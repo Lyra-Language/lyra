@@ -3,7 +3,7 @@ package parser
 import (
 	"errors"
 
-	lyra_parser "github.com/avrame/tree-sitter-lyra/bindings/go"
+	lyra_parser "github.com/Lyra-Language/tree-sitter-lyra/bindings/go"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 

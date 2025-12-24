@@ -1,8 +1,8 @@
 package analyzer
 
 import (
-	"avrameisner.com/lyra-lsp/symbols"
-	"avrameisner.com/lyra-lsp/types"
+	"avrameisner.com/lyra-lsp/pkg/symbols"
+	"avrameisner.com/lyra-lsp/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
