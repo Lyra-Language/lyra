@@ -1,7 +1,7 @@
 package symbols
 
 import (
-	"avrameisner.com/lyra-lsp/pkg/types"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // Symbol represents any named entity in the program

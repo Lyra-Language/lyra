@@ -1,4 +1,4 @@
-module avrameisner.com/lyra-lsp
+module github.com/Lyra-Language/lyra
 
 go 1.25.4
 

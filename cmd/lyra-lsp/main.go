@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"avrameisner.com/lyra-lsp/pkg/analyzer"
-	"avrameisner.com/lyra-lsp/pkg/parser"
+	"github.com/Lyra-Language/lyra/pkg/analyzer"
+	"github.com/Lyra-Language/lyra/pkg/parser"
 )
 
 func main() {
