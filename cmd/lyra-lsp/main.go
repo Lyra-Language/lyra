@@ -9,19 +9,8 @@ import (
 
 func main() {
 	source := `
-struct Point { x: Int, y: Int }
-
-data Maybe<t> = Nil | Some(t)
-
-data Tree<t> = Nil | Leaf(t) | Node { left: Tree, value: t, right: Tree }
-
 def sum: (Int, Int) -> Int = (a, b) => a + b
-
-pure def fib: (Int) -> Int = {
-  (0) => 0,
-  (1) => 1,
-  (n) => fib(n-2) + fib(n-1),
-}
+let x: Float = sum(1, "2") // should produce two type errors
 `
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -31,10 +20,18 @@ pure def fib: (Int) -> Int = {
 
 	collector := analyzer.NewCollector([]byte(source))
 	table, errors := collector.Collect(tree.RootNode())
+	checker := analyzer.NewChecker([]byte(source), table)
+	typeErrors := checker.Check(tree.RootNode())
 
 	if len(errors) > 0 {
 		fmt.Println("Collection errors:")
 		for _, e := range errors {
+			fmt.Println("  -", e)
+		}
+	}
+	if len(typeErrors) > 0 {
+		fmt.Println("Type errors:")
+		for _, e := range typeErrors {
 			fmt.Println("  -", e)
 		}
 	}

@@ -197,7 +197,7 @@ func (c *Checker) CheckExpression(node *sitter.Node) types.Type {
 		return c.checkIdentifier(node)
 
 	// Compound expressions
-	case "function_call":
+	case "call_expression":
 		return c.checkFunctionCall(node)
 	case "binary_expression":
 		return c.checkBinaryExpr(node)
@@ -211,7 +211,7 @@ func (c *Checker) CheckExpression(node *sitter.Node) types.Type {
 		return c.checkTupleLiteral(node)
 	case "lambda":
 		return c.checkLambda(node)
-	case "member_access":
+	case "member_expression":
 		return c.checkMemberAccess(node)
 	case "index_expression":
 		return c.checkIndexExpr(node)
@@ -259,7 +259,7 @@ func (c *Checker) checkFunctionCall(node *sitter.Node) types.Type {
 		switch child.Kind() {
 		case "identifier":
 			calleeNode = child
-		case "arguments_list":
+		case "argument_list":
 			for j := uint(0); j < child.ChildCount(); j++ {
 				arg := child.Child(j)
 				if arg.IsNamed() {
@@ -692,7 +692,7 @@ func (c *Checker) parseTypeNode(node *sitter.Node) types.Type {
 func isExpression(kind string) bool {
 	switch kind {
 	case "integer_literal", "float_literal", "string_literal", "boolean_literal",
-		"identifier", "function_call", "binary_expression", "unary_expression",
+		"identifier", "call_expression", "binary_expression", "unary_expression",
 		"if_then_else", "array_literal", "tuple_literal", "lambda", "index_expression", "block":
 		return true
 	}
