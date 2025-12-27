@@ -78,13 +78,13 @@ func (s TraitSymbol) GetLocation() Location { return s.Location }
 // TraitImplSymbol represents a trait implementation
 type TraitImplSymbol struct {
 	TraitName string
-	ForType   types.Type
+	ForType   string
 	Methods   map[string]Location // method name -> definition location
 	Location  Location
 }
 
 func (TraitImplSymbol) symbolNode() {}
 func (s TraitImplSymbol) GetName() string {
-	return s.TraitName + " for " + s.ForType.(types.UserDefinedType).Name
+	return s.TraitName + " for " + s.ForType
 }
 func (s TraitImplSymbol) GetLocation() Location { return s.Location }

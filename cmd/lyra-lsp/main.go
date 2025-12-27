@@ -17,7 +17,7 @@ data Tree<t> = Nil | Leaf(t) | Node { left: Tree, value: t, right: Tree }
 
 def sum: (Int, Int) -> Int = (a, b) => a + b
 
-def fib: (Int) -> Int = {
+pure def fib: (Int) -> Int = {
   (0) => 0,
   (1) => 1,
   (n) => fib(n-2) + fib(n-1),

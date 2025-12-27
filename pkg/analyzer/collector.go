@@ -1,5 +1,12 @@
 package analyzer
 
+/*
+Collector walks the STree and builds the symbol table
+This is a top-down approach, starting from the program node and walking down the AST.
+The symbol table is built as we go, and we can use the symbol table to check the program.
+The symbol table is used to check the program for errors.
+*/
+
 import (
 	"github.com/Lyra-Language/lyra/pkg/symbols"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -267,9 +274,10 @@ func (c *Collector) collectFunctionSignature(node *sitter.Node) (name string, ge
 		case "function_type":
 			sig = c.parseFunctionType(child)
 		default:
-			if text == "pure" {
+			switch text {
+			case "pure":
 				isPure = true
-			} else if text == "async" {
+			case "async":
 				isAsync = true
 			}
 		}
@@ -290,8 +298,6 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 		return types.PrimitiveType{Name: "Bool"}
 	case "generic_type":
 		return types.GenericType{Name: c.nodeText(node)}
-	case "user_defined_type_name":
-		return types.UserDefinedType{Name: c.nodeText(node)}
 	case "array_type":
 		// []t format
 		for i := uint(0); i < node.ChildCount(); i++ {
@@ -300,8 +306,6 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 				return types.ArrayType{ElementType: c.parseType(child)}
 			}
 		}
-	case "parameterized_type":
-		return c.parseParameterizedType(node)
 	case "function_type":
 		return c.parseFunctionType(node)
 	case "map_type":
@@ -315,35 +319,12 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 			}
 		}
 	}
-	// Fallback - treat as user-defined
-	return types.UserDefinedType{Name: c.nodeText(node)}
-}
-
-func (c *Collector) parseParameterizedType(node *sitter.Node) types.Type {
-	var name string
-	typeArgs := make([]types.Type, 0)
-
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		switch child.Kind() {
-		case "user_defined_type_name":
-			name = c.nodeText(child)
-		default:
-			if child.IsNamed() {
-				typeArgs = append(typeArgs, c.parseType(child))
-			}
-		}
-	}
-
-	return types.UserDefinedType{
-		Name:     name,
-		TypeArgs: typeArgs,
-	}
+	return nil
 }
 
 func (c *Collector) parseFunctionType(node *sitter.Node) *types.FunctionType {
 	ft := &types.FunctionType{
-		Parameters: make([]types.Type, 0),
+		Parameters: make([]types.NamedParameter, 0),
 	}
 
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -356,7 +337,9 @@ func (c *Collector) parseFunctionType(node *sitter.Node) *types.FunctionType {
 					for k := uint(0); k < param.ChildCount(); k++ {
 						typeNode := param.Child(k)
 						if typeNode.IsNamed() {
-							ft.Parameters = append(ft.Parameters, c.parseType(typeNode))
+							ft.Parameters = append(
+								ft.Parameters,
+								types.NamedParameter{Name: c.nodeText(typeNode), Type: c.parseType(typeNode)})
 						}
 					}
 				}
