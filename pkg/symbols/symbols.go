@@ -38,6 +38,7 @@ type FunctionSymbol struct {
 	Name          string
 	GenericParams []string
 	Signature     *types.FunctionType // nil if not explicitly typed
+	Patterns      []*FunctionPatternSymbol
 	Location      Location
 	IsPublic      bool
 	IsPure        bool
@@ -47,6 +48,39 @@ type FunctionSymbol struct {
 func (FunctionSymbol) symbolNode()             {}
 func (s FunctionSymbol) GetName() string       { return s.Name }
 func (s FunctionSymbol) GetLocation() Location { return s.Location }
+
+// FunctionPatternSymbol represents a function pattern
+type FunctionPatternSymbol struct {
+	Parameters []types.NamedParameter
+	Guard      *GuardSymbol
+	Body       string
+	Location   Location
+}
+
+func (FunctionPatternSymbol) symbolNode()             {}
+func (s FunctionPatternSymbol) GetName() string       { return "function pattern" }
+func (s FunctionPatternSymbol) GetLocation() Location { return s.Location }
+
+// GuardSymbol represents a guard
+type GuardSymbol struct {
+	Expression string
+	Location   Location
+}
+
+func (GuardSymbol) symbolNode()             {}
+func (s GuardSymbol) GetName() string       { return "guard" }
+func (s GuardSymbol) GetLocation() Location { return s.Location }
+
+// TraitMethodSymbol represents a trait method signature
+type TraitMethodSymbol struct {
+	Name      string
+	Signature *types.FunctionType
+	Location  Location
+}
+
+func (TraitMethodSymbol) symbolNode()             {}
+func (s TraitMethodSymbol) GetName() string       { return s.Name }
+func (s TraitMethodSymbol) GetLocation() Location { return s.Location }
 
 // VariableSymbol represents a let/var/const binding
 type VariableSymbol struct {
@@ -66,7 +100,7 @@ type TraitSymbol struct {
 	Name          string
 	GenericParams []string
 	Bounds        []string // trait bounds like Show + Eq
-	Methods       map[string]*types.FunctionType
+	Methods       map[string]*TraitMethodSymbol
 	Location      Location
 	IsPublic      bool
 }
@@ -78,13 +112,24 @@ func (s TraitSymbol) GetLocation() Location { return s.Location }
 // TraitImplSymbol represents a trait implementation
 type TraitImplSymbol struct {
 	TraitName string
-	ForType   string
-	Methods   map[string]Location // method name -> definition location
+	ForType   types.Type
+	Methods   map[string]*TraitMethodImplSymbol
 	Location  Location
 }
 
 func (TraitImplSymbol) symbolNode() {}
 func (s TraitImplSymbol) GetName() string {
-	return s.TraitName + " for " + s.ForType
+	return s.TraitName + " for " + s.ForType.GetName()
 }
 func (s TraitImplSymbol) GetLocation() Location { return s.Location }
+
+// TraitMethodImplSymbol represents a trait method implementation
+type TraitMethodImplSymbol struct {
+	Name     string
+	Impl     *FunctionPatternSymbol
+	Location Location
+}
+
+func (TraitMethodImplSymbol) symbolNode()             {}
+func (s TraitMethodImplSymbol) GetName() string       { return s.Name }
+func (s TraitMethodImplSymbol) GetLocation() Location { return s.Location }

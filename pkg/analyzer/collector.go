@@ -161,6 +161,7 @@ func (c *Collector) collectFunctionDef(node *sitter.Node) {
 	var name string
 	var genericParams []string
 	var signature *types.FunctionType
+	var patterns []*symbols.FunctionPatternSymbol
 	isPublic := false
 	isPure := false
 	isAsync := false
@@ -172,6 +173,8 @@ func (c *Collector) collectFunctionDef(node *sitter.Node) {
 			isPublic = true
 		case "function_signature":
 			name, genericParams, signature, isPure, isAsync = c.collectFunctionSignature(child)
+		case "function_pattern":
+			patterns = append(patterns, c.collectFunctionPatternSymbol(child))
 		}
 	}
 
@@ -183,6 +186,7 @@ func (c *Collector) collectFunctionDef(node *sitter.Node) {
 		IsPublic:      isPublic,
 		IsPure:        isPure,
 		IsAsync:       isAsync,
+		Patterns:      patterns,
 	}
 
 	if err := c.table.RegisterFunction(sym); err != nil {
@@ -306,6 +310,8 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 				return types.ArrayType{ElementType: c.parseType(child)}
 			}
 		}
+	case "user_defined_type_name":
+		return types.UnresolvedType{Name: c.nodeText(node)}
 	case "function_type":
 		return c.parseFunctionType(node)
 	case "map_type":
@@ -377,11 +383,175 @@ func (c *Collector) parseMapType(node *sitter.Node) types.Type {
 	return mt
 }
 
-// Stub for trait collection - you'll expand this
-func (c *Collector) collectTraitDeclaration(node *sitter.Node) {
-	// Similar pattern to struct/data collection
+func (c *Collector) collectTraitDeclaration(node *sitter.Node) *symbols.TraitSymbol {
+	var name string
+	var genericParams []string
+	methods := make(map[string]*symbols.TraitMethodSymbol)
+	var isPublic bool
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "visibility":
+			isPublic = true
+		case "trait_name":
+			name = c.nodeText(child)
+		case "generic_parameters":
+			genericParams = c.collectGenericParams(child)
+		case "trait_method":
+			method := c.collectTraitMethod(child)
+			methods[method.Name] = method
+		}
+	}
+
+	symbol := &symbols.TraitSymbol{
+		Name:          name,
+		GenericParams: genericParams,
+		Methods:       methods,
+		Location:      c.nodeLocation(node),
+		IsPublic:      isPublic,
+	}
+
+	if err := c.table.RegisterTrait(symbol); err != nil {
+		c.errors = append(c.errors, err)
+	}
+	return symbol
 }
 
-func (c *Collector) collectTraitImpl(node *sitter.Node) {
-	// Similar pattern
+func (c *Collector) collectTraitMethod(node *sitter.Node) *symbols.TraitMethodSymbol {
+	var methodName string
+	var methodType *types.FunctionType
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "method_name":
+			methodName = c.nodeText(child)
+		case "function_type":
+			methodType = c.parseFunctionType(child)
+		}
+	}
+	return &symbols.TraitMethodSymbol{
+		Name:      methodName,
+		Signature: methodType,
+		Location:  c.nodeLocation(node),
+	}
+}
+
+func (c *Collector) collectTraitImpl(node *sitter.Node) *symbols.TraitImplSymbol {
+	var traitName string
+	var forType types.Type
+	var methods = make(map[string]*symbols.TraitMethodImplSymbol)
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "trait_name":
+			traitName = c.nodeText(child)
+		case "type":
+			forType = c.parseType(child)
+		case "trait_method_implementation":
+			method := c.collectTraitMethodImpl(child)
+			methods[method.Name] = method
+		}
+	}
+
+	sym := &symbols.TraitImplSymbol{
+		TraitName: traitName,
+		ForType:   forType,
+		Methods:   methods,
+		Location:  c.nodeLocation(node),
+	}
+
+	if err := c.table.RegisterTraitImpl(sym); err != nil {
+		c.errors = append(c.errors, err)
+	}
+	return sym
+}
+
+func (c *Collector) collectTraitMethodImpl(node *sitter.Node) *symbols.TraitMethodImplSymbol {
+	var methodName string
+	var methodPattern *symbols.FunctionPatternSymbol
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "method_name":
+			methodName = c.nodeText(child)
+		case "function_pattern":
+			methodPattern = c.collectFunctionPatternSymbol(child)
+		}
+	}
+	return &symbols.TraitMethodImplSymbol{
+		Name:     methodName,
+		Impl:     methodPattern,
+		Location: c.nodeLocation(node),
+	}
+}
+
+func (c *Collector) collectFunctionPatternSymbol(node *sitter.Node) *symbols.FunctionPatternSymbol {
+	var parameters []types.NamedParameter
+	var guard *symbols.GuardSymbol
+	var body string
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "parameter_list":
+			parameters = c.collectNamedParameters(child)
+		case "guard":
+			guard = c.collectGuardSymbol(child)
+		case "body":
+			body = c.nodeText(child)
+		}
+	}
+	return &symbols.FunctionPatternSymbol{
+		Parameters: parameters,
+		Guard:      guard,
+		Body:       body,
+		Location:   c.nodeLocation(node),
+	}
+}
+
+func (c *Collector) collectNamedParameters(node *sitter.Node) []types.NamedParameter {
+	parameters := make([]types.NamedParameter, 0)
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "parameter" {
+			parameters = append(parameters, c.collectNamedParameter(child))
+		}
+	}
+	return parameters
+}
+
+func (c *Collector) collectNamedParameter(node *sitter.Node) types.NamedParameter {
+	var name string
+	var typeNode *sitter.Node
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "parameter_name" {
+			name = c.nodeText(child)
+		} else if child.Kind() == "parameter_type" {
+			typeNode = child
+		}
+	}
+
+	if typeNode == nil {
+		return types.NamedParameter{Name: name, Type: nil}
+	}
+
+	return types.NamedParameter{Name: name, Type: c.parseType(typeNode)}
+}
+
+func (c *Collector) collectGuardSymbol(node *sitter.Node) *symbols.GuardSymbol {
+	var expression string
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "expression" {
+			expression = c.nodeText(child)
+		}
+	}
+	return &symbols.GuardSymbol{Expression: expression, Location: c.nodeLocation(node)}
 }

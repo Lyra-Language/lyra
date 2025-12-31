@@ -109,6 +109,10 @@ func (st *SymbolTable) RegisterTrait(sym *TraitSymbol) error {
 }
 
 // RegisterTraitImpl adds a trait implementation
-func (st *SymbolTable) RegisterTraitImpl(sym *TraitImplSymbol) {
+func (st *SymbolTable) RegisterTraitImpl(sym *TraitImplSymbol) error {
+	if err := st.GlobalScope.Define(sym); err != nil {
+		return err
+	}
 	st.TraitImpls = append(st.TraitImpls, sym)
+	return nil
 }
