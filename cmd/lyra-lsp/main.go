@@ -5,18 +5,21 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer"
 	"github.com/Lyra-Language/lyra/pkg/parser"
+	"github.com/Lyra-Language/lyra/pkg/printer"
 )
 
 func main() {
-	source := `
-def sum: (Int, Int) -> Int = (a, b) => a + b
+	source := `def sum: (Int, Int) -> Int = (a, b) => a + b
 let x: Float = sum(1, "2") // should produce two type errors
-`
+def say_hello: (Str) -> Str = (name) => 42 // should produce a type error (wrong return type)`
+
 	tree, err := parser.Parse(source)
 	if err != nil {
 		fmt.Println("Parse error:", err)
 		return
 	}
+	printer := printer.NewPrinter([]byte(source))
+	printer.Print(tree.RootNode())
 
 	collector := analyzer.NewCollector([]byte(source))
 	table, errors := collector.Collect(tree.RootNode())
