@@ -12,22 +12,15 @@ type Type interface {
 }
 
 // typeNode is a placeholder for the type node
-func (PrimitiveType) typeNode() {}
-func (ArrayType) typeNode()     {}
-func (FunctionType) typeNode()  {}
-func (GenericType) typeNode()   {}
-func (StructType) typeNode()    {}
-func (DataType) typeNode()      {}
-func (MapType) typeNode()       {}
-func (TupleType) typeNode()     {}
 
-// IsNumericType checks if the type is a numeric type
-func (p PrimitiveType) IsNumericType() bool {
-	isInt := p.Name == "Int" || p.Name == "Int8" || p.Name == "Int16" || p.Name == "Int32" || p.Name == "Int64"
-	isUInt := p.Name == "UInt" || p.Name == "UInt8" || p.Name == "UInt16" || p.Name == "UInt32" || p.Name == "UInt64"
-	isFloat := p.Name == "Float" || p.Name == "Float16" || p.Name == "Float32" || p.Name == "Float64"
-	return isInt || isUInt || isFloat
-}
+func (ArrayType) typeNode()    {}
+func (FunctionType) typeNode() {}
+func (GenericType) typeNode()  {}
+func (StructType) typeNode()   {}
+func (DataType) typeNode()     {}
+func (MapType) typeNode()      {}
+func (TupleType) typeNode()    {}
+
 func (a ArrayType) IsNumericType() bool {
 	return false
 }
@@ -50,10 +43,6 @@ func (t TupleType) IsNumericType() bool {
 	return false
 }
 
-// GetName returns the name of the type
-func (p PrimitiveType) GetName() string {
-	return p.Name
-}
 func (a ArrayType) GetName() string {
 	elementName := "?"
 	if a.ElementType != nil {
@@ -112,11 +101,6 @@ func (t TupleType) GetName() string {
 		elementNames[i] = elementName
 	}
 	return fmt.Sprintf("(%s)", strings.Join(elementNames, ", "))
-}
-
-// Type definitions
-type PrimitiveType struct {
-	Name string // Int, Float, Bool, String
 }
 
 type ArrayType struct {

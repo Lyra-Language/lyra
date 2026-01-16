@@ -3,8 +3,8 @@ package analyzer
 import (
 	"testing"
 
+	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/parser"
-	"github.com/Lyra-Language/lyra/pkg/symbols"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -17,26 +17,36 @@ func TestCollector_VariableDeclaration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
-	// printer := printer.NewPrinter([]byte(source))
-	// printer.Print(tree.RootNode())
 
 	collector := NewCollector([]byte(source))
-	table, errors := collector.Collect(tree.RootNode())
+	program, table, errors := collector.Collect(tree.RootNode())
 	if len(errors) > 0 {
 		t.Fatalf("Collector errors: %v", errors)
 	}
-	// t.Logf("Table: %v", table)
-	// t.Logf("Errors: %v", errors)
 
-	varSym, ok := table.GlobalScope.Lookup("the_answer")
+	// Check AST was built
+	if len(program.Statements) != 1 {
+		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
+	}
+
+	// Check symbol table lookup
+	namedNode, ok := table.GlobalScope.Lookup("the_answer")
 	if !ok {
 		t.Fatalf("\"the_answer\" not found in global scope")
 	}
-	if !types.TypesEqual(varSym.(*symbols.VariableSymbol).Type, types.PrimitiveType{Name: "Int"}) {
-		t.Fatalf("\"the_answer\" type is not Int. Got %v", varSym.(*symbols.VariableSymbol).Type)
+
+	varDecl, ok := namedNode.(*ast.VariableDeclarationStmt)
+	if !ok {
+		t.Fatalf("\"the_answer\" is not a VariableDeclarationStmt, got %T", namedNode)
 	}
-	if !types.TypesEqual(varSym.(*symbols.VariableSymbol).InitExpression.Type, types.PrimitiveType{Name: "Int"}) {
-		t.Fatalf("\"the_answer\" init expression type is not Int. Got %v", varSym.(*symbols.VariableSymbol).InitExpression.Type)
+
+	if !types.TypesEqual(varDecl.Type, intType) {
+		t.Fatalf("\"the_answer\" type is not Int. Got %v", varDecl.Type)
+	}
+
+	// Note: Init expression type is not set during collection, only during type checking
+	if varDecl.Value == nil {
+		t.Fatalf("\"the_answer\" has no init value")
 	}
 }
 
@@ -49,25 +59,37 @@ func TestCollector_FunctionDefinition(t *testing.T) {
 	}
 
 	collector := NewCollector([]byte(source))
-	table, errors := collector.Collect(tree.RootNode())
+	program, table, errors := collector.Collect(tree.RootNode())
 	if len(errors) > 0 {
 		t.Fatalf("Collector errors: %v", errors)
 	}
 
-	funcSym, ok := table.Functions["sum"]
+	// Check AST was built
+	if len(program.Statements) != 1 {
+		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
+	}
+
+	// Check symbol table lookup
+	funcDef, ok := table.Functions["sum"]
 	if !ok {
 		t.Fatalf("\"sum\" not found in functions")
 	}
-	if len(funcSym.Clauses) != 1 {
-		t.Fatalf("\"sum\" should have 1 clause. Got %d", len(funcSym.Clauses))
+
+	if len(funcDef.Clauses) != 1 {
+		t.Fatalf("\"sum\" should have 1 clause. Got %d", len(funcDef.Clauses))
 	}
-	if !types.TypesEqual(funcSym.Signature.ParameterTypes[0].Type, intType) {
-		t.Fatalf("\"sum\" first parameter type is not Int. Got %v", funcSym.Signature.ParameterTypes[0].Type)
+
+	if funcDef.Signature == nil {
+		t.Fatalf("\"sum\" has no signature")
 	}
-	if !types.TypesEqual(funcSym.Signature.ParameterTypes[1].Type, intType) {
-		t.Fatalf("\"sum\" second parameter type is not Int. Got %v", funcSym.Signature.ParameterTypes[1].Type)
+
+	if !types.TypesEqual(funcDef.Signature.ParameterTypes[0].Type, intType) {
+		t.Fatalf("\"sum\" first parameter type is not Int. Got %v", funcDef.Signature.ParameterTypes[0].Type)
 	}
-	if !types.TypesEqual(funcSym.Signature.ReturnType, intType) {
-		t.Fatalf("\"sum\" return type is not Int. Got %v", funcSym.Signature.ReturnType)
+	if !types.TypesEqual(funcDef.Signature.ParameterTypes[1].Type, intType) {
+		t.Fatalf("\"sum\" second parameter type is not Int. Got %v", funcDef.Signature.ParameterTypes[1].Type)
+	}
+	if !types.TypesEqual(funcDef.Signature.ReturnType, intType) {
+		t.Fatalf("\"sum\" return type is not Int. Got %v", funcDef.Signature.ReturnType)
 	}
 }

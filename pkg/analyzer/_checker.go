@@ -3,21 +3,22 @@ package analyzer
 import (
 	"fmt"
 
-	"github.com/Lyra-Language/lyra/pkg/symbols"
+	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 type Checker struct {
-	source []byte
 	table  *symbols.SymbolTable
 	scope  *symbols.Scope
 	errors []TypeError
+	ast    *ast.Program
 }
 
 type TypeError struct {
 	Message  string
-	Location symbols.Location
+	Location ast.Location
 	Expected types.Type
 	Actual   types.Type
 }
@@ -26,9 +27,9 @@ func (e TypeError) Error() string {
 	return fmt.Sprintf("%d:%d: %s", e.Location.StartLine, e.Location.StartCol, e.Message)
 }
 
-func NewChecker(source []byte, table *symbols.SymbolTable) *Checker {
+func NewChecker(ast *ast.Program, table *symbols.SymbolTable) *Checker {
 	return &Checker{
-		source: source,
+		ast:    ast,
 		table:  table,
 		scope:  table.GlobalScope,
 		errors: make([]TypeError, 0),
@@ -36,14 +37,14 @@ func NewChecker(source []byte, table *symbols.SymbolTable) *Checker {
 }
 
 // Check runs type checking on the entire program
-func (c *Checker) Check(root *sitter.Node) []TypeError {
-	c.checkProgram(root)
+func (c *Checker) Check() []TypeError {
+	c.checkProgram(c.ast)
 	return c.errors
 }
 
-func (c *Checker) checkProgram(node *sitter.Node) {
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
+func (c *Checker) checkProgram(ast *program.Program) {
+	for i := uint(0); i < program.ChildCount(); i++ {
+		child := program.Child(i)
 		switch child.Kind() {
 		case "function_definition":
 			c.checkFunctionDef(child)
@@ -84,14 +85,14 @@ func (c *Checker) checkFunctionDef(node *sitter.Node) {
 					continue
 				}
 				switch p := pattern.(type) {
-				case symbols.IdentifierPattern:
+				case ast.IdentifierPattern:
 					paramSym := &symbols.VariableSymbol{
 						Name:     p.Name,
 						Type:     paramType.Type,
 						Location: c.nodeLocation(node),
 					}
 					funcScope.Define(paramSym)
-				case symbols.LiteralPattern:
+				case ast.LiteralPattern:
 					paramSym := &symbols.VariableSymbol{
 						Name:     fmt.Sprintf("%v", p.Value),
 						Type:     paramType.Type,
@@ -583,15 +584,10 @@ func (c *Checker) checkIndexExpr(node *sitter.Node) types.Type {
 }
 
 // Helper methods
-
-func (c *Checker) nodeText(node *sitter.Node) string {
-	return string(c.source[node.StartByte():node.EndByte()])
-}
-
-func (c *Checker) nodeLocation(node *sitter.Node) symbols.Location {
+func (c *Checker) nodeLocation(node *sitter.Node) ast.Location {
 	start := node.StartPosition()
 	end := node.EndPosition()
-	return symbols.Location{
+	return ast.Location{
 		StartLine: int(start.Row) + 1,
 		StartCol:  int(start.Column) + 1,
 		EndLine:   int(end.Row) + 1,
@@ -633,7 +629,7 @@ func (c *Checker) typeString(t types.Type) string {
 	}
 	switch ty := t.(type) {
 	case types.PrimitiveType:
-		return ty.Name
+		return ty.GetName()
 	case types.ArrayType:
 		return "[]" + c.typeString(ty.ElementType)
 	case types.MapType:
@@ -664,25 +660,6 @@ func (c *Checker) typeString(t types.Type) string {
 		return ty.Name
 	}
 	return fmt.Sprintf("%T", t)
-}
-
-// parseTypeNode converts a type AST node (used for type annotations)
-func (c *Checker) parseTypeNode(node *sitter.Node) types.Type {
-	// Reuse collector's logic or duplicate here
-	// For now, simple version:
-	switch node.Kind() {
-	case "signed_integer_type", "unsigned_integer_type":
-		return types.PrimitiveType{Name: c.nodeText(node)}
-	case "float_type":
-		return types.PrimitiveType{Name: c.nodeText(node)}
-	case "string_type":
-		return types.PrimitiveType{Name: "Str"}
-	case "boolean_type":
-		return types.PrimitiveType{Name: "Bool"}
-	case "generic_type":
-		return types.GenericType{Name: c.nodeText(node)}
-	}
-	return nil
 }
 
 func isExpression(kind string) bool {
