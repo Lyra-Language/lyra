@@ -6,10 +6,12 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/printer"
+	"github.com/Lyra-Language/lyra/pkg/symbols"
 )
 
 func main() {
-	source := `def sum: (Int, Int) -> Int = (a, b) => a + b
+	source := `
+def sum: (Int, Int) -> Int = (a, b) => a + b
 let x: Float = sum(1, "2") // should produce two type errors
 def say_hello: (Str) -> Str = (name) => 42 // should produce a type error (wrong return type)`
 
@@ -46,10 +48,21 @@ def say_hello: (Str) -> Str = (name) => 42 // should produce a type error (wrong
 
 	fmt.Println("\n=== Functions ===")
 	for name, sym := range table.Functions {
-		fmt.Printf("  %s (line %d, pure=%v, async=%v)\n",
-			name, sym.Location.StartLine, sym.IsPure, sym.IsAsync)
-		if sym.Signature != nil {
-			fmt.Printf("    signature: %d params -> return\n", len(sym.Signature.Parameters))
+		fmt.Printf("  %s (line %d, pure=%v, async=%v)\n", name, sym.Location.StartLine, sym.IsPure, sym.IsAsync)
+		fmt.Printf("    signature: %s\n", sym.Signature.GetName())
+		if sym.Clauses != nil {
+			fmt.Printf("    clauses: %d\n", len(sym.Clauses))
+		}
+		for _, clause := range sym.Clauses {
+			fmt.Printf("      parameters: %d\n", len(clause.ParameterPatterns))
+			for _, param := range clause.ParameterPatterns {
+				switch p := param.(type) {
+				case symbols.IdentifierPattern:
+					fmt.Printf("        %s\n", p.Name)
+				case symbols.LiteralPattern:
+					fmt.Printf("        %v\n", p.Value)
+				}
+			}
 		}
 	}
 }

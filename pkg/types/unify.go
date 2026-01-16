@@ -13,11 +13,11 @@ func TypesEqual(a, b Type) bool {
 		}
 	case FunctionType:
 		if bt, ok := b.(FunctionType); ok {
-			if len(at.Parameters) != len(bt.Parameters) {
+			if len(at.ParameterTypes) != len(bt.ParameterTypes) {
 				return false
 			}
-			for i := range at.Parameters {
-				if !TypesEqual(at.Parameters[i].Type, bt.Parameters[i].Type) {
+			for i := range at.ParameterTypes {
+				if !TypesEqual(at.ParameterTypes[i].Type, bt.ParameterTypes[i].Type) {
 					return false
 				}
 			}

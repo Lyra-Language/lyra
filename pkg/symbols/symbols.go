@@ -1,6 +1,8 @@
 package symbols
 
 import (
+	"fmt"
+
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -38,7 +40,7 @@ type FunctionSymbol struct {
 	Name          string
 	GenericParams []string
 	Signature     *types.FunctionType // nil if not explicitly typed
-	Patterns      []*FunctionPatternSymbol
+	Clauses       []*FunctionClauseSymbol
 	Location      Location
 	IsPublic      bool
 	IsPure        bool
@@ -49,17 +51,38 @@ func (FunctionSymbol) symbolNode()             {}
 func (s FunctionSymbol) GetName() string       { return s.Name }
 func (s FunctionSymbol) GetLocation() Location { return s.Location }
 
-// FunctionPatternSymbol represents a function pattern
-type FunctionPatternSymbol struct {
-	Parameters []types.NamedParameter
-	Guard      *GuardSymbol
-	Body       string
-	Location   Location
+// FunctionClauseSymbol represents a function clause
+type FunctionClauseSymbol struct {
+	ParameterPatterns []Pattern
+	Guard             *GuardSymbol
+	Body              *FunctionBodySymbol
+	Location          Location
 }
 
-func (FunctionPatternSymbol) symbolNode()             {}
-func (s FunctionPatternSymbol) GetName() string       { return "function pattern" }
-func (s FunctionPatternSymbol) GetLocation() Location { return s.Location }
+func (FunctionClauseSymbol) symbolNode()             {}
+func (s FunctionClauseSymbol) GetName() string       { return "function clause" }
+func (s FunctionClauseSymbol) GetLocation() Location { return s.Location }
+
+type Pattern interface {
+	isPattern()
+	GetName() string
+}
+
+type IdentifierPattern struct {
+	Name string
+}
+
+func (IdentifierPattern) isPattern()        {}
+func (p IdentifierPattern) GetName() string { return p.Name }
+
+type LiteralPattern struct {
+	Value any
+}
+
+func (LiteralPattern) isPattern()        {}
+func (p LiteralPattern) GetName() string { return fmt.Sprintf("%v", p.Value) }
+
+// TODO: add other patterns
 
 // GuardSymbol represents a guard
 type GuardSymbol struct {
@@ -84,11 +107,12 @@ func (s TraitMethodSymbol) GetLocation() Location { return s.Location }
 
 // VariableSymbol represents a let/var/const binding
 type VariableSymbol struct {
-	Name       string
-	Type       types.Type // may be nil if needs inference
-	Location   Location
-	IsMutable  bool // var vs let
-	IsConstant bool // const
+	Name           string
+	Type           types.Type // may be nil if needs inference
+	InitExpression *ExpressionSymbol
+	Location       Location
+	IsMutable      bool // var vs let
+	IsConstant     bool // const
 }
 
 func (VariableSymbol) symbolNode()             {}
@@ -126,10 +150,51 @@ func (s TraitImplSymbol) GetLocation() Location { return s.Location }
 // TraitMethodImplSymbol represents a trait method implementation
 type TraitMethodImplSymbol struct {
 	Name     string
-	Impl     *FunctionPatternSymbol
+	Impl     *FunctionClauseSymbol
 	Location Location
 }
 
 func (TraitMethodImplSymbol) symbolNode()             {}
 func (s TraitMethodImplSymbol) GetName() string       { return s.Name }
 func (s TraitMethodImplSymbol) GetLocation() Location { return s.Location }
+
+// FunctionBodySymbol represents a function body
+type FunctionBodySymbol struct {
+	Block      *BlockSymbol
+	Expression *ExpressionSymbol
+	Location   Location
+}
+
+func (FunctionBodySymbol) symbolNode()             {}
+func (s FunctionBodySymbol) GetName() string       { return "function body" }
+func (s FunctionBodySymbol) GetLocation() Location { return s.Location }
+
+// BlockSymbol represents a block of code
+type BlockSymbol struct {
+	Statements []*StatementSymbol
+	Location   Location
+}
+
+func (BlockSymbol) symbolNode()             {}
+func (s BlockSymbol) GetName() string       { return "block" }
+func (s BlockSymbol) GetLocation() Location { return s.Location }
+
+// ExpressionSymbol represents an expression
+type ExpressionSymbol struct {
+	Type     types.Type
+	Location Location
+}
+
+func (ExpressionSymbol) symbolNode()             {}
+func (s ExpressionSymbol) GetName() string       { return "expression" }
+func (s ExpressionSymbol) GetLocation() Location { return s.Location }
+
+// StatementSymbol represents a statement
+type StatementSymbol struct {
+	Expression *ExpressionSymbol // nil if not an expression statement
+	Location   Location
+}
+
+func (StatementSymbol) symbolNode()             {}
+func (s StatementSymbol) GetName() string       { return "statement" }
+func (s StatementSymbol) GetLocation() Location { return s.Location }

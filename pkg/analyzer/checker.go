@@ -62,54 +62,50 @@ func (c *Checker) checkProgram(node *sitter.Node) {
 }
 
 func (c *Checker) checkFunctionDef(node *sitter.Node) {
-	// Find function name and look up its symbol
-	var funcName string
-	var bodyNode *sitter.Node
+	// node is function_definition
 
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		switch child.Kind() {
-		case "function_signature":
-			for j := uint(0); j < child.ChildCount(); j++ {
-				if child.Child(j).Kind() == "identifier" {
-					funcName = c.nodeText(child.Child(j))
-				}
-			}
-		case "block", "expression": // function body
-			bodyNode = child
-		}
-	}
+	functionSignatureNode := node.ChildByFieldName("signature")
+	funcName := c.nodeText(functionSignatureNode.ChildByFieldName("name"))
 
 	// Create function scope
 	funcScope := symbols.NewScope(c.scope, symbols.ScopeFunction)
 	oldScope := c.scope
 	c.scope = funcScope
 
-	// For each param in signature, create VariableSymbol and add to funcScope
 	if funcSym, ok := c.table.Functions[funcName]; ok && funcSym.Signature != nil {
-		for _, param := range funcSym.Signature.Parameters {
-			paramSym := &symbols.VariableSymbol{
-				Name:       param.Name,
-				Type:       param.Type,
-				Location:   c.nodeLocation(node),
-				IsMutable:  false,
-				IsConstant: false,
-			}
-			funcScope.Define(paramSym)
-		}
-	}
-
-	if bodyNode != nil {
-		returnType := c.checkBlock(bodyNode)
-
-		// Verify return type matches declared signature
-		if funcSym, ok := c.table.Functions[funcName]; ok && funcSym.Signature != nil {
-			if funcSym.Signature.ReturnType != nil && returnType != nil {
-				if !types.TypesEqual(funcSym.Signature.ReturnType, returnType) {
-					c.typeError(bodyNode, funcSym.Signature.ReturnType, returnType,
-						"function %s declared to return %s but body returns %s",
-						funcName, c.typeString(funcSym.Signature.ReturnType), c.typeString(returnType))
+		// For each param in each function clause, create VariableSymbol and add to funcScope
+		for _, clause := range funcSym.Clauses {
+			for pattern_idx, pattern := range clause.ParameterPatterns {
+				paramType := funcSym.Signature.ParameterTypes[pattern_idx]
+				if paramType.Type == nil {
+					c.typeError(node, nil, nil,
+						"function %s has no parameter type for pattern %s",
+						funcName, pattern.GetName())
+					continue
 				}
+				switch p := pattern.(type) {
+				case symbols.IdentifierPattern:
+					paramSym := &symbols.VariableSymbol{
+						Name:     p.Name,
+						Type:     paramType.Type,
+						Location: c.nodeLocation(node),
+					}
+					funcScope.Define(paramSym)
+				case symbols.LiteralPattern:
+					paramSym := &symbols.VariableSymbol{
+						Name:     fmt.Sprintf("%v", p.Value),
+						Type:     paramType.Type,
+						Location: c.nodeLocation(node),
+					}
+					funcScope.Define(paramSym)
+				}
+			}
+		}
+
+		// check that return type of each function clause matches the function signature
+		for _, clause := range funcSym.Clauses {
+			if clause.Body != nil {
+
 			}
 		}
 	}
@@ -286,20 +282,20 @@ func (c *Checker) checkFunctionCall(node *sitter.Node) types.Type {
 	}
 
 	// Check argument count
-	if len(argNodes) != len(fnType.Parameters) {
-		c.error(node, "expected %d arguments but got %d", len(fnType.Parameters), len(argNodes))
+	if len(argNodes) != len(fnType.ParameterTypes) {
+		c.error(node, "expected %d arguments but got %d", len(fnType.ParameterTypes), len(argNodes))
 		return fnType.ReturnType
 	}
 
 	// Check each argument type
 	for i, argNode := range argNodes {
 		argType := c.CheckExpression(argNode)
-		expectedType := fnType.Parameters[i]
-		if argType != nil && expectedType.Type != nil {
-			if !types.TypesEqual(expectedType.Type, argType) {
-				c.typeError(argNode, expectedType.Type, argType,
+		expectedType := fnType.ParameterTypes[i].Type
+		if argType != nil && expectedType != nil {
+			if !types.TypesEqual(expectedType, argType) {
+				c.typeError(argNode, expectedType, argType,
 					"argument %d: expected %s but got %s",
-					i+1, c.typeString(expectedType.Type), c.typeString(argType))
+					i+1, c.typeString(expectedType), c.typeString(argType))
 			}
 		}
 	}
@@ -657,7 +653,7 @@ func (c *Checker) typeString(t types.Type) string {
 		return ty.Name
 	case *types.FunctionType:
 		s := "("
-		for i, p := range ty.Parameters {
+		for i, p := range ty.ParameterTypes {
 			if i > 0 {
 				s += ", "
 			}

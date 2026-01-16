@@ -8,6 +8,8 @@ The symbol table is used to check the program for errors.
 */
 
 import (
+	"fmt"
+
 	"github.com/Lyra-Language/lyra/pkg/symbols"
 	"github.com/Lyra-Language/lyra/pkg/types"
 
@@ -41,13 +43,15 @@ func (c *Collector) walkProgram(node *sitter.Node) {
 		switch child.Kind() {
 		case "type_declaration":
 			c.collectTypeDeclaration(child)
+		case "expression":
+			c.collectExpression(child)
 		case "statement":
 			c.collectStatement(child)
 		// Handle concrete statement types directly (due to supertypes)
 		case "function_definition":
 			c.collectFunctionDef(child)
 		case "declaration":
-			// handle top-level declarations if needed
+			c.collectDeclaration(child)
 		case "const_declaration":
 			// handle top-level const declarations if needed
 		}
@@ -144,6 +148,38 @@ func (c *Collector) collectDataType(node *sitter.Node) {
 	}
 }
 
+func (c *Collector) collectExpression(node *sitter.Node) {
+
+}
+
+func (c *Collector) collectDeclaration(node *sitter.Node) {
+	var keyword string
+	var name string
+	var varType types.Type
+	var initExpr *symbols.ExpressionSymbol
+
+	keyword = c.nodeText(node.ChildByFieldName("keyword"))
+	name = c.nodeText(node.ChildByFieldName("name"))
+	typeAnnotation := node.ChildByFieldName("type_annotation")
+	if typeAnnotation != nil {
+		varType = c.parseType(typeAnnotation.ChildByFieldName("type"))
+	}
+	initExpr = c.collectExpressionSymbol(node.ChildByFieldName("value"))
+
+	sym := &symbols.VariableSymbol{
+		Name:           name,
+		Type:           varType,
+		InitExpression: initExpr,
+		Location:       c.nodeLocation(node),
+		IsMutable:      keyword == "var",
+		IsConstant:     keyword == "const",
+	}
+
+	if err := c.table.GlobalScope.Define(sym); err != nil {
+		c.errors = append(c.errors, err)
+	}
+}
+
 func (c *Collector) collectStatement(node *sitter.Node) {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -151,8 +187,7 @@ func (c *Collector) collectStatement(node *sitter.Node) {
 		case "function_definition":
 			c.collectFunctionDef(child)
 		case "declaration", "const_declaration":
-			// For now, skip local declarations (they need scope tracking)
-			// We'll add these when we walk function bodies
+			c.collectDeclaration(child)
 		}
 	}
 }
@@ -161,7 +196,7 @@ func (c *Collector) collectFunctionDef(node *sitter.Node) {
 	var name string
 	var genericParams []string
 	var signature *types.FunctionType
-	var patterns []*symbols.FunctionPatternSymbol
+	var functionClauses []*symbols.FunctionClauseSymbol
 	isPublic := false
 	isPure := false
 	isAsync := false
@@ -173,8 +208,8 @@ func (c *Collector) collectFunctionDef(node *sitter.Node) {
 			isPublic = true
 		case "function_signature":
 			name, genericParams, signature, isPure, isAsync = c.collectFunctionSignature(child)
-		case "function_pattern":
-			patterns = append(patterns, c.collectFunctionPatternSymbol(child))
+		case "function_clause":
+			functionClauses = append(functionClauses, c.collectFunctionClauseSymbol(child))
 		}
 	}
 
@@ -186,7 +221,7 @@ func (c *Collector) collectFunctionDef(node *sitter.Node) {
 		IsPublic:      isPublic,
 		IsPure:        isPure,
 		IsAsync:       isAsync,
-		Patterns:      patterns,
+		Clauses:       functionClauses,
 	}
 
 	if err := c.table.RegisterFunction(sym); err != nil {
@@ -286,7 +321,7 @@ func (c *Collector) collectFunctionSignature(node *sitter.Node) (name string, ge
 			}
 		}
 	}
-	return
+	return name, genericParams, sig, isPure, isAsync
 }
 
 // parseType converts a type AST node to a types.Type
@@ -330,35 +365,41 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 
 func (c *Collector) parseFunctionType(node *sitter.Node) *types.FunctionType {
 	ft := &types.FunctionType{
-		Parameters: make([]types.NamedParameter, 0),
+		ParameterTypes: make([]types.ParameterType, 0),
 	}
 
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		switch child.Kind() {
-		case "function_type_parameter_list":
-			for j := uint(0); j < child.ChildCount(); j++ {
-				param := child.Child(j)
-				if param.Kind() == "parameter_type" {
-					for k := uint(0); k < param.ChildCount(); k++ {
-						typeNode := param.Child(k)
-						if typeNode.IsNamed() {
-							ft.Parameters = append(
-								ft.Parameters,
-								types.NamedParameter{Name: c.nodeText(typeNode), Type: c.parseType(typeNode)})
-						}
-					}
-				}
-			}
-		default:
-			// Return type comes after the parameter list
-			if child.IsNamed() && child.Kind() != "function_type_parameter_list" {
-				ft.ReturnType = c.parseType(child)
+	parameterTypes := node.ChildByFieldName("parameter_types")
+	if parameterTypes != nil {
+		for i := uint(0); i < parameterTypes.ChildCount(); i++ {
+			child := parameterTypes.Child(i)
+			if child.Kind() == "parameter_type" {
+				ft.ParameterTypes = append(ft.ParameterTypes, c.parseParameterType(child))
 			}
 		}
 	}
+	returnType := node.ChildByFieldName("return_type")
+	if returnType != nil {
+		ft.ReturnType = c.parseType(returnType)
+	}
 
 	return ft
+}
+
+func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
+	modifier := types.Modifier("")
+	modifier_node := node.ChildByFieldName("modifier")
+	if modifier_node != nil {
+		modifier = types.Modifier(c.nodeText(modifier_node))
+	}
+	typeNode := node.ChildByFieldName("type")
+	if typeNode == nil {
+		// Throw an error
+		panic(fmt.Sprintf("parseParameterType: type node is nil for node: %v", node))
+	}
+	return types.ParameterType{
+		Modifier: modifier,
+		Type:     c.parseType(typeNode),
+	}
 }
 
 func (c *Collector) parseMapType(node *sitter.Node) types.Type {
@@ -471,77 +512,70 @@ func (c *Collector) collectTraitImpl(node *sitter.Node) *symbols.TraitImplSymbol
 
 func (c *Collector) collectTraitMethodImpl(node *sitter.Node) *symbols.TraitMethodImplSymbol {
 	var methodName string
-	var methodPattern *symbols.FunctionPatternSymbol
+	var methodClause *symbols.FunctionClauseSymbol
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
 		case "method_name":
 			methodName = c.nodeText(child)
-		case "function_pattern":
-			methodPattern = c.collectFunctionPatternSymbol(child)
+		case "function_clause":
+			methodClause = c.collectFunctionClauseSymbol(child)
 		}
 	}
 	return &symbols.TraitMethodImplSymbol{
 		Name:     methodName,
-		Impl:     methodPattern,
+		Impl:     methodClause,
 		Location: c.nodeLocation(node),
 	}
 }
 
-func (c *Collector) collectFunctionPatternSymbol(node *sitter.Node) *symbols.FunctionPatternSymbol {
-	var parameters []types.NamedParameter
+func (c *Collector) collectFunctionClauseSymbol(node *sitter.Node) *symbols.FunctionClauseSymbol {
+	var parameterPatterns []symbols.Pattern
 	var guard *symbols.GuardSymbol
-	var body string
+	var body *symbols.FunctionBodySymbol
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
 		case "parameter_list":
-			parameters = c.collectNamedParameters(child)
+			parameterPatterns = c.collectParameterPatterns(child)
 		case "guard":
 			guard = c.collectGuardSymbol(child)
 		case "body":
-			body = c.nodeText(child)
+			body = c.collectFunctionClauseBody(child)
 		}
 	}
-	return &symbols.FunctionPatternSymbol{
-		Parameters: parameters,
-		Guard:      guard,
-		Body:       body,
-		Location:   c.nodeLocation(node),
+	return &symbols.FunctionClauseSymbol{
+		ParameterPatterns: parameterPatterns,
+		Guard:             guard,
+		Body:              body,
+		Location:          c.nodeLocation(node),
 	}
 }
 
-func (c *Collector) collectNamedParameters(node *sitter.Node) []types.NamedParameter {
-	parameters := make([]types.NamedParameter, 0)
+func (c *Collector) collectParameterPatterns(node *sitter.Node) []symbols.Pattern {
+	parameterPatterns := make([]symbols.Pattern, 0)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "parameter" {
-			parameters = append(parameters, c.collectNamedParameter(child))
+			parameterPatterns = append(parameterPatterns, c.collectPattern(child))
 		}
 	}
-	return parameters
+	return parameterPatterns
 }
 
-func (c *Collector) collectNamedParameter(node *sitter.Node) types.NamedParameter {
-	var name string
-	var typeNode *sitter.Node
-
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.Kind() == "parameter_name" {
-			name = c.nodeText(child)
-		} else if child.Kind() == "parameter_type" {
-			typeNode = child
+func (c *Collector) collectPattern(node *sitter.Node) symbols.Pattern {
+	pattern := node.ChildByFieldName("pattern")
+	if pattern != nil {
+		switch pattern.Kind() {
+		case "identifier":
+			return symbols.IdentifierPattern{Name: c.nodeText(pattern)}
+		case "literal_pattern":
+			return symbols.LiteralPattern{Value: c.nodeText(pattern)}
 		}
 	}
-
-	if typeNode == nil {
-		return types.NamedParameter{Name: name, Type: nil}
-	}
-
-	return types.NamedParameter{Name: name, Type: c.parseType(typeNode)}
+	return nil
 }
 
 func (c *Collector) collectGuardSymbol(node *sitter.Node) *symbols.GuardSymbol {
@@ -554,4 +588,58 @@ func (c *Collector) collectGuardSymbol(node *sitter.Node) *symbols.GuardSymbol {
 		}
 	}
 	return &symbols.GuardSymbol{Expression: expression, Location: c.nodeLocation(node)}
+}
+
+func (c *Collector) collectFunctionClauseBody(node *sitter.Node) *symbols.FunctionBodySymbol {
+	body := &symbols.FunctionBodySymbol{
+		Location:   c.nodeLocation(node),
+		Block:      nil,
+		Expression: nil,
+	}
+	block := node.ChildByFieldName("block")
+	if block != nil {
+		body.Block = c.collectFunctionClauseBlock(block)
+	}
+	expression := node.ChildByFieldName("expression")
+	if expression != nil {
+		body.Expression = c.collectExpressionSymbol(expression)
+	}
+	return body
+}
+
+func (c *Collector) collectFunctionClauseBlock(node *sitter.Node) *symbols.BlockSymbol {
+	var statements []*symbols.StatementSymbol
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "statement" {
+			statements = append(statements, c.collectStatementSymbol(child))
+		}
+	}
+	return &symbols.BlockSymbol{Statements: statements, Location: c.nodeLocation(node)}
+}
+
+func (c *Collector) collectExpressionSymbol(node *sitter.Node) *symbols.ExpressionSymbol {
+	switch node.Kind() {
+	case "integer":
+		return &symbols.ExpressionSymbol{Type: types.PrimitiveType{Name: "Int"}, Location: c.nodeLocation(node)}
+	case "float":
+		return &symbols.ExpressionSymbol{Type: types.PrimitiveType{Name: "Float"}, Location: c.nodeLocation(node)}
+	case "string":
+		return &symbols.ExpressionSymbol{Type: types.PrimitiveType{Name: "Str"}, Location: c.nodeLocation(node)}
+	case "boolean":
+		return &symbols.ExpressionSymbol{Type: types.PrimitiveType{Name: "Bool"}, Location: c.nodeLocation(node)}
+	}
+	return nil
+}
+
+func (c *Collector) collectStatementSymbol(node *sitter.Node) *symbols.StatementSymbol {
+	statement := &symbols.StatementSymbol{
+		Expression: nil,
+		Location:   c.nodeLocation(node),
+	}
+	expression := node.ChildByFieldName("expression")
+	if expression != nil {
+		statement.Expression = c.collectExpressionSymbol(expression)
+	}
+	return statement
 }

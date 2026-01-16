@@ -62,15 +62,25 @@ func (a ArrayType) GetName() string {
 	return fmt.Sprintf("Array<%s>", elementName)
 }
 func (f FunctionType) GetName() string {
-	parameterNames := make([]string, len(f.Parameters))
-	for i, parameter := range f.Parameters {
-		parameterNames[i] = parameter.Type.GetName()
+	parameterTypes := make([]string, len(f.ParameterTypes))
+	for i, parameterType := range f.ParameterTypes {
+		parameterTypes[i] = parameterType.GetName()
 	}
-	returnName := "?"
+	returnTypeName := "?"
 	if f.ReturnType != nil {
-		returnName = f.ReturnType.GetName()
+		returnTypeName = f.ReturnType.GetName()
 	}
-	return fmt.Sprintf("(%s) -> %s", strings.Join(parameterNames, ", "), returnName)
+	return fmt.Sprintf("(%s) -> %s", strings.Join(parameterTypes, ", "), returnTypeName)
+}
+func (p ParameterType) GetName() string {
+	modifier := ""
+	if p.Modifier != "" {
+		modifier = string(p.Modifier) + " "
+	}
+	if p.Type != nil {
+		return fmt.Sprintf("%s%s", modifier, p.Type.GetName())
+	}
+	return modifier
 }
 func (g GenericType) GetName() string {
 	return g.Name
@@ -114,14 +124,22 @@ type ArrayType struct {
 }
 
 type FunctionType struct {
-	Parameters []NamedParameter
-	ReturnType Type
+	ParameterTypes []ParameterType
+	ReturnType     Type
 }
 
-type NamedParameter struct {
-	Name string
-	Type Type
+type ParameterType struct {
+	Modifier Modifier
+	Type     Type
 }
+
+type Modifier string
+
+const (
+	Ref Modifier = "ref"
+	Mut Modifier = "mut"
+	Own Modifier = "own"
+)
 
 type GenericType struct {
 	Name string // lowercase letter optionally followed by any number of letters or numbers
