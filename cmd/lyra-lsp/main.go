@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 
-	"github.com/Lyra-Language/lyra/pkg/analyzer"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/printer"
@@ -23,7 +23,7 @@ def say_hello: (Str) -> Str = (name) => 42 // should produce a type error (wrong
 	printer := printer.NewPrinter([]byte(source))
 	printer.Print(tree.RootNode())
 
-	collector := analyzer.NewCollector([]byte(source))
+	collector := collector.NewCollector([]byte(source))
 	program, table, errors := collector.Collect(tree.RootNode())
 	// checker := analyzer.NewChecker([]byte(source), table)
 	// typeErrors := checker.Check(tree.RootNode())

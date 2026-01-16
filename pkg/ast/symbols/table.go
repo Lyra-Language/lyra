@@ -70,10 +70,8 @@ type SymbolTable struct {
 	GlobalScope *Scope
 
 	// Quick lookup tables - these point to AST nodes directly
-	Types      map[string]*ast.TypeDeclarationStmt
-	Functions  map[string]*ast.FunctionDefStmt
-	Traits     map[string]*TraitSymbol      // Keep for now - traits are more complex
-	TraitImpls []*TraitImplSymbol           // Keep for now - complex keys
+	Types     map[string]*ast.TypeDeclarationStmt
+	Functions map[string]*ast.FunctionDefStmt
 }
 
 func NewSymbolTable() *SymbolTable {
@@ -81,8 +79,6 @@ func NewSymbolTable() *SymbolTable {
 		GlobalScope: NewScope(nil, ScopeGlobal),
 		Types:       make(map[string]*ast.TypeDeclarationStmt),
 		Functions:   make(map[string]*ast.FunctionDefStmt),
-		Traits:      make(map[string]*TraitSymbol),
-		TraitImpls:  make([]*TraitImplSymbol, 0),
 	}
 }
 
@@ -107,17 +103,4 @@ func (st *SymbolTable) RegisterFunction(node *ast.FunctionDefStmt) error {
 // RegisterVariable adds a variable to the current scope
 func (st *SymbolTable) RegisterVariable(node *ast.VariableDeclarationStmt) error {
 	return st.GlobalScope.Define(node)
-}
-
-// RegisterTrait adds a trait to both the scope and quick lookup
-func (st *SymbolTable) RegisterTrait(sym *TraitSymbol) error {
-	// Traits still use the old symbol type for now
-	st.Traits[sym.Name] = sym
-	return nil
-}
-
-// RegisterTraitImpl adds a trait implementation
-func (st *SymbolTable) RegisterTraitImpl(sym *TraitImplSymbol) error {
-	st.TraitImpls = append(st.TraitImpls, sym)
-	return nil
 }

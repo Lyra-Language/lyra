@@ -3,6 +3,7 @@ package analyzer
 import (
 	"testing"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -18,7 +19,7 @@ func TestCollector_VariableDeclaration(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	collector := NewCollector([]byte(source))
+	collector := collector.NewCollector([]byte(source))
 	program, table, errors := collector.Collect(tree.RootNode())
 	if len(errors) > 0 {
 		t.Fatalf("Collector errors: %v", errors)
@@ -58,7 +59,7 @@ func TestCollector_FunctionDefinition(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	collector := NewCollector([]byte(source))
+	collector := collector.NewCollector([]byte(source))
 	program, table, errors := collector.Collect(tree.RootNode())
 	if len(errors) > 0 {
 		t.Fatalf("Collector errors: %v", errors)
