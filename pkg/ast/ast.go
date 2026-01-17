@@ -44,8 +44,9 @@ type Program struct {
 func (p *Program) node()                 {}
 func (p *Program) GetLocation() Location { return p.Location }
 func (p *Program) Print(indent string) {
-	fmt.Printf("%sProgram(%d statements)\n", indent, len(p.Statements))
+	fmt.Printf("%sProgram(%d statements) {\n", indent, len(p.Statements))
 	for _, statement := range p.Statements {
 		statement.Print(indent + "  ")
 	}
+	fmt.Printf("%s}\n", indent)
 }

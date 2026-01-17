@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func (c *Collector) collectTypeDeclaration(node *sitter.Node) *ast.TypeDeclarationStmt {
+func (c *Collector) collectTypeDeclaration(node *sitter.Node) *ast.TypeDeclStmt {
 	// type_declaration contains struct_type, data_type, trait_declaration, etc.
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -20,7 +20,7 @@ func (c *Collector) collectTypeDeclaration(node *sitter.Node) *ast.TypeDeclarati
 	return nil
 }
 
-func (c *Collector) collectStructType(node *sitter.Node) *ast.TypeDeclarationStmt {
+func (c *Collector) collectStructType(node *sitter.Node) *ast.TypeDeclStmt {
 	var name string
 	var genericParams []string
 	fields := make(map[string]types.StructField)
@@ -40,7 +40,7 @@ func (c *Collector) collectStructType(node *sitter.Node) *ast.TypeDeclarationStm
 		}
 	}
 
-	astNode := &ast.TypeDeclarationStmt{
+	astNode := &ast.TypeDeclStmt{
 		AstBase:       ast.AstBase{Location: c.nodeLocation(node)},
 		Name:          name,
 		GenericParams: genericParams,
@@ -58,7 +58,7 @@ func (c *Collector) collectStructType(node *sitter.Node) *ast.TypeDeclarationStm
 	return astNode
 }
 
-func (c *Collector) collectDataType(node *sitter.Node) *ast.TypeDeclarationStmt {
+func (c *Collector) collectDataType(node *sitter.Node) *ast.TypeDeclStmt {
 	var name string
 	var genericParams []string
 	constructors := make(map[string]types.DataTypeConstructor)
@@ -79,7 +79,7 @@ func (c *Collector) collectDataType(node *sitter.Node) *ast.TypeDeclarationStmt 
 		}
 	}
 
-	astNode := &ast.TypeDeclarationStmt{
+	astNode := &ast.TypeDeclStmt{
 		AstBase:       ast.AstBase{Location: c.nodeLocation(node)},
 		Name:          name,
 		GenericParams: genericParams,

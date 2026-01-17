@@ -7,6 +7,10 @@ func TypesEqual(a, b Type) bool {
 		if bt, ok := b.(PrimitiveType); ok {
 			return at.Name == bt.Name
 		}
+	case GenericType:
+		if bt, ok := b.(GenericType); ok {
+			return at.Name == bt.Name
+		}
 	case ArrayType:
 		if bt, ok := b.(ArrayType); ok {
 			return TypesEqual(at.ElementType, bt.ElementType)

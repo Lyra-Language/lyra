@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func (c *Collector) collectVariableDeclaration(node *sitter.Node) *ast.VariableDeclarationStmt {
+func (c *Collector) collectVariableDeclaration(node *sitter.Node) *ast.VarDeclStmt {
 	keyword := c.nodeText(node.ChildByFieldName("keyword"))
 	name := c.nodeText(node.ChildByFieldName("name"))
 
@@ -17,7 +17,7 @@ func (c *Collector) collectVariableDeclaration(node *sitter.Node) *ast.VariableD
 
 	initExpr := c.collectExpression(node.ChildByFieldName("value"))
 
-	astNode := &ast.VariableDeclarationStmt{
+	astNode := &ast.VarDeclStmt{
 		AstBase: ast.AstBase{Location: c.nodeLocation(node)},
 		Keyword: keyword,
 		Name:    name,

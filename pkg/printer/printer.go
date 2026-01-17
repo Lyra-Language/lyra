@@ -24,11 +24,7 @@ func (p *Printer) Print(node *sitter.Node) {
 func (p *Printer) printNode(cursor *sitter.TreeCursor) {
 	currentNode := cursor.Node()
 	depth := cursor.Depth()
-	if currentNode.IsNamed() && currentNode.Kind() != "program" {
-		fmt.Println(strings.Repeat("  ", int(depth)), currentNode.Kind(), ": \""+p.nodeText(currentNode)+"\"")
-	} else {
-		fmt.Println(strings.Repeat("  ", int(depth)), currentNode.Kind())
-	}
+	fmt.Println(strings.Repeat("  ", int(depth)), currentNode.Kind())
 
 	// print all children of the current node
 	if cursor.GotoFirstChild() {

@@ -7,7 +7,7 @@ import (
 )
 
 // TypeDeclarationStmt represents a type declaration (struct, data type, etc.)
-type TypeDeclarationStmt struct {
+type TypeDeclStmt struct {
 	AstBase
 	Name          string
 	GenericParams []string
@@ -15,10 +15,10 @@ type TypeDeclarationStmt struct {
 	IsPublic      bool
 }
 
-func (t *TypeDeclarationStmt) GetName() string { return t.Name }
+func (t *TypeDeclStmt) GetName() string { return t.Name }
 
-func (t *TypeDeclarationStmt) Print(indent string) {
-	fmt.Printf("%sTypeDeclarationStmt(%s)\n", indent, t.Name)
+func (t *TypeDeclStmt) Print(indent string) {
+	fmt.Printf("%sTypeDeclStmt(%s) {\n", indent, t.Name)
 	if t.GenericParams != nil {
 		fmt.Printf("%s  GenericParams: %v\n", indent, t.GenericParams)
 	}
@@ -39,7 +39,7 @@ type ExpressionStmt struct {
 }
 
 // VariableDeclarationStmt represents a let/var/const binding
-type VariableDeclarationStmt struct {
+type VarDeclStmt struct {
 	AstBase
 	Keyword string // "let", "var", "const"
 	Name    string
@@ -47,10 +47,10 @@ type VariableDeclarationStmt struct {
 	Value   Expression
 }
 
-func (v *VariableDeclarationStmt) GetName() string { return v.Name }
+func (v *VarDeclStmt) GetName() string { return v.Name }
 
-func (v *VariableDeclarationStmt) Print(indent string) {
-	fmt.Printf("%sVariableDeclarationStmt(%s)\n", indent, v.Name)
+func (v *VarDeclStmt) Print(indent string) {
+	fmt.Printf("%sVarDeclStmt(%s)\n", indent, v.Name)
 	if v.Keyword != "" {
 		fmt.Printf("%s  Keyword: %s\n", indent, v.Keyword)
 	}
@@ -64,10 +64,10 @@ func (v *VariableDeclarationStmt) Print(indent string) {
 }
 
 // IsMutable returns true if this is a var declaration
-func (v *VariableDeclarationStmt) IsMutable() bool { return v.Keyword == "var" }
+func (v *VarDeclStmt) IsMutable() bool { return v.Keyword == "var" }
 
 // IsConstant returns true if this is a const declaration
-func (v *VariableDeclarationStmt) IsConstant() bool { return v.Keyword == "const" }
+func (v *VarDeclStmt) IsConstant() bool { return v.Keyword == "const" }
 
 // FunctionDefStmt represents a function definition
 type FunctionDefStmt struct {

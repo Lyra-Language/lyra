@@ -24,6 +24,12 @@ func (c *Collector) collectFunctionDef(node *sitter.Node) *ast.FunctionDefStmt {
 			name, genericParams, signature, isPure, isAsync = c.collectFunctionSignature(child)
 		case "function_clause":
 			clauses = append(clauses, c.collectFunctionClause(child))
+		case "function_clause_list":
+			for j := uint(0); j < child.ChildCount(); j++ {
+				if child.Child(j).Kind() == "function_clause" {
+					clauses = append(clauses, c.collectFunctionClause(child.Child(j)))
+				}
+			}
 		}
 	}
 
@@ -50,16 +56,17 @@ func (c *Collector) collectFunctionClause(node *sitter.Node) *ast.FunctionClause
 	var guard ast.Expression
 	var body ast.Expression
 
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		switch child.Kind() {
-		case "parameter_list":
-			parameters = c.collectParameterPatterns(child)
-		case "guard":
-			guard = c.collectExpression(child)
-		case "body":
-			body = c.collectExpression(child)
-		}
+	parameterListNode := node.ChildByFieldName("parameters")
+	if parameterListNode != nil {
+		parameters = c.collectParameterPatterns(parameterListNode)
+	}
+	guardNode := node.ChildByFieldName("guard")
+	if guardNode != nil {
+		guard = c.collectExpression(guardNode)
+	}
+	bodyNode := node.ChildByFieldName("body")
+	if bodyNode != nil {
+		body = c.collectExpression(bodyNode)
 	}
 
 	return &ast.FunctionClause{
