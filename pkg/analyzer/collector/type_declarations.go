@@ -23,7 +23,7 @@ func (c *Collector) collectTypeDeclaration(node *sitter.Node) *ast.TypeDeclarati
 func (c *Collector) collectStructType(node *sitter.Node) *ast.TypeDeclarationStmt {
 	var name string
 	var genericParams []string
-	fields := make(map[string]types.Type)
+	fields := make(map[string]types.StructField)
 	isPublic := false
 
 	for i := uint(0); i < node.ChildCount(); i++ {

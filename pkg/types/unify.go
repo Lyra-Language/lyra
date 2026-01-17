@@ -29,15 +29,11 @@ func TypesEqual(a, b Type) bool {
 				return false
 			}
 			for name, aFieldType := range at.Fields {
-				if bFieldType, ok := bt.Fields[name]; !ok || !TypesEqual(aFieldType, bFieldType) {
+				if bFieldType, ok := bt.Fields[name]; !ok || !TypesEqual(aFieldType.Type, bFieldType.Type) {
 					return false
 				}
 			}
 			return true
-		}
-	case MapType:
-		if bt, ok := b.(MapType); ok {
-			return TypesEqual(at.KeyType, bt.KeyType) && TypesEqual(at.ValueType, bt.ValueType)
 		}
 	case TupleType:
 		if bt, ok := b.(TupleType); ok {

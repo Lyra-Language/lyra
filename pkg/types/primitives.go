@@ -1,5 +1,7 @@
 package types
 
+import "fmt"
+
 type PrimitiveTypeName string
 
 const (
@@ -36,4 +38,8 @@ func (p PrimitiveType) IsNumericType() bool {
 	isUInt := p.Name == UInt || p.Name == UInt8 || p.Name == UInt16 || p.Name == UInt32 || p.Name == UInt64
 	isFloat := p.Name == Float || p.Name == Float16 || p.Name == Float32 || p.Name == Float64
 	return isInt || isUInt || isFloat
+}
+
+func (p PrimitiveType) Print(indent string) {
+	fmt.Printf("%s%s\n", indent, p.GetName())
 }

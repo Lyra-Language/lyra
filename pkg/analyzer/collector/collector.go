@@ -89,29 +89,11 @@ func (c *Collector) collectGenericParams(node *sitter.Node) []string {
 	return params
 }
 
-func (c *Collector) collectStructFields(node *sitter.Node) map[string]types.Type {
-	fields := make(map[string]types.Type)
-	var currentFieldName string
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		switch child.Kind() {
-		case "field_name":
-			currentFieldName = c.nodeText(child)
-		case "field_type":
-			if currentFieldName != "" {
-				fields[currentFieldName] = c.parseType(child)
-				currentFieldName = ""
-			}
-		}
-	}
-	return fields
-}
-
 func (c *Collector) collectDataConstructor(node *sitter.Node) (string, types.DataTypeConstructor) {
 	var name string
 	ctor := types.DataTypeConstructor{
 		Params: make([]types.Type, 0),
-		Fields: make(map[string]types.Type),
+		Fields: make(map[string]types.StructField),
 	}
 
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -128,6 +110,28 @@ func (c *Collector) collectDataConstructor(node *sitter.Node) (string, types.Dat
 
 	ctor.Name = name
 	return name, ctor
+}
+
+func (c *Collector) collectStructFields(node *sitter.Node) map[string]types.StructField {
+	fields := make(map[string]types.StructField)
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "struct_member" {
+			field_type_node := child.ChildByFieldName("field_type")
+			var field_type types.Type
+			if field_type_node != nil {
+				field_type = c.parseType(field_type_node.Child(0))
+			}
+			field_name := c.nodeText(child.ChildByFieldName("field_name"))
+			default_value := c.collectExpression(child.ChildByFieldName("default_field_value"))
+			fields[field_name] = types.StructField{
+				Name:         field_name,
+				Type:         field_type,
+				DefaultValue: default_value,
+			}
+		}
+	}
+	return fields
 }
 
 func (c *Collector) collectFunctionSignature(node *sitter.Node) (name string, genericParams []string, sig *types.FunctionType, isPure, isAsync bool) {
@@ -172,8 +176,6 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 		return types.GenericType{Name: c.nodeText(node)}
 	case "array_type":
 		return c.parseArrayType(node)
-	case "map_type":
-		return c.parseMapType(node)
 	}
 	c.errors = append(c.errors, fmt.Errorf("parseType: unknown type node kind: %s", node.Kind()))
 	return nil
@@ -226,28 +228,6 @@ func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
 		Modifier: modifier,
 		Type:     c.parseType(typeNode),
 	}
-}
-
-func (c *Collector) parseMapType(node *sitter.Node) types.Type {
-	mt := types.MapType{}
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		switch child.Kind() {
-		case "key_type":
-			for j := uint(0); j < child.ChildCount(); j++ {
-				if child.Child(j).IsNamed() {
-					mt.KeyType = c.parseType(child.Child(j))
-				}
-			}
-		case "value_type":
-			for j := uint(0); j < child.ChildCount(); j++ {
-				if child.Child(j).IsNamed() {
-					mt.ValueType = c.parseType(child.Child(j))
-				}
-			}
-		}
-	}
-	return mt
 }
 
 func (c *Collector) collectParameterPatterns(node *sitter.Node) []ast.Pattern {

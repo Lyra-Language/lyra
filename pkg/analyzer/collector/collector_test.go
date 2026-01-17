@@ -1,15 +1,57 @@
-package analyzer
+package collector
 
 import (
 	"testing"
 
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 var intType = types.PrimitiveType{Name: "Int"}
+
+func TestCollector_StructTypeDeclaration(t *testing.T) {
+	source := `struct Point {
+		x: Int,
+		y: Int = 0,
+	}`
+
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	collector := NewCollector([]byte(source))
+	program, table, errors := collector.Collect(tree.RootNode())
+	if len(errors) > 0 {
+		t.Fatalf("Collector errors: %v", errors)
+	}
+	// program.Print("")
+
+	// Check AST was built
+	if len(program.Statements) != 1 {
+		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
+	}
+
+	// Check symbol table lookup
+	namedNode, ok := table.GlobalScope.Lookup("Point")
+	if !ok {
+		t.Fatalf("\"Point\" not found in global scope")
+	}
+
+	structDecl, ok := namedNode.(*ast.TypeDeclarationStmt)
+	if !ok {
+		t.Fatalf("\"Point\" is not a TypeDeclarationStmt, got %T", namedNode)
+	}
+
+	expectedFields := map[string]types.StructField{
+		"x": {Name: "x", Type: intType, DefaultValue: nil},
+		"y": {Name: "y", Type: intType, DefaultValue: ast.IntegerLiteral{Value: 0}},
+	}
+	if !types.TypesEqual(structDecl.Type, types.StructType{Name: "Point", Fields: expectedFields}) {
+		t.Fatalf("\"Point\" type is not StructType. Got %v", structDecl.Type)
+	}
+}
 
 func TestCollector_VariableDeclaration(t *testing.T) {
 	source := `let the_answer: Int = 42`
@@ -19,11 +61,12 @@ func TestCollector_VariableDeclaration(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	collector := collector.NewCollector([]byte(source))
+	collector := NewCollector([]byte(source))
 	program, table, errors := collector.Collect(tree.RootNode())
 	if len(errors) > 0 {
 		t.Fatalf("Collector errors: %v", errors)
 	}
+	// program.Print("")
 
 	// Check AST was built
 	if len(program.Statements) != 1 {
@@ -59,11 +102,12 @@ func TestCollector_FunctionDefinition(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	collector := collector.NewCollector([]byte(source))
+	collector := NewCollector([]byte(source))
 	program, table, errors := collector.Collect(tree.RootNode())
 	if len(errors) > 0 {
 		t.Fatalf("Collector errors: %v", errors)
 	}
+	// program.Print("")
 
 	// Check AST was built
 	if len(program.Statements) != 1 {

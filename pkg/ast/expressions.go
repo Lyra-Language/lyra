@@ -1,11 +1,16 @@
 package ast
 
-import "github.com/Lyra-Language/lyra/pkg/types"
+import (
+	"fmt"
+
+	"github.com/Lyra-Language/lyra/pkg/types"
+)
 
 type Expression interface {
 	exprNode()
 	GetType() types.Type
 	SetType(types.Type)
+	GetName() string
 }
 
 // Base struct to embed in all expression types
@@ -18,6 +23,7 @@ func (e *ExprBase) exprNode()             {}
 func (e *ExprBase) GetType() types.Type   { return e.Type }
 func (e *ExprBase) SetType(t types.Type)  { e.Type = t }
 func (e *ExprBase) GetLocation() Location { return e.Location }
+func (e *ExprBase) GetName() string       { return "" }
 
 // Concrete expression types
 type IntegerLiteral struct {
@@ -25,9 +31,17 @@ type IntegerLiteral struct {
 	Value int64
 }
 
+func (i *IntegerLiteral) GetName() string {
+	return fmt.Sprintf("%d", i.Value)
+}
+
 type FloatLiteral struct {
 	ExprBase
 	Value float64
+}
+
+func (f *FloatLiteral) GetName() string {
+	return fmt.Sprintf("%f", f.Value)
 }
 
 type StringLiteral struct {
@@ -35,14 +49,26 @@ type StringLiteral struct {
 	Value string
 }
 
+func (s *StringLiteral) GetName() string {
+	return s.Value
+}
+
 type BooleanLiteral struct {
 	ExprBase
 	Value bool
 }
 
+func (b *BooleanLiteral) GetName() string {
+	return fmt.Sprintf("%t", b.Value)
+}
+
 type Identifier struct {
 	ExprBase
 	Name string
+}
+
+func (i *Identifier) GetName() string {
+	return i.Name
 }
 
 // type BinaryExpr struct {
