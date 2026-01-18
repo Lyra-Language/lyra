@@ -113,27 +113,30 @@ func (f *FunctionDefStmt) Print(indent string) {
 type FunctionClause struct {
 	AstBase
 	Parameters []Pattern
-	Guard      Expression
+	Guard      *GuardExpr
 	Body       Expression
 }
 
 func (f *FunctionClause) Print(indent string) {
-	parameters_str := "("
+	parameters_str := ""
 	for idx, parameter := range f.Parameters {
 		if idx > 0 {
 			parameters_str += ", "
 		}
 		parameters_str += parameter.GetName()
 	}
-	parameters_str += ")"
 	fmt.Printf("%sFunctionClause(%s)\n", indent, parameters_str)
 	if f.Guard != nil {
-		fmt.Printf("%s  Guard: %s\n", indent, f.Guard.GetName())
+		fmt.Printf("%s  Guard: {\n", indent)
+		f.Guard.Print(indent + "    ")
+		fmt.Printf("%s  }\n", indent)
 	} else {
 		fmt.Printf("%s  Guard: nil\n", indent)
 	}
 	if f.Body != nil {
-		fmt.Printf("%s  Body: %s\n", indent, f.Body.GetName())
+		fmt.Printf("%s  Body: {\n", indent)
+		f.Body.Print(indent + "    ")
+		fmt.Printf("%s  }\n", indent)
 	} else {
 		fmt.Printf("%s  Body: nil\n", indent)
 	}

@@ -1,6 +1,8 @@
 package collector
 
 import (
+	"fmt"
+
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -53,7 +55,7 @@ func (c *Collector) collectFunctionDef(node *sitter.Node) *ast.FunctionDefStmt {
 
 func (c *Collector) collectFunctionClause(node *sitter.Node) *ast.FunctionClause {
 	var parameters []ast.Pattern
-	var guard ast.Expression
+	var guard *ast.GuardExpr
 	var body ast.Expression
 
 	parameterListNode := node.ChildByFieldName("parameters")
@@ -62,7 +64,15 @@ func (c *Collector) collectFunctionClause(node *sitter.Node) *ast.FunctionClause
 	}
 	guardNode := node.ChildByFieldName("guard")
 	if guardNode != nil {
-		guard = c.collectExpression(guardNode)
+		guardExpressionNode := guardNode.ChildByFieldName("guard_expression")
+		if guardExpressionNode == nil {
+			c.errors = append(c.errors, fmt.Errorf("guard expression is missing"))
+		} else {
+			guard = &ast.GuardExpr{
+				ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: c.nodeLocation(guardNode)}},
+				Condition: c.collectExpression(guardExpressionNode),
+			}
+		}
 	}
 	bodyNode := node.ChildByFieldName("body")
 	if bodyNode != nil {

@@ -33,35 +33,43 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 	switch node.Kind() {
 	case "integer", "integer_literal":
 		value, _ := strconv.ParseInt(c.nodeText(node), 10, 64)
-		return &ast.IntegerLiteral{
+		return &ast.IntegerLiteralExpr{
 			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 			Value:    value,
 		}
 
 	case "float", "float_literal":
 		value, _ := strconv.ParseFloat(c.nodeText(node), 64)
-		return &ast.FloatLiteral{
+		return &ast.FloatLiteralExpr{
 			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 			Value:    value,
 		}
 
 	case "string", "string_literal":
-		return &ast.StringLiteral{
+		return &ast.StringLiteralExpr{
 			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 			Value:    c.nodeText(node),
 		}
 
 	case "boolean", "boolean_literal":
 		value := c.nodeText(node) == "true"
-		return &ast.BooleanLiteral{
+		return &ast.BooleanLiteralExpr{
 			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 			Value:    value,
 		}
 
 	case "identifier":
-		return &ast.Identifier{
+		return &ast.IdentifierExpr{
 			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 			Name:     c.nodeText(node),
+		}
+
+	case "boolean_expr":
+		return &ast.BooleanBinaryOpExpr{
+			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+			Left:     c.collectExpression(node.ChildByFieldName("left")),
+			Operator: ast.BooleanBinaryOp(c.nodeText(node.ChildByFieldName("operator"))),
+			Right:    c.collectExpression(node.ChildByFieldName("right")),
 		}
 	}
 

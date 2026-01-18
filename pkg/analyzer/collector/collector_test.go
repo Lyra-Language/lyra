@@ -49,7 +49,7 @@ func TestCollector_StructTypeDeclaration(t *testing.T) {
 
 	expectedFields := map[string]types.StructField{
 		"x": {Name: "x", Type: intType, DefaultValue: nil},
-		"y": {Name: "y", Type: intType, DefaultValue: ast.IntegerLiteral{Value: 0}},
+		"y": {Name: "y", Type: intType, DefaultValue: ast.IntegerLiteralExpr{Value: 0}},
 	}
 	if !types.TypesEqual(structDecl.Type, types.StructType{Name: "Point", Fields: expectedFields}) {
 		t.Fatalf("\"Point\" type is not StructType. Got %v", structDecl.Type)
@@ -176,7 +176,7 @@ func TestCollector_FunctionDefinitionWithGenericParams(t *testing.T) {
 	}
 }
 
-func TestCollector_FunctionDefinitionWithMultipleClausesAndGuards(t *testing.T) {
+func TestCollector_FunctionDefinitionWithMultipleClausesAndGuard(t *testing.T) {
 	source := `
 		def fib: (Int) -> Int = {
 			(n) if n < 2 => n,
@@ -206,6 +206,10 @@ func TestCollector_FunctionDefinitionWithMultipleClausesAndGuards(t *testing.T) 
 
 	if len(funcDef.Clauses) != 2 {
 		t.Fatalf("\"fib\" should have 2 clauses. Got %d", len(funcDef.Clauses))
+	}
+
+	if funcDef.Clauses[0].Guard == nil {
+		t.Fatalf("\"fib\" first clause has no guard")
 	}
 
 	if funcDef.Signature == nil {
