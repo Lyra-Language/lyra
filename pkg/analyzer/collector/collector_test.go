@@ -212,6 +212,13 @@ func TestCollector_FunctionDefinitionWithMultipleClausesAndGuard(t *testing.T) {
 		t.Fatalf("\"fib\" first clause has no guard")
 	}
 
+	if funcDef.Clauses[0].Guard.Condition == nil {
+		t.Fatalf("\"fib\" first clause guard condition is nil")
+	}
+	if funcDef.Clauses[0].Guard.Condition.GetName() != "n < 2" {
+		t.Fatalf("\"fib\" first clause guard condition is not \"n < 2\". Got %s", funcDef.Clauses[0].Guard.Condition.GetName())
+	}
+
 	if funcDef.Signature == nil {
 		t.Fatalf("\"fib\" has no signature")
 	}
