@@ -1,0 +1,56 @@
+package ast
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/Lyra-Language/lyra/pkg/types"
+)
+
+type FunctionCallExpr struct {
+	ExprBase
+	Function         Expression
+	GenericArguments []types.Type
+	Arguments        ArgumentList
+}
+
+func (f *FunctionCallExpr) GetName() string {
+	return fmt.Sprintf("%s(%s)", f.Function.GetName(), f.Arguments.GetName())
+}
+
+func (f *FunctionCallExpr) Print(indent string) {
+	fmt.Printf("%sFunctionCallExpr(%s)\n", indent, f.GetName())
+	fmt.Printf("%s  Function: {\n", indent)
+	f.Function.Print(indent + "    ")
+	fmt.Printf("%s  }\n", indent)
+	if f.GenericArguments != nil {
+		fmt.Printf("%s  GenericArguments: {\n", indent)
+		for _, genericArgument := range f.GenericArguments {
+			genericArgument.Print(indent + "    ")
+		}
+		fmt.Printf("%s  }\n", indent)
+	}
+	fmt.Printf("%s  Arguments: {\n", indent)
+	f.Arguments.Print(indent + "    ")
+	fmt.Printf("%s  }\n", indent)
+}
+
+type ArgumentList struct {
+	Arguments []Expression
+}
+
+func (a *ArgumentList) GetName() string {
+	argumentNames := make([]string, len(a.Arguments))
+	for i, argument := range a.Arguments {
+		argumentNames[i] = argument.GetName()
+	}
+	return fmt.Sprintf("%s", strings.Join(argumentNames, ", "))
+}
+
+func (a *ArgumentList) Print(indent string) {
+	fmt.Printf("%sArgumentList(%s) {\n", indent, a.GetName())
+	for _, argument := range a.Arguments {
+		argument.Print(indent + "    ")
+	}
+	fmt.Printf("%s}\n", indent)
+}

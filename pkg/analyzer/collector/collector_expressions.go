@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -71,6 +72,20 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 			Operator: ast.BooleanBinaryOp(c.nodeText(node.ChildByFieldName("operator"))),
 			Right:    c.collectExpression(node.ChildByFieldName("right")),
 		}
+	case "addition", "subtraction", "multiplication", "division":
+		return &ast.MathBinaryOpExpr{
+			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+			Left:     c.collectExpression(node.ChildByFieldName("left")),
+			Operator: ast.MathBinaryOp(c.nodeText(node.ChildByFieldName("operator"))),
+			Right:    c.collectExpression(node.ChildByFieldName("right")),
+		}
+	case "call_expression":
+		return &ast.FunctionCallExpr{
+			ExprBase:         ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+			Function:         c.collectExpression(node.ChildByFieldName("function")),
+			GenericArguments: c.collectGenericArguments(node),
+			Arguments:        c.collectArgumentList(node.ChildByFieldName("arguments")),
+		}
 	}
 
 	// For wrapper nodes, recurse into the first named child
@@ -82,4 +97,30 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 	}
 
 	return nil
+}
+
+func (c *Collector) collectGenericArguments(node *sitter.Node) []types.Type {
+	genericArgumentsNode := node.ChildByFieldName("generic_arguments")
+	if genericArgumentsNode == nil {
+		return nil
+	}
+	genericArguments := make([]types.Type, 0)
+	for i := uint(0); i < genericArgumentsNode.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.IsNamed() {
+			genericArguments = append(genericArguments, c.parseType(child))
+		}
+	}
+	return genericArguments
+}
+
+func (c *Collector) collectArgumentList(node *sitter.Node) ast.ArgumentList {
+	arguments := make([]ast.Expression, 0)
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.IsNamed() {
+			arguments = append(arguments, c.collectExpression(child))
+		}
+	}
+	return ast.ArgumentList{Arguments: arguments}
 }

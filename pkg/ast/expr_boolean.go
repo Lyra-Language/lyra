@@ -1,0 +1,38 @@
+package ast
+
+import "fmt"
+
+type BooleanBinaryOpExpr struct {
+	ExprBase
+	Left     Expression
+	Operator BooleanBinaryOp
+	Right    Expression
+}
+
+func (b *BooleanBinaryOpExpr) GetName() string {
+	return fmt.Sprintf("%s %s %s", b.Left.GetName(), b.Operator, b.Right.GetName())
+}
+
+func (b *BooleanBinaryOpExpr) Print(indent string) {
+	fmt.Printf("%sBooleanBinaryOpExpr(%s)\n", indent, b.GetName())
+	fmt.Printf("%s  Left: {\n", indent)
+	b.Left.Print(indent + "    ")
+	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s  Operator: %s\n", indent, b.Operator)
+	fmt.Printf("%s  Right: {\n", indent)
+	b.Right.Print(indent + "    ")
+	fmt.Printf("%s  }\n", indent)
+}
+
+type BooleanBinaryOp string
+
+const (
+	BooleanBinaryOpLT  BooleanBinaryOp = "<"
+	BooleanBinaryOpLTE BooleanBinaryOp = "<="
+	BooleanBinaryOpGT  BooleanBinaryOp = ">"
+	BooleanBinaryOpGTE BooleanBinaryOp = ">="
+	BooleanBinaryOpEq  BooleanBinaryOp = "=="
+	BooleanBinaryOpNEq BooleanBinaryOp = "!="
+	BooleanBinaryOpAnd BooleanBinaryOp = "&&"
+	BooleanBinaryOpOr  BooleanBinaryOp = "||"
+)

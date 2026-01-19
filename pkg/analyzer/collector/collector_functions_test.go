@@ -103,6 +103,9 @@ func TestCollector_FunctionDefinitionWithMultipleClausesAndGuard(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
+	// p := printer.NewPrinter([]byte(source))
+	// p.Print(tree.RootNode())
+
 	collector := NewCollector([]byte(source))
 	program, table, errors := collector.Collect(tree.RootNode())
 	if len(errors) > 0 {
