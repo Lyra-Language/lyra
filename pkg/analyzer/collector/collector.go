@@ -230,33 +230,20 @@ func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
 	}
 }
 
-func (c *Collector) collectParameterPatterns(node *sitter.Node) []ast.Pattern {
-	patterns := make([]ast.Pattern, 0)
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.Kind() == "parameter" {
-			patterns = append(patterns, c.collectPattern(child))
+func (c *Collector) collectPattern(patternNode *sitter.Node) ast.Pattern {
+	loc := c.nodeLocation(patternNode)
+	switch patternNode.Kind() {
+	case "identifier":
+		return &ast.IdentifierPattern{
+			PatternBase: ast.PatternBase{Location: loc},
+			Name:        c.nodeText(patternNode),
+		}
+	case "literal_pattern":
+		return &ast.LiteralPattern{
+			PatternBase: ast.PatternBase{Location: loc},
+			Value:       c.nodeText(patternNode),
 		}
 	}
-	return patterns
-}
-
-func (c *Collector) collectPattern(node *sitter.Node) ast.Pattern {
-	pattern := node.ChildByFieldName("pattern")
-	if pattern != nil {
-		loc := c.nodeLocation(pattern)
-		switch pattern.Kind() {
-		case "identifier":
-			return &ast.IdentifierPattern{
-				PatternBase: ast.PatternBase{Location: loc},
-				Name:        c.nodeText(pattern),
-			}
-		case "literal_pattern":
-			return &ast.LiteralPattern{
-				PatternBase: ast.PatternBase{Location: loc},
-				Value:       c.nodeText(pattern),
-			}
-		}
-	}
+	c.errors = append(c.errors, fmt.Errorf("collectPattern: unknown pattern node kind: %s", patternNode.Kind()))
 	return nil
 }

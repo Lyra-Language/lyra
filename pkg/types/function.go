@@ -33,8 +33,9 @@ func (f FunctionType) Print(indent string) {
 }
 
 type ParameterType struct {
-	Modifier Modifier
-	Type     Type
+	Modifier     Modifier
+	Type         Type
+	DefaultValue any
 }
 
 func (p ParameterType) GetName() string {

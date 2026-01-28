@@ -112,7 +112,7 @@ func (f *FunctionDefStmt) Print(indent string) {
 // FunctionClause represents a single clause of a function (pattern matching)
 type FunctionClause struct {
 	AstBase
-	Parameters []Pattern
+	Parameters []Parameter
 	Guard      *GuardExpr
 	Body       Expression
 }
@@ -143,8 +143,36 @@ func (f *FunctionClause) Print(indent string) {
 	fmt.Printf("%s}\n", indent)
 }
 
+type Parameter struct {
+	Pattern      Pattern
+	DefaultValue Expression
+}
+
+func (p *Parameter) Print(indent string) {
+	fmt.Printf("%sParameter(%s)\n", indent, p.Pattern.GetName())
+	if p.DefaultValue != nil {
+		fmt.Printf("%s  DefaultValue: %v\n", indent, p.DefaultValue)
+	}
+}
+
+func (p *Parameter) GetName() string {
+	defaultValue := ""
+	if p.DefaultValue != nil {
+		defaultValue = fmt.Sprintf(" = %v", p.DefaultValue)
+	}
+	return fmt.Sprintf("%s%s", p.Pattern.GetName(), defaultValue)
+}
+
 // ReturnStmt represents a return statement
 type ReturnStmt struct {
 	AstBase
 	Value Expression // nil for bare return
+}
+
+func (r *ReturnStmt) Print(indent string) {
+	fmt.Printf("%sReturnStmt(%s)\n", indent, r.Value.GetName())
+}
+
+func (r *ReturnStmt) GetName() string {
+	return fmt.Sprintf("return %s", r.Value.GetName())
 }

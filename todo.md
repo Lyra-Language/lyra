@@ -1,4 +1,6 @@
 ## To-Dos
-- parse function guards and body (expressions)
 
 ## Completed
+
+### 01/19/26
+- parse function guards and body (expressions)

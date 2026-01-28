@@ -54,13 +54,13 @@ func (c *Collector) collectFunctionDef(node *sitter.Node) *ast.FunctionDefStmt {
 }
 
 func (c *Collector) collectFunctionClause(node *sitter.Node) *ast.FunctionClause {
-	var parameters []ast.Pattern
+	var parameters []ast.Parameter
 	var guard *ast.GuardExpr
 	var body ast.Expression
 
 	parameterListNode := node.ChildByFieldName("parameters")
 	if parameterListNode != nil {
-		parameters = c.collectParameterPatterns(parameterListNode)
+		parameters = c.collectFunctionParameters(parameterListNode)
 	}
 	guardNode := node.ChildByFieldName("guard")
 	if guardNode != nil {
@@ -85,4 +85,33 @@ func (c *Collector) collectFunctionClause(node *sitter.Node) *ast.FunctionClause
 		Guard:      guard,
 		Body:       body,
 	}
+}
+
+func (c *Collector) collectFunctionParameters(node *sitter.Node) []ast.Parameter {
+	parameters := make([]ast.Parameter, 0)
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "parameter" {
+			parameters = append(parameters, c.collectParameter(child))
+		}
+	}
+	return parameters
+}
+
+func (c *Collector) collectParameter(node *sitter.Node) ast.Parameter {
+	var pattern ast.Pattern
+	if patternNode := node.ChildByFieldName("pattern"); patternNode != nil {
+		pattern = c.collectPattern(patternNode)
+	} else {
+		c.errors = append(c.errors, fmt.Errorf("parameter is missing pattern node"))
+	}
+	defaultValue := ast.Expression(nil)
+	if defaultValueNode := node.ChildByFieldName("default_value"); defaultValueNode != nil {
+		if defaultValueExpressionNode := defaultValueNode.ChildByFieldName("expression"); defaultValueExpressionNode != nil {
+			defaultValue = c.collectExpression(defaultValueExpressionNode)
+		} else {
+			c.errors = append(c.errors, fmt.Errorf("parameter default value is missing expression"))
+		}
+	}
+	return ast.Parameter{Pattern: pattern, DefaultValue: defaultValue}
 }

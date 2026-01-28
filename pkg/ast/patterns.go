@@ -16,6 +16,7 @@ type PatternBase struct {
 
 func (p *PatternBase) patternNode()          {}
 func (p *PatternBase) GetLocation() Location { return p.Location }
+func (p *PatternBase) GetName() string       { return "" }
 
 // IdentifierPattern represents an identifier pattern (binds a name)
 type IdentifierPattern struct {
