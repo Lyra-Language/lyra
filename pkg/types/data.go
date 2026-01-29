@@ -32,18 +32,23 @@ type DataTypeConstructor struct {
 }
 
 func (c DataTypeConstructor) Print(indent string) {
-	if c.Params != nil {
-		fmt.Printf("%sDataTypeConstructor(%s) (\n", indent, c.Name)
-		for _, param := range c.Params {
-			param.Print(indent + ", ")
+	fmt.Printf("%sDataTypeConstructor(%s)", indent, c.Name)
+	if len(c.Params) > 0 {
+		fmt.Printf(" (\n")
+		for idx, param := range c.Params {
+			param.Print(indent + "  ")
+			if idx < len(c.Params)-1 {
+				fmt.Printf(",\n")
+			}
 		}
 		fmt.Printf("%s)\n", indent)
 	}
-	if c.Fields != nil {
-		fmt.Printf("%sDataTypeConstructor(%s) {\n", indent, c.Name)
+	if len(c.Fields) > 0 {
+		fmt.Printf(" {\n")
 		for name, field := range c.Fields {
 			fmt.Printf("%s%s: %s\n", indent+"  ", name, field.Type.GetName())
 		}
-		fmt.Printf("%s)\n", indent)
+		fmt.Printf("%s}\n", indent)
 	}
+	fmt.Printf("\n")
 }

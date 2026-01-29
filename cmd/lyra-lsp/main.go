@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
-	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/printer"
 )
@@ -60,12 +59,7 @@ def say_hello: (Str) -> Str = (name) => 42 // should produce a type error (wrong
 		for _, clause := range funcDef.Clauses {
 			fmt.Printf("      parameters: %d\n", len(clause.Parameters))
 			for _, param := range clause.Parameters {
-				switch p := param.(type) {
-				case *ast.IdentifierPattern:
-					fmt.Printf("        %s\n", p.Name)
-				case *ast.LiteralPattern:
-					fmt.Printf("        %v\n", p.Value)
-				}
+				fmt.Printf("        %s\n", param.GetName())
 			}
 		}
 	}
