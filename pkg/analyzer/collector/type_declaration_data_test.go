@@ -149,7 +149,7 @@ func TestCollector_DataTypeWithStructFields(t *testing.T) {
 		t.Fatalf("Collector errors: %v", errors)
 	}
 
-	program.Print("")
+	// program.Print("")
 
 	if len(program.Statements) != 1 {
 		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
@@ -240,7 +240,7 @@ func TestCollector_ComplexDataType(t *testing.T) {
 		t.Fatalf("Collector errors: %v", errors)
 	}
 
-	program.Print("")
+	// program.Print("")
 
 	if len(program.Statements) != 2 {
 		t.Fatalf("Expected 2 statements, got %d", len(program.Statements))

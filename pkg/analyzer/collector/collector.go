@@ -176,6 +176,8 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 		return types.GenericType{Name: c.nodeText(node)}
 	case "array_type":
 		return c.parseArrayType(node)
+	case "constrained_type":
+		return c.parseConstrainedType(node)
 	}
 	c.errors = append(c.errors, fmt.Errorf("parseType: unknown type node kind: %s", node.Kind()))
 	return nil
@@ -189,6 +191,19 @@ func (c *Collector) parseArrayType(node *sitter.Node) types.Type {
 		}
 	}
 	return types.ArrayType{}
+}
+
+func (c *Collector) parseConstrainedType(node *sitter.Node) types.Type {
+	constraints := make([]types.Constraint, 0)
+	constraintsNode := node.ChildByFieldName("constraints")
+	if constraintsNode != nil {
+		constraints = c.collectConstraints(constraintsNode)
+	}
+	return types.ConstrainedType{
+		Name:        c.nodeText(node.ChildByFieldName("name")),
+		Type:        c.parseType(node.ChildByFieldName("type")),
+		Constraints: constraints,
+	}
 }
 
 func (c *Collector) parseFunctionType(node *sitter.Node) *types.FunctionType {
