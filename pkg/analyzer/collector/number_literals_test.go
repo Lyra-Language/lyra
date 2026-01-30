@@ -183,7 +183,7 @@ func TestCollectFloatLiteralExpr(t *testing.T) {
 	if len(errors) > 0 {
 		t.Fatalf("Collector errors: %v", errors)
 	}
-	program.Print("")
+	// program.Print("")
 
 	if len(program.Statements) != 1 {
 		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
@@ -204,6 +204,107 @@ func TestCollectFloatLiteralExpr(t *testing.T) {
 
 	if varDeclStmt.Value.(*ast.FloatLiteralExpr).Value != 3.14159 {
 		t.Fatalf("Expected Expression value to be 3.14159, got %f", varDeclStmt.Value.(*ast.FloatLiteralExpr).Value)
+	}
+}
+
+func TestCollectFloatLiteralExprWithExponent(t *testing.T) {
+	source := `let pi = 0.03141592e2`
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	collector := NewCollector([]byte(source))
+	program, _, errors := collector.Collect(tree.RootNode())
+	if len(errors) > 0 {
+		t.Fatalf("Collector errors: %v", errors)
+	}
+	// program.Print("")
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
+	}
+	varDeclStmt, ok := program.Statements[0].(*ast.VarDeclStmt)
+	if !ok {
+		t.Fatalf("Expected VarDeclStmt, got %T", program.Statements[0])
+	}
+
+	if varDeclStmt.Value == nil {
+		t.Fatalf("Expected Value, got nil")
+	}
+
+	if varDeclStmt.Value.GetName() != "3.141592" {
+		t.Fatalf("Expected Expression name to be \"3.141592\", got %s", varDeclStmt.Value.GetName())
+	}
+
+	if varDeclStmt.Value.(*ast.FloatLiteralExpr).Value != 0.03141592e2 {
+		t.Fatalf("Expected Expression value to be 0.03141592e2, got %f", varDeclStmt.Value.(*ast.FloatLiteralExpr).Value)
+	}
+}
+
+func TestCollectFloatLiteralExprWithPositiveExponent(t *testing.T) {
+	source := `let pi = 0.03141592e+2`
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	collector := NewCollector([]byte(source))
+	program, _, errors := collector.Collect(tree.RootNode())
+	if len(errors) > 0 {
+		t.Fatalf("Collector errors: %v", errors)
+	}
+	program.Print("")
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
+	}
+	varDeclStmt, ok := program.Statements[0].(*ast.VarDeclStmt)
+	if !ok {
+		t.Fatalf("Expected VarDeclStmt, got %T", program.Statements[0])
+	}
+
+	if varDeclStmt.Value == nil {
+		t.Fatalf("Expected Value, got nil")
+	}
+
+	if varDeclStmt.Value.GetName() != "3.141592" {
+		t.Fatalf("Expected Expression name to be \"3.141592\", got %s", varDeclStmt.Value.GetName())
+	}
+
+	if varDeclStmt.Value.(*ast.FloatLiteralExpr).Value != 0.03141592e+2 {
+		t.Fatalf("Expected Expression value to be 0.03141592e+2, got %f", varDeclStmt.Value.(*ast.FloatLiteralExpr).Value)
+	}
+}
+
+func TestCollectFloatLiteralExprWithNegativeExponent(t *testing.T) {
+	source := `let pi = 314.1592e-2`
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	collector := NewCollector([]byte(source))
+	program, _, errors := collector.Collect(tree.RootNode())
+	if len(errors) > 0 {
+		t.Fatalf("Collector errors: %v", errors)
+	}
+	// program.Print("")
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
+	}
+	varDeclStmt, ok := program.Statements[0].(*ast.VarDeclStmt)
+	if !ok {
+		t.Fatalf("Expected VarDeclStmt, got %T", program.Statements[0])
+	}
+	if varDeclStmt.Value == nil {
+		t.Fatalf("Expected Value, got nil")
+	}
+
+	if varDeclStmt.Value.GetName() != "3.141592" {
+		t.Fatalf("Expected Expression name to be \"3.141592\", got %s", varDeclStmt.Value.GetName())
+	}
+
+	if varDeclStmt.Value.(*ast.FloatLiteralExpr).Value != 314.1592e-2 {
+		t.Fatalf("Expected Expression value to be 314.1592e-2, got %f", varDeclStmt.Value.(*ast.FloatLiteralExpr).Value)
 	}
 }
 
