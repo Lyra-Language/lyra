@@ -25,6 +25,23 @@ type Constraint interface {
 	Print(indent string)
 }
 
+type LiteralUnionConstraint struct {
+	Values []any
+}
+
+func (l *LiteralUnionConstraint) constraintNode() {}
+func (l *LiteralUnionConstraint) Print(indent string) {
+	fmt.Printf("%sLiteralUnionConstraint {\n", indent)
+	for _, value := range l.Values {
+		fmt.Printf("%s  Value: %v\n", indent, value)
+	}
+	fmt.Printf("%s}\n", indent)
+}
+
+func (l *LiteralUnionConstraint) GetName() string {
+	return fmt.Sprintf("literal_union(%v)", l.Values)
+}
+
 type RangeConstraint struct {
 	Start      MathConstraintExpr
 	Comparator string

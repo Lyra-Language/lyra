@@ -40,16 +40,27 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 		return c.collectFloatLiteralExpr(node)
 
 	case "string_literal":
+		value, err := strconv.Unquote(c.nodeText(node))
+		if err != nil {
+			c.errors = append(c.errors, fmt.Errorf("invalid string literal: %v", err))
+			return nil
+		}
 		return &ast.StringLiteralExpr{
-			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-			Value:    c.nodeText(node),
+			ExprBase: ast.ExprBase{
+				AstBase: ast.AstBase{Location: loc},
+				Type:    types.PrimitiveType{Name: types.String},
+			},
+			Value: value,
 		}
 
 	case "boolean_literal":
 		value := c.nodeText(node) == "true"
 		return &ast.BooleanLiteralExpr{
-			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-			Value:    value,
+			ExprBase: ast.ExprBase{
+				AstBase: ast.AstBase{Location: loc},
+				Type:    types.PrimitiveType{Name: types.Bool},
+			},
+			Value: value,
 		}
 
 	case "identifier":

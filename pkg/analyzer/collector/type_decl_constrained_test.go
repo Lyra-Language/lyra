@@ -5,9 +5,162 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/parser"
-	"github.com/Lyra-Language/lyra/pkg/printer"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
+
+func TestCollector_BasicConstrainedTypeWithoutConstraints(t *testing.T) {
+	source := `
+	type Angle = Float
+	`
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	// p := printer.NewPrinter([]byte(source))
+	// p.Print(tree.RootNode())
+
+	collector := NewCollector([]byte(source))
+	program, table, errors := collector.Collect(tree.RootNode())
+	if len(errors) > 0 {
+		t.Fatalf("Collector errors: %v", errors)
+	}
+
+	// program.Print("")
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
+	}
+
+	namedNode, ok := table.GlobalScope.Lookup("Angle")
+	if !ok {
+		t.Fatalf("\"Angle\" not found in global scope")
+	}
+	angleDecl, ok := namedNode.(*ast.TypeDeclStmt)
+	if !ok {
+		t.Fatalf("\"Angle\" is not a TypeDeclStmt, got %T", namedNode)
+	}
+	if angleDecl.GetName() != "Angle" {
+		t.Fatalf("\"Angle\" should have name \"Angle\". Got %s", angleDecl.GetName())
+	}
+	if len(angleDecl.Type.(*types.ConstrainedType).Constraints) != 0 {
+		t.Fatalf("\"Angle\" should have no constraints. Got %d", len(angleDecl.Type.(*types.ConstrainedType).Constraints))
+	}
+	if !types.TypesEqual(angleDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "Float"}) {
+		t.Fatalf("\"Angle\" should have type \"Float\". Got %v", angleDecl.Type.(*types.ConstrainedType).Type)
+	}
+}
+
+func TestCollector_ConstrainedTypeWithLiteralUnionConstraintWithStrings(t *testing.T) {
+	source := `
+	type Color = "red" | "green" | "blue"
+	`
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	// p := printer.NewPrinter([]byte(source))
+	// p.Print(tree.RootNode())
+
+	collector := NewCollector([]byte(source))
+	program, table, errors := collector.Collect(tree.RootNode())
+	if len(errors) > 0 {
+		t.Fatalf("Collector errors: %v", errors)
+	}
+
+	// program.Print("")
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
+	}
+
+	namedNode, ok := table.GlobalScope.Lookup("Color")
+	if !ok {
+		t.Fatalf("\"Color\" not found in global scope")
+	}
+	colorDecl, ok := namedNode.(*ast.TypeDeclStmt)
+	if !ok {
+		t.Fatalf("\"Color\" is not a TypeDeclStmt, got %T", namedNode)
+	}
+	if colorDecl.GetName() != "Color" {
+		t.Fatalf("\"Color\" should have name \"Color\". Got %s", colorDecl.GetName())
+	}
+	if len(colorDecl.Type.(*types.ConstrainedType).Constraints) != 1 {
+		t.Fatalf("\"Color\" should have 1 constraint. Got %d", len(colorDecl.Type.(*types.ConstrainedType).Constraints))
+	}
+	if !types.TypesEqual(colorDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: types.String}) {
+		t.Fatalf("\"Color\" should have type \"Str\". Got %v", colorDecl.Type.(*types.ConstrainedType).Type)
+	}
+	literalUnionConstraint, ok := colorDecl.Type.(*types.ConstrainedType).Constraints[0].(*types.LiteralUnionConstraint)
+	if !ok {
+		t.Fatalf("\"Color\" should have literal union constraint. Got %T", colorDecl.Type.(*types.ConstrainedType).Constraints[0])
+	}
+	if len(literalUnionConstraint.Values) != 3 {
+		t.Fatalf("\"Color\" should have 3 values. Got %d", len(literalUnionConstraint.Values))
+	}
+	if literalUnionConstraint.Values[0].(*ast.StringLiteralExpr).Value != "red" {
+		t.Fatalf("\"Color\" should have value \"red\". Got %s", literalUnionConstraint.Values[0].(*ast.StringLiteralExpr).Value)
+	}
+	if literalUnionConstraint.Values[1].(*ast.StringLiteralExpr).Value != "green" {
+		t.Fatalf("\"Color\" should have value \"green\". Got %s", literalUnionConstraint.Values[1].(*ast.StringLiteralExpr).Value)
+	}
+	if literalUnionConstraint.Values[2].(*ast.StringLiteralExpr).Value != "blue" {
+		t.Fatalf("\"Color\" should have value \"blue\". Got %s", literalUnionConstraint.Values[2].(*ast.StringLiteralExpr).Value)
+	}
+}
+
+func TestCollector_ConstrainedTypeWithLiteralUnionConstraintWithNumbers(t *testing.T) {
+	source := `
+	type Status = 200 | 404 | 500
+	`
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	collector := NewCollector([]byte(source))
+	program, table, errors := collector.Collect(tree.RootNode())
+	if len(errors) > 0 {
+		t.Fatalf("Collector errors: %v", errors)
+	}
+
+	program.Print("")
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
+	}
+	namedNode, ok := table.GlobalScope.Lookup("Status")
+	if !ok {
+		t.Fatalf("\"Status\" not found in global scope")
+	}
+	statusDecl, ok := namedNode.(*ast.TypeDeclStmt)
+	if !ok {
+		t.Fatalf("\"Status\" is not a TypeDeclStmt, got %T", namedNode)
+	}
+	if statusDecl.GetName() != "Status" {
+		t.Fatalf("\"Status\" should have name \"Status\". Got %s", statusDecl.GetName())
+	}
+	if len(statusDecl.Type.(*types.ConstrainedType).Constraints) != 1 {
+		t.Fatalf("\"Status\" should have 1 constraint. Got %d", len(statusDecl.Type.(*types.ConstrainedType).Constraints))
+	}
+	if !types.TypesEqual(statusDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: types.Int}) {
+		t.Fatalf("\"Status\" should have type \"Int\". Got %v", statusDecl.Type.(*types.ConstrainedType).Type)
+	}
+	literalUnionConstraint, ok := statusDecl.Type.(*types.ConstrainedType).Constraints[0].(*types.LiteralUnionConstraint)
+	if !ok {
+		t.Fatalf("\"Status\" should have literal union constraint. Got %T", statusDecl.Type.(*types.ConstrainedType).Constraints[0])
+	}
+	if len(literalUnionConstraint.Values) != 3 {
+		t.Fatalf("\"Status\" should have 3 values. Got %d", len(literalUnionConstraint.Values))
+	}
+	if literalUnionConstraint.Values[0].(*ast.IntegerLiteralExpr).Value != 200 {
+		t.Fatalf("\"Status\" should have value 200. Got %v", literalUnionConstraint.Values[0])
+	}
+	if literalUnionConstraint.Values[1].(*ast.IntegerLiteralExpr).Value != 404 {
+		t.Fatalf("\"Status\" should have value 404. Got %v", literalUnionConstraint.Values[1])
+	}
+	if literalUnionConstraint.Values[2].(*ast.IntegerLiteralExpr).Value != 500 {
+		t.Fatalf("\"Status\" should have value 500. Got %v", literalUnionConstraint.Values[2])
+	}
+}
 
 func TestCollector_SimpleRangeConstrainedType(t *testing.T) {
 	source := `
@@ -17,8 +170,8 @@ func TestCollector_SimpleRangeConstrainedType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
-	p := printer.NewPrinter([]byte(source))
-	p.Print(tree.RootNode())
+	// p := printer.NewPrinter([]byte(source))
+	// p.Print(tree.RootNode())
 
 	collector := NewCollector([]byte(source))
 	program, table, errors := collector.Collect(tree.RootNode())
@@ -231,8 +384,8 @@ func TestCollector_MultipleConstraints(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
-	p := printer.NewPrinter([]byte(source))
-	p.Print(tree.RootNode())
+	// p := printer.NewPrinter([]byte(source))
+	// p.Print(tree.RootNode())
 
 	collector := NewCollector([]byte(source))
 	program, table, errors := collector.Collect(tree.RootNode())

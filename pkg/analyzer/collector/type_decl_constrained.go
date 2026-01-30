@@ -13,9 +13,19 @@ func (c *Collector) collectConstrainedTypeDeclaration(node *sitter.Node) *ast.Ty
 	nameNode := node.ChildByFieldName("name")
 	typeNode := node.ChildByFieldName("type")
 	constraintsNode := node.ChildByFieldName("constraints")
+	literalUnionNode := node.ChildByFieldName("literal_union")
 
 	name := c.nodeText(nameNode)
 	typeType := c.parseType(typeNode)
+	constraints := make([]types.Constraint, 0)
+	if constraintsNode != nil {
+		constraints = c.collectConstraints(constraintsNode)
+	}
+	if literalUnionNode != nil {
+		literalUnion := c.collectLiteralUnionConstraint(literalUnionNode)
+		constraints = append(constraints, literalUnion)
+		typeType = c.inferTypeFromValues(literalUnion.Values)
+	}
 
 	astNode := &ast.TypeDeclStmt{
 		AstBase: ast.AstBase{Location: c.nodeLocation(node)},
@@ -23,7 +33,7 @@ func (c *Collector) collectConstrainedTypeDeclaration(node *sitter.Node) *ast.Ty
 		Type: &types.ConstrainedType{
 			Name:        name,
 			Type:        typeType,
-			Constraints: c.collectConstraints(constraintsNode),
+			Constraints: constraints,
 		},
 	}
 
@@ -36,6 +46,7 @@ func (c *Collector) collectConstrainedTypeDeclaration(node *sitter.Node) *ast.Ty
 
 func (c *Collector) collectConstraints(node *sitter.Node) []types.Constraint {
 	constraints := make([]types.Constraint, 0)
+	fmt.Printf("collectConstraints: %s\n", node.Kind())
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
@@ -46,6 +57,26 @@ func (c *Collector) collectConstraints(node *sitter.Node) []types.Constraint {
 		}
 	}
 	return constraints
+}
+
+func (c *Collector) collectLiteralUnionConstraint(node *sitter.Node) *types.LiteralUnionConstraint {
+	values := make([]any, 0)
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "literal_val" {
+			values = append(values, c.collectExpression(child))
+		}
+	}
+	return &types.LiteralUnionConstraint{Values: values}
+}
+
+func (c *Collector) inferTypeFromValues(values []any) types.Type {
+	value := values[0].(ast.Expression)
+	if value == nil {
+		c.errors = append(c.errors, fmt.Errorf("literal union constraint must have at least one value"))
+		return nil
+	}
+	return value.GetType()
 }
 
 func (c *Collector) collectRangeConstraint(node *sitter.Node) *types.RangeConstraint {

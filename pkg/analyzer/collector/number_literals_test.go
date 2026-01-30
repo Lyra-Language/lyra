@@ -5,7 +5,6 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/parser"
-	"github.com/Lyra-Language/lyra/pkg/printer"
 )
 
 func TestCollectIntegerLiteralExpr(t *testing.T) {
@@ -21,7 +20,7 @@ func TestCollectIntegerLiteralExpr(t *testing.T) {
 		t.Fatalf("Collector errors: %v", errors)
 	}
 
-	program.Print("")
+	// program.Print("")
 
 	if len(program.Statements) != 1 {
 		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
@@ -175,8 +174,8 @@ func TestCollectFloatLiteralExpr(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
-	p := printer.NewPrinter([]byte(source))
-	p.Print(tree.RootNode())
+	// p := printer.NewPrinter([]byte(source))
+	// p.Print(tree.RootNode())
 
 	collector := NewCollector([]byte(source))
 	program, _, errors := collector.Collect(tree.RootNode())
@@ -252,7 +251,7 @@ func TestCollectFloatLiteralExprWithPositiveExponent(t *testing.T) {
 	if len(errors) > 0 {
 		t.Fatalf("Collector errors: %v", errors)
 	}
-	program.Print("")
+	// program.Print("")
 
 	if len(program.Statements) != 1 {
 		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
