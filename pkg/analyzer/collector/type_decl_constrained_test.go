@@ -446,3 +446,122 @@ func TestCollector_MultipleConstraints(t *testing.T) {
 		t.Fatalf("\"Radian\" should have rounding mode nearest even. Got %s", precisionConstraint.RoundingMode)
 	}
 }
+
+func TestCollector_StepConstrainedType(t *testing.T) {
+	source := `
+	type CompassHeading = Int where range(0..<360), step(15)
+	`
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	collector := NewCollector([]byte(source))
+	program, table, errors := collector.Collect(tree.RootNode())
+	if len(errors) > 0 {
+		t.Fatalf("Collector errors: %v", errors)
+	}
+
+	program.Print("")
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
+	}
+	namedNode, ok := table.GlobalScope.Lookup("CompassHeading")
+	if !ok {
+		t.Fatalf("\"CompassHeading\" not found in global scope")
+	}
+	compassHeadingDecl, ok := namedNode.(*ast.TypeDeclStmt)
+	if !ok {
+		t.Fatalf("\"CompassHeading\" is not a TypeDeclStmt, got %T", namedNode)
+	}
+	if compassHeadingDecl.GetName() != "CompassHeading" {
+		t.Fatalf("\"CompassHeading\" should have name \"CompassHeading\". Got %s", compassHeadingDecl.GetName())
+	}
+	if len(compassHeadingDecl.Type.(*types.ConstrainedType).Constraints) != 2 {
+		t.Fatalf("\"CompassHeading\" should have 2 constraints. Got %d", len(compassHeadingDecl.Type.(*types.ConstrainedType).Constraints))
+	}
+	if !types.TypesEqual(compassHeadingDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "Int"}) {
+		t.Fatalf("\"CompassHeading\" should have type \"Int\". Got %v", compassHeadingDecl.Type.(*types.ConstrainedType).Type)
+	}
+	rangeConstraint, ok := compassHeadingDecl.Type.(*types.ConstrainedType).Constraints[0].(*types.RangeConstraint)
+	if !ok {
+		t.Fatalf("\"CompassHeading\" should have range constraint. Got %T", compassHeadingDecl.Type.(*types.ConstrainedType).Constraints[0])
+	}
+	if rangeConstraint.Start == nil {
+		t.Fatalf("\"CompassHeading\" should have start. Got nil")
+	}
+	if rangeConstraint.Start.GetName() != "0" {
+		t.Fatalf("\"CompassHeading\" should have start 0. Got %s", rangeConstraint.Start.GetName())
+	}
+	if rangeConstraint.Comparator != "<" {
+		t.Fatalf("\"CompassHeading\" should have comparator <. Got %s", rangeConstraint.Comparator)
+	}
+	if rangeConstraint.End == nil {
+		t.Fatalf("\"CompassHeading\" should have end. Got nil")
+	}
+	if rangeConstraint.End.GetName() != "360" {
+		t.Fatalf("\"CompassHeading\" should have end 360. Got %s", rangeConstraint.End.GetName())
+	}
+	stepConstraint, ok := compassHeadingDecl.Type.(*types.ConstrainedType).Constraints[1].(*types.StepConstraint)
+	if !ok {
+		t.Fatalf("\"CompassHeading\" should have step constraint. Got %T", compassHeadingDecl.Type.(*types.ConstrainedType).Constraints[1])
+	}
+	if stepConstraint.Value.GetName() != "15" {
+		t.Fatalf("\"CompassHeading\" should have value 15. Got %s", stepConstraint.Value.GetName())
+	}
+	if !types.TypesEqual(stepConstraint.Value.(*types.MathConstraintLiteralExpr).Type, types.PrimitiveType{Name: types.Int}) {
+		t.Fatalf("\"CompassHeading\" should have value type Int. Got %v", stepConstraint.Value.(*types.MathConstraintLiteralExpr).Type)
+	}
+	if stepConstraint.Value.(*types.MathConstraintLiteralExpr).Value != int64(15) {
+		t.Fatalf("\"CompassHeading\" should have value 15. Got %v", stepConstraint.Value.(*types.MathConstraintLiteralExpr).Value)
+	}
+}
+
+func TestCollector_PatternConstrainedType(t *testing.T) {
+	source := `
+	type HexStr = Str where pattern(r/^#(?:[0-9a-fA-F]{3}){1,2}$/)
+	`
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	// p := printer.NewPrinter([]byte(source))
+	// p.Print(tree.RootNode())
+
+	collector := NewCollector([]byte(source))
+	program, table, errors := collector.Collect(tree.RootNode())
+	if len(errors) > 0 {
+		t.Fatalf("Collector errors: %v", errors)
+	}
+
+	// program.Print("")
+
+	if len(program.Statements) != 1 {
+		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
+	}
+	namedNode, ok := table.GlobalScope.Lookup("HexStr")
+	if !ok {
+		t.Fatalf("\"HexStr\" not found in global scope")
+	}
+	hexStrDecl, ok := namedNode.(*ast.TypeDeclStmt)
+	if !ok {
+		t.Fatalf("\"HexStr\" is not a TypeDeclStmt, got %T", namedNode)
+	}
+	if hexStrDecl.GetName() != "HexStr" {
+		t.Fatalf("\"HexStr\" should have name \"HexStr\". Got %s", hexStrDecl.GetName())
+	}
+	if len(hexStrDecl.Type.(*types.ConstrainedType).Constraints) != 1 {
+		t.Fatalf("\"HexStr\" should have 1 constraint. Got %d", len(hexStrDecl.Type.(*types.ConstrainedType).Constraints))
+	}
+	if !types.TypesEqual(hexStrDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: types.String}) {
+		t.Fatalf("\"HexStr\" should have type \"Str\". Got %v", hexStrDecl.Type.(*types.ConstrainedType).Type)
+	}
+	patternConstraint, ok := hexStrDecl.Type.(*types.ConstrainedType).Constraints[0].(*types.PatternConstraint)
+	if !ok {
+		t.Fatalf("\"HexStr\" should have pattern constraint. Got %T", hexStrDecl.Type.(*types.ConstrainedType).Constraints[0])
+	}
+	if patternConstraint.Pattern != "r/^#(?:[0-9a-fA-F]{3}){1,2}$/" {
+		t.Fatalf("\"HexStr\" should have pattern r/^#(?:[0-9a-fA-F]{3}){1,2}$/. Got %s", patternConstraint.Pattern)
+	}
+}

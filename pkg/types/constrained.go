@@ -191,3 +191,35 @@ const (
 	RoundingModeDown        RoundingMode = "round_down"
 	RoundingModeTrunc       RoundingMode = "round_trunc"
 )
+
+type StepConstraint struct {
+	Value MathConstraintExpr
+}
+
+func (s *StepConstraint) constraintNode() {}
+
+func (s *StepConstraint) GetName() string {
+	return fmt.Sprintf("step(%s)", s.Value.GetName())
+}
+
+func (s *StepConstraint) Print(indent string) {
+	fmt.Printf("%sStepConstraint(%s)\n", indent, s.GetName())
+	fmt.Printf("%s  Value: {\n", indent)
+	s.Value.Print(indent + "    ")
+	fmt.Printf("%s  }\n", indent)
+}
+
+type PatternConstraint struct {
+	Pattern string
+}
+
+func (p *PatternConstraint) constraintNode() {}
+
+func (p *PatternConstraint) GetName() string {
+	return fmt.Sprintf("pattern(%s)", p.Pattern)
+}
+
+func (p *PatternConstraint) Print(indent string) {
+	fmt.Printf("%sPatternConstraint(%s)\n", indent, p.GetName())
+	fmt.Printf("%s  Pattern: %s\n", indent, p.Pattern)
+}

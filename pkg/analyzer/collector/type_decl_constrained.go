@@ -54,6 +54,10 @@ func (c *Collector) collectConstraints(node *sitter.Node) []types.Constraint {
 			constraints = append(constraints, c.collectRangeConstraint(child))
 		case "precision_constraint":
 			constraints = append(constraints, c.collectPrecisionConstraint(child))
+		case "step_constraint":
+			constraints = append(constraints, c.collectStepConstraint(child))
+		case "pattern_constraint":
+			constraints = append(constraints, c.collectPatternConstraint(child))
 		}
 	}
 	return constraints
@@ -193,4 +197,24 @@ func (c *Collector) collectPrecisionConstraint(node *sitter.Node) *types.Precisi
 		Value:        value,
 		RoundingMode: roundingMode,
 	}
+}
+
+func (c *Collector) collectStepConstraint(node *sitter.Node) *types.StepConstraint {
+	valueNode := node.ChildByFieldName("value")
+	if valueNode == nil {
+		c.errors = append(c.errors, fmt.Errorf("step constraint must have a value"))
+		return nil
+	}
+	value := c.collectMathConstraintExpr(valueNode)
+	return &types.StepConstraint{Value: value}
+}
+
+func (c *Collector) collectPatternConstraint(node *sitter.Node) *types.PatternConstraint {
+	patternNode := node.ChildByFieldName("pattern")
+	if patternNode == nil {
+		c.errors = append(c.errors, fmt.Errorf("pattern constraint must have a pattern"))
+		return nil
+	}
+	pattern := c.nodeText(patternNode)
+	return &types.PatternConstraint{Pattern: pattern}
 }
