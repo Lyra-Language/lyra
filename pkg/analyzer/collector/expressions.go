@@ -1,7 +1,9 @@
 package collector
 
 import (
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -28,31 +30,22 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 	if node == nil {
 		return nil
 	}
-
 	loc := c.nodeLocation(node)
 
 	switch node.Kind() {
-	case "integer", "integer_literal":
-		value, _ := strconv.ParseInt(c.nodeText(node), 10, 64)
-		return &ast.IntegerLiteralExpr{
-			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-			Value:    value,
-		}
+	case "integer_literal":
+		return c.collectIntegerLiteralExpr(node)
 
-	case "float", "float_literal":
-		value, _ := strconv.ParseFloat(c.nodeText(node), 64)
-		return &ast.FloatLiteralExpr{
-			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-			Value:    value,
-		}
+	case "float_literal":
+		return c.collectFloatLiteralExpr(node)
 
-	case "string", "string_literal":
+	case "string_literal":
 		return &ast.StringLiteralExpr{
 			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 			Value:    c.nodeText(node),
 		}
 
-	case "boolean", "boolean_literal":
+	case "boolean_literal":
 		value := c.nodeText(node) == "true"
 		return &ast.BooleanLiteralExpr{
 			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
@@ -97,6 +90,59 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 	}
 
 	return nil
+}
+
+func (c *Collector) collectIntegerLiteralExpr(node *sitter.Node) *ast.IntegerLiteralExpr {
+	loc := c.nodeLocation(node)
+	base := ast.IntegerBase10
+	value := int64(0)
+	err := error(nil)
+
+	for i := uint(0); i < node.ChildCount(); i++ {
+		valueString := c.nodeText(node.Child(i))
+		valueStringWithoutUnderscores := strings.ReplaceAll(valueString, "_", "")
+		value, err = strconv.ParseInt(valueStringWithoutUnderscores, 0, 64)
+		if err != nil {
+			c.errors = append(c.errors, fmt.Errorf("failed to parse integer literal: %w", err))
+			return nil
+		}
+		switch node.Child(i).Kind() {
+		case "binary_int":
+			base = ast.IntegerBase2
+		case "octal_int":
+			base = ast.IntegerBase8
+		case "decimal_int":
+			base = ast.IntegerBase10
+		case "hexadecimal_int":
+			base = ast.IntegerBase16
+		}
+	}
+	return &ast.IntegerLiteralExpr{
+		ExprBase: ast.ExprBase{
+			AstBase: ast.AstBase{Location: loc},
+			Type:    types.PrimitiveType{Name: "Int"},
+		},
+		Value: value,
+		Base:  base,
+	}
+}
+
+func (c *Collector) collectFloatLiteralExpr(node *sitter.Node) *ast.FloatLiteralExpr {
+	loc := c.nodeLocation(node)
+	valueString := c.nodeText(node)
+	valueStringWithoutUnderscores := strings.ReplaceAll(valueString, "_", "")
+	value, err := strconv.ParseFloat(valueStringWithoutUnderscores, 64)
+	if err != nil {
+		c.errors = append(c.errors, fmt.Errorf("failed to parse float literal: %w", err))
+		return nil
+	}
+	return &ast.FloatLiteralExpr{
+		ExprBase: ast.ExprBase{
+			AstBase: ast.AstBase{Location: loc},
+			Type:    types.PrimitiveType{Name: "Float"},
+		},
+		Value: value,
+	}
 }
 
 func (c *Collector) collectGenericArguments(node *sitter.Node) []types.Type {

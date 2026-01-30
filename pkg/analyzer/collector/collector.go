@@ -162,8 +162,12 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 		return nil
 	}
 	switch node.Kind() {
+	case "integer":
+		return types.PrimitiveType{Name: types.PrimitiveTypeName(c.nodeText(node.ChildByFieldName("type")))}
 	case "signed_integer_type", "unsigned_integer_type":
 		return types.PrimitiveType{Name: types.PrimitiveTypeName(c.nodeText(node))}
+	case "float":
+		return types.PrimitiveType{Name: types.PrimitiveTypeName(c.nodeText(node.ChildByFieldName("type")))}
 	case "float_type":
 		return types.PrimitiveType{Name: types.PrimitiveTypeName(c.nodeText(node))}
 	case "string_type":
@@ -199,7 +203,7 @@ func (c *Collector) parseConstrainedType(node *sitter.Node) types.Type {
 	if constraintsNode != nil {
 		constraints = c.collectConstraints(constraintsNode)
 	}
-	return types.ConstrainedType{
+	return &types.ConstrainedType{
 		Name:        c.nodeText(node.ChildByFieldName("name")),
 		Type:        c.parseType(node.ChildByFieldName("type")),
 		Constraints: constraints,

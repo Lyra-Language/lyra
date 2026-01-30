@@ -10,10 +10,10 @@ type ConstrainedType struct {
 	Constraints []Constraint
 }
 
-func (c ConstrainedType) typeNode()           {}
-func (c ConstrainedType) IsNumericType() bool { return false }
-func (c ConstrainedType) GetName() string     { return c.Name }
-func (c ConstrainedType) Print(indent string) {
+func (c *ConstrainedType) typeNode()           {}
+func (c *ConstrainedType) IsNumericType() bool { return false }
+func (c *ConstrainedType) GetName() string     { return c.Name }
+func (c *ConstrainedType) Print(indent string) {
 	fmt.Printf("%sConstrainedType(%s) {\n", indent, c.Name)
 	for _, constraint := range c.Constraints {
 		constraint.Print(indent + "  ")
@@ -31,8 +31,8 @@ type RangeConstraint struct {
 	End        MathConstraintExpr
 }
 
-func (r RangeConstraint) constraintNode() {}
-func (r RangeConstraint) Print(indent string) {
+func (r *RangeConstraint) constraintNode() {}
+func (r *RangeConstraint) Print(indent string) {
 	fmt.Printf("%sRangeConstraint {\n", indent)
 	if r.Start != nil {
 		fmt.Printf("%s  Start: {\n", indent)
@@ -146,3 +146,31 @@ func (m *MathConstraintNegationExpr) Print(indent string) {
 	m.Operand.Print(indent + "    ")
 	fmt.Printf("%s  }\n", indent)
 }
+
+type PrecisionConstraint struct {
+	Value        MathConstraintExpr
+	RoundingMode RoundingMode
+}
+
+func (p *PrecisionConstraint) constraintNode() {}
+
+func (p *PrecisionConstraint) GetName() string {
+	return fmt.Sprintf("precision(%s)", p.Value.GetName())
+}
+
+func (p *PrecisionConstraint) Print(indent string) {
+	fmt.Printf("%sPrecisionConstraint(%s)\n", indent, p.GetName())
+	fmt.Printf("%s  Value: {\n", indent)
+	p.Value.Print(indent + "    ")
+	fmt.Printf("%s  }\n", indent)
+}
+
+type RoundingMode string
+
+const (
+	RoundingModeNearestEven RoundingMode = "round_even"
+	RoundingModeZero        RoundingMode = "round_zero"
+	RoundingModeUp          RoundingMode = "round_up"
+	RoundingModeDown        RoundingMode = "round_down"
+	RoundingModeTrunc       RoundingMode = "round_trunc"
+)

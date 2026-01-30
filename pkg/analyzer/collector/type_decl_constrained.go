@@ -9,100 +9,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func (c *Collector) collectTypeDeclaration(node *sitter.Node) *ast.TypeDeclStmt {
-	// type_declaration contains struct_type, data_type, trait_declaration, etc.
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		switch child.Kind() {
-		case "struct_type":
-			return c.collectStructType(child)
-		case "data_type":
-			return c.collectDataType(child)
-		case "constrained_type":
-			return c.collectConstrainedType(child)
-		}
-	}
-	return nil
-}
-
-func (c *Collector) collectStructType(node *sitter.Node) *ast.TypeDeclStmt {
-	var name string
-	var genericParams []string
-	fields := make(map[string]types.StructField)
-	isPublic := false
-
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		switch child.Kind() {
-		case "visibility":
-			isPublic = true
-		case "struct_name":
-			name = c.nodeText(child)
-		case "generic_parameters":
-			genericParams = c.collectGenericParams(child)
-		case "struct_type_body":
-			fields = c.collectStructFields(child)
-		}
-	}
-
-	astNode := &ast.TypeDeclStmt{
-		AstBase:       ast.AstBase{Location: c.nodeLocation(node)},
-		Name:          name,
-		GenericParams: genericParams,
-		Type: types.StructType{
-			Name:   name,
-			Fields: fields,
-		},
-		IsPublic: isPublic,
-	}
-
-	if err := c.table.RegisterType(astNode); err != nil {
-		c.errors = append(c.errors, err)
-	}
-
-	return astNode
-}
-
-func (c *Collector) collectDataType(node *sitter.Node) *ast.TypeDeclStmt {
-	var name string
-	var genericParams []string
-	constructors := make(map[string]types.DataTypeConstructor)
-	isPublic := false
-
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		switch child.Kind() {
-		case "visibility":
-			isPublic = true
-		case "data_type_name":
-			name = c.nodeText(child)
-		case "generic_parameters":
-			genericParams = c.collectGenericParams(child)
-		case "data_type_constructor":
-			ctorName, ctor := c.collectDataConstructor(child)
-			constructors[ctorName] = ctor
-		}
-	}
-
-	astNode := &ast.TypeDeclStmt{
-		AstBase:       ast.AstBase{Location: c.nodeLocation(node)},
-		Name:          name,
-		GenericParams: genericParams,
-		Type: types.DataType{
-			Name:         name,
-			Constructors: constructors,
-		},
-		IsPublic: isPublic,
-	}
-
-	if err := c.table.RegisterType(astNode); err != nil {
-		c.errors = append(c.errors, err)
-	}
-
-	return astNode
-}
-
-func (c *Collector) collectConstrainedType(node *sitter.Node) *ast.TypeDeclStmt {
+func (c *Collector) collectConstrainedTypeDeclaration(node *sitter.Node) *ast.TypeDeclStmt {
 	nameNode := node.ChildByFieldName("name")
 	typeNode := node.ChildByFieldName("type")
 	constraintsNode := node.ChildByFieldName("constraints")
@@ -113,7 +20,7 @@ func (c *Collector) collectConstrainedType(node *sitter.Node) *ast.TypeDeclStmt 
 	astNode := &ast.TypeDeclStmt{
 		AstBase: ast.AstBase{Location: c.nodeLocation(node)},
 		Name:    name,
-		Type: types.ConstrainedType{
+		Type: &types.ConstrainedType{
 			Name:        name,
 			Type:        typeType,
 			Constraints: c.collectConstraints(constraintsNode),
@@ -134,12 +41,14 @@ func (c *Collector) collectConstraints(node *sitter.Node) []types.Constraint {
 		switch child.Kind() {
 		case "range_constraint":
 			constraints = append(constraints, c.collectRangeConstraint(child))
+		case "precision_constraint":
+			constraints = append(constraints, c.collectPrecisionConstraint(child))
 		}
 	}
 	return constraints
 }
 
-func (c *Collector) collectRangeConstraint(node *sitter.Node) types.RangeConstraint {
+func (c *Collector) collectRangeConstraint(node *sitter.Node) *types.RangeConstraint {
 	var start types.MathConstraintExpr
 	var comparator string
 	var end types.MathConstraintExpr
@@ -160,7 +69,7 @@ func (c *Collector) collectRangeConstraint(node *sitter.Node) types.RangeConstra
 	if start == nil && end == nil {
 		c.errors = append(c.errors, fmt.Errorf("range constraint must have a start or end"))
 	}
-	return types.RangeConstraint{
+	return &types.RangeConstraint{
 		Start:      start,
 		Comparator: comparator,
 		End:        end,
@@ -174,17 +83,17 @@ func (c *Collector) collectMathConstraintExpr(node *sitter.Node) types.MathConst
 	switch node.Kind() {
 	case "constraint_math_expr":
 		return c.collectMathConstraintExpr(node.Child(0))
-	case "integer":
+	case "integer_literal":
 		value, _ := strconv.ParseInt(c.nodeText(node), 10, 64)
 		return &types.MathConstraintLiteralExpr{
 			Value: value,
-			Type:  c.parseType(node.ChildByFieldName("type")),
+			Type:  types.PrimitiveType{Name: types.Int},
 		}
-	case "float":
+	case "float_literal":
 		value, _ := strconv.ParseFloat(c.nodeText(node), 64)
 		return &types.MathConstraintLiteralExpr{
 			Value: value,
-			Type:  c.parseType(node.ChildByFieldName("type")),
+			Type:  types.PrimitiveType{Name: types.Float},
 		}
 	case "identifier", "const_identifier":
 		return &types.MathConstraintIdentifierExpr{
@@ -230,5 +139,27 @@ func (c *Collector) collectMathConstraintBinaryOpExpr(node *sitter.Node) types.M
 		Left:     left,
 		Operator: operator,
 		Right:    right,
+	}
+}
+
+func (c *Collector) collectPrecisionConstraint(node *sitter.Node) *types.PrecisionConstraint {
+	valueNode := node.ChildByFieldName("value")
+	if valueNode == nil {
+		c.errors = append(c.errors, fmt.Errorf("precision constraint must have a value"))
+		return nil
+	}
+	roundingModeNode := node.ChildByFieldName("rounding_mode")
+	roundingMode := types.RoundingModeNearestEven
+	if roundingModeNode != nil {
+		roundingMode = types.RoundingMode(c.nodeText(roundingModeNode))
+		if roundingMode == "" {
+			c.errors = append(c.errors, fmt.Errorf("invalid rounding mode: %s", roundingMode))
+			return nil
+		}
+	}
+	value := c.collectMathConstraintExpr(valueNode)
+	return &types.PrecisionConstraint{
+		Value:        value,
+		RoundingMode: roundingMode,
 	}
 }

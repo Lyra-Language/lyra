@@ -37,7 +37,3 @@ func (p *Printer) printNode(cursor *sitter.TreeCursor) {
 		cursor.GotoParent()
 	}
 }
-
-func (p *Printer) nodeText(node *sitter.Node) string {
-	return string(p.source[node.StartByte():node.EndByte()])
-}
