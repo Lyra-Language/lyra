@@ -12,7 +12,7 @@ var intType = types.PrimitiveType{Name: "int"}
 
 func TestCollector_StructTypeDeclaration(t *testing.T) {
 	source := `
-		pub struct Point {
+		pub stack struct Point {
 			x: int,
 			y: int = 0,
 		}
@@ -46,6 +46,12 @@ func TestCollector_StructTypeDeclaration(t *testing.T) {
 		t.Fatalf("\"Point\" is not a TypeDeclStmt, got %T", namedNode)
 	}
 
+	if !structDecl.IsPublic {
+		t.Fatalf("\"Point\" is not public")
+	}
+	if structDecl.Type.(types.StructType).Allocation != types.Stack {
+		t.Fatalf("\"Point\" allocation is not stack")
+	}
 	expectedFields := map[string]types.StructField{
 		"x": {Name: "x", Type: intType, DefaultValue: nil},
 		"y": {Name: "y", Type: intType, DefaultValue: ast.IntegerLiteralExpr{Value: 0}},

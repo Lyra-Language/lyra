@@ -1,10 +1,12 @@
 ## To-Dos
-- handle i8, i16, f32, etc
+- Add sizeof() function to query type sizes
 
 ## Completed
 
 ### 01/31/26
 - collect Array literals
+- handle i8, i16, f32, etc
+- store allocation modifiers in AST
 
 ### 01/30/26
 - add step constrained type decl

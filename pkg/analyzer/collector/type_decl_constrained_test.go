@@ -5,7 +5,6 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/parser"
-	"github.com/Lyra-Language/lyra/pkg/printer"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -462,7 +461,7 @@ func TestCollector_StepConstrainedType(t *testing.T) {
 		t.Fatalf("Collector errors: %v", errors)
 	}
 
-	program.Print("")
+	// program.Print("")
 
 	if len(program.Statements) != 1 {
 		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
@@ -527,8 +526,8 @@ func TestCollector_PatternConstrainedType(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	p := printer.NewPrinter([]byte(source))
-	p.Print(tree.RootNode())
+	// p := printer.NewPrinter([]byte(source))
+	// p.Print(tree.RootNode())
 
 	collector := NewCollector([]byte(source))
 	program, table, errors := collector.Collect(tree.RootNode())
@@ -536,7 +535,7 @@ func TestCollector_PatternConstrainedType(t *testing.T) {
 		t.Fatalf("Collector errors: %v", errors)
 	}
 
-	program.Print("")
+	// program.Print("")
 
 	if len(program.Statements) != 1 {
 		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))

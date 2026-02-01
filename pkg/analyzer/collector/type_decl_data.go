@@ -9,12 +9,15 @@ import (
 func (c *Collector) collectDataTypeDeclaration(node *sitter.Node) *ast.TypeDeclStmt {
 	var name string
 	var genericParams []string
+	var allocation types.AllocationModifier
 	constructors := make(map[string]types.DataTypeConstructor)
 	isPublic := false
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
+		case "allocation_modifier":
+			allocation = c.collectAllocationModifier(child)
 		case "visibility":
 			isPublic = true
 		case "data_type_name":
@@ -34,6 +37,7 @@ func (c *Collector) collectDataTypeDeclaration(node *sitter.Node) *ast.TypeDeclS
 		Type: types.DataType{
 			Name:         name,
 			Constructors: constructors,
+			Allocation:   allocation,
 		},
 		IsPublic: isPublic,
 	}

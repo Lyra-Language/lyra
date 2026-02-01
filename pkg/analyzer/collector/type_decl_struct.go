@@ -11,10 +11,13 @@ func (c *Collector) collectStructTypeDeclaration(node *sitter.Node) *ast.TypeDec
 	var genericParams []string
 	fields := make(map[string]types.StructField)
 	isPublic := false
+	var allocation types.AllocationModifier
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
+		case "allocation_modifier":
+			allocation = c.collectAllocationModifier(child)
 		case "visibility":
 			isPublic = true
 		case "struct_name":
@@ -31,8 +34,9 @@ func (c *Collector) collectStructTypeDeclaration(node *sitter.Node) *ast.TypeDec
 		Name:          name,
 		GenericParams: genericParams,
 		Type: types.StructType{
-			Name:   name,
-			Fields: fields,
+			Name:       name,
+			Fields:     fields,
+			Allocation: allocation,
 		},
 		IsPublic: isPublic,
 	}

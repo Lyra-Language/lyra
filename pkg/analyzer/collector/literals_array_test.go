@@ -5,7 +5,6 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/parser"
-	"github.com/Lyra-Language/lyra/pkg/printer"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -17,13 +16,13 @@ func TestCollectSimpleStaticArrayLiteral(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	p := printer.NewPrinter([]byte(source))
-	p.Print(tree.RootNode())
+	// p := printer.NewPrinter([]byte(source))
+	// p.Print(tree.RootNode())
 
 	collector := NewCollector([]byte(source))
 	program, _, errors := collector.Collect(tree.RootNode())
 
-	program.Print("")
+	// program.Print("")
 
 	if len(errors) > 0 {
 		t.Fatalf("Expected no errors, got %v", errors)
@@ -48,20 +47,20 @@ func TestCollectSimpleStaticArrayLiteral(t *testing.T) {
 }
 
 func TestCollectSimpleDynamicArrayLiteral(t *testing.T) {
-	source := `let arr: []int = [1, 2, 3]`
+	source := `let arr: stack []int = [1, 2, 3]`
 
 	tree, err := parser.Parse(source)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	p := printer.NewPrinter([]byte(source))
-	p.Print(tree.RootNode())
+	// p := printer.NewPrinter([]byte(source))
+	// p.Print(tree.RootNode())
 
 	collector := NewCollector([]byte(source))
 	program, _, errors := collector.Collect(tree.RootNode())
 
-	program.Print("")
+	// program.Print("")
 
 	if len(errors) > 0 {
 		t.Fatalf("Expected no errors, got %v", errors)
@@ -91,6 +90,10 @@ func TestCollectSimpleDynamicArrayLiteral(t *testing.T) {
 	if !types.TypesEqual(stmt.Type, types.DynamicArrayType{ElementType: intType}) {
 		t.Fatalf("Expected Type to be DynamicArray<int>, got %s", stmt.Type.GetName())
 	}
+
+	if stmt.Type.(types.DynamicArrayType).Allocation != types.Stack {
+		t.Fatalf("Expected Allocation to be Stack, got %s", stmt.Type.(types.DynamicArrayType).Allocation)
+	}
 }
 
 func TestCollectArrayRepeatInitialization(t *testing.T) {
@@ -101,13 +104,13 @@ func TestCollectArrayRepeatInitialization(t *testing.T) {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	p := printer.NewPrinter([]byte(source))
-	p.Print(tree.RootNode())
+	// p := printer.NewPrinter([]byte(source))
+	// p.Print(tree.RootNode())
 
 	collector := NewCollector([]byte(source))
 	program, _, errors := collector.Collect(tree.RootNode())
 
-	program.Print("")
+	// program.Print("")
 
 	if len(errors) > 0 {
 		t.Fatalf("Expected no errors, got %v", errors)
@@ -147,13 +150,13 @@ func TestCollectArrayRepeatInitializationWithCompileTimeConstantCount(t *testing
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	p := printer.NewPrinter([]byte(source))
-	p.Print(tree.RootNode())
+	// p := printer.NewPrinter([]byte(source))
+	// p.Print(tree.RootNode())
 
 	collector := NewCollector([]byte(source))
 	program, _, errors := collector.Collect(tree.RootNode())
 
-	program.Print("")
+	// program.Print("")
 
 	if len(errors) > 0 {
 		t.Fatalf("Expected no errors, got %v", errors)

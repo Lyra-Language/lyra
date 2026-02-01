@@ -5,6 +5,7 @@ import "fmt"
 type StaticArrayType struct {
 	ElementType Type
 	Size        int
+	Allocation  AllocationModifier
 }
 
 func (StaticArrayType) typeNode() {}
@@ -31,6 +32,7 @@ func (a StaticArrayType) Print(indent string) {
 
 type DynamicArrayType struct {
 	ElementType Type
+	Allocation  AllocationModifier
 }
 
 func (DynamicArrayType) typeNode() {}

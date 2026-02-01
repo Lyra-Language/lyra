@@ -6,7 +6,8 @@ import (
 )
 
 type TupleType struct {
-	Elements []Type
+	Elements   []Type
+	Allocation AllocationModifier
 }
 
 func (TupleType) typeNode() {}

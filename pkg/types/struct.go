@@ -3,8 +3,10 @@ package types
 import "fmt"
 
 type StructType struct {
-	Name   string // uppercase letter optionally followed by any number of letters or numbers
-	Fields map[string]StructField
+	Name          string // uppercase letter optionally followed by any number of letters or numbers
+	Fields        map[string]StructField
+	GenericParams []GenericType
+	Allocation    AllocationModifier
 }
 
 func (StructType) typeNode() {}
@@ -19,9 +21,17 @@ func (s StructType) GetName() string {
 
 func (s StructType) Print(indent string) {
 	fmt.Printf("%sStructType(%s) {\n", indent, s.Name)
-	for _, field := range s.Fields {
-		field.Print(indent + "  ")
+	if s.Allocation != "" {
+		fmt.Printf("%s  Allocation: %s\n", indent, s.Allocation)
 	}
+	if len(s.GenericParams) > 0 {
+		fmt.Printf("%s  GenericParams: %s\n", indent, s.GenericParams)
+	}
+	fmt.Printf("%s  Fields: {\n", indent)
+	for _, field := range s.Fields {
+		field.Print(indent + "    ")
+	}
+	fmt.Printf("%s}\n", indent+"  ")
 	fmt.Printf("%s}\n", indent)
 }
 

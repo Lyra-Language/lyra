@@ -10,7 +10,7 @@ import (
 
 func TestCollector_BasicDataType(t *testing.T) {
 	source := `
-	data ColorName = Red | Green | Blue
+	pub stack data ColorName = Red | Green | Blue
 	`
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -64,11 +64,18 @@ func TestCollector_BasicDataType(t *testing.T) {
 	if _, ok := dataTypeDecl.Type.(types.DataType).Constructors["Blue"]; !ok {
 		t.Fatalf("\"ColorName\" should have constructor \"Blue\". Got %v", dataTypeDecl.Type.(types.DataType).Constructors)
 	}
+
+	if !dataTypeDecl.IsPublic {
+		t.Fatalf("\"ColorName\" is not public")
+	}
+	if dataTypeDecl.Type.(types.DataType).Allocation != types.Stack {
+		t.Fatalf("\"ColorName\" allocation is not stack")
+	}
 }
 
 func TestCollector_DataTypeWithGenericParameter(t *testing.T) {
 	source := `
-	data Maybe<t> = Nil | Some t
+	pub heap data Maybe<t> = Nil | Some t
 	`
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -131,6 +138,12 @@ func TestCollector_DataTypeWithGenericParameter(t *testing.T) {
 
 	if len(dataTypeDecl.Type.(types.DataType).Constructors["Some"].Fields) != 0 {
 		t.Fatalf("\"Maybe\" should have no fields in constructor \"Some\". Got %d", len(dataTypeDecl.Type.(types.DataType).Constructors["Some"].Fields))
+	}
+	if !dataTypeDecl.IsPublic {
+		t.Fatalf("\"Maybe\" is not public")
+	}
+	if dataTypeDecl.Type.(types.DataType).Allocation != types.Heap {
+		t.Fatalf("\"Maybe\" allocation is not heap")
 	}
 }
 

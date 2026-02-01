@@ -5,6 +5,7 @@ import "fmt"
 type DataType struct {
 	Name         string // uppercase letter optionally followed by any number of letters or numbers
 	Constructors map[string]DataTypeConstructor
+	Allocation   AllocationModifier
 }
 
 func (DataType) typeNode() {}

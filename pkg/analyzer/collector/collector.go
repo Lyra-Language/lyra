@@ -158,7 +158,12 @@ func (c *Collector) collectFunctionSignature(node *sitter.Node) (name string, ge
 	return name, genericParams, sig, isPure, isAsync
 }
 
-func (c *Collector) parseType(node *sitter.Node) types.Type {
+// allocation is only used for array types
+func (c *Collector) parseType(node *sitter.Node, allocation ...types.AllocationModifier) types.Type {
+	var alloc types.AllocationModifier
+	if len(allocation) > 0 {
+		alloc = allocation[0]
+	}
 	if node == nil {
 		return nil
 	}
@@ -180,15 +185,17 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 	case "generic_type":
 		return types.GenericType{Name: c.nodeText(node)}
 	case "array_type":
-		return c.parseArrayType(node)
+		return c.parseArrayType(node, alloc)
 	case "constrained_type":
 		return c.parseConstrainedType(node)
+	case "allocated_type":
+		return c.parseAllocatedType(node)
 	}
 	c.errors = append(c.errors, fmt.Errorf("parseType: unknown type node kind: %s", node.Kind()))
 	return nil
 }
 
-func (c *Collector) parseArrayType(node *sitter.Node) types.Type {
+func (c *Collector) parseArrayType(node *sitter.Node, allocation types.AllocationModifier) types.Type {
 	typeNode := node.ChildByFieldName("element_type")
 	if typeNode == nil {
 		c.errors = append(c.errors, fmt.Errorf("parseArrayType: element type node is nil"))
@@ -209,10 +216,10 @@ func (c *Collector) parseArrayType(node *sitter.Node) types.Type {
 			c.errors = append(c.errors, fmt.Errorf("parseArrayType: invalid size: %s", sizeString))
 			return nil
 		}
-		return types.StaticArrayType{ElementType: elementType, Size: int(sizeInt)}
+		return types.StaticArrayType{ElementType: elementType, Size: int(sizeInt), Allocation: allocation}
 	}
 
-	return types.DynamicArrayType{ElementType: elementType}
+	return types.DynamicArrayType{ElementType: elementType, Allocation: allocation}
 }
 
 func (c *Collector) parseConstrainedType(node *sitter.Node) types.Type {
@@ -283,4 +290,14 @@ func (c *Collector) collectPattern(patternNode *sitter.Node) ast.Pattern {
 	}
 	c.errors = append(c.errors, fmt.Errorf("collectPattern: unknown pattern node kind: %s", patternNode.Kind()))
 	return nil
+}
+
+func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {
+	allocation := c.collectAllocationModifier(node.ChildByFieldName("allocation"))
+	typeNode := node.ChildByFieldName("type")
+	if typeNode == nil {
+		c.errors = append(c.errors, fmt.Errorf("parseAllocatedType: type node is nil"))
+		return nil
+	}
+	return c.parseType(typeNode, allocation)
 }

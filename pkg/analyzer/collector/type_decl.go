@@ -2,6 +2,7 @@ package collector
 
 import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -19,4 +20,8 @@ func (c *Collector) collectTypeDeclaration(node *sitter.Node) *ast.TypeDeclStmt 
 		}
 	}
 	return nil
+}
+
+func (c *Collector) collectAllocationModifier(node *sitter.Node) types.AllocationModifier {
+	return types.AllocationModifier(c.nodeText(node))
 }

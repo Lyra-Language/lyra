@@ -18,3 +18,11 @@ func (UnresolvedType) typeNode()             {}
 func (u UnresolvedType) IsNumericType() bool { return false }
 func (u UnresolvedType) GetName() string     { return u.Name }
 func (u UnresolvedType) Print(indent string) { fmt.Printf("%s%s\n", indent, u.Name) }
+
+type AllocationModifier string
+
+const (
+	Stack  AllocationModifier = "stack"
+	Heap   AllocationModifier = "heap"
+	Shared AllocationModifier = "shared"
+)

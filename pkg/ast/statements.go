@@ -19,15 +19,16 @@ func (t *TypeDeclStmt) GetName() string { return t.Name }
 
 func (t *TypeDeclStmt) Print(indent string) {
 	fmt.Printf("%sTypeDeclStmt(%s) {\n", indent, t.Name)
+	if t.IsPublic {
+		fmt.Printf("%s  IsPublic: true\n", indent)
+	}
 	if t.GenericParams != nil {
 		fmt.Printf("%s  GenericParams: %v\n", indent, t.GenericParams)
 	}
 	if t.Type != nil {
-		fmt.Printf("%s  Type:\n", indent)
+		fmt.Printf("%s  Type: {\n", indent)
 		t.Type.Print(indent + "    ")
-	}
-	if t.IsPublic {
-		fmt.Printf("%s  IsPublic: true\n", indent)
+		fmt.Printf("%s  }\n", indent)
 	}
 	fmt.Printf("%s}\n", indent)
 }
