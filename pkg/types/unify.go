@@ -11,10 +11,18 @@ func TypesEqual(a, b Type) bool {
 		if bt, ok := b.(GenericType); ok {
 			return at.Name == bt.Name
 		}
-	case ArrayType:
-		if bt, ok := b.(ArrayType); ok {
+	case StaticArrayType:
+		if bt, ok := b.(StaticArrayType); ok {
+			if at.Size != bt.Size {
+				return false
+			}
 			return TypesEqual(at.ElementType, bt.ElementType)
 		}
+	case DynamicArrayType:
+		if bt, ok := b.(DynamicArrayType); ok {
+			return TypesEqual(at.ElementType, bt.ElementType)
+		}
+		return false
 	case FunctionType:
 		if bt, ok := b.(FunctionType); ok {
 			if len(at.ParameterTypes) != len(bt.ParameterTypes) {

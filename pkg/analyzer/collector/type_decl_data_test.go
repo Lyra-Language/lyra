@@ -16,8 +16,8 @@ func TestCollector_BasicDataType(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
-	// printer := printer.NewPrinter([]byte(source))
-	// printer.Print(tree.RootNode())
+	// p := printer.NewPrinter([]byte(source))
+	// p.Print(tree.RootNode())
 
 	collector := NewCollector([]byte(source))
 	program, table, errors := collector.Collect(tree.RootNode())
@@ -224,8 +224,8 @@ func TestCollector_ComplexDataType(t *testing.T) {
 	data CSSColor =
 		| ColorName CSSColorName
 		| Hex HexStr
-		| RGB { r: Int8, g: Int8, b: Int8 }
-		| HSL { hue: Hue, sat: Float, light: Float, alpha: Alpha }
+		| RGB { r: i8, g: i8, b: i8 }
+		| HSL { hue: Hue, sat: float, light: float, alpha: Alpha }
 
 	data Hue = HueDeg Angle | HueRadian Radian | HueTurn Turn
 	`

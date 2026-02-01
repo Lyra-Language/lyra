@@ -2,24 +2,54 @@ package types
 
 import "fmt"
 
-type ArrayType struct {
+type StaticArrayType struct {
 	ElementType Type
+	Size        int
 }
 
-func (ArrayType) typeNode() {}
+func (StaticArrayType) typeNode() {}
 
-func (a ArrayType) IsNumericType() bool {
+func (a StaticArrayType) IsNumericType() bool {
 	return false
 }
 
-func (a ArrayType) GetName() string {
+func (a StaticArrayType) GetName() string {
+	elementTypeName := "?"
+	if a.ElementType != nil {
+		elementTypeName = a.ElementType.GetName()
+	}
+	return fmt.Sprintf("StaticArray<%s, %d>", elementTypeName, a.Size)
+}
+
+func (a StaticArrayType) Print(indent string) {
+	fmt.Printf("%sStaticArrayType(%s)\n", indent, a.GetName())
+	fmt.Printf("%s  ElementType: {\n", indent)
+	fmt.Printf("%s  Size: %d\n", indent, a.Size)
+	a.ElementType.Print(indent + "    ")
+	fmt.Printf("%s  }\n", indent)
+}
+
+type DynamicArrayType struct {
+	ElementType Type
+}
+
+func (DynamicArrayType) typeNode() {}
+
+func (a DynamicArrayType) IsNumericType() bool {
+	return false
+}
+
+func (a DynamicArrayType) GetName() string {
 	elementName := "?"
 	if a.ElementType != nil {
 		elementName = a.ElementType.GetName()
 	}
-	return fmt.Sprintf("Array<%s>", elementName)
+	return fmt.Sprintf("DynamicArray<%s>", elementName)
 }
 
-func (a ArrayType) Print(indent string) {
-	fmt.Printf("%sArrayType(%s)\n", indent, a.GetName())
+func (a DynamicArrayType) Print(indent string) {
+	fmt.Printf("%sDynamicArrayType(%s)\n", indent, a.GetName())
+	fmt.Printf("%s  ElementType: {\n", indent)
+	a.ElementType.Print(indent + "    ")
+	fmt.Printf("%s  }\n", indent)
 }

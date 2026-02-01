@@ -27,7 +27,7 @@ func (d DataType) Print(indent string) {
 // Data constructor can have different shapes
 type DataTypeConstructor struct {
 	Name   string
-	Params []Type                 // for Simple(Int) style
+	Params []Type                 // for Simple(int) style
 	Fields map[string]StructField // for Node { left: Tree, value: t } style
 }
 

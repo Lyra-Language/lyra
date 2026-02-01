@@ -27,7 +27,8 @@ func (e *ExprBase) Print(indent string)   {}
 
 type IdentifierExpr struct {
 	ExprBase
-	Name string
+	Name    string
+	IsConst bool
 }
 
 func (i *IdentifierExpr) GetName() string {
@@ -39,7 +40,7 @@ func (i *IdentifierExpr) GetType() types.Type {
 }
 
 func (i *IdentifierExpr) Print(indent string) {
-	fmt.Printf("%sIdentifierExpr(%s)\n", indent, i.Name)
+	fmt.Printf("%sIdentifierExpr(%s, IsConst: %t)\n", indent, i.Name, i.IsConst)
 }
 
 type GuardExpr struct {

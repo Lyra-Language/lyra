@@ -1,0 +1,48 @@
+package ast
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/Lyra-Language/lyra/pkg/types"
+)
+
+type ArrayLiteralExpr struct {
+	ExprBase
+	Elements []Expression
+}
+
+func (a *ArrayLiteralExpr) exprNode() {}
+
+func (a *ArrayLiteralExpr) GetType() types.Type {
+	return a.ExprBase.Type // Returns DynamicArrayType or StaticArrayType
+}
+
+func (a *ArrayLiteralExpr) Print(indent string) {
+	fmt.Printf("%sArrayLiteralExpr(%s) {\n", indent, a.GetName())
+	for _, element := range a.Elements {
+		element.Print(indent + "    ")
+	}
+	fmt.Printf("%s}\n", indent)
+}
+
+func (a *ArrayLiteralExpr) GetName() string {
+	elementNames := make([]string, len(a.Elements))
+	for i, element := range a.Elements {
+		elementNames[i] = element.GetName()
+	}
+	return fmt.Sprintf("array_literal(%s)", strings.Join(elementNames, ", "))
+	// return "array_literal"
+}
+
+func (a *ArrayLiteralExpr) GetElementType() types.Type {
+	if arrType, ok := a.ExprBase.Type.(types.DynamicArrayType); ok {
+		return arrType.ElementType
+	}
+
+	if arrType, ok := a.ExprBase.Type.(types.StaticArrayType); ok {
+		return arrType.ElementType
+	}
+
+	return nil
+}

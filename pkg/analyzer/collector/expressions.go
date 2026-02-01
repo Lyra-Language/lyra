@@ -53,6 +53,12 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 			Value: value,
 		}
 
+	case "array_literal":
+		return c.collectArrayLiteralExpr(node)
+
+	case "array_repeat_init":
+		return c.collectArrayRepeatInitExpr(node)
+
 	case "boolean_literal":
 		value := c.nodeText(node) == "true"
 		return &ast.BooleanLiteralExpr{
@@ -67,6 +73,14 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 		return &ast.IdentifierExpr{
 			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 			Name:     c.nodeText(node),
+			IsConst:  false,
+		}
+
+	case "const_identifier":
+		return &ast.IdentifierExpr{
+			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+			Name:     c.nodeText(node),
+			IsConst:  true,
 		}
 
 	case "boolean_expr":
@@ -131,7 +145,7 @@ func (c *Collector) collectIntegerLiteralExpr(node *sitter.Node) *ast.IntegerLit
 	return &ast.IntegerLiteralExpr{
 		ExprBase: ast.ExprBase{
 			AstBase: ast.AstBase{Location: loc},
-			Type:    types.PrimitiveType{Name: "Int"},
+			Type:    types.PrimitiveType{Name: "int"},
 		},
 		Value: value,
 		Base:  base,
@@ -150,9 +164,37 @@ func (c *Collector) collectFloatLiteralExpr(node *sitter.Node) *ast.FloatLiteral
 	return &ast.FloatLiteralExpr{
 		ExprBase: ast.ExprBase{
 			AstBase: ast.AstBase{Location: loc},
-			Type:    types.PrimitiveType{Name: "Float"},
+			Type:    types.PrimitiveType{Name: "float"},
 		},
 		Value: value,
+	}
+}
+
+func (c *Collector) collectArrayLiteralExpr(node *sitter.Node) *ast.ArrayLiteralExpr {
+	elements := make([]ast.Expression, 0)
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.IsNamed() {
+			elements = append(elements, c.collectExpression(child))
+		}
+	}
+	return &ast.ArrayLiteralExpr{
+		ExprBase: ast.ExprBase{
+			AstBase: ast.AstBase{Location: c.nodeLocation(node)},
+			Type:    nil, // Type will be resolved during type checking
+		},
+		Elements: elements,
+	}
+}
+
+func (c *Collector) collectArrayRepeatInitExpr(node *sitter.Node) *ast.ArrayRepeatExpr {
+	return &ast.ArrayRepeatExpr{
+		ExprBase: ast.ExprBase{
+			AstBase: ast.AstBase{Location: c.nodeLocation(node)},
+			Type:    nil, // Type will be resolved during type checking
+		},
+		Value: c.collectExpression(node.ChildByFieldName("value")),
+		Count: c.collectExpression(node.ChildByFieldName("count")),
 	}
 }
 

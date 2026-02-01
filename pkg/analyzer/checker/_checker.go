@@ -179,15 +179,15 @@ func (c *Checker) CheckExpression(node *sitter.Node) types.Type {
 	switch node.Kind() {
 	// Literals
 	case "integer_literal":
-		return types.PrimitiveType{Name: "Int"}
+		return types.PrimitiveType{Name: "int"}
 	case "float_literal":
-		return types.PrimitiveType{Name: "Float"}
+		return types.PrimitiveType{Name: "float"}
 	case "string_literal", "raw_string_literal":
-		return types.PrimitiveType{Name: "Str"}
+		return types.PrimitiveType{Name: "string"}
 	case "boolean_literal":
-		return types.PrimitiveType{Name: "Bool"}
+		return types.PrimitiveType{Name: "bool"}
 	case "char_literal":
-		return types.PrimitiveType{Name: "Char"}
+		return types.PrimitiveType{Name: "char"}
 
 	// Identifiers
 	case "identifier":
@@ -380,7 +380,7 @@ func (c *Checker) checkBinaryExpr(node *sitter.Node) types.Type {
 		return leftType
 
 	case "<=>": // spaceship operator
-		return types.PrimitiveType{Name: "Int"}
+		return types.PrimitiveType{Name: "int"}
 
 	case "++": // array concatenation
 		// check if leftType and rightType are arrays
@@ -566,10 +566,10 @@ func (c *Checker) checkIndexExpr(node *sitter.Node) types.Type {
 
 	switch t := objType.(type) {
 	case types.ArrayType:
-		// Index should be Int
-		intType := types.PrimitiveType{Name: "Int"}
+		// Index should be int
+		intType := types.PrimitiveType{Name: "int"}
 		if indexType != nil && !types.TypesEqual(intType, indexType) {
-			c.typeError(indexNode, intType, indexType, "array index must be Int")
+			c.typeError(indexNode, intType, indexType, "array index must be int")
 		}
 		return t.ElementType
 	case types.MapType:

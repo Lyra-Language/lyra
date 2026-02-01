@@ -9,7 +9,7 @@ import (
 )
 
 func TestCollector_VariableDeclaration(t *testing.T) {
-	source := `let the_answer: Int = 42`
+	source := `let the_answer: int = 42`
 
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -40,7 +40,7 @@ func TestCollector_VariableDeclaration(t *testing.T) {
 	}
 
 	if !types.TypesEqual(varDecl.Type, intType) {
-		t.Fatalf("\"the_answer\" type is not Int. Got %v", varDecl.Type)
+		t.Fatalf("\"the_answer\" type is not int. Got %v", varDecl.Type)
 	}
 
 	// Note: Init expression type is not set during collection, only during type checking

@@ -8,6 +8,7 @@ The AST nodes serve as the source of truth - the symbol table just indexes them.
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
@@ -188,13 +189,30 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 }
 
 func (c *Collector) parseArrayType(node *sitter.Node) types.Type {
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.IsNamed() {
-			return types.ArrayType{ElementType: c.parseType(child)}
-		}
+	typeNode := node.ChildByFieldName("element_type")
+	if typeNode == nil {
+		c.errors = append(c.errors, fmt.Errorf("parseArrayType: element type node is nil"))
+		return nil
 	}
-	return types.ArrayType{}
+
+	elementType := c.parseType(typeNode)
+	if elementType == nil {
+		c.errors = append(c.errors, fmt.Errorf("parseArrayType: element type is nil"))
+		return nil
+	}
+
+	sizeNode := node.ChildByFieldName("size")
+	if sizeNode != nil {
+		sizeString := c.nodeText(sizeNode)
+		sizeInt, err := strconv.ParseInt(sizeString, 10, 64)
+		if err != nil {
+			c.errors = append(c.errors, fmt.Errorf("parseArrayType: invalid size: %s", sizeString))
+			return nil
+		}
+		return types.StaticArrayType{ElementType: elementType, Size: int(sizeInt)}
+	}
+
+	return types.DynamicArrayType{ElementType: elementType}
 }
 
 func (c *Collector) parseConstrainedType(node *sitter.Node) types.Type {

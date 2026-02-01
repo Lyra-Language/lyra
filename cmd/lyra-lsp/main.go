@@ -10,9 +10,9 @@ import (
 
 func main() {
 	source := `
-def sum: (Int, Int) -> Int = (a, b) => a + b
-let x: Float = sum(1, "2") // should produce two type errors
-def say_hello: (Str) -> Str = (name) => 42 // should produce a type error (wrong return type)`
+def sum: (int, int) -> int = (a, b) => a + b
+let x: float = sum(1, "2") // should produce two type errors
+def say_hello: (string) -> string = (name) => 42 // should produce a type error (wrong return type)`
 
 	tree, err := parser.Parse(source)
 	if err != nil {

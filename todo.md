@@ -1,8 +1,10 @@
 ## To-Dos
-- collect Array literals
-- handle Int8, Int16, Float32, etc
+- handle i8, i16, f32, etc
 
 ## Completed
+
+### 01/31/26
+- collect Array literals
 
 ### 01/30/26
 - add step constrained type decl

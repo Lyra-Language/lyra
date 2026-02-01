@@ -7,7 +7,7 @@ import (
 )
 
 func TestChecker(t *testing.T) {
-	source := `let the_answer: Int = 42`
+	source := `let the_answer: int = 42`
 
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -32,7 +32,7 @@ func TestChecker(t *testing.T) {
 }
 
 func TestChecker_TypeErrors(t *testing.T) {
-	source := `let the_answer: Int = "42"`
+	source := `let the_answer: int = "42"`
 
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -53,7 +53,7 @@ func TestChecker_TypeErrors(t *testing.T) {
 	if len(typeErrors) != 1 {
 		t.Fatalf("Checker should have 1 type error. Got %d", len(typeErrors))
 	}
-	expectedMessage := "cannot assign Str to variable the_answer of type Int"
+	expectedMessage := "cannot assign string to variable the_answer of type int"
 	if typeErrors[0].Message != expectedMessage {
 		t.Fatalf("Checker type error message is incorrect. Expected \"%s\". Got \"%s\"", expectedMessage, typeErrors[0].Message)
 	}

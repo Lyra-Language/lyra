@@ -5,12 +5,13 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/parser"
+	"github.com/Lyra-Language/lyra/pkg/printer"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 func TestCollector_BasicConstrainedTypeWithoutConstraints(t *testing.T) {
 	source := `
-	type Angle = Float
+	type Angle = float
 	`
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -45,8 +46,8 @@ func TestCollector_BasicConstrainedTypeWithoutConstraints(t *testing.T) {
 	if len(angleDecl.Type.(*types.ConstrainedType).Constraints) != 0 {
 		t.Fatalf("\"Angle\" should have no constraints. Got %d", len(angleDecl.Type.(*types.ConstrainedType).Constraints))
 	}
-	if !types.TypesEqual(angleDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "Float"}) {
-		t.Fatalf("\"Angle\" should have type \"Float\". Got %v", angleDecl.Type.(*types.ConstrainedType).Type)
+	if !types.TypesEqual(angleDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "float"}) {
+		t.Fatalf("\"Angle\" should have type \"float\". Got %v", angleDecl.Type.(*types.ConstrainedType).Type)
 	}
 }
 
@@ -142,7 +143,7 @@ func TestCollector_ConstrainedTypeWithLiteralUnionConstraintWithNumbers(t *testi
 		t.Fatalf("\"Status\" should have 1 constraint. Got %d", len(statusDecl.Type.(*types.ConstrainedType).Constraints))
 	}
 	if !types.TypesEqual(statusDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: types.Int}) {
-		t.Fatalf("\"Status\" should have type \"Int\". Got %v", statusDecl.Type.(*types.ConstrainedType).Type)
+		t.Fatalf("\"Status\" should have type \"int\". Got %v", statusDecl.Type.(*types.ConstrainedType).Type)
 	}
 	literalUnionConstraint, ok := statusDecl.Type.(*types.ConstrainedType).Constraints[0].(*types.LiteralUnionConstraint)
 	if !ok {
@@ -164,7 +165,7 @@ func TestCollector_ConstrainedTypeWithLiteralUnionConstraintWithNumbers(t *testi
 
 func TestCollector_SimpleRangeConstrainedType(t *testing.T) {
 	source := `
-	type Angle = Float where range(0..<360)
+	type Angle = float where range(0..<360)
 	`
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -199,8 +200,8 @@ func TestCollector_SimpleRangeConstrainedType(t *testing.T) {
 	if len(angleDecl.Type.(*types.ConstrainedType).Constraints) != 1 {
 		t.Fatalf("\"Angle\" should have 1 constraint. Got %d", len(angleDecl.Type.(*types.ConstrainedType).Constraints))
 	}
-	if !types.TypesEqual(angleDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "Float"}) {
-		t.Fatalf("\"Angle\" should have type \"Float\". Got %v", angleDecl.Type.(*types.ConstrainedType).Type)
+	if !types.TypesEqual(angleDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "float"}) {
+		t.Fatalf("\"Angle\" should have type \"float\". Got %v", angleDecl.Type.(*types.ConstrainedType).Type)
 	}
 	rangeConstraint, ok := angleDecl.Type.(*types.ConstrainedType).Constraints[0].(*types.RangeConstraint)
 	if !ok {
@@ -219,7 +220,7 @@ func TestCollector_SimpleRangeConstrainedType(t *testing.T) {
 
 func TestCollector_RangeConstrainedTypeWithConstantMultiplication(t *testing.T) {
 	source := `
-	type Radian = Float where range(0..<PI*2)
+	type Radian = float where range(0..<PI*2)
 	`
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -254,8 +255,8 @@ func TestCollector_RangeConstrainedTypeWithConstantMultiplication(t *testing.T) 
 	if len(radianDecl.Type.(*types.ConstrainedType).Constraints) != 1 {
 		t.Fatalf("\"Radian\" should have 1 constraint. Got %d", len(radianDecl.Type.(*types.ConstrainedType).Constraints))
 	}
-	if !types.TypesEqual(radianDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "Float"}) {
-		t.Fatalf("\"Radian\" should have type \"Float\". Got %v", radianDecl.Type.(*types.ConstrainedType).Type)
+	if !types.TypesEqual(radianDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "float"}) {
+		t.Fatalf("\"Radian\" should have type \"float\". Got %v", radianDecl.Type.(*types.ConstrainedType).Type)
 	}
 	rangeConstraint, ok := radianDecl.Type.(*types.ConstrainedType).Constraints[0].(*types.RangeConstraint)
 	if !ok {
@@ -288,7 +289,7 @@ func TestCollector_RangeConstrainedTypeWithConstantMultiplication(t *testing.T) 
 func TestCollector_RangeConstrainedTypeWithVariableAdditionAndSubtraction(t *testing.T) {
 	source := `
 	let pi = 3.14159
-	type Radian = Float where range(pi-3..<pi+3)
+	type Radian = float where range(pi-3..<pi+3)
 	`
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -336,8 +337,8 @@ func TestCollector_RangeConstrainedTypeWithVariableAdditionAndSubtraction(t *tes
 	if len(radianDecl.Type.(*types.ConstrainedType).Constraints) != 1 {
 		t.Fatalf("\"Radian\" should have 1 constraint. Got %d", len(radianDecl.Type.(*types.ConstrainedType).Constraints))
 	}
-	if !types.TypesEqual(radianDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "Float"}) {
-		t.Fatalf("\"Radian\" should have type \"Float\". Got %v", radianDecl.Type.(*types.ConstrainedType).Type)
+	if !types.TypesEqual(radianDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "float"}) {
+		t.Fatalf("\"Radian\" should have type \"float\". Got %v", radianDecl.Type.(*types.ConstrainedType).Type)
 	}
 	rangeConstraint, ok := radianDecl.Type.(*types.ConstrainedType).Constraints[0].(*types.RangeConstraint)
 	if !ok {
@@ -378,7 +379,7 @@ func TestCollector_RangeConstrainedTypeWithVariableAdditionAndSubtraction(t *tes
 
 func TestCollector_MultipleConstraints(t *testing.T) {
 	source := `
-	type Radian = Float where range(0..<PI*2), precision(0.01)
+	type Radian = float where range(0..<PI*2), precision(0.01)
 	`
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -413,8 +414,8 @@ func TestCollector_MultipleConstraints(t *testing.T) {
 	if len(radianDecl.Type.(*types.ConstrainedType).Constraints) != 2 {
 		t.Fatalf("\"Radian\" should have 2 constraints. Got %d", len(radianDecl.Type.(*types.ConstrainedType).Constraints))
 	}
-	if !types.TypesEqual(radianDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "Float"}) {
-		t.Fatalf("\"Radian\" should have type \"Float\". Got %v", radianDecl.Type.(*types.ConstrainedType).Type)
+	if !types.TypesEqual(radianDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "float"}) {
+		t.Fatalf("\"Radian\" should have type \"float\". Got %v", radianDecl.Type.(*types.ConstrainedType).Type)
 	}
 	rangeConstraint, ok := radianDecl.Type.(*types.ConstrainedType).Constraints[0].(*types.RangeConstraint)
 	if !ok {
@@ -449,7 +450,7 @@ func TestCollector_MultipleConstraints(t *testing.T) {
 
 func TestCollector_StepConstrainedType(t *testing.T) {
 	source := `
-	type CompassHeading = Int where range(0..<360), step(15)
+	type CompassHeading = int where range(0..<360), step(15)
 	`
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -480,8 +481,8 @@ func TestCollector_StepConstrainedType(t *testing.T) {
 	if len(compassHeadingDecl.Type.(*types.ConstrainedType).Constraints) != 2 {
 		t.Fatalf("\"CompassHeading\" should have 2 constraints. Got %d", len(compassHeadingDecl.Type.(*types.ConstrainedType).Constraints))
 	}
-	if !types.TypesEqual(compassHeadingDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "Int"}) {
-		t.Fatalf("\"CompassHeading\" should have type \"Int\". Got %v", compassHeadingDecl.Type.(*types.ConstrainedType).Type)
+	if !types.TypesEqual(compassHeadingDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: "int"}) {
+		t.Fatalf("\"CompassHeading\" should have type \"int\". Got %v", compassHeadingDecl.Type.(*types.ConstrainedType).Type)
 	}
 	rangeConstraint, ok := compassHeadingDecl.Type.(*types.ConstrainedType).Constraints[0].(*types.RangeConstraint)
 	if !ok {
@@ -510,7 +511,7 @@ func TestCollector_StepConstrainedType(t *testing.T) {
 		t.Fatalf("\"CompassHeading\" should have value 15. Got %s", stepConstraint.Value.GetName())
 	}
 	if !types.TypesEqual(stepConstraint.Value.(*types.MathConstraintLiteralExpr).Type, types.PrimitiveType{Name: types.Int}) {
-		t.Fatalf("\"CompassHeading\" should have value type Int. Got %v", stepConstraint.Value.(*types.MathConstraintLiteralExpr).Type)
+		t.Fatalf("\"CompassHeading\" should have value type int. Got %v", stepConstraint.Value.(*types.MathConstraintLiteralExpr).Type)
 	}
 	if stepConstraint.Value.(*types.MathConstraintLiteralExpr).Value != int64(15) {
 		t.Fatalf("\"CompassHeading\" should have value 15. Got %v", stepConstraint.Value.(*types.MathConstraintLiteralExpr).Value)
@@ -519,15 +520,15 @@ func TestCollector_StepConstrainedType(t *testing.T) {
 
 func TestCollector_PatternConstrainedType(t *testing.T) {
 	source := `
-	type HexStr = Str where pattern(r/^#(?:[0-9a-fA-F]{3}){1,2}$/)
+	type HexStr = string where pattern(r/^#(?:[0-9a-fA-F]{3}){1,2}$/)
 	`
 	tree, err := parser.Parse(source)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
 
-	// p := printer.NewPrinter([]byte(source))
-	// p.Print(tree.RootNode())
+	p := printer.NewPrinter([]byte(source))
+	p.Print(tree.RootNode())
 
 	collector := NewCollector([]byte(source))
 	program, table, errors := collector.Collect(tree.RootNode())
@@ -535,7 +536,7 @@ func TestCollector_PatternConstrainedType(t *testing.T) {
 		t.Fatalf("Collector errors: %v", errors)
 	}
 
-	// program.Print("")
+	program.Print("")
 
 	if len(program.Statements) != 1 {
 		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))

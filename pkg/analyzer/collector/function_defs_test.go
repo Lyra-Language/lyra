@@ -9,7 +9,7 @@ import (
 )
 
 func TestCollector_SimpleFunctionDefinition(t *testing.T) {
-	source := `pub def sum<Int>: (Int, Int) -> Int = (a, b) => a + b`
+	source := `pub def sum<int>: (int, int) -> int = (a, b) => a + b`
 
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -43,13 +43,13 @@ func TestCollector_SimpleFunctionDefinition(t *testing.T) {
 	}
 
 	if !types.TypesEqual(funcDef.Signature.ParameterTypes[0].Type, intType) {
-		t.Fatalf("\"sum\" first parameter type is not Int. Got %v", funcDef.Signature.ParameterTypes[0].Type)
+		t.Fatalf("\"sum\" first parameter type is not int. Got %v", funcDef.Signature.ParameterTypes[0].Type)
 	}
 	if !types.TypesEqual(funcDef.Signature.ParameterTypes[1].Type, intType) {
-		t.Fatalf("\"sum\" second parameter type is not Int. Got %v", funcDef.Signature.ParameterTypes[1].Type)
+		t.Fatalf("\"sum\" second parameter type is not int. Got %v", funcDef.Signature.ParameterTypes[1].Type)
 	}
 	if !types.TypesEqual(funcDef.Signature.ReturnType, intType) {
-		t.Fatalf("\"sum\" return type is not Int. Got %v", funcDef.Signature.ReturnType)
+		t.Fatalf("\"sum\" return type is not int. Got %v", funcDef.Signature.ReturnType)
 	}
 }
 
@@ -93,7 +93,7 @@ func TestCollector_FunctionDefinitionWithGenericParams(t *testing.T) {
 
 func TestCollector_FunctionDefinitionWithMultipleClausesAndGuard(t *testing.T) {
 	source := `
-		def fib: (Int) -> Int = {
+		def fib: (int) -> int = {
 			(n) if n < 2 => n,
 			(n) => fib(n-2) + fib(n-1),
 		}
@@ -144,10 +144,10 @@ func TestCollector_FunctionDefinitionWithMultipleClausesAndGuard(t *testing.T) {
 	}
 
 	if !types.TypesEqual(funcDef.Signature.ParameterTypes[0].Type, intType) {
-		t.Fatalf("\"fib\" parameter type is not Int. Got %v", funcDef.Signature.ParameterTypes[0].Type)
+		t.Fatalf("\"fib\" parameter type is not int. Got %v", funcDef.Signature.ParameterTypes[0].Type)
 	}
 	if !types.TypesEqual(funcDef.Signature.ReturnType, intType) {
-		t.Fatalf("\"fib\" return type is not Int. Got %v", funcDef.Signature.ReturnType)
+		t.Fatalf("\"fib\" return type is not int. Got %v", funcDef.Signature.ReturnType)
 	}
 }
 
@@ -229,7 +229,7 @@ func TestCollector_FunctionDefinitionWithModifiedParameters(t *testing.T) {
 
 func TestCollector_FunctionDefinitionWithDefaultParameters(t *testing.T) {
 	source := `
-		def add: (Int, Int) -> Int = (a, b = 0) => a + b
+		def add: (int, int) -> int = (a, b = 0) => a + b
 	`
 
 	tree, err := parser.Parse(source)
@@ -266,13 +266,13 @@ func TestCollector_FunctionDefinitionWithDefaultParameters(t *testing.T) {
 	}
 
 	if !types.TypesEqual(funcDef.Signature.ParameterTypes[0].Type, intType) {
-		t.Fatalf("\"add\" first parameter type is not Int. Got %v", funcDef.Signature.ParameterTypes[0].Type)
+		t.Fatalf("\"add\" first parameter type is not int. Got %v", funcDef.Signature.ParameterTypes[0].Type)
 	}
 	if !types.TypesEqual(funcDef.Signature.ParameterTypes[1].Type, intType) {
-		t.Fatalf("\"add\" second parameter type is not Int. Got %v", funcDef.Signature.ParameterTypes[1].Type)
+		t.Fatalf("\"add\" second parameter type is not int. Got %v", funcDef.Signature.ParameterTypes[1].Type)
 	}
 	if !types.TypesEqual(funcDef.Signature.ReturnType, intType) {
-		t.Fatalf("\"add\" return type is not Int. Got %v", funcDef.Signature.ReturnType)
+		t.Fatalf("\"add\" return type is not int. Got %v", funcDef.Signature.ReturnType)
 	}
 
 	// Check default parameters

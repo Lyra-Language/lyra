@@ -8,13 +8,13 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
-var intType = types.PrimitiveType{Name: "Int"}
+var intType = types.PrimitiveType{Name: "int"}
 
 func TestCollector_StructTypeDeclaration(t *testing.T) {
 	source := `
 		pub struct Point {
-			x: Int,
-			y: Int = 0,
+			x: int,
+			y: int = 0,
 		}
 	`
 

@@ -17,6 +17,10 @@ func (c *Collector) collectVariableDeclaration(node *sitter.Node) *ast.VarDeclSt
 
 	initExpr := c.collectExpression(node.ChildByFieldName("value"))
 
+	if arrayType, ok := initExpr.GetType().(types.StaticArrayType); ok {
+		varType = arrayType
+	}
+
 	astNode := &ast.VarDeclStmt{
 		AstBase: ast.AstBase{Location: c.nodeLocation(node)},
 		Keyword: keyword,
