@@ -145,7 +145,7 @@ func (c *Collector) collectIntegerLiteralExpr(node *sitter.Node) *ast.IntegerLit
 	return &ast.IntegerLiteralExpr{
 		ExprBase: ast.ExprBase{
 			AstBase: ast.AstBase{Location: loc},
-			Type:    types.PrimitiveType{Name: "int"},
+			Type:    nil, // Type will be resolved during type checking
 		},
 		Value: value,
 		Base:  base,

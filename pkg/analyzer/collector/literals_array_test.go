@@ -130,16 +130,12 @@ func TestCollectArrayRepeatInitialization(t *testing.T) {
 		t.Fatalf("Expected Expression with type, got nil")
 	}
 
-	if !types.TypesEqual(stmt.Value.GetType(), types.StaticArrayType{ElementType: intType, Size: 8}) {
-		t.Fatalf("Expected StaticArray<int, 8>, got %s", stmt.Value.GetType().GetName())
-	}
-
 	if stmt.Type == nil {
 		t.Fatalf("Expected Type, got nil")
 	}
 
-	if !types.TypesEqual(stmt.Type, types.StaticArrayType{ElementType: intType, Size: 8}) {
-		t.Fatalf("Expected Type to be StaticArray<int, 8>, got %s", stmt.Type.GetName())
+	if !types.TypesEqual(stmt.Type, types.StaticArrayType{ElementType: nil, Size: 8}) {
+		t.Fatalf("Expected Type to be StaticArray<?, 8>, got %s", stmt.Type.GetName())
 	}
 }
 
@@ -180,8 +176,8 @@ func TestCollectArrayRepeatInitializationWithCompileTimeConstantCount(t *testing
 		t.Fatalf("Expected Size to be -1, got %d", stmt.Type.(types.StaticArrayType).Size)
 	}
 
-	if !types.TypesEqual(stmt.Type, types.StaticArrayType{ElementType: intType, Size: -1}) {
-		t.Fatalf("Expected Type to be StaticArray<int, -1>, got %s", stmt.Type.GetName())
+	if !types.TypesEqual(stmt.Type, types.StaticArrayType{ElementType: nil, Size: -1}) {
+		t.Fatalf("Expected Type to be StaticArray<?, -1>, got %s", stmt.Type.GetName())
 	}
 
 	if stmt.Value.(*ast.ArrayRepeatExpr).Value.(*ast.IntegerLiteralExpr).Value != 0 {

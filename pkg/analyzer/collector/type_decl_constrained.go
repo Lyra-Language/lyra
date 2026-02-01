@@ -58,6 +58,8 @@ func (c *Collector) collectConstraints(node *sitter.Node) []types.Constraint {
 			constraints = append(constraints, c.collectStepConstraint(child))
 		case "pattern_constraint":
 			constraints = append(constraints, c.collectPatternConstraint(child))
+		case "literal_union_constraint":
+			constraints = append(constraints, c.collectLiteralUnionConstraint(child))
 		}
 	}
 	return constraints

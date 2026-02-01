@@ -3,6 +3,11 @@ package types
 // TypesEqual checks structural equality of two types
 func TypesEqual(a, b Type) bool {
 	switch at := a.(type) {
+	case nil:
+		if b == nil {
+			return true
+		}
+		return false
 	case PrimitiveType:
 		if bt, ok := b.(PrimitiveType); ok {
 			return at.Name == bt.Name

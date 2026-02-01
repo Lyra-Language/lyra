@@ -53,7 +53,7 @@ func TestCollector_BasicConstrainedTypeWithoutConstraints(t *testing.T) {
 
 func TestCollector_ConstrainedTypeWithLiteralUnionConstraintWithStrings(t *testing.T) {
 	source := `
-	type Color = "red" | "green" | "blue"
+	type Color = string where values("red", "green", "blue")
 	`
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -111,7 +111,7 @@ func TestCollector_ConstrainedTypeWithLiteralUnionConstraintWithStrings(t *testi
 
 func TestCollector_ConstrainedTypeWithLiteralUnionConstraintWithNumbers(t *testing.T) {
 	source := `
-	type Status = 200 | 404 | 500
+	type Status = i32 where values(200, 404, 500)
 	`
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -123,7 +123,7 @@ func TestCollector_ConstrainedTypeWithLiteralUnionConstraintWithNumbers(t *testi
 		t.Fatalf("Collector errors: %v", errors)
 	}
 
-	program.Print("")
+	// program.Print("")
 
 	if len(program.Statements) != 1 {
 		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
@@ -142,8 +142,8 @@ func TestCollector_ConstrainedTypeWithLiteralUnionConstraintWithNumbers(t *testi
 	if len(statusDecl.Type.(*types.ConstrainedType).Constraints) != 1 {
 		t.Fatalf("\"Status\" should have 1 constraint. Got %d", len(statusDecl.Type.(*types.ConstrainedType).Constraints))
 	}
-	if !types.TypesEqual(statusDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: types.Int}) {
-		t.Fatalf("\"Status\" should have type \"int\". Got %v", statusDecl.Type.(*types.ConstrainedType).Type)
+	if !types.TypesEqual(statusDecl.Type.(*types.ConstrainedType).Type, types.PrimitiveType{Name: types.Int32}) {
+		t.Fatalf("\"Status\" should have type \"i32\". Got %v", statusDecl.Type.(*types.ConstrainedType).Type)
 	}
 	literalUnionConstraint, ok := statusDecl.Type.(*types.ConstrainedType).Constraints[0].(*types.LiteralUnionConstraint)
 	if !ok {
