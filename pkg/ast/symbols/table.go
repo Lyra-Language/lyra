@@ -67,7 +67,8 @@ func (s *Scope) LookupLocal(name string) (ast.Named, bool) {
 // SymbolTable is the top-level container for all symbols
 // It provides quick lookups by name, pointing directly to AST nodes
 type SymbolTable struct {
-	GlobalScope *Scope
+	GlobalScope  *Scope
+	CurrentScope *Scope
 
 	// Quick lookup tables - these point to AST nodes directly
 	Types     map[string]*ast.TypeDeclStmt
@@ -75,10 +76,23 @@ type SymbolTable struct {
 }
 
 func NewSymbolTable() *SymbolTable {
-	return &SymbolTable{
+	st := &SymbolTable{
 		GlobalScope: NewScope(nil, ScopeGlobal),
 		Types:       make(map[string]*ast.TypeDeclStmt),
 		Functions:   make(map[string]*ast.FunctionDefStmt),
+	}
+	st.CurrentScope = st.GlobalScope
+	return st
+}
+
+func (st *SymbolTable) PushScope(kind ScopeKind) *Scope {
+	st.CurrentScope = NewScope(st.CurrentScope, kind)
+	return st.CurrentScope
+}
+
+func (st *SymbolTable) PopScope() {
+	if st.CurrentScope.Parent != nil {
+		st.CurrentScope = st.CurrentScope.Parent
 	}
 }
 
@@ -102,5 +116,8 @@ func (st *SymbolTable) RegisterFunction(node *ast.FunctionDefStmt) error {
 
 // RegisterVariable adds a variable to the current scope
 func (st *SymbolTable) RegisterVariable(node *ast.VarDeclStmt) error {
-	return st.GlobalScope.Define(node)
+	if st.CurrentScope == nil {
+		return fmt.Errorf("no current scope to register variable %s", node.Name)
+	}
+	return st.CurrentScope.Define(node)
 }

@@ -83,6 +83,9 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 			IsConst:  true,
 		}
 
+	case "tuple_literal":
+		return c.collectTupleLiteralExpr(node)
+
 	case "boolean_expr":
 		return &ast.BooleanBinaryOpExpr{
 			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
@@ -205,7 +208,7 @@ func (c *Collector) collectGenericArguments(node *sitter.Node) []types.Type {
 	}
 	genericArguments := make([]types.Type, 0)
 	for i := uint(0); i < genericArgumentsNode.ChildCount(); i++ {
-		child := node.Child(i)
+		child := genericArgumentsNode.Child(i)
 		if child.IsNamed() {
 			genericArguments = append(genericArguments, c.parseType(child))
 		}

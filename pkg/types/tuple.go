@@ -6,6 +6,7 @@ import (
 )
 
 type TupleType struct {
+	Name       string // uppercase letter optionally followed by any number of letters or numbers
 	Elements   []Type
 	Allocation AllocationModifier
 }

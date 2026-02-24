@@ -1,22 +1,22 @@
 ## To-Dos
+- Collect tuple types
+- Collect range expressions
+- Collect regex
+- Collect array comprehensions
+- Collect if expressions
+- Collect postfix expressions (i.e. foo.blah[3].baz())
+- Collect function types (lambdas)
+- Collect patterns
+- Collect destructuring statements
+- Collect match expressions
+- Collect modules
+- Collect trait declarations
+- Collect trait implementations
 - Collect math assignment operators (i.e. +=, *=, etc)
 - Collect character literals (runes?)
 - Collect for loops
 - Collect for/in loops
 - Collect arena statements
-- Collect regex
-- Collect tuple types
-- Collect array comprehensions
-- Collect postfix expressions (i.e. foo.blah[3].baz())
-- Collect range expressions
-- Collect function types (lambdas)
-- Collect if expressions
-- Collect patterns
-- Collect destructuring statements
-- Collect match expressions
-- Collect trait declarations
-- Collect trait implementations
-- Collect modules
 - Add sizeof() function to query type sizes
 
 ## Completed

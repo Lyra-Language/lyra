@@ -7,10 +7,10 @@ import (
 )
 
 type Expression interface {
+	AstNode
 	exprNode()
 	GetName() string
 	GetType() types.Type
-	Print(indent string)
 }
 
 // Base struct to embed in all expression types
@@ -19,6 +19,7 @@ type ExprBase struct {
 	Type types.Type
 }
 
+func (e *ExprBase) node()                 {}
 func (e *ExprBase) exprNode()             {}
 func (e *ExprBase) GetLocation() Location { return e.Location }
 func (e *ExprBase) GetName() string       { return "" }

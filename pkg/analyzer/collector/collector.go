@@ -9,6 +9,7 @@ The AST nodes serve as the source of truth - the symbol table just indexes them.
 import (
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
@@ -32,6 +33,32 @@ func NewCollector(source []byte) *Collector {
 		ast:    &ast.Program{},
 		errors: make([]error, 0),
 	}
+}
+
+type CollectorError struct {
+	Message  string
+	Location ast.Location
+	Severity CollectorErrorSeverity
+}
+
+type CollectorErrorSeverity int
+
+const (
+	CollectorErrorSeverityError CollectorErrorSeverity = iota
+	CollectorErrorSeverityWarning
+	CollectorErrorSeverityInfo
+)
+
+func (e CollectorError) Error() string {
+	return fmt.Sprintf("%s: %s", &e.Location, e.Message)
+}
+
+func (c *Collector) addError(node *sitter.Node, severity CollectorErrorSeverity, format string, args ...any) {
+	c.errors = append(c.errors, CollectorError{
+		Message:  fmt.Sprintf(format, args...),
+		Location: c.nodeLocation(node),
+		Severity: severity,
+	})
 }
 
 // Collect walks the entire tree and returns the AST, symbol table, and any errors
@@ -168,13 +195,7 @@ func (c *Collector) parseType(node *sitter.Node, allocation ...types.AllocationM
 		return nil
 	}
 	switch node.Kind() {
-	case "integer":
-		return types.PrimitiveType{Name: types.PrimitiveTypeName(c.nodeText(node.ChildByFieldName("type")))}
-	case "signed_integer_type", "unsigned_integer_type":
-		return types.PrimitiveType{Name: types.PrimitiveTypeName(c.nodeText(node))}
-	case "float":
-		return types.PrimitiveType{Name: types.PrimitiveTypeName(c.nodeText(node.ChildByFieldName("type")))}
-	case "float_type":
+	case "signed_integer_type", "unsigned_integer_type", "float_type":
 		return types.PrimitiveType{Name: types.PrimitiveTypeName(c.nodeText(node))}
 	case "string_type":
 		return types.PrimitiveType{Name: types.String}
@@ -190,21 +211,125 @@ func (c *Collector) parseType(node *sitter.Node, allocation ...types.AllocationM
 		return c.parseConstrainedType(node)
 	case "allocated_type":
 		return c.parseAllocatedType(node)
+	case "tuple_type", "anonymous_tuple_type":
+		return c.parseTupleType(node)
 	}
-	c.errors = append(c.errors, fmt.Errorf("parseType: unknown type node kind: %s", node.Kind()))
+	// Fallback: type annotation may be (int, int) etc. when grammar produces multiple type children
+	text := c.nodeText(node)
+	if len(text) >= 2 && text[0] == '(' && text[len(text)-1] == ')' {
+		if elemTypes := c.tryParseTupleElementTypes(node); len(elemTypes) >= 2 {
+			return types.TupleType{Name: "?", Elements: elemTypes}
+		}
+	}
+	c.addError(node, CollectorErrorSeverityError, "parseType: unknown type node kind: %s", node.Kind())
 	return nil
+}
+
+func (c *Collector) tryParseTupleElementTypes(node *sitter.Node) []types.Type {
+	elements := make([]types.Type, 0)
+	// For ERROR or other wrapper nodes, collect all known type nodes in the subtree
+	if node.Kind() == "ERROR" || node.Kind() == "type" {
+		c.collectTupleElementTypesRec(node, &elements)
+		return elements
+	}
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.IsNamed() {
+			if t := c.parseType(child); t != nil {
+				elements = append(elements, t)
+			}
+		}
+	}
+	return elements
+}
+
+func (c *Collector) collectTupleElementTypesRec(node *sitter.Node, out *[]types.Type) {
+	kind := node.Kind()
+	if kind == "signed_integer_type" || kind == "unsigned_integer_type" || kind == "float_type" ||
+		kind == "string_type" || kind == "boolean_type" || kind == "user_defined_type_name" || kind == "generic_type" {
+		if t := c.parseType(node); t != nil {
+			*out = append(*out, t)
+		}
+		return
+	}
+	for i := uint(0); i < node.ChildCount(); i++ {
+		c.collectTupleElementTypesRec(node.Child(i), out)
+	}
+}
+
+func (c *Collector) parseTupleType(node *sitter.Node) types.Type {
+	body := node.ChildByFieldName("tuple_type_body")
+	if body == nil {
+		body = node
+	}
+	tupleName := "?"
+	if nameNode := node.ChildByFieldName("tuple_type_name"); nameNode != nil {
+		tupleName = c.nodeText(nameNode)
+	}
+	elements := c.tryParseTupleElementTypes(body)
+	return types.TupleType{Name: tupleName, Elements: elements}
+}
+
+// parseTupleTypeFromString parses a tuple type from a string like "(int, int)" when the grammar doesn't produce a type node.
+func (c *Collector) parseTupleTypeFromString(s string) types.Type {
+	s = strings.TrimSpace(s)
+	if len(s) < 2 || s[0] != '(' || s[len(s)-1] != ')' {
+		return nil
+	}
+	inner := strings.TrimSpace(s[1 : len(s)-1])
+	if inner == "" {
+		return nil
+	}
+	parts := splitTupleTypeElements(inner)
+	elements := make([]types.Type, 0, len(parts))
+	for _, p := range parts {
+		name := strings.TrimSpace(p)
+		if name == "" {
+			continue
+		}
+		if pt := types.PrimitiveTypeName(name); pt != "" {
+			elements = append(elements, types.PrimitiveType{Name: pt})
+		} else {
+			elements = append(elements, types.UnresolvedType{Name: name})
+		}
+	}
+	if len(elements) < 2 {
+		return nil
+	}
+	return types.TupleType{Name: "?", Elements: elements}
+}
+
+func splitTupleTypeElements(s string) []string {
+	var parts []string
+	depth := 0
+	start := 0
+	for i := 0; i < len(s); i++ {
+		switch s[i] {
+		case '(', '[', '<':
+			depth++
+		case ')', ']', '>':
+			depth--
+		case ',':
+			if depth == 0 {
+				parts = append(parts, s[start:i])
+				start = i + 1
+			}
+		}
+	}
+	parts = append(parts, s[start:])
+	return parts
 }
 
 func (c *Collector) parseArrayType(node *sitter.Node, allocation types.AllocationModifier) types.Type {
 	typeNode := node.ChildByFieldName("element_type")
 	if typeNode == nil {
-		c.errors = append(c.errors, fmt.Errorf("parseArrayType: element type node is nil"))
+		c.addError(node, CollectorErrorSeverityError, "parseArrayType: element type node is nil")
 		return nil
 	}
 
 	elementType := c.parseType(typeNode)
 	if elementType == nil {
-		c.errors = append(c.errors, fmt.Errorf("parseArrayType: element type is nil"))
+		c.addError(node, CollectorErrorSeverityError, "parseArrayType: element type is nil")
 		return nil
 	}
 
@@ -213,7 +338,7 @@ func (c *Collector) parseArrayType(node *sitter.Node, allocation types.Allocatio
 		sizeString := c.nodeText(sizeNode)
 		sizeInt, err := strconv.ParseInt(sizeString, 10, 64)
 		if err != nil {
-			c.errors = append(c.errors, fmt.Errorf("parseArrayType: invalid size: %s", sizeString))
+			c.addError(node, CollectorErrorSeverityError, "parseArrayType: invalid size: %s", sizeString)
 			return nil
 		}
 		return types.StaticArrayType{ElementType: elementType, Size: int(sizeInt), Allocation: allocation}
@@ -265,7 +390,7 @@ func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
 	}
 	typeNode := node.ChildByFieldName("type")
 	if typeNode == nil {
-		c.errors = append(c.errors, fmt.Errorf("parseParameterType: type node is nil"))
+		c.addError(node, CollectorErrorSeverityError, "parseParameterType: type node is nil")
 		return types.ParameterType{}
 	}
 	return types.ParameterType{
@@ -288,7 +413,7 @@ func (c *Collector) collectPattern(patternNode *sitter.Node) ast.Pattern {
 			Value:       c.nodeText(patternNode),
 		}
 	}
-	c.errors = append(c.errors, fmt.Errorf("collectPattern: unknown pattern node kind: %s", patternNode.Kind()))
+	c.addError(patternNode, CollectorErrorSeverityError, "collectPattern: unknown pattern node kind: %s", patternNode.Kind())
 	return nil
 }
 
@@ -296,7 +421,7 @@ func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {
 	allocation := c.collectAllocationModifier(node.ChildByFieldName("allocation"))
 	typeNode := node.ChildByFieldName("type")
 	if typeNode == nil {
-		c.errors = append(c.errors, fmt.Errorf("parseAllocatedType: type node is nil"))
+		c.addError(node, CollectorErrorSeverityError, "parseAllocatedType: type node is nil")
 		return nil
 	}
 	return c.parseType(typeNode, allocation)

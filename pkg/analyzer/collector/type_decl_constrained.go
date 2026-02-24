@@ -46,7 +46,6 @@ func (c *Collector) collectConstrainedTypeDeclaration(node *sitter.Node) *ast.Ty
 
 func (c *Collector) collectConstraints(node *sitter.Node) []types.Constraint {
 	constraints := make([]types.Constraint, 0)
-	fmt.Printf("collectConstraints: %s\n", node.Kind())
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {

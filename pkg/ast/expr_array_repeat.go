@@ -27,8 +27,6 @@ func (a *ArrayRepeatExpr) Print(indent string) {
 }
 
 func (a *ArrayRepeatExpr) GetType() types.Type {
-	fmt.Printf("ArrayRepeatExpr GetType: %s\n", a.Count.GetType())
-
 	var size int
 	intLiteral, ok := a.Count.(*IntegerLiteralExpr)
 	if ok {

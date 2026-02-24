@@ -11,7 +11,7 @@ type Location struct {
 	EndCol    int
 }
 
-func (l *Location) ToString() string {
+func (l *Location) String() string {
 	return fmt.Sprintf("%s:%d:%d-%d:%d", l.File, l.StartLine, l.StartCol, l.EndLine, l.EndCol)
 }
 
