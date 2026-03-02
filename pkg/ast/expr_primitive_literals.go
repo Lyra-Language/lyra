@@ -2,6 +2,8 @@ package ast
 
 import (
 	"fmt"
+
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 type IntegerLiteralExpr struct {
@@ -12,6 +14,10 @@ type IntegerLiteralExpr struct {
 
 func (i *IntegerLiteralExpr) GetName() string {
 	return fmt.Sprintf("%d", i.Value)
+}
+
+func (i *IntegerLiteralExpr) GetType() types.Type {
+	return types.PrimitiveType{Name: types.Int}
 }
 
 func (i *IntegerLiteralExpr) Print(indent string) {
@@ -40,6 +46,10 @@ func (f *FloatLiteralExpr) Print(indent string) {
 	fmt.Printf("%sFloatLiteralExpr(%f)\n", indent, f.Value)
 }
 
+func (f *FloatLiteralExpr) GetType() types.Type {
+	return types.PrimitiveType{Name: types.Float}
+}
+
 type StringLiteralExpr struct {
 	ExprBase
 	Value string
@@ -49,6 +59,10 @@ func (s *StringLiteralExpr) GetName() string {
 	return s.Value
 }
 
+func (s *StringLiteralExpr) GetType() types.Type {
+	return types.PrimitiveType{Name: types.String}
+}
+
 func (s *StringLiteralExpr) Print(indent string) {
 	fmt.Printf("%sStringLiteralExpr(%s)\n", indent, s.Value)
 }
@@ -56,6 +70,10 @@ func (s *StringLiteralExpr) Print(indent string) {
 type BooleanLiteralExpr struct {
 	ExprBase
 	Value bool
+}
+
+func (b *BooleanLiteralExpr) GetType() types.Type {
+	return types.PrimitiveType{Name: types.Bool}
 }
 
 func (b *BooleanLiteralExpr) GetName() string {

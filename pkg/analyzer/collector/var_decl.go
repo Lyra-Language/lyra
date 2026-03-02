@@ -79,6 +79,8 @@ func (c *Collector) collectVariableDeclaration(node *sitter.Node) *ast.VarDeclSt
 			varType = arrayType
 		} else if tupleType, ok := initExpr.GetType().(types.TupleType); ok {
 			varType = tupleType
+		} else if rangeType, ok := initExpr.GetType().(types.RangeType); ok {
+			varType = rangeType
 		}
 	}
 

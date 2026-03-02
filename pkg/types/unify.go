@@ -68,6 +68,22 @@ func TypesEqual(a, b Type) bool {
 		if bt, ok := b.(DataType); ok {
 			return at.Name == bt.Name
 		}
+	case RangeType:
+		if bt, ok := b.(RangeType); ok {
+			if !TypesEqual(at.Start, bt.Start) {
+				return false
+			}
+			if at.EndOperator != bt.EndOperator {
+				return false
+			}
+			if !TypesEqual(at.End, bt.End) {
+				return false
+			}
+			if at.Step != nil && bt.Step != nil {
+				return TypesEqual(at.Step, bt.Step)
+			}
+			return true
+		}
 	default:
 		return false
 	}

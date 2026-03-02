@@ -1,6 +1,10 @@
 package ast
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/Lyra-Language/lyra/pkg/types"
+)
 
 type MathBinaryOpExpr struct {
 	ExprBase
@@ -11,6 +15,18 @@ type MathBinaryOpExpr struct {
 
 func (m *MathBinaryOpExpr) GetName() string {
 	return fmt.Sprintf("%s %s %s", m.Left.GetName(), m.Operator, m.Right.GetName())
+}
+
+func (m *MathBinaryOpExpr) GetType() types.Type {
+	leftType := m.Left.GetType()
+	rightType := m.Right.GetType()
+	if types.TypesEqual(leftType, types.PrimitiveType{Name: types.Int}) && types.TypesEqual(rightType, types.PrimitiveType{Name: types.Int}) {
+		return types.PrimitiveType{Name: types.Int}
+	}
+	if types.TypesEqual(leftType, types.PrimitiveType{Name: types.Float}) && types.TypesEqual(rightType, types.PrimitiveType{Name: types.Float}) {
+		return types.PrimitiveType{Name: types.Float}
+	}
+	return types.Type(nil)
 }
 
 func (m *MathBinaryOpExpr) Print(indent string) {
