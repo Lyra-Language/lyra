@@ -14,7 +14,7 @@ type MathBinaryOpExpr struct {
 }
 
 func (m *MathBinaryOpExpr) GetName() string {
-	return fmt.Sprintf("%s %s %s", m.Left.GetName(), m.Operator, m.Right.GetName())
+	return "math_binary_op_expr"
 }
 
 func (m *MathBinaryOpExpr) GetType() types.Type {
@@ -30,7 +30,7 @@ func (m *MathBinaryOpExpr) GetType() types.Type {
 }
 
 func (m *MathBinaryOpExpr) Print(indent string) {
-	fmt.Printf("%sMathBinaryOpExpr(%s)\n", indent, m.GetName())
+	fmt.Printf("%sMathBinaryOpExpr(%s) {\n", indent, m.GetName())
 	fmt.Printf("%s  Left: {\n", indent)
 	m.Left.Print(indent + "    ")
 	fmt.Printf("%s  }\n", indent)
@@ -38,6 +38,7 @@ func (m *MathBinaryOpExpr) Print(indent string) {
 	fmt.Printf("%s  Right: {\n", indent)
 	m.Right.Print(indent + "    ")
 	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s}\n", indent)
 }
 
 type MathBinaryOp string

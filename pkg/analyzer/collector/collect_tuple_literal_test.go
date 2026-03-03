@@ -34,8 +34,8 @@ func TestCollector_SimpleAnonymousTupleLiteral(t *testing.T) {
 		t.Fatalf("Expected Value, got nil")
 	}
 
-	if stmt.Value.GetName() != "tuple_literal(Name: ?, Elements: 1, 2)" {
-		t.Fatalf("Expected Value name to be \"tuple_literal(Name: ?, Elements: 1, 2)\", got %s", stmt.Value.GetName())
+	if stmt.Value.GetName() != "tuple_literal_expr" {
+		t.Fatalf("Expected Value name to be \"tuple_literal_expr\", got %s", stmt.Value.GetName())
 	}
 	expectedType := types.TupleType{Name: "?", Elements: []types.Type{intType, intType}}
 	if !types.TypesEqual(stmt.Value.GetType(), expectedType) {

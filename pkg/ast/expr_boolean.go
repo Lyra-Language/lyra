@@ -10,7 +10,7 @@ type BooleanBinaryOpExpr struct {
 }
 
 func (b *BooleanBinaryOpExpr) GetName() string {
-	return fmt.Sprintf("%s %s %s", b.Left.GetName(), b.Operator, b.Right.GetName())
+	return "boolean_binary_op_expr"
 }
 
 func (b *BooleanBinaryOpExpr) Print(indent string) {

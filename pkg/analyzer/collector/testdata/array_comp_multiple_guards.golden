@@ -1,0 +1,78 @@
+Program(1 statements) {
+  VarDeclStmt(foo)
+    Keyword: let
+    Value: {
+      ArrayCompExpr {
+        Generators: {
+          Generator {
+            Value: {
+              RangeExpr {
+                Start: {
+                  IntegerLiteralExpr(1)
+                }
+                EndOperator: =
+                End: {
+                  IntegerLiteralExpr(5)
+                }
+              }
+            }
+            Identifier: x
+          }
+          Generator {
+            Value: {
+              RangeExpr {
+                Start: {
+                  IntegerLiteralExpr(1)
+                }
+                EndOperator: =
+                End: {
+                  IntegerLiteralExpr(5)
+                }
+              }
+            }
+            Identifier: y
+          }
+        }
+        Guards: {
+          Guard: {
+            FunctionCallExpr {
+              Function: {
+                IdentifierExpr(odd, IsConst: false)
+              }
+              Arguments: {
+                ArgumentList(x) {
+                    IdentifierExpr(x, IsConst: false)
+                }
+              }
+          }
+          Guard: {
+            FunctionCallExpr {
+              Function: {
+                IdentifierExpr(even, IsConst: false)
+              }
+              Arguments: {
+                ArgumentList(y) {
+                    IdentifierExpr(y, IsConst: false)
+                }
+              }
+          }
+        }
+        Result: {
+          TupleLiteralExpr(Name: ?) {
+              IdentifierExpr(x, IsConst: false)
+              IdentifierExpr(y, IsConst: false)
+              MathBinaryOpExpr(math_binary_op_expr) {
+                Left: {
+                  IdentifierExpr(x, IsConst: false)
+                }
+                Operator: *
+                Right: {
+                  IdentifierExpr(y, IsConst: false)
+                }
+              }
+          }
+        }
+      }
+    }
+  }
+}

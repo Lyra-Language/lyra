@@ -2,7 +2,6 @@ package ast
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -16,11 +15,7 @@ type TupleLiteralExpr struct {
 func (t *TupleLiteralExpr) exprNode() {}
 
 func (t *TupleLiteralExpr) GetName() string {
-	elementNames := make([]string, len(t.Elements))
-	for i, element := range t.Elements {
-		elementNames[i] = element.GetName()
-	}
-	return fmt.Sprintf("tuple_literal(Name: %s, Elements: %s)", t.Name, strings.Join(elementNames, ", "))
+	return "tuple_literal_expr"
 }
 
 func (t *TupleLiteralExpr) GetType() types.Type {

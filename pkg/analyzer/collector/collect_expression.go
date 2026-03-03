@@ -59,6 +59,9 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 	case "array_repeat_init":
 		return c.collectArrayRepeatInitExpr(node)
 
+	case "array_comp_expr":
+		return c.collectArrayCompExpr(node)
+
 	case "boolean_literal":
 		value := c.nodeText(node) == "true"
 		return &ast.BooleanLiteralExpr{

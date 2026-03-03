@@ -135,8 +135,8 @@ func TestCollector_FunctionDefinitionWithMultipleClausesAndGuard(t *testing.T) {
 	if funcDef.Clauses[0].Guard.Condition == nil {
 		t.Fatalf("\"fib\" first clause guard condition is nil")
 	}
-	if funcDef.Clauses[0].Guard.Condition.GetName() != "n < 2" {
-		t.Fatalf("\"fib\" first clause guard condition is not \"n < 2\". Got %s", funcDef.Clauses[0].Guard.Condition.GetName())
+	if funcDef.Clauses[0].Guard.Condition.GetName() != "boolean_binary_op_expr" {
+		t.Fatalf("\"fib\" first clause guard condition is not \"boolean_binary_op_expr\". Got %s", funcDef.Clauses[0].Guard.Condition.GetName())
 	}
 
 	if funcDef.Signature == nil {
@@ -222,8 +222,8 @@ func TestCollector_FunctionDefinitionWithModifiedParameters(t *testing.T) {
 		t.Fatalf("\"add\" first clause body is nil")
 	}
 
-	if funcDef.Clauses[0].Body.GetName() != "point + vec" {
-		t.Fatalf("\"add\" first clause body is not point + vec. Got %v", funcDef.Clauses[0].Body.GetName())
+	if funcDef.Clauses[0].Body.GetName() != "math_binary_op_expr" {
+		t.Fatalf("\"add\" first clause body is not math_binary_op_expr. Got %v", funcDef.Clauses[0].Body.GetName())
 	}
 }
 

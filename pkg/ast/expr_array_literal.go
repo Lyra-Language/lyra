@@ -2,7 +2,6 @@ package ast
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -27,12 +26,7 @@ func (a *ArrayLiteralExpr) Print(indent string) {
 }
 
 func (a *ArrayLiteralExpr) GetName() string {
-	elementNames := make([]string, len(a.Elements))
-	for i, element := range a.Elements {
-		elementNames[i] = element.GetName()
-	}
-	return fmt.Sprintf("array_literal(%s)", strings.Join(elementNames, ", "))
-	// return "array_literal"
+	return "array_literal_expr"
 }
 
 func (a *ArrayLiteralExpr) GetElementType() types.Type {

@@ -1,7 +1,4 @@
 ## To-Dos
-- Collect range expressions
-- Collect regex
-- Collect array comprehensions
 - Collect if expressions
 - Collect postfix expressions (i.e. foo.blah[3].baz())
 - Collect function types (lambdas)
@@ -16,9 +13,14 @@
 - Collect for loops
 - Collect for/in loops
 - Collect arena statements
+- Collect regex
 - Add sizeof() function to query type sizes
 
 ## Completed
+
+### 03/02/26
+- Collect range expressions
+- Collect array comprehensions
 
 ### 02/23/26
 - Collect tuple types

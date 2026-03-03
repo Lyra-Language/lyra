@@ -66,7 +66,11 @@ func (v *VarDeclStmt) Print(indent string) {
 		fmt.Printf("%s  Type: %s\n", indent, v.Type.GetName())
 	}
 	if v.Value != nil {
-		fmt.Printf("%s  Value: %s\n", indent, v.Value.GetName())
+		fmt.Printf("%s  Value: {\n", indent)
+		v.Value.Print(indent + "    ")
+		fmt.Printf("%s  }\n", indent)
+	} else {
+		fmt.Printf("%s  Value: nil\n", indent)
 	}
 	fmt.Printf("%s}\n", indent)
 }

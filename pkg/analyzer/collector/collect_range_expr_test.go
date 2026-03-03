@@ -166,11 +166,11 @@ func TestCollector_RangeExpressionWithStartExpression(t *testing.T) {
 		t.Fatalf("Expected RangeExpr, got %T", exprStatement.Expression)
 	}
 
-	if rangeExpr.Start.GetName() != "start * 2" {
-		t.Fatalf("Expected Start to be MathBinaryOpExpr, got %s", rangeExpr.Start.GetName())
+	if rangeExpr.Start.GetName() != "math_binary_op_expr" {
+		t.Fatalf("Expected Start to be math_binary_op_expr, got %s", rangeExpr.Start.GetName())
 	}
 
-	if rangeExpr.End.GetName() != "end - 1" {
-		t.Fatalf("Expected End to be MathBinaryOpExpr, got %s", rangeExpr.End.GetName())
+	if rangeExpr.End.GetName() != "math_binary_op_expr" {
+		t.Fatalf("Expected End to be math_binary_op_expr, got %s", rangeExpr.End.GetName())
 	}
 }

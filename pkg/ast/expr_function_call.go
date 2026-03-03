@@ -15,11 +15,11 @@ type FunctionCallExpr struct {
 }
 
 func (f *FunctionCallExpr) GetName() string {
-	return fmt.Sprintf("%s(%s)", f.Function.GetName(), f.Arguments.GetName())
+	return "function_call_expr"
 }
 
 func (f *FunctionCallExpr) Print(indent string) {
-	fmt.Printf("%sFunctionCallExpr(%s)\n", indent, f.GetName())
+	fmt.Printf("%sFunctionCallExpr {\n", indent)
 	fmt.Printf("%s  Function: {\n", indent)
 	f.Function.Print(indent + "    ")
 	fmt.Printf("%s  }\n", indent)
