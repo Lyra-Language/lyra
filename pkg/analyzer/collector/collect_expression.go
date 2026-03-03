@@ -1,26 +1,19 @@
 package collector
 
 import (
-	"fmt"
-	"strconv"
-	"strings"
-
 	"github.com/Lyra-Language/lyra/pkg/ast"
-	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 func (c *Collector) collectExpressionStatement(node *sitter.Node) *ast.ExpressionStmt {
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.IsNamed() {
-			expr := c.collectExpression(child)
-			if expr != nil {
-				return &ast.ExpressionStmt{
-					AstBase:    ast.AstBase{Location: c.nodeLocation(node)},
-					Expression: expr,
-				}
-			}
+	if node.NamedChildCount() < 1 {
+		return nil
+	}
+	expr := c.collectExpression(node.NamedChild(0))
+	if expr != nil {
+		return &ast.ExpressionStmt{
+			AstBase:    ast.AstBase{Location: c.nodeLocation(node)},
+			Expression: expr,
 		}
 	}
 	return nil
@@ -40,18 +33,7 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 		return c.collectFloatLiteralExpr(node)
 
 	case "string_literal":
-		value, err := strconv.Unquote(c.nodeText(node))
-		if err != nil {
-			c.errors = append(c.errors, fmt.Errorf("invalid string literal: %v", err))
-			return nil
-		}
-		return &ast.StringLiteralExpr{
-			ExprBase: ast.ExprBase{
-				AstBase: ast.AstBase{Location: loc},
-				Type:    types.PrimitiveType{Name: types.String},
-			},
-			Value: value,
-		}
+		return c.collectStringLiteralExpr(node, loc)
 
 	case "array_literal":
 		return c.collectArrayLiteralExpr(node)
@@ -63,201 +45,33 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 		return c.collectArrayCompExpr(node)
 
 	case "boolean_literal":
-		value := c.nodeText(node) == "true"
-		return &ast.BooleanLiteralExpr{
-			ExprBase: ast.ExprBase{
-				AstBase: ast.AstBase{Location: loc},
-				Type:    types.PrimitiveType{Name: types.Bool},
-			},
-			Value: value,
-		}
+		return c.collectBooleanLiteralExpr(node, loc)
 
 	case "identifier":
-		return &ast.IdentifierExpr{
-			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-			Name:     c.nodeText(node),
-			IsConst:  false,
-		}
+		return c.collectIdentifierExpr(node, false, loc)
 
 	case "const_identifier":
-		return &ast.IdentifierExpr{
-			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-			Name:     c.nodeText(node),
-			IsConst:  true,
-		}
+		return c.collectIdentifierExpr(node, true, loc)
 
 	case "tuple_literal":
 		return c.collectTupleLiteralExpr(node)
 
 	case "boolean_expr":
-		return &ast.BooleanBinaryOpExpr{
-			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-			Left:     c.collectExpression(node.ChildByFieldName("left")),
-			Operator: ast.BooleanBinaryOp(c.nodeText(node.ChildByFieldName("operator"))),
-			Right:    c.collectExpression(node.ChildByFieldName("right")),
-		}
+		return c.collectBooleanBinaryExpr(node, loc)
+
 	case "addition", "subtraction", "multiplication", "division":
-		return &ast.MathBinaryOpExpr{
-			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-			Left:     c.collectExpression(node.ChildByFieldName("left")),
-			Operator: ast.MathBinaryOp(c.nodeText(node.ChildByFieldName("operator"))),
-			Right:    c.collectExpression(node.ChildByFieldName("right")),
-		}
+		return c.collectMathBinaryExpr(node, loc)
+
 	case "call_expression":
-		return &ast.FunctionCallExpr{
-			ExprBase:         ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-			Function:         c.collectExpression(node.ChildByFieldName("function")),
-			GenericArguments: c.collectGenericArguments(node),
-			Arguments:        c.collectArgumentList(node.ChildByFieldName("arguments")),
-		}
+		return c.collectFunctionCallExpr(node, loc)
+
 	case "range_expression":
 		return c.collectRangeExpr(node)
 	}
 
-	// For wrapper nodes, recurse into the first named child
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.IsNamed() {
-			return c.collectExpression(child)
-		}
+	// For wrapper nodes (e.g. parenthesized), recurse into the first named child
+	if node.NamedChildCount() >= 1 {
+		return c.collectExpression(node.NamedChild(0))
 	}
-
 	return nil
-}
-
-func (c *Collector) collectIntegerLiteralExpr(node *sitter.Node) *ast.IntegerLiteralExpr {
-	loc := c.nodeLocation(node)
-	base := ast.IntegerBase10
-	value := int64(0)
-	err := error(nil)
-
-	for i := uint(0); i < node.ChildCount(); i++ {
-		valueString := c.nodeText(node.Child(i))
-		valueStringWithoutUnderscores := strings.ReplaceAll(valueString, "_", "")
-		value, err = strconv.ParseInt(valueStringWithoutUnderscores, 0, 64)
-		if err != nil {
-			c.errors = append(c.errors, fmt.Errorf("failed to parse integer literal: %w", err))
-			return nil
-		}
-		switch node.Child(i).Kind() {
-		case "binary_int":
-			base = ast.IntegerBase2
-		case "octal_int":
-			base = ast.IntegerBase8
-		case "decimal_int":
-			base = ast.IntegerBase10
-		case "hexadecimal_int":
-			base = ast.IntegerBase16
-		}
-	}
-	return &ast.IntegerLiteralExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    nil, // Type will be resolved during type checking
-		},
-		Value: value,
-		Base:  base,
-	}
-}
-
-func (c *Collector) collectFloatLiteralExpr(node *sitter.Node) *ast.FloatLiteralExpr {
-	loc := c.nodeLocation(node)
-	valueString := c.nodeText(node)
-	valueStringWithoutUnderscores := strings.ReplaceAll(valueString, "_", "")
-	value, err := strconv.ParseFloat(valueStringWithoutUnderscores, 64)
-	if err != nil {
-		c.errors = append(c.errors, fmt.Errorf("failed to parse float literal: %w", err))
-		return nil
-	}
-	return &ast.FloatLiteralExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    types.PrimitiveType{Name: "float"},
-		},
-		Value: value,
-	}
-}
-
-func (c *Collector) collectArrayLiteralExpr(node *sitter.Node) *ast.ArrayLiteralExpr {
-	elements := make([]ast.Expression, 0)
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.IsNamed() {
-			elements = append(elements, c.collectExpression(child))
-		}
-	}
-	return &ast.ArrayLiteralExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: c.nodeLocation(node)},
-			Type:    nil, // Type will be resolved during type checking
-		},
-		Elements: elements,
-	}
-}
-
-func (c *Collector) collectArrayRepeatInitExpr(node *sitter.Node) *ast.ArrayRepeatExpr {
-	return &ast.ArrayRepeatExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: c.nodeLocation(node)},
-			Type:    nil, // Type will be resolved during type checking
-		},
-		Value: c.collectExpression(node.ChildByFieldName("value")),
-		Count: c.collectExpression(node.ChildByFieldName("count")),
-	}
-}
-
-func (c *Collector) collectGenericArguments(node *sitter.Node) []types.Type {
-	genericArgumentsNode := node.ChildByFieldName("generic_arguments")
-	if genericArgumentsNode == nil {
-		return nil
-	}
-	genericArguments := make([]types.Type, 0)
-	for i := uint(0); i < genericArgumentsNode.ChildCount(); i++ {
-		child := genericArgumentsNode.Child(i)
-		if child.IsNamed() {
-			genericArguments = append(genericArguments, c.parseType(child))
-		}
-	}
-	return genericArguments
-}
-
-func (c *Collector) collectArgumentList(node *sitter.Node) ast.ArgumentList {
-	arguments := make([]ast.Expression, 0)
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.IsNamed() {
-			arguments = append(arguments, c.collectExpression(child))
-		}
-	}
-	return ast.ArgumentList{Arguments: arguments}
-}
-
-func (c *Collector) collectRangeExpr(node *sitter.Node) *ast.RangeExpr {
-	startNode := node.ChildByFieldName("start")
-	if startNode == nil {
-		c.errors = append(c.errors, fmt.Errorf("range expression must have a start"))
-		return nil
-	}
-	endOperatorNode := node.ChildByFieldName("end_operator")
-	if endOperatorNode == nil {
-		c.errors = append(c.errors, fmt.Errorf("range expression must have an end operator"))
-		return nil
-	}
-	endNode := node.ChildByFieldName("end")
-	if endNode == nil {
-		c.errors = append(c.errors, fmt.Errorf("range expression must have an end"))
-		return nil
-	}
-	stepNode := node.ChildByFieldName("step")
-	step := ast.Expression(nil)
-	if stepNode != nil {
-		step = c.collectExpression(stepNode)
-	}
-	return &ast.RangeExpr{
-		ExprBase:    ast.ExprBase{AstBase: ast.AstBase{Location: c.nodeLocation(node)}},
-		Start:       c.collectExpression(startNode),
-		EndOperator: c.nodeText(endOperatorNode),
-		End:         c.collectExpression(endNode),
-		Step:        step,
-	}
 }

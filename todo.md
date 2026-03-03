@@ -1,4 +1,6 @@
 ## To-Dos
+- Refactor collector tests to use new "capture_program_print" function
+
 - Collect if expressions
 - Collect postfix expressions (i.e. foo.blah[3].baz())
 - Collect function types (lambdas)
@@ -21,6 +23,7 @@
 ### 03/02/26
 - Collect range expressions
 - Collect array comprehensions
+- Refactor collect_expression.go - break up into smaller files
 
 ### 02/23/26
 - Collect tuple types
