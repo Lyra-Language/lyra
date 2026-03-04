@@ -15,13 +15,13 @@ func (b *BooleanBinaryOpExpr) GetName() string {
 
 func (b *BooleanBinaryOpExpr) Print(indent string) {
 	fmt.Printf("%sBooleanBinaryOpExpr(%s)\n", indent, b.GetName())
-	fmt.Printf("%s  Left: {\n", indent)
-	b.Left.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
-	fmt.Printf("%s  Operator: %s\n", indent, b.Operator)
-	fmt.Printf("%s  Right: {\n", indent)
-	b.Right.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s\tLeft: {\n", indent)
+	b.Left.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
+	fmt.Printf("%s\tOperator: %s\n", indent, b.Operator)
+	fmt.Printf("%s\tRight: {\n", indent)
+	b.Right.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
 }
 
 type BooleanBinaryOp string

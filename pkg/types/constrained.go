@@ -15,14 +15,14 @@ func (c *ConstrainedType) IsNumericType() bool { return false }
 func (c *ConstrainedType) GetName() string     { return c.Name }
 func (c *ConstrainedType) Print(indent string) {
 	fmt.Printf("%sConstrainedType {\n", indent)
-	fmt.Printf("%s  Name: %s\n", indent, c.Name)
-	fmt.Printf("%s  Type: %s\n", indent, c.Type.GetName())
+	fmt.Printf("%s\tName: %s\n", indent, c.Name)
+	fmt.Printf("%s\tType: %s\n", indent, c.Type.GetName())
 	if len(c.Constraints) > 0 {
-		fmt.Printf("%s  Constraints: {\n", indent)
+		fmt.Printf("%s\tConstraints: {\n", indent)
 		for _, constraint := range c.Constraints {
-			constraint.Print(indent + "    ")
+			constraint.Print(indent + "\t")
 		}
-		fmt.Printf("%s  }\n", indent)
+		fmt.Printf("%s\t}\n", indent)
 	}
 	fmt.Printf("%s}\n", indent)
 }
@@ -49,7 +49,7 @@ func (l *LiteralUnionConstraint) constraintNode() {}
 func (l *LiteralUnionConstraint) Print(indent string) {
 	fmt.Printf("%sLiteralUnionConstraint {\n", indent)
 	for _, value := range l.Values {
-		fmt.Printf("%s  Value: %s\n", indent, value.GetName())
+		fmt.Printf("%s\tValue: %s\n", indent, value.GetName())
 	}
 	fmt.Printf("%s}\n", indent)
 }
@@ -68,15 +68,15 @@ func (r *RangeConstraint) constraintNode() {}
 func (r *RangeConstraint) Print(indent string) {
 	fmt.Printf("%sRangeConstraint {\n", indent)
 	if r.Start != nil {
-		fmt.Printf("%s  Start: {\n", indent)
-		r.Start.Print(indent + "    ")
-		fmt.Printf("%s  }\n", indent)
+		fmt.Printf("%s\tStart: {\n", indent)
+		r.Start.Print(indent + "\t")
+		fmt.Printf("%s\t}\n", indent)
 	}
-	fmt.Printf("%s  Comparator: %s\n", indent, r.Comparator)
+	fmt.Printf("%s\tComparator: %s\n", indent, r.Comparator)
 	if r.End != nil {
-		fmt.Printf("%s  End: {\n", indent)
-		r.End.Print(indent + "    ")
-		fmt.Printf("%s  }\n", indent)
+		fmt.Printf("%s\tEnd: {\n", indent)
+		r.End.Print(indent + "\t")
+		fmt.Printf("%s\t}\n", indent)
 	}
 	fmt.Printf("%s}\n", indent)
 }
@@ -112,11 +112,11 @@ func (m *MathConstraintLiteralExpr) GetName() string {
 
 func (m *MathConstraintLiteralExpr) Print(indent string) {
 	fmt.Printf("%sMathConstraintLiteralExpr { \n", indent)
-	fmt.Printf("%s  Value: %s\n", indent, m.Value.ConstraintString())
+	fmt.Printf("%s\tValue: %s\n", indent, m.Value.ConstraintString())
 	if m.Type != nil {
-		fmt.Printf("%s  Type: {\n", indent)
-		m.Type.Print(indent + "    ")
-		fmt.Printf("%s  }\n", indent)
+		fmt.Printf("%s\tType: {\n", indent)
+		m.Type.Print(indent + "\t")
+		fmt.Printf("%s\t}\n", indent)
 	}
 	fmt.Printf("%s}\n", indent)
 }
@@ -137,9 +137,9 @@ func (m *MathConstraintIdentifierExpr) GetName() string {
 func (m *MathConstraintIdentifierExpr) Print(indent string) {
 	fmt.Printf("%sMathConstraintIdentifierExpr(%s)\n", indent, m.Name)
 	if m.Type != nil {
-		fmt.Printf("%s  Type: {\n", indent)
-		m.Type.Print(indent + "    ")
-		fmt.Printf("%s  }\n", indent)
+		fmt.Printf("%s\tType: {\n", indent)
+		m.Type.Print(indent + "\t")
+		fmt.Printf("%s\t}\n", indent)
 	}
 }
 
@@ -158,13 +158,13 @@ func (m *MathConstraintBinaryOpExpr) GetName() string {
 
 func (m *MathConstraintBinaryOpExpr) Print(indent string) {
 	fmt.Printf("%sMathConstraintBinaryOpExpr(%s) {\n", indent, m.GetName())
-	fmt.Printf("%s  Left: {\n", indent)
-	m.Left.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
-	fmt.Printf("%s  Operator: %s\n", indent, m.Operator)
-	fmt.Printf("%s  Right: {\n", indent)
-	m.Right.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s\tLeft: {\n", indent)
+	m.Left.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
+	fmt.Printf("%s\tOperator: %s\n", indent, m.Operator)
+	fmt.Printf("%s\tRight: {\n", indent)
+	m.Right.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
 	fmt.Printf("%s}\n", indent)
 }
 
@@ -190,9 +190,9 @@ func (m *MathConstraintNegationExpr) GetName() string {
 
 func (m *MathConstraintNegationExpr) Print(indent string) {
 	fmt.Printf("%sMathConstraintNegationExpr(%s)\n", indent, m.GetName())
-	fmt.Printf("%s  Operand: {\n", indent)
-	m.Operand.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s\tOperand: {\n", indent)
+	m.Operand.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
 }
 
 type PrecisionConstraint struct {
@@ -208,9 +208,9 @@ func (p *PrecisionConstraint) GetName() string {
 
 func (p *PrecisionConstraint) Print(indent string) {
 	fmt.Printf("%sPrecisionConstraint(%s)\n", indent, p.GetName())
-	fmt.Printf("%s  Value: {\n", indent)
-	p.Value.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s\tValue: {\n", indent)
+	p.Value.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
 }
 
 type RoundingMode string
@@ -235,9 +235,9 @@ func (s *StepConstraint) GetName() string {
 
 func (s *StepConstraint) Print(indent string) {
 	fmt.Printf("%sStepConstraint(%s)\n", indent, s.GetName())
-	fmt.Printf("%s  Value: {\n", indent)
-	s.Value.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s\tValue: {\n", indent)
+	s.Value.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
 }
 
 type PatternConstraint struct {
@@ -252,5 +252,5 @@ func (p *PatternConstraint) GetName() string {
 
 func (p *PatternConstraint) Print(indent string) {
 	fmt.Printf("%sPatternConstraint(%s)\n", indent, p.GetName())
-	fmt.Printf("%s  Pattern: %s\n", indent, p.Pattern)
+	fmt.Printf("%s\tPattern: %s\n", indent, p.Pattern)
 }

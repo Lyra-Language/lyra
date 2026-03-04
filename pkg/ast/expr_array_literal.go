@@ -20,7 +20,7 @@ func (a *ArrayLiteralExpr) GetType() types.Type {
 func (a *ArrayLiteralExpr) Print(indent string) {
 	fmt.Printf("%sArrayLiteralExpr(%s) {\n", indent, a.GetName())
 	for _, element := range a.Elements {
-		element.Print(indent + "    ")
+		element.Print(indent + "\t")
 	}
 	fmt.Printf("%s}\n", indent)
 }

@@ -26,21 +26,21 @@ func (a *ArrayCompExpr) GetType() types.Type {
 
 func (a *ArrayCompExpr) Print(indent string) {
 	fmt.Printf("%sArrayCompExpr {\n", indent)
-	fmt.Printf("%s  Generators: {\n", indent)
+	fmt.Printf("%s\tGenerators: {\n", indent)
 	for _, generator := range a.Generators {
-		generator.Print(indent + "    ")
+		generator.Print(indent + "\t")
 	}
-	fmt.Printf("%s  }\n", indent)
-	fmt.Printf("%s  Guards: {\n", indent)
+	fmt.Printf("%s\t}\n", indent)
+	fmt.Printf("%s\tGuards: {\n", indent)
 	for _, guard := range a.Guards {
-		fmt.Printf("%s    Guard: {\n", indent)
-		guard.Print(indent + "      ")
-		fmt.Printf("%s    }\n", indent)
+		fmt.Printf("%s\t\tGuard: {\n", indent)
+		guard.Print(indent + "\t\t")
+		fmt.Printf("%s\t\t}\n", indent)
 	}
-	fmt.Printf("%s  }\n", indent)
-	fmt.Printf("%s  Result: {\n", indent)
-	a.Result.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s\t}\n", indent)
+	fmt.Printf("%s\tResult: {\n", indent)
+	a.Result.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
 	fmt.Printf("%s}\n", indent)
 }
 
@@ -62,9 +62,9 @@ func (g *Generator) GetType() types.Type {
 
 func (g *Generator) Print(indent string) {
 	fmt.Printf("%sGenerator {\n", indent)
-	fmt.Printf("%s  Value: {\n", indent)
-	g.Value.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
-	fmt.Printf("%s  Identifier: %s\n", indent, g.Identifier)
+	fmt.Printf("%s\tValue: {\n", indent)
+	g.Value.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
+	fmt.Printf("%s\tIdentifier: %s\n", indent, g.Identifier)
 	fmt.Printf("%s}\n", indent)
 }

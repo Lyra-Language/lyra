@@ -20,15 +20,15 @@ func (t *TypeDeclStmt) GetName() string { return t.Name }
 func (t *TypeDeclStmt) Print(indent string) {
 	fmt.Printf("%sTypeDeclStmt(%s) {\n", indent, t.Name)
 	if t.IsPublic {
-		fmt.Printf("%s  IsPublic: true\n", indent)
+		fmt.Printf("%s\tIsPublic: true\n", indent)
 	}
 	if t.GenericParams != nil {
-		fmt.Printf("%s  GenericParams: %v\n", indent, t.GenericParams)
+		fmt.Printf("%s\tGenericParams: %v\n", indent, t.GenericParams)
 	}
 	if t.Type != nil {
-		fmt.Printf("%s  Type: {\n", indent)
-		t.Type.Print(indent + "    ")
-		fmt.Printf("%s  }\n", indent)
+		fmt.Printf("%s\tType: {\n", indent)
+		t.Type.Print(indent + "\t")
+		fmt.Printf("%s\t}\n", indent)
 	}
 	fmt.Printf("%s}\n", indent)
 }
@@ -43,7 +43,7 @@ func (e *ExpressionStmt) GetName() string { return e.Expression.GetName() }
 
 func (e *ExpressionStmt) Print(indent string) {
 	fmt.Printf("%sExpressionStmt(%s)\n", indent, e.Expression.GetName())
-	e.Expression.Print(indent + "    ")
+	e.Expression.Print(indent + "\t")
 }
 
 // VariableDeclarationStmt represents a let/var/const binding
@@ -60,17 +60,17 @@ func (v *VarDeclStmt) GetName() string { return v.Name }
 func (v *VarDeclStmt) Print(indent string) {
 	fmt.Printf("%sVarDeclStmt(%s) {\n", indent, v.Name)
 	if v.Keyword != "" {
-		fmt.Printf("%s  Keyword: %s\n", indent, v.Keyword)
+		fmt.Printf("%s\tKeyword: %s\n", indent, v.Keyword)
 	}
 	if v.Type != nil {
-		fmt.Printf("%s  Type: %s\n", indent, v.Type.GetName())
+		fmt.Printf("%s\tType: %s\n", indent, v.Type.GetName())
 	}
 	if v.Value != nil {
-		fmt.Printf("%s  Value: {\n", indent)
-		v.Value.Print(indent + "    ")
-		fmt.Printf("%s  }\n", indent)
+		fmt.Printf("%s\tValue: {\n", indent)
+		v.Value.Print(indent + "\t")
+		fmt.Printf("%s\t}\n", indent)
 	} else {
-		fmt.Printf("%s  Value: nil\n", indent)
+		fmt.Printf("%s\tValue: nil\n", indent)
 	}
 	fmt.Printf("%s}\n", indent)
 }
@@ -98,25 +98,25 @@ func (f *FunctionDefStmt) GetName() string { return f.Name }
 func (f *FunctionDefStmt) Print(indent string) {
 	fmt.Printf("%sFunctionDefStmt(%s)\n", indent, f.Name)
 	if f.GenericParams != nil {
-		fmt.Printf("%s  GenericParams: %v\n", indent, f.GenericParams)
+		fmt.Printf("%s\tGenericParams: %v\n", indent, f.GenericParams)
 	}
 	if f.Signature != nil {
-		fmt.Printf("%s  Signature: %s\n", indent, f.Signature.GetName())
+		fmt.Printf("%s\tSignature: %s\n", indent, f.Signature.GetName())
 	}
 	if f.Clauses != nil {
-		fmt.Printf("%s  Clauses:\n", indent)
+		fmt.Printf("%s\tClauses:\n", indent)
 		for _, clause := range f.Clauses {
-			clause.Print(indent + "    ")
+			clause.Print(indent + "\t")
 		}
 	}
 	if f.IsPublic {
-		fmt.Printf("%s  IsPublic: true\n", indent)
+		fmt.Printf("%s\tIsPublic: true\n", indent)
 	}
 	if f.IsPure {
-		fmt.Printf("%s  IsPure: true\n", indent)
+		fmt.Printf("%s\tIsPure: true\n", indent)
 	}
 	if f.IsAsync {
-		fmt.Printf("%s  IsAsync: true\n", indent)
+		fmt.Printf("%s\tIsAsync: true\n", indent)
 	}
 	fmt.Printf("%s}\n", indent)
 }
@@ -139,18 +139,18 @@ func (f *FunctionClause) Print(indent string) {
 	}
 	fmt.Printf("%sFunctionClause(%s)\n", indent, parameters_str)
 	if f.Guard != nil {
-		fmt.Printf("%s  Guard: {\n", indent)
-		f.Guard.Print(indent + "    ")
-		fmt.Printf("%s  }\n", indent)
+		fmt.Printf("%s\tGuard: {\n", indent)
+		f.Guard.Print(indent + "\t")
+		fmt.Printf("%s\t}\n", indent)
 	} else {
-		fmt.Printf("%s  Guard: nil\n", indent)
+		fmt.Printf("%s\tGuard: nil\n", indent)
 	}
 	if f.Body != nil {
-		fmt.Printf("%s  Body: {\n", indent)
-		f.Body.Print(indent + "    ")
-		fmt.Printf("%s  }\n", indent)
+		fmt.Printf("%s\tBody: {\n", indent)
+		f.Body.Print(indent + "\t")
+		fmt.Printf("%s\t}\n", indent)
 	} else {
-		fmt.Printf("%s  Body: nil\n", indent)
+		fmt.Printf("%s\tBody: nil\n", indent)
 	}
 	fmt.Printf("%s}\n", indent)
 }
@@ -163,7 +163,7 @@ type Parameter struct {
 func (p *Parameter) Print(indent string) {
 	fmt.Printf("%sParameter(%s)\n", indent, p.Pattern.GetName())
 	if p.DefaultValue != nil {
-		fmt.Printf("%s  DefaultValue: %v\n", indent, p.DefaultValue)
+		fmt.Printf("%s\tDefaultValue: %v\n", indent, p.DefaultValue)
 	}
 }
 

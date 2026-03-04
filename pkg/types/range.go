@@ -16,17 +16,17 @@ func (r RangeType) GetName() string {
 }
 func (r RangeType) Print(indent string) {
 	fmt.Printf("%sRangeType {\n", indent)
-	fmt.Printf("%s  Start: {\n", indent)
-	r.Start.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
-	fmt.Printf("%s  EndOperator: %s\n", indent, r.EndOperator)
-	fmt.Printf("%s  End: {\n", indent)
-	r.End.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s\tStart: {\n", indent)
+	r.Start.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
+	fmt.Printf("%s\tEndOperator: %s\n", indent, r.EndOperator)
+	fmt.Printf("%s\tEnd: {\n", indent)
+	r.End.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
 	if r.Step != nil {
-		fmt.Printf("%s  Step: {\n", indent)
-		r.Step.Print(indent + "    ")
-		fmt.Printf("%s  }\n", indent)
+		fmt.Printf("%s\tStep: {\n", indent)
+		r.Step.Print(indent + "\t")
+		fmt.Printf("%s\t}\n", indent)
 	}
 	fmt.Printf("%s}\n", indent)
 }

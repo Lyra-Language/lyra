@@ -24,10 +24,10 @@ func (a StaticArrayType) GetName() string {
 
 func (a StaticArrayType) Print(indent string) {
 	fmt.Printf("%sStaticArrayType(%s)\n", indent, a.GetName())
-	fmt.Printf("%s  ElementType: {\n", indent)
-	fmt.Printf("%s  Size: %d\n", indent, a.Size)
-	a.ElementType.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s\tElementType: {\n", indent)
+	fmt.Printf("%s\tSize: %d\n", indent, a.Size)
+	a.ElementType.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
 }
 
 type DynamicArrayType struct {
@@ -51,7 +51,7 @@ func (a DynamicArrayType) GetName() string {
 
 func (a DynamicArrayType) Print(indent string) {
 	fmt.Printf("%sDynamicArrayType(%s)\n", indent, a.GetName())
-	fmt.Printf("%s  ElementType: {\n", indent)
-	a.ElementType.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s\tElementType: {\n", indent)
+	a.ElementType.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
 }

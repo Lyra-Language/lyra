@@ -46,7 +46,7 @@ func (p *Program) GetLocation() Location { return p.Location }
 func (p *Program) Print(indent string) {
 	fmt.Printf("%sProgram(%d statements) {\n", indent, len(p.Statements))
 	for _, statement := range p.Statements {
-		statement.Print(indent + "  ")
+		statement.Print(indent + "\t")
 	}
 	fmt.Printf("%s}\n", indent)
 }

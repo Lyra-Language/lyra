@@ -32,7 +32,7 @@ func (t *TupleLiteralExpr) GetType() types.Type {
 func (t *TupleLiteralExpr) Print(indent string) {
 	fmt.Printf("%sTupleLiteralExpr(Name: %s) {\n", indent, t.Name)
 	for _, element := range t.Elements {
-		element.Print(indent + "    ")
+		element.Print(indent + "\t")
 	}
 	fmt.Printf("%s}\n", indent)
 }

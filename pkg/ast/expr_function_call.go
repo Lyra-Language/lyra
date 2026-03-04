@@ -20,19 +20,19 @@ func (f *FunctionCallExpr) GetName() string {
 
 func (f *FunctionCallExpr) Print(indent string) {
 	fmt.Printf("%sFunctionCallExpr {\n", indent)
-	fmt.Printf("%s  Function: {\n", indent)
-	f.Function.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s\tFunction: {\n", indent)
+	f.Function.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
 	if f.GenericArguments != nil {
-		fmt.Printf("%s  GenericArguments: {\n", indent)
+		fmt.Printf("%s\tGenericArguments: {\n", indent)
 		for _, genericArgument := range f.GenericArguments {
-			genericArgument.Print(indent + "    ")
+			genericArgument.Print(indent + "\t")
 		}
-		fmt.Printf("%s  }\n", indent)
+		fmt.Printf("%s\t}\n", indent)
 	}
-	fmt.Printf("%s  Arguments: {\n", indent)
-	f.Arguments.Print(indent + "    ")
-	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s\tArguments: {\n", indent)
+	f.Arguments.Print(indent + "\t")
+	fmt.Printf("%s\t}\n", indent)
 }
 
 type ArgumentList struct {
@@ -50,7 +50,7 @@ func (a *ArgumentList) GetName() string {
 func (a *ArgumentList) Print(indent string) {
 	fmt.Printf("%sArgumentList(%s) {\n", indent, a.GetName())
 	for _, argument := range a.Arguments {
-		argument.Print(indent + "    ")
+		argument.Print(indent + "\t")
 	}
 	fmt.Printf("%s}\n", indent)
 }
