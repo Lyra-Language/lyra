@@ -2,7 +2,6 @@ package collector
 
 import (
 	"fmt"
-	"strconv"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -65,23 +64,25 @@ func (c *Collector) collectConstraints(node *sitter.Node) []types.Constraint {
 }
 
 func (c *Collector) collectLiteralUnionConstraint(node *sitter.Node) *types.LiteralUnionConstraint {
-	values := make([]any, 0)
+	values := make([]types.LiteralUnionValue, 0)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "literal_val" {
-			values = append(values, c.collectExpression(child))
+			expr := c.collectExpression(child)
+			if v, ok := expr.(types.LiteralUnionValue); ok {
+				values = append(values, v)
+			}
 		}
 	}
 	return &types.LiteralUnionConstraint{Values: values}
 }
 
-func (c *Collector) inferTypeFromValues(values []any) types.Type {
-	value := values[0].(ast.Expression)
-	if value == nil {
+func (c *Collector) inferTypeFromValues(values []types.LiteralUnionValue) types.Type {
+	if len(values) == 0 {
 		c.errors = append(c.errors, fmt.Errorf("literal union constraint must have at least one value"))
 		return nil
 	}
-	return value.GetType()
+	return values[0].GetType()
 }
 
 func (c *Collector) collectRangeConstraint(node *sitter.Node) *types.RangeConstraint {
@@ -120,16 +121,22 @@ func (c *Collector) collectMathConstraintExpr(node *sitter.Node) types.MathConst
 	case "constraint_math_expr":
 		return c.collectMathConstraintExpr(node.Child(0))
 	case "integer_literal":
-		value, _ := strconv.ParseInt(c.nodeText(node), 10, 64)
+		expr := c.collectIntegerLiteralExpr(node)
+		if expr == nil {
+			return nil
+		}
 		return &types.MathConstraintLiteralExpr{
-			Value: value,
-			Type:  types.PrimitiveType{Name: types.Int},
+			Value: expr,
+			Type:  expr.GetType(),
 		}
 	case "float_literal":
-		value, _ := strconv.ParseFloat(c.nodeText(node), 64)
+		expr := c.collectFloatLiteralExpr(node)
+		if expr == nil {
+			return nil
+		}
 		return &types.MathConstraintLiteralExpr{
-			Value: value,
-			Type:  types.PrimitiveType{Name: types.Float},
+			Value: expr,
+			Type:  expr.GetType(),
 		}
 	case "identifier", "const_identifier":
 		return &types.MathConstraintIdentifierExpr{

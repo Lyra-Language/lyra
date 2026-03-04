@@ -58,7 +58,7 @@ type VarDeclStmt struct {
 func (v *VarDeclStmt) GetName() string { return v.Name }
 
 func (v *VarDeclStmt) Print(indent string) {
-	fmt.Printf("%sVarDeclStmt(%s)\n", indent, v.Name)
+	fmt.Printf("%sVarDeclStmt(%s) {\n", indent, v.Name)
 	if v.Keyword != "" {
 		fmt.Printf("%s  Keyword: %s\n", indent, v.Keyword)
 	}

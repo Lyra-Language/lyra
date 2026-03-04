@@ -20,8 +20,6 @@ func TestCollectIntegerLiteralExpr(t *testing.T) {
 		t.Fatalf("Collector errors: %v", errors)
 	}
 
-	// program.Print("")
-
 	if len(program.Statements) != 1 {
 		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
 	}
@@ -39,8 +37,8 @@ func TestCollectIntegerLiteralExpr(t *testing.T) {
 		t.Fatalf("Expected Value, got nil")
 	}
 
-	if varDeclStmt.Value.GetName() != "1000000" {
-		t.Fatalf("Expected Value name to be \"1000000\", got %s", varDeclStmt.Value.GetName())
+	if varDeclStmt.Value.GetName() != "IntegerLiteralExpr(1000000, Base: 10)" {
+		t.Fatalf("Expected Value name to be \"IntegerLiteralExpr(1000000, Base: 10)\", got %s", varDeclStmt.Value.GetName())
 	}
 
 	if varDeclStmt.Value.(*ast.IntegerLiteralExpr).Value != 1000000 {
@@ -79,8 +77,8 @@ func TestCollectBinaryIntegerLiteralExpr(t *testing.T) {
 		t.Fatalf("Expected Value, got nil")
 	}
 
-	if varDeclStmt.Value.GetName() != "42" {
-		t.Fatalf("Expected Expression name to be \"42\", got %s", varDeclStmt.Value.GetName())
+	if varDeclStmt.Value.GetName() != "IntegerLiteralExpr(42, Base: 2)" {
+		t.Fatalf("Expected Expression name to be \"IntegerLiteralExpr(42, Base: 2)\", got %s", varDeclStmt.Value.GetName())
 	}
 
 	if varDeclStmt.Value.(*ast.IntegerLiteralExpr).Value != 42 {
@@ -117,8 +115,8 @@ func TestCollectOctalIntegerLiteralExpr(t *testing.T) {
 		t.Fatalf("Expected Value, got nil")
 	}
 
-	if varDeclStmt.Value.GetName() != "42" {
-		t.Fatalf("Expected Expression name to be \"42\", got %s", varDeclStmt.Value.GetName())
+	if varDeclStmt.Value.GetName() != "IntegerLiteralExpr(42, Base: 8)" {
+		t.Fatalf("Expected Expression name to be \"IntegerLiteralExpr(42, Base: 8)\", got %s", varDeclStmt.Value.GetName())
 	}
 
 	if varDeclStmt.Value.(*ast.IntegerLiteralExpr).Value != 42 {
@@ -155,8 +153,8 @@ func TestCollectHexadecimalIntegerLiteralExpr(t *testing.T) {
 		t.Fatalf("Expected Value, got nil")
 	}
 
-	if varDeclStmt.Value.GetName() != "42" {
-		t.Fatalf("Expected Expression name to be \"42\", got %s", varDeclStmt.Value.GetName())
+	if varDeclStmt.Value.GetName() != "IntegerLiteralExpr(42, Base: 16)" {
+		t.Fatalf("Expected Expression name to be \"IntegerLiteralExpr(42, Base: 16)\", got %s", varDeclStmt.Value.GetName())
 	}
 
 	if varDeclStmt.Value.(*ast.IntegerLiteralExpr).Value != 42 {
@@ -197,8 +195,8 @@ func TestCollectFloatLiteralExpr(t *testing.T) {
 		t.Fatalf("Expected Value, got nil")
 	}
 
-	if varDeclStmt.Value.GetName() != "3.14159" {
-		t.Fatalf("Expected Expression name to be \"3.14159\", got %s", varDeclStmt.Value.GetName())
+	if varDeclStmt.Value.GetName() != "FloatLiteralExpr(3.14159)" {
+		t.Fatalf("Expected Expression name to be \"FloatLiteralExpr(3.14159)\", got %s", varDeclStmt.Value.GetName())
 	}
 
 	if varDeclStmt.Value.(*ast.FloatLiteralExpr).Value != 3.14159 {
@@ -231,8 +229,8 @@ func TestCollectFloatLiteralExprWithExponent(t *testing.T) {
 		t.Fatalf("Expected Value, got nil")
 	}
 
-	if varDeclStmt.Value.GetName() != "3.141592" {
-		t.Fatalf("Expected Expression name to be \"3.141592\", got %s", varDeclStmt.Value.GetName())
+	if varDeclStmt.Value.GetName() != "FloatLiteralExpr(3.141592)" {
+		t.Fatalf("Expected Expression name to be \"FloatLiteralExpr(3.141592)\", got %s", varDeclStmt.Value.GetName())
 	}
 
 	if varDeclStmt.Value.(*ast.FloatLiteralExpr).Value != 0.03141592e2 {
@@ -265,8 +263,8 @@ func TestCollectFloatLiteralExprWithPositiveExponent(t *testing.T) {
 		t.Fatalf("Expected Value, got nil")
 	}
 
-	if varDeclStmt.Value.GetName() != "3.141592" {
-		t.Fatalf("Expected Expression name to be \"3.141592\", got %s", varDeclStmt.Value.GetName())
+	if varDeclStmt.Value.GetName() != "FloatLiteralExpr(3.141592)" {
+		t.Fatalf("Expected Expression name to be \"FloatLiteralExpr(3.141592)\", got %s", varDeclStmt.Value.GetName())
 	}
 
 	if varDeclStmt.Value.(*ast.FloatLiteralExpr).Value != 0.03141592e+2 {
@@ -298,8 +296,8 @@ func TestCollectFloatLiteralExprWithNegativeExponent(t *testing.T) {
 		t.Fatalf("Expected Value, got nil")
 	}
 
-	if varDeclStmt.Value.GetName() != "3.141592" {
-		t.Fatalf("Expected Expression name to be \"3.141592\", got %s", varDeclStmt.Value.GetName())
+	if varDeclStmt.Value.GetName() != "FloatLiteralExpr(3.141592)" {
+		t.Fatalf("Expected Expression name to be \"FloatLiteralExpr(3.141592)\", got %s", varDeclStmt.Value.GetName())
 	}
 
 	if varDeclStmt.Value.(*ast.FloatLiteralExpr).Value != 314.1592e-2 {
@@ -332,8 +330,8 @@ func TestCollectFloatLiteralExprWithUnderscores(t *testing.T) {
 		t.Fatalf("Expected Value, got nil")
 	}
 
-	if varDeclStmt.Value.GetName() != "3.14159" { // NOTE: no trailing zeros
-		t.Fatalf("Expected Expression name to be \"3.14159\", got %s", varDeclStmt.Value.GetName())
+	if varDeclStmt.Value.GetName() != "FloatLiteralExpr(3.14159)" { // NOTE: no trailing zeros
+		t.Fatalf("Expected Expression name to be \"FloatLiteralExpr(3.14159)\", got %s", varDeclStmt.Value.GetName())
 	}
 
 	if varDeclStmt.Value.(*ast.FloatLiteralExpr).Value != 3.14159 {

@@ -14,10 +14,17 @@ func (c *ConstrainedType) typeNode()           {}
 func (c *ConstrainedType) IsNumericType() bool { return false }
 func (c *ConstrainedType) GetName() string     { return c.Name }
 func (c *ConstrainedType) Print(indent string) {
-	fmt.Printf("%sConstrainedType(%s) {\n", indent, c.Name)
-	for _, constraint := range c.Constraints {
-		constraint.Print(indent + "  ")
+	fmt.Printf("%sConstrainedType {\n", indent)
+	fmt.Printf("%s  Name: %s\n", indent, c.Name)
+	fmt.Printf("%s  Type: %s\n", indent, c.Type.GetName())
+	if len(c.Constraints) > 0 {
+		fmt.Printf("%s  Constraints: {\n", indent)
+		for _, constraint := range c.Constraints {
+			constraint.Print(indent + "    ")
+		}
+		fmt.Printf("%s  }\n", indent)
 	}
+	fmt.Printf("%s}\n", indent)
 }
 
 type Constraint interface {
@@ -25,15 +32,24 @@ type Constraint interface {
 	Print(indent string)
 }
 
+// LiteralUnionValue is implemented only by primitive literal AST nodes (int/float/string/bool).
+// The marker method ensures other expressions (identifiers, calls, etc.) do not satisfy this interface.
+type LiteralUnionValue interface {
+	GetName() string
+	GetType() Type
+	SealLiteralUnion() // marker; only ast *IntegerLiteralExpr, *StringLiteralExpr, etc. implement this
+}
+
+// LiteralUnionConstraint holds a set of allowed literal values for a constrained type.
 type LiteralUnionConstraint struct {
-	Values []any
+	Values []LiteralUnionValue
 }
 
 func (l *LiteralUnionConstraint) constraintNode() {}
 func (l *LiteralUnionConstraint) Print(indent string) {
 	fmt.Printf("%sLiteralUnionConstraint {\n", indent)
 	for _, value := range l.Values {
-		fmt.Printf("%s  Value: %v\n", indent, value)
+		fmt.Printf("%s  Value: %s\n", indent, value.GetName())
 	}
 	fmt.Printf("%s}\n", indent)
 }
@@ -71,25 +87,38 @@ type MathConstraintExpr interface {
 	Print(indent string)
 }
 
+// LiteralNumberValue is implemented only by *ast.IntegerLiteralExpr and *ast.FloatLiteralExpr.
+// Using AST nodes keeps constraint literals consistent with the rest of the AST (e.g. LiteralUnionValue).
+type LiteralNumberValue interface {
+	GetName() string
+	GetType() Type
+	SealMathConstraintLiteral() // marker; only ast int/float literal nodes implement this
+	Int64() (int64, bool)       // for extraction
+	Float64() (float64, bool)   // for extraction
+	ConstraintString() string   // numeric string for constraint display, e.g. "15" or "3.14"
+}
+
 // MathConstraintLiteralExpr implements MathConstraintExpr
 type MathConstraintLiteralExpr struct {
-	Value any
+	Value LiteralNumberValue
 	Type  Type
 }
 
 func (m *MathConstraintLiteralExpr) mathConstraintExprNode() {}
 
 func (m *MathConstraintLiteralExpr) GetName() string {
-	return fmt.Sprintf("%v", m.Value)
+	return m.Value.ConstraintString()
 }
 
 func (m *MathConstraintLiteralExpr) Print(indent string) {
-	fmt.Printf("%sMathConstraintLiteralExpr(%s)\n", indent, m.Value)
+	fmt.Printf("%sMathConstraintLiteralExpr { \n", indent)
+	fmt.Printf("%s  Value: %s\n", indent, m.Value.ConstraintString())
 	if m.Type != nil {
 		fmt.Printf("%s  Type: {\n", indent)
 		m.Type.Print(indent + "    ")
 		fmt.Printf("%s  }\n", indent)
 	}
+	fmt.Printf("%s}\n", indent)
 }
 
 // MathConstraintIdentifierExpr implements MathConstraintExpr
@@ -128,13 +157,15 @@ func (m *MathConstraintBinaryOpExpr) GetName() string {
 }
 
 func (m *MathConstraintBinaryOpExpr) Print(indent string) {
-	fmt.Printf("%sMathConstraintBinaryOpExpr(%s)\n", indent, m.GetName())
+	fmt.Printf("%sMathConstraintBinaryOpExpr(%s) {\n", indent, m.GetName())
 	fmt.Printf("%s  Left: {\n", indent)
 	m.Left.Print(indent + "    ")
+	fmt.Printf("%s  }\n", indent)
 	fmt.Printf("%s  Operator: %s\n", indent, m.Operator)
 	fmt.Printf("%s  Right: {\n", indent)
 	m.Right.Print(indent + "    ")
 	fmt.Printf("%s  }\n", indent)
+	fmt.Printf("%s}\n", indent)
 }
 
 type MathConstraintBinaryOp string

@@ -22,7 +22,7 @@ func TestCollectBasicArrayCompExpr(t *testing.T) {
 
 	got := captureProgramPrint(program)
 	want := `Program(1 statements) {
-  VarDeclStmt(squares)
+  VarDeclStmt(squares) {
     Keyword: let
     Value: {
       ArrayCompExpr {
@@ -31,11 +31,11 @@ func TestCollectBasicArrayCompExpr(t *testing.T) {
             Value: {
               RangeExpr {
                 Start: {
-                  IntegerLiteralExpr(1)
+                  IntegerLiteralExpr(1, Base: 10)
                 }
                 EndOperator: =
                 End: {
-                  IntegerLiteralExpr(5)
+                  IntegerLiteralExpr(5, Base: 10)
                 }
               }
             }
@@ -60,8 +60,8 @@ func TestCollectBasicArrayCompExpr(t *testing.T) {
   }
 }
 `
-	if got != want {
-		t.Errorf("Print output mismatch:\ngot:\n%s\nwant:\n%s", got, want)
+	if msg := cmpOutput(got, want); msg != "" {
+		t.Error(msg)
 	}
 }
 
@@ -79,7 +79,7 @@ func TestCollectArrayCompExprWithGuard(t *testing.T) {
 
 	got := captureProgramPrint(program)
 	want := `Program(1 statements) {
-  VarDeclStmt(evens)
+  VarDeclStmt(evens) {
     Keyword: let
     Value: {
       ArrayCompExpr {
@@ -88,11 +88,11 @@ func TestCollectArrayCompExprWithGuard(t *testing.T) {
             Value: {
               RangeExpr {
                 Start: {
-                  IntegerLiteralExpr(1)
+                  IntegerLiteralExpr(1, Base: 10)
                 }
                 EndOperator: =
                 End: {
-                  IntegerLiteralExpr(5)
+                  IntegerLiteralExpr(5, Base: 10)
                 }
               }
             }
@@ -107,7 +107,7 @@ func TestCollectArrayCompExprWithGuard(t *testing.T) {
               }
               Operator: ==
               Right: {
-                IntegerLiteralExpr(0)
+                IntegerLiteralExpr(0, Base: 10)
               }
           }
         }
@@ -127,8 +127,8 @@ func TestCollectArrayCompExprWithGuard(t *testing.T) {
   }
 }
 `
-	if got != want {
-		t.Errorf("Print output mismatch:\ngot:\n%s\nwant:\n%s", got, want)
+	if msg := cmpOutput(got, want); msg != "" {
+		t.Error(msg)
 	}
 }
 
@@ -163,8 +163,8 @@ func TestCollectArrayCompExprWithMultipleGuardsAndGenerators(t *testing.T) {
 		}
 		t.Fatal("Golden file was empty; wrote current output. Re-run test to verify.")
 	}
-	if got != string(want) {
-		t.Errorf("Print output mismatch:\ngot:\n%s\nwant (from %s):\n%s", got, goldenPath, string(want))
+	if msg := cmpOutput(got, string(want)); msg != "" {
+		t.Errorf("Print output mismatch (golden file %s): %s", goldenPath, msg)
 	}
 }
 
@@ -182,7 +182,7 @@ func TestCollectArrayCompExprWithArrayLiteralGenerator(t *testing.T) {
 
 	got := captureProgramPrint(program)
 	want := `Program(1 statements) {
-  VarDeclStmt(foo)
+  VarDeclStmt(foo) {
     Keyword: let
     Value: {
       ArrayCompExpr {
@@ -190,9 +190,9 @@ func TestCollectArrayCompExprWithArrayLiteralGenerator(t *testing.T) {
           Generator {
             Value: {
               ArrayLiteralExpr(array_literal_expr) {
-                  IntegerLiteralExpr(1)
-                  IntegerLiteralExpr(2)
-                  IntegerLiteralExpr(3)
+                  IntegerLiteralExpr(1, Base: 10)
+                  IntegerLiteralExpr(2, Base: 10)
+                  IntegerLiteralExpr(3, Base: 10)
               }
             }
             Identifier: x
@@ -216,7 +216,7 @@ func TestCollectArrayCompExprWithArrayLiteralGenerator(t *testing.T) {
   }
 }
 `
-	if got != want {
-		t.Errorf("Print output mismatch:\ngot:\n%s\nwant:\n%s", got, want)
+	if msg := cmpOutput(got, want); msg != "" {
+		t.Error(msg)
 	}
 }
