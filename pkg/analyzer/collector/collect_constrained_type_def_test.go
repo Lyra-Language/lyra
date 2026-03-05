@@ -120,36 +120,36 @@ func TestCollector_SimpleRangeConstrainedType(t *testing.T) {
 	got := captureProgramPrint(program)
 	want :=
 		`Program(1 statements) {
-	TypeDeclStmt(Angle) {
-		Type: {
-			ConstrainedType {
-				Name: Angle
-				Type: float
-				Constraints: {
-					RangeConstraint {
-						Start: {
-							MathConstraintLiteralExpr {
-								Value: 0
-								Type: {
-									int
+			TypeDeclStmt(Angle) {
+				Type: {
+					ConstrainedType {
+						Name: Angle
+						Type: float
+						Constraints: {
+							RangeConstraint {
+								Start: {
+									MathConstraintLiteralExpr {
+										Value: 0
+										Type: {
+											int
+										}
+									}
 								}
-							}
-						}
-						Comparator: <
-						End: {
-							MathConstraintLiteralExpr {
-								Value: 360
-								Type: {
-									int
+								Comparator: <
+								End: {
+									MathConstraintLiteralExpr {
+										Value: 360
+										Type: {
+											int
+										}
+									}
 								}
 							}
 						}
 					}
 				}
 			}
-		}
-	}
-}`
+		}`
 	if msg := cmpOutput(got, want); msg != "" {
 		t.Fatal(msg)
 	}

@@ -121,7 +121,6 @@ func (c *Collector) collectDataConstructor(node *sitter.Node) (string, types.Dat
 	var name string
 	ctor := types.DataTypeConstructor{
 		Params: make([]types.Type, 0),
-		Fields: make(map[string]types.StructField),
 	}
 
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -140,8 +139,9 @@ func (c *Collector) collectDataConstructor(node *sitter.Node) (string, types.Dat
 	return name, ctor
 }
 
-func (c *Collector) collectStructFields(node *sitter.Node) map[string]types.StructField {
-	fields := make(map[string]types.StructField)
+// collectStructFields returns struct fields in source declaration order.
+func (c *Collector) collectStructFields(node *sitter.Node) []types.StructField {
+	var fields []types.StructField
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "struct_member" {
@@ -152,14 +152,23 @@ func (c *Collector) collectStructFields(node *sitter.Node) map[string]types.Stru
 			}
 			field_name := c.nodeText(child.ChildByFieldName("field_name"))
 			default_value := c.collectExpression(child.ChildByFieldName("default_field_value"))
-			fields[field_name] = types.StructField{
+			fields = append(fields, types.StructField{
 				Name:         field_name,
 				Type:         field_type,
 				DefaultValue: default_value,
-			}
+			})
 		}
 	}
 	return fields
+}
+
+// collectStructFieldsMap returns struct fields as a map (for StructType lookup).
+func (c *Collector) collectStructFieldsMap(node *sitter.Node) map[string]types.StructField {
+	m := make(map[string]types.StructField)
+	for _, field := range c.collectStructFields(node) {
+		m[field.Name] = field
+	}
+	return m
 }
 
 func (c *Collector) collectFunctionSignature(node *sitter.Node) (name string, genericParams []string, sig *types.FunctionType, isPure, isAsync bool) {

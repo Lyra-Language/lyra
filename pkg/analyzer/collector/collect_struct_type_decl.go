@@ -25,7 +25,7 @@ func (c *Collector) collectStructTypeDeclaration(node *sitter.Node) *ast.TypeDec
 		case "generic_parameters":
 			genericParams = c.collectGenericParams(child)
 		case "struct_type_body":
-			fields = c.collectStructFields(child)
+			fields = c.collectStructFieldsMap(child)
 		}
 	}
 

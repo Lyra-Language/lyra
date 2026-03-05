@@ -10,7 +10,7 @@ func (c *Collector) collectDataTypeDeclaration(node *sitter.Node) *ast.TypeDeclS
 	var name string
 	var genericParams []string
 	var allocation types.AllocationModifier
-	constructors := make(map[string]types.DataTypeConstructor)
+	var constructors []types.DataTypeConstructor
 	isPublic := false
 
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -25,8 +25,8 @@ func (c *Collector) collectDataTypeDeclaration(node *sitter.Node) *ast.TypeDeclS
 		case "generic_parameters":
 			genericParams = c.collectGenericParams(child)
 		case "data_type_constructor":
-			ctorName, ctor := c.collectDataConstructor(child)
-			constructors[ctorName] = ctor
+			_, ctor := c.collectDataConstructor(child)
+			constructors = append(constructors, ctor)
 		}
 	}
 

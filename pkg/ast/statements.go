@@ -27,7 +27,7 @@ func (t *TypeDeclStmt) Print(indent string) {
 	}
 	if t.Type != nil {
 		fmt.Printf("%s\tType: {\n", indent)
-		t.Type.Print(indent + "\t")
+		t.Type.Print(indent + "\t\t")
 		fmt.Printf("%s\t}\n", indent)
 	}
 	fmt.Printf("%s}\n", indent)
