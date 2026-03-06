@@ -4,7 +4,7 @@ import "fmt"
 
 type StructType struct {
 	Name          string // uppercase letter optionally followed by any number of letters or numbers
-	Fields        map[string]StructField
+	Fields        []StructField
 	GenericParams []GenericType
 	Allocation    AllocationModifier
 }

@@ -162,14 +162,6 @@ func (c *Collector) collectStructFields(node *sitter.Node) []types.StructField {
 	return fields
 }
 
-// collectStructFieldsMap returns struct fields as a map (for StructType lookup).
-func (c *Collector) collectStructFieldsMap(node *sitter.Node) map[string]types.StructField {
-	m := make(map[string]types.StructField)
-	for _, field := range c.collectStructFields(node) {
-		m[field.Name] = field
-	}
-	return m
-}
 
 func (c *Collector) collectFunctionSignature(node *sitter.Node) (name string, genericParams []string, sig *types.FunctionType, isPure, isAsync bool) {
 	for i := uint(0); i < node.ChildCount(); i++ {

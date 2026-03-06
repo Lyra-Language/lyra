@@ -9,7 +9,7 @@ import (
 func (c *Collector) collectStructTypeDeclaration(node *sitter.Node) *ast.TypeDeclStmt {
 	var name string
 	var genericParams []string
-	fields := make(map[string]types.StructField)
+	var fields []types.StructField
 	isPublic := false
 	var allocation types.AllocationModifier
 
@@ -25,7 +25,7 @@ func (c *Collector) collectStructTypeDeclaration(node *sitter.Node) *ast.TypeDec
 		case "generic_parameters":
 			genericParams = c.collectGenericParams(child)
 		case "struct_type_body":
-			fields = c.collectStructFieldsMap(child)
+			fields = c.collectStructFields(child)
 		}
 	}
 

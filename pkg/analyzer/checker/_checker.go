@@ -536,8 +536,10 @@ func (c *Checker) checkMemberAccess(node *sitter.Node) types.Type {
 
 	switch t := objType.(type) {
 	case types.StructType:
-		if fieldType, ok := t.Fields[memberName]; ok {
-			return fieldType
+		for _, field := range t.Fields {
+			if field.Name == memberName {
+				return field
+			}
 		}
 		c.error(node, "struct %s has no field %s", t.Name, memberName)
 	case types.TupleType:

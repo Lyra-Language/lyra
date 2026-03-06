@@ -1,0 +1,14 @@
+Program(1 statements) {
+	TypeDeclStmt(Point) {
+		IsPublic: true
+		Type: {
+			StructType(Point) {
+			  Allocation: stack
+			  Fields: {
+			    StructField(x: int)
+			    StructField(y: int)
+			  }
+			}
+		}
+	}
+}

@@ -1,10 +1,9 @@
 package collector
 
 import (
+	"path/filepath"
 	"testing"
 
-	"github.com/Lyra-Language/lyra/pkg/ast"
-	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -17,46 +16,19 @@ func TestCollector_StructTypeDeclaration(t *testing.T) {
 			y: int = 0,
 		}
 	`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "basic_struct_type_declaration.golden"))
+}
 
-	tree, err := parser.Parse(source)
-	if err != nil {
-		t.Fatalf("Parse error: %v", err)
-	}
-
-	collector := NewCollector([]byte(source))
-	program, table, errors := collector.Collect(tree.RootNode())
-	if len(errors) > 0 {
-		t.Fatalf("Collector errors: %v", errors)
-	}
-	// program.Print("")
-
-	// Check AST was built
-	if len(program.Statements) != 1 {
-		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
-	}
-
-	// Check symbol table lookup
-	namedNode, ok := table.GlobalScope.Lookup("Point")
-	if !ok {
-		t.Fatalf("\"Point\" not found in global scope")
-	}
-
-	structDecl, ok := namedNode.(*ast.TypeDeclStmt)
-	if !ok {
-		t.Fatalf("\"Point\" is not a TypeDeclStmt, got %T", namedNode)
-	}
-
-	if !structDecl.IsPublic {
-		t.Fatalf("\"Point\" is not public")
-	}
-	if structDecl.Type.(types.StructType).Allocation != types.Stack {
-		t.Fatalf("\"Point\" allocation is not stack")
-	}
-	expectedFields := map[string]types.StructField{
-		"x": {Name: "x", Type: intType, DefaultValue: nil},
-		"y": {Name: "y", Type: intType, DefaultValue: ast.IntegerLiteralExpr{Value: 0}},
-	}
-	if !types.TypesEqual(structDecl.Type, types.StructType{Name: "Point", Fields: expectedFields}) {
-		t.Fatalf("\"Point\" type is not StructType. Got %v", structDecl.Type)
-	}
+func TestCollector_StructTypeDeclarationWithGenericParameters(t *testing.T) {
+	source := `
+		pub stack struct Point<t> {
+			x: t,
+			y: t,
+		}
+	`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "struct_type_declaration_with_generic_parameters.golden"))
 }

@@ -45,8 +45,18 @@ func TypesEqual(a, b Type) bool {
 			if at.Name != bt.Name {
 				return false
 			}
-			for name, aFieldType := range at.Fields {
-				if bFieldType, ok := bt.Fields[name]; !ok || !TypesEqual(aFieldType.Type, bFieldType.Type) {
+			for _, aField := range at.Fields {
+				found := false
+				for _, bField := range bt.Fields {
+					if bField.Name == aField.Name {
+						if !TypesEqual(aField.Type, bField.Type) {
+							return false
+						}
+						found = true
+						break
+					}
+				}
+				if !found {
 					return false
 				}
 			}
