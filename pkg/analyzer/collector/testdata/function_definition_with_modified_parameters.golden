@@ -1,0 +1,25 @@
+Program(1 statements) {
+	FunctionDefStmt(add) {
+		Signature: (mut Point, ref Vec3) -> Point
+		Clauses: {
+			FunctionClause {
+				Parameters: {
+					Parameter(point)
+					Parameter(vec)
+				}
+				Guard: nil
+				Body: {
+					MathBinaryOpExpr(math_binary_op_expr) {
+						Left: {
+							IdentifierExpr(point, IsConst: false)
+						}
+						Operator: +
+						Right: {
+							IdentifierExpr(vec, IsConst: false)
+						}
+					}
+				}
+			}
+		}
+	}
+}

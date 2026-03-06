@@ -1,0 +1,48 @@
+Program(1 statements) {
+	TypeDeclStmt(Radian) {
+		Type: {
+			ConstrainedType {
+				Name: Radian
+				Type: float
+				Constraints: {
+				RangeConstraint {
+					Start: {
+					MathConstraintLiteralExpr { 
+						Value: 0
+						Type: {
+						int
+						}
+					}
+					}
+					Comparator: <
+					End: {
+					MathConstraintBinaryOpExpr(PI * 2) {
+						Left: {
+						MathConstraintIdentifierExpr(PI)
+						}
+						Operator: *
+						Right: {
+						MathConstraintLiteralExpr { 
+							Value: 2
+							Type: {
+							int
+							}
+						}
+						}
+					}
+					}
+				}
+				PrecisionConstraint(precision(0.01))
+					Value: {
+					MathConstraintLiteralExpr { 
+						Value: 0.01
+						Type: {
+						float
+						}
+					}
+					}
+				}
+			}
+		}
+	}
+}

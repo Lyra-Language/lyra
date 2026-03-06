@@ -1,0 +1,38 @@
+Program(1 statements) {
+	VarDeclStmt(squares) {
+		Keyword: let
+		Value: {
+			ArrayCompExpr {
+				Generators: {
+					Generator {
+						Value: {
+							RangeExpr {
+								Start: {
+									IntegerLiteralExpr(1, Base: 10)
+								}
+								EndOperator: =
+								End: {
+									IntegerLiteralExpr(5, Base: 10)
+								}
+							}
+						}
+						Identifier: x
+					}
+				}
+				Guards: {
+				}
+				Result: {
+					MathBinaryOpExpr(math_binary_op_expr) {
+						Left: {
+							IdentifierExpr(x, IsConst: false)
+						}
+						Operator: *
+						Right: {
+							IdentifierExpr(x, IsConst: false)
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,17 @@
+Program(1 statements) {
+	TypeDeclStmt(Status) {
+		Type: {
+			ConstrainedType {
+				Name: Status
+				Type: i32
+				Constraints: {
+				LiteralUnionConstraint {
+					Value: IntegerLiteralExpr(200, Base: 10)
+					Value: IntegerLiteralExpr(404, Base: 10)
+					Value: IntegerLiteralExpr(500, Base: 10)
+				}
+				}
+			}
+		}
+	}
+}

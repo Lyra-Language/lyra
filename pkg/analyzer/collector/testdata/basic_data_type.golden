@@ -1,0 +1,12 @@
+Program(1 statements) {
+	TypeDeclStmt(ColorName) {
+		IsPublic: true
+		Type: {
+			DataType(ColorName) {
+				DataTypeConstructor(Red)
+				DataTypeConstructor(Green)
+				DataTypeConstructor(Blue)
+			}
+		}
+	}
+}

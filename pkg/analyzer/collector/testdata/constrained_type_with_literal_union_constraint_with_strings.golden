@@ -1,0 +1,17 @@
+Program(1 statements) {
+	TypeDeclStmt(Color) {
+		Type: {
+			ConstrainedType {
+				Name: Color
+				Type: string
+				Constraints: {
+				LiteralUnionConstraint {
+					Value: StringLiteralExpr(red)
+					Value: StringLiteralExpr(green)
+					Value: StringLiteralExpr(blue)
+				}
+				}
+			}
+		}
+	}
+}

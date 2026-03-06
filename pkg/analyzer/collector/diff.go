@@ -2,7 +2,10 @@ package collector
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
+	"testing"
 
 	"github.com/sergi/go-diff/diffmatchpatch"
 )
@@ -23,21 +26,49 @@ func normalizeWhitespace(s string) string {
 	return strings.Join(lines, "\n")
 }
 
-// cmpOutput compares got and want and returns an empty string if equal, otherwise a diff message.
+// checkGolden compares got against the golden file at goldenPath. If the file
+// does not exist or is empty, it is created with got as its content and the
+// test is failed so it can be re-run for verification. Otherwise got is
+// compared against the file contents using cmpOutput.
+func checkGolden(t *testing.T, got, goldenPath string) {
+	t.Helper()
+	expected, err := os.ReadFile(goldenPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			_ = os.MkdirAll(filepath.Dir(goldenPath), 0755)
+			if err := os.WriteFile(goldenPath, []byte(got), 0644); err != nil {
+				t.Fatalf("Write golden file: %v", err)
+			}
+			t.Fatalf("Wrote initial golden file at %s; re-run test to verify", goldenPath)
+		}
+		t.Fatalf("Read golden file: %v", err)
+	}
+	if len(expected) == 0 {
+		if err := os.WriteFile(goldenPath, []byte(got), 0644); err != nil {
+			t.Fatalf("Write golden file: %v", err)
+		}
+		t.Fatal("Golden file was empty; wrote current output. Re-run test to verify.")
+	}
+	if msg := cmpOutput(got, string(expected)); msg != "" {
+		t.Errorf("Print output mismatch (golden file %s): %s", goldenPath, msg)
+	}
+}
+
+// cmpOutput compares got and expected and returns an empty string if equal, otherwise a diff message.
 // Comparison ignores whitespace: lines are trimmed and runs of spaces/tabs are collapsed,
 // so you can write the expected string without matching indentation exactly.
 // The diff is produced by github.com/sergi/go-diff (DiffPrettyText).
-// Use in tests: if msg := cmpOutput(got, want); msg != "" { t.Error(msg) }
-func cmpOutput(got, want string) string {
-	if normalizeWhitespace(got) == normalizeWhitespace(want) {
+// Use in tests: if msg := cmpOutput(got, expected); msg != "" { t.Error(msg) }
+func cmpOutput(got, expected string) string {
+	if normalizeWhitespace(got) == normalizeWhitespace(expected) {
 		return ""
 	}
 	dmp := diffmatchpatch.New()
-	diffs := dmp.DiffMain(want, got, false)
+	diffs := dmp.DiffMain(expected, got, false)
 	diffStr := dmp.DiffPrettyText(diffs)
 	if lines := strings.Count(diffStr, "\n"); lines > diffMaxOutputLines {
 		split := strings.SplitN(diffStr, "\n", diffMaxOutputLines+1)
 		diffStr = strings.Join(split[:diffMaxOutputLines], "\n") + "\n... (truncated)\n"
 	}
-	return fmt.Sprintf("\n\ngot:\n%s\n\nwant:\n%s\n\noutput mismatch:\n%s", got, want, diffStr)
+	return fmt.Sprintf("\n\ngot:\n%s\n\nexpected:\n%s\n\noutput mismatch:\n%s", got, expected, diffStr)
 }

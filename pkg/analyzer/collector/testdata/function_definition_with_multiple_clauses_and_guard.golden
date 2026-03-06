@@ -1,0 +1,81 @@
+Program(1 statements) {
+	FunctionDefStmt(fib) {
+		Signature: (int) -> int
+		Clauses: {
+			FunctionClause {
+				Parameters: {
+					Parameter(n)
+				}
+				Guard: {
+					GuardExpr(boolean_binary_op_expr) {
+						Condition: {
+							BooleanBinaryOpExpr(boolean_binary_op_expr) {
+								Left: {
+									IdentifierExpr(n, IsConst: false)
+								}
+								Operator: <
+								Right: {
+									IntegerLiteralExpr(2, Base: 10)
+								}
+							}
+						}
+					}
+				}
+				Body: {
+					IdentifierExpr(n, IsConst: false)
+				}
+			}
+			FunctionClause {
+				Parameters: {
+					Parameter(n)
+				}
+				Guard: nil
+				Body: {
+					MathBinaryOpExpr(math_binary_op_expr) {
+						Left: {
+							FunctionCallExpr {
+								Function: {
+									IdentifierExpr(fib, IsConst: false)
+								}
+								Arguments: {
+									ArgumentList(math_binary_op_expr) {
+										MathBinaryOpExpr(math_binary_op_expr) {
+											Left: {
+												IdentifierExpr(n, IsConst: false)
+											}
+											Operator: -
+											Right: {
+												IntegerLiteralExpr(2, Base: 10)
+											}
+										}
+									}
+								}
+							}
+						}
+						Operator: +
+						Right: {
+							FunctionCallExpr {
+								Function: {
+									IdentifierExpr(fib, IsConst: false)
+								}
+								Arguments: {
+									ArgumentList(math_binary_op_expr) {
+										MathBinaryOpExpr(math_binary_op_expr) {
+											Left: {
+												IdentifierExpr(n, IsConst: false)
+											}
+											Operator: -
+											Right: {
+												IntegerLiteralExpr(1, Base: 10)
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,25 @@
+Program(1 statements) {
+	FunctionDefStmt(add) {
+		Signature: (int, int) -> int
+		Clauses: {
+			FunctionClause {
+				Parameters: {
+					Parameter(a)
+					Parameter(b, DefaultValue: IntegerLiteralExpr(0, Base: 10))
+				}
+				Guard: nil
+				Body: {
+					MathBinaryOpExpr(math_binary_op_expr) {
+						Left: {
+							IdentifierExpr(a, IsConst: false)
+						}
+						Operator: +
+						Right: {
+							IdentifierExpr(b, IsConst: false)
+						}
+					}
+				}
+			}
+		}
+	}
+}

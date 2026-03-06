@@ -1,0 +1,53 @@
+Program(2 statements) {
+	VarDeclStmt(pi) {
+		Keyword: let
+		Value: {
+			FloatLiteralExpr(3.14159)
+		}
+	}
+	TypeDeclStmt(Radian) {
+		Type: {
+			ConstrainedType {
+				Name: Radian
+				Type: float
+				Constraints: {
+				RangeConstraint {
+					Start: {
+					MathConstraintBinaryOpExpr(pi - 3) {
+						Left: {
+						MathConstraintIdentifierExpr(pi)
+						}
+						Operator: -
+						Right: {
+						MathConstraintLiteralExpr { 
+							Value: 3
+							Type: {
+							int
+							}
+						}
+						}
+					}
+					}
+					Comparator: <
+					End: {
+					MathConstraintBinaryOpExpr(pi + 3) {
+						Left: {
+						MathConstraintIdentifierExpr(pi)
+						}
+						Operator: +
+						Right: {
+						MathConstraintLiteralExpr { 
+							Value: 3
+							Type: {
+							int
+							}
+						}
+						}
+					}
+					}
+				}
+				}
+			}
+		}
+	}
+}

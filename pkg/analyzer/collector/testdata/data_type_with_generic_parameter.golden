@@ -1,0 +1,16 @@
+Program(1 statements) {
+	TypeDeclStmt(Maybe) {
+		IsPublic: true
+		GenericParams: [t]
+		Type: {
+			DataType(Maybe) {
+				DataTypeConstructor(Nil)
+				DataTypeConstructor(Some) {
+					Params: (
+						GenericType(t)
+					)
+				}
+			}
+		}
+	}
+}

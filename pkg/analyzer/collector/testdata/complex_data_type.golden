@@ -1,0 +1,54 @@
+Program(2 statements) {
+	TypeDeclStmt(CSSColor) {
+		Type: {
+			DataType(CSSColor) {
+				DataTypeConstructor(ColorName) {
+					Params: (
+						CSSColorName
+					)
+				}
+				DataTypeConstructor(Hex) {
+					Params: (
+						HexStr
+					)
+				}
+				DataTypeConstructor(RGB) {
+					Fields: {
+						r: i8
+						g: i8
+						b: i8
+					}
+				}
+				DataTypeConstructor(HSL) {
+					Fields: {
+						hue: Hue
+						sat: float
+						light: float
+						alpha: Alpha
+					}
+				}
+			}
+		}
+	}
+	TypeDeclStmt(Hue) {
+		Type: {
+			DataType(Hue) {
+				DataTypeConstructor(HueDeg) {
+					Params: (
+						Angle
+					)
+				}
+				DataTypeConstructor(HueRadian) {
+					Params: (
+						Radian
+					)
+				}
+				DataTypeConstructor(HueTurn) {
+					Params: (
+						Turn
+					)
+				}
+			}
+		}
+	}
+}

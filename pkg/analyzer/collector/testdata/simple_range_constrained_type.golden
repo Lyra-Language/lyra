@@ -1,0 +1,31 @@
+Program(1 statements) {
+	TypeDeclStmt(Angle) {
+		Type: {
+			ConstrainedType {
+				Name: Angle
+				Type: float
+				Constraints: {
+				RangeConstraint {
+					Start: {
+					MathConstraintLiteralExpr { 
+						Value: 0
+						Type: {
+						int
+						}
+					}
+					}
+					Comparator: <
+					End: {
+					MathConstraintLiteralExpr { 
+						Value: 360
+						Type: {
+						int
+						}
+					}
+					}
+				}
+				}
+			}
+		}
+	}
+}
