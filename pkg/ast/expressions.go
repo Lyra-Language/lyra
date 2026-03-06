@@ -58,8 +58,9 @@ func (g *GuardExpr) GetType() types.Type {
 }
 
 func (g *GuardExpr) Print(indent string) {
-	fmt.Printf("%sGuardExpr(%s)\n", indent, g.Condition.GetName())
+	fmt.Printf("%sGuardExpr(%s) {\n", indent, g.Condition.GetName())
 	fmt.Printf("%s\tCondition: {\n", indent)
-	g.Condition.Print(indent + "\t")
+	g.Condition.Print(indent + "\t\t")
 	fmt.Printf("%s\t}\n", indent)
+	fmt.Printf("%s}\n", indent)
 }

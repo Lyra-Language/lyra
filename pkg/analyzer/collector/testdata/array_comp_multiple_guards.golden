@@ -41,9 +41,10 @@ Program(1 statements) {
               }
               Arguments: {
                 ArgumentList(x) {
-                    IdentifierExpr(x, IsConst: false)
+                  IdentifierExpr(x, IsConst: false)
                 }
               }
+            }
           }
           Guard: {
             FunctionCallExpr {
@@ -52,24 +53,25 @@ Program(1 statements) {
               }
               Arguments: {
                 ArgumentList(y) {
-                    IdentifierExpr(y, IsConst: false)
+                  IdentifierExpr(y, IsConst: false)
                 }
               }
+            }
           }
         }
         Result: {
           TupleLiteralExpr(Name: ?) {
-              IdentifierExpr(x, IsConst: false)
-              IdentifierExpr(y, IsConst: false)
-              MathBinaryOpExpr(math_binary_op_expr) {
-                Left: {
-                  IdentifierExpr(x, IsConst: false)
-                }
-                Operator: *
-                Right: {
-                  IdentifierExpr(y, IsConst: false)
-                }
+            IdentifierExpr(x, IsConst: false)
+            IdentifierExpr(y, IsConst: false)
+            MathBinaryOpExpr(math_binary_op_expr) {
+              Left: {
+                IdentifierExpr(x, IsConst: false)
               }
+              Operator: *
+              Right: {
+                IdentifierExpr(y, IsConst: false)
+              }
+            }
           }
         }
       }

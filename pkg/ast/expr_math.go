@@ -32,11 +32,11 @@ func (m *MathBinaryOpExpr) GetType() types.Type {
 func (m *MathBinaryOpExpr) Print(indent string) {
 	fmt.Printf("%sMathBinaryOpExpr(%s) {\n", indent, m.GetName())
 	fmt.Printf("%s\tLeft: {\n", indent)
-	m.Left.Print(indent + "\t")
+	m.Left.Print(indent + "\t\t")
 	fmt.Printf("%s\t}\n", indent)
 	fmt.Printf("%s\tOperator: %s\n", indent, m.Operator)
 	fmt.Printf("%s\tRight: {\n", indent)
-	m.Right.Print(indent + "\t")
+	m.Right.Print(indent + "\t\t")
 	fmt.Printf("%s\t}\n", indent)
 	fmt.Printf("%s}\n", indent)
 }

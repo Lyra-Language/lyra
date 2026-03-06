@@ -67,7 +67,7 @@ func (v *VarDeclStmt) Print(indent string) {
 	}
 	if v.Value != nil {
 		fmt.Printf("%s\tValue: {\n", indent)
-		v.Value.Print(indent + "\t")
+		v.Value.Print(indent + "\t\t")
 		fmt.Printf("%s\t}\n", indent)
 	} else {
 		fmt.Printf("%s\tValue: nil\n", indent)
@@ -96,18 +96,12 @@ type FunctionDefStmt struct {
 func (f *FunctionDefStmt) GetName() string { return f.Name }
 
 func (f *FunctionDefStmt) Print(indent string) {
-	fmt.Printf("%sFunctionDefStmt(%s)\n", indent, f.Name)
+	fmt.Printf("%sFunctionDefStmt(%s) {\n", indent, f.Name)
 	if f.GenericParams != nil {
 		fmt.Printf("%s\tGenericParams: %v\n", indent, f.GenericParams)
 	}
 	if f.Signature != nil {
 		fmt.Printf("%s\tSignature: %s\n", indent, f.Signature.GetName())
-	}
-	if f.Clauses != nil {
-		fmt.Printf("%s\tClauses:\n", indent)
-		for _, clause := range f.Clauses {
-			clause.Print(indent + "\t")
-		}
 	}
 	if f.IsPublic {
 		fmt.Printf("%s\tIsPublic: true\n", indent)
@@ -117,6 +111,13 @@ func (f *FunctionDefStmt) Print(indent string) {
 	}
 	if f.IsAsync {
 		fmt.Printf("%s\tIsAsync: true\n", indent)
+	}
+	if f.Clauses != nil {
+		fmt.Printf("%s\tClauses: {\n", indent)
+		for _, clause := range f.Clauses {
+			clause.Print(indent + "\t\t")
+		}
+		fmt.Printf("%s\t}\n", indent)
 	}
 	fmt.Printf("%s}\n", indent)
 }
@@ -130,24 +131,24 @@ type FunctionClause struct {
 }
 
 func (f *FunctionClause) Print(indent string) {
-	parameters_str := ""
-	for idx, parameter := range f.Parameters {
-		if idx > 0 {
-			parameters_str += ", "
+	fmt.Printf("%sFunctionClause {\n", indent)
+	if f.Parameters != nil {
+		fmt.Printf("%s\tParameters: {\n", indent)
+		for _, parameter := range f.Parameters {
+			parameter.Print(indent + "\t\t")
 		}
-		parameters_str += parameter.GetName()
+		fmt.Printf("%s\t}\n", indent)
 	}
-	fmt.Printf("%sFunctionClause(%s)\n", indent, parameters_str)
 	if f.Guard != nil {
 		fmt.Printf("%s\tGuard: {\n", indent)
-		f.Guard.Print(indent + "\t")
+		f.Guard.Print(indent + "\t\t")
 		fmt.Printf("%s\t}\n", indent)
 	} else {
 		fmt.Printf("%s\tGuard: nil\n", indent)
 	}
 	if f.Body != nil {
 		fmt.Printf("%s\tBody: {\n", indent)
-		f.Body.Print(indent + "\t")
+		f.Body.Print(indent + "\t\t")
 		fmt.Printf("%s\t}\n", indent)
 	} else {
 		fmt.Printf("%s\tBody: nil\n", indent)
@@ -161,10 +162,12 @@ type Parameter struct {
 }
 
 func (p *Parameter) Print(indent string) {
-	fmt.Printf("%sParameter(%s)\n", indent, p.Pattern.GetName())
+	defaultValue := ""
 	if p.DefaultValue != nil {
-		fmt.Printf("%s\tDefaultValue: %v\n", indent, p.DefaultValue)
+		defaultValue = fmt.Sprintf(", DefaultValue: %v", p.DefaultValue.GetName())
 	}
+	fmt.Printf("%sParameter(%s%s)\n", indent, p.Pattern.GetName(), defaultValue)
+
 }
 
 func (p *Parameter) GetName() string {

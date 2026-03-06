@@ -21,7 +21,7 @@ func (f *FunctionCallExpr) GetName() string {
 func (f *FunctionCallExpr) Print(indent string) {
 	fmt.Printf("%sFunctionCallExpr {\n", indent)
 	fmt.Printf("%s\tFunction: {\n", indent)
-	f.Function.Print(indent + "\t")
+	f.Function.Print(indent + "\t\t")
 	fmt.Printf("%s\t}\n", indent)
 	if f.GenericArguments != nil {
 		fmt.Printf("%s\tGenericArguments: {\n", indent)
@@ -31,8 +31,9 @@ func (f *FunctionCallExpr) Print(indent string) {
 		fmt.Printf("%s\t}\n", indent)
 	}
 	fmt.Printf("%s\tArguments: {\n", indent)
-	f.Arguments.Print(indent + "\t")
+	f.Arguments.Print(indent + "\t\t")
 	fmt.Printf("%s\t}\n", indent)
+	fmt.Printf("%s}\n", indent)
 }
 
 type ArgumentList struct {

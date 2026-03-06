@@ -39,5 +39,5 @@ func cmpOutput(got, want string) string {
 		split := strings.SplitN(diffStr, "\n", diffMaxOutputLines+1)
 		diffStr = strings.Join(split[:diffMaxOutputLines], "\n") + "\n... (truncated)\n"
 	}
-	return fmt.Sprintf("got:\n%s\n\nwant:\n%s\n\noutput mismatch:\n%s", got, want, diffStr)
+	return fmt.Sprintf("\n\ngot:\n%s\n\nwant:\n%s\n\noutput mismatch:\n%s", got, want, diffStr)
 }

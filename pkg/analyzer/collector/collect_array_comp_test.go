@@ -78,55 +78,56 @@ func TestCollectArrayCompExprWithGuard(t *testing.T) {
 	}
 
 	got := captureProgramPrint(program)
-	want := `Program(1 statements) {
-  VarDeclStmt(evens) {
-    Keyword: let
-    Value: {
-      ArrayCompExpr {
-        Generators: {
-          Generator {
-            Value: {
-              RangeExpr {
-                Start: {
-                  IntegerLiteralExpr(1, Base: 10)
+	want := `
+  Program(1 statements) {
+    VarDeclStmt(evens) {
+      Keyword: let
+      Value: {
+        ArrayCompExpr {
+          Generators: {
+            Generator {
+              Value: {
+                RangeExpr {
+                  Start: {
+                    IntegerLiteralExpr(1, Base: 10)
+                  }
+                  EndOperator: =
+                  End: {
+                    IntegerLiteralExpr(5, Base: 10)
+                  }
                 }
-                EndOperator: =
-                End: {
-                  IntegerLiteralExpr(5, Base: 10)
+              }
+              Identifier: x
+            }
+          }
+          Guards: {
+            Guard: {
+              BooleanBinaryOpExpr(boolean_binary_op_expr) {
+                Left: {
+                  IdentifierExpr(x, IsConst: false)
+                }
+                Operator: ==
+                Right: {
+                  IntegerLiteralExpr(0, Base: 10)
                 }
               }
             }
-            Identifier: x
           }
-        }
-        Guards: {
-          Guard: {
-            BooleanBinaryOpExpr(boolean_binary_op_expr)
+          Result: {
+            MathBinaryOpExpr(math_binary_op_expr) {
               Left: {
                 IdentifierExpr(x, IsConst: false)
               }
-              Operator: ==
+              Operator: *
               Right: {
-                IntegerLiteralExpr(0, Base: 10)
+                IdentifierExpr(x, IsConst: false)
               }
-          }
-        }
-        Result: {
-          MathBinaryOpExpr(math_binary_op_expr) {
-            Left: {
-              IdentifierExpr(x, IsConst: false)
-            }
-            Operator: *
-            Right: {
-              IdentifierExpr(x, IsConst: false)
             }
           }
         }
       }
     }
-  }
-}
-`
+  }`
 	if msg := cmpOutput(got, want); msg != "" {
 		t.Error(msg)
 	}
