@@ -1,0 +1,8 @@
+Program(1 statements) {
+	VarDeclStmt(fourty_two) {
+		Keyword: let
+		Value: {
+			IntegerLiteralExpr(42, Base: 8)
+		}
+	}
+}

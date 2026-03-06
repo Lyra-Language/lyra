@@ -1,0 +1,8 @@
+Program(1 statements) {
+	VarDeclStmt(one_million) {
+		Keyword: let
+		Value: {
+			IntegerLiteralExpr(1000000, Base: 10)
+		}
+	}
+}
