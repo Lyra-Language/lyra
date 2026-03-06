@@ -42,8 +42,9 @@ type ExpressionStmt struct {
 func (e *ExpressionStmt) GetName() string { return e.Expression.GetName() }
 
 func (e *ExpressionStmt) Print(indent string) {
-	fmt.Printf("%sExpressionStmt(%s)\n", indent, e.Expression.GetName())
+	fmt.Printf("%sExpressionStmt(%s) {\n", indent, e.Expression.GetName())
 	e.Expression.Print(indent + "\t")
+	fmt.Printf("%s}\n", indent)
 }
 
 // VariableDeclarationStmt represents a let/var/const binding

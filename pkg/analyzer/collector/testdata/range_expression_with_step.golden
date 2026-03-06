@@ -1,0 +1,16 @@
+Program(1 statements) {
+	ExpressionStmt(range_expression) {
+		RangeExpr {
+			Start: {
+				IntegerLiteralExpr(0, Base: 10)
+			}
+			EndOperator: =
+			End: {
+				IntegerLiteralExpr(10, Base: 10)
+			}
+			Step: {
+				IntegerLiteralExpr(2, Base: 10)
+			}
+		}
+	}
+}
