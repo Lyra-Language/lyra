@@ -21,8 +21,9 @@ func (a *ArrayRepeatExpr) GetName() string {
 func (a *ArrayRepeatExpr) Print(indent string) {
 	fmt.Printf("%sArrayRepeatExpr {\n", indent)
 	fmt.Printf("%s\tValue: {\n", indent)
-	a.Value.Print(indent + "\t")
-	a.Count.Print(indent + "\t")
+	a.Value.Print(indent + "\t\t")
+	a.Count.Print(indent + "\t\t")
+	fmt.Printf("%s\t}\n", indent)
 	fmt.Printf("%s}\n", indent)
 }
 

@@ -1,0 +1,14 @@
+Program(1 statements) {
+	VarDeclStmt(arr) {
+		Keyword: let
+		Type: StaticArray<int, -1>
+		Value: {
+			ArrayRepeatExpr {
+				Value: {
+					IntegerLiteralExpr(0, Base: 10)
+					IdentifierExpr(SIZE, IsConst: true)
+				}
+			}
+		}
+	}
+}

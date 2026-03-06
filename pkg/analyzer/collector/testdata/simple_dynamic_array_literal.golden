@@ -1,0 +1,13 @@
+Program(1 statements) {
+	VarDeclStmt(arr) {
+		Keyword: let
+		Type: DynamicArray<int>
+		Value: {
+			ArrayLiteralExpr(array_literal_expr) {
+				IntegerLiteralExpr(1, Base: 10)
+				IntegerLiteralExpr(2, Base: 10)
+				IntegerLiteralExpr(3, Base: 10)
+			}
+		}
+	}
+}
