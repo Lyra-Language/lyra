@@ -1,50 +1,50 @@
 package collector
 
 import (
+	"path/filepath"
 	"testing"
-
-	"github.com/Lyra-Language/lyra/pkg/ast"
-	"github.com/Lyra-Language/lyra/pkg/parser"
-	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
-func TestCollector_VariableDeclaration(t *testing.T) {
-	source := `let the_answer: int = 42`
+func TestCollector_VariableDeclarationWithoutValue(t *testing.T) {
+	source := `
+	var the_answer
+	the_answer = 42`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "variable_declaration_without_value.golden"))
+}
 
-	tree, err := parser.Parse(source)
-	if err != nil {
-		t.Fatalf("Parse error: %v", err)
-	}
+func TestCollector_VariableDeclarationWithLet(t *testing.T) {
+	source := `let pi: float = 3.14159`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "variable_declaration_with_let.golden"))
+}
 
-	collector := NewCollector([]byte(source))
-	program, table, errors := collector.Collect(tree.RootNode())
-	if len(errors) > 0 {
-		t.Fatalf("Collector errors: %v", errors)
-	}
-	// program.Print("")
+func TestCollector_VariableDeclarationWithVar(t *testing.T) {
+	source := `var the_answer: int = 42`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "variable_declaration_with_var.golden"))
+}
 
-	// Check AST was built
-	if len(program.Statements) != 1 {
-		t.Fatalf("Expected 1 statement, got %d", len(program.Statements))
-	}
+func TestCollector_VariableDeclarationWithConst(t *testing.T) {
+	source := `const PI: float = 3.14159`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "variable_declaration_with_const.golden"))
+}
 
-	// Check symbol table lookup
-	namedNode, ok := table.GlobalScope.Lookup("the_answer")
-	if !ok {
-		t.Fatalf("\"the_answer\" not found in global scope")
-	}
+func TestCollector_VariableDeclarationWithoutTypeAnnotation(t *testing.T) {
+	source := `let pi = 3.14159`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "variable_declaration_without_type_annotation.golden"))
+}
 
-	varDecl, ok := namedNode.(*ast.VarDeclStmt)
-	if !ok {
-		t.Fatalf("\"the_answer\" is not a VarDeclStmt, got %T", namedNode)
-	}
-
-	if !types.TypesEqual(varDecl.Type, intType) {
-		t.Fatalf("\"the_answer\" type is not int. Got %v", varDecl.Type)
-	}
-
-	// Note: Init expression type is not set during collection, only during type checking
-	if varDecl.Value == nil {
-		t.Fatalf("\"the_answer\" has no init value")
-	}
+func TestCollector_VariableDeclarationWithTupleType(t *testing.T) {
+	source := `let the_answer: (int, int) = (42, 13)`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "variable_declaration_with_tuple_type.golden"))
 }

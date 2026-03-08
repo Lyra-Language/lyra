@@ -71,10 +71,14 @@ func (c *Collector) collectVariableDeclaration(node *sitter.Node) *ast.VarDeclSt
 		}
 	}
 
-	initExpr := c.collectExpression(node.ChildByFieldName("value"))
+	valueNode := node.ChildByFieldName("value")
+	var initExpr ast.Expression = nil
+	if valueNode != nil {
+		initExpr = c.collectExpression(valueNode)
+	}
 
 	// Infer variable type from initializer only when no type annotation was given
-	if varType == nil {
+	if varType == nil && initExpr != nil {
 		if arrayType, ok := initExpr.GetType().(types.StaticArrayType); ok {
 			varType = arrayType
 		} else if tupleType, ok := initExpr.GetType().(types.TupleType); ok {

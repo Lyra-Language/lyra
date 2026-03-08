@@ -1,0 +1,6 @@
+Program(1 statements) {
+	VarDeclStmt(the_answer) {
+		Keyword: var
+		Value: nil
+	}
+}

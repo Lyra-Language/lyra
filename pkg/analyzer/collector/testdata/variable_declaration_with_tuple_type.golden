@@ -1,0 +1,12 @@
+Program(1 statements) {
+	VarDeclStmt(the_answer) {
+		Keyword: let
+		Type: (int, int)
+		Value: {
+			TupleLiteralExpr(Name: ?) {
+				IntegerLiteralExpr(42, Base: 10)
+				IntegerLiteralExpr(13, Base: 10)
+			}
+		}
+	}
+}

@@ -1,0 +1,9 @@
+Program(1 statements) {
+	VarDeclStmt(PI) {
+		Keyword: const
+		Type: float
+		Value: {
+			FloatLiteralExpr(3.14159)
+		}
+	}
+}

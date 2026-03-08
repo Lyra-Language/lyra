@@ -70,3 +70,10 @@ func TestCollector_PatternConstrainedType(t *testing.T) {
 	got := captureProgramPrint(program)
 	checkGolden(t, got, filepath.Join("testdata", "pattern_constrained_type.golden"))
 }
+
+func TestCollector_ParameterizedConstrainedType(t *testing.T) {
+	source := `type Point<t> = Tuple`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "parameterized_constrained_type.golden"))
+}
