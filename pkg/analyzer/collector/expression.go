@@ -56,6 +56,9 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 	case "tuple_literal":
 		return c.collectTupleLiteralExpr(node)
 
+	case "struct_literal":
+		return c.collectStructLiteralExpr(node)
+
 	case "boolean_expr":
 		return c.collectBooleanBinaryExpr(node, loc)
 
