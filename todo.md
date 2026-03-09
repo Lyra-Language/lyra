@@ -1,6 +1,5 @@
 ## To-Dos
-- Test struct literal collection
-- Test array literal collection
+- Add and Test array literal collection
 - Collect if expressions
 - Collect postfix expressions (i.e. foo.blah[3].baz())
 - Collect function types (lambdas)
@@ -19,6 +18,9 @@
 - Add sizeof() function to query type sizes
 
 ## Completed
+
+### 03/09/26
+- Add and Test struct literal collection
 
 ### 03/08/26
 - Refactor collector tests to use new "capture_program_print" function
