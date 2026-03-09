@@ -1,0 +1,18 @@
+Program(1 statements) {
+	TypeDeclStmt(RGBA) {
+		Type: {
+			TupleType(RGBA) {
+				Elements: {
+					TupleType(?) {
+						Elements: {
+							int
+							int
+							int
+						}
+					}
+					float
+				}
+			}
+		}
+	}
+}

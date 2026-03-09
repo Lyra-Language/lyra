@@ -1,0 +1,12 @@
+Program(1 statements) {
+	TypeDeclStmt(Point2D) {
+		Type: {
+			TupleType(Point2D) {
+				Elements: {
+					float
+					float
+				}
+			}
+		}
+	}
+}

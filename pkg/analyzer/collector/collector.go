@@ -9,7 +9,6 @@ The AST nodes serve as the source of truth - the symbol table just indexes them.
 import (
 	"fmt"
 	"strconv"
-	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
@@ -117,6 +116,17 @@ func (c *Collector) collectGenericParams(node *sitter.Node) []string {
 	return params
 }
 
+func (c *Collector) collectGenericArgs(node *sitter.Node) []types.Type {
+	args := make([]types.Type, 0)
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.IsNamed() {
+			args = append(args, c.parseType(child))
+		}
+	}
+	return args
+}
+
 func (c *Collector) collectDataConstructor(node *sitter.Node) (string, types.DataTypeConstructor) {
 	var name string
 	ctor := types.DataTypeConstructor{
@@ -162,7 +172,6 @@ func (c *Collector) collectStructFields(node *sitter.Node) []types.StructField {
 	return fields
 }
 
-
 func (c *Collector) collectFunctionSignature(node *sitter.Node) (name string, genericParams []string, sig *types.FunctionType, isPure, isAsync bool) {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -206,119 +215,50 @@ func (c *Collector) parseType(node *sitter.Node, allocation ...types.AllocationM
 		return types.UnresolvedType{Name: c.nodeText(node)}
 	case "generic_type":
 		return types.GenericType{Name: c.nodeText(node)}
+	case "parameterized_type":
+		return c.parseParameterizedType(node)
 	case "array_type":
 		return c.parseArrayType(node, alloc)
 	case "constrained_type":
 		return c.parseConstrainedType(node)
 	case "allocated_type":
 		return c.parseAllocatedType(node)
-	case "tuple_type", "anonymous_tuple_type":
-		return c.parseTupleType(node)
-	}
-	// Fallback: type annotation may be (int, int) etc. when grammar produces multiple type children
-	text := c.nodeText(node)
-	if len(text) >= 2 && text[0] == '(' && text[len(text)-1] == ')' {
-		if elemTypes := c.tryParseTupleElementTypes(node); len(elemTypes) >= 2 {
-			return types.TupleType{Name: "?", Elements: elemTypes}
-		}
+	case "anonymous_tuple_type":
+		return c.parseAnonymousTupleType(node)
 	}
 	c.addError(node, CollectorErrorSeverityError, "parseType: unknown type node kind: %s", node.Kind())
 	return nil
 }
 
-func (c *Collector) tryParseTupleElementTypes(node *sitter.Node) []types.Type {
-	elements := make([]types.Type, 0)
-	// For ERROR or other wrapper nodes, collect all known type nodes in the subtree
-	if node.Kind() == "ERROR" || node.Kind() == "type" {
-		c.collectTupleElementTypesRec(node, &elements)
-		return elements
+func (c *Collector) parseParameterizedType(node *sitter.Node) types.Type {
+	name := c.nodeText(node.ChildByFieldName("name"))
+	typeArgumentsNode := node.ChildByFieldName("type_arguments")
+	if typeArgumentsNode == nil {
+		c.addError(node, CollectorErrorSeverityError, "parseParameterizedType: type arguments node is nil")
+		return nil
 	}
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
+	typeArguments := make([]types.Type, 0)
+	for i := uint(0); i < typeArgumentsNode.ChildCount(); i++ {
+		child := typeArgumentsNode.Child(i)
 		if child.IsNamed() {
-			if t := c.parseType(child); t != nil {
-				elements = append(elements, t)
-			}
+			typeArguments = append(typeArguments, c.parseType(child))
 		}
 	}
-	return elements
-}
-
-func (c *Collector) collectTupleElementTypesRec(node *sitter.Node, out *[]types.Type) {
-	kind := node.Kind()
-	if kind == "signed_integer_type" || kind == "unsigned_integer_type" || kind == "float_type" ||
-		kind == "string_type" || kind == "boolean_type" || kind == "user_defined_type_name" || kind == "generic_type" {
-		if t := c.parseType(node); t != nil {
-			*out = append(*out, t)
-		}
-		return
-	}
-	for i := uint(0); i < node.ChildCount(); i++ {
-		c.collectTupleElementTypesRec(node.Child(i), out)
-	}
-}
-
-func (c *Collector) parseTupleType(node *sitter.Node) types.Type {
-	body := node.ChildByFieldName("tuple_type_body")
-	if body == nil {
-		body = node
-	}
-	tupleName := "?"
-	if nameNode := node.ChildByFieldName("tuple_type_name"); nameNode != nil {
-		tupleName = c.nodeText(nameNode)
-	}
-	elements := c.tryParseTupleElementTypes(body)
-	return types.TupleType{Name: tupleName, Elements: elements}
-}
-
-// parseTupleTypeFromString parses a tuple type from a string like "(int, int)" when the grammar doesn't produce a type node.
-func (c *Collector) parseTupleTypeFromString(s string) types.Type {
-	s = strings.TrimSpace(s)
-	if len(s) < 2 || s[0] != '(' || s[len(s)-1] != ')' {
+	if len(typeArguments) == 0 {
 		return nil
 	}
-	inner := strings.TrimSpace(s[1 : len(s)-1])
-	if inner == "" {
-		return nil
-	}
-	parts := splitTupleTypeElements(inner)
-	elements := make([]types.Type, 0, len(parts))
-	for _, p := range parts {
-		name := strings.TrimSpace(p)
-		if name == "" {
-			continue
-		}
-		if pt := types.PrimitiveTypeName(name); pt != "" {
-			elements = append(elements, types.PrimitiveType{Name: pt})
-		} else {
-			elements = append(elements, types.UnresolvedType{Name: name})
-		}
-	}
-	if len(elements) < 2 {
+	return types.ParameterizedType{Name: name, TypeArguments: typeArguments}
+}
+
+func (c *Collector) parseAnonymousTupleType(node *sitter.Node) types.Type {
+	elements := make([]types.Type, 0)
+	if node.Child(0).Kind() == "tuple_type_body" {
+		elements = c.collectTupleTypeBody(node.Child(0))
+	} else {
+		c.addError(node, CollectorErrorSeverityError, "parseAnonymousTupleType: unknown type node kind: %s", node.Child(0).Kind())
 		return nil
 	}
 	return types.TupleType{Name: "?", Elements: elements}
-}
-
-func splitTupleTypeElements(s string) []string {
-	var parts []string
-	depth := 0
-	start := 0
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '(', '[', '<':
-			depth++
-		case ')', ']', '>':
-			depth--
-		case ',':
-			if depth == 0 {
-				parts = append(parts, s[start:i])
-				start = i + 1
-			}
-		}
-	}
-	parts = append(parts, s[start:])
-	return parts
 }
 
 func (c *Collector) parseArrayType(node *sitter.Node, allocation types.AllocationModifier) types.Type {

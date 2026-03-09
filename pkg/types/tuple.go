@@ -6,9 +6,8 @@ import (
 )
 
 type TupleType struct {
-	Name       string // uppercase letter optionally followed by any number of letters or numbers
-	Elements   []Type
-	Allocation AllocationModifier
+	Name     string // uppercase letter optionally followed by any number of letters or numbers
+	Elements []Type
 }
 
 func (TupleType) typeNode() {}
@@ -26,12 +25,19 @@ func (t TupleType) GetName() string {
 		}
 		elementNames[i] = elementName
 	}
-	return fmt.Sprintf("(%s)", strings.Join(elementNames, ", "))
+	name := "AnonymousTuple"
+	if t.Name != "" {
+		name = t.Name
+	}
+	return fmt.Sprintf("%s(%s)", name, strings.Join(elementNames, ", "))
 }
 
 func (t TupleType) Print(indent string) {
-	fmt.Printf("%sTupleType(%s)\n", indent, t.GetName())
+	fmt.Printf("%sTupleType(%s) {\n", indent, t.Name)
+	fmt.Printf("%s\tElements: {\n", indent)
 	for _, element := range t.Elements {
-		element.Print(indent + "\t")
+		element.Print(indent + "\t\t")
 	}
+	fmt.Printf("%s\t}\n", indent)
+	fmt.Printf("%s}\n", indent)
 }

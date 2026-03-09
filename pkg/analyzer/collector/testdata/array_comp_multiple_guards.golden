@@ -61,15 +61,17 @@ Program(1 statements) {
         }
         Result: {
           TupleLiteralExpr(Name: ?) {
-            IdentifierExpr(x, IsConst: false)
-            IdentifierExpr(y, IsConst: false)
-            MathBinaryOpExpr(math_binary_op_expr) {
-              Left: {
-                IdentifierExpr(x, IsConst: false)
-              }
-              Operator: *
-              Right: {
-                IdentifierExpr(y, IsConst: false)
+            Elements: {
+              IdentifierExpr(x, IsConst: false)
+              IdentifierExpr(y, IsConst: false)
+              MathBinaryOpExpr(math_binary_op_expr) {
+                Left: {
+                  IdentifierExpr(x, IsConst: false)
+                }
+                Operator: *
+                Right: {
+                  IdentifierExpr(y, IsConst: false)
+                }
               }
             }
           }

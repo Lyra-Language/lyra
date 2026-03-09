@@ -8,8 +8,9 @@ import (
 
 type TupleLiteralExpr struct {
 	ExprBase
-	Elements []Expression
-	Name     string
+	Elements         []Expression
+	GenericArguments []types.Type
+	Name             string
 }
 
 func (t *TupleLiteralExpr) exprNode() {}
@@ -31,8 +32,17 @@ func (t *TupleLiteralExpr) GetType() types.Type {
 
 func (t *TupleLiteralExpr) Print(indent string) {
 	fmt.Printf("%sTupleLiteralExpr(Name: %s) {\n", indent, t.Name)
-	for _, element := range t.Elements {
-		element.Print(indent + "\t")
+	if t.GenericArguments != nil {
+		fmt.Printf("%s\tGenericArguments: {\n", indent)
+		for _, genericArgument := range t.GenericArguments {
+			genericArgument.Print(indent + "\t\t")
+		}
+		fmt.Printf("%s\t}\n", indent)
 	}
+	fmt.Printf("%s\tElements: {\n", indent)
+	for _, element := range t.Elements {
+		element.Print(indent + "\t\t")
+	}
+	fmt.Printf("%s\t}\n", indent)
 	fmt.Printf("%s}\n", indent)
 }

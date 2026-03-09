@@ -1,0 +1,14 @@
+Program(1 statements) {
+	VarDeclStmt(point) {
+		Keyword: let
+		Type: Point
+		Value: {
+			TupleLiteralExpr(Name: ?) {
+				Elements: {
+					IntegerLiteralExpr(1, Base: 10)
+					IntegerLiteralExpr(2, Base: 10)
+				}
+			}
+		}
+	}
+}

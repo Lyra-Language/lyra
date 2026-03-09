@@ -9,6 +9,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	"github.com/Lyra-Language/lyra/pkg/parser"
+	"github.com/Lyra-Language/lyra/pkg/printer"
 )
 
 // parseAndCollect parses source, runs the collector, and returns the resulting
@@ -16,9 +17,18 @@ import (
 // collector error.
 func parseAndCollect(t *testing.T, source string) (*ast.Program, *symbols.SymbolTable) {
 	t.Helper()
+	return parseAndCollectFull(t, source, false)
+}
+
+func parseAndCollectFull(t *testing.T, source string, printTree bool) (*ast.Program, *symbols.SymbolTable) {
+	t.Helper()
 	tree, err := parser.Parse(source)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
+	}
+	if printTree {
+		p := printer.NewPrinter([]byte(source))
+		p.Print(tree.RootNode())
 	}
 	c := NewCollector([]byte(source))
 	program, table, errors := c.Collect(tree.RootNode())

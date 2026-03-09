@@ -11,6 +11,8 @@ func (c *Collector) collectTypeDeclaration(node *sitter.Node) *ast.TypeDeclStmt 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
+		case "named_tuple_type":
+			return c.collectNamedTupleTypeDeclaration(child)
 		case "struct_type":
 			return c.collectStructTypeDeclaration(child)
 		case "data_type":

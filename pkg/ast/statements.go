@@ -13,6 +13,7 @@ type TypeDeclStmt struct {
 	GenericParams []string
 	Type          types.Type
 	IsPublic      bool
+	Allocation    types.AllocationModifier
 }
 
 func (t *TypeDeclStmt) GetName() string { return t.Name }
@@ -24,6 +25,9 @@ func (t *TypeDeclStmt) Print(indent string) {
 	}
 	if t.GenericParams != nil {
 		fmt.Printf("%s\tGenericParams: %v\n", indent, t.GenericParams)
+	}
+	if t.Allocation != "" {
+		fmt.Printf("%s\tAllocation: %s\n", indent, t.Allocation)
 	}
 	if t.Type != nil {
 		fmt.Printf("%s\tType: {\n", indent)
