@@ -9,7 +9,7 @@ Program(1 statements) {
 				Guard: {
 					GuardExpr(boolean_binary_op_expr) {
 						Condition: {
-							BooleanBinaryOpExpr(boolean_binary_op_expr) {
+							BooleanBinaryOpExpr {
 								Left: {
 									IdentifierExpr(n, IsConst: false)
 								}

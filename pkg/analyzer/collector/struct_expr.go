@@ -1,8 +1,6 @@
 package collector
 
 import (
-	"fmt"
-
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -20,7 +18,6 @@ func (c *Collector) collectStructLiteralExpr(node *sitter.Node) *ast.StructInsta
 		genericArguments = c.collectGenericArgs(genericArgumentsNode)
 	}
 	structBodyNode := node.ChildByFieldName("struct_body")
-	fmt.Println("structBodyNode.Kind():", structBodyNode.Kind())
 	fields := c.collectStructInstanceFields(structBodyNode)
 	return &ast.StructInstance{
 		ExprBase: ast.ExprBase{

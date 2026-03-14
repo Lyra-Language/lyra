@@ -1,0 +1,26 @@
+Program(1 statements) {
+	VarDeclStmt(foo) {
+		Keyword: let
+		Value: {
+			IfExpr {
+			  Condition: {
+			    BooleanBinaryOpExpr {
+			    	Left: {
+			    		IdentifierExpr(x, IsConst: false)
+			    	}
+			    	Operator: ==
+			    	Right: {
+			    		IntegerLiteralExpr(0, Base: 10)
+			    	}
+			    }
+			  }
+			  Then: {
+			    StringLiteralExpr(zero)
+			  }
+			  Else: {
+			    StringLiteralExpr(not zero)
+			  }
+			}
+		}
+	}
+}

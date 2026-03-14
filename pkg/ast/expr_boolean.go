@@ -14,7 +14,7 @@ func (b *BooleanBinaryOpExpr) GetName() string {
 }
 
 func (b *BooleanBinaryOpExpr) Print(indent string) {
-	fmt.Printf("%sBooleanBinaryOpExpr(%s) {\n", indent, b.GetName())
+	fmt.Printf("%sBooleanBinaryOpExpr {\n", indent)
 	fmt.Printf("%s\tLeft: {\n", indent)
 	b.Left.Print(indent + "\t\t")
 	fmt.Printf("%s\t}\n", indent)

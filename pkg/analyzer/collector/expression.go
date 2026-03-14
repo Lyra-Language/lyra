@@ -32,6 +32,9 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 	case "float_literal":
 		return c.collectFloatLiteralExpr(node)
 
+	case "boolean_literal":
+		return c.collectBooleanLiteralExpr(node, loc)
+
 	case "string_literal":
 		return c.collectStringLiteralExpr(node, loc)
 
@@ -44,8 +47,11 @@ func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 	case "array_comp_expr":
 		return c.collectArrayCompExpr(node)
 
-	case "boolean_literal":
-		return c.collectBooleanLiteralExpr(node, loc)
+	case "if_then_expr":
+		return c.collectIfThenExpr(node)
+
+	case "if_block_expr":
+		return c.collectIfBlockExpr(node)
 
 	case "identifier":
 		return c.collectIdentifierExpr(node, false, loc)

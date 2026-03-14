@@ -28,7 +28,7 @@ func TestCollector_StructInstanceShorthand(t *testing.T) {
 
 func TestCollector_StructInstanceWithGenericArguments(t *testing.T) {
 	source := `let point = Point::<i32> { x: 1, y: 2 }`
-	program, _ := parseAndCollectFull(t, source, true)
+	program, _ := parseAndCollect(t, source)
 	got := captureProgramPrint(program)
 	checkGolden(t, got, filepath.Join("testdata", "struct_instance_with_generic_arguments.golden"))
 }
