@@ -1,0 +1,29 @@
+package typedecls
+
+import (
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
+	sitter "github.com/tree-sitter/go-tree-sitter"
+)
+
+func CollectTypeDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TypeDeclStmt {
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		switch child.Kind() {
+		case "named_tuple_type":
+			return collectNamedTupleTypeDeclaration(child, ctx)
+		case "struct_type":
+			return collectStructTypeDeclaration(child, ctx)
+		case "data_type":
+			return collectDataTypeDeclaration(child, ctx)
+		case "constrained_type":
+			return collectConstrainedTypeDeclaration(child, ctx)
+		}
+	}
+	return nil
+}
+
+func allocModifier(node *sitter.Node, ctx *collctx.Ctx) types.AllocationModifier {
+	return types.AllocationModifier(ctx.NodeText(node))
+}

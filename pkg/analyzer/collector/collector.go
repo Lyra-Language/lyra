@@ -7,9 +7,11 @@ The AST nodes serve as the source of truth - the symbol table just indexes them.
 */
 
 import (
-	"fmt"
 	"strconv"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/typedecls"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -17,50 +19,44 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-// Collector walks the CST and builds an AST + symbol table
+// Re-export error types from collctx so callers don't need to import both packages.
+type CollectorError = collctx.CollectorError
+type CollectorErrorSeverity = collctx.ErrorSeverity
+
+const (
+	CollectorErrorSeverityError   = collctx.SeverityError
+	CollectorErrorSeverityWarning = collctx.SeverityWarning
+	CollectorErrorSeverityInfo    = collctx.SeverityInfo
+)
+
+// Collector walks the CST and builds an AST + symbol table.
 type Collector struct {
 	source []byte
 	table  *symbols.SymbolTable
 	ast    *ast.Program
 	errors []error
+	ctx    *collctx.Ctx
 }
 
 func NewCollector(source []byte) *Collector {
-	return &Collector{
+	c := &Collector{
 		source: source,
 		table:  symbols.NewSymbolTable(),
 		ast:    &ast.Program{},
 		errors: make([]error, 0),
 	}
+	c.ctx = &collctx.Ctx{
+		Source:               source,
+		Errors:               &c.errors,
+		CollectExpr:          c.collectExpression,
+		ParseType:            func(node *sitter.Node) types.Type { return c.parseType(node) },
+		RegisterType:         c.table.RegisterType,
+		CollectGenericParams: c.collectGenericParams,
+	}
+	return c
 }
 
-type CollectorError struct {
-	Message  string
-	Location ast.Location
-	Severity CollectorErrorSeverity
-}
-
-type CollectorErrorSeverity int
-
-const (
-	CollectorErrorSeverityError CollectorErrorSeverity = iota
-	CollectorErrorSeverityWarning
-	CollectorErrorSeverityInfo
-)
-
-func (e CollectorError) Error() string {
-	return fmt.Sprintf("%s: %s", &e.Location, e.Message)
-}
-
-func (c *Collector) addError(node *sitter.Node, severity CollectorErrorSeverity, format string, args ...any) {
-	c.errors = append(c.errors, CollectorError{
-		Message:  fmt.Sprintf(format, args...),
-		Location: c.nodeLocation(node),
-		Severity: severity,
-	})
-}
-
-// Collect walks the entire tree and returns the AST, symbol table, and any errors
+// Collect walks the entire tree and returns the AST, symbol table, and any errors.
 func (c *Collector) Collect(root *sitter.Node) (*ast.Program, *symbols.SymbolTable, []error) {
 	c.walkProgram(root)
 	return c.ast, c.table, c.errors
@@ -73,19 +69,24 @@ func (c *Collector) walkProgram(node *sitter.Node) {
 
 		switch child.Kind() {
 		case "type_declaration":
-			stmt = c.collectTypeDeclaration(child)
+			stmt = typedecls.CollectTypeDeclaration(child, c.ctx)
 		case "function_definition":
 			stmt = c.collectFunctionDef(child)
 		case "declaration", "const_declaration":
 			stmt = c.collectVariableDeclaration(child)
 		case "expression_statement":
-			stmt = c.collectExpressionStatement(child)
+			stmt = expressions.CollectExpressionStatement(child, c.ctx)
 		}
 
 		if stmt != nil {
 			c.ast.Statements = append(c.ast.Statements, stmt)
 		}
 	}
+}
+
+// collectExpression is the thin wrapper wired into ctx.CollectExpr.
+func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
+	return expressions.CollectExpression(node, c.ctx)
 }
 
 // Helper methods
@@ -105,6 +106,10 @@ func (c *Collector) nodeLocation(node *sitter.Node) ast.Location {
 	}
 }
 
+func (c *Collector) addError(node *sitter.Node, severity CollectorErrorSeverity, format string, args ...any) {
+	c.ctx.AddError(node, severity, format, args...)
+}
+
 func (c *Collector) collectGenericParams(node *sitter.Node) []string {
 	params := make([]string, 0)
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -114,62 +119,6 @@ func (c *Collector) collectGenericParams(node *sitter.Node) []string {
 		}
 	}
 	return params
-}
-
-func (c *Collector) collectGenericArgs(node *sitter.Node) []types.Type {
-	args := make([]types.Type, 0)
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.IsNamed() {
-			args = append(args, c.parseType(child))
-		}
-	}
-	return args
-}
-
-func (c *Collector) collectDataConstructor(node *sitter.Node) (string, types.DataTypeConstructor) {
-	var name string
-	ctor := types.DataTypeConstructor{
-		Params: make([]types.Type, 0),
-	}
-
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		switch child.Kind() {
-		case "data_type_constructor_name":
-			name = c.nodeText(child)
-		case "generic_type", "user_defined_type_name", "signed_integer_type", "string_type", "boolean_type", "float_type":
-			ctor.Params = append(ctor.Params, c.parseType(child))
-		case "struct_type_body":
-			ctor.Fields = c.collectStructFields(child)
-		}
-	}
-
-	ctor.Name = name
-	return name, ctor
-}
-
-// collectStructFields returns struct fields in source declaration order.
-func (c *Collector) collectStructFields(node *sitter.Node) []types.StructField {
-	var fields []types.StructField
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.Kind() == "struct_member" {
-			field_type_node := child.ChildByFieldName("field_type")
-			var field_type types.Type
-			if field_type_node != nil {
-				field_type = c.parseType(field_type_node.Child(0))
-			}
-			field_name := c.nodeText(child.ChildByFieldName("field_name"))
-			default_value := c.collectExpression(child.ChildByFieldName("default_field_value"))
-			fields = append(fields, types.StructField{
-				Name:         field_name,
-				Type:         field_type,
-				DefaultValue: default_value,
-			})
-		}
-	}
-	return fields
 }
 
 func (c *Collector) collectFunctionSignature(node *sitter.Node) (name string, genericParams []string, sig *types.FunctionType, isPure, isAsync bool) {
@@ -251,14 +200,12 @@ func (c *Collector) parseParameterizedType(node *sitter.Node) types.Type {
 }
 
 func (c *Collector) parseAnonymousTupleType(node *sitter.Node) types.Type {
-	elements := make([]types.Type, 0)
 	if node.Child(0).Kind() == "tuple_type_body" {
-		elements = c.collectTupleTypeBody(node.Child(0))
-	} else {
-		c.addError(node, CollectorErrorSeverityError, "parseAnonymousTupleType: unknown type node kind: %s", node.Child(0).Kind())
-		return nil
+		elements := typedecls.CollectTupleTypeBody(node.Child(0), c.ctx)
+		return types.TupleType{Name: "?", Elements: elements}
 	}
-	return types.TupleType{Name: "?", Elements: elements}
+	c.addError(node, CollectorErrorSeverityError, "parseAnonymousTupleType: unknown type node kind: %s", node.Child(0).Kind())
+	return nil
 }
 
 func (c *Collector) parseArrayType(node *sitter.Node, allocation types.AllocationModifier) types.Type {
@@ -290,15 +237,25 @@ func (c *Collector) parseArrayType(node *sitter.Node, allocation types.Allocatio
 
 func (c *Collector) parseConstrainedType(node *sitter.Node) types.Type {
 	constraints := make([]types.Constraint, 0)
-	constraintsNode := node.ChildByFieldName("constraints")
-	if constraintsNode != nil {
-		constraints = c.collectConstraints(constraintsNode)
+	if constraintsNode := node.ChildByFieldName("constraints"); constraintsNode != nil {
+		constraints = typedecls.CollectConstraints(constraintsNode, c.ctx)
 	}
 	return &types.ConstrainedType{
 		Name:        c.nodeText(node.ChildByFieldName("name")),
 		Type:        c.parseType(node.ChildByFieldName("type")),
 		Constraints: constraints,
 	}
+}
+
+func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {
+	allocationNode := node.ChildByFieldName("allocation")
+	allocation := types.AllocationModifier(c.nodeText(allocationNode))
+	typeNode := node.ChildByFieldName("type")
+	if typeNode == nil {
+		c.addError(node, CollectorErrorSeverityError, "parseAllocatedType: type node is nil")
+		return nil
+	}
+	return c.parseType(typeNode, allocation)
 }
 
 func (c *Collector) parseFunctionType(node *sitter.Node) *types.FunctionType {
@@ -315,8 +272,7 @@ func (c *Collector) parseFunctionType(node *sitter.Node) *types.FunctionType {
 			}
 		}
 	}
-	returnType := node.ChildByFieldName("return_type")
-	if returnType != nil {
+	if returnType := node.ChildByFieldName("return_type"); returnType != nil {
 		ft.ReturnType = c.parseType(returnType)
 	}
 
@@ -325,9 +281,8 @@ func (c *Collector) parseFunctionType(node *sitter.Node) *types.FunctionType {
 
 func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
 	modifier := types.Modifier("")
-	modifier_node := node.ChildByFieldName("modifier")
-	if modifier_node != nil {
-		modifier = types.Modifier(c.nodeText(modifier_node))
+	if modifierNode := node.ChildByFieldName("modifier"); modifierNode != nil {
+		modifier = types.Modifier(c.nodeText(modifierNode))
 	}
 	typeNode := node.ChildByFieldName("type")
 	if typeNode == nil {
@@ -356,14 +311,4 @@ func (c *Collector) collectPattern(patternNode *sitter.Node) ast.Pattern {
 	}
 	c.addError(patternNode, CollectorErrorSeverityError, "collectPattern: unknown pattern node kind: %s", patternNode.Kind())
 	return nil
-}
-
-func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {
-	allocation := c.collectAllocationModifier(node.ChildByFieldName("allocation"))
-	typeNode := node.ChildByFieldName("type")
-	if typeNode == nil {
-		c.addError(node, CollectorErrorSeverityError, "parseAllocatedType: type node is nil")
-		return nil
-	}
-	return c.parseType(typeNode, allocation)
 }

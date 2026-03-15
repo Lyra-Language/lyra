@@ -1,7 +1,6 @@
 ## To-Dos
 - Collect postfix expressions (i.e. foo.blah[3].baz())
 - Collect function types (lambdas)
-- Collect patterns
 - Collect destructuring statements
 - Collect match expressions
 - Collect modules
@@ -16,6 +15,9 @@
 - Add sizeof() function to query type sizes
 
 ## Completed
+
+### 03/14/26
+- Refactor collect directory into sub-directories and sub-packages
 
 ### 03/13/26
 - Collect and Test array literal collection

@@ -1,12 +1,13 @@
-package collector
+package typedecls
 
 import (
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func (c *Collector) collectStructTypeDeclaration(node *sitter.Node) *ast.TypeDeclStmt {
+func collectStructTypeDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TypeDeclStmt {
 	var name string
 	var genericParams []string
 	var fields []types.StructField
@@ -17,20 +18,20 @@ func (c *Collector) collectStructTypeDeclaration(node *sitter.Node) *ast.TypeDec
 		child := node.Child(i)
 		switch child.Kind() {
 		case "allocation_modifier":
-			allocation = c.collectAllocationModifier(child)
+			allocation = allocModifier(child, ctx)
 		case "visibility":
 			isPublic = true
 		case "struct_name":
-			name = c.nodeText(child)
+			name = ctx.NodeText(child)
 		case "generic_parameters":
-			genericParams = c.collectGenericParams(child)
+			genericParams = collectGenericParams(child, ctx)
 		case "struct_type_body":
-			fields = c.collectStructFields(child)
+			fields = collectStructFields(child, ctx)
 		}
 	}
 
 	astNode := &ast.TypeDeclStmt{
-		AstBase:       ast.AstBase{Location: c.nodeLocation(node)},
+		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
 		Name:          name,
 		GenericParams: genericParams,
 		Type: types.StructType{
@@ -41,8 +42,8 @@ func (c *Collector) collectStructTypeDeclaration(node *sitter.Node) *ast.TypeDec
 		IsPublic: isPublic,
 	}
 
-	if err := c.table.RegisterType(astNode); err != nil {
-		c.errors = append(c.errors, err)
+	if err := ctx.RegisterType(astNode); err != nil {
+		ctx.AppendError(err)
 	}
 
 	return astNode
