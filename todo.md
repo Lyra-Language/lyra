@@ -1,7 +1,9 @@
 ## To-Dos
+- Collect array destructuring
+- Collect struct destructuring
+- Collect data type destructuring
 - Collect postfix expressions (i.e. foo.blah[3].baz())
 - Collect function types (lambdas)
-- Collect destructuring statements (patterns)
 - Collect match expressions
 - Collect modules
 - Collect trait declarations
@@ -18,9 +20,10 @@
 
 ### 03/14/26
 - Refactor collect directory into sub-directories and sub-packages
+- Collect and test tuple destructuring
 
 ### 03/13/26
-- Collect and Test array literal collection
+- Collect and test array literal collection
 - Collect and test if expressions
 
 ### 03/09/26
