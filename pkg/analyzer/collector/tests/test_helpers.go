@@ -1,4 +1,4 @@
-package collector
+package tests
 
 import (
 	"bytes"
@@ -10,6 +10,8 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/printer"
+
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
 )
 
 // parseAndCollect parses source, runs the collector, and returns the resulting
@@ -30,7 +32,7 @@ func parseAndCollectFull(t *testing.T, source string, printTree bool) (*ast.Prog
 		p := printer.NewPrinter([]byte(source))
 		p.Print(tree.RootNode())
 	}
-	c := NewCollector([]byte(source))
+	c := collector.NewCollector([]byte(source))
 	program, table, errors := c.Collect(tree.RootNode())
 	if len(errors) > 0 {
 		t.Fatalf("Collector errors: %v", errors)
