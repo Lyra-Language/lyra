@@ -1,7 +1,7 @@
 ## To-Dos
 - Collect postfix expressions (i.e. foo.blah[3].baz())
 - Collect function types (lambdas)
-- Collect destructuring statements
+- Collect destructuring statements (patterns)
 - Collect match expressions
 - Collect modules
 - Collect trait declarations

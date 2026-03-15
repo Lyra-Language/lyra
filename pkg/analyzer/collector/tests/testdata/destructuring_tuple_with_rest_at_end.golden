@@ -1,0 +1,13 @@
+Program(1 statements) {
+	DestructuringDeclaration(let) {
+		TuplePattern {
+			IdentifierPattern(x),
+			IdentifierPattern(y),
+			IdentifierPattern(z),
+			RestPattern(rest),
+		}
+		Value: {
+			IdentifierExpr(some_tuple, IsConst: false)
+		}
+	}
+}

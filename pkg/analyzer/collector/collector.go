@@ -47,15 +47,16 @@ func NewCollector(source []byte) *Collector {
 		errors: make([]error, 0),
 	}
 	c.ctx = &collctx.Ctx{
-		Source:               source,
-		Errors:               &c.errors,
-		CollectExpr:          c.collectExpression,
-		CollectPattern:       c.collectPattern,
-		ParseType:            func(node *sitter.Node) types.Type { return c.parseType(node) },
-		RegisterType:         c.table.RegisterType,
-		RegisterFunction:     c.table.RegisterFunction,
-		RegisterVariable:     c.table.RegisterVariable,
-		CollectGenericParams: c.collectGenericParams,
+		Source:                    source,
+		Errors:                    &c.errors,
+		CollectExpr:               c.collectExpression,
+		ParseDestructuringPattern: c.ParseDestructuringPattern,
+		CollectPattern:            c.collectPattern,
+		ParseType:                 func(node *sitter.Node) types.Type { return c.parseType(node) },
+		RegisterType:              c.table.RegisterType,
+		RegisterFunction:          c.table.RegisterFunction,
+		RegisterVariable:          c.table.RegisterVariable,
+		CollectGenericParams:      c.collectGenericParams,
 	}
 	return c
 }
@@ -78,6 +79,8 @@ func (c *Collector) walkProgram(node *sitter.Node) {
 			stmt = declarations.CollectFunctionDefinition(child, c.ctx)
 		case "declaration", "const_declaration":
 			stmt = declarations.CollectVariableDeclaration(child, c.ctx)
+		case "destructuring_declaration":
+			stmt = declarations.CollectDestructuringDeclaration(child, c.ctx)
 		case "expression_statement":
 			stmt = expressions.CollectExpressionStatement(child, c.ctx)
 		}
@@ -239,6 +242,10 @@ func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {
 	return c.parseType(typeNode, allocation)
 }
 
+func (c *Collector) ParseDestructuringPattern(patternNode *sitter.Node) ast.Pattern {
+	return c.collectPattern(patternNode.Child(0))
+}
+
 func (c *Collector) collectPattern(patternNode *sitter.Node) ast.Pattern {
 	loc := c.nodeLocation(patternNode)
 	switch patternNode.Kind() {
@@ -252,7 +259,54 @@ func (c *Collector) collectPattern(patternNode *sitter.Node) ast.Pattern {
 			PatternBase: ast.PatternBase{Location: loc},
 			Value:       c.nodeText(patternNode),
 		}
+	case "tuple_pattern":
+		return c.collectTuplePattern(patternNode)
 	}
 	c.addError(patternNode, CollectorErrorSeverityError, "collectPattern: unknown pattern node kind: %s", patternNode.Kind())
 	return nil
+}
+
+func (c *Collector) collectTuplePattern(patternNode *sitter.Node) ast.Pattern {
+	loc := c.nodeLocation(patternNode)
+	return &ast.TuplePattern{
+		PatternBase: ast.PatternBase{Location: loc},
+		Elements:    c.collectTuplePatternElements(patternNode),
+	}
+}
+
+func (c *Collector) collectTuplePatternElements(patternNode *sitter.Node) []ast.Pattern {
+	elements := make([]ast.Pattern, 0)
+	for i := uint(0); i < patternNode.ChildCount(); i++ {
+		child := patternNode.Child(i)
+		element := c.collectPatternElement(child)
+		if element != nil {
+			elements = append(elements, element)
+		}
+	}
+	return elements
+}
+
+func (c *Collector) collectPatternElement(node *sitter.Node) ast.Pattern {
+	switch node.Kind() {
+	case "identifier", "literal_pattern", "pattern":
+		return c.collectPattern(node)
+	case "rest_pattern":
+		return c.collectRestPattern(node)
+	case "wildcard_pattern":
+		return c.collectWildcardPattern(node)
+	}
+	return nil
+}
+
+func (c *Collector) collectRestPattern(node *sitter.Node) ast.Pattern {
+	return &ast.RestPattern{
+		PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
+		Identifier:  c.nodeText(node.ChildByFieldName("identifier")),
+	}
+}
+
+func (c *Collector) collectWildcardPattern(node *sitter.Node) ast.Pattern {
+	return &ast.WildcardPattern{
+		PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
+	}
 }

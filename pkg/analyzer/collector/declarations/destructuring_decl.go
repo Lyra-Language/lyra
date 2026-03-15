@@ -1,0 +1,27 @@
+package declarations
+
+import (
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
+	sitter "github.com/tree-sitter/go-tree-sitter"
+)
+
+func CollectDestructuringDeclaration(node *sitter.Node, ctx *collctx.Ctx) ast.AstNode {
+	keyword := ctx.NodeText(node.ChildByFieldName("keyword"))
+	pattern := ctx.ParseDestructuringPattern(node.ChildByFieldName("pattern"))
+	typeAnnotationNode := node.ChildByFieldName("type_annotation")
+	var typeAnnotation types.Type = nil
+	if typeAnnotationNode != nil {
+		typeAnnotation = ctx.ParseType(typeAnnotationNode)
+	}
+	value := ctx.CollectExpr(node.ChildByFieldName("value"))
+
+	return &ast.DestructuringDeclaration{
+		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
+		Keyword: keyword,
+		Pattern: pattern,
+		Type:    typeAnnotation,
+		Value:   value,
+	}
+}
