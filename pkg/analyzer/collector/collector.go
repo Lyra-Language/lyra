@@ -10,6 +10,7 @@ import (
 	"strconv"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/declarations"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/typedecls"
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -49,8 +50,11 @@ func NewCollector(source []byte) *Collector {
 		Source:               source,
 		Errors:               &c.errors,
 		CollectExpr:          c.collectExpression,
+		CollectPattern:       c.collectPattern,
 		ParseType:            func(node *sitter.Node) types.Type { return c.parseType(node) },
 		RegisterType:         c.table.RegisterType,
+		RegisterFunction:     c.table.RegisterFunction,
+		RegisterVariable:     c.table.RegisterVariable,
 		CollectGenericParams: c.collectGenericParams,
 	}
 	return c
@@ -71,9 +75,9 @@ func (c *Collector) walkProgram(node *sitter.Node) {
 		case "type_declaration":
 			stmt = typedecls.CollectTypeDeclaration(child, c.ctx)
 		case "function_definition":
-			stmt = c.collectFunctionDef(child)
+			stmt = declarations.CollectFunctionDefinition(child, c.ctx)
 		case "declaration", "const_declaration":
-			stmt = c.collectVariableDeclaration(child)
+			stmt = declarations.CollectVariableDeclaration(child, c.ctx)
 		case "expression_statement":
 			stmt = expressions.CollectExpressionStatement(child, c.ctx)
 		}
@@ -119,29 +123,6 @@ func (c *Collector) collectGenericParams(node *sitter.Node) []string {
 		}
 	}
 	return params
-}
-
-func (c *Collector) collectFunctionSignature(node *sitter.Node) (name string, genericParams []string, sig *types.FunctionType, isPure, isAsync bool) {
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		text := c.nodeText(child)
-		switch child.Kind() {
-		case "identifier":
-			name = text
-		case "generic_parameters":
-			genericParams = c.collectGenericParams(child)
-		case "function_type":
-			sig = c.parseFunctionType(child)
-		default:
-			switch text {
-			case "pure":
-				isPure = true
-			case "async":
-				isAsync = true
-			}
-		}
-	}
-	return name, genericParams, sig, isPure, isAsync
 }
 
 // allocation is only used for array types
@@ -256,43 +237,6 @@ func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {
 		return nil
 	}
 	return c.parseType(typeNode, allocation)
-}
-
-func (c *Collector) parseFunctionType(node *sitter.Node) *types.FunctionType {
-	ft := &types.FunctionType{
-		ParameterTypes: make([]types.ParameterType, 0),
-	}
-
-	parameterTypes := node.ChildByFieldName("parameter_types")
-	if parameterTypes != nil {
-		for i := uint(0); i < parameterTypes.ChildCount(); i++ {
-			child := parameterTypes.Child(i)
-			if child.Kind() == "parameter_type" {
-				ft.ParameterTypes = append(ft.ParameterTypes, c.parseParameterType(child))
-			}
-		}
-	}
-	if returnType := node.ChildByFieldName("return_type"); returnType != nil {
-		ft.ReturnType = c.parseType(returnType)
-	}
-
-	return ft
-}
-
-func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
-	modifier := types.Modifier("")
-	if modifierNode := node.ChildByFieldName("modifier"); modifierNode != nil {
-		modifier = types.Modifier(c.nodeText(modifierNode))
-	}
-	typeNode := node.ChildByFieldName("type")
-	if typeNode == nil {
-		c.addError(node, CollectorErrorSeverityError, "parseParameterType: type node is nil")
-		return types.ParameterType{}
-	}
-	return types.ParameterType{
-		Modifier: modifier,
-		Type:     c.parseType(typeNode),
-	}
 }
 
 func (c *Collector) collectPattern(patternNode *sitter.Node) ast.Pattern {

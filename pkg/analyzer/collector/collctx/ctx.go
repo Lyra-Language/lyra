@@ -34,10 +34,16 @@ type Ctx struct {
 
 	// CollectExpr dispatches to the expression collector.
 	CollectExpr func(*sitter.Node) ast.Expression
+	// CollectPattern dispatches to the pattern collector.
+	CollectPattern func(*sitter.Node) ast.Pattern
 	// ParseType parses a type annotation node into a types.Type.
 	ParseType func(*sitter.Node) types.Type
 	// RegisterType registers a type declaration in the symbol table.
 	RegisterType func(*ast.TypeDeclStmt) error
+	// RegisterFunction registers a function declaration in the symbol table.
+	RegisterFunction func(*ast.FunctionDefStmt) error
+	// RegisterVariable registers a variable declaration in the symbol table.
+	RegisterVariable func(*ast.VarDeclStmt) error
 	// CollectGenericParams collects generic type parameter names from a generic_parameters node.
 	CollectGenericParams func(*sitter.Node) []string
 }

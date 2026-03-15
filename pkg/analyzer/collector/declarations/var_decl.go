@@ -1,24 +1,25 @@
-package collector
+package declarations
 
 import (
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func (c *Collector) collectVariableDeclaration(node *sitter.Node) *ast.VarDeclStmt {
-	keyword := c.nodeText(node.ChildByFieldName("keyword"))
-	name := c.nodeText(node.ChildByFieldName("name"))
+func CollectVariableDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.VarDeclStmt {
+	keyword := ctx.NodeText(node.ChildByFieldName("keyword"))
+	name := ctx.NodeText(node.ChildByFieldName("name"))
 
 	var varType types.Type
 	if typeAnnotation := node.ChildByFieldName("type_annotation"); typeAnnotation != nil {
-		varType = c.parseType(typeAnnotation.ChildByFieldName("type"))
+		varType = ctx.ParseType(typeAnnotation.ChildByFieldName("type"))
 	}
 
 	valueNode := node.ChildByFieldName("value")
 	var initExpr ast.Expression = nil
 	if valueNode != nil {
-		initExpr = c.collectExpression(valueNode)
+		initExpr = ctx.CollectExpr(valueNode)
 	}
 
 	// Infer variable type from initializer only when no type annotation was given
@@ -40,15 +41,15 @@ func (c *Collector) collectVariableDeclaration(node *sitter.Node) *ast.VarDeclSt
 	}
 
 	astNode := &ast.VarDeclStmt{
-		AstBase: ast.AstBase{Location: c.nodeLocation(node)},
+		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
 		Keyword: keyword,
 		Name:    name,
 		Type:    varType,
 		Value:   initExpr,
 	}
 
-	if err := c.table.RegisterVariable(astNode); err != nil {
-		c.errors = append(c.errors, err)
+	if err := ctx.RegisterVariable(astNode); err != nil {
+		ctx.AppendError(err)
 	}
 
 	return astNode
