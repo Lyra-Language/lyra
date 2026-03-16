@@ -1,10 +1,11 @@
 ## To-Dos
-- Collect array destructuring
-- Collect struct destructuring
-- Collect data type destructuring
+
+- Collect struct destructuring and write tests
+- Collect data type destructuring and write tests
+- Test advanced destructuring with nested data types
+- Collect match expressions
 - Collect postfix expressions (i.e. foo.blah[3].baz())
 - Collect function types (lambdas)
-- Collect match expressions
 - Collect modules
 - Collect trait declarations
 - Collect trait implementations
@@ -17,6 +18,9 @@
 - Add sizeof() function to query type sizes
 
 ## Completed
+
+### 03/16/26
+- Collect array destructuring and write tests
 
 ### 03/14/26
 - Refactor collect directory into sub-directories and sub-packages
