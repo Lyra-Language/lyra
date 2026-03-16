@@ -2,6 +2,7 @@
 
 - Collect data type destructuring and write tests
 - Collect match expressions
+- Test very complex nested patterns
 - Collect postfix expressions (i.e. foo.blah[3].baz())
 - Collect function types (lambdas)
 - Collect modules
