@@ -59,6 +59,22 @@ func (p *TuplePattern) Print(indent string) {
 	fmt.Printf("%s}\n", indent)
 }
 
+type ArrayPattern struct {
+	PatternBase
+	Elements []Pattern
+}
+
+func (p *ArrayPattern) patternNode()    {}
+func (p *ArrayPattern) GetName() string { return fmt.Sprintf("[%v]", p.Elements) }
+func (p *ArrayPattern) Print(indent string) {
+	fmt.Printf("%sArrayPattern {\n", indent)
+	for _, element := range p.Elements {
+		element.Print(indent + "\t")
+		fmt.Printf(",\n")
+	}
+	fmt.Printf("%s}\n", indent)
+}
+
 type RestPattern struct {
 	PatternBase
 	Identifier string

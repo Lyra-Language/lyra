@@ -261,6 +261,8 @@ func (c *Collector) collectPattern(patternNode *sitter.Node) ast.Pattern {
 		}
 	case "tuple_pattern":
 		return c.collectTuplePattern(patternNode)
+	case "array_pattern":
+		return c.collectArrayPattern(patternNode)
 	}
 	c.addError(patternNode, CollectorErrorSeverityError, "collectPattern: unknown pattern node kind: %s", patternNode.Kind())
 	return nil
@@ -275,6 +277,31 @@ func (c *Collector) collectTuplePattern(patternNode *sitter.Node) ast.Pattern {
 }
 
 func (c *Collector) collectTuplePatternElements(patternNode *sitter.Node) []ast.Pattern {
+	elements := make([]ast.Pattern, 0)
+	for i := uint(0); i < patternNode.ChildCount(); i++ {
+		child := patternNode.Child(i)
+		element := c.collectPatternElement(child)
+		if element != nil {
+			elements = append(elements, element)
+		}
+	}
+	return elements
+}
+
+func (c *Collector) collectArrayPattern(patternNode *sitter.Node) ast.Pattern {
+	loc := c.nodeLocation(patternNode)
+	elements := c.collectArrayPatternElements(patternNode)
+	if len(elements) == 0 {
+		c.addError(patternNode, CollectorErrorSeverityError, "collectArrayPattern: no elements in array pattern")
+		return nil
+	}
+	return &ast.ArrayPattern{
+		PatternBase: ast.PatternBase{Location: loc},
+		Elements:    elements,
+	}
+}
+
+func (c *Collector) collectArrayPatternElements(patternNode *sitter.Node) []ast.Pattern {
 	elements := make([]ast.Pattern, 0)
 	for i := uint(0); i < patternNode.ChildCount(); i++ {
 		child := patternNode.Child(i)
