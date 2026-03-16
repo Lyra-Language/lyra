@@ -75,6 +75,42 @@ func (p *ArrayPattern) Print(indent string) {
 	fmt.Printf("%s}\n", indent)
 }
 
+type StructPattern struct {
+	PatternBase
+	Fields []StructPatternField
+}
+
+func (p *StructPattern) patternNode()    {}
+func (p *StructPattern) GetName() string { return fmt.Sprintf("{%v}", p.Fields) }
+func (p *StructPattern) Print(indent string) {
+	fmt.Printf("%sStructPattern {\n", indent)
+	for _, field := range p.Fields {
+		field.Print(indent + "\t")
+	}
+	fmt.Printf("%s}\n", indent)
+}
+
+type StructPatternField struct {
+	PatternBase
+	Name    string
+	Pattern Pattern
+}
+
+func (p *StructPatternField) patternNode()    {}
+func (p *StructPatternField) GetName() string { return p.Name }
+func (p *StructPatternField) Print(indent string) {
+	fmt.Printf("%sStructPatternField {\n", indent)
+	fmt.Printf("%s\tname: %s\n", indent, p.Name)
+	if p.Pattern != nil {
+		fmt.Printf("%s\tpattern: {\n", indent)
+		p.Pattern.Print(indent + "\t\t")
+		fmt.Printf("\n%s\t}\n", indent)
+	} else {
+		fmt.Printf("%s\tpattern: nil\n", indent)
+	}
+	fmt.Printf("%s}\n", indent)
+}
+
 type RestPattern struct {
 	PatternBase
 	Identifier string

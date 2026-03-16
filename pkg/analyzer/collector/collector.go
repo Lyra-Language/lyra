@@ -263,6 +263,8 @@ func (c *Collector) collectPattern(patternNode *sitter.Node) ast.Pattern {
 		return c.collectTuplePattern(patternNode)
 	case "array_pattern":
 		return c.collectArrayPattern(patternNode)
+	case "struct_pattern":
+		return c.collectStructPattern(patternNode)
 	}
 	c.addError(patternNode, CollectorErrorSeverityError, "collectPattern: unknown pattern node kind: %s", patternNode.Kind())
 	return nil
@@ -322,6 +324,72 @@ func (c *Collector) collectPatternElement(node *sitter.Node) ast.Pattern {
 	case "wildcard_pattern":
 		return c.collectWildcardPattern(node)
 	}
+	return nil
+}
+
+func (c *Collector) collectStructPattern(node *sitter.Node) ast.Pattern {
+	loc := c.nodeLocation(node)
+	fields := c.collectStructPatternFields(node)
+	return &ast.StructPattern{
+		PatternBase: ast.PatternBase{Location: loc},
+		Fields:      fields,
+	}
+}
+
+func (c *Collector) collectStructPatternFields(node *sitter.Node) []ast.StructPatternField {
+	fields := make([]ast.StructPatternField, 0)
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		child := node.NamedChild(i)
+		field := c.collectStructPatternField(child)
+		if field != nil {
+			fields = append(fields, *field)
+		}
+	}
+	return fields
+}
+
+func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatternField {
+	nameNode := node.ChildByFieldName("name")
+	if nameNode != nil {
+		return &ast.StructPatternField{
+			PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
+			Name:        c.nodeText(nameNode),
+			Pattern:     nil,
+		}
+	}
+	structFieldRenameNode := node.ChildByFieldName("struct_field_rename")
+	if structFieldRenameNode != nil {
+		return &ast.StructPatternField{
+			PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
+			Name:        c.nodeText(structFieldRenameNode.ChildByFieldName("new_name")),
+			Pattern:     nil,
+		}
+	}
+	structFieldWithPatternNode := node.ChildByFieldName("struct_field_with_pattern")
+	if structFieldWithPatternNode != nil {
+		return &ast.StructPatternField{
+			PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
+			Name:        c.nodeText(structFieldWithPatternNode.ChildByFieldName("name")),
+			Pattern:     c.collectPattern(structFieldWithPatternNode.ChildByFieldName("pattern")),
+		}
+	}
+	restPatternNode := node.ChildByFieldName("rest_pattern")
+	if restPatternNode != nil {
+		return &ast.StructPatternField{
+			PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
+			Name:        "...",
+			Pattern:     c.collectRestPattern(restPatternNode),
+		}
+	}
+	wildcardPatternNode := node.ChildByFieldName("wildcard_pattern")
+	if wildcardPatternNode != nil {
+		return &ast.StructPatternField{
+			PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
+			Name:        "_",
+			Pattern:     c.collectWildcardPattern(wildcardPatternNode),
+		}
+	}
+
 	return nil
 }
 

@@ -1,0 +1,21 @@
+Program(1 statements) {
+	DestructuringDeclaration(let) {
+		StructPattern {
+			StructPatternField {
+				name: a
+				pattern: nil
+			}
+			StructPatternField {
+				name: b
+				pattern: nil
+			}
+			StructPatternField {
+				name: c
+				pattern: nil
+			}
+		}
+		Value: {
+			IdentifierExpr(some_struct, IsConst: false)
+		}
+	}
+}
