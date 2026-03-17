@@ -4,15 +4,15 @@ Program(1 statements) {
 			StructPatternField {
 				name: foo
 				pattern: nil
-			}
+			},
 			StructPatternField {
 				name: bar
 				pattern: nil
-			}
+			},
 			StructPatternField {
 				name: baz
 				pattern: nil
-			}
+			},
 		}
 		Value: {
 			IdentifierExpr(some_struct, IsConst: false)

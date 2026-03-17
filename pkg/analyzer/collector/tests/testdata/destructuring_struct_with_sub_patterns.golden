@@ -9,9 +9,8 @@ Program(1 statements) {
 						IdentifierPattern(y),
 						IdentifierPattern(z),
 					}
-
 				}
-			}
+			},
 			StructPatternField {
 				name: b
 				pattern: {
@@ -19,9 +18,8 @@ Program(1 statements) {
 						IdentifierPattern(a),
 						IdentifierPattern(b),
 					}
-
 				}
-			}
+			},
 			StructPatternField {
 				name: c
 				pattern: {
@@ -29,19 +27,18 @@ Program(1 statements) {
 						StructPatternField {
 							name: d
 							pattern: nil
-						}
+						},
 						StructPatternField {
 							name: e
 							pattern: nil
-						}
+						},
 						StructPatternField {
 							name: f
 							pattern: nil
-						}
+						},
 					}
-
 				}
-			}
+			},
 		}
 		Value: {
 			IdentifierExpr(some_struct, IsConst: false)

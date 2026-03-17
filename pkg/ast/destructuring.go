@@ -18,7 +18,7 @@ func (d *DestructuringDeclaration) GetName() string { return d.Pattern.GetName()
 func (d *DestructuringDeclaration) Print(indent string) {
 	fmt.Printf("%sDestructuringDeclaration(%s) {\n", indent, d.Keyword)
 	d.Pattern.Print(indent + "\t")
-	fmt.Printf("%s\tValue: {\n", indent)
+	fmt.Printf("\n%s\tValue: {\n", indent)
 	d.Value.Print(indent + "\t\t")
 	fmt.Printf("%s\t}\n", indent)
 	if d.Type != nil {

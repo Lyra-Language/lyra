@@ -1,6 +1,8 @@
 ## To-Dos
 
-- Collect data type destructuring and write tests
+- Collect and Test "If Let Destructuring Expressions"
+- Collect and Test "If Let Else Destructuring Expressions"
+- Collect and Test "If Else Destructuring Expressions"
 - Collect match expressions
 - Test very complex nested patterns
 - Collect postfix expressions (i.e. foo.blah[3].baz())
@@ -21,6 +23,7 @@
 ### 03/16/26
 - Collect array destructuring and write tests
 - Collect struct destructuring and write tests
+- Collect data type destructuring and write tests
 
 ### 03/14/26
 - Refactor collect directory into sub-directories and sub-packages

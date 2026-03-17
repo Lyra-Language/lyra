@@ -1,0 +1,17 @@
+Program(1 statements) {
+	DestructuringDeclaration(let) {
+		DataPattern {
+			name: Some
+			pattern: {
+				ArrayPattern {
+					IdentifierPattern(x),
+					IdentifierPattern(y),
+					IdentifierPattern(z),
+				}
+			}
+		}
+		Value: {
+			IdentifierExpr(some_data, IsConst: false)
+		}
+	}
+}

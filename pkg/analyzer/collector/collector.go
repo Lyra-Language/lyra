@@ -265,6 +265,8 @@ func (c *Collector) collectPattern(patternNode *sitter.Node) ast.Pattern {
 		return c.collectArrayPattern(patternNode)
 	case "struct_pattern":
 		return c.collectStructPattern(patternNode)
+	case "data_pattern":
+		return c.collectDataPattern(patternNode)
 	}
 	c.addError(patternNode, CollectorErrorSeverityError, "collectPattern: unknown pattern node kind: %s", patternNode.Kind())
 	return nil
@@ -391,6 +393,25 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 	}
 
 	return nil
+}
+
+func (c *Collector) collectDataPattern(node *sitter.Node) *ast.DataPattern {
+	loc := c.nodeLocation(node)
+	nameNode := node.ChildByFieldName("name")
+	if nameNode == nil {
+		c.addError(node, CollectorErrorSeverityError, "collectDataPattern: name node is nil")
+		return nil
+	}
+	patternNode := node.ChildByFieldName("pattern")
+	var pattern ast.Pattern
+	if patternNode != nil {
+		pattern = c.collectPattern(patternNode)
+	}
+	return &ast.DataPattern{
+		PatternBase: ast.PatternBase{Location: loc},
+		Name:        c.nodeText(nameNode),
+		Pattern:     pattern,
+	}
 }
 
 func (c *Collector) collectRestPattern(node *sitter.Node) ast.Pattern {

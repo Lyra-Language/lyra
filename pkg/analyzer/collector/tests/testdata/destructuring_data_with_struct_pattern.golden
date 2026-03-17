@@ -1,0 +1,26 @@
+Program(1 statements) {
+	DestructuringDeclaration(let) {
+		DataPattern {
+			name: Some
+			pattern: {
+				StructPattern {
+					StructPatternField {
+						name: x
+						pattern: nil
+					},
+					StructPatternField {
+						name: y
+						pattern: nil
+					},
+					StructPatternField {
+						name: z
+						pattern: nil
+					},
+				}
+			}
+		}
+		Value: {
+			IdentifierExpr(some_data, IsConst: false)
+		}
+	}
+}
