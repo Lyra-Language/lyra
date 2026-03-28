@@ -1,9 +1,9 @@
 Program(1 statements) {
 	DestructuringStatement {
-		Keyword: let
+		Keyword: var
 		ArrayPattern {
 			IdentifierPattern(a),
-			RestPattern(middle),
+			IdentifierPattern(b),
 			IdentifierPattern(c),
 		}
 		Value: {

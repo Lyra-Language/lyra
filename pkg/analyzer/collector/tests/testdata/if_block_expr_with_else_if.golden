@@ -13,13 +13,17 @@ Program(1 statements) {
 		    }
 		  }
 		  Then: {
-		    FunctionCallExpr {
-		    	Function: {
-		    		IdentifierExpr(println, IsConst: false)
-		    	}
-		    	Arguments: {
-		    		ArgumentList(StringLiteralExpr(x is 3)) {
-		    			StringLiteralExpr(x is 3)
+		    BlockExpr {
+		    	ExpressionStmt(function_call_expr) {
+		    		FunctionCallExpr {
+		    			Function: {
+		    				IdentifierExpr(println, IsConst: false)
+		    			}
+		    			Arguments: {
+		    				ArgumentList(StringLiteralExpr(x is 3)) {
+		    					StringLiteralExpr(x is 3)
+		    				}
+		    			}
 		    		}
 		    	}
 		    }
@@ -38,25 +42,33 @@ Program(1 statements) {
 		        }
 		      }
 		      Then: {
-		        FunctionCallExpr {
-		        	Function: {
-		        		IdentifierExpr(println, IsConst: false)
-		        	}
-		        	Arguments: {
-		        		ArgumentList(StringLiteralExpr(x is 4)) {
-		        			StringLiteralExpr(x is 4)
+		        BlockExpr {
+		        	ExpressionStmt(function_call_expr) {
+		        		FunctionCallExpr {
+		        			Function: {
+		        				IdentifierExpr(println, IsConst: false)
+		        			}
+		        			Arguments: {
+		        				ArgumentList(StringLiteralExpr(x is 4)) {
+		        					StringLiteralExpr(x is 4)
+		        				}
+		        			}
 		        		}
 		        	}
 		        }
 		      }
 		      Else: {
-		        FunctionCallExpr {
-		        	Function: {
-		        		IdentifierExpr(println, IsConst: false)
-		        	}
-		        	Arguments: {
-		        		ArgumentList(StringLiteralExpr(x is not 3 or 4)) {
-		        			StringLiteralExpr(x is not 3 or 4)
+		        BlockExpr {
+		        	ExpressionStmt(function_call_expr) {
+		        		FunctionCallExpr {
+		        			Function: {
+		        				IdentifierExpr(println, IsConst: false)
+		        			}
+		        			Arguments: {
+		        				ArgumentList(StringLiteralExpr(x is not 3 or 4)) {
+		        					StringLiteralExpr(x is not 3 or 4)
+		        				}
+		        			}
 		        		}
 		        	}
 		        }

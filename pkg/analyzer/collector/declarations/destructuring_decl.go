@@ -7,7 +7,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectDestructuringDeclaration(node *sitter.Node, ctx *collctx.Ctx) ast.AstNode {
+func CollectDestructuringDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.DestructuringDeclStmt {
 	keyword := ctx.NodeText(node.ChildByFieldName("keyword"))
 	pattern := ctx.ParseDestructuringPattern(node.ChildByFieldName("pattern"))
 	typeAnnotationNode := node.ChildByFieldName("type_annotation")
@@ -17,7 +17,7 @@ func CollectDestructuringDeclaration(node *sitter.Node, ctx *collctx.Ctx) ast.As
 	}
 	value := ctx.CollectExpr(node.ChildByFieldName("value"))
 
-	return &ast.DestructuringDeclaration{
+	return &ast.DestructuringDeclStmt{
 		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
 		Keyword: keyword,
 		Pattern: pattern,

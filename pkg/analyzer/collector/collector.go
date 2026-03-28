@@ -50,6 +50,7 @@ func NewCollector(source []byte) *Collector {
 		Source:                    source,
 		Errors:                    &c.errors,
 		CollectExpr:               c.collectExpression,
+		CollectStatement:          c.collectStatement,
 		ParseDestructuringPattern: c.ParseDestructuringPattern,
 		CollectPattern:            c.collectPattern,
 		ParseType:                 func(node *sitter.Node) types.Type { return c.parseType(node) },
@@ -70,20 +71,8 @@ func (c *Collector) Collect(root *sitter.Node) (*ast.Program, *symbols.SymbolTab
 func (c *Collector) walkProgram(node *sitter.Node) {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
-		var stmt ast.AstNode
 
-		switch child.Kind() {
-		case "type_declaration":
-			stmt = typedecls.CollectTypeDeclaration(child, c.ctx)
-		case "function_definition":
-			stmt = declarations.CollectFunctionDefinition(child, c.ctx)
-		case "declaration", "const_declaration":
-			stmt = declarations.CollectVariableDeclaration(child, c.ctx)
-		case "destructuring_declaration":
-			stmt = declarations.CollectDestructuringDeclaration(child, c.ctx)
-		case "expression_statement":
-			stmt = expressions.CollectExpressionStatement(child, c.ctx)
-		}
+		stmt := c.collectStatement(child)
 
 		if stmt != nil {
 			c.ast.Statements = append(c.ast.Statements, stmt)
@@ -94,6 +83,27 @@ func (c *Collector) walkProgram(node *sitter.Node) {
 // collectExpression is the thin wrapper wired into ctx.CollectExpr.
 func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
 	return expressions.CollectExpression(node, c.ctx)
+}
+
+func (c *Collector) collectStatement(node *sitter.Node) ast.Statement {
+	if node == nil {
+		return nil
+	}
+	switch node.Kind() {
+	case "type_declaration":
+		return typedecls.CollectTypeDeclaration(node, c.ctx)
+	case "function_definition":
+		return declarations.CollectFunctionDefinition(node, c.ctx)
+	case "declaration", "const_declaration":
+		return declarations.CollectVariableDeclaration(node, c.ctx)
+	case "destructuring_declaration":
+		return declarations.CollectDestructuringDeclaration(node, c.ctx)
+	case "if_destructuring_declaration":
+		return declarations.CollectDestructuringIfStatement(node, c.ctx)
+	case "expression_statement":
+		return expressions.CollectExpressionStatement(node, c.ctx)
+	}
+	return nil
 }
 
 // Helper methods

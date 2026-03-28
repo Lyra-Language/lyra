@@ -1,0 +1,47 @@
+Program(1 statements) {
+	IfDestructuringStatement {
+		DestructuringStatement {
+			Keyword: let
+			ArrayPattern {
+				IdentifierPattern(a),
+				IdentifierPattern(b),
+				IdentifierPattern(c),
+			}
+			Value: {
+				IdentifierExpr(some_array, IsConst: false)
+			}
+		}
+		Then: {
+			BlockExpr {
+				ExpressionStmt(function_call_expr) {
+					FunctionCallExpr {
+						Function: {
+							IdentifierExpr(println, IsConst: false)
+						}
+						Arguments: {
+							ArgumentList(StringLiteralExpr(#{a}, #{b}, #{c})) {
+								StringLiteralExpr(#{a}, #{b}, #{c})
+							}
+						}
+					}
+				}
+			}
+		}
+		Else: {
+			BlockExpr {
+				ExpressionStmt(function_call_expr) {
+					FunctionCallExpr {
+						Function: {
+							IdentifierExpr(println, IsConst: false)
+						}
+						Arguments: {
+							ArgumentList(StringLiteralExpr(No array found)) {
+								StringLiteralExpr(No array found)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

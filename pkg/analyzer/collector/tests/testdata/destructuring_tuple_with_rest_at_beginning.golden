@@ -1,5 +1,6 @@
 Program(1 statements) {
-	DestructuringDeclaration(let) {
+	DestructuringStatement {
+		Keyword: let
 		TuplePattern {
 			RestPattern(rest),
 			IdentifierPattern(x),

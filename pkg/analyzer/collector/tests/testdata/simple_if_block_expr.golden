@@ -1,29 +1,33 @@
 Program(1 statements) {
 	ExpressionStmt(if_expr) {
 		IfExpr {
-			Condition: {
-				BooleanBinaryOpExpr {
-					Left: {
-						IdentifierExpr(x, IsConst: false)
-					}
-					Operator: ==
-					Right: {
-						IntegerLiteralExpr(3, Base: 10)
-					}
-				}
-			}
-			Then: {
-				FunctionCallExpr {
-					Function: {
-						IdentifierExpr(println, IsConst: false)
-					}
-					Arguments: {
-						ArgumentList(StringLiteralExpr(x is 3)) {
-							StringLiteralExpr(x is 3)
-						}
-					}
-				}
-			}
+		  Condition: {
+		    BooleanBinaryOpExpr {
+		    	Left: {
+		    		IdentifierExpr(x, IsConst: false)
+		    	}
+		    	Operator: ==
+		    	Right: {
+		    		IntegerLiteralExpr(3, Base: 10)
+		    	}
+		    }
+		  }
+		  Then: {
+		    BlockExpr {
+		    	ExpressionStmt(function_call_expr) {
+		    		FunctionCallExpr {
+		    			Function: {
+		    				IdentifierExpr(println, IsConst: false)
+		    			}
+		    			Arguments: {
+		    				ArgumentList(StringLiteralExpr(x is 3)) {
+		    					StringLiteralExpr(x is 3)
+		    				}
+		    			}
+		    		}
+		    	}
+		    }
+		  }
 		}
 	}
 }

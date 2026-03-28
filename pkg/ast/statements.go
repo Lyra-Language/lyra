@@ -6,6 +6,13 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
+type Statement interface {
+	AstNode
+	statementNode()
+	GetName() string
+	Print(indent string)
+}
+
 // TypeDeclarationStmt represents a type declaration (struct, data type, etc.)
 type TypeDeclStmt struct {
 	AstBase
@@ -15,6 +22,8 @@ type TypeDeclStmt struct {
 	IsPublic      bool
 	Allocation    types.AllocationModifier
 }
+
+func (t *TypeDeclStmt) statementNode() {}
 
 func (t *TypeDeclStmt) GetName() string { return t.Name }
 
@@ -43,6 +52,8 @@ type ExpressionStmt struct {
 	Expression Expression
 }
 
+func (e *ExpressionStmt) statementNode() {}
+
 func (e *ExpressionStmt) GetName() string { return e.Expression.GetName() }
 
 func (e *ExpressionStmt) Print(indent string) {
@@ -59,6 +70,8 @@ type VarDeclStmt struct {
 	Type    types.Type // may be nil if needs inference
 	Value   Expression
 }
+
+func (v *VarDeclStmt) statementNode() {}
 
 func (v *VarDeclStmt) GetName() string { return v.Name }
 
@@ -97,6 +110,8 @@ type FunctionDefStmt struct {
 	IsPure        bool
 	IsAsync       bool
 }
+
+func (f *FunctionDefStmt) statementNode() {}
 
 func (f *FunctionDefStmt) GetName() string { return f.Name }
 
@@ -188,6 +203,8 @@ type ReturnStmt struct {
 	AstBase
 	Value Expression // nil for bare return
 }
+
+func (r *ReturnStmt) statementNode() {}
 
 func (r *ReturnStmt) Print(indent string) {
 	fmt.Printf("%sReturnStmt(%s)\n", indent, r.Value.GetName())

@@ -1,5 +1,6 @@
 Program(1 statements) {
-	DestructuringDeclaration(let) {
+	DestructuringStatement {
+		Keyword: let
 		StructPattern {
 			StructPatternField {
 				name: foo

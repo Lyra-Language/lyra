@@ -12,6 +12,13 @@ func TestCollectDestructuringArray(t *testing.T) {
 	checkGolden(t, got, filepath.Join("testdata", "destructuring_array.golden"))
 }
 
+func TestCollectDestructuringArrayWithVar(t *testing.T) {
+	source := `var [a, b, c] = some_array`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "destructuring_array_with_var.golden"))
+}
+
 func TestCollectDestructuringArrayWithRestAtStart(t *testing.T) {
 	source := `let [...head, a, b, c] = some_array`
 	program, _ := parseAndCollect(t, source)
