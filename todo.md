@@ -1,8 +1,5 @@
 ## To-Dos
 
-- Collect and Test "If Let Destructuring Expressions"
-- Collect and Test "If Let Else Destructuring Expressions"
-- Collect and Test "If Else Destructuring Expressions"
 - Collect match expressions
 - Test very complex nested patterns
 - Collect postfix expressions (i.e. foo.blah[3].baz())
@@ -19,6 +16,11 @@
 - Add sizeof() function to query type sizes
 
 ## Completed
+
+### 04/09/26
+- Collect and Test "If Let Destructuring Expressions"
+- Collect and Test "If Let Else Destructuring Expressions"
+- Collect and Test "If Else Destructuring Expressions"
 
 ### 03/16/26
 - Collect array destructuring and write tests

@@ -61,3 +61,24 @@ func (i *IfDestructuringStmt) Print(indent string) {
 	}
 	fmt.Printf("%s}\n", indent)
 }
+
+type ElseDestructuringStmt struct {
+	AstBase
+	DestructuringStatement DestructuringDeclStmt
+	Else                   BlockExpr
+}
+
+func (e *ElseDestructuringStmt) statementNode() {}
+
+func (e *ElseDestructuringStmt) GetName() string {
+	return fmt.Sprintf("else %s { %s }", e.DestructuringStatement.GetName(), e.Else.GetName())
+}
+
+func (e *ElseDestructuringStmt) Print(indent string) {
+	fmt.Printf("%sElseDestructuringStatement {\n", indent)
+	e.DestructuringStatement.Print(indent + "\t")
+	fmt.Printf("%s\tElse: {\n", indent)
+	e.Else.Print(indent + "\t\t")
+	fmt.Printf("%s\t}\n", indent)
+	fmt.Printf("%s}\n", indent)
+}

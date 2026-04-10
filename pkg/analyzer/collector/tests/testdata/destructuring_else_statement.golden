@@ -1,0 +1,48 @@
+Program(2 statements) {
+	ElseDestructuringStatement {
+		DestructuringStatement {
+			Keyword: let
+			StructPattern {
+				StructPatternField {
+					name: foo
+					pattern: nil
+				},
+				StructPatternField {
+					name: bar
+					pattern: nil
+				},
+			}
+			Value: {
+				IdentifierExpr(some_struct, IsConst: false)
+			}
+		}
+		Else: {
+			BlockExpr {
+				ExpressionStmt(function_call_expr) {
+					FunctionCallExpr {
+						Function: {
+							IdentifierExpr(println, IsConst: false)
+						}
+						Arguments: {
+							ArgumentList(StringLiteralExpr(No struct found)) {
+								StringLiteralExpr(No struct found)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	ExpressionStmt(function_call_expr) {
+		FunctionCallExpr {
+			Function: {
+				IdentifierExpr(println, IsConst: false)
+			}
+			Arguments: {
+				ArgumentList(StringLiteralExpr(We got the struct: #{foo}, #{bar})) {
+					StringLiteralExpr(We got the struct: #{foo}, #{bar})
+				}
+			}
+		}
+	}
+}

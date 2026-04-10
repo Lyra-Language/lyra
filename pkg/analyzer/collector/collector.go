@@ -98,8 +98,10 @@ func (c *Collector) collectStatement(node *sitter.Node) ast.Statement {
 		return declarations.CollectVariableDeclaration(node, c.ctx)
 	case "destructuring_declaration":
 		return declarations.CollectDestructuringDeclaration(node, c.ctx)
-	case "if_destructuring_declaration":
+	case "destructuring_if_declaration":
 		return declarations.CollectDestructuringIfStatement(node, c.ctx)
+	case "destructuring_else_declaration":
+		return declarations.CollectDestructuringElseStatement(node, c.ctx)
 	case "expression_statement":
 		return expressions.CollectExpressionStatement(node, c.ctx)
 	}

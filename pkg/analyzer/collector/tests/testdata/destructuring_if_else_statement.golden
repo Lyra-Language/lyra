@@ -27,5 +27,21 @@ Program(1 statements) {
 				}
 			}
 		}
+		Else: {
+			BlockExpr {
+				ExpressionStmt(function_call_expr) {
+					FunctionCallExpr {
+						Function: {
+							IdentifierExpr(println, IsConst: false)
+						}
+						Arguments: {
+							ArgumentList(StringLiteralExpr(No array found)) {
+								StringLiteralExpr(No array found)
+							}
+						}
+					}
+				}
+			}
+		}
 	}
 }
