@@ -335,12 +335,12 @@ func (c *Collector) collectArrayPatternElements(patternNode *sitter.Node) []ast.
 
 func (c *Collector) collectPatternElement(node *sitter.Node) ast.Pattern {
 	switch node.Kind() {
-	case "identifier", "literal_pattern", "pattern":
-		return c.collectPattern(node)
 	case "rest_pattern":
 		return c.collectRestPattern(node)
-	case "wildcard_pattern":
-		return c.collectWildcardPattern(node)
+	case "identifier", "literal_pattern", "pattern",
+		"tuple_pattern", "array_pattern", "struct_pattern", "data_pattern",
+		"range_pattern", "wildcard_pattern":
+		return c.collectPattern(node)
 	}
 	return nil
 }

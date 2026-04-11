@@ -1,5 +1,4 @@
 ## To-Dos
-- Test very complex nested patterns
 - Collect postfix expressions (i.e. foo.blah[3].baz())
 - Collect function types (lambdas)
 - Collect modules
@@ -14,6 +13,9 @@
 - Add sizeof() function to query type sizes
 
 ## Completed
+
+### 04/11/26
+- Test very complex nested patterns
 
 ### 04/10/26
 - Collect and test match expressions

@@ -9,7 +9,7 @@ require (
 
 require (
 	github.com/mattn/go-pointer v0.0.1 // indirect
-	github.com/sergi/go-diff v1.4.0 // indirect
+	github.com/sergi/go-diff v1.4.0
 )
 
 // Remove this replace directive once you've pushed and tagged a release
