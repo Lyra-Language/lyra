@@ -8,10 +8,21 @@ import (
 )
 
 func CollectDestructuringElseStatement(node *sitter.Node, ctx *collctx.Ctx) *ast.ElseDestructuringStmt {
-	destructuringStatement := CollectDestructuringDeclaration(node.ChildByFieldName("destructuring_declaration"), ctx)
-	elseBlock := expressions.CollectBlockExpr(node.ChildByFieldName("else_block"), ctx)
+	if node == nil {
+		return nil
+	}
+	declNode := node.ChildByFieldName("destructuring_declaration")
+	elseNode := node.ChildByFieldName("else_block")
+	if declNode == nil || elseNode == nil {
+		return nil
+	}
+	destructuringStatement := CollectDestructuringDeclaration(declNode, ctx)
+	elseBlock := expressions.CollectBlockExpr(elseNode, ctx)
+	if destructuringStatement == nil || elseBlock == nil {
+		return nil
+	}
 	return &ast.ElseDestructuringStmt{
 		DestructuringStatement: *destructuringStatement,
-		Else:                   *elseBlock, // guaranteed to be non-nil
+		Else:                   *elseBlock,
 	}
 }

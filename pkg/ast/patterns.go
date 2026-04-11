@@ -149,12 +149,29 @@ type RangePattern struct {
 	EndOperator string
 }
 
-func (p *RangePattern) patternNode()    {}
-func (p *RangePattern) GetName() string { return fmt.Sprintf("%s..%s%s", p.Start.GetName(), p.End.GetName(), p.EndOperator) }
+func (p *RangePattern) patternNode() {}
+func (p *RangePattern) GetName() string {
+	start, end := "", ""
+	if p.Start != nil {
+		start = p.Start.GetName()
+	}
+	if p.End != nil {
+		end = p.End.GetName()
+	}
+	return fmt.Sprintf("%s..%s%s", start, end, p.EndOperator)
+}
 func (p *RangePattern) Print(indent string) {
 	fmt.Printf("%sRangePattern {\n", indent)
-	fmt.Printf("%s\tstart: %s\n", indent, p.Start.GetName())
-	fmt.Printf("%s\tend: %s\n", indent, p.End.GetName())
+	if p.Start != nil {
+		fmt.Printf("%s\tstart: %s\n", indent, p.Start.GetName())
+	} else {
+		fmt.Printf("%s\tstart: nil\n", indent)
+	}
+	if p.End != nil {
+		fmt.Printf("%s\tend: %s\n", indent, p.End.GetName())
+	} else {
+		fmt.Printf("%s\tend: nil\n", indent)
+	}
 	fmt.Printf("%s\tend_operator: %s\n", indent, p.EndOperator)
 	fmt.Printf("%s}", indent)
 }
