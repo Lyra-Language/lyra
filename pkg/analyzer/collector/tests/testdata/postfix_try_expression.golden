@@ -1,0 +1,21 @@
+Program(1 statements) {
+	VarDeclStmt(file) {
+		Keyword: let
+		Value: {
+			TryExpr {
+				Operand: {
+					FunctionCallExpr {
+						Function: {
+							IdentifierExpr(open_file, IsConst: false)
+						}
+						Arguments: {
+							ArgumentList(StringLiteralExpr(foo.txt)) {
+								StringLiteralExpr(foo.txt)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

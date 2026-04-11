@@ -1,5 +1,5 @@
 ## To-Dos
-- Collect postfix expressions (i.e. foo.blah[3].baz())
+- Collect and test null coalescing expressions (??)
 - Collect function types (lambdas)
 - Collect modules
 - Collect trait declarations
@@ -16,6 +16,7 @@
 
 ### 04/11/26
 - Test very complex nested patterns
+- Collect and test postfix expressions (i.e. foo.blah[3].baz())
 
 ### 04/10/26
 - Collect and test match expressions

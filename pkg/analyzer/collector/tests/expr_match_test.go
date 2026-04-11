@@ -21,13 +21,13 @@ func TestCollectMatchExpressionWithBlocks(t *testing.T) {
 	source := `
 	match foo {
 		[a] => {
-			fmt.println("An array with one element")
+			println("An array with one element")
 		},
 		[a, b] => {
-			fmt.println("An array with two elements")
+			println("An array with two elements")
 		},
 		_ => {
-			fmt.println("A wildcard match")
+			println("A wildcard match")
 		},
 	}`
 	program, _ := parseAndCollect(t, source)

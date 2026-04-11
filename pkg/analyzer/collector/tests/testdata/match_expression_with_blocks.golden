@@ -1,66 +1,65 @@
 Program(1 statements) {
-		ExpressionStmt() {
-			MatchExpr {
-				Value: {
-					IdentifierExpr(foo, IsConst: false)
+	ExpressionStmt() {
+		MatchExpr {
+			Value: {
+				IdentifierExpr(foo, IsConst: false)
+			}
+			MatchArms: {
+				MatchArm {
+					ArrayPattern {
+						IdentifierPattern(a),
+					}
+					Body: {
+						BlockExpr {
+							ExpressionStmt(function_call_expr) {
+								FunctionCallExpr {
+									Function: {
+										IdentifierExpr(println, IsConst: false)
+									}
+									Arguments: {
+										ArgumentList(StringLiteralExpr(An array with one element)) {
+											StringLiteralExpr(An array with one element)
+										}
+									}
+								}
+							}
+						}
+					}
 				}
-				MatchArms: {
-					MatchArm {
-						ArrayPattern {
-							IdentifierPattern(a),
-						}
-						Body: {
-							BlockExpr {
-								ExpressionStmt(function_call_expr) {
-									FunctionCallExpr {
-										Function: {
-											IdentifierExpr(fmt, IsConst: false)
-										}
-										Arguments: {
-											ArgumentList(StringLiteralExpr(An array with one element)) {
-												StringLiteralExpr(An array with one element)
-											}
+				MatchArm {
+					ArrayPattern {
+						IdentifierPattern(a),
+						IdentifierPattern(b),
+					}
+					Body: {
+						BlockExpr {
+							ExpressionStmt(function_call_expr) {
+								FunctionCallExpr {
+									Function: {
+										IdentifierExpr(println, IsConst: false)
+									}
+									Arguments: {
+										ArgumentList(StringLiteralExpr(An array with two elements)) {
+											StringLiteralExpr(An array with two elements)
 										}
 									}
 								}
 							}
 						}
 					}
-					MatchArm {
-						ArrayPattern {
-							IdentifierPattern(a),
-							IdentifierPattern(b),
-						}
-						Body: {
-							BlockExpr {
-								ExpressionStmt(function_call_expr) {
-									FunctionCallExpr {
-										Function: {
-											IdentifierExpr(fmt, IsConst: false)
-										}
-										Arguments: {
-											ArgumentList(StringLiteralExpr(An array with two elements)) {
-												StringLiteralExpr(An array with two elements)
-											}
-										}
+				}
+				MatchArm {
+					WildcardPattern
+					Body: {
+						BlockExpr {
+							ExpressionStmt(function_call_expr) {
+								FunctionCallExpr {
+									Function: {
+										IdentifierExpr(println, IsConst: false)
 									}
-								}
-							}
-						}
-					}
-					MatchArm {
-						WildcardPattern
-						Body: {
-							BlockExpr {
-								ExpressionStmt(function_call_expr) {
-									FunctionCallExpr {
-										Function: {
-											IdentifierExpr(fmt, IsConst: false)
-										}
-										Arguments: {
-											ArgumentList(StringLiteralExpr(A wildcard match)) {
-												StringLiteralExpr(A wildcard match)
-											}
+									Arguments: {
+										ArgumentList(StringLiteralExpr(A wildcard match)) {
+											StringLiteralExpr(A wildcard match)
 										}
 									}
 								}
@@ -71,3 +70,4 @@ Program(1 statements) {
 			}
 		}
 	}
+}

@@ -1,0 +1,16 @@
+Program(1 statements) {
+	VarDeclStmt(name) {
+		Keyword: let
+		Value: {
+			MemberExpr {
+				Object: {
+					IdentifierExpr(person, IsConst: false)
+				}
+				Property: {
+					IdentifierExpr(name, IsConst: false)
+				}
+				Optional: false
+			}
+		}
+	}
+}

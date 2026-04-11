@@ -1,0 +1,45 @@
+Program(1 statements) {
+	VarDeclStmt(data) {
+		Keyword: let
+		Value: {
+			TryExpr {
+				Operand: {
+					FunctionCallExpr {
+						Function: {
+							MemberExpr {
+								Object: {
+									FunctionCallExpr {
+										Function: {
+											MemberExpr {
+												Object: {
+													FunctionCallExpr {
+														Function: {
+															IdentifierExpr(open_file, IsConst: false)
+														}
+														Arguments: {
+															ArgumentList(path) {
+																IdentifierExpr(path, IsConst: false)
+															}
+														}
+													}
+												}
+												Property: {
+													IdentifierExpr(read, IsConst: false)
+												}
+												Optional: true
+											}
+										}
+									}
+								}
+								Property: {
+									IdentifierExpr(parse, IsConst: false)
+								}
+								Optional: true
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

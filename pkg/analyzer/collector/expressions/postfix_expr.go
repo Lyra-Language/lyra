@@ -41,3 +41,28 @@ func collectArgumentList(node *sitter.Node, ctx *collctx.Ctx) ast.ArgumentList {
 	}
 	return ast.ArgumentList{Arguments: arguments}
 }
+
+func collectMemberExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location, optional bool) *ast.MemberExpr {
+	return &ast.MemberExpr{
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Object:   CollectExpression(node.ChildByFieldName("object"), ctx),
+		Property: *CollectIdentifierExpr(node.ChildByFieldName("property"), false, loc, ctx),
+		Optional: optional,
+	}
+}
+
+func collectIndexExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location, optional bool) *ast.IndexExpr {
+	return &ast.IndexExpr{
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Object:   CollectExpression(node.ChildByFieldName("object"), ctx),
+		Index:    CollectExpression(node.ChildByFieldName("index"), ctx),
+		Optional: optional,
+	}
+}
+
+func collectTryExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.TryExpr {
+	return &ast.TryExpr{
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Operand:  CollectExpression(node.ChildByFieldName("operand"), ctx),
+	}
+}

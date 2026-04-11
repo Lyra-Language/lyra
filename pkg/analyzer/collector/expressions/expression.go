@@ -50,9 +50,9 @@ func CollectExpression(node *sitter.Node, ctx *collctx.Ctx) ast.Expression {
 	case "block":
 		return CollectBlockExpr(node, ctx)
 	case "identifier":
-		return collectIdentifierExpr(node, false, loc, ctx)
+		return CollectIdentifierExpr(node, false, loc, ctx)
 	case "const_identifier":
-		return collectIdentifierExpr(node, true, loc, ctx)
+		return CollectIdentifierExpr(node, true, loc, ctx)
 	case "tuple_literal":
 		return collectTupleLiteralExpr(node, ctx)
 	case "struct_literal":
@@ -63,6 +63,16 @@ func CollectExpression(node *sitter.Node, ctx *collctx.Ctx) ast.Expression {
 		return collectMathBinaryExpr(node, ctx, loc)
 	case "call_expression":
 		return collectFunctionCallExpr(node, ctx, loc)
+	case "member_expression":
+		return collectMemberExpr(node, ctx, loc, false)
+	case "optional_member_expression":
+		return collectMemberExpr(node, ctx, loc, true)
+	case "index_expression":
+		return collectIndexExpr(node, ctx, loc, false)
+	case "optional_index_expression":
+		return collectIndexExpr(node, ctx, loc, true)
+	case "try_expression":
+		return collectTryExpr(node, ctx, loc)
 	case "range_expression":
 		return collectRangeExpr(node, ctx)
 	}

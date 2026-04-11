@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectIdentifierExpr(node *sitter.Node, isConst bool, loc ast.Location, ctx *collctx.Ctx) *ast.IdentifierExpr {
+func CollectIdentifierExpr(node *sitter.Node, isConst bool, loc ast.Location, ctx *collctx.Ctx) *ast.IdentifierExpr {
 	return &ast.IdentifierExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Name:     ctx.NodeText(node),
