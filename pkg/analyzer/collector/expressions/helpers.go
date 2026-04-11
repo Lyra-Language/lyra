@@ -2,6 +2,7 @@ package expressions
 
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -17,4 +18,16 @@ func collectGenericArgs(node *sitter.Node, ctx *collctx.Ctx) []types.Type {
 		}
 	}
 	return args
+}
+
+func collectGuard(node *sitter.Node, ctx *collctx.Ctx) *ast.GuardExpr {
+	guardExpression := CollectExpression(node.ChildByFieldName("guard_expression"), ctx)
+	if guardExpression == nil {
+		ctx.AddError(node, collctx.SeverityError, "CollectGuard: guard expression is nil")
+		return nil
+	}
+	return &ast.GuardExpr{
+		ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: ctx.NodeLocation(node)}},
+		Condition: guardExpression,
+	}
 }

@@ -1,0 +1,130 @@
+Program(1 statements) {
+	ExpressionStmt() {
+		MatchExpr {
+			Value: {
+				IdentifierExpr(foo, IsConst: false)
+			}
+			MatchArms: {
+				MatchArm {
+					DataPattern {
+						name: Some
+						pattern: {
+							IdentifierPattern(x)
+						}
+					}
+					Guard: {
+						GuardExpr(boolean_binary_op_expr) {
+							Condition: {
+								BooleanBinaryOpExpr {
+									Left: {
+										BooleanBinaryOpExpr {
+											Left: {
+												IdentifierExpr(x, IsConst: false)
+											}
+											Operator: >
+											Right: {
+												IntegerLiteralExpr(0, Base: 10)
+											}
+										}
+									}
+									Operator: &&
+									Right: {
+										BooleanBinaryOpExpr {
+											Left: {
+												IdentifierExpr(x, IsConst: false)
+											}
+											Operator: <
+											Right: {
+												IntegerLiteralExpr(10, Base: 10)
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					Body: {
+						FunctionCallExpr {
+							Function: {
+								IdentifierExpr(print, IsConst: false)
+							}
+							Arguments: {
+								ArgumentList(StringLiteralExpr(1-9)) {
+									StringLiteralExpr(1-9)
+								}
+							}
+						}
+					}
+				}
+				MatchArm {
+					DataPattern {
+						name: Some
+						pattern: {
+							IdentifierPattern(x)
+						}
+					}
+					Guard: {
+						GuardExpr(boolean_binary_op_expr) {
+							Condition: {
+								BooleanBinaryOpExpr {
+									Left: {
+										BooleanBinaryOpExpr {
+											Left: {
+												IdentifierExpr(x, IsConst: false)
+											}
+											Operator: >=
+											Right: {
+												IntegerLiteralExpr(10, Base: 10)
+											}
+										}
+									}
+									Operator: &&
+									Right: {
+										BooleanBinaryOpExpr {
+											Left: {
+												IdentifierExpr(x, IsConst: false)
+											}
+											Operator: <
+											Right: {
+												IntegerLiteralExpr(100, Base: 10)
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					Body: {
+						FunctionCallExpr {
+							Function: {
+								IdentifierExpr(print, IsConst: false)
+							}
+							Arguments: {
+								ArgumentList(StringLiteralExpr(10-99)) {
+									StringLiteralExpr(10-99)
+								}
+							}
+						}
+					}
+				}
+				MatchArm {
+					DataPattern {
+						name: None
+					}
+					Body: {
+						FunctionCallExpr {
+							Function: {
+								IdentifierExpr(print, IsConst: false)
+							}
+							Arguments: {
+								ArgumentList(StringLiteralExpr(No number!)) {
+									StringLiteralExpr(No number!)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,44 @@
+Program(1 statements) {
+	VarDeclStmt(bar) {
+		Keyword: let
+		Value: {
+			MatchExpr {
+				Value: {
+					IdentifierExpr(foo, IsConst: false)
+				}
+				MatchArms: {
+					MatchArm {
+						DataPattern {
+							name: Some
+							pattern: {
+								LiteralPattern(42)
+							}
+						}
+						Body: {
+							StringLiteralExpr(The Answer!)
+						}
+					}
+					MatchArm {
+						DataPattern {
+							name: Some
+							pattern: {
+								WildcardPattern
+							}
+						}
+						Body: {
+							StringLiteralExpr(Just some number)
+						}
+					}
+					MatchArm {
+						DataPattern {
+							name: None
+						}
+						Body: {
+							StringLiteralExpr(huh?)
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -123,9 +123,11 @@ func (p *DataPattern) GetName() string { return fmt.Sprintf("%s", p.Name) }
 func (p *DataPattern) Print(indent string) {
 	fmt.Printf("%sDataPattern {\n", indent)
 	fmt.Printf("%s\tname: %s\n", indent, p.Name)
-	fmt.Printf("%s\tpattern: {\n", indent)
-	p.Pattern.Print(indent + "\t\t")
-	fmt.Printf("\n%s\t}\n", indent)
+	if p.Pattern != nil {
+		fmt.Printf("%s\tpattern: {\n", indent)
+		p.Pattern.Print(indent + "\t\t")
+		fmt.Printf("\n%s\t}\n", indent)
+	}
 	fmt.Printf("%s}", indent)
 }
 
@@ -138,6 +140,23 @@ func (p *RestPattern) patternNode()    {}
 func (p *RestPattern) GetName() string { return fmt.Sprintf("...%s", p.Identifier) }
 func (p *RestPattern) Print(indent string) {
 	fmt.Printf("%sRestPattern(%s)", indent, p.Identifier)
+}
+
+type RangePattern struct {
+	PatternBase
+	Start Expression
+	End Expression
+	EndOperator string
+}
+
+func (p *RangePattern) patternNode()    {}
+func (p *RangePattern) GetName() string { return fmt.Sprintf("%s..%s%s", p.Start.GetName(), p.End.GetName(), p.EndOperator) }
+func (p *RangePattern) Print(indent string) {
+	fmt.Printf("%sRangePattern {\n", indent)
+	fmt.Printf("%s\tstart: %s\n", indent, p.Start.GetName())
+	fmt.Printf("%s\tend: %s\n", indent, p.End.GetName())
+	fmt.Printf("%s\tend_operator: %s\n", indent, p.EndOperator)
+	fmt.Printf("%s}", indent)
 }
 
 type WildcardPattern struct {

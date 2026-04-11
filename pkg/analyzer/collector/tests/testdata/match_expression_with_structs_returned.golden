@@ -1,0 +1,44 @@
+Program(1 statements) {
+	VarDeclStmt(foo) {
+		Keyword: let
+		Value: {
+			MatchExpr {
+				Value: {
+					IdentifierExpr(bar, IsConst: false)
+				}
+				MatchArms: {
+					MatchArm {
+						LiteralPattern("foo")
+						Body: {
+							StructInstanceExpr(?) {
+								Fields: {
+									StructField(a: StringLiteralExpr(b))
+								}
+							}
+						}
+					}
+					MatchArm {
+						LiteralPattern("bar")
+						Body: {
+							StructInstanceExpr(?) {
+								Fields: {
+									StructField(b: StringLiteralExpr(a))
+								}
+							}
+						}
+					}
+					MatchArm {
+						WildcardPattern
+						Body: {
+							StructInstanceExpr(?) {
+								Fields: {
+									StructField(c: StringLiteralExpr(d))
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

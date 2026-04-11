@@ -45,6 +45,8 @@ func CollectExpression(node *sitter.Node, ctx *collctx.Ctx) ast.Expression {
 		return collectIfThenExpr(node, ctx)
 	case "if_block_expr":
 		return collectIfBlockExpr(node, ctx)
+	case "match_expr":
+		return CollectMatchExpression(node, ctx)
 	case "block":
 		return CollectBlockExpr(node, ctx)
 	case "identifier":

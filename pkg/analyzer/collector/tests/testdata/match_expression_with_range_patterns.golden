@@ -1,0 +1,79 @@
+Program(1 statements) {
+	ExpressionStmt() {
+		MatchExpr {
+			Value: {
+				IdentifierExpr(foo, IsConst: false)
+			}
+			MatchArms: {
+				MatchArm {
+					RangePattern {
+						start: IntegerLiteralExpr(0, Base: 10)
+						end: IntegerLiteralExpr(9, Base: 10)
+						end_operator: =
+					}
+					Body: {
+						FunctionCallExpr {
+							Function: {
+								IdentifierExpr(print, IsConst: false)
+							}
+							Arguments: {
+								ArgumentList(StringLiteralExpr(one digit)) {
+									StringLiteralExpr(one digit)
+								}
+							}
+						}
+					}
+				}
+				MatchArm {
+					LiteralPattern(42)
+					Body: {
+						FunctionCallExpr {
+							Function: {
+								IdentifierExpr(print, IsConst: false)
+							}
+							Arguments: {
+								ArgumentList(StringLiteralExpr(The Answer!)) {
+									StringLiteralExpr(The Answer!)
+								}
+							}
+						}
+					}
+				}
+				MatchArm {
+					RangePattern {
+						start: IntegerLiteralExpr(10, Base: 10)
+						end: IntegerLiteralExpr(99, Base: 10)
+						end_operator: =
+					}
+					Body: {
+						FunctionCallExpr {
+							Function: {
+								IdentifierExpr(print, IsConst: false)
+							}
+							Arguments: {
+								ArgumentList(StringLiteralExpr(two digits)) {
+									StringLiteralExpr(two digits)
+								}
+							}
+						}
+					}
+				}
+				MatchArm {
+					WildcardPattern
+					Body: {
+						FunctionCallExpr {
+							Function: {
+								IdentifierExpr(print, IsConst: false)
+							}
+							Arguments: {
+								ArgumentList(StringLiteralExpr(lots of digits!)) {
+									StringLiteralExpr(lots of digits!)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

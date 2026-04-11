@@ -279,6 +279,10 @@ func (c *Collector) collectPattern(patternNode *sitter.Node) ast.Pattern {
 		return c.collectStructPattern(patternNode)
 	case "data_pattern":
 		return c.collectDataPattern(patternNode)
+	case "range_pattern":
+		return c.collectRangePattern(patternNode)
+	case "wildcard_pattern":
+		return c.collectWildcardPattern(patternNode)
 	}
 	c.addError(patternNode, CollectorErrorSeverityError, "collectPattern: unknown pattern node kind: %s", patternNode.Kind())
 	return nil
@@ -423,6 +427,20 @@ func (c *Collector) collectDataPattern(node *sitter.Node) *ast.DataPattern {
 		PatternBase: ast.PatternBase{Location: loc},
 		Name:        c.nodeText(nameNode),
 		Pattern:     pattern,
+	}
+}
+
+func (c *Collector) collectRangePattern(node *sitter.Node) ast.Pattern {
+	endOperatorNode := node.ChildByFieldName("end_operator")
+	endOperator := ""
+	if endOperatorNode != nil {
+		endOperator = c.nodeText(endOperatorNode)
+	}
+	return &ast.RangePattern{
+		PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
+		Start:       c.collectExpression(node.ChildByFieldName("start")),
+		End:         c.collectExpression(node.ChildByFieldName("end")),
+		EndOperator: endOperator,
 	}
 }
 
