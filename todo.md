@@ -1,6 +1,4 @@
 ## To-Dos
-
-- Collect match expressions
 - Test very complex nested patterns
 - Collect postfix expressions (i.e. foo.blah[3].baz())
 - Collect function types (lambdas)
@@ -16,6 +14,9 @@
 - Add sizeof() function to query type sizes
 
 ## Completed
+
+### 04/10/26
+- Collect and test match expressions
 
 ### 04/09/26
 - Collect and Test "If Let Destructuring Expressions"
