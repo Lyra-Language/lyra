@@ -12,6 +12,13 @@ func TestCollectPostfixPropertyAccess(t *testing.T) {
 	checkGolden(t, got, filepath.Join("testdata", "postfix_property_access.golden"))
 }
 
+func TestCollectPostfixMemberConstPropertyAccess(t *testing.T) {
+	source := `let max = limits.MAX`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "postfix_member_const_property_access.golden"))
+}
+
 func TestCollectPostfixOptionalPropertyAccess(t *testing.T) {
 	source := `let name = person?.name`
 	program, _ := parseAndCollect(t, source)

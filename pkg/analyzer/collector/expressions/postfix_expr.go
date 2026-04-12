@@ -43,10 +43,12 @@ func collectArgumentList(node *sitter.Node, ctx *collctx.Ctx) ast.ArgumentList {
 }
 
 func collectMemberExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location, optional bool) *ast.MemberExpr {
+	propertyNode := node.ChildByFieldName("property")
+	isConst := propertyNode != nil && propertyNode.Kind() == "const_identifier"
 	return &ast.MemberExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Object:   CollectExpression(node.ChildByFieldName("object"), ctx),
-		Property: *CollectIdentifierExpr(node.ChildByFieldName("property"), false, loc, ctx),
+		Property: *CollectIdentifierExpr(propertyNode, isConst, loc, ctx),
 		Optional: optional,
 	}
 }
