@@ -1,0 +1,15 @@
+Program(1 statements) {
+	VarDeclStmt(result) {
+		Keyword: let
+		Value: {
+			NullCoalescingExpr {
+				Optional: {
+					IdentifierExpr(optional, IsConst: false)
+				}
+				Default: {
+					IdentifierExpr(default, IsConst: false)
+				}
+			}
+		}
+	}
+}

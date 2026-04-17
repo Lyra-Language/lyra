@@ -75,6 +75,8 @@ func CollectExpression(node *sitter.Node, ctx *collctx.Ctx) ast.Expression {
 		return collectTryExpr(node, ctx, loc)
 	case "range_expression":
 		return collectRangeExpr(node, ctx)
+	case "null_coalescing_expression":
+		return collectNullCoalescingExpr(node, ctx, loc)
 	}
 
 	// For wrapper nodes (e.g. parenthesized), recurse into the first named child.
