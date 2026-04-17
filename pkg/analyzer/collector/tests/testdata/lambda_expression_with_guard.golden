@@ -1,0 +1,43 @@
+Program(1 statements) {
+	VarDeclStmt(divide) {
+		Keyword: let
+		Value: {
+			LambdaExpr {
+				FunctionClause: {
+					FunctionClause {
+						Parameters: {
+							Parameter(a)
+							Parameter(b)
+						}
+						Guard: {
+							GuardExpr(boolean_binary_op_expr) {
+								Condition: {
+									BooleanBinaryOpExpr {
+										Left: {
+											IdentifierExpr(b, IsConst: false)
+										}
+										Operator: !=
+										Right: {
+											IntegerLiteralExpr(0, Base: 10)
+										}
+									}
+								}
+							}
+						}
+						Body: {
+							MathBinaryOpExpr(math_binary_op_expr) {
+								Left: {
+									IdentifierExpr(a, IsConst: false)
+								}
+								Operator: /
+								Right: {
+									IdentifierExpr(b, IsConst: false)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

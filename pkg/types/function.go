@@ -8,6 +8,8 @@ import (
 type FunctionType struct {
 	ParameterTypes []ParameterType
 	ReturnType     Type
+	IsAsync        bool
+	IsPure         bool
 }
 
 func (FunctionType) typeNode() {}
@@ -29,7 +31,24 @@ func (f FunctionType) GetName() string {
 }
 
 func (f FunctionType) Print(indent string) {
-	fmt.Printf("%sFunctionType(%s)\n", indent, f.GetName())
+	fmt.Printf("%sFunctionType {\n", indent)
+	if len(f.ParameterTypes) > 0 {
+		fmt.Printf("%s\tParameterTypes: {\n", indent)
+		for _, parameterType := range f.ParameterTypes {
+			fmt.Printf("%s\t\t%s\n", indent, parameterType.GetName())
+		}
+		fmt.Printf("%s\t}\n", indent)
+	}
+	if f.ReturnType != nil {
+		fmt.Printf("%s\tReturnType: %s\n", indent, f.ReturnType.GetName())
+	}
+	if f.IsAsync {
+		fmt.Printf("%s\tIsAsync: true\n", indent)
+	}
+	if f.IsPure {
+		fmt.Printf("%s\tIsPure: true\n", indent)
+	}
+	fmt.Printf("%s}\n", indent)
 }
 
 type ParameterType struct {

@@ -8,7 +8,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectRangeExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.RangeExpr {
+func collectRangeExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.RangeExpr {
 	startNode := node.ChildByFieldName("start")
 	if startNode == nil {
 		ctx.AppendError(fmt.Errorf("range expression must have a start"))
@@ -29,7 +29,7 @@ func collectRangeExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.RangeExpr {
 		step = CollectExpression(stepNode, ctx)
 	}
 	return &ast.RangeExpr{
-		ExprBase:    ast.ExprBase{AstBase: ast.AstBase{Location: ctx.NodeLocation(node)}},
+		ExprBase:    ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Start:       CollectExpression(startNode, ctx),
 		EndOperator: ctx.NodeText(endOperatorNode),
 		End:         CollectExpression(endNode, ctx),

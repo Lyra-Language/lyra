@@ -1,0 +1,36 @@
+Program(1 statements) {
+	FunctionDefStmt(make_sum_fn) {
+		Signature: (int) -> (int) -> int
+		Clauses: {
+			FunctionClause {
+				Parameters: {
+					Parameter(a)
+				}
+				Guard: nil
+				Body: {
+					LambdaExpr {
+						FunctionClause: {
+							FunctionClause {
+								Parameters: {
+									Parameter(b)
+								}
+								Guard: nil
+								Body: {
+									MathBinaryOpExpr(math_binary_op_expr) {
+										Left: {
+											IdentifierExpr(a, IsConst: false)
+										}
+										Operator: +
+										Right: {
+											IdentifierExpr(b, IsConst: false)
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

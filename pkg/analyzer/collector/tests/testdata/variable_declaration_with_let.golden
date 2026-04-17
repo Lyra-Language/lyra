@@ -1,7 +1,9 @@
 Program(1 statements) {
 	VarDeclStmt(pi) {
 		Keyword: let
-		Type: float
+		Type: {
+			float
+		}
 		Value: {
 			FloatLiteralExpr(3.14159)
 		}

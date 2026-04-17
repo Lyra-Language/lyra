@@ -7,7 +7,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectTupleLiteralExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.TupleLiteralExpr {
+func collectTupleLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.TupleLiteralExpr {
 	tupleNameNode := node.ChildByFieldName("tuple_name")
 	tupleName := "?"
 	if tupleNameNode != nil {
@@ -27,7 +27,7 @@ func collectTupleLiteralExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.TupleLite
 	}
 	return &ast.TupleLiteralExpr{
 		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
+			AstBase: ast.AstBase{Location: loc},
 		},
 		Name:             tupleName,
 		GenericArguments: genericArguments,

@@ -1,7 +1,9 @@
 Program(1 statements) {
 	VarDeclStmt(the_answer) {
 		Keyword: var
-		Type: int
+		Type: {
+			int
+		}
 		Value: {
 			IntegerLiteralExpr(42, Base: 10)
 		}

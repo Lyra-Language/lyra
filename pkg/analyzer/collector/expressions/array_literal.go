@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectArrayLiteralExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.ArrayLiteralExpr {
+func collectArrayLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.ArrayLiteralExpr {
 	elements := make([]ast.Expression, 0)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -16,7 +16,7 @@ func collectArrayLiteralExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.ArrayLite
 	}
 	return &ast.ArrayLiteralExpr{
 		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
+			AstBase: ast.AstBase{Location: loc},
 			Type:    nil,
 		},
 		Elements: elements,

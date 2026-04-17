@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectBlockExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.BlockExpr {
+func CollectBlockExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.BlockExpr {
 	if node == nil {
 		return nil
 	}
@@ -19,7 +19,7 @@ func CollectBlockExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.BlockExpr {
 	}
 	return &ast.BlockExpr{
 		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
+			AstBase: ast.AstBase{Location: loc},
 			Type:    nil,
 		},
 		Statements: statements,

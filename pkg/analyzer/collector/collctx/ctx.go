@@ -36,6 +36,8 @@ type Ctx struct {
 	CollectExpr func(*sitter.Node) ast.Expression
 	// CollectStatement dispatches to the statement collector.
 	CollectStatement func(*sitter.Node) ast.Statement
+	// CollectFunctionClause dispatches to the function clause collector.
+	CollectFunctionClause func(*sitter.Node) ast.FunctionClause
 	// ParseDestructuringPattern parses a destructuring pattern node into a ast.Pattern.
 	ParseDestructuringPattern func(*sitter.Node) ast.Pattern
 	// CollectPattern dispatches to the pattern collector.

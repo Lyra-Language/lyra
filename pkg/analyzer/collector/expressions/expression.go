@@ -28,35 +28,35 @@ func CollectExpression(node *sitter.Node, ctx *collctx.Ctx) ast.Expression {
 
 	switch node.Kind() {
 	case "integer_literal":
-		return collectIntegerLiteralExpr(node, ctx)
+		return collectIntegerLiteralExpr(node, ctx, loc)
 	case "float_literal":
-		return collectFloatLiteralExpr(node, ctx)
+		return collectFloatLiteralExpr(node, ctx, loc)
 	case "boolean_literal":
 		return collectBooleanLiteralExpr(node, ctx, loc)
 	case "string_literal":
 		return collectStringLiteralExpr(node, ctx, loc)
 	case "array_literal":
-		return collectArrayLiteralExpr(node, ctx)
+		return collectArrayLiteralExpr(node, ctx, loc)
 	case "array_repeat_init":
-		return collectArrayRepeatInitExpr(node, ctx)
+		return collectArrayRepeatInitExpr(node, ctx, loc)
 	case "array_comp_expr":
-		return collectArrayCompExpr(node, ctx)
+		return collectArrayCompExpr(node, ctx, loc)
 	case "if_then_expr":
-		return collectIfThenExpr(node, ctx)
+		return collectIfThenExpr(node, ctx, loc)
 	case "if_block_expr":
-		return collectIfBlockExpr(node, ctx)
+		return collectIfBlockExpr(node, ctx, loc)
 	case "match_expr":
-		return CollectMatchExpression(node, ctx)
+		return CollectMatchExpression(node, ctx, loc)
 	case "block":
-		return CollectBlockExpr(node, ctx)
+		return CollectBlockExpr(node, ctx, loc)
 	case "identifier":
 		return CollectIdentifierExpr(node, false, loc, ctx)
 	case "const_identifier":
 		return CollectIdentifierExpr(node, true, loc, ctx)
 	case "tuple_literal":
-		return collectTupleLiteralExpr(node, ctx)
+		return collectTupleLiteralExpr(node, ctx, loc)
 	case "struct_literal":
-		return collectStructLiteralExpr(node, ctx)
+		return collectStructLiteralExpr(node, ctx, loc)
 	case "boolean_expr":
 		return collectBooleanBinaryExpr(node, ctx, loc)
 	case "addition", "subtraction", "multiplication", "division":
@@ -74,9 +74,11 @@ func CollectExpression(node *sitter.Node, ctx *collctx.Ctx) ast.Expression {
 	case "try_expression":
 		return collectTryExpr(node, ctx, loc)
 	case "range_expression":
-		return collectRangeExpr(node, ctx)
+		return collectRangeExpr(node, ctx, loc)
 	case "null_coalescing_expression":
 		return collectNullCoalescingExpr(node, ctx, loc)
+	case "lambda_expression":
+		return collectLambdaExpr(node, ctx, loc)
 	}
 
 	// For wrapper nodes (e.g. parenthesized), recurse into the first named child.

@@ -11,8 +11,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectIntegerLiteralExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.IntegerLiteralExpr {
-	loc := ctx.NodeLocation(node)
+func collectIntegerLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.IntegerLiteralExpr {
 	base := ast.IntegerBase10
 	value := int64(0)
 	var err error
@@ -38,7 +37,7 @@ func collectIntegerLiteralExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.Integer
 	}
 	return &ast.IntegerLiteralExpr{
 		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
+			AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
 			Type:    nil,
 		},
 		Value: value,
@@ -46,8 +45,7 @@ func collectIntegerLiteralExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.Integer
 	}
 }
 
-func collectFloatLiteralExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.FloatLiteralExpr {
-	loc := ctx.NodeLocation(node)
+func collectFloatLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.FloatLiteralExpr {
 	valueString := ctx.NodeText(node)
 	valueStringWithoutUnderscores := strings.ReplaceAll(valueString, "_", "")
 	value, err := strconv.ParseFloat(valueStringWithoutUnderscores, 64)
@@ -57,7 +55,7 @@ func collectFloatLiteralExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.FloatLite
 	}
 	return &ast.FloatLiteralExpr{
 		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
+			AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
 			Type:    types.PrimitiveType{Name: "float"},
 		},
 		Value: value,

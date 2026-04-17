@@ -51,6 +51,7 @@ func NewCollector(source []byte) *Collector {
 		Errors:                    &c.errors,
 		CollectExpr:               c.collectExpression,
 		CollectStatement:          c.collectStatement,
+		CollectFunctionClause:     c.collectFunctionClause,
 		ParseDestructuringPattern: c.ParseDestructuringPattern,
 		CollectPattern:            c.collectPattern,
 		ParseType:                 func(node *sitter.Node) types.Type { return c.parseType(node) },
@@ -170,6 +171,8 @@ func (c *Collector) parseType(node *sitter.Node, allocation ...types.AllocationM
 		return c.parseAllocatedType(node)
 	case "anonymous_tuple_type":
 		return c.parseAnonymousTupleType(node)
+	case "function_type":
+		return c.parseFunctionType(node)
 	}
 	c.addError(node, CollectorErrorSeverityError, "parseType: unknown type node kind: %s", node.Kind())
 	return nil
@@ -202,6 +205,32 @@ func (c *Collector) parseAnonymousTupleType(node *sitter.Node) types.Type {
 	}
 	c.addError(node, CollectorErrorSeverityError, "parseAnonymousTupleType: unknown type node kind: %s", node.Child(0).Kind())
 	return nil
+}
+
+func (c *Collector) parseFunctionType(node *sitter.Node) types.Type {
+	return types.FunctionType{
+		ParameterTypes: c.parseParameterTypes(node.ChildByFieldName("parameter_types")),
+		ReturnType:     c.parseType(node.ChildByFieldName("return_type")),
+		IsAsync:        node.ChildByFieldName("is_async") != nil,
+		IsPure:         node.ChildByFieldName("is_pure") != nil,
+	}
+}
+
+func (c *Collector) parseParameterTypes(node *sitter.Node) []types.ParameterType {
+	parameterTypes := make([]types.ParameterType, 0)
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "parameter_type" {
+			parameterTypes = append(parameterTypes, c.parseParameterType(child))
+		}
+	}
+	return parameterTypes
+}
+
+func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
+	return types.ParameterType{
+		Type: c.parseType(node.ChildByFieldName("type")),
+	}
 }
 
 func (c *Collector) parseArrayType(node *sitter.Node, allocation types.AllocationModifier) types.Type {
@@ -256,6 +285,10 @@ func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {
 
 func (c *Collector) ParseDestructuringPattern(patternNode *sitter.Node) ast.Pattern {
 	return c.collectPattern(patternNode.Child(0))
+}
+
+func (c *Collector) collectFunctionClause(node *sitter.Node) ast.FunctionClause {
+	return *declarations.CollectFunctionClause(node, c.ctx)
 }
 
 func (c *Collector) collectPattern(patternNode *sitter.Node) ast.Pattern {

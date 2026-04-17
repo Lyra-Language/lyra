@@ -1,0 +1,46 @@
+Program(1 statements) {
+	VarDeclStmt(doubled) {
+		Keyword: let
+		Value: {
+			FunctionCallExpr {
+				Function: {
+					IdentifierExpr(map, IsConst: false)
+				}
+				GenericArguments: {
+				int
+				int
+				}
+				Arguments: {
+					ArgumentList(array_literal_expr, lambda) {
+						ArrayLiteralExpr(array_literal_expr) {
+							IntegerLiteralExpr(1, Base: 10)
+							IntegerLiteralExpr(2, Base: 10)
+							IntegerLiteralExpr(3, Base: 10)
+						}
+						LambdaExpr {
+							FunctionClause: {
+								FunctionClause {
+									Parameters: {
+										Parameter(x)
+									}
+									Guard: nil
+									Body: {
+										MathBinaryOpExpr(math_binary_op_expr) {
+											Left: {
+												IntegerLiteralExpr(2, Base: 10)
+											}
+											Operator: *
+											Right: {
+												IdentifierExpr(x, IsConst: false)
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

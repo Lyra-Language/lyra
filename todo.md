@@ -1,6 +1,5 @@
 ## To-Dos
 
-- Collect function types (lambdas)
 - Collect modules
 - Collect trait declarations
 - Collect trait implementations
@@ -17,6 +16,7 @@
 ### 04/17/26
 
 - Collect and test null coalescing expressions (??)
+- Collect function types (lambdas)
 
 ### 04/11/26
 

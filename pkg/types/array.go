@@ -23,11 +23,17 @@ func (a StaticArrayType) GetName() string {
 }
 
 func (a StaticArrayType) Print(indent string) {
-	fmt.Printf("%sStaticArrayType(%s)\n", indent, a.GetName())
-	fmt.Printf("%s\tElementType: {\n", indent)
+	fmt.Printf("%sStaticArrayType {\n", indent)
 	fmt.Printf("%s\tSize: %d\n", indent, a.Size)
-	a.ElementType.Print(indent + "\t")
-	fmt.Printf("%s\t}\n", indent)
+	if a.ElementType != nil {
+		fmt.Printf("%s\tElementType: {\n", indent)
+		a.ElementType.Print(indent + "\t\t")
+		fmt.Printf("%s\t}\n", indent)
+	}
+	if a.Allocation != "" {
+		fmt.Printf("%s\tAllocation: %s\n", indent, a.Allocation)
+	}
+	fmt.Printf("%s}\n", indent)
 }
 
 type DynamicArrayType struct {

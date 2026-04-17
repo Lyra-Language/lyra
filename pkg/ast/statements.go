@@ -81,7 +81,9 @@ func (v *VarDeclStmt) Print(indent string) {
 		fmt.Printf("%s\tKeyword: %s\n", indent, v.Keyword)
 	}
 	if v.Type != nil {
-		fmt.Printf("%s\tType: %s\n", indent, v.Type.GetName())
+		fmt.Printf("%s\tType: {\n", indent)
+		v.Type.Print(indent + "\t\t")
+		fmt.Printf("%s\t}\n", indent)
 	}
 	if v.Value != nil {
 		fmt.Printf("%s\tValue: {\n", indent)

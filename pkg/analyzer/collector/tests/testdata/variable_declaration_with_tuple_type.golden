@@ -1,7 +1,14 @@
 Program(1 statements) {
 	VarDeclStmt(the_answer) {
 		Keyword: let
-		Type: ?(int, int)
+		Type: {
+			TupleType(?) {
+				Elements: {
+					int
+					int
+				}
+			}
+		}
 		Value: {
 			TupleLiteralExpr(Name: ?) {
 				Elements: {

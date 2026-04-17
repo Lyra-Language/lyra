@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectMatchExpression(node *sitter.Node, ctx *collctx.Ctx) *ast.MatchExpr {
+func CollectMatchExpression(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.MatchExpr {
 	value := CollectExpression(node.ChildByFieldName("value"), ctx)
 	if value == nil {
 		ctx.AddError(node, collctx.SeverityError, "CollectMatchExpression: value is nil")
@@ -18,7 +18,7 @@ func CollectMatchExpression(node *sitter.Node, ctx *collctx.Ctx) *ast.MatchExpr 
 		return nil
 	}
 	return &ast.MatchExpr{
-		ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: ctx.NodeLocation(node)}},
+		ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Value:     value,     // guaranteed to be non-nil
 		MatchArms: matchArms, // guaranteed to be non-nil
 	}

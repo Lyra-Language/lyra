@@ -1,7 +1,11 @@
 Program(1 statements) {
 	VarDeclStmt(arr) {
 		Keyword: let
-		Type: StaticArray<?, 100>
+		Type: {
+			StaticArrayType {
+				Size: 100
+			}
+		}
 		Value: {
 			ArrayRepeatExpr {
 				Value: {

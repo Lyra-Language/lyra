@@ -27,11 +27,11 @@ func CollectFunctionDefinition(node *sitter.Node, ctx *collctx.Ctx) *ast.Functio
 		case "function_signature":
 			name, genericParams, signature, isPure, isAsync = collectFunctionSignature(child, ctx)
 		case "function_clause":
-			clauses = append(clauses, collectFunctionClause(child, ctx))
+			clauses = append(clauses, CollectFunctionClause(child, ctx))
 		case "function_clause_list":
 			for j := uint(0); j < child.ChildCount(); j++ {
 				if child.Child(j).Kind() == "function_clause" {
-					clauses = append(clauses, collectFunctionClause(child.Child(j), ctx))
+					clauses = append(clauses, CollectFunctionClause(child.Child(j), ctx))
 				}
 			}
 		}
@@ -115,7 +115,7 @@ func parseParameterType(node *sitter.Node, ctx *collctx.Ctx) types.ParameterType
 	}
 }
 
-func collectFunctionClause(node *sitter.Node, ctx *collctx.Ctx) *ast.FunctionClause {
+func CollectFunctionClause(node *sitter.Node, ctx *collctx.Ctx) *ast.FunctionClause {
 	var parameters []ast.Parameter
 	var guard *ast.GuardExpr
 	var body ast.Expression

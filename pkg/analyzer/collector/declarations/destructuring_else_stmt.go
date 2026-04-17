@@ -17,7 +17,7 @@ func CollectDestructuringElseStatement(node *sitter.Node, ctx *collctx.Ctx) *ast
 		return nil
 	}
 	destructuringStatement := CollectDestructuringDeclaration(declNode, ctx)
-	elseBlock := expressions.CollectBlockExpr(elseNode, ctx)
+	elseBlock := expressions.CollectBlockExpr(elseNode, ctx, ctx.NodeLocation(elseNode))
 	if destructuringStatement == nil || elseBlock == nil {
 		return nil
 	}

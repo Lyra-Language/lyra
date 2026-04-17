@@ -1,7 +1,12 @@
 Program(1 statements) {
 	VarDeclStmt(arr) {
 		Keyword: let
-		Type: DynamicArray<int>
+		Type: {
+			DynamicArrayType(DynamicArray<int>)
+				ElementType: {
+				int
+				}
+		}
 		Value: {
 			ArrayLiteralExpr(array_literal_expr) {
 				IntegerLiteralExpr(1, Base: 10)

@@ -1,0 +1,29 @@
+Program(1 statements) {
+	VarDeclStmt(sum) {
+		Keyword: let
+		Value: {
+			LambdaExpr {
+				FunctionClause: {
+					FunctionClause {
+						Parameters: {
+							Parameter(a)
+							Parameter(b)
+						}
+						Guard: nil
+						Body: {
+							MathBinaryOpExpr(math_binary_op_expr) {
+								Left: {
+									IdentifierExpr(a, IsConst: false)
+								}
+								Operator: +
+								Right: {
+									IdentifierExpr(b, IsConst: false)
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

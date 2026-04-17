@@ -8,14 +8,14 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectArrayCompExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.ArrayCompExpr {
+func collectArrayCompExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.ArrayCompExpr {
 	resultNode := node.ChildByFieldName("result_expression")
 	if resultNode == nil {
 		ctx.AppendError(fmt.Errorf("array comprehension must have a result"))
 		return nil
 	}
 	return &ast.ArrayCompExpr{
-		ExprBase:   ast.ExprBase{AstBase: ast.AstBase{Location: ctx.NodeLocation(node)}},
+		ExprBase:   ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Generators: collectGenerators(node, ctx),
 		Guards:     collectGuards(node, ctx),
 		Result:     CollectExpression(resultNode, ctx),

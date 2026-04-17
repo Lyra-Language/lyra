@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectIfThenExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.IfExpr {
+func collectIfThenExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.IfExpr {
 	ifConditionNode := node.ChildByFieldName("condition")
 	if ifConditionNode == nil {
 		ctx.AddError(node, collctx.SeverityError, "collectIfThenExpr: if condition node is nil")
@@ -23,7 +23,7 @@ func collectIfThenExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.IfExpr {
 
 	return &ast.IfExpr{
 		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
+			AstBase: ast.AstBase{Location: loc},
 			Type:    nil,
 		},
 		Condition: CollectExpression(ifConditionNode, ctx),
@@ -32,7 +32,7 @@ func collectIfThenExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.IfExpr {
 	}
 }
 
-func collectIfBlockExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.IfExpr {
+func collectIfBlockExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.IfExpr {
 	ifConditionNode := node.ChildByFieldName("condition")
 	if ifConditionNode == nil {
 		ctx.AddError(node, collctx.SeverityError, "collectIfBlockExpr: if condition node is nil")
@@ -49,7 +49,7 @@ func collectIfBlockExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.IfExpr {
 
 	return &ast.IfExpr{
 		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
+			AstBase: ast.AstBase{Location: loc},
 			Type:    nil,
 		},
 		Condition: CollectExpression(ifConditionNode, ctx),

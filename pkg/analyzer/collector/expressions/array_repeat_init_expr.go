@@ -6,10 +6,10 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectArrayRepeatInitExpr(node *sitter.Node, ctx *collctx.Ctx) *ast.ArrayRepeatExpr {
+func collectArrayRepeatInitExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.ArrayRepeatExpr {
 	return &ast.ArrayRepeatExpr{
 		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
+			AstBase: ast.AstBase{Location: loc},
 			Type:    nil,
 		},
 		Value: CollectExpression(node.ChildByFieldName("value"), ctx),

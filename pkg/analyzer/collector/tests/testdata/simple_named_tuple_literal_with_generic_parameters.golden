@@ -1,7 +1,14 @@
 Program(1 statements) {
 	VarDeclStmt(point) {
 		Keyword: let
-		Type: Point(int, int)
+		Type: {
+			TupleType(Point) {
+				Elements: {
+					int
+					int
+				}
+			}
+		}
 		Value: {
 			TupleLiteralExpr(Name: Point) {
 				GenericArguments: {
