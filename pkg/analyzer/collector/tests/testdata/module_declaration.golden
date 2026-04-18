@@ -1,0 +1,6 @@
+Program(1 statements) {
+	ModuleDeclStmt {
+		ModuleName(myapp)
+		ModuleName(utils)
+	}
+}

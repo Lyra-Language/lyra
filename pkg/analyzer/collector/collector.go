@@ -12,6 +12,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/declarations"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/statements"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/typedecls"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
@@ -91,6 +92,10 @@ func (c *Collector) collectStatement(node *sitter.Node) ast.Statement {
 		return nil
 	}
 	switch node.Kind() {
+	case "module_declaration":
+		return declarations.CollectModuleDeclaration(node, c.ctx)
+	case "import_statement":
+		return statements.CollectImportStatement(node, c.ctx)
 	case "type_declaration":
 		return typedecls.CollectTypeDeclaration(node, c.ctx)
 	case "function_definition":

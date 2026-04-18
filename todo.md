@@ -1,6 +1,5 @@
 ## To-Dos
 
-- Collect modules
 - Collect trait declarations
 - Collect trait implementations
 - Collect math assignment operators (i.e. +=, \*=, etc)
@@ -15,8 +14,9 @@
 
 ### 04/17/26
 
-- Collect and test null coalescing expressions (??)
 - Collect function types (lambdas)
+- Collect and test null coalescing expressions (??)
+- Collect module declarations and import statements
 
 ### 04/11/26
 

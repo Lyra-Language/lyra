@@ -1,0 +1,12 @@
+Program(1 statements) {
+	ImportStmt {
+		Path: {
+			ModuleName(std)
+			ModuleName(collections)
+		}
+		Members: {
+			ImportMember(name: HashMap, alias: HM)
+			ImportMember(name: Set)
+		}
+	}
+}
