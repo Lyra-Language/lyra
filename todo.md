@@ -1,6 +1,5 @@
 ## To-Dos
 
-- Collect trait declarations
 - Collect trait implementations
 - Collect math assignment operators (i.e. +=, \*=, etc)
 - Collect character literals (runes?)
@@ -11,6 +10,10 @@
 - Add sizeof() function to query type sizes
 
 ## Completed
+
+### 04/18/26
+
+- Collect trait declarations
 
 ### 04/17/26
 

@@ -1,0 +1,30 @@
+Program(1 statements) {
+	TraitDeclStmt(Bounded) {
+		GenericParams: [t]
+		GenericParameterConstraints: {
+			TraitGenericParameterConstraint {
+				Name: t
+				Constraints: [Ord]
+			}
+		}
+		Bounds: [Show Eq]
+		Methods: {
+			TraitMethod {
+				Name: id
+				Signature: {
+					FunctionType {
+						ParameterTypes: {
+							ParameterType {
+								Type: {
+									GenericType(t)
+								}
+							}
+						}
+						ReturnType: t
+					}
+				}
+			}
+		}
+		IsPublic: false
+	}
+}

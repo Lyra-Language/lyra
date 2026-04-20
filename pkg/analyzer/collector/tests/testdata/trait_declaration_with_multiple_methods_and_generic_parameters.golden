@@ -1,0 +1,83 @@
+Program(1 statements) {
+	TraitDeclStmt(Collection) {
+		GenericParams: [c e]
+		Methods: {
+			TraitMethod {
+				Name: add
+				Signature: {
+					FunctionType {
+						ParameterTypes: {
+							ParameterType {
+								Type: {
+									GenericType(c<e>)
+								}
+							}
+							ParameterType {
+								Type: {
+									GenericType(e)
+								}
+							}
+						}
+						ReturnType: c<e>
+					}
+				}
+			}
+			TraitMethod {
+				Name: remove
+				Signature: {
+					FunctionType {
+						ParameterTypes: {
+							ParameterType {
+								Type: {
+									GenericType(c<e>)
+								}
+							}
+							ParameterType {
+								Type: {
+									GenericType(e)
+								}
+							}
+						}
+						ReturnType: c<e>
+					}
+				}
+			}
+			TraitMethod {
+				Name: contains
+				Signature: {
+					FunctionType {
+						ParameterTypes: {
+							ParameterType {
+								Type: {
+									GenericType(c<e>)
+								}
+							}
+							ParameterType {
+								Type: {
+									GenericType(e)
+								}
+							}
+						}
+						ReturnType: bool
+					}
+				}
+			}
+			TraitMethod {
+				Name: size
+				Signature: {
+					FunctionType {
+						ParameterTypes: {
+							ParameterType {
+								Type: {
+									GenericType(c<e>)
+								}
+							}
+						}
+						ReturnType: int
+					}
+				}
+			}
+		}
+		IsPublic: false
+	}
+}

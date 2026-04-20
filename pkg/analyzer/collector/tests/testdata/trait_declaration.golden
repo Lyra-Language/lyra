@@ -1,0 +1,22 @@
+Program(1 statements) {
+	TraitDeclStmt(Show) {
+		Methods: {
+			TraitMethod {
+				Name: show
+				Signature: {
+					FunctionType {
+						ParameterTypes: {
+							ParameterType {
+								Type: {
+									Self
+								}
+							}
+						}
+						ReturnType: string
+					}
+				}
+			}
+		}
+		IsPublic: false
+	}
+}

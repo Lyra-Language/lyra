@@ -1,0 +1,38 @@
+Program(1 statements) {
+	TraitDeclStmt(PairOps) {
+		GenericParams: [a b]
+		GenericParameterConstraints: {
+			TraitGenericParameterConstraint {
+				Name: a
+				Constraints: [Show Eq]
+			}
+			TraitGenericParameterConstraint {
+				Name: b
+				Constraints: [Ord]
+			}
+		}
+		Methods: {
+			TraitMethod {
+				Name: first
+				Signature: {
+					FunctionType {
+						ParameterTypes: {
+							ParameterType {
+								Type: {
+									GenericType(a)
+								}
+							}
+							ParameterType {
+								Type: {
+									GenericType(b)
+								}
+							}
+						}
+						ReturnType: a
+					}
+				}
+			}
+		}
+		IsPublic: false
+	}
+}

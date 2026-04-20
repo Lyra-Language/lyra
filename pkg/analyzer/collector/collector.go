@@ -56,6 +56,7 @@ func NewCollector(source []byte) *Collector {
 		ParseDestructuringPattern: c.ParseDestructuringPattern,
 		CollectPattern:            c.collectPattern,
 		ParseType:                 func(node *sitter.Node) types.Type { return c.parseType(node) },
+		ParseFunctionType:         func(node *sitter.Node) *types.FunctionType { return c.parseFunctionType(node) },
 		RegisterType:              c.table.RegisterType,
 		RegisterFunction:          c.table.RegisterFunction,
 		RegisterVariable:          c.table.RegisterVariable,
@@ -98,6 +99,8 @@ func (c *Collector) collectStatement(node *sitter.Node) ast.Statement {
 		return statements.CollectImportStatement(node, c.ctx)
 	case "type_declaration":
 		return typedecls.CollectTypeDeclaration(node, c.ctx)
+	case "trait_declaration":
+		return declarations.CollectTraitDeclaration(node, c.ctx)
 	case "function_definition":
 		return declarations.CollectFunctionDefinition(node, c.ctx)
 	case "declaration", "const_declaration":
@@ -178,6 +181,8 @@ func (c *Collector) parseType(node *sitter.Node, allocation ...types.AllocationM
 		return c.parseAnonymousTupleType(node)
 	case "function_type":
 		return c.parseFunctionType(node)
+	case "self_type":
+		return c.parseSelfType(node)
 	}
 	c.addError(node, CollectorErrorSeverityError, "parseType: unknown type node kind: %s", node.Kind())
 	return nil
@@ -212,8 +217,8 @@ func (c *Collector) parseAnonymousTupleType(node *sitter.Node) types.Type {
 	return nil
 }
 
-func (c *Collector) parseFunctionType(node *sitter.Node) types.Type {
-	return types.FunctionType{
+func (c *Collector) parseFunctionType(node *sitter.Node) *types.FunctionType {
+	return &types.FunctionType{
 		ParameterTypes: c.parseParameterTypes(node.ChildByFieldName("parameter_types")),
 		ReturnType:     c.parseType(node.ChildByFieldName("return_type")),
 		IsAsync:        node.ChildByFieldName("is_async") != nil,
@@ -236,6 +241,15 @@ func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
 	return types.ParameterType{
 		Type: c.parseType(node.ChildByFieldName("type")),
 	}
+}
+
+func (c *Collector) parseSelfType(node *sitter.Node) types.Type {
+	genericParamsNode := node.ChildByFieldName("generic_parameters")
+	genericParams := make([]string, 0)
+	if genericParamsNode != nil {
+		genericParams = c.collectGenericParams(genericParamsNode)
+	}
+	return types.SelfType{GenericParams: genericParams}
 }
 
 func (c *Collector) parseArrayType(node *sitter.Node, allocation types.AllocationModifier) types.Type {

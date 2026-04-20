@@ -1,12 +1,30 @@
 package types
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type Type interface {
 	typeNode()
 	IsNumericType() bool
 	GetName() string
 	Print(indent string)
+}
+
+type SelfType struct {
+	GenericParams []string
+}
+
+func (SelfType) typeNode()             {}
+func (SelfType) IsNumericType() bool { return false }
+func (SelfType) GetName() string     { return "Self" }
+func (s SelfType) Print(indent string) {
+	if len(s.GenericParams) > 0 {
+		fmt.Printf("%sSelf<%s>\n", indent, strings.Join(s.GenericParams, ", "))
+	} else {
+		fmt.Printf("%sSelf\n", indent)
+	}
 }
 
 // UnresolvedType represents a type reference that hasn't been resolved yet

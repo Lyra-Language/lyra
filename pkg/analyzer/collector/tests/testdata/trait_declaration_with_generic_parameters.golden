@@ -1,0 +1,23 @@
+Program(1 statements) {
+	TraitDeclStmt(Converter) {
+		GenericParams: [from to]
+		Methods: {
+			TraitMethod {
+				Name: convert
+				Signature: {
+					FunctionType {
+						ParameterTypes: {
+							ParameterType {
+								Type: {
+									GenericType(from)
+								}
+							}
+						}
+						ReturnType: to
+					}
+				}
+			}
+		}
+		IsPublic: false
+	}
+}

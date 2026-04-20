@@ -1,0 +1,36 @@
+Program(1 statements) {
+	TraitDeclStmt(Functor) {
+		Methods: {
+			TraitMethod {
+				Name: map
+				Signature: {
+					FunctionType {
+						ParameterTypes: {
+							ParameterType {
+								Type: {
+									Self<a>
+								}
+							}
+							ParameterType {
+								Type: {
+									FunctionType {
+										ParameterTypes: {
+											ParameterType {
+												Type: {
+													GenericType(a)
+												}
+											}
+										}
+										ReturnType: b
+									}
+								}
+							}
+						}
+						ReturnType: Self
+					}
+				}
+			}
+		}
+		IsPublic: false
+	}
+}

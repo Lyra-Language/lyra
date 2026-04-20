@@ -1,0 +1,47 @@
+Program(1 statements) {
+	TraitDeclStmt(Eq) {
+		Methods: {
+			TraitMethod {
+				Name: ==
+				Signature: {
+					FunctionType {
+						ParameterTypes: {
+							ParameterType {
+								Type: {
+									Self
+								}
+							}
+							ParameterType {
+								Type: {
+									Self
+								}
+							}
+						}
+						ReturnType: bool
+					}
+				}
+			}
+			TraitMethod {
+				Name: !=
+				Signature: {
+					FunctionType {
+						ParameterTypes: {
+							ParameterType {
+								Type: {
+									Self
+								}
+							}
+							ParameterType {
+								Type: {
+									Self
+								}
+							}
+						}
+						ReturnType: bool
+					}
+				}
+			}
+		}
+		IsPublic: false
+	}
+}

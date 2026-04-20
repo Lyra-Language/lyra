@@ -35,7 +35,7 @@ func (f FunctionType) Print(indent string) {
 	if len(f.ParameterTypes) > 0 {
 		fmt.Printf("%s\tParameterTypes: {\n", indent)
 		for _, parameterType := range f.ParameterTypes {
-			fmt.Printf("%s\t\t%s\n", indent, parameterType.GetName())
+			parameterType.Print(indent + "\t\t")
 		}
 		fmt.Printf("%s\t}\n", indent)
 	}
@@ -66,6 +66,20 @@ func (p ParameterType) GetName() string {
 		return fmt.Sprintf("%s%s", modifier, p.Type.GetName())
 	}
 	return modifier
+}
+
+func (p ParameterType) Print(indent string) {
+	fmt.Printf("%sParameterType {\n", indent)
+	if p.Modifier != "" {
+		fmt.Printf("%s\tModifier: %s\n", indent, p.Modifier)
+	}
+	fmt.Printf("%s\tType: {\n", indent)
+	p.Type.Print(indent + "\t\t")
+	fmt.Printf("%s\t}\n", indent)
+	if p.DefaultValue != nil {
+		fmt.Printf("%s\tDefaultValue: %v\n", indent, p.DefaultValue)
+	}
+	fmt.Printf("%s}\n", indent)
 }
 
 type Modifier string

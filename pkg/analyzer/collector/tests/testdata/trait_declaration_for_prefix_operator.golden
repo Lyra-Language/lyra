@@ -1,0 +1,22 @@
+Program(1 statements) {
+	TraitDeclStmt(Neg) {
+		Methods: {
+			TraitMethod {
+				Name: -
+				Signature: {
+					FunctionType {
+						ParameterTypes: {
+							ParameterType {
+								Type: {
+									Self
+								}
+							}
+						}
+						ReturnType: Self
+					}
+				}
+			}
+		}
+		IsPublic: false
+	}
+}

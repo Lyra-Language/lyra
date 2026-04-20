@@ -44,6 +44,8 @@ type Ctx struct {
 	CollectPattern func(*sitter.Node) ast.Pattern
 	// ParseType parses a type annotation node into a types.Type.
 	ParseType func(*sitter.Node) types.Type
+	// ParseFunctionType parses a function type node into a types.FunctionType.
+	ParseFunctionType func(*sitter.Node) *types.FunctionType
 	// RegisterType registers a type declaration in the symbol table.
 	RegisterType func(*ast.TypeDeclStmt) error
 	// RegisterFunction registers a function declaration in the symbol table.
