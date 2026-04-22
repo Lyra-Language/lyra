@@ -59,7 +59,7 @@ func CollectExpression(node *sitter.Node, ctx *collctx.Ctx) ast.Expression {
 		return collectStructLiteralExpr(node, ctx, loc)
 	case "boolean_expr":
 		return collectBooleanBinaryExpr(node, ctx, loc)
-	case "addition", "subtraction", "multiplication", "division":
+	case "binary_expression":
 		return collectMathBinaryExpr(node, ctx, loc)
 	case "call_expression":
 		return collectFunctionCallExpr(node, ctx, loc)
