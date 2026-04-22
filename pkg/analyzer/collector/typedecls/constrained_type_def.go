@@ -146,10 +146,22 @@ func collectMathConstraintExpr(node *sitter.Node, ctx *collctx.Ctx) types.MathCo
 			Type:    ctx.ParseType(node.ChildByFieldName("type")),
 			IsConst: node.Kind() == "const_identifier",
 		}
-	case "constraint_multiplication", "constraint_division", "constraint_addition", "constraint_subtraction":
+	case "constraint_binary_expression":
 		return collectMathConstraintBinaryOpExpr(node, ctx)
+	case "constraint_negation":
+		return collectMathConstraintNegationExpr(node, ctx)
 	}
 	return nil
+}
+
+func collectMathConstraintNegationExpr(node *sitter.Node, ctx *collctx.Ctx) types.MathConstraintExpr {
+	operandNode := node.ChildByFieldName("operand")
+	operand := collectMathConstraintExpr(operandNode, ctx)
+	if operand == nil {
+		ctx.AppendError(fmt.Errorf("constraint negation must have an operand"))
+		return nil
+	}
+	return &types.MathConstraintNegationExpr{Operand: operand}
 }
 
 func collectMathConstraintBinaryOpExpr(node *sitter.Node, ctx *collctx.Ctx) types.MathConstraintExpr {

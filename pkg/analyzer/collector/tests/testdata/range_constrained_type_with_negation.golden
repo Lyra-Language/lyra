@@ -1,0 +1,34 @@
+Program(1 statements) {
+	TypeDeclStmt(Temp) {
+		Type: {
+			ConstrainedType {
+				Name: Temp
+				Type: int
+				Constraints: {
+				RangeConstraint {
+					Start: {
+					MathConstraintNegationExpr(-100)
+						Operand: {
+						MathConstraintLiteralExpr { 
+							Value: 100
+							Type: {
+							int
+							}
+						}
+						}
+					}
+					Comparator: <
+					End: {
+					MathConstraintLiteralExpr { 
+						Value: 200
+						Type: {
+						int
+						}
+					}
+					}
+				}
+				}
+			}
+		}
+	}
+}

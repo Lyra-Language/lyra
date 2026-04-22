@@ -40,6 +40,13 @@ func TestCollector_RangeConstrainedTypeWithConstantMultiplication(t *testing.T) 
 	checkGolden(t, got, filepath.Join("testdata", "range_constrained_type_with_constant_multiplication.golden"))
 }
 
+func TestCollector_RangeConstrainedTypeWithNegation(t *testing.T) {
+	source := `type Temp = int where range(-100..<200)`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "range_constrained_type_with_negation.golden"))
+}
+
 func TestCollector_RangeConstrainedTypeWithVariableAdditionAndSubtraction(t *testing.T) {
 	source := `
 		let pi = 3.14159
