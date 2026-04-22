@@ -21,6 +21,8 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
+var _ collctx.Collector = (*Collector)(nil)
+
 // Re-export error types from collctx so callers don't need to import both packages.
 type CollectorError = collctx.CollectorError
 type CollectorErrorSeverity = collctx.ErrorSeverity
@@ -47,21 +49,7 @@ func NewCollector(source []byte) *Collector {
 		ast:    &ast.Program{},
 		errors: make([]error, 0),
 	}
-	c.ctx = &collctx.Ctx{
-		Source:                    source,
-		Errors:                    &c.errors,
-		CollectExpr:               c.collectExpression,
-		CollectStatement:          c.collectStatement,
-		CollectFunctionClause:     c.collectFunctionClause,
-		ParseDestructuringPattern: c.ParseDestructuringPattern,
-		CollectPattern:            c.collectPattern,
-		ParseType:                 func(node *sitter.Node) types.Type { return c.parseType(node) },
-		ParseFunctionType:         func(node *sitter.Node) *types.FunctionType { return c.parseFunctionType(node) },
-		RegisterType:              c.table.RegisterType,
-		RegisterFunction:          c.table.RegisterFunction,
-		RegisterVariable:          c.table.RegisterVariable,
-		CollectGenericParams:      c.collectGenericParams,
-	}
+	c.ctx = collctx.NewCtx(source, c, &c.errors)
 	return c
 }
 
@@ -75,7 +63,7 @@ func (c *Collector) walkProgram(node *sitter.Node) {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 
-		stmt := c.collectStatement(child)
+		stmt := c.CollectStatement(child)
 
 		if stmt != nil {
 			c.ast.Statements = append(c.ast.Statements, stmt)
@@ -83,12 +71,11 @@ func (c *Collector) walkProgram(node *sitter.Node) {
 	}
 }
 
-// collectExpression is the thin wrapper wired into ctx.CollectExpr.
-func (c *Collector) collectExpression(node *sitter.Node) ast.Expression {
+func (c *Collector) CollectExpr(node *sitter.Node) ast.Expression {
 	return expressions.CollectExpression(node, c.ctx)
 }
 
-func (c *Collector) collectStatement(node *sitter.Node) ast.Statement {
+func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 	if node == nil {
 		return nil
 	}
@@ -138,7 +125,7 @@ func (c *Collector) addError(node *sitter.Node, severity CollectorErrorSeverity,
 	c.ctx.AddError(node, severity, format, args...)
 }
 
-func (c *Collector) collectGenericParams(node *sitter.Node) []string {
+func (c *Collector) CollectGenericParams(node *sitter.Node) []string {
 	params := make([]string, 0)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -147,6 +134,26 @@ func (c *Collector) collectGenericParams(node *sitter.Node) []string {
 		}
 	}
 	return params
+}
+
+func (c *Collector) ParseType(node *sitter.Node) types.Type {
+	return c.parseType(node)
+}
+
+func (c *Collector) ParseFunctionType(node *sitter.Node) *types.FunctionType {
+	return c.parseFunctionType(node)
+}
+
+func (c *Collector) RegisterType(stmt *ast.TypeDeclStmt) error {
+	return c.table.RegisterType(stmt)
+}
+
+func (c *Collector) RegisterFunction(stmt *ast.FunctionDefStmt) error {
+	return c.table.RegisterFunction(stmt)
+}
+
+func (c *Collector) RegisterVariable(stmt *ast.VarDeclStmt) error {
+	return c.table.RegisterVariable(stmt)
 }
 
 // allocation is only used for array types
@@ -247,7 +254,7 @@ func (c *Collector) parseSelfType(node *sitter.Node) types.Type {
 	genericParamsNode := node.ChildByFieldName("generic_parameters")
 	genericParams := make([]string, 0)
 	if genericParamsNode != nil {
-		genericParams = c.collectGenericParams(genericParamsNode)
+		genericParams = c.CollectGenericParams(genericParamsNode)
 	}
 	return types.SelfType{GenericParams: genericParams}
 }
@@ -303,14 +310,14 @@ func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {
 }
 
 func (c *Collector) ParseDestructuringPattern(patternNode *sitter.Node) ast.Pattern {
-	return c.collectPattern(patternNode.Child(0))
+	return c.CollectPattern(patternNode.Child(0))
 }
 
-func (c *Collector) collectFunctionClause(node *sitter.Node) ast.FunctionClause {
+func (c *Collector) CollectFunctionClause(node *sitter.Node) ast.FunctionClause {
 	return *declarations.CollectFunctionClause(node, c.ctx)
 }
 
-func (c *Collector) collectPattern(patternNode *sitter.Node) ast.Pattern {
+func (c *Collector) CollectPattern(patternNode *sitter.Node) ast.Pattern {
 	loc := c.nodeLocation(patternNode)
 	switch patternNode.Kind() {
 	case "identifier":
@@ -392,7 +399,7 @@ func (c *Collector) collectPatternElement(node *sitter.Node) ast.Pattern {
 	case "identifier", "literal_pattern", "pattern",
 		"tuple_pattern", "array_pattern", "struct_pattern", "data_pattern",
 		"range_pattern", "wildcard_pattern":
-		return c.collectPattern(node)
+		return c.CollectPattern(node)
 	}
 	return nil
 }
@@ -440,7 +447,7 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 		return &ast.StructPatternField{
 			PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
 			Name:        c.nodeText(structFieldWithPatternNode.ChildByFieldName("name")),
-			Pattern:     c.collectPattern(structFieldWithPatternNode.ChildByFieldName("pattern")),
+			Pattern:     c.CollectPattern(structFieldWithPatternNode.ChildByFieldName("pattern")),
 		}
 	}
 	restPatternNode := node.ChildByFieldName("rest_pattern")
@@ -473,7 +480,7 @@ func (c *Collector) collectDataPattern(node *sitter.Node) *ast.DataPattern {
 	patternNode := node.ChildByFieldName("pattern")
 	var pattern ast.Pattern
 	if patternNode != nil {
-		pattern = c.collectPattern(patternNode)
+		pattern = c.CollectPattern(patternNode)
 	}
 	return &ast.DataPattern{
 		PatternBase: ast.PatternBase{Location: loc},
@@ -490,8 +497,8 @@ func (c *Collector) collectRangePattern(node *sitter.Node) ast.Pattern {
 	}
 	return &ast.RangePattern{
 		PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
-		Start:       c.collectExpression(node.ChildByFieldName("start")),
-		End:         c.collectExpression(node.ChildByFieldName("end")),
+		Start:       c.CollectExpr(node.ChildByFieldName("start")),
+		End:         c.CollectExpr(node.ChildByFieldName("end")),
 		EndOperator: endOperator,
 	}
 }

@@ -26,34 +26,39 @@ func (e CollectorError) Error() string {
 	return fmt.Sprintf("%s: %s", &e.Location, e.Message)
 }
 
-// Ctx carries the shared mutable state and cross-package callbacks that
-// collector subpackages need without importing the root collector package.
+// Collector is the recursive dispatch surface that subpackages need from
+// [Ctx] without importing the root collector package. The concrete
+// *collector.Collector implements this interface and is embedded on [Ctx].
+type Collector interface {
+	CollectExpr(*sitter.Node) ast.Expression
+	CollectStatement(*sitter.Node) ast.Statement
+	CollectFunctionClause(*sitter.Node) ast.FunctionClause
+	ParseDestructuringPattern(*sitter.Node) ast.Pattern
+	CollectPattern(*sitter.Node) ast.Pattern
+	ParseType(*sitter.Node) types.Type
+	ParseFunctionType(*sitter.Node) *types.FunctionType
+	RegisterType(*ast.TypeDeclStmt) error
+	RegisterFunction(*ast.FunctionDefStmt) error
+	RegisterVariable(*ast.VarDeclStmt) error
+	CollectGenericParams(*sitter.Node) []string
+}
+
+// Ctx carries shared mutable state (source text, error sink) plus a [Collector]
+// for expression / statement / type / symbol-table dispatch.
 type Ctx struct {
 	Source []byte
-	Errors *[]error
+	errors *[]error
+	Collector
+}
 
-	// CollectExpr dispatches to the expression collector.
-	CollectExpr func(*sitter.Node) ast.Expression
-	// CollectStatement dispatches to the statement collector.
-	CollectStatement func(*sitter.Node) ast.Statement
-	// CollectFunctionClause dispatches to the function clause collector.
-	CollectFunctionClause func(*sitter.Node) ast.FunctionClause
-	// ParseDestructuringPattern parses a destructuring pattern node into a ast.Pattern.
-	ParseDestructuringPattern func(*sitter.Node) ast.Pattern
-	// CollectPattern dispatches to the pattern collector.
-	CollectPattern func(*sitter.Node) ast.Pattern
-	// ParseType parses a type annotation node into a types.Type.
-	ParseType func(*sitter.Node) types.Type
-	// ParseFunctionType parses a function type node into a types.FunctionType.
-	ParseFunctionType func(*sitter.Node) *types.FunctionType
-	// RegisterType registers a type declaration in the symbol table.
-	RegisterType func(*ast.TypeDeclStmt) error
-	// RegisterFunction registers a function declaration in the symbol table.
-	RegisterFunction func(*ast.FunctionDefStmt) error
-	// RegisterVariable registers a variable declaration in the symbol table.
-	RegisterVariable func(*ast.VarDeclStmt) error
-	// CollectGenericParams collects generic type parameter names from a generic_parameters node.
-	CollectGenericParams func(*sitter.Node) []string
+// NewCtx constructs a [Ctx] for use by the root collector. The error slice pointer
+// must remain valid for the lifetime of collection (AppendError / AddError append into it).
+func NewCtx(source []byte, coll Collector, errs *[]error) *Ctx {
+	return &Ctx{
+		Source:    source,
+		errors:    errs,
+		Collector: coll,
+	}
 }
 
 func (ctx *Ctx) NodeText(node *sitter.Node) string {
@@ -72,7 +77,7 @@ func (ctx *Ctx) NodeLocation(node *sitter.Node) ast.Location {
 }
 
 func (ctx *Ctx) AddError(node *sitter.Node, sev ErrorSeverity, format string, args ...any) {
-	*ctx.Errors = append(*ctx.Errors, CollectorError{
+	*ctx.errors = append(*ctx.errors, CollectorError{
 		Message:  fmt.Sprintf(format, args...),
 		Location: ctx.NodeLocation(node),
 		Severity: sev,
@@ -80,5 +85,5 @@ func (ctx *Ctx) AddError(node *sitter.Node, sev ErrorSeverity, format string, ar
 }
 
 func (ctx *Ctx) AppendError(err error) {
-	*ctx.Errors = append(*ctx.Errors, err)
+	*ctx.errors = append(*ctx.errors, err)
 }
