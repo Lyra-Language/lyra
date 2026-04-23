@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		{
 			VarDeclStmt(divide) {
-				Keyword: let
+				BindingKind: let
 				Name: divide
 				Value: {
 					LambdaExpr {

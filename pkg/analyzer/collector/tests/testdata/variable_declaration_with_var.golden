@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		{
 			VarDeclStmt(the_answer) {
-				Keyword: var
+				BindingKind: var
 				Name: the_answer
 				Type: {
 					PrimitiveType(int) {

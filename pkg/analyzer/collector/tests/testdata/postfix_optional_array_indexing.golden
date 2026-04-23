@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		{
 			VarDeclStmt(first) {
-				Keyword: let
+				BindingKind: let
 				Name: first
 				Value: {
 					IndexExpr {

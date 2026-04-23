@@ -1,14 +1,29 @@
 package declarations
 
 import (
+	"fmt"
+
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
+func bindingKind(keyword string) ast.BindingKind {
+	switch keyword {
+	case "let":
+		return ast.BindingLet
+	case "var":
+		return ast.BindingVar
+	case "const":
+		return ast.BindingConst
+	default:
+		panic(fmt.Sprintf("invalid binding kind: %s", keyword))
+	}
+}
+
 func CollectVariableDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.VarDeclStmt {
-	keyword := ctx.NodeText(node.ChildByFieldName("keyword"))
+	kind := bindingKind(ctx.NodeText(node.ChildByFieldName("keyword")))
 	name := ctx.NodeText(node.ChildByFieldName("name"))
 
 	var varType types.Type
@@ -42,7 +57,7 @@ func CollectVariableDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.VarDec
 
 	astNode := &ast.VarDeclStmt{
 		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
-		Keyword: keyword,
+		BindingKind: kind,
 		Name:    name,
 		Type:    varType,
 		Value:   initExpr,

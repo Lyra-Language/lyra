@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		{
 			VarDeclStmt(result) {
-				Keyword: let
+				BindingKind: let
 				Name: result
 				Value: {
 					NullCoalescingExpr {

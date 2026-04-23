@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		{
 			VarDeclStmt(pi) {
-				Keyword: let
+				BindingKind: let
 				Name: pi
 				Value: {
 					FloatLiteralExpr {

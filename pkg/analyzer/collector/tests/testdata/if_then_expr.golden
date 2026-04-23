@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		{
 			VarDeclStmt(foo) {
-				Keyword: let
+				BindingKind: let
 				Name: foo
 				Value: {
 					IfExpr {

@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		{
 			VarDeclStmt(sum) {
-				Keyword: let
+				BindingKind: let
 				Name: sum
 				Value: {
 					LambdaExpr {

@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		{
 			VarDeclStmt(bar) {
-				Keyword: let
+				BindingKind: let
 				Name: bar
 				Value: {
 					MatchExpr {

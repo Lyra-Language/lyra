@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		{
 			VarDeclStmt(max) {
-				Keyword: let
+				BindingKind: let
 				Name: max
 				Value: {
 					MemberExpr {

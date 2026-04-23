@@ -36,10 +36,32 @@ func (e *ExpressionStmt) statementNode() {}
 
 func (e *ExpressionStmt) GetName() string { return e.Expression.GetName() }
 
+type BindingKind int
+
+const (
+	BindingUnknown BindingKind = iota
+	BindingLet
+	BindingVar
+	BindingConst
+)
+
+func (k BindingKind) String() string {
+	switch k {
+	case BindingLet:
+		return "let"
+	case BindingVar:
+		return "var"
+	case BindingConst:
+		return "const"
+	default:
+		return "unknown"
+	}
+}
+
 // VariableDeclarationStmt represents a let/var/const binding
 type VarDeclStmt struct {
 	AstBase
-	Keyword string // "let", "var", "const"
+	BindingKind BindingKind
 	Name    string
 	Type    types.Type // may be nil if needs inference
 	Value   Expression
@@ -50,10 +72,10 @@ func (v *VarDeclStmt) statementNode() {}
 func (v *VarDeclStmt) GetName() string { return v.Name }
 
 // IsMutable returns true if this is a var declaration
-func (v *VarDeclStmt) IsMutable() bool { return v.Keyword == "var" }
+func (v *VarDeclStmt) IsMutable() bool { return v.BindingKind == BindingVar }
 
 // IsConstant returns true if this is a const declaration
-func (v *VarDeclStmt) IsConstant() bool { return v.Keyword == "const" }
+func (v *VarDeclStmt) IsConstant() bool { return v.BindingKind == BindingConst }
 
 // FunctionDefStmt represents a function definition
 type FunctionDefStmt struct {

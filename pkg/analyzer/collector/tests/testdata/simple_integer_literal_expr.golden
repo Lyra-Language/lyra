@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		{
 			VarDeclStmt(one_million) {
-				Keyword: let
+				BindingKind: let
 				Name: one_million
 				Value: {
 					IntegerLiteralExpr {

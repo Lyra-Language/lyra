@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		{
 			VarDeclStmt(PI) {
-				Keyword: const
+				BindingKind: const
 				Name: PI
 				Type: {
 					PrimitiveType(float) {

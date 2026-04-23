@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		{
 			VarDeclStmt(point) {
-				Keyword: let
+				BindingKind: let
 				Name: point
 				Type: {
 					UnresolvedType(Point) {

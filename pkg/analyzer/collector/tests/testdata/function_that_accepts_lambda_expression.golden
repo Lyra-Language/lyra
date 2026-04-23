@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		{
 			VarDeclStmt(doubled) {
-				Keyword: let
+				BindingKind: let
 				Name: doubled
 				Value: {
 					FunctionCallExpr {
