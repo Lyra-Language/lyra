@@ -1,15 +1,23 @@
 Program(1 statements) {
-	VarDeclStmt(first) {
-		Keyword: let
-		Value: {
-			IndexExpr {
-				Object: {
-					IdentifierExpr(array, IsConst: false)
+	Statements: {
+		{
+			VarDeclStmt(first) {
+				Keyword: let
+				Name: first
+				Value: {
+					IndexExpr {
+						Index: {
+							IntegerLiteralExpr {
+								Base: 10
+							}
+						}
+						Object: {
+							IdentifierExpr(array) {
+								Name: array
+							}
+						}
+					}
 				}
-				Index: {
-					IntegerLiteralExpr(0, Base: 10)
-				}
-				Optional: false
 			}
 		}
 	}

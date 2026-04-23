@@ -19,7 +19,6 @@ func (l *Location) String() string {
 type AstNode interface {
 	node()
 	GetLocation() Location
-	Print(indent string)
 }
 
 // Named is the interface for AST nodes that have a name (for symbol table lookup)
@@ -34,7 +33,6 @@ type AstBase struct {
 
 func (a *AstBase) node()                 {}
 func (a *AstBase) GetLocation() Location { return a.Location }
-func (a *AstBase) Print(indent string)   {}
 
 type Program struct {
 	AstBase
@@ -43,10 +41,3 @@ type Program struct {
 
 func (p *Program) node()                 {}
 func (p *Program) GetLocation() Location { return p.Location }
-func (p *Program) Print(indent string) {
-	fmt.Printf("%sProgram(%d statements) {\n", indent, len(p.Statements))
-	for _, statement := range p.Statements {
-		statement.Print(indent + "\t")
-	}
-	fmt.Printf("%s}\n", indent)
-}

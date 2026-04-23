@@ -1,23 +1,77 @@
 Program(1 statements) {
-	FunctionDefStmt(sum) {
-		GenericParams: [t]
-		Signature: (t, t) -> t
-		IsPublic: true
-		Clauses: {
-			FunctionClause {
-				Parameters: {
-					Parameter(a)
-					Parameter(b)
-				}
-				Guard: nil
-				Body: {
-					MathBinaryOpExpr(math_binary_op_expr) {
-						Left: {
-							IdentifierExpr(a, IsConst: false)
+	Statements: {
+		{
+			FunctionDefStmt(sum) {
+				Clauses: {
+					{
+						FunctionClause {
+							Body: {
+								MathBinaryOpExpr {
+									Left: {
+										IdentifierExpr(a) {
+											Name: a
+										}
+									}
+									Operator: +
+									Right: {
+										IdentifierExpr(b) {
+											Name: b
+										}
+									}
+								}
+							}
+							Parameters: {
+								{
+									Parameter {
+										Pattern: {
+											IdentifierPattern(a) {
+												Name: a
+											}
+										}
+									}
+									Parameter {
+										Pattern: {
+											IdentifierPattern(b) {
+												Name: b
+											}
+										}
+									}
+								}
+							}
 						}
-						Operator: +
-						Right: {
-							IdentifierExpr(b, IsConst: false)
+					}
+				}
+				GenericParams: {
+					{
+						t
+					}
+				}
+				IsPublic: true
+				Name: sum
+				Signature: {
+					FunctionType((t, t) -> t) {
+						ParameterTypes: {
+							{
+								ParameterType(t) {
+									Type: {
+										GenericType(t) {
+											Name: t
+										}
+									}
+								}
+								ParameterType(t) {
+									Type: {
+										GenericType(t) {
+											Name: t
+										}
+									}
+								}
+							}
+						}
+						ReturnType: {
+							GenericType(t) {
+								Name: t
+							}
 						}
 					}
 				}

@@ -1,15 +1,24 @@
 Program(1 statements) {
-	VarDeclStmt(max) {
-		Keyword: let
-		Value: {
-			MemberExpr {
-				Object: {
-					IdentifierExpr(limits, IsConst: false)
+	Statements: {
+		{
+			VarDeclStmt(max) {
+				Keyword: let
+				Name: max
+				Value: {
+					MemberExpr {
+						Object: {
+							IdentifierExpr(limits) {
+								Name: limits
+							}
+						}
+						Property: {
+							IdentifierExpr(MAX) {
+								IsConst: true
+								Name: MAX
+							}
+						}
+					}
 				}
-				Property: {
-					IdentifierExpr(MAX, IsConst: true)
-				}
-				Optional: false
 			}
 		}
 	}

@@ -1,12 +1,28 @@
 Program(1 statements) {
-	ImportStmt {
-		Path: {
-			ModuleName(myapp)
-			ModuleName(utils)
-		}
-		Members: {
-			ImportMember(name: Map)
-			ImportMember(name: Set)
+	Statements: {
+		{
+			ImportStmt {
+				Members: {
+					{
+						ImportMember(Map) {
+							Name: Map
+						}
+						ImportMember(Set) {
+							Name: Set
+						}
+					}
+				}
+				Path: {
+					{
+						ModuleName(myapp) {
+							Name: myapp
+						}
+						ModuleName(utils) {
+							Name: utils
+						}
+					}
+				}
+			}
 		}
 	}
 }

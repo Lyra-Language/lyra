@@ -1,82 +1,126 @@
 Program(1 statements) {
-  VarDeclStmt(foo) {
-    Keyword: let
-    Value: {
-      ArrayCompExpr {
-        Generators: {
-          Generator {
-            Value: {
-              RangeExpr {
-                Start: {
-                  IntegerLiteralExpr(1, Base: 10)
-                }
-                EndOperator: =
-                End: {
-                  IntegerLiteralExpr(5, Base: 10)
-                }
-              }
-            }
-            Identifier: x
-          }
-          Generator {
-            Value: {
-              RangeExpr {
-                Start: {
-                  IntegerLiteralExpr(1, Base: 10)
-                }
-                EndOperator: =
-                End: {
-                  IntegerLiteralExpr(5, Base: 10)
-                }
-              }
-            }
-            Identifier: y
-          }
-        }
-        Guards: {
-          Guard: {
-            FunctionCallExpr {
-              Function: {
-                IdentifierExpr(odd, IsConst: false)
-              }
-              Arguments: {
-                ArgumentList(x) {
-                  IdentifierExpr(x, IsConst: false)
-                }
-              }
-            }
-          }
-          Guard: {
-            FunctionCallExpr {
-              Function: {
-                IdentifierExpr(even, IsConst: false)
-              }
-              Arguments: {
-                ArgumentList(y) {
-                  IdentifierExpr(y, IsConst: false)
-                }
-              }
-            }
-          }
-        }
-        Result: {
-          TupleLiteralExpr(Name: ?) {
-            Elements: {
-              IdentifierExpr(x, IsConst: false)
-              IdentifierExpr(y, IsConst: false)
-              MathBinaryOpExpr(math_binary_op_expr) {
-                Left: {
-                  IdentifierExpr(x, IsConst: false)
-                }
-                Operator: *
-                Right: {
-                  IdentifierExpr(y, IsConst: false)
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
+	Statements: {
+		{
+			VarDeclStmt(foo) {
+				Keyword: let
+				Name: foo
+				Value: {
+					ArrayCompExpr {
+						Generators: {
+							{
+								Generator {
+									Identifier: x
+									Value: {
+										RangeExpr {
+											End: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 5
+												}
+											}
+											EndOperator: =
+											Start: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 1
+												}
+											}
+										}
+									}
+								}
+								Generator {
+									Identifier: y
+									Value: {
+										RangeExpr {
+											End: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 5
+												}
+											}
+											EndOperator: =
+											Start: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 1
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						Guards: {
+							{
+								FunctionCallExpr {
+									Arguments: {
+										ArgumentList {
+											Arguments: {
+												{
+													IdentifierExpr(x) {
+														Name: x
+													}
+												}
+											}
+										}
+									}
+									Function: {
+										IdentifierExpr(odd) {
+											Name: odd
+										}
+									}
+								}
+								FunctionCallExpr {
+									Arguments: {
+										ArgumentList {
+											Arguments: {
+												{
+													IdentifierExpr(y) {
+														Name: y
+													}
+												}
+											}
+										}
+									}
+									Function: {
+										IdentifierExpr(even) {
+											Name: even
+										}
+									}
+								}
+							}
+						}
+						Result: {
+							TupleLiteralExpr(?) {
+								Elements: {
+									{
+										IdentifierExpr(x) {
+											Name: x
+										}
+										IdentifierExpr(y) {
+											Name: y
+										}
+										MathBinaryOpExpr {
+											Left: {
+												IdentifierExpr(x) {
+													Name: x
+												}
+											}
+											Operator: *
+											Right: {
+												IdentifierExpr(y) {
+													Name: y
+												}
+											}
+										}
+									}
+								}
+								Name: ?
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 }

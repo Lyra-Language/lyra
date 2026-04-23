@@ -1,36 +1,82 @@
 Program(1 statements) {
-	TraitDeclStmt(Functor) {
-		Methods: {
-			TraitMethod {
-				Name: map
-				Signature: {
-					FunctionType {
-						ParameterTypes: {
-							ParameterType {
-								Type: {
-									Self<a>
+	Statements: {
+		{
+			TraitDeclStmt(Functor) {
+				Bounds: {
+					{
+					}
+				}
+				GenericParameterConstraints: {
+					{
+					}
+				}
+				GenericParams: {
+					{
+					}
+				}
+				Methods: {
+					{
+						TraitMethod {
+							Name: {
+								MethodName(map) {
+									Value: map
 								}
 							}
-							ParameterType {
-								Type: {
-									FunctionType {
-										ParameterTypes: {
-											ParameterType {
+							Signature: {
+								FunctionType((Self, (a) -> b) -> Self) {
+									ParameterTypes: {
+										{
+											ParameterType(Self) {
 												Type: {
-													GenericType(a)
+													SelfType(Self) {
+														GenericParams: {
+															{
+																a
+															}
+														}
+													}
+												}
+											}
+											ParameterType((a) -> b) {
+												Type: {
+													FunctionType((a) -> b) {
+														ParameterTypes: {
+															{
+																ParameterType(a) {
+																	Type: {
+																		GenericType(a) {
+																			Name: a
+																		}
+																	}
+																}
+															}
+														}
+														ReturnType: {
+															GenericType(b) {
+																Name: b
+															}
+														}
+													}
 												}
 											}
 										}
-										ReturnType: b
+									}
+									ReturnType: {
+										SelfType(Self) {
+											GenericParams: {
+												{
+													b
+												}
+											}
+										}
 									}
 								}
 							}
 						}
-						ReturnType: Self
 					}
 				}
+				Name: Functor
 			}
 		}
-		IsPublic: false
 	}
 }

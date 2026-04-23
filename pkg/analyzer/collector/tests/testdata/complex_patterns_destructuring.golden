@@ -1,55 +1,89 @@
 Program(1 statements) {
-	DestructuringStatement {
-		Keyword: let
-		StructPattern {
-			StructPatternField {
-				name: foo
-				pattern: {
-					ArrayPattern {
-						IdentifierPattern(a),
-						IdentifierPattern(b),
-						RestPattern(rest),
-					}
-				}
-			},
-			StructPatternField {
-				name: bar
-				pattern: {
-					TuplePattern {
-						IdentifierPattern(c),
-						DataPattern {
-							name: Some
-							pattern: {
-								IdentifierPattern(d)
-							}
-						},
-					}
-				}
-			},
-			StructPatternField {
-				name: baz
-				pattern: {
+	Statements: {
+		{
+			DestructuringDeclStmt {
+				Keyword: let
+				Pattern: {
 					StructPattern {
-						StructPatternField {
-							name: e
-							pattern: nil
-						},
-						StructPatternField {
-							name: f
-							pattern: nil
-						},
-						StructPatternField {
-							name: ...
-							pattern: {
-								RestPattern(rest)
+						Fields: {
+							{
+								StructPatternField(foo) {
+									Name: foo
+									Pattern: {
+										ArrayPattern {
+											Elements: {
+												{
+													IdentifierPattern(a) {
+														Name: a
+													}
+													IdentifierPattern(b) {
+														Name: b
+													}
+													RestPattern {
+														Identifier: rest
+													}
+												}
+											}
+										}
+									}
+								}
+								StructPatternField(bar) {
+									Name: bar
+									Pattern: {
+										TuplePattern {
+											Elements: {
+												{
+													IdentifierPattern(c) {
+														Name: c
+													}
+													DataPattern(Some) {
+														Name: Some
+														Pattern: {
+															IdentifierPattern(d) {
+																Name: d
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+								StructPatternField(baz) {
+									Name: baz
+									Pattern: {
+										StructPattern {
+											Fields: {
+												{
+													StructPatternField(e) {
+														Name: e
+													}
+													StructPatternField(f) {
+														Name: f
+													}
+													StructPatternField(...) {
+														Name: ...
+														Pattern: {
+															RestPattern {
+																Identifier: rest
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+								}
 							}
-						},
+						}
 					}
 				}
-			},
-		}
-		Value: {
-			IdentifierExpr(some_complex_struct, IsConst: false)
+				Value: {
+					IdentifierExpr(some_complex_struct) {
+						Name: some_complex_struct
+					}
+				}
+			}
 		}
 	}
 }

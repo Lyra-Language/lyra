@@ -1,48 +1,79 @@
 Program(1 statements) {
-	DestructuringStatement {
-		Keyword: let
-		StructPattern {
-			StructPatternField {
-				name: a
-				pattern: {
-					ArrayPattern {
-						IdentifierPattern(x),
-						IdentifierPattern(y),
-						IdentifierPattern(z),
-					}
-				}
-			},
-			StructPatternField {
-				name: b
-				pattern: {
-					TuplePattern {
-						IdentifierPattern(a),
-						IdentifierPattern(b),
-					}
-				}
-			},
-			StructPatternField {
-				name: c
-				pattern: {
+	Statements: {
+		{
+			DestructuringDeclStmt {
+				Keyword: let
+				Pattern: {
 					StructPattern {
-						StructPatternField {
-							name: d
-							pattern: nil
-						},
-						StructPatternField {
-							name: e
-							pattern: nil
-						},
-						StructPatternField {
-							name: f
-							pattern: nil
-						},
+						Fields: {
+							{
+								StructPatternField(a) {
+									Name: a
+									Pattern: {
+										ArrayPattern {
+											Elements: {
+												{
+													IdentifierPattern(x) {
+														Name: x
+													}
+													IdentifierPattern(y) {
+														Name: y
+													}
+													IdentifierPattern(z) {
+														Name: z
+													}
+												}
+											}
+										}
+									}
+								}
+								StructPatternField(b) {
+									Name: b
+									Pattern: {
+										TuplePattern {
+											Elements: {
+												{
+													IdentifierPattern(a) {
+														Name: a
+													}
+													IdentifierPattern(b) {
+														Name: b
+													}
+												}
+											}
+										}
+									}
+								}
+								StructPatternField(c) {
+									Name: c
+									Pattern: {
+										StructPattern {
+											Fields: {
+												{
+													StructPatternField(d) {
+														Name: d
+													}
+													StructPatternField(e) {
+														Name: e
+													}
+													StructPatternField(f) {
+														Name: f
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
 					}
 				}
-			},
-		}
-		Value: {
-			IdentifierExpr(some_struct, IsConst: false)
+				Value: {
+					IdentifierExpr(some_struct) {
+						Name: some_struct
+					}
+				}
+			}
 		}
 	}
 }

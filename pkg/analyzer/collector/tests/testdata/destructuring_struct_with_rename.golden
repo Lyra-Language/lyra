@@ -1,22 +1,31 @@
 Program(1 statements) {
-	DestructuringStatement {
-		Keyword: let
-		StructPattern {
-			StructPatternField {
-				name: foo
-				pattern: nil
-			},
-			StructPatternField {
-				name: bar
-				pattern: nil
-			},
-			StructPatternField {
-				name: baz
-				pattern: nil
-			},
-		}
-		Value: {
-			IdentifierExpr(some_struct, IsConst: false)
+	Statements: {
+		{
+			DestructuringDeclStmt {
+				Keyword: let
+				Pattern: {
+					StructPattern {
+						Fields: {
+							{
+								StructPatternField(foo) {
+									Name: foo
+								}
+								StructPatternField(bar) {
+									Name: bar
+								}
+								StructPatternField(baz) {
+									Name: baz
+								}
+							}
+						}
+					}
+				}
+				Value: {
+					IdentifierExpr(some_struct) {
+						Name: some_struct
+					}
+				}
+			}
 		}
 	}
 }

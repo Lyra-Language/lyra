@@ -1,26 +1,60 @@
 Program(1 statements) {
-	IfDestructuringStatement {
-		DestructuringStatement {
-			Keyword: let
-			ArrayPattern {
-				IdentifierPattern(a),
-				IdentifierPattern(b),
-				IdentifierPattern(c),
-			}
-			Value: {
-				IdentifierExpr(some_array, IsConst: false)
-			}
-		}
-		Then: {
-			BlockExpr {
-				ExpressionStmt(function_call_expr) {
-					FunctionCallExpr {
-						Function: {
-							IdentifierExpr(println, IsConst: false)
+	Statements: {
+		{
+			IfDestructuringStmt {
+				DestructuringStatement: {
+					DestructuringDeclStmt {
+						Keyword: let
+						Pattern: {
+							ArrayPattern {
+								Elements: {
+									{
+										IdentifierPattern(a) {
+											Name: a
+										}
+										IdentifierPattern(b) {
+											Name: b
+										}
+										IdentifierPattern(c) {
+											Name: c
+										}
+									}
+								}
+							}
 						}
-						Arguments: {
-							ArgumentList(StringLiteralExpr(#{a}, #{b}, #{c})) {
-								StringLiteralExpr(#{a}, #{b}, #{c})
+						Value: {
+							IdentifierExpr(some_array) {
+								Name: some_array
+							}
+						}
+					}
+				}
+				Then: {
+					BlockExpr {
+						Statements: {
+							{
+								ExpressionStmt {
+									Expression: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														{
+															StringLiteralExpr {
+																Value: #{a}, #{b}, #{c}
+															}
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(println) {
+													Name: println
+												}
+											}
+										}
+									}
+								}
 							}
 						}
 					}

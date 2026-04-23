@@ -1,39 +1,89 @@
 Program(1 statements) {
-	VarDeclStmt(foo) {
-		Keyword: let
-		Value: {
-			MatchExpr {
+	Statements: {
+		{
+			VarDeclStmt(foo) {
+				Keyword: let
+				Name: foo
 				Value: {
-					IdentifierExpr(bar, IsConst: false)
-				}
-				MatchArms: {
-					MatchArm {
-						LiteralPattern("foo")
-						Body: {
-							StructInstanceExpr(?) {
-								Fields: {
-									StructField(a: StringLiteralExpr(b))
+					MatchExpr {
+						MatchArms: {
+							{
+								MatchArm {
+									Body: {
+										StructInstance(?) {
+											Fields: {
+												{
+													StructField(a) {
+														Name: a
+														Value: {
+															StringLiteralExpr {
+																Value: b
+															}
+														}
+													}
+												}
+											}
+											Name: ?
+										}
+									}
+									Pattern: {
+										LiteralPattern {
+											Value: "foo"
+										}
+									}
+								}
+								MatchArm {
+									Body: {
+										StructInstance(?) {
+											Fields: {
+												{
+													StructField(b) {
+														Name: b
+														Value: {
+															StringLiteralExpr {
+																Value: a
+															}
+														}
+													}
+												}
+											}
+											Name: ?
+										}
+									}
+									Pattern: {
+										LiteralPattern {
+											Value: "bar"
+										}
+									}
+								}
+								MatchArm {
+									Body: {
+										StructInstance(?) {
+											Fields: {
+												{
+													StructField(c) {
+														Name: c
+														Value: {
+															StringLiteralExpr {
+																Value: d
+															}
+														}
+													}
+												}
+											}
+											Name: ?
+										}
+									}
+									Pattern: {
+										WildcardPattern {
+										}
+									}
 								}
 							}
 						}
-					}
-					MatchArm {
-						LiteralPattern("bar")
-						Body: {
-							StructInstanceExpr(?) {
-								Fields: {
-									StructField(b: StringLiteralExpr(a))
-								}
-							}
-						}
-					}
-					MatchArm {
-						WildcardPattern
-						Body: {
-							StructInstanceExpr(?) {
-								Fields: {
-									StructField(c: StringLiteralExpr(d))
-								}
+						Value: {
+							IdentifierExpr(bar) {
+								Name: bar
 							}
 						}
 					}

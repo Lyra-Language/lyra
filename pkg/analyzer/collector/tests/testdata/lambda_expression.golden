@@ -1,23 +1,45 @@
 Program(1 statements) {
-	VarDeclStmt(sum) {
-		Keyword: let
-		Value: {
-			LambdaExpr {
-				FunctionClause: {
-					FunctionClause {
-						Parameters: {
-							Parameter(a)
-							Parameter(b)
-						}
-						Guard: nil
-						Body: {
-							MathBinaryOpExpr(math_binary_op_expr) {
-								Left: {
-									IdentifierExpr(a, IsConst: false)
+	Statements: {
+		{
+			VarDeclStmt(sum) {
+				Keyword: let
+				Name: sum
+				Value: {
+					LambdaExpr {
+						FunctionClause: {
+							FunctionClause {
+								Body: {
+									MathBinaryOpExpr {
+										Left: {
+											IdentifierExpr(a) {
+												Name: a
+											}
+										}
+										Operator: +
+										Right: {
+											IdentifierExpr(b) {
+												Name: b
+											}
+										}
+									}
 								}
-								Operator: +
-								Right: {
-									IdentifierExpr(b, IsConst: false)
+								Parameters: {
+									{
+										Parameter {
+											Pattern: {
+												IdentifierPattern(a) {
+													Name: a
+												}
+											}
+										}
+										Parameter {
+											Pattern: {
+												IdentifierPattern(b) {
+													Name: b
+												}
+											}
+										}
+									}
 								}
 							}
 						}

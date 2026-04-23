@@ -1,74 +1,146 @@
 Program(1 statements) {
-	ExpressionStmt() {
-		MatchExpr {
-			Value: {
-				IdentifierExpr(foo, IsConst: false)
-			}
-			MatchArms: {
-				MatchArm {
-					RangePattern {
-						start: IntegerLiteralExpr(0, Base: 10)
-						end: IntegerLiteralExpr(9, Base: 10)
-						end_operator: =
-					}
-					Body: {
-						FunctionCallExpr {
-							Function: {
-								IdentifierExpr(print, IsConst: false)
-							}
-							Arguments: {
-								ArgumentList(StringLiteralExpr(one digit)) {
-									StringLiteralExpr(one digit)
+	Statements: {
+		{
+			ExpressionStmt {
+				Expression: {
+					MatchExpr {
+						MatchArms: {
+							{
+								MatchArm {
+									Body: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														{
+															StringLiteralExpr {
+																Value: one digit
+															}
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(print) {
+													Name: print
+												}
+											}
+										}
+									}
+									Pattern: {
+										RangePattern {
+											End: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 9
+												}
+											}
+											EndOperator: =
+											Start: {
+												IntegerLiteralExpr {
+													Base: 10
+												}
+											}
+										}
+									}
+								}
+								MatchArm {
+									Body: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														{
+															StringLiteralExpr {
+																Value: The Answer!
+															}
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(print) {
+													Name: print
+												}
+											}
+										}
+									}
+									Pattern: {
+										LiteralPattern {
+											Value: 42
+										}
+									}
+								}
+								MatchArm {
+									Body: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														{
+															StringLiteralExpr {
+																Value: two digits
+															}
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(print) {
+													Name: print
+												}
+											}
+										}
+									}
+									Pattern: {
+										RangePattern {
+											End: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 99
+												}
+											}
+											EndOperator: =
+											Start: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 10
+												}
+											}
+										}
+									}
+								}
+								MatchArm {
+									Body: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														{
+															StringLiteralExpr {
+																Value: lots of digits!
+															}
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(print) {
+													Name: print
+												}
+											}
+										}
+									}
+									Pattern: {
+										WildcardPattern {
+										}
+									}
 								}
 							}
 						}
-					}
-				}
-				MatchArm {
-					LiteralPattern(42)
-					Body: {
-						FunctionCallExpr {
-							Function: {
-								IdentifierExpr(print, IsConst: false)
-							}
-							Arguments: {
-								ArgumentList(StringLiteralExpr(The Answer!)) {
-									StringLiteralExpr(The Answer!)
-								}
-							}
-						}
-					}
-				}
-				MatchArm {
-					RangePattern {
-						start: IntegerLiteralExpr(10, Base: 10)
-						end: IntegerLiteralExpr(99, Base: 10)
-						end_operator: =
-					}
-					Body: {
-						FunctionCallExpr {
-							Function: {
-								IdentifierExpr(print, IsConst: false)
-							}
-							Arguments: {
-								ArgumentList(StringLiteralExpr(two digits)) {
-									StringLiteralExpr(two digits)
-								}
-							}
-						}
-					}
-				}
-				MatchArm {
-					WildcardPattern
-					Body: {
-						FunctionCallExpr {
-							Function: {
-								IdentifierExpr(print, IsConst: false)
-							}
-							Arguments: {
-								ArgumentList(StringLiteralExpr(lots of digits!)) {
-									StringLiteralExpr(lots of digits!)
-								}
+						Value: {
+							IdentifierExpr(foo) {
+								Name: foo
 							}
 						}
 					}

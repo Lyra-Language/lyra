@@ -1,22 +1,59 @@
 Program(1 statements) {
-	TraitDeclStmt(Neg) {
-		Methods: {
-			TraitMethod {
-				Name: -
-				Signature: {
-					FunctionType {
-						ParameterTypes: {
-							ParameterType {
-								Type: {
-									Self
+	Statements: {
+		{
+			TraitDeclStmt(Neg) {
+				Bounds: {
+					{
+					}
+				}
+				GenericParameterConstraints: {
+					{
+					}
+				}
+				GenericParams: {
+					{
+					}
+				}
+				Methods: {
+					{
+						TraitMethod {
+							Name: {
+								MethodName(-) {
+									Kind: 1
+									Value: -
+								}
+							}
+							Signature: {
+								FunctionType((Self) -> Self) {
+									ParameterTypes: {
+										{
+											ParameterType(Self) {
+												Type: {
+													SelfType(Self) {
+														GenericParams: {
+															{
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+									ReturnType: {
+										SelfType(Self) {
+											GenericParams: {
+												{
+												}
+											}
+										}
+									}
 								}
 							}
 						}
-						ReturnType: Self
 					}
 				}
+				Name: Neg
 			}
 		}
-		IsPublic: false
 	}
 }

@@ -1,17 +1,45 @@
 Program(1 statements) {
-	DestructuringStatement {
-		Keyword: let
-		TuplePattern {
-			IdentifierPattern(x),
-			IdentifierPattern(y),
-			IdentifierPattern(z),
-		}
-		Value: {
-			TupleLiteralExpr(Name: ThreeInts) {
-				Elements: {
-					IntegerLiteralExpr(1, Base: 10)
-					IntegerLiteralExpr(2, Base: 10)
-					IntegerLiteralExpr(3, Base: 10)
+	Statements: {
+		{
+			DestructuringDeclStmt {
+				Keyword: let
+				Pattern: {
+					TuplePattern {
+						Elements: {
+							{
+								IdentifierPattern(x) {
+									Name: x
+								}
+								IdentifierPattern(y) {
+									Name: y
+								}
+								IdentifierPattern(z) {
+									Name: z
+								}
+							}
+						}
+					}
+				}
+				Value: {
+					TupleLiteralExpr(ThreeInts) {
+						Elements: {
+							{
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
+								}
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 2
+								}
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 3
+								}
+							}
+						}
+						Name: ThreeInts
+					}
 				}
 			}
 		}

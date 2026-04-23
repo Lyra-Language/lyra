@@ -1,23 +1,35 @@
 Program(1 statements) {
-	VarDeclStmt(value) {
-		Keyword: let
-		Value: {
-			IndexExpr {
-				Object: {
+	Statements: {
+		{
+			VarDeclStmt(value) {
+				Keyword: let
+				Name: value
+				Value: {
 					IndexExpr {
-						Object: {
-							IdentifierExpr(matrix, IsConst: false)
-						}
 						Index: {
-							IntegerLiteralExpr(0, Base: 10)
+							IntegerLiteralExpr {
+								Base: 10
+								Value: 1
+							}
+						}
+						Object: {
+							IndexExpr {
+								Index: {
+									IntegerLiteralExpr {
+										Base: 10
+									}
+								}
+								Object: {
+									IdentifierExpr(matrix) {
+										Name: matrix
+									}
+								}
+								Optional: true
+							}
 						}
 						Optional: true
 					}
 				}
-				Index: {
-					IntegerLiteralExpr(1, Base: 10)
-				}
-				Optional: true
 			}
 		}
 	}

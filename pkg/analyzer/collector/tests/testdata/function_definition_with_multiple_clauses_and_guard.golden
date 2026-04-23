@@ -1,76 +1,146 @@
 Program(1 statements) {
-	FunctionDefStmt(fib) {
-		Signature: (int) -> int
-		Clauses: {
-			FunctionClause {
-				Parameters: {
-					Parameter(n)
-				}
-				Guard: {
-					GuardExpr(boolean_binary_op_expr) {
-						Condition: {
-							BooleanBinaryOpExpr {
-								Left: {
-									IdentifierExpr(n, IsConst: false)
+	Statements: {
+		{
+			FunctionDefStmt(fib) {
+				Clauses: {
+					{
+						FunctionClause {
+							Body: {
+								IdentifierExpr(n) {
+									Name: n
 								}
-								Operator: <
-								Right: {
-									IntegerLiteralExpr(2, Base: 10)
+							}
+							Guard: {
+								GuardExpr {
+									Condition: {
+										BooleanBinaryOpExpr {
+											Left: {
+												IdentifierExpr(n) {
+													Name: n
+												}
+											}
+											Operator: <
+											Right: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 2
+												}
+											}
+										}
+									}
+								}
+							}
+							Parameters: {
+								{
+									Parameter {
+										Pattern: {
+											IdentifierPattern(n) {
+												Name: n
+											}
+										}
+									}
+								}
+							}
+						}
+						FunctionClause {
+							Body: {
+								MathBinaryOpExpr {
+									Left: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														{
+															MathBinaryOpExpr {
+																Left: {
+																	IdentifierExpr(n) {
+																		Name: n
+																	}
+																}
+																Operator: -
+																Right: {
+																	IntegerLiteralExpr {
+																		Base: 10
+																		Value: 2
+																	}
+																}
+															}
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(fib) {
+													Name: fib
+												}
+											}
+										}
+									}
+									Operator: +
+									Right: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														{
+															MathBinaryOpExpr {
+																Left: {
+																	IdentifierExpr(n) {
+																		Name: n
+																	}
+																}
+																Operator: -
+																Right: {
+																	IntegerLiteralExpr {
+																		Base: 10
+																		Value: 1
+																	}
+																}
+															}
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(fib) {
+													Name: fib
+												}
+											}
+										}
+									}
+								}
+							}
+							Parameters: {
+								{
+									Parameter {
+										Pattern: {
+											IdentifierPattern(n) {
+												Name: n
+											}
+										}
+									}
 								}
 							}
 						}
 					}
 				}
-				Body: {
-					IdentifierExpr(n, IsConst: false)
-				}
-			}
-			FunctionClause {
-				Parameters: {
-					Parameter(n)
-				}
-				Guard: nil
-				Body: {
-					MathBinaryOpExpr(math_binary_op_expr) {
-						Left: {
-							FunctionCallExpr {
-								Function: {
-									IdentifierExpr(fib, IsConst: false)
-								}
-								Arguments: {
-									ArgumentList(math_binary_op_expr) {
-										MathBinaryOpExpr(math_binary_op_expr) {
-											Left: {
-												IdentifierExpr(n, IsConst: false)
-											}
-											Operator: -
-											Right: {
-												IntegerLiteralExpr(2, Base: 10)
-											}
+				Name: fib
+				Signature: {
+					FunctionType((int) -> int) {
+						ParameterTypes: {
+							{
+								ParameterType(int) {
+									Type: {
+										PrimitiveType(int) {
+											Name: int
 										}
 									}
 								}
 							}
 						}
-						Operator: +
-						Right: {
-							FunctionCallExpr {
-								Function: {
-									IdentifierExpr(fib, IsConst: false)
-								}
-								Arguments: {
-									ArgumentList(math_binary_op_expr) {
-										MathBinaryOpExpr(math_binary_op_expr) {
-											Left: {
-												IdentifierExpr(n, IsConst: false)
-											}
-											Operator: -
-											Right: {
-												IntegerLiteralExpr(1, Base: 10)
-											}
-										}
-									}
-								}
+						ReturnType: {
+							PrimitiveType(int) {
+								Name: int
 							}
 						}
 					}

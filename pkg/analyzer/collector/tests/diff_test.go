@@ -50,6 +50,13 @@ func checkGolden(t *testing.T, got, goldenPath string) {
 		t.Fatal("Golden file was empty; wrote current output. Re-run test to verify.")
 	}
 	if msg := cmpOutput(got, string(expected)); msg != "" {
+		if os.Getenv("UPDATE_GOLDEN") == "1" {
+			if err := os.WriteFile(goldenPath, []byte(got), 0644); err != nil {
+				t.Fatalf("Update golden file: %v", err)
+			}
+			t.Logf("updated golden file: %s", goldenPath)
+			return
+		}
 		t.Errorf("Print output mismatch (golden file %s): %s", goldenPath, msg)
 	}
 }

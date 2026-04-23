@@ -1,14 +1,40 @@
 Program(1 statements) {
-	TypeDeclStmt(Point) {
-		IsPublic: true
-		GenericParams: [t]
-		Type: {
-			StructType(Point) {
-			  Allocation: stack
-			  Fields: {
-			    StructField(x: t)
-			    StructField(y: t)
-			  }
+	Statements: {
+		{
+			TypeDeclStmt(Point) {
+				GenericParams: {
+					{
+						t
+					}
+				}
+				IsPublic: true
+				Name: Point
+				Type: {
+					StructType(Point) {
+						Allocation: stack
+						Fields: {
+							{
+								StructField(x) {
+									Name: x
+									Type: {
+										GenericType(t) {
+											Name: t
+										}
+									}
+								}
+								StructField(y) {
+									Name: y
+									Type: {
+										GenericType(t) {
+											Name: t
+										}
+									}
+								}
+							}
+						}
+						Name: Point
+					}
+				}
 			}
 		}
 	}

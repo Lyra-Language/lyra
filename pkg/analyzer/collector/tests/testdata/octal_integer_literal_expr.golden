@@ -1,8 +1,16 @@
 Program(1 statements) {
-	VarDeclStmt(fourty_two) {
-		Keyword: let
-		Value: {
-			IntegerLiteralExpr(42, Base: 8)
+	Statements: {
+		{
+			VarDeclStmt(fourty_two) {
+				Keyword: let
+				Name: fourty_two
+				Value: {
+					IntegerLiteralExpr {
+						Base: 8
+						Value: 42
+					}
+				}
+			}
 		}
 	}
 }

@@ -1,9 +1,22 @@
 Program(1 statements) {
-	TypeDeclStmt(Point) {
-		Type: {
-			ConstrainedType {
+	Statements: {
+		{
+			TypeDeclStmt(Point) {
 				Name: Point
-				Type: Tuple
+				Type: {
+					ConstrainedType(Point) {
+						Constraints: {
+							{
+							}
+						}
+						Name: Point
+						Type: {
+							UnresolvedType(Tuple) {
+								Name: Tuple
+							}
+						}
+					}
+				}
 			}
 		}
 	}

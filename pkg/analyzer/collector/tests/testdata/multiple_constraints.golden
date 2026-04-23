@@ -1,45 +1,80 @@
 Program(1 statements) {
-	TypeDeclStmt(Radian) {
-		Type: {
-			ConstrainedType {
+	Statements: {
+		{
+			TypeDeclStmt(Radian) {
 				Name: Radian
-				Type: float
-				Constraints: {
-				RangeConstraint {
-					Start: {
-					MathConstraintLiteralExpr { 
-						Value: 0
-						Type: {
-						int
-						}
-					}
-					}
-					Comparator: <
-					End: {
-					MathConstraintBinaryOpExpr(PI * 2) {
-						Left: {
-						MathConstraintIdentifierExpr(PI)
-						}
-						Operator: *
-						Right: {
-						MathConstraintLiteralExpr { 
-							Value: 2
-							Type: {
-							int
+				Type: {
+					ConstrainedType(Radian) {
+						Constraints: {
+							{
+								RangeConstraint {
+									Comparator: <
+									End: {
+										MathConstraintBinaryOpExpr {
+											Left: {
+												MathConstraintIdentifierExpr(PI) {
+													IsConst: true
+													Name: PI
+												}
+											}
+											Operator: *
+											Right: {
+												MathConstraintLiteralExpr {
+													Type: {
+														PrimitiveType(int) {
+															Name: int
+														}
+													}
+													Value: {
+														IntegerLiteralExpr {
+															Base: 10
+															Value: 2
+														}
+													}
+												}
+											}
+										}
+									}
+									Start: {
+										MathConstraintLiteralExpr {
+											Type: {
+												PrimitiveType(int) {
+													Name: int
+												}
+											}
+											Value: {
+												IntegerLiteralExpr {
+													Base: 10
+												}
+											}
+										}
+									}
+								}
+								PrecisionConstraint {
+									RoundingMode: round_even
+									Value: {
+										MathConstraintLiteralExpr {
+											Type: {
+												PrimitiveType(float) {
+													Name: float
+												}
+											}
+											Value: {
+												FloatLiteralExpr {
+													Value: 0.01
+												}
+											}
+										}
+									}
+								}
 							}
 						}
-						}
-					}
-					}
-				}
-				PrecisionConstraint(precision(0.01))
-					Value: {
-					MathConstraintLiteralExpr { 
-						Value: 0.01
+						Name: Radian
 						Type: {
-						float
+							PrimitiveType(float) {
+								Name: float
+							}
 						}
-					}
 					}
 				}
 			}

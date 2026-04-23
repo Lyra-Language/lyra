@@ -1,125 +1,188 @@
 Program(1 statements) {
-	ExpressionStmt() {
-		MatchExpr {
-			Value: {
-				IdentifierExpr(foo, IsConst: false)
-			}
-			MatchArms: {
-				MatchArm {
-					DataPattern {
-						name: Some
-						pattern: {
-							IdentifierPattern(x)
-						}
-					}
-					Guard: {
-						GuardExpr(boolean_binary_op_expr) {
-							Condition: {
-								BooleanBinaryOpExpr {
-									Left: {
-										BooleanBinaryOpExpr {
-											Left: {
-												IdentifierExpr(x, IsConst: false)
+	Statements: {
+		{
+			ExpressionStmt {
+				Expression: {
+					MatchExpr {
+						MatchArms: {
+							{
+								MatchArm {
+									Body: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														{
+															StringLiteralExpr {
+																Value: 1-9
+															}
+														}
+													}
+												}
 											}
-											Operator: >
-											Right: {
-												IntegerLiteralExpr(0, Base: 10)
-											}
-										}
-									}
-									Operator: &&
-									Right: {
-										BooleanBinaryOpExpr {
-											Left: {
-												IdentifierExpr(x, IsConst: false)
-											}
-											Operator: <
-											Right: {
-												IntegerLiteralExpr(10, Base: 10)
+											Function: {
+												IdentifierExpr(print) {
+													Name: print
+												}
 											}
 										}
 									}
-								}
-							}
-						}
-					}
-					Body: {
-						FunctionCallExpr {
-							Function: {
-								IdentifierExpr(print, IsConst: false)
-							}
-							Arguments: {
-								ArgumentList(StringLiteralExpr(1-9)) {
-									StringLiteralExpr(1-9)
-								}
-							}
-						}
-					}
-				}
-				MatchArm {
-					DataPattern {
-						name: Some
-						pattern: {
-							IdentifierPattern(x)
-						}
-					}
-					Guard: {
-						GuardExpr(boolean_binary_op_expr) {
-							Condition: {
-								BooleanBinaryOpExpr {
-									Left: {
-										BooleanBinaryOpExpr {
-											Left: {
-												IdentifierExpr(x, IsConst: false)
-											}
-											Operator: >=
-											Right: {
-												IntegerLiteralExpr(10, Base: 10)
+									Guard: {
+										GuardExpr {
+											Condition: {
+												BooleanBinaryOpExpr {
+													Left: {
+														BooleanBinaryOpExpr {
+															Left: {
+																IdentifierExpr(x) {
+																	Name: x
+																}
+															}
+															Operator: >
+															Right: {
+																IntegerLiteralExpr {
+																	Base: 10
+																}
+															}
+														}
+													}
+													Operator: &&
+													Right: {
+														BooleanBinaryOpExpr {
+															Left: {
+																IdentifierExpr(x) {
+																	Name: x
+																}
+															}
+															Operator: <
+															Right: {
+																IntegerLiteralExpr {
+																	Base: 10
+																	Value: 10
+																}
+															}
+														}
+													}
+												}
 											}
 										}
 									}
-									Operator: &&
-									Right: {
-										BooleanBinaryOpExpr {
-											Left: {
-												IdentifierExpr(x, IsConst: false)
-											}
-											Operator: <
-											Right: {
-												IntegerLiteralExpr(100, Base: 10)
+									Pattern: {
+										DataPattern(Some) {
+											Name: Some
+											Pattern: {
+												IdentifierPattern(x) {
+													Name: x
+												}
 											}
 										}
 									}
 								}
-							}
-						}
-					}
-					Body: {
-						FunctionCallExpr {
-							Function: {
-								IdentifierExpr(print, IsConst: false)
-							}
-							Arguments: {
-								ArgumentList(StringLiteralExpr(10-99)) {
-									StringLiteralExpr(10-99)
+								MatchArm {
+									Body: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														{
+															StringLiteralExpr {
+																Value: 10-99
+															}
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(print) {
+													Name: print
+												}
+											}
+										}
+									}
+									Guard: {
+										GuardExpr {
+											Condition: {
+												BooleanBinaryOpExpr {
+													Left: {
+														BooleanBinaryOpExpr {
+															Left: {
+																IdentifierExpr(x) {
+																	Name: x
+																}
+															}
+															Operator: >=
+															Right: {
+																IntegerLiteralExpr {
+																	Base: 10
+																	Value: 10
+																}
+															}
+														}
+													}
+													Operator: &&
+													Right: {
+														BooleanBinaryOpExpr {
+															Left: {
+																IdentifierExpr(x) {
+																	Name: x
+																}
+															}
+															Operator: <
+															Right: {
+																IntegerLiteralExpr {
+																	Base: 10
+																	Value: 100
+																}
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+									Pattern: {
+										DataPattern(Some) {
+											Name: Some
+											Pattern: {
+												IdentifierPattern(x) {
+													Name: x
+												}
+											}
+										}
+									}
+								}
+								MatchArm {
+									Body: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														{
+															StringLiteralExpr {
+																Value: No number!
+															}
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(print) {
+													Name: print
+												}
+											}
+										}
+									}
+									Pattern: {
+										DataPattern(None) {
+											Name: None
+										}
+									}
 								}
 							}
 						}
-					}
-				}
-				MatchArm {
-					DataPattern {
-						name: None
-					}
-					Body: {
-						FunctionCallExpr {
-							Function: {
-								IdentifierExpr(print, IsConst: false)
-							}
-							Arguments: {
-								ArgumentList(StringLiteralExpr(No number!)) {
-									StringLiteralExpr(No number!)
-								}
+						Value: {
+							IdentifierExpr(foo) {
+								Name: foo
 							}
 						}
 					}

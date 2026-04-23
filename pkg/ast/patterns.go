@@ -27,9 +27,6 @@ type IdentifierPattern struct {
 
 func (p *IdentifierPattern) patternNode()    {}
 func (p *IdentifierPattern) GetName() string { return p.Name }
-func (p *IdentifierPattern) Print(indent string) {
-	fmt.Printf("%sIdentifierPattern(%s)", indent, p.GetName())
-}
 
 // LiteralPattern represents a literal pattern (matches a value)
 type LiteralPattern struct {
@@ -39,9 +36,6 @@ type LiteralPattern struct {
 
 func (p *LiteralPattern) patternNode()    {}
 func (p *LiteralPattern) GetName() string { return fmt.Sprintf("%v", p.Value) }
-func (p *LiteralPattern) Print(indent string) {
-	fmt.Printf("%sLiteralPattern(%s)", indent, p.GetName())
-}
 
 type TuplePattern struct {
 	PatternBase
@@ -50,14 +44,6 @@ type TuplePattern struct {
 
 func (p *TuplePattern) patternNode()    {}
 func (p *TuplePattern) GetName() string { return fmt.Sprintf("(%v)", p.Elements) }
-func (p *TuplePattern) Print(indent string) {
-	fmt.Printf("%sTuplePattern {\n", indent)
-	for _, element := range p.Elements {
-		element.Print(indent + "\t")
-		fmt.Printf(",\n")
-	}
-	fmt.Printf("%s}", indent)
-}
 
 type ArrayPattern struct {
 	PatternBase
@@ -66,14 +52,6 @@ type ArrayPattern struct {
 
 func (p *ArrayPattern) patternNode()    {}
 func (p *ArrayPattern) GetName() string { return fmt.Sprintf("[%v]", p.Elements) }
-func (p *ArrayPattern) Print(indent string) {
-	fmt.Printf("%sArrayPattern {\n", indent)
-	for _, element := range p.Elements {
-		element.Print(indent + "\t")
-		fmt.Printf(",\n")
-	}
-	fmt.Printf("%s}", indent)
-}
 
 type StructPattern struct {
 	PatternBase
@@ -82,14 +60,6 @@ type StructPattern struct {
 
 func (p *StructPattern) patternNode()    {}
 func (p *StructPattern) GetName() string { return fmt.Sprintf("{%v}", p.Fields) }
-func (p *StructPattern) Print(indent string) {
-	fmt.Printf("%sStructPattern {\n", indent)
-	for _, field := range p.Fields {
-		field.Print(indent + "\t")
-		fmt.Printf(",\n")
-	}
-	fmt.Printf("%s}", indent)
-}
 
 type StructPatternField struct {
 	PatternBase
@@ -99,18 +69,6 @@ type StructPatternField struct {
 
 func (p *StructPatternField) patternNode()    {}
 func (p *StructPatternField) GetName() string { return p.Name }
-func (p *StructPatternField) Print(indent string) {
-	fmt.Printf("%sStructPatternField {\n", indent)
-	fmt.Printf("%s\tname: %s\n", indent, p.Name)
-	if p.Pattern != nil {
-		fmt.Printf("%s\tpattern: {\n", indent)
-		p.Pattern.Print(indent + "\t\t")
-		fmt.Printf("\n%s\t}\n", indent)
-	} else {
-		fmt.Printf("%s\tpattern: nil\n", indent)
-	}
-	fmt.Printf("%s}", indent)
-}
 
 type DataPattern struct {
 	PatternBase
@@ -120,16 +78,6 @@ type DataPattern struct {
 
 func (p *DataPattern) patternNode()    {}
 func (p *DataPattern) GetName() string { return p.Name }
-func (p *DataPattern) Print(indent string) {
-	fmt.Printf("%sDataPattern {\n", indent)
-	fmt.Printf("%s\tname: %s\n", indent, p.Name)
-	if p.Pattern != nil {
-		fmt.Printf("%s\tpattern: {\n", indent)
-		p.Pattern.Print(indent + "\t\t")
-		fmt.Printf("\n%s\t}\n", indent)
-	}
-	fmt.Printf("%s}", indent)
-}
 
 type RestPattern struct {
 	PatternBase
@@ -138,9 +86,6 @@ type RestPattern struct {
 
 func (p *RestPattern) patternNode()    {}
 func (p *RestPattern) GetName() string { return fmt.Sprintf("...%s", p.Identifier) }
-func (p *RestPattern) Print(indent string) {
-	fmt.Printf("%sRestPattern(%s)", indent, p.Identifier)
-}
 
 type RangePattern struct {
 	PatternBase
@@ -160,21 +105,6 @@ func (p *RangePattern) GetName() string {
 	}
 	return fmt.Sprintf("%s..%s%s", start, end, p.EndOperator)
 }
-func (p *RangePattern) Print(indent string) {
-	fmt.Printf("%sRangePattern {\n", indent)
-	if p.Start != nil {
-		fmt.Printf("%s\tstart: %s\n", indent, p.Start.GetName())
-	} else {
-		fmt.Printf("%s\tstart: nil\n", indent)
-	}
-	if p.End != nil {
-		fmt.Printf("%s\tend: %s\n", indent, p.End.GetName())
-	} else {
-		fmt.Printf("%s\tend: nil\n", indent)
-	}
-	fmt.Printf("%s\tend_operator: %s\n", indent, p.EndOperator)
-	fmt.Printf("%s}", indent)
-}
 
 type WildcardPattern struct {
 	PatternBase
@@ -182,6 +112,3 @@ type WildcardPattern struct {
 
 func (p *WildcardPattern) patternNode()    {}
 func (p *WildcardPattern) GetName() string { return "_" }
-func (p *WildcardPattern) Print(indent string) {
-	fmt.Printf("%sWildcardPattern", indent)
-}

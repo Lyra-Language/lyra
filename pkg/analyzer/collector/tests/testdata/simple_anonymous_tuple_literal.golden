@@ -1,19 +1,40 @@
 Program(1 statements) {
-	VarDeclStmt(point) {
-		Keyword: let
-		Type: {
-			TupleType(?) {
-				Elements: {
-					int
-					int
+	Statements: {
+		{
+			VarDeclStmt(point) {
+				Keyword: let
+				Name: point
+				Type: {
+					TupleType(?) {
+						Elements: {
+							{
+								PrimitiveType(int) {
+									Name: int
+								}
+								PrimitiveType(int) {
+									Name: int
+								}
+							}
+						}
+						Name: ?
+					}
 				}
-			}
-		}
-		Value: {
-			TupleLiteralExpr(Name: ?) {
-				Elements: {
-					IntegerLiteralExpr(1, Base: 10)
-					IntegerLiteralExpr(2, Base: 10)
+				Value: {
+					TupleLiteralExpr(?) {
+						Elements: {
+							{
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
+								}
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 2
+								}
+							}
+						}
+						Name: ?
+					}
 				}
 			}
 		}

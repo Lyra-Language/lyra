@@ -1,47 +1,107 @@
 Program(1 statements) {
-	TraitDeclStmt(Eq) {
-		Methods: {
-			TraitMethod {
-				Name: ==
-				Signature: {
-					FunctionType {
-						ParameterTypes: {
-							ParameterType {
-								Type: {
-									Self
+	Statements: {
+		{
+			TraitDeclStmt(Eq) {
+				Bounds: {
+					{
+					}
+				}
+				GenericParameterConstraints: {
+					{
+					}
+				}
+				GenericParams: {
+					{
+					}
+				}
+				Methods: {
+					{
+						TraitMethod {
+							Name: {
+								MethodName(==) {
+									Kind: 3
+									Value: ==
 								}
 							}
-							ParameterType {
-								Type: {
-									Self
+							Signature: {
+								FunctionType((Self, Self) -> bool) {
+									ParameterTypes: {
+										{
+											ParameterType(Self) {
+												Type: {
+													SelfType(Self) {
+														GenericParams: {
+															{
+															}
+														}
+													}
+												}
+											}
+											ParameterType(Self) {
+												Type: {
+													SelfType(Self) {
+														GenericParams: {
+															{
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+									ReturnType: {
+										PrimitiveType(bool) {
+											Name: bool
+										}
+									}
 								}
 							}
 						}
-						ReturnType: bool
-					}
-				}
-			}
-			TraitMethod {
-				Name: !=
-				Signature: {
-					FunctionType {
-						ParameterTypes: {
-							ParameterType {
-								Type: {
-									Self
+						TraitMethod {
+							Name: {
+								MethodName(!=) {
+									Kind: 3
+									Value: !=
 								}
 							}
-							ParameterType {
-								Type: {
-									Self
+							Signature: {
+								FunctionType((Self, Self) -> bool) {
+									ParameterTypes: {
+										{
+											ParameterType(Self) {
+												Type: {
+													SelfType(Self) {
+														GenericParams: {
+															{
+															}
+														}
+													}
+												}
+											}
+											ParameterType(Self) {
+												Type: {
+													SelfType(Self) {
+														GenericParams: {
+															{
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+									ReturnType: {
+										PrimitiveType(bool) {
+											Name: bool
+										}
+									}
 								}
 							}
 						}
-						ReturnType: bool
 					}
 				}
+				Name: Eq
 			}
 		}
-		IsPublic: false
 	}
 }

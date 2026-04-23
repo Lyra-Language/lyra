@@ -1,11 +1,20 @@
 Program(1 statements) {
-	VarDeclStmt(pi) {
-		Keyword: let
-		Type: {
-			float
-		}
-		Value: {
-			FloatLiteralExpr(3.14159)
+	Statements: {
+		{
+			VarDeclStmt(pi) {
+				Keyword: let
+				Name: pi
+				Type: {
+					PrimitiveType(float) {
+						Name: float
+					}
+				}
+				Value: {
+					FloatLiteralExpr {
+						Value: 3.14159
+					}
+				}
+			}
 		}
 	}
 }

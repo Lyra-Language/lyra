@@ -1,7 +1,6 @@
 package ast
 
 import (
-	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -15,14 +14,6 @@ func (a *ArrayLiteralExpr) exprNode() {}
 
 func (a *ArrayLiteralExpr) GetType() types.Type {
 	return a.ExprBase.Type // Returns DynamicArrayType or StaticArrayType
-}
-
-func (a *ArrayLiteralExpr) Print(indent string) {
-	fmt.Printf("%sArrayLiteralExpr(%s) {\n", indent, a.GetName())
-	for _, element := range a.Elements {
-		element.Print(indent + "\t")
-	}
-	fmt.Printf("%s}\n", indent)
 }
 
 func (a *ArrayLiteralExpr) GetName() string {

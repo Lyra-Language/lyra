@@ -1,37 +1,64 @@
 Program(1 statements) {
-	VarDeclStmt(divide) {
-		Keyword: let
-		Value: {
-			LambdaExpr {
-				FunctionClause: {
-					FunctionClause {
-						Parameters: {
-							Parameter(a)
-							Parameter(b)
-						}
-						Guard: {
-							GuardExpr(boolean_binary_op_expr) {
-								Condition: {
-									BooleanBinaryOpExpr {
+	Statements: {
+		{
+			VarDeclStmt(divide) {
+				Keyword: let
+				Name: divide
+				Value: {
+					LambdaExpr {
+						FunctionClause: {
+							FunctionClause {
+								Body: {
+									MathBinaryOpExpr {
 										Left: {
-											IdentifierExpr(b, IsConst: false)
+											IdentifierExpr(a) {
+												Name: a
+											}
 										}
-										Operator: !=
+										Operator: /
 										Right: {
-											IntegerLiteralExpr(0, Base: 10)
+											IdentifierExpr(b) {
+												Name: b
+											}
 										}
 									}
 								}
-							}
-						}
-						Body: {
-							MathBinaryOpExpr(math_binary_op_expr) {
-								Left: {
-									IdentifierExpr(a, IsConst: false)
+								Guard: {
+									GuardExpr {
+										Condition: {
+											BooleanBinaryOpExpr {
+												Left: {
+													IdentifierExpr(b) {
+														Name: b
+													}
+												}
+												Operator: !=
+												Right: {
+													IntegerLiteralExpr {
+														Base: 10
+													}
+												}
+											}
+										}
+									}
 								}
-								Operator: /
-								Right: {
-									IdentifierExpr(b, IsConst: false)
+								Parameters: {
+									{
+										Parameter {
+											Pattern: {
+												IdentifierPattern(a) {
+													Name: a
+												}
+											}
+										}
+										Parameter {
+											Pattern: {
+												IdentifierPattern(b) {
+													Name: b
+												}
+											}
+										}
+									}
 								}
 							}
 						}

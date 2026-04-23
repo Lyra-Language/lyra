@@ -1,40 +1,82 @@
 Program(1 statements) {
-	VarDeclStmt(doubled) {
-		Keyword: let
-		Value: {
-			FunctionCallExpr {
-				Function: {
-					IdentifierExpr(map, IsConst: false)
-				}
-				GenericArguments: {
-				int
-				int
-				}
-				Arguments: {
-					ArgumentList(array_literal_expr, lambda) {
-						ArrayLiteralExpr(array_literal_expr) {
-							IntegerLiteralExpr(1, Base: 10)
-							IntegerLiteralExpr(2, Base: 10)
-							IntegerLiteralExpr(3, Base: 10)
-						}
-						LambdaExpr {
-							FunctionClause: {
-								FunctionClause {
-									Parameters: {
-										Parameter(x)
-									}
-									Guard: nil
-									Body: {
-										MathBinaryOpExpr(math_binary_op_expr) {
-											Left: {
-												IntegerLiteralExpr(2, Base: 10)
+	Statements: {
+		{
+			VarDeclStmt(doubled) {
+				Keyword: let
+				Name: doubled
+				Value: {
+					FunctionCallExpr {
+						Arguments: {
+							ArgumentList {
+								Arguments: {
+									{
+										ArrayLiteralExpr {
+											Elements: {
+												{
+													IntegerLiteralExpr {
+														Base: 10
+														Value: 1
+													}
+													IntegerLiteralExpr {
+														Base: 10
+														Value: 2
+													}
+													IntegerLiteralExpr {
+														Base: 10
+														Value: 3
+													}
+												}
 											}
-											Operator: *
-											Right: {
-												IdentifierExpr(x, IsConst: false)
+										}
+										LambdaExpr {
+											FunctionClause: {
+												FunctionClause {
+													Body: {
+														MathBinaryOpExpr {
+															Left: {
+																IntegerLiteralExpr {
+																	Base: 10
+																	Value: 2
+																}
+															}
+															Operator: *
+															Right: {
+																IdentifierExpr(x) {
+																	Name: x
+																}
+															}
+														}
+													}
+													Parameters: {
+														{
+															Parameter {
+																Pattern: {
+																	IdentifierPattern(x) {
+																		Name: x
+																	}
+																}
+															}
+														}
+													}
+												}
 											}
 										}
 									}
+								}
+							}
+						}
+						Function: {
+							IdentifierExpr(map) {
+								Name: map
+							}
+						}
+						GenericArguments: {
+							{
+								PrimitiveType(int) {
+									Name: int
+								}
+								PrimitiveType(int) {
+									Name: int
 								}
 							}
 						}

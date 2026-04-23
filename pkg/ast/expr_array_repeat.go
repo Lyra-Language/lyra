@@ -18,15 +18,6 @@ func (a *ArrayRepeatExpr) GetName() string {
 	return fmt.Sprintf("ArrayRepeatExpr(Value: %s, Count: %s)", a.Value.GetName(), a.Count.GetName())
 }
 
-func (a *ArrayRepeatExpr) Print(indent string) {
-	fmt.Printf("%sArrayRepeatExpr {\n", indent)
-	fmt.Printf("%s\tValue: {\n", indent)
-	a.Value.Print(indent + "\t\t")
-	a.Count.Print(indent + "\t\t")
-	fmt.Printf("%s\t}\n", indent)
-	fmt.Printf("%s}\n", indent)
-}
-
 func (a *ArrayRepeatExpr) GetType() types.Type {
 	var size int
 	intLiteral, ok := a.Count.(*IntegerLiteralExpr)

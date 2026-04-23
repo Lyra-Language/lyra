@@ -1,7 +1,6 @@
 package ast
 
 import (
-	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -28,21 +27,4 @@ func (t *TupleLiteralExpr) GetType() types.Type {
 		elements[i] = element.GetType()
 	}
 	return types.TupleType{Name: t.Name, Elements: elements}
-}
-
-func (t *TupleLiteralExpr) Print(indent string) {
-	fmt.Printf("%sTupleLiteralExpr(Name: %s) {\n", indent, t.Name)
-	if t.GenericArguments != nil {
-		fmt.Printf("%s\tGenericArguments: {\n", indent)
-		for _, genericArgument := range t.GenericArguments {
-			genericArgument.Print(indent + "\t\t")
-		}
-		fmt.Printf("%s\t}\n", indent)
-	}
-	fmt.Printf("%s\tElements: {\n", indent)
-	for _, element := range t.Elements {
-		element.Print(indent + "\t\t")
-	}
-	fmt.Printf("%s\t}\n", indent)
-	fmt.Printf("%s}\n", indent)
 }

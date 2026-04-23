@@ -1,8 +1,15 @@
 Program(1 statements) {
-	VarDeclStmt(pi) {
-		Keyword: let
-		Value: {
-			FloatLiteralExpr(3.14159)
+	Statements: {
+		{
+			VarDeclStmt(pi) {
+				Keyword: let
+				Name: pi
+				Value: {
+					FloatLiteralExpr {
+						Value: 3.14159
+					}
+				}
+			}
 		}
 	}
 }

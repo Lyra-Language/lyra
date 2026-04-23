@@ -1,46 +1,82 @@
 Program(2 statements) {
-	ElseDestructuringStatement {
-		DestructuringStatement {
-			Keyword: let
-			StructPattern {
-				StructPatternField {
-					name: foo
-					pattern: nil
-				},
-				StructPatternField {
-					name: bar
-					pattern: nil
-				},
-			}
-			Value: {
-				IdentifierExpr(some_struct, IsConst: false)
-			}
-		}
-		Else: {
-			BlockExpr {
-				ExpressionStmt(function_call_expr) {
-					FunctionCallExpr {
-						Function: {
-							IdentifierExpr(println, IsConst: false)
+	Statements: {
+		{
+			ElseDestructuringStmt {
+				DestructuringStatement: {
+					DestructuringDeclStmt {
+						Keyword: let
+						Pattern: {
+							StructPattern {
+								Fields: {
+									{
+										StructPatternField(foo) {
+											Name: foo
+										}
+										StructPatternField(bar) {
+											Name: bar
+										}
+									}
+								}
+							}
 						}
-						Arguments: {
-							ArgumentList(StringLiteralExpr(No struct found)) {
-								StringLiteralExpr(No struct found)
+						Value: {
+							IdentifierExpr(some_struct) {
+								Name: some_struct
+							}
+						}
+					}
+				}
+				Else: {
+					BlockExpr {
+						Statements: {
+							{
+								ExpressionStmt {
+									Expression: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														{
+															StringLiteralExpr {
+																Value: No struct found
+															}
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(println) {
+													Name: println
+												}
+											}
+										}
+									}
+								}
 							}
 						}
 					}
 				}
 			}
-		}
-	}
-	ExpressionStmt(function_call_expr) {
-		FunctionCallExpr {
-			Function: {
-				IdentifierExpr(println, IsConst: false)
-			}
-			Arguments: {
-				ArgumentList(StringLiteralExpr(We got the struct: #{foo}, #{bar})) {
-					StringLiteralExpr(We got the struct: #{foo}, #{bar})
+			ExpressionStmt {
+				Expression: {
+					FunctionCallExpr {
+						Arguments: {
+							ArgumentList {
+								Arguments: {
+									{
+										StringLiteralExpr {
+											Value: We got the struct: #{foo}, #{bar}
+										}
+									}
+								}
+							}
+						}
+						Function: {
+							IdentifierExpr(println) {
+								Name: println
+							}
+						}
+					}
 				}
 			}
 		}

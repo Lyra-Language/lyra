@@ -1,9 +1,19 @@
 Program(1 statements) {
-	ImportStmt {
-		Path: {
-			ModuleName(myapp)
-			ModuleName(utils)
+	Statements: {
+		{
+			ImportStmt {
+				Alias: utils
+				Path: {
+					{
+						ModuleName(myapp) {
+							Name: myapp
+						}
+						ModuleName(utils) {
+							Name: utils
+						}
+					}
+				}
+			}
 		}
-		Alias: utils
 	}
 }

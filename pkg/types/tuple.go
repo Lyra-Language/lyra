@@ -31,13 +31,3 @@ func (t TupleType) GetName() string {
 func (t TupleType) String() string {
 	return t.GetName()
 }
-
-func (t TupleType) Print(indent string) {
-	fmt.Printf("%sTupleType(%s) {\n", indent, t.Name)
-	fmt.Printf("%s\tElements: {\n", indent)
-	for _, element := range t.Elements {
-		element.Print(indent + "\t\t")
-	}
-	fmt.Printf("%s\t}\n", indent)
-	fmt.Printf("%s}\n", indent)
-}

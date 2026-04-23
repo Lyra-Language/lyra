@@ -1,22 +1,55 @@
 Program(1 statements) {
-	TraitDeclStmt(Show) {
-		Methods: {
-			TraitMethod {
-				Name: show
-				Signature: {
-					FunctionType {
-						ParameterTypes: {
-							ParameterType {
-								Type: {
-									Self
+	Statements: {
+		{
+			TraitDeclStmt(Show) {
+				Bounds: {
+					{
+					}
+				}
+				GenericParameterConstraints: {
+					{
+					}
+				}
+				GenericParams: {
+					{
+					}
+				}
+				Methods: {
+					{
+						TraitMethod {
+							Name: {
+								MethodName(show) {
+									Value: show
+								}
+							}
+							Signature: {
+								FunctionType((Self) -> string) {
+									ParameterTypes: {
+										{
+											ParameterType(Self) {
+												Type: {
+													SelfType(Self) {
+														GenericParams: {
+															{
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+									ReturnType: {
+										PrimitiveType(string) {
+											Name: string
+										}
+									}
 								}
 							}
 						}
-						ReturnType: string
 					}
 				}
+				Name: Show
 			}
 		}
-		IsPublic: false
 	}
 }

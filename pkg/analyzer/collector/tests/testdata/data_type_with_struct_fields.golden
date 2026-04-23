@@ -1,19 +1,72 @@
 Program(1 statements) {
-	TypeDeclStmt(Tree) {
-		GenericParams: [t]
-		Type: {
-			DataType(Tree) {
-				DataTypeConstructor(Nil)
-				DataTypeConstructor(Leaf) {
-					Params: (
-						GenericType(t)
-					)
+	Statements: {
+		{
+			TypeDeclStmt(Tree) {
+				GenericParams: {
+					{
+						t
+					}
 				}
-				DataTypeConstructor(Node) {
-					Fields: {
-						left: Tree
-						value: t
-						right: Tree
+				Name: Tree
+				Type: {
+					DataType(Tree) {
+						Constructors: {
+							{
+								DataTypeConstructor(Nil) {
+									Name: Nil
+									Params: {
+										{
+										}
+									}
+								}
+								DataTypeConstructor(Leaf) {
+									Name: Leaf
+									Params: {
+										{
+											GenericType(t) {
+												Name: t
+											}
+										}
+									}
+								}
+								DataTypeConstructor(Node) {
+									Fields: {
+										{
+											StructField(left) {
+												Name: left
+												Type: {
+													UnresolvedType(Tree) {
+														Name: Tree
+													}
+												}
+											}
+											StructField(value) {
+												Name: value
+												Type: {
+													GenericType(t) {
+														Name: t
+													}
+												}
+											}
+											StructField(right) {
+												Name: right
+												Type: {
+													UnresolvedType(Tree) {
+														Name: Tree
+													}
+												}
+											}
+										}
+									}
+									Name: Node
+									Params: {
+										{
+										}
+									}
+								}
+							}
+						}
+						Name: Tree
 					}
 				}
 			}

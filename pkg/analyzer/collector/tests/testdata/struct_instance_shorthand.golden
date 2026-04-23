@@ -1,10 +1,25 @@
 Program(1 statements) {
-	VarDeclStmt(point) {
-		Keyword: let
-		Value: {
-			StructInstanceExpr(Point) {
-				Fields: {
-					StructFieldShorthand(IntegerLiteralExpr(1, Base: 10))
+	Statements: {
+		{
+			VarDeclStmt(point) {
+				Keyword: let
+				Name: point
+				Value: {
+					StructInstance(Point) {
+						Fields: {
+							{
+								StructField {
+									Value: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 1
+										}
+									}
+								}
+							}
+						}
+						Name: Point
+					}
 				}
 			}
 		}

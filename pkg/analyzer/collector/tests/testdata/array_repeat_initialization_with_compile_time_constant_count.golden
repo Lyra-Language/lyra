@@ -1,19 +1,33 @@
 Program(1 statements) {
-	VarDeclStmt(arr) {
-		Keyword: let
-		Type: {
-			StaticArrayType {
-				Size: -1
-				ElementType: {
-					int
+	Statements: {
+		{
+			VarDeclStmt(arr) {
+				Keyword: let
+				Name: arr
+				Type: {
+					StaticArrayType(StaticArray<int, -1>) {
+						ElementType: {
+							PrimitiveType(int) {
+								Name: int
+							}
+						}
+						Size: -1
+					}
 				}
-			}
-		}
-		Value: {
-			ArrayRepeatExpr {
 				Value: {
-					IntegerLiteralExpr(0, Base: 10)
-					IdentifierExpr(SIZE, IsConst: true)
+					ArrayRepeatExpr {
+						Count: {
+							IdentifierExpr(SIZE) {
+								IsConst: true
+								Name: SIZE
+							}
+						}
+						Value: {
+							IntegerLiteralExpr {
+								Base: 10
+							}
+						}
+					}
 				}
 			}
 		}

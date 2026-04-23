@@ -1,38 +1,78 @@
 Program(1 statements) {
-	TraitDeclStmt(PairOps) {
-		GenericParams: [a b]
-		GenericParameterConstraints: {
-			TraitGenericParameterConstraint {
-				Name: a
-				Constraints: [Show Eq]
-			}
-			TraitGenericParameterConstraint {
-				Name: b
-				Constraints: [Ord]
-			}
-		}
-		Methods: {
-			TraitMethod {
-				Name: first
-				Signature: {
-					FunctionType {
-						ParameterTypes: {
-							ParameterType {
-								Type: {
-									GenericType(a)
+	Statements: {
+		{
+			TraitDeclStmt(PairOps) {
+				Bounds: {
+					{
+					}
+				}
+				GenericParameterConstraints: {
+					{
+						TraitGenericParameterConstraint(a) {
+							Constraints: {
+								{
+									Show
+									Eq
 								}
 							}
-							ParameterType {
-								Type: {
-									GenericType(b)
+							Name: a
+						}
+						TraitGenericParameterConstraint(b) {
+							Constraints: {
+								{
+									Ord
+								}
+							}
+							Name: b
+						}
+					}
+				}
+				GenericParams: {
+					{
+						a
+						b
+					}
+				}
+				Methods: {
+					{
+						TraitMethod {
+							Name: {
+								MethodName(first) {
+									Value: first
+								}
+							}
+							Signature: {
+								FunctionType((a, b) -> a) {
+									ParameterTypes: {
+										{
+											ParameterType(a) {
+												Type: {
+													GenericType(a) {
+														Name: a
+													}
+												}
+											}
+											ParameterType(b) {
+												Type: {
+													GenericType(b) {
+														Name: b
+													}
+												}
+											}
+										}
+									}
+									ReturnType: {
+										GenericType(a) {
+											Name: a
+										}
+									}
 								}
 							}
 						}
-						ReturnType: a
 					}
 				}
+				Name: PairOps
 			}
 		}
-		IsPublic: false
 	}
 }

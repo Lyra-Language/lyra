@@ -1,15 +1,39 @@
 Program(1 statements) {
-	TypeDeclStmt(Status) {
-		Type: {
-			ConstrainedType {
+	Statements: {
+		{
+			TypeDeclStmt(Status) {
 				Name: Status
-				Type: i32
-				Constraints: {
-				LiteralUnionConstraint {
-					Value: IntegerLiteralExpr(200, Base: 10)
-					Value: IntegerLiteralExpr(404, Base: 10)
-					Value: IntegerLiteralExpr(500, Base: 10)
-				}
+				Type: {
+					ConstrainedType(Status) {
+						Constraints: {
+							{
+								LiteralUnionConstraint {
+									Values: {
+										{
+											IntegerLiteralExpr {
+												Base: 10
+												Value: 200
+											}
+											IntegerLiteralExpr {
+												Base: 10
+												Value: 404
+											}
+											IntegerLiteralExpr {
+												Base: 10
+												Value: 500
+											}
+										}
+									}
+								}
+							}
+						}
+						Name: Status
+						Type: {
+							PrimitiveType(i32) {
+								Name: i32
+							}
+						}
+					}
 				}
 			}
 		}

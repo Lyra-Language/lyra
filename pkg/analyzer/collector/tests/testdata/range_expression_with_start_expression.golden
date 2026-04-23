@@ -1,26 +1,42 @@
 Program(1 statements) {
-	ExpressionStmt(range_expression) {
-		RangeExpr {
-			Start: {
-				MathBinaryOpExpr(math_binary_op_expr) {
-					Left: {
-						IdentifierExpr(start, IsConst: false)
-					}
-					Operator: *
-					Right: {
-						IntegerLiteralExpr(2, Base: 10)
-					}
-				}
-			}
-			EndOperator: =
-			End: {
-				MathBinaryOpExpr(math_binary_op_expr) {
-					Left: {
-						IdentifierExpr(end, IsConst: false)
-					}
-					Operator: -
-					Right: {
-						IntegerLiteralExpr(1, Base: 10)
+	Statements: {
+		{
+			ExpressionStmt {
+				Expression: {
+					RangeExpr {
+						End: {
+							MathBinaryOpExpr {
+								Left: {
+									IdentifierExpr(end) {
+										Name: end
+									}
+								}
+								Operator: -
+								Right: {
+									IntegerLiteralExpr {
+										Base: 10
+										Value: 1
+									}
+								}
+							}
+						}
+						EndOperator: =
+						Start: {
+							MathBinaryOpExpr {
+								Left: {
+									IdentifierExpr(start) {
+										Name: start
+									}
+								}
+								Operator: *
+								Right: {
+									IntegerLiteralExpr {
+										Base: 10
+										Value: 2
+									}
+								}
+							}
+						}
 					}
 				}
 			}

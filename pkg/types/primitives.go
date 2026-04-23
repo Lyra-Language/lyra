@@ -1,7 +1,5 @@
 package types
 
-import "fmt"
-
 type PrimitiveTypeName string
 
 const (
@@ -35,8 +33,4 @@ func (p PrimitiveType) GetName() string {
 
 func (p PrimitiveType) String() string {
 	return p.GetName()
-}
-
-func (p PrimitiveType) Print(indent string) {
-	fmt.Printf("%s%s\n", indent, p.GetName())
 }

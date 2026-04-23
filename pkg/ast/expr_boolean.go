@@ -1,7 +1,5 @@
 package ast
 
-import "fmt"
-
 type BooleanBinaryOpExpr struct {
 	ExprBase
 	Left     Expression
@@ -11,18 +9,6 @@ type BooleanBinaryOpExpr struct {
 
 func (b *BooleanBinaryOpExpr) GetName() string {
 	return "boolean_binary_op_expr"
-}
-
-func (b *BooleanBinaryOpExpr) Print(indent string) {
-	fmt.Printf("%sBooleanBinaryOpExpr {\n", indent)
-	fmt.Printf("%s\tLeft: {\n", indent)
-	b.Left.Print(indent + "\t\t")
-	fmt.Printf("%s\t}\n", indent)
-	fmt.Printf("%s\tOperator: %s\n", indent, b.Operator)
-	fmt.Printf("%s\tRight: {\n", indent)
-	b.Right.Print(indent + "\t\t")
-	fmt.Printf("%s\t}\n", indent)
-	fmt.Printf("%s}\n", indent)
 }
 
 type BooleanBinaryOp string

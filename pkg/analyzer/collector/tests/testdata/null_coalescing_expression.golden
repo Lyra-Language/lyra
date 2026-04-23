@@ -1,13 +1,22 @@
 Program(1 statements) {
-	VarDeclStmt(result) {
-		Keyword: let
-		Value: {
-			NullCoalescingExpr {
-				Optional: {
-					IdentifierExpr(optional, IsConst: false)
-				}
-				Default: {
-					IdentifierExpr(default, IsConst: false)
+	Statements: {
+		{
+			VarDeclStmt(result) {
+				Keyword: let
+				Name: result
+				Value: {
+					NullCoalescingExpr {
+						Default: {
+							IdentifierExpr(default) {
+								Name: default
+							}
+						}
+						Optional: {
+							IdentifierExpr(optional) {
+								Name: optional
+							}
+						}
+					}
 				}
 			}
 		}

@@ -1,16 +1,29 @@
 Program(1 statements) {
-	VarDeclStmt(file) {
-		Keyword: let
-		Value: {
-			TryExpr {
-				Operand: {
-					FunctionCallExpr {
-						Function: {
-							IdentifierExpr(open_file, IsConst: false)
-						}
-						Arguments: {
-							ArgumentList(StringLiteralExpr(foo.txt)) {
-								StringLiteralExpr(foo.txt)
+	Statements: {
+		{
+			VarDeclStmt(file) {
+				Keyword: let
+				Name: file
+				Value: {
+					TryExpr {
+						Operand: {
+							FunctionCallExpr {
+								Arguments: {
+									ArgumentList {
+										Arguments: {
+											{
+												StringLiteralExpr {
+													Value: foo.txt
+												}
+											}
+										}
+									}
+								}
+								Function: {
+									IdentifierExpr(open_file) {
+										Name: open_file
+									}
+								}
 							}
 						}
 					}

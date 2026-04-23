@@ -1,29 +1,88 @@
 Program(1 statements) {
-	FunctionDefStmt(make_sum_fn) {
-		Signature: (int) -> (int) -> int
-		Clauses: {
-			FunctionClause {
-				Parameters: {
-					Parameter(a)
-				}
-				Guard: nil
-				Body: {
-					LambdaExpr {
-						FunctionClause: {
-							FunctionClause {
-								Parameters: {
-									Parameter(b)
+	Statements: {
+		{
+			FunctionDefStmt(make_sum_fn) {
+				Clauses: {
+					{
+						FunctionClause {
+							Body: {
+								LambdaExpr {
+									FunctionClause: {
+										FunctionClause {
+											Body: {
+												MathBinaryOpExpr {
+													Left: {
+														IdentifierExpr(a) {
+															Name: a
+														}
+													}
+													Operator: +
+													Right: {
+														IdentifierExpr(b) {
+															Name: b
+														}
+													}
+												}
+											}
+											Parameters: {
+												{
+													Parameter {
+														Pattern: {
+															IdentifierPattern(b) {
+																Name: b
+															}
+														}
+													}
+												}
+											}
+										}
+									}
 								}
-								Guard: nil
-								Body: {
-									MathBinaryOpExpr(math_binary_op_expr) {
-										Left: {
-											IdentifierExpr(a, IsConst: false)
+							}
+							Parameters: {
+								{
+									Parameter {
+										Pattern: {
+											IdentifierPattern(a) {
+												Name: a
+											}
 										}
-										Operator: +
-										Right: {
-											IdentifierExpr(b, IsConst: false)
+									}
+								}
+							}
+						}
+					}
+				}
+				Name: make_sum_fn
+				Signature: {
+					FunctionType((int) -> (int) -> int) {
+						ParameterTypes: {
+							{
+								ParameterType(int) {
+									Type: {
+										PrimitiveType(int) {
+											Name: int
 										}
+									}
+								}
+							}
+						}
+						ReturnType: {
+							FunctionType((int) -> int) {
+								ParameterTypes: {
+									{
+										ParameterType(int) {
+											Type: {
+												PrimitiveType(int) {
+													Name: int
+												}
+											}
+										}
+									}
+								}
+								ReturnType: {
+									PrimitiveType(int) {
+										Name: int
 									}
 								}
 							}

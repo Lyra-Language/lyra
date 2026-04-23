@@ -1,40 +1,64 @@
 Program(1 statements) {
-	VarDeclStmt(bar) {
-		Keyword: let
-		Value: {
-			MatchExpr {
+	Statements: {
+		{
+			VarDeclStmt(bar) {
+				Keyword: let
+				Name: bar
 				Value: {
-					IdentifierExpr(foo, IsConst: false)
-				}
-				MatchArms: {
-					MatchArm {
-						DataPattern {
-							name: Some
-							pattern: {
-								LiteralPattern(42)
+					MatchExpr {
+						MatchArms: {
+							{
+								MatchArm {
+									Body: {
+										StringLiteralExpr {
+											Value: The Answer!
+										}
+									}
+									Pattern: {
+										DataPattern(Some) {
+											Name: Some
+											Pattern: {
+												LiteralPattern {
+													Value: 42
+												}
+											}
+										}
+									}
+								}
+								MatchArm {
+									Body: {
+										StringLiteralExpr {
+											Value: Just some number
+										}
+									}
+									Pattern: {
+										DataPattern(Some) {
+											Name: Some
+											Pattern: {
+												WildcardPattern {
+												}
+											}
+										}
+									}
+								}
+								MatchArm {
+									Body: {
+										StringLiteralExpr {
+											Value: huh?
+										}
+									}
+									Pattern: {
+										DataPattern(None) {
+											Name: None
+										}
+									}
+								}
 							}
 						}
-						Body: {
-							StringLiteralExpr(The Answer!)
-						}
-					}
-					MatchArm {
-						DataPattern {
-							name: Some
-							pattern: {
-								WildcardPattern
+						Value: {
+							IdentifierExpr(foo) {
+								Name: foo
 							}
-						}
-						Body: {
-							StringLiteralExpr(Just some number)
-						}
-					}
-					MatchArm {
-						DataPattern {
-							name: None
-						}
-						Body: {
-							StringLiteralExpr(huh?)
 						}
 					}
 				}

@@ -1,18 +1,36 @@
 Program(1 statements) {
-	DestructuringStatement {
-		Keyword: let
-		DataPattern {
-			name: Some
-			pattern: {
-				ArrayPattern {
-					IdentifierPattern(x),
-					IdentifierPattern(y),
-					IdentifierPattern(z),
+	Statements: {
+		{
+			DestructuringDeclStmt {
+				Keyword: let
+				Pattern: {
+					DataPattern(Some) {
+						Name: Some
+						Pattern: {
+							ArrayPattern {
+								Elements: {
+									{
+										IdentifierPattern(x) {
+											Name: x
+										}
+										IdentifierPattern(y) {
+											Name: y
+										}
+										IdentifierPattern(z) {
+											Name: z
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				Value: {
+					IdentifierExpr(some_data) {
+						Name: some_data
+					}
 				}
 			}
-		}
-		Value: {
-			IdentifierExpr(some_data, IsConst: false)
 		}
 	}
 }

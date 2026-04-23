@@ -1,13 +1,31 @@
 Program(1 statements) {
-	DestructuringStatement {
-		Keyword: var
-		ArrayPattern {
-			IdentifierPattern(a),
-			IdentifierPattern(b),
-			IdentifierPattern(c),
-		}
-		Value: {
-			IdentifierExpr(some_array, IsConst: false)
+	Statements: {
+		{
+			DestructuringDeclStmt {
+				Keyword: var
+				Pattern: {
+					ArrayPattern {
+						Elements: {
+							{
+								IdentifierPattern(a) {
+									Name: a
+								}
+								IdentifierPattern(b) {
+									Name: b
+								}
+								IdentifierPattern(c) {
+									Name: c
+								}
+							}
+						}
+					}
+				}
+				Value: {
+					IdentifierExpr(some_array) {
+						Name: some_array
+					}
+				}
+			}
 		}
 	}
 }

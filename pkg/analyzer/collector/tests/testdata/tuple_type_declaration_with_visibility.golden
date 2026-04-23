@@ -1,11 +1,23 @@
 Program(1 statements) {
-	TypeDeclStmt(Point2D) {
-		IsPublic: true
-		Type: {
-			TupleType(Point2D) {
-				Elements: {
-					float
-					float
+	Statements: {
+		{
+			TypeDeclStmt(Point2D) {
+				IsPublic: true
+				Name: Point2D
+				Type: {
+					TupleType(Point2D) {
+						Elements: {
+							{
+								PrimitiveType(float) {
+									Name: float
+								}
+								PrimitiveType(float) {
+									Name: float
+								}
+							}
+						}
+						Name: Point2D
+					}
 				}
 			}
 		}

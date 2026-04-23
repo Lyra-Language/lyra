@@ -1,29 +1,53 @@
 Program(1 statements) {
-	TypeDeclStmt(Angle) {
-		Type: {
-			ConstrainedType {
+	Statements: {
+		{
+			TypeDeclStmt(Angle) {
 				Name: Angle
-				Type: float
-				Constraints: {
-				RangeConstraint {
-					Start: {
-					MathConstraintLiteralExpr { 
-						Value: 0
+				Type: {
+					ConstrainedType(Angle) {
+						Constraints: {
+							{
+								RangeConstraint {
+									Comparator: <
+									End: {
+										MathConstraintLiteralExpr {
+											Type: {
+												PrimitiveType(int) {
+													Name: int
+												}
+											}
+											Value: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 360
+												}
+											}
+										}
+									}
+									Start: {
+										MathConstraintLiteralExpr {
+											Type: {
+												PrimitiveType(int) {
+													Name: int
+												}
+											}
+											Value: {
+												IntegerLiteralExpr {
+													Base: 10
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						Name: Angle
 						Type: {
-						int
+							PrimitiveType(float) {
+								Name: float
+							}
 						}
 					}
-					}
-					Comparator: <
-					End: {
-					MathConstraintLiteralExpr { 
-						Value: 360
-						Type: {
-						int
-						}
-					}
-					}
-				}
 				}
 			}
 		}

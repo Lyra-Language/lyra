@@ -1,11 +1,40 @@
 Program(1 statements) {
-	TypeDeclStmt(ColorName) {
-		IsPublic: true
-		Type: {
-			DataType(ColorName) {
-				DataTypeConstructor(Red)
-				DataTypeConstructor(Green)
-				DataTypeConstructor(Blue)
+	Statements: {
+		{
+			TypeDeclStmt(ColorName) {
+				IsPublic: true
+				Name: ColorName
+				Type: {
+					DataType(ColorName) {
+						Allocation: stack
+						Constructors: {
+							{
+								DataTypeConstructor(Red) {
+									Name: Red
+									Params: {
+										{
+										}
+									}
+								}
+								DataTypeConstructor(Green) {
+									Name: Green
+									Params: {
+										{
+										}
+									}
+								}
+								DataTypeConstructor(Blue) {
+									Name: Blue
+									Params: {
+										{
+										}
+									}
+								}
+							}
+						}
+						Name: ColorName
+					}
+				}
 			}
 		}
 	}

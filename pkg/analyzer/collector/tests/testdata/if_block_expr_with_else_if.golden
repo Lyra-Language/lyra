@@ -1,80 +1,138 @@
 Program(1 statements) {
-	ExpressionStmt(if_expr) {
-		IfExpr {
-		  Condition: {
-		    BooleanBinaryOpExpr {
-		    	Left: {
-		    		IdentifierExpr(x, IsConst: false)
-		    	}
-		    	Operator: ==
-		    	Right: {
-		    		IntegerLiteralExpr(3, Base: 10)
-		    	}
-		    }
-		  }
-		  Then: {
-		    BlockExpr {
-		    	ExpressionStmt(function_call_expr) {
-		    		FunctionCallExpr {
-		    			Function: {
-		    				IdentifierExpr(println, IsConst: false)
-		    			}
-		    			Arguments: {
-		    				ArgumentList(StringLiteralExpr(x is 3)) {
-		    					StringLiteralExpr(x is 3)
-		    				}
-		    			}
-		    		}
-		    	}
-		    }
-		  }
-		  Else: {
-		    IfExpr {
-		      Condition: {
-		        BooleanBinaryOpExpr {
-		        	Left: {
-		        		IdentifierExpr(x, IsConst: false)
-		        	}
-		        	Operator: ==
-		        	Right: {
-		        		IntegerLiteralExpr(4, Base: 10)
-		        	}
-		        }
-		      }
-		      Then: {
-		        BlockExpr {
-		        	ExpressionStmt(function_call_expr) {
-		        		FunctionCallExpr {
-		        			Function: {
-		        				IdentifierExpr(println, IsConst: false)
-		        			}
-		        			Arguments: {
-		        				ArgumentList(StringLiteralExpr(x is 4)) {
-		        					StringLiteralExpr(x is 4)
-		        				}
-		        			}
-		        		}
-		        	}
-		        }
-		      }
-		      Else: {
-		        BlockExpr {
-		        	ExpressionStmt(function_call_expr) {
-		        		FunctionCallExpr {
-		        			Function: {
-		        				IdentifierExpr(println, IsConst: false)
-		        			}
-		        			Arguments: {
-		        				ArgumentList(StringLiteralExpr(x is not 3 or 4)) {
-		        					StringLiteralExpr(x is not 3 or 4)
-		        				}
-		        			}
-		        		}
-		        	}
-		        }
-		      }
-		    }
-		  }
+	Statements: {
+		{
+			ExpressionStmt {
+				Expression: {
+					IfExpr {
+						Condition: {
+							BooleanBinaryOpExpr {
+								Left: {
+									IdentifierExpr(x) {
+										Name: x
+									}
+								}
+								Operator: ==
+								Right: {
+									IntegerLiteralExpr {
+										Base: 10
+										Value: 3
+									}
+								}
+							}
+						}
+						Else: {
+							IfExpr {
+								Condition: {
+									BooleanBinaryOpExpr {
+										Left: {
+											IdentifierExpr(x) {
+												Name: x
+											}
+										}
+										Operator: ==
+										Right: {
+											IntegerLiteralExpr {
+												Base: 10
+												Value: 4
+											}
+										}
+									}
+								}
+								Else: {
+									BlockExpr {
+										Statements: {
+											{
+												ExpressionStmt {
+													Expression: {
+														FunctionCallExpr {
+															Arguments: {
+																ArgumentList {
+																	Arguments: {
+																		{
+																			StringLiteralExpr {
+																				Value: x is not 3 or 4
+																			}
+																		}
+																	}
+																}
+															}
+															Function: {
+																IdentifierExpr(println) {
+																	Name: println
+																}
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+								Then: {
+									BlockExpr {
+										Statements: {
+											{
+												ExpressionStmt {
+													Expression: {
+														FunctionCallExpr {
+															Arguments: {
+																ArgumentList {
+																	Arguments: {
+																		{
+																			StringLiteralExpr {
+																				Value: x is 4
+																			}
+																		}
+																	}
+																}
+															}
+															Function: {
+																IdentifierExpr(println) {
+																	Name: println
+																}
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						Then: {
+							BlockExpr {
+								Statements: {
+									{
+										ExpressionStmt {
+											Expression: {
+												FunctionCallExpr {
+													Arguments: {
+														ArgumentList {
+															Arguments: {
+																{
+																	StringLiteralExpr {
+																		Value: x is 3
+																	}
+																}
+															}
+														}
+													}
+													Function: {
+														IdentifierExpr(println) {
+															Name: println
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 }

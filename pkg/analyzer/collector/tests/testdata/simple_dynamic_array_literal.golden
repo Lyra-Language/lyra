@@ -1,17 +1,39 @@
 Program(1 statements) {
-	VarDeclStmt(arr) {
-		Keyword: let
-		Type: {
-			DynamicArrayType(DynamicArray<int>)
-				ElementType: {
-				int
+	Statements: {
+		{
+			VarDeclStmt(arr) {
+				Keyword: let
+				Name: arr
+				Type: {
+					DynamicArrayType(DynamicArray<int>) {
+						Allocation: stack
+						ElementType: {
+							PrimitiveType(int) {
+								Name: int
+							}
+						}
+					}
 				}
-		}
-		Value: {
-			ArrayLiteralExpr(array_literal_expr) {
-				IntegerLiteralExpr(1, Base: 10)
-				IntegerLiteralExpr(2, Base: 10)
-				IntegerLiteralExpr(3, Base: 10)
+				Value: {
+					ArrayLiteralExpr {
+						Elements: {
+							{
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
+								}
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 2
+								}
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 3
+								}
+							}
+						}
+					}
+				}
 			}
 		}
 	}

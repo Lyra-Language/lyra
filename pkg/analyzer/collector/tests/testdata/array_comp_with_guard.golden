@@ -1,49 +1,70 @@
 Program(1 statements) {
-  VarDeclStmt(evens) {
-    Keyword: let
-    Value: {
-      ArrayCompExpr {
-        Generators: {
-          Generator {
-            Value: {
-              RangeExpr {
-                Start: {
-                  IntegerLiteralExpr(1, Base: 10)
-                }
-                EndOperator: =
-                End: {
-                  IntegerLiteralExpr(5, Base: 10)
-                }
-              }
-            }
-            Identifier: x
-          }
-        }
-        Guards: {
-          Guard: {
-            BooleanBinaryOpExpr {
-              Left: {
-                IdentifierExpr(x, IsConst: false)
-              }
-              Operator: ==
-              Right: {
-                IntegerLiteralExpr(0, Base: 10)
-              }
-            }
-          }
-        }
-        Result: {
-          MathBinaryOpExpr(math_binary_op_expr) {
-            Left: {
-              IdentifierExpr(x, IsConst: false)
-            }
-            Operator: *
-            Right: {
-              IdentifierExpr(x, IsConst: false)
-            }
-          }
-        }
-      }
-    }
-  }
+	Statements: {
+		{
+			VarDeclStmt(evens) {
+				Keyword: let
+				Name: evens
+				Value: {
+					ArrayCompExpr {
+						Generators: {
+							{
+								Generator {
+									Identifier: x
+									Value: {
+										RangeExpr {
+											End: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 5
+												}
+											}
+											EndOperator: =
+											Start: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 1
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						Guards: {
+							{
+								BooleanBinaryOpExpr {
+									Left: {
+										IdentifierExpr(x) {
+											Name: x
+										}
+									}
+									Operator: ==
+									Right: {
+										IntegerLiteralExpr {
+											Base: 10
+										}
+									}
+								}
+							}
+						}
+						Result: {
+							MathBinaryOpExpr {
+								Left: {
+									IdentifierExpr(x) {
+										Name: x
+									}
+								}
+								Operator: *
+								Right: {
+									IdentifierExpr(x) {
+										Name: x
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
 }

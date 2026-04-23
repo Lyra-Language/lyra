@@ -1,7 +1,6 @@
 package ast
 
 import (
-	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -20,34 +19,6 @@ func (t *TraitDeclStmt) statementNode() {}
 
 func (t *TraitDeclStmt) GetName() string { return t.Name }
 
-func (t *TraitDeclStmt) Print(indent string) {
-	fmt.Printf("%sTraitDeclStmt(%s) {\n", indent, t.Name)
-	if len(t.GenericParams) > 0 {
-		fmt.Printf("%s\tGenericParams: %v\n", indent, t.GenericParams)
-	}
-	if len(t.GenericParameterConstraints) > 0 {
-		fmt.Printf("%s\tGenericParameterConstraints: {\n", indent)
-		for _, constraint := range t.GenericParameterConstraints {
-			constraint.Print(indent + "\t\t")
-		}
-		fmt.Printf("%s\t}\n", indent)
-	}
-	if len(t.Bounds) > 0 {
-		fmt.Printf("%s\tBounds: %v\n", indent, t.Bounds)
-	}
-	fmt.Printf("%s\tMethods: {\n", indent)
-	for _, method := range t.Methods {
-		method.Print(indent + "\t\t")
-	}
-	fmt.Printf("%s\t}\n", indent)
-	if t.IsPublic {
-		fmt.Printf("%s\tIsPublic: true\n", indent)
-	} else {
-		fmt.Printf("%s\tIsPublic: false\n", indent)
-	}
-	fmt.Printf("%s}\n", indent)
-}
-
 type TraitGenericParameterConstraint struct {
 	Name string
 	Constraints []string
@@ -57,13 +28,6 @@ func (t *TraitGenericParameterConstraint) GetName() string {
 	return t.Name
 }
 
-func (t *TraitGenericParameterConstraint) Print(indent string) {
-	fmt.Printf("%sTraitGenericParameterConstraint {\n", indent)
-	fmt.Printf("%s\tName: %s\n", indent, t.Name)
-	fmt.Printf("%s\tConstraints: %v\n", indent, t.Constraints)
-	fmt.Printf("%s}\n", indent)
-}
-
 type TraitMethod struct {
 	Name MethodName
 	Signature *types.FunctionType
@@ -71,15 +35,6 @@ type TraitMethod struct {
 
 func (t *TraitMethod) GetName() string {
 	return t.Name.GetName()
-}
-
-func (t *TraitMethod) Print(indent string) {
-	fmt.Printf("%sTraitMethod {\n", indent)
-	fmt.Printf("%s\tName: %s\n", indent, t.Name.GetName())
-	fmt.Printf("%s\tSignature: {\n", indent)
-	t.Signature.Print(indent + "\t\t")
-	fmt.Printf("%s\t}\n", indent)
-	fmt.Printf("%s}\n", indent)
 }
 
 // MethodNameKind classifies a trait method name. Prefix vs binary matters for
@@ -116,10 +71,6 @@ func NewMethodNameBinary(op BinaryOperator) MethodName {
 
 func (m MethodName) GetName() string {
 	return m.Value
-}
-
-func (m MethodName) Print(indent string) {
-	fmt.Printf("%sMethodName(%s)\n", indent, m.GetName())
 }
 
 type PrefixOperator string

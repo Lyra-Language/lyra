@@ -1,21 +1,76 @@
 Program(1 statements) {
-	FunctionDefStmt(add) {
-		Signature: (int, int) -> int
-		Clauses: {
-			FunctionClause {
-				Parameters: {
-					Parameter(a)
-					Parameter(b, DefaultValue: IntegerLiteralExpr(0, Base: 10))
-				}
-				Guard: nil
-				Body: {
-					MathBinaryOpExpr(math_binary_op_expr) {
-						Left: {
-							IdentifierExpr(a, IsConst: false)
+	Statements: {
+		{
+			FunctionDefStmt(add) {
+				Clauses: {
+					{
+						FunctionClause {
+							Body: {
+								MathBinaryOpExpr {
+									Left: {
+										IdentifierExpr(a) {
+											Name: a
+										}
+									}
+									Operator: +
+									Right: {
+										IdentifierExpr(b) {
+											Name: b
+										}
+									}
+								}
+							}
+							Parameters: {
+								{
+									Parameter {
+										Pattern: {
+											IdentifierPattern(a) {
+												Name: a
+											}
+										}
+									}
+									Parameter {
+										DefaultValue: {
+											IntegerLiteralExpr {
+												Base: 10
+											}
+										}
+										Pattern: {
+											IdentifierPattern(b) {
+												Name: b
+											}
+										}
+									}
+								}
+							}
 						}
-						Operator: +
-						Right: {
-							IdentifierExpr(b, IsConst: false)
+					}
+				}
+				Name: add
+				Signature: {
+					FunctionType((int, int) -> int) {
+						ParameterTypes: {
+							{
+								ParameterType(int) {
+									Type: {
+										PrimitiveType(int) {
+											Name: int
+										}
+									}
+								}
+								ParameterType(int) {
+									Type: {
+										PrimitiveType(int) {
+											Name: int
+										}
+									}
+								}
+							}
+						}
+						ReturnType: {
+							PrimitiveType(int) {
+								Name: int
+							}
 						}
 					}
 				}

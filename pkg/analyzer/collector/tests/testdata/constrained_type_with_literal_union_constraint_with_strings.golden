@@ -1,15 +1,36 @@
 Program(1 statements) {
-	TypeDeclStmt(Color) {
-		Type: {
-			ConstrainedType {
+	Statements: {
+		{
+			TypeDeclStmt(Color) {
 				Name: Color
-				Type: string
-				Constraints: {
-				LiteralUnionConstraint {
-					Value: StringLiteralExpr(red)
-					Value: StringLiteralExpr(green)
-					Value: StringLiteralExpr(blue)
-				}
+				Type: {
+					ConstrainedType(Color) {
+						Constraints: {
+							{
+								LiteralUnionConstraint {
+									Values: {
+										{
+											StringLiteralExpr {
+												Value: red
+											}
+											StringLiteralExpr {
+												Value: green
+											}
+											StringLiteralExpr {
+												Value: blue
+											}
+										}
+									}
+								}
+							}
+						}
+						Name: Color
+						Type: {
+							PrimitiveType(string) {
+								Name: string
+							}
+						}
+					}
 				}
 			}
 		}

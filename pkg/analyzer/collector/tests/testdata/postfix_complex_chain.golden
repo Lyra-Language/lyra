@@ -1,40 +1,57 @@
 Program(1 statements) {
-	VarDeclStmt(foo) {
-		Keyword: let
-		Value: {
-			MemberExpr {
-				Object: {
-					IndexExpr {
+	Statements: {
+		{
+			VarDeclStmt(foo) {
+				Keyword: let
+				Name: foo
+				Value: {
+					MemberExpr {
 						Object: {
-							FunctionCallExpr {
-								Function: {
-									MemberExpr {
-										Object: {
-											IdentifierExpr(struct, IsConst: false)
-										}
-										Property: {
-											IdentifierExpr(function, IsConst: false)
-										}
-										Optional: false
+							IndexExpr {
+								Index: {
+									IntegerLiteralExpr {
+										Base: 10
 									}
 								}
-								Arguments: {
-									ArgumentList(StringLiteralExpr(arg)) {
-										StringLiteralExpr(arg)
+								Object: {
+									FunctionCallExpr {
+										Arguments: {
+											ArgumentList {
+												Arguments: {
+													{
+														StringLiteralExpr {
+															Value: arg
+														}
+													}
+												}
+											}
+										}
+										Function: {
+											MemberExpr {
+												Object: {
+													IdentifierExpr(struct) {
+														Name: struct
+													}
+												}
+												Property: {
+													IdentifierExpr(function) {
+														Name: function
+													}
+												}
+											}
+										}
 									}
 								}
+								Optional: true
 							}
 						}
-						Index: {
-							IntegerLiteralExpr(0, Base: 10)
+						Property: {
+							IdentifierExpr(property) {
+								Name: property
+							}
 						}
-						Optional: true
 					}
 				}
-				Property: {
-					IdentifierExpr(property, IsConst: false)
-				}
-				Optional: false
 			}
 		}
 	}

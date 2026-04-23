@@ -1,21 +1,73 @@
 Program(1 statements) {
-	FunctionDefStmt(add) {
-		Signature: (mut Point, ref Vec3) -> Point
-		Clauses: {
-			FunctionClause {
-				Parameters: {
-					Parameter(point)
-					Parameter(vec)
-				}
-				Guard: nil
-				Body: {
-					MathBinaryOpExpr(math_binary_op_expr) {
-						Left: {
-							IdentifierExpr(point, IsConst: false)
+	Statements: {
+		{
+			FunctionDefStmt(add) {
+				Clauses: {
+					{
+						FunctionClause {
+							Body: {
+								MathBinaryOpExpr {
+									Left: {
+										IdentifierExpr(point) {
+											Name: point
+										}
+									}
+									Operator: +
+									Right: {
+										IdentifierExpr(vec) {
+											Name: vec
+										}
+									}
+								}
+							}
+							Parameters: {
+								{
+									Parameter {
+										Pattern: {
+											IdentifierPattern(point) {
+												Name: point
+											}
+										}
+									}
+									Parameter {
+										Pattern: {
+											IdentifierPattern(vec) {
+												Name: vec
+											}
+										}
+									}
+								}
+							}
 						}
-						Operator: +
-						Right: {
-							IdentifierExpr(vec, IsConst: false)
+					}
+				}
+				Name: add
+				Signature: {
+					FunctionType((mut Point, ref Vec3) -> Point) {
+						ParameterTypes: {
+							{
+								ParameterType(mut Point) {
+									Modifier: mut
+									Type: {
+										UnresolvedType(Point) {
+											Name: Point
+										}
+									}
+								}
+								ParameterType(ref Vec3) {
+									Modifier: ref
+									Type: {
+										UnresolvedType(Vec3) {
+											Name: Vec3
+										}
+									}
+								}
+							}
+						}
+						ReturnType: {
+							UnresolvedType(Point) {
+								Name: Point
+							}
 						}
 					}
 				}

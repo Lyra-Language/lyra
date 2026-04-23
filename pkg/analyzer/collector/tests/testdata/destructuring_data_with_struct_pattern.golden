@@ -1,27 +1,36 @@
 Program(1 statements) {
-	DestructuringStatement {
-		Keyword: let
-		DataPattern {
-			name: Some
-			pattern: {
-				StructPattern {
-					StructPatternField {
-						name: x
-						pattern: nil
-					},
-					StructPatternField {
-						name: y
-						pattern: nil
-					},
-					StructPatternField {
-						name: z
-						pattern: nil
-					},
+	Statements: {
+		{
+			DestructuringDeclStmt {
+				Keyword: let
+				Pattern: {
+					DataPattern(Some) {
+						Name: Some
+						Pattern: {
+							StructPattern {
+								Fields: {
+									{
+										StructPatternField(x) {
+											Name: x
+										}
+										StructPatternField(y) {
+											Name: y
+										}
+										StructPatternField(z) {
+											Name: z
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				Value: {
+					IdentifierExpr(some_data) {
+						Name: some_data
+					}
 				}
 			}
-		}
-		Value: {
-			IdentifierExpr(some_data, IsConst: false)
 		}
 	}
 }

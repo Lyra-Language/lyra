@@ -1,11 +1,35 @@
 Program(1 statements) {
-	VarDeclStmt(point) {
-		Keyword: let
-		Value: {
-			StructInstanceExpr(?) {
-				Fields: {
-					StructField(x: IntegerLiteralExpr(1, Base: 10))
-					StructField(y: IntegerLiteralExpr(2, Base: 10))
+	Statements: {
+		{
+			VarDeclStmt(point) {
+				Keyword: let
+				Name: point
+				Value: {
+					StructInstance(?) {
+						Fields: {
+							{
+								StructField(x) {
+									Name: x
+									Value: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 1
+										}
+									}
+								}
+								StructField(y) {
+									Name: y
+									Value: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 2
+										}
+									}
+								}
+							}
+						}
+						Name: ?
+					}
 				}
 			}
 		}

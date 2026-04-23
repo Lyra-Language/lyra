@@ -1,83 +1,156 @@
 Program(1 statements) {
-	TraitDeclStmt(Collection) {
-		GenericParams: [c e]
-		Methods: {
-			TraitMethod {
-				Name: add
-				Signature: {
-					FunctionType {
-						ParameterTypes: {
-							ParameterType {
-								Type: {
-									GenericType(c<e>)
+	Statements: {
+		{
+			TraitDeclStmt(Collection) {
+				Bounds: {
+					{
+					}
+				}
+				GenericParameterConstraints: {
+					{
+					}
+				}
+				GenericParams: {
+					{
+						c
+						e
+					}
+				}
+				Methods: {
+					{
+						TraitMethod {
+							Name: {
+								MethodName(add) {
+									Value: add
 								}
 							}
-							ParameterType {
-								Type: {
-									GenericType(e)
+							Signature: {
+								FunctionType((c<e>, e) -> c<e>) {
+									ParameterTypes: {
+										{
+											ParameterType(c<e>) {
+												Type: {
+													GenericType(c<e>) {
+														Name: c<e>
+													}
+												}
+											}
+											ParameterType(e) {
+												Type: {
+													GenericType(e) {
+														Name: e
+													}
+												}
+											}
+										}
+									}
+									ReturnType: {
+										GenericType(c<e>) {
+											Name: c<e>
+										}
+									}
 								}
 							}
 						}
-						ReturnType: c<e>
-					}
-				}
-			}
-			TraitMethod {
-				Name: remove
-				Signature: {
-					FunctionType {
-						ParameterTypes: {
-							ParameterType {
-								Type: {
-									GenericType(c<e>)
+						TraitMethod {
+							Name: {
+								MethodName(remove) {
+									Value: remove
 								}
 							}
-							ParameterType {
-								Type: {
-									GenericType(e)
-								}
-							}
-						}
-						ReturnType: c<e>
-					}
-				}
-			}
-			TraitMethod {
-				Name: contains
-				Signature: {
-					FunctionType {
-						ParameterTypes: {
-							ParameterType {
-								Type: {
-									GenericType(c<e>)
-								}
-							}
-							ParameterType {
-								Type: {
-									GenericType(e)
+							Signature: {
+								FunctionType((c<e>, e) -> c<e>) {
+									ParameterTypes: {
+										{
+											ParameterType(c<e>) {
+												Type: {
+													GenericType(c<e>) {
+														Name: c<e>
+													}
+												}
+											}
+											ParameterType(e) {
+												Type: {
+													GenericType(e) {
+														Name: e
+													}
+												}
+											}
+										}
+									}
+									ReturnType: {
+										GenericType(c<e>) {
+											Name: c<e>
+										}
+									}
 								}
 							}
 						}
-						ReturnType: bool
-					}
-				}
-			}
-			TraitMethod {
-				Name: size
-				Signature: {
-					FunctionType {
-						ParameterTypes: {
-							ParameterType {
-								Type: {
-									GenericType(c<e>)
+						TraitMethod {
+							Name: {
+								MethodName(contains) {
+									Value: contains
+								}
+							}
+							Signature: {
+								FunctionType((c<e>, e) -> bool) {
+									ParameterTypes: {
+										{
+											ParameterType(c<e>) {
+												Type: {
+													GenericType(c<e>) {
+														Name: c<e>
+													}
+												}
+											}
+											ParameterType(e) {
+												Type: {
+													GenericType(e) {
+														Name: e
+													}
+												}
+											}
+										}
+									}
+									ReturnType: {
+										PrimitiveType(bool) {
+											Name: bool
+										}
+									}
 								}
 							}
 						}
-						ReturnType: int
+						TraitMethod {
+							Name: {
+								MethodName(size) {
+									Value: size
+								}
+							}
+							Signature: {
+								FunctionType((c<e>) -> int) {
+									ParameterTypes: {
+										{
+											ParameterType(c<e>) {
+												Type: {
+													GenericType(c<e>) {
+														Name: c<e>
+													}
+												}
+											}
+										}
+									}
+									ReturnType: {
+										PrimitiveType(int) {
+											Name: int
+										}
+									}
+								}
+							}
+						}
 					}
 				}
+				Name: Collection
 			}
 		}
-		IsPublic: false
 	}
 }

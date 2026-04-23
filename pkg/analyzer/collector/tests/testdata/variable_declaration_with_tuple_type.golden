@@ -1,19 +1,40 @@
 Program(1 statements) {
-	VarDeclStmt(the_answer) {
-		Keyword: let
-		Type: {
-			TupleType(?) {
-				Elements: {
-					int
-					int
+	Statements: {
+		{
+			VarDeclStmt(the_answer) {
+				Keyword: let
+				Name: the_answer
+				Type: {
+					TupleType(?) {
+						Elements: {
+							{
+								PrimitiveType(int) {
+									Name: int
+								}
+								PrimitiveType(int) {
+									Name: int
+								}
+							}
+						}
+						Name: ?
+					}
 				}
-			}
-		}
-		Value: {
-			TupleLiteralExpr(Name: ?) {
-				Elements: {
-					IntegerLiteralExpr(42, Base: 10)
-					IntegerLiteralExpr(13, Base: 10)
+				Value: {
+					TupleLiteralExpr(?) {
+						Elements: {
+							{
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 42
+								}
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 13
+								}
+							}
+						}
+						Name: ?
+					}
 				}
 			}
 		}
