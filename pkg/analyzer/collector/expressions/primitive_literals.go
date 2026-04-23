@@ -1,7 +1,6 @@
 package expressions
 
 import (
-	"fmt"
 	"strconv"
 	"strings"
 
@@ -21,7 +20,7 @@ func collectIntegerLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Loca
 	valueStringWithoutUnderscores := strings.ReplaceAll(valueString, "_", "")
 	value, err = strconv.ParseInt(valueStringWithoutUnderscores, 0, 64)
 	if err != nil {
-		ctx.AppendError(fmt.Errorf("failed to parse integer literal: %w", err))
+		ctx.AddError(node, collctx.SeverityError, "failed to parse integer literal: %v", err)
 		return nil
 	}
 	switch child.Kind() {
@@ -50,7 +49,7 @@ func collectFloatLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Locati
 	valueStringWithoutUnderscores := strings.ReplaceAll(valueString, "_", "")
 	value, err := strconv.ParseFloat(valueStringWithoutUnderscores, 64)
 	if err != nil {
-		ctx.AppendError(fmt.Errorf("failed to parse float literal: %w", err))
+		ctx.AddError(node, collctx.SeverityError, "failed to parse float literal: %v", err)
 		return nil
 	}
 	return &ast.FloatLiteralExpr{
@@ -65,7 +64,7 @@ func collectFloatLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Locati
 func collectStringLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.StringLiteralExpr {
 	value, err := strconv.Unquote(ctx.NodeText(node))
 	if err != nil {
-		ctx.AppendError(fmt.Errorf("invalid string literal: %v", err))
+		ctx.AddError(node, collctx.SeverityError, "invalid string literal: %v", err)
 		return nil
 	}
 	return &ast.StringLiteralExpr{

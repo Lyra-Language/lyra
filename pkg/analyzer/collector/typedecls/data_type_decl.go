@@ -44,7 +44,7 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TypeDe
 	}
 
 	if err := ctx.RegisterType(astNode); err != nil {
-		ctx.AppendError(err)
+		ctx.AddError(node, collctx.SeverityError, "failed to register data type %q: %v", name, err)
 	}
 
 	return astNode

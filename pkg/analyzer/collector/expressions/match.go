@@ -7,7 +7,11 @@ import (
 )
 
 func CollectMatchExpression(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.MatchExpr {
-	value := CollectExpression(node.ChildByFieldName("value"), ctx)
+	valueNode, ok := ctx.MustField(node, "value")
+	if !ok {
+		return nil
+	}
+	value := CollectExpression(valueNode, ctx)
 	if value == nil {
 		ctx.AddError(node, collctx.SeverityError, "CollectMatchExpression: value is nil")
 		return nil
@@ -40,9 +44,8 @@ func CollectMatchArms(node *sitter.Node, ctx *collctx.Ctx) []ast.MatchArm {
 }
 
 func CollectMatchArm(node *sitter.Node, ctx *collctx.Ctx) *ast.MatchArm {
-	patternNode := node.ChildByFieldName("pattern")
-	if patternNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "CollectMatchArm: pattern is nil")
+	patternNode, ok := ctx.MustField(node, "pattern")
+	if !ok {
 		return nil
 	}
 	pattern := ctx.CollectPattern(patternNode)
@@ -51,7 +54,11 @@ func CollectMatchArm(node *sitter.Node, ctx *collctx.Ctx) *ast.MatchArm {
 	if guardNode != nil {
 		guard = collectGuard(guardNode, ctx)
 	}
-	body := CollectExpression(node.ChildByFieldName("body"), ctx)
+	bodyNode, ok := ctx.MustField(node, "body")
+	if !ok {
+		return nil
+	}
+	body := CollectExpression(bodyNode, ctx)
 	if body == nil {
 		ctx.AddError(node, collctx.SeverityError, "CollectMatchArm: body is nil")
 		return nil

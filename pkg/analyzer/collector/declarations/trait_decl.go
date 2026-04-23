@@ -11,7 +11,10 @@ import (
 func CollectTraitDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TraitDeclStmt {
 	visibilityNode := node.ChildByFieldName("visibility")
 	isPublic := visibilityNode != nil
-	nameNode := node.ChildByFieldName("name")
+	nameNode, ok := ctx.MustField(node, "name")
+	if !ok {
+		return nil
+	}
 	name := ctx.NodeText(nameNode)
 
 	genericParamsNode := node.ChildByFieldName("generic_parameters")
@@ -32,9 +35,8 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TraitDecl
 		genericParameterConstraints = collectGenericParameterConstraints(genericParameterConstraintsNode, ctx)
 	}
 
-	methodsNode := node.ChildByFieldName("methods")
-	if methodsNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "trait declaration is missing methods node")
+	methodsNode, ok := ctx.MustField(node, "methods")
+	if !ok {
 		return nil
 	}
 	methods := collectMethods(methodsNode, ctx)
@@ -73,15 +75,13 @@ func collectGenericParameterConstraints(node *sitter.Node, ctx *collctx.Ctx) []a
 }
 
 func collectTraitGenericParameterConstraint(node *sitter.Node, ctx *collctx.Ctx) ast.TraitGenericParameterConstraint {
-	genericTypeNode := node.ChildByFieldName("generic_type")
-	if genericTypeNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "trait generic parameter constraint is missing generic type node")
+	genericTypeNode, ok := ctx.MustField(node, "generic_type")
+	if !ok {
 		return ast.TraitGenericParameterConstraint{}
 	}
 	name := ctx.NodeText(genericTypeNode)
-	traitBoundsNode := node.ChildByFieldName("trait_bounds")
-	if traitBoundsNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "trait generic parameter constraint is missing trait bounds node")
+	traitBoundsNode, ok := ctx.MustField(node, "trait_bounds")
+	if !ok {
 		return ast.TraitGenericParameterConstraint{}
 	}
 	constraints := collectBounds(traitBoundsNode, ctx)
@@ -102,15 +102,13 @@ func collectMethods(node *sitter.Node, ctx *collctx.Ctx) []ast.TraitMethod {
 }
 
 func collectTraitMethodDeclaration(node *sitter.Node, ctx *collctx.Ctx) ast.TraitMethod {
-	nameNode := node.ChildByFieldName("name")
-	if nameNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "trait method is missing name node")
+	nameNode, ok := ctx.MustField(node, "name")
+	if !ok {
 		return ast.TraitMethod{}
 	}
 	name := collectMethodName(nameNode, ctx)
-	signatureNode := node.ChildByFieldName("signature")
-	if signatureNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "trait method is missing signature node")
+	signatureNode, ok := ctx.MustField(node, "signature")
+	if !ok {
 		return ast.TraitMethod{}
 	}
 	signature := ctx.ParseFunctionType(signatureNode)

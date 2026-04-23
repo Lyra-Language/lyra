@@ -7,15 +7,13 @@ import (
 )
 
 func collectIfThenExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.IfExpr {
-	ifConditionNode := node.ChildByFieldName("condition")
-	if ifConditionNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "collectIfThenExpr: if condition node is nil")
+	ifConditionNode, ok := ctx.MustField(node, "condition")
+	if !ok {
 		return nil
 	}
 
-	thenExpressionNode := node.ChildByFieldName("then_expression")
-	if thenExpressionNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "collectIfThenExpr: then expression node is nil")
+	thenExpressionNode, ok := ctx.MustField(node, "then_expression")
+	if !ok {
 		return nil
 	}
 
@@ -33,15 +31,13 @@ func collectIfThenExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *a
 }
 
 func collectIfBlockExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.IfExpr {
-	ifConditionNode := node.ChildByFieldName("condition")
-	if ifConditionNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "collectIfBlockExpr: if condition node is nil")
+	ifConditionNode, ok := ctx.MustField(node, "condition")
+	if !ok {
 		return nil
 	}
 
-	thenBlockNode := node.ChildByFieldName("then_block")
-	if thenBlockNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "collectIfBlockExpr: then block node is nil")
+	thenBlockNode, ok := ctx.MustField(node, "then_block")
+	if !ok {
 		return nil
 	}
 

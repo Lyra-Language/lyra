@@ -84,6 +84,13 @@ func (ctx *Ctx) AddError(node *sitter.Node, sev ErrorSeverity, format string, ar
 	})
 }
 
-func (ctx *Ctx) AppendError(err error) {
-	*ctx.errors = append(*ctx.errors, err)
+// MustField retrieves a required child-by-field-name node.
+// If the field is missing, it records a consistent location-aware error and returns false.
+func (ctx *Ctx) MustField(node *sitter.Node, fieldName string) (*sitter.Node, bool) {
+	field := node.ChildByFieldName(fieldName)
+	if field == nil {
+		ctx.AddError(node, SeverityError, "%s is missing %q field", node.Kind(), fieldName)
+		return nil, false
+	}
+	return field, true
 }

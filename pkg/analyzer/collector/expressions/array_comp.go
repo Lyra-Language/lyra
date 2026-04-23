@@ -1,8 +1,6 @@
 package expressions
 
 import (
-	"fmt"
-
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -11,7 +9,7 @@ import (
 func collectArrayCompExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.ArrayCompExpr {
 	resultNode := node.ChildByFieldName("result_expression")
 	if resultNode == nil {
-		ctx.AppendError(fmt.Errorf("array comprehension must have a result"))
+		ctx.AddError(node, collctx.SeverityError, "array comprehension must have a result")
 		return nil
 	}
 	return &ast.ArrayCompExpr{
@@ -36,12 +34,12 @@ func collectGenerators(node *sitter.Node, ctx *collctx.Ctx) []ast.Generator {
 func collectGenerator(node *sitter.Node, ctx *collctx.Ctx) ast.Generator {
 	valueNode := node.ChildByFieldName("value")
 	if valueNode == nil {
-		ctx.AppendError(fmt.Errorf("generator must have a value"))
+		ctx.AddError(node, collctx.SeverityError, "generator must have a value")
 		return ast.Generator{}
 	}
 	identifierNode := node.ChildByFieldName("identifier")
 	if identifierNode == nil {
-		ctx.AppendError(fmt.Errorf("generator must have an identifier"))
+		ctx.AddError(node, collctx.SeverityError, "generator must have an identifier")
 		return ast.Generator{}
 	}
 	return ast.Generator{

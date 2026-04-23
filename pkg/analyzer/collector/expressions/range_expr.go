@@ -1,8 +1,6 @@
 package expressions
 
 import (
-	"fmt"
-
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -11,17 +9,17 @@ import (
 func collectRangeExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.RangeExpr {
 	startNode := node.ChildByFieldName("start")
 	if startNode == nil {
-		ctx.AppendError(fmt.Errorf("range expression must have a start"))
+		ctx.AddError(node, collctx.SeverityError, "range expression must have a start")
 		return nil
 	}
 	endOperatorNode := node.ChildByFieldName("end_operator")
 	if endOperatorNode == nil {
-		ctx.AppendError(fmt.Errorf("range expression must have an end operator"))
+		ctx.AddError(node, collctx.SeverityError, "range expression must have an end operator")
 		return nil
 	}
 	endNode := node.ChildByFieldName("end")
 	if endNode == nil {
-		ctx.AppendError(fmt.Errorf("range expression must have an end"))
+		ctx.AddError(node, collctx.SeverityError, "range expression must have an end")
 		return nil
 	}
 	step := ast.Expression(nil)

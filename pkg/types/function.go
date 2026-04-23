@@ -31,14 +31,14 @@ func (f FunctionType) String() string {
 }
 
 type ParameterType struct {
-	Modifier     Modifier
+	Modifier     AllocationModifier
 	Type         Type
 	DefaultValue any
 }
 
 func (p ParameterType) GetName() string {
 	modifier := ""
-	if p.Modifier != "" {
+	if p.Modifier != AllocationModifier("") {
 		modifier = string(p.Modifier) + " "
 	}
 	if p.Type != nil {
@@ -46,11 +46,3 @@ func (p ParameterType) GetName() string {
 	}
 	return modifier
 }
-
-type Modifier string
-
-const (
-	Ref Modifier = "ref"
-	Mut Modifier = "mut"
-	Own Modifier = "own"
-)

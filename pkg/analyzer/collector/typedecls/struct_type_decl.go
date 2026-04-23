@@ -43,7 +43,7 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.Type
 	}
 
 	if err := ctx.RegisterType(astNode); err != nil {
-		ctx.AppendError(err)
+		ctx.AddError(node, collctx.SeverityError, "failed to register struct type %q: %v", name, err)
 	}
 
 	return astNode

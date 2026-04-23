@@ -1,8 +1,6 @@
 package declarations
 
 import (
-	"fmt"
-
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -49,7 +47,7 @@ func CollectFunctionDefinition(node *sitter.Node, ctx *collctx.Ctx) *ast.Functio
 	}
 
 	if err := ctx.RegisterFunction(astNode); err != nil {
-		ctx.AppendError(err)
+		ctx.AddError(node, collctx.SeverityError, "failed to register function %q: %v", name, err)
 	}
 
 	return astNode
@@ -100,13 +98,13 @@ func parseFunctionType(node *sitter.Node, ctx *collctx.Ctx) *types.FunctionType 
 }
 
 func parseParameterType(node *sitter.Node, ctx *collctx.Ctx) types.ParameterType {
-	modifier := types.Modifier("")
+	modifier := types.AllocationModifier("")
 	if modifierNode := node.ChildByFieldName("modifier"); modifierNode != nil {
-		modifier = types.Modifier(ctx.NodeText(modifierNode))
+		modifier = types.AllocationModifier(ctx.NodeText(modifierNode))
 	}
 	typeNode := node.ChildByFieldName("type")
 	if typeNode == nil {
-		ctx.AppendError(fmt.Errorf("parameter type is missing type node"))
+		ctx.AddError(node, collctx.SeverityError, "parameter type is missing type node")
 		return types.ParameterType{}
 	}
 	return types.ParameterType{
@@ -128,7 +126,7 @@ func CollectFunctionClause(node *sitter.Node, ctx *collctx.Ctx) *ast.FunctionCla
 	if guardNode != nil {
 		guardExpressionNode := guardNode.ChildByFieldName("guard_expression")
 		if guardExpressionNode == nil {
-			ctx.AppendError(fmt.Errorf("guard expression is missing"))
+			ctx.AddError(guardNode, collctx.SeverityError, "guard expression is missing")
 		} else {
 			guard = &ast.GuardExpr{
 				ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: ctx.NodeLocation(guardNode)}},
@@ -165,14 +163,14 @@ func collectParameter(node *sitter.Node, ctx *collctx.Ctx) ast.Parameter {
 	if patternNode := node.ChildByFieldName("pattern"); patternNode != nil {
 		pattern = ctx.CollectPattern(patternNode)
 	} else {
-		ctx.AppendError(fmt.Errorf("parameter is missing pattern node"))
+		ctx.AddError(node, collctx.SeverityError, "parameter is missing pattern node")
 	}
 	defaultValue := ast.Expression(nil)
 	if defaultValueNode := node.ChildByFieldName("default_value"); defaultValueNode != nil {
 		if defaultValueExpressionNode := defaultValueNode.ChildByFieldName("expression"); defaultValueExpressionNode != nil {
 			defaultValue = expressions.CollectExpression(defaultValueExpressionNode, ctx)
 		} else {
-			ctx.AppendError(fmt.Errorf("parameter default value is missing expression"))
+			ctx.AddError(defaultValueNode, collctx.SeverityError, "parameter default value is missing expression")
 		}
 	}
 	return ast.Parameter{Pattern: pattern, DefaultValue: defaultValue}

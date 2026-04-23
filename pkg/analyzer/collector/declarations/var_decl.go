@@ -64,7 +64,7 @@ func CollectVariableDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.VarDec
 	}
 
 	if err := ctx.RegisterVariable(astNode); err != nil {
-		ctx.AppendError(err)
+		ctx.AddError(node, collctx.SeverityError, "failed to register variable %q: %v", name, err)
 	}
 
 	return astNode
