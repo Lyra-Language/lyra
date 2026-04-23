@@ -35,7 +35,9 @@ func checkGolden(t *testing.T, got, goldenPath string) {
 	expected, err := os.ReadFile(goldenPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			_ = os.MkdirAll(filepath.Dir(goldenPath), 0755)
+			if err := os.MkdirAll(filepath.Dir(goldenPath), 0755); err != nil {
+				t.Fatalf("MkdirAll: %v", err)
+		}
 			if err := os.WriteFile(goldenPath, []byte(got), 0644); err != nil {
 				t.Fatalf("Write golden file: %v", err)
 			}
