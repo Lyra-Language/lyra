@@ -28,18 +28,27 @@ func TypesEqual(a, b Type) bool {
 			return TypesEqual(at.ElementType, bt.ElementType)
 		}
 		return false
-	case FunctionType:
-		if bt, ok := b.(FunctionType); ok {
-			if len(at.ParameterTypes) != len(bt.ParameterTypes) {
+	case *FunctionType:
+		// FunctionType uses the pointer convention: it is constructed as
+		// *types.FunctionType everywhere (see ast.FunctionDefStmt.Signature,
+		// ast.TraitMethod.Signature, Collector.parseFunctionType). The type
+		// switch must match the pointer form or equality silently returns false.
+		bt, ok := b.(*FunctionType)
+		if !ok {
+			return false
+		}
+		if at == nil || bt == nil {
+			return at == bt
+		}
+		if len(at.ParameterTypes) != len(bt.ParameterTypes) {
+			return false
+		}
+		for i := range at.ParameterTypes {
+			if !TypesEqual(at.ParameterTypes[i].Type, bt.ParameterTypes[i].Type) {
 				return false
 			}
-			for i := range at.ParameterTypes {
-				if !TypesEqual(at.ParameterTypes[i].Type, bt.ParameterTypes[i].Type) {
-					return false
-				}
-			}
-			return TypesEqual(at.ReturnType, bt.ReturnType)
 		}
+		return TypesEqual(at.ReturnType, bt.ReturnType)
 	case StructType:
 		if bt, ok := b.(StructType); ok {
 			if at.Name != bt.Name {
@@ -78,6 +87,19 @@ func TypesEqual(a, b Type) bool {
 		if bt, ok := b.(DataType); ok {
 			return at.Name == bt.Name
 		}
+	case *ConstrainedType:
+		// ConstrainedType uses the pointer convention: it is constructed as
+		// *types.ConstrainedType in Collector.parseConstrainedType and
+		// typedecls.collectConstrainedTypeDeclaration. Like DataType, it is a
+		// nominal declared type so name equality is sufficient.
+		bt, ok := b.(*ConstrainedType)
+		if !ok {
+			return false
+		}
+		if at == nil || bt == nil {
+			return at == bt
+		}
+		return at.Name == bt.Name
 	case RangeType:
 		if bt, ok := b.(RangeType); ok {
 			if !TypesEqual(at.Start, bt.Start) {

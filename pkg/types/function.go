@@ -12,6 +12,12 @@ type FunctionType struct {
 	IsPure         bool
 }
 
+// FunctionType uses the pointer convention: it is always constructed as
+// *types.FunctionType in the collector and stored as *types.FunctionType in
+// AST nodes (ast.FunctionDefStmt.Signature, ast.TraitMethod.Signature).
+// Receivers stay as value receivers so both FunctionType and *FunctionType
+// satisfy types.Type; code that matches the interface concrete type (notably
+// TypesEqual) must use the pointer form *FunctionType.
 func (FunctionType) typeNode() {}
 
 func (f FunctionType) GetName() string {

@@ -4,6 +4,13 @@ import (
 	"fmt"
 )
 
+// ConstrainedType uses the pointer convention: it is always constructed as
+// *types.ConstrainedType (Collector.parseConstrainedType and
+// typedecls.collectConstrainedTypeDeclaration) and then stored inside a
+// types.Type interface. Receivers are pointer receivers so that only
+// *ConstrainedType satisfies types.Type, keeping the convention enforced at
+// compile time; code that matches the interface concrete type (notably
+// TypesEqual) must use the pointer form *ConstrainedType.
 type ConstrainedType struct {
 	Name        string
 	Type        Type
