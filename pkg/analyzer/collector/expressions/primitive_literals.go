@@ -16,29 +16,29 @@ func collectIntegerLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Loca
 	value := int64(0)
 	var err error
 
-	for i := uint(0); i < node.ChildCount(); i++ {
-		valueString := ctx.NodeText(node.Child(i))
-		valueStringWithoutUnderscores := strings.ReplaceAll(valueString, "_", "")
-		value, err = strconv.ParseInt(valueStringWithoutUnderscores, 0, 64)
-		if err != nil {
-			ctx.AppendError(fmt.Errorf("failed to parse integer literal: %w", err))
-			return nil
-		}
-		switch node.Child(i).Kind() {
-		case "binary_int":
-			base = ast.IntegerBase2
-		case "octal_int":
-			base = ast.IntegerBase8
-		case "decimal_int":
-			base = ast.IntegerBase10
-		case "hexadecimal_int":
-			base = ast.IntegerBase16
-		}
+	child := node.NamedChild(0)
+	valueString := ctx.NodeText(child)
+	valueStringWithoutUnderscores := strings.ReplaceAll(valueString, "_", "")
+	value, err = strconv.ParseInt(valueStringWithoutUnderscores, 0, 64)
+	if err != nil {
+		ctx.AppendError(fmt.Errorf("failed to parse integer literal: %w", err))
+		return nil
 	}
+	switch child.Kind() {
+	case "binary_int":
+		base = ast.IntegerBase2
+	case "octal_int":
+		base = ast.IntegerBase8
+	case "decimal_int":
+		base = ast.IntegerBase10
+	case "hexadecimal_int":
+		base = ast.IntegerBase16
+	}
+
 	return &ast.IntegerLiteralExpr{
 		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
-			Type:    nil,
+			AstBase: ast.AstBase{Location: loc},
+			Type:    types.PrimitiveType{Name: types.Int},
 		},
 		Value: value,
 		Base:  base,
@@ -55,8 +55,8 @@ func collectFloatLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Locati
 	}
 	return &ast.FloatLiteralExpr{
 		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
-			Type:    types.PrimitiveType{Name: "float"},
+			AstBase: ast.AstBase{Location: loc},
+			Type:    types.PrimitiveType{Name: types.Float},
 		},
 		Value: value,
 	}

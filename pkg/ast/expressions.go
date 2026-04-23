@@ -36,10 +36,6 @@ func (i *IdentifierExpr) GetName() string {
 	return i.Name
 }
 
-func (i *IdentifierExpr) GetType() types.Type {
-	return nil
-}
-
 func (i *IdentifierExpr) Print(indent string) {
 	fmt.Printf("%sIdentifierExpr(%s, IsConst: %t)\n", indent, i.Name, i.IsConst)
 }

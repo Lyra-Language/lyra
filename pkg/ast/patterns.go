@@ -119,7 +119,7 @@ type DataPattern struct {
 }
 
 func (p *DataPattern) patternNode()    {}
-func (p *DataPattern) GetName() string { return fmt.Sprintf("%s", p.Name) }
+func (p *DataPattern) GetName() string { return p.Name }
 func (p *DataPattern) Print(indent string) {
 	fmt.Printf("%sDataPattern {\n", indent)
 	fmt.Printf("%s\tname: %s\n", indent, p.Name)

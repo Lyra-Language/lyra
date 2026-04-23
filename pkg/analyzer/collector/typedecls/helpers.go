@@ -6,18 +6,6 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-// collectGenericParams collects generic type parameter names from a generic_parameters node.
-func collectGenericParams(node *sitter.Node, ctx *collctx.Ctx) []string {
-	params := make([]string, 0)
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.Kind() == "generic_type" {
-			params = append(params, ctx.NodeText(child))
-		}
-	}
-	return params
-}
-
 // collectStructFields returns struct fields in source declaration order.
 func collectStructFields(node *sitter.Node, ctx *collctx.Ctx) []types.StructField {
 	var fields []types.StructField

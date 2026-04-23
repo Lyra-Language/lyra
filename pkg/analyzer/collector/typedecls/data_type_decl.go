@@ -24,7 +24,7 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TypeDe
 		case "data_type_name":
 			name = ctx.NodeText(child)
 		case "generic_parameters":
-			genericParams = collectGenericParams(child, ctx)
+			genericParams = ctx.CollectGenericParams(child)
 		case "data_type_constructor":
 			_, ctor := collectDataConstructor(child, ctx)
 			constructors = append(constructors, ctor)

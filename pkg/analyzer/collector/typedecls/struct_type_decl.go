@@ -24,7 +24,7 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.Type
 		case "struct_name":
 			name = ctx.NodeText(child)
 		case "generic_parameters":
-			genericParams = collectGenericParams(child, ctx)
+			genericParams = ctx.CollectGenericParams(child)
 		case "struct_type_body":
 			fields = collectStructFields(child, ctx)
 		}

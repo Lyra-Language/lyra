@@ -2,18 +2,12 @@ package ast
 
 import (
 	"fmt"
-
-	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 type MatchExpr struct {
 	ExprBase
 	Value     Expression
 	MatchArms []MatchArm
-}
-
-func (m *MatchExpr) GetType() types.Type {
-	return nil
 }
 
 func (m *MatchExpr) Print(indent string) {

@@ -24,7 +24,7 @@ func collectNamedTupleTypeDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.
 		name = ctx.NodeText(nameNode)
 	}
 	if genericParamsNode := node.ChildByFieldName("generic_parameters"); genericParamsNode != nil {
-		genericParams = collectGenericParams(genericParamsNode, ctx)
+		genericParams = ctx.CollectGenericParams(genericParamsNode)
 	}
 	if elementsNode := node.ChildByFieldName("tuple_type_body"); elementsNode != nil {
 		elements = CollectTupleTypeBody(elementsNode, ctx)
