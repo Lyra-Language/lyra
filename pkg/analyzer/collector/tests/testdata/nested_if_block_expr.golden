@@ -52,8 +52,23 @@ Program(1 statements) {
 																					ArgumentList {
 																						Arguments: {
 																							{
-																								StringLiteralExpr {
-																									Value: At #{x},#{y}
+																								InterpolatedStringExpr {
+																									Segments: {
+																										{
+																											StringLiteralExpr {
+																												Value: At 
+																											}
+																											IdentifierExpr(x) {
+																												Name: x
+																											}
+																											StringLiteralExpr {
+																												Value: ,
+																											}
+																											IdentifierExpr(y) {
+																												Name: y
+																											}
+																										}
+																									}
 																								}
 																							}
 																						}

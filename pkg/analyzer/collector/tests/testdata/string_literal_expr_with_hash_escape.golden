@@ -1,0 +1,15 @@
+Program(1 statements) {
+	Statements: {
+		{
+			VarDeclStmt(s) {
+				BindingKind: let
+				Name: s
+				Value: {
+					StringLiteralExpr {
+						Value: Phone #: not an interp
+					}
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,33 @@
+Program(1 statements) {
+	Statements: {
+		{
+			VarDeclStmt(point) {
+				BindingKind: let
+				Name: point
+				Value: {
+					InterpolatedStringExpr {
+						Segments: {
+							{
+								StringLiteralExpr {
+									Value: At (
+								}
+								IdentifierExpr(x) {
+									Name: x
+								}
+								StringLiteralExpr {
+									Value: , 
+								}
+								IdentifierExpr(y) {
+									Name: y
+								}
+								StringLiteralExpr {
+									Value: )
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

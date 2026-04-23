@@ -40,8 +40,26 @@ Program(1 statements) {
 												ArgumentList {
 													Arguments: {
 														{
-															StringLiteralExpr {
-																Value: #{a}, #{b}, #{c}
+															InterpolatedStringExpr {
+																Segments: {
+																	{
+																		IdentifierExpr(a) {
+																			Name: a
+																		}
+																		StringLiteralExpr {
+																			Value: , 
+																		}
+																		IdentifierExpr(b) {
+																			Name: b
+																		}
+																		StringLiteralExpr {
+																			Value: , 
+																		}
+																		IdentifierExpr(c) {
+																			Name: c
+																		}
+																	}
+																}
 															}
 														}
 													}

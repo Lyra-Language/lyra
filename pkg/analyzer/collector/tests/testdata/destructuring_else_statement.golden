@@ -64,8 +64,23 @@ Program(2 statements) {
 							ArgumentList {
 								Arguments: {
 									{
-										StringLiteralExpr {
-											Value: We got the struct: #{foo}, #{bar}
+										InterpolatedStringExpr {
+											Segments: {
+												{
+													StringLiteralExpr {
+														Value: We got the struct: 
+													}
+													IdentifierExpr(foo) {
+														Name: foo
+													}
+													StringLiteralExpr {
+														Value: , 
+													}
+													IdentifierExpr(bar) {
+														Name: bar
+													}
+												}
+											}
 										}
 									}
 								}

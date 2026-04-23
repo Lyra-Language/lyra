@@ -1,0 +1,15 @@
+Program(1 statements) {
+	Statements: {
+		{
+			VarDeclStmt(greeting) {
+				BindingKind: let
+				Name: greeting
+				Value: {
+					StringLiteralExpr {
+						Value: Hello, World!
+					}
+				}
+			}
+		}
+	}
+}

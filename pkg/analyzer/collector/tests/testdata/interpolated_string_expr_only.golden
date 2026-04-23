@@ -1,0 +1,21 @@
+Program(1 statements) {
+	Statements: {
+		{
+			VarDeclStmt(v) {
+				BindingKind: let
+				Name: v
+				Value: {
+					InterpolatedStringExpr {
+						Segments: {
+							{
+								IdentifierExpr(name) {
+									Name: name
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
