@@ -10,13 +10,13 @@ type ConstrainedType struct {
 	Constraints []Constraint
 }
 
-func (c *ConstrainedType) typeNode()           {}
-func (c *ConstrainedType) IsNumericType() bool { return false }
-func (c *ConstrainedType) GetName() string     { return c.Name }
+func (c *ConstrainedType) typeNode()       {}
+func (c *ConstrainedType) GetName() string { return c.Name }
+func (c *ConstrainedType) String() string  { return c.GetName() }
 func (c *ConstrainedType) Print(indent string) {
 	fmt.Printf("%sConstrainedType {\n", indent)
 	fmt.Printf("%s\tName: %s\n", indent, c.Name)
-	fmt.Printf("%s\tType: %s\n", indent, c.Type.GetName())
+	fmt.Printf("%s\tType: %s\n", indent, c.Type.String())
 	if len(c.Constraints) > 0 {
 		fmt.Printf("%s\tConstraints: {\n", indent)
 		for _, constraint := range c.Constraints {

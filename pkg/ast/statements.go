@@ -123,7 +123,7 @@ func (f *FunctionDefStmt) Print(indent string) {
 		fmt.Printf("%s\tGenericParams: %v\n", indent, f.GenericParams)
 	}
 	if f.Signature != nil {
-		fmt.Printf("%s\tSignature: %s\n", indent, f.Signature.GetName())
+		fmt.Printf("%s\tSignature: %s\n", indent, f.Signature.String())
 	}
 	if f.IsPublic {
 		fmt.Printf("%s\tIsPublic: true\n", indent)

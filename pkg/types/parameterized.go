@@ -8,11 +8,11 @@ type ParameterizedType struct {
 }
 
 func (ParameterizedType) typeNode() {}
-func (p ParameterizedType) IsNumericType() bool {
-	return false
-}
 func (p ParameterizedType) GetName() string {
 	return p.Name
+}
+func (p ParameterizedType) String() string {
+	return p.GetName()
 }
 func (p ParameterizedType) Print(indent string) {
 	fmt.Printf("%sParameterizedType(%s) {\n", indent, p.Name)

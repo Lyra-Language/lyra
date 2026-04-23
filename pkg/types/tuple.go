@@ -12,16 +12,12 @@ type TupleType struct {
 
 func (TupleType) typeNode() {}
 
-func (t TupleType) IsNumericType() bool {
-	return false
-}
-
 func (t TupleType) GetName() string {
 	elementNames := make([]string, len(t.Elements))
 	for i, element := range t.Elements {
 		elementName := "?"
 		if element != nil {
-			elementName = element.GetName()
+			elementName = element.String()
 		}
 		elementNames[i] = elementName
 	}
@@ -30,6 +26,10 @@ func (t TupleType) GetName() string {
 		name = t.Name
 	}
 	return fmt.Sprintf("%s(%s)", name, strings.Join(elementNames, ", "))
+}
+
+func (t TupleType) String() string {
+	return t.GetName()
 }
 
 func (t TupleType) Print(indent string) {

@@ -14,10 +14,6 @@ type FunctionType struct {
 
 func (FunctionType) typeNode() {}
 
-func (f FunctionType) IsNumericType() bool {
-	return false
-}
-
 func (f FunctionType) GetName() string {
 	parameterTypes := make([]string, len(f.ParameterTypes))
 	for i, parameterType := range f.ParameterTypes {
@@ -25,9 +21,13 @@ func (f FunctionType) GetName() string {
 	}
 	returnTypeName := "?"
 	if f.ReturnType != nil {
-		returnTypeName = f.ReturnType.GetName()
+		returnTypeName = f.ReturnType.String()
 	}
 	return fmt.Sprintf("(%s) -> %s", strings.Join(parameterTypes, ", "), returnTypeName)
+}
+
+func (f FunctionType) String() string {
+	return f.GetName()
 }
 
 func (f FunctionType) Print(indent string) {
@@ -40,7 +40,7 @@ func (f FunctionType) Print(indent string) {
 		fmt.Printf("%s\t}\n", indent)
 	}
 	if f.ReturnType != nil {
-		fmt.Printf("%s\tReturnType: %s\n", indent, f.ReturnType.GetName())
+		fmt.Printf("%s\tReturnType: %s\n", indent, f.ReturnType.String())
 	}
 	if f.IsAsync {
 		fmt.Printf("%s\tIsAsync: true\n", indent)
@@ -63,7 +63,7 @@ func (p ParameterType) GetName() string {
 		modifier = string(p.Modifier) + " "
 	}
 	if p.Type != nil {
-		return fmt.Sprintf("%s%s", modifier, p.Type.GetName())
+		return fmt.Sprintf("%s%s", modifier, p.Type.String())
 	}
 	return modifier
 }

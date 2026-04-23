@@ -11,12 +11,12 @@ type StructType struct {
 
 func (StructType) typeNode() {}
 
-func (s StructType) IsNumericType() bool {
-	return false
-}
-
 func (s StructType) GetName() string {
 	return s.Name
+}
+
+func (s StructType) String() string {
+	return s.GetName()
 }
 
 func (s StructType) Print(indent string) {
@@ -42,7 +42,7 @@ type StructField struct {
 }
 
 func (s StructField) Print(indent string) {
-	fmt.Printf("%sStructField(%s: %s)\n", indent, s.Name, s.Type.GetName())
+	fmt.Printf("%sStructField(%s: %s)\n", indent, s.Name, s.Type.String())
 	if s.DefaultValue != nil {
 		fmt.Printf("%s  DefaultValue: %v\n", indent, s.DefaultValue)
 	}

@@ -9,12 +9,12 @@ type DataType struct {
 }
 
 func (DataType) typeNode() {}
-
-func (d DataType) IsNumericType() bool {
-	return false
-}
 func (d DataType) GetName() string {
 	return d.Name
+}
+
+func (d DataType) String() string {
+	return d.GetName()
 }
 
 func (d DataType) Print(indent string) {
@@ -50,7 +50,7 @@ func (c DataTypeConstructor) Print(indent string) {
 		fmt.Printf(" {\n")
 		fmt.Printf("%s\tFields: {\n", indent)
 		for _, field := range c.Fields {
-			fmt.Printf("%s\t\t%s: %s\n", indent, field.Name, field.Type.GetName())
+			fmt.Printf("%s\t\t%s: %s\n", indent, field.Name, field.Type.String())
 		}
 		fmt.Printf("%s\t}\n", indent)
 		fmt.Printf("%s}", indent)

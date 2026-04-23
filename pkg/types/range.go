@@ -9,10 +9,13 @@ type RangeType struct {
 	Step        Type
 }
 
-func (r RangeType) typeNode()           {}
-func (r RangeType) IsNumericType() bool { return false }
+func (r RangeType) typeNode() {}
 func (r RangeType) GetName() string {
-	return fmt.Sprintf("range(%s, %s, %s)", r.Start.GetName(), r.End.GetName(), r.Step.GetName())
+	return fmt.Sprintf("range(%s, %s, %s)", r.Start.String(), r.End.String(), r.Step.String())
+}
+
+func (r RangeType) String() string {
+	return r.GetName()
 }
 func (r RangeType) Print(indent string) {
 	fmt.Printf("%sRangeType {\n", indent)

@@ -8,12 +8,12 @@ type GenericType struct {
 
 func (GenericType) typeNode() {}
 
-func (g GenericType) IsNumericType() bool {
-	return false
-}
-
 func (g GenericType) GetName() string {
 	return g.Name
+}
+
+func (g GenericType) String() string {
+	return g.GetName()
 }
 
 func (g GenericType) Print(indent string) {

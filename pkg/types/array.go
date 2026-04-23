@@ -10,16 +10,16 @@ type StaticArrayType struct {
 
 func (StaticArrayType) typeNode() {}
 
-func (a StaticArrayType) IsNumericType() bool {
-	return false
-}
-
 func (a StaticArrayType) GetName() string {
 	elementTypeName := "?"
 	if a.ElementType != nil {
-		elementTypeName = a.ElementType.GetName()
+		elementTypeName = a.ElementType.String()
 	}
 	return fmt.Sprintf("StaticArray<%s, %d>", elementTypeName, a.Size)
+}
+
+func (a StaticArrayType) String() string {
+	return a.GetName()
 }
 
 func (a StaticArrayType) Print(indent string) {
@@ -43,16 +43,16 @@ type DynamicArrayType struct {
 
 func (DynamicArrayType) typeNode() {}
 
-func (a DynamicArrayType) IsNumericType() bool {
-	return false
-}
-
 func (a DynamicArrayType) GetName() string {
 	elementName := "?"
 	if a.ElementType != nil {
-		elementName = a.ElementType.GetName()
+		elementName = a.ElementType.String()
 	}
 	return fmt.Sprintf("DynamicArray<%s>", elementName)
+}
+
+func (a DynamicArrayType) String() string {
+	return a.GetName()
 }
 
 func (a DynamicArrayType) Print(indent string) {
