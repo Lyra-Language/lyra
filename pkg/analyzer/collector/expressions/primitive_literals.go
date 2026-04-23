@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -205,7 +207,11 @@ func unescapeStringContent(raw string) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("invalid \\u escape: %v", err)
 			}
-			sb.WriteRune(rune(n))
+			r := rune(n)
+			if err := validateUnicodeScalarValue(r); err != nil {
+				return "", fmt.Errorf("invalid \\u escape: %v", err)
+			}
+			sb.WriteRune(r)
 			i += 4
 		case 'U':
 			if i+8 >= len(raw) {
@@ -215,13 +221,30 @@ func unescapeStringContent(raw string) (string, error) {
 			if err != nil {
 				return "", fmt.Errorf("invalid \\U escape: %v", err)
 			}
-			sb.WriteRune(rune(n))
+			r := rune(n)
+			if err := validateUnicodeScalarValue(r); err != nil {
+				return "", fmt.Errorf("invalid \\U escape: %v", err)
+			}
+			sb.WriteRune(r)
 			i += 8
 		default:
 			return "", fmt.Errorf("unknown escape sequence: \\%c", esc)
 		}
 	}
 	return sb.String(), nil
+}
+
+func validateUnicodeScalarValue(r rune) error {
+	if r < 0 {
+		return fmt.Errorf("code point U+%X out of range (max U+10FFFF)", r)
+	}
+	if r > utf8.MaxRune {
+		return fmt.Errorf("code point U+%X out of range (max U+10FFFF)", r)
+	}
+	if utf16.IsSurrogate(r) {
+		return fmt.Errorf("code point U+%X is a surrogate", r)
+	}
+	return nil
 }
 
 func collectBooleanLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.BooleanLiteralExpr {
