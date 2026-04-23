@@ -8,15 +8,13 @@ import (
 )
 
 type Printer struct {
-	source []byte
 }
 
-func NewPrinter(source []byte) *Printer {
-	return &Printer{source: source}
+func NewPrinter() *Printer {
+	return &Printer{}
 }
 
 func (p *Printer) Print(node *sitter.Node) {
-	fmt.Println("Printing tree...")
 	cursor := node.Walk()
 	p.printNode(cursor)
 }

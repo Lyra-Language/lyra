@@ -26,7 +26,7 @@ func parseAndCollectFull(t *testing.T, source string, printTree bool) (*ast.Prog
 		t.Fatalf("Parse error: %v", err)
 	}
 	if printTree {
-		p := printer.NewPrinter([]byte(source))
+		p := printer.NewPrinter()
 		p.Print(tree.RootNode())
 	}
 	c := collector.NewCollector([]byte(source))
