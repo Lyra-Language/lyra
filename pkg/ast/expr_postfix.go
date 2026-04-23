@@ -47,7 +47,7 @@ func (a *ArgumentList) GetName() string {
 	for i, argument := range a.Arguments {
 		argumentNames[i] = argument.GetName()
 	}
-	return fmt.Sprintf("%s", strings.Join(argumentNames, ", "))
+	return strings.Join(argumentNames, ", ")
 }
 
 func (a *ArgumentList) Print(indent string) {

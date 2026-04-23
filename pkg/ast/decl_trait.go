@@ -18,7 +18,7 @@ type TraitDeclStmt struct {
 
 func (t *TraitDeclStmt) statementNode() {}
 
-func (t *TraitDeclStmt) GetName() string { return "trait" }
+func (t *TraitDeclStmt) GetName() string { return t.Name }
 
 func (t *TraitDeclStmt) Print(indent string) {
 	fmt.Printf("%sTraitDeclStmt(%s) {\n", indent, t.Name)
