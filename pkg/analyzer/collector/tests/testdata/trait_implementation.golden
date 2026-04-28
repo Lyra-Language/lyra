@@ -1,0 +1,99 @@
+Program(2 statements) {
+	Statements: {
+		{
+			TraitImplStmt {
+				Methods: {
+					{
+						TraitMethodImpl {
+							Clause: {
+								FunctionClause {
+									Body: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														{
+															IdentifierExpr(n) {
+																Name: n
+															}
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(int_to_string) {
+													Name: int_to_string
+												}
+											}
+										}
+									}
+									Parameters: {
+										{
+											Parameter {
+												Pattern: {
+													IdentifierPattern(n) {
+														Name: n
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+							Name: {
+								MethodName(show) {
+									Value: show
+								}
+							}
+						}
+					}
+				}
+				TraitName: Show
+				Type: {
+					PrimitiveType(int) {
+						Name: int
+					}
+				}
+			}
+			TraitImplStmt {
+				Methods: {
+					{
+						TraitMethodImpl {
+							Clause: {
+								FunctionClause {
+									Body: {
+										IdentifierExpr(s) {
+											Name: s
+										}
+									}
+									Parameters: {
+										{
+											Parameter {
+												Pattern: {
+													IdentifierPattern(s) {
+														Name: s
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+							Name: {
+								MethodName(show) {
+									Value: show
+								}
+							}
+						}
+					}
+				}
+				TraitName: Show
+				Type: {
+					PrimitiveType(string) {
+						Name: string
+					}
+				}
+			}
+		}
+	}
+}

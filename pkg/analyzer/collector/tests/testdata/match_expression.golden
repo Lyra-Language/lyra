@@ -34,10 +34,6 @@ Program(1 statements) {
 									Pattern: {
 										DataPattern(Some) {
 											Name: Some
-											Pattern: {
-												WildcardPattern {
-												}
-											}
 										}
 									}
 								}

@@ -30,10 +30,6 @@ Program(1 statements) {
 								}
 							}
 						}
-						Guards: {
-							{
-							}
-						}
 						Result: {
 							MathBinaryOpExpr {
 								Left: {

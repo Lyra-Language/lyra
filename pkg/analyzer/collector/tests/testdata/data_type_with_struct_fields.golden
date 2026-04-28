@@ -14,10 +14,6 @@ Program(1 statements) {
 							{
 								DataTypeConstructor(Nil) {
 									Name: Nil
-									Params: {
-										{
-										}
-									}
 								}
 								DataTypeConstructor(Leaf) {
 									Name: Leaf
@@ -59,10 +55,6 @@ Program(1 statements) {
 										}
 									}
 									Name: Node
-									Params: {
-										{
-										}
-									}
 								}
 							}
 						}

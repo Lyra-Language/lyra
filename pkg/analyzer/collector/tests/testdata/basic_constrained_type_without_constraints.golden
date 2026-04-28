@@ -5,10 +5,6 @@ Program(1 statements) {
 				Name: Angle
 				Type: {
 					ConstrainedType(Angle) {
-						Constraints: {
-							{
-							}
-						}
 						Name: Angle
 						Type: {
 							PrimitiveType(float) {

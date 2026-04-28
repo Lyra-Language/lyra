@@ -8,26 +8,10 @@ Program(1 statements) {
 					TryExpr {
 						Operand: {
 							FunctionCallExpr {
-								Arguments: {
-									ArgumentList {
-										Arguments: {
-											{
-											}
-										}
-									}
-								}
 								Function: {
 									MemberExpr {
 										Object: {
 											FunctionCallExpr {
-												Arguments: {
-													ArgumentList {
-														Arguments: {
-															{
-															}
-														}
-													}
-												}
 												Function: {
 													MemberExpr {
 														Object: {

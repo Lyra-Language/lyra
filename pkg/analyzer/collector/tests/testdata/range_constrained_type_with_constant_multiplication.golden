@@ -41,10 +41,6 @@ Program(1 statements) {
 													Name: float
 												}
 											}
-											Value: {
-												FloatLiteralExpr {
-												}
-											}
 										}
 									}
 								}

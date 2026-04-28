@@ -57,10 +57,6 @@ Program(2 statements) {
 										}
 									}
 									Name: RGB
-									Params: {
-										{
-										}
-									}
 								}
 								DataTypeConstructor(HSL) {
 									Fields: {
@@ -100,10 +96,6 @@ Program(2 statements) {
 										}
 									}
 									Name: HSL
-									Params: {
-										{
-										}
-									}
 								}
 							}
 						}

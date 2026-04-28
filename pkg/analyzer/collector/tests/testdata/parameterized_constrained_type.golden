@@ -5,10 +5,6 @@ Program(1 statements) {
 				Name: Point
 				Type: {
 					ConstrainedType(Point) {
-						Constraints: {
-							{
-							}
-						}
 						Name: Point
 						Type: {
 							UnresolvedType(Tuple) {

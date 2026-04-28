@@ -2,18 +2,6 @@ Program(1 statements) {
 	Statements: {
 		{
 			TraitDeclStmt(Functor) {
-				Bounds: {
-					{
-					}
-				}
-				GenericParameterConstraints: {
-					{
-					}
-				}
-				GenericParams: {
-					{
-					}
-				}
 				Methods: {
 					{
 						TraitMethod {

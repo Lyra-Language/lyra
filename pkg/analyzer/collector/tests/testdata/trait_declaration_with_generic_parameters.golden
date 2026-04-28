@@ -2,14 +2,6 @@ Program(1 statements) {
 	Statements: {
 		{
 			TraitDeclStmt(Converter) {
-				Bounds: {
-					{
-					}
-				}
-				GenericParameterConstraints: {
-					{
-					}
-				}
 				GenericParams: {
 					{
 						from

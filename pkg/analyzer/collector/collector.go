@@ -88,6 +88,8 @@ func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 		return typedecls.CollectTypeDeclaration(node, c.ctx)
 	case "trait_declaration":
 		return declarations.CollectTraitDeclaration(node, c.ctx)
+	case "trait_implementation":
+		return declarations.CollectTraitImplementation(node, c.ctx)
 	case "function_definition":
 		return declarations.CollectFunctionDefinition(node, c.ctx)
 	case "declaration", "const_declaration":

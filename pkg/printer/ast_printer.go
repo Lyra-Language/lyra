@@ -138,6 +138,9 @@ func (w *astWalker) writeField(name string, v reflect.Value, indent string) {
 		w.line(indent, fmt.Sprintf("%s: nil", name))
 		return
 	}
+	if isEmptyComposite(v) {
+		return
+	}
 
 	switch kind {
 	case reflect.Struct, reflect.Ptr, reflect.Slice, reflect.Array, reflect.Interface:
@@ -199,8 +202,10 @@ func isZeroValue(v reflect.Value) bool {
 		return v.Uint() == 0
 	case reflect.Float32, reflect.Float64:
 		return v.Float() == 0
-	case reflect.Ptr, reflect.Interface, reflect.Slice, reflect.Map, reflect.Func:
+	case reflect.Ptr, reflect.Interface, reflect.Func:
 		return v.IsNil()
+	case reflect.Slice, reflect.Map:
+		return v.IsNil() || v.Len() == 0
 	case reflect.Array:
 		for i := 0; i < v.Len(); i++ {
 			if !isZeroValue(v.Index(i)) {
@@ -211,6 +216,42 @@ func isZeroValue(v reflect.Value) bool {
 	case reflect.Struct:
 		zero := reflect.Zero(v.Type())
 		return reflect.DeepEqual(v.Interface(), zero.Interface())
+	default:
+		return false
+	}
+}
+
+func isEmptyComposite(v reflect.Value) bool {
+	for v.IsValid() && v.Kind() == reflect.Interface {
+		if v.IsNil() {
+			return false
+		}
+		v = v.Elem()
+	}
+
+	for v.IsValid() && v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			return false
+		}
+		v = v.Elem()
+	}
+
+	if !v.IsValid() {
+		return false
+	}
+
+	switch v.Kind() {
+	case reflect.Slice, reflect.Array:
+		return v.Len() == 0
+	case reflect.Struct:
+		for _, f := range exportedFields(v) {
+			fieldValue := v.FieldByIndex(f.Index)
+			if isZeroValue(fieldValue) || isEmptyComposite(fieldValue) {
+				continue
+			}
+			return false
+		}
+		return true
 	default:
 		return false
 	}

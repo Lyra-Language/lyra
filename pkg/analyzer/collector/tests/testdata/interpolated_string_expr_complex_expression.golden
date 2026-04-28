@@ -12,14 +12,6 @@ Program(1 statements) {
 									Value: Hello, 
 								}
 								FunctionCallExpr {
-									Arguments: {
-										ArgumentList {
-											Arguments: {
-												{
-												}
-											}
-										}
-									}
 									Function: {
 										MemberExpr {
 											Object: {

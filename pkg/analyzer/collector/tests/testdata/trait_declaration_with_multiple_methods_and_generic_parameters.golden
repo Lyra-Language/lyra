@@ -2,14 +2,6 @@ Program(1 statements) {
 	Statements: {
 		{
 			TraitDeclStmt(Collection) {
-				Bounds: {
-					{
-					}
-				}
-				GenericParameterConstraints: {
-					{
-					}
-				}
 				GenericParams: {
 					{
 						c

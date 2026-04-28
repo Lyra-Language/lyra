@@ -4,10 +4,6 @@ Program(1 statements) {
 			VarDeclStmt(blank) {
 				BindingKind: let
 				Name: blank
-				Value: {
-					StringLiteralExpr {
-					}
-				}
 			}
 		}
 	}

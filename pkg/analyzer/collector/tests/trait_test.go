@@ -16,6 +16,21 @@ func TestCollector_TraitDeclaration(t *testing.T) {
 	checkGolden(t, got, filepath.Join("testdata", "trait_declaration.golden"))
 }
 
+func TestCollector_TraitImplementation(t *testing.T) {
+	source := `
+	impl Show for int {
+		show = (n) => int_to_string(n)
+	}
+
+	impl Show for string {
+		show = (s) => s
+	}
+	`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "trait_implementation.golden"))
+}
+
 func TestCollector_TraitDeclarationWithGenericParameters(t *testing.T) {
 	source := `
 	trait Converter<from, to> {

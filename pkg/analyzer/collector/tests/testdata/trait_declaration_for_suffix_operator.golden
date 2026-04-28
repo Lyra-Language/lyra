@@ -2,18 +2,6 @@ Program(1 statements) {
 	Statements: {
 		{
 			TraitDeclStmt(Inc) {
-				Bounds: {
-					{
-					}
-				}
-				GenericParameterConstraints: {
-					{
-					}
-				}
-				GenericParams: {
-					{
-					}
-				}
 				Methods: {
 					{
 						TraitMethod {
@@ -28,22 +16,6 @@ Program(1 statements) {
 									ParameterTypes: {
 										{
 											ParameterType(Self) {
-												Type: {
-													SelfType(Self) {
-														GenericParams: {
-															{
-															}
-														}
-													}
-												}
-											}
-										}
-									}
-									ReturnType: {
-										SelfType(Self) {
-											GenericParams: {
-												{
-												}
 											}
 										}
 									}

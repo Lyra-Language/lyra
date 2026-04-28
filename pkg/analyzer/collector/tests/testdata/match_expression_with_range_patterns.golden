@@ -131,10 +131,6 @@ Program(1 statements) {
 											}
 										}
 									}
-									Pattern: {
-										WildcardPattern {
-										}
-									}
 								}
 							}
 						}

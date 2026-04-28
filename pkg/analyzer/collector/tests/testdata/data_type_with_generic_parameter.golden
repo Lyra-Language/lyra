@@ -16,10 +16,6 @@ Program(1 statements) {
 							{
 								DataTypeConstructor(Nil) {
 									Name: Nil
-									Params: {
-										{
-										}
-									}
 								}
 								DataTypeConstructor(Some) {
 									Name: Some

@@ -11,24 +11,12 @@ Program(1 statements) {
 							{
 								DataTypeConstructor(Red) {
 									Name: Red
-									Params: {
-										{
-										}
-									}
 								}
 								DataTypeConstructor(Green) {
 									Name: Green
-									Params: {
-										{
-										}
-									}
 								}
 								DataTypeConstructor(Blue) {
 									Name: Blue
-									Params: {
-										{
-										}
-									}
 								}
 							}
 						}

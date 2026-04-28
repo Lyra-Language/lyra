@@ -2,10 +2,6 @@ Program(1 statements) {
 	Statements: {
 		{
 			TraitDeclStmt(PairOps) {
-				Bounds: {
-					{
-					}
-				}
 				GenericParameterConstraints: {
 					{
 						TraitGenericParameterConstraint(a) {
