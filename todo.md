@@ -1,6 +1,5 @@
 ## To-Dos
 
-- Collect trait implementations
 - Collect math assignment operators (i.e. +=, \*=, etc)
 - Collect character literals (runes?)
 - Collect for loops
@@ -14,6 +13,7 @@
 ### 04/18/26
 
 - Collect trait declarations
+- Collect trait implementations
 
 ### 04/17/26
 
