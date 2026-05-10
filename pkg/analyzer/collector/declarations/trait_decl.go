@@ -26,13 +26,13 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TraitDecl
 	boundsNode := node.ChildByFieldName("trait_bounds")
 	bounds := make([]string, 0)
 	if boundsNode != nil {
-		bounds = collectBounds(boundsNode, ctx)
+		bounds = ctx.CollectBounds(boundsNode)
 	}
 
 	genericParameterConstraintsNode := node.ChildByFieldName("trait_generic_parameter_constraints")
-	genericParameterConstraints := make([]ast.TraitGenericParameterConstraint, 0)
+	genericParameterConstraints := make([]ast.GenericParameterConstraint, 0)
 	if genericParameterConstraintsNode != nil {
-		genericParameterConstraints = collectGenericParameterConstraints(genericParameterConstraintsNode, ctx)
+		genericParameterConstraints = ctx.CollectGenericParameterConstraints(genericParameterConstraintsNode)
 	}
 
 	methodsNode, ok := ctx.MustField(node, "methods")
@@ -52,44 +52,6 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TraitDecl
 	}
 }
 
-func collectBounds(node *sitter.Node, ctx *collctx.Ctx) []string {
-	bounds := make([]string, 0)
-	for i := uint(0); i < node.ChildCount(); i++ {
-		child := node.Child(i)
-		if child.Kind() == "trait_name" {
-			bounds = append(bounds, ctx.NodeText(child))
-		}
-	}
-	return bounds
-}
-
-func collectGenericParameterConstraints(node *sitter.Node, ctx *collctx.Ctx) []ast.TraitGenericParameterConstraint {
-	constraints := make([]ast.TraitGenericParameterConstraint, 0)
-	for i := uint(0); i < node.NamedChildCount(); i++ {
-		child := node.NamedChild(i)
-		if child.Kind() == "trait_generic_parameter_constraint" {
-			constraints = append(constraints, collectTraitGenericParameterConstraint(child, ctx))
-		}
-	}
-	return constraints
-}
-
-func collectTraitGenericParameterConstraint(node *sitter.Node, ctx *collctx.Ctx) ast.TraitGenericParameterConstraint {
-	genericTypeNode, ok := ctx.MustField(node, "generic_type")
-	if !ok {
-		return ast.TraitGenericParameterConstraint{}
-	}
-	name := ctx.NodeText(genericTypeNode)
-	traitBoundsNode, ok := ctx.MustField(node, "trait_bounds")
-	if !ok {
-		return ast.TraitGenericParameterConstraint{}
-	}
-	constraints := collectBounds(traitBoundsNode, ctx)
-	return ast.TraitGenericParameterConstraint{
-		Name: name,
-		Constraints: constraints,
-	}
-}
 func collectMethods(node *sitter.Node, ctx *collctx.Ctx) []ast.TraitMethod {
 	methods := make([]ast.TraitMethod, 0)
 	for i := uint(0); i < node.NamedChildCount(); i++ {
@@ -111,7 +73,7 @@ func collectTraitMethodDeclaration(node *sitter.Node, ctx *collctx.Ctx) ast.Trai
 	if !ok {
 		return ast.TraitMethod{}
 	}
-	signature := ctx.ParseFunctionType(signatureNode)
+	signature := ctx.ParseLambdaType(signatureNode)
 	if signature == nil {
 		ctx.AddError(node, collctx.SeverityError, "could not parse trait method signature")
 		return ast.TraitMethod{}

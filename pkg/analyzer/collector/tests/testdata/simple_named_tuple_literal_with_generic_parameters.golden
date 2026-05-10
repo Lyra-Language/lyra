@@ -1,47 +1,39 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(point) {
-				BindingKind: let
-				Name: point
-				Type: {
-					TupleType(Point) {
-						Elements: {
-							{
-								PrimitiveType(int) {
-									Name: int
-								}
-								PrimitiveType(int) {
-									Name: int
-								}
-							}
+		VarDeclStmt(point) {
+			BindingKind: let
+			Name: point
+			Type: {
+				TupleType(Point) {
+					Elements: {
+						PrimitiveType(int) {
+							Name: int
 						}
-						Name: Point
+						PrimitiveType(int) {
+							Name: int
+						}
 					}
+					Name: Point
 				}
-				Value: {
-					TupleLiteralExpr(Point) {
-						Elements: {
-							{
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 1
-								}
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 2
-								}
-							}
+			}
+			Value: {
+				TupleLiteralExpr(Point) {
+					Elements: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 1
 						}
-						GenericArguments: {
-							{
-								PrimitiveType(i32) {
-									Name: i32
-								}
-							}
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 2
 						}
-						Name: Point
 					}
+					GenericArguments: {
+						PrimitiveType(i32) {
+							Name: i32
+						}
+					}
+					Name: Point
 				}
 			}
 		}

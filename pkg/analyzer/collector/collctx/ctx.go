@@ -32,15 +32,16 @@ func (e CollectorError) Error() string {
 type Collector interface {
 	CollectExpr(*sitter.Node) ast.Expression
 	CollectStatement(*sitter.Node) ast.Statement
-	CollectFunctionClause(*sitter.Node) ast.FunctionClause
 	ParseDestructuringPattern(*sitter.Node) ast.Pattern
 	CollectPattern(*sitter.Node) ast.Pattern
 	ParseType(*sitter.Node) types.Type
-	ParseFunctionType(*sitter.Node) *types.FunctionType
+	ParseLambdaType(*sitter.Node) *types.LambdaType
 	RegisterType(*ast.TypeDeclStmt) error
-	RegisterFunction(*ast.FunctionDefStmt) error
+	RegisterFunction(string, *ast.LambdaExpr) error
 	RegisterVariable(*ast.VarDeclStmt) error
 	CollectGenericParams(*sitter.Node) []string
+	CollectGenericParameterConstraints(*sitter.Node) []ast.GenericParameterConstraint
+	CollectBounds(*sitter.Node) []string
 }
 
 // Ctx carries shared mutable state (source text, error sink) plus a [Collector]

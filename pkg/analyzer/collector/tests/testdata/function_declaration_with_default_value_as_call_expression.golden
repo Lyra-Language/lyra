@@ -1,0 +1,60 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(process) {
+			BindingKind: let
+			Name: process
+			Value: {
+				LambdaExpr {
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(items) {
+									Name: items
+								}
+							}
+							Type: {
+								DynamicArrayType(DynamicArray<string>) {
+									ElementType: {
+										PrimitiveType(string) {
+											Name: string
+										}
+									}
+								}
+							}
+						}
+						Parameter {
+							DefaultValue: {
+								FunctionCallExpr {
+									Function: {
+										IdentifierExpr(get_default_config) {
+											Name: get_default_config
+										}
+									}
+								}
+							}
+							Pattern: {
+								IdentifierPattern(config) {
+									Name: config
+								}
+							}
+							Type: {
+								UnresolvedType(Config) {
+									Name: Config
+								}
+							}
+						}
+					}
+					ReturnType: {
+						ReturnType(void) {
+							Type: {
+								GenericType(void) {
+									Name: void
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -1,16 +1,12 @@
 Program(1 statements) {
 	Statements: {
-		{
-			ModuleDeclStmt {
-				Path: {
-					{
-						ModuleName(myapp) {
-							Name: myapp
-						}
-						ModuleName(utils) {
-							Name: utils
-						}
-					}
+		ModuleDeclStmt {
+			Path: {
+				ModuleName(myapp) {
+					Name: myapp
+				}
+				ModuleName(utils) {
+					Name: utils
 				}
 			}
 		}

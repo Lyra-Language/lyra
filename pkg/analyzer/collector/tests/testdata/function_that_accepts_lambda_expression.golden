@@ -1,63 +1,42 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(doubled) {
-				BindingKind: let
-				Name: doubled
-				Value: {
-					FunctionCallExpr {
-						Arguments: {
-							ArgumentList {
-								Arguments: {
-									{
-										ArrayLiteralExpr {
-											Elements: {
-												{
-													IntegerLiteralExpr {
-														Base: 10
-														Value: 1
-													}
-													IntegerLiteralExpr {
-														Base: 10
-														Value: 2
-													}
-													IntegerLiteralExpr {
-														Base: 10
-														Value: 3
-													}
+		VarDeclStmt(doubled) {
+			BindingKind: let
+			Name: doubled
+			Value: {
+				FunctionCallExpr {
+					Arguments: {
+						ArgumentList {
+							Arguments: {
+								ArrayLiteralExpr {
+									Elements: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 1
+										}
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 2
+										}
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 3
+										}
+									}
+								}
+								LambdaExpr {
+									Body: {
+										MathBinaryOpExpr {
+											Left: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 2
 												}
 											}
-										}
-										LambdaExpr {
-											FunctionClause: {
-												FunctionClause {
-													Body: {
-														MathBinaryOpExpr {
-															Left: {
-																IntegerLiteralExpr {
-																	Base: 10
-																	Value: 2
-																}
-															}
-															Operator: *
-															Right: {
-																IdentifierExpr(x) {
-																	Name: x
-																}
-															}
-														}
-													}
-													Parameters: {
-														{
-															Parameter {
-																Pattern: {
-																	IdentifierPattern(x) {
-																		Name: x
-																	}
-																}
-															}
-														}
-													}
+											Operator: *
+											Right: {
+												IdentifierExpr(x) {
+													Name: x
 												}
 											}
 										}
@@ -65,20 +44,18 @@ Program(1 statements) {
 								}
 							}
 						}
-						Function: {
-							IdentifierExpr(map) {
-								Name: map
-							}
+					}
+					Function: {
+						IdentifierExpr(map) {
+							Name: map
 						}
-						GenericArguments: {
-							{
-								PrimitiveType(int) {
-									Name: int
-								}
-								PrimitiveType(int) {
-									Name: int
-								}
-							}
+					}
+					GenericArguments: {
+						PrimitiveType(int) {
+							Name: int
+						}
+						PrimitiveType(int) {
+							Name: int
 						}
 					}
 				}

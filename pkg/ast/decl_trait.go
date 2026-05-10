@@ -1,7 +1,6 @@
 package ast
 
 import (
-
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -10,7 +9,7 @@ type TraitDeclStmt struct {
 	Name string
 	GenericParams []string
 	Bounds []string
-	GenericParameterConstraints []TraitGenericParameterConstraint
+	GenericParameterConstraints []GenericParameterConstraint
 	Methods []TraitMethod
 	IsPublic bool
 }
@@ -19,18 +18,9 @@ func (t *TraitDeclStmt) statementNode() {}
 
 func (t *TraitDeclStmt) GetName() string { return t.Name }
 
-type TraitGenericParameterConstraint struct {
-	Name string
-	Constraints []string
-}
-
-func (t *TraitGenericParameterConstraint) GetName() string {
-	return t.Name
-}
-
 type TraitMethod struct {
 	Name MethodName
-	Signature *types.FunctionType
+	Signature *types.LambdaType
 }
 
 func (t *TraitMethod) GetName() string {

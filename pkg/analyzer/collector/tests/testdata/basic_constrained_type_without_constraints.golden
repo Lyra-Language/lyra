@@ -1,15 +1,13 @@
 Program(1 statements) {
 	Statements: {
-		{
-			TypeDeclStmt(Angle) {
-				Name: Angle
-				Type: {
-					ConstrainedType(Angle) {
-						Name: Angle
-						Type: {
-							PrimitiveType(float) {
-								Name: float
-							}
+		TypeDeclStmt(Angle) {
+			Name: Angle
+			Type: {
+				ConstrainedType(Angle) {
+					Name: Angle
+					Type: {
+						PrimitiveType(float) {
+							Name: float
 						}
 					}
 				}

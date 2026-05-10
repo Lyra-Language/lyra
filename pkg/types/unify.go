@@ -28,23 +28,23 @@ func TypesEqual(a, b Type) bool {
 			return TypesEqual(at.ElementType, bt.ElementType)
 		}
 		return false
-	case *FunctionType:
-		// FunctionType uses the pointer convention: it is constructed as
-		// *types.FunctionType everywhere (see ast.FunctionDefStmt.Signature,
-		// ast.TraitMethod.Signature, Collector.parseFunctionType). The type
+	case *LambdaType:
+		// LambdaType uses the pointer convention: it is constructed as
+		// *types.LambdaType everywhere (see ast.FunctionDefStmt.Signature,
+		// ast.TraitMethod.Signature, Collector.parseLambdaType). The type
 		// switch must match the pointer form or equality silently returns false.
-		bt, ok := b.(*FunctionType)
+		bt, ok := b.(*LambdaType)
 		if !ok {
 			return false
 		}
 		if at == nil || bt == nil {
 			return at == bt
 		}
-		if len(at.ParameterTypes) != len(bt.ParameterTypes) {
+		if len(at.Parameters) != len(bt.Parameters) {
 			return false
 		}
-		for i := range at.ParameterTypes {
-			if !TypesEqual(at.ParameterTypes[i].Type, bt.ParameterTypes[i].Type) {
+		for i := range at.Parameters {
+			if !TypesEqual(at.Parameters[i].Type, bt.Parameters[i].Type) {
 				return false
 			}
 		}
@@ -116,6 +116,20 @@ func TypesEqual(a, b Type) bool {
 			}
 			return true
 		}
+	case ReturnType:
+		bt, ok := b.(ReturnType)
+		if !ok {
+			return false
+		}
+		if at.Type == nil || bt.Type == nil {
+			return at.Type == bt.Type
+		}
+		return TypesEqual(at.Type, bt.Type)
+	case VoidType:
+		if _, ok := b.(VoidType); ok {
+			return true
+		}
+		return false
 	default:
 		return false
 	}

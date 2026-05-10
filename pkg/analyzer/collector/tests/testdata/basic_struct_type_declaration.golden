@@ -1,34 +1,30 @@
 Program(1 statements) {
 	Statements: {
-		{
-			TypeDeclStmt(Point) {
-				IsPublic: true
-				Name: Point
-				Type: {
-					StructType(Point) {
-						Allocation: stack
-						Fields: {
-							{
-								StructField(x) {
-									Name: x
-									Type: {
-										PrimitiveType(int) {
-											Name: int
-										}
-									}
-								}
-								StructField(y) {
-									Name: y
-									Type: {
-										PrimitiveType(int) {
-											Name: int
-										}
-									}
+		TypeDeclStmt(Point) {
+			IsPublic: true
+			Name: Point
+			Type: {
+				StructType(Point) {
+					Allocation: stack
+					Fields: {
+						StructField(x) {
+							Name: x
+							Type: {
+								PrimitiveType(int) {
+									Name: int
 								}
 							}
 						}
-						Name: Point
+						StructField(y) {
+							Name: y
+							Type: {
+								PrimitiveType(int) {
+									Name: int
+								}
+							}
+						}
 					}
+					Name: Point
 				}
 			}
 		}

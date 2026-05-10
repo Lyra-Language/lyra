@@ -1,14 +1,12 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(line) {
-				BindingKind: let
-				Name: line
-				Value: {
-					StringLiteralExpr {
-						Value: Hello
+		VarDeclStmt(line) {
+			BindingKind: let
+			Name: line
+			Value: {
+				StringLiteralExpr {
+					Value: Hello
 	World\!
-					}
 				}
 			}
 		}

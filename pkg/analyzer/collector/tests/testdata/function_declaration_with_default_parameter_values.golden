@@ -1,0 +1,64 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(greet) {
+			BindingKind: let
+			Name: greet
+			Value: {
+				LambdaExpr {
+					Body: {
+						InterpolatedStringExpr {
+							Segments: {
+								IdentifierExpr(prefix) {
+									Name: prefix
+								}
+								IdentifierExpr(name) {
+									Name: name
+								}
+							}
+						}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(name) {
+									Name: name
+								}
+							}
+							Type: {
+								PrimitiveType(string) {
+									Name: string
+								}
+							}
+						}
+						Parameter {
+							DefaultValue: {
+								StringLiteralExpr {
+									Value: Hello
+								}
+							}
+							Pattern: {
+								IdentifierPattern(prefix) {
+									Name: prefix
+								}
+							}
+							Type: {
+								PrimitiveType(string) {
+									Name: string
+								}
+							}
+						}
+					}
+					ReturnType: {
+						ReturnType(string) {
+							Type: {
+								PrimitiveType(string) {
+									Name: string
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

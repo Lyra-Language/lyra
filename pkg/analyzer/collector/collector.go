@@ -90,8 +90,6 @@ func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 		return declarations.CollectTraitDeclaration(node, c.ctx)
 	case "trait_implementation":
 		return declarations.CollectTraitImplementation(node, c.ctx)
-	case "function_definition":
-		return declarations.CollectFunctionDefinition(node, c.ctx)
 	case "declaration", "const_declaration":
 		return declarations.CollectVariableDeclaration(node, c.ctx)
 	case "destructuring_declaration":
@@ -102,6 +100,8 @@ func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 		return declarations.CollectDestructuringElseStatement(node, c.ctx)
 	case "expression_statement":
 		return expressions.CollectExpressionStatement(node, c.ctx)
+	case "return_statement":
+		return statements.CollectReturnStatement(node, c.ctx)
 	}
 	return nil
 }
@@ -138,20 +138,59 @@ func (c *Collector) CollectGenericParams(node *sitter.Node) []string {
 	return params
 }
 
+func (c *Collector) CollectGenericParameterConstraints(node *sitter.Node) []ast.GenericParameterConstraint {
+	constraints := make([]ast.GenericParameterConstraint, 0)
+	for i := uint(0); i < node.NamedChildCount(); i++ {
+		child := node.NamedChild(i)
+		if child.Kind() == "generic_parameter_constraint" {
+			constraints = append(constraints, c.collectTraitGenericParameterConstraint(child))
+		}
+	}
+	return constraints
+}
+
+func (c *Collector) collectTraitGenericParameterConstraint(node *sitter.Node) ast.GenericParameterConstraint {
+	genericTypeNode, ok := c.ctx.MustField(node, "generic_type")
+	if !ok {
+		return ast.GenericParameterConstraint{}
+	}
+	name := c.ctx.NodeText(genericTypeNode)
+	traitBoundsNode, ok := c.ctx.MustField(node, "generic_bounds")
+	if !ok {
+		return ast.GenericParameterConstraint{}
+	}
+	constraints := c.CollectBounds(traitBoundsNode)
+	return ast.GenericParameterConstraint{
+		Name: name,
+		Constraints: constraints,
+	}
+}
+
+func (c *Collector) CollectBounds(node *sitter.Node) []string {
+	bounds := make([]string, 0)
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() == "trait_name" {
+			bounds = append(bounds, c.ctx.NodeText(child))
+		}
+	}
+	return bounds
+}
+
 func (c *Collector) ParseType(node *sitter.Node) types.Type {
 	return c.parseType(node)
 }
 
-func (c *Collector) ParseFunctionType(node *sitter.Node) *types.FunctionType {
-	return c.parseFunctionType(node)
+func (c *Collector) ParseLambdaType(node *sitter.Node) *types.LambdaType {
+	return c.parseLambdaType(node)
 }
 
 func (c *Collector) RegisterType(stmt *ast.TypeDeclStmt) error {
 	return c.table.RegisterType(stmt)
 }
 
-func (c *Collector) RegisterFunction(stmt *ast.FunctionDefStmt) error {
-	return c.table.RegisterFunction(stmt)
+func (c *Collector) RegisterFunction(name string, stmt *ast.LambdaExpr) error {
+	return c.table.RegisterFunction(name, stmt)
 }
 
 func (c *Collector) RegisterVariable(stmt *ast.VarDeclStmt) error {
@@ -188,10 +227,12 @@ func (c *Collector) parseType(node *sitter.Node, allocation ...types.AllocationM
 		return c.parseAllocatedType(node)
 	case "anonymous_tuple_type":
 		return c.parseAnonymousTupleType(node)
-	case "function_type":
-		return c.parseFunctionType(node)
+	case "lambda_type":
+		return c.parseLambdaType(node)
 	case "self_type":
 		return c.parseSelfType(node)
+	case "void_type":
+		return types.VoidType{}
 	}
 	c.addError(node, CollectorErrorSeverityError, "parseType: unknown type node kind: %s", node.Kind())
 	return nil
@@ -226,12 +267,10 @@ func (c *Collector) parseAnonymousTupleType(node *sitter.Node) types.Type {
 	return nil
 }
 
-func (c *Collector) parseFunctionType(node *sitter.Node) *types.FunctionType {
-	return &types.FunctionType{
-		ParameterTypes: c.parseParameterTypes(node.ChildByFieldName("parameter_types")),
-		ReturnType:     c.parseType(node.ChildByFieldName("return_type")),
-		IsAsync:        node.ChildByFieldName("is_async") != nil,
-		IsPure:         node.ChildByFieldName("is_pure") != nil,
+func (c *Collector) parseLambdaType(node *sitter.Node) *types.LambdaType {
+	return &types.LambdaType{
+		Parameters: c.parseParameterTypes(node.ChildByFieldName("parameter_types")),
+		ReturnType: types.ReturnType{Type: c.parseType(node.ChildByFieldName("return_type"))},
 	}
 }
 
@@ -313,10 +352,6 @@ func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {
 
 func (c *Collector) ParseDestructuringPattern(patternNode *sitter.Node) ast.Pattern {
 	return c.CollectPattern(patternNode.Child(0))
-}
-
-func (c *Collector) CollectFunctionClause(node *sitter.Node) ast.FunctionClause {
-	return *declarations.CollectFunctionClause(node, c.ctx)
 }
 
 func (c *Collector) CollectPattern(patternNode *sitter.Node) ast.Pattern {

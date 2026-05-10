@@ -1,39 +1,37 @@
 Program(1 statements) {
 	Statements: {
-		{
-			ExpressionStmt {
-				Expression: {
-					RangeExpr {
-						End: {
-							MathBinaryOpExpr {
-								Left: {
-									IdentifierExpr(end) {
-										Name: end
-									}
+		ExpressionStmt {
+			Expression: {
+				RangeExpr {
+					End: {
+						MathBinaryOpExpr {
+							Left: {
+								IdentifierExpr(end) {
+									Name: end
 								}
-								Operator: -
-								Right: {
-									IntegerLiteralExpr {
-										Base: 10
-										Value: 1
-									}
+							}
+							Operator: -
+							Right: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
 								}
 							}
 						}
-						EndOperator: =
-						Start: {
-							MathBinaryOpExpr {
-								Left: {
-									IdentifierExpr(start) {
-										Name: start
-									}
+					}
+					EndOperator: =
+					Start: {
+						MathBinaryOpExpr {
+							Left: {
+								IdentifierExpr(start) {
+									Name: start
 								}
-								Operator: *
-								Right: {
-									IntegerLiteralExpr {
-										Base: 10
-										Value: 2
-									}
+							}
+							Operator: *
+							Right: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 2
 								}
 							}
 						}

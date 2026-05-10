@@ -53,7 +53,7 @@ func TestCollectNestedIfBlockExpr(t *testing.T) {
 		if y == 0 {
 			println("On Horizontal Axis")
 		} else {
-			println("At #{x},#{y}")
+			println("At ${x},${y}")
 		}
 	}`
 	program, _ := parseAndCollect(t, source)

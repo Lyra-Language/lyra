@@ -1,0 +1,42 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(render) {
+			BindingKind: let
+			Name: render
+			Value: {
+				LambdaExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								nil
+							}
+						}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(scene) {
+									Name: scene
+								}
+							}
+							Type: {
+								UnresolvedType(Scene) {
+									Name: Scene
+								}
+							}
+							TypeModifier: ref
+						}
+					}
+					ReturnType: {
+						ReturnType(Void) {
+							Type: {
+								VoidType(Void) {
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -1,18 +1,16 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(PI) {
-				BindingKind: const
-				Name: PI
-				Type: {
-					PrimitiveType(float) {
-						Name: float
-					}
+		VarDeclStmt(PI) {
+			BindingKind: const
+			Name: PI
+			Type: {
+				PrimitiveType(float) {
+					Name: float
 				}
-				Value: {
-					FloatLiteralExpr {
-						Value: 3.14159
-					}
+			}
+			Value: {
+				FloatLiteralExpr {
+					Value: 3.14159
 				}
 			}
 		}

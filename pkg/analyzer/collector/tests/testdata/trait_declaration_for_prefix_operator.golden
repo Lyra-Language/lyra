@@ -1,31 +1,25 @@
 Program(1 statements) {
 	Statements: {
-		{
-			TraitDeclStmt(Neg) {
-				Methods: {
-					{
-						TraitMethod {
-							Name: {
-								MethodName(-) {
-									Kind: 1
-									Value: -
-								}
-							}
-							Signature: {
-								FunctionType((Self) -> Self) {
-									ParameterTypes: {
-										{
-											ParameterType(Self) {
-											}
-										}
-									}
+		TraitDeclStmt(Neg) {
+			Methods: {
+				TraitMethod {
+					Name: {
+						MethodName(-) {
+							Kind: 1
+							Value: -
+						}
+					}
+					Signature: {
+						FunctionType((Self) -> Self) {
+							ParameterTypes: {
+								ParameterType(Self) {
 								}
 							}
 						}
 					}
 				}
-				Name: Neg
 			}
+			Name: Neg
 		}
 	}
 }

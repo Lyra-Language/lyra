@@ -39,6 +39,16 @@ func bindingKind(keyword string) ast.BindingKind {
 func CollectVariableDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.VarDeclStmt {
 	kind := bindingKind(ctx.NodeText(node.ChildByFieldName("keyword")))
 	name := ctx.NodeText(node.ChildByFieldName("name"))
+	genericParametersNode := node.ChildByFieldName("generic_parameters")
+	genericParameters := make([]string, 0)
+	if genericParametersNode != nil {
+		genericParameters = ctx.CollectGenericParams(genericParametersNode)
+	}
+	genericParamConstraintsNode := node.ChildByFieldName("generic_parameter_constraints")
+	genericParamConstraints := make([]ast.GenericParameterConstraint, 0)
+	if genericParamConstraintsNode != nil {
+		genericParamConstraints = ctx.CollectGenericParameterConstraints(genericParamConstraintsNode)
+	}
 
 	var varType types.Type
 	if typeAnnotation := node.ChildByFieldName("type_annotation"); typeAnnotation != nil {
@@ -79,6 +89,8 @@ func CollectVariableDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.VarDec
 		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
 		BindingKind: kind,
 		Name:    name,
+		GenericParams: genericParameters,
+		GenericParamConstraints: genericParamConstraints,
 		Type:    varType,
 		Value:   initExpr,
 	}

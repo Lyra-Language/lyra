@@ -1,26 +1,22 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(arr) {
-				BindingKind: let
-				Name: arr
-				Value: {
-					ArrayLiteralExpr {
-						Elements: {
-							{
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 1
-								}
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 2
-								}
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 3
-								}
-							}
+		VarDeclStmt(arr) {
+			BindingKind: let
+			Name: arr
+			Value: {
+				ArrayLiteralExpr {
+					Elements: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 1
+						}
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 2
+						}
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 3
 						}
 					}
 				}

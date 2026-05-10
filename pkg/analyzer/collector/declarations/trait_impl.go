@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -75,7 +76,7 @@ func collectTraitImplConstraint(node *sitter.Node, ctx *collctx.Ctx) ast.TraitIm
 	if !ok {
 		return ast.TraitImplConstraint{}
 	}
-	traitBounds := collectBounds(traitBoundsNode, ctx)
+	traitBounds := ctx.CollectBounds(traitBoundsNode)
 	return ast.TraitImplConstraint{
 		GenericType: genericType,
 		TraitBounds: traitBounds,
@@ -104,13 +105,9 @@ func collectTraitMethodImpl(node *sitter.Node, ctx *collctx.Ctx) ast.TraitMethod
 	if !ok {
 		return ast.TraitMethodImpl{}
 	}
-	clause := CollectFunctionClause(clauseNode, ctx)
-	if clause == nil {
-		ctx.AddError(node, collctx.SeverityError, "could not parse trait method implementation function clause")
-		return ast.TraitMethodImpl{}
-	}
+	clause := expressions.CollectLambdaClause(clauseNode, ctx)
 	return ast.TraitMethodImpl{
 		Name: methodName,
-		Clause: *clause,
+		Clause: clause,
 	}
 }

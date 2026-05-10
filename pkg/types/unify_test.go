@@ -15,54 +15,54 @@ func TestTypesEqualFunctionTypePointerConvention(t *testing.T) {
 	intT := types.PrimitiveType{Name: types.Int}
 	floatT := types.PrimitiveType{Name: types.Float}
 
-	makeSig := func(ret types.Type, params ...types.Type) *types.FunctionType {
+	makeSig := func(ret types.ReturnType, params ...types.Type) *types.LambdaType {
 		ps := make([]types.ParameterType, 0, len(params))
 		for _, p := range params {
 			ps = append(ps, types.ParameterType{Type: p})
 		}
-		return &types.FunctionType{ParameterTypes: ps, ReturnType: ret}
+		return &types.LambdaType{Parameters: ps, ReturnType: ret}
 	}
 
 	t.Run("identical signatures are equal", func(t *testing.T) {
-		a := makeSig(intT, intT, intT)
-		b := makeSig(intT, intT, intT)
+		a := makeSig(types.ReturnType{Type: intT}, intT, intT)
+		b := makeSig(types.ReturnType{Type: intT}, intT, intT)
 		if !types.TypesEqual(a, b) {
 			t.Fatalf("expected identical *FunctionType values to be equal: %s vs %s", a, b)
 		}
 	})
 
 	t.Run("different return types are unequal", func(t *testing.T) {
-		a := makeSig(intT, intT)
-		b := makeSig(floatT, intT)
+		a := makeSig(types.ReturnType{Type: intT}, intT)
+		b := makeSig(types.ReturnType{Type: floatT}, intT)
 		if types.TypesEqual(a, b) {
 			t.Fatalf("expected different return types to be unequal")
 		}
 	})
 
 	t.Run("different parameter arity is unequal", func(t *testing.T) {
-		a := makeSig(intT, intT)
-		b := makeSig(intT, intT, intT)
+		a := makeSig(types.ReturnType{Type: intT}, intT)
+		b := makeSig(types.ReturnType{Type: intT}, intT, intT)
 		if types.TypesEqual(a, b) {
 			t.Fatalf("expected different parameter arities to be unequal")
 		}
 	})
 
 	t.Run("different parameter types are unequal", func(t *testing.T) {
-		a := makeSig(intT, intT, intT)
-		b := makeSig(intT, intT, floatT)
+		a := makeSig(types.ReturnType{Type: intT}, intT, intT)
+		b := makeSig(types.ReturnType{Type: intT}, intT, floatT)
 		if types.TypesEqual(a, b) {
 			t.Fatalf("expected differing parameter types to be unequal")
 		}
 	})
 
 	t.Run("nil pointers are equal to themselves but not to populated signatures", func(t *testing.T) {
-		var a *types.FunctionType
-		var b *types.FunctionType
+		var a *types.LambdaType
+		var b *types.LambdaType
 		if !types.TypesEqual(a, b) {
-			t.Fatalf("expected two nil *FunctionType to compare equal")
+			t.Fatalf("expected two nil *LambdaType to compare equal")
 		}
-		if types.TypesEqual(a, makeSig(intT)) {
-			t.Fatalf("expected nil *FunctionType and a real signature to be unequal")
+		if types.TypesEqual(a, makeSig(types.ReturnType{Type: intT})) {
+			t.Fatalf("expected nil *LambdaType and a real signature to be unequal")
 		}
 	})
 }
@@ -106,17 +106,17 @@ func TestTypesEqualConstrainedTypePointerConvention(t *testing.T) {
 // concrete types live on different sides of the value/pointer convention.
 func TestTypesEqualMixedConventions(t *testing.T) {
 	intT := types.PrimitiveType{Name: types.Int}
-	fn := &types.FunctionType{ReturnType: intT}
+	fn := &types.LambdaType{ReturnType: types.ReturnType{Type: intT}}
 	ct := &types.ConstrainedType{Name: "Angle", Type: intT}
 
 	cases := []struct {
 		name string
 		a, b types.Type
 	}{
-		{"*FunctionType vs PrimitiveType", fn, intT},
-		{"PrimitiveType vs *FunctionType", intT, fn},
+		{"*LambdaType vs PrimitiveType", fn, intT},
+		{"PrimitiveType vs *LambdaType", intT, fn},
 		{"*ConstrainedType vs PrimitiveType", ct, intT},
-		{"*FunctionType vs *ConstrainedType", fn, ct},
+		{"*LambdaType vs *ConstrainedType", fn, ct},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

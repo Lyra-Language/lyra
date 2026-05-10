@@ -1,21 +1,19 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(name) {
-				BindingKind: let
-				Name: name
-				Value: {
-					MemberExpr {
-						Object: {
-							IdentifierExpr(person) {
-								Name: person
-							}
+		VarDeclStmt(name) {
+			BindingKind: let
+			Name: name
+			Value: {
+				MemberExpr {
+					Object: {
+						IdentifierExpr(person) {
+							Name: person
 						}
-						Optional: true
-						Property: {
-							IdentifierExpr(name) {
-								Name: name
-							}
+					}
+					Optional: true
+					Property: {
+						IdentifierExpr(name) {
+							Name: name
 						}
 					}
 				}

@@ -1,148 +1,128 @@
 Program(2 statements) {
 	Statements: {
-		{
-			TypeDeclStmt(CSSColor) {
-				Name: CSSColor
-				Type: {
-					DataType(CSSColor) {
-						Constructors: {
-							{
-								DataTypeConstructor(ColorName) {
-									Name: ColorName
-									Params: {
-										{
-											UnresolvedType(CSSColorName) {
-												Name: CSSColorName
-											}
-										}
-									}
-								}
-								DataTypeConstructor(Hex) {
-									Name: Hex
-									Params: {
-										{
-											UnresolvedType(HexStr) {
-												Name: HexStr
-											}
-										}
-									}
-								}
-								DataTypeConstructor(RGB) {
-									Fields: {
-										{
-											StructField(r) {
-												Name: r
-												Type: {
-													PrimitiveType(i8) {
-														Name: i8
-													}
-												}
-											}
-											StructField(g) {
-												Name: g
-												Type: {
-													PrimitiveType(i8) {
-														Name: i8
-													}
-												}
-											}
-											StructField(b) {
-												Name: b
-												Type: {
-													PrimitiveType(i8) {
-														Name: i8
-													}
-												}
-											}
-										}
-									}
-									Name: RGB
-								}
-								DataTypeConstructor(HSL) {
-									Fields: {
-										{
-											StructField(hue) {
-												Name: hue
-												Type: {
-													UnresolvedType(Hue) {
-														Name: Hue
-													}
-												}
-											}
-											StructField(sat) {
-												Name: sat
-												Type: {
-													PrimitiveType(float) {
-														Name: float
-													}
-												}
-											}
-											StructField(light) {
-												Name: light
-												Type: {
-													PrimitiveType(float) {
-														Name: float
-													}
-												}
-											}
-											StructField(alpha) {
-												Name: alpha
-												Type: {
-													UnresolvedType(Alpha) {
-														Name: Alpha
-													}
-												}
-											}
-										}
-									}
-									Name: HSL
+		TypeDeclStmt(CSSColor) {
+			Name: CSSColor
+			Type: {
+				DataType(CSSColor) {
+					Constructors: {
+						DataTypeConstructor(ColorName) {
+							Name: ColorName
+							Params: {
+								UnresolvedType(CSSColorName) {
+									Name: CSSColorName
 								}
 							}
 						}
-						Name: CSSColor
+						DataTypeConstructor(Hex) {
+							Name: Hex
+							Params: {
+								UnresolvedType(HexStr) {
+									Name: HexStr
+								}
+							}
+						}
+						DataTypeConstructor(RGB) {
+							Fields: {
+								StructField(r) {
+									Name: r
+									Type: {
+										PrimitiveType(i8) {
+											Name: i8
+										}
+									}
+								}
+								StructField(g) {
+									Name: g
+									Type: {
+										PrimitiveType(i8) {
+											Name: i8
+										}
+									}
+								}
+								StructField(b) {
+									Name: b
+									Type: {
+										PrimitiveType(i8) {
+											Name: i8
+										}
+									}
+								}
+							}
+							Name: RGB
+						}
+						DataTypeConstructor(HSL) {
+							Fields: {
+								StructField(hue) {
+									Name: hue
+									Type: {
+										UnresolvedType(Hue) {
+											Name: Hue
+										}
+									}
+								}
+								StructField(sat) {
+									Name: sat
+									Type: {
+										PrimitiveType(float) {
+											Name: float
+										}
+									}
+								}
+								StructField(light) {
+									Name: light
+									Type: {
+										PrimitiveType(float) {
+											Name: float
+										}
+									}
+								}
+								StructField(alpha) {
+									Name: alpha
+									Type: {
+										UnresolvedType(Alpha) {
+											Name: Alpha
+										}
+									}
+								}
+							}
+							Name: HSL
+						}
 					}
+					Name: CSSColor
 				}
 			}
-			TypeDeclStmt(Hue) {
-				Name: Hue
-				Type: {
-					DataType(Hue) {
-						Constructors: {
-							{
-								DataTypeConstructor(HueDeg) {
-									Name: HueDeg
-									Params: {
-										{
-											UnresolvedType(Angle) {
-												Name: Angle
-											}
-										}
-									}
-								}
-								DataTypeConstructor(HueRadian) {
-									Name: HueRadian
-									Params: {
-										{
-											UnresolvedType(Radian) {
-												Name: Radian
-											}
-										}
-									}
-								}
-								DataTypeConstructor(HueTurn) {
-									Name: HueTurn
-									Params: {
-										{
-											UnresolvedType(Turn) {
-												Name: Turn
-											}
-										}
-									}
+		}
+		TypeDeclStmt(Hue) {
+			Name: Hue
+			Type: {
+				DataType(Hue) {
+					Constructors: {
+						DataTypeConstructor(HueDeg) {
+							Name: HueDeg
+							Params: {
+								UnresolvedType(Angle) {
+									Name: Angle
 								}
 							}
 						}
-						Name: Hue
+						DataTypeConstructor(HueRadian) {
+							Name: HueRadian
+							Params: {
+								UnresolvedType(Radian) {
+									Name: Radian
+								}
+							}
+						}
+						DataTypeConstructor(HueTurn) {
+							Name: HueTurn
+							Params: {
+								UnresolvedType(Turn) {
+									Name: Turn
+								}
+							}
+						}
 					}
+					Name: Hue
 				}
 			}
 		}

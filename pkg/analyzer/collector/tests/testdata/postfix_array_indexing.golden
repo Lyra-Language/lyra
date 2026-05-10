@@ -1,20 +1,18 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(first) {
-				BindingKind: let
-				Name: first
-				Value: {
-					IndexExpr {
-						Index: {
-							IntegerLiteralExpr {
-								Base: 10
-							}
+		VarDeclStmt(first) {
+			BindingKind: let
+			Name: first
+			Value: {
+				IndexExpr {
+					Index: {
+						IntegerLiteralExpr {
+							Base: 10
 						}
-						Object: {
-							IdentifierExpr(array) {
-								Name: array
-							}
+					}
+					Object: {
+						IdentifierExpr(array) {
+							Name: array
 						}
 					}
 				}

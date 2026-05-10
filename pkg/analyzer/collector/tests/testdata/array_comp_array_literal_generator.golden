@@ -1,50 +1,37 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(foo) {
-				BindingKind: let
-				Name: foo
-				Value: {
-					ArrayCompExpr {
-						Generators: {
-							{
-								Generator {
-									Identifier: x
-									Value: {
-										ArrayLiteralExpr {
-											Elements: {
-												{
-													IntegerLiteralExpr {
-														Base: 10
-														Value: 1
-													}
-													IntegerLiteralExpr {
-														Base: 10
-														Value: 2
-													}
-													IntegerLiteralExpr {
-														Base: 10
-														Value: 3
-													}
-												}
-											}
-										}
-									}
+		VarDeclStmt(foo) {
+			BindingKind: let
+			Name: foo
+			Value: {
+				ArrayLiteralExpr {
+					Elements: {
+						ArrayLiteralExpr {
+							Elements: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
+								}
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 2
+								}
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 3
 								}
 							}
 						}
-						Result: {
-							MathBinaryOpExpr {
-								Left: {
-									IdentifierExpr(x) {
-										Name: x
-									}
+						MathBinaryOpExpr {
+							Left: {
+								IdentifierExpr(x) {
+									Name: x
 								}
-								Operator: *
-								Right: {
-									IdentifierExpr(x) {
-										Name: x
-									}
+							}
+							Operator: *
+							Right: {
+								IdentifierExpr(x) {
+									Name: x
 								}
 							}
 						}

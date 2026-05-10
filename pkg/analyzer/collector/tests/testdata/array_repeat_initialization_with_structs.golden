@@ -1,54 +1,50 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(arr) {
-				BindingKind: let
-				Name: arr
-				Type: {
-					StaticArrayType(StaticArray<?, 100>) {
-						Size: 100
-					}
+		VarDeclStmt(arr) {
+			BindingKind: let
+			Name: arr
+			Type: {
+				StaticArrayType(StaticArray<?, 100>) {
+					Size: 100
 				}
-				Value: {
-					ArrayRepeatExpr {
-						Count: {
-							IntegerLiteralExpr {
-								Base: 10
-								Value: 100
-							}
+			}
+			Value: {
+				ArrayRepeatExpr {
+					Count: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 100
 						}
-						Value: {
-							StructInstance(Vec3) {
-								Fields: {
-									{
-										StructField(x) {
-											Name: x
-											Value: {
-												IntegerLiteralExpr {
-													Base: 10
-												}
-											}
-										}
-										StructField(y) {
-											Name: y
-											Value: {
-												IntegerLiteralExpr {
-													Base: 10
-												}
-											}
-										}
-										StructField(z) {
-											Name: z
-											Value: {
-												IntegerLiteralExpr {
-													Base: 10
-												}
-											}
+					}
+					Value: {
+						StructInstance(Vec3) {
+							Fields: {
+								StructField(x) {
+									Name: x
+									Value: {
+										IntegerLiteralExpr {
+											Base: 10
 										}
 									}
 								}
-								Name: Vec3
+								StructField(y) {
+									Name: y
+									Value: {
+										IntegerLiteralExpr {
+											Base: 10
+										}
+									}
+								}
+								StructField(z) {
+									Name: z
+									Value: {
+										IntegerLiteralExpr {
+											Base: 10
+										}
+									}
+								}
 							}
+							Name: Vec3
 						}
 					}
 				}

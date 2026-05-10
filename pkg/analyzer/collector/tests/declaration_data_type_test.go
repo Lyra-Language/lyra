@@ -13,7 +13,7 @@ func TestCollector_BasicDataType(t *testing.T) {
 }
 
 func TestCollector_DataTypeWithGenericParameter(t *testing.T) {
-	source := `pub heap data Maybe<t> = Nil | Some t`
+	source := `pub data Maybe<t> = Nil | Some t`
 	program, _ := parseAndCollect(t, source)
 	got := captureProgramPrint(program)
 	checkGolden(t, got, filepath.Join("testdata", "data_type_with_generic_parameter.golden"))

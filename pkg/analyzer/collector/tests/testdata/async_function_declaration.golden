@@ -1,0 +1,113 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(fetchJSON) {
+			BindingKind: let
+			Name: fetchJSON
+			Value: {
+				LambdaExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								VarDeclStmt(resp) {
+									BindingKind: let
+									Name: resp
+									Value: {
+										AwaitExpr {
+											Operand: {
+												FunctionCallExpr {
+													Arguments: {
+														ArgumentList {
+															Arguments: {
+																IdentifierExpr(url) {
+																	Name: url
+																}
+																IdentifierExpr(options) {
+																	Name: options
+																}
+															}
+														}
+													}
+													Function: {
+														IdentifierExpr(fetch) {
+															Name: fetch
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+								ReturnStmt {
+									Value: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														IdentifierExpr(resp) {
+															Name: resp
+														}
+													}
+												}
+											}
+											Function: {
+												MemberExpr {
+													Object: {
+														IdentifierExpr(JSON) {
+															IsConst: true
+															Name: JSON
+														}
+													}
+													Property: {
+														IdentifierExpr(parse) {
+															Name: parse
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					IsAsync: true
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(url) {
+									Name: url
+								}
+							}
+							Type: {
+								PrimitiveType(string) {
+									Name: string
+								}
+							}
+						}
+						Parameter {
+							Pattern: {
+								IdentifierPattern(options) {
+									Name: options
+								}
+							}
+							Type: {
+								UnresolvedType(FetchOptions) {
+									Name: FetchOptions
+								}
+							}
+						}
+					}
+					ReturnType: {
+						ReturnType(Response) {
+							Type: {
+								UnresolvedType(Response) {
+									Name: Response
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

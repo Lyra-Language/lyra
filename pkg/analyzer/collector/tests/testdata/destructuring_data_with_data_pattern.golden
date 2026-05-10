@@ -1,25 +1,21 @@
 Program(1 statements) {
 	Statements: {
-		{
-			DestructuringDeclStmt {
-				Keyword: let
-				Pattern: {
-					DataPattern(Some) {
-						Name: Some
-						Pattern: {
-							DataPattern(AnotherData) {
-								Name: AnotherData
-								Pattern: {
-									TuplePattern {
-										Elements: {
-											{
-												IdentifierPattern(x) {
-													Name: x
-												}
-												IdentifierPattern(y) {
-													Name: y
-												}
-											}
+		DestructuringDeclStmt {
+			Keyword: let
+			Pattern: {
+				DataPattern(Some) {
+					Name: Some
+					Pattern: {
+						DataPattern(AnotherData) {
+							Name: AnotherData
+							Pattern: {
+								TuplePattern {
+									Elements: {
+										IdentifierPattern(x) {
+											Name: x
+										}
+										IdentifierPattern(y) {
+											Name: y
 										}
 									}
 								}
@@ -27,10 +23,10 @@ Program(1 statements) {
 						}
 					}
 				}
-				Value: {
-					IdentifierExpr(some_data) {
-						Name: some_data
-					}
+			}
+			Value: {
+				IdentifierExpr(some_data) {
+					Name: some_data
 				}
 			}
 		}

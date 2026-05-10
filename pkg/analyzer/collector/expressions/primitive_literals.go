@@ -79,7 +79,7 @@ func collectStringLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Locat
 	// `string_interpolation`. When no interpolation segments are present we
 	// return a plain StringLiteralExpr; otherwise an InterpolatedStringExpr
 	// whose segments alternate between literal text chunks and the expressions
-	// embedded inside `#{ ... }`.
+	// embedded inside `${ ... }`.
 	childCount := node.NamedChildCount()
 
 	stringType := types.PrimitiveType{Name: types.String}

@@ -1,36 +1,32 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(arr) {
-				BindingKind: let
-				Name: arr
-				Type: {
-					DynamicArrayType(DynamicArray<int>) {
-						Allocation: stack
-						ElementType: {
-							PrimitiveType(int) {
-								Name: int
-							}
+		VarDeclStmt(arr) {
+			BindingKind: let
+			Name: arr
+			Type: {
+				DynamicArrayType(DynamicArray<int>) {
+					Allocation: stack
+					ElementType: {
+						PrimitiveType(int) {
+							Name: int
 						}
 					}
 				}
-				Value: {
-					ArrayLiteralExpr {
-						Elements: {
-							{
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 1
-								}
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 2
-								}
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 3
-								}
-							}
+			}
+			Value: {
+				ArrayLiteralExpr {
+					Elements: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 1
+						}
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 2
+						}
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 3
 						}
 					}
 				}

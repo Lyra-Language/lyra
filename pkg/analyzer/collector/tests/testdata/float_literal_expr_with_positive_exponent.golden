@@ -1,13 +1,11 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(pi) {
-				BindingKind: let
-				Name: pi
-				Value: {
-					FloatLiteralExpr {
-						Value: 3.141592
-					}
+		VarDeclStmt(pi) {
+			BindingKind: let
+			Name: pi
+			Value: {
+				FloatLiteralExpr {
+					Value: 3.141592
 				}
 			}
 		}

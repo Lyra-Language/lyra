@@ -1,54 +1,46 @@
 Program(2 statements) {
 	Statements: {
-		{
-			ElseDestructuringStmt {
-				DestructuringStatement: {
-					DestructuringDeclStmt {
-						Keyword: let
-						Pattern: {
-							StructPattern {
-								Fields: {
-									{
-										StructPatternField(foo) {
-											Name: foo
-										}
-										StructPatternField(bar) {
-											Name: bar
-										}
-									}
+		ElseDestructuringStmt {
+			DestructuringStatement: {
+				DestructuringDeclStmt {
+					Keyword: let
+					Pattern: {
+						StructPattern {
+							Fields: {
+								StructPatternField(foo) {
+									Name: foo
+								}
+								StructPatternField(bar) {
+									Name: bar
 								}
 							}
 						}
-						Value: {
-							IdentifierExpr(some_struct) {
-								Name: some_struct
-							}
+					}
+					Value: {
+						IdentifierExpr(some_struct) {
+							Name: some_struct
 						}
 					}
 				}
-				Else: {
-					BlockExpr {
-						Statements: {
-							{
-								ExpressionStmt {
-									Expression: {
-										FunctionCallExpr {
+			}
+			Else: {
+				BlockExpr {
+					Statements: {
+						ExpressionStmt {
+							Expression: {
+								FunctionCallExpr {
+									Arguments: {
+										ArgumentList {
 											Arguments: {
-												ArgumentList {
-													Arguments: {
-														{
-															StringLiteralExpr {
-																Value: No struct found
-															}
-														}
-													}
+												StringLiteralExpr {
+													Value: No struct found
 												}
 											}
-											Function: {
-												IdentifierExpr(println) {
-													Name: println
-												}
-											}
+										}
+									}
+									Function: {
+										IdentifierExpr(println) {
+											Name: println
 										}
 									}
 								}
@@ -57,39 +49,35 @@ Program(2 statements) {
 					}
 				}
 			}
-			ExpressionStmt {
-				Expression: {
-					FunctionCallExpr {
-						Arguments: {
-							ArgumentList {
-								Arguments: {
-									{
-										InterpolatedStringExpr {
-											Segments: {
-												{
-													StringLiteralExpr {
-														Value: We got the struct: 
-													}
-													IdentifierExpr(foo) {
-														Name: foo
-													}
-													StringLiteralExpr {
-														Value: , 
-													}
-													IdentifierExpr(bar) {
-														Name: bar
-													}
-												}
-											}
+		}
+		ExpressionStmt {
+			Expression: {
+				FunctionCallExpr {
+					Arguments: {
+						ArgumentList {
+							Arguments: {
+								InterpolatedStringExpr {
+									Segments: {
+										StringLiteralExpr {
+											Value: We got the struct: 
+										}
+										IdentifierExpr(foo) {
+											Name: foo
+										}
+										StringLiteralExpr {
+											Value: , 
+										}
+										IdentifierExpr(bar) {
+											Name: bar
 										}
 									}
 								}
 							}
 						}
-						Function: {
-							IdentifierExpr(println) {
-								Name: println
-							}
+					}
+					Function: {
+						IdentifierExpr(println) {
+							Name: println
 						}
 					}
 				}

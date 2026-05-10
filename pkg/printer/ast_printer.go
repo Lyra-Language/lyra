@@ -143,7 +143,13 @@ func (w *astWalker) writeField(name string, v reflect.Value, indent string) {
 	}
 
 	switch kind {
-	case reflect.Struct, reflect.Ptr, reflect.Slice, reflect.Array, reflect.Interface:
+	case reflect.Slice, reflect.Array:
+		w.line(indent, fmt.Sprintf("%s: {", name))
+		for i := 0; i < v.Len(); i++ {
+			w.writeValue(v.Index(i), indent+"\t")
+		}
+		w.line(indent, "}")
+	case reflect.Struct, reflect.Ptr, reflect.Interface:
 		w.line(indent, fmt.Sprintf("%s: {", name))
 		w.writeValue(v, indent+"\t")
 		w.line(indent, "}")
@@ -244,7 +250,11 @@ func isEmptyComposite(v reflect.Value) bool {
 	case reflect.Slice, reflect.Array:
 		return v.Len() == 0
 	case reflect.Struct:
-		for _, f := range exportedFields(v) {
+		fields := exportedFields(v)
+		if len(fields) == 0 {
+			return false  // unit type — its presence is meaningful
+		}
+		for _, f := range fields {
 			fieldValue := v.FieldByIndex(f.Index)
 			if isZeroValue(fieldValue) || isEmptyComposite(fieldValue) {
 				continue

@@ -1,63 +1,41 @@
 Program(1 statements) {
 	Statements: {
-		{
-			TraitDeclStmt(Bounded) {
-				Bounds: {
-					{
-						Show
-						Eq
-					}
-				}
-				GenericParameterConstraints: {
-					{
-						TraitGenericParameterConstraint(t) {
-							Constraints: {
-								{
-									Ord
-								}
-							}
-							Name: t
+		TraitDeclStmt(Bounded) {
+			Bounds: {
+				Show
+				Eq
+			}
+			GenericParams: {
+				t
+			}
+			Methods: {
+				TraitMethod {
+					Name: {
+						MethodName(id) {
+							Value: id
 						}
 					}
-				}
-				GenericParams: {
-					{
-						t
-					}
-				}
-				Methods: {
-					{
-						TraitMethod {
-							Name: {
-								MethodName(id) {
-									Value: id
-								}
-							}
-							Signature: {
-								FunctionType((t) -> t) {
-									ParameterTypes: {
-										{
-											ParameterType(t) {
-												Type: {
-													GenericType(t) {
-														Name: t
-													}
-												}
-											}
-										}
-									}
-									ReturnType: {
+					Signature: {
+						FunctionType((t) -> t) {
+							ParameterTypes: {
+								ParameterType(t) {
+									Type: {
 										GenericType(t) {
 											Name: t
 										}
 									}
 								}
 							}
+							ReturnType: {
+								GenericType(t) {
+									Name: t
+								}
+							}
 						}
 					}
 				}
-				Name: Bounded
 			}
+			Name: Bounded
 		}
 	}
 }

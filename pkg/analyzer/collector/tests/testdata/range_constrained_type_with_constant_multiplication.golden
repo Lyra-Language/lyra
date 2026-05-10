@@ -1,56 +1,27 @@
 Program(1 statements) {
 	Statements: {
-		{
-			TypeDeclStmt(Radian) {
-				Name: Radian
-				Type: {
-					ConstrainedType(Radian) {
-						Constraints: {
-							{
-								RangeConstraint {
-									Comparator: <
-									End: {
-										MathConstraintBinaryOpExpr {
-											Left: {
-												MathConstraintIdentifierExpr(PI) {
-													IsConst: true
-													Name: PI
-												}
-											}
-											Operator: *
-											Right: {
-												MathConstraintLiteralExpr {
-													Type: {
-														PrimitiveType(float) {
-															Name: float
-														}
-													}
-													Value: {
-														FloatLiteralExpr {
-															Value: 2
-														}
-													}
-												}
-											}
-										}
-									}
-									Start: {
-										MathConstraintLiteralExpr {
-											Type: {
-												PrimitiveType(float) {
-													Name: float
-												}
-											}
+		TypeDeclStmt(Radian) {
+			Name: Radian
+			Type: {
+				ConstrainedType(Radian) {
+					Constraints: {
+						RangeConstraint {
+							Comparator: <
+							Start: {
+								MathConstraintLiteralExpr {
+									Type: {
+										PrimitiveType(float) {
+											Name: float
 										}
 									}
 								}
 							}
 						}
-						Name: Radian
-						Type: {
-							PrimitiveType(float) {
-								Name: float
-							}
+					}
+					Name: Radian
+					Type: {
+						PrimitiveType(float) {
+							Name: float
 						}
 					}
 				}

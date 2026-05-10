@@ -1,20 +1,18 @@
 Program(1 statements) {
 	Statements: {
-		{
-			ExpressionStmt {
-				Expression: {
-					RangeExpr {
-						End: {
-							IntegerLiteralExpr {
-								Base: 10
-								Value: 10
-							}
+		ExpressionStmt {
+			Expression: {
+				RangeExpr {
+					End: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 10
 						}
-						EndOperator: <
-						Start: {
-							IntegerLiteralExpr {
-								Base: 10
-							}
+					}
+					EndOperator: <
+					Start: {
+						IntegerLiteralExpr {
+							Base: 10
 						}
 					}
 				}

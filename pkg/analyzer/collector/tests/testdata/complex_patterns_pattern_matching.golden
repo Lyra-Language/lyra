@@ -1,185 +1,46 @@
 Program(1 statements) {
 	Statements: {
-		{
-			ExpressionStmt {
-				Expression: {
-					MatchExpr {
-						MatchArms: {
-							{
-								MatchArm {
-									Body: {
-										FunctionCallExpr {
+		ExpressionStmt {
+			Expression: {
+				MatchExpr {
+					MatchArms: {
+						MatchArm {
+							Body: {
+								FunctionCallExpr {
+									Arguments: {
+										ArgumentList {
 											Arguments: {
-												ArgumentList {
-													Arguments: {
-														{
-															StringLiteralExpr {
-																Value: An array with three elements
-															}
-														}
-													}
-												}
-											}
-											Function: {
-												IdentifierExpr(print) {
-													Name: print
+												StringLiteralExpr {
+													Value: An array with three elements
 												}
 											}
 										}
 									}
-									Pattern: {
-										StructPattern {
-											Fields: {
-												{
-													StructPatternField(foo) {
-														Name: foo
-														Pattern: {
-															ArrayPattern {
-																Elements: {
-																	{
-																		IdentifierPattern(a) {
-																			Name: a
-																		}
-																		IdentifierPattern(b) {
-																			Name: b
-																		}
-																		RestPattern {
-																			Identifier: rest
-																		}
-																	}
-																}
-															}
-														}
-													}
-												}
-											}
+									Function: {
+										IdentifierExpr(print) {
+											Name: print
 										}
 									}
 								}
-								MatchArm {
-									Body: {
-										FunctionCallExpr {
-											Arguments: {
-												ArgumentList {
-													Arguments: {
-														{
-															StringLiteralExpr {
-																Value: A tuple with two elements
-															}
+							}
+							Pattern: {
+								StructPattern {
+									Fields: {
+										StructPatternField(foo) {
+											Name: foo
+											Pattern: {
+												ArrayPattern {
+													Elements: {
+														IdentifierPattern(a) {
+															Name: a
+														}
+														IdentifierPattern(b) {
+															Name: b
+														}
+														RestPattern {
+															Identifier: rest
 														}
 													}
-												}
-											}
-											Function: {
-												IdentifierExpr(print) {
-													Name: print
-												}
-											}
-										}
-									}
-									Pattern: {
-										StructPattern {
-											Fields: {
-												{
-													StructPatternField(bar) {
-														Name: bar
-														Pattern: {
-															TuplePattern {
-																Elements: {
-																	{
-																		IdentifierPattern(c) {
-																			Name: c
-																		}
-																		DataPattern(Some) {
-																			Name: Some
-																			Pattern: {
-																				IdentifierPattern(d) {
-																					Name: d
-																				}
-																			}
-																		}
-																	}
-																}
-															}
-														}
-													}
-												}
-											}
-										}
-									}
-								}
-								MatchArm {
-									Body: {
-										FunctionCallExpr {
-											Arguments: {
-												ArgumentList {
-													Arguments: {
-														{
-															StringLiteralExpr {
-																Value: A struct with three elements
-															}
-														}
-													}
-												}
-											}
-											Function: {
-												IdentifierExpr(print) {
-													Name: print
-												}
-											}
-										}
-									}
-									Pattern: {
-										StructPattern {
-											Fields: {
-												{
-													StructPatternField(baz) {
-														Name: baz
-														Pattern: {
-															StructPattern {
-																Fields: {
-																	{
-																		StructPatternField(e) {
-																			Name: e
-																		}
-																		StructPatternField(f) {
-																			Name: f
-																		}
-																		StructPatternField(...) {
-																			Name: ...
-																			Pattern: {
-																				RestPattern {
-																					Identifier: rest
-																				}
-																			}
-																		}
-																	}
-																}
-															}
-														}
-													}
-												}
-											}
-										}
-									}
-								}
-								MatchArm {
-									Body: {
-										FunctionCallExpr {
-											Arguments: {
-												ArgumentList {
-													Arguments: {
-														{
-															StringLiteralExpr {
-																Value: No match
-															}
-														}
-													}
-												}
-											}
-											Function: {
-												IdentifierExpr(print) {
-													Name: print
 												}
 											}
 										}
@@ -187,10 +48,125 @@ Program(1 statements) {
 								}
 							}
 						}
-						Value: {
-							IdentifierExpr(some_complex_struct) {
-								Name: some_complex_struct
+						MatchArm {
+							Body: {
+								FunctionCallExpr {
+									Arguments: {
+										ArgumentList {
+											Arguments: {
+												StringLiteralExpr {
+													Value: A tuple with two elements
+												}
+											}
+										}
+									}
+									Function: {
+										IdentifierExpr(print) {
+											Name: print
+										}
+									}
+								}
 							}
+							Pattern: {
+								StructPattern {
+									Fields: {
+										StructPatternField(bar) {
+											Name: bar
+											Pattern: {
+												TuplePattern {
+													Elements: {
+														IdentifierPattern(c) {
+															Name: c
+														}
+														DataPattern(Some) {
+															Name: Some
+															Pattern: {
+																IdentifierPattern(d) {
+																	Name: d
+																}
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						MatchArm {
+							Body: {
+								FunctionCallExpr {
+									Arguments: {
+										ArgumentList {
+											Arguments: {
+												StringLiteralExpr {
+													Value: A struct with three elements
+												}
+											}
+										}
+									}
+									Function: {
+										IdentifierExpr(print) {
+											Name: print
+										}
+									}
+								}
+							}
+							Pattern: {
+								StructPattern {
+									Fields: {
+										StructPatternField(baz) {
+											Name: baz
+											Pattern: {
+												StructPattern {
+													Fields: {
+														StructPatternField(e) {
+															Name: e
+														}
+														StructPatternField(f) {
+															Name: f
+														}
+														StructPatternField(...) {
+															Name: ...
+															Pattern: {
+																RestPattern {
+																	Identifier: rest
+																}
+															}
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+						MatchArm {
+							Body: {
+								FunctionCallExpr {
+									Arguments: {
+										ArgumentList {
+											Arguments: {
+												StringLiteralExpr {
+													Value: No match
+												}
+											}
+										}
+									}
+									Function: {
+										IdentifierExpr(print) {
+											Name: print
+										}
+									}
+								}
+							}
+						}
+					}
+					Value: {
+						IdentifierExpr(some_complex_struct) {
+							Name: some_complex_struct
 						}
 					}
 				}

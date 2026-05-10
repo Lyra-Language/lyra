@@ -1,34 +1,32 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(value) {
-				BindingKind: let
-				Name: value
-				Value: {
-					IndexExpr {
-						Index: {
-							IntegerLiteralExpr {
-								Base: 10
-								Value: 1
-							}
+		VarDeclStmt(value) {
+			BindingKind: let
+			Name: value
+			Value: {
+				IndexExpr {
+					Index: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 1
 						}
-						Object: {
-							IndexExpr {
-								Index: {
-									IntegerLiteralExpr {
-										Base: 10
-									}
-								}
-								Object: {
-									IdentifierExpr(matrix) {
-										Name: matrix
-									}
-								}
-								Optional: true
-							}
-						}
-						Optional: true
 					}
+					Object: {
+						IndexExpr {
+							Index: {
+								IntegerLiteralExpr {
+									Base: 10
+								}
+							}
+							Object: {
+								IdentifierExpr(matrix) {
+									Name: matrix
+								}
+							}
+							Optional: true
+						}
+					}
+					Optional: true
 				}
 			}
 		}

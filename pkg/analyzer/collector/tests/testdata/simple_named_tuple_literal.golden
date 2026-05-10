@@ -1,30 +1,26 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(point) {
-				BindingKind: let
-				Name: point
-				Type: {
-					UnresolvedType(Point) {
-						Name: Point
-					}
+		VarDeclStmt(point) {
+			BindingKind: let
+			Name: point
+			Type: {
+				UnresolvedType(Point) {
+					Name: Point
 				}
-				Value: {
-					TupleLiteralExpr(?) {
-						Elements: {
-							{
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 1
-								}
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 2
-								}
-							}
+			}
+			Value: {
+				TupleLiteralExpr(?) {
+					Elements: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 1
 						}
-						Name: ?
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 2
+						}
 					}
+					Name: ?
 				}
 			}
 		}

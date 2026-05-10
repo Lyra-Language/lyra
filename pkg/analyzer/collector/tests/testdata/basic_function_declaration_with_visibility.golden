@@ -1,0 +1,19 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(foo) {
+			BindingKind: let
+			Name: foo
+			Value: {
+				LambdaExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								nil
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

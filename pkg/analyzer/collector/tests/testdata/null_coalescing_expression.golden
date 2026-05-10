@@ -1,20 +1,18 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(result) {
-				BindingKind: let
-				Name: result
-				Value: {
-					NullCoalescingExpr {
-						Default: {
-							IdentifierExpr(default) {
-								Name: default
-							}
+		VarDeclStmt(result) {
+			BindingKind: let
+			Name: result
+			Value: {
+				NullCoalescingExpr {
+					Default: {
+						IdentifierExpr(default) {
+							Name: default
 						}
-						Optional: {
-							IdentifierExpr(optional) {
-								Name: optional
-							}
+					}
+					Optional: {
+						IdentifierExpr(optional) {
+							Name: optional
 						}
 					}
 				}

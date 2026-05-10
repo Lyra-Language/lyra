@@ -1,0 +1,87 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(map) {
+			BindingKind: let
+			GenericParams: {
+				t
+				u
+			}
+			Name: map
+			Value: {
+				LambdaExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								nil
+								nil
+								nil
+								nil
+								nil
+							}
+						}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(array) {
+									Name: array
+								}
+							}
+							Type: {
+								DynamicArrayType(DynamicArray<t>) {
+									ElementType: {
+										GenericType(t) {
+											Name: t
+										}
+									}
+								}
+							}
+						}
+						Parameter {
+							Pattern: {
+								IdentifierPattern(func) {
+									Name: func
+								}
+							}
+							Type: {
+								LambdaType((t) -> u) {
+									Parameters: {
+										ParameterType(t) {
+											Type: {
+												GenericType(t) {
+													Name: t
+												}
+											}
+										}
+									}
+									ReturnType: {
+										ReturnType(u) {
+											Type: {
+												GenericType(u) {
+													Name: u
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					ReturnType: {
+						ReturnType(DynamicArray<u>) {
+							Type: {
+								DynamicArrayType(DynamicArray<u>) {
+									ElementType: {
+										GenericType(u) {
+											Name: u
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

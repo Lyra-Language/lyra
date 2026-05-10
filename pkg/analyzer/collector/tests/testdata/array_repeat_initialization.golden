@@ -1,31 +1,29 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(arr) {
-				BindingKind: let
-				Name: arr
-				Type: {
-					StaticArrayType(StaticArray<int, 8>) {
-						ElementType: {
-							PrimitiveType(int) {
-								Name: int
-							}
+		VarDeclStmt(arr) {
+			BindingKind: let
+			Name: arr
+			Type: {
+				StaticArrayType(StaticArray<int, 8>) {
+					ElementType: {
+						PrimitiveType(int) {
+							Name: int
 						}
-						Size: 8
 					}
+					Size: 8
 				}
-				Value: {
-					ArrayRepeatExpr {
-						Count: {
-							IntegerLiteralExpr {
-								Base: 10
-								Value: 8
-							}
+			}
+			Value: {
+				ArrayRepeatExpr {
+					Count: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 8
 						}
-						Value: {
-							IntegerLiteralExpr {
-								Base: 10
-							}
+					}
+					Value: {
+						IntegerLiteralExpr {
+							Base: 10
 						}
 					}
 				}

@@ -1,35 +1,29 @@
 Program(1 statements) {
 	Statements: {
-		{
-			TypeDeclStmt(RGBA) {
-				Name: RGBA
-				Type: {
-					TupleType(RGBA) {
-						Elements: {
-							{
-								TupleType(?) {
-									Elements: {
-										{
-											PrimitiveType(int) {
-												Name: int
-											}
-											PrimitiveType(int) {
-												Name: int
-											}
-											PrimitiveType(int) {
-												Name: int
-											}
-										}
-									}
-									Name: ?
+		TypeDeclStmt(RGBA) {
+			Name: RGBA
+			Type: {
+				TupleType(RGBA) {
+					Elements: {
+						TupleType(?) {
+							Elements: {
+								PrimitiveType(int) {
+									Name: int
 								}
-								PrimitiveType(float) {
-									Name: float
+								PrimitiveType(int) {
+									Name: int
+								}
+								PrimitiveType(int) {
+									Name: int
 								}
 							}
+							Name: ?
 						}
-						Name: RGBA
+						PrimitiveType(float) {
+							Name: float
+						}
 					}
+					Name: RGBA
 				}
 			}
 		}

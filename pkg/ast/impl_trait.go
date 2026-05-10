@@ -22,7 +22,7 @@ type TraitImplConstraint struct {
 
 type TraitMethodImpl struct {
 	Name MethodName
-	Clause FunctionClause
+	Clause LambdaClause
 }
 
 func (t *TraitMethodImpl) GetName() string { return t.Name.GetName() }

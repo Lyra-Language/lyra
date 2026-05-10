@@ -1,36 +1,32 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(msg) {
-				BindingKind: let
-				Name: msg
-				Value: {
-					InterpolatedStringExpr {
-						Segments: {
-							{
-								StringLiteralExpr {
-									Value: Hello, 
-								}
-								FunctionCallExpr {
-									Function: {
-										MemberExpr {
-											Object: {
-												IdentifierExpr(employee) {
-													Name: employee
-												}
-											}
-											Property: {
-												IdentifierExpr(get_name) {
-													Name: get_name
-												}
-											}
+		VarDeclStmt(msg) {
+			BindingKind: let
+			Name: msg
+			Value: {
+				InterpolatedStringExpr {
+					Segments: {
+						StringLiteralExpr {
+							Value: Hello, 
+						}
+						FunctionCallExpr {
+							Function: {
+								MemberExpr {
+									Object: {
+										IdentifierExpr(employee) {
+											Name: employee
+										}
+									}
+									Property: {
+										IdentifierExpr(get_name) {
+											Name: get_name
 										}
 									}
 								}
-								StringLiteralExpr {
-									Value: !
-								}
 							}
+						}
+						StringLiteralExpr {
+							Value: !
 						}
 					}
 				}

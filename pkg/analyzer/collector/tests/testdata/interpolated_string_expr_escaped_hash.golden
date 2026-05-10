@@ -1,20 +1,16 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(s) {
-				BindingKind: let
-				Name: s
-				Value: {
-					InterpolatedStringExpr {
-						Segments: {
-							{
-								StringLiteralExpr {
-									Value: Phone #: 
-								}
-								IdentifierExpr(phone_num) {
-									Name: phone_num
-								}
-							}
+		VarDeclStmt(s) {
+			BindingKind: let
+			Name: s
+			Value: {
+				InterpolatedStringExpr {
+					Segments: {
+						StringLiteralExpr {
+							Value: Phone #: 
+						}
+						IdentifierExpr(phone_num) {
+							Name: phone_num
 						}
 					}
 				}

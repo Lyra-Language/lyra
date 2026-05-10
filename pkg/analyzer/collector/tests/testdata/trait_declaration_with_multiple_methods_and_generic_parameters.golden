@@ -1,148 +1,134 @@
 Program(1 statements) {
 	Statements: {
-		{
-			TraitDeclStmt(Collection) {
-				GenericParams: {
-					{
-						c
-						e
-					}
-				}
-				Methods: {
-					{
-						TraitMethod {
-							Name: {
-								MethodName(add) {
-									Value: add
-								}
-							}
-							Signature: {
-								FunctionType((c<e>, e) -> c<e>) {
-									ParameterTypes: {
-										{
-											ParameterType(c<e>) {
-												Type: {
-													GenericType(c<e>) {
-														Name: c<e>
-													}
-												}
-											}
-											ParameterType(e) {
-												Type: {
-													GenericType(e) {
-														Name: e
-													}
-												}
-											}
-										}
-									}
-									ReturnType: {
-										GenericType(c<e>) {
-											Name: c<e>
-										}
-									}
-								}
-							}
-						}
-						TraitMethod {
-							Name: {
-								MethodName(remove) {
-									Value: remove
-								}
-							}
-							Signature: {
-								FunctionType((c<e>, e) -> c<e>) {
-									ParameterTypes: {
-										{
-											ParameterType(c<e>) {
-												Type: {
-													GenericType(c<e>) {
-														Name: c<e>
-													}
-												}
-											}
-											ParameterType(e) {
-												Type: {
-													GenericType(e) {
-														Name: e
-													}
-												}
-											}
-										}
-									}
-									ReturnType: {
-										GenericType(c<e>) {
-											Name: c<e>
-										}
-									}
-								}
-							}
-						}
-						TraitMethod {
-							Name: {
-								MethodName(contains) {
-									Value: contains
-								}
-							}
-							Signature: {
-								FunctionType((c<e>, e) -> bool) {
-									ParameterTypes: {
-										{
-											ParameterType(c<e>) {
-												Type: {
-													GenericType(c<e>) {
-														Name: c<e>
-													}
-												}
-											}
-											ParameterType(e) {
-												Type: {
-													GenericType(e) {
-														Name: e
-													}
-												}
-											}
-										}
-									}
-									ReturnType: {
-										PrimitiveType(bool) {
-											Name: bool
-										}
-									}
-								}
-							}
-						}
-						TraitMethod {
-							Name: {
-								MethodName(size) {
-									Value: size
-								}
-							}
-							Signature: {
-								FunctionType((c<e>) -> int) {
-									ParameterTypes: {
-										{
-											ParameterType(c<e>) {
-												Type: {
-													GenericType(c<e>) {
-														Name: c<e>
-													}
-												}
-											}
-										}
-									}
-									ReturnType: {
-										PrimitiveType(int) {
-											Name: int
-										}
-									}
-								}
-							}
-						}
-					}
-				}
-				Name: Collection
+		TraitDeclStmt(Collection) {
+			GenericParams: {
+				c
+				e
 			}
+			Methods: {
+				TraitMethod {
+					Name: {
+						MethodName(add) {
+							Value: add
+						}
+					}
+					Signature: {
+						FunctionType((c<e>, e) -> c<e>) {
+							ParameterTypes: {
+								ParameterType(c<e>) {
+									Type: {
+										GenericType(c<e>) {
+											Name: c<e>
+										}
+									}
+								}
+								ParameterType(e) {
+									Type: {
+										GenericType(e) {
+											Name: e
+										}
+									}
+								}
+							}
+							ReturnType: {
+								GenericType(c<e>) {
+									Name: c<e>
+								}
+							}
+						}
+					}
+				}
+				TraitMethod {
+					Name: {
+						MethodName(remove) {
+							Value: remove
+						}
+					}
+					Signature: {
+						FunctionType((c<e>, e) -> c<e>) {
+							ParameterTypes: {
+								ParameterType(c<e>) {
+									Type: {
+										GenericType(c<e>) {
+											Name: c<e>
+										}
+									}
+								}
+								ParameterType(e) {
+									Type: {
+										GenericType(e) {
+											Name: e
+										}
+									}
+								}
+							}
+							ReturnType: {
+								GenericType(c<e>) {
+									Name: c<e>
+								}
+							}
+						}
+					}
+				}
+				TraitMethod {
+					Name: {
+						MethodName(contains) {
+							Value: contains
+						}
+					}
+					Signature: {
+						FunctionType((c<e>, e) -> bool) {
+							ParameterTypes: {
+								ParameterType(c<e>) {
+									Type: {
+										GenericType(c<e>) {
+											Name: c<e>
+										}
+									}
+								}
+								ParameterType(e) {
+									Type: {
+										GenericType(e) {
+											Name: e
+										}
+									}
+								}
+							}
+							ReturnType: {
+								PrimitiveType(bool) {
+									Name: bool
+								}
+							}
+						}
+					}
+				}
+				TraitMethod {
+					Name: {
+						MethodName(size) {
+							Value: size
+						}
+					}
+					Signature: {
+						FunctionType((c<e>) -> int) {
+							ParameterTypes: {
+								ParameterType(c<e>) {
+									Type: {
+										GenericType(c<e>) {
+											Name: c<e>
+										}
+									}
+								}
+							}
+							ReturnType: {
+								PrimitiveType(int) {
+									Name: int
+								}
+							}
+						}
+					}
+				}
+			}
+			Name: Collection
 		}
 	}
 }

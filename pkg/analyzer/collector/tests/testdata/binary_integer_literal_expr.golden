@@ -1,14 +1,12 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(fourty_two) {
-				BindingKind: let
-				Name: fourty_two
-				Value: {
-					IntegerLiteralExpr {
-						Base: 2
-						Value: 42
-					}
+		VarDeclStmt(fourty_two) {
+			BindingKind: let
+			Name: fourty_two
+			Value: {
+				IntegerLiteralExpr {
+					Base: 2
+					Value: 42
 				}
 			}
 		}

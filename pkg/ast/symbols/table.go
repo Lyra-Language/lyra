@@ -72,14 +72,14 @@ type SymbolTable struct {
 
 	// Quick lookup tables - these point to AST nodes directly
 	Types     map[string]*ast.TypeDeclStmt
-	Functions map[string]*ast.FunctionDefStmt
+	Functions map[string]*ast.LambdaExpr
 }
 
 func NewSymbolTable() *SymbolTable {
 	st := &SymbolTable{
 		GlobalScope: NewScope(nil, ScopeGlobal),
 		Types:       make(map[string]*ast.TypeDeclStmt),
-		Functions:   make(map[string]*ast.FunctionDefStmt),
+		Functions:   make(map[string]*ast.LambdaExpr),
 	}
 	st.CurrentScope = st.GlobalScope
 	return st
@@ -106,11 +106,11 @@ func (st *SymbolTable) RegisterType(node *ast.TypeDeclStmt) error {
 }
 
 // RegisterFunction adds a function to the symbol table
-func (st *SymbolTable) RegisterFunction(node *ast.FunctionDefStmt) error {
+func (st *SymbolTable) RegisterFunction(name string, node *ast.LambdaExpr) error {
 	if err := st.GlobalScope.Define(node); err != nil {
 		return err
 	}
-	st.Functions[node.Name] = node
+	st.Functions[name] = node
 	return nil
 }
 

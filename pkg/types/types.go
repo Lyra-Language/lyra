@@ -32,6 +32,12 @@ func (SelfType) typeNode()         {}
 func (SelfType) GetName() string   { return "Self" }
 func (s SelfType) String() string  { return s.GetName() }
 
+type VoidType struct{}
+
+func (VoidType) typeNode()         {}
+func (VoidType) GetName() string   { return "Void" }
+func (VoidType) String() string    { return VoidType{}.GetName() }
+
 // UnresolvedType represents a type reference that hasn't been resolved yet
 type UnresolvedType struct {
 	Name string // e.g., "Tree", "Point", "Maybe"
@@ -45,6 +51,26 @@ type AllocationModifier string
 
 const (
 	Stack  AllocationModifier = "stack"
-	Heap   AllocationModifier = "heap"
 	Shared AllocationModifier = "shared"
 )
+
+type TypeModifier string
+const (
+	Mut TypeModifier = "mut"
+	Ref TypeModifier = "ref"
+)
+
+type ReturnType struct {
+	Type Type
+	TypeModifier TypeModifier
+}
+func (r ReturnType) typeNode() {}
+func (r ReturnType) GetName() string {
+	if r.TypeModifier != "" {
+		return fmt.Sprintf("%s %s", r.TypeModifier, r.Type.GetName())
+	}
+	return r.Type.GetName()
+}
+func (r ReturnType) String() string {
+	return r.GetName()
+}

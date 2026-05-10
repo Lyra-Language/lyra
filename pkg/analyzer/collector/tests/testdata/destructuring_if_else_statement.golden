@@ -1,57 +1,49 @@
 Program(1 statements) {
 	Statements: {
-		{
-			IfDestructuringStmt {
-				DestructuringStatement: {
-					DestructuringDeclStmt {
-						Keyword: let
-						Pattern: {
-							ArrayPattern {
-								Elements: {
-									{
-										IdentifierPattern(a) {
-											Name: a
-										}
-										IdentifierPattern(b) {
-											Name: b
-										}
-										IdentifierPattern(c) {
-											Name: c
-										}
-									}
+		IfDestructuringStmt {
+			DestructuringStatement: {
+				DestructuringDeclStmt {
+					Keyword: let
+					Pattern: {
+						ArrayPattern {
+							Elements: {
+								IdentifierPattern(a) {
+									Name: a
+								}
+								IdentifierPattern(b) {
+									Name: b
+								}
+								IdentifierPattern(c) {
+									Name: c
 								}
 							}
 						}
-						Value: {
-							IdentifierExpr(some_array) {
-								Name: some_array
-							}
+					}
+					Value: {
+						IdentifierExpr(some_array) {
+							Name: some_array
 						}
 					}
 				}
-				Else: {
-					BlockExpr {
-						Statements: {
-							{
-								ExpressionStmt {
-									Expression: {
-										FunctionCallExpr {
+			}
+			Else: {
+				BlockExpr {
+					Statements: {
+						ExpressionStmt {
+							Expression: {
+								FunctionCallExpr {
+									Arguments: {
+										ArgumentList {
 											Arguments: {
-												ArgumentList {
-													Arguments: {
-														{
-															StringLiteralExpr {
-																Value: No array found
-															}
-														}
-													}
+												StringLiteralExpr {
+													Value: No array found
 												}
 											}
-											Function: {
-												IdentifierExpr(println) {
-													Name: println
-												}
-											}
+										}
+									}
+									Function: {
+										IdentifierExpr(println) {
+											Name: println
 										}
 									}
 								}
@@ -59,47 +51,41 @@ Program(1 statements) {
 						}
 					}
 				}
-				Then: {
-					BlockExpr {
-						Statements: {
-							{
-								ExpressionStmt {
-									Expression: {
-										FunctionCallExpr {
+			}
+			Then: {
+				BlockExpr {
+					Statements: {
+						ExpressionStmt {
+							Expression: {
+								FunctionCallExpr {
+									Arguments: {
+										ArgumentList {
 											Arguments: {
-												ArgumentList {
-													Arguments: {
-														{
-															InterpolatedStringExpr {
-																Segments: {
-																	{
-																		IdentifierExpr(a) {
-																			Name: a
-																		}
-																		StringLiteralExpr {
-																			Value: , 
-																		}
-																		IdentifierExpr(b) {
-																			Name: b
-																		}
-																		StringLiteralExpr {
-																			Value: , 
-																		}
-																		IdentifierExpr(c) {
-																			Name: c
-																		}
-																	}
-																}
-															}
+												InterpolatedStringExpr {
+													Segments: {
+														IdentifierExpr(a) {
+															Name: a
+														}
+														StringLiteralExpr {
+															Value: , 
+														}
+														IdentifierExpr(b) {
+															Name: b
+														}
+														StringLiteralExpr {
+															Value: , 
+														}
+														IdentifierExpr(c) {
+															Name: c
 														}
 													}
 												}
 											}
-											Function: {
-												IdentifierExpr(println) {
-													Name: println
-												}
-											}
+										}
+									}
+									Function: {
+										IdentifierExpr(println) {
+											Name: println
 										}
 									}
 								}

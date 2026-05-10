@@ -59,26 +59,28 @@ func CollectExpression(node *sitter.Node, ctx *collctx.Ctx) ast.Expression {
 		return collectStructLiteralExpr(node, ctx, loc)
 	case "boolean_expr":
 		return collectBooleanBinaryExpr(node, ctx, loc)
-	case "binary_expression":
+	case "binary_expr":
 		return collectMathBinaryExpr(node, ctx, loc)
-	case "call_expression":
+	case "call_expr":
 		return collectFunctionCallExpr(node, ctx, loc)
-	case "member_expression":
+	case "member_expr":
 		return collectMemberExpr(node, ctx, loc, false)
-	case "optional_member_expression":
+	case "optional_member_expr":
 		return collectMemberExpr(node, ctx, loc, true)
-	case "index_expression":
+	case "index_expr":
 		return collectIndexExpr(node, ctx, loc, false)
-	case "optional_index_expression":
+	case "optional_index_expr":
 		return collectIndexExpr(node, ctx, loc, true)
-	case "try_expression":
+	case "try_expr":
 		return collectTryExpr(node, ctx, loc)
-	case "range_expression":
+	case "range_expr":
 		return collectRangeExpr(node, ctx, loc)
-	case "null_coalescing_expression":
+	case "null_coalescing_expr":
 		return collectNullCoalescingExpr(node, ctx, loc)
-	case "lambda_expression":
-		return collectLambdaExpr(node, ctx, loc)
+	case "lambda_expr":
+		return CollectLambdaExpr(node, ctx, loc)
+	case "await_expr":
+		return collectAwaitExpr(node, ctx, loc)
 	}
 
 	// For wrapper nodes (e.g. parenthesized), recurse into the first named child.

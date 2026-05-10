@@ -1,0 +1,53 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(add) {
+			BindingKind: let
+			Name: add
+			Value: {
+				LambdaExpr {
+					Body: {
+							MathBinaryOpExpr {
+									Left: {
+											IdentifierExpr(a) {
+													Name: a
+											}
+									}
+									Operator: +
+									Right: {
+											IdentifierExpr(b) {
+													Name: b
+											}
+									}
+							}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(a) {
+									Name: a
+								}
+							}
+							Type: {
+								UnresolvedType(Int) {
+									Name: Int
+								}
+							}
+						}
+						Parameter {
+							Pattern: {
+								IdentifierPattern(b) {
+									Name: b
+								}
+							}
+							Type: {
+								UnresolvedType(String) {
+									Name: String
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -1,36 +1,27 @@
 Program(1 statements) {
 	Statements: {
-		{
-			TypeDeclStmt(Maybe) {
-				GenericParams: {
-					{
-						t
-					}
-				}
-				IsPublic: true
-				Name: Maybe
-				Type: {
-					DataType(Maybe) {
-						Allocation: heap
-						Constructors: {
-							{
-								DataTypeConstructor(Nil) {
-									Name: Nil
-								}
-								DataTypeConstructor(Some) {
-									Name: Some
-									Params: {
-										{
-											GenericType(t) {
-												Name: t
-											}
-										}
-									}
+		TypeDeclStmt(Maybe) {
+			GenericParams: {
+				t
+			}
+			IsPublic: true
+			Name: Maybe
+			Type: {
+				DataType(Maybe) {
+					Constructors: {
+						DataTypeConstructor(Nil) {
+							Name: Nil
+						}
+						DataTypeConstructor(Some) {
+							Name: Some
+							Params: {
+								GenericType(t) {
+									Name: t
 								}
 							}
 						}
-						Name: Maybe
 					}
+					Name: Maybe
 				}
 			}
 		}

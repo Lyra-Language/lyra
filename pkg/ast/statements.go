@@ -1,8 +1,6 @@
 package ast
 
 import (
-	"fmt"
-
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -63,6 +61,8 @@ type VarDeclStmt struct {
 	AstBase
 	BindingKind BindingKind
 	Name    string
+	GenericParams []string
+	GenericParamConstraints []GenericParameterConstraint
 	Type    types.Type // may be nil if needs inference
 	Value   Expression
 }
@@ -76,52 +76,3 @@ func (v *VarDeclStmt) IsMutable() bool { return v.BindingKind == BindingVar }
 
 // IsConstant returns true if this is a const declaration
 func (v *VarDeclStmt) IsConstant() bool { return v.BindingKind == BindingConst }
-
-// FunctionDefStmt represents a function definition
-type FunctionDefStmt struct {
-	AstBase
-	Name          string
-	GenericParams []string
-	Signature     *types.FunctionType
-	Clauses       []*FunctionClause
-	IsPublic      bool
-	IsPure        bool
-	IsAsync       bool
-}
-
-func (f *FunctionDefStmt) statementNode() {}
-
-func (f *FunctionDefStmt) GetName() string { return f.Name }
-
-// FunctionClause represents a single clause of a function (pattern matching)
-type FunctionClause struct {
-	AstBase
-	Parameters []Parameter
-	Guard      *GuardExpr
-	Body       Expression
-}
-
-type Parameter struct {
-	Pattern      Pattern
-	DefaultValue Expression
-}
-
-func (p *Parameter) GetName() string {
-	defaultValue := ""
-	if p.DefaultValue != nil {
-		defaultValue = fmt.Sprintf(" = %v", p.DefaultValue)
-	}
-	return fmt.Sprintf("%s%s", p.Pattern.GetName(), defaultValue)
-}
-
-// ReturnStmt represents a return statement
-type ReturnStmt struct {
-	AstBase
-	Value Expression // nil for bare return
-}
-
-func (r *ReturnStmt) statementNode() {}
-
-func (r *ReturnStmt) GetName() string {
-	return fmt.Sprintf("return %s", r.Value.GetName())
-}

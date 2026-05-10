@@ -1,35 +1,31 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(point) {
-				BindingKind: let
-				Name: point
-				Value: {
-					StructInstance(?) {
-						Fields: {
-							{
-								StructField(x) {
-									Name: x
-									Value: {
-										IntegerLiteralExpr {
-											Base: 10
-											Value: 1
-										}
-									}
-								}
-								StructField(y) {
-									Name: y
-									Value: {
-										IntegerLiteralExpr {
-											Base: 10
-											Value: 2
-										}
-									}
+		VarDeclStmt(point) {
+			BindingKind: let
+			Name: point
+			Value: {
+				StructInstance(?) {
+					Fields: {
+						StructField(x) {
+							Name: x
+							Value: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
 								}
 							}
 						}
-						Name: ?
+						StructField(y) {
+							Name: y
+							Value: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 2
+								}
+							}
+						}
 					}
+					Name: ?
 				}
 			}
 		}

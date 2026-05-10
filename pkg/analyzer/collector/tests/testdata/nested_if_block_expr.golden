@@ -1,115 +1,101 @@
 Program(1 statements) {
 	Statements: {
-		{
-			ExpressionStmt {
-				Expression: {
-					IfExpr {
-						Condition: {
-							BooleanBinaryOpExpr {
-								Left: {
-									IdentifierExpr(x) {
-										Name: x
-									}
+		ExpressionStmt {
+			Expression: {
+				IfExpr {
+					Condition: {
+						BooleanBinaryOpExpr {
+							Left: {
+								IdentifierExpr(x) {
+									Name: x
 								}
-								Operator: ==
-								Right: {
-									IntegerLiteralExpr {
-										Base: 10
-									}
+							}
+							Operator: ==
+							Right: {
+								IntegerLiteralExpr {
+									Base: 10
 								}
 							}
 						}
-						Else: {
-							BlockExpr {
-								Statements: {
-									{
-										ExpressionStmt {
-											Expression: {
-												IfExpr {
-													Condition: {
-														BooleanBinaryOpExpr {
-															Left: {
-																IdentifierExpr(y) {
-																	Name: y
-																}
-															}
-															Operator: ==
-															Right: {
-																IntegerLiteralExpr {
-																	Base: 10
-																}
-															}
+					}
+					Else: {
+						BlockExpr {
+							Statements: {
+								ExpressionStmt {
+									Expression: {
+										IfExpr {
+											Condition: {
+												BooleanBinaryOpExpr {
+													Left: {
+														IdentifierExpr(y) {
+															Name: y
 														}
 													}
-													Else: {
-														BlockExpr {
-															Statements: {
-																{
-																	ExpressionStmt {
-																		Expression: {
-																			FunctionCallExpr {
-																				Arguments: {
-																					ArgumentList {
-																						Arguments: {
-																							{
-																								InterpolatedStringExpr {
-																									Segments: {
-																										{
-																											StringLiteralExpr {
-																												Value: At 
-																											}
-																											IdentifierExpr(x) {
-																												Name: x
-																											}
-																											StringLiteralExpr {
-																												Value: ,
-																											}
-																											IdentifierExpr(y) {
-																												Name: y
-																											}
-																										}
-																									}
-																								}
-																							}
+													Operator: ==
+													Right: {
+														IntegerLiteralExpr {
+															Base: 10
+														}
+													}
+												}
+											}
+											Else: {
+												BlockExpr {
+													Statements: {
+														ExpressionStmt {
+															Expression: {
+																FunctionCallExpr {
+																	Arguments: {
+																		ArgumentList {
+																			Arguments: {
+																				InterpolatedStringExpr {
+																					Segments: {
+																						StringLiteralExpr {
+																							Value: At 
+																						}
+																						IdentifierExpr(x) {
+																							Name: x
+																						}
+																						StringLiteralExpr {
+																							Value: ,
+																						}
+																						IdentifierExpr(y) {
+																							Name: y
 																						}
 																					}
 																				}
-																				Function: {
-																					IdentifierExpr(println) {
-																						Name: println
-																					}
-																				}
 																			}
+																		}
+																	}
+																	Function: {
+																		IdentifierExpr(println) {
+																			Name: println
 																		}
 																	}
 																}
 															}
 														}
 													}
-													Then: {
-														BlockExpr {
-															Statements: {
-																{
-																	ExpressionStmt {
-																		Expression: {
-																			FunctionCallExpr {
-																				Arguments: {
-																					ArgumentList {
-																						Arguments: {
-																							{
-																								StringLiteralExpr {
-																									Value: On Horizontal Axis
-																								}
-																							}
-																						}
-																					}
-																				}
-																				Function: {
-																					IdentifierExpr(println) {
-																						Name: println
-																					}
+												}
+											}
+											Then: {
+												BlockExpr {
+													Statements: {
+														ExpressionStmt {
+															Expression: {
+																FunctionCallExpr {
+																	Arguments: {
+																		ArgumentList {
+																			Arguments: {
+																				StringLiteralExpr {
+																					Value: On Horizontal Axis
 																				}
 																			}
+																		}
+																	}
+																	Function: {
+																		IdentifierExpr(println) {
+																			Name: println
 																		}
 																	}
 																}
@@ -123,82 +109,72 @@ Program(1 statements) {
 								}
 							}
 						}
-						Then: {
-							BlockExpr {
-								Statements: {
-									{
-										ExpressionStmt {
-											Expression: {
-												IfExpr {
-													Condition: {
-														BooleanBinaryOpExpr {
-															Left: {
-																IdentifierExpr(y) {
-																	Name: y
-																}
-															}
-															Operator: ==
-															Right: {
-																IntegerLiteralExpr {
-																	Base: 10
-																}
-															}
+					}
+					Then: {
+						BlockExpr {
+							Statements: {
+								ExpressionStmt {
+									Expression: {
+										IfExpr {
+											Condition: {
+												BooleanBinaryOpExpr {
+													Left: {
+														IdentifierExpr(y) {
+															Name: y
 														}
 													}
-													Else: {
-														BlockExpr {
-															Statements: {
-																{
-																	ExpressionStmt {
-																		Expression: {
-																			FunctionCallExpr {
-																				Arguments: {
-																					ArgumentList {
-																						Arguments: {
-																							{
-																								StringLiteralExpr {
-																									Value: On Vertical Axis
-																								}
-																							}
-																						}
-																					}
-																				}
-																				Function: {
-																					IdentifierExpr(println) {
-																						Name: println
-																					}
+													Operator: ==
+													Right: {
+														IntegerLiteralExpr {
+															Base: 10
+														}
+													}
+												}
+											}
+											Else: {
+												BlockExpr {
+													Statements: {
+														ExpressionStmt {
+															Expression: {
+																FunctionCallExpr {
+																	Arguments: {
+																		ArgumentList {
+																			Arguments: {
+																				StringLiteralExpr {
+																					Value: On Vertical Axis
 																				}
 																			}
+																		}
+																	}
+																	Function: {
+																		IdentifierExpr(println) {
+																			Name: println
 																		}
 																	}
 																}
 															}
 														}
 													}
-													Then: {
-														BlockExpr {
-															Statements: {
-																{
-																	ExpressionStmt {
-																		Expression: {
-																			FunctionCallExpr {
-																				Arguments: {
-																					ArgumentList {
-																						Arguments: {
-																							{
-																								StringLiteralExpr {
-																									Value: At Origin
-																								}
-																							}
-																						}
-																					}
-																				}
-																				Function: {
-																					IdentifierExpr(println) {
-																						Name: println
-																					}
+												}
+											}
+											Then: {
+												BlockExpr {
+													Statements: {
+														ExpressionStmt {
+															Expression: {
+																FunctionCallExpr {
+																	Arguments: {
+																		ArgumentList {
+																			Arguments: {
+																				StringLiteralExpr {
+																					Value: At Origin
 																				}
 																			}
+																		}
+																	}
+																	Function: {
+																		IdentifierExpr(println) {
+																			Name: println
 																		}
 																	}
 																}

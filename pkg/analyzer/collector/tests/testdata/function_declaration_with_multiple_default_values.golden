@@ -1,0 +1,107 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(factorial) {
+			BindingKind: let
+			Name: factorial
+			Value: {
+				LambdaExpr {
+					IsPure: true
+					LambdaClauses: {
+						LambdaClause {
+							Body: {
+								IdentifierExpr(acc) {
+									Name: acc
+								}
+							}
+						}
+						LambdaClause {
+							Body: {
+								FunctionCallExpr {
+									Arguments: {
+										ArgumentList {
+											Arguments: {
+												MathBinaryOpExpr {
+													Left: {
+														IdentifierExpr(n) {
+															Name: n
+														}
+													}
+													Operator: -
+													Right: {
+														IntegerLiteralExpr {
+															Base: 10
+															Value: 1
+														}
+													}
+												}
+												MathBinaryOpExpr {
+													Left: {
+														IdentifierExpr(acc) {
+															Name: acc
+														}
+													}
+													Operator: *
+													Right: {
+														IdentifierExpr(n) {
+															Name: n
+														}
+													}
+												}
+											}
+										}
+									}
+									Function: {
+										IdentifierExpr(factorial) {
+											Name: factorial
+										}
+									}
+								}
+							}
+						}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(n) {
+									Name: n
+								}
+							}
+							Type: {
+								PrimitiveType(int) {
+									Name: int
+								}
+							}
+						}
+						Parameter {
+							DefaultValue: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
+								}
+							}
+							Pattern: {
+								IdentifierPattern(acc) {
+									Name: acc
+								}
+							}
+							Type: {
+								PrimitiveType(int) {
+									Name: int
+								}
+							}
+						}
+					}
+					ReturnType: {
+						ReturnType(int) {
+							Type: {
+								PrimitiveType(int) {
+									Name: int
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

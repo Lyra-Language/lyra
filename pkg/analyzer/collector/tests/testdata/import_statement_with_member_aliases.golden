@@ -1,27 +1,21 @@
 Program(1 statements) {
 	Statements: {
-		{
-			ImportStmt {
-				Members: {
-					{
-						ImportMember(HashMap) {
-							Alias: HM
-							Name: HashMap
-						}
-						ImportMember(Set) {
-							Name: Set
-						}
-					}
+		ImportStmt {
+			Members: {
+				ImportMember(HashMap) {
+					Alias: HM
+					Name: HashMap
 				}
-				Path: {
-					{
-						ModuleName(std) {
-							Name: std
-						}
-						ModuleName(collections) {
-							Name: collections
-						}
-					}
+				ImportMember(Set) {
+					Name: Set
+				}
+			}
+			Path: {
+				ModuleName(std) {
+					Name: std
+				}
+				ModuleName(collections) {
+					Name: collections
 				}
 			}
 		}

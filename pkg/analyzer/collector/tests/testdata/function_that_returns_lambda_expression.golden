@@ -1,89 +1,38 @@
-Program(1 statements) {
+Program(2 statements) {
 	Statements: {
-		{
-			FunctionDefStmt(make_sum_fn) {
-				Clauses: {
-					{
-						FunctionClause {
-							Body: {
-								LambdaExpr {
-									FunctionClause: {
-										FunctionClause {
-											Body: {
-												MathBinaryOpExpr {
-													Left: {
-														IdentifierExpr(a) {
-															Name: a
-														}
-													}
-													Operator: +
-													Right: {
-														IdentifierExpr(b) {
-															Name: b
-														}
-													}
-												}
-											}
-											Parameters: {
-												{
-													Parameter {
-														Pattern: {
-															IdentifierPattern(b) {
-																Name: b
-															}
-														}
-													}
-												}
-											}
-										}
-									}
-								}
-							}
-							Parameters: {
-								{
-									Parameter {
-										Pattern: {
-											IdentifierPattern(a) {
-												Name: a
-											}
-										}
-									}
+		ExpressionStmt {
+			Expression: {
+				IdentifierExpr(def) {
+					Name: def
+				}
+			}
+		}
+		ExpressionStmt {
+			Expression: {
+				FunctionCallExpr {
+					Arguments: {
+						ArgumentList {
+							Arguments: {
+								IdentifierExpr(int) {
+									Name: int
 								}
 							}
 						}
 					}
-				}
-				Name: make_sum_fn
-				Signature: {
-					FunctionType((int) -> (int) -> int) {
-						ParameterTypes: {
-							{
-								ParameterType(int) {
-									Type: {
-										PrimitiveType(int) {
+					Function: {
+						FunctionCallExpr {
+							Arguments: {
+								ArgumentList {
+									Arguments: {
+										IdentifierExpr(int) {
 											Name: int
 										}
 									}
 								}
 							}
-						}
-						ReturnType: {
-							FunctionType((int) -> int) {
-								ParameterTypes: {
-									{
-										ParameterType(int) {
-											Type: {
-												PrimitiveType(int) {
-													Name: int
-												}
-											}
-										}
-									}
-								}
-								ReturnType: {
-									PrimitiveType(int) {
-										Name: int
-									}
+							Function: {
+								IdentifierExpr(make_sum_fn) {
+									Name: make_sum_fn
 								}
 							}
 						}

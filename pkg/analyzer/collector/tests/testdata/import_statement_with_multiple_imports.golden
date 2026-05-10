@@ -1,61 +1,49 @@
 Program(3 statements) {
 	Statements: {
-		{
-			ImportStmt {
-				Alias: io
-				Path: {
-					{
-						ModuleName(std) {
-							Name: std
-						}
-						ModuleName(io) {
-							Name: io
-						}
-					}
+		ImportStmt {
+			Alias: io
+			Path: {
+				ModuleName(std) {
+					Name: std
+				}
+				ModuleName(io) {
+					Name: io
 				}
 			}
-			ImportStmt {
-				Members: {
-					{
-						ImportMember(Map) {
-							Name: Map
-						}
-						ImportMember(Set) {
-							Name: Set
-						}
-					}
+		}
+		ImportStmt {
+			Members: {
+				ImportMember(Map) {
+					Name: Map
 				}
-				Path: {
-					{
-						ModuleName(std) {
-							Name: std
-						}
-						ModuleName(collections) {
-							Name: collections
-						}
-					}
+				ImportMember(Set) {
+					Name: Set
 				}
 			}
-			ImportStmt {
-				Members: {
-					{
-						ImportMember(sin) {
-							Name: sin
-						}
-						ImportMember(cos) {
-							Name: cos
-						}
-						ImportMember(PI) {
-							Name: PI
-						}
-					}
+			Path: {
+				ModuleName(std) {
+					Name: std
 				}
-				Path: {
-					{
-						ModuleName(math) {
-							Name: math
-						}
-					}
+				ModuleName(collections) {
+					Name: collections
+				}
+			}
+		}
+		ImportStmt {
+			Members: {
+				ImportMember(sin) {
+					Name: sin
+				}
+				ImportMember(cos) {
+					Name: cos
+				}
+				ImportMember(PI) {
+					Name: PI
+				}
+			}
+			Path: {
+				ModuleName(math) {
+					Name: math
 				}
 			}
 		}

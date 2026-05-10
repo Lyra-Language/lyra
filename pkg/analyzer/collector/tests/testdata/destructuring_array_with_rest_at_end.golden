@@ -1,32 +1,28 @@
 Program(1 statements) {
 	Statements: {
-		{
-			DestructuringDeclStmt {
-				Keyword: let
-				Pattern: {
-					ArrayPattern {
-						Elements: {
-							{
-								IdentifierPattern(a) {
-									Name: a
-								}
-								IdentifierPattern(b) {
-									Name: b
-								}
-								IdentifierPattern(c) {
-									Name: c
-								}
-								RestPattern {
-									Identifier: tail
-								}
-							}
+		DestructuringDeclStmt {
+			Keyword: let
+			Pattern: {
+				ArrayPattern {
+					Elements: {
+						IdentifierPattern(a) {
+							Name: a
+						}
+						IdentifierPattern(b) {
+							Name: b
+						}
+						IdentifierPattern(c) {
+							Name: c
+						}
+						RestPattern {
+							Identifier: tail
 						}
 					}
 				}
-				Value: {
-					IdentifierExpr(some_array) {
-						Name: some_array
-					}
+			}
+			Value: {
+				IdentifierExpr(some_array) {
+					Name: some_array
 				}
 			}
 		}

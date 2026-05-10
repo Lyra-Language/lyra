@@ -1,0 +1,118 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(fib) {
+			BindingKind: let
+			Name: fib
+			Value: {
+				LambdaExpr {
+					IsPure: true
+					LambdaClauses: {
+						LambdaClause {
+							Body: {
+								IntegerLiteralExpr {
+									Base: 10
+								}
+							}
+						}
+						LambdaClause {
+							Body: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
+								}
+							}
+						}
+						LambdaClause {
+							Body: {
+								MathBinaryOpExpr {
+									Left: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														MathBinaryOpExpr {
+															Left: {
+																IdentifierExpr(n) {
+																	Name: n
+																}
+															}
+															Operator: -
+															Right: {
+																IntegerLiteralExpr {
+																	Base: 10
+																	Value: 1
+																}
+															}
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(fib) {
+													Name: fib
+												}
+											}
+										}
+									}
+									Operator: +
+									Right: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
+													Arguments: {
+														MathBinaryOpExpr {
+															Left: {
+																IdentifierExpr(n) {
+																	Name: n
+																}
+															}
+															Operator: -
+															Right: {
+																IntegerLiteralExpr {
+																	Base: 10
+																	Value: 2
+																}
+															}
+														}
+													}
+												}
+											}
+											Function: {
+												IdentifierExpr(fib) {
+													Name: fib
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(n) {
+									Name: n
+								}
+							}
+							Type: {
+								PrimitiveType(int) {
+									Name: int
+								}
+							}
+						}
+					}
+					ReturnType: {
+						ReturnType(int) {
+							Type: {
+								PrimitiveType(int) {
+									Name: int
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

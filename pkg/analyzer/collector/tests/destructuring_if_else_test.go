@@ -8,7 +8,7 @@ import (
 func TestCollectDestructuringIfStatement(t *testing.T) {
 	source := `
 	if let [a, b, c] = some_array {
-		println("#{a}, #{b}, #{c}")
+		println("${a}, ${b}, ${c}")
 	}`
 	program, _ := parseAndCollect(t, source)
 	got := captureProgramPrint(program)
@@ -18,7 +18,7 @@ func TestCollectDestructuringIfStatement(t *testing.T) {
 func TestCollectDestructuringIfElseStatement(t *testing.T) {
 	source := `
 	if let [a, b, c] = some_array {
-		println("#{a}, #{b}, #{c}")
+		println("${a}, ${b}, ${c}")
 	} else {
 		println("No array found")
 	}`
@@ -32,7 +32,7 @@ func TestCollectDestructuringElseStatement(t *testing.T) {
 	let { foo, bar } = some_struct else {
 		println("No struct found")
 	}
-	println("We got the struct: #{foo}, #{bar}")`
+	println("We got the struct: ${foo}, ${bar}")`
 	program, _ := parseAndCollect(t, source)
 	got := captureProgramPrint(program)
 	checkGolden(t, got, filepath.Join("testdata", "destructuring_else_statement.golden"))

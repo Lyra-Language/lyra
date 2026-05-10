@@ -66,7 +66,7 @@ func (s *StringLiteralExpr) GetName() string {
 }
 
 // InterpolatedStringExpr represents a double-quoted string with one or more
-// `#{expr}` interpolations. Each segment is either a *StringLiteralExpr holding
+// `${expr}` interpolations. Each segment is either a *StringLiteralExpr holding
 // a literal content chunk or an arbitrary Expression produced from an
 // interpolation. Interpolated strings are not compile-time constants, so they
 // deliberately do not implement SealLiteralUnion.

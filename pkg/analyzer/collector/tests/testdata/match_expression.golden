@@ -1,60 +1,56 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(bar) {
-				BindingKind: let
-				Name: bar
-				Value: {
-					MatchExpr {
-						MatchArms: {
-							{
-								MatchArm {
-									Body: {
-										StringLiteralExpr {
-											Value: The Answer!
-										}
-									}
-									Pattern: {
-										DataPattern(Some) {
-											Name: Some
-											Pattern: {
-												LiteralPattern {
-													Value: 42
-												}
-											}
-										}
-									}
+		VarDeclStmt(bar) {
+			BindingKind: let
+			Name: bar
+			Value: {
+				MatchExpr {
+					MatchArms: {
+						MatchArm {
+							Body: {
+								StringLiteralExpr {
+									Value: The Answer!
 								}
-								MatchArm {
-									Body: {
-										StringLiteralExpr {
-											Value: Just some number
-										}
-									}
+							}
+							Pattern: {
+								DataPattern(Some) {
+									Name: Some
 									Pattern: {
-										DataPattern(Some) {
-											Name: Some
-										}
-									}
-								}
-								MatchArm {
-									Body: {
-										StringLiteralExpr {
-											Value: huh?
-										}
-									}
-									Pattern: {
-										DataPattern(None) {
-											Name: None
+										LiteralPattern {
+											Value: 42
 										}
 									}
 								}
 							}
 						}
-						Value: {
-							IdentifierExpr(foo) {
-								Name: foo
+						MatchArm {
+							Body: {
+								StringLiteralExpr {
+									Value: Just some number
+								}
 							}
+							Pattern: {
+								DataPattern(Some) {
+									Name: Some
+								}
+							}
+						}
+						MatchArm {
+							Body: {
+								StringLiteralExpr {
+									Value: huh?
+								}
+							}
+							Pattern: {
+								DataPattern(None) {
+									Name: None
+								}
+							}
+						}
+					}
+					Value: {
+						IdentifierExpr(foo) {
+							Name: foo
 						}
 					}
 				}

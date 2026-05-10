@@ -1,54 +1,50 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(data) {
-				BindingKind: let
-				Name: data
-				Value: {
-					TryExpr {
-						Operand: {
-							FunctionCallExpr {
-								Function: {
-									MemberExpr {
-										Object: {
-											FunctionCallExpr {
-												Function: {
-													MemberExpr {
-														Object: {
-															FunctionCallExpr {
-																Arguments: {
-																	ArgumentList {
-																		Arguments: {
-																			{
-																				IdentifierExpr(path) {
-																					Name: path
-																				}
-																			}
+		VarDeclStmt(data) {
+			BindingKind: let
+			Name: data
+			Value: {
+				TryExpr {
+					Operand: {
+						FunctionCallExpr {
+							Function: {
+								MemberExpr {
+									Object: {
+										FunctionCallExpr {
+											Function: {
+												MemberExpr {
+													Object: {
+														FunctionCallExpr {
+															Arguments: {
+																ArgumentList {
+																	Arguments: {
+																		IdentifierExpr(path) {
+																			Name: path
 																		}
 																	}
 																}
-																Function: {
-																	IdentifierExpr(open_file) {
-																		Name: open_file
-																	}
+															}
+															Function: {
+																IdentifierExpr(open_file) {
+																	Name: open_file
 																}
 															}
 														}
-														Optional: true
-														Property: {
-															IdentifierExpr(read) {
-																Name: read
-															}
+													}
+													Optional: true
+													Property: {
+														IdentifierExpr(read) {
+															Name: read
 														}
 													}
 												}
 											}
 										}
-										Optional: true
-										Property: {
-											IdentifierExpr(parse) {
-												Name: parse
-											}
+									}
+									Optional: true
+									Property: {
+										IdentifierExpr(parse) {
+											Name: parse
 										}
 									}
 								}

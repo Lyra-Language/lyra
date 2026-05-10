@@ -1,48 +1,42 @@
 Program(1 statements) {
 	Statements: {
-		{
-			ExpressionStmt {
-				Expression: {
-					IfExpr {
-						Condition: {
-							BooleanBinaryOpExpr {
-								Left: {
-									IdentifierExpr(x) {
-										Name: x
-									}
+		ExpressionStmt {
+			Expression: {
+				IfExpr {
+					Condition: {
+						BooleanBinaryOpExpr {
+							Left: {
+								IdentifierExpr(x) {
+									Name: x
 								}
-								Operator: ==
-								Right: {
-									IntegerLiteralExpr {
-										Base: 10
-										Value: 3
-									}
+							}
+							Operator: ==
+							Right: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 3
 								}
 							}
 						}
-						Else: {
-							BlockExpr {
-								Statements: {
-									{
-										ExpressionStmt {
-											Expression: {
-												FunctionCallExpr {
+					}
+					Else: {
+						BlockExpr {
+							Statements: {
+								ExpressionStmt {
+									Expression: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
 													Arguments: {
-														ArgumentList {
-															Arguments: {
-																{
-																	StringLiteralExpr {
-																		Value: x is not 3
-																	}
-																}
-															}
+														StringLiteralExpr {
+															Value: x is not 3
 														}
 													}
-													Function: {
-														IdentifierExpr(println) {
-															Name: println
-														}
-													}
+												}
+											}
+											Function: {
+												IdentifierExpr(println) {
+													Name: println
 												}
 											}
 										}
@@ -50,29 +44,25 @@ Program(1 statements) {
 								}
 							}
 						}
-						Then: {
-							BlockExpr {
-								Statements: {
-									{
-										ExpressionStmt {
-											Expression: {
-												FunctionCallExpr {
+					}
+					Then: {
+						BlockExpr {
+							Statements: {
+								ExpressionStmt {
+									Expression: {
+										FunctionCallExpr {
+											Arguments: {
+												ArgumentList {
 													Arguments: {
-														ArgumentList {
-															Arguments: {
-																{
-																	StringLiteralExpr {
-																		Value: x is 3
-																	}
-																}
-															}
+														StringLiteralExpr {
+															Value: x is 3
 														}
 													}
-													Function: {
-														IdentifierExpr(println) {
-															Name: println
-														}
-													}
+												}
+											}
+											Function: {
+												IdentifierExpr(println) {
+													Name: println
 												}
 											}
 										}

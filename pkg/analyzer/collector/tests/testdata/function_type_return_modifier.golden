@@ -1,0 +1,50 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(open_file) {
+			BindingKind: let
+			Name: open_file
+			Value: {
+				LambdaExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								nil
+								ReturnStmt {
+									Value: {
+										IdentifierExpr(file) {
+											Name: file
+										}
+									}
+								}
+							}
+						}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(path) {
+									Name: path
+								}
+							}
+							Type: {
+								PrimitiveType(string) {
+									Name: string
+								}
+							}
+						}
+					}
+					ReturnType: {
+						ReturnType(mut File) {
+							Type: {
+								UnresolvedType(File) {
+									Name: File
+								}
+							}
+							TypeModifier: mut
+						}
+					}
+				}
+			}
+		}
+	}
+}

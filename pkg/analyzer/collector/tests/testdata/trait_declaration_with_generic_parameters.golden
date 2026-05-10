@@ -1,46 +1,38 @@
 Program(1 statements) {
 	Statements: {
-		{
-			TraitDeclStmt(Converter) {
-				GenericParams: {
-					{
-						from
-						to
+		TraitDeclStmt(Converter) {
+			GenericParams: {
+				from
+				to
+			}
+			Methods: {
+				TraitMethod {
+					Name: {
+						MethodName(convert) {
+							Value: convert
+						}
 					}
-				}
-				Methods: {
-					{
-						TraitMethod {
-							Name: {
-								MethodName(convert) {
-									Value: convert
+					Signature: {
+						FunctionType((from) -> to) {
+							ParameterTypes: {
+								ParameterType(from) {
+									Type: {
+										GenericType(from) {
+											Name: from
+										}
+									}
 								}
 							}
-							Signature: {
-								FunctionType((from) -> to) {
-									ParameterTypes: {
-										{
-											ParameterType(from) {
-												Type: {
-													GenericType(from) {
-														Name: from
-													}
-												}
-											}
-										}
-									}
-									ReturnType: {
-										GenericType(to) {
-											Name: to
-										}
-									}
+							ReturnType: {
+								GenericType(to) {
+									Name: to
 								}
 							}
 						}
 					}
 				}
-				Name: Converter
 			}
+			Name: Converter
 		}
 	}
 }

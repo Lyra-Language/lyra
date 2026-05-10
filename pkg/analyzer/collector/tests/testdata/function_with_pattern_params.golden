@@ -1,0 +1,96 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(foo) {
+			BindingKind: let
+			Name: foo
+			Value: {
+				LambdaExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								nil
+							}
+						}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								StructPattern {
+									Fields: {
+										StructPatternField(x) {
+											Name: x
+										}
+										StructPatternField(y) {
+											Name: y
+										}
+									}
+								}
+							}
+							Type: {
+								UnresolvedType(Point) {
+									Name: Point
+								}
+							}
+						}
+						Parameter {
+							Pattern: {
+								ArrayPattern {
+									Elements: {
+										IdentifierPattern(one) {
+											Name: one
+										}
+										IdentifierPattern(two) {
+											Name: two
+										}
+										IdentifierPattern(three) {
+											Name: three
+										}
+										RestPattern {
+											Identifier: rest
+										}
+									}
+								}
+							}
+							Type: {
+								DynamicArrayType(DynamicArray<string>) {
+									ElementType: {
+										PrimitiveType(string) {
+											Name: string
+										}
+									}
+								}
+							}
+						}
+						Parameter {
+							Pattern: {
+								TuplePattern {
+									Elements: {
+										IdentifierPattern(alpha) {
+											Name: alpha
+										}
+										IdentifierPattern(beta) {
+											Name: beta
+										}
+									}
+								}
+							}
+							Type: {
+								UnresolvedType(SomeTuple) {
+									Name: SomeTuple
+								}
+							}
+						}
+					}
+					ReturnType: {
+						ReturnType(Void) {
+							Type: {
+								VoidType(Void) {
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

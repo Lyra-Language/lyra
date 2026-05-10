@@ -1,0 +1,65 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(sum) {
+			BindingKind: let
+			GenericParams: {
+				n
+			}
+			Name: sum
+			Value: {
+				LambdaExpr {
+					Body: {
+						MathBinaryOpExpr {
+							Left: {
+								IdentifierExpr(a) {
+									Name: a
+								}
+							}
+							Operator: +
+							Right: {
+								IdentifierExpr(b) {
+									Name: b
+								}
+							}
+						}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(a) {
+									Name: a
+								}
+							}
+							Type: {
+								GenericType(n) {
+									Name: n
+								}
+							}
+						}
+						Parameter {
+							Pattern: {
+								IdentifierPattern(b) {
+									Name: b
+								}
+							}
+							Type: {
+								GenericType(n) {
+									Name: n
+								}
+							}
+						}
+					}
+					ReturnType: {
+						ReturnType(n) {
+							Type: {
+								GenericType(n) {
+									Name: n
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

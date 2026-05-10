@@ -1,10 +1,8 @@
 Program(1 statements) {
 	Statements: {
-		{
-			VarDeclStmt(the_answer) {
-				BindingKind: var
-				Name: the_answer
-			}
+		VarDeclStmt(the_answer) {
+			BindingKind: var
+			Name: the_answer
 		}
 	}
 }
