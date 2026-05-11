@@ -105,7 +105,7 @@ func collectTraitMethodImpl(node *sitter.Node, ctx *collctx.Ctx) ast.TraitMethod
 	if !ok {
 		return ast.TraitMethodImpl{}
 	}
-	clause := expressions.CollectLambdaClause(clauseNode, ctx)
+	clause := *expressions.CollectLambdaClause(clauseNode, ctx)
 	return ast.TraitMethodImpl{
 		Name:   methodName,
 		Clause: clause,

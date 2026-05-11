@@ -10,6 +10,9 @@
 
 ## Completed
 
+### 05/11/26
+- Add tests for trait declarations with default methods
+
 ### 04/18/26
 
 - Collect trait declarations

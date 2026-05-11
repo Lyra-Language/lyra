@@ -1,0 +1,79 @@
+Program(1 statements) {
+	Statements: {
+		TraitDeclStmt(Show) {
+			Methods: {
+				TraitMethod {
+					Name: {
+						MethodName(show) {
+							Value: show
+						}
+					}
+					Signature: {
+						LambdaType((Self) -> string) {
+							Parameters: {
+								ParameterType(Self) {
+								}
+							}
+							ReturnType: {
+								ReturnType(string) {
+									Type: {
+										PrimitiveType(string) {
+											Name: string
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+				TraitMethod {
+					DefaultMethod: {
+						LambdaClause {
+							Body: {
+								FunctionCallExpr {
+									Arguments: {
+										ArgumentList {
+											Arguments: {
+												IdentifierExpr(x) {
+													Name: x
+												}
+											}
+										}
+									}
+									Function: {
+										IdentifierExpr(show) {
+											Name: show
+										}
+									}
+								}
+							}
+						}
+					}
+					Name: {
+						MethodName(show_twice) {
+							Value: show_twice
+						}
+					}
+					Signature: {
+						LambdaType((Self) -> string) {
+							Parameters: {
+								ParameterType(Self) {
+								}
+							}
+							ReturnType: {
+								ReturnType(string) {
+									Type: {
+										PrimitiveType(string) {
+											Name: string
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			Name: Show
+		}
+	}
+}

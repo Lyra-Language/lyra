@@ -6,12 +6,12 @@ import (
 
 type TraitDeclStmt struct {
 	AstBase
-	Name string
-	GenericParams []string
-	Bounds []string
+	Name                        string
+	GenericParams               []string
+	Bounds                      []string
 	GenericParameterConstraints []GenericParameterConstraint
-	Methods []TraitMethod
-	IsPublic bool
+	Methods                     []TraitMethod
+	IsPublic                    bool
 }
 
 func (t *TraitDeclStmt) statementNode() {}
@@ -19,8 +19,9 @@ func (t *TraitDeclStmt) statementNode() {}
 func (t *TraitDeclStmt) GetName() string { return t.Name }
 
 type TraitMethod struct {
-	Name MethodName
-	Signature *types.LambdaType
+	Name          MethodName
+	Signature     *types.LambdaType
+	DefaultMethod *LambdaClause
 }
 
 func (t *TraitMethod) GetName() string {
@@ -66,8 +67,8 @@ func (m MethodName) GetName() string {
 type PrefixOperator string
 
 const (
-	Negate PrefixOperator = "-"
-	Not PrefixOperator = "!"
+	Negate     PrefixOperator = "-"
+	Not        PrefixOperator = "!"
 	BitwiseNot PrefixOperator = "~"
 )
 
@@ -81,24 +82,24 @@ const (
 type BinaryOperator string
 
 const (
-	Equal BinaryOperator = "=="
-	NotEqual BinaryOperator = "!="
-	GreaterThan BinaryOperator = ">"
-	LessThan BinaryOperator = "<"
+	Equal              BinaryOperator = "=="
+	NotEqual           BinaryOperator = "!="
+	GreaterThan        BinaryOperator = ">"
+	LessThan           BinaryOperator = "<"
 	GreaterThanOrEqual BinaryOperator = ">="
-	LessThanOrEqual BinaryOperator = "<="
-	Spaceship BinaryOperator = "<=>"
-	And BinaryOperator = "&&"
-	Or BinaryOperator = "||"
-	Add BinaryOperator = "+"
-	Subtract BinaryOperator = "-"
-	Multiply BinaryOperator = "*"
-	Divide BinaryOperator = "/"
-	Modulus BinaryOperator = "%"
-	Power BinaryOperator = "**"
-	LeftShift BinaryOperator = "<<"
-	RightShift BinaryOperator = ">>"
-	BitwiseAnd BinaryOperator = "&"
-	BitwiseOr BinaryOperator = "|"
-	BitwiseXor BinaryOperator = "^"
+	LessThanOrEqual    BinaryOperator = "<="
+	Spaceship          BinaryOperator = "<=>"
+	And                BinaryOperator = "&&"
+	Or                 BinaryOperator = "||"
+	Add                BinaryOperator = "+"
+	Subtract           BinaryOperator = "-"
+	Multiply           BinaryOperator = "*"
+	Divide             BinaryOperator = "/"
+	Modulus            BinaryOperator = "%"
+	Power              BinaryOperator = "**"
+	LeftShift          BinaryOperator = "<<"
+	RightShift         BinaryOperator = ">>"
+	BitwiseAnd         BinaryOperator = "&"
+	BitwiseOr          BinaryOperator = "|"
+	BitwiseXor         BinaryOperator = "^"
 )

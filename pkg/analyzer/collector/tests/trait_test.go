@@ -122,3 +122,29 @@ func TestCollector_TraitDeclarationWithMultipleGenericConstraints(t *testing.T) 
 	got := captureProgramPrint(program)
 	checkGolden(t, got, filepath.Join("testdata", "trait_declaration_with_multiple_generic_constraints.golden"))
 }
+
+func TestCollector_TraitWithDefaultMethodImplementation(t *testing.T) {
+	source := `
+	trait Show {
+		show: (Self) -> string,
+		show_twice: (Self) -> string = (x) => show(x) + " " + show(x)
+	}
+	`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "trait_with_default_method_implementation.golden"))
+}
+
+func TestCollector_TraitWithDefaultMethodImplementationWithBlock(t *testing.T) {
+	source := `
+	trait Describable {
+		describe: (Self) -> string = (self) => {
+			let s = self.name()
+			concat("Item: ", s)
+		}
+	}
+	`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "trait_with_default_method_implementation_with_block.golden"))
+}

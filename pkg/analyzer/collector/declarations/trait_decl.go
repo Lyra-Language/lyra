@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -42,13 +43,13 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TraitDecl
 	methods := collectMethods(methodsNode, ctx)
 
 	return &ast.TraitDeclStmt{
-		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
-		Name: name,
-		GenericParams: genericParams,
+		AstBase:                     ast.AstBase{Location: ctx.NodeLocation(node)},
+		Name:                        name,
+		GenericParams:               genericParams,
 		GenericParameterConstraints: genericParameterConstraints,
-		Bounds: bounds,
-		Methods: methods,
-		IsPublic: isPublic,
+		Bounds:                      bounds,
+		Methods:                     methods,
+		IsPublic:                    isPublic,
 	}
 }
 
@@ -66,11 +67,13 @@ func collectMethods(node *sitter.Node, ctx *collctx.Ctx) []ast.TraitMethod {
 func collectTraitMethodDeclaration(node *sitter.Node, ctx *collctx.Ctx) ast.TraitMethod {
 	nameNode, ok := ctx.MustField(node, "name")
 	if !ok {
+		ctx.AddError(node, collctx.SeverityError, "trait method declaration is missing a name")
 		return ast.TraitMethod{}
 	}
 	name := collectMethodName(nameNode, ctx)
 	signatureNode, ok := ctx.MustField(node, "signature")
 	if !ok {
+		ctx.AddError(node, collctx.SeverityError, "trait method declaration is missing a signature")
 		return ast.TraitMethod{}
 	}
 	signature := ctx.ParseLambdaType(signatureNode)
@@ -78,9 +81,20 @@ func collectTraitMethodDeclaration(node *sitter.Node, ctx *collctx.Ctx) ast.Trai
 		ctx.AddError(node, collctx.SeverityError, "could not parse trait method signature")
 		return ast.TraitMethod{}
 	}
+	defaultMethodNode := node.ChildByFieldName("default")
+	defaultMethod := (*ast.LambdaClause)(nil)
+	if defaultMethodNode != nil {
+		defaultMethodBodyNode := defaultMethodNode.ChildByFieldName("body")
+		if defaultMethodBodyNode == nil {
+			ctx.AddError(node, collctx.SeverityError, "default method implementation is missing a body")
+			return ast.TraitMethod{}
+		}
+		defaultMethod = expressions.CollectLambdaClause(defaultMethodBodyNode, ctx)
+	}
 	return ast.TraitMethod{
-		Name: name,
-		Signature: signature,
+		Name:          name,
+		Signature:     signature,
+		DefaultMethod: defaultMethod,
 	}
 }
 

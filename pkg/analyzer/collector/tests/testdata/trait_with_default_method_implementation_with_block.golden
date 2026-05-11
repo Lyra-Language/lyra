@@ -1,0 +1,88 @@
+Program(1 statements) {
+	Statements: {
+		TraitDeclStmt(Describable) {
+			Methods: {
+				TraitMethod {
+					DefaultMethod: {
+						LambdaClause {
+							Body: {
+								BlockExpr {
+									Statements: {
+										VarDeclStmt(s) {
+											BindingKind: let
+											Name: s
+											Value: {
+												FunctionCallExpr {
+													Function: {
+														MemberExpr {
+															Object: {
+																IdentifierExpr(self) {
+																	Name: self
+																}
+															}
+															Property: {
+																IdentifierExpr(name) {
+																	Name: name
+																}
+															}
+														}
+													}
+												}
+											}
+										}
+										ExpressionStmt {
+											Expression: {
+												FunctionCallExpr {
+													Arguments: {
+														ArgumentList {
+															Arguments: {
+																StringLiteralExpr {
+																	Value: Item: 
+																}
+																IdentifierExpr(s) {
+																	Name: s
+																}
+															}
+														}
+													}
+													Function: {
+														IdentifierExpr(concat) {
+															Name: concat
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					Name: {
+						MethodName(describe) {
+							Value: describe
+						}
+					}
+					Signature: {
+						LambdaType((Self) -> string) {
+							Parameters: {
+								ParameterType(Self) {
+								}
+							}
+							ReturnType: {
+								ReturnType(string) {
+									Type: {
+										PrimitiveType(string) {
+											Name: string
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			Name: Describable
+		}
+	}
+}

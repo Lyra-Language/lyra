@@ -24,7 +24,7 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *a
 		return nil
 	}
 	parameters := collectParameters(parametersNode, ctx)
-	
+
 	bodyNode := node.ChildByFieldName("body")
 	var body = ast.Expression(nil)
 	var lambdaClauses = []ast.LambdaClause(nil)
@@ -45,16 +45,16 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *a
 	}
 
 	return &ast.LambdaExpr{
-		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		IsUnsafe: isUnsafe,
-		IsPure: isPure,
-		IsAsync: isAsync,
-		IsGenerator: isGenerator,
-		IsRecursive: isRecursive,
-		Parameters: parameters,
-		Body: body,
+		ExprBase:      ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		IsUnsafe:      isUnsafe,
+		IsPure:        isPure,
+		IsAsync:       isAsync,
+		IsGenerator:   isGenerator,
+		IsRecursive:   isRecursive,
+		Parameters:    parameters,
+		Body:          body,
 		LambdaClauses: lambdaClauses,
-		ReturnType: returnType,
+		ReturnType:    returnType,
 	}
 }
 
@@ -63,24 +63,24 @@ func collectLambdaClauses(node *sitter.Node, ctx *collctx.Ctx) []ast.LambdaClaus
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "lambda_clause" {
-			clauses = append(clauses, CollectLambdaClause(child, ctx))
+			clauses = append(clauses, *CollectLambdaClause(child, ctx))
 		}
 	}
 	return clauses
 }
 
-func CollectLambdaClause(node *sitter.Node, ctx *collctx.Ctx) ast.LambdaClause {
+func CollectLambdaClause(node *sitter.Node, ctx *collctx.Ctx) *ast.LambdaClause {
 	patterns := collectPatternParameters(node.ChildByFieldName("parameters"), ctx)
 	var guard *ast.GuardExpr
 	if guardNode := node.ChildByFieldName("guard"); guardNode != nil {
 		guard = collectGuard(guardNode, ctx)
 	}
 	body := ctx.CollectExpr(node.ChildByFieldName("body"))
-	return ast.LambdaClause{
-		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
+	return &ast.LambdaClause{
+		AstBase:  ast.AstBase{Location: ctx.NodeLocation(node)},
 		Patterns: patterns,
-		Guard: guard,
-		Body: body,
+		Guard:    guard,
+		Body:     body,
 	}
 }
 
@@ -128,9 +128,9 @@ func collectParameter(node *sitter.Node, ctx *collctx.Ctx) ast.Parameter {
 		defaultValue = ctx.CollectExpr(defaultValueNode)
 	}
 	return ast.Parameter{
-		Pattern: pattern,
+		Pattern:      pattern,
 		TypeModifier: types.TypeModifier(typeModifier),
-		Type: paramType,
+		Type:         paramType,
 		DefaultValue: defaultValue,
 	}
 }
@@ -147,7 +147,7 @@ func collectReturnType(node *sitter.Node, ctx *collctx.Ctx) types.ReturnType {
 		return types.ReturnType{}
 	}
 	return types.ReturnType{
-		Type: ctx.ParseType(typeNode),
+		Type:         ctx.ParseType(typeNode),
 		TypeModifier: types.TypeModifier(typeModifier),
 	}
 }
