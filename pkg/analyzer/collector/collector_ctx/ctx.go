@@ -1,4 +1,4 @@
-package collctx
+package collector_ctx
 
 import (
 	"fmt"

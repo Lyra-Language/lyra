@@ -1,13 +1,13 @@
 package typedecls
 
 import (
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectConstrainedTypeDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TypeDeclStmt {
+func collectConstrainedTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.TypeDeclStmt {
 	nameNode := node.ChildByFieldName("name")
 	typeNode := node.ChildByFieldName("type")
 	constraintsNode := node.ChildByFieldName("constraints")
@@ -36,7 +36,7 @@ func collectConstrainedTypeDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast
 	}
 
 	if err := ctx.RegisterType(astNode); err != nil {
-		ctx.AddError(node, collctx.SeverityError, "failed to register constrained type %q: %v", name, err)
+		ctx.AddError(node, collector_ctx.SeverityError, "failed to register constrained type %q: %v", name, err)
 	}
 
 	return astNode
@@ -44,7 +44,7 @@ func collectConstrainedTypeDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast
 
 // CollectConstraints is exported because collector.go calls it from parseConstrainedType
 // (which handles constrained_type as a type annotation, not just a declaration).
-func CollectConstraints(node *sitter.Node, ctx *collctx.Ctx) []types.Constraint {
+func CollectConstraints(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Constraint {
 	constraints := make([]types.Constraint, 0)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -64,7 +64,7 @@ func CollectConstraints(node *sitter.Node, ctx *collctx.Ctx) []types.Constraint 
 	return constraints
 }
 
-func collectLiteralUnionConstraint(node *sitter.Node, ctx *collctx.Ctx) *types.LiteralUnionConstraint {
+func collectLiteralUnionConstraint(node *sitter.Node, ctx *collector_ctx.Ctx) *types.LiteralUnionConstraint {
 	values := make([]types.LiteralUnionValue, 0)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -78,15 +78,15 @@ func collectLiteralUnionConstraint(node *sitter.Node, ctx *collctx.Ctx) *types.L
 	return &types.LiteralUnionConstraint{Values: values}
 }
 
-func inferTypeFromValues(values []types.LiteralUnionValue, node *sitter.Node, ctx *collctx.Ctx) types.Type {
+func inferTypeFromValues(values []types.LiteralUnionValue, node *sitter.Node, ctx *collector_ctx.Ctx) types.Type {
 	if len(values) == 0 {
-		ctx.AddError(node, collctx.SeverityError, "literal union constraint must have at least one value")
+		ctx.AddError(node, collector_ctx.SeverityError, "literal union constraint must have at least one value")
 		return nil
 	}
 	return values[0].GetType()
 }
 
-func collectRangeConstraint(node *sitter.Node, ctx *collctx.Ctx) *types.RangeConstraint {
+func collectRangeConstraint(node *sitter.Node, ctx *collector_ctx.Ctx) *types.RangeConstraint {
 	var start types.MathConstraintExpr
 	var comparator string
 	var end types.MathConstraintExpr
@@ -102,7 +102,7 @@ func collectRangeConstraint(node *sitter.Node, ctx *collctx.Ctx) *types.RangeCon
 	}
 
 	if start == nil && end == nil {
-		ctx.AddError(node, collctx.SeverityError, "range constraint must have a start or end")
+		ctx.AddError(node, collector_ctx.SeverityError, "range constraint must have a start or end")
 	}
 	return &types.RangeConstraint{
 		Start:      start,
@@ -111,7 +111,7 @@ func collectRangeConstraint(node *sitter.Node, ctx *collctx.Ctx) *types.RangeCon
 	}
 }
 
-func collectMathConstraintExpr(node *sitter.Node, ctx *collctx.Ctx) types.MathConstraintExpr {
+func collectMathConstraintExpr(node *sitter.Node, ctx *collector_ctx.Ctx) types.MathConstraintExpr {
 	if node == nil {
 		return nil
 	}
@@ -152,17 +152,17 @@ func collectMathConstraintExpr(node *sitter.Node, ctx *collctx.Ctx) types.MathCo
 	return nil
 }
 
-func collectMathConstraintNegationExpr(node *sitter.Node, ctx *collctx.Ctx) types.MathConstraintExpr {
+func collectMathConstraintNegationExpr(node *sitter.Node, ctx *collector_ctx.Ctx) types.MathConstraintExpr {
 	operandNode := node.ChildByFieldName("operand")
 	operand := collectMathConstraintExpr(operandNode, ctx)
 	if operand == nil {
-		ctx.AddError(node, collctx.SeverityError, "constraint negation must have an operand")
+		ctx.AddError(node, collector_ctx.SeverityError, "constraint negation must have an operand")
 		return nil
 	}
 	return &types.MathConstraintNegationExpr{Operand: operand}
 }
 
-func collectMathConstraintBinaryOpExpr(node *sitter.Node, ctx *collctx.Ctx) types.MathConstraintExpr {
+func collectMathConstraintBinaryOpExpr(node *sitter.Node, ctx *collector_ctx.Ctx) types.MathConstraintExpr {
 	leftNode := node.ChildByFieldName("left")
 	operatorNode := node.ChildByFieldName("operator")
 	rightNode := node.ChildByFieldName("right")
@@ -170,7 +170,7 @@ func collectMathConstraintBinaryOpExpr(node *sitter.Node, ctx *collctx.Ctx) type
 	left := collectMathConstraintExpr(leftNode, ctx)
 	right := collectMathConstraintExpr(rightNode, ctx)
 	if left == nil || right == nil {
-		ctx.AddError(node, collctx.SeverityError, "math constraint binary operator must have a left and right operand")
+		ctx.AddError(node, collector_ctx.SeverityError, "math constraint binary operator must have a left and right operand")
 		return nil
 	}
 	var binaryOperator types.MathConstraintBinaryOp
@@ -185,7 +185,7 @@ func collectMathConstraintBinaryOpExpr(node *sitter.Node, ctx *collctx.Ctx) type
 		binaryOperator = types.MathConstraintBinaryOpSub
 	}
 	if binaryOperator == "" {
-		ctx.AddError(node, collctx.SeverityError, "invalid binary operator: %s", operator)
+		ctx.AddError(node, collector_ctx.SeverityError, "invalid binary operator: %s", operator)
 		return nil
 	}
 	return &types.MathConstraintBinaryOpExpr{
@@ -195,17 +195,17 @@ func collectMathConstraintBinaryOpExpr(node *sitter.Node, ctx *collctx.Ctx) type
 	}
 }
 
-func collectPrecisionConstraint(node *sitter.Node, ctx *collctx.Ctx) *types.PrecisionConstraint {
+func collectPrecisionConstraint(node *sitter.Node, ctx *collector_ctx.Ctx) *types.PrecisionConstraint {
 	valueNode := node.ChildByFieldName("value")
 	if valueNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "precision constraint must have a value")
+		ctx.AddError(node, collector_ctx.SeverityError, "precision constraint must have a value")
 		return nil
 	}
 	roundingMode := types.RoundingModeNearestEven
 	if roundingModeNode := node.ChildByFieldName("rounding_mode"); roundingModeNode != nil {
 		roundingMode = types.RoundingMode(ctx.NodeText(roundingModeNode))
 		if roundingMode == "" {
-			ctx.AddError(roundingModeNode, collctx.SeverityError, "invalid rounding mode: %s", roundingMode)
+			ctx.AddError(roundingModeNode, collector_ctx.SeverityError, "invalid rounding mode: %s", roundingMode)
 			return nil
 		}
 	}
@@ -215,19 +215,19 @@ func collectPrecisionConstraint(node *sitter.Node, ctx *collctx.Ctx) *types.Prec
 	}
 }
 
-func collectStepConstraint(node *sitter.Node, ctx *collctx.Ctx) *types.StepConstraint {
+func collectStepConstraint(node *sitter.Node, ctx *collector_ctx.Ctx) *types.StepConstraint {
 	valueNode := node.ChildByFieldName("value")
 	if valueNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "step constraint must have a value")
+		ctx.AddError(node, collector_ctx.SeverityError, "step constraint must have a value")
 		return nil
 	}
 	return &types.StepConstraint{Value: collectMathConstraintExpr(valueNode, ctx)}
 }
 
-func collectPatternConstraint(node *sitter.Node, ctx *collctx.Ctx) *types.PatternConstraint {
+func collectPatternConstraint(node *sitter.Node, ctx *collector_ctx.Ctx) *types.PatternConstraint {
 	patternNode := node.ChildByFieldName("pattern")
 	if patternNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "pattern constraint must have a pattern")
+		ctx.AddError(node, collector_ctx.SeverityError, "pattern constraint must have a pattern")
 		return nil
 	}
 	return &types.PatternConstraint{Pattern: ctx.NodeText(patternNode)}

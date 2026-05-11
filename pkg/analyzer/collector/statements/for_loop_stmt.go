@@ -1,12 +1,12 @@
 package statements
 
 import (
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectForLoopStmt(node *sitter.Node, ctx *collctx.Ctx) *ast.ForLoopStmt {
+func CollectForLoopStmt(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopStmt {
 	labelNode := node.ChildByFieldName("label")
 	label := ""
 	if labelNode != nil {
@@ -20,7 +20,7 @@ func CollectForLoopStmt(node *sitter.Node, ctx *collctx.Ctx) *ast.ForLoopStmt {
 	if forConditionNode != nil {
 		conditionExprNode := forConditionNode.ChildByFieldName("condition_expr")
 		if conditionExprNode == nil {
-			ctx.AddError(forConditionNode, collctx.SeverityError, "Expected for loop condition expression, got %s", forConditionNode.Kind())
+			ctx.AddError(forConditionNode, collector_ctx.SeverityError, "Expected for loop condition expression, got %s", forConditionNode.Kind())
 			return nil
 		}
 		maybeConditionExpr := ctx.CollectExpr(conditionExprNode)
@@ -32,7 +32,7 @@ func CollectForLoopStmt(node *sitter.Node, ctx *collctx.Ctx) *ast.ForLoopStmt {
 			if varDecl, ok := stmt.(*ast.VarDeclStmt); ok {
 				initExpr = varDecl
 			} else {
-				ctx.AddError(initExprNode, collctx.SeverityError, "Expected variable declaration in for loop initializer, got %s", initExprNode.Kind())
+				ctx.AddError(initExprNode, collector_ctx.SeverityError, "Expected variable declaration in for loop initializer, got %s", initExprNode.Kind())
 			}
 		}
 
@@ -45,13 +45,13 @@ func CollectForLoopStmt(node *sitter.Node, ctx *collctx.Ctx) *ast.ForLoopStmt {
 
 	bodyNode := node.ChildByFieldName("for_body")
 	if bodyNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "Expected for loop body")
+		ctx.AddError(node, collector_ctx.SeverityError, "Expected for loop body")
 		return nil
 	}
 	body := ctx.CollectExpr(bodyNode)
 	bodyBlockPtr, ok := body.(*ast.BlockExpr)
 	if !ok {
-		ctx.AddError(bodyNode, collctx.SeverityError, "Expected block expression for for loop body")
+		ctx.AddError(bodyNode, collector_ctx.SeverityError, "Expected block expression for for loop body")
 		return nil
 	}
 

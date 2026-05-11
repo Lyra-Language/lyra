@@ -1,15 +1,15 @@
 package expressions
 
 import (
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectArrayCompExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.ArrayCompExpr {
+func collectArrayCompExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.ArrayCompExpr {
 	resultNode := node.ChildByFieldName("result_expression")
 	if resultNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "array comprehension must have a result")
+		ctx.AddError(node, collector_ctx.SeverityError, "array comprehension must have a result")
 		return nil
 	}
 	return &ast.ArrayCompExpr{
@@ -20,7 +20,7 @@ func collectArrayCompExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location)
 	}
 }
 
-func collectGenerators(node *sitter.Node, ctx *collctx.Ctx) []ast.Generator {
+func collectGenerators(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Generator {
 	generators := make([]ast.Generator, 0)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -31,15 +31,15 @@ func collectGenerators(node *sitter.Node, ctx *collctx.Ctx) []ast.Generator {
 	return generators
 }
 
-func collectGenerator(node *sitter.Node, ctx *collctx.Ctx) ast.Generator {
+func collectGenerator(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Generator {
 	valueNode := node.ChildByFieldName("value")
 	if valueNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "generator must have a value")
+		ctx.AddError(node, collector_ctx.SeverityError, "generator must have a value")
 		return ast.Generator{}
 	}
 	identifierNode := node.ChildByFieldName("identifier")
 	if identifierNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "generator must have an identifier")
+		ctx.AddError(node, collector_ctx.SeverityError, "generator must have an identifier")
 		return ast.Generator{}
 	}
 	return ast.Generator{
@@ -49,7 +49,7 @@ func collectGenerator(node *sitter.Node, ctx *collctx.Ctx) ast.Generator {
 	}
 }
 
-func collectGuards(node *sitter.Node, ctx *collctx.Ctx) []ast.Expression {
+func collectGuards(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Expression {
 	if node == nil {
 		return nil
 	}

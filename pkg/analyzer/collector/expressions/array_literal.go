@@ -1,12 +1,12 @@
 package expressions
 
 import (
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectArrayLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.ArrayLiteralExpr {
+func collectArrayLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.ArrayLiteralExpr {
 	elements := make([]ast.Expression, 0)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)

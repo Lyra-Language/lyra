@@ -1,13 +1,13 @@
 package typedecls
 
 import (
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 // collectStructFields returns struct fields in source declaration order.
-func collectStructFields(node *sitter.Node, ctx *collctx.Ctx) []types.StructField {
+func collectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []types.StructField {
 	var fields []types.StructField
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -30,7 +30,7 @@ func collectStructFields(node *sitter.Node, ctx *collctx.Ctx) []types.StructFiel
 }
 
 // collectDataConstructor parses a data_type_constructor node.
-func collectDataConstructor(node *sitter.Node, ctx *collctx.Ctx) (string, types.DataTypeConstructor) {
+func collectDataConstructor(node *sitter.Node, ctx *collector_ctx.Ctx) (string, types.DataTypeConstructor) {
 	var name string
 	ctor := types.DataTypeConstructor{
 		Params: make([]types.Type, 0),
@@ -53,7 +53,7 @@ func collectDataConstructor(node *sitter.Node, ctx *collctx.Ctx) (string, types.
 }
 
 // CollectTupleTypeBody is exported because collector.go calls it from parseAnonymousTupleType.
-func CollectTupleTypeBody(node *sitter.Node, ctx *collctx.Ctx) []types.Type {
+func CollectTupleTypeBody(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Type {
 	elements := make([]types.Type, 0)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)

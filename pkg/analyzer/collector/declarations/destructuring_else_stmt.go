@@ -1,13 +1,13 @@
 package declarations
 
 import (
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectDestructuringElseStatement(node *sitter.Node, ctx *collctx.Ctx) *ast.ElseDestructuringStmt {
+func CollectDestructuringElseStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ElseDestructuringStmt {
 	if node == nil {
 		return nil
 	}

@@ -1,15 +1,15 @@
 package expressions
 
 import (
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectLambdaExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.LambdaExpr {
+func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.LambdaExpr {
 	if node.ChildCount() < 1 {
-		ctx.AddError(node, collctx.SeverityError, "collectLambdaExpr: node has no children")
+		ctx.AddError(node, collector_ctx.SeverityError, "collectLambdaExpr: node has no children")
 		return nil
 	}
 	isUnsafe := node.ChildByFieldName("is_unsafe") != nil
@@ -20,7 +20,7 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *a
 
 	parametersNode := node.ChildByFieldName("parameters")
 	if parametersNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "collectLambdaExpr: lambda expression missing parameters")
+		ctx.AddError(node, collector_ctx.SeverityError, "collectLambdaExpr: lambda expression missing parameters")
 		return nil
 	}
 	parameters := collectParameters(parametersNode, ctx)
@@ -33,7 +33,7 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *a
 	} else {
 		lambdClauseNodes := node.ChildByFieldName("lambda_clauses")
 		if lambdClauseNodes == nil {
-			ctx.AddError(node, collctx.SeverityError, "collectLambdaExpr: lambda expression must have either a body or lambda clauses")
+			ctx.AddError(node, collector_ctx.SeverityError, "collectLambdaExpr: lambda expression must have either a body or lambda clauses")
 			return nil
 		}
 		lambdaClauses = collectLambdaClauses(lambdClauseNodes, ctx)
@@ -58,7 +58,7 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *a
 	}
 }
 
-func collectLambdaClauses(node *sitter.Node, ctx *collctx.Ctx) []ast.LambdaClause {
+func collectLambdaClauses(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.LambdaClause {
 	clauses := []ast.LambdaClause{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -69,7 +69,7 @@ func collectLambdaClauses(node *sitter.Node, ctx *collctx.Ctx) []ast.LambdaClaus
 	return clauses
 }
 
-func CollectLambdaClause(node *sitter.Node, ctx *collctx.Ctx) *ast.LambdaClause {
+func CollectLambdaClause(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.LambdaClause {
 	patterns := collectPatternParameters(node.ChildByFieldName("parameters"), ctx)
 	var guard *ast.GuardExpr
 	if guardNode := node.ChildByFieldName("guard"); guardNode != nil {
@@ -84,7 +84,7 @@ func CollectLambdaClause(node *sitter.Node, ctx *collctx.Ctx) *ast.LambdaClause 
 	}
 }
 
-func collectPatternParameters(node *sitter.Node, ctx *collctx.Ctx) []ast.Pattern {
+func collectPatternParameters(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Pattern {
 	patterns := []ast.Pattern{}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
@@ -95,7 +95,7 @@ func collectPatternParameters(node *sitter.Node, ctx *collctx.Ctx) []ast.Pattern
 	return patterns
 }
 
-func collectParameters(node *sitter.Node, ctx *collctx.Ctx) []ast.Parameter {
+func collectParameters(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Parameter {
 	parameters := []ast.Parameter{}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
@@ -106,10 +106,10 @@ func collectParameters(node *sitter.Node, ctx *collctx.Ctx) []ast.Parameter {
 	return parameters
 }
 
-func collectParameter(node *sitter.Node, ctx *collctx.Ctx) ast.Parameter {
+func collectParameter(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Parameter {
 	patternNode := node.ChildByFieldName("pattern")
 	if patternNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "parameter node missing pattern")
+		ctx.AddError(node, collector_ctx.SeverityError, "parameter node missing pattern")
 		return ast.Parameter{}
 	}
 	pattern := ctx.CollectPattern(patternNode)
@@ -135,7 +135,7 @@ func collectParameter(node *sitter.Node, ctx *collctx.Ctx) ast.Parameter {
 	}
 }
 
-func collectReturnType(node *sitter.Node, ctx *collctx.Ctx) types.ReturnType {
+func collectReturnType(node *sitter.Node, ctx *collector_ctx.Ctx) types.ReturnType {
 	typeModifierNode := node.ChildByFieldName("type_modifier")
 	var typeModifier string
 	if typeModifierNode != nil {
@@ -143,7 +143,7 @@ func collectReturnType(node *sitter.Node, ctx *collctx.Ctx) types.ReturnType {
 	}
 	typeNode := node.ChildByFieldName("type")
 	if typeNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "return type node missing type")
+		ctx.AddError(node, collector_ctx.SeverityError, "return type node missing type")
 		return types.ReturnType{}
 	}
 	return types.ReturnType{

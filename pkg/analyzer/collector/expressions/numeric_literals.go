@@ -4,13 +4,13 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectIntegerLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.IntegerLiteralExpr {
+func collectIntegerLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.IntegerLiteralExpr {
 	base := ast.IntegerBase10
 	value := int64(0)
 	var err error
@@ -40,7 +40,7 @@ func collectIntegerLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Loca
 	}
 	value, err = strconv.ParseInt(valueStringToParse, int(base), 64)
 	if err != nil {
-		ctx.AddError(node, collctx.SeverityError, "failed to parse integer literal: %v", err)
+		ctx.AddError(node, collector_ctx.SeverityError, "failed to parse integer literal: %v", err)
 		return nil
 	}
 
@@ -54,12 +54,12 @@ func collectIntegerLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Loca
 	}
 }
 
-func collectFloatLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.FloatLiteralExpr {
+func collectFloatLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.FloatLiteralExpr {
 	valueString := ctx.NodeText(node)
 	valueStringWithoutUnderscores := strings.ReplaceAll(valueString, "_", "")
 	value, err := strconv.ParseFloat(valueStringWithoutUnderscores, 64)
 	if err != nil {
-		ctx.AddError(node, collctx.SeverityError, "failed to parse float literal: %v", err)
+		ctx.AddError(node, collector_ctx.SeverityError, "failed to parse float literal: %v", err)
 		return nil
 	}
 	return &ast.FloatLiteralExpr{

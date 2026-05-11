@@ -1,12 +1,12 @@
 package expressions
 
 import (
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectSpreadExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.SpreadExpr {
+func collectSpreadExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.SpreadExpr {
 	spreadNameNode := node.ChildByFieldName("spread_name")
 	if spreadNameNode == nil {
 		return nil

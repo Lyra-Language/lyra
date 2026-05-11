@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -36,7 +36,7 @@ func bindingKind(keyword string) ast.BindingKind {
 	}
 }
 
-func CollectVariableDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.VarDeclStmt {
+func CollectVariableDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.VarDeclStmt {
 	kind := bindingKind(ctx.NodeText(node.ChildByFieldName("keyword")))
 	name := ctx.NodeText(node.ChildByFieldName("name"))
 	genericParametersNode := node.ChildByFieldName("generic_parameters")
@@ -86,17 +86,17 @@ func CollectVariableDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.VarDec
 	}
 
 	astNode := &ast.VarDeclStmt{
-		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
-		BindingKind: kind,
-		Name:    name,
-		GenericParams: genericParameters,
+		AstBase:                 ast.AstBase{Location: ctx.NodeLocation(node)},
+		BindingKind:             kind,
+		Name:                    name,
+		GenericParams:           genericParameters,
 		GenericParamConstraints: genericParamConstraints,
-		Type:    varType,
-		Value:   initExpr,
+		Type:                    varType,
+		Value:                   initExpr,
 	}
 
 	if err := ctx.RegisterVariable(astNode); err != nil {
-		ctx.AddError(node, collctx.SeverityError, "failed to register variable %q: %v", name, err)
+		ctx.AddError(node, collector_ctx.SeverityError, "failed to register variable %q: %v", name, err)
 	}
 
 	return astNode

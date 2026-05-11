@@ -1,24 +1,24 @@
 package expressions
 
 import (
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectMatchExpression(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.MatchExpr {
+func CollectMatchExpression(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.MatchExpr {
 	valueNode, ok := ctx.MustField(node, "value")
 	if !ok {
 		return nil
 	}
 	value := CollectExpression(valueNode, ctx)
 	if value == nil {
-		ctx.AddError(node, collctx.SeverityError, "CollectMatchExpression: value is nil")
+		ctx.AddError(node, collector_ctx.SeverityError, "CollectMatchExpression: value is nil")
 		return nil
 	}
 	matchArms := CollectMatchArms(node, ctx)
 	if matchArms == nil {
-		ctx.AddError(node, collctx.SeverityError, "CollectMatchExpression: match arms are nil")
+		ctx.AddError(node, collector_ctx.SeverityError, "CollectMatchExpression: match arms are nil")
 		return nil
 	}
 	return &ast.MatchExpr{
@@ -28,13 +28,13 @@ func CollectMatchExpression(node *sitter.Node, ctx *collctx.Ctx, loc ast.Locatio
 	}
 }
 
-func CollectMatchArms(node *sitter.Node, ctx *collctx.Ctx) []ast.MatchArm {
+func CollectMatchArms(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.MatchArm {
 	matchArms := []ast.MatchArm{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		if node.Child(i).Kind() == "match_arm" {
 			matchArm := CollectMatchArm(node.Child(i), ctx)
 			if matchArm == nil {
-				ctx.AddError(node, collctx.SeverityError, "CollectMatchArms: match arm is nil")
+				ctx.AddError(node, collector_ctx.SeverityError, "CollectMatchArms: match arm is nil")
 				return nil
 			}
 			matchArms = append(matchArms, *matchArm)
@@ -43,7 +43,7 @@ func CollectMatchArms(node *sitter.Node, ctx *collctx.Ctx) []ast.MatchArm {
 	return matchArms
 }
 
-func CollectMatchArm(node *sitter.Node, ctx *collctx.Ctx) *ast.MatchArm {
+func CollectMatchArm(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.MatchArm {
 	patternNode, ok := ctx.MustField(node, "pattern")
 	if !ok {
 		return nil
@@ -60,7 +60,7 @@ func CollectMatchArm(node *sitter.Node, ctx *collctx.Ctx) *ast.MatchArm {
 	}
 	body := CollectExpression(bodyNode, ctx)
 	if body == nil {
-		ctx.AddError(node, collctx.SeverityError, "CollectMatchArm: body is nil")
+		ctx.AddError(node, collector_ctx.SeverityError, "CollectMatchArm: body is nil")
 		return nil
 	}
 	return &ast.MatchArm{

@@ -3,13 +3,13 @@ package declarations
 import (
 	"strings"
 
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectTraitDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TraitDeclStmt {
+func CollectTraitDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.TraitDeclStmt {
 	visibilityNode := node.ChildByFieldName("visibility")
 	isPublic := visibilityNode != nil
 	nameNode, ok := ctx.MustField(node, "name")
@@ -53,7 +53,7 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TraitDecl
 	}
 }
 
-func collectMethods(node *sitter.Node, ctx *collctx.Ctx) []ast.TraitMethod {
+func collectMethods(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.TraitMethod {
 	methods := make([]ast.TraitMethod, 0)
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
@@ -64,21 +64,21 @@ func collectMethods(node *sitter.Node, ctx *collctx.Ctx) []ast.TraitMethod {
 	return methods
 }
 
-func collectTraitMethodDeclaration(node *sitter.Node, ctx *collctx.Ctx) ast.TraitMethod {
+func collectTraitMethodDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) ast.TraitMethod {
 	nameNode, ok := ctx.MustField(node, "name")
 	if !ok {
-		ctx.AddError(node, collctx.SeverityError, "trait method declaration is missing a name")
+		ctx.AddError(node, collector_ctx.SeverityError, "trait method declaration is missing a name")
 		return ast.TraitMethod{}
 	}
 	name := collectMethodName(nameNode, ctx)
 	signatureNode, ok := ctx.MustField(node, "signature")
 	if !ok {
-		ctx.AddError(node, collctx.SeverityError, "trait method declaration is missing a signature")
+		ctx.AddError(node, collector_ctx.SeverityError, "trait method declaration is missing a signature")
 		return ast.TraitMethod{}
 	}
 	signature := ctx.ParseLambdaType(signatureNode)
 	if signature == nil {
-		ctx.AddError(node, collctx.SeverityError, "could not parse trait method signature")
+		ctx.AddError(node, collector_ctx.SeverityError, "could not parse trait method signature")
 		return ast.TraitMethod{}
 	}
 	defaultMethodNode := node.ChildByFieldName("default")
@@ -86,7 +86,7 @@ func collectTraitMethodDeclaration(node *sitter.Node, ctx *collctx.Ctx) ast.Trai
 	if defaultMethodNode != nil {
 		defaultMethodBodyNode := defaultMethodNode.ChildByFieldName("body")
 		if defaultMethodBodyNode == nil {
-			ctx.AddError(node, collctx.SeverityError, "default method implementation is missing a body")
+			ctx.AddError(node, collector_ctx.SeverityError, "default method implementation is missing a body")
 			return ast.TraitMethod{}
 		}
 		defaultMethod = expressions.CollectLambdaClause(defaultMethodBodyNode, ctx)
@@ -98,7 +98,7 @@ func collectTraitMethodDeclaration(node *sitter.Node, ctx *collctx.Ctx) ast.Trai
 	}
 }
 
-func collectMethodName(node *sitter.Node, ctx *collctx.Ctx) ast.MethodName {
+func collectMethodName(node *sitter.Node, ctx *collector_ctx.Ctx) ast.MethodName {
 	name := ctx.NodeText(node)
 	switch node.Kind() {
 	case "identifier":
@@ -116,7 +116,7 @@ func collectMethodName(node *sitter.Node, ctx *collctx.Ctx) ast.MethodName {
 			op = strings.TrimPrefix(op, "_")
 			return ast.NewMethodNameSuffix(ast.SuffixOperator(op))
 		}
-		ctx.AddError(node, collctx.SeverityError, "could not collect method name: unknown unary operator node kind: %s", opNode.Kind())
+		ctx.AddError(node, collector_ctx.SeverityError, "could not collect method name: unknown unary operator node kind: %s", opNode.Kind())
 		return ast.MethodName{}
 	case "binary_operator":
 		// trim the parens and the underscores
@@ -125,7 +125,7 @@ func collectMethodName(node *sitter.Node, ctx *collctx.Ctx) ast.MethodName {
 		name = strings.Trim(name, "_")
 		return ast.NewMethodNameBinary(ast.BinaryOperator(name))
 	default:
-		ctx.AddError(node, collctx.SeverityError, "could not collect method name: unknown node kind: %s", node.Kind())
+		ctx.AddError(node, collector_ctx.SeverityError, "could not collect method name: unknown node kind: %s", node.Kind())
 		return ast.MethodName{}
 	}
 }

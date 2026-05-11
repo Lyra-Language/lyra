@@ -1,13 +1,13 @@
 package expressions
 
 import (
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectStructLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.StructInstance {
+func collectStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.StructInstance {
 	nameNode := node.ChildByFieldName("struct_name")
 	name := "?"
 	if nameNode != nil {
@@ -29,7 +29,7 @@ func collectStructLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Locat
 	if structUpdateNode != nil {
 		baseStructNode := structUpdateNode.ChildByFieldName("base")
 		if baseStructNode == nil {
-			ctx.AddError(node, collctx.SeverityError, "struct update must have a base struct")
+			ctx.AddError(node, collector_ctx.SeverityError, "struct update must have a base struct")
 			return nil
 		}
 		expr := ctx.CollectExpr(baseStructNode)
@@ -46,12 +46,12 @@ func collectStructLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Locat
 		},
 		Name:        name,
 		GenericArgs: genericArguments,
-		BaseStruct: baseStruct,
+		BaseStruct:  baseStruct,
 		Fields:      fields,
 	}
 }
 
-func collectStructFields(node *sitter.Node, ctx *collctx.Ctx) []ast.StructField {
+func collectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.StructField {
 	fields := []ast.StructField(nil)
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
@@ -62,14 +62,14 @@ func collectStructFields(node *sitter.Node, ctx *collctx.Ctx) []ast.StructField 
 	return fields
 }
 
-func collectStructInstanceField(node *sitter.Node, ctx *collctx.Ctx) ast.StructField {
+func collectStructInstanceField(node *sitter.Node, ctx *collector_ctx.Ctx) ast.StructField {
 	return ast.StructField{
 		Name:  ctx.NodeText(node.ChildByFieldName("field_name")),
 		Value: CollectExpression(node.ChildByFieldName("field_value"), ctx),
 	}
 }
 
-func collectStructShorthandFields(node *sitter.Node, ctx *collctx.Ctx) []ast.StructField {
+func collectStructShorthandFields(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.StructField {
 	fields := []ast.StructField(nil)
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)

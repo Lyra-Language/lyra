@@ -1,13 +1,13 @@
 package declarations
 
 import (
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectDestructuringDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.DestructuringDeclStmt {
+func CollectDestructuringDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.DestructuringDeclStmt {
 	keyword := ctx.NodeText(node.ChildByFieldName("keyword"))
 	pattern := ctx.ParseDestructuringPattern(node.ChildByFieldName("pattern"))
 	typeAnnotationNode := node.ChildByFieldName("type_annotation")

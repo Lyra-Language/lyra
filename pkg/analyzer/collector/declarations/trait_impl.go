@@ -3,13 +3,13 @@ package declarations
 import (
 	"fmt"
 
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectTraitImplementation(node *sitter.Node, ctx *collctx.Ctx) *ast.TraitImplStmt {
+func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.TraitImplStmt {
 	traitNameNode, ok := ctx.MustField(node, "trait_name")
 	if !ok {
 		return nil
@@ -29,7 +29,7 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collctx.Ctx) *ast.TraitI
 
 	astType := ctx.ParseType(typeNode)
 	if astType == nil {
-		ctx.AddError(node, collctx.SeverityError, "could not parse trait implementation type")
+		ctx.AddError(node, collector_ctx.SeverityError, "could not parse trait implementation type")
 		return nil
 	}
 
@@ -55,7 +55,7 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collctx.Ctx) *ast.TraitI
 	}
 }
 
-func collectTraitImplConstraints(node *sitter.Node, ctx *collctx.Ctx) []ast.TraitImplConstraint {
+func collectTraitImplConstraints(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.TraitImplConstraint {
 	constraints := make([]ast.TraitImplConstraint, 0)
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -66,7 +66,7 @@ func collectTraitImplConstraints(node *sitter.Node, ctx *collctx.Ctx) []ast.Trai
 	return constraints
 }
 
-func collectTraitImplConstraint(node *sitter.Node, ctx *collctx.Ctx) ast.TraitImplConstraint {
+func collectTraitImplConstraint(node *sitter.Node, ctx *collector_ctx.Ctx) ast.TraitImplConstraint {
 	genericTypeNode, ok := ctx.MustField(node, "generic_type")
 	if !ok {
 		return ast.TraitImplConstraint{}
@@ -83,7 +83,7 @@ func collectTraitImplConstraint(node *sitter.Node, ctx *collctx.Ctx) ast.TraitIm
 	}
 }
 
-func collectTraitMethodImpls(node *sitter.Node, ctx *collctx.Ctx) []ast.TraitMethodImpl {
+func collectTraitMethodImpls(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.TraitMethodImpl {
 	methods := make([]ast.TraitMethodImpl, 0)
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
@@ -95,7 +95,7 @@ func collectTraitMethodImpls(node *sitter.Node, ctx *collctx.Ctx) []ast.TraitMet
 	return methods
 }
 
-func collectTraitMethodImpl(node *sitter.Node, ctx *collctx.Ctx) ast.TraitMethodImpl {
+func collectTraitMethodImpl(node *sitter.Node, ctx *collector_ctx.Ctx) ast.TraitMethodImpl {
 	methodNameNode, ok := ctx.MustField(node, "method_name")
 	if !ok {
 		return ast.TraitMethodImpl{}

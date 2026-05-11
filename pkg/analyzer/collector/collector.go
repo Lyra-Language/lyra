@@ -9,7 +9,7 @@ The AST nodes serve as the source of truth - the symbol table just indexes them.
 import (
 	"strconv"
 
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/declarations"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/statements"
@@ -21,16 +21,16 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-var _ collctx.Collector = (*Collector)(nil)
+var _ collector_ctx.Collector = (*Collector)(nil)
 
-// Re-export error types from collctx so callers don't need to import both packages.
-type CollectorError = collctx.CollectorError
-type CollectorErrorSeverity = collctx.ErrorSeverity
+// Re-export error types from collector_ctx so callers don't need to import both packages.
+type CollectorError = collector_ctx.CollectorError
+type CollectorErrorSeverity = collector_ctx.ErrorSeverity
 
 const (
-	CollectorErrorSeverityError   = collctx.SeverityError
-	CollectorErrorSeverityWarning = collctx.SeverityWarning
-	CollectorErrorSeverityInfo    = collctx.SeverityInfo
+	CollectorErrorSeverityError   = collector_ctx.SeverityError
+	CollectorErrorSeverityWarning = collector_ctx.SeverityWarning
+	CollectorErrorSeverityInfo    = collector_ctx.SeverityInfo
 )
 
 // Collector walks the CST and builds an AST + symbol table.
@@ -39,7 +39,7 @@ type Collector struct {
 	table  *symbols.SymbolTable
 	ast    *ast.Program
 	errors []error
-	ctx    *collctx.Ctx
+	ctx    *collector_ctx.Ctx
 }
 
 func NewCollector(source []byte) *Collector {
@@ -49,7 +49,7 @@ func NewCollector(source []byte) *Collector {
 		ast:    &ast.Program{},
 		errors: make([]error, 0),
 	}
-	c.ctx = collctx.NewCtx(source, c, &c.errors)
+	c.ctx = collector_ctx.NewCtx(source, c, &c.errors)
 	return c
 }
 

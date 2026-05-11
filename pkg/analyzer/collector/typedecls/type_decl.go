@@ -1,13 +1,13 @@
 package typedecls
 
 import (
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectTypeDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TypeDeclStmt {
+func CollectTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.TypeDeclStmt {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
@@ -24,6 +24,6 @@ func CollectTypeDeclaration(node *sitter.Node, ctx *collctx.Ctx) *ast.TypeDeclSt
 	return nil
 }
 
-func allocModifier(node *sitter.Node, ctx *collctx.Ctx) types.AllocationModifier {
+func allocModifier(node *sitter.Node, ctx *collector_ctx.Ctx) types.AllocationModifier {
 	return types.AllocationModifier(ctx.NodeText(node))
 }

@@ -1,12 +1,12 @@
 package expressions
 
 import (
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectExpressionStatement(node *sitter.Node, ctx *collctx.Ctx) *ast.ExpressionStmt {
+func CollectExpressionStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ExpressionStmt {
 	if node.NamedChildCount() < 1 {
 		return nil
 	}
@@ -20,7 +20,7 @@ func CollectExpressionStatement(node *sitter.Node, ctx *collctx.Ctx) *ast.Expres
 	return nil
 }
 
-func CollectExpression(node *sitter.Node, ctx *collctx.Ctx) ast.Expression {
+func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression {
 	if node == nil {
 		return nil
 	}
