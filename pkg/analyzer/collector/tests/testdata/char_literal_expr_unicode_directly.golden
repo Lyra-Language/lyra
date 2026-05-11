@@ -1,0 +1,13 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(e_accent) {
+			BindingKind: let
+			Name: e_accent
+			Value: {
+				CharacterLiteralExpr {
+					Value: 233
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,13 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(c) {
+			BindingKind: let
+			Name: c
+			Value: {
+				CharacterLiteralExpr {
+					Value: 97
+				}
+			}
+		}
+	}
+}

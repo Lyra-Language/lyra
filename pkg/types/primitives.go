@@ -19,6 +19,7 @@ const (
 	Float64 PrimitiveTypeName = "f64"
 	Bool    PrimitiveTypeName = "bool"
 	String  PrimitiveTypeName = "string"
+	Char    PrimitiveTypeName = "char"
 )
 
 type PrimitiveType struct {

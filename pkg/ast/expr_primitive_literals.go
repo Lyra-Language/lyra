@@ -23,9 +23,9 @@ func (i *IntegerLiteralExpr) GetName() string {
 	return fmt.Sprintf("IntegerLiteralExpr(%d, Base: %d)", i.Value, i.Base)
 }
 
-func (i *IntegerLiteralExpr) Int64() (int64, bool)       { return i.Value, true }
-func (i *IntegerLiteralExpr) Float64() (float64, bool)   { return 0, false }
-func (i *IntegerLiteralExpr) ConstraintString() string   { return fmt.Sprintf("%d", i.Value) }
+func (i *IntegerLiteralExpr) Int64() (int64, bool)     { return i.Value, true }
+func (i *IntegerLiteralExpr) Float64() (float64, bool) { return 0, false }
+func (i *IntegerLiteralExpr) ConstraintString() string { return fmt.Sprintf("%d", i.Value) }
 
 type IntegerBase int // 10, 8, 16, 2
 
@@ -49,9 +49,9 @@ func (f *FloatLiteralExpr) GetName() string {
 	return fmt.Sprintf("FloatLiteralExpr(%g)", f.Value) // NOTE: no trailing zeros
 }
 
-func (f *FloatLiteralExpr) Int64() (int64, bool)       { return 0, false }
-func (f *FloatLiteralExpr) Float64() (float64, bool)   { return f.Value, true }
-func (f *FloatLiteralExpr) ConstraintString() string   { return fmt.Sprintf("%g", f.Value) }
+func (f *FloatLiteralExpr) Int64() (int64, bool)     { return 0, false }
+func (f *FloatLiteralExpr) Float64() (float64, bool) { return f.Value, true }
+func (f *FloatLiteralExpr) ConstraintString() string { return fmt.Sprintf("%g", f.Value) }
 
 type StringLiteralExpr struct {
 	ExprBase
@@ -89,4 +89,16 @@ func (b *BooleanLiteralExpr) SealLiteralUnion()          {}
 
 func (b *BooleanLiteralExpr) GetName() string {
 	return fmt.Sprintf("BooleanLiteralExpr(%t)", b.Value)
+}
+
+type CharacterLiteralExpr struct {
+	ExprBase
+	Value rune
+}
+
+func (c *CharacterLiteralExpr) primitiveLiteralValueNode() {}
+func (c *CharacterLiteralExpr) SealLiteralUnion()          {}
+
+func (c *CharacterLiteralExpr) GetName() string {
+	return fmt.Sprintf("CharacterLiteralExpr(%c)", c.Value)
 }

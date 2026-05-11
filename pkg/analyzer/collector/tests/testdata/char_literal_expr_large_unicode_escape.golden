@@ -1,0 +1,13 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(emoji) {
+			BindingKind: let
+			Name: emoji
+			Value: {
+				CharacterLiteralExpr {
+					Value: 128512
+				}
+			}
+		}
+	}
+}
