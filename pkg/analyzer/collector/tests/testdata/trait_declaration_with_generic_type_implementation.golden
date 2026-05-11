@@ -5,6 +5,7 @@ Program(1 statements) {
 				TraitMethod {
 					Name: {
 						MethodName(map) {
+							Kind: 0
 							Value: map
 						}
 					}

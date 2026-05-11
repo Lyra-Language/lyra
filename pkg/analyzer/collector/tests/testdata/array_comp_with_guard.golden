@@ -22,14 +22,26 @@ Program(1 statements) {
 						}
 						BooleanBinaryOpExpr {
 							Left: {
-								IdentifierExpr(x) {
-									Name: x
+								MathBinaryOpExpr {
+									Left: {
+										IdentifierExpr(x) {
+											Name: x
+										}
+									}
+									Operator: %
+									Right: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 2
+										}
+									}
 								}
 							}
 							Operator: ==
 							Right: {
 								IntegerLiteralExpr {
 									Base: 10
+									Value: 0
 								}
 							}
 						}

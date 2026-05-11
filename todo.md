@@ -1,7 +1,5 @@
 ## To-Dos
 
-- Collect character literals (runes?)
-- Collect for loops
 - Collect for/in loops
 - Collect arena statements
 - Collect regex
@@ -12,6 +10,9 @@
 ### 05/11/26
 - Add tests for trait declarations with default methods
 - Collect math assignment operators (i.e. +=, \*=, etc)
+- Collect character literals
+- Collect for loops
+- Add for loop labels and break/continue statements
 
 ### 04/18/26
 

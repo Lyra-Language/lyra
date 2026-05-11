@@ -16,6 +16,7 @@ Program(1 statements) {
 							Index: {
 								IntegerLiteralExpr {
 									Base: 10
+									Value: 0
 								}
 							}
 							Object: {

@@ -12,6 +12,8 @@ func TestCollectMathAssignOpExpr(t *testing.T) {
 	x -= 1
 	x *= 3
 	x /= 3
+	x %= 3
+	x %%= 3
 	`
 	program, _ := parseAndCollect(t, source)
 	got := captureProgramPrint(program)

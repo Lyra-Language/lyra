@@ -5,6 +5,7 @@ Program(1 statements) {
 				TraitMethod {
 					Name: {
 						MethodName(show) {
+							Kind: 0
 							Value: show
 						}
 					}
@@ -51,6 +52,7 @@ Program(1 statements) {
 					}
 					Name: {
 						MethodName(show_twice) {
+							Kind: 0
 							Value: show_twice
 						}
 					}

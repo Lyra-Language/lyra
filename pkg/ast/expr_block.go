@@ -5,6 +5,7 @@ type BlockExpr struct {
 	Statements []Statement
 }
 
+func (b *BlockExpr) exprNode() {}
 func (b *BlockExpr) GetName() string {
 	return "block_expr"
 }

@@ -36,6 +36,10 @@ func collectCompoundAssignmentExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.
 		operator = ast.MathAssignOpMul
 	case "div_assign_operator":
 		operator = ast.MathAssignOpDiv
+	case "mod_assign_operator":
+		operator = ast.MathAssignOpMod
+	case "remainder_assign_operator":
+		operator = ast.MathAssignOpRemainder
 	default:
 		ctx.AddError(opNode, collctx.SeverityError, "Unknown compound assignment operator: %s", opNode.Kind())
 		return nil

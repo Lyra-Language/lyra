@@ -9,6 +9,7 @@ Program(1 statements) {
 				TraitMethod {
 					Name: {
 						MethodName(convert) {
+							Kind: 0
 							Value: convert
 						}
 					}

@@ -27,6 +27,7 @@ Program(2 statements) {
 					}
 					Name: {
 						MethodName(show) {
+							Kind: 0
 							Value: show
 						}
 					}
@@ -53,6 +54,7 @@ Program(2 statements) {
 					}
 					Name: {
 						MethodName(show) {
+							Kind: 0
 							Value: show
 						}
 					}

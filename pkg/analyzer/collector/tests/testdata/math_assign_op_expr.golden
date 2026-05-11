@@ -1,4 +1,4 @@
-Program(5 statements) {
+Program(7 statements) {
 	Statements: {
 		VarDeclStmt(x) {
 			BindingKind: var
@@ -73,6 +73,42 @@ Program(5 statements) {
 						}
 					}
 					Operator: /=
+					Right: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 3
+						}
+					}
+				}
+			}
+		}
+		ExpressionStmt {
+			Expression: {
+				MathAssignOpExpr {
+					Left: {
+						IdentifierExpr(x) {
+							Name: x
+						}
+					}
+					Operator: %=
+					Right: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 3
+						}
+					}
+				}
+			}
+		}
+		ExpressionStmt {
+			Expression: {
+				MathAssignOpExpr {
+					Left: {
+						IdentifierExpr(x) {
+							Name: x
+						}
+					}
+					Operator: %%=
 					Right: {
 						IntegerLiteralExpr {
 							Base: 10

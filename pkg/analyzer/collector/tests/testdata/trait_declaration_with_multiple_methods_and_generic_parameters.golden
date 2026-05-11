@@ -9,6 +9,7 @@ Program(1 statements) {
 				TraitMethod {
 					Name: {
 						MethodName(add) {
+							Kind: 0
 							Value: add
 						}
 					}
@@ -45,6 +46,7 @@ Program(1 statements) {
 				TraitMethod {
 					Name: {
 						MethodName(remove) {
+							Kind: 0
 							Value: remove
 						}
 					}
@@ -81,6 +83,7 @@ Program(1 statements) {
 				TraitMethod {
 					Name: {
 						MethodName(contains) {
+							Kind: 0
 							Value: contains
 						}
 					}
@@ -117,6 +120,7 @@ Program(1 statements) {
 				TraitMethod {
 					Name: {
 						MethodName(size) {
+							Kind: 0
 							Value: size
 						}
 					}

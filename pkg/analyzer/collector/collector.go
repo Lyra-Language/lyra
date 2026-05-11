@@ -90,7 +90,7 @@ func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 		return declarations.CollectTraitDeclaration(node, c.ctx)
 	case "trait_implementation":
 		return declarations.CollectTraitImplementation(node, c.ctx)
-	case "declaration", "const_declaration":
+	case "declaration", "const_declaration", "for_initial_expr":
 		return declarations.CollectVariableDeclaration(node, c.ctx)
 	case "destructuring_declaration":
 		return declarations.CollectDestructuringDeclaration(node, c.ctx)
@@ -100,6 +100,12 @@ func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 		return declarations.CollectDestructuringElseStatement(node, c.ctx)
 	case "expression_statement":
 		return expressions.CollectExpressionStatement(node, c.ctx)
+	case "for_loop":
+		return statements.CollectForLoopStmt(node, c.ctx)
+	case "break_statement":
+		return statements.CollectBreakStatement(node, c.ctx)
+	case "continue_statement":
+		return statements.CollectContinueStatement(node, c.ctx)
 	case "return_statement":
 		return statements.CollectReturnStatement(node, c.ctx)
 	}
@@ -161,7 +167,7 @@ func (c *Collector) collectTraitGenericParameterConstraint(node *sitter.Node) as
 	}
 	constraints := c.CollectBounds(traitBoundsNode)
 	return ast.GenericParameterConstraint{
-		Name: name,
+		Name:        name,
 		Constraints: constraints,
 	}
 }

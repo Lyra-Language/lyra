@@ -11,6 +11,7 @@ Program(1 statements) {
 							Body: {
 								IntegerLiteralExpr {
 									Base: 10
+									Value: 0
 								}
 							}
 						}

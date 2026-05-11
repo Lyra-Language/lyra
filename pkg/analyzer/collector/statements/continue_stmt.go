@@ -1,0 +1,20 @@
+package statements
+
+import (
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collctx"
+	"github.com/Lyra-Language/lyra/pkg/ast"
+	sitter "github.com/tree-sitter/go-tree-sitter"
+)
+
+func CollectContinueStatement(node *sitter.Node, ctx *collctx.Ctx) *ast.ContinueStmt {
+	labelNode := node.ChildByFieldName("label")
+	label := ""
+	if labelNode != nil {
+		label = ctx.NodeText(labelNode)
+	}
+
+	return &ast.ContinueStmt{
+		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
+		Label:   label,
+	}
+}

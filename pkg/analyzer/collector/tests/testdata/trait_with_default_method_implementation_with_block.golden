@@ -60,6 +60,7 @@ Program(1 statements) {
 					}
 					Name: {
 						MethodName(describe) {
+							Kind: 0
 							Value: describe
 						}
 					}

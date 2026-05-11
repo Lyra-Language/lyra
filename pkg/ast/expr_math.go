@@ -30,10 +30,12 @@ func (m *MathBinaryOpExpr) GetType() types.Type {
 type MathBinaryOp string
 
 const (
-	MathBinaryOpAdd MathBinaryOp = "+"
-	MathBinaryOpSub MathBinaryOp = "-"
-	MathBinaryOpMul MathBinaryOp = "*"
-	MathBinaryOpDiv MathBinaryOp = "/"
+	MathBinaryOpAdd       MathBinaryOp = "+"
+	MathBinaryOpSub       MathBinaryOp = "-"
+	MathBinaryOpMul       MathBinaryOp = "*"
+	MathBinaryOpDiv       MathBinaryOp = "/"
+	MathBinaryOpMod       MathBinaryOp = "%"
+	MathBinaryOpRemainder MathBinaryOp = "%%"
 )
 
 type MathAssignOpExpr struct {
@@ -54,8 +56,10 @@ func (m *MathAssignOpExpr) GetType() types.Type {
 type MathAssignOp string
 
 const (
-	MathAssignOpAdd MathAssignOp = "+="
-	MathAssignOpSub MathAssignOp = "-="
-	MathAssignOpMul MathAssignOp = "*="
-	MathAssignOpDiv MathAssignOp = "/="
+	MathAssignOpAdd       MathAssignOp = "+="
+	MathAssignOpSub       MathAssignOp = "-="
+	MathAssignOpMul       MathAssignOp = "*="
+	MathAssignOpDiv       MathAssignOp = "/="
+	MathAssignOpMod       MathAssignOp = "%="
+	MathAssignOpRemainder MathAssignOp = "%%="
 )

@@ -6,31 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectIfThenExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.IfExpr {
-	ifConditionNode, ok := ctx.MustField(node, "condition")
-	if !ok {
-		return nil
-	}
-
-	thenExpressionNode, ok := ctx.MustField(node, "then_expression")
-	if !ok {
-		return nil
-	}
-
-	elseBranchNode := node.ChildByFieldName("else_branch")
-
-	return &ast.IfExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    nil,
-		},
-		Condition: CollectExpression(ifConditionNode, ctx),
-		Then:      CollectExpression(thenExpressionNode, ctx),
-		Else:      CollectExpression(elseBranchNode, ctx),
-	}
-}
-
-func collectIfBlockExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.IfExpr {
+func collectIfExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.IfExpr {
 	ifConditionNode, ok := ctx.MustField(node, "condition")
 	if !ok {
 		return nil

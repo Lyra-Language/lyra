@@ -1,0 +1,112 @@
+package collector_test
+
+import (
+	"path/filepath"
+	"testing"
+)
+
+func TestCollect_InfiniteForLoop(t *testing.T) {
+	source := `
+	for {
+		println("All work and no play makes Homer something something...")
+	}`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "infinite_for_loop.golden"))
+}
+
+func TestCollect_ForLoopWithCondition(t *testing.T) {
+	source := `
+	var i = 0
+	for i < 10 {
+		println("i == ${i}")
+	}`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "for_loop_with_condition.golden"))
+}
+
+func TestCollect_ForLoopWithInitAndCondition(t *testing.T) {
+	source := `
+	for var i = 0; i < 10 {
+		println("i == ${i}")
+		i += 1
+	}`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "for_loop_with_init_and_condition.golden"))
+}
+
+func TestCollect_ForLoopWithConditionAndPost(t *testing.T) {
+	source := `
+	var i = 0
+	for i < 10; i += 1 {
+		println("i == ${i}")
+	}`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "for_loop_with_condition_and_post.golden"))
+}
+
+func TestCollect_ForLoopWithInitAndConditionAndPost(t *testing.T) {
+	source := `
+	for var i = 0; i < 10; i += 1 {
+		println("i == ${i}")
+	}`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "for_loop_with_init_and_condition_and_post.golden"))
+}
+
+func TestCollect_ForLoopWithBreak(t *testing.T) {
+	source := `
+	for var i = 0; i < 10; i += 1 {
+		break
+	}`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "for_loop_with_break.golden"))
+}
+
+func TestCollect_LabeledForLoopWithBreak(t *testing.T) {
+	source := `
+	outer: for var i = 0; i < 10; i += 1 {
+		for var y = 0; y < 10; y += 1 {
+			if y == 5 {
+				break outer
+			}
+			println("y == ${y}")
+		}
+	}`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "labeled_for_loop_with_break.golden"))
+}
+
+func TestCollect_ForLoopWithContinue(t *testing.T) {
+	source := `
+	for var i = 0; i < 10; i += 1 {
+		if i % 2 == 0 {
+			continue
+		}
+		println("i == ${i}")
+	}`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "for_loop_with_continue.golden"))
+}
+
+func TestCollect_LabeledForLoopWithContinue(t *testing.T) {
+	source := `
+	outer: for var i = 0; i < 10; i += 1 {
+		for var y = 0; y < 10; y += 1 {
+			if y % 2 == 0 {
+				continue outer
+			}
+			println("y == ${y}")
+		}
+	}`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "labeled_for_loop_with_continue.golden"))
+}

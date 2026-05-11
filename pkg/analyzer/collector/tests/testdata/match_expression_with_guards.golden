@@ -38,6 +38,7 @@ Program(1 statements) {
 													Right: {
 														IntegerLiteralExpr {
 															Base: 10
+															Value: 0
 														}
 													}
 												}

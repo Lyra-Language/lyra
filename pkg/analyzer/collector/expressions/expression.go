@@ -43,13 +43,11 @@ func CollectExpression(node *sitter.Node, ctx *collctx.Ctx) ast.Expression {
 		return collectArrayRepeatInitExpr(node, ctx, loc)
 	case "array_comp_expr":
 		return collectArrayCompExpr(node, ctx, loc)
-	case "if_then_expr":
-		return collectIfThenExpr(node, ctx, loc)
 	case "if_block_expr":
-		return collectIfBlockExpr(node, ctx, loc)
+		return collectIfExpr(node, ctx, loc)
 	case "match_expr":
 		return CollectMatchExpression(node, ctx, loc)
-	case "block":
+	case "block", "for_body":
 		return CollectBlockExpr(node, ctx, loc)
 	case "identifier":
 		return CollectIdentifierExpr(node, false, loc, ctx)
@@ -61,7 +59,7 @@ func CollectExpression(node *sitter.Node, ctx *collctx.Ctx) ast.Expression {
 		return collectStructLiteralExpr(node, ctx, loc)
 	case "spread_expr":
 		return collectSpreadExpr(node, ctx, loc)
-	case "boolean_expr":
+	case "boolean_expr", "for_condition_expr":
 		return collectBooleanBinaryExpr(node, ctx, loc)
 	case "binary_expr":
 		return collectMathBinaryExpr(node, ctx, loc)
