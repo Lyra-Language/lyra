@@ -16,8 +16,7 @@ type IntegerLiteralExpr struct {
 }
 
 func (i *IntegerLiteralExpr) primitiveLiteralValueNode() {}
-func (i *IntegerLiteralExpr) SealLiteralUnion()          {}
-func (i *IntegerLiteralExpr) SealMathConstraintLiteral() {}
+func (i *IntegerLiteralExpr) LiteralText() string        { return fmt.Sprintf("%d", i.Value) }
 
 func (i *IntegerLiteralExpr) GetName() string {
 	return fmt.Sprintf("IntegerLiteralExpr(%d, Base: %d)", i.Value, i.Base)
@@ -42,8 +41,7 @@ type FloatLiteralExpr struct {
 }
 
 func (f *FloatLiteralExpr) primitiveLiteralValueNode() {}
-func (f *FloatLiteralExpr) SealLiteralUnion()          {}
-func (f *FloatLiteralExpr) SealMathConstraintLiteral() {}
+func (f *FloatLiteralExpr) LiteralText() string        { return fmt.Sprintf("%g", f.Value) }
 
 func (f *FloatLiteralExpr) GetName() string {
 	return fmt.Sprintf("FloatLiteralExpr(%g)", f.Value) // NOTE: no trailing zeros
@@ -59,7 +57,7 @@ type StringLiteralExpr struct {
 }
 
 func (s *StringLiteralExpr) primitiveLiteralValueNode() {}
-func (s *StringLiteralExpr) SealLiteralUnion()          {}
+func (s *StringLiteralExpr) LiteralText() string        { return fmt.Sprintf("%q", s.Value) }
 
 func (s *StringLiteralExpr) GetName() string {
 	return fmt.Sprintf("StringLiteralExpr(%s)", s.Value)
@@ -67,9 +65,8 @@ func (s *StringLiteralExpr) GetName() string {
 
 // InterpolatedStringExpr represents a double-quoted string with one or more
 // `${expr}` interpolations. Each segment is either a *StringLiteralExpr holding
-// a literal content chunk or an arbitrary Expression produced from an
-// interpolation. Interpolated strings are not compile-time constants, so they
-// deliberately do not implement SealLiteralUnion.
+// a literal content chunk or an arbitrary Expression. Interpolated strings are
+// not compile-time constants, so they do not implement LiteralUnionValue.
 type InterpolatedStringExpr struct {
 	ExprBase
 	Segments []Expression
@@ -85,7 +82,7 @@ type BooleanLiteralExpr struct {
 }
 
 func (b *BooleanLiteralExpr) primitiveLiteralValueNode() {}
-func (b *BooleanLiteralExpr) SealLiteralUnion()          {}
+func (b *BooleanLiteralExpr) LiteralText() string        { return fmt.Sprintf("%t", b.Value) }
 
 func (b *BooleanLiteralExpr) GetName() string {
 	return fmt.Sprintf("BooleanLiteralExpr(%t)", b.Value)
@@ -97,7 +94,7 @@ type CharacterLiteralExpr struct {
 }
 
 func (c *CharacterLiteralExpr) primitiveLiteralValueNode() {}
-func (c *CharacterLiteralExpr) SealLiteralUnion()          {}
+func (c *CharacterLiteralExpr) LiteralText() string        { return fmt.Sprintf("%q", c.Value) }
 
 func (c *CharacterLiteralExpr) GetName() string {
 	return fmt.Sprintf("CharacterLiteralExpr(%c)", c.Value)

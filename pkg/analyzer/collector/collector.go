@@ -114,21 +114,6 @@ func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 
 // Helper methods
 
-func (c *Collector) nodeText(node *sitter.Node) string {
-	return string(c.source[node.StartByte():node.EndByte()])
-}
-
-func (c *Collector) nodeLocation(node *sitter.Node) ast.Location {
-	start := node.StartPosition()
-	end := node.EndPosition()
-	return ast.Location{
-		StartLine: int(start.Row) + 1,
-		StartCol:  int(start.Column) + 1,
-		EndLine:   int(end.Row) + 1,
-		EndCol:    int(end.Column) + 1,
-	}
-}
-
 func (c *Collector) addError(node *sitter.Node, severity CollectorErrorSeverity, format string, args ...any) {
 	c.ctx.AddError(node, severity, format, args...)
 }
@@ -138,7 +123,7 @@ func (c *Collector) CollectGenericParams(node *sitter.Node) []string {
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "generic_type" {
-			params = append(params, c.nodeText(child))
+			params = append(params, c.ctx.NodeText(child))
 		}
 	}
 	return params
@@ -214,15 +199,15 @@ func (c *Collector) parseType(node *sitter.Node, allocation ...types.AllocationM
 	}
 	switch node.Kind() {
 	case "signed_integer_type", "unsigned_integer_type", "float_type":
-		return types.PrimitiveType{Name: types.PrimitiveTypeName(c.nodeText(node))}
+		return types.PrimitiveType{Name: types.PrimitiveTypeName(c.ctx.NodeText(node))}
 	case "string_type":
 		return types.PrimitiveType{Name: types.String}
 	case "boolean_type":
 		return types.PrimitiveType{Name: types.Bool}
 	case "user_defined_type_name":
-		return types.UnresolvedType{Name: c.nodeText(node)}
+		return types.UnresolvedType{Name: c.ctx.NodeText(node)}
 	case "generic_type":
-		return types.GenericType{Name: c.nodeText(node)}
+		return types.GenericType{Name: c.ctx.NodeText(node)}
 	case "parameterized_type":
 		return c.parseParameterizedType(node)
 	case "array_type":
@@ -247,7 +232,7 @@ func (c *Collector) parseType(node *sitter.Node, allocation ...types.AllocationM
 }
 
 func (c *Collector) parseParameterizedType(node *sitter.Node) types.Type {
-	name := c.nodeText(node.ChildByFieldName("name"))
+	name := c.ctx.NodeText(node.ChildByFieldName("name"))
 	typeArgumentsNode := node.ChildByFieldName("type_arguments")
 	if typeArgumentsNode == nil {
 		c.addError(node, CollectorErrorSeverityError, "parseParameterizedType: type arguments node is nil")
@@ -323,7 +308,7 @@ func (c *Collector) parseArrayType(node *sitter.Node, allocation types.Allocatio
 
 	sizeNode := node.ChildByFieldName("size")
 	if sizeNode != nil {
-		sizeString := c.nodeText(sizeNode)
+		sizeString := c.ctx.NodeText(sizeNode)
 		sizeInt, err := strconv.ParseInt(sizeString, 10, 64)
 		if err != nil {
 			c.addError(node, CollectorErrorSeverityError, "parseArrayType: invalid size: %s", sizeString)
@@ -341,7 +326,7 @@ func (c *Collector) parseConstrainedType(node *sitter.Node) types.Type {
 		constraints = typedecls.CollectConstraints(constraintsNode, c.ctx)
 	}
 	return &types.ConstrainedType{
-		Name:        c.nodeText(node.ChildByFieldName("name")),
+		Name:        c.ctx.NodeText(node.ChildByFieldName("name")),
 		Type:        c.parseType(node.ChildByFieldName("type")),
 		Constraints: constraints,
 	}
@@ -349,7 +334,7 @@ func (c *Collector) parseConstrainedType(node *sitter.Node) types.Type {
 
 func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {
 	allocationNode := node.ChildByFieldName("allocation")
-	allocation := types.AllocationModifier(c.nodeText(allocationNode))
+	allocation := types.AllocationModifier(c.ctx.NodeText(allocationNode))
 	typeNode := node.ChildByFieldName("type")
 	if typeNode == nil {
 		c.addError(node, CollectorErrorSeverityError, "parseAllocatedType: type node is nil")
@@ -363,17 +348,17 @@ func (c *Collector) ParseDestructuringPattern(patternNode *sitter.Node) ast.Patt
 }
 
 func (c *Collector) CollectPattern(patternNode *sitter.Node) ast.Pattern {
-	loc := c.nodeLocation(patternNode)
+	loc := c.ctx.NodeLocation(patternNode)
 	switch patternNode.Kind() {
 	case "identifier":
 		return &ast.IdentifierPattern{
 			PatternBase: ast.PatternBase{Location: loc},
-			Name:        c.nodeText(patternNode),
+			Name:        c.ctx.NodeText(patternNode),
 		}
 	case "literal_pattern":
 		return &ast.LiteralPattern{
 			PatternBase: ast.PatternBase{Location: loc},
-			Value:       c.nodeText(patternNode),
+			Value:       c.ctx.NodeText(patternNode),
 		}
 	case "tuple_pattern":
 		return c.collectTuplePattern(patternNode)
@@ -393,28 +378,16 @@ func (c *Collector) CollectPattern(patternNode *sitter.Node) ast.Pattern {
 }
 
 func (c *Collector) collectTuplePattern(patternNode *sitter.Node) ast.Pattern {
-	loc := c.nodeLocation(patternNode)
+	loc := c.ctx.NodeLocation(patternNode)
 	return &ast.TuplePattern{
 		PatternBase: ast.PatternBase{Location: loc},
-		Elements:    c.collectTuplePatternElements(patternNode),
+		Elements:    c.collectPatternElements(patternNode),
 	}
-}
-
-func (c *Collector) collectTuplePatternElements(patternNode *sitter.Node) []ast.Pattern {
-	elements := make([]ast.Pattern, 0)
-	for i := uint(0); i < patternNode.ChildCount(); i++ {
-		child := patternNode.Child(i)
-		element := c.collectPatternElement(child)
-		if element != nil {
-			elements = append(elements, element)
-		}
-	}
-	return elements
 }
 
 func (c *Collector) collectArrayPattern(patternNode *sitter.Node) ast.Pattern {
-	loc := c.nodeLocation(patternNode)
-	elements := c.collectArrayPatternElements(patternNode)
+	loc := c.ctx.NodeLocation(patternNode)
+	elements := c.collectPatternElements(patternNode)
 	if len(elements) == 0 {
 		c.addError(patternNode, CollectorErrorSeverityError, "collectArrayPattern: no elements in array pattern")
 		return nil
@@ -425,7 +398,7 @@ func (c *Collector) collectArrayPattern(patternNode *sitter.Node) ast.Pattern {
 	}
 }
 
-func (c *Collector) collectArrayPatternElements(patternNode *sitter.Node) []ast.Pattern {
+func (c *Collector) collectPatternElements(patternNode *sitter.Node) []ast.Pattern {
 	elements := make([]ast.Pattern, 0)
 	for i := uint(0); i < patternNode.ChildCount(); i++ {
 		child := patternNode.Child(i)
@@ -450,7 +423,7 @@ func (c *Collector) collectPatternElement(node *sitter.Node) ast.Pattern {
 }
 
 func (c *Collector) collectStructPattern(node *sitter.Node) ast.Pattern {
-	loc := c.nodeLocation(node)
+	loc := c.ctx.NodeLocation(node)
 	fields := c.collectStructPatternFields(node)
 	return &ast.StructPattern{
 		PatternBase: ast.PatternBase{Location: loc},
@@ -474,31 +447,31 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 	nameNode := node.ChildByFieldName("name")
 	if nameNode != nil {
 		return &ast.StructPatternField{
-			PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
-			Name:        c.nodeText(nameNode),
+			PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+			Name:        c.ctx.NodeText(nameNode),
 			Pattern:     nil,
 		}
 	}
 	structFieldRenameNode := node.ChildByFieldName("struct_field_rename")
 	if structFieldRenameNode != nil {
 		return &ast.StructPatternField{
-			PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
-			Name:        c.nodeText(structFieldRenameNode.ChildByFieldName("new_name")),
+			PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+			Name:        c.ctx.NodeText(structFieldRenameNode.ChildByFieldName("new_name")),
 			Pattern:     nil,
 		}
 	}
 	structFieldWithPatternNode := node.ChildByFieldName("struct_field_with_pattern")
 	if structFieldWithPatternNode != nil {
 		return &ast.StructPatternField{
-			PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
-			Name:        c.nodeText(structFieldWithPatternNode.ChildByFieldName("name")),
+			PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+			Name:        c.ctx.NodeText(structFieldWithPatternNode.ChildByFieldName("name")),
 			Pattern:     c.CollectPattern(structFieldWithPatternNode.ChildByFieldName("pattern")),
 		}
 	}
 	restPatternNode := node.ChildByFieldName("rest_pattern")
 	if restPatternNode != nil {
 		return &ast.StructPatternField{
-			PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
+			PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
 			Name:        "...",
 			Pattern:     c.collectRestPattern(restPatternNode),
 		}
@@ -506,7 +479,7 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 	wildcardPatternNode := node.ChildByFieldName("wildcard_pattern")
 	if wildcardPatternNode != nil {
 		return &ast.StructPatternField{
-			PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
+			PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
 			Name:        "_",
 			Pattern:     c.collectWildcardPattern(wildcardPatternNode),
 		}
@@ -516,7 +489,7 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 }
 
 func (c *Collector) collectDataPattern(node *sitter.Node) *ast.DataPattern {
-	loc := c.nodeLocation(node)
+	loc := c.ctx.NodeLocation(node)
 	nameNode := node.ChildByFieldName("name")
 	if nameNode == nil {
 		c.addError(node, CollectorErrorSeverityError, "collectDataPattern: name node is nil")
@@ -529,7 +502,7 @@ func (c *Collector) collectDataPattern(node *sitter.Node) *ast.DataPattern {
 	}
 	return &ast.DataPattern{
 		PatternBase: ast.PatternBase{Location: loc},
-		Name:        c.nodeText(nameNode),
+		Name:        c.ctx.NodeText(nameNode),
 		Pattern:     pattern,
 	}
 }
@@ -538,10 +511,10 @@ func (c *Collector) collectRangePattern(node *sitter.Node) ast.Pattern {
 	endOperatorNode := node.ChildByFieldName("end_operator")
 	endOperator := ""
 	if endOperatorNode != nil {
-		endOperator = c.nodeText(endOperatorNode)
+		endOperator = c.ctx.NodeText(endOperatorNode)
 	}
 	return &ast.RangePattern{
-		PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
+		PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
 		Start:       c.CollectExpr(node.ChildByFieldName("start")),
 		End:         c.CollectExpr(node.ChildByFieldName("end")),
 		EndOperator: endOperator,
@@ -550,13 +523,13 @@ func (c *Collector) collectRangePattern(node *sitter.Node) ast.Pattern {
 
 func (c *Collector) collectRestPattern(node *sitter.Node) ast.Pattern {
 	return &ast.RestPattern{
-		PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
-		Identifier:  c.nodeText(node.ChildByFieldName("identifier")),
+		PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+		Identifier:  c.ctx.NodeText(node.ChildByFieldName("identifier")),
 	}
 }
 
 func (c *Collector) collectWildcardPattern(node *sitter.Node) ast.Pattern {
 	return &ast.WildcardPattern{
-		PatternBase: ast.PatternBase{Location: c.nodeLocation(node)},
+		PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
 	}
 }

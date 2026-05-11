@@ -26,11 +26,11 @@ type Constraint interface {
 }
 
 // LiteralUnionValue is implemented only by primitive literal AST nodes (int/float/string/bool).
-// The marker method ensures other expressions (identifiers, calls, etc.) do not satisfy this interface.
+// LiteralText restricts the interface to concrete literal types — no other expression has it.
 type LiteralUnionValue interface {
 	GetName() string
 	GetType() Type
-	SealLiteralUnion() // marker; only ast *IntegerLiteralExpr, *StringLiteralExpr, etc. implement this
+	LiteralText() string // source-text representation of the literal value, e.g. `42`, `"hello"`, `true`
 }
 
 // LiteralUnionConstraint holds a set of allowed literal values for a constrained type.
@@ -58,14 +58,13 @@ type MathConstraintExpr interface {
 }
 
 // LiteralNumberValue is implemented only by *ast.IntegerLiteralExpr and *ast.FloatLiteralExpr.
-// Using AST nodes keeps constraint literals consistent with the rest of the AST (e.g. LiteralUnionValue).
+// Int64, Float64, and ConstraintString restrict this to numeric literal nodes.
 type LiteralNumberValue interface {
 	GetName() string
 	GetType() Type
-	SealMathConstraintLiteral() // marker; only ast int/float literal nodes implement this
-	Int64() (int64, bool)       // for extraction
-	Float64() (float64, bool)   // for extraction
-	ConstraintString() string   // numeric string for constraint display, e.g. "15" or "3.14"
+	Int64() (int64, bool)     // for extraction
+	Float64() (float64, bool) // for extraction
+	ConstraintString() string // numeric string for constraint display, e.g. "15" or "3.14"
 }
 
 // MathConstraintLiteralExpr implements MathConstraintExpr
