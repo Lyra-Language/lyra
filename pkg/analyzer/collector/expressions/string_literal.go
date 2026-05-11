@@ -13,67 +13,6 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectIntegerLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.IntegerLiteralExpr {
-	base := ast.IntegerBase10
-	value := int64(0)
-	var err error
-
-	child := node.NamedChild(0)
-	switch child.Kind() {
-	case "binary_int":
-		base = ast.IntegerBase2
-	case "octal_int":
-		base = ast.IntegerBase8
-	case "decimal_int":
-		base = ast.IntegerBase10
-	case "hexadecimal_int":
-		base = ast.IntegerBase16
-	}
-
-	valueString := ctx.NodeText(child)
-	valueStringWithoutUnderscores := strings.ReplaceAll(valueString, "_", "")
-	valueStringToParse := valueStringWithoutUnderscores
-	switch base {
-	case ast.IntegerBase2:
-		valueStringToParse = strings.TrimPrefix(valueStringToParse, "0b")
-	case ast.IntegerBase8:
-		valueStringToParse = strings.TrimPrefix(valueStringToParse, "0o")
-	case ast.IntegerBase16:
-		valueStringToParse = strings.TrimPrefix(valueStringToParse, "0x")
-	}
-	value, err = strconv.ParseInt(valueStringToParse, int(base), 64)
-	if err != nil {
-		ctx.AddError(node, collctx.SeverityError, "failed to parse integer literal: %v", err)
-		return nil
-	}
-
-	return &ast.IntegerLiteralExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    types.PrimitiveType{Name: types.Int},
-		},
-		Value: value,
-		Base:  base,
-	}
-}
-
-func collectFloatLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.FloatLiteralExpr {
-	valueString := ctx.NodeText(node)
-	valueStringWithoutUnderscores := strings.ReplaceAll(valueString, "_", "")
-	value, err := strconv.ParseFloat(valueStringWithoutUnderscores, 64)
-	if err != nil {
-		ctx.AddError(node, collctx.SeverityError, "failed to parse float literal: %v", err)
-		return nil
-	}
-	return &ast.FloatLiteralExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    types.PrimitiveType{Name: types.Float},
-		},
-		Value: value,
-	}
-}
-
 func collectStringLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) ast.Expression {
 	// string_literal has named children that are either `string_content` or
 	// `string_interpolation`. When no interpolation segments are present we
@@ -255,37 +194,4 @@ func validateUnicodeScalarValue(r rune) error {
 		return fmt.Errorf("code point U+%X is a surrogate", r)
 	}
 	return nil
-}
-
-func collectCharacterLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.CharacterLiteralExpr {
-	raw := ctx.NodeText(node)
-	// strip surrounding single quotes
-	inner := raw[1 : len(raw)-1]
-	content, err := unescapeStringContent(inner)
-	if err != nil {
-		ctx.AddError(node, collctx.SeverityError, "failed to parse character literal: %v", err)
-		return nil
-	}
-	runes := []rune(content)
-	if len(runes) != 1 {
-		ctx.AddError(node, collctx.SeverityError, "character literal must contain exactly one character")
-		return nil
-	}
-	return &ast.CharacterLiteralExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    types.PrimitiveType{Name: types.Char},
-		},
-		Value: runes[0],
-	}
-}
-
-func collectBooleanLiteralExpr(node *sitter.Node, ctx *collctx.Ctx, loc ast.Location) *ast.BooleanLiteralExpr {
-	return &ast.BooleanLiteralExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    types.PrimitiveType{Name: types.Bool},
-		},
-		Value: ctx.NodeText(node) == "true",
-	}
 }
