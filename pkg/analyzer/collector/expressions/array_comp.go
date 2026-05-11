@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectArrayCompExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.ArrayCompExpr {
+func collectArrayCompExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
 	resultNode := node.ChildByFieldName("result_expression")
 	if resultNode == nil {
 		ctx.AddError(node, collector_ctx.SeverityError, "array comprehension must have a result")

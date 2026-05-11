@@ -189,11 +189,7 @@ func (c *Collector) RegisterVariable(stmt *ast.VarDeclStmt) error {
 }
 
 // allocation is only used for array types
-func (c *Collector) parseType(node *sitter.Node, allocation ...types.AllocationModifier) types.Type {
-	var alloc types.AllocationModifier
-	if len(allocation) > 0 {
-		alloc = allocation[0]
-	}
+func (c *Collector) parseType(node *sitter.Node) types.Type {
 	if node == nil {
 		return nil
 	}
@@ -211,7 +207,7 @@ func (c *Collector) parseType(node *sitter.Node, allocation ...types.AllocationM
 	case "parameterized_type":
 		return c.parseParameterizedType(node)
 	case "array_type":
-		return c.parseArrayType(node, alloc)
+		return c.parseArrayType(node, types.None)
 	case "constrained_type":
 		return c.parseConstrainedType(node)
 	case "allocated_type":
@@ -340,7 +336,13 @@ func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {
 		c.addError(node, CollectorErrorSeverityError, "parseAllocatedType: type node is nil")
 		return nil
 	}
-	return c.parseType(typeNode, allocation)
+	switch typeNode.Kind() {
+	case "array_type":
+		return c.parseArrayType(typeNode, allocation)
+	default:
+		c.addError(node, CollectorErrorSeverityError, "parseAllocatedType: unknown allocated type node kind: %s", typeNode.Kind())
+		return nil
+	}
 }
 
 func (c *Collector) ParseDestructuringPattern(patternNode *sitter.Node) ast.Pattern {

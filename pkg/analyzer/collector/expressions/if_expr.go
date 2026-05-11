@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectIfExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.IfExpr {
+func collectIfExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
 	ifConditionNode, ok := ctx.MustField(node, "condition")
 	if !ok {
 		return nil

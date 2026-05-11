@@ -7,7 +7,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.LambdaExpr {
+func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
 	if node.ChildCount() < 1 {
 		ctx.AddError(node, collector_ctx.SeverityError, "collectLambdaExpr: node has no children")
 		return nil

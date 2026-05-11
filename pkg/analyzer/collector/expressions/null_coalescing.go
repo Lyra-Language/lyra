@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectNullCoalescingExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.NullCoalescingExpr {
+func collectNullCoalescingExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
 	optional := CollectExpression(node.ChildByFieldName("optional"), ctx)
 	if optional == nil {
 		ctx.AddError(node, collector_ctx.SeverityError, "null coalescing expression must have an optional expression")

@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectSpreadExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.SpreadExpr {
+func collectSpreadExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
 	spreadNameNode := node.ChildByFieldName("spread_name")
 	if spreadNameNode == nil {
 		return nil

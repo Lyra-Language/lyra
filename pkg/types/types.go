@@ -50,6 +50,7 @@ func (u UnresolvedType) String() string  { return u.GetName() }
 type AllocationModifier string
 
 const (
+	None   AllocationModifier = "none"
 	Stack  AllocationModifier = "stack"
 	Shared AllocationModifier = "shared"
 )

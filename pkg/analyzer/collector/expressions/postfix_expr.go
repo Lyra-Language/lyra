@@ -42,7 +42,7 @@ func collectArgumentList(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Argument
 	return ast.ArgumentList{Arguments: arguments}
 }
 
-func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location, optional bool) *ast.MemberExpr {
+func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location, optional bool) ast.Expression {
 	propertyNode := node.ChildByFieldName("property")
 	isConst := propertyNode != nil && propertyNode.Kind() == "const_identifier"
 	if propertyNode == nil {

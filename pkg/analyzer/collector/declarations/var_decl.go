@@ -1,26 +1,11 @@
 package declarations
 
 import (
-	"reflect"
-
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
-
-func isNilExpression(expr ast.Expression) bool {
-	if expr == nil {
-		return true
-	}
-	v := reflect.ValueOf(expr)
-	switch v.Kind() {
-	case reflect.Ptr, reflect.Map, reflect.Slice, reflect.Interface, reflect.Func, reflect.Chan:
-		return v.IsNil()
-	default:
-		return false
-	}
-}
 
 func bindingKind(keyword string, ctx *collector_ctx.Ctx) ast.BindingKind {
 	switch keyword {
@@ -59,12 +44,6 @@ func CollectVariableDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	var initExpr ast.Expression = nil
 	if valueNode != nil {
 		initExpr = ctx.CollectExpr(valueNode)
-	}
-
-	// CollectExpr can return a typed-nil expression when collection fails.
-	// Normalize that here so later type inference does not panic on GetType().
-	if isNilExpression(initExpr) {
-		initExpr = nil
 	}
 
 	// Infer variable type from initializer only when no type annotation was given

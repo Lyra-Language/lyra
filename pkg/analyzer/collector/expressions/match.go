@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectMatchExpression(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.MatchExpr {
+func CollectMatchExpression(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
 	valueNode, ok := ctx.MustField(node, "value")
 	if !ok {
 		return nil

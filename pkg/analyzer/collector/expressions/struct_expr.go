@@ -7,7 +7,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.StructInstance {
+func collectStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
 	nameNode := node.ChildByFieldName("struct_name")
 	name := "?"
 	if nameNode != nil {

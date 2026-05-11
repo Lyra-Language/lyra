@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectRangeExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.RangeExpr {
+func collectRangeExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
 	startNode := node.ChildByFieldName("start")
 	if startNode == nil {
 		ctx.AddError(node, collector_ctx.SeverityError, "range expression must have a start")
