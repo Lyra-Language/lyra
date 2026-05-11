@@ -119,11 +119,10 @@ func collectParameter(node *sitter.Node, ctx *collctx.Ctx) ast.Parameter {
 		typeModifier = ctx.NodeText(typeModifierNode)
 	}
 	typeNode := node.ChildByFieldName("type")
-	if typeNode == nil {
-		ctx.AddError(node, collctx.SeverityError, "parameter node missing type")
-		return ast.Parameter{}
+	var paramType types.Type
+	if typeNode != nil {
+		paramType = ctx.ParseType(typeNode)
 	}
-	paramType := ctx.ParseType(typeNode)
 	var defaultValue ast.Expression
 	if defaultValueNode := node.ChildByFieldName("default_value"); defaultValueNode != nil {
 		defaultValue = ctx.CollectExpr(defaultValueNode)

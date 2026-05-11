@@ -1,97 +1,67 @@
 Program(2 statements) {
 	Statements: {
-		{
-			TraitImplStmt {
-				Methods: {
-					{
-						TraitMethodImpl {
-							Clause: {
-								FunctionClause {
-									Body: {
-										FunctionCallExpr {
+		TraitImplStmt {
+			Methods: {
+				TraitMethodImpl {
+					Clause: {
+						LambdaClause {
+							Body: {
+								FunctionCallExpr {
+									Arguments: {
+										ArgumentList {
 											Arguments: {
-												ArgumentList {
-													Arguments: {
-														{
-															IdentifierExpr(n) {
-																Name: n
-															}
-														}
-													}
-												}
-											}
-											Function: {
-												IdentifierExpr(int_to_string) {
-													Name: int_to_string
+												IdentifierExpr(n) {
+													Name: n
 												}
 											}
 										}
 									}
-									Parameters: {
-										{
-											Parameter {
-												Pattern: {
-													IdentifierPattern(n) {
-														Name: n
-													}
-												}
-											}
+									Function: {
+										IdentifierExpr(int_to_string) {
+											Name: int_to_string
 										}
 									}
-								}
-							}
-							Name: {
-								MethodName(show) {
-									Value: show
 								}
 							}
 						}
 					}
-				}
-				TraitName: Show
-				Type: {
-					PrimitiveType(int) {
-						Name: int
+					Name: {
+						MethodName(show) {
+							Value: show
+						}
 					}
 				}
 			}
-			TraitImplStmt {
-				Methods: {
-					{
-						TraitMethodImpl {
-							Clause: {
-								FunctionClause {
-									Body: {
-										IdentifierExpr(s) {
-											Name: s
-										}
-									}
-									Parameters: {
-										{
-											Parameter {
-												Pattern: {
-													IdentifierPattern(s) {
-														Name: s
-													}
-												}
-											}
-										}
-									}
-								}
-							}
-							Name: {
-								MethodName(show) {
-									Value: show
+			TraitName: Show
+			Type: {
+				PrimitiveType(int) {
+					Name: int
+				}
+			}
+		}
+		TraitImplStmt {
+			Methods: {
+				TraitMethodImpl {
+					Clause: {
+						LambdaClause {
+							Body: {
+								IdentifierExpr(s) {
+									Name: s
 								}
 							}
 						}
 					}
-				}
-				TraitName: Show
-				Type: {
-					PrimitiveType(string) {
-						Name: string
+					Name: {
+						MethodName(show) {
+							Value: show
+						}
 					}
+				}
+			}
+			TraitName: Show
+			Type: {
+				PrimitiveType(string) {
+					Name: string
 				}
 			}
 		}

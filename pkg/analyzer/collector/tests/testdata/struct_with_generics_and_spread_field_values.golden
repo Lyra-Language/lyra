@@ -1,0 +1,28 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(p) {
+			BindingKind: let
+			Name: p
+			Value: {
+				StructInstance(Point) {
+					Fields: {
+						StructField(x) {
+							Name: x
+							Value: {
+								SpreadExpr(xs) {
+									Name: xs
+								}
+							}
+						}
+					}
+					GenericArgs: {
+						PrimitiveType(i32) {
+							Name: i32
+						}
+					}
+					Name: Point
+				}
+			}
+		}
+	}
+}

@@ -13,7 +13,7 @@ func TestCollector_RangeExpression(t *testing.T) {
 }
 
 func TestCollector_RangeExpressionWithStep(t *testing.T) {
-	source := `0..=10,2`
+	source := `0..=10:2`
 	program, _ := parseAndCollect(t, source)
 	got := captureProgramPrint(program)
 	checkGolden(t, got, filepath.Join("testdata", "range_expression_with_step.golden"))

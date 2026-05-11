@@ -1,0 +1,26 @@
+Program(1 statements) {
+	Statements: {
+		ExpressionStmt {
+			Expression: {
+				StructInstance(Player) {
+					BaseStruct: {
+						IdentifierExpr(existingPlayer) {
+							Name: existingPlayer
+						}
+					}
+					Fields: {
+						StructField(health) {
+							Name: health
+							Value: {
+								IdentifierExpr(newHealth) {
+									Name: newHealth
+								}
+							}
+						}
+					}
+					Name: Player
+				}
+			}
+		}
+	}
+}

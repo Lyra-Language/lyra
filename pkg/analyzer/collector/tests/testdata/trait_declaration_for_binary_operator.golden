@@ -10,16 +10,20 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						FunctionType((Self, Self) -> bool) {
-							ParameterTypes: {
+						LambdaType((Self, Self) -> bool) {
+							Parameters: {
 								ParameterType(Self) {
 								}
 								ParameterType(Self) {
 								}
 							}
 							ReturnType: {
-								PrimitiveType(bool) {
-									Name: bool
+								ReturnType(bool) {
+									Type: {
+										PrimitiveType(bool) {
+											Name: bool
+										}
+									}
 								}
 							}
 						}
@@ -33,16 +37,20 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						FunctionType((Self, Self) -> bool) {
-							ParameterTypes: {
+						LambdaType((Self, Self) -> bool) {
+							Parameters: {
 								ParameterType(Self) {
 								}
 								ParameterType(Self) {
 								}
 							}
 							ReturnType: {
-								PrimitiveType(bool) {
-									Name: bool
+								ReturnType(bool) {
+									Type: {
+										PrimitiveType(bool) {
+											Name: bool
+										}
+									}
 								}
 							}
 						}

@@ -66,6 +66,10 @@ Program(1 statements) {
 									Name: ?
 								}
 							}
+							Pattern: {
+								WildcardPattern {
+								}
+							}
 						}
 					}
 					Value: {

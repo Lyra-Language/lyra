@@ -1,0 +1,75 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(p) {
+			BindingKind: let
+			Name: p
+			Value: {
+				StructInstance(?) {
+					BaseStruct: {
+						IdentifierExpr(player) {
+							Name: player
+						}
+					}
+					Fields: {
+						StructField(health) {
+							Name: health
+							Value: {
+								MathBinaryOpExpr {
+									Left: {
+										MemberExpr {
+											Object: {
+												IdentifierExpr(player) {
+													Name: player
+												}
+											}
+											Property: {
+												IdentifierExpr(health) {
+													Name: health
+												}
+											}
+										}
+									}
+									Operator: -
+									Right: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 10
+										}
+									}
+								}
+							}
+						}
+						StructField(x) {
+							Name: x
+							Value: {
+								MathBinaryOpExpr {
+									Left: {
+										MemberExpr {
+											Object: {
+												IdentifierExpr(player) {
+													Name: player
+												}
+											}
+											Property: {
+												IdentifierExpr(x) {
+													Name: x
+												}
+											}
+										}
+									}
+									Operator: +
+									Right: {
+										IdentifierExpr(dx) {
+											Name: dx
+										}
+									}
+								}
+							}
+						}
+					}
+					Name: ?
+				}
+			}
+		}
+	}
+}

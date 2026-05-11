@@ -6,40 +6,34 @@ import (
 )
 
 func TestCollectLambdaExpression(t *testing.T) {
-	source := `let sum = (a, b) => a + b`
+	source := `
+	(a: int, b: int) -> int => a + b`
 	program, _ := parseAndCollect(t, source)
 	got := captureProgramPrint(program)
 	checkGolden(t, got, filepath.Join("testdata", "lambda_expression.golden"))
 }
 
-func TestCollectLambdaExpressionWithTypeAnnotation(t *testing.T) {
-	source := `let sum: (int, int) -> int = (a, b) => a + b`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "lambda_expression_with_type_annotation.golden"))
-}
-
-func TestCollectLambdaExpressionWithGuard(t *testing.T) {
-	source := `let divide = (a, b) if b != 0 => a / b`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "lambda_expression_with_guard.golden"))
-}
-
-func TestCollectFunctionThatReturnsLambdaExpression(t *testing.T) {
+func TestCollectLambdaExpressionWithNoReturnType(t *testing.T) {
 	source := `
-	def make_sum_fn: (int) -> (int) -> int =
-		(a) => (b) => a + b`
+	let double = (x: int) => x * 2`
 	program, _ := parseAndCollect(t, source)
 	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "function_that_returns_lambda_expression.golden"))
+	checkGolden(t, got, filepath.Join("testdata", "lambda_expression_with_no_return_type.golden"))
 }
 
-func TestCollectFunctionThatAcceptsLambdaExpression(t *testing.T) {
+func TestCollectFunctionThatReturnsLambda(t *testing.T) {
 	source := `
-	let doubled = map::<int, int>([1, 2, 3], (x) => 2 * x)
-	`
+	let make_sum_fn = (a: int) -> (int) -> int => (b) => a + b`
 	program, _ := parseAndCollect(t, source)
 	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "function_that_accepts_lambda_expression.golden"))
+	checkGolden(t, got, filepath.Join("testdata", "function_that_returns_lambda.golden"))
+}
+
+func TestCollect_FunctionThatAcceptsLambdaAsParameter(t *testing.T) {
+	source := `
+	let nums = [1, 2, 3]
+	let doubled = map::<int, int>(nums, (x) => 2 * x)`
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", "function_that_accepts_lambda_as_parameter.golden"))
 }

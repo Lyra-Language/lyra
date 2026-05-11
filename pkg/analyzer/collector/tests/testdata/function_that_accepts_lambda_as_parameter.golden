@@ -1,5 +1,27 @@
-Program(1 statements) {
+Program(2 statements) {
 	Statements: {
+		VarDeclStmt(nums) {
+			BindingKind: let
+			Name: nums
+			Value: {
+				ArrayLiteralExpr {
+					Elements: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 1
+						}
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 2
+						}
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 3
+						}
+					}
+				}
+			}
+		}
 		VarDeclStmt(doubled) {
 			BindingKind: let
 			Name: doubled
@@ -8,21 +30,8 @@ Program(1 statements) {
 					Arguments: {
 						ArgumentList {
 							Arguments: {
-								ArrayLiteralExpr {
-									Elements: {
-										IntegerLiteralExpr {
-											Base: 10
-											Value: 1
-										}
-										IntegerLiteralExpr {
-											Base: 10
-											Value: 2
-										}
-										IntegerLiteralExpr {
-											Base: 10
-											Value: 3
-										}
-									}
+								IdentifierExpr(nums) {
+									Name: nums
 								}
 								LambdaExpr {
 									Body: {
@@ -36,6 +45,15 @@ Program(1 statements) {
 											Operator: *
 											Right: {
 												IdentifierExpr(x) {
+													Name: x
+												}
+											}
+										}
+									}
+									Parameters: {
+										Parameter {
+											Pattern: {
+												IdentifierPattern(x) {
 													Name: x
 												}
 											}

@@ -1,69 +1,65 @@
 Program(2 statements) {
 	Statements: {
-		{
-			VarDeclStmt(pi) {
-				BindingKind: let
-				Name: pi
-				Value: {
-					FloatLiteralExpr {
-						Value: 3.14159
-					}
+		VarDeclStmt(pi) {
+			BindingKind: let
+			Name: pi
+			Value: {
+				FloatLiteralExpr {
+					Value: 3.14159
 				}
 			}
-			TypeDeclStmt(Radian) {
-				Name: Radian
-				Type: {
-					ConstrainedType(Radian) {
-						Constraints: {
-							{
-								RangeConstraint {
-									Comparator: <
-									End: {
-										MathConstraintBinaryOpExpr {
-											Left: {
-												MathConstraintIdentifierExpr(pi) {
-													Name: pi
+		}
+		TypeDeclStmt(Radian) {
+			Name: Radian
+			Type: {
+				ConstrainedType(Radian) {
+					Constraints: {
+						RangeConstraint {
+							Comparator: <
+							End: {
+								MathConstraintBinaryOpExpr {
+									Left: {
+										MathConstraintIdentifierExpr(pi) {
+											Name: pi
+										}
+									}
+									Operator: +
+									Right: {
+										MathConstraintLiteralExpr {
+											Type: {
+												PrimitiveType(int) {
+													Name: int
 												}
 											}
-											Operator: +
-											Right: {
-												MathConstraintLiteralExpr {
-													Type: {
-														PrimitiveType(int) {
-															Name: int
-														}
-													}
-													Value: {
-														IntegerLiteralExpr {
-															Base: 10
-															Value: 3
-														}
-													}
+											Value: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 3
 												}
 											}
 										}
 									}
-									Start: {
-										MathConstraintBinaryOpExpr {
-											Left: {
-												MathConstraintIdentifierExpr(pi) {
-													Name: pi
+								}
+							}
+							Start: {
+								MathConstraintBinaryOpExpr {
+									Left: {
+										MathConstraintIdentifierExpr(pi) {
+											Name: pi
+										}
+									}
+									Operator: -
+									Right: {
+										MathConstraintLiteralExpr {
+											Type: {
+												PrimitiveType(int) {
+													Name: int
 												}
 											}
-											Operator: -
-											Right: {
-												MathConstraintLiteralExpr {
-													Type: {
-														PrimitiveType(int) {
-															Name: int
-														}
-													}
-													Value: {
-														IntegerLiteralExpr {
-															Base: 10
-															Value: 3
-														}
-													}
+											Value: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 3
 												}
 											}
 										}
@@ -71,11 +67,11 @@ Program(2 statements) {
 								}
 							}
 						}
-						Name: Radian
-						Type: {
-							PrimitiveType(float) {
-								Name: float
-							}
+					}
+					Name: Radian
+					Type: {
+						PrimitiveType(float) {
+							Name: float
 						}
 					}
 				}

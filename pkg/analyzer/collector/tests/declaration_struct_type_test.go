@@ -3,11 +3,7 @@ package collector_test
 import (
 	"path/filepath"
 	"testing"
-
-	"github.com/Lyra-Language/lyra/pkg/types"
 )
-
-var intType = types.PrimitiveType{Name: "int"}
 
 func TestCollector_StructTypeDeclaration(t *testing.T) {
 	source := `

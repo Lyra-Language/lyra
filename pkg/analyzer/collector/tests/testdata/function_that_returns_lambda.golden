@@ -1,0 +1,80 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(make_sum_fn) {
+			BindingKind: let
+			Name: make_sum_fn
+			Value: {
+				LambdaExpr {
+					Body: {
+						LambdaExpr {
+							Body: {
+								MathBinaryOpExpr {
+									Left: {
+										IdentifierExpr(a) {
+											Name: a
+										}
+									}
+									Operator: +
+									Right: {
+										IdentifierExpr(b) {
+											Name: b
+										}
+									}
+								}
+							}
+							Parameters: {
+								Parameter {
+									Pattern: {
+										IdentifierPattern(b) {
+											Name: b
+										}
+									}
+								}
+							}
+						}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(a) {
+									Name: a
+								}
+							}
+							Type: {
+								PrimitiveType(int) {
+									Name: int
+								}
+							}
+						}
+					}
+					ReturnType: {
+						ReturnType((int) -> int) {
+							Type: {
+								LambdaType((int) -> int) {
+									Parameters: {
+										ParameterType(int) {
+											Type: {
+												PrimitiveType(int) {
+													Name: int
+												}
+											}
+										}
+									}
+									ReturnType: {
+										ReturnType(int) {
+											Type: {
+												PrimitiveType(int) {
+													Name: int
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

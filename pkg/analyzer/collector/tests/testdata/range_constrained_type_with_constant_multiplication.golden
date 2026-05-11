@@ -7,6 +7,31 @@ Program(1 statements) {
 					Constraints: {
 						RangeConstraint {
 							Comparator: <
+							End: {
+								MathConstraintBinaryOpExpr {
+									Left: {
+										MathConstraintIdentifierExpr(PI) {
+											IsConst: true
+											Name: PI
+										}
+									}
+									Operator: *
+									Right: {
+										MathConstraintLiteralExpr {
+											Type: {
+												PrimitiveType(float) {
+													Name: float
+												}
+											}
+											Value: {
+												FloatLiteralExpr {
+													Value: 2
+												}
+											}
+										}
+									}
+								}
+							}
 							Start: {
 								MathConstraintLiteralExpr {
 									Type: {

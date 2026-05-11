@@ -46,12 +46,12 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collctx.Ctx) *ast.TraitI
 	methods := collectTraitMethodImpls(methodsNode, ctx)
 
 	return &ast.TraitImplStmt{
-		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
-		TraitName: traitName,
+		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
+		TraitName:     traitName,
 		GenericParams: genericParams,
-		Type: astType,
-		Constraints: constraints,
-		Methods: methods,
+		Type:          astType,
+		Constraints:   constraints,
+		Methods:       methods,
 	}
 }
 
@@ -101,13 +101,13 @@ func collectTraitMethodImpl(node *sitter.Node, ctx *collctx.Ctx) ast.TraitMethod
 		return ast.TraitMethodImpl{}
 	}
 	methodName := collectMethodName(methodNameNode.NamedChild(0), ctx)
-	clauseNode, ok := ctx.MustField(node, "function_clause")
+	clauseNode, ok := ctx.MustField(node, "method_clause")
 	if !ok {
 		return ast.TraitMethodImpl{}
 	}
 	clause := expressions.CollectLambdaClause(clauseNode, ctx)
 	return ast.TraitMethodImpl{
-		Name: methodName,
+		Name:   methodName,
 		Clause: clause,
 	}
 }

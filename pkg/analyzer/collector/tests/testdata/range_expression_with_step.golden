@@ -15,6 +15,12 @@ Program(1 statements) {
 							Base: 10
 						}
 					}
+					Step: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 2
+						}
+					}
 				}
 			}
 		}

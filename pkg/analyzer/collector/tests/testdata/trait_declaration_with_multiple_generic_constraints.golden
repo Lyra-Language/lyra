@@ -13,8 +13,8 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						FunctionType((a, b) -> a) {
-							ParameterTypes: {
+						LambdaType((a, b) -> a) {
+							Parameters: {
 								ParameterType(a) {
 									Type: {
 										GenericType(a) {
@@ -31,8 +31,12 @@ Program(1 statements) {
 								}
 							}
 							ReturnType: {
-								GenericType(a) {
-									Name: a
+								ReturnType(a) {
+									Type: {
+										GenericType(a) {
+											Name: a
+										}
+									}
 								}
 							}
 						}

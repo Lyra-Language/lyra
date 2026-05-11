@@ -1,60 +1,56 @@
 Program(1 statements) {
 	Statements: {
-		{
-			TraitDeclStmt(Functor) {
-				Methods: {
-					{
-						TraitMethod {
-							Name: {
-								MethodName(map) {
-									Value: map
+		TraitDeclStmt(Functor) {
+			Methods: {
+				TraitMethod {
+					Name: {
+						MethodName(map) {
+							Value: map
+						}
+					}
+					Signature: {
+						LambdaType((Self, (a) -> b) -> Self) {
+							Parameters: {
+								ParameterType(Self) {
+									Type: {
+										SelfType(Self) {
+											GenericParams: {
+												a
+											}
+										}
+									}
 								}
-							}
-							Signature: {
-								FunctionType((Self, (a) -> b) -> Self) {
-									ParameterTypes: {
-										{
-											ParameterType(Self) {
-												Type: {
-													SelfType(Self) {
-														GenericParams: {
-															{
-																a
-															}
+								ParameterType((a) -> b) {
+									Type: {
+										LambdaType((a) -> b) {
+											Parameters: {
+												ParameterType(a) {
+													Type: {
+														GenericType(a) {
+															Name: a
 														}
 													}
 												}
 											}
-											ParameterType((a) -> b) {
-												Type: {
-													FunctionType((a) -> b) {
-														ParameterTypes: {
-															{
-																ParameterType(a) {
-																	Type: {
-																		GenericType(a) {
-																			Name: a
-																		}
-																	}
-																}
-															}
-														}
-														ReturnType: {
-															GenericType(b) {
-																Name: b
-															}
+											ReturnType: {
+												ReturnType(b) {
+													Type: {
+														GenericType(b) {
+															Name: b
 														}
 													}
 												}
 											}
 										}
 									}
-									ReturnType: {
+								}
+							}
+							ReturnType: {
+								ReturnType(Self) {
+									Type: {
 										SelfType(Self) {
 											GenericParams: {
-												{
-													b
-												}
+												b
 											}
 										}
 									}
@@ -63,8 +59,8 @@ Program(1 statements) {
 						}
 					}
 				}
-				Name: Functor
 			}
+			Name: Functor
 		}
 	}
 }

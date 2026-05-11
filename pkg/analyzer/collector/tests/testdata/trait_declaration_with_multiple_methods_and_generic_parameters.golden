@@ -13,8 +13,8 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						FunctionType((c<e>, e) -> c<e>) {
-							ParameterTypes: {
+						LambdaType((c<e>, e) -> c<e>) {
+							Parameters: {
 								ParameterType(c<e>) {
 									Type: {
 										GenericType(c<e>) {
@@ -31,8 +31,12 @@ Program(1 statements) {
 								}
 							}
 							ReturnType: {
-								GenericType(c<e>) {
-									Name: c<e>
+								ReturnType(c<e>) {
+									Type: {
+										GenericType(c<e>) {
+											Name: c<e>
+										}
+									}
 								}
 							}
 						}
@@ -45,8 +49,8 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						FunctionType((c<e>, e) -> c<e>) {
-							ParameterTypes: {
+						LambdaType((c<e>, e) -> c<e>) {
+							Parameters: {
 								ParameterType(c<e>) {
 									Type: {
 										GenericType(c<e>) {
@@ -63,8 +67,12 @@ Program(1 statements) {
 								}
 							}
 							ReturnType: {
-								GenericType(c<e>) {
-									Name: c<e>
+								ReturnType(c<e>) {
+									Type: {
+										GenericType(c<e>) {
+											Name: c<e>
+										}
+									}
 								}
 							}
 						}
@@ -77,8 +85,8 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						FunctionType((c<e>, e) -> bool) {
-							ParameterTypes: {
+						LambdaType((c<e>, e) -> bool) {
+							Parameters: {
 								ParameterType(c<e>) {
 									Type: {
 										GenericType(c<e>) {
@@ -95,8 +103,12 @@ Program(1 statements) {
 								}
 							}
 							ReturnType: {
-								PrimitiveType(bool) {
-									Name: bool
+								ReturnType(bool) {
+									Type: {
+										PrimitiveType(bool) {
+											Name: bool
+										}
+									}
 								}
 							}
 						}
@@ -109,8 +121,8 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						FunctionType((c<e>) -> int) {
-							ParameterTypes: {
+						LambdaType((c<e>) -> int) {
+							Parameters: {
 								ParameterType(c<e>) {
 									Type: {
 										GenericType(c<e>) {
@@ -120,8 +132,12 @@ Program(1 statements) {
 								}
 							}
 							ReturnType: {
-								PrimitiveType(int) {
-									Name: int
+								ReturnType(int) {
+									Type: {
+										PrimitiveType(int) {
+											Name: int
+										}
+									}
 								}
 							}
 						}

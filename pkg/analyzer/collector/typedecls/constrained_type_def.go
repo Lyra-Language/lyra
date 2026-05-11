@@ -144,7 +144,7 @@ func collectMathConstraintExpr(node *sitter.Node, ctx *collctx.Ctx) types.MathCo
 			Type:    ctx.ParseType(node.ChildByFieldName("type")),
 			IsConst: node.Kind() == "const_identifier",
 		}
-	case "constraint_binary_expression":
+	case "constraint_binary_expr":
 		return collectMathConstraintBinaryOpExpr(node, ctx)
 	case "constraint_negation":
 		return collectMathConstraintNegationExpr(node, ctx)

@@ -16,8 +16,8 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						FunctionType((t) -> t) {
-							ParameterTypes: {
+						LambdaType((t) -> t) {
+							Parameters: {
 								ParameterType(t) {
 									Type: {
 										GenericType(t) {
@@ -27,8 +27,12 @@ Program(1 statements) {
 								}
 							}
 							ReturnType: {
-								GenericType(t) {
-									Name: t
+								ReturnType(t) {
+									Type: {
+										GenericType(t) {
+											Name: t
+										}
+									}
 								}
 							}
 						}

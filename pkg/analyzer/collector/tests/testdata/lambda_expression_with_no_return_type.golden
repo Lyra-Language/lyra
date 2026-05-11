@@ -1,0 +1,42 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(double) {
+			BindingKind: let
+			Name: double
+			Value: {
+				LambdaExpr {
+					Body: {
+						MathBinaryOpExpr {
+							Left: {
+								IdentifierExpr(x) {
+									Name: x
+								}
+							}
+							Operator: *
+							Right: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 2
+								}
+							}
+						}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(x) {
+									Name: x
+								}
+							}
+							Type: {
+								PrimitiveType(int) {
+									Name: int
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

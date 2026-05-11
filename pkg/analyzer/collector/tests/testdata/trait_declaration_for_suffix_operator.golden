@@ -10,8 +10,8 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						FunctionType((Self) -> Self) {
-							ParameterTypes: {
+						LambdaType((Self) -> Self) {
+							Parameters: {
 								ParameterType(Self) {
 								}
 							}
