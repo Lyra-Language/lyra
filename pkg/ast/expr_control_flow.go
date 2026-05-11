@@ -2,24 +2,42 @@ package ast
 
 import "fmt"
 
-type IfThenExpr struct {
+type IfExpr struct {
 	ExprBase
 	Condition Expression
-	Then      Expression
+	Then      Expression // nil if no then
 	Else      Expression // nil if no else
 }
 
-func (i *IfThenExpr) GetName() string {
-	return fmt.Sprintf("if %s then %s else %s", i.Condition.GetName(), i.Then.GetName(), i.Else.GetName())
+func (i *IfExpr) GetName() string {
+	return "if_expr"
 }
 
-type IfBlockExpr struct {
+type MatchExpr struct {
 	ExprBase
-	Condition Expression
-	Then      Expression
-	Else      Expression // nil if no else
+	Value     Expression
+	MatchArms []MatchArm
 }
 
-func (i *IfBlockExpr) GetName() string {
-	return fmt.Sprintf("if %s { %s } else { %s }", i.Condition.GetName(), i.Then.GetName(), i.Else.GetName())
+type MatchArm struct {
+	Pattern Pattern
+	Guard   *GuardExpr // nil when the source omits `if guard { ... }`
+	Body    Expression
+}
+
+func (m *MatchArm) GetName() string {
+	if m.Guard != nil {
+		return fmt.Sprintf("match %s if %s { %s }", m.Pattern.GetName(), m.Guard.GetName(), m.Body.GetName())
+	}
+	return fmt.Sprintf("match %s { %s }", m.Pattern.GetName(), m.Body.GetName())
+}
+
+type BlockExpr struct {
+	ExprBase
+	Statements []Statement
+}
+
+func (b *BlockExpr) exprNode() {}
+func (b *BlockExpr) GetName() string {
+	return "block_expr"
 }
