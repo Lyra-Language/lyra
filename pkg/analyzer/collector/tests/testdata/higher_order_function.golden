@@ -44,7 +44,7 @@ Program(1 statements) {
 								}
 							}
 							Type: {
-								LambdaType((t) -> u) {
+								LambdaType {
 									Parameters: {
 										ParameterType(t) {
 											Type: {

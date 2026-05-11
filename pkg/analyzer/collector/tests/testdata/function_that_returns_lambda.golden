@@ -50,7 +50,7 @@ Program(1 statements) {
 					ReturnType: {
 						ReturnType((int) -> int) {
 							Type: {
-								LambdaType((int) -> int) {
+								LambdaType {
 									Parameters: {
 										ParameterType(int) {
 											Type: {

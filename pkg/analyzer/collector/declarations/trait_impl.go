@@ -1,8 +1,6 @@
 package declarations
 
 import (
-	"fmt"
-
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -87,7 +85,6 @@ func collectTraitMethodImpls(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Tr
 	methods := make([]ast.TraitMethodImpl, 0)
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
-		fmt.Println("collectTraitMethodImpls", child.Kind())
 		if child.Kind() == "trait_method_implementation" {
 			methods = append(methods, collectTraitMethodImpl(child, ctx))
 		}

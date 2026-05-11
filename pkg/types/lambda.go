@@ -10,9 +10,9 @@ type LambdaType struct {
 	ReturnType ReturnType
 }
 
-func (LambdaType) typeNode() {}
+func (*LambdaType) typeNode() {}
 
-func (t LambdaType) GetName() string {
+func (t *LambdaType) GetName() string {
 	paramTypeNames := make([]string, len(t.Parameters))
 	for i, param := range t.Parameters {
 		paramTypeNames[i] = param.String()
@@ -20,7 +20,7 @@ func (t LambdaType) GetName() string {
 	return fmt.Sprintf("(%s) -> %s", strings.Join(paramTypeNames, ", "), t.ReturnType.String())
 }
 
-func (t LambdaType) String() string {
+func (t *LambdaType) String() string {
 	return t.GetName()
 }
 

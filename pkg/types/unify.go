@@ -48,7 +48,7 @@ func TypesEqual(a, b Type) bool {
 				return false
 			}
 		}
-		return TypesEqual(at.ReturnType, bt.ReturnType)
+		return TypesEqual(at.ReturnType.Type, bt.ReturnType.Type)
 	case StructType:
 		if bt, ok := b.(StructType); ok {
 			if at.Name != bt.Name {
@@ -116,15 +116,6 @@ func TypesEqual(a, b Type) bool {
 			}
 			return true
 		}
-	case ReturnType:
-		bt, ok := b.(ReturnType)
-		if !ok {
-			return false
-		}
-		if at.Type == nil || bt.Type == nil {
-			return at.Type == bt.Type
-		}
-		return TypesEqual(at.Type, bt.Type)
 	case VoidType:
 		if _, ok := b.(VoidType); ok {
 			return true

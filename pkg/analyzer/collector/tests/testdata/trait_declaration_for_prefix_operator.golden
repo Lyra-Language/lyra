@@ -10,7 +10,7 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						LambdaType((Self) -> Self) {
+						LambdaType {
 							Parameters: {
 								ParameterType(Self) {
 								}

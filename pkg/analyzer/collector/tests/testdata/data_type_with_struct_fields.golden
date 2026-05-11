@@ -20,33 +20,37 @@ Program(1 statements) {
 							}
 						}
 						DataTypeConstructor(Node) {
-							Fields: {
-								StructField(left) {
-									Name: left
-									Type: {
-										UnresolvedType(Tree) {
-											Name: Tree
+							Name: Node
+							Params: {
+								AnonymousStructType {
+									Fields: {
+										StructField(left) {
+											Name: left
+											Type: {
+												UnresolvedType(Tree) {
+													Name: Tree
+												}
+											}
 										}
-									}
-								}
-								StructField(value) {
-									Name: value
-									Type: {
-										GenericType(t) {
-											Name: t
+										StructField(value) {
+											Name: value
+											Type: {
+												GenericType(t) {
+													Name: t
+												}
+											}
 										}
-									}
-								}
-								StructField(right) {
-									Name: right
-									Type: {
-										UnresolvedType(Tree) {
-											Name: Tree
+										StructField(right) {
+											Name: right
+											Type: {
+												UnresolvedType(Tree) {
+													Name: Tree
+												}
+											}
 										}
 									}
 								}
 							}
-							Name: Node
 						}
 					}
 					Name: Tree

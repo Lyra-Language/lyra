@@ -22,3 +22,12 @@ type StructField struct {
 	Type         Type
 	DefaultValue any
 }
+
+type AnonymousStructType struct {
+	Fields []StructField
+}
+
+func (AnonymousStructType) typeNode()        {}
+func (AnonymousStructType) GetName() string  { return "" }
+func (a AnonymousStructType) String() string { return "struct" }
+

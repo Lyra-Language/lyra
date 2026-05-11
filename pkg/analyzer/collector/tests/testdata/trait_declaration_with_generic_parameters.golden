@@ -14,7 +14,7 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						LambdaType((from) -> to) {
+						LambdaType {
 							Parameters: {
 								ParameterType(from) {
 									Type: {

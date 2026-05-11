@@ -6,8 +6,8 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-// collectStructFields returns struct fields in source declaration order.
-func collectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []types.StructField {
+// CollectStructFields returns struct fields in source declaration order.
+func CollectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []types.StructField {
 	var fields []types.StructField
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -41,10 +41,9 @@ func collectDataConstructor(node *sitter.Node, ctx *collector_ctx.Ctx) (string, 
 		switch child.Kind() {
 		case "data_type_constructor_name":
 			name = ctx.NodeText(child)
-		case "generic_type", "user_defined_type_name", "signed_integer_type", "string_type", "boolean_type", "float_type":
+		case "generic_type", "user_defined_type_name", "signed_integer_type", "string_type",
+			"boolean_type", "float_type", "anonymous_struct_type":
 			ctor.Params = append(ctor.Params, ctx.ParseType(child))
-		case "struct_type_body":
-			ctor.Fields = collectStructFields(child, ctx)
 		}
 	}
 

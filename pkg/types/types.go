@@ -28,24 +28,24 @@ type SelfType struct {
 	GenericParams []string
 }
 
-func (SelfType) typeNode()         {}
-func (SelfType) GetName() string   { return "Self" }
-func (s SelfType) String() string  { return s.GetName() }
+func (SelfType) typeNode()        {}
+func (SelfType) GetName() string  { return "Self" }
+func (s SelfType) String() string { return s.GetName() }
 
 type VoidType struct{}
 
-func (VoidType) typeNode()         {}
-func (VoidType) GetName() string   { return "Void" }
-func (VoidType) String() string    { return VoidType{}.GetName() }
+func (VoidType) typeNode()       {}
+func (VoidType) GetName() string { return "Void" }
+func (VoidType) String() string  { return VoidType{}.GetName() }
 
 // UnresolvedType represents a type reference that hasn't been resolved yet
 type UnresolvedType struct {
 	Name string // e.g., "Tree", "Point", "Maybe"
 }
 
-func (UnresolvedType) typeNode()             {}
-func (u UnresolvedType) GetName() string     { return u.Name }
-func (u UnresolvedType) String() string      { return u.GetName() }
+func (UnresolvedType) typeNode()         {}
+func (u UnresolvedType) GetName() string { return u.Name }
+func (u UnresolvedType) String() string  { return u.GetName() }
 
 type AllocationModifier string
 
@@ -55,16 +55,17 @@ const (
 )
 
 type TypeModifier string
+
 const (
 	Mut TypeModifier = "mut"
 	Ref TypeModifier = "ref"
 )
 
 type ReturnType struct {
-	Type Type
+	Type         Type
 	TypeModifier TypeModifier
 }
-func (r ReturnType) typeNode() {}
+
 func (r ReturnType) GetName() string {
 	if r.TypeModifier != "" {
 		return fmt.Sprintf("%s %s", r.TypeModifier, r.Type.GetName())

@@ -14,7 +14,7 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						LambdaType((c<e>, e) -> c<e>) {
+						LambdaType {
 							Parameters: {
 								ParameterType(c<e>) {
 									Type: {
@@ -51,7 +51,7 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						LambdaType((c<e>, e) -> c<e>) {
+						LambdaType {
 							Parameters: {
 								ParameterType(c<e>) {
 									Type: {
@@ -88,7 +88,7 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						LambdaType((c<e>, e) -> bool) {
+						LambdaType {
 							Parameters: {
 								ParameterType(c<e>) {
 									Type: {
@@ -125,7 +125,7 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						LambdaType((c<e>) -> int) {
+						LambdaType {
 							Parameters: {
 								ParameterType(c<e>) {
 									Type: {

@@ -10,7 +10,7 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						LambdaType((Self, Self) -> bool) {
+						LambdaType {
 							Parameters: {
 								ParameterType(Self) {
 								}
@@ -37,7 +37,7 @@ Program(1 statements) {
 						}
 					}
 					Signature: {
-						LambdaType((Self, Self) -> bool) {
+						LambdaType {
 							Parameters: {
 								ParameterType(Self) {
 								}

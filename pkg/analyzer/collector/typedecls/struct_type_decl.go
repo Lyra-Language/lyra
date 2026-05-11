@@ -26,7 +26,7 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *as
 		case "generic_parameters":
 			genericParams = ctx.CollectGenericParams(child)
 		case "struct_type_body":
-			fields = collectStructFields(child, ctx)
+			fields = CollectStructFields(child, ctx)
 		}
 	}
 

@@ -15,9 +15,7 @@ func (d DataType) String() string {
 	return d.GetName()
 }
 
-// DataTypeConstructor can have different shapes
 type DataTypeConstructor struct {
 	Name   string
-	Params []Type        // for Simple(int) style
-	Fields []StructField // for Node { left: Tree, value: t } style
+	Params []Type
 }

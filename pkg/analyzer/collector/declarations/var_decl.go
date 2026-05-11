@@ -1,7 +1,6 @@
 package declarations
 
 import (
-	"fmt"
 	"reflect"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
@@ -23,7 +22,7 @@ func isNilExpression(expr ast.Expression) bool {
 	}
 }
 
-func bindingKind(keyword string) ast.BindingKind {
+func bindingKind(keyword string, ctx *collector_ctx.Ctx) ast.BindingKind {
 	switch keyword {
 	case "let":
 		return ast.BindingLet
@@ -32,12 +31,13 @@ func bindingKind(keyword string) ast.BindingKind {
 	case "const":
 		return ast.BindingConst
 	default:
-		panic(fmt.Sprintf("invalid binding kind: %s", keyword))
+		ctx.AddError(nil, collector_ctx.SeverityError, "invalid binding kind: %s", keyword)
+		return ast.BindingUnknown
 	}
 }
 
 func CollectVariableDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.VarDeclStmt {
-	kind := bindingKind(ctx.NodeText(node.ChildByFieldName("keyword")))
+	kind := bindingKind(ctx.NodeText(node.ChildByFieldName("keyword")), ctx)
 	name := ctx.NodeText(node.ChildByFieldName("name"))
 	genericParametersNode := node.ChildByFieldName("generic_parameters")
 	genericParameters := make([]string, 0)

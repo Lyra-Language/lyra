@@ -22,70 +22,78 @@ Program(2 statements) {
 							}
 						}
 						DataTypeConstructor(RGB) {
-							Fields: {
-								StructField(r) {
-									Name: r
-									Type: {
-										PrimitiveType(i8) {
-											Name: i8
+							Name: RGB
+							Params: {
+								AnonymousStructType {
+									Fields: {
+										StructField(r) {
+											Name: r
+											Type: {
+												PrimitiveType(i8) {
+													Name: i8
+												}
+											}
 										}
-									}
-								}
-								StructField(g) {
-									Name: g
-									Type: {
-										PrimitiveType(i8) {
-											Name: i8
+										StructField(g) {
+											Name: g
+											Type: {
+												PrimitiveType(i8) {
+													Name: i8
+												}
+											}
 										}
-									}
-								}
-								StructField(b) {
-									Name: b
-									Type: {
-										PrimitiveType(i8) {
-											Name: i8
+										StructField(b) {
+											Name: b
+											Type: {
+												PrimitiveType(i8) {
+													Name: i8
+												}
+											}
 										}
 									}
 								}
 							}
-							Name: RGB
 						}
 						DataTypeConstructor(HSL) {
-							Fields: {
-								StructField(hue) {
-									Name: hue
-									Type: {
-										UnresolvedType(Hue) {
-											Name: Hue
+							Name: HSL
+							Params: {
+								AnonymousStructType {
+									Fields: {
+										StructField(hue) {
+											Name: hue
+											Type: {
+												UnresolvedType(Hue) {
+													Name: Hue
+												}
+											}
 										}
-									}
-								}
-								StructField(sat) {
-									Name: sat
-									Type: {
-										PrimitiveType(float) {
-											Name: float
+										StructField(sat) {
+											Name: sat
+											Type: {
+												PrimitiveType(float) {
+													Name: float
+												}
+											}
 										}
-									}
-								}
-								StructField(light) {
-									Name: light
-									Type: {
-										PrimitiveType(float) {
-											Name: float
+										StructField(light) {
+											Name: light
+											Type: {
+												PrimitiveType(float) {
+													Name: float
+												}
+											}
 										}
-									}
-								}
-								StructField(alpha) {
-									Name: alpha
-									Type: {
-										UnresolvedType(Alpha) {
-											Name: Alpha
+										StructField(alpha) {
+											Name: alpha
+											Type: {
+												UnresolvedType(Alpha) {
+													Name: Alpha
+												}
+											}
 										}
 									}
 								}
 							}
-							Name: HSL
 						}
 					}
 					Name: CSSColor

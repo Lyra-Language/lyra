@@ -45,10 +45,19 @@ func collectArgumentList(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Argument
 func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location, optional bool) *ast.MemberExpr {
 	propertyNode := node.ChildByFieldName("property")
 	isConst := propertyNode != nil && propertyNode.Kind() == "const_identifier"
+	if propertyNode == nil {
+		ctx.AddError(node, collector_ctx.SeverityError, "member expression missing property")
+		return nil
+	}
+	property := CollectIdentifierExpr(propertyNode, isConst, loc, ctx)
+	if property == nil {
+		ctx.AddError(node, collector_ctx.SeverityError, "could not parse member expression property")
+		return nil
+	}
 	return &ast.MemberExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Object:   CollectExpression(node.ChildByFieldName("object"), ctx),
-		Property: *CollectIdentifierExpr(propertyNode, isConst, loc, ctx),
+		Property: *property,
 		Optional: optional,
 	}
 }

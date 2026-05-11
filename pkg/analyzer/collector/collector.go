@@ -233,6 +233,8 @@ func (c *Collector) parseType(node *sitter.Node, allocation ...types.AllocationM
 		return c.parseAllocatedType(node)
 	case "anonymous_tuple_type":
 		return c.parseAnonymousTupleType(node)
+	case "anonymous_struct_type":
+		return types.AnonymousStructType{Fields: typedecls.CollectStructFields(node, c.ctx)}
 	case "lambda_type":
 		return c.parseLambdaType(node)
 	case "self_type":
