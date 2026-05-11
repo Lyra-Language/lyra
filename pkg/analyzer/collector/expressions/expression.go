@@ -83,6 +83,8 @@ func CollectExpression(node *sitter.Node, ctx *collctx.Ctx) ast.Expression {
 		return CollectLambdaExpr(node, ctx, loc)
 	case "await_expr":
 		return collectAwaitExpr(node, ctx, loc)
+	case "compound_assignment":
+		return collectCompoundAssignmentExpr(node, ctx, loc)
 	}
 
 	// For wrapper nodes (e.g. parenthesized), recurse into the first named child.

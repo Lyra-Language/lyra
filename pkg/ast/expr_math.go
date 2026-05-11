@@ -1,7 +1,6 @@
 package ast
 
 import (
-
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -35,4 +34,28 @@ const (
 	MathBinaryOpSub MathBinaryOp = "-"
 	MathBinaryOpMul MathBinaryOp = "*"
 	MathBinaryOpDiv MathBinaryOp = "/"
+)
+
+type MathAssignOpExpr struct {
+	ExprBase
+	Left     IdentifierExpr
+	Operator MathAssignOp
+	Right    Expression
+}
+
+func (m *MathAssignOpExpr) GetName() string {
+	return "math_assign_op_expr"
+}
+
+func (m *MathAssignOpExpr) GetType() types.Type {
+	return m.Left.GetType()
+}
+
+type MathAssignOp string
+
+const (
+	MathAssignOpAdd MathAssignOp = "+="
+	MathAssignOpSub MathAssignOp = "-="
+	MathAssignOpMul MathAssignOp = "*="
+	MathAssignOpDiv MathAssignOp = "/="
 )

@@ -1,0 +1,86 @@
+Program(5 statements) {
+	Statements: {
+		VarDeclStmt(x) {
+			BindingKind: var
+			Name: x
+			Value: {
+				IntegerLiteralExpr {
+					Base: 10
+					Value: 5
+				}
+			}
+		}
+		ExpressionStmt {
+			Expression: {
+				MathAssignOpExpr {
+					Left: {
+						IdentifierExpr(x) {
+							Name: x
+						}
+					}
+					Operator: +=
+					Right: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 3
+						}
+					}
+				}
+			}
+		}
+		ExpressionStmt {
+			Expression: {
+				MathAssignOpExpr {
+					Left: {
+						IdentifierExpr(x) {
+							Name: x
+						}
+					}
+					Operator: -=
+					Right: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 1
+						}
+					}
+				}
+			}
+		}
+		ExpressionStmt {
+			Expression: {
+				MathAssignOpExpr {
+					Left: {
+						IdentifierExpr(x) {
+							Name: x
+						}
+					}
+					Operator: *=
+					Right: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 3
+						}
+					}
+				}
+			}
+		}
+		ExpressionStmt {
+			Expression: {
+				MathAssignOpExpr {
+					Left: {
+						IdentifierExpr(x) {
+							Name: x
+						}
+					}
+					Operator: /=
+					Right: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 3
+						}
+					}
+				}
+			}
+		}
+	}
+}

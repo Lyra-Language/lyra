@@ -1,6 +1,5 @@
 ## To-Dos
 
-- Collect math assignment operators (i.e. +=, \*=, etc)
 - Collect character literals (runes?)
 - Collect for loops
 - Collect for/in loops
@@ -12,6 +11,7 @@
 
 ### 05/11/26
 - Add tests for trait declarations with default methods
+- Collect math assignment operators (i.e. +=, \*=, etc)
 
 ### 04/18/26
 
