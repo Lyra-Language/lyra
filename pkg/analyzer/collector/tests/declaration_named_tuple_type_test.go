@@ -1,41 +1,23 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollector_TupleTypeDeclaration(t *testing.T) {
-	source := `tuple Point2D(float, float)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "tuple_type_declaration.golden"))
+	runGoldenTest(t, `tuple Point2D(float, float)`, "tuple_type_declaration")
 }
 
 func TestCollector_TupleTypeDeclarationWithGenericParameters(t *testing.T) {
-	source := `tuple Point2D<t>(t, t)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "tuple_type_declaration_with_generic_parameters.golden"))
+	runGoldenTest(t, `tuple Point2D<t>(t, t)`, "tuple_type_declaration_with_generic_parameters")
 }
 
 func TestCollector_TupleTypeDeclarationWithVisibility(t *testing.T) {
-	source := `pub tuple Point2D(float, float)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "tuple_type_declaration_with_visibility.golden"))
+	runGoldenTest(t, `pub tuple Point2D(float, float)`, "tuple_type_declaration_with_visibility")
 }
 
 func TestCollector_TupleTypeDeclarationWithAllocationModifier(t *testing.T) {
-	source := `pub stack tuple Point2D(float, float)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "tuple_type_declaration_with_allocation_modifier.golden"))
+	runGoldenTest(t, `pub stack tuple Point2D(float, float)`, "tuple_type_declaration_with_allocation_modifier")
 }
 
 func TestCollector_TupleTypeDeclarationWithNestedTuple(t *testing.T) {
-	source := `tuple RGBA((int, int, int), float)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "tuple_type_declaration_with_nested_tuple.golden"))
+	runGoldenTest(t, `tuple RGBA((int, int, int), float)`, "tuple_type_declaration_with_nested_tuple")
 }

@@ -19,19 +19,19 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Tra
 	name := ctx.NodeText(nameNode)
 
 	genericParamsNode := node.ChildByFieldName("generic_parameters")
-	genericParams := make([]string, 0)
+	genericParams := []string{}
 	if genericParamsNode != nil {
 		genericParams = ctx.CollectGenericParams(genericParamsNode)
 	}
 
 	boundsNode := node.ChildByFieldName("trait_bounds")
-	bounds := make([]string, 0)
+	bounds := []string{}
 	if boundsNode != nil {
 		bounds = ctx.CollectBounds(boundsNode)
 	}
 
 	genericParameterConstraintsNode := node.ChildByFieldName("trait_generic_parameter_constraints")
-	genericParameterConstraints := make([]ast.GenericParameterConstraint, 0)
+	genericParameterConstraints := []ast.GenericParameterConstraint{}
 	if genericParameterConstraintsNode != nil {
 		genericParameterConstraints = ctx.CollectGenericParameterConstraints(genericParameterConstraintsNode)
 	}
@@ -54,7 +54,7 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Tra
 }
 
 func collectMethods(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.TraitMethod {
-	methods := make([]ast.TraitMethod, 0)
+	methods := []ast.TraitMethod{}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
 		if child.Kind() == "trait_method" {

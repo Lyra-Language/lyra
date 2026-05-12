@@ -1,50 +1,29 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollector_BasicConstrainedTypeWithoutConstraints(t *testing.T) {
-	source := `newtype Angle = float`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "basic_constrained_type_without_constraints.golden"))
+	runGoldenTest(t, `newtype Angle = float`, "basic_constrained_type_without_constraints")
 }
 
 func TestCollector_ConstrainedTypeWithLiteralUnionConstraintWithStrings(t *testing.T) {
-	source := `newtype Color = string where values("red", "green", "blue")`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "constrained_type_with_literal_union_constraint_with_strings.golden"))
+	runGoldenTest(t, `newtype Color = string where values("red", "green", "blue")`, "constrained_type_with_literal_union_constraint_with_strings")
 }
 
 func TestCollector_ConstrainedTypeWithLiteralUnionConstraintWithNumbers(t *testing.T) {
-	source := `newtype Status = i32 where values(200, 404, 500)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "constrained_type_with_literal_union_constraint_with_numbers.golden"))
+	runGoldenTest(t, `newtype Status = i32 where values(200, 404, 500)`, "constrained_type_with_literal_union_constraint_with_numbers")
 }
 
 func TestCollector_SimpleRangeConstrainedType(t *testing.T) {
-	source := `newtype Angle = float where range(0..<360)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "simple_range_constrained_type.golden"))
+	runGoldenTest(t, `newtype Angle = float where range(0..<360)`, "simple_range_constrained_type")
 }
 
 func TestCollector_RangeConstrainedTypeWithConstantMultiplication(t *testing.T) {
-	source := `newtype Radian = float where range(0.0..<PI*2.0)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "range_constrained_type_with_constant_multiplication.golden"))
+	runGoldenTest(t, `newtype Radian = float where range(0.0..<PI*2.0)`, "range_constrained_type_with_constant_multiplication")
 }
 
 func TestCollector_RangeConstrainedTypeWithNegation(t *testing.T) {
-	source := `newtype Temp = int where range(-100..<200)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "range_constrained_type_with_negation.golden"))
+	runGoldenTest(t, `newtype Temp = int where range(-100..<200)`, "range_constrained_type_with_negation")
 }
 
 func TestCollector_RangeConstrainedTypeWithVariableAdditionAndSubtraction(t *testing.T) {
@@ -52,35 +31,21 @@ func TestCollector_RangeConstrainedTypeWithVariableAdditionAndSubtraction(t *tes
 		let pi = 3.14159
 		newtype Radian = float where range(pi-3..<pi+3)
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "range_constrained_type_with_variable_addition_and_subtraction.golden"))
+	runGoldenTest(t, source, "range_constrained_type_with_variable_addition_and_subtraction")
 }
 
 func TestCollector_MultipleConstraints(t *testing.T) {
-	source := `newtype Radian = float where range(0..<PI*2), precision(0.01)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "multiple_constraints.golden"))
+	runGoldenTest(t, `newtype Radian = float where range(0..<PI*2), precision(0.01)`, "multiple_constraints")
 }
 
 func TestCollector_StepConstrainedType(t *testing.T) {
-	source := `newtype CompassHeading = int where range(0..<360), step(15)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "step_constrained_type.golden"))
+	runGoldenTest(t, `newtype CompassHeading = int where range(0..<360), step(15)`, "step_constrained_type")
 }
 
 func TestCollector_PatternConstrainedType(t *testing.T) {
-	source := `newtype HexStr = string where pattern(r/^#(?:[0-9a-fA-F]{3}){1,2}$/)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "pattern_constrained_type.golden"))
+	runGoldenTest(t, `newtype HexStr = string where pattern(r/^#(?:[0-9a-fA-F]{3}){1,2}$/)`, "pattern_constrained_type")
 }
 
 func TestCollector_ParameterizedConstrainedType(t *testing.T) {
-	source := `newtype Point<t> = Tuple`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "parameterized_constrained_type.golden"))
+	runGoldenTest(t, `newtype Point<t> = Tuple`, "parameterized_constrained_type")
 }

@@ -1,41 +1,23 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollectDestructuringArray(t *testing.T) {
-	source := `let [a, b, c] = some_array`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_array.golden"))
+	runGoldenTest(t, `let [a, b, c] = some_array`, "destructuring_array")
 }
 
 func TestCollectDestructuringArrayWithVar(t *testing.T) {
-	source := `var [a, b, c] = some_array`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_array_with_var.golden"))
+	runGoldenTest(t, `var [a, b, c] = some_array`, "destructuring_array_with_var")
 }
 
 func TestCollectDestructuringArrayWithRestAtStart(t *testing.T) {
-	source := `let [...head, a, b, c] = some_array`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_array_with_rest_at_start.golden"))
+	runGoldenTest(t, `let [...head, a, b, c] = some_array`, "destructuring_array_with_rest_at_start")
 }
 
 func TestCollectDestructuringArrayWithRestInMiddle(t *testing.T) {
-	source := `let [a, ...middle, c] = some_array`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_array_with_rest_in_middle.golden"))
+	runGoldenTest(t, `let [a, ...middle, c] = some_array`, "destructuring_array_with_rest_in_middle")
 }
 
 func TestCollectDestructuringArrayWithRestAtEnd(t *testing.T) {
-	source := `let [a, b, c, ...tail] = some_array`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_array_with_rest_at_end.golden"))
+	runGoldenTest(t, `let [a, b, c, ...tail] = some_array`, "destructuring_array_with_rest_at_end")
 }

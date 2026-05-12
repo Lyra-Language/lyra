@@ -1,6 +1,7 @@
 package collector_test
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -41,4 +42,11 @@ func parseAndCollectFull(t *testing.T, source string, printTree bool) (*ast.Prog
 // This lets tests assert on the full collected AST shape without manual type assertions.
 func captureProgramPrint(program *ast.Program) string {
 	return printer.PrintAST(program)
+}
+
+func runGoldenTest(t *testing.T, source string, goldenFileName string) {
+	t.Helper()
+	program, _ := parseAndCollect(t, source)
+	got := captureProgramPrint(program)
+	checkGolden(t, got, filepath.Join("testdata", goldenFileName+".golden"))
 }

@@ -1,18 +1,13 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollect_InfiniteForLoop(t *testing.T) {
 	source := `
 	for {
 		println("All work and no play makes Homer something something...")
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "infinite_for_loop.golden"))
+	runGoldenTest(t, source, "infinite_for_loop")
 }
 
 func TestCollect_ForLoopWithCondition(t *testing.T) {
@@ -21,9 +16,7 @@ func TestCollect_ForLoopWithCondition(t *testing.T) {
 	for i < 10 {
 		println("i == ${i}")
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "for_loop_with_condition.golden"))
+	runGoldenTest(t, source, "for_loop_with_condition")
 }
 
 func TestCollect_ForLoopWithInitAndCondition(t *testing.T) {
@@ -32,9 +25,7 @@ func TestCollect_ForLoopWithInitAndCondition(t *testing.T) {
 		println("i == ${i}")
 		i += 1
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "for_loop_with_init_and_condition.golden"))
+	runGoldenTest(t, source, "for_loop_with_init_and_condition")
 }
 
 func TestCollect_ForLoopWithConditionAndPost(t *testing.T) {
@@ -43,9 +34,7 @@ func TestCollect_ForLoopWithConditionAndPost(t *testing.T) {
 	for i < 10; i += 1 {
 		println("i == ${i}")
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "for_loop_with_condition_and_post.golden"))
+	runGoldenTest(t, source, "for_loop_with_condition_and_post")
 }
 
 func TestCollect_ForLoopWithInitAndConditionAndPost(t *testing.T) {
@@ -53,9 +42,7 @@ func TestCollect_ForLoopWithInitAndConditionAndPost(t *testing.T) {
 	for var i = 0; i < 10; i += 1 {
 		println("i == ${i}")
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "for_loop_with_init_and_condition_and_post.golden"))
+	runGoldenTest(t, source, "for_loop_with_init_and_condition_and_post")
 }
 
 func TestCollect_ForLoopWithBreak(t *testing.T) {
@@ -63,9 +50,7 @@ func TestCollect_ForLoopWithBreak(t *testing.T) {
 	for var i = 0; i < 10; i += 1 {
 		break
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "for_loop_with_break.golden"))
+	runGoldenTest(t, source, "for_loop_with_break")
 }
 
 func TestCollect_LabeledForLoopWithBreak(t *testing.T) {
@@ -78,9 +63,7 @@ func TestCollect_LabeledForLoopWithBreak(t *testing.T) {
 			println("y == ${y}")
 		}
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "labeled_for_loop_with_break.golden"))
+	runGoldenTest(t, source, "labeled_for_loop_with_break")
 }
 
 func TestCollect_ForLoopWithContinue(t *testing.T) {
@@ -91,9 +74,7 @@ func TestCollect_ForLoopWithContinue(t *testing.T) {
 		}
 		println("i == ${i}")
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "for_loop_with_continue.golden"))
+	runGoldenTest(t, source, "for_loop_with_continue")
 }
 
 func TestCollect_LabeledForLoopWithContinue(t *testing.T) {
@@ -106,7 +87,5 @@ func TestCollect_LabeledForLoopWithContinue(t *testing.T) {
 			println("y == ${y}")
 		}
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "labeled_for_loop_with_continue.golden"))
+	runGoldenTest(t, source, "labeled_for_loop_with_continue")
 }

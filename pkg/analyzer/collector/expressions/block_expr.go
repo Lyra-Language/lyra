@@ -10,7 +10,7 @@ func CollectBlockExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locatio
 	if node == nil {
 		return nil
 	}
-	statements := make([]ast.Statement, 0)
+	statements := []ast.Statement{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.IsNamed() {

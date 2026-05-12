@@ -1,18 +1,13 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollectSimpleIfBlockExpr(t *testing.T) {
 	source := `
 	if x == 3 {
 		println("x is 3")
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "simple_if_block_expr.golden"))
+	runGoldenTest(t, source, "simple_if_block_expr")
 }
 
 func TestCollectIfBlockExprWithElse(t *testing.T) {
@@ -22,9 +17,7 @@ func TestCollectIfBlockExprWithElse(t *testing.T) {
 	} else {
 		println("x is not 3")
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "if_block_expr_with_else.golden"))
+	runGoldenTest(t, source, "if_block_expr_with_else")
 }
 
 func TestCollectIfBlockExprWithElseIf(t *testing.T) {
@@ -36,9 +29,7 @@ func TestCollectIfBlockExprWithElseIf(t *testing.T) {
 	} else {
 		println("x is not 3 or 4")
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "if_block_expr_with_else_if.golden"))
+	runGoldenTest(t, source, "if_block_expr_with_else_if")
 }
 
 func TestCollectNestedIfBlockExpr(t *testing.T) {
@@ -56,7 +47,5 @@ func TestCollectNestedIfBlockExpr(t *testing.T) {
 			println("At ${x},${y}")
 		}
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "nested_if_block_expr.golden"))
+	runGoldenTest(t, source, "nested_if_block_expr")
 }

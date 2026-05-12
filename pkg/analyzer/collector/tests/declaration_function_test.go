@@ -1,18 +1,13 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollector_BasicFunctionDeclarationWithoutParams(t *testing.T) {
 	source := `
 	let foo = () => {
 		// do stuff
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "basic_function_declaration_without_params.golden"))
+	runGoldenTest(t, source, "basic_function_declaration_without_params")
 }
 
 func TestCollector_BasicFunctionDeclarationWithVisibility(t *testing.T) {
@@ -20,33 +15,22 @@ func TestCollector_BasicFunctionDeclarationWithVisibility(t *testing.T) {
 	pub let foo = () => {
 		// do stuff
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "basic_function_declaration_with_visibility.golden"))
+	runGoldenTest(t, source, "basic_function_declaration_with_visibility")
 }
 
 func TestCollector_BasicFunctionDeclarationWithParams(t *testing.T) {
-	source := `
-	let add = (a: Int, b: String) => a + b`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "basic_function_declaration_with_params.golden"))
+	runGoldenTest(t, `
+	let add = (a: Int, b: String) => a + b`, "basic_function_declaration_with_params")
 }
 
 func TestCollector_DefaultParameterValues(t *testing.T) {
-	source := `
-	let greet = (name: string, prefix: string = "Hello") -> string => "${prefix} ${name}"`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "function_declaration_with_default_parameter_values.golden"))
+	runGoldenTest(t, `
+	let greet = (name: string, prefix: string = "Hello") -> string => "${prefix} ${name}"`, "function_declaration_with_default_parameter_values")
 }
 
 func TestCollector_DefaultValueAsCallExpression(t *testing.T) {
-	source := `
-	let process = (items: []string, config: Config = get_default_config()) -> void => {}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "function_declaration_with_default_value_as_call_expression.golden"))
+	runGoldenTest(t, `
+	let process = (items: []string, config: Config = get_default_config()) -> void => {}`, "function_declaration_with_default_value_as_call_expression")
 }
 
 func TestCollector_DefaultValueWithMultipleClauses(t *testing.T) {
@@ -55,17 +39,12 @@ func TestCollector_DefaultValueWithMultipleClauses(t *testing.T) {
 		(0, acc) => acc,
 		(n, acc) => factorial(n - 1, acc * n),
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "function_declaration_with_multiple_default_values.golden"))
+	runGoldenTest(t, source, "function_declaration_with_multiple_default_values")
 }
 
 func TestCollector_PureFunctionDeclaration(t *testing.T) {
-	source := `
-	let add = pure (a: int, b: int) -> int => a + b`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "pure_function_declaration.golden"))
+	runGoldenTest(t, `
+	let add = pure (a: int, b: int) -> int => a + b`, "pure_function_declaration")
 }
 
 func TestCollector_AsyncFunctionDeclaration(t *testing.T) {
@@ -74,17 +53,12 @@ func TestCollector_AsyncFunctionDeclaration(t *testing.T) {
 		let resp = await fetch(url, options)
 		return JSON.parse(resp)
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "async_function_declaration.golden"))
+	runGoldenTest(t, source, "async_function_declaration")
 }
 
 func TestCollector_PureAsyncFunctionDeclaration(t *testing.T) {
-	source := `
-	let compute = pure async (n: int) -> int => n * 2`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "pure_async_function_declaration.golden"))
+	runGoldenTest(t, `
+	let compute = pure async (n: int) -> int => n * 2`, "pure_async_function_declaration")
 }
 
 func TestCollector_PureRecursiveFunctionWithPatternMatching(t *testing.T) {
@@ -94,9 +68,7 @@ func TestCollector_PureRecursiveFunctionWithPatternMatching(t *testing.T) {
 		(1) => 1,
 		(n) => fib(n-1) + fib(n-2),
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "pure_function_with_pattern_matching.golden"))
+	runGoldenTest(t, source, "pure_function_with_pattern_matching")
 }
 
 func TestCollector_PureRecursiveFunctionWithMultipleFunctionClausesAndGuard(t *testing.T) {
@@ -105,25 +77,17 @@ func TestCollector_PureRecursiveFunctionWithMultipleFunctionClausesAndGuard(t *t
 		(n) if n < 2 => n,
 		(n) => fib(n-2) + fib(n-1),
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "pure_recursive_function_with_multiple_function_clauses_and_guard.golden"))
+	runGoldenTest(t, source, "pure_recursive_function_with_multiple_function_clauses_and_guard")
 }
 
 func TestCollector_FunctionWithGenericParams(t *testing.T) {
-	source := `
-	let sum<n> = (a: n, b: n) -> n => a + b`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "function_with_generic_params.golden"))
+	runGoldenTest(t, `
+	let sum<n> = (a: n, b: n) -> n => a + b`, "function_with_generic_params")
 }
 
 func TestCollector_FunctionWithGenericParamsAndConstraints(t *testing.T) {
-	source := `
-	let compare<n> where n: Ord = (a: n, b: n) -> n => a <=> b`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "function_with_generic_params_and_constraints.golden"))
+	runGoldenTest(t, `
+	let compare<n> where n: Ord = (a: n, b: n) -> n => a <=> b`, "function_with_generic_params_and_constraints")
 }
 
 func TestCollector_FunctionWithPatternParams(t *testing.T) {
@@ -131,9 +95,7 @@ func TestCollector_FunctionWithPatternParams(t *testing.T) {
 	let foo = ({ x, y }: Point, [one, two, three, ...rest]: []string, (alpha, beta): SomeTuple) -> Void => {
 		// do stuff
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "function_with_pattern_params.golden"))
+	runGoldenTest(t, source, "function_with_pattern_params")
 }
 
 func TestCollector_HigherOrderFunction(t *testing.T) {
@@ -145,9 +107,7 @@ func TestCollector_HigherOrderFunction(t *testing.T) {
 		//  }
 		//  new_array
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "higher_order_function.golden"))
+	runGoldenTest(t, source, "higher_order_function")
 }
 
 func TestCollector_TypeParameterModifiers(t *testing.T) {
@@ -155,9 +115,7 @@ func TestCollector_TypeParameterModifiers(t *testing.T) {
 	let render = (scene: ref Scene) -> Void => {
 		// render the scene
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "type_parameter_modifiers.golden"))
+	runGoldenTest(t, source, "type_parameter_modifiers")
 }
 
 func TestCollector_FunctionTypeReturnModifier(t *testing.T) {
@@ -166,7 +124,5 @@ func TestCollector_FunctionTypeReturnModifier(t *testing.T) {
 		// do some stuff
 		return file
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "function_type_return_modifier.golden"))
+	runGoldenTest(t, source, "function_type_return_modifier")
 }

@@ -18,7 +18,7 @@ func collectTupleLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.
 	if genericArgumentsNode != nil {
 		genericArguments = collectGenericArgs(genericArgumentsNode, ctx)
 	}
-	elements := make([]ast.Expression, 0)
+	elements := []ast.Expression{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "tuple_value" {

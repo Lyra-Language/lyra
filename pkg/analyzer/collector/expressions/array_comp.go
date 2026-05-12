@@ -21,7 +21,7 @@ func collectArrayCompExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Loc
 }
 
 func collectGenerators(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Generator {
-	generators := make([]ast.Generator, 0)
+	generators := []ast.Generator{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "generator" {
@@ -53,7 +53,7 @@ func collectGuards(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Expression {
 	if node == nil {
 		return nil
 	}
-	guards := make([]ast.Expression, 0)
+	guards := []ast.Expression{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "comprehension_guard" {

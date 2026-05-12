@@ -15,7 +15,7 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	traitName := ctx.NodeText(traitNameNode)
 
 	genericParamsNode := node.ChildByFieldName("generic_parameters")
-	genericParams := make([]string, 0)
+	genericParams := []string{}
 	if genericParamsNode != nil {
 		genericParams = ctx.CollectGenericParams(genericParamsNode)
 	}
@@ -32,7 +32,7 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	}
 
 	constraintsNode := node.ChildByFieldName("constraints")
-	constraints := make([]ast.TraitImplConstraint, 0)
+	constraints := []ast.TraitImplConstraint{}
 	if constraintsNode != nil {
 		constraints = collectTraitImplConstraints(constraintsNode, ctx)
 	}
@@ -54,7 +54,7 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 }
 
 func collectTraitImplConstraints(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.TraitImplConstraint {
-	constraints := make([]ast.TraitImplConstraint, 0)
+	constraints := []ast.TraitImplConstraint{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "impl_constraint" {
@@ -82,7 +82,7 @@ func collectTraitImplConstraint(node *sitter.Node, ctx *collector_ctx.Ctx) ast.T
 }
 
 func collectTraitMethodImpls(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.TraitMethodImpl {
-	methods := make([]ast.TraitMethodImpl, 0)
+	methods := []ast.TraitMethodImpl{}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
 		if child.Kind() == "trait_method_implementation" {

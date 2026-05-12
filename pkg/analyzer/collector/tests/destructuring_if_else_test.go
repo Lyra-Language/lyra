@@ -1,18 +1,13 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollectDestructuringIfStatement(t *testing.T) {
 	source := `
 	if let [a, b, c] = some_array {
 		println("${a}, ${b}, ${c}")
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_if_statement.golden"))
+	runGoldenTest(t, source, "destructuring_if_statement")
 }
 
 func TestCollectDestructuringIfElseStatement(t *testing.T) {
@@ -22,9 +17,7 @@ func TestCollectDestructuringIfElseStatement(t *testing.T) {
 	} else {
 		println("No array found")
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_if_else_statement.golden"))
+	runGoldenTest(t, source, "destructuring_if_else_statement")
 }
 
 func TestCollectDestructuringElseStatement(t *testing.T) {
@@ -33,7 +26,5 @@ func TestCollectDestructuringElseStatement(t *testing.T) {
 		println("No struct found")
 	}
 	println("We got the struct: ${foo}, ${bar}")`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_else_statement.golden"))
+	runGoldenTest(t, source, "destructuring_else_statement")
 }

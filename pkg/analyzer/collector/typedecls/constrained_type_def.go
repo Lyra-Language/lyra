@@ -15,7 +15,7 @@ func collectConstrainedTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx
 
 	name := ctx.NodeText(nameNode)
 	typeType := ctx.ParseType(typeNode)
-	constraints := make([]types.Constraint, 0)
+	constraints := []types.Constraint{}
 	if constraintsNode != nil {
 		constraints = CollectConstraints(constraintsNode, ctx)
 	}
@@ -45,7 +45,7 @@ func collectConstrainedTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx
 // CollectConstraints is exported because collector.go calls it from parseConstrainedType
 // (which handles constrained_type as a type annotation, not just a declaration).
 func CollectConstraints(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Constraint {
-	constraints := make([]types.Constraint, 0)
+	constraints := []types.Constraint{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
@@ -65,7 +65,7 @@ func CollectConstraints(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Const
 }
 
 func collectLiteralUnionConstraint(node *sitter.Node, ctx *collector_ctx.Ctx) *types.LiteralUnionConstraint {
-	values := make([]types.LiteralUnionValue, 0)
+	values := []types.LiteralUnionValue{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "literal_val" {

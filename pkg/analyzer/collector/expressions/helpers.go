@@ -10,7 +10,7 @@ import (
 // collectGenericArgs collects type arguments from a generic_arguments node,
 // delegating type parsing to ctx.ParseType.
 func collectGenericArgs(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Type {
-	args := make([]types.Type, 0)
+	args := []types.Type{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.IsNamed() {

@@ -1,9 +1,6 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollector_StructTypeDeclaration(t *testing.T) {
 	source := `
@@ -12,9 +9,7 @@ func TestCollector_StructTypeDeclaration(t *testing.T) {
 			y: int = 0,
 		}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "basic_struct_type_declaration.golden"))
+	runGoldenTest(t, source, "basic_struct_type_declaration")
 }
 
 func TestCollector_StructTypeDeclarationWithGenericParameters(t *testing.T) {
@@ -24,7 +19,5 @@ func TestCollector_StructTypeDeclarationWithGenericParameters(t *testing.T) {
 			y: t,
 		}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "struct_type_declaration_with_generic_parameters.golden"))
+	runGoldenTest(t, source, "struct_type_declaration_with_generic_parameters")
 }

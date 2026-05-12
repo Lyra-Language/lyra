@@ -1,36 +1,21 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollector_ImportStatement(t *testing.T) {
-	source := `import myapp.utils`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "import_statement.golden"))
+	runGoldenTest(t, `import myapp.utils`, "import_statement")
 }
 
 func TestCollector_ImportStatementWithAlias(t *testing.T) {
-	source := `import myapp.utils as utils`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "import_statement_with_alias.golden"))
+	runGoldenTest(t, `import myapp.utils as utils`, "import_statement_with_alias")
 }
 
 func TestCollector_ImportStatementWithMembers(t *testing.T) {
-	source := `import myapp.utils.{ Map, Set }`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "import_statement_with_members.golden"))
+	runGoldenTest(t, `import myapp.utils.{ Map, Set }`, "import_statement_with_members")
 }
 
 func TestCollector_ImportStatementWithMemberAliases(t *testing.T) {
-	source := `import std.collections.{ HashMap as HM, Set }`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "import_statement_with_member_aliases.golden"))
+	runGoldenTest(t, `import std.collections.{ HashMap as HM, Set }`, "import_statement_with_member_aliases")
 }
 
 func TestCollector_ImportStatementWithMultipleImports(t *testing.T) {
@@ -38,7 +23,5 @@ func TestCollector_ImportStatementWithMultipleImports(t *testing.T) {
 	import std.io as io
 	import std.collections.{ Map, Set }
 	import math.{ sin, cos, PI }`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "import_statement_with_multiple_imports.golden"))
+	runGoldenTest(t, source, "import_statement_with_multiple_imports")
 }

@@ -1,41 +1,23 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollector_DestructuringTuple(t *testing.T) {
-	source := `let (x, y, z) = ThreeInts(1, 2, 3)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_tuple.golden"))
+	runGoldenTest(t, `let (x, y, z) = ThreeInts(1, 2, 3)`, "destructuring_tuple")
 }
 
 func TestCollector_DestructuringTupleFromIdentifier(t *testing.T) {
-	source := `let (x, y, z) = some_tuple`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_tuple_from_identifier.golden"))
+	runGoldenTest(t, `let (x, y, z) = some_tuple`, "destructuring_tuple_from_identifier")
 }
 
 func TestCollector_DestructuringTupleWithRestAtBeginning(t *testing.T) {
-	source := `let (...rest, x, y, z) = some_tuple`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_tuple_with_rest_at_beginning.golden"))
+	runGoldenTest(t, `let (...rest, x, y, z) = some_tuple`, "destructuring_tuple_with_rest_at_beginning")
 }
 
 func TestCollector_DestructuringTupleWithRestInMiddle(t *testing.T) {
-	source := `let (x, y, ...rest, z) = some_tuple`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_tuple_with_rest_in_middle.golden"))
+	runGoldenTest(t, `let (x, y, ...rest, z) = some_tuple`, "destructuring_tuple_with_rest_in_middle")
 }
 
 func TestCollector_DestructuringTupleWithRestAtEnd(t *testing.T) {
-	source := `let (x, y, z, ...rest) = some_tuple`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_tuple_with_rest_at_end.golden"))
+	runGoldenTest(t, `let (x, y, z, ...rest) = some_tuple`, "destructuring_tuple_with_rest_at_end")
 }

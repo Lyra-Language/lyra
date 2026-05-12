@@ -1,9 +1,6 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollectMatchExpression(t *testing.T) {
 	source := `
@@ -12,9 +9,7 @@ func TestCollectMatchExpression(t *testing.T) {
 		Some _ => "Just some number",
 		None => "huh?",
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "match_expression.golden"))
+	runGoldenTest(t, source, "match_expression")
 }
 
 func TestCollectMatchExpressionWithBlocks(t *testing.T) {
@@ -30,9 +25,7 @@ func TestCollectMatchExpressionWithBlocks(t *testing.T) {
 			println("A wildcard match")
 		},
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "match_expression_with_blocks.golden"))
+	runGoldenTest(t, source, "match_expression_with_blocks")
 }
 
 func TestCollectMatchExpressionWithStructsReturned(t *testing.T) {
@@ -42,9 +35,7 @@ func TestCollectMatchExpressionWithStructsReturned(t *testing.T) {
 		"bar" => { b: "a" },
 		_ => { c: "d" },
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "match_expression_with_structs_returned.golden"))
+	runGoldenTest(t, source, "match_expression_with_structs_returned")
 }
 
 func TestCollectMatchExpressionWithRangePatterns(t *testing.T) {
@@ -55,9 +46,7 @@ func TestCollectMatchExpressionWithRangePatterns(t *testing.T) {
 		10..=99 => print("two digits"),
 		_ => print("lots of digits!"),
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "match_expression_with_range_patterns.golden"))
+	runGoldenTest(t, source, "match_expression_with_range_patterns")
 }
 
 func TestCollectMatchExpressionWithGuards(t *testing.T) {
@@ -67,7 +56,5 @@ func TestCollectMatchExpressionWithGuards(t *testing.T) {
 		Some x if x >= 10 && x < 100 => print("10-99"),
 		None => print("No number!"),
 	}`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "match_expression_with_guards.golden"))
+	runGoldenTest(t, source, "match_expression_with_guards")
 }

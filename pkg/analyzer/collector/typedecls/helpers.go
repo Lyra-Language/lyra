@@ -33,7 +33,7 @@ func CollectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Stru
 func collectDataConstructor(node *sitter.Node, ctx *collector_ctx.Ctx) (string, types.DataTypeConstructor) {
 	var name string
 	ctor := types.DataTypeConstructor{
-		Params: make([]types.Type, 0),
+		Params: []types.Type{},
 	}
 
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -53,7 +53,7 @@ func collectDataConstructor(node *sitter.Node, ctx *collector_ctx.Ctx) (string, 
 
 // CollectTupleTypeBody is exported because collector.go calls it from parseAnonymousTupleType.
 func CollectTupleTypeBody(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Type {
-	elements := make([]types.Type, 0)
+	elements := []types.Type{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "tuple_type_element" {

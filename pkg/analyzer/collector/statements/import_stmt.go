@@ -8,7 +8,7 @@ import (
 
 func CollectImportStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ImportStmt {
 	importStmt := &ast.ImportStmt{
-		Path: make([]ast.ModuleName, 0),
+		Path: []ast.ModuleName{},
 	}
 
 	pathNode := node.ChildByFieldName("path")
@@ -35,7 +35,7 @@ func CollectImportStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Impo
 	}
 
 	if membersNode != nil {
-		importStmt.Members = make([]ast.ImportMember, 0)
+		importStmt.Members = []ast.ImportMember{}
 		for i := uint(0); i < membersNode.ChildCount(); i++ {
 			child := membersNode.Child(i)
 			if child.Kind() == "import_member" {

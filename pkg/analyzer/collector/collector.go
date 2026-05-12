@@ -47,7 +47,7 @@ func NewCollector(source []byte) *Collector {
 		source: source,
 		table:  symbols.NewSymbolTable(),
 		ast:    &ast.Program{},
-		errors: make([]error, 0),
+		errors: []error{},
 	}
 	c.ctx = collector_ctx.NewCtx(source, c, &c.errors)
 	return c
@@ -119,7 +119,7 @@ func (c *Collector) addError(node *sitter.Node, severity CollectorErrorSeverity,
 }
 
 func (c *Collector) CollectGenericParams(node *sitter.Node) []string {
-	params := make([]string, 0)
+	params := []string{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "generic_type" {
@@ -130,7 +130,7 @@ func (c *Collector) CollectGenericParams(node *sitter.Node) []string {
 }
 
 func (c *Collector) CollectGenericParameterConstraints(node *sitter.Node) []ast.GenericParameterConstraint {
-	constraints := make([]ast.GenericParameterConstraint, 0)
+	constraints := []ast.GenericParameterConstraint{}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
 		if child.Kind() == "generic_parameter_constraint" {
@@ -158,7 +158,7 @@ func (c *Collector) collectTraitGenericParameterConstraint(node *sitter.Node) as
 }
 
 func (c *Collector) CollectBounds(node *sitter.Node) []string {
-	bounds := make([]string, 0)
+	bounds := []string{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "trait_name" {
@@ -234,7 +234,7 @@ func (c *Collector) parseParameterizedType(node *sitter.Node) types.Type {
 		c.addError(node, CollectorErrorSeverityError, "parseParameterizedType: type arguments node is nil")
 		return nil
 	}
-	typeArguments := make([]types.Type, 0)
+	typeArguments := []types.Type{}
 	for i := uint(0); i < typeArgumentsNode.ChildCount(); i++ {
 		child := typeArgumentsNode.Child(i)
 		if child.IsNamed() {
@@ -264,7 +264,7 @@ func (c *Collector) parseLambdaType(node *sitter.Node) *types.LambdaType {
 }
 
 func (c *Collector) parseParameterTypes(node *sitter.Node) []types.ParameterType {
-	parameterTypes := make([]types.ParameterType, 0)
+	parameterTypes := []types.ParameterType{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "parameter_type" {
@@ -282,7 +282,7 @@ func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
 
 func (c *Collector) parseSelfType(node *sitter.Node) types.Type {
 	genericParamsNode := node.ChildByFieldName("generic_parameters")
-	genericParams := make([]string, 0)
+	genericParams := []string{}
 	if genericParamsNode != nil {
 		genericParams = c.CollectGenericParams(genericParamsNode)
 	}
@@ -317,7 +317,7 @@ func (c *Collector) parseArrayType(node *sitter.Node, allocation types.Allocatio
 }
 
 func (c *Collector) parseConstrainedType(node *sitter.Node) types.Type {
-	constraints := make([]types.Constraint, 0)
+	constraints := []types.Constraint{}
 	if constraintsNode := node.ChildByFieldName("constraints"); constraintsNode != nil {
 		constraints = typedecls.CollectConstraints(constraintsNode, c.ctx)
 	}
@@ -401,7 +401,7 @@ func (c *Collector) collectArrayPattern(patternNode *sitter.Node) ast.Pattern {
 }
 
 func (c *Collector) collectPatternElements(patternNode *sitter.Node) []ast.Pattern {
-	elements := make([]ast.Pattern, 0)
+	elements := []ast.Pattern{}
 	for i := uint(0); i < patternNode.ChildCount(); i++ {
 		child := patternNode.Child(i)
 		element := c.collectPatternElement(child)
@@ -434,7 +434,7 @@ func (c *Collector) collectStructPattern(node *sitter.Node) ast.Pattern {
 }
 
 func (c *Collector) collectStructPatternFields(node *sitter.Node) []ast.StructPatternField {
-	fields := make([]ast.StructPatternField, 0)
+	fields := []ast.StructPatternField{}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
 		field := c.collectStructPatternField(child)

@@ -1,101 +1,59 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollectSimpleStringLiteralExpr(t *testing.T) {
-	source := `let greeting = "Hello, World!"`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "simple_string_literal_expr.golden"))
+	runGoldenTest(t, `let greeting = "Hello, World!"`, "simple_string_literal_expr")
 }
 
 func TestCollectEmptyStringLiteralExpr(t *testing.T) {
-	source := `let blank = ""`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "empty_string_literal_expr.golden"))
+	runGoldenTest(t, `let blank = ""`, "empty_string_literal_expr")
 }
 
 func TestCollectStringLiteralExprWithSimpleEscapes(t *testing.T) {
-	source := `let line = "Hello\n\tWorld\\!"`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "string_literal_expr_with_simple_escapes.golden"))
+	runGoldenTest(t, `let line = "Hello\n\tWorld\\!"`, "string_literal_expr_with_simple_escapes")
 }
 
 func TestCollectStringLiteralExprWithNumericEscapes(t *testing.T) {
-	// \x41 == 'A', \u00e9 == 'é', \o101 == 'A'.
-	source := `let s = "A=\x41 e=\u00e9 A'=\o101"`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "string_literal_expr_with_numeric_escapes.golden"))
+	// \x41 == 'A', é == 'é', \o101 == 'A'.
+	runGoldenTest(t, `let s = "A=\x41 e=é A'=\o101"`, "string_literal_expr_with_numeric_escapes")
 }
 
 func TestCollectStringLiteralExprWithHashEscape(t *testing.T) {
 	// \# escapes the hash so that "${" is treated as literal content rather
 	// than starting an interpolation. The resulting value contains a literal "#".
-	source := `let s = "Phone \#: not an interp"`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "string_literal_expr_with_hash_escape.golden"))
+	runGoldenTest(t, `let s = "Phone \#: not an interp"`, "string_literal_expr_with_hash_escape")
 }
 
 func TestCollectInterpolatedStringExprSimple(t *testing.T) {
-	source := `let greeting = "Hello, ${name}!"`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "interpolated_string_expr_simple.golden"))
+	runGoldenTest(t, `let greeting = "Hello, ${name}!"`, "interpolated_string_expr_simple")
 }
 
 func TestCollectInterpolatedStringExprLeadingInterpolation(t *testing.T) {
-	source := `let greeting = "${name} is here"`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "interpolated_string_expr_leading.golden"))
+	runGoldenTest(t, `let greeting = "${name} is here"`, "interpolated_string_expr_leading")
 }
 
 func TestCollectInterpolatedStringExprOnlyInterpolation(t *testing.T) {
-	source := `let v = "${name}"`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "interpolated_string_expr_only.golden"))
+	runGoldenTest(t, `let v = "${name}"`, "interpolated_string_expr_only")
 }
 
 func TestCollectInterpolatedStringExprMultipleSegments(t *testing.T) {
-	source := `let point = "At (${x}, ${y})"`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "interpolated_string_expr_multiple_segments.golden"))
+	runGoldenTest(t, `let point = "At (${x}, ${y})"`, "interpolated_string_expr_multiple_segments")
 }
 
 func TestCollectInterpolatedStringExprComplexExpression(t *testing.T) {
-	source := `let msg = "Hello, ${employee.get_name()}!"`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "interpolated_string_expr_complex_expression.golden"))
+	runGoldenTest(t, `let msg = "Hello, ${employee.get_name()}!"`, "interpolated_string_expr_complex_expression")
 }
 
 func TestCollectInterpolatedStringExprEscapedHash(t *testing.T) {
 	// The \# is a literal '#', while the second ${...} starts an interpolation.
-	source := `let s = "Phone \#: ${phone_num}"`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "interpolated_string_expr_escaped_hash.golden"))
+	runGoldenTest(t, `let s = "Phone \#: ${phone_num}"`, "interpolated_string_expr_escaped_hash")
 }
 
 func TestCollectInterpolatedStringExprWithArithmetic(t *testing.T) {
-	source := `let msg = "Total: ${price * qty}"`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "interpolated_string_expr_with_arithmetic.golden"))
+	runGoldenTest(t, `let msg = "Total: ${price * qty}"`, "interpolated_string_expr_with_arithmetic")
 }
 
 func TestCollectInterpolatedStringExprNested(t *testing.T) {
-	source := `let greeting = "Hello, ${if is_male then "Mr. ${last_name}" else "Mrs. ${last_name}" end}!"`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "interpolated_string_expr_nested.golden"))
+	runGoldenTest(t, `let greeting = "Hello, ${if is_male then "Mr. ${last_name}" else "Mrs. ${last_name}" end}!"`, "interpolated_string_expr_nested")
 }

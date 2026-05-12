@@ -21,7 +21,7 @@ func collectCallGenericArguments(node *sitter.Node, ctx *collector_ctx.Ctx) []ty
 	if genericArgumentsNode == nil {
 		return nil
 	}
-	genericArguments := make([]types.Type, 0)
+	genericArguments := []types.Type{}
 	for i := uint(0); i < genericArgumentsNode.ChildCount(); i++ {
 		child := genericArgumentsNode.Child(i)
 		if child.IsNamed() {
@@ -32,7 +32,7 @@ func collectCallGenericArguments(node *sitter.Node, ctx *collector_ctx.Ctx) []ty
 }
 
 func collectArgumentList(node *sitter.Node, ctx *collector_ctx.Ctx) ast.ArgumentList {
-	arguments := make([]ast.Expression, 0)
+	arguments := []ast.Expression{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.IsNamed() {

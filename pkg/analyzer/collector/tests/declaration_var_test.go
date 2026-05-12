@@ -1,50 +1,30 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollector_VariableDeclarationWithoutValue(t *testing.T) {
 	source := `
 	var the_answer
 	the_answer = 42`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "variable_declaration_without_value.golden"))
+	runGoldenTest(t, source, "variable_declaration_without_value")
 }
 
 func TestCollector_VariableDeclarationWithLet(t *testing.T) {
-	source := `let pi: float = 3.14159`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "variable_declaration_with_let.golden"))
+	runGoldenTest(t, `let pi: float = 3.14159`, "variable_declaration_with_let")
 }
 
 func TestCollector_VariableDeclarationWithVar(t *testing.T) {
-	source := `var the_answer: int = 42`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "variable_declaration_with_var.golden"))
+	runGoldenTest(t, `var the_answer: int = 42`, "variable_declaration_with_var")
 }
 
 func TestCollector_VariableDeclarationWithConst(t *testing.T) {
-	source := `const PI: float = 3.14159`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "variable_declaration_with_const.golden"))
+	runGoldenTest(t, `const PI: float = 3.14159`, "variable_declaration_with_const")
 }
 
 func TestCollector_VariableDeclarationWithoutTypeAnnotation(t *testing.T) {
-	source := `let pi = 3.14159`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "variable_declaration_without_type_annotation.golden"))
+	runGoldenTest(t, `let pi = 3.14159`, "variable_declaration_without_type_annotation")
 }
 
 func TestCollector_VariableDeclarationWithTupleType(t *testing.T) {
-	source := `let the_answer: (int, int) = (42, 13)`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "variable_declaration_with_tuple_type.golden"))
+	runGoldenTest(t, `let the_answer: (int, int) = (42, 13)`, "variable_declaration_with_tuple_type")
 }

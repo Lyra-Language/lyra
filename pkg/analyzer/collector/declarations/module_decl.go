@@ -8,7 +8,7 @@ import (
 
 func CollectModuleDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ModuleDeclStmt {
 	moduleDecl := &ast.ModuleDeclStmt{
-		Path: make([]ast.ModuleName, 0),
+		Path: []ast.ModuleName{},
 	}
 	pathNode := node.ChildByFieldName("path")
 	if pathNode == nil {

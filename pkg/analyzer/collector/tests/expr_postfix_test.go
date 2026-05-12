@@ -1,69 +1,39 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollectPostfixPropertyAccess(t *testing.T) {
-	source := `let name = person.name`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "postfix_property_access.golden"))
+	runGoldenTest(t, `let name = person.name`, "postfix_property_access")
 }
 
 func TestCollectPostfixMemberConstPropertyAccess(t *testing.T) {
-	source := `let max = limits.MAX`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "postfix_member_const_property_access.golden"))
+	runGoldenTest(t, `let max = limits.MAX`, "postfix_member_const_property_access")
 }
 
 func TestCollectPostfixOptionalPropertyAccess(t *testing.T) {
-	source := `let name = person?.name`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "postfix_optional_property_access.golden"))
+	runGoldenTest(t, `let name = person?.name`, "postfix_optional_property_access")
 }
 
 func TestCollectPostfixArrayIndexing(t *testing.T) {
-	source := `let first = array[0]`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "postfix_array_indexing.golden"))
+	runGoldenTest(t, `let first = array[0]`, "postfix_array_indexing")
 }
 
 func TestCollectPostfixOptionalArrayIndexing(t *testing.T) {
-	source := `let first = array?[0]`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "postfix_optional_array_indexing.golden"))
+	runGoldenTest(t, `let first = array?[0]`, "postfix_optional_array_indexing")
 }
 
 func TestCollectPostfixTryExpression(t *testing.T) {
-	source := `let file = open_file("foo.txt")?`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "postfix_try_expression.golden"))
+	runGoldenTest(t, `let file = open_file("foo.txt")?`, "postfix_try_expression")
 }
 
 func TestCollectPostfixChainedOptionalMemberCalls(t *testing.T) {
-	source := `let data = open_file(path)?.read()?.parse()?`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "postfix_chained_optional_member_calls.golden"))
+	runGoldenTest(t, `let data = open_file(path)?.read()?.parse()?`, "postfix_chained_optional_member_calls")
 }
 
 func TestCollectPostfixChainedOptionalIndexAccess(t *testing.T) {
-	source := `let value = matrix?[0]?[1]`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "postfix_chained_optional_index_access.golden"))
+	runGoldenTest(t, `let value = matrix?[0]?[1]`, "postfix_chained_optional_index_access")
 }
 
 func TestCollectPostfixComplexChain(t *testing.T) {
-	source := `let foo = struct.function("arg")?[0].property`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "postfix_complex_chain.golden"))
+	runGoldenTest(t, `let foo = struct.function("arg")?[0].property`, "postfix_complex_chain")
 }

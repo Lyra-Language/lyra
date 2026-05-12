@@ -1,34 +1,19 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollectDestructuringStruct(t *testing.T) {
-	source := `let {a, b, c} = some_struct`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_struct.golden"))
+	runGoldenTest(t, `let {a, b, c} = some_struct`, "destructuring_struct")
 }
 
 func TestCollectDestructuringStructWithRename(t *testing.T) {
-	source := `let {a: foo, b: bar, c: baz} = some_struct`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_struct_with_rename.golden"))
+	runGoldenTest(t, `let {a: foo, b: bar, c: baz} = some_struct`, "destructuring_struct_with_rename")
 }
 
 func TestCollectDestructuringStructWithRest(t *testing.T) {
-	source := `let {a, b, ...rest} = some_struct`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_struct_with_rest.golden"))
+	runGoldenTest(t, `let {a, b, ...rest} = some_struct`, "destructuring_struct_with_rest")
 }
 
 func TestCollectDestructuringStructWithSubPatterns(t *testing.T) {
-	source := `let {a: [x, y, z], b: (a, b), c: {d, e, f}} = some_struct`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "destructuring_struct_with_sub_patterns.golden"))
+	runGoldenTest(t, `let {a: [x, y, z], b: (a, b), c: {d, e, f}} = some_struct`, "destructuring_struct_with_sub_patterns")
 }

@@ -54,7 +54,7 @@ func collectStringLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast
 		return newLiteral(loc, sb.String())
 	}
 
-	segments := make([]ast.Expression, 0, childCount)
+	segments := []ast.Expression{}
 	for i := uint(0); i < childCount; i++ {
 		child := node.NamedChild(i)
 		switch child.Kind() {

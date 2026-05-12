@@ -27,7 +27,7 @@ const (
 func NewScope(parent *Scope, kind ScopeKind) *Scope {
 	s := &Scope{
 		Parent:   parent,
-		Children: make([]*Scope, 0),
+		Children: []*Scope{},
 		Symbols:  make(map[string]ast.Named),
 		Kind:     kind,
 	}

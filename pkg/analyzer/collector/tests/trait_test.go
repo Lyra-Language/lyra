@@ -1,9 +1,6 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollector_TraitDeclaration(t *testing.T) {
 	source := `
@@ -11,9 +8,7 @@ func TestCollector_TraitDeclaration(t *testing.T) {
 		show: (Self) -> string
 	}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "trait_declaration.golden"))
+	runGoldenTest(t, source, "trait_declaration")
 }
 
 func TestCollector_TraitImplementation(t *testing.T) {
@@ -26,9 +21,7 @@ func TestCollector_TraitImplementation(t *testing.T) {
 		show = (s) => s
 	}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "trait_implementation.golden"))
+	runGoldenTest(t, source, "trait_implementation")
 }
 
 func TestCollector_TraitDeclarationWithGenericParameters(t *testing.T) {
@@ -37,9 +30,7 @@ func TestCollector_TraitDeclarationWithGenericParameters(t *testing.T) {
 		convert: (from) -> to
 	}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "trait_declaration_with_generic_parameters.golden"))
+	runGoldenTest(t, source, "trait_declaration_with_generic_parameters")
 }
 
 func TestCollector_TraitDeclarationWithGenericTypeImplementation(t *testing.T) {
@@ -48,9 +39,7 @@ func TestCollector_TraitDeclarationWithGenericTypeImplementation(t *testing.T) {
 		map: (Self<a>, (a) -> b) -> Self<b>
 	}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "trait_declaration_with_generic_type_implementation.golden"))
+	runGoldenTest(t, source, "trait_declaration_with_generic_type_implementation")
 }
 
 func TestCollector_TraitDeclarationForPrefixOperator(t *testing.T) {
@@ -59,9 +48,7 @@ func TestCollector_TraitDeclarationForPrefixOperator(t *testing.T) {
 		(-_): (Self) -> Self
 	}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "trait_declaration_for_prefix_operator.golden"))
+	runGoldenTest(t, source, "trait_declaration_for_prefix_operator")
 }
 
 func TestCollector_TraitDeclarationForSuffixOperator(t *testing.T) {
@@ -70,9 +57,7 @@ func TestCollector_TraitDeclarationForSuffixOperator(t *testing.T) {
 		(_++): (Self) -> Self
 	}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "trait_declaration_for_suffix_operator.golden"))
+	runGoldenTest(t, source, "trait_declaration_for_suffix_operator")
 }
 
 func TestCollector_TraitDeclarationForBinaryOperator(t *testing.T) {
@@ -82,9 +67,7 @@ func TestCollector_TraitDeclarationForBinaryOperator(t *testing.T) {
 		(_!=_): (Self, Self) -> bool
 	}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "trait_declaration_for_binary_operator.golden"))
+	runGoldenTest(t, source, "trait_declaration_for_binary_operator")
 }
 
 func TestCollector_TraitDeclarationWithMultipleMethodsAndGenericParameters(t *testing.T) {
@@ -96,9 +79,7 @@ func TestCollector_TraitDeclarationWithMultipleMethodsAndGenericParameters(t *te
 		size: (c<e>) -> int
 	}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "trait_declaration_with_multiple_methods_and_generic_parameters.golden"))
+	runGoldenTest(t, source, "trait_declaration_with_multiple_methods_and_generic_parameters")
 }
 
 func TestCollector_TraitDeclarationWithSelfAndGenericConstraints(t *testing.T) {
@@ -107,9 +88,7 @@ func TestCollector_TraitDeclarationWithSelfAndGenericConstraints(t *testing.T) {
 		id: (t) -> t
 	}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "trait_declaration_with_self_and_generic_constraints.golden"))
+	runGoldenTest(t, source, "trait_declaration_with_self_and_generic_constraints")
 }
 
 func TestCollector_TraitDeclarationWithMultipleGenericConstraints(t *testing.T) {
@@ -118,9 +97,7 @@ func TestCollector_TraitDeclarationWithMultipleGenericConstraints(t *testing.T) 
 		first: (a, b) -> a
 	}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "trait_declaration_with_multiple_generic_constraints.golden"))
+	runGoldenTest(t, source, "trait_declaration_with_multiple_generic_constraints")
 }
 
 func TestCollector_TraitWithDefaultMethodImplementation(t *testing.T) {
@@ -130,9 +107,7 @@ func TestCollector_TraitWithDefaultMethodImplementation(t *testing.T) {
 		show_twice: (Self) -> string = (x) => show(x) + " " + show(x)
 	}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "trait_with_default_method_implementation.golden"))
+	runGoldenTest(t, source, "trait_with_default_method_implementation")
 }
 
 func TestCollector_TraitWithDefaultMethodImplementationWithBlock(t *testing.T) {
@@ -144,7 +119,5 @@ func TestCollector_TraitWithDefaultMethodImplementationWithBlock(t *testing.T) {
 		}
 	}
 	`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "trait_with_default_method_implementation_with_block.golden"))
+	runGoldenTest(t, source, "trait_with_default_method_implementation_with_block")
 }

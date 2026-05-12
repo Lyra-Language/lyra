@@ -7,7 +7,7 @@ import (
 )
 
 func collectArrayLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.ArrayLiteralExpr {
-	elements := make([]ast.Expression, 0)
+	elements := []ast.Expression{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.IsNamed() {

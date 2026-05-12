@@ -1,48 +1,27 @@
 package collector_test
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestCollectSimpleStaticArrayLiteral(t *testing.T) {
-	source := `let arr = [1, 2, 3]`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "simple_static_array_literal.golden"))
+	runGoldenTest(t, `let arr = [1, 2, 3]`, "simple_static_array_literal")
 }
 
 func TestCollectArrayLiteralWithExpression(t *testing.T) {
-	source := `let arr = [1, 2 * PI, 3]`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "array_literal_with_expression.golden"))
+	runGoldenTest(t, `let arr = [1, 2 * PI, 3]`, "array_literal_with_expression")
 }
 
 func TestCollectArrayRepeatInitializationWithStructs(t *testing.T) {
-	source := `let arr = [Vec3 { x: 0, y: 0, z: 0 }; 100]`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "array_repeat_initialization_with_structs.golden"))
+	runGoldenTest(t, `let arr = [Vec3 { x: 0, y: 0, z: 0 }; 100]`, "array_repeat_initialization_with_structs")
 }
 
 func TestCollectSimpleDynamicArrayLiteral(t *testing.T) {
-	source := `let arr: stack []int = [1, 2, 3]`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "simple_dynamic_array_literal.golden"))
+	runGoldenTest(t, `let arr: stack []int = [1, 2, 3]`, "simple_dynamic_array_literal")
 }
 
 func TestCollectArrayRepeatInitialization(t *testing.T) {
-	source := `let arr = [0; 8]`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "array_repeat_initialization.golden"))
+	runGoldenTest(t, `let arr = [0; 8]`, "array_repeat_initialization")
 }
 
 func TestCollectArrayRepeatInitializationWithCompileTimeConstantCount(t *testing.T) {
-	source := `let arr = [0; SIZE]`
-	program, _ := parseAndCollect(t, source)
-	got := captureProgramPrint(program)
-	checkGolden(t, got, filepath.Join("testdata", "array_repeat_initialization_with_compile_time_constant_count.golden"))
+	runGoldenTest(t, `let arr = [0; SIZE]`, "array_repeat_initialization_with_compile_time_constant_count")
 }
