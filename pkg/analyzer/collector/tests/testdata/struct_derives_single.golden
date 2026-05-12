@@ -1,0 +1,33 @@
+Program(1 statements) {
+	Statements: {
+		TypeDeclStmt(Point) {
+			Derives: {
+				Eq
+			}
+			Name: Point
+			Type: {
+				StructType(Point) {
+					Fields: {
+						StructField(x) {
+							Name: x
+							Type: {
+								PrimitiveType(f32) {
+									Name: f32
+								}
+							}
+						}
+						StructField(y) {
+							Name: y
+							Type: {
+								PrimitiveType(f32) {
+									Name: f32
+								}
+							}
+						}
+					}
+					Name: Point
+				}
+			}
+		}
+	}
+}

@@ -12,11 +12,14 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	var genericParams []string
 	var allocation types.AllocationModifier
 	var constructors []types.DataTypeConstructor
+	var derives []string
 	isPublic := false
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
+		case "attribute_list":
+			derives = collectDerives(child, ctx)
 		case "allocation_modifier":
 			allocation = allocModifier(child, ctx)
 		case "visibility":
@@ -41,6 +44,7 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 			Allocation:   allocation,
 		},
 		IsPublic: isPublic,
+		Derives:  derives,
 	}
 
 	if err := ctx.RegisterType(astNode); err != nil {

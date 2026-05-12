@@ -18,6 +18,7 @@ type TypeDeclStmt struct {
 	Type          types.Type
 	IsPublic      bool
 	Allocation    types.AllocationModifier
+	Derives       []string
 }
 
 func (t *TypeDeclStmt) statementNode() {}
