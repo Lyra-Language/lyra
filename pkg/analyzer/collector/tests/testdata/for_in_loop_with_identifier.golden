@@ -1,0 +1,38 @@
+Program(1 statements) {
+	Statements: {
+		ForInLoopStmt {
+			Body: {
+				BlockExpr {
+					Statements: {
+						ExpressionStmt {
+							Expression: {
+								FunctionCallExpr {
+									Arguments: {
+										ArgumentList {
+											Arguments: {
+												IdentifierExpr(item) {
+													Name: item
+												}
+											}
+										}
+									}
+									Function: {
+										IdentifierExpr(println) {
+											Name: println
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			Iterable: {
+				IdentifierExpr(my_collection) {
+					Name: my_collection
+				}
+			}
+			Key: item
+		}
+	}
+}

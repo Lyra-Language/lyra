@@ -1,6 +1,4 @@
 ## To-Dos
-
-- Collect for/in loops
 - Collect arena statements
 - Collect regex
 - Add sizeof() function to query type sizes
@@ -13,6 +11,7 @@
 - Collect character literals
 - Collect for loops
 - Add for loop labels and break/continue statements
+- Collect and test for/in loops
 
 ### 04/18/26
 
