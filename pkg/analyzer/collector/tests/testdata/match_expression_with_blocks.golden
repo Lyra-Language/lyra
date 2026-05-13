@@ -12,12 +12,8 @@ Program(1 statements) {
 											Expression: {
 												FunctionCallExpr {
 													Arguments: {
-														ArgumentList {
-															Arguments: {
-																StringLiteralExpr {
-																	Value: An array with one element
-																}
-															}
+														StringLiteralExpr {
+															Value: An array with one element
 														}
 													}
 													Function: {
@@ -49,12 +45,8 @@ Program(1 statements) {
 											Expression: {
 												FunctionCallExpr {
 													Arguments: {
-														ArgumentList {
-															Arguments: {
-																StringLiteralExpr {
-																	Value: An array with two elements
-																}
-															}
+														StringLiteralExpr {
+															Value: An array with two elements
 														}
 													}
 													Function: {
@@ -89,12 +81,8 @@ Program(1 statements) {
 											Expression: {
 												FunctionCallExpr {
 													Arguments: {
-														ArgumentList {
-															Arguments: {
-																StringLiteralExpr {
-																	Value: A wildcard match
-																}
-															}
+														StringLiteralExpr {
+															Value: A wildcard match
 														}
 													}
 													Function: {

@@ -36,12 +36,8 @@ Program(1 statements) {
 						}
 						FunctionCallExpr {
 							Arguments: {
-								ArgumentList {
-									Arguments: {
-										IdentifierExpr(x) {
-											Name: x
-										}
-									}
+								IdentifierExpr(x) {
+									Name: x
 								}
 							}
 							Function: {
@@ -52,12 +48,8 @@ Program(1 statements) {
 						}
 						FunctionCallExpr {
 							Arguments: {
-								ArgumentList {
-									Arguments: {
-										IdentifierExpr(y) {
-											Name: y
-										}
-									}
+								IdentifierExpr(y) {
+									Name: y
 								}
 							}
 							Function: {

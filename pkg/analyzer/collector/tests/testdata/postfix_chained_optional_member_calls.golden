@@ -16,12 +16,8 @@ Program(1 statements) {
 													Object: {
 														FunctionCallExpr {
 															Arguments: {
-																ArgumentList {
-																	Arguments: {
-																		IdentifierExpr(path) {
-																			Name: path
-																		}
-																	}
+																IdentifierExpr(path) {
+																	Name: path
 																}
 															}
 															Function: {

@@ -16,15 +16,11 @@ Program(1 statements) {
 											Operand: {
 												FunctionCallExpr {
 													Arguments: {
-														ArgumentList {
-															Arguments: {
-																IdentifierExpr(url) {
-																	Name: url
-																}
-																IdentifierExpr(options) {
-																	Name: options
-																}
-															}
+														IdentifierExpr(url) {
+															Name: url
+														}
+														IdentifierExpr(options) {
+															Name: options
 														}
 													}
 													Function: {
@@ -41,12 +37,8 @@ Program(1 statements) {
 									Value: {
 										FunctionCallExpr {
 											Arguments: {
-												ArgumentList {
-													Arguments: {
-														IdentifierExpr(resp) {
-															Name: resp
-														}
-													}
+												IdentifierExpr(resp) {
+													Name: resp
 												}
 											}
 											Function: {

@@ -33,12 +33,8 @@ Program(1 statements) {
 							Body: {
 								FunctionCallExpr {
 									Arguments: {
-										ArgumentList {
-											Arguments: {
-												IdentifierExpr(x) {
-													Name: x
-												}
-											}
+										IdentifierExpr(x) {
+											Name: x
 										}
 									}
 									Function: {

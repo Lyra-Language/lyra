@@ -28,35 +28,31 @@ Program(2 statements) {
 			Value: {
 				FunctionCallExpr {
 					Arguments: {
-						ArgumentList {
-							Arguments: {
-								IdentifierExpr(nums) {
-									Name: nums
-								}
-								LambdaExpr {
-									Body: {
-										MathBinaryOpExpr {
-											Left: {
-												IntegerLiteralExpr {
-													Base: 10
-													Value: 2
-												}
-											}
-											Operator: *
-											Right: {
-												IdentifierExpr(x) {
-													Name: x
-												}
-											}
+						IdentifierExpr(nums) {
+							Name: nums
+						}
+						LambdaExpr {
+							Body: {
+								MathBinaryOpExpr {
+									Left: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 2
 										}
 									}
-									Parameters: {
-										Parameter {
-											Pattern: {
-												IdentifierPattern(x) {
-													Name: x
-												}
-											}
+									Operator: *
+									Right: {
+										IdentifierExpr(x) {
+											Name: x
+										}
+									}
+								}
+							}
+							Parameters: {
+								Parameter {
+									Pattern: {
+										IdentifierPattern(x) {
+											Name: x
 										}
 									}
 								}

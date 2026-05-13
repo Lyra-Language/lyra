@@ -49,17 +49,13 @@ Program(1 statements) {
 							Expression: {
 								FunctionCallExpr {
 									Arguments: {
-										ArgumentList {
-											Arguments: {
-												InterpolatedStringExpr {
-													Segments: {
-														StringLiteralExpr {
-															Value: i == 
-														}
-														IdentifierExpr(i) {
-															Name: i
-														}
-													}
+										InterpolatedStringExpr {
+											Segments: {
+												StringLiteralExpr {
+													Value: i == 
+												}
+												IdentifierExpr(i) {
+													Name: i
 												}
 											}
 										}

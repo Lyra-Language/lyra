@@ -8,12 +8,8 @@ Program(1 statements) {
 							Body: {
 								FunctionCallExpr {
 									Arguments: {
-										ArgumentList {
-											Arguments: {
-												StringLiteralExpr {
-													Value: An array with three elements
-												}
-											}
+										StringLiteralExpr {
+											Value: An array with three elements
 										}
 									}
 									Function: {
@@ -52,12 +48,8 @@ Program(1 statements) {
 							Body: {
 								FunctionCallExpr {
 									Arguments: {
-										ArgumentList {
-											Arguments: {
-												StringLiteralExpr {
-													Value: A tuple with two elements
-												}
-											}
+										StringLiteralExpr {
+											Value: A tuple with two elements
 										}
 									}
 									Function: {
@@ -98,12 +90,8 @@ Program(1 statements) {
 							Body: {
 								FunctionCallExpr {
 									Arguments: {
-										ArgumentList {
-											Arguments: {
-												StringLiteralExpr {
-													Value: A struct with three elements
-												}
-											}
+										StringLiteralExpr {
+											Value: A struct with three elements
 										}
 									}
 									Function: {
@@ -147,12 +135,8 @@ Program(1 statements) {
 							Body: {
 								FunctionCallExpr {
 									Arguments: {
-										ArgumentList {
-											Arguments: {
-												StringLiteralExpr {
-													Value: No match
-												}
-											}
+										StringLiteralExpr {
+											Value: No match
 										}
 									}
 									Function: {

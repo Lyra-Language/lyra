@@ -1,0 +1,60 @@
+Program(1 statements) {
+	Statements: {
+		WithStmt(frame) {
+			Arena: {
+				FunctionCallExpr {
+					Arguments: {
+						FunctionCallExpr {
+							Arguments: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 4
+								}
+							}
+							Function: {
+								IdentifierExpr(megabytes) {
+									Name: megabytes
+								}
+							}
+						}
+					}
+					Function: {
+						MemberExpr {
+							Property: {
+								IdentifierExpr(new) {
+									Name: new
+								}
+							}
+						}
+					}
+				}
+			}
+			Body: {
+				BlockExpr {
+					Statements: {
+						VarDeclStmt(x) {
+							BindingKind: let
+							Name: x
+							Value: {
+								FunctionCallExpr {
+									Arguments: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 42
+										}
+									}
+									Function: {
+										IdentifierExpr(alloc) {
+											Name: alloc
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+			Name: frame
+		}
+	}
+}

@@ -31,7 +31,7 @@ func collectCallGenericArguments(node *sitter.Node, ctx *collector_ctx.Ctx) []ty
 	return genericArguments
 }
 
-func collectArgumentList(node *sitter.Node, ctx *collector_ctx.Ctx) ast.ArgumentList {
+func collectArgumentList(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Expression {
 	arguments := []ast.Expression{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -39,7 +39,7 @@ func collectArgumentList(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Argument
 			arguments = append(arguments, CollectExpression(child, ctx))
 		}
 	}
-	return ast.ArgumentList{Arguments: arguments}
+	return arguments
 }
 
 func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location, optional bool) ast.Expression {

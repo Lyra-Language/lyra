@@ -2,7 +2,6 @@ package ast
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -11,23 +10,11 @@ type FunctionCallExpr struct {
 	ExprBase
 	Function         Expression
 	GenericArguments []types.Type
-	Arguments        ArgumentList
+	Arguments        []Expression
 }
 
 func (f *FunctionCallExpr) GetName() string {
 	return "function_call_expr"
-}
-
-type ArgumentList struct {
-	Arguments []Expression
-}
-
-func (a *ArgumentList) GetName() string {
-	argumentNames := make([]string, len(a.Arguments))
-	for i, argument := range a.Arguments {
-		argumentNames[i] = argument.GetName()
-	}
-	return strings.Join(argumentNames, ", ")
 }
 
 type MemberExpr struct {

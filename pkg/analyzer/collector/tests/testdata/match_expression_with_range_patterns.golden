@@ -8,12 +8,8 @@ Program(1 statements) {
 							Body: {
 								FunctionCallExpr {
 									Arguments: {
-										ArgumentList {
-											Arguments: {
-												StringLiteralExpr {
-													Value: one digit
-												}
-											}
+										StringLiteralExpr {
+											Value: one digit
 										}
 									}
 									Function: {
@@ -45,12 +41,8 @@ Program(1 statements) {
 							Body: {
 								FunctionCallExpr {
 									Arguments: {
-										ArgumentList {
-											Arguments: {
-												StringLiteralExpr {
-													Value: The Answer!
-												}
-											}
+										StringLiteralExpr {
+											Value: The Answer!
 										}
 									}
 									Function: {
@@ -70,12 +62,8 @@ Program(1 statements) {
 							Body: {
 								FunctionCallExpr {
 									Arguments: {
-										ArgumentList {
-											Arguments: {
-												StringLiteralExpr {
-													Value: two digits
-												}
-											}
+										StringLiteralExpr {
+											Value: two digits
 										}
 									}
 									Function: {
@@ -107,12 +95,8 @@ Program(1 statements) {
 							Body: {
 								FunctionCallExpr {
 									Arguments: {
-										ArgumentList {
-											Arguments: {
-												StringLiteralExpr {
-													Value: lots of digits!
-												}
-											}
+										StringLiteralExpr {
+											Value: lots of digits!
 										}
 									}
 									Function: {

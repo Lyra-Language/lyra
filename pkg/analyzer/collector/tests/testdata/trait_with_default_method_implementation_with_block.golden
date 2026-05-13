@@ -34,15 +34,11 @@ Program(1 statements) {
 											Expression: {
 												FunctionCallExpr {
 													Arguments: {
-														ArgumentList {
-															Arguments: {
-																StringLiteralExpr {
-																	Value: Item: 
-																}
-																IdentifierExpr(s) {
-																	Name: s
-																}
-															}
+														StringLiteralExpr {
+															Value: Item: 
+														}
+														IdentifierExpr(s) {
+															Name: s
 														}
 													}
 													Function: {

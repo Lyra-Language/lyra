@@ -30,12 +30,8 @@ Program(2 statements) {
 							Expression: {
 								FunctionCallExpr {
 									Arguments: {
-										ArgumentList {
-											Arguments: {
-												StringLiteralExpr {
-													Value: No struct found
-												}
-											}
+										StringLiteralExpr {
+											Value: No struct found
 										}
 									}
 									Function: {
@@ -54,23 +50,19 @@ Program(2 statements) {
 			Expression: {
 				FunctionCallExpr {
 					Arguments: {
-						ArgumentList {
-							Arguments: {
-								InterpolatedStringExpr {
-									Segments: {
-										StringLiteralExpr {
-											Value: We got the struct: 
-										}
-										IdentifierExpr(foo) {
-											Name: foo
-										}
-										StringLiteralExpr {
-											Value: , 
-										}
-										IdentifierExpr(bar) {
-											Name: bar
-										}
-									}
+						InterpolatedStringExpr {
+							Segments: {
+								StringLiteralExpr {
+									Value: We got the struct: 
+								}
+								IdentifierExpr(foo) {
+									Name: foo
+								}
+								StringLiteralExpr {
+									Value: , 
+								}
+								IdentifierExpr(bar) {
+									Name: bar
 								}
 							}
 						}

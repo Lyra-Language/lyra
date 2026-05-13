@@ -26,12 +26,8 @@ Program(1 statements) {
 									Expression: {
 										FunctionCallExpr {
 											Arguments: {
-												ArgumentList {
-													Arguments: {
-														StringLiteralExpr {
-															Value: x is 3
-														}
-													}
+												StringLiteralExpr {
+													Value: x is 3
 												}
 											}
 											Function: {

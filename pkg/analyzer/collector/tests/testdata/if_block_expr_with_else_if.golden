@@ -44,12 +44,8 @@ Program(1 statements) {
 											Expression: {
 												FunctionCallExpr {
 													Arguments: {
-														ArgumentList {
-															Arguments: {
-																StringLiteralExpr {
-																	Value: x is not 3 or 4
-																}
-															}
+														StringLiteralExpr {
+															Value: x is not 3 or 4
 														}
 													}
 													Function: {
@@ -70,12 +66,8 @@ Program(1 statements) {
 											Expression: {
 												FunctionCallExpr {
 													Arguments: {
-														ArgumentList {
-															Arguments: {
-																StringLiteralExpr {
-																	Value: x is 4
-																}
-															}
+														StringLiteralExpr {
+															Value: x is 4
 														}
 													}
 													Function: {
@@ -98,12 +90,8 @@ Program(1 statements) {
 									Expression: {
 										FunctionCallExpr {
 											Arguments: {
-												ArgumentList {
-													Arguments: {
-														StringLiteralExpr {
-															Value: x is 3
-														}
-													}
+												StringLiteralExpr {
+													Value: x is 3
 												}
 											}
 											Function: {

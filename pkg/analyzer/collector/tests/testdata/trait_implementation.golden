@@ -8,12 +8,8 @@ Program(2 statements) {
 							Body: {
 								FunctionCallExpr {
 									Arguments: {
-										ArgumentList {
-											Arguments: {
-												IdentifierExpr(n) {
-													Name: n
-												}
-											}
+										IdentifierExpr(n) {
+											Name: n
 										}
 									}
 									Function: {
