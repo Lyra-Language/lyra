@@ -1,0 +1,18 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(x) {
+			BindingKind: let
+			Name: x
+			Value: {
+				NegationExpr {
+					Operand: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 42
+						}
+					}
+				}
+			}
+		}
+	}
+}

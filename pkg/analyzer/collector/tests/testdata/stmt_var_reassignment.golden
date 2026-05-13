@@ -1,0 +1,23 @@
+Program(2 statements) {
+	Statements: {
+		VarDeclStmt(x) {
+			BindingKind: var
+			Name: x
+			Value: {
+				IntegerLiteralExpr {
+					Base: 10
+					Value: 1
+				}
+			}
+		}
+		VarReassignmentStmt(x) {
+			Name: x
+			Value: {
+				IntegerLiteralExpr {
+					Base: 10
+					Value: 2
+				}
+			}
+		}
+	}
+}

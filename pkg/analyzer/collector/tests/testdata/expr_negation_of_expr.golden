@@ -1,0 +1,21 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(x) {
+			BindingKind: let
+			Name: x
+			Value: {
+				NegationExpr {
+					Operand: {
+						FunctionCallExpr {
+							Function: {
+								IdentifierExpr(foo) {
+									Name: foo
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

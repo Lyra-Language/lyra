@@ -77,6 +77,16 @@ func (v *VarDeclStmt) IsMutable() bool { return v.BindingKind == BindingVar }
 // IsConstant returns true if this is a const declaration
 func (v *VarDeclStmt) IsConstant() bool { return v.BindingKind == BindingConst }
 
+// VarReassignmentStmt represents a mutable variable update: x = value
+type VarReassignmentStmt struct {
+	AstBase
+	Name  string
+	Value Expression
+}
+
+func (v *VarReassignmentStmt) statementNode()  {}
+func (v *VarReassignmentStmt) GetName() string { return v.Name }
+
 // DerefAssignmentStmt represents a pointer write: *target = value
 type DerefAssignmentStmt struct {
 	AstBase

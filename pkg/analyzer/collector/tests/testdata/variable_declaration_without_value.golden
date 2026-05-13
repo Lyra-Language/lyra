@@ -1,8 +1,17 @@
-Program(1 statements) {
+Program(2 statements) {
 	Statements: {
 		VarDeclStmt(the_answer) {
 			BindingKind: var
 			Name: the_answer
+		}
+		VarReassignmentStmt(the_answer) {
+			Name: the_answer
+			Value: {
+				IntegerLiteralExpr {
+					Base: 10
+					Value: 42
+				}
+			}
 		}
 	}
 }

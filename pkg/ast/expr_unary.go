@@ -11,6 +11,13 @@ func (e *AwaitExpr) GetName() string {
 	return "await " + e.Operand.GetName()
 }
 
+type NegationExpr struct {
+	ExprBase
+	Operand Expression
+}
+
+func (e *NegationExpr) GetName() string { return "negation_expr" }
+
 type AddressOfExpr struct {
 	ExprBase
 	Operand Expression

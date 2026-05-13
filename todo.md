@@ -1,5 +1,12 @@
 ## To-Dos
 
+- Collect data_constructor_expr
+- Collect unsafe blocks
+- Collect given expr
+- Collect compose expr
+- Collect yield expr
+- Collect yield/from expr
+- Collect generators
 - Add sizeof() function to query type sizes
 
 ## Completed
@@ -7,6 +14,9 @@
 ### 05/13/26
 - Collect arena statements
 - Collect regex
+- Collect pointer syntax
+- Collect negation
+- Collect var reassignment
 
 ### 05/11/26
 - Add tests for trait declarations with default methods
