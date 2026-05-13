@@ -35,6 +35,8 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 		return collectBooleanLiteralExpr(node, ctx, loc)
 	case "char_literal":
 		return collectCharacterLiteralExpr(node, ctx, loc)
+	case "regex_literal":
+		return collectRegexLiteralExpr(node, ctx, loc)
 	case "string_literal":
 		return collectStringLiteralExpr(node, ctx, loc)
 	case "array_literal":

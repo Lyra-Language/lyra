@@ -99,3 +99,12 @@ func (c *CharacterLiteralExpr) LiteralText() string        { return fmt.Sprintf(
 func (c *CharacterLiteralExpr) GetName() string {
 	return fmt.Sprintf("CharacterLiteralExpr(%c)", c.Value)
 }
+
+type RegexLiteralExpr struct {
+	ExprBase
+	Pattern string
+}
+
+func (r *RegexLiteralExpr) GetName() string {
+	return fmt.Sprintf("RegexLiteralExpr(%s)", r.Pattern)
+}

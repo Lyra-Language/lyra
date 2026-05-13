@@ -1,0 +1,13 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(path) {
+			BindingKind: let
+			Name: path
+			Value: {
+				RegexLiteralExpr {
+					Pattern: \/usr\/local\/bin
+				}
+			}
+		}
+	}
+}

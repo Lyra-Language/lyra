@@ -1,9 +1,12 @@
 ## To-Dos
-- Collect arena statements
-- Collect regex
+
 - Add sizeof() function to query type sizes
 
 ## Completed
+
+### 05/13/26
+- Collect arena statements
+- Collect regex
 
 ### 05/11/26
 - Add tests for trait declarations with default methods
