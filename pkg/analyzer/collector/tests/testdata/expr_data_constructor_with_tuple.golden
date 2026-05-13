@@ -1,0 +1,28 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(v) {
+			BindingKind: let
+			Name: v
+			Value: {
+				DataConstructorExpr {
+					Constructor: Some
+					Value: {
+						TupleLiteralExpr(Pair) {
+							Elements: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
+								}
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 2
+								}
+							}
+							Name: Pair
+						}
+					}
+				}
+			}
+		}
+	}
+}

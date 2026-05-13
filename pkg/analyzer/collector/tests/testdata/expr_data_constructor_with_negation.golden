@@ -1,0 +1,23 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(v) {
+			BindingKind: let
+			Name: v
+			Value: {
+				DataConstructorExpr {
+					Constructor: Err
+					Value: {
+						NegationExpr {
+							Operand: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

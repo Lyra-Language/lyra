@@ -1,6 +1,5 @@
 ## To-Dos
 
-- Collect data_constructor_expr
 - Collect unsafe blocks
 - Collect given expr
 - Collect compose expr
@@ -17,6 +16,7 @@
 - Collect pointer syntax
 - Collect negation
 - Collect var reassignment
+- Collect data_constructor_expr
 
 ### 05/11/26
 - Add tests for trait declarations with default methods

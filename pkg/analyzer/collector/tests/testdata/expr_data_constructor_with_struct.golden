@@ -1,0 +1,38 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(v) {
+			BindingKind: let
+			Name: v
+			Value: {
+				DataConstructorExpr {
+					Constructor: Some
+					Value: {
+						StructInstance(Point) {
+							Fields: {
+								StructField(x) {
+									Name: x
+									Value: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 1
+										}
+									}
+								}
+								StructField(y) {
+									Name: y
+									Value: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 2
+										}
+									}
+								}
+							}
+							Name: Point
+						}
+					}
+				}
+			}
+		}
+	}
+}

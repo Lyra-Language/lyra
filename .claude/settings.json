@@ -3,7 +3,8 @@
     "allow": [
       "Bash(go build *)",
       "Bash(go test *)",
-      "Bash(python3 -c ' *)"
+      "Bash(python3 -c ' *)",
+      "Bash(npx tree-sitter *)"
     ]
   }
 }
