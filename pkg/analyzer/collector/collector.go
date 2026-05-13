@@ -204,6 +204,26 @@ func (c *Collector) RegisterVariable(stmt *ast.VarDeclStmt) error {
 	return c.table.RegisterVariable(stmt)
 }
 
+func (c *Collector) RegisterParameter(p *ast.Parameter) error {
+	return c.table.RegisterParameter(p)
+}
+
+func (c *Collector) PushFunctionScope() {
+	c.table.PushScope(symbols.ScopeFunction)
+}
+
+func (c *Collector) PushBlockScope() {
+	c.table.PushScope(symbols.ScopeBlock)
+}
+
+func (c *Collector) PushLoopScope() {
+	c.table.PushScope(symbols.ScopeLoop)
+}
+
+func (c *Collector) PopScope() {
+	c.table.PopScope()
+}
+
 // allocation is only used for array types
 func (c *Collector) parseType(node *sitter.Node) types.Type {
 	if node == nil {

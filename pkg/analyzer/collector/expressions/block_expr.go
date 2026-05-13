@@ -10,6 +10,8 @@ func CollectBlockExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locatio
 	if node == nil {
 		return nil
 	}
+	ctx.PushBlockScope()
+	defer ctx.PopScope()
 	statements := []ast.Statement{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)

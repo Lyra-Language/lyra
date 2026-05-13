@@ -7,6 +7,9 @@ import (
 )
 
 func CollectForLoopStmt(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopStmt {
+	ctx.PushLoopScope()
+	defer ctx.PopScope()
+
 	labelNode := node.ChildByFieldName("label")
 	label := ""
 	if labelNode != nil {

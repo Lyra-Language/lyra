@@ -23,7 +23,15 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 		ctx.AddError(node, collector_ctx.SeverityError, "collectLambdaExpr: lambda expression missing parameters")
 		return nil
 	}
+	ctx.PushFunctionScope()
+	defer ctx.PopScope()
+
 	parameters := collectParameters(parametersNode, ctx)
+	for i := range parameters {
+		if err := ctx.RegisterParameter(&parameters[i]); err != nil {
+			ctx.AddError(parametersNode, collector_ctx.SeverityError, "failed to register parameter %q: %v", parameters[i].GetName(), err)
+		}
+	}
 
 	bodyNode := node.ChildByFieldName("body")
 	var body = ast.Expression(nil)
@@ -128,6 +136,7 @@ func collectParameter(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Parameter {
 		defaultValue = ctx.CollectExpr(defaultValueNode)
 	}
 	return ast.Parameter{
+		AstBase:      ast.AstBase{Location: ctx.NodeLocation(node)},
 		Pattern:      pattern,
 		TypeModifier: types.TypeModifier(typeModifier),
 		Type:         paramType,

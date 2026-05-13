@@ -34,6 +34,7 @@ type LambdaClause struct {
 }
 
 type Parameter struct {
+	AstBase
 	Pattern      Pattern
 	TypeModifier types.TypeModifier
 	Type         types.Type

@@ -7,9 +7,20 @@ import (
 )
 
 func CollectWithStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.WithStmt {
+	ctx.PushBlockScope()
+	defer ctx.PopScope()
+
 	name := ""
 	if nameNode := node.ChildByFieldName("name"); nameNode != nil {
 		name = ctx.NodeText(nameNode)
+		v := &ast.VarDeclStmt{
+			AstBase:     ast.AstBase{Location: ctx.NodeLocation(nameNode)},
+			BindingKind: ast.BindingLet,
+			Name:        name,
+		}
+		if err := ctx.RegisterVariable(v); err != nil {
+			ctx.AddError(nameNode, collector_ctx.SeverityError, "failed to register with binding %q: %v", name, err)
+		}
 	}
 
 	arenaNode := node.ChildByFieldName("arena")

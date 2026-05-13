@@ -7,6 +7,9 @@ import (
 )
 
 func CollectForInLoopStmt(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInLoopStmt {
+	ctx.PushLoopScope()
+	defer ctx.PopScope()
+
 	var label, key, value string
 	var iterable ast.Expression
 	var body *ast.BlockExpr
@@ -56,8 +59,10 @@ func collectForInCondition(node *sitter.Node, ctx *collector_ctx.Ctx) (key, valu
 		switch child.Kind() {
 		case "for_variable_or_key":
 			key = ctx.NodeText(child)
+			registerLoopVar(child, key, ctx)
 		case "for_index_or_value":
 			value = ctx.NodeText(child)
+			registerLoopVar(child, value, ctx)
 		default:
 			if child.IsNamed() {
 				iterable = ctx.CollectExpr(child)
@@ -65,4 +70,15 @@ func collectForInCondition(node *sitter.Node, ctx *collector_ctx.Ctx) (key, valu
 		}
 	}
 	return
+}
+
+func registerLoopVar(node *sitter.Node, name string, ctx *collector_ctx.Ctx) {
+	v := &ast.VarDeclStmt{
+		AstBase:     ast.AstBase{Location: ctx.NodeLocation(node)},
+		BindingKind: ast.BindingLet,
+		Name:        name,
+	}
+	if err := ctx.RegisterVariable(v); err != nil {
+		ctx.AddError(node, collector_ctx.SeverityError, "failed to register loop variable %q: %v", name, err)
+	}
 }

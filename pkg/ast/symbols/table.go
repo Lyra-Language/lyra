@@ -121,3 +121,11 @@ func (st *SymbolTable) RegisterVariable(node *ast.VarDeclStmt) error {
 	}
 	return st.CurrentScope.Define(node)
 }
+
+// RegisterParameter adds a lambda/function parameter to the current scope
+func (st *SymbolTable) RegisterParameter(node *ast.Parameter) error {
+	if st.CurrentScope == nil {
+		return fmt.Errorf("no current scope to register parameter %s", node.GetName())
+	}
+	return st.CurrentScope.Define(node)
+}

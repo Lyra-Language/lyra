@@ -39,6 +39,11 @@ type Collector interface {
 	RegisterType(*ast.TypeDeclStmt) error
 	RegisterFunction(string, *ast.LambdaExpr) error
 	RegisterVariable(*ast.VarDeclStmt) error
+	RegisterParameter(*ast.Parameter) error
+	PushFunctionScope()
+	PushBlockScope()
+	PushLoopScope()
+	PopScope()
 	CollectGenericParams(*sitter.Node) []ast.GenericParam
 	MergeWhereConstraints([]ast.GenericParam, *sitter.Node) []ast.GenericParam
 	CollectBounds(*sitter.Node) []string
