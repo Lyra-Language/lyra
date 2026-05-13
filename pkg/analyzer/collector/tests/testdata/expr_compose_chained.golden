@@ -1,0 +1,33 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(pipeline) {
+			BindingKind: let
+			Name: pipeline
+			Value: {
+				ComposeExpr {
+					Left: {
+						IdentifierExpr(parse) {
+							Name: parse
+						}
+					}
+					Operator: ->>
+					Right: {
+						ComposeExpr {
+							Left: {
+								IdentifierExpr(validate) {
+									Name: validate
+								}
+							}
+							Operator: ->>
+							Right: {
+								IdentifierExpr(serialize) {
+									Name: serialize
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

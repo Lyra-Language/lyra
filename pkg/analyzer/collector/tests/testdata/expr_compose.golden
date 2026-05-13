@@ -1,0 +1,23 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(transform) {
+			BindingKind: let
+			Name: transform
+			Value: {
+				ComposeExpr {
+					Left: {
+						IdentifierExpr(negate) {
+							Name: negate
+						}
+					}
+					Operator: ->>
+					Right: {
+						IdentifierExpr(double) {
+							Name: double
+						}
+					}
+				}
+			}
+		}
+	}
+}

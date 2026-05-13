@@ -1,0 +1,61 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(behavior) {
+			BindingKind: let
+			Name: behavior
+			Value: {
+				LambdaExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								ExpressionStmt {
+									Expression: {
+										YieldFromExpr {
+											Generator: {
+												FunctionCallExpr {
+													Arguments: {
+														MemberExpr {
+															Object: {
+																IdentifierExpr(enemy) {
+																	Name: enemy
+																}
+															}
+															Property: {
+																IdentifierExpr(path) {
+																	Name: path
+																}
+															}
+														}
+													}
+													Function: {
+														IdentifierExpr(patrol) {
+															Name: patrol
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(enemy) {
+									Name: enemy
+								}
+							}
+							Type: {
+								UnresolvedType(Enemy) {
+									Name: Enemy
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
