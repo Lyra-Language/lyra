@@ -8,11 +8,8 @@ import (
 
 func collectArrayRepeatInitExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.ArrayRepeatExpr {
 	return &ast.ArrayRepeatExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    nil,
-		},
-		Value: CollectExpression(node.ChildByFieldName("value"), ctx),
-		Count: CollectExpression(node.ChildByFieldName("count"), ctx),
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Value:    CollectExpression(node.ChildByFieldName("value"), ctx),
+		Count:    CollectExpression(node.ChildByFieldName("count"), ctx),
 	}
 }

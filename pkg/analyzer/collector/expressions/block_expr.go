@@ -20,10 +20,7 @@ func CollectBlockExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locatio
 		}
 	}
 	return &ast.BlockExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    nil,
-		},
+		ExprBase:   ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Statements: statements,
 	}
 }

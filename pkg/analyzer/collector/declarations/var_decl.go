@@ -44,24 +44,6 @@ func CollectVariableDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 		initExpr = ctx.CollectExpr(valueNode)
 	}
 
-	// Infer variable type from initializer only when no type annotation was given
-	if varType == nil && initExpr != nil {
-		if arrayType, ok := initExpr.GetType().(types.StaticArrayType); ok {
-			varType = arrayType
-		} else if tupleType, ok := initExpr.GetType().(types.TupleType); ok {
-			varType = tupleType
-		} else if rangeType, ok := initExpr.GetType().(types.RangeType); ok {
-			varType = rangeType
-		}
-	}
-
-	// When variable has explicit tuple type and initializer is a tuple literal, propagate type to the literal
-	if tupleType, ok := varType.(types.TupleType); ok {
-		if tupleLit, ok := initExpr.(*ast.TupleLiteralExpr); ok {
-			tupleLit.ExprBase.Type = tupleType
-		}
-	}
-
 	astNode := &ast.VarDeclStmt{
 		AstBase:                 ast.AstBase{Location: ctx.NodeLocation(node)},
 		BindingKind:             kind,

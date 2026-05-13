@@ -3,7 +3,6 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
-	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -22,10 +21,7 @@ func collectCharacterLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc 
 		return nil
 	}
 	return &ast.CharacterLiteralExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    types.PrimitiveType{Name: types.Char},
-		},
-		Value: runes[0],
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Value:    runes[0],
 	}
 }

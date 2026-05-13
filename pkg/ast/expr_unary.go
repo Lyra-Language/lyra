@@ -1,7 +1,5 @@
 package ast
 
-import "github.com/Lyra-Language/lyra/pkg/types"
-
 type AwaitExpr struct {
 	ExprBase
 	Operand Expression
@@ -38,9 +36,7 @@ type SpreadExpr struct {
 	Name string
 }
 
-func (e *SpreadExpr) GetType() types.Type {
-	return nil
-}
+func (e *SpreadExpr) GetName() string { return "..." + e.Name }
 
 func (e *SpreadExpr) String() string {
 	return "..." + e.Name

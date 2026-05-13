@@ -3,11 +3,6 @@ Program(1 statements) {
 		VarDeclStmt(arr) {
 			BindingKind: let
 			Name: arr
-			Type: {
-				StaticArrayType(StaticArray<?, 100>) {
-					Size: 100
-				}
-			}
 			Value: {
 				ArrayRepeatExpr {
 					Count: {

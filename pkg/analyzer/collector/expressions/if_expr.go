@@ -20,10 +20,7 @@ func collectIfExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) 
 	elseBranchNode := node.ChildByFieldName("else_branch")
 
 	return &ast.IfExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    nil,
-		},
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Condition: CollectExpression(ifConditionNode, ctx),
 		Then:      CollectExpression(thenBlockNode, ctx),
 		Else:      CollectExpression(elseBranchNode, ctx),

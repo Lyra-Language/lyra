@@ -16,10 +16,6 @@ func (s *StructInstance) GetName() string {
 	return s.Name
 }
 
-func (s *StructInstance) GetType() types.Type {
-	return nil
-}
-
 type StructField struct {
 	Name  string
 	Value Expression

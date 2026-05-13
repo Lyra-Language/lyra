@@ -6,7 +6,6 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
-	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -45,12 +44,9 @@ func collectIntegerLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc as
 	}
 
 	return &ast.IntegerLiteralExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    types.PrimitiveType{Name: types.Int},
-		},
-		Value: value,
-		Base:  base,
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Value:    value,
+		Base:     base,
 	}
 }
 
@@ -63,10 +59,7 @@ func collectFloatLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.
 		return nil
 	}
 	return &ast.FloatLiteralExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    types.PrimitiveType{Name: types.Float},
-		},
-		Value: value,
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Value:    value,
 	}
 }

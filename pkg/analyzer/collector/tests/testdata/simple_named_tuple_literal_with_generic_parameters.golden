@@ -3,19 +3,6 @@ Program(1 statements) {
 		VarDeclStmt(point) {
 			BindingKind: let
 			Name: point
-			Type: {
-				TupleType(Point) {
-					Elements: {
-						PrimitiveType(int) {
-							Name: int
-						}
-						PrimitiveType(int) {
-							Name: int
-						}
-					}
-					Name: Point
-				}
-			}
 			Value: {
 				TupleLiteralExpr(Point) {
 					Elements: {

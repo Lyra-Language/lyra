@@ -3,16 +3,6 @@ Program(1 statements) {
 		VarDeclStmt(arr) {
 			BindingKind: let
 			Name: arr
-			Type: {
-				StaticArrayType(StaticArray<int, -1>) {
-					ElementType: {
-						PrimitiveType(int) {
-							Name: int
-						}
-					}
-					Size: -1
-				}
-			}
 			Value: {
 				ArrayRepeatExpr {
 					Count: {

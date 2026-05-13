@@ -9,7 +9,6 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
-	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -21,14 +20,10 @@ func collectStringLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast
 	// embedded inside `${ ... }`.
 	childCount := node.NamedChildCount()
 
-	stringType := types.PrimitiveType{Name: types.String}
 	newLiteral := func(l ast.Location, value string) *ast.StringLiteralExpr {
 		return &ast.StringLiteralExpr{
-			ExprBase: ast.ExprBase{
-				AstBase: ast.AstBase{Location: l},
-				Type:    stringType,
-			},
-			Value: value,
+			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: l}},
+			Value:    value,
 		}
 	}
 
@@ -80,10 +75,7 @@ func collectStringLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast
 	}
 
 	return &ast.InterpolatedStringExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    stringType,
-		},
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Segments: segments,
 	}
 }

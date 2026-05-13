@@ -15,10 +15,7 @@ func collectArrayLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.
 		}
 	}
 	return &ast.ArrayLiteralExpr{
-		ExprBase: ast.ExprBase{
-			AstBase: ast.AstBase{Location: loc},
-			Type:    nil,
-		},
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Elements: elements,
 	}
 }
