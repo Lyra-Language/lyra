@@ -1,0 +1,45 @@
+Program(1 statements) {
+	Statements: {
+		TypeDeclStmt(Pair) {
+			GenericParams: {
+				GenericParam(a) {
+					Constraints: {
+						Display
+					}
+					Name: a
+				}
+				GenericParam(b) {
+					Constraints: {
+						Clone
+						Debug
+					}
+					Name: b
+				}
+			}
+			Name: Pair
+			Type: {
+				StructType(Pair) {
+					Fields: {
+						StructField(first) {
+							Name: first
+							Type: {
+								GenericType(a) {
+									Name: a
+								}
+							}
+						}
+						StructField(second) {
+							Name: second
+							Type: {
+								GenericType(b) {
+									Name: b
+								}
+							}
+						}
+					}
+					Name: Pair
+				}
+			}
+		}
+	}
+}

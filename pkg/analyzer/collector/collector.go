@@ -120,43 +120,51 @@ func (c *Collector) addError(node *sitter.Node, severity CollectorErrorSeverity,
 	c.ctx.AddError(node, severity, format, args...)
 }
 
-func (c *Collector) CollectGenericParams(node *sitter.Node) []string {
-	params := []string{}
+func (c *Collector) CollectGenericParams(node *sitter.Node) []ast.GenericParam {
+	params := []ast.GenericParam{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
-		if child.Kind() == "generic_type" {
-			params = append(params, c.ctx.NodeText(child))
+		if child.Kind() != "generic_parameter" {
+			continue
 		}
+		nameNode := child.ChildByFieldName("name")
+		if nameNode == nil {
+			continue
+		}
+		p := ast.GenericParam{Name: c.ctx.NodeText(nameNode)}
+		if boundsNode := child.ChildByFieldName("bounds"); boundsNode != nil {
+			p.Constraints = c.CollectBounds(boundsNode)
+		}
+		params = append(params, p)
 	}
 	return params
 }
 
-func (c *Collector) CollectGenericParameterConstraints(node *sitter.Node) []ast.GenericParameterConstraint {
-	constraints := []ast.GenericParameterConstraint{}
-	for i := uint(0); i < node.NamedChildCount(); i++ {
-		child := node.NamedChild(i)
-		if child.Kind() == "generic_parameter_constraint" {
-			constraints = append(constraints, c.collectTraitGenericParameterConstraint(child))
+func (c *Collector) MergeWhereConstraints(params []ast.GenericParam, whereNode *sitter.Node) []ast.GenericParam {
+	nameToIdx := make(map[string]int, len(params))
+	for i, p := range params {
+		nameToIdx[p.Name] = i
+	}
+	for i := uint(0); i < whereNode.NamedChildCount(); i++ {
+		child := whereNode.NamedChild(i)
+		if child.Kind() != "generic_parameter_constraint" {
+			continue
+		}
+		nameNode, ok := c.ctx.MustField(child, "generic_type")
+		if !ok {
+			continue
+		}
+		boundsNode, ok := c.ctx.MustField(child, "generic_bounds")
+		if !ok {
+			continue
+		}
+		name := c.ctx.NodeText(nameNode)
+		bounds := c.CollectBounds(boundsNode)
+		if idx, ok := nameToIdx[name]; ok {
+			params[idx].Constraints = append(params[idx].Constraints, bounds...)
 		}
 	}
-	return constraints
-}
-
-func (c *Collector) collectTraitGenericParameterConstraint(node *sitter.Node) ast.GenericParameterConstraint {
-	genericTypeNode, ok := c.ctx.MustField(node, "generic_type")
-	if !ok {
-		return ast.GenericParameterConstraint{}
-	}
-	name := c.ctx.NodeText(genericTypeNode)
-	traitBoundsNode, ok := c.ctx.MustField(node, "generic_bounds")
-	if !ok {
-		return ast.GenericParameterConstraint{}
-	}
-	constraints := c.CollectBounds(traitBoundsNode)
-	return ast.GenericParameterConstraint{
-		Name:        name,
-		Constraints: constraints,
-	}
+	return params
 }
 
 func (c *Collector) CollectBounds(node *sitter.Node) []string {
@@ -284,11 +292,13 @@ func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
 
 func (c *Collector) parseSelfType(node *sitter.Node) types.Type {
 	genericParamsNode := node.ChildByFieldName("generic_parameters")
-	genericParams := []string{}
+	var names []string
 	if genericParamsNode != nil {
-		genericParams = c.CollectGenericParams(genericParamsNode)
+		for _, p := range c.CollectGenericParams(genericParamsNode) {
+			names = append(names, p.Name)
+		}
 	}
-	return types.SelfType{GenericParams: genericParams}
+	return types.SelfType{GenericParams: names}
 }
 
 func (c *Collector) parseArrayType(node *sitter.Node, allocation types.AllocationModifier) types.Type {

@@ -14,7 +14,7 @@ type Statement interface {
 type TypeDeclStmt struct {
 	AstBase
 	Name          string
-	GenericParams []string
+	GenericParams []GenericParam
 	Type          types.Type
 	IsPublic      bool
 	Allocation    types.AllocationModifier
@@ -60,11 +60,10 @@ func (k BindingKind) String() string {
 // VariableDeclarationStmt represents a let/var/const binding
 type VarDeclStmt struct {
 	AstBase
-	BindingKind BindingKind
-	Name    string
-	GenericParams []string
-	GenericParamConstraints []GenericParameterConstraint
-	Type    types.Type // may be nil if needs inference
+	BindingKind   BindingKind
+	Name          string
+	GenericParams []GenericParam
+	Type          types.Type // may be nil if needs inference
 	Value   Expression
 }
 

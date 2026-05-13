@@ -9,7 +9,7 @@ import (
 
 func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.TypeDeclStmt {
 	var name string
-	var genericParams []string
+	var genericParams []ast.GenericParam
 	var fields []types.StructField
 	var derives []string
 	isPublic := false

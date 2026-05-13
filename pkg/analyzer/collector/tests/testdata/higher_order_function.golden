@@ -3,8 +3,12 @@ Program(1 statements) {
 		VarDeclStmt(map) {
 			BindingKind: let
 			GenericParams: {
-				t
-				u
+				GenericParam(t) {
+					Name: t
+				}
+				GenericParam(u) {
+					Name: u
+				}
 			}
 			Name: map
 			Value: {

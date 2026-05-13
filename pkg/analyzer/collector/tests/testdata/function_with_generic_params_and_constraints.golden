@@ -2,16 +2,13 @@ Program(1 statements) {
 	Statements: {
 		VarDeclStmt(compare) {
 			BindingKind: let
-			GenericParamConstraints: {
-				GenericParameterConstraint(n) {
+			GenericParams: {
+				GenericParam(n) {
 					Constraints: {
 						Ord
 					}
 					Name: n
 				}
-			}
-			GenericParams: {
-				n
 			}
 			Name: compare
 			Value: {

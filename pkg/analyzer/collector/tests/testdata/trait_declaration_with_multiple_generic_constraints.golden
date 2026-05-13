@@ -2,8 +2,19 @@ Program(1 statements) {
 	Statements: {
 		TraitDeclStmt(PairOps) {
 			GenericParams: {
-				a
-				b
+				GenericParam(a) {
+					Constraints: {
+						Show
+						Eq
+					}
+					Name: a
+				}
+				GenericParam(b) {
+					Constraints: {
+						Ord
+					}
+					Name: b
+				}
 			}
 			Methods: {
 				TraitMethod {

@@ -2,7 +2,9 @@ Program(1 statements) {
 	Statements: {
 		TypeDeclStmt(Point) {
 			GenericParams: {
-				t
+				GenericParam(t) {
+					Name: t
+				}
 			}
 			IsPublic: true
 			Name: Point

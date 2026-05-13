@@ -5,7 +5,7 @@ import "github.com/Lyra-Language/lyra/pkg/types"
 type TraitImplStmt struct {
 	AstBase
 	TraitName string
-	GenericParams []string
+	GenericParams []GenericParam
 	Type types.Type
 	Constraints []TraitImplConstraint
 	Methods []TraitMethodImpl

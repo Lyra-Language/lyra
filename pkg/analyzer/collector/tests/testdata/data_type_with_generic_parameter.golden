@@ -2,7 +2,9 @@ Program(1 statements) {
 	Statements: {
 		TypeDeclStmt(Maybe) {
 			GenericParams: {
-				t
+				GenericParam(t) {
+					Name: t
+				}
 			}
 			IsPublic: true
 			Name: Maybe

@@ -2,8 +2,12 @@ Program(1 statements) {
 	Statements: {
 		TraitDeclStmt(Converter) {
 			GenericParams: {
-				from
-				to
+				GenericParam(from) {
+					Name: from
+				}
+				GenericParam(to) {
+					Name: to
+				}
 			}
 			Methods: {
 				TraitMethod {

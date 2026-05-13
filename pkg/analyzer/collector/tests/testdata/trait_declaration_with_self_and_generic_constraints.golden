@@ -6,7 +6,12 @@ Program(1 statements) {
 				Eq
 			}
 			GenericParams: {
-				t
+				GenericParam(t) {
+					Constraints: {
+						Ord
+					}
+					Name: t
+				}
 			}
 			Methods: {
 				TraitMethod {

@@ -6,11 +6,10 @@ import (
 
 type TraitDeclStmt struct {
 	AstBase
-	Name                        string
-	GenericParams               []string
-	Bounds                      []string
-	GenericParameterConstraints []GenericParameterConstraint
-	Methods                     []TraitMethod
+	Name          string
+	GenericParams []GenericParam
+	Bounds        []string
+	Methods       []TraitMethod
 	IsPublic                    bool
 }
 

@@ -19,7 +19,7 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Tra
 	name := ctx.NodeText(nameNode)
 
 	genericParamsNode := node.ChildByFieldName("generic_parameters")
-	genericParams := []string{}
+	genericParams := []ast.GenericParam{}
 	if genericParamsNode != nil {
 		genericParams = ctx.CollectGenericParams(genericParamsNode)
 	}
@@ -30,10 +30,8 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Tra
 		bounds = ctx.CollectBounds(boundsNode)
 	}
 
-	genericParameterConstraintsNode := node.ChildByFieldName("trait_generic_parameter_constraints")
-	genericParameterConstraints := []ast.GenericParameterConstraint{}
-	if genericParameterConstraintsNode != nil {
-		genericParameterConstraints = ctx.CollectGenericParameterConstraints(genericParameterConstraintsNode)
+	if whereNode := node.ChildByFieldName("generic_parameter_constraints"); whereNode != nil {
+		genericParams = ctx.MergeWhereConstraints(genericParams, whereNode)
 	}
 
 	methodsNode, ok := ctx.MustField(node, "methods")
@@ -43,13 +41,12 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Tra
 	methods := collectMethods(methodsNode, ctx)
 
 	return &ast.TraitDeclStmt{
-		AstBase:                     ast.AstBase{Location: ctx.NodeLocation(node)},
-		Name:                        name,
-		GenericParams:               genericParams,
-		GenericParameterConstraints: genericParameterConstraints,
-		Bounds:                      bounds,
-		Methods:                     methods,
-		IsPublic:                    isPublic,
+		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
+		Name:          name,
+		GenericParams: genericParams,
+		Bounds:        bounds,
+		Methods:       methods,
+		IsPublic:      isPublic,
 	}
 }
 

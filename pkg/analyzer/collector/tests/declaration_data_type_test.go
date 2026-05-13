@@ -10,6 +10,10 @@ func TestCollector_DataTypeWithGenericParameter(t *testing.T) {
 	runGoldenTest(t, `pub data Maybe<t> = Nil | Some t`, "data_type_with_generic_parameter")
 }
 
+func TestCollector_DataTypeWithGenericParamConstraints(t *testing.T) {
+	runGoldenTest(t, `data Result<ok: Default, err: Display> = Ok ok | Err err`, "data_type_with_generic_param_constraints")
+}
+
 func TestCollector_DataTypeWithStructFields(t *testing.T) {
 	runGoldenTest(t, `data Tree<t> = Nil | Leaf t | Node { left: Tree, value: t, right: Tree }`, "data_type_with_struct_fields")
 }

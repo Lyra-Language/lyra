@@ -9,7 +9,7 @@ import (
 
 func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.TypeDeclStmt {
 	var name string
-	var genericParams []string
+	var genericParams []ast.GenericParam
 	var allocation types.AllocationModifier
 	var constructors []types.DataTypeConstructor
 	var derives []string

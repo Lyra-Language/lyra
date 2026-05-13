@@ -21,3 +21,13 @@ func TestCollector_StructTypeDeclarationWithGenericParameters(t *testing.T) {
 	`
 	runGoldenTest(t, source, "struct_type_declaration_with_generic_parameters")
 }
+
+func TestCollector_StructTypeDeclarationWithGenericParamConstraints(t *testing.T) {
+	source := `
+		struct Pair<a: Display, b: Clone + Debug> {
+			first: a,
+			second: b,
+		}
+	`
+	runGoldenTest(t, source, "struct_type_declaration_with_generic_param_constraints")
+}

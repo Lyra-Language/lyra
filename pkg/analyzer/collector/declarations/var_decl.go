@@ -25,14 +25,12 @@ func CollectVariableDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	kind := bindingKind(ctx.NodeText(node.ChildByFieldName("keyword")), ctx)
 	name := ctx.NodeText(node.ChildByFieldName("name"))
 	genericParametersNode := node.ChildByFieldName("generic_parameters")
-	genericParameters := []string{}
+	genericParameters := []ast.GenericParam{}
 	if genericParametersNode != nil {
 		genericParameters = ctx.CollectGenericParams(genericParametersNode)
 	}
-	genericParamConstraintsNode := node.ChildByFieldName("generic_parameter_constraints")
-	genericParamConstraints := []ast.GenericParameterConstraint{}
-	if genericParamConstraintsNode != nil {
-		genericParamConstraints = ctx.CollectGenericParameterConstraints(genericParamConstraintsNode)
+	if whereNode := node.ChildByFieldName("generic_parameter_constraints"); whereNode != nil {
+		genericParameters = ctx.MergeWhereConstraints(genericParameters, whereNode)
 	}
 
 	var varType types.Type
@@ -68,8 +66,7 @@ func CollectVariableDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 		AstBase:                 ast.AstBase{Location: ctx.NodeLocation(node)},
 		BindingKind:             kind,
 		Name:                    name,
-		GenericParams:           genericParameters,
-		GenericParamConstraints: genericParamConstraints,
+		GenericParams: genericParameters,
 		Type:                    varType,
 		Value:                   initExpr,
 	}

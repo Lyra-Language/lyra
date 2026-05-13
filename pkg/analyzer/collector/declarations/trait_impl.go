@@ -15,7 +15,7 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	traitName := ctx.NodeText(traitNameNode)
 
 	genericParamsNode := node.ChildByFieldName("generic_parameters")
-	genericParams := []string{}
+	genericParams := []ast.GenericParam{}
 	if genericParamsNode != nil {
 		genericParams = ctx.CollectGenericParams(genericParamsNode)
 	}

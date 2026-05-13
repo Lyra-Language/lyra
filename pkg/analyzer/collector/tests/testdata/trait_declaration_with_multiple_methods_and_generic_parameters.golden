@@ -2,8 +2,12 @@ Program(1 statements) {
 	Statements: {
 		TraitDeclStmt(Collection) {
 			GenericParams: {
-				c
-				e
+				GenericParam(c) {
+					Name: c
+				}
+				GenericParam(e) {
+					Name: e
+				}
 			}
 			Methods: {
 				TraitMethod {

@@ -3,7 +3,9 @@ Program(1 statements) {
 		VarDeclStmt(sum) {
 			BindingKind: let
 			GenericParams: {
-				n
+				GenericParam(n) {
+					Name: n
+				}
 			}
 			Name: sum
 			Value: {

@@ -2,7 +2,9 @@ Program(1 statements) {
 	Statements: {
 		TypeDeclStmt(Tree) {
 			GenericParams: {
-				t
+				GenericParam(t) {
+					Name: t
+				}
 			}
 			Name: Tree
 			Type: {
