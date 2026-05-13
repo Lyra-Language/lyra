@@ -87,6 +87,10 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 		return CollectLambdaExpr(node, ctx, loc)
 	case "await_expr":
 		return collectAwaitExpr(node, ctx, loc)
+	case "unsafe_block":
+		return collectUnsafeBlockExpr(node, ctx, loc)
+	case "given_expr":
+		return collectGivenExpr(node, ctx, loc)
 	case "negation":
 		return collectNegationExpr(node, ctx, loc)
 	case "address_of_expr":

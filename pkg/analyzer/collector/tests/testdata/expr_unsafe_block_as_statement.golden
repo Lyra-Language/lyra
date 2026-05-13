@@ -1,0 +1,33 @@
+Program(1 statements) {
+	Statements: {
+		ExpressionStmt {
+			Expression: {
+				UnsafeBlockExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								DerefAssignmentStmt {
+									Target: {
+										DerefExpr {
+											Operand: {
+												IdentifierExpr(ptr) {
+													Name: ptr
+												}
+											}
+										}
+									}
+									Value: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 42
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

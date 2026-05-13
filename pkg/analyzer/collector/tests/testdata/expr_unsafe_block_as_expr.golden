@@ -1,0 +1,49 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(result) {
+			BindingKind: let
+			Name: result
+			Value: {
+				UnsafeBlockExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								VarDeclStmt(val) {
+									BindingKind: let
+									Name: val
+									Value: {
+										DerefExpr {
+											Operand: {
+												IdentifierExpr(ptr) {
+													Name: ptr
+												}
+											}
+										}
+									}
+								}
+								ExpressionStmt {
+									Expression: {
+										MathBinaryOpExpr {
+											Left: {
+												IdentifierExpr(val) {
+													Name: val
+												}
+											}
+											Operator: +
+											Right: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 1
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

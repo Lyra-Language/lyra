@@ -1,0 +1,76 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(result) {
+			BindingKind: let
+			Name: result
+			Value: {
+				GivenExpr {
+					Bindings: {
+						VarDeclStmt(a_sq) {
+							BindingKind: let
+							Name: a_sq
+							Value: {
+								MathBinaryOpExpr {
+									Left: {
+										IdentifierExpr(a) {
+											Name: a
+										}
+									}
+									Operator: *
+									Right: {
+										IdentifierExpr(a) {
+											Name: a
+										}
+									}
+								}
+							}
+						}
+						VarDeclStmt(b_sq) {
+							BindingKind: let
+							Name: b_sq
+							Value: {
+								MathBinaryOpExpr {
+									Left: {
+										IdentifierExpr(b) {
+											Name: b
+										}
+									}
+									Operator: *
+									Right: {
+										IdentifierExpr(b) {
+											Name: b
+										}
+									}
+								}
+							}
+						}
+					}
+					Body: {
+						FunctionCallExpr {
+							Arguments: {
+								MathBinaryOpExpr {
+									Left: {
+										IdentifierExpr(a_sq) {
+											Name: a_sq
+										}
+									}
+									Operator: +
+									Right: {
+										IdentifierExpr(b_sq) {
+											Name: b_sq
+										}
+									}
+								}
+							}
+							Function: {
+								IdentifierExpr(sqrt) {
+									Name: sqrt
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

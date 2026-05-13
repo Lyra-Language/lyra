@@ -1,7 +1,5 @@
 ## To-Dos
 
-- Collect unsafe blocks
-- Collect given expr
 - Collect compose expr
 - Collect yield expr
 - Collect yield/from expr
@@ -17,6 +15,8 @@
 - Collect negation
 - Collect var reassignment
 - Collect data_constructor_expr
+- Collect unsafe blocks
+- Collect given expr
 
 ### 05/11/26
 - Add tests for trait declarations with default methods
