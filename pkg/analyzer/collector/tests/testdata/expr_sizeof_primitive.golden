@@ -1,0 +1,17 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(x) {
+			BindingKind: let
+			Name: x
+			Value: {
+				SizeofExpr {
+					Type: {
+						PrimitiveType(i32) {
+							Name: i32
+						}
+					}
+				}
+			}
+		}
+	}
+}

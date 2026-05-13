@@ -236,6 +236,8 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 		return c.parseLambdaType(node)
 	case "self_type":
 		return c.parseSelfType(node)
+	case "raw_pointer_type":
+		return c.parseRawPointerType(node)
 	case "void_type":
 		return types.VoidType{}
 	}
@@ -343,6 +345,18 @@ func (c *Collector) parseConstrainedType(node *sitter.Node) types.Type {
 		Name:        c.ctx.NodeText(node.ChildByFieldName("name")),
 		Type:        c.parseType(node.ChildByFieldName("type")),
 		Constraints: constraints,
+	}
+}
+
+func (c *Collector) parseRawPointerType(node *sitter.Node) types.Type {
+	pointeeNode := node.ChildByFieldName("pointee")
+	if pointeeNode == nil {
+		c.addError(node, CollectorErrorSeverityError, "parseRawPointerType: missing pointee")
+		return nil
+	}
+	return types.RawPointerType{
+		Pointee: c.parseType(pointeeNode),
+		IsMut:   node.ChildByFieldName("is_mut") != nil,
 	}
 }
 

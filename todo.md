@@ -1,9 +1,5 @@
 ## To-Dos
 
-- Collect compose expr
-- Collect yield expr
-- Collect yield/from expr
-- Collect generators
 - Add sizeof() function to query type sizes
 
 ## Completed
@@ -17,6 +13,10 @@
 - Collect data_constructor_expr
 - Collect unsafe blocks
 - Collect given expr
+- Collect compose expr
+- Collect yield expr
+- Collect yield/from expr
+- Collect generators
 
 ### 05/11/26
 - Add tests for trait declarations with default methods

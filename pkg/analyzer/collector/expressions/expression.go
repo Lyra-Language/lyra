@@ -87,6 +87,8 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 		return CollectLambdaExpr(node, ctx, loc)
 	case "await_expr":
 		return collectAwaitExpr(node, ctx, loc)
+	case "sizeof_expr":
+		return collectSizeofExpr(node, ctx, loc)
 	case "compose_expr":
 		return collectComposeExpr(node, ctx, loc)
 	case "yield_expr":

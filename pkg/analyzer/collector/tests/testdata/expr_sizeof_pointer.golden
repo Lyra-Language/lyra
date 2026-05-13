@@ -1,0 +1,21 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(x) {
+			BindingKind: let
+			Name: x
+			Value: {
+				SizeofExpr {
+					Type: {
+						RawPointerType(^i32) {
+							Pointee: {
+								PrimitiveType(i32) {
+									Name: i32
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}
