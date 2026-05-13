@@ -76,3 +76,13 @@ func (v *VarDeclStmt) IsMutable() bool { return v.BindingKind == BindingVar }
 
 // IsConstant returns true if this is a const declaration
 func (v *VarDeclStmt) IsConstant() bool { return v.BindingKind == BindingConst }
+
+// DerefAssignmentStmt represents a pointer write: *target = value
+type DerefAssignmentStmt struct {
+	AstBase
+	Target DerefExpr
+	Value  Expression
+}
+
+func (d *DerefAssignmentStmt) statementNode()  {}
+func (d *DerefAssignmentStmt) GetName() string { return "deref_assignment" }

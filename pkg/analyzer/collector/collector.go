@@ -106,6 +106,8 @@ func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 		return statements.CollectForInLoopStmt(node, c.ctx)
 	case "with_statement":
 		return statements.CollectWithStatement(node, c.ctx)
+	case "deref_assignment":
+		return statements.CollectDerefAssignmentStmt(node, c.ctx)
 	case "break_statement":
 		return statements.CollectBreakStatement(node, c.ctx)
 	case "continue_statement":

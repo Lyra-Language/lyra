@@ -1,0 +1,18 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(p) {
+			BindingKind: let
+			Name: p
+			Value: {
+				AddressOfExpr {
+					IsMut: true
+					Operand: {
+						IdentifierExpr(x) {
+							Name: x
+						}
+					}
+				}
+			}
+		}
+	}
+}

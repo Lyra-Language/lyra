@@ -1,0 +1,17 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(v) {
+			BindingKind: let
+			Name: v
+			Value: {
+				DerefExpr {
+					Operand: {
+						IdentifierExpr(p) {
+							Name: p
+						}
+					}
+				}
+			}
+		}
+	}
+}

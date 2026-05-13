@@ -11,6 +11,21 @@ func (e *AwaitExpr) GetName() string {
 	return "await " + e.Operand.GetName()
 }
 
+type AddressOfExpr struct {
+	ExprBase
+	Operand Expression
+	IsMut   bool
+}
+
+func (e *AddressOfExpr) GetName() string { return "address_of_expr" }
+
+type DerefExpr struct {
+	ExprBase
+	Operand Expression
+}
+
+func (e *DerefExpr) GetName() string { return "deref_expr" }
+
 type SpreadExpr struct {
 	ExprBase
 	Name string

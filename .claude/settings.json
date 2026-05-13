@@ -2,7 +2,8 @@
   "permissions": {
     "allow": [
       "Bash(go build *)",
-      "Bash(go test *)"
+      "Bash(go test *)",
+      "Bash(python3 -c ' *)"
     ]
   }
 }

@@ -85,6 +85,10 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 		return CollectLambdaExpr(node, ctx, loc)
 	case "await_expr":
 		return collectAwaitExpr(node, ctx, loc)
+	case "address_of_expr":
+		return collectAddressOfExpr(node, ctx, loc)
+	case "deref_expr":
+		return collectDerefExpr(node, ctx, loc)
 	case "compound_assignment":
 		return collectCompoundAssignmentExpr(node, ctx, loc)
 	}
