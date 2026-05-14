@@ -9,8 +9,52 @@ Program(1 statements) {
 						StringLiteralExpr {
 							Value: Hello, 
 						}
-						IdentifierExpr(is_male) {
-							Name: is_male
+						IfExpr {
+							Condition: {
+								IdentifierExpr(is_male) {
+									Name: is_male
+								}
+							}
+							Else: {
+								BlockExpr {
+									Statements: {
+										ExpressionStmt {
+											Expression: {
+												InterpolatedStringExpr {
+													Segments: {
+														StringLiteralExpr {
+															Value: Mrs. 
+														}
+														IdentifierExpr(last_name) {
+															Name: last_name
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+							Then: {
+								BlockExpr {
+									Statements: {
+										ExpressionStmt {
+											Expression: {
+												InterpolatedStringExpr {
+													Segments: {
+														StringLiteralExpr {
+															Value: Mr. 
+														}
+														IdentifierExpr(last_name) {
+															Name: last_name
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
 						}
 						StringLiteralExpr {
 							Value: !

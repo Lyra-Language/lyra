@@ -11,7 +11,7 @@ func CollectDestructuringElseStatement(node *sitter.Node, ctx *collector_ctx.Ctx
 	if node == nil {
 		return nil
 	}
-	declNode := node.ChildByFieldName("destructuring_declaration")
+	declNode := node.ChildByFieldName("declaration")
 	elseNode := node.ChildByFieldName("else_block")
 	if declNode == nil || elseNode == nil {
 		return nil

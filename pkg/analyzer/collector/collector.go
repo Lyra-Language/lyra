@@ -92,8 +92,6 @@ func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 		return declarations.CollectTraitImplementation(node, c.ctx)
 	case "declaration", "const_declaration", "for_initial_expr":
 		return declarations.CollectVariableDeclaration(node, c.ctx)
-	case "destructuring_declaration":
-		return declarations.CollectDestructuringDeclaration(node, c.ctx)
 	case "destructuring_if_declaration":
 		return declarations.CollectDestructuringIfStatement(node, c.ctx)
 	case "destructuring_else_declaration":

@@ -8,7 +8,7 @@ import (
 )
 
 func CollectDestructuringIfStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.IfDestructuringStmt {
-	destructuringStatement := CollectDestructuringDeclaration(node.ChildByFieldName("destructuring_declaration"), ctx)
+	destructuringStatement := CollectDestructuringDeclaration(node.ChildByFieldName("declaration"), ctx)
 	thenNode := node.ChildByFieldName("then_block")
 	if thenNode == nil {
 		ctx.AddError(node, collector_ctx.SeverityError, "CollectDestructuringIfStatement: then block node is nil")

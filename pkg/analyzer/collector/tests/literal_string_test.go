@@ -55,5 +55,5 @@ func TestCollectInterpolatedStringExprWithArithmetic(t *testing.T) {
 }
 
 func TestCollectInterpolatedStringExprNested(t *testing.T) {
-	runGoldenTest(t, `let greeting = "Hello, ${if is_male then "Mr. ${last_name}" else "Mrs. ${last_name}" end}!"`, "interpolated_string_expr_nested")
+	runGoldenTest(t, `let greeting = "Hello, ${if is_male { "Mr. ${last_name}" } else { "Mrs. ${last_name}" }}!"`, "interpolated_string_expr_nested")
 }
