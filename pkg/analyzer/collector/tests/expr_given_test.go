@@ -20,3 +20,11 @@ func TestCollect_GivenExprWithConst(t *testing.T) {
 	source := `let circumference = 2 * PI * r given { const PI = 3.1415 }`
 	runGoldenTest(t, source, "expr_given_with_const")
 }
+
+func TestCollect_GivenExprWithDestructuringBinding(t *testing.T) {
+	source := `
+	let msg = greet(name) given {
+		let Some name = get_name() ?? "World"
+	}`
+	runGoldenTest(t, source, "expr_given_with_destructuring_binding")
+}
