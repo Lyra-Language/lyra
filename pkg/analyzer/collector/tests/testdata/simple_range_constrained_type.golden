@@ -10,8 +10,8 @@ Program(1 statements) {
 							End: {
 								MathConstraintLiteralExpr {
 									Type: {
-										PrimitiveType(int) {
-											Name: int
+										PrimitiveType(untyped_int) {
+											Name: untyped_int
 										}
 									}
 									Value: {
@@ -25,8 +25,8 @@ Program(1 statements) {
 							Start: {
 								MathConstraintLiteralExpr {
 									Type: {
-										PrimitiveType(int) {
-											Name: int
+										PrimitiveType(untyped_int) {
+											Name: untyped_int
 										}
 									}
 									Value: {
@@ -41,8 +41,8 @@ Program(1 statements) {
 					}
 					Name: Angle
 					Type: {
-						PrimitiveType(float) {
-							Name: float
+						PrimitiveType(f64) {
+							Name: f64
 						}
 					}
 				}

@@ -24,7 +24,7 @@ func TestCollector_ComplexDataType(t *testing.T) {
 			| ColorName CSSColorName
 			| Hex HexStr
 			| RGB { r: i8, g: i8, b: i8 }
-			| HSL { hue: Hue, sat: float, light: float, alpha: Alpha }
+			| HSL { hue: Hue, sat: f64, light: f64, alpha: Alpha }
 
 		data Hue = HueDeg Angle | HueRadian Radian | HueTurn Turn
 	`

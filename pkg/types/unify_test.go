@@ -13,7 +13,7 @@ import (
 // switch only matched the value form.
 func TestTypesEqualFunctionTypePointerConvention(t *testing.T) {
 	intT := types.PrimitiveType{Name: types.Int}
-	floatT := types.PrimitiveType{Name: types.Float}
+	floatT := types.PrimitiveType{Name: types.Float64}
 
 	makeSig := func(ret types.ReturnType, params ...types.Type) *types.LambdaType {
 		ps := make([]types.ParameterType, 0, len(params))

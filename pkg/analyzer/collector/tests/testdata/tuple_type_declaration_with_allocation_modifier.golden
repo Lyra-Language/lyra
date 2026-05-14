@@ -7,11 +7,11 @@ Program(1 statements) {
 			Type: {
 				TupleType(Point2D) {
 					Elements: {
-						PrimitiveType(float) {
-							Name: float
+						PrimitiveType(f64) {
+							Name: f64
 						}
-						PrimitiveType(float) {
-							Name: float
+						PrimitiveType(f64) {
+							Name: f64
 						}
 					}
 					Name: Point2D

@@ -19,8 +19,8 @@ Program(1 statements) {
 							}
 							Name: ?
 						}
-						PrimitiveType(float) {
-							Name: float
+						PrimitiveType(f64) {
+							Name: f64
 						}
 					}
 					Name: RGBA

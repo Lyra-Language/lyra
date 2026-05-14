@@ -3,7 +3,7 @@ package collector_test
 import "testing"
 
 func TestCollector_BasicConstrainedTypeWithoutConstraints(t *testing.T) {
-	runGoldenTest(t, `newtype Angle = float`, "basic_constrained_type_without_constraints")
+	runGoldenTest(t, `newtype Angle = f64`, "basic_constrained_type_without_constraints")
 }
 
 func TestCollector_ConstrainedTypeWithLiteralUnionConstraintWithStrings(t *testing.T) {
@@ -15,11 +15,11 @@ func TestCollector_ConstrainedTypeWithLiteralUnionConstraintWithNumbers(t *testi
 }
 
 func TestCollector_SimpleRangeConstrainedType(t *testing.T) {
-	runGoldenTest(t, `newtype Angle = float where range(0..<360)`, "simple_range_constrained_type")
+	runGoldenTest(t, `newtype Angle = f64 where range(0..<360)`, "simple_range_constrained_type")
 }
 
 func TestCollector_RangeConstrainedTypeWithConstantMultiplication(t *testing.T) {
-	runGoldenTest(t, `newtype Radian = float where range(0.0..<PI*2.0)`, "range_constrained_type_with_constant_multiplication")
+	runGoldenTest(t, `newtype Radian = f64 where range(0.0..<PI*2.0)`, "range_constrained_type_with_constant_multiplication")
 }
 
 func TestCollector_RangeConstrainedTypeWithNegation(t *testing.T) {
@@ -29,13 +29,13 @@ func TestCollector_RangeConstrainedTypeWithNegation(t *testing.T) {
 func TestCollector_RangeConstrainedTypeWithVariableAdditionAndSubtraction(t *testing.T) {
 	source := `
 		let pi = 3.14159
-		newtype Radian = float where range(pi-3..<pi+3)
+		newtype Radian = f64 where range(pi-3..<pi+3)
 	`
 	runGoldenTest(t, source, "range_constrained_type_with_variable_addition_and_subtraction")
 }
 
 func TestCollector_MultipleConstraints(t *testing.T) {
-	runGoldenTest(t, `newtype Radian = float where range(0..<PI*2), precision(0.01)`, "multiple_constraints")
+	runGoldenTest(t, `newtype Radian = f64 where range(0..<PI*2), precision(0.01)`, "multiple_constraints")
 }
 
 func TestCollector_StepConstrainedType(t *testing.T) {

@@ -3,7 +3,7 @@ package collector_test
 import "testing"
 
 func TestCollector_TupleTypeDeclaration(t *testing.T) {
-	runGoldenTest(t, `tuple Point2D(float, float)`, "tuple_type_declaration")
+	runGoldenTest(t, `tuple Point2D(f64, f64)`, "tuple_type_declaration")
 }
 
 func TestCollector_TupleTypeDeclarationWithGenericParameters(t *testing.T) {
@@ -15,13 +15,13 @@ func TestCollector_TupleTypeDeclarationWithGenericParamConstraints(t *testing.T)
 }
 
 func TestCollector_TupleTypeDeclarationWithVisibility(t *testing.T) {
-	runGoldenTest(t, `pub tuple Point2D(float, float)`, "tuple_type_declaration_with_visibility")
+	runGoldenTest(t, `pub tuple Point2D(f64, f64)`, "tuple_type_declaration_with_visibility")
 }
 
 func TestCollector_TupleTypeDeclarationWithAllocationModifier(t *testing.T) {
-	runGoldenTest(t, `pub stack tuple Point2D(float, float)`, "tuple_type_declaration_with_allocation_modifier")
+	runGoldenTest(t, `pub stack tuple Point2D(f64, f64)`, "tuple_type_declaration_with_allocation_modifier")
 }
 
 func TestCollector_TupleTypeDeclarationWithNestedTuple(t *testing.T) {
-	runGoldenTest(t, `tuple RGBA((int, int, int), float)`, "tuple_type_declaration_with_nested_tuple")
+	runGoldenTest(t, `tuple RGBA((int, int, int), f64)`, "tuple_type_declaration_with_nested_tuple")
 }

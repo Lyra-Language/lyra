@@ -46,8 +46,8 @@ func TestTypeCheck_U64Annotation_IntLiteral(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-func TestTypeCheck_FloatAnnotation_FloatLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: float = 3.14`)
+func TestTypeCheck_F32Annotation_FloatLiteral(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: f32 = 3.14`)
 	assertNoErrors(t, res)
 }
 
@@ -71,7 +71,7 @@ func TestTypeCheck_BoolAnnotation_BoolLiteral(t *testing.T) {
 func TestTypeCheck_StringAnnotation_IntLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: string = 42`)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign int to string")
+	assertErrorContains(t, res, "cannot assign untyped_int to string")
 }
 
 func TestTypeCheck_IntAnnotation_StringLiteral(t *testing.T) {
@@ -83,21 +83,21 @@ func TestTypeCheck_IntAnnotation_StringLiteral(t *testing.T) {
 func TestTypeCheck_BoolAnnotation_IntLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: bool = 1`)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign int to bool")
+	assertErrorContains(t, res, "cannot assign untyped_int to bool")
 }
 
 func TestTypeCheck_IntAnnotation_FloatLiteral(t *testing.T) {
 	// float literal is not assignable to an integer type.
 	res := parseCollectAndCheck(t, `let x: int = 3.14`)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign float to int")
+	assertErrorContains(t, res, "cannot assign untyped_float to int")
 }
 
-func TestTypeCheck_FloatAnnotation_IntLiteral(t *testing.T) {
-	// Integer literal is not assignable to float without an explicit cast.
-	res := parseCollectAndCheck(t, `let x: float = 42`)
+func TestTypeCheck_F64Annotation_IntLiteral(t *testing.T) {
+	// Integer literal is not assignable to a float type without an explicit cast.
+	res := parseCollectAndCheck(t, `let x: f64 = 42`)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign int to float")
+	assertErrorContains(t, res, "cannot assign untyped_int to f64")
 }
 
 func TestTypeCheck_StringAnnotation_BoolLiteral(t *testing.T) {
@@ -157,7 +157,7 @@ func typeTableEntryForFirstDecl(t *testing.T, source string) string {
 	return typ.String()
 }
 
-// Without an annotation the raw inferred type of the literal is stored.
+// Without an annotation the literal is promoted to its default concrete type.
 
 func TestTypeCheck_TypeTable_NoAnnotation_IntLiteral(t *testing.T) {
 	if got := typeTableEntryForFirstDecl(t, `let x = 42`); got != "int" {
@@ -166,8 +166,8 @@ func TestTypeCheck_TypeTable_NoAnnotation_IntLiteral(t *testing.T) {
 }
 
 func TestTypeCheck_TypeTable_NoAnnotation_FloatLiteral(t *testing.T) {
-	if got := typeTableEntryForFirstDecl(t, `let x = 3.14`); got != "float" {
-		t.Errorf("expected float, got %s", got)
+	if got := typeTableEntryForFirstDecl(t, `let x = 3.14`); got != "f64" {
+		t.Errorf("expected f64, got %s", got)
 	}
 }
 
@@ -234,17 +234,17 @@ func TestTypeCheck_TypeTable_BoolAnnotation_BoolLiteral(t *testing.T) {
 	}
 }
 
-// On a type mismatch the raw inferred type is stored (not the annotation),
+// On a type mismatch the raw untyped literal type is stored (not the annotation),
 // since the annotation cannot be applied to an incompatible value.
 
 func TestTypeCheck_TypeTable_Mismatch_StoresInferredType(t *testing.T) {
-	if got := typeTableEntryForFirstDecl(t, `let x: string = 42`); got != "int" {
-		t.Errorf("expected inferred int on mismatch, got %s", got)
+	if got := typeTableEntryForFirstDecl(t, `let x: string = 42`); got != "untyped_int" {
+		t.Errorf("expected inferred untyped_int on mismatch, got %s", got)
 	}
 }
 
 func TestTypeCheck_TypeTable_Mismatch_FloatToInt_StoresInferredType(t *testing.T) {
-	if got := typeTableEntryForFirstDecl(t, `let x: int = 3.14`); got != "float" {
-		t.Errorf("expected inferred float on mismatch, got %s", got)
+	if got := typeTableEntryForFirstDecl(t, `let x: int = 3.14`); got != "untyped_float" {
+		t.Errorf("expected inferred untyped_float on mismatch, got %s", got)
 	}
 }

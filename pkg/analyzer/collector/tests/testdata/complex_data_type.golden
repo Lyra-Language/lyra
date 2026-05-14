@@ -70,16 +70,16 @@ Program(2 statements) {
 										StructField(sat) {
 											Name: sat
 											Type: {
-												PrimitiveType(float) {
-													Name: float
+												PrimitiveType(f64) {
+													Name: f64
 												}
 											}
 										}
 										StructField(light) {
 											Name: light
 											Type: {
-												PrimitiveType(float) {
-													Name: float
+												PrimitiveType(f64) {
+													Name: f64
 												}
 											}
 										}

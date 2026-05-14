@@ -19,8 +19,8 @@ Program(1 statements) {
 									Right: {
 										MathConstraintLiteralExpr {
 											Type: {
-												PrimitiveType(int) {
-													Name: int
+												PrimitiveType(untyped_int) {
+													Name: untyped_int
 												}
 											}
 											Value: {
@@ -36,8 +36,8 @@ Program(1 statements) {
 							Start: {
 								MathConstraintLiteralExpr {
 									Type: {
-										PrimitiveType(int) {
-											Name: int
+										PrimitiveType(untyped_int) {
+											Name: untyped_int
 										}
 									}
 									Value: {
@@ -54,8 +54,8 @@ Program(1 statements) {
 							Value: {
 								MathConstraintLiteralExpr {
 									Type: {
-										PrimitiveType(float) {
-											Name: float
+										PrimitiveType(untyped_float) {
+											Name: untyped_float
 										}
 									}
 									Value: {
@@ -69,8 +69,8 @@ Program(1 statements) {
 					}
 					Name: Radian
 					Type: {
-						PrimitiveType(float) {
-							Name: float
+						PrimitiveType(f64) {
+							Name: f64
 						}
 					}
 				}

@@ -49,7 +49,7 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	}
 
 	if decl.Type == nil {
-		tc.typeTable.Set(decl.Value, inferredType)
+		tc.typeTable.Set(decl.Value, promoteToDefault(inferredType))
 		return
 	}
 
@@ -83,17 +83,65 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return e.GetType()
 	case *ast.CharacterLiteralExpr:
 		return e.GetType()
+	case *ast.MathBinaryOpExpr:
+		return tc.inferBinaryExpr(e)
 	case *ast.IdentifierExpr:
 		sym, ok := tc.scope.Lookup(e.Name)
 		if !ok {
 			return nil
 		}
 		if v, ok := sym.(*ast.VarDeclStmt); ok {
+			if v.Value != nil {
+				if t, ok := tc.typeTable.Get(v.Value); ok {
+					return t
+				}
+			}
 			return v.Type
 		}
 		return nil
 	}
 	return nil
+}
+
+// promoteToDefault converts an untyped literal type to its default concrete type.
+// UntypedInt → int (natural register-width signed integer)
+// UntypedFloat → f64
+func promoteToDefault(t types.Type) types.Type {
+	p, ok := t.(types.PrimitiveType)
+	if !ok {
+		return t
+	}
+	switch p.Name {
+	case types.UntypedInt:
+		return types.PrimitiveType{Name: types.Int}
+	case types.UntypedFloat:
+		return types.PrimitiveType{Name: types.Float64}
+	}
+	return t
+}
+
+func (tc *TypeChecker) inferBinaryExpr(expr *ast.MathBinaryOpExpr) types.Type {
+	left := tc.inferExprType(expr.Left)
+	right := tc.inferExprType(expr.Right)
+
+	if left == nil || right == nil {
+		return nil
+	}
+
+	if !types.IsNumeric(left) || !types.IsNumeric(right) {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"operator %s: operands must be numeric, got %s and %s", expr.Operator, left, right)
+		return nil
+	}
+
+	result := numericResultType(left, right)
+	if result == nil {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"operator %s: incompatible types %s and %s", expr.Operator, left, right)
+		return nil
+	}
+
+	return result
 }
 
 func (tc *TypeChecker) addError(loc ast.Location, sev Severity, format string, args ...any) {

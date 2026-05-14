@@ -24,7 +24,7 @@ func (i *IntegerLiteralExpr) GetName() string {
 	return fmt.Sprintf("IntegerLiteralExpr(%d, Base: %d)", i.Value, i.Base)
 }
 
-func (i *IntegerLiteralExpr) GetType() types.Type      { return types.PrimitiveType{Name: types.Int} }
+func (i *IntegerLiteralExpr) GetType() types.Type      { return types.PrimitiveType{Name: types.UntypedInt} }
 func (i *IntegerLiteralExpr) Int64() (int64, bool)     { return i.Value, true }
 func (i *IntegerLiteralExpr) Float64() (float64, bool) { return 0, false }
 func (i *IntegerLiteralExpr) ConstraintString() string { return fmt.Sprintf("%d", i.Value) }
@@ -50,7 +50,7 @@ func (f *FloatLiteralExpr) GetName() string {
 	return fmt.Sprintf("FloatLiteralExpr(%g)", f.Value) // NOTE: no trailing zeros
 }
 
-func (f *FloatLiteralExpr) GetType() types.Type      { return types.PrimitiveType{Name: types.Float} }
+func (f *FloatLiteralExpr) GetType() types.Type      { return types.PrimitiveType{Name: types.UntypedFloat} }
 func (f *FloatLiteralExpr) Int64() (int64, bool)     { return 0, false }
 func (f *FloatLiteralExpr) Float64() (float64, bool) { return f.Value, true }
 func (f *FloatLiteralExpr) ConstraintString() string { return fmt.Sprintf("%g", f.Value) }

@@ -10,7 +10,7 @@ func TestCollector_VariableDeclarationWithoutValue(t *testing.T) {
 }
 
 func TestCollector_VariableDeclarationWithLet(t *testing.T) {
-	runGoldenTest(t, `let pi: float = 3.14159`, "variable_declaration_with_let")
+	runGoldenTest(t, `let pi: f64 = 3.14159`, "variable_declaration_with_let")
 }
 
 func TestCollector_VariableDeclarationWithVar(t *testing.T) {
@@ -18,7 +18,7 @@ func TestCollector_VariableDeclarationWithVar(t *testing.T) {
 }
 
 func TestCollector_VariableDeclarationWithConst(t *testing.T) {
-	runGoldenTest(t, `const PI: float = 3.14159`, "variable_declaration_with_const")
+	runGoldenTest(t, `const PI: f64 = 3.14159`, "variable_declaration_with_const")
 }
 
 func TestCollector_VariableDeclarationWithoutTypeAnnotation(t *testing.T) {

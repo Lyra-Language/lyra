@@ -6,8 +6,8 @@ Program(1 statements) {
 				ConstrainedType(Angle) {
 					Name: Angle
 					Type: {
-						PrimitiveType(float) {
-							Name: float
+						PrimitiveType(f64) {
+							Name: f64
 						}
 					}
 				}
