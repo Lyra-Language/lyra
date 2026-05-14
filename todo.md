@@ -1,8 +1,13 @@
 ## To-Dos
 
-- Add sizeof() function to query type sizes
+
 
 ## Completed
+
+### 05/14/26
+- Removed "float" type (still have f16, f32, and f64)
+- Added type converting
+- Allowing int literal to be treated as a float
 
 ### 05/13/26
 - Collect arena statements
@@ -17,6 +22,8 @@
 - Collect yield expr
 - Collect yield/from expr
 - Collect generators
+- Add @sizeof() attr to query type sizes
+- Added typechecker
 
 ### 05/11/26
 - Add tests for trait declarations with default methods

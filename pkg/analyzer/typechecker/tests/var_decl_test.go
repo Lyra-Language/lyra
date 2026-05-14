@@ -66,6 +66,12 @@ func TestTypeCheck_BoolAnnotation_BoolLiteral(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
+func TestTypeCheck_F64Annotation_IntLiteral(t *testing.T) {
+	// Integer literal is assignable to a float type without an explicit cast.
+	res := parseCollectAndCheck(t, `let x: f64 = 42`)
+	assertNoErrors(t, res)
+}
+
 // --- annotation mismatch: one error ---
 
 func TestTypeCheck_StringAnnotation_IntLiteral(t *testing.T) {
@@ -91,13 +97,6 @@ func TestTypeCheck_IntAnnotation_FloatLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: int = 3.14`)
 	assertErrorCount(t, res, 1)
 	assertErrorContains(t, res, "cannot assign float literal to int")
-}
-
-func TestTypeCheck_F64Annotation_IntLiteral(t *testing.T) {
-	// Integer literal is not assignable to a float type without an explicit cast.
-	res := parseCollectAndCheck(t, `let x: f64 = 42`)
-	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign integer literal to f64")
 }
 
 func TestTypeCheck_StringAnnotation_BoolLiteral(t *testing.T) {

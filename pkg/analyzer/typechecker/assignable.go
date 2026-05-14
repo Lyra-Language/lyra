@@ -18,16 +18,16 @@ func isAssignable(from, to types.Type) bool {
 	}
 	switch fromP.Name {
 	case types.UntypedInt:
-		return isAnyInt(toP.Name)
+		return isAnyConcreteInt(toP.Name) || isAnyConcreteFloat(toP.Name)
 	case types.UntypedFloat:
-		return isAnyFloat(toP.Name)
+		return isAnyConcreteFloat(toP.Name)
 	}
 	return false
 }
 
 // numericResultType returns the result type of a binary operation on two numeric types.
 // UntypedInt/UntypedFloat widens to the concrete type when mixed with one.
-// Returns nil if the operands are from different numeric families or are otherwise incompatible.
+// Returns nil if the operands are from different concrete numeric types
 func numericResultType(a, b types.Type) types.Type {
 	if types.TypesEqual(a, b) {
 		return a
@@ -37,16 +37,16 @@ func numericResultType(a, b types.Type) types.Type {
 	if !aIsPrim || !bIsPrim {
 		return nil
 	}
-	if ap.Name == types.UntypedInt && isAnyInt(bp.Name) {
+	if ap.Name == types.UntypedInt && (isAnyConcreteInt(bp.Name) || isFloatType(bp)) {
 		return b
 	}
-	if bp.Name == types.UntypedInt && isAnyInt(ap.Name) {
+	if bp.Name == types.UntypedInt && (isAnyConcreteInt(ap.Name) || isFloatType(ap)) {
 		return a
 	}
-	if ap.Name == types.UntypedFloat && isAnyFloat(bp.Name) {
+	if ap.Name == types.UntypedFloat && isFloatType(bp) {
 		return b
 	}
-	if bp.Name == types.UntypedFloat && isAnyFloat(ap.Name) {
+	if bp.Name == types.UntypedFloat && isFloatType(ap) {
 		return a
 	}
 	return nil
@@ -67,7 +67,10 @@ func numericPrimitiveByName(name string) (types.Type, bool) {
 
 func isIntType(t types.Type) bool {
 	p, ok := t.(types.PrimitiveType)
-	return ok && isAnyInt(p.Name)
+	if !ok {
+		return false
+	}
+	return isAnyConcreteInt(p.Name) || p.Name == types.UntypedInt
 }
 
 func isFloatType(t types.Type) bool {
@@ -75,11 +78,7 @@ func isFloatType(t types.Type) bool {
 	if !ok {
 		return false
 	}
-	switch p.Name {
-	case types.Float16, types.Float32, types.Float64, types.UntypedFloat:
-		return true
-	}
-	return false
+	return isAnyConcreteFloat(p.Name) || p.Name == types.UntypedFloat
 }
 
 // floatPrecision returns the relative precision rank of a concrete float type
@@ -100,7 +99,7 @@ func floatPrecision(t types.Type) int {
 	return 0
 }
 
-func isAnyInt(n types.PrimitiveTypeName) bool {
+func isAnyConcreteInt(n types.PrimitiveTypeName) bool {
 	switch n {
 	case types.Int, types.Int8, types.Int16, types.Int32, types.Int64,
 		types.UInt, types.UInt8, types.UInt16, types.UInt32, types.UInt64:
@@ -109,7 +108,7 @@ func isAnyInt(n types.PrimitiveTypeName) bool {
 	return false
 }
 
-func isAnyFloat(n types.PrimitiveTypeName) bool {
+func isAnyConcreteFloat(n types.PrimitiveTypeName) bool {
 	switch n {
 	case types.Float16, types.Float32, types.Float64:
 		return true
