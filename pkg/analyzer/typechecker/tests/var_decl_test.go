@@ -71,7 +71,7 @@ func TestTypeCheck_BoolAnnotation_BoolLiteral(t *testing.T) {
 func TestTypeCheck_StringAnnotation_IntLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: string = 42`)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign untyped_int to string")
+	assertErrorContains(t, res, "cannot assign integer literal to string")
 }
 
 func TestTypeCheck_IntAnnotation_StringLiteral(t *testing.T) {
@@ -83,21 +83,21 @@ func TestTypeCheck_IntAnnotation_StringLiteral(t *testing.T) {
 func TestTypeCheck_BoolAnnotation_IntLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: bool = 1`)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign untyped_int to bool")
+	assertErrorContains(t, res, "cannot assign integer literal to bool")
 }
 
 func TestTypeCheck_IntAnnotation_FloatLiteral(t *testing.T) {
 	// float literal is not assignable to an integer type.
 	res := parseCollectAndCheck(t, `let x: int = 3.14`)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign untyped_float to int")
+	assertErrorContains(t, res, "cannot assign float literal to int")
 }
 
 func TestTypeCheck_F64Annotation_IntLiteral(t *testing.T) {
 	// Integer literal is not assignable to a float type without an explicit cast.
 	res := parseCollectAndCheck(t, `let x: f64 = 42`)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign untyped_int to f64")
+	assertErrorContains(t, res, "cannot assign integer literal to f64")
 }
 
 func TestTypeCheck_StringAnnotation_BoolLiteral(t *testing.T) {
@@ -238,13 +238,13 @@ func TestTypeCheck_TypeTable_BoolAnnotation_BoolLiteral(t *testing.T) {
 // since the annotation cannot be applied to an incompatible value.
 
 func TestTypeCheck_TypeTable_Mismatch_StoresInferredType(t *testing.T) {
-	if got := typeTableEntryForFirstDecl(t, `let x: string = 42`); got != "untyped_int" {
-		t.Errorf("expected inferred untyped_int on mismatch, got %s", got)
+	if got := typeTableEntryForFirstDecl(t, `let x: string = 42`); got != "integer literal" {
+		t.Errorf("expected inferred integer literal on mismatch, got %s", got)
 	}
 }
 
 func TestTypeCheck_TypeTable_Mismatch_FloatToInt_StoresInferredType(t *testing.T) {
-	if got := typeTableEntryForFirstDecl(t, `let x: int = 3.14`); got != "untyped_float" {
-		t.Errorf("expected inferred untyped_float on mismatch, got %s", got)
+	if got := typeTableEntryForFirstDecl(t, `let x: int = 3.14`); got != "float literal" {
+		t.Errorf("expected inferred float literal on mismatch, got %s", got)
 	}
 }

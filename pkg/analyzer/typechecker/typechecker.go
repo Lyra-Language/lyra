@@ -173,6 +173,8 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return e.GetType()
 	case *ast.CharacterLiteralExpr:
 		return e.GetType()
+	case *ast.FunctionCallExpr:
+		return tc.inferTypeConversion(e)
 	case *ast.MathBinaryOpExpr:
 		return tc.inferBinaryExpr(e)
 	case *ast.IdentifierExpr:
@@ -208,6 +210,44 @@ func promoteToDefault(t types.Type) types.Type {
 		return types.PrimitiveType{Name: types.Float64}
 	}
 	return t
+}
+
+// inferTypeConversion handles calls of the form `TypeName(expr)` where TypeName
+// is a concrete numeric primitive. Returns nil for ordinary function calls.
+func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Type {
+	ident, ok := call.Function.(*ast.IdentifierExpr)
+	if !ok {
+		return nil
+	}
+	targetType, ok := numericPrimitiveByName(ident.Name)
+	if !ok {
+		return nil
+	}
+	if len(call.Arguments) != 1 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"%s: type conversion requires exactly 1 argument, got %d", ident.Name, len(call.Arguments))
+		return targetType
+	}
+	argType := tc.inferExprType(call.Arguments[0])
+	if argType == nil {
+		return targetType
+	}
+	if !types.IsNumeric(argType) {
+		tc.addError(call.GetLocation(), SeverityError,
+			"cannot convert %s to %s", argType, ident.Name)
+		return nil
+	}
+	if isFloatType(argType) && isIntType(targetType) {
+		tc.addError(call.GetLocation(), SeverityError,
+			"cannot convert %s to %s: use a rounding function", argType, ident.Name)
+		return nil
+	}
+	if srcPrec, dstPrec := floatPrecision(argType), floatPrecision(targetType); srcPrec > dstPrec && dstPrec > 0 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"cannot convert %s to %s: use a rounding function", argType, ident.Name)
+		return nil
+	}
+	return targetType
 }
 
 func (tc *TypeChecker) inferBinaryExpr(expr *ast.MathBinaryOpExpr) types.Type {

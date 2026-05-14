@@ -72,7 +72,7 @@ func TestTypeCheck_BinaryExpr_StringAnnotation_IntAddition(t *testing.T) {
 func TestTypeCheck_BinaryExpr_IntAnnotation_FloatAddition(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: int = 1.0 + 2.0`)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign untyped_float to int")
+	assertErrorContains(t, res, "cannot assign float literal to int")
 }
 
 // operand type errors
