@@ -89,3 +89,33 @@ func TestCollect_LabeledForLoopWithContinue(t *testing.T) {
 	}`
 	runGoldenTest(t, source, "labeled_for_loop_with_continue")
 }
+
+func TestCollect_ForLoopAsExpression(t *testing.T) {
+	source := `
+	let result = for var i = 0; i < 100; i += 1 {
+		if i * i > 50 {
+			break i * i
+		}
+	}`
+	runGoldenTest(t, source, "for_loop_as_expression")
+}
+
+func TestCollect_ForInLoopAsExpression(t *testing.T) {
+	source := `
+	let found = for item in items {
+		if item > 10 {
+			break item
+		}
+	}`
+	runGoldenTest(t, source, "for_in_loop_as_expression")
+}
+
+func TestCollect_LabeledForLoopBreakWithValue(t *testing.T) {
+	source := `
+	let result = outer: for i in 0..=10 {
+		for j in 0..=10 {
+			break outer i + j
+		}
+	}`
+	runGoldenTest(t, source, "labeled_for_loop_break_with_value")
+}

@@ -1,7 +1,9 @@
 Program(1 statements) {
 	Statements: {
-		ExpressionStmt {
-			Expression: {
+		VarDeclStmt(result) {
+			BindingKind: let
+			Name: result
+			Value: {
 				ForLoopExpr {
 					Body: {
 						BlockExpr {
@@ -18,20 +20,19 @@ Program(1 statements) {
 																	Name: i
 																}
 															}
-															Operator: %
+															Operator: *
 															Right: {
-																IntegerLiteralExpr {
-																	Base: 10
-																	Value: 2
+																IdentifierExpr(i) {
+																	Name: i
 																}
 															}
 														}
 													}
-													Operator: ==
+													Operator: >
 													Right: {
 														IntegerLiteralExpr {
 															Base: 10
-															Value: 0
+															Value: 50
 														}
 													}
 												}
@@ -39,32 +40,24 @@ Program(1 statements) {
 											Then: {
 												BlockExpr {
 													Statements: {
-														ContinueStmt {
+														BreakStmt {
+															Value: {
+																MathBinaryOpExpr {
+																	Left: {
+																		IdentifierExpr(i) {
+																			Name: i
+																		}
+																	}
+																	Operator: *
+																	Right: {
+																		IdentifierExpr(i) {
+																			Name: i
+																		}
+																	}
+																}
+															}
 														}
 													}
-												}
-											}
-										}
-									}
-								}
-								ExpressionStmt {
-									Expression: {
-										FunctionCallExpr {
-											Arguments: {
-												InterpolatedStringExpr {
-													Segments: {
-														StringLiteralExpr {
-															Value: i == 
-														}
-														IdentifierExpr(i) {
-															Name: i
-														}
-													}
-												}
-											}
-											Function: {
-												IdentifierExpr(println) {
-													Name: println
 												}
 											}
 										}
@@ -84,7 +77,7 @@ Program(1 statements) {
 							Right: {
 								IntegerLiteralExpr {
 									Base: 10
-									Value: 10
+									Value: 100
 								}
 							}
 						}

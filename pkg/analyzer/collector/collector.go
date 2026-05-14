@@ -98,10 +98,6 @@ func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 		return declarations.CollectDestructuringElseStatement(node, c.ctx)
 	case "expression_statement":
 		return expressions.CollectExpressionStatement(node, c.ctx)
-	case "for_loop":
-		return statements.CollectForLoopStmt(node, c.ctx)
-	case "for_in_loop":
-		return statements.CollectForInLoopStmt(node, c.ctx)
 	case "with_statement":
 		return statements.CollectWithStatement(node, c.ctx)
 	case "var_reassignment":

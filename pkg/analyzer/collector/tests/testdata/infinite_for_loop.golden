@@ -1,20 +1,24 @@
 Program(1 statements) {
 	Statements: {
-		ForLoopStmt {
-			Body: {
-				BlockExpr {
-					Statements: {
-						ExpressionStmt {
-							Expression: {
-								FunctionCallExpr {
-									Arguments: {
-										StringLiteralExpr {
-											Value: All work and no play makes Homer something something...
-										}
-									}
-									Function: {
-										IdentifierExpr(println) {
-											Name: println
+		ExpressionStmt {
+			Expression: {
+				ForLoopExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								ExpressionStmt {
+									Expression: {
+										FunctionCallExpr {
+											Arguments: {
+												StringLiteralExpr {
+													Value: All work and no play makes Homer something something...
+												}
+											}
+											Function: {
+												IdentifierExpr(println) {
+													Name: println
+												}
+											}
 										}
 									}
 								}

@@ -1,35 +1,39 @@
 Program(1 statements) {
 	Statements: {
-		ForInLoopStmt {
-			Body: {
-				BlockExpr {
-					Statements: {
-						BreakStmt {
-							Label: outer
+		ExpressionStmt {
+			Expression: {
+				ForInLoopExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								BreakStmt {
+									Label: outer
+								}
+							}
 						}
 					}
-				}
-			}
-			Iterable: {
-				ArrayLiteralExpr {
-					Elements: {
-						IntegerLiteralExpr {
-							Base: 10
-							Value: 1
-						}
-						IntegerLiteralExpr {
-							Base: 10
-							Value: 2
-						}
-						IntegerLiteralExpr {
-							Base: 10
-							Value: 3
+					Iterable: {
+						ArrayLiteralExpr {
+							Elements: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
+								}
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 2
+								}
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 3
+								}
+							}
 						}
 					}
+					Key: item
+					Label: outer
 				}
 			}
-			Key: item
-			Label: outer
 		}
 	}
 }

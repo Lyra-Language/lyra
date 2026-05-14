@@ -1,0 +1,85 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(result) {
+			BindingKind: let
+			Name: result
+			Value: {
+				ForInLoopExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								ExpressionStmt {
+									Expression: {
+										ForInLoopExpr {
+											Body: {
+												BlockExpr {
+													Statements: {
+														BreakStmt {
+															Label: outer
+															Value: {
+																MathBinaryOpExpr {
+																	Left: {
+																		IdentifierExpr(i) {
+																			Name: i
+																		}
+																	}
+																	Operator: +
+																	Right: {
+																		IdentifierExpr(j) {
+																			Name: j
+																		}
+																	}
+																}
+															}
+														}
+													}
+												}
+											}
+											Iterable: {
+												RangeExpr {
+													End: {
+														IntegerLiteralExpr {
+															Base: 10
+															Value: 10
+														}
+													}
+													EndOperator: =
+													Start: {
+														IntegerLiteralExpr {
+															Base: 10
+															Value: 0
+														}
+													}
+												}
+											}
+											Key: j
+										}
+									}
+								}
+							}
+						}
+					}
+					Iterable: {
+						RangeExpr {
+							End: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 10
+								}
+							}
+							EndOperator: =
+							Start: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 0
+								}
+							}
+						}
+					}
+					Key: i
+					Label: outer
+				}
+			}
+		}
+	}
+}

@@ -10,64 +10,68 @@ Program(2 statements) {
 				}
 			}
 		}
-		ForLoopStmt {
-			Body: {
-				BlockExpr {
-					Statements: {
-						ExpressionStmt {
-							Expression: {
-								FunctionCallExpr {
-									Arguments: {
-										InterpolatedStringExpr {
-											Segments: {
-												StringLiteralExpr {
-													Value: i == 
-												}
-												IdentifierExpr(i) {
-													Name: i
+		ExpressionStmt {
+			Expression: {
+				ForLoopExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								ExpressionStmt {
+									Expression: {
+										FunctionCallExpr {
+											Arguments: {
+												InterpolatedStringExpr {
+													Segments: {
+														StringLiteralExpr {
+															Value: i == 
+														}
+														IdentifierExpr(i) {
+															Name: i
+														}
+													}
 												}
 											}
-										}
-									}
-									Function: {
-										IdentifierExpr(println) {
-											Name: println
+											Function: {
+												IdentifierExpr(println) {
+													Name: println
+												}
+											}
 										}
 									}
 								}
 							}
 						}
 					}
-				}
-			}
-			Condition: {
-				BooleanBinaryOpExpr {
-					Left: {
-						IdentifierExpr(i) {
-							Name: i
+					Condition: {
+						BooleanBinaryOpExpr {
+							Left: {
+								IdentifierExpr(i) {
+									Name: i
+								}
+							}
+							Operator: <
+							Right: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 10
+								}
+							}
 						}
 					}
-					Operator: <
-					Right: {
-						IntegerLiteralExpr {
-							Base: 10
-							Value: 10
-						}
-					}
-				}
-			}
-			Post: {
-				MathAssignOpExpr {
-					Left: {
-						IdentifierExpr(i) {
-							Name: i
-						}
-					}
-					Operator: +=
-					Right: {
-						IntegerLiteralExpr {
-							Base: 10
-							Value: 1
+					Post: {
+						MathAssignOpExpr {
+							Left: {
+								IdentifierExpr(i) {
+									Name: i
+								}
+							}
+							Operator: +=
+							Right: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
+								}
+							}
 						}
 					}
 				}

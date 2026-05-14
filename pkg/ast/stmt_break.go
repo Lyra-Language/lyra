@@ -2,7 +2,8 @@ package ast
 
 type BreakStmt struct {
 	AstBase
-	Label string // Optional label for breaking out of labeled loops
+	Label string     // Optional label for breaking out of labeled loops
+	Value Expression // Optional value to return from the loop
 }
 
 func (b *BreakStmt) statementNode() {}

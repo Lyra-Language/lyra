@@ -1,73 +1,125 @@
 Program(1 statements) {
 	Statements: {
-		ForLoopStmt {
-			Body: {
-				BlockExpr {
-					Statements: {
-						ForLoopStmt {
-							Body: {
-								BlockExpr {
-									Statements: {
-										ExpressionStmt {
-											Expression: {
-												IfExpr {
-													Condition: {
-														BooleanBinaryOpExpr {
-															Left: {
-																MathBinaryOpExpr {
-																	Left: {
-																		IdentifierExpr(y) {
-																			Name: y
+		ExpressionStmt {
+			Expression: {
+				ForLoopExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								ExpressionStmt {
+									Expression: {
+										ForLoopExpr {
+											Body: {
+												BlockExpr {
+													Statements: {
+														ExpressionStmt {
+															Expression: {
+																IfExpr {
+																	Condition: {
+																		BooleanBinaryOpExpr {
+																			Left: {
+																				MathBinaryOpExpr {
+																					Left: {
+																						IdentifierExpr(y) {
+																							Name: y
+																						}
+																					}
+																					Operator: %
+																					Right: {
+																						IntegerLiteralExpr {
+																							Base: 10
+																							Value: 2
+																						}
+																					}
+																				}
+																			}
+																			Operator: ==
+																			Right: {
+																				IntegerLiteralExpr {
+																					Base: 10
+																					Value: 0
+																				}
+																			}
 																		}
 																	}
-																	Operator: %
-																	Right: {
-																		IntegerLiteralExpr {
-																			Base: 10
-																			Value: 2
+																	Then: {
+																		BlockExpr {
+																			Statements: {
+																				ContinueStmt {
+																					Label: outer
+																				}
+																			}
 																		}
 																	}
-																}
-															}
-															Operator: ==
-															Right: {
-																IntegerLiteralExpr {
-																	Base: 10
-																	Value: 0
 																}
 															}
 														}
-													}
-													Then: {
-														BlockExpr {
-															Statements: {
-																ContinueStmt {
-																	Label: outer
+														ExpressionStmt {
+															Expression: {
+																FunctionCallExpr {
+																	Arguments: {
+																		InterpolatedStringExpr {
+																			Segments: {
+																				StringLiteralExpr {
+																					Value: y == 
+																				}
+																				IdentifierExpr(y) {
+																					Name: y
+																				}
+																			}
+																		}
+																	}
+																	Function: {
+																		IdentifierExpr(println) {
+																			Name: println
+																		}
+																	}
 																}
 															}
 														}
 													}
 												}
 											}
-										}
-										ExpressionStmt {
-											Expression: {
-												FunctionCallExpr {
-													Arguments: {
-														InterpolatedStringExpr {
-															Segments: {
-																StringLiteralExpr {
-																	Value: y == 
-																}
-																IdentifierExpr(y) {
-																	Name: y
-																}
-															}
+											Condition: {
+												BooleanBinaryOpExpr {
+													Left: {
+														IdentifierExpr(y) {
+															Name: y
 														}
 													}
-													Function: {
-														IdentifierExpr(println) {
-															Name: println
+													Operator: <
+													Right: {
+														IntegerLiteralExpr {
+															Base: 10
+															Value: 10
+														}
+													}
+												}
+											}
+											Init: {
+												VarDeclStmt(y) {
+													BindingKind: var
+													Name: y
+													Value: {
+														IntegerLiteralExpr {
+															Base: 10
+															Value: 0
+														}
+													}
+												}
+											}
+											Post: {
+												MathAssignOpExpr {
+													Left: {
+														IdentifierExpr(y) {
+															Name: y
+														}
+													}
+													Operator: +=
+													Right: {
+														IntegerLiteralExpr {
+															Base: 10
+															Value: 1
 														}
 													}
 												}
@@ -76,95 +128,51 @@ Program(1 statements) {
 									}
 								}
 							}
-							Condition: {
-								BooleanBinaryOpExpr {
-									Left: {
-										IdentifierExpr(y) {
-											Name: y
-										}
-									}
-									Operator: <
-									Right: {
-										IntegerLiteralExpr {
-											Base: 10
-											Value: 10
-										}
-									}
+						}
+					}
+					Condition: {
+						BooleanBinaryOpExpr {
+							Left: {
+								IdentifierExpr(i) {
+									Name: i
 								}
 							}
-							Init: {
-								VarDeclStmt(y) {
-									BindingKind: var
-									Name: y
-									Value: {
-										IntegerLiteralExpr {
-											Base: 10
-											Value: 0
-										}
-									}
-								}
-							}
-							Post: {
-								MathAssignOpExpr {
-									Left: {
-										IdentifierExpr(y) {
-											Name: y
-										}
-									}
-									Operator: +=
-									Right: {
-										IntegerLiteralExpr {
-											Base: 10
-											Value: 1
-										}
-									}
+							Operator: <
+							Right: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 10
 								}
 							}
 						}
 					}
-				}
-			}
-			Condition: {
-				BooleanBinaryOpExpr {
-					Left: {
-						IdentifierExpr(i) {
+					Init: {
+						VarDeclStmt(i) {
+							BindingKind: var
 							Name: i
+							Value: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 0
+								}
+							}
 						}
 					}
-					Operator: <
-					Right: {
-						IntegerLiteralExpr {
-							Base: 10
-							Value: 10
-						}
-					}
-				}
-			}
-			Init: {
-				VarDeclStmt(i) {
-					BindingKind: var
-					Name: i
-					Value: {
-						IntegerLiteralExpr {
-							Base: 10
-							Value: 0
-						}
-					}
-				}
-			}
-			Label: outer
-			Post: {
-				MathAssignOpExpr {
-					Left: {
-						IdentifierExpr(i) {
-							Name: i
-						}
-					}
-					Operator: +=
-					Right: {
-						IntegerLiteralExpr {
-							Base: 10
-							Value: 1
+					Label: outer
+					Post: {
+						MathAssignOpExpr {
+							Left: {
+								IdentifierExpr(i) {
+									Name: i
+								}
+							}
+							Operator: +=
+							Right: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
+								}
+							}
 						}
 					}
 				}

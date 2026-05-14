@@ -6,7 +6,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func CollectForInLoopStmt(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInLoopStmt {
+func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInLoopExpr {
 	ctx.PushLoopScope()
 	defer ctx.PopScope()
 
@@ -44,7 +44,7 @@ func CollectForInLoopStmt(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInL
 		return nil
 	}
 
-	return &ast.ForInLoopStmt{
+	return &ast.ForInLoopExpr{
 		Label:    label,
 		Key:      key,
 		Value:    value,

@@ -1,54 +1,58 @@
 Program(1 statements) {
 	Statements: {
-		ForInLoopStmt {
-			Body: {
-				BlockExpr {
-					Statements: {
-						ExpressionStmt {
-							Expression: {
-								FunctionCallExpr {
-									Arguments: {
-										InterpolatedStringExpr {
-											Segments: {
-												StringLiteralExpr {
-													Value: i == 
-												}
-												IdentifierExpr(i) {
-													Name: i
+		ExpressionStmt {
+			Expression: {
+				ForInLoopExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								ExpressionStmt {
+									Expression: {
+										FunctionCallExpr {
+											Arguments: {
+												InterpolatedStringExpr {
+													Segments: {
+														StringLiteralExpr {
+															Value: i == 
+														}
+														IdentifierExpr(i) {
+															Name: i
+														}
+													}
 												}
 											}
-										}
-									}
-									Function: {
-										IdentifierExpr(println) {
-											Name: println
+											Function: {
+												IdentifierExpr(println) {
+													Name: println
+												}
+											}
 										}
 									}
 								}
 							}
 						}
 					}
-				}
-			}
-			Iterable: {
-				TupleLiteralExpr(?) {
-					Elements: {
-						IntegerLiteralExpr {
-							Base: 10
-							Value: 1
-						}
-						StringLiteralExpr {
-							Value: 2
-						}
-						IntegerLiteralExpr {
-							Base: 10
-							Value: 3
+					Iterable: {
+						TupleLiteralExpr(?) {
+							Elements: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 1
+								}
+								StringLiteralExpr {
+									Value: 2
+								}
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 3
+								}
+							}
+							Name: ?
 						}
 					}
-					Name: ?
+					Key: i
 				}
 			}
-			Key: i
 		}
 	}
 }

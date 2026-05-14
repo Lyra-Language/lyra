@@ -1,7 +1,7 @@
 package ast
 
-type ForLoopStmt struct {
-	AstBase
+type ForLoopExpr struct {
+	ExprBase
 	Label     string
 	Init      *VarDeclStmt
 	Condition *Expression
@@ -9,11 +9,10 @@ type ForLoopStmt struct {
 	Body      BlockExpr
 }
 
-func (t *ForLoopStmt) statementNode()  {}
-func (t *ForLoopStmt) GetName() string { return "for_loop" }
+func (t *ForLoopExpr) GetName() string { return "for_loop" }
 
-type ForInLoopStmt struct {
-	AstBase
+type ForInLoopExpr struct {
+	ExprBase
 	Label    string
 	Key      string
 	Value    string
@@ -21,5 +20,4 @@ type ForInLoopStmt struct {
 	Body     BlockExpr
 }
 
-func (t *ForInLoopStmt) statementNode()  {}
-func (t *ForInLoopStmt) GetName() string { return "for_in_loop" }
+func (t *ForInLoopExpr) GetName() string { return "for_in_loop" }

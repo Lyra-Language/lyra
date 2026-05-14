@@ -1,0 +1,55 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(found) {
+			BindingKind: let
+			Name: found
+			Value: {
+				ForInLoopExpr {
+					Body: {
+						BlockExpr {
+							Statements: {
+								ExpressionStmt {
+									Expression: {
+										IfExpr {
+											Condition: {
+												BooleanBinaryOpExpr {
+													Left: {
+														IdentifierExpr(item) {
+															Name: item
+														}
+													}
+													Operator: >
+													Right: {
+														IntegerLiteralExpr {
+															Base: 10
+															Value: 10
+														}
+													}
+												}
+											}
+											Then: {
+												BlockExpr {
+													Statements: {
+														BreakStmt {
+															Label: item
+														}
+													}
+												}
+											}
+										}
+									}
+								}
+							}
+						}
+					}
+					Iterable: {
+						IdentifierExpr(items) {
+							Name: items
+						}
+					}
+					Key: item
+				}
+			}
+		}
+	}
+}

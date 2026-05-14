@@ -13,8 +13,14 @@ func CollectBreakStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Break
 		label = ctx.NodeText(labelNode)
 	}
 
+	var value ast.Expression
+	if valueNode := node.ChildByFieldName("value"); valueNode != nil {
+		value = ctx.CollectExpr(valueNode)
+	}
+
 	return &ast.BreakStmt{
 		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
 		Label:   label,
+		Value:   value,
 	}
 }

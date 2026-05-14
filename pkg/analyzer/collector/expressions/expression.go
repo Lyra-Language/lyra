@@ -2,6 +2,7 @@ package expressions
 
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/statements"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -107,6 +108,10 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 		return collectDerefExpr(node, ctx, loc)
 	case "compound_assignment":
 		return collectCompoundAssignmentExpr(node, ctx, loc)
+	case "for_loop":
+		return statements.CollectForLoopExpr(node, ctx)
+	case "for_in_loop":
+		return statements.CollectForInLoopExpr(node, ctx)
 	}
 
 	// For wrapper nodes (e.g. parenthesized), recurse into the first named child.
