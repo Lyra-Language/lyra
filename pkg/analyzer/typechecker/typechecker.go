@@ -35,6 +35,14 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 	switch n := node.(type) {
 	case *ast.VarDeclStmt:
 		tc.checkVarDecl(n)
+	case *ast.VarReassignmentStmt:
+		tc.checkVarReassignment(n)
+	case *ast.ExpressionStmt:
+		if e, ok := n.Expression.(*ast.MathAssignOpExpr); ok {
+			tc.checkMathAssignOp(e)
+		}
+	case *ast.DerefAssignmentStmt:
+		tc.checkDerefAssignment(n)
 	}
 }
 
@@ -63,6 +71,88 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// Store the annotation type — this is the effective type the expression is used as.
 	// e.g. literal 42 annotated as i32 should be recorded as i32, not the untyped int.
 	tc.typeTable.Set(decl.Value, decl.Type)
+}
+
+func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {
+	sym, ok := tc.scope.Lookup(stmt.Name)
+	if !ok {
+		return
+	}
+	decl, ok := sym.(*ast.VarDeclStmt)
+	if !ok {
+		return
+	}
+	if !decl.IsMutable() {
+		tc.addError(stmt.GetLocation(), SeverityError,
+			"%s: cannot assign to immutable binding", stmt.Name)
+		return
+	}
+	effective := tc.effectiveType(decl)
+	if effective == nil {
+		return
+	}
+	rhsType := tc.inferExprType(stmt.Value)
+	if rhsType == nil {
+		return
+	}
+	if !isAssignable(rhsType, effective) {
+		tc.addError(stmt.GetLocation(), SeverityError,
+			"%s: cannot assign %s to %s", stmt.Name, rhsType, effective)
+	}
+}
+
+// checkDerefAssignment handles the grammar's representation of const reassignment.
+// When the parser sees `X = val` where X is a const identifier, it emits a
+// DerefAssignmentStmt with a DerefExpr wrapping the const IdentifierExpr.
+func (tc *TypeChecker) checkDerefAssignment(stmt *ast.DerefAssignmentStmt) {
+	ident, ok := stmt.Target.Operand.(*ast.IdentifierExpr)
+	if !ok || !ident.IsConst {
+		return
+	}
+	tc.addError(stmt.GetLocation(), SeverityError,
+		"%s: cannot assign to immutable binding", ident.Name)
+}
+
+func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
+	sym, ok := tc.scope.Lookup(expr.Left.Name)
+	if !ok {
+		return
+	}
+	decl, ok := sym.(*ast.VarDeclStmt)
+	if !ok {
+		return
+	}
+	if !decl.IsMutable() {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"%s: cannot assign to immutable binding", expr.Left.Name)
+		return
+	}
+	effective := tc.effectiveType(decl)
+	if effective == nil {
+		return
+	}
+	rhsType := tc.inferExprType(expr.Right)
+	if rhsType == nil {
+		return
+	}
+	if !isAssignable(rhsType, effective) {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"%s: cannot assign %s to %s", expr.Left.Name, rhsType, effective)
+	}
+}
+
+// effectiveType returns the concrete type of a declaration: the annotation if
+// present, or the TypeTable entry recorded when the initializer was checked.
+func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
+	if decl.Type != nil {
+		return decl.Type
+	}
+	if decl.Value != nil {
+		if t, ok := tc.typeTable.Get(decl.Value); ok {
+			return t
+		}
+	}
+	return nil
 }
 
 // inferExprType returns the type of expr, or nil if it cannot be determined yet.
