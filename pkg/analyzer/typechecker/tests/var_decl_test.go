@@ -99,6 +99,41 @@ func TestTypeCheck_IntAnnotation_FloatLiteral(t *testing.T) {
 	assertErrorContains(t, res, "cannot assign float literal to int")
 }
 
+func TestTypeCheck_UnsignedIntAnnotation_NegatedLiteral(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: uint = -3`)
+	assertErrorCount(t, res, 1)
+	assertErrorContains(t, res, "cannot assign integer literal to uint")
+}
+
+// --- signed to unsigned mismatch: one error ---
+
+func TestTypeCheck_UnsignedIntAnnotation_SignedIntDeclarationUnannotated(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let a = 3
+		let b: uint = a
+	`)
+	assertErrorCount(t, res, 1)
+	assertErrorContains(t, res, "cannot assign int to uint")
+}
+
+func TestTypeCheck_UnsignedIntAnnotation_SignedIntDeclarationAnnotated(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let a: int = 3
+		let b: uint = a
+	`)
+	assertErrorCount(t, res, 1)
+	assertErrorContains(t, res, "cannot assign int to uint")
+}
+
+func TestTypeCheck_UnsignedIntAnnotation_ConcreteSignedIntDeclaration(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let a: i32 = 3
+		let b: uint = a
+	`)
+	assertErrorCount(t, res, 1)
+	assertErrorContains(t, res, "cannot assign i32 to uint")
+}
+
 func TestTypeCheck_StringAnnotation_BoolLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: string = false`)
 	assertErrorCount(t, res, 1)

@@ -16,8 +16,9 @@ const (
 	Float16      PrimitiveTypeName = "f16"
 	Float32      PrimitiveTypeName = "f32"
 	Float64      PrimitiveTypeName = "f64"
-	UntypedInt   PrimitiveTypeName = "untyped_int"
-	UntypedFloat PrimitiveTypeName = "untyped_float"
+	UntypedInt       PrimitiveTypeName = "untyped_int"
+	UntypedSignedInt PrimitiveTypeName = "untyped_signed_int"
+	UntypedFloat     PrimitiveTypeName = "untyped_float"
 	Bool         PrimitiveTypeName = "bool"
 	String       PrimitiveTypeName = "string"
 	Char         PrimitiveTypeName = "char"
@@ -31,7 +32,7 @@ func (PrimitiveType) typeNode() {}
 
 func (p PrimitiveType) GetName() string {
 	switch p.Name {
-	case UntypedInt:
+	case UntypedInt, UntypedSignedInt:
 		return "integer literal"
 	case UntypedFloat:
 		return "float literal"

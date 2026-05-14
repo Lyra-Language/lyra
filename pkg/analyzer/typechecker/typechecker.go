@@ -175,6 +175,8 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return e.GetType()
 	case *ast.FunctionCallExpr:
 		return tc.inferTypeConversion(e)
+	case *ast.NegationExpr:
+		return tc.inferNegationExpr(e)
 	case *ast.MathBinaryOpExpr:
 		return tc.inferBinaryExpr(e)
 	case *ast.IdentifierExpr:
@@ -204,7 +206,7 @@ func promoteToDefault(t types.Type) types.Type {
 		return t
 	}
 	switch p.Name {
-	case types.UntypedInt:
+	case types.UntypedInt, types.UntypedSignedInt:
 		return types.PrimitiveType{Name: types.Int}
 	case types.UntypedFloat:
 		return types.PrimitiveType{Name: types.Float64}
@@ -272,6 +274,28 @@ func (tc *TypeChecker) inferBinaryExpr(expr *ast.MathBinaryOpExpr) types.Type {
 	}
 
 	return result
+}
+
+func (tc *TypeChecker) inferNegationExpr(expr *ast.NegationExpr) types.Type {
+	operandType := tc.inferExprType(expr.Operand)
+	if operandType == nil {
+		return nil
+	}
+	if !types.IsNumeric(operandType) {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"cannot negate non-numeric type %s", operandType)
+		return nil
+	}
+	p, ok := operandType.(types.PrimitiveType)
+	if ok && isAnyConcreteUnsignedInt(p.Name) {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"cannot negate unsigned type %s", operandType)
+		return nil
+	}
+	if ok && (p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt) {
+		return types.PrimitiveType{Name: types.UntypedSignedInt}
+	}
+	return operandType
 }
 
 func (tc *TypeChecker) addError(loc ast.Location, sev Severity, format string, args ...any) {

@@ -4,9 +4,9 @@ import "github.com/Lyra-Language/lyra/pkg/types"
 
 // isAssignable reports whether a value of type from can be assigned to a slot of type to.
 //
-// Untyped integer literals (UntypedInt) are assignable to any concrete integer type.
-// Untyped float literals (UntypedFloat) are assignable to any concrete float type.
-// All concrete types require exact structural equality.
+// Untyped integer literals (UntypedInt) are assignable to any concrete integer type or
+// any concrete float type. Untyped float literals (UntypedFloat) are assignable to any
+// concrete float type. All concrete types require exact structural equality.
 func isAssignable(from, to types.Type) bool {
 	if types.TypesEqual(from, to) {
 		return true
@@ -19,6 +19,8 @@ func isAssignable(from, to types.Type) bool {
 	switch fromP.Name {
 	case types.UntypedInt:
 		return isAnyConcreteInt(toP.Name) || isAnyConcreteFloat(toP.Name)
+	case types.UntypedSignedInt:
+		return isAnyConcreteSignedInt(toP.Name) || isAnyConcreteFloat(toP.Name)
 	case types.UntypedFloat:
 		return isAnyConcreteFloat(toP.Name)
 	}
@@ -41,6 +43,19 @@ func numericResultType(a, b types.Type) types.Type {
 		return b
 	}
 	if bp.Name == types.UntypedInt && (isAnyConcreteInt(ap.Name) || isFloatType(ap)) {
+		return a
+	}
+	// UntypedInt + UntypedSignedInt → UntypedSignedInt (signed takes precedence)
+	if ap.Name == types.UntypedInt && bp.Name == types.UntypedSignedInt {
+		return b
+	}
+	if bp.Name == types.UntypedInt && ap.Name == types.UntypedSignedInt {
+		return a
+	}
+	if ap.Name == types.UntypedSignedInt && (isAnyConcreteSignedInt(bp.Name) || isFloatType(bp)) {
+		return b
+	}
+	if bp.Name == types.UntypedSignedInt && (isAnyConcreteSignedInt(ap.Name) || isFloatType(ap)) {
 		return a
 	}
 	if ap.Name == types.UntypedFloat && isFloatType(bp) {
@@ -70,7 +85,7 @@ func isIntType(t types.Type) bool {
 	if !ok {
 		return false
 	}
-	return isAnyConcreteInt(p.Name) || p.Name == types.UntypedInt
+	return isAnyConcreteInt(p.Name) || p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt
 }
 
 func isFloatType(t types.Type) bool {
@@ -100,9 +115,20 @@ func floatPrecision(t types.Type) int {
 }
 
 func isAnyConcreteInt(n types.PrimitiveTypeName) bool {
+	return isAnyConcreteSignedInt(n) || isAnyConcreteUnsignedInt(n)
+}
+
+func isAnyConcreteSignedInt(n types.PrimitiveTypeName) bool {
 	switch n {
-	case types.Int, types.Int8, types.Int16, types.Int32, types.Int64,
-		types.UInt, types.UInt8, types.UInt16, types.UInt32, types.UInt64:
+	case types.Int, types.Int8, types.Int16, types.Int32, types.Int64:
+		return true
+	}
+	return false
+}
+
+func isAnyConcreteUnsignedInt(n types.PrimitiveTypeName) bool {
+	switch n {
+	case types.UInt, types.UInt8, types.UInt16, types.UInt32, types.UInt64:
 		return true
 	}
 	return false
