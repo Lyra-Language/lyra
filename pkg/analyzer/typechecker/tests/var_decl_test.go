@@ -9,98 +9,98 @@ import (
 // --- no annotation: no errors ---
 
 func TestTypeCheck_NoAnnotation_IntLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x = 42`)
+	res := parseCollectAndCheck(t, `let x = 42`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_NoAnnotation_FloatLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x = 3.14`)
+	res := parseCollectAndCheck(t, `let x = 3.14`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_NoAnnotation_StringLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x = "hello"`)
+	res := parseCollectAndCheck(t, `let x = "hello"`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_NoAnnotation_BoolLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x = true`)
+	res := parseCollectAndCheck(t, `let x = true`, false)
 	assertNoErrors(t, res)
 }
 
 // --- annotation matches literal: no errors ---
 
 func TestTypeCheck_IntAnnotation_IntLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: int = 42`)
+	res := parseCollectAndCheck(t, `let x: int = 42`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_I32Annotation_IntLiteral(t *testing.T) {
 	// Untyped integer literal is assignable to any concrete integer type.
-	res := parseCollectAndCheck(t, `let x: i32 = 42`)
+	res := parseCollectAndCheck(t, `let x: i32 = 42`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_U64Annotation_IntLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: u64 = 100`)
+	res := parseCollectAndCheck(t, `let x: u64 = 100`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_F32Annotation_FloatLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: f32 = 3.14`)
+	res := parseCollectAndCheck(t, `let x: f32 = 3.14`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_F64Annotation_FloatLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: f64 = 2.718`)
+	res := parseCollectAndCheck(t, `let x: f64 = 2.718`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_StringAnnotation_StringLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: string = "hello"`)
+	res := parseCollectAndCheck(t, `let x: string = "hello"`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_BoolAnnotation_BoolLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: bool = true`)
+	res := parseCollectAndCheck(t, `let x: bool = true`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_F64Annotation_IntLiteral(t *testing.T) {
 	// Integer literal is assignable to a float type without an explicit cast.
-	res := parseCollectAndCheck(t, `let x: f64 = 42`)
+	res := parseCollectAndCheck(t, `let x: f64 = 42`, false)
 	assertNoErrors(t, res)
 }
 
 // --- annotation mismatch: one error ---
 
 func TestTypeCheck_StringAnnotation_IntLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: string = 42`)
+	res := parseCollectAndCheck(t, `let x: string = 42`, false)
 	assertErrorCount(t, res, 1)
 	assertErrorContains(t, res, "cannot assign integer literal to string")
 }
 
 func TestTypeCheck_IntAnnotation_StringLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: int = "hello"`)
+	res := parseCollectAndCheck(t, `let x: int = "hello"`, false)
 	assertErrorCount(t, res, 1)
 	assertErrorContains(t, res, "cannot assign string to int")
 }
 
 func TestTypeCheck_BoolAnnotation_IntLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: bool = 1`)
+	res := parseCollectAndCheck(t, `let x: bool = 1`, false)
 	assertErrorCount(t, res, 1)
 	assertErrorContains(t, res, "cannot assign integer literal to bool")
 }
 
 func TestTypeCheck_IntAnnotation_FloatLiteral(t *testing.T) {
 	// float literal is not assignable to an integer type.
-	res := parseCollectAndCheck(t, `let x: int = 3.14`)
+	res := parseCollectAndCheck(t, `let x: int = 3.14`, false)
 	assertErrorCount(t, res, 1)
 	assertErrorContains(t, res, "cannot assign float literal to int")
 }
 
 func TestTypeCheck_UnsignedIntAnnotation_NegatedLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: uint = -3`)
+	res := parseCollectAndCheck(t, `let x: uint = -3`, false)
 	assertErrorCount(t, res, 1)
 	assertErrorContains(t, res, "cannot assign integer literal to uint")
 }
@@ -111,7 +111,7 @@ func TestTypeCheck_UnsignedIntAnnotation_SignedIntDeclarationUnannotated(t *test
 	res := parseCollectAndCheck(t, `
 		let a = 3
 		let b: uint = a
-	`)
+	`, false)
 	assertErrorCount(t, res, 1)
 	assertErrorContains(t, res, "cannot assign int to uint")
 }
@@ -120,7 +120,7 @@ func TestTypeCheck_UnsignedIntAnnotation_SignedIntDeclarationAnnotated(t *testin
 	res := parseCollectAndCheck(t, `
 		let a: int = 3
 		let b: uint = a
-	`)
+	`, false)
 	assertErrorCount(t, res, 1)
 	assertErrorContains(t, res, "cannot assign int to uint")
 }
@@ -129,13 +129,13 @@ func TestTypeCheck_UnsignedIntAnnotation_ConcreteSignedIntDeclaration(t *testing
 	res := parseCollectAndCheck(t, `
 		let a: i32 = 3
 		let b: uint = a
-	`)
+	`, false)
 	assertErrorCount(t, res, 1)
 	assertErrorContains(t, res, "cannot assign i32 to uint")
 }
 
 func TestTypeCheck_StringAnnotation_BoolLiteral(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: string = false`)
+	res := parseCollectAndCheck(t, `let x: string = false`, false)
 	assertErrorCount(t, res, 1)
 	assertErrorContains(t, res, "cannot assign bool to string")
 }
@@ -147,7 +147,7 @@ func TestTypeCheck_MultipleDecls_AllValid(t *testing.T) {
 	let a: int = 1
 	let b: string = "hi"
 	let c: bool = true
-	`)
+	`, false)
 	assertNoErrors(t, res)
 }
 
@@ -156,7 +156,7 @@ func TestTypeCheck_MultipleDecls_OneError(t *testing.T) {
 	let a: int = 1
 	let b: string = 99
 	let c: bool = true
-	`)
+	`, false)
 	assertErrorCount(t, res, 1)
 	assertErrorContains(t, res, "b")
 }
@@ -165,7 +165,7 @@ func TestTypeCheck_MultipleDecls_TwoErrors(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let a: string = 1
 	let b: int = "oops"
-	`)
+	`, false)
 	assertErrorCount(t, res, 2)
 }
 
@@ -176,7 +176,7 @@ func TestTypeCheck_MultipleDecls_TwoErrors(t *testing.T) {
 // VarDeclStmt). Fails the test if anything is missing.
 func typeTableEntryForFirstDecl(t *testing.T, source string) string {
 	t.Helper()
-	res := parseCollectAndCheck(t, source)
+	res := parseCollectAndCheck(t, source, false)
 	if len(res.program.Statements) == 0 {
 		t.Fatal("expected at least one statement")
 	}

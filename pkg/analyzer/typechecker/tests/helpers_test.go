@@ -9,6 +9,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	"github.com/Lyra-Language/lyra/pkg/parser"
+	"github.com/Lyra-Language/lyra/pkg/printer"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
@@ -19,9 +20,14 @@ type checkResult struct {
 	errors    []typechecker.TypeError
 }
 
-func parseCollectAndCheck(t *testing.T, source string) checkResult {
+func parseCollectAndCheck(t *testing.T, source string, printTree bool) checkResult {
 	t.Helper()
 	tree, err := parser.Parse(source)
+	// Print tree
+	if printTree {
+		p := printer.NewPrinter()
+		p.Print(tree.RootNode())
+	}
 	if err != nil {
 		t.Fatalf("parse error: %v", err)
 	}

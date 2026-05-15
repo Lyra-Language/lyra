@@ -1,0 +1,43 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(x) {
+			BindingKind: let
+			Name: x
+			Value: {
+				BooleanBinaryOpExpr {
+					Left: {
+						BooleanBinaryOpExpr {
+							Left: {
+								IdentifierExpr(a) {
+									Name: a
+								}
+							}
+							Operator: <
+							Right: {
+								IdentifierExpr(b) {
+									Name: b
+								}
+							}
+						}
+					}
+					Operator: &&
+					Right: {
+						BooleanBinaryOpExpr {
+							Left: {
+								IdentifierExpr(c) {
+									Name: c
+								}
+							}
+							Operator: >
+							Right: {
+								IdentifierExpr(d) {
+									Name: d
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

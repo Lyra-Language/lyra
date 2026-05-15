@@ -25,6 +25,14 @@ func IsNumeric(t Type) bool {
 	}
 }
 
+func IsBoolean(t Type) bool {
+	primitive, ok := t.(PrimitiveType)
+	if !ok {
+		return false
+	}
+	return primitive.Name == Bool
+}
+
 type SelfType struct {
 	GenericParams []string
 }

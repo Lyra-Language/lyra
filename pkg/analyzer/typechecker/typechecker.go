@@ -5,8 +5,8 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
-	"github.com/Lyra-Language/lyra/pkg/typetable"
 	"github.com/Lyra-Language/lyra/pkg/types"
+	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
 type TypeChecker struct {
@@ -40,9 +40,15 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 	case *ast.ExpressionStmt:
 		if e, ok := n.Expression.(*ast.MathAssignOpExpr); ok {
 			tc.checkMathAssignOp(e)
+		} else if e, ok := n.Expression.(*ast.BooleanLiteralExpr); ok {
+			tc.checkBooleanLiteralExpr(e)
+		} else if e, ok := n.Expression.(*ast.BooleanBinaryOpExpr); ok {
+			tc.checkBooleanBinaryOpExpr(e)
 		}
 	case *ast.DerefAssignmentStmt:
 		tc.checkDerefAssignment(n)
+	case *ast.BooleanBinaryOpExpr:
+		tc.checkBooleanBinaryOpExpr(n)
 	}
 }
 
@@ -141,6 +147,27 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 	}
 }
 
+func (tc *TypeChecker) checkBooleanLiteralExpr(expr *ast.BooleanLiteralExpr) {
+	exprType := tc.inferExprType(expr)
+	if exprType == nil {
+		return
+	}
+	if !types.IsBoolean(exprType) {
+		tc.addError(expr.GetLocation(), SeverityError, "expected bool type, got %s instead", exprType)
+	}
+}
+
+func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
+	lhsType := tc.inferExprType(expr.Left)
+	rhsType := tc.inferExprType(expr.Right)
+	if !types.IsBoolean(lhsType) {
+		tc.addError(expr.GetLocation(), SeverityError, "expected left expression to be bool, got %s instead", lhsType)
+	}
+	if !types.IsBoolean(rhsType) {
+		tc.addError(expr.GetLocation(), SeverityError, "expected right expression to be bool, got %s instead", rhsType)
+	}
+}
+
 // effectiveType returns the concrete type of a declaration: the annotation if
 // present, or the TypeTable entry recorded when the initializer was checked.
 func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
@@ -177,8 +204,11 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return tc.inferTypeConversion(e)
 	case *ast.NegationExpr:
 		return tc.inferNegationExpr(e)
+	case *ast.BooleanBinaryOpExpr:
+		tc.checkBooleanBinaryOpExpr(e)
+		return types.PrimitiveType{Name: types.Bool}
 	case *ast.MathBinaryOpExpr:
-		return tc.inferBinaryExpr(e)
+		return tc.inferMathBinaryExpr(e)
 	case *ast.IdentifierExpr:
 		sym, ok := tc.scope.Lookup(e.Name)
 		if !ok {
@@ -252,7 +282,7 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 	return targetType
 }
 
-func (tc *TypeChecker) inferBinaryExpr(expr *ast.MathBinaryOpExpr) types.Type {
+func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Type {
 	left := tc.inferExprType(expr.Left)
 	right := tc.inferExprType(expr.Right)
 
