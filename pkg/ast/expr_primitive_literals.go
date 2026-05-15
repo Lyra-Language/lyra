@@ -89,7 +89,7 @@ type BooleanLiteralExpr struct {
 func (b *BooleanLiteralExpr) primitiveLiteralValueNode() {}
 func (b *BooleanLiteralExpr) LiteralText() string        { return fmt.Sprintf("%t", b.Value) }
 
-func (b *BooleanLiteralExpr) GetType() types.Type { return types.PrimitiveType{Name: types.Bool} }
+func (b *BooleanLiteralExpr) GetType() types.Type { return types.PrimitiveType{Name: types.Boolean} }
 func (b *BooleanLiteralExpr) GetName() string {
 	return fmt.Sprintf("BooleanLiteralExpr(%t)", b.Value)
 }

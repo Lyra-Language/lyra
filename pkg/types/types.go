@@ -30,7 +30,7 @@ func IsBoolean(t Type) bool {
 	if !ok {
 		return false
 	}
-	return primitive.Name == Bool
+	return primitive.Name == Boolean
 }
 
 type SelfType struct {

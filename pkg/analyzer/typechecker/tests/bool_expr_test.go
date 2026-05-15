@@ -67,17 +67,17 @@ func TestTypeCheck_BoolAndBinaryExpr_TwoBoolLiterals(t *testing.T) {
 func TestTypeCheck_NotBooleanExpr_NonBool(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x = !3.1415`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "expected bool type, got float literal instead")
+	assertErrorContains(t, res, "expected boolean, got float literal instead")
 }
 
 func TestTypeCheck_BoolAndBinaryExpr_OneNonBoolLiteralOnLeft(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x = "true" && true`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "expected left expression to be bool, got string instead")
+	assertErrorContains(t, res, "operands must both be boolean, got string and boolean instead")
 }
 
 func TestTypeCheck_BoolAndBinaryExpr_OneNonBoolLiteralOnRight(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x = true && 4`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "expected right expression to be bool, got integer literal instead")
+	assertErrorContains(t, res, "operands must both be boolean, got boolean and integer literal instead")
 }

@@ -1,8 +1,6 @@
 ## To-Dos
 
 ### Typechecker
-
-- **Comparison operators** — type-check `==`, `!=`, `<`, `>`, `<=`, `>=`; operands must be compatible, result is `bool`
 - **String concatenation** — allow `+` on two `string` operands as a special case of binary expressions
 - **Function declaration type-checking** — verify that return expressions match the declared return type; check parameter types against call-site arguments
 - **If/else expression type-checking** — branches must have compatible types; condition must be `bool`
@@ -13,6 +11,9 @@
 - **Duplicate variable declaration detection** — error when the same name is declared twice in the same scope
 
 ## Completed
+
+### 05/15/26
+- **Comparison operators** — type-check `==`, `!=`, `<`, `>`, `<=`, `>=`; operands must be compatible, result is `bool`
 
 ### 05/14/26
 - Removed "float" type (still have f16, f32, and f64)

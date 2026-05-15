@@ -137,7 +137,7 @@ func TestTypeCheck_UnsignedIntAnnotation_ConcreteSignedIntDeclaration(t *testing
 func TestTypeCheck_StringAnnotation_BoolLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: string = false`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign bool to string")
+	assertErrorContains(t, res, "cannot assign boolean to string")
 }
 
 // --- multiple declarations: each checked independently ---
@@ -212,8 +212,8 @@ func TestTypeCheck_TypeTable_NoAnnotation_StringLiteral(t *testing.T) {
 }
 
 func TestTypeCheck_TypeTable_NoAnnotation_BoolLiteral(t *testing.T) {
-	if got := typeTableEntryForFirstDecl(t, `let x = true`); got != "bool" {
-		t.Errorf("expected bool, got %s", got)
+	if got := typeTableEntryForFirstDecl(t, `let x = true`); got != "boolean" {
+		t.Errorf("expected boolean, got %s", got)
 	}
 }
 
@@ -263,8 +263,8 @@ func TestTypeCheck_TypeTable_StringAnnotation_StringLiteral(t *testing.T) {
 }
 
 func TestTypeCheck_TypeTable_BoolAnnotation_BoolLiteral(t *testing.T) {
-	if got := typeTableEntryForFirstDecl(t, `let x: bool = false`); got != "bool" {
-		t.Errorf("expected bool, got %s", got)
+	if got := typeTableEntryForFirstDecl(t, `let x: boolean = false`); got != "boolean" {
+		t.Errorf("expected boolean, got %s", got)
 	}
 }
 

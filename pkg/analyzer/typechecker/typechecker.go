@@ -117,8 +117,7 @@ func (tc *TypeChecker) checkDerefAssignment(stmt *ast.DerefAssignmentStmt) {
 	if !ok || !ident.IsConst {
 		return
 	}
-	tc.addError(stmt.GetLocation(), SeverityError,
-		"%s: cannot assign to immutable binding", ident.Name)
+	tc.addImmutableBindingError(stmt.Target.Operand, ident.Name)
 }
 
 func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
@@ -131,8 +130,7 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 		return
 	}
 	if !decl.IsMutable() {
-		tc.addError(expr.GetLocation(), SeverityError,
-			"%s: cannot assign to immutable binding", expr.Left.Name)
+		tc.addImmutableBindingError(expr, expr.Left.Name)
 		return
 	}
 	effective := tc.effectiveType(decl)
@@ -155,7 +153,7 @@ func (tc *TypeChecker) checkBooleanLiteralExpr(expr *ast.BooleanLiteralExpr) {
 		return
 	}
 	if !types.IsBoolean(exprType) {
-		tc.addError(expr.GetLocation(), SeverityError, "expected bool type, got %s instead", exprType)
+		tc.addExpectedTypeError(expr, types.PrimitiveType{Name: types.Boolean}, exprType)
 	}
 }
 
@@ -165,19 +163,49 @@ func (tc *TypeChecker) checkNotBooleanExpr(expr *ast.NotBooleanExpr) {
 		return
 	}
 	if !types.IsBoolean(exprType) {
-		tc.addError(expr.GetLocation(), SeverityError, "expected bool type, got %s instead", exprType)
+		tc.addExpectedTypeError(expr, types.PrimitiveType{Name: types.Boolean}, exprType)
 	}
 }
 
 func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
-	lhsType := tc.inferExprType(expr.Left)
-	rhsType := tc.inferExprType(expr.Right)
-	if !types.IsBoolean(lhsType) {
-		tc.addError(expr.GetLocation(), SeverityError, "expected left expression to be bool, got %s instead", lhsType)
+	leftType := tc.inferExprType(expr.Left)
+	rightType := tc.inferExprType(expr.Right)
+
+	switch expr.Operator {
+	case ast.BooleanBinaryOpAnd, ast.BooleanBinaryOpOr:
+		if !types.IsBoolean(leftType) || !types.IsBoolean(rightType) {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"operands must both be boolean, got %s and %s instead", leftType, rightType)
+		}
+	case ast.BooleanBinaryOpEq, ast.BooleanBinaryOpNEq:
+		if !areEqualityCompatible(leftType, rightType) {
+			tc.addIncompatibleTypesError(expr, leftType, rightType)
+		}
+	case ast.BooleanBinaryOpLT, ast.BooleanBinaryOpLTE, ast.BooleanBinaryOpGT, ast.BooleanBinaryOpGTE:
+		if !types.IsNumeric(leftType) || !types.IsNumeric(rightType) {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"operands must be numeric, got %s and %s instead", leftType, rightType)
+			return
+		}
+		if numericResultType(leftType, rightType) == nil {
+			tc.addIncompatibleTypesError(expr, leftType, rightType)
+		}
 	}
-	if !types.IsBoolean(rhsType) {
-		tc.addError(expr.GetLocation(), SeverityError, "expected right expression to be bool, got %s instead", rhsType)
-	}
+}
+
+func (tc *TypeChecker) addImmutableBindingError(expr ast.Expression, name string) {
+	tc.addError(expr.GetLocation(), SeverityError,
+		"%s: cannot assign to immutable binding", name)
+}
+
+func (tc *TypeChecker) addExpectedTypeError(expr ast.Expression, expected, actual types.Type) {
+	tc.addError(expr.GetLocation(), SeverityError,
+		"expected %s, got %s instead", expected, actual)
+}
+
+func (tc *TypeChecker) addIncompatibleTypesError(expr ast.Expression, leftType, rightType types.Type) {
+	tc.addError(expr.GetLocation(), SeverityError,
+		"incompatible types: %s and %s", leftType, rightType)
 }
 
 // effectiveType returns the concrete type of a declaration: the annotation if
@@ -218,10 +246,10 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return tc.inferNegationExpr(e)
 	case *ast.NotBooleanExpr:
 		tc.checkNotBooleanExpr(e)
-		return types.PrimitiveType{Name: types.Bool}
+		return types.PrimitiveType{Name: types.Boolean}
 	case *ast.BooleanBinaryOpExpr:
 		tc.checkBooleanBinaryOpExpr(e)
-		return types.PrimitiveType{Name: types.Bool}
+		return types.PrimitiveType{Name: types.Boolean}
 	case *ast.MathBinaryOpExpr:
 		return tc.inferMathBinaryExpr(e)
 	case *ast.IdentifierExpr:

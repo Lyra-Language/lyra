@@ -27,6 +27,17 @@ func isAssignable(from, to types.Type) bool {
 	return false
 }
 
+// areEqualityCompatible reports whether two types can be compared with == or !=.
+// The rule is symmetric assignability: a == b is valid whenever a can be
+// assigned to b's type OR b can be assigned to a's type. This covers:
+//   - Same concrete types:            bool == bool, i32 == i32
+//   - Untyped widening to concrete:   i32 == 5, f64 == 1.0
+//   - Rejects int/float mixing:       5 == 5.0  (UntypedInt ↛ UntypedFloat)
+//   - Rejects cross-kind mismatches:  string == 5, bool == 5
+func areEqualityCompatible(a, b types.Type) bool {
+	return isAssignable(a, b) || isAssignable(b, a)
+}
+
 // numericResultType returns the result type of a binary operation on two numeric types.
 // UntypedInt/UntypedFloat widens to the concrete type when mixed with one.
 // Returns nil if the operands are from different concrete numeric types

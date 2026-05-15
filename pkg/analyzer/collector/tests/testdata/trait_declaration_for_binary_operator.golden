@@ -18,10 +18,10 @@ Program(1 statements) {
 								}
 							}
 							ReturnType: {
-								ReturnType(bool) {
+								ReturnType(boolean) {
 									Type: {
-										PrimitiveType(bool) {
-											Name: bool
+										PrimitiveType(boolean) {
+											Name: boolean
 										}
 									}
 								}
@@ -45,10 +45,10 @@ Program(1 statements) {
 								}
 							}
 							ReturnType: {
-								ReturnType(bool) {
+								ReturnType(boolean) {
 									Type: {
-										PrimitiveType(bool) {
-											Name: bool
+										PrimitiveType(boolean) {
+											Name: boolean
 										}
 									}
 								}
