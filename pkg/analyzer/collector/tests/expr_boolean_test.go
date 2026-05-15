@@ -2,6 +2,11 @@ package collector_test
 
 import "testing"
 
+func TestCollect_NotBooleanExpr(t *testing.T) {
+	source := `let x = !a`
+	runGoldenTest(t, source, "expr_not_boolean")
+}
+
 func TestCollect_BooleanBinaryEq(t *testing.T) {
 	source := `let x = a == b`
 	runGoldenTest(t, source, "expr_boolean_binary_eq")

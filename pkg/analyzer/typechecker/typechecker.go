@@ -44,6 +44,8 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 			tc.checkBooleanLiteralExpr(e)
 		} else if e, ok := n.Expression.(*ast.BooleanBinaryOpExpr); ok {
 			tc.checkBooleanBinaryOpExpr(e)
+		} else if e, ok := n.Expression.(*ast.NotBooleanExpr); ok {
+			tc.checkNotBooleanExpr(e)
 		}
 	case *ast.DerefAssignmentStmt:
 		tc.checkDerefAssignment(n)
@@ -157,6 +159,16 @@ func (tc *TypeChecker) checkBooleanLiteralExpr(expr *ast.BooleanLiteralExpr) {
 	}
 }
 
+func (tc *TypeChecker) checkNotBooleanExpr(expr *ast.NotBooleanExpr) {
+	exprType := tc.inferExprType(expr.Expression)
+	if exprType == nil {
+		return
+	}
+	if !types.IsBoolean(exprType) {
+		tc.addError(expr.GetLocation(), SeverityError, "expected bool type, got %s instead", exprType)
+	}
+}
+
 func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 	lhsType := tc.inferExprType(expr.Left)
 	rhsType := tc.inferExprType(expr.Right)
@@ -204,6 +216,9 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return tc.inferTypeConversion(e)
 	case *ast.NegationExpr:
 		return tc.inferNegationExpr(e)
+	case *ast.NotBooleanExpr:
+		tc.checkNotBooleanExpr(e)
+		return types.PrimitiveType{Name: types.Bool}
 	case *ast.BooleanBinaryOpExpr:
 		tc.checkBooleanBinaryOpExpr(e)
 		return types.PrimitiveType{Name: types.Bool}

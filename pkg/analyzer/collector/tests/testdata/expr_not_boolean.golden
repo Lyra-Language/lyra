@@ -1,0 +1,17 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(x) {
+			BindingKind: let
+			Name: x
+			Value: {
+				NotBooleanExpr {
+					Expression: {
+						IdentifierExpr(a) {
+							Name: a
+						}
+					}
+				}
+			}
+		}
+	}
+}

@@ -65,7 +65,11 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 	case "spread_expr":
 		return collectSpreadExpr(node, ctx, loc)
 	case "boolean_expr", "for_condition_expr":
-		return collectBooleanBinaryExpr(node, ctx, loc)
+		opNode := node.ChildByFieldName("operator")
+		if opNode != nil && opNode.Kind() == "not" {
+			return collectNotBooleanExpr(node, ctx, loc)
+		}
+		return collectBinaryBooleanExpr(node, ctx, loc)
 	case "binary_expr":
 		return collectMathBinaryExpr(node, ctx, loc)
 	case "call_expr":

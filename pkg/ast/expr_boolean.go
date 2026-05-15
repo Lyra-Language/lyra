@@ -1,5 +1,14 @@
 package ast
 
+type NotBooleanExpr struct {
+	ExprBase
+	Expression Expression
+}
+
+func (n *NotBooleanExpr) GetName() string {
+	return "not_boolean_expr"
+}
+
 type BooleanBinaryOpExpr struct {
 	ExprBase
 	Left     Expression

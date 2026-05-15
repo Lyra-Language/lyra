@@ -2,16 +2,15 @@
 
 ### Typechecker
 
-1. **Boolean operators** — type-check `&&`, `||`, `!`; operands must be `bool`, result is `bool`
-2. **Comparison operators** — type-check `==`, `!=`, `<`, `>`, `<=`, `>=`; operands must be compatible, result is `bool`
-3. **String concatenation** — allow `+` on two `string` operands as a special case of binary expressions
-4. **Function declaration type-checking** — verify that return expressions match the declared return type; check parameter types against call-site arguments
-5. **If/else expression type-checking** — branches must have compatible types; condition must be `bool`
-6. **Scope-aware variable resolution** — variables declared inside blocks (if, for, match) should not be visible outside them; detect use-before-declaration
-7. **Match expression exhaustiveness** — for `data` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
-8. **Struct literal type-checking** — verify field names exist on the struct, field value types match field declarations, no missing required fields
-9. **Overflow/range checking for integer literals** — flag literal values that don't fit the annotated type (e.g. `let x: i8 = 200`)
-10. **Duplicate variable declaration detection** — error when the same name is declared twice in the same scope
+- **Comparison operators** — type-check `==`, `!=`, `<`, `>`, `<=`, `>=`; operands must be compatible, result is `bool`
+- **String concatenation** — allow `+` on two `string` operands as a special case of binary expressions
+- **Function declaration type-checking** — verify that return expressions match the declared return type; check parameter types against call-site arguments
+- **If/else expression type-checking** — branches must have compatible types; condition must be `bool`
+- **Scope-aware variable resolution** — variables declared inside blocks (if, for, match) should not be visible outside them; detect use-before-declaration
+- **Match expression exhaustiveness** — for `data` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
+- **Struct literal type-checking** — verify field names exist on the struct, field value types match field declarations, no missing required fields
+- **Overflow/range checking for integer literals** — flag literal values that don't fit the annotated type (e.g. `let x: i8 = 200`)
+- **Duplicate variable declaration detection** — error when the same name is declared twice in the same scope
 
 ## Completed
 
@@ -19,6 +18,7 @@
 - Removed "float" type (still have f16, f32, and f64)
 - Added type converting
 - Allowing int literal to be treated as a float
+- **Boolean operators** — type-check `&&`, `||`, `!`; operands must be `bool`, result is `bool`
 
 ### 05/13/26
 - Collect arena statements
