@@ -35,7 +35,7 @@ func TestCollector_DefaultValueAsCallExpression(t *testing.T) {
 
 func TestCollector_DefaultValueWithMultipleClauses(t *testing.T) {
 	source := `
-	let factorial = pure rec (n: int, acc: int = 1) -> int {
+	let factorial = pure (n: int, acc: int = 1) -> int {
 		(0, acc) => acc,
 		(n, acc) => factorial(n - 1, acc * n),
 	}`
@@ -63,7 +63,7 @@ func TestCollector_PureAsyncFunctionDeclaration(t *testing.T) {
 
 func TestCollector_PureRecursiveFunctionWithPatternMatching(t *testing.T) {
 	source := `
-	let fib = pure rec (n: int) -> int {
+	let fib = pure (n: int) -> int {
 		(0) => 0,
 		(1) => 1,
 		(n) => fib(n-1) + fib(n-2),
@@ -73,7 +73,7 @@ func TestCollector_PureRecursiveFunctionWithPatternMatching(t *testing.T) {
 
 func TestCollector_PureRecursiveFunctionWithMultipleFunctionClausesAndGuard(t *testing.T) {
 	source := `
-	let fib = pure rec (n: int) -> int {
+	let fib = pure (n: int) -> int {
 		(n) if n < 2 => n,
 		(n) => fib(n-2) + fib(n-1),
 	}`

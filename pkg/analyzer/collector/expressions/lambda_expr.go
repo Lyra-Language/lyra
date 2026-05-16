@@ -16,7 +16,6 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 	isPure := node.ChildByFieldName("is_pure") != nil
 	isAsync := node.ChildByFieldName("is_async") != nil
 	isGenerator := node.ChildByFieldName("is_generator") != nil
-	isRecursive := node.ChildByFieldName("is_recursive") != nil
 
 	parametersNode := node.ChildByFieldName("parameters")
 	if parametersNode == nil {
@@ -58,7 +57,6 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 		IsPure:        isPure,
 		IsAsync:       isAsync,
 		IsGenerator:   isGenerator,
-		IsRecursive:   isRecursive,
 		Parameters:    parameters,
 		Body:          body,
 		LambdaClauses: lambdaClauses,

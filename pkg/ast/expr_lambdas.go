@@ -8,15 +8,14 @@ import (
 
 type LambdaExpr struct {
 	ExprBase
-	Parameters []Parameter
-	ReturnType types.ReturnType
-	Body Expression
+	Parameters    []Parameter
+	ReturnType    types.ReturnType
+	Body          Expression
 	LambdaClauses []LambdaClause
-	IsUnsafe bool
-	IsPure bool
-	IsAsync bool
-	IsGenerator bool
-	IsRecursive bool
+	IsUnsafe      bool
+	IsPure        bool
+	IsAsync       bool
+	IsGenerator   bool
 }
 
 func (e *LambdaExpr) exprNode() {}
@@ -29,8 +28,8 @@ func (e *LambdaExpr) GetName() string {
 type LambdaClause struct {
 	AstBase
 	Patterns []Pattern
-	Guard      *GuardExpr
-	Body       Expression
+	Guard    *GuardExpr
+	Body     Expression
 }
 
 type Parameter struct {
@@ -60,4 +59,3 @@ func (r *ReturnStmt) statementNode() {}
 func (r *ReturnStmt) GetName() string {
 	return fmt.Sprintf("return %s", r.Value.GetName())
 }
-
