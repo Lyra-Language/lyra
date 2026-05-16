@@ -70,6 +70,8 @@ func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
 		tc.inferStringConcatExpr(e)
 	} else if e, ok := n.Expression.(*ast.FunctionCallExpr); ok {
 		tc.inferFunctionCallExpr(e)
+	} else if e, ok := n.Expression.(*ast.IfExpr); ok {
+		tc.checkIfExpr(e)
 	}
 }
 
@@ -284,6 +286,10 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 	case *ast.BooleanBinaryOpExpr:
 		tc.checkBooleanBinaryOpExpr(e)
 		return types.PrimitiveType{Name: types.Boolean}
+	case *ast.BlockExpr:
+		return tc.inferBlockType(e)
+	case *ast.IfExpr:
+		return tc.checkIfExpr(e)
 	case *ast.MathBinaryOpExpr:
 		return tc.inferMathBinaryExpr(e)
 	case *ast.StringConcatExpr:
