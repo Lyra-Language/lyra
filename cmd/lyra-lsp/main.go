@@ -11,6 +11,7 @@ import (
 	"github.com/owenrumney/go-lsp/lsp"
 	"github.com/owenrumney/go-lsp/server"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/parser"
@@ -169,6 +170,21 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 			Severity: &sev,
 			Source:   "lyra",
 			Message:  ce.Message,
+		})
+	}
+
+	log.Printf("analyze: checking use-before-declaration")
+	for _, ube := range checker.CheckUseBeforeDeclaration(program) {
+		sev := lsp.SeverityError
+		loc := ube.Location
+		diags = append(diags, lsp.Diagnostic{
+			Range: lsp.Range{
+				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
+				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
+			},
+			Severity: &sev,
+			Source:   "lyra",
+			Message:  ube.Message,
 		})
 	}
 
