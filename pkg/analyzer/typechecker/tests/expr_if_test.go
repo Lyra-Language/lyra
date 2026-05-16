@@ -36,7 +36,7 @@ func TestTypeCheck_If_Condition_IntVar_Error(t *testing.T) {
 		if n { 1 }
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "if condition must be bool, got int")
+	assertErrorIs(t, res, "if condition must be boolean, got int")
 }
 
 func TestTypeCheck_If_Condition_StringVar_Error(t *testing.T) {
@@ -45,7 +45,7 @@ func TestTypeCheck_If_Condition_StringVar_Error(t *testing.T) {
 		if s { 1 }
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "if condition must be bool, got string")
+	assertErrorIs(t, res, "if condition must be boolean, got string")
 }
 
 // ── one-armed if: no branch-type requirement ─────────────────────────────────
@@ -204,7 +204,7 @@ func TestTypeCheck_ElseIf_BadCondition_Error(t *testing.T) {
 		if true { 1 } else if n { 2 } else { 3 }
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "if condition must be bool, got int")
+	assertErrorIs(t, res, "if condition must be boolean, got int")
 }
 
 // ── condition and branch errors can co-occur ─────────────────────────────────
@@ -215,6 +215,6 @@ func TestTypeCheck_IfElse_BadConditionAndBranches_BothErrors(t *testing.T) {
 		if n { 1 } else { "oops" }
 	`, false)
 	assertErrorCount(t, res, 2)
-	assertErrorIs(t, res, "if condition must be bool, got int")
+	assertErrorIs(t, res, "if condition must be boolean, got int")
 	assertErrorIs(t, res, "if/else branches have incompatible types: then is integer literal, else is string")
 }

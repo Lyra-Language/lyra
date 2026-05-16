@@ -168,13 +168,13 @@ func TestTypeCheck_Comparison_ConcreteIntAndFloatLiterals_NoError(t *testing.T) 
 func TestTypeCheck_Comparison_TwoNonNumericOperands_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `"a" > true`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator >: operands must be numeric, got string and boolean instead")
+	assertErrorIs(t, res, "operator >: operands must be numeric, got string and boolean")
 }
 
 func TestTypeCheck_Comparison_OneNonNumericOperands_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `"a" < 5`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator <: operands must be numeric, got string and integer literal instead")
+	assertErrorIs(t, res, "operator <: operands must be numeric, got string and integer literal")
 }
 
 // <= and >= operators (previously untested)
@@ -239,11 +239,11 @@ func TestTypeCheck_Comparison_DifferentConcreteInts_Error(t *testing.T) {
 func TestTypeCheck_Comparison_BoolOperands_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, "true > false", false)
 	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator >: operands must be numeric, got boolean and boolean instead")
+	assertErrorIs(t, res, "operator >: operands must be numeric, got boolean and boolean")
 }
 
 func TestTypeCheck_Comparison_StringOperands_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `"a" < "b"`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator <: operands must be numeric, got string and string instead")
+	assertErrorIs(t, res, "operator <: operands must be numeric, got string and string")
 }

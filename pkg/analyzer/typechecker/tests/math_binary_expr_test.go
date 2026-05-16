@@ -109,7 +109,7 @@ func TestTypeCheck_BinaryExpr_ConcreteIntAndConcreteInt_DifferentSizes_Error(t *
 		let x = a + b
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator +: incompatible types i32 and i64")
+	assertErrorIs(t, res, "operator +: incompatible types: i32 and i64")
 }
 
 func TestTypeCheck_BinaryExpr_ConcreteIntAndConcreteFloat_Error(t *testing.T) {
@@ -119,7 +119,7 @@ func TestTypeCheck_BinaryExpr_ConcreteIntAndConcreteFloat_Error(t *testing.T) {
 		let x = a + b
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator +: incompatible types i32 and f64")
+	assertErrorIs(t, res, "operator +: incompatible types: i32 and f64")
 }
 
 // operand type errors

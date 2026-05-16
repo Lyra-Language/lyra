@@ -36,7 +36,7 @@ func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr) types.Type {
 		condType := tc.inferExprType(expr.Condition)
 		if condType != nil && !types.IsBoolean(condType) {
 			tc.addError(expr.Condition.GetLocation(), SeverityError,
-				"if condition must be bool, got %s", condType)
+				"if condition must be boolean, got %s", condType)
 		}
 	}
 

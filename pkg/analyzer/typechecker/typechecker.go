@@ -120,8 +120,7 @@ func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {
 		return
 	}
 	if !decl.IsMutable() {
-		tc.addError(stmt.GetLocation(), SeverityError,
-			"%s: cannot assign to immutable binding", stmt.Name)
+		tc.addImmutableBindingError(stmt.GetLocation(), stmt.Name, decl.BindingKind)
 		return
 	}
 	effective := tc.effectiveType(decl)
@@ -146,7 +145,7 @@ func (tc *TypeChecker) checkDerefAssignment(stmt *ast.DerefAssignmentStmt) {
 	if !ok || !ident.IsConst {
 		return
 	}
-	tc.addImmutableBindingError(stmt.Target.Operand, ident.Name)
+	tc.addImmutableBindingError(stmt.Target.Operand.GetLocation(), ident.Name, ast.BindingConst)
 }
 
 func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
@@ -159,7 +158,7 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 		return
 	}
 	if !decl.IsMutable() {
-		tc.addImmutableBindingError(expr, expr.Left.Name)
+		tc.addImmutableBindingError(expr.GetLocation(), expr.Left.Name, decl.BindingKind)
 		return
 	}
 	effective := tc.effectiveType(decl)
@@ -192,7 +191,8 @@ func (tc *TypeChecker) checkNotBooleanExpr(expr *ast.NotBooleanExpr) {
 		return
 	}
 	if !types.IsBoolean(exprType) {
-		tc.addExpectedTypeError(expr, types.PrimitiveType{Name: types.Boolean}, exprType)
+		tc.addError(expr.GetLocation(), SeverityError,
+			"'!' operator: operand must be boolean, got %s", exprType)
 	}
 }
 
@@ -208,7 +208,7 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 	case ast.BooleanBinaryOpAnd, ast.BooleanBinaryOpOr:
 		if !types.IsBoolean(leftType) || !types.IsBoolean(rightType) {
 			tc.addError(expr.GetLocation(), SeverityError,
-				"operator %s: operands must both be boolean, got %s and %s instead", expr.Operator, leftType, rightType)
+				"operator %s: operands must both be boolean, got %s and %s", expr.Operator, leftType, rightType)
 		}
 	case ast.BooleanBinaryOpEq, ast.BooleanBinaryOpNEq:
 		if !areEqualityCompatible(leftType, rightType) {
@@ -217,7 +217,7 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 	case ast.BooleanBinaryOpLT, ast.BooleanBinaryOpLTE, ast.BooleanBinaryOpGT, ast.BooleanBinaryOpGTE:
 		if !types.IsNumeric(leftType) || !types.IsNumeric(rightType) {
 			tc.addError(expr.GetLocation(), SeverityError,
-				"operator %s: operands must be numeric, got %s and %s instead", expr.Operator, leftType, rightType)
+				"operator %s: operands must be numeric, got %s and %s", expr.Operator, leftType, rightType)
 			return
 		}
 		if numericResultType(leftType, rightType) == nil {
@@ -226,9 +226,15 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 	}
 }
 
-func (tc *TypeChecker) addImmutableBindingError(expr ast.Expression, name string) {
-	tc.addError(expr.GetLocation(), SeverityError,
-		"%s: cannot assign to immutable binding", name)
+func (tc *TypeChecker) addImmutableBindingError(loc ast.Location, name string, kind ast.BindingKind) {
+	switch kind {
+	case ast.BindingConst:
+		tc.addError(loc, SeverityError,
+			"%s: 'const' binding is immutable and cannot be reassigned", name)
+	default: // BindingLet
+		tc.addError(loc, SeverityError,
+			"%s: 'let' binding is immutable; use 'var' to allow reassignment", name)
+	}
 }
 
 func (tc *TypeChecker) addExpectedTypeError(expr ast.Expression, expected, actual types.Type) {
@@ -365,12 +371,12 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 	}
 	if isFloatType(argType) && isIntType(targetType) {
 		tc.addError(call.GetLocation(), SeverityError,
-			"cannot convert %s to %s: use a rounding function", argType, ident.Name)
+			"cannot convert %s to %s: use floor(), ceil(), or round() to convert explicitly", argType, ident.Name)
 		return nil
 	}
 	if srcPrec, dstPrec := floatPrecision(argType), floatPrecision(targetType); srcPrec > dstPrec && dstPrec > 0 {
 		tc.addError(call.GetLocation(), SeverityError,
-			"cannot convert %s to %s: use a rounding function", argType, ident.Name)
+			"cannot convert %s to %s: narrowing conversion may lose precision", argType, ident.Name)
 		return nil
 	}
 	return targetType
@@ -393,7 +399,7 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 	result := numericResultType(left, right)
 	if result == nil {
 		tc.addError(expr.GetLocation(), SeverityError,
-			"operator %s: incompatible types %s and %s", expr.Operator, left, right)
+			"operator %s: incompatible types: %s and %s", expr.Operator, left, right)
 		return nil
 	}
 
