@@ -1,0 +1,33 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(s) {
+			BindingKind: let
+			Name: s
+			Value: {
+				StringConcatExpr {
+					Left: {
+						StringConcatExpr {
+							Left: {
+								StringLiteralExpr {
+									Value: a
+								}
+							}
+							Operator: ++
+							Right: {
+								StringLiteralExpr {
+									Value: b
+								}
+							}
+						}
+					}
+					Operator: ++
+					Right: {
+						StringLiteralExpr {
+							Value: c
+						}
+					}
+				}
+			}
+		}
+	}
+}

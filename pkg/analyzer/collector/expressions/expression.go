@@ -72,6 +72,8 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 		return collectBinaryBooleanExpr(node, ctx, loc)
 	case "binary_expr":
 		return collectMathBinaryExpr(node, ctx, loc)
+	case "string_concat_expr":
+		return collectStringConcatExpr(node, ctx, loc)
 	case "call_expr":
 		return collectFunctionCallExpr(node, ctx, loc)
 	case "member_expr":

@@ -48,19 +48,25 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 	case *ast.VarReassignmentStmt:
 		tc.checkVarReassignment(n)
 	case *ast.ExpressionStmt:
-		if e, ok := n.Expression.(*ast.MathAssignOpExpr); ok {
-			tc.checkMathAssignOp(e)
-		} else if e, ok := n.Expression.(*ast.BooleanLiteralExpr); ok {
-			tc.checkBooleanLiteralExpr(e)
-		} else if e, ok := n.Expression.(*ast.BooleanBinaryOpExpr); ok {
-			tc.checkBooleanBinaryOpExpr(e)
-		} else if e, ok := n.Expression.(*ast.NotBooleanExpr); ok {
-			tc.checkNotBooleanExpr(e)
-		}
+		tc.checkExpressionStmt(n)
 	case *ast.DerefAssignmentStmt:
 		tc.checkDerefAssignment(n)
 	case *ast.BooleanBinaryOpExpr:
 		tc.checkBooleanBinaryOpExpr(n)
+	}
+}
+
+func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
+	if e, ok := n.Expression.(*ast.MathAssignOpExpr); ok {
+		tc.checkMathAssignOp(e)
+	} else if e, ok := n.Expression.(*ast.BooleanLiteralExpr); ok {
+		tc.checkBooleanLiteralExpr(e)
+	} else if e, ok := n.Expression.(*ast.BooleanBinaryOpExpr); ok {
+		tc.checkBooleanBinaryOpExpr(e)
+	} else if e, ok := n.Expression.(*ast.NotBooleanExpr); ok {
+		tc.checkNotBooleanExpr(e)
+	} else if e, ok := n.Expression.(*ast.StringConcatExpr); ok {
+		tc.inferStringConcatExpr(e)
 	}
 }
 
@@ -262,6 +268,10 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return types.PrimitiveType{Name: types.Boolean}
 	case *ast.MathBinaryOpExpr:
 		return tc.inferMathBinaryExpr(e)
+	case *ast.StringConcatExpr:
+		return tc.inferStringConcatExpr(e)
+	case *ast.InterpolatedStringExpr:
+		return types.PrimitiveType{Name: types.String}
 	case *ast.IdentifierExpr:
 		sym, ok := tc.scope.Lookup(e.Name)
 		if !ok {
@@ -357,6 +367,23 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 	}
 
 	return result
+}
+
+func (tc *TypeChecker) inferStringConcatExpr(expr *ast.StringConcatExpr) types.Type {
+	left := tc.inferExprType(expr.Left)
+	right := tc.inferExprType(expr.Right)
+
+	if left == nil || right == nil {
+		return nil
+	}
+
+	if !types.IsString(left) || !types.IsString(right) {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"operator ++: operands must be strings, got %s and %s", left, right)
+		return nil
+	}
+
+	return types.PrimitiveType{Name: types.String}
 }
 
 func (tc *TypeChecker) inferNegationExpr(expr *ast.NegationExpr) types.Type {

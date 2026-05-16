@@ -25,6 +25,14 @@ func IsNumeric(t Type) bool {
 	}
 }
 
+func IsString(t Type) bool {
+	primitive, ok := t.(PrimitiveType)
+	if !ok {
+		return false
+	}
+	return primitive.Name == String
+}
+
 func IsBoolean(t Type) bool {
 	primitive, ok := t.(PrimitiveType)
 	if !ok {

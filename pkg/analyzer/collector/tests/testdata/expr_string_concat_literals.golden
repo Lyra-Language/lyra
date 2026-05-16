@@ -1,0 +1,21 @@
+Program(1 statements) {
+	Statements: {
+		ExpressionStmt {
+			Expression: {
+				StringConcatExpr {
+					Left: {
+						StringLiteralExpr {
+							Value: hello
+						}
+					}
+					Operator: ++
+					Right: {
+						StringLiteralExpr {
+							Value: world
+						}
+					}
+				}
+			}
+		}
+	}
+}

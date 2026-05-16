@@ -1,0 +1,29 @@
+Program(1 statements) {
+	Statements: {
+		ExpressionStmt {
+			Expression: {
+				StringConcatExpr {
+					Left: {
+						FunctionCallExpr {
+							Function: {
+								IdentifierExpr(foo) {
+									Name: foo
+								}
+							}
+						}
+					}
+					Operator: ++
+					Right: {
+						FunctionCallExpr {
+							Function: {
+								IdentifierExpr(bar) {
+									Name: bar
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

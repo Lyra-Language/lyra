@@ -1,7 +1,6 @@
 ## To-Dos
 
 ### Typechecker
-- **String concatenation** — allow `+` on two `string` operands as a special case of binary expressions
 - **Function declaration type-checking** — verify that return expressions match the declared return type; check parameter types against call-site arguments
 - **If/else expression type-checking** — branches must have compatible types; condition must be `bool`
 - **Scope-aware variable resolution** — variables declared inside blocks (if, for, match) should not be visible outside them; detect use-before-declaration
@@ -15,6 +14,7 @@
 ### 05/15/26
 - **Comparison operators** — type-check `==`, `!=`, `<`, `>`, `<=`, `>=`; operands must be compatible, result is `bool`
 - Added LSP server and hooked it up to vscode extension
+- **String concatenation** — allow `++` on two `string` operands as a special case of binary expressions
 
 ### 05/14/26
 - Removed "float" type (still have f16, f32, and f64)
