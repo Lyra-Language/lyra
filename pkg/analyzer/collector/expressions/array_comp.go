@@ -7,7 +7,7 @@ import (
 )
 
 func collectArrayCompExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
-	resultNode := node.ChildByFieldName("result_expression")
+	resultNode := node.ChildByFieldName("result_expr")
 	if resultNode == nil {
 		ctx.AddError(node, collector_ctx.SeverityError, "array comprehension must have a result")
 		return nil
