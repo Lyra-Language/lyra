@@ -7,6 +7,7 @@ The AST nodes serve as the source of truth - the symbol table just indexes them.
 */
 
 import (
+	"reflect"
 	"strconv"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
@@ -65,10 +66,19 @@ func (c *Collector) walkProgram(node *sitter.Node) {
 
 		stmt := c.CollectStatement(child)
 
-		if stmt != nil {
+		// Guard against both untyped nils and typed nils. The latter arise when a
+		// sub-function returns a concrete nil pointer (e.g. nil *ast.ExpressionStmt)
+		// which Go wraps into a non-nil ast.Statement interface value.
+		if stmt != nil && !isTypedNil(stmt) {
 			c.ast.Statements = append(c.ast.Statements, stmt)
 		}
 	}
+}
+
+// isTypedNil reports whether v is a non-nil interface wrapping a nil pointer.
+func isTypedNil(v any) bool {
+	rv := reflect.ValueOf(v)
+	return rv.Kind() == reflect.Ptr && rv.IsNil()
 }
 
 func (c *Collector) CollectExpr(node *sitter.Node) ast.Expression {

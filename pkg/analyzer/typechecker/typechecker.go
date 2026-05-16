@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"reflect"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
@@ -32,6 +33,15 @@ func (tc *TypeChecker) Check(program *ast.Program) []TypeError {
 }
 
 func (tc *TypeChecker) checkNode(node ast.AstNode) {
+	// Guard against both untyped nils and typed nils (e.g. (*ast.ExpressionStmt)(nil)
+	// stored in an ast.AstNode interface — a common Go gotcha when sub-functions return
+	// a concrete nil pointer that gets wrapped in the interface).
+	if node == nil {
+		return
+	}
+	if rv := reflect.ValueOf(node); rv.Kind() == reflect.Ptr && rv.IsNil() {
+		return
+	}
 	switch n := node.(type) {
 	case *ast.VarDeclStmt:
 		tc.checkVarDecl(n)

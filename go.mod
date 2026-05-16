@@ -8,6 +8,11 @@ require (
 )
 
 require (
+	github.com/gorilla/websocket v1.5.3 // indirect
+	github.com/owenrumney/go-lsp v0.2.2
+)
+
+require (
 	github.com/mattn/go-pointer v0.0.1 // indirect
 	github.com/sergi/go-diff v1.4.0
 )

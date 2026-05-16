@@ -41,7 +41,8 @@ func NewScope(parent *Scope, kind ScopeKind) *Scope {
 func (s *Scope) Define(node ast.Named) error {
 	name := node.GetName()
 	if existing, exists := s.Symbols[name]; exists {
-		return fmt.Errorf("symbol %q already defined at %v", name, existing.GetLocation())
+		existingLoc := existing.GetLocation()
+		return fmt.Errorf("symbol %q already defined at %s", name, existingLoc.Pretty())
 	}
 	s.Symbols[name] = node
 	return nil

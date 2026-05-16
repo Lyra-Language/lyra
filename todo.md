@@ -14,6 +14,7 @@
 
 ### 05/15/26
 - **Comparison operators** — type-check `==`, `!=`, `<`, `>`, `<=`, `>=`; operands must be compatible, result is `bool`
+- Added LSP server and hooked it up to vscode extension
 
 ### 05/14/26
 - Removed "float" type (still have f16, f32, and f64)
