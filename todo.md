@@ -1,7 +1,6 @@
 ## To-Dos
 
 ### Typechecker
-- **Function declaration type-checking** — verify that return expressions match the declared return type; check parameter types against call-site arguments
 - **If/else expression type-checking** — branches must have compatible types; condition must be `bool`
 - **Scope-aware variable resolution** — variables declared inside blocks (if, for, match) should not be visible outside them; detect use-before-declaration
 - **Match expression exhaustiveness** — for `data` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
@@ -10,6 +9,9 @@
 - **Duplicate variable declaration detection** — error when the same name is declared twice in the same scope
 
 ## Completed
+
+### 05/16/26
+- **Function declaration type-checking** — verify that return expressions match the declared return type; check parameter types against call-site arguments
 
 ### 05/15/26
 - **Comparison operators** — type-check `==`, `!=`, `<`, `>`, `<=`, `>=`; operands must be compatible, result is `bool`

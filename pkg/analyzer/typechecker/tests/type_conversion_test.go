@@ -22,7 +22,7 @@ func TestTypeCheck_TypeConversion_F64ToU32_Error(t *testing.T) {
 		let u: u32 = u32(f)
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot convert f64 to u32: use a rounding function")
+	assertErrorIs(t, res, "cannot convert f64 to u32: use a rounding function")
 }
 
 func TestTypeCheck_TypeConversion_IntToI32(t *testing.T) {
@@ -51,7 +51,7 @@ func TestTypeCheck_TypeConversion_UntypedIntToF32(t *testing.T) {
 func TestTypeCheck_TypeConversion_UntypedFloatToI64_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `let i: i64 = i64(3.14)`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot convert float literal to i64: use a rounding function")
+	assertErrorIs(t, res, "cannot convert float literal to i64: use a rounding function")
 }
 
 // --- result type is recorded in TypeTable ---
@@ -79,19 +79,19 @@ func TestTypeCheck_TypeConversion_NonNumericArg(t *testing.T) {
 		let x: int = int(s)
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot convert string to int")
+	assertErrorIs(t, res, "cannot convert string to int")
 }
 
 func TestTypeCheck_TypeConversion_TooManyArgs(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x = i32(1, 2)`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "i32: type conversion requires exactly 1 argument, got 2")
+	assertErrorIs(t, res, "i32: type conversion requires exactly 1 argument, got 2")
 }
 
 func TestTypeCheck_TypeConversion_NoArgs(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x = f64()`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "f64: type conversion requires exactly 1 argument, got 0")
+	assertErrorIs(t, res, "f64: type conversion requires exactly 1 argument, got 0")
 }
 
 // --- float narrowing (lossy, blocked) ---
@@ -102,7 +102,7 @@ func TestTypeCheck_TypeConversion_F64ToF32_Error(t *testing.T) {
 		let y: f32 = f32(x)
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot convert f64 to f32: use a rounding function")
+	assertErrorIs(t, res, "cannot convert f64 to f32: use a rounding function")
 }
 
 func TestTypeCheck_TypeConversion_F64ToF16_Error(t *testing.T) {
@@ -111,7 +111,7 @@ func TestTypeCheck_TypeConversion_F64ToF16_Error(t *testing.T) {
 		let y: f16 = f16(x)
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot convert f64 to f16: use a rounding function")
+	assertErrorIs(t, res, "cannot convert f64 to f16: use a rounding function")
 }
 
 func TestTypeCheck_TypeConversion_F32ToF16_Error(t *testing.T) {
@@ -120,7 +120,7 @@ func TestTypeCheck_TypeConversion_F32ToF16_Error(t *testing.T) {
 		let y: f16 = f16(x)
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot convert f32 to f16: use a rounding function")
+	assertErrorIs(t, res, "cannot convert f32 to f16: use a rounding function")
 }
 
 // --- float widening (lossless, allowed) ---
@@ -164,5 +164,5 @@ func TestTypeCheck_TypeConversion_AnnotationMismatch(t *testing.T) {
 		let y: string = i32(x)
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "y: cannot assign i32 to string")
+	assertErrorIs(t, res, "y: cannot assign i32 to string")
 }

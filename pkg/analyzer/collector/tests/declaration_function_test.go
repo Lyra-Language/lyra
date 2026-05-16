@@ -92,7 +92,7 @@ func TestCollector_FunctionWithGenericParamsAndConstraints(t *testing.T) {
 
 func TestCollector_FunctionWithPatternParams(t *testing.T) {
 	source := `
-	let foo = ({ x, y }: Point, [one, two, three, ...rest]: []string, (alpha, beta): SomeTuple) -> Void => {
+	let foo = ({ x, y }: Point, [one, two, three, ...rest]: []string, (alpha, beta): SomeTuple) -> void => {
 		// do stuff
 	}`
 	runGoldenTest(t, source, "function_with_pattern_params")
@@ -112,7 +112,7 @@ func TestCollector_HigherOrderFunction(t *testing.T) {
 
 func TestCollector_TypeParameterModifiers(t *testing.T) {
 	source := `
-	let render = (scene: ref Scene) -> Void => {
+	let render = (scene: ref Scene) -> void => {
 		// render the scene
 	}`
 	runGoldenTest(t, source, "type_parameter_modifiers")

@@ -11,10 +11,11 @@ import (
 )
 
 type TypeChecker struct {
-	symTable  *symbols.SymbolTable
-	typeTable *typetable.TypeTable
-	scope     *symbols.Scope
-	errors    []TypeError
+	symTable   *symbols.SymbolTable
+	typeTable  *typetable.TypeTable
+	scope      *symbols.Scope
+	errors     []TypeError
+	paramTypes map[string]types.Type // non-nil only while checking a function body
 }
 
 func New(symTable *symbols.SymbolTable, typeTable *typetable.TypeTable) *TypeChecker {
@@ -67,11 +68,21 @@ func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
 		tc.checkNotBooleanExpr(e)
 	} else if e, ok := n.Expression.(*ast.StringConcatExpr); ok {
 		tc.inferStringConcatExpr(e)
+	} else if e, ok := n.Expression.(*ast.FunctionCallExpr); ok {
+		tc.inferFunctionCallExpr(e)
 	}
 }
 
 func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	if decl.Value == nil {
+		return
+	}
+
+	// Lambda values (function declarations) are handled separately.
+	// Full lambda type inference is not yet implemented, so the regular
+	// annotation check is skipped for them.
+	if lambda, ok := decl.Value.(*ast.LambdaExpr); ok {
+		tc.checkLambdaBody(decl.Name, lambda)
 		return
 	}
 
@@ -261,7 +272,10 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 	case *ast.CharacterLiteralExpr:
 		return e.GetType()
 	case *ast.FunctionCallExpr:
-		return tc.inferTypeConversion(e)
+		if t := tc.inferTypeConversion(e); t != nil {
+			return t
+		}
+		return tc.inferFunctionCallExpr(e)
 	case *ast.NegationExpr:
 		return tc.inferNegationExpr(e)
 	case *ast.NotBooleanExpr:
@@ -277,6 +291,13 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 	case *ast.InterpolatedStringExpr:
 		return types.PrimitiveType{Name: types.String}
 	case *ast.IdentifierExpr:
+		// Consult the parameter scope installed by withParamScope while
+		// type-checking a function body.
+		if tc.paramTypes != nil {
+			if t, ok := tc.paramTypes[e.Name]; ok {
+				return t
+			}
+		}
 		sym, ok := tc.scope.Lookup(e.Name)
 		if !ok {
 			return nil

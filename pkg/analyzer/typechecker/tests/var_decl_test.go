@@ -77,32 +77,32 @@ func TestTypeCheck_F64Annotation_IntLiteral(t *testing.T) {
 func TestTypeCheck_StringAnnotation_IntLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: string = 42`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "x: cannot assign integer literal to string")
+	assertErrorIs(t, res, "x: cannot assign integer literal to string")
 }
 
 func TestTypeCheck_IntAnnotation_StringLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: int = "hello"`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "x: cannot assign string to int")
+	assertErrorIs(t, res, "x: cannot assign string to int")
 }
 
 func TestTypeCheck_BoolAnnotation_IntLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: bool = 1`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "x: cannot assign integer literal to boolean")
+	assertErrorIs(t, res, "x: cannot assign integer literal to boolean")
 }
 
 func TestTypeCheck_IntAnnotation_FloatLiteral(t *testing.T) {
 	// float literal is not assignable to an integer type.
 	res := parseCollectAndCheck(t, `let x: int = 3.14`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "x: cannot assign float literal to int")
+	assertErrorIs(t, res, "x: cannot assign float literal to int")
 }
 
 func TestTypeCheck_UnsignedIntAnnotation_NegatedLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: uint = -3`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "x: cannot assign integer literal to uint")
+	assertErrorIs(t, res, "x: cannot assign integer literal to uint")
 }
 
 // --- signed to unsigned mismatch: one error ---
@@ -113,7 +113,7 @@ func TestTypeCheck_UnsignedIntAnnotation_SignedIntDeclarationUnannotated(t *test
 		let b: uint = a
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "b: cannot assign int to uint")
+	assertErrorIs(t, res, "b: cannot assign int to uint")
 }
 
 func TestTypeCheck_UnsignedIntAnnotation_SignedIntDeclarationAnnotated(t *testing.T) {
@@ -122,7 +122,7 @@ func TestTypeCheck_UnsignedIntAnnotation_SignedIntDeclarationAnnotated(t *testin
 		let b: uint = a
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "b: cannot assign int to uint")
+	assertErrorIs(t, res, "b: cannot assign int to uint")
 }
 
 func TestTypeCheck_UnsignedIntAnnotation_ConcreteSignedIntDeclaration(t *testing.T) {
@@ -131,13 +131,13 @@ func TestTypeCheck_UnsignedIntAnnotation_ConcreteSignedIntDeclaration(t *testing
 		let b: uint = a
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "b: cannot assign i32 to uint")
+	assertErrorIs(t, res, "b: cannot assign i32 to uint")
 }
 
 func TestTypeCheck_StringAnnotation_BoolLiteral(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: string = false`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "x: cannot assign boolean to string")
+	assertErrorIs(t, res, "x: cannot assign boolean to string")
 }
 
 // --- multiple declarations: each checked independently ---
@@ -158,7 +158,7 @@ func TestTypeCheck_MultipleDecls_OneError(t *testing.T) {
 	let c: bool = true
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "b: cannot assign integer literal to string")
+	assertErrorIs(t, res, "b: cannot assign integer literal to string")
 }
 
 func TestTypeCheck_MultipleDecls_TwoErrors(t *testing.T) {

@@ -61,7 +61,7 @@ func assertErrorCount(t *testing.T, res checkResult, want int) {
 	}
 }
 
-func assertErrorContains(t *testing.T, res checkResult, expected string) {
+func assertErrorIs(t *testing.T, res checkResult, expected string) {
 	t.Helper()
 	for _, e := range res.errors {
 		if e.Message == expected {

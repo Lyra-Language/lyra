@@ -99,7 +99,7 @@ func TestTypeCheck_Negation_Reassignment_Valid(t *testing.T) {
 func TestTypeCheck_Negation_UnsignedAnnotation_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: u8 = -1`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "x: cannot assign integer literal to u8")
+	assertErrorIs(t, res, "x: cannot assign integer literal to u8")
 }
 
 func TestTypeCheck_Negation_ConcreteUnsignedVar_Error(t *testing.T) {
@@ -108,7 +108,7 @@ func TestTypeCheck_Negation_ConcreteUnsignedVar_Error(t *testing.T) {
 		let b = -a
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot negate unsigned type u32")
+	assertErrorIs(t, res, "cannot negate unsigned type u32")
 }
 
 func TestTypeCheck_Negation_NonNumeric_Error(t *testing.T) {
@@ -117,5 +117,5 @@ func TestTypeCheck_Negation_NonNumeric_Error(t *testing.T) {
 		let x = -flag
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot negate non-numeric type boolean")
+	assertErrorIs(t, res, "cannot negate non-numeric type boolean")
 }

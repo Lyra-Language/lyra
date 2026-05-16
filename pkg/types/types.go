@@ -52,7 +52,7 @@ func (s SelfType) String() string { return s.GetName() }
 type VoidType struct{}
 
 func (VoidType) typeNode()       {}
-func (VoidType) GetName() string { return "Void" }
+func (VoidType) GetName() string { return "void" }
 func (VoidType) String() string  { return VoidType{}.GetName() }
 
 // UnresolvedType represents a type reference that hasn't been resolved yet

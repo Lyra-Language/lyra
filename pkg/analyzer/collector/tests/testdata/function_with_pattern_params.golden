@@ -83,9 +83,9 @@ Program(1 statements) {
 						}
 					}
 					ReturnType: {
-						ReturnType(Void) {
+						ReturnType(void) {
 							Type: {
-								VoidType(Void) {
+								VoidType(void) {
 								}
 							}
 						}
