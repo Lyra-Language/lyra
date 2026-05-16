@@ -2,7 +2,6 @@
   "permissions": {
     "allow": [
       "Bash(go build *)",
-      "Bash(UPDATE_GOLDEN=1 go test ./pkg/analyzer/collector/tests/... -run TestCollect_Regex)",
       "Bash(go test *)",
       "Bash(python3 -c ' *)",
       "Bash(npx tree-sitter *)",

@@ -187,24 +187,28 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 	leftType := tc.inferExprType(expr.Left)
 	rightType := tc.inferExprType(expr.Right)
 
+	if leftType == nil || rightType == nil {
+		return
+	}
+
 	switch expr.Operator {
 	case ast.BooleanBinaryOpAnd, ast.BooleanBinaryOpOr:
 		if !types.IsBoolean(leftType) || !types.IsBoolean(rightType) {
 			tc.addError(expr.GetLocation(), SeverityError,
-				"operands must both be boolean, got %s and %s instead", leftType, rightType)
+				"operator %s: operands must both be boolean, got %s and %s instead", expr.Operator, leftType, rightType)
 		}
 	case ast.BooleanBinaryOpEq, ast.BooleanBinaryOpNEq:
 		if !areEqualityCompatible(leftType, rightType) {
-			tc.addIncompatibleTypesError(expr, leftType, rightType)
+			tc.addIncompatibleTypesError(expr, string(expr.Operator), leftType, rightType)
 		}
 	case ast.BooleanBinaryOpLT, ast.BooleanBinaryOpLTE, ast.BooleanBinaryOpGT, ast.BooleanBinaryOpGTE:
 		if !types.IsNumeric(leftType) || !types.IsNumeric(rightType) {
 			tc.addError(expr.GetLocation(), SeverityError,
-				"operands must be numeric, got %s and %s instead", leftType, rightType)
+				"operator %s: operands must be numeric, got %s and %s instead", expr.Operator, leftType, rightType)
 			return
 		}
 		if numericResultType(leftType, rightType) == nil {
-			tc.addIncompatibleTypesError(expr, leftType, rightType)
+			tc.addIncompatibleTypesError(expr, string(expr.Operator), leftType, rightType)
 		}
 	}
 }
@@ -216,12 +220,12 @@ func (tc *TypeChecker) addImmutableBindingError(expr ast.Expression, name string
 
 func (tc *TypeChecker) addExpectedTypeError(expr ast.Expression, expected, actual types.Type) {
 	tc.addError(expr.GetLocation(), SeverityError,
-		"expected %s, got %s instead", expected, actual)
+		"%s: expected %s, got %s instead", expr.GetName(), expected, actual)
 }
 
-func (tc *TypeChecker) addIncompatibleTypesError(expr ast.Expression, leftType, rightType types.Type) {
+func (tc *TypeChecker) addIncompatibleTypesError(expr ast.Expression, operator string, leftType, rightType types.Type) {
 	tc.addError(expr.GetLocation(), SeverityError,
-		"incompatible types: %s and %s", leftType, rightType)
+		"operator %s: incompatible types: %s and %s", operator, leftType, rightType)
 }
 
 // effectiveType returns the concrete type of a declaration: the annotation if

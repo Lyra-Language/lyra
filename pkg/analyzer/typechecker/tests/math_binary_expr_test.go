@@ -32,7 +32,7 @@ func TestTypeCheck_Ident_MismatchViaReference(t *testing.T) {
 		let y: int = x
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign string to int")
+	assertErrorContains(t, res, "y: cannot assign string to int")
 }
 
 // --- binary expression inference (#1) ---
@@ -86,19 +86,19 @@ func TestTypeCheck_BinaryExpr_F64Annotation_FloatAndIntLiterals(t *testing.T) {
 func TestTypeCheck_BinaryExpr_StringAnnotation_IntAddition(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: string = 1 + 2`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign")
+	assertErrorContains(t, res, "x: cannot assign integer literal to string")
 }
 
 func TestTypeCheck_BinaryExpr_IntAnnotation_FloatAddition(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: int = 1.0 + 2.0`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign float literal to int")
+	assertErrorContains(t, res, "x: cannot assign float literal to int")
 }
 
 func TestTypeCheck_BinaryExpr_IntAnnotation_MixedAddition(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: int = 1 + 2.0`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign float literal to int")
+	assertErrorContains(t, res, "x: cannot assign float literal to int")
 }
 
 // Incompatible concrete types
@@ -109,7 +109,7 @@ func TestTypeCheck_BinaryExpr_ConcreteIntAndConcreteInt_DifferentSizes_Error(t *
 		let x = a + b
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "incompatible types i32 and i64")
+	assertErrorContains(t, res, "operator +: incompatible types i32 and i64")
 }
 
 func TestTypeCheck_BinaryExpr_ConcreteIntAndConcreteFloat_Error(t *testing.T) {
@@ -119,7 +119,7 @@ func TestTypeCheck_BinaryExpr_ConcreteIntAndConcreteFloat_Error(t *testing.T) {
 		let x = a + b
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "incompatible types")
+	assertErrorContains(t, res, "operator +: incompatible types i32 and f64")
 }
 
 // operand type errors
@@ -131,7 +131,7 @@ func TestTypeCheck_BinaryExpr_NonNumericOperand(t *testing.T) {
 		let x = flag + 1
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "operands must be numeric")
+	assertErrorContains(t, res, "operator +: operands must be numeric, got boolean and integer literal")
 }
 
 // TypeTable records the result type

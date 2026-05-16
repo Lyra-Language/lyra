@@ -58,7 +58,7 @@ func TestStringConcat_NonStringLeft_Error(t *testing.T) {
 		let s = n ++ " world"
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "operator ++: operands must be strings")
+	assertErrorContains(t, res, "operator ++: operands must be strings, got int and string")
 }
 
 func TestStringConcat_NonStringRight_Error(t *testing.T) {
@@ -67,7 +67,7 @@ func TestStringConcat_NonStringRight_Error(t *testing.T) {
 		let s = "hello" ++ n
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "operator ++: operands must be strings")
+	assertErrorContains(t, res, "operator ++: operands must be strings, got string and int")
 }
 
 func TestStringConcat_BothNonString_Error(t *testing.T) {
@@ -77,7 +77,7 @@ func TestStringConcat_BothNonString_Error(t *testing.T) {
 		let s = n ++ b
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "operator ++: operands must be strings")
+	assertErrorContains(t, res, "operator ++: operands must be strings, got int and boolean")
 }
 
 func TestStringConcat_BoolVar_Error(t *testing.T) {
@@ -86,7 +86,7 @@ func TestStringConcat_BoolVar_Error(t *testing.T) {
 		let s = flag ++ "hello"
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "operator ++: operands must be strings")
+	assertErrorContains(t, res, "operator ++: operands must be strings, got boolean and string")
 }
 
 // --- annotation mismatch ---
@@ -94,5 +94,5 @@ func TestStringConcat_BoolVar_Error(t *testing.T) {
 func TestStringConcat_WrongAnnotation_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `let s: int = "hello" ++ " world"`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign")
+	assertErrorContains(t, res, "s: cannot assign string to int")
 }

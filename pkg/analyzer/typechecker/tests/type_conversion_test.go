@@ -51,7 +51,7 @@ func TestTypeCheck_TypeConversion_UntypedIntToF32(t *testing.T) {
 func TestTypeCheck_TypeConversion_UntypedFloatToI64_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `let i: i64 = i64(3.14)`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "use a rounding function")
+	assertErrorContains(t, res, "cannot convert float literal to i64: use a rounding function")
 }
 
 // --- result type is recorded in TypeTable ---
@@ -164,5 +164,5 @@ func TestTypeCheck_TypeConversion_AnnotationMismatch(t *testing.T) {
 		let y: string = i32(x)
 	`, false)
 	assertErrorCount(t, res, 1)
-	assertErrorContains(t, res, "cannot assign i32 to string")
+	assertErrorContains(t, res, "y: cannot assign i32 to string")
 }

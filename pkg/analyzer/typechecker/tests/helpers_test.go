@@ -1,7 +1,6 @@
 package typechecker_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
@@ -62,12 +61,12 @@ func assertErrorCount(t *testing.T, res checkResult, want int) {
 	}
 }
 
-func assertErrorContains(t *testing.T, res checkResult, substr string) {
+func assertErrorContains(t *testing.T, res checkResult, expected string) {
 	t.Helper()
 	for _, e := range res.errors {
-		if strings.Contains(e.Message, substr) {
+		if e.Message == expected {
 			return
 		}
 	}
-	t.Errorf("expected an error containing %q, got: %v", substr, res.errors)
+	t.Errorf("expected: %q, got: %v", expected, res.errors)
 }
