@@ -9,7 +9,7 @@ Program(1 statements) {
 			IsPublic: true
 			Name: Point
 			Type: {
-				StructType(Point) {
+				NamedStructType(Point) {
 					Allocation: stack
 					Fields: {
 						StructField(x) {

@@ -12,7 +12,7 @@ Program(1 statements) {
 						}
 					}
 					Value: {
-						StructInstance(Vec3) {
+						StructInstanceExpr(Vec3) {
 							Fields: {
 								StructField(x) {
 									Name: x

@@ -27,26 +27,22 @@ func TestTypeCheck_Inequality_TwoFloatLiterals_NoError(t *testing.T) {
 
 func TestTypeCheck_Equality_IntAndFloatLiterals_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, "5 == 5.0", false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator ==: incompatible types: integer literal and float literal")
+	assertErrorsAre(t, res, "operator ==: incompatible types: integer literal and float literal")
 }
 
 func TestTypeCheck_Equality_FloatAndIntLiterals_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, "5.0 == 5", false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator ==: incompatible types: float literal and integer literal")
+	assertErrorsAre(t, res, "operator ==: incompatible types: float literal and integer literal")
 }
 
 func TestTypeCheck_Inequality_IntAndFloatLiterals_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, "5 != 6.0", false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator !=: incompatible types: integer literal and float literal")
+	assertErrorsAre(t, res, "operator !=: incompatible types: integer literal and float literal")
 }
 
 func TestTypeCheck_Inequality_FloatAndIntLiterals_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, "5.0 != 6", false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator !=: incompatible types: float literal and integer literal")
+	assertErrorsAre(t, res, "operator !=: incompatible types: float literal and integer literal")
 }
 
 // Equality - concrete typed identifiers
@@ -82,8 +78,7 @@ func TestTypeCheck_Equality_DifferentConcreteInts_Error(t *testing.T) {
 		let a: i32 = 1
 		let b: i64 = 2
 		a == b`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator ==: incompatible types: i32 and i64")
+	assertErrorsAre(t, res, "operator ==: incompatible types: i32 and i64")
 }
 
 func TestTypeCheck_Equality_ConcreteIntAndConcreteFloat_Error(t *testing.T) {
@@ -91,8 +86,7 @@ func TestTypeCheck_Equality_ConcreteIntAndConcreteFloat_Error(t *testing.T) {
 		let a: i32 = 1
 		let b: f64 = 2.0
 		a == b`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator ==: incompatible types: i32 and f64")
+	assertErrorsAre(t, res, "operator ==: incompatible types: i32 and f64")
 }
 
 // Equality - non-numeric primitive types
@@ -113,14 +107,12 @@ func TestTypeCheck_Equality_TwoCharLiterals_NoError(t *testing.T) {
 
 func TestTypeCheck_Equality_StringAndInt_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `"hello" == 5`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator ==: incompatible types: string and integer literal")
+	assertErrorsAre(t, res, "operator ==: incompatible types: string and integer literal")
 }
 
 func TestTypeCheck_Equality_BoolAndInt_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, "true == 5", false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator ==: incompatible types: boolean and integer literal")
+	assertErrorsAre(t, res, "operator ==: incompatible types: boolean and integer literal")
 }
 
 // Inequality - concrete typed identifiers
@@ -142,39 +134,35 @@ func TestTypeCheck_Inequality_DifferentConcreteInts_Error(t *testing.T) {
 		let a: i32 = 1
 		let b: i64 = 2
 		a != b`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator !=: incompatible types: i32 and i64")
+	assertErrorsAre(t, res, "operator !=: incompatible types: i32 and i64")
 }
 
 // Comparison operators
 func TestTypeCheck_Comparison_IntAndIntLiterals_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, "6 > 5", false)
-	assertErrorCount(t, res, 0)
+	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_Comparison_IntAndFloatLiterals_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, "6 < 5.0", false)
-	assertErrorCount(t, res, 0)
+	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_Comparison_ConcreteIntAndFloatLiterals_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let i: i32 = 6
 		i < 5.0`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator <: incompatible types: i32 and float literal")
+	assertErrorsAre(t, res, "operator <: incompatible types: i32 and float literal")
 }
 
 func TestTypeCheck_Comparison_TwoNonNumericOperands_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `"a" > true`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator >: operands must be numeric, got string and boolean")
+	assertErrorsAre(t, res, "operator >: operands must be numeric, got string and boolean")
 }
 
 func TestTypeCheck_Comparison_OneNonNumericOperands_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `"a" < 5`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator <: operands must be numeric, got string and integer literal")
+	assertErrorsAre(t, res, "operator <: operands must be numeric, got string and integer literal")
 }
 
 // <= and >= operators (previously untested)
@@ -192,8 +180,7 @@ func TestTypeCheck_Comparison_LessThanOrEqual_IntAndFloatLiterals_Error(t *testi
 	res := parseCollectAndCheck(t, `
 		let a: i32 = 5
 		a <= 3.0`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator <=: incompatible types: i32 and float literal")
+	assertErrorsAre(t, res, "operator <=: incompatible types: i32 and float literal")
 }
 
 // Float literal operands
@@ -231,19 +218,16 @@ func TestTypeCheck_Comparison_DifferentConcreteInts_Error(t *testing.T) {
 		let a: i32 = 5
 		let b: i64 = 3
 		a > b`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator >: incompatible types: i32 and i64")
+	assertErrorsAre(t, res, "operator >: incompatible types: i32 and i64")
 }
 
 // Non-numeric types are always invalid for ordering operators
 func TestTypeCheck_Comparison_BoolOperands_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, "true > false", false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator >: operands must be numeric, got boolean and boolean")
+	assertErrorsAre(t, res, "operator >: operands must be numeric, got boolean and boolean")
 }
 
 func TestTypeCheck_Comparison_StringOperands_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `"a" < "b"`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "operator <: operands must be numeric, got string and string")
+	assertErrorsAre(t, res, "operator <: operands must be numeric, got string and string")
 }

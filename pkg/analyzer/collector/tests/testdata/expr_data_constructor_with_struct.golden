@@ -7,7 +7,7 @@ Program(1 statements) {
 				DataConstructorExpr {
 					Constructor: Some
 					Value: {
-						StructInstance(Point) {
+						StructInstanceExpr(Point) {
 							Fields: {
 								StructField(x) {
 									Name: x

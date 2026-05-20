@@ -6,7 +6,7 @@ Program(1 statements) {
 			}
 			Name: Point
 			Type: {
-				StructType(Point) {
+				NamedStructType(Point) {
 					Fields: {
 						StructField(x) {
 							Name: x

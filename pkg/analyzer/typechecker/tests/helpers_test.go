@@ -51,22 +51,18 @@ func assertNoErrors(t *testing.T, res checkResult) {
 	}
 }
 
-func assertErrorCount(t *testing.T, res checkResult, want int) {
+func assertErrorsAre(t *testing.T, res checkResult, expected ...string) {
 	t.Helper()
-	if len(res.errors) != want {
-		t.Errorf("expected %d type error(s), got %d:", want, len(res.errors))
+	if len(res.errors) != len(expected) {
+		t.Errorf("expected %d type error(s), got %d:", len(expected), len(res.errors))
 		for _, e := range res.errors {
 			t.Errorf("  %s", e.Message)
 		}
+		return
 	}
-}
-
-func assertErrorIs(t *testing.T, res checkResult, expected string) {
-	t.Helper()
-	for _, e := range res.errors {
-		if e.Message == expected {
-			return
+	for idx, e := range res.errors {
+		if e.Message != expected[idx] {
+			t.Errorf("expected: %q, got: %q", expected[idx], e.Message)
 		}
 	}
-	t.Errorf("expected: %q, got: %v", expected, res.errors)
 }

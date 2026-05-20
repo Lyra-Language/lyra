@@ -7,7 +7,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
+func collectNamedStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
 	nameNode := node.ChildByFieldName("struct_name")
 	name := "?"
 	if nameNode != nil {
@@ -40,7 +40,7 @@ func collectStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast
 	} else {
 		fields = collectStructFields(structBodyNode, ctx)
 	}
-	return &ast.StructInstance{
+	return &ast.StructInstanceExpr{
 		ExprBase: ast.ExprBase{
 			AstBase: ast.AstBase{Location: loc},
 		},
@@ -48,6 +48,37 @@ func collectStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast
 		GenericArgs: genericArguments,
 		BaseStruct:  baseStruct,
 		Fields:      fields,
+	}
+}
+
+func collectAnonymousStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.StructInstanceExpr {
+	structBodyNode := node.ChildByFieldName("struct_body")
+
+	baseStruct := (*ast.IdentifierExpr)(nil)
+	fields := []ast.StructField(nil)
+	if structBodyNode != nil {
+		structUpdateNode := structBodyNode.ChildByFieldName("struct_update")
+		structShorthandNode := structBodyNode.ChildByFieldName("struct_shorthand")
+		if structUpdateNode != nil {
+			baseStructNode := structUpdateNode.ChildByFieldName("base")
+			if baseStructNode == nil {
+				ctx.AddError(node, collector_ctx.SeverityError, "anonymous struct update must have a base struct")
+				return nil
+			}
+			expr := ctx.CollectExpr(baseStructNode)
+			baseStruct = expr.(*ast.IdentifierExpr)
+			fields = collectStructFields(structUpdateNode, ctx)
+		} else if structShorthandNode != nil {
+			fields = collectStructShorthandFields(structShorthandNode, ctx)
+		} else {
+			fields = collectStructFields(structBodyNode, ctx)
+		}
+	}
+	return &ast.StructInstanceExpr{
+		ExprBase:   ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Name:       "?",
+		BaseStruct: baseStruct,
+		Fields:     fields,
 	}
 }
 

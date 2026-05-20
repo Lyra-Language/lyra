@@ -126,3 +126,55 @@ func TestTypesEqualMixedConventions(t *testing.T) {
 		})
 	}
 }
+
+func TestTypesEqualNamedStruct(t *testing.T) {
+	a := types.NamedStructType{Name: "Point"}
+	b := types.NamedStructType{Name: "Point"}
+	if !types.TypesEqual(a, b) {
+		t.Fatalf("expected %s and %s to be equal", a, b)
+	}
+}
+
+func TestTypesNotEqualNamedStruct(t *testing.T) {
+	a := types.NamedStructType{Name: "Point"}
+	b := types.NamedStructType{Name: "Line"}
+	if types.TypesEqual(a, b) {
+		t.Fatalf("expected %s and %s to be unequal", a, b)
+	}
+}
+
+func TestTypesEqualAnonymousStruct(t *testing.T) {
+	a := types.AnonymousStructType{
+		Fields: []types.StructField{
+			{Name: "x", Type: types.PrimitiveType{Name: types.Int}},
+			{Name: "y", Type: types.PrimitiveType{Name: types.Int}},
+		},
+	}
+	b := types.AnonymousStructType{
+		Fields: []types.StructField{
+			{Name: "x", Type: types.PrimitiveType{Name: types.Int}},
+			{Name: "y", Type: types.PrimitiveType{Name: types.Int}},
+		},
+	}
+	if !types.TypesEqual(a, b) {
+		t.Fatalf("expected %s and %s to be equal", a, b)
+	}
+}
+
+func TestTypesNotEqualAnonymousStruct(t *testing.T) {
+	a := types.AnonymousStructType{
+		Fields: []types.StructField{
+			{Name: "x", Type: types.PrimitiveType{Name: types.Int}},
+			{Name: "y", Type: types.PrimitiveType{Name: types.Int}},
+		},
+	}
+	b := types.AnonymousStructType{
+		Fields: []types.StructField{
+			{Name: "x", Type: types.PrimitiveType{Name: types.Int}},
+			{Name: "z", Type: types.PrimitiveType{Name: types.Int}},
+		},
+	}
+	if types.TypesEqual(a, b) {
+		t.Fatalf("expected %s and %s to be unequal", a, b)
+	}
+}

@@ -49,28 +49,33 @@ func TypesEqual(a, b Type) bool {
 			}
 		}
 		return TypesEqual(at.ReturnType.Type, bt.ReturnType.Type)
-	case StructType:
-		if bt, ok := b.(StructType); ok {
-			if at.Name != bt.Name {
+	case NamedStructType:
+		bt, ok := b.(NamedStructType)
+		return ok && at.Name == bt.Name
+	case AnonymousStructType:
+		bt, ok := b.(AnonymousStructType)
+		if !ok {
+			return false
+		}
+		if len(at.Fields) != len(bt.Fields) {
+			return false
+		}
+		for _, aField := range at.Fields {
+			found := false
+			for _, bField := range bt.Fields {
+				if bField.Name == aField.Name {
+					if !TypesEqual(aField.Type, bField.Type) {
+						return false
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
 				return false
 			}
-			for _, aField := range at.Fields {
-				found := false
-				for _, bField := range bt.Fields {
-					if bField.Name == aField.Name {
-						if !TypesEqual(aField.Type, bField.Type) {
-							return false
-						}
-						found = true
-						break
-					}
-				}
-				if !found {
-					return false
-				}
-			}
-			return true
 		}
+		return true
 	case TupleType:
 		if bt, ok := b.(TupleType); ok {
 			if len(at.Elements) != len(bt.Elements) {
@@ -121,6 +126,30 @@ func TypesEqual(a, b Type) bool {
 			return true
 		}
 		return false
+	case ParameterizedType:
+		// Nominal: same name and identical type arguments.
+		bt, ok := b.(ParameterizedType)
+		if !ok || at.Name != bt.Name || len(at.TypeArguments) != len(bt.TypeArguments) {
+			return false
+		}
+		for i := range at.TypeArguments {
+			if !TypesEqual(at.TypeArguments[i], bt.TypeArguments[i]) {
+				return false
+			}
+		}
+		return true
+	case RawPointerType:
+		bt, ok := b.(RawPointerType)
+		return ok && at.IsMut == bt.IsMut && TypesEqual(at.Pointee, bt.Pointee)
+	case SelfType:
+		// SelfType is equal to any other SelfType regardless of generic params;
+		// the params are resolved during trait/impl checking, not here.
+		_, ok := b.(SelfType)
+		return ok
+	case UnresolvedType:
+		// Two unresolved references are equal only if they name the same symbol.
+		bt, ok := b.(UnresolvedType)
+		return ok && at.Name == bt.Name
 	default:
 		return false
 	}

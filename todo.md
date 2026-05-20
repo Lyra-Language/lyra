@@ -1,17 +1,24 @@
 ## To-Dos
 
 ### Typechecker
-- **Scope-aware variable resolution** — variables declared inside blocks (if, for, match) should not be visible outside them; detect use-before-declaration
+- **Match expression exhaustiveness** — for `string` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
+- **Match expression exhaustiveness** — for `number` types, warn when a match arm is missing; type-check the scrutinee and arm patterns. Allow range patterns
 - **Match expression exhaustiveness** — for `data` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
-- **Struct literal type-checking** — verify field names exist on the struct, field value types match field declarations, no missing required fields
+- **Match expression exhaustiveness** — for `array` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
 - **Overflow/range checking for integer literals** — flag literal values that don't fit the annotated type (e.g. `let x: i8 = 200`)
 - **Duplicate variable declaration detection** — error when the same name is declared twice in the same scope
 
+## In Progress
+
 ## Completed
+
+### 05/19/26
+- **Struct literal type-checking** — verify field names exist on the struct, field value types match field declarations, no missing required fields
 
 ### 05/16/26
 - **Function declaration type-checking** — verify that return expressions match the declared return type; check parameter types against call-site arguments
 - **If/else expression type-checking** — branches must have compatible types; condition must be `bool`
+- **Scope-aware variable resolution** — variables declared inside blocks (if, for, match) should not be visible outside them; detect use-before-declaration
 
 ### 05/15/26
 - **Comparison operators** — type-check `==`, `!=`, `<`, `>`, `<=`, `>=`; operands must be compatible, result is `bool`

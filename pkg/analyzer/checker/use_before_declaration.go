@@ -233,7 +233,7 @@ func (c *ubeChecker) checkExpr(expr ast.Expression, declared, seen map[string]bo
 			c.checkExpr(el, declared, seen)
 		}
 
-	case *ast.StructInstance:
+	case *ast.StructInstanceExpr:
 		// Name is a type name, not a variable reference.
 		if e.BaseStruct != nil {
 			c.checkExpr(e.BaseStruct, declared, seen)

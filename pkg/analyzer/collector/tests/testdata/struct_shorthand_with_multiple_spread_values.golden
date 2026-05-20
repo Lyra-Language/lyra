@@ -4,7 +4,7 @@ Program(1 statements) {
 			BindingKind: let
 			Name: merged
 			Value: {
-				StructInstance(Point) {
+				StructInstanceExpr(Point) {
 					Fields: {
 						StructField {
 							Value: {

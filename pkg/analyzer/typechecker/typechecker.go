@@ -44,6 +44,8 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 		return
 	}
 	switch n := node.(type) {
+	case *ast.TypeDeclStmt:
+		tc.checkTypeDecl(n)
 	case *ast.VarDeclStmt:
 		tc.checkVarDecl(n)
 	case *ast.VarReassignmentStmt:
@@ -55,6 +57,17 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 	case *ast.BooleanBinaryOpExpr:
 		tc.checkBooleanBinaryOpExpr(n)
 	}
+}
+
+func (tc *TypeChecker) checkTypeDecl(decl *ast.TypeDeclStmt) {
+	switch decl.Type.(type) {
+	case types.NamedStructType:
+		tc.checkStructDecl(decl)
+	}
+}
+
+func (tc *TypeChecker) checkStructDecl(decl *ast.TypeDeclStmt) {
+
 }
 
 func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
@@ -286,6 +299,8 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return tc.inferFunctionCallExpr(e)
 	case *ast.NegationExpr:
 		return tc.inferNegationExpr(e)
+	case *ast.StructInstanceExpr:
+		return tc.inferStructInstanceExpr(e)
 	case *ast.NotBooleanExpr:
 		tc.checkNotBooleanExpr(e)
 		return types.PrimitiveType{Name: types.Boolean}
@@ -443,6 +458,55 @@ func (tc *TypeChecker) inferNegationExpr(expr *ast.NegationExpr) types.Type {
 		return types.PrimitiveType{Name: types.UntypedSignedInt}
 	}
 	return operandType
+}
+
+func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) types.Type {
+	decl, ok := tc.symTable.Types[expr.Name]
+	if !ok {
+		tc.addError(expr.GetLocation(), SeverityError, "undefined struct type %q", expr.Name)
+		return nil
+	}
+	structType := decl.Type.(types.NamedStructType)
+
+	typeSubst := make(map[string]types.Type, len(decl.GenericParams))
+	if len(decl.GenericParams) != len(expr.GenericArgs) {
+		tc.addError(expr.GetLocation(), SeverityError, "%s: expected %d generic arguments, got %d", expr.Name, len(decl.GenericParams), len(expr.GenericArgs))
+		return nil
+	} else if len(decl.GenericParams) > 0 {
+		for i, param := range decl.GenericParams {
+			typeSubst[param.Name] = expr.GenericArgs[i]
+		}
+	}
+
+	// Build a quick name->type lookup for the declared fields.
+	fieldTypes := make(map[string]types.Type, len(structType.Fields))
+	for _, f := range structType.Fields {
+		// Substitute generic type parameters if available, otherwise use the field's declared type.
+		if typeSub, ok := typeSubst[f.Type.GetName()]; ok {
+			fieldTypes[f.Name] = typeSub
+		} else {
+			fieldTypes[f.Name] = f.Type
+		}
+	}
+
+	// Check each field in the instance against the declared type.
+	for idx, f := range expr.Fields {
+		name := f.Name
+		if name == "" {
+			name = structType.Fields[idx].Name
+		}
+		expected, ok := fieldTypes[name]
+		if !ok {
+			tc.addError(expr.GetLocation(), SeverityError, "%s: unknown field %q", expr.Name, name)
+			continue
+		}
+		actual := tc.inferExprType(f.Value)
+		if actual != nil && !isAssignable(actual, expected) {
+			tc.addError(f.Value.GetLocation(), SeverityError, "%s.%s: cannot assign %s to %s", expr.Name, name, actual, expected)
+		}
+	}
+
+	return structType
 }
 
 func (tc *TypeChecker) addError(loc ast.Location, sev Severity, format string, args ...any) {

@@ -4,7 +4,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
-type StructInstance struct {
+type StructInstanceExpr struct {
 	ExprBase
 	Name        string
 	GenericArgs []types.Type
@@ -12,8 +12,17 @@ type StructInstance struct {
 	Fields      []StructField
 }
 
-func (s *StructInstance) GetName() string {
+func (s *StructInstanceExpr) GetName() string {
 	return s.Name
+}
+
+type AnonymousStructInstanceExpr struct {
+	ExprBase
+	Fields []StructField
+}
+
+func (s *AnonymousStructInstanceExpr) GetName() string {
+	return "anonymous struct"
 }
 
 type StructField struct {

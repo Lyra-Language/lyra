@@ -37,7 +37,7 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *as
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
 		Name:          name,
 		GenericParams: genericParams,
-		Type: types.StructType{
+		Type: types.NamedStructType{
 			Name:       name,
 			Fields:     fields,
 			Allocation: allocation,

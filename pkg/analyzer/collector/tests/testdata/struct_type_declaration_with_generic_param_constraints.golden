@@ -18,7 +18,7 @@ Program(1 statements) {
 			}
 			Name: Pair
 			Type: {
-				StructType(Pair) {
+				NamedStructType(Pair) {
 					Fields: {
 						StructField(first) {
 							Name: first

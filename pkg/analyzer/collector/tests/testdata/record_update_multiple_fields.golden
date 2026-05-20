@@ -2,7 +2,7 @@ Program(1 statements) {
 	Statements: {
 		ExpressionStmt {
 			Expression: {
-				StructInstance(Player) {
+				StructInstanceExpr(Player) {
 					BaseStruct: {
 						IdentifierExpr(existingPlayer) {
 							Name: existingPlayer

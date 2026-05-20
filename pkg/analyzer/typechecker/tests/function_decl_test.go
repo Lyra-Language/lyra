@@ -13,8 +13,7 @@ func TestTypeCheck_Fn_ReturnType_ExprBody_Match(t *testing.T) {
 
 func TestTypeCheck_Fn_ReturnType_ExprBody_Mismatch(t *testing.T) {
 	res := parseCollectAndCheck(t, `let bad = (x: int) -> string => x * 2`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "bad: return type mismatch: expected string, got int")
+	assertErrorsAre(t, res, "bad: return type mismatch: expected string, got int")
 }
 
 func TestTypeCheck_Fn_ReturnType_StringConcat_Match(t *testing.T) {
@@ -24,8 +23,7 @@ func TestTypeCheck_Fn_ReturnType_StringConcat_Match(t *testing.T) {
 
 func TestTypeCheck_Fn_ReturnType_StringConcat_Mismatch(t *testing.T) {
 	res := parseCollectAndCheck(t, `let bad = (x: int) -> int => "prefix" ++ "suffix"`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "bad: return type mismatch: expected int, got string")
+	assertErrorsAre(t, res, "bad: return type mismatch: expected int, got string")
 }
 
 func TestTypeCheck_Fn_ReturnType_NoAnnotation_NoError(t *testing.T) {
@@ -51,8 +49,7 @@ func TestTypeCheck_Fn_ReturnType_BlockReturn_Mismatch(t *testing.T) {
 			return x * 2
 		}
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "bad: return type mismatch: expected string, got int")
+	assertErrorsAre(t, res, "bad: return type mismatch: expected string, got int")
 }
 
 // Block bodies – implicit last-expression return
@@ -72,8 +69,7 @@ func TestTypeCheck_Fn_ReturnType_BlockImplicit_Mismatch(t *testing.T) {
 			x * 2
 		}
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "bad: return type mismatch: expected string, got int")
+	assertErrorsAre(t, res, "bad: return type mismatch: expected string, got int")
 }
 
 // ── call-site argument count ────────────────────────────────────────────────
@@ -91,8 +87,7 @@ func TestTypeCheck_Call_ArgCount_TooFew(t *testing.T) {
 		let add = (a: int, b: int) -> int => a + b
 		add(1)
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "add: expected 2 argument(s), got 1")
+	assertErrorsAre(t, res, "add: expected 2 argument(s), got 1")
 }
 
 func TestTypeCheck_Call_ArgCount_TooMany(t *testing.T) {
@@ -100,8 +95,7 @@ func TestTypeCheck_Call_ArgCount_TooMany(t *testing.T) {
 		let add = (a: int, b: int) -> int => a + b
 		add(1, 2, 3)
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "add: expected 2 argument(s), got 3")
+	assertErrorsAre(t, res, "add: expected 2 argument(s), got 3")
 }
 
 func TestTypeCheck_Call_ArgCount_ZeroParams_Correct(t *testing.T) {
@@ -117,8 +111,7 @@ func TestTypeCheck_Call_ArgCount_ZeroParams_TooMany(t *testing.T) {
 		let answer = () -> int => 42
 		answer(1)
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "answer: expected 0 argument(s), got 1")
+	assertErrorsAre(t, res, "answer: expected 0 argument(s), got 1")
 }
 
 func TestTypeCheck_Call_ArgCount_WithDefault_Correct_AllProvided(t *testing.T) {
@@ -142,8 +135,7 @@ func TestTypeCheck_Call_ArgCount_WithDefault_TooMany(t *testing.T) {
 		let greet = (name: string, prefix: string = "Hello") -> string => prefix ++ " " ++ name
 		greet("Alice", "Hi", "extra")
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "greet: expected 1 to 2 argument(s), got 3")
+	assertErrorsAre(t, res, "greet: expected 1 to 2 argument(s), got 3")
 }
 
 // ── call-site argument types ─────────────────────────────────────────────────
@@ -170,8 +162,7 @@ func TestTypeCheck_Call_ArgType_Mismatch_BoolToInt(t *testing.T) {
 		let flag: bool = true
 		add(flag, 2)
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "add: argument 1 (a): cannot assign boolean to int")
+	assertErrorsAre(t, res, "add: argument 1 (a): cannot assign boolean to int")
 }
 
 func TestTypeCheck_Call_ArgType_Mismatch_IntToString(t *testing.T) {
@@ -180,8 +171,7 @@ func TestTypeCheck_Call_ArgType_Mismatch_IntToString(t *testing.T) {
 		let n: int = 42
 		greet(n)
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "greet: argument 1 (name): cannot assign int to string")
+	assertErrorsAre(t, res, "greet: argument 1 (name): cannot assign int to string")
 }
 
 // ── void return-type enforcement ───────────────────────────────────────────
@@ -206,8 +196,7 @@ func TestTypeCheck_Fn_Void_ReturnValue_Error(t *testing.T) {
 			return 42
 		}
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "bad: void function must not return a value")
+	assertErrorsAre(t, res, "bad: void function must not return a value")
 }
 
 func TestTypeCheck_Fn_Void_ReturnString_Error(t *testing.T) {
@@ -216,8 +205,7 @@ func TestTypeCheck_Fn_Void_ReturnString_Error(t *testing.T) {
 			return name
 		}
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "bad: void function must not return a value")
+	assertErrorsAre(t, res, "bad: void function must not return a value")
 }
 
 func TestTypeCheck_Fn_Void_MultipleReturnValues_MultipleErrors(t *testing.T) {
@@ -227,8 +215,7 @@ func TestTypeCheck_Fn_Void_MultipleReturnValues_MultipleErrors(t *testing.T) {
 			return x * 3
 		}
 	`, false)
-	assertErrorCount(t, res, 2)
-	assertErrorIs(t, res, "bad: void function must not return a value")
+	assertErrorsAre(t, res, "bad: void function must not return a value", "bad: void function must not return a value")
 }
 
 func TestTypeCheck_Fn_Void_ExprBody_NoError(t *testing.T) {
@@ -252,6 +239,5 @@ func TestTypeCheck_Call_ReturnType_Propagates_Mismatch(t *testing.T) {
 		let add = (a: int, b: int) -> int => a + b
 		let x: string = add(1, 2)
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "x: cannot assign int to string")
+	assertErrorsAre(t, res, "x: cannot assign int to string")
 }

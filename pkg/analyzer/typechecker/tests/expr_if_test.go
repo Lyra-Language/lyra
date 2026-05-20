@@ -35,8 +35,7 @@ func TestTypeCheck_If_Condition_IntVar_Error(t *testing.T) {
 		let n: int = 42
 		if n { 1 }
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "if condition must be boolean, got int")
+	assertErrorsAre(t, res, "if condition must be boolean, got int")
 }
 
 func TestTypeCheck_If_Condition_StringVar_Error(t *testing.T) {
@@ -44,8 +43,7 @@ func TestTypeCheck_If_Condition_StringVar_Error(t *testing.T) {
 		let s: string = "hello"
 		if s { 1 }
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "if condition must be boolean, got string")
+	assertErrorsAre(t, res, "if condition must be boolean, got string")
 }
 
 // ── one-armed if: no branch-type requirement ─────────────────────────────────
@@ -93,20 +91,17 @@ func TestTypeCheck_IfElse_UntypedIntAndConcreteInt_NoError(t *testing.T) {
 
 func TestTypeCheck_IfElse_IntAndString_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `if true { 1 } else { "hello" }`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "if/else branches have incompatible types: then is integer literal, else is string")
+	assertErrorsAre(t, res, "if/else branches have incompatible types: then is integer literal, else is string")
 }
 
 func TestTypeCheck_IfElse_StringAndBool_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `if true { "a" } else { true }`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "if/else branches have incompatible types: then is string, else is boolean")
+	assertErrorsAre(t, res, "if/else branches have incompatible types: then is string, else is boolean")
 }
 
 func TestTypeCheck_IfElse_IntAndBool_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `if true { 1 } else { false }`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "if/else branches have incompatible types: then is integer literal, else is boolean")
+	assertErrorsAre(t, res, "if/else branches have incompatible types: then is integer literal, else is boolean")
 }
 
 // ── if/else as a value ───────────────────────────────────────────────────────
@@ -123,14 +118,12 @@ func TestTypeCheck_IfElse_AsValue_IntAnnotation_NoError(t *testing.T) {
 
 func TestTypeCheck_IfElse_AsValue_WrongAnnotation_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `let n: int = if true { "yes" } else { "no" }`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "n: cannot assign string to int")
+	assertErrorsAre(t, res, "n: cannot assign string to int")
 }
 
 func TestTypeCheck_IfElse_AsValue_IncompatibleBranches_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x = if true { 1 } else { "oops" }`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "if/else branches have incompatible types: then is integer literal, else is string")
+	assertErrorsAre(t, res, "if/else branches have incompatible types: then is integer literal, else is string")
 }
 
 // ── type-table entry ─────────────────────────────────────────────────────────
@@ -173,8 +166,7 @@ func TestTypeCheck_ElseIf_AsValue_WrongAnnotation_Error(t *testing.T) {
 		let x: int = 1
 		let n: int = if x == 1 { "one" } else if x == 2 { "two" } else { "other" }
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "n: cannot assign string to int")
+	assertErrorsAre(t, res, "n: cannot assign string to int")
 }
 
 func TestTypeCheck_ElseIf_InnerBranchMismatch_Error(t *testing.T) {
@@ -184,8 +176,7 @@ func TestTypeCheck_ElseIf_InnerBranchMismatch_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		if true { 1 } else if false { 2 } else { "three" }
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "if/else branches have incompatible types: then is integer literal, else is string")
+	assertErrorsAre(t, res, "if/else branches have incompatible types: then is integer literal, else is string")
 }
 
 func TestTypeCheck_ElseIf_MiddleBranchMismatch_Error(t *testing.T) {
@@ -193,8 +184,7 @@ func TestTypeCheck_ElseIf_MiddleBranchMismatch_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		if true { 1 } else if false { "two" } else { 3 }
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "if/else branches have incompatible types: then is string, else is integer literal")
+	assertErrorsAre(t, res, "if/else branches have incompatible types: then is string, else is integer literal")
 }
 
 func TestTypeCheck_ElseIf_BadCondition_Error(t *testing.T) {
@@ -203,8 +193,7 @@ func TestTypeCheck_ElseIf_BadCondition_Error(t *testing.T) {
 		let n: int = 5
 		if true { 1 } else if n { 2 } else { 3 }
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "if condition must be boolean, got int")
+	assertErrorsAre(t, res, "if condition must be boolean, got int")
 }
 
 // ── condition and branch errors can co-occur ─────────────────────────────────
@@ -214,7 +203,5 @@ func TestTypeCheck_IfElse_BadConditionAndBranches_BothErrors(t *testing.T) {
 		let n: int = 5
 		if n { 1 } else { "oops" }
 	`, false)
-	assertErrorCount(t, res, 2)
-	assertErrorIs(t, res, "if condition must be boolean, got int")
-	assertErrorIs(t, res, "if/else branches have incompatible types: then is integer literal, else is string")
+	assertErrorsAre(t, res, "if condition must be boolean, got int", "if/else branches have incompatible types: then is integer literal, else is string")
 }

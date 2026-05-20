@@ -34,8 +34,7 @@ func TestTypeCheck_VarReassignment_TypeMismatch(t *testing.T) {
 		var x: int = 1
 		x = 3.14
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "x: cannot assign float literal to int")
+	assertErrorsAre(t, res, "x: cannot assign float literal to int")
 }
 
 func TestTypeCheck_VarReassignment_InferredTypeMismatch(t *testing.T) {
@@ -43,8 +42,7 @@ func TestTypeCheck_VarReassignment_InferredTypeMismatch(t *testing.T) {
 		var x = 42
 		x = 3.14
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "x: cannot assign float literal to int")
+	assertErrorsAre(t, res, "x: cannot assign float literal to int")
 }
 
 // --- immutability enforcement ---
@@ -54,8 +52,7 @@ func TestTypeCheck_LetReassignment_Error(t *testing.T) {
 		let x: int = 1
 		x = 2
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "x: 'let' binding is immutable; use 'var' to allow reassignment")
+	assertErrorsAre(t, res, "x: 'let' binding is immutable; use 'var' to allow reassignment")
 }
 
 func TestTypeCheck_ConstReassignment_Error(t *testing.T) {
@@ -63,8 +60,7 @@ func TestTypeCheck_ConstReassignment_Error(t *testing.T) {
 		const X: int = 1
 		X = 2
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "X: 'const' binding is immutable and cannot be reassigned")
+	assertErrorsAre(t, res, "X: 'const' binding is immutable and cannot be reassigned")
 }
 
 // --- compound assignment (x += value) ---
@@ -90,8 +86,7 @@ func TestTypeCheck_CompoundAssign_TypeMismatch(t *testing.T) {
 		var x: int = 1
 		x += 3.14
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "x: cannot assign float literal to int")
+	assertErrorsAre(t, res, "x: cannot assign float literal to int")
 }
 
 func TestTypeCheck_CompoundAssign_LetImmutable(t *testing.T) {
@@ -99,8 +94,7 @@ func TestTypeCheck_CompoundAssign_LetImmutable(t *testing.T) {
 		let x: int = 1
 		x += 1
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "x: 'let' binding is immutable; use 'var' to allow reassignment")
+	assertErrorsAre(t, res, "x: 'let' binding is immutable; use 'var' to allow reassignment")
 }
 
 func TestTypeCheck_CompoundAssign_ConstImmutable(t *testing.T) {
@@ -108,6 +102,5 @@ func TestTypeCheck_CompoundAssign_ConstImmutable(t *testing.T) {
 		const X: int = 1
 		X += 1
 	`, false)
-	assertErrorCount(t, res, 1)
-	assertErrorIs(t, res, "X: 'const' binding is immutable and cannot be reassigned")
+	assertErrorsAre(t, res, "X: 'const' binding is immutable and cannot be reassigned")
 }

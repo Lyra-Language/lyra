@@ -60,8 +60,10 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 		return collectTupleLiteralExpr(node, ctx, loc)
 	case "data_constructor_expr":
 		return collectDataConstructorExpr(node, ctx, loc)
-	case "struct_literal":
-		return collectStructLiteralExpr(node, ctx, loc)
+	case "named_struct_literal":
+		return collectNamedStructLiteralExpr(node, ctx, loc)
+	case "anonymous_struct_literal":
+		return collectAnonymousStructLiteralExpr(node, ctx, loc)
 	case "spread_expr":
 		return collectSpreadExpr(node, ctx, loc)
 	case "boolean_expr", "for_condition_expr":
