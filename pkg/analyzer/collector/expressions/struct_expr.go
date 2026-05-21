@@ -23,6 +23,7 @@ func collectNamedStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	structBodyNode := node.ChildByFieldName("struct_body")
 	structUpdateNode := structBodyNode.ChildByFieldName("struct_update")
 	structShorthandNode := structBodyNode.ChildByFieldName("struct_shorthand")
+	structFieldsNode := structBodyNode.ChildByFieldName("struct_fields")
 
 	baseStruct := (*ast.IdentifierExpr)(nil)
 	fields := []ast.StructField(nil)
@@ -38,7 +39,7 @@ func collectNamedStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	} else if structShorthandNode != nil {
 		fields = collectStructShorthandFields(structShorthandNode, ctx)
 	} else {
-		fields = collectStructFields(structBodyNode, ctx)
+		fields = collectStructFields(structFieldsNode, ctx)
 	}
 	return &ast.StructInstanceExpr{
 		ExprBase: ast.ExprBase{
@@ -51,34 +52,39 @@ func collectNamedStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	}
 }
 
-func collectAnonymousStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.StructInstanceExpr {
+func collectAnonymousStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.AnonymousStructInstanceExpr {
 	structBodyNode := node.ChildByFieldName("struct_body")
 
-	baseStruct := (*ast.IdentifierExpr)(nil)
 	fields := []ast.StructField(nil)
+	var baseStructIdentifier *ast.IdentifierExpr
 	if structBodyNode != nil {
 		structUpdateNode := structBodyNode.ChildByFieldName("struct_update")
 		structShorthandNode := structBodyNode.ChildByFieldName("struct_shorthand")
+		structFieldsNode := structBodyNode.ChildByFieldName("struct_fields")
 		if structUpdateNode != nil {
-			baseStructNode := structUpdateNode.ChildByFieldName("base")
-			if baseStructNode == nil {
-				ctx.AddError(node, collector_ctx.SeverityError, "anonymous struct update must have a base struct")
-				return nil
-			}
-			expr := ctx.CollectExpr(baseStructNode)
-			baseStruct = expr.(*ast.IdentifierExpr)
+			baseStructIdentifier = collectBaseStruct(structUpdateNode, ctx)
 			fields = collectStructFields(structUpdateNode, ctx)
 		} else if structShorthandNode != nil {
 			fields = collectStructShorthandFields(structShorthandNode, ctx)
 		} else {
-			fields = collectStructFields(structBodyNode, ctx)
+			fields = collectStructFields(structFieldsNode, ctx)
 		}
 	}
-	return &ast.StructInstanceExpr{
+	return &ast.AnonymousStructInstanceExpr{
 		ExprBase:   ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		Name:       "?",
-		BaseStruct: baseStruct,
+		BaseStruct: baseStructIdentifier,
 		Fields:     fields,
+	}
+}
+
+func collectBaseStruct(structUpdateNode *sitter.Node, ctx *collector_ctx.Ctx) *ast.IdentifierExpr {
+	baseStruct := ctx.CollectExpr(structUpdateNode)
+	identifierExpr, ok := baseStruct.(*ast.IdentifierExpr)
+	if ok {
+		return identifierExpr
+	} else {
+		ctx.AddError(structUpdateNode, collector_ctx.SeverityError, "expected identifier, got %s", baseStruct.GetName())
+		return nil
 	}
 }
 

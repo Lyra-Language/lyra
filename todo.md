@@ -10,7 +10,11 @@
 
 ## In Progress
 
+
 ## Completed
+
+### 05/20/26
+— for struct record update syntax, include fields in the base struct when checking for missing fields
 
 ### 05/19/26
 - **Struct literal type-checking** — verify field names exist on the struct, field value types match field declarations, no missing required fields

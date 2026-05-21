@@ -8,7 +8,7 @@ Program(1 statements) {
 					MatchArms: {
 						MatchArm {
 							Body: {
-								StructInstanceExpr(?) {
+								AnonymousStructInstanceExpr {
 									Fields: {
 										StructField(a) {
 											Name: a
@@ -19,7 +19,6 @@ Program(1 statements) {
 											}
 										}
 									}
-									Name: ?
 								}
 							}
 							Pattern: {
@@ -30,7 +29,7 @@ Program(1 statements) {
 						}
 						MatchArm {
 							Body: {
-								StructInstanceExpr(?) {
+								AnonymousStructInstanceExpr {
 									Fields: {
 										StructField(b) {
 											Name: b
@@ -41,7 +40,6 @@ Program(1 statements) {
 											}
 										}
 									}
-									Name: ?
 								}
 							}
 							Pattern: {
@@ -52,7 +50,7 @@ Program(1 statements) {
 						}
 						MatchArm {
 							Body: {
-								StructInstanceExpr(?) {
+								AnonymousStructInstanceExpr {
 									Fields: {
 										StructField(c) {
 											Name: c
@@ -63,7 +61,6 @@ Program(1 statements) {
 											}
 										}
 									}
-									Name: ?
 								}
 							}
 							Pattern: {

@@ -301,6 +301,8 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return tc.inferNegationExpr(e)
 	case *ast.StructInstanceExpr:
 		return tc.inferStructInstanceExpr(e)
+	case *ast.AnonymousStructInstanceExpr:
+		return tc.inferAnonymousStructInstanceExpr(e)
 	case *ast.NotBooleanExpr:
 		tc.checkNotBooleanExpr(e)
 		return types.PrimitiveType{Name: types.Boolean}
@@ -466,7 +468,18 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		tc.addError(expr.GetLocation(), SeverityError, "undefined struct type %q", expr.Name)
 		return nil
 	}
-	structType := decl.Type.(types.NamedStructType)
+
+	structType, ok := decl.Type.(types.NamedStructType)
+
+	if !ok {
+		tc.addError(expr.GetLocation(), SeverityError, "%s: not a struct type", expr.Name)
+		return nil
+	} else {
+		if len(structType.Fields) == 0 {
+			tc.addError(expr.GetLocation(), SeverityError, "%s: no fields declared", expr.Name)
+			return nil
+		}
+	}
 
 	typeSubst := make(map[string]types.Type, len(decl.GenericParams))
 	if len(decl.GenericParams) != len(expr.GenericArgs) {
@@ -489,12 +502,14 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		}
 	}
 
-	// Check each field in the instance against the declared type.
+	// Check each field in the instance against the declared type and build a set of field names.
+	fieldNames := make(map[string]struct{}, len(expr.Fields))
 	for idx, f := range expr.Fields {
 		name := f.Name
 		if name == "" {
 			name = structType.Fields[idx].Name
 		}
+		fieldNames[name] = struct{}{}
 		expected, ok := fieldTypes[name]
 		if !ok {
 			tc.addError(expr.GetLocation(), SeverityError, "%s: unknown field %q", expr.Name, name)
@@ -506,7 +521,48 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		}
 	}
 
+	if expr.BaseStruct != nil {
+		// Record update syntax: the base struct supplies any fields not listed in
+		// the update, so missing-field errors are suppressed for those.
+		// We do verify that the base expression has the same struct type.
+		baseType := tc.inferExprType(expr.BaseStruct)
+		if baseType != nil && !types.TypesEqual(baseType, structType) {
+			tc.addError(expr.BaseStruct.GetLocation(), SeverityError,
+				"%s: base struct has type %s, expected %s", expr.Name, baseType, structType)
+		}
+	} else {
+		// Full struct literal: every field without a default must be supplied.
+		for _, f := range structType.Fields {
+			if _, ok := fieldNames[f.Name]; !ok {
+				if f.DefaultValue != nil {
+					continue
+				}
+				tc.addError(expr.GetLocation(), SeverityError, "%s: missing field %q", expr.Name, f.Name)
+			}
+		}
+	}
+
 	return structType
+}
+
+func (tc *TypeChecker) inferAnonymousStructInstanceExpr(expr *ast.AnonymousStructInstanceExpr) types.Type {
+	structTypeFields := tc.convertAnonymousStructFieldsToTypeFields(expr.Fields)
+	structType := types.AnonymousStructType{
+		Fields: structTypeFields,
+	}
+
+	return structType
+}
+
+func (tc *TypeChecker) convertAnonymousStructFieldsToTypeFields(fields []ast.StructField) []types.StructField {
+	structTypeFields := make([]types.StructField, len(fields))
+	for i, f := range fields {
+		structTypeFields[i] = types.StructField{
+			Name: f.Name,
+			Type: tc.inferExprType(f.Value),
+		}
+	}
+	return structTypeFields
 }
 
 func (tc *TypeChecker) addError(loc ast.Location, sev Severity, format string, args ...any) {

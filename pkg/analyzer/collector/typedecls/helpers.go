@@ -18,7 +18,7 @@ func CollectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Stru
 				fieldType = ctx.ParseType(fieldTypeNode.Child(0))
 			}
 			fieldName := ctx.NodeText(child.ChildByFieldName("field_name"))
-			defaultValue := ctx.CollectExpr(child.ChildByFieldName("default_field_value"))
+			defaultValue := ctx.CollectExpr(child.ChildByFieldName("default_value"))
 			fields = append(fields, types.StructField{
 				Name:         fieldName,
 				Type:         fieldType,

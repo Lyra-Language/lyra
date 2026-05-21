@@ -56,6 +56,7 @@ func CollectMatchArm(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.MatchArm {
 	}
 	bodyNode, ok := ctx.MustField(node, "body")
 	if !ok {
+		ctx.AddError(node, collector_ctx.SeverityError, "CollectMatchArm: body node is missing")
 		return nil
 	}
 	body := CollectExpression(bodyNode, ctx)

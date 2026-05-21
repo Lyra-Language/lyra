@@ -75,9 +75,9 @@ func TestTypeCheck_StructLiteralWithExpression_Ok(t *testing.T) {
 		let oldAge = 30
 		struct Person {
 			name: string,
-			age: oldAge + 1,
+			age: int,
 		}
-		let s = Person { name: "Alice" }
+		let s = Person { name: "Alice", age: oldAge + 1 }
 	`, false)
 	assertNoErrors(t, res)
 }
@@ -127,9 +127,56 @@ func TestTypeCheck_StructLiteral_GenericArgs_Error(t *testing.T) {
 	)
 }
 
-// func TestTypeCheck_AnonymousStructLiteral_Ok(t *testing.T) {
-// 	res := parseCollectAndCheck(t, `
-// 		let person = { name: "Alice", age: 30 }
-// 	`, false)
-// 	assertNoErrors(t, res)
-// }
+func TestTypeCheck_NamedStructMissingField_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Person { name: string, age: int, sex: string }
+		let person = Person { name: "Alice", age: 30 }
+	`, false)
+	assertErrorsAre(t, res, "Person: missing field \"sex\"")
+}
+
+func TestTypeCheck_NamedStructUpdate_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Person { name: string, age: int, sex: string = "male" }
+		let person = Person { name: "Alice", age: 30 }
+		let updated = Person { person | age: 31, sex: "female" }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_NamedStructUpdateUnknownField_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Person { name: string, age: int }
+		let person = Person { name: "Alice", age: 30 }
+		let updated = Person { person | age: 31, sex: "female" }
+	`, false)
+	assertErrorsAre(t, res,
+		"Person: unknown field \"sex\"",
+	)
+}
+
+func TestTypeCheck_NamedStructUpdateWrongType_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Person { name: string, age: int }
+		let person = Person { name: "Alice", age: 30 }
+		let updated = Person { person | age: "31" }
+	`, false)
+	assertErrorsAre(t, res,
+		"Person.age: cannot assign string to int",
+	)
+}
+
+func TestTypeCheck_AnonymousStructLiteral_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let person = { name: "Alice", age: 30 }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_AnonymousStructUpdate_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let person = { name: "Alice", age: 30 }
+		let updated = { person | age: 31, sex: "female" }
+	`, false)
+	assertNoErrors(t, res)
+}

@@ -16,6 +16,12 @@ Program(1 statements) {
 							}
 						}
 						StructField(y) {
+							DefaultValue: {
+								IntegerLiteralExpr {
+									Base: 10
+									Value: 0
+								}
+							}
 							Name: y
 							Type: {
 								PrimitiveType(int) {

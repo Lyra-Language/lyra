@@ -4,7 +4,7 @@ Program(1 statements) {
 			BindingKind: let
 			Name: point
 			Value: {
-				StructInstanceExpr(?) {
+				AnonymousStructInstanceExpr {
 					Fields: {
 						StructField(x) {
 							Name: x
@@ -25,7 +25,6 @@ Program(1 statements) {
 							}
 						}
 					}
-					Name: ?
 				}
 			}
 		}

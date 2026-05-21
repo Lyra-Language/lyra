@@ -18,7 +18,8 @@ func (s *StructInstanceExpr) GetName() string {
 
 type AnonymousStructInstanceExpr struct {
 	ExprBase
-	Fields []StructField
+	BaseStruct *IdentifierExpr
+	Fields     []StructField
 }
 
 func (s *AnonymousStructInstanceExpr) GetName() string {
