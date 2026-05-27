@@ -23,7 +23,7 @@ func CollectMatchExpression(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.L
 	}
 	return &ast.MatchExpr{
 		ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		Value:     value,     // guaranteed to be non-nil
+		Scrutinee: value,     // guaranteed to be non-nil
 		MatchArms: matchArms, // guaranteed to be non-nil
 	}
 }

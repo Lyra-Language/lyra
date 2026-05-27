@@ -15,7 +15,7 @@ func (i *IfExpr) GetName() string {
 
 type MatchExpr struct {
 	ExprBase
-	Value     Expression
+	Scrutinee Expression
 	MatchArms []MatchArm
 }
 

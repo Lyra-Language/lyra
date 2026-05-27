@@ -1,0 +1,297 @@
+package typechecker
+
+import (
+	"math"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
+)
+
+// inferBlockType returns the type of a block expression — the type of its last
+// expression statement. Returns nil for an empty block or one whose last
+// statement is not an ExpressionStmt (e.g. a declaration or return).
+func (tc *TypeChecker) inferBlockType(block *ast.BlockExpr) types.Type {
+	if len(block.Statements) == 0 {
+		return nil
+	}
+	last := block.Statements[len(block.Statements)-1]
+	if exprStmt, ok := last.(*ast.ExpressionStmt); ok {
+		return tc.inferExprType(exprStmt.Expression)
+	}
+	return nil
+}
+
+// checkIfExpr type-checks an if(/else) expression and returns its inferred
+// type. Two invariants are enforced:
+//
+//  1. The condition must be bool (when its type is inferable).
+//  2. When an else branch is present and both branch types are inferable,
+//     the branches must have mutually assignable types.
+//
+// One-armed ifs (no else) are not required to have a meaningful type: the
+// result value is discarded when the expression is used as a statement, and
+// requiring an else would break the extremely common pattern
+// `if cond { do_something() }`.
+func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr) types.Type {
+	// ── 1. condition must be bool ────────────────────────────────────────────
+	if expr.Condition != nil {
+		condType := tc.inferExprType(expr.Condition)
+		if condType != nil && !types.IsBoolean(condType) {
+			tc.addError(expr.Condition.GetLocation(), SeverityError,
+				"if condition must be boolean, got %s", condType)
+		}
+	}
+
+	// ── 2. infer branch types ────────────────────────────────────────────────
+	var thenType, elseType types.Type
+	if expr.Then != nil {
+		thenType = tc.inferExprType(expr.Then)
+	}
+	if expr.Else != nil {
+		elseType = tc.inferExprType(expr.Else)
+	}
+
+	// ── 3. branch compatibility (only when both branches exist) ──────────────
+	if expr.Else != nil && thenType != nil && elseType != nil {
+		common, ok := branchCommonType(thenType, elseType)
+		if !ok {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"if/else branches have incompatible types: then is %s, else is %s",
+				thenType, elseType)
+			return nil
+		}
+		return common
+	}
+
+	// One-armed if, or at least one branch type is unresolvable.
+	return thenType
+}
+
+func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
+	scrutineeType := tc.inferExprType(expr.Scrutinee)
+	if types.IsNumeric(scrutineeType) {
+		for _, arm := range expr.MatchArms {
+			tc.checkNumericMatchArm(arm.Pattern, scrutineeType)
+		}
+		if !tc.isNumericMatchExhaustive(expr.MatchArms, scrutineeType) {
+			tc.addError(expr.GetLocation(), SeverityWarning,
+				"match on numeric type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
+		}
+	}
+	return nil
+}
+
+// isNumericMatchExhaustive reports whether the arms of a numeric match
+// expression cover all possible values of scrutineeType.
+//
+// Two strategies are tried in order:
+//  1. Wildcard / unguarded identifier — trivially covers every value.
+//  2. Interval analysis — for fixed-width integer types only. Collects the
+//     inclusive [lo, hi] interval from each unguarded LiteralPattern or
+//     RangePattern and checks whether their union spans [typeMin, typeMax].
+func (tc *TypeChecker) isNumericMatchExhaustive(arms []ast.MatchArm, scrutineeType types.Type) bool {
+	// Fast path: a wildcard or unguarded identifier catches everything.
+	if numericMatchIsExhaustive(arms) {
+		return true
+	}
+	// For fixed-width integer types, attempt interval coverage analysis.
+	p, ok := scrutineeType.(types.PrimitiveType)
+	if !ok {
+		return false
+	}
+	typeMin, typeMax, boundsKnown := intTypeBounds(p.Name)
+	if !boundsKnown {
+		return false
+	}
+	return integerIntervalsExhaustive(arms, typeMin, typeMax)
+}
+
+// intTypeBounds returns the inclusive [min, max] for fixed-width integer types.
+// Platform-sized (int/uint), untyped, and float types return ok=false because
+// their range is either unknown or too large to reason about discretely.
+func intTypeBounds(name types.PrimitiveTypeName) (min, max int64, ok bool) {
+	switch name {
+	case types.Int8:
+		return math.MinInt8, math.MaxInt8, true
+	case types.UInt8:
+		return 0, math.MaxUint8, true
+	case types.Int16:
+		return math.MinInt16, math.MaxInt16, true
+	case types.UInt16:
+		return 0, math.MaxUint16, true
+	case types.Int32:
+		return math.MinInt32, math.MaxInt32, true
+	case types.UInt32:
+		return 0, math.MaxUint32, true
+	case types.Int64:
+		return math.MinInt64, math.MaxInt64, true
+		// UInt64: max is 2^64-1 which overflows int64; skip range-based exhaustiveness.
+	}
+	return 0, 0, false
+}
+
+// extractIntFromExpr extracts a compile-time int64 value from an expression
+// that appears as a range-pattern bound. Handles IntegerLiteralExpr and
+// NegationExpr wrapping one (for negative bounds like -128).
+func extractIntFromExpr(e ast.Expression) (int64, bool) {
+	if e == nil {
+		return 0, false
+	}
+	switch v := e.(type) {
+	case *ast.IntegerLiteralExpr:
+		return v.Value, true
+	case *ast.NegationExpr:
+		inner, ok := v.Operand.(*ast.IntegerLiteralExpr)
+		if !ok {
+			return 0, false
+		}
+		return -inner.Value, true
+	}
+	return 0, false
+}
+
+// armIntInterval returns the inclusive [lo, hi] integer interval that an
+// unguarded arm's pattern covers. Returns ok=false for guarded arms, arms
+// whose pattern is not a numeric literal/range, or bounds that cannot be
+// statically evaluated.
+func armIntInterval(arm ast.MatchArm) (lo, hi int64, ok bool) {
+	if arm.Guard != nil {
+		return 0, 0, false
+	}
+	switch p := arm.Pattern.(type) {
+	case *ast.LiteralPattern:
+		s, isStr := p.Value.(string)
+		if !isStr {
+			return 0, 0, false
+		}
+		n, err := strconv.ParseInt(s, 0, 64)
+		if err != nil {
+			return 0, 0, false
+		}
+		return n, n, true
+	case *ast.RangePattern:
+		start, startOk := extractIntFromExpr(p.Start)
+		end, endOk := extractIntFromExpr(p.End)
+		if !startOk || !endOk {
+			return 0, 0, false
+		}
+		if p.EndOperator == "<" { // exclusive end (..<)
+			if end == math.MinInt64 {
+				return 0, 0, false // underflow
+			}
+			end--
+		}
+		return start, end, true
+	}
+	return 0, 0, false
+}
+
+// integerIntervalsExhaustive reports whether the unguarded pattern arms
+// collectively cover every integer in [typeMin, typeMax] without gaps.
+func integerIntervalsExhaustive(arms []ast.MatchArm, typeMin, typeMax int64) bool {
+	type interval struct{ lo, hi int64 }
+	var ivs []interval
+	for _, arm := range arms {
+		lo, hi, ok := armIntInterval(arm)
+		if ok && lo <= hi {
+			ivs = append(ivs, interval{lo, hi})
+		}
+	}
+	if len(ivs) == 0 {
+		return false
+	}
+	sort.Slice(ivs, func(i, j int) bool {
+		if ivs[i].lo != ivs[j].lo {
+			return ivs[i].lo < ivs[j].lo
+		}
+		return ivs[i].hi > ivs[j].hi // wider first when lo ties
+	})
+	// Walk the sorted intervals. nextNeeded is the smallest value not yet covered.
+	nextNeeded := typeMin
+	for _, iv := range ivs {
+		if iv.lo > nextNeeded {
+			return false // gap before this interval
+		}
+		if iv.hi >= typeMax {
+			return true // coverage reaches the upper bound
+		}
+		if iv.hi >= nextNeeded {
+			nextNeeded = iv.hi + 1
+		}
+	}
+	return false
+}
+
+// numericMatchIsExhaustive reports whether at least one arm unconditionally
+// catches every value — i.e. a WildcardPattern or an unguarded IdentifierPattern.
+func numericMatchIsExhaustive(arms []ast.MatchArm) bool {
+	for _, arm := range arms {
+		if arm.Guard != nil {
+			// A guarded arm only matches conditionally, so it never guarantees
+			// coverage on its own.
+			continue
+		}
+		switch arm.Pattern.(type) {
+		case *ast.WildcardPattern, *ast.IdentifierPattern:
+			return true
+		}
+	}
+	return false
+}
+
+func (tc *TypeChecker) checkNumericMatchArm(pattern ast.Pattern, scrutineeType types.Type) {
+	// RangePattern needs no check: the grammar restricts both start and end to
+	// number literals, so numeric bounds are guaranteed by the parser.
+	switch p := pattern.(type) {
+	case *ast.LiteralPattern:
+		kind := literalPatternKind(p.Value)
+		if isIntType(scrutineeType) && kind != types.UntypedInt {
+			tc.addError(p.GetLocation(), SeverityError,
+				"literal pattern '%s' is not an integer type", p.Value)
+		}
+		if isFloatType(scrutineeType) && kind != types.UntypedFloat {
+			tc.addError(p.GetLocation(), SeverityError,
+				"literal pattern '%s' is not a float type", p.Value)
+		}
+	}
+}
+
+// literalPatternKind classifies a literal pattern's raw source text as
+// UntypedInt, UntypedFloat, Boolean, or String.
+func literalPatternKind(value any) types.PrimitiveTypeName {
+	s, ok := value.(string)
+	if !ok {
+		return ""
+	}
+	switch {
+	case s == "true" || s == "false":
+		return types.Boolean
+	case len(s) > 0 && s[0] == '"':
+		return types.String
+	case strings.Contains(s, "."):
+		return types.UntypedFloat
+	default:
+		return types.UntypedInt
+	}
+}
+
+// branchCommonType returns the common type for two if/else branches and
+// whether they are compatible. Exact equality wins first; then untyped→concrete
+// widening (e.g. untyped int + i32 → i32); otherwise the types are incompatible.
+func branchCommonType(a, b types.Type) (types.Type, bool) {
+	if types.TypesEqual(a, b) {
+		return a, true
+	}
+	// Untyped widening: if a is assignable to b, b is the more concrete type.
+	if isAssignable(a, b) {
+		return b, true
+	}
+	// Symmetric case.
+	if isAssignable(b, a) {
+		return a, true
+	}
+	return nil, false
+}

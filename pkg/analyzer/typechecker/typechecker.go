@@ -85,6 +85,8 @@ func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
 		tc.inferFunctionCallExpr(e)
 	} else if e, ok := n.Expression.(*ast.IfExpr); ok {
 		tc.checkIfExpr(e)
+	} else if e, ok := n.Expression.(*ast.MatchExpr); ok {
+		tc.checkMatchExpr(e)
 	}
 }
 

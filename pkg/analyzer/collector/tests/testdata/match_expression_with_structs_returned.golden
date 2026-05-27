@@ -69,7 +69,7 @@ Program(1 statements) {
 							}
 						}
 					}
-					Value: {
+					Scrutinee: {
 						IdentifierExpr(bar) {
 							Name: bar
 						}

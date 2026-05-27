@@ -2,16 +2,18 @@
 
 ### Typechecker
 - **Match expression exhaustiveness** — for `string` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
-- **Match expression exhaustiveness** — for `number` types, warn when a match arm is missing; type-check the scrutinee and arm patterns. Allow range patterns
 - **Match expression exhaustiveness** — for `data` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
 - **Match expression exhaustiveness** — for `array` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
 - **Overflow/range checking for integer literals** — flag literal values that don't fit the annotated type (e.g. `let x: i8 = 200`)
 - **Duplicate variable declaration detection** — error when the same name is declared twice in the same scope
 
 ## In Progress
-
+- **Match expression exhaustiveness** — for `number` types, warn when a match arm is missing; type-check the scrutinee and arm patterns. Allow range patterns
 
 ## Completed
+
+### 05/26/26
+— 
 
 ### 05/20/26
 — for struct record update syntax, include fields in the base struct when checking for missing fields

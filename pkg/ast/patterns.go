@@ -1,6 +1,8 @@
 package ast
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // Pattern is the interface for all pattern AST nodes
 type Pattern interface {
@@ -89,8 +91,8 @@ func (p *RestPattern) GetName() string { return fmt.Sprintf("...%s", p.Identifie
 
 type RangePattern struct {
 	PatternBase
-	Start Expression
-	End Expression
+	Start       Expression
+	End         Expression
 	EndOperator string
 }
 

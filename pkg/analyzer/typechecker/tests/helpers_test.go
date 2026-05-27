@@ -66,3 +66,29 @@ func assertErrorsAre(t *testing.T, res checkResult, expected ...string) {
 		}
 	}
 }
+
+// assertWarningsAre checks that only warnings (no errors) were produced and
+// that their messages match expected in order.
+func assertWarningsAre(t *testing.T, res checkResult, expected ...string) {
+	t.Helper()
+	var warnings []typechecker.TypeError
+	for _, e := range res.errors {
+		if e.Severity == typechecker.SeverityWarning {
+			warnings = append(warnings, e)
+		} else {
+			t.Errorf("unexpected error (severity=error): %s", e.Message)
+		}
+	}
+	if len(warnings) != len(expected) {
+		t.Errorf("expected %d warning(s), got %d:", len(expected), len(warnings))
+		for _, w := range warnings {
+			t.Errorf("  %s", w.Message)
+		}
+		return
+	}
+	for idx, w := range warnings {
+		if w.Message != expected[idx] {
+			t.Errorf("expected warning: %q, got: %q", expected[idx], w.Message)
+		}
+	}
+}

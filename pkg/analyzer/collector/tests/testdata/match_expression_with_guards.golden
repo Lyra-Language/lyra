@@ -160,7 +160,7 @@ Program(1 statements) {
 							}
 						}
 					}
-					Value: {
+					Scrutinee: {
 						IdentifierExpr(foo) {
 							Name: foo
 						}

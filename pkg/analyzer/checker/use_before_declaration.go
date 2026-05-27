@@ -148,7 +148,7 @@ func (c *ubeChecker) checkExpr(expr ast.Expression, declared, seen map[string]bo
 
 	case *ast.MatchExpr:
 		// The matched value is in the current scope.
-		c.checkExpr(e.Value, declared, seen)
+		c.checkExpr(e.Scrutinee, declared, seen)
 		// Each arm's guard and body are in a fresh scope (pattern binds variables
 		// that are not VarDeclStmts, so they will not appear in any declared set).
 		for _, arm := range e.MatchArms {

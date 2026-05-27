@@ -152,7 +152,7 @@ Program(1 statements) {
 							}
 						}
 					}
-					Value: {
+					Scrutinee: {
 						IdentifierExpr(some_complex_struct) {
 							Name: some_complex_struct
 						}
