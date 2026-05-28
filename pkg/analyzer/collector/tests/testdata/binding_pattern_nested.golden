@@ -1,0 +1,87 @@
+Program(1 statements) {
+	Statements: {
+		ExpressionStmt {
+			Expression: {
+				MatchExpr {
+					MatchArms: {
+						MatchArm {
+							Body: {
+								FunctionCallExpr {
+									Arguments: {
+										IdentifierExpr(px) {
+											Name: px
+										}
+									}
+									Function: {
+										IdentifierExpr(print) {
+											Name: print
+										}
+									}
+								}
+							}
+							Pattern: {
+								StructPattern {
+									Fields: {
+										StructPatternField(x) {
+											Name: x
+											Pattern: {
+												BindingPattern(px) {
+													Name: px
+													Pattern: {
+														RangePattern {
+															End: {
+																IntegerLiteralExpr {
+																	Base: 10
+																	Value: 100
+																}
+															}
+															EndOperator: =
+															Start: {
+																IntegerLiteralExpr {
+																	Base: 10
+																	Value: 0
+																}
+															}
+														}
+													}
+												}
+											}
+										}
+										StructPatternField(y) {
+											Name: y
+										}
+									}
+								}
+							}
+						}
+						MatchArm {
+							Body: {
+								FunctionCallExpr {
+									Arguments: {
+										StringLiteralExpr {
+											Value: out of range
+										}
+									}
+									Function: {
+										IdentifierExpr(print) {
+											Name: print
+										}
+									}
+								}
+							}
+							Pattern: {
+								WildcardPattern {
+								}
+							}
+						}
+					}
+					Scrutinee: {
+						IdentifierExpr(point) {
+							Name: point
+						}
+					}
+				}
+			}
+		}
+	}
+}

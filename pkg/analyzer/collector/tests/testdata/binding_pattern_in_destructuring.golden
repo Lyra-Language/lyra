@@ -1,0 +1,32 @@
+Program(1 statements) {
+	Statements: {
+		DestructuringDeclStmt {
+			Keyword: let
+			Pattern: {
+				BindingPattern(all) {
+					Name: all
+					Pattern: {
+						ArrayPattern {
+							Elements: {
+								IdentifierPattern(a) {
+									Name: a
+								}
+								IdentifierPattern(b) {
+									Name: b
+								}
+								RestPattern {
+									Identifier: rest
+								}
+							}
+						}
+					}
+				}
+			}
+			Value: {
+				IdentifierExpr(some_array) {
+					Name: some_array
+				}
+			}
+		}
+	}
+}

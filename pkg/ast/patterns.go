@@ -126,3 +126,16 @@ type RegexPattern struct {
 
 func (p *RegexPattern) patternNode()    {}
 func (p *RegexPattern) GetName() string { return fmt.Sprintf("r/%s/", p.Pattern) }
+
+// BindingPattern binds a name to the whole matched value while also matching
+// an inner pattern. Written `name @ pattern` — equivalent to Rust's @ bindings
+// or Haskell's as-patterns. Both `name` and the variables inside `pattern` are
+// bound in the arm/body.
+type BindingPattern struct {
+	PatternBase
+	Name    string
+	Pattern Pattern
+}
+
+func (p *BindingPattern) patternNode()    {}
+func (p *BindingPattern) GetName() string { return fmt.Sprintf("%s @ %s", p.Name, p.Pattern.GetName()) }

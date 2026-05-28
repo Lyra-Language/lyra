@@ -430,6 +430,8 @@ func (c *Collector) CollectPattern(patternNode *sitter.Node) ast.Pattern {
 		return c.collectDataPattern(patternNode)
 	case "range_pattern":
 		return c.collectRangePattern(patternNode)
+	case "binding_pattern":
+		return c.collectBindingPattern(patternNode)
 	case "wildcard_pattern":
 		return c.collectWildcardPattern(patternNode)
 	}
@@ -492,7 +494,7 @@ func (c *Collector) collectPatternElement(node *sitter.Node) ast.Pattern {
 		return c.collectRestPattern(node)
 	case "identifier", "literal_pattern", "pattern",
 		"tuple_pattern", "array_pattern", "struct_pattern", "data_pattern",
-		"range_pattern", "wildcard_pattern":
+		"range_pattern", "wildcard_pattern", "binding_pattern":
 		return c.CollectPattern(node)
 	}
 	return nil
@@ -607,5 +609,23 @@ func (c *Collector) collectRestPattern(node *sitter.Node) ast.Pattern {
 func (c *Collector) collectWildcardPattern(node *sitter.Node) ast.Pattern {
 	return &ast.WildcardPattern{
 		PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+	}
+}
+
+func (c *Collector) collectBindingPattern(node *sitter.Node) ast.Pattern {
+	nameNode := node.ChildByFieldName("name")
+	if nameNode == nil {
+		c.addError(node, CollectorErrorSeverityError, "collectBindingPattern: name node is nil")
+		return nil
+	}
+	patternNode := node.ChildByFieldName("pattern")
+	if patternNode == nil {
+		c.addError(node, CollectorErrorSeverityError, "collectBindingPattern: pattern node is nil")
+		return nil
+	}
+	return &ast.BindingPattern{
+		PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+		Name:        c.ctx.NodeText(nameNode),
+		Pattern:     c.CollectPattern(patternNode),
 	}
 }
