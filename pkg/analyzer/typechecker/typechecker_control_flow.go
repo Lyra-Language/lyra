@@ -89,8 +89,121 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.addError(expr.GetLocation(), SeverityWarning,
 				"match on string type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
+	} else if dt, ok := tc.resolveToDataType(scrutineeType); ok {
+		for _, arm := range expr.MatchArms {
+			tc.checkDataMatchArm(arm.Pattern, dt)
+		}
+		if exhaustive, missing := dataMatchIsExhaustive(expr.MatchArms, dt); !exhaustive {
+			tc.addError(expr.GetLocation(), SeverityWarning,
+				"match on %s is not exhaustive: missing constructors: %s",
+				dt.Name, strings.Join(missing, ", "))
+		}
 	}
 	return nil
+}
+
+// findDataTypeByConstructor searches the registered type declarations for the
+// DataType that owns a constructor named ctorName. Returns (DataType, true) on
+// success and (DataType{}, false) when no such constructor is found.
+func (tc *TypeChecker) findDataTypeByConstructor(ctorName string) (types.DataType, bool) {
+	for _, decl := range tc.symTable.Types {
+		dt, ok := decl.Type.(types.DataType)
+		if !ok {
+			continue
+		}
+		for _, ctor := range dt.Constructors {
+			if ctor.Name == ctorName {
+				return dt, true
+			}
+		}
+	}
+	return types.DataType{}, false
+}
+
+// resolveToDataType returns the DataType underlying t, or (DataType{}, false) if
+// t is neither a DataType nor an UnresolvedType that names a DataType.
+func (tc *TypeChecker) resolveToDataType(t types.Type) (types.DataType, bool) {
+	if t == nil {
+		return types.DataType{}, false
+	}
+	if dt, ok := t.(types.DataType); ok {
+		return dt, true
+	}
+	if u, ok := t.(types.UnresolvedType); ok {
+		if decl, exists := tc.symTable.Types[u.Name]; exists {
+			if dt, ok := decl.Type.(types.DataType); ok {
+				return dt, true
+			}
+		}
+	}
+	return types.DataType{}, false
+}
+
+// checkDataMatchArm validates one arm's pattern against a data-type scrutinee.
+// Only DataPattern, WildcardPattern, and IdentifierPattern are legal; the
+// DataPattern constructor name must exist in the data type's declaration.
+func (tc *TypeChecker) checkDataMatchArm(pattern ast.Pattern, dt types.DataType) {
+	switch p := pattern.(type) {
+	case *ast.WildcardPattern, *ast.IdentifierPattern:
+		return
+	case *ast.DataPattern:
+		for _, ctor := range dt.Constructors {
+			if ctor.Name == p.Name {
+				return
+			}
+		}
+		tc.addError(p.GetLocation(), SeverityError,
+			"%s is not a constructor of %s", p.Name, dt.Name)
+	case *ast.LiteralPattern:
+		tc.addError(p.GetLocation(), SeverityError,
+			"literal patterns are not allowed on a data type scrutinee")
+	case *ast.RegexPattern:
+		tc.addError(p.GetLocation(), SeverityError,
+			"regex patterns are not allowed on a data type scrutinee")
+	case *ast.RangePattern:
+		tc.addError(p.GetLocation(), SeverityError,
+			"range patterns are not allowed on a data type scrutinee")
+	default:
+		tc.addError(pattern.GetLocation(), SeverityError,
+			"this pattern is not allowed on a data type scrutinee")
+	}
+}
+
+// dataMatchIsExhaustive reports whether the match arms fully cover all
+// constructors of dt. Returns (true, nil) when a wildcard or unguarded
+// identifier is present. Returns (true, nil) when every constructor has at
+// least one unguarded DataPattern arm. Otherwise returns (false, missingNames)
+// where missingNames lists the uncovered constructors in declaration order.
+func dataMatchIsExhaustive(arms []ast.MatchArm, dt types.DataType) (bool, []string) {
+	// A wildcard or unguarded identifier catches every possible value.
+	for _, arm := range arms {
+		if arm.Guard != nil {
+			continue
+		}
+		switch arm.Pattern.(type) {
+		case *ast.WildcardPattern, *ast.IdentifierPattern:
+			return true, nil
+		}
+	}
+
+	// Collect constructor names that are covered by unguarded DataPattern arms.
+	covered := make(map[string]bool, len(dt.Constructors))
+	for _, arm := range arms {
+		if arm.Guard != nil {
+			continue
+		}
+		if dp, ok := arm.Pattern.(*ast.DataPattern); ok {
+			covered[dp.Name] = true
+		}
+	}
+
+	var missing []string
+	for _, ctor := range dt.Constructors {
+		if !covered[ctor.Name] {
+			missing = append(missing, ctor.Name)
+		}
+	}
+	return len(missing) == 0, missing
 }
 
 // checkStringMatchArm validates one arm's pattern against a `string`

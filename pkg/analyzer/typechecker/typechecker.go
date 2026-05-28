@@ -321,6 +321,14 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return tc.inferStringConcatExpr(e)
 	case *ast.InterpolatedStringExpr:
 		return types.PrimitiveType{Name: types.String}
+	case *ast.DataConstructorExpr:
+		// Resolve the data type that owns this constructor so that the type of
+		// a data-constructor expression (e.g. `Some 42`) is the enclosing
+		// DataType (e.g. `Maybe`), not nil.
+		if dt, ok := tc.findDataTypeByConstructor(e.Constructor); ok {
+			return dt
+		}
+		return nil
 	case *ast.IdentifierExpr:
 		// Consult the parameter scope installed by withParamScope while
 		// type-checking a function body.
