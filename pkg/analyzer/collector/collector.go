@@ -418,6 +418,8 @@ func (c *Collector) CollectPattern(patternNode *sitter.Node) ast.Pattern {
 			PatternBase: ast.PatternBase{Location: loc},
 			Value:       c.ctx.NodeText(patternNode),
 		}
+	case "regex_pattern":
+		return c.collectRegexPattern(patternNode, loc)
 	case "tuple_pattern":
 		return c.collectTuplePattern(patternNode)
 	case "array_pattern":
@@ -433,6 +435,22 @@ func (c *Collector) CollectPattern(patternNode *sitter.Node) ast.Pattern {
 	}
 	c.addError(patternNode, CollectorErrorSeverityError, "collectPattern: unknown pattern node kind: %s", patternNode.Kind())
 	return nil
+}
+
+// collectRegexPattern lowers a `regex_pattern` grammar node into a
+// RegexPattern AST node. The grammar wraps a regex_literal, so we read the
+// raw text and strip the surrounding `r/.../` delimiters — mirroring how
+// regex_literal expressions are collected.
+func (c *Collector) collectRegexPattern(patternNode *sitter.Node, loc ast.Location) ast.Pattern {
+	raw := c.ctx.NodeText(patternNode) // e.g. r/[0-9]+/
+	if len(raw) < 3 || raw[:2] != "r/" || raw[len(raw)-1] != '/' {
+		c.addError(patternNode, CollectorErrorSeverityError, "collectRegexPattern: malformed regex literal %q", raw)
+		return nil
+	}
+	return &ast.RegexPattern{
+		PatternBase: ast.PatternBase{Location: loc},
+		Pattern:     raw[2 : len(raw)-1],
+	}
 }
 
 func (c *Collector) collectTuplePattern(patternNode *sitter.Node) ast.Pattern {

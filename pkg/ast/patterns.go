@@ -114,3 +114,15 @@ type WildcardPattern struct {
 
 func (p *WildcardPattern) patternNode()    {}
 func (p *WildcardPattern) GetName() string { return "_" }
+
+// RegexPattern matches a string by regex language membership. Used only in
+// match arms whose scrutinee is `string`. The Pattern field is the raw regex
+// body with the surrounding `r/` and `/` delimiters stripped, matching the
+// convention of RegexLiteralExpr.
+type RegexPattern struct {
+	PatternBase
+	Pattern string
+}
+
+func (p *RegexPattern) patternNode()    {}
+func (p *RegexPattern) GetName() string { return fmt.Sprintf("r/%s/", p.Pattern) }

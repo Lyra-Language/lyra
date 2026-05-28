@@ -1,22 +1,30 @@
 ## To-Dos
 
+### Regex engine (resharp-style)
+- **Phase 1: core derivative DFA** — symbolic-byte-set expression algebra, Brzozowski derivatives, lazy DFA, intersection (`&`), complement (`~(...)`), wildcard `_`, standard syntax, multiline anchors, `(?i)`/`(?s)`/`(?m)`/`(?-m)`/`(?x)` flags, `IsMatch` + `FindAll` with leftmost-longest semantics
+- **Phase 2: lookarounds** — `(?=...)`, `(?!...)`, `(?<=...)`, `(?<!...)` compiled into the automaton
+- **Phase 3: Unicode properties** — `\p{Letter}`, `\p{Nd}`, etc.
+- **Phase 4: performance** — SIMD prefix scan, byte-frequency-based acceleration, bounded DFA fast path
+- Wire the engine into `RegexLiteralExpr` (typecheck regex patterns in match arms) and `PatternConstraint` (validate constrained string types)
+
 ### Typechecker
-- **Match expression exhaustiveness** — for `string` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
 - **Match expression exhaustiveness** — for `data` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
 - **Match expression exhaustiveness** — for `array` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
 - **Overflow/range checking for integer literals** — flag literal values that don't fit the annotated type (e.g. `let x: i8 = 200`)
 - **Duplicate variable declaration detection** — error when the same name is declared twice in the same scope
 
 ## In Progress
-- **Match expression exhaustiveness** — for `number` types, warn when a match arm is missing; type-check the scrutinee and arm patterns. Allow range patterns
+- (nothing — see Completed below)
 
 ## Completed
 
-### 05/26/26
-— 
+### 05/27/26
+- **Match expression exhaustiveness** — for `string` types, warn when a match arm is missing; type-check the scrutinee and arm patterns. Allow regex patterns
+- **Match expression exhaustiveness** — for `number` types, warn when a match arm is missing; type-check the scrutinee and arm patterns. Allow range patterns
+- Added regex engine based on RE#sharp-style regex syntax
 
 ### 05/20/26
-— for struct record update syntax, include fields in the base struct when checking for missing fields
+- for struct record update syntax, include fields in the base struct when checking for missing fields
 
 ### 05/19/26
 - **Struct literal type-checking** — verify field names exist on the struct, field value types match field declarations, no missing required fields

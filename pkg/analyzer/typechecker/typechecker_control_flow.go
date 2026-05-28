@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/regex"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -80,8 +81,64 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.addError(expr.GetLocation(), SeverityWarning,
 				"match on numeric type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
+	} else if types.IsString(scrutineeType) {
+		for _, arm := range expr.MatchArms {
+			tc.checkStringMatchArm(arm.Pattern)
+		}
+		if !stringMatchIsExhaustive(expr.MatchArms) {
+			tc.addError(expr.GetLocation(), SeverityWarning,
+				"match on string type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
+		}
 	}
 	return nil
+}
+
+// checkStringMatchArm validates one arm's pattern against a `string`
+// scrutinee. Allowed patterns: string literal, regex literal, identifier
+// (binding), or wildcard. Anything else — number/bool literal, range, etc. —
+// is a type error.
+func (tc *TypeChecker) checkStringMatchArm(pattern ast.Pattern) {
+	switch p := pattern.(type) {
+	case *ast.WildcardPattern, *ast.IdentifierPattern:
+		return
+	case *ast.RegexPattern:
+		// Validate the regex itself at compile time so users learn about
+		// syntax errors at type-check time rather than at runtime.
+		if _, err := regex.Compile(p.Pattern); err != nil {
+			tc.addError(p.GetLocation(), SeverityError,
+				"invalid regex pattern r/%s/: %s", p.Pattern, err.Error())
+		}
+	case *ast.LiteralPattern:
+		kind := literalPatternKind(p.Value)
+		if kind != types.String {
+			tc.addError(p.GetLocation(), SeverityError,
+				"literal pattern '%s' is not a string type", p.Value)
+		}
+	case *ast.RangePattern:
+		tc.addError(p.GetLocation(), SeverityError,
+			"range patterns are not allowed on string scrutinees")
+	default:
+		tc.addError(pattern.GetLocation(), SeverityError,
+			"this pattern is not allowed on a string scrutinee")
+	}
+}
+
+// stringMatchIsExhaustive reports whether at least one arm unconditionally
+// catches every string — a wildcard or an unguarded identifier. String
+// literals and regex literals can only cover finite or partial subsets of
+// the language, so they never on their own make the match exhaustive (we
+// don't try to prove regex unions cover Σ*).
+func stringMatchIsExhaustive(arms []ast.MatchArm) bool {
+	for _, arm := range arms {
+		if arm.Guard != nil {
+			continue
+		}
+		switch arm.Pattern.(type) {
+		case *ast.WildcardPattern, *ast.IdentifierPattern:
+			return true
+		}
+	}
+	return false
 }
 
 // isNumericMatchExhaustive reports whether the arms of a numeric match
@@ -246,6 +303,9 @@ func (tc *TypeChecker) checkNumericMatchArm(pattern ast.Pattern, scrutineeType t
 	// RangePattern needs no check: the grammar restricts both start and end to
 	// number literals, so numeric bounds are guaranteed by the parser.
 	switch p := pattern.(type) {
+	case *ast.RegexPattern:
+		tc.addError(p.GetLocation(), SeverityError,
+			"regex patterns are not allowed on a numeric scrutinee")
 	case *ast.LiteralPattern:
 		kind := literalPatternKind(p.Value)
 		if isIntType(scrutineeType) && kind != types.UntypedInt {
