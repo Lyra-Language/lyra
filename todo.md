@@ -1,5 +1,5 @@
 ## To-Dos
-
+---------
 ### Regex engine (resharp-style)
 - **Phase 2: lookarounds** — `(?=...)`, `(?!...)`, `(?<=...)`, `(?<!...)` compiled into the automaton
 - **Phase 3: Unicode properties** — `\p{Letter}`, `\p{Nd}`, etc.
@@ -7,13 +7,17 @@
 - Wire the engine into `RegexLiteralExpr` (typecheck regex patterns in match arms) and `PatternConstraint` (validate constrained string types)
 
 ### Typechecker
-- **Match expression exhaustiveness** — for `array` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
 - **Overflow/range checking for integer literals** — flag literal values that don't fit the annotated type (e.g. `let x: i8 = 200`)
 - **Duplicate variable declaration detection** — error when the same name is declared twice in the same scope
 
 ## In Progress
+--------------
 
 ## Completed
+------------
+
+### 05/29/26
+- **Match expression exhaustiveness** — for `array` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
 
 ### 05/27/26
 - **Match expression exhaustiveness** — for `string` types, warn when a match arm is missing; type-check the scrutinee and arm patterns. Allow regex patterns

@@ -89,6 +89,14 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.addError(expr.GetLocation(), SeverityWarning,
 				"match on string type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
+	} else if types.IsArray(scrutineeType) {
+		for _, arm := range expr.MatchArms {
+			tc.checkArrayMatchArm(arm.Pattern, scrutineeType)
+		}
+		if !arrayMatchIsExhaustive(expr.MatchArms, scrutineeType) {
+			tc.addError(expr.GetLocation(), SeverityWarning,
+				"match on array type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
+		}
 	} else if dt, ok := tc.resolveToDataType(scrutineeType); ok {
 		for _, arm := range expr.MatchArms {
 			tc.checkDataMatchArm(arm.Pattern, dt)
@@ -100,6 +108,92 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 		}
 	}
 	return nil
+}
+
+func (tc *TypeChecker) checkArrayMatchArm(pattern ast.Pattern, scrutineeType types.Type) {
+	if pattern == nil {
+		return
+	}
+	// Extract the element type — works for both static and dynamic arrays.
+	var elemType types.Type
+	switch at := scrutineeType.(type) {
+	case types.DynamicArrayType:
+		elemType = at.ElementType
+	case types.StaticArrayType:
+		elemType = at.ElementType
+	}
+
+	switch p := pattern.(type) {
+	case *ast.WildcardPattern, *ast.IdentifierPattern:
+		// Catch-all — always valid.
+	case *ast.BindingPattern:
+		// The binding name is always valid; check the inner pattern.
+		tc.checkArrayMatchArm(p.Pattern, scrutineeType)
+	case *ast.ArrayPattern:
+		for _, elem := range p.Elements {
+			tc.checkArrayPatternElement(elem, elemType)
+		}
+	default:
+		tc.addError(pattern.GetLocation(), SeverityError,
+			"expected array pattern, got %s", pattern.GetName())
+	}
+}
+
+// checkArrayPatternElement validates a single element pattern against the
+// array's element type. Structural patterns (nested arrays, structs, etc.)
+// that can't be verified without a richer type system are silently allowed.
+func (tc *TypeChecker) checkArrayPatternElement(elem ast.Pattern, elemType types.Type) {
+	if elemType == nil {
+		return
+	}
+	switch p := elem.(type) {
+	case *ast.WildcardPattern, *ast.IdentifierPattern, *ast.RestPattern:
+		// Always valid.
+	case *ast.BindingPattern:
+		tc.checkArrayPatternElement(p.Pattern, elemType)
+	case *ast.LiteralPattern:
+		kind := literalPatternKind(p.Value)
+		elemPrim, ok := elemType.(types.PrimitiveType)
+		if !ok {
+			return
+		}
+		if !isAssignable(types.PrimitiveType{Name: kind}, elemPrim) {
+			tc.addError(p.GetLocation(), SeverityError,
+				"element pattern %s does not match array element type %s", p.Value, elemType)
+		}
+	}
+}
+
+// arrayMatchIsExhaustive reports whether the arms fully cover all arrays.
+// Two patterns unconditionally cover every array:
+//  1. A wildcard or unguarded identifier.
+//  2. An array pattern whose only element is a rest spread: [...rest] —
+//     this matches arrays of any length.
+func arrayMatchIsExhaustive(arms []ast.MatchArm, _ types.Type) bool {
+	for _, arm := range arms {
+		if arm.Guard != nil {
+			continue
+		}
+		switch p := arm.Pattern.(type) {
+		case *ast.WildcardPattern, *ast.IdentifierPattern:
+			return true
+		case *ast.BindingPattern:
+			// A binding wrapping a wildcard or identifier is also a catch-all
+			// (the inner pattern succeeds on every value).
+			switch p.Pattern.(type) {
+			case *ast.WildcardPattern, *ast.IdentifierPattern:
+				return true
+			}
+		case *ast.ArrayPattern:
+			// [...rest] covers every length.
+			if len(p.Elements) == 1 {
+				if _, ok := p.Elements[0].(*ast.RestPattern); ok {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 // findDataTypeByConstructor searches the registered type declarations for the

@@ -33,6 +33,20 @@ func IsString(t Type) bool {
 	return primitive.Name == String
 }
 
+func IsStaticArray(t Type) bool {
+	_, ok := t.(StaticArrayType)
+	return ok
+}
+
+func IsDynamicArray(t Type) bool {
+	_, ok := t.(DynamicArrayType)
+	return ok
+}
+
+func IsArray(t Type) bool {
+	return IsStaticArray(t) || IsDynamicArray(t)
+}
+
 func IsBoolean(t Type) bool {
 	primitive, ok := t.(PrimitiveType)
 	if !ok {
