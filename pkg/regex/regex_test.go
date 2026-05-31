@@ -325,10 +325,112 @@ func TestErrors_Backreference(t *testing.T) {
 	}
 }
 
-func TestErrors_Lookahead(t *testing.T) {
-	if _, err := Compile(`(?=foo)`); err == nil {
-		t.Error("expected error for lookahead in Phase 1")
+// ── lookarounds ──────────────────────────────────────────────────────────────
+
+// Positive lookahead inlined as rest ∩ R·_*:
+// (?=abc)abcdef == abcdef ∩ abc·_* == abcdef.
+func TestLookAhead_Positive_Leading(t *testing.T) {
+	re := mustCompile(t, `(?=\w)\w{3}`)
+	assertMatch(t, re, "abc", true)
+	assertMatch(t, re, "ab", false)
+	assertFindAll(t, re, "foobar", []string{"foo", "bar"})
+}
+
+// Negative lookahead at leading position.
+func TestLookAhead_Negative_Leading(t *testing.T) {
+	// (?!foo)\w+ — word run that does NOT start with "foo".
+	re := mustCompile(t, `(?!foo)\w+`)
+	assertMatch(t, re, "bar", true)
+	assertMatch(t, re, "foo", false)
+	assertMatch(t, re, "foobar", false)
+}
+
+// Middle lookahead inlined as A·(B ∩ R·_*):
+// hello(?=world)world == hello·(world ∩ world·_*) == helloworld.
+func TestLookAhead_Positive_Middle(t *testing.T) {
+	re := mustCompile(t, `hello(?=world)world`)
+	assertMatch(t, re, "helloworld", true)
+	assertMatch(t, re, "helloxorld", false)
+}
+
+// Trailing positive lookahead in FindAll:
+// \w+(?=:) matches word runs immediately before a colon (colon not consumed).
+func TestLookAhead_Positive_Trailing_FindAll(t *testing.T) {
+	re := mustCompile(t, `\w+(?=:)`)
+	assertFindAll(t, re, "foo:bar:baz", []string{"foo", "bar"})
+	assertFindAll(t, re, "nocolon", nil)
+}
+
+// Trailing negative lookahead:
+// foo(?!bar) matches "foo" not followed by "bar".
+func TestLookAhead_Negative_Trailing_FindAll(t *testing.T) {
+	re := mustCompile(t, `foo(?!bar)`)
+	assertFindAll(t, re, "foobar foobaz", []string{"foo"})
+}
+
+// Trailing positive lookahead in IsMatch.
+// \w+(?=\d) in full-string mode: last character of \w+ must be followed by
+// another digit — but in IsMatch there is nothing after the match, so this
+// resolves to \w+ ∩ ~(...) depending on where the lookahead is placed.
+// A simpler smoke test: (?=abc)abc matches "abc".
+func TestLookAhead_Positive_Trailing_IsMatch(t *testing.T) {
+	re := mustCompile(t, `\w+(?=!)`)
+	// In IsMatch, nothing follows the match, so '!' is never there.
+	assertMatch(t, re, "hello!", false) // "hello!" — '!' is not \w so \w+ = "hello", then nothing follows
+	// In FindAll "hello!" the match is "hello".
+	assertFindAll(t, re, "hello! world!", []string{"hello", "world"})
+}
+
+// Non-leading positive lookbehind inlined as (A ∩ _*·R)·B.
+// \w+(?<=\d) — word run that ends with a digit.
+func TestLookBehind_Positive_Trailing(t *testing.T) {
+	re := mustCompile(t, `\w+(?<=\d)`)
+	assertFindAll(t, re, "abc123 def456 ghi", []string{"abc123", "def456"})
+	assertMatch(t, re, "abc123", true)
+	assertMatch(t, re, "abc", false)
+}
+
+// Middle lookbehind: hello(?<=llo)world.
+func TestLookBehind_Positive_Middle(t *testing.T) {
+	re := mustCompile(t, `hello(?<=llo)world`)
+	assertMatch(t, re, "helloworld", true)
+	assertMatch(t, re, "helXoworld", false)
+}
+
+// Leading positive lookbehind uses the gate DFA.
+// (?<=\d)\w+ — word chars immediately after a digit.
+func TestLookBehind_Leading_Positive_FindAll(t *testing.T) {
+	re := mustCompile(t, `(?<=\d)\w+`)
+	assertFindAll(t, re, "a1foo b2bar", []string{"foo", "bar"})
+	assertFindAll(t, re, "nopreceding", nil)
+}
+
+// Leading negative lookbehind: (?<!\d)\w+ — word run NOT preceded by a digit.
+func TestLookBehind_Leading_Negative_FindAll(t *testing.T) {
+	re := mustCompile(t, `(?<!\d)\w+`)
+	// "foo" at pos 0: nothing precedes it → gate passes (not a digit).
+	// "1bar" at pos 4: space precedes '1' → gate passes, so the whole run "1bar" matches.
+	// "bar" at pos 5 is NOT scanned because pos 5 is preceded by '1' (digit) —
+	// the gate skips it, preventing a separate "bar" match.
+	assertFindAll(t, re, "foo 1bar", []string{"foo", "1bar"})
+	// Simple case: neither word run is preceded by a digit.
+	assertFindAll(t, re, "foo bar", []string{"foo", "bar"})
+}
+
+// Quantifier on a lookaround must be an error.
+func TestErrors_LookAround_Quantifier(t *testing.T) {
+	if _, err := Compile(`(?=foo)+`); err == nil {
+		t.Error("expected error for quantifier on lookahead")
 	}
+}
+
+// Combined lookahead + intersection: password-like test.
+func TestLookAhead_Combined_Intersection(t *testing.T) {
+	// Must start with an uppercase letter and contain a digit.
+	re := mustCompile(t, `(?=[A-Z])\w+&_*\d_*`)
+	assertMatch(t, re, "Hello1", true)
+	assertMatch(t, re, "hello1", false) // no uppercase start
+	assertMatch(t, re, "HELLO", false)  // no digit
 }
 
 func TestErrors_BadComplement(t *testing.T) {

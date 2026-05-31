@@ -166,18 +166,18 @@ func (p *parser) parseInter(inGroup bool) (expr, error) {
 }
 
 func (p *parser) parseConcat(inGroup bool) (expr, error) {
-	out := exprEps
+	accumulated := exprEps
 	for {
 		c, ok := p.peek()
 		if !ok {
-			return out, nil
+			return accumulated, nil
 		}
 		// Terminators of a concatenation:
 		if c == '|' || c == '&' {
-			return out, nil
+			return accumulated, nil
 		}
 		if inGroup && c == ')' {
-			return out, nil
+			return accumulated, nil
 		}
 		// Misplaced postfix operators:
 		if c == '*' || c == '+' || c == '?' || c == '{' {
@@ -188,9 +188,63 @@ func (p *parser) parseConcat(inGroup bool) (expr, error) {
 			return nil, err
 		}
 		if piece == nil {
-			return out, nil
+			return accumulated, nil
 		}
-		out = mkConcat(out, piece)
+
+		switch la := piece.(type) {
+
+		case exLookBehind:
+			// Lookbehind assertion.
+			if isEps(accumulated) {
+				// Leading lookbehind: parse the rest of this concat level, then
+				// wrap it in an exLeadingLB marker so CompileWithOptions can
+				// extract it into a separate gate DFA.
+				rest, err := p.parseConcat(inGroup)
+				if err != nil {
+					return nil, err
+				}
+				if isEps(rest) {
+					// (?<=R) with nothing after — encode as ε ∩ _*·R so nullable
+					// reflects whether R matches ε (correct for IsMatch).
+					constraint := mkConcat(exprAnyStr, la.e)
+					if !la.pos {
+						constraint = mkCompl(constraint)
+					}
+					return mkInter(exprEps, constraint), nil
+				}
+				return exConcat{l: exLeadingLB{pos: la.pos, e: la.e}, r: rest}, nil
+			}
+			// Non-leading lookbehind: intersect the accumulated prefix with _*·R
+			// so the DFA advances both the pattern and the lookbehind check
+			// over the same characters.
+			constraint := mkConcat(exprAnyStr, la.e) // _*·R
+			if !la.pos {
+				constraint = mkCompl(constraint)
+			}
+			accumulated = mkInter(accumulated, constraint)
+
+		case exLookAhead:
+			// Lookahead assertion: parse the rest of this concat level.
+			rest, err := p.parseConcat(inGroup)
+			if err != nil {
+				return nil, err
+			}
+			constraint := mkConcat(la.e, exprAnyStr) // R·_*
+			if !la.pos {
+				constraint = mkCompl(constraint)
+			}
+			if isEps(rest) {
+				// Trailing lookahead: nothing follows, so we keep an exLookAhead
+				// sentinel that lookaheadNullable() checks at scan time.
+				return mkConcat(accumulated, exLookAhead{pos: la.pos, e: la.e}), nil
+			}
+			// Middle/leading lookahead: inline as rest ∩ R·_* (both the rest and
+			// R advance over the same characters from the current position).
+			return mkConcat(accumulated, mkInter(rest, constraint)), nil
+
+		default:
+			accumulated = mkConcat(accumulated, piece)
+		}
 	}
 }
 
@@ -201,6 +255,14 @@ func (p *parser) parseRepeat() (expr, error) {
 	}
 	if atom == nil {
 		return nil, nil
+	}
+	// Lookaround assertions are zero-width and cannot carry a quantifier.
+	switch atom.(type) {
+	case exLookAhead, exLookBehind:
+		if c, ok2 := p.peekRaw(); ok2 && (c == '*' || c == '+' || c == '?' || c == '{') {
+			return nil, p.errorf(p.pos, "quantifier not allowed on lookaround assertion")
+		}
+		return atom, nil
 	}
 	c, ok := p.peekRaw()
 	if !ok {
@@ -387,13 +449,41 @@ func (p *parser) parseGroup() (expr, error) {
 
 	// Inline flag group: (?flags) or (?flags:expr) or (?flags-flags) or (?-flags)
 	if p.pos+1 < len(p.src) && p.src[p.pos] == '?' {
-		// Detect (?...) — including lookaround forms we don't support yet.
+		// Detect (?...) — lookarounds and flag groups.
 		look := p.src[p.pos+1]
+
+		// (?=...) positive lookahead  or  (?!...) negative lookahead
 		if look == '=' || look == '!' {
-			return nil, p.errorf(p.pos, "lookarounds are not supported in Phase 1")
+			isPos := look == '='
+			p.pos += 2 // consume '?' and '='/'!'
+			inner, err := p.parseAlt(true)
+			if err != nil {
+				return nil, err
+			}
+			if p.pos >= len(p.src) || p.src[p.pos] != ')' {
+				return nil, p.errorf(p.pos, "expected ')' to close lookahead opened at %d", openPos)
+			}
+			p.advance() // ')'
+			return exLookAhead{pos: isPos, e: inner}, nil
 		}
+
+		// (?<=...) positive lookbehind  or  (?<!...) negative lookbehind
+		if look == '<' && p.pos+2 < len(p.src) && (p.src[p.pos+2] == '=' || p.src[p.pos+2] == '!') {
+			isPos := p.src[p.pos+2] == '='
+			p.pos += 3 // consume '?', '<', '='/'!'
+			inner, err := p.parseAlt(true)
+			if err != nil {
+				return nil, err
+			}
+			if p.pos >= len(p.src) || p.src[p.pos] != ')' {
+				return nil, p.errorf(p.pos, "expected ')' to close lookbehind opened at %d", openPos)
+			}
+			p.advance() // ')'
+			return exLookBehind{pos: isPos, e: inner}, nil
+		}
+
 		if look == '<' {
-			return nil, p.errorf(p.pos, "lookbehinds / named groups are not supported in Phase 1")
+			return nil, p.errorf(p.pos, "lookbehinds must use '=' or '!' after '?<'; named groups are not supported")
 		}
 		if look == 'P' {
 			return nil, p.errorf(p.pos, "named groups (?P<name>...) are not supported")

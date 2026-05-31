@@ -42,22 +42,50 @@ type exCompl struct{ e expr }
 type exUnion struct{ parts []expr } // sorted by key, deduplicated, ∅-free
 type exInter struct{ parts []expr } // sorted by key, deduplicated, ∅-free
 
+// ── lookarounds ─────────────────────────────────────────────────────────────
+
+// exLookAhead represents a trailing lookahead (?=...) or (?!...). It is
+// zero-width (D_c = ∅) and only appears when nothing follows the assertion in
+// the pattern. Acceptance is checked by lookaheadNullable at scan time.
+type exLookAhead struct {
+	pos bool // true = (?=...), false = (?!...)
+	e   expr
+}
+
+// exLookBehind is a temporary parse node for (?<=...) / (?<!...). It is
+// consumed in parseConcat and never persists into the DFA expression tree.
+type exLookBehind struct {
+	pos bool
+	e   expr
+}
+
+// exLeadingLB is a marker left at the head of an expression when the pattern
+// starts with a lookbehind assertion. CompileWithOptions peels it off and
+// compiles it into a separate gate DFA.
+type exLeadingLB struct {
+	pos bool
+	e   expr
+}
+
 // ── key encoding ────────────────────────────────────────────────────────────
 //
 // Encoding rules (each token is self-delimiting):
 //   atoms:   "0" (∅) | "1" (ε) | "2" (_) | "3" (\A) | "4" (\z) | "5" (^) | "6" ($)
 //            "L<2 hex>"        | "C<64 hex>"
 //   compounds (bracketed):
-//     concat: "N" l r "n"   ─ no separator: children are self-delimiting
-//     star:   "S" e "s"
-//     compl:  "K" e "k"
-//     union:  "U" p1 "," p2 "," ... "u"
-//     inter:  "W" p1 "," p2 "," ... "w"
+//     concat:     "N" l r "n"   ─ no separator: children are self-delimiting
+//     star:       "S" e "s"
+//     compl:      "K" e "k"
+//     union:      "U" p1 "," p2 "," ... "u"
+//     inter:      "W" p1 "," p2 "," ... "w"
+//     lookahead+: "P" e "p"   (positive trailing lookahead)
+//     lookahead-: "Q" e "q"   (negative trailing lookahead)
+//     leadingLB+: "G" e "g"   (positive leading-lookbehind marker)
+//     leadingLB-: "H" e "h"   (negative leading-lookbehind marker)
 //
-// Single-character markers (0-6, L, C, N, S, K, U, W) never collide with hex
-// payloads (which are 0-9 / A-F only), and lowercase closers (n, s, k, u, w)
-// never start a sub-expression. Thus the grammar is unambiguous without any
-// length prefix.
+// Single-character markers (0-6, L, C, N, S, K, U, W, P, Q, G, H) never
+// collide with hex payloads (0-9 / A-F only), and lowercase closers
+// (n, s, k, u, w, p, q, g, h) never start a sub-expression.
 
 func (exEmpty) key() string { return "0" }
 func (exEps) key() string   { return "1" }
@@ -73,6 +101,20 @@ func (e exCls) key() string {
 func (e exConcat) key() string { return "N" + e.l.key() + e.r.key() + "n" }
 func (e exStar) key() string   { return "S" + e.e.key() + "s" }
 func (e exCompl) key() string  { return "K" + e.e.key() + "k" }
+
+func (e exLookAhead) key() string {
+	if e.pos {
+		return "P" + e.e.key() + "p"
+	}
+	return "Q" + e.e.key() + "q"
+}
+func (e exLookBehind) key() string { return "" } // temporary; never used in DFA
+func (e exLeadingLB) key() string {
+	if e.pos {
+		return "G" + e.e.key() + "g"
+	}
+	return "H" + e.e.key() + "h"
+}
 
 func (e exUnion) key() string {
 	parts := make([]string, len(e.parts))
@@ -123,6 +165,9 @@ func containsAnchors(e expr) bool {
 	switch v := e.(type) {
 	case exBT, exET, exBL, exEL:
 		return true
+	case exLookAhead, exLookBehind, exLeadingLB:
+		_ = v
+		return true // lookarounds are position-dependent
 	case exConcat:
 		return containsAnchors(v.l) || containsAnchors(v.r)
 	case exStar:

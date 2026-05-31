@@ -37,6 +37,17 @@ func nullable(e expr) bool {
 		return false
 	case exBT, exET, exBL, exEL:
 		return false
+	case exLookAhead:
+		// exLookAhead is always treated as non-accepting by the standard DFA
+		// accept check. Acceptance at the lookahead position is handled
+		// exclusively by lookaheadNullable() in the scanning loop, which
+		// calls checkLAPass() to verify the remaining input without consuming.
+		_ = v
+		return false
+	case exLookBehind:
+		return false // temporary parse node; should never reach the DFA
+	case exLeadingLB:
+		return false // marker node; peeled before DFA construction
 	case exStar:
 		return true
 	case exCompl:
@@ -153,6 +164,16 @@ func deriv(sym int, e expr) expr {
 			return mkUnion(dl, deriv(sym, v.r))
 		}
 		return dl
+
+	case exLookAhead:
+		// Lookaheads are zero-width: they don't consume characters.
+		// D_c((?=R)) = ∅  —  the node stays as a sentinel in the concat until
+		// lookaheadNullable() fires it at scan time.
+		return exprEmpty
+	case exLookBehind:
+		return exprEmpty // temporary parse node
+	case exLeadingLB:
+		return exprEmpty // marker node; peeled before DFA construction
 
 	case exUnion:
 		parts := make([]expr, len(v.parts))
