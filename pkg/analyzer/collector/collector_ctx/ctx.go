@@ -30,6 +30,11 @@ func (e CollectorError) Error() string {
 // [Ctx] without importing the root collector package. The concrete
 // *collector.Collector implements this interface and is embedded on [Ctx].
 type Collector interface {
+	// LookupCurrentScope returns the symbol registered under name in the
+	// innermost scope only (does not walk parent scopes). Used by
+	// declaration collectors to detect same-scope re-declarations before
+	// attempting to register, so they can emit a precise error message.
+	LookupCurrentScope(name string) (ast.Named, bool)
 	CollectExpr(*sitter.Node) ast.Expression
 	CollectStatement(*sitter.Node) ast.Statement
 	ParseDestructuringPattern(*sitter.Node) ast.Pattern

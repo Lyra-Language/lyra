@@ -69,7 +69,12 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 		Value:         initExpr,
 	}
 
-	if err := ctx.RegisterVariable(astNode); err != nil {
+	if existing, alreadyDeclared := ctx.LookupCurrentScope(name); alreadyDeclared {
+		ctx.AddError(node, collector_ctx.SeverityError,
+			"%s is already declared in this scope (first declared at %s)",
+			name, existing.GetLocation().Pretty())
+	} else if err := ctx.RegisterVariable(astNode); err != nil {
+		// Unexpected registration failure (should not normally happen).
 		ctx.AddError(node, collector_ctx.SeverityError, "failed to register variable %q: %v", name, err)
 	}
 
@@ -87,6 +92,25 @@ func collectPatternDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *co
 
 	value := ctx.CollectExpr(node.ChildByFieldName("value"))
 
+	// Check each pattern-bound name for conflicts with existing declarations in
+	// the current scope. A let or const binding is immutable and cannot be
+	// re-declared; any other duplicate is also an error.
+	for _, name := range destructuringPatternBoundNames(pattern) {
+		existing, alreadyDeclared := ctx.LookupCurrentScope(name)
+		if !alreadyDeclared {
+			continue
+		}
+		if v, ok := existing.(*ast.VarDeclStmt); ok && (v.BindingKind == ast.BindingLet || v.BindingKind == ast.BindingConst) {
+			ctx.AddError(node, collector_ctx.SeverityError,
+				"cannot re-declare %s %s in this scope (first declared at %s)",
+				v.BindingKind, name, v.GetLocation().Pretty())
+		} else {
+			ctx.AddError(node, collector_ctx.SeverityError,
+				"%s is already declared in this scope (first declared at %s)",
+				name, existing.GetLocation().Pretty())
+		}
+	}
+
 	return &ast.DestructuringDeclStmt{
 		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
 		Keyword: keyword,
@@ -94,4 +118,43 @@ func collectPatternDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *co
 		Type:    varType,
 		Value:   value,
 	}
+}
+
+// destructuringPatternBoundNames returns all variable names introduced by a
+// destructuring pattern. Wildcard "_" bindings are excluded since they are
+// intentional discard slots.
+func destructuringPatternBoundNames(pat ast.Pattern) []string {
+	if pat == nil {
+		return nil
+	}
+	switch p := pat.(type) {
+	case *ast.IdentifierPattern:
+		if p.Name == "_" {
+			return nil
+		}
+		return []string{p.Name}
+	case *ast.TuplePattern:
+		var names []string
+		for _, el := range p.Elements {
+			names = append(names, destructuringPatternBoundNames(el)...)
+		}
+		return names
+	case *ast.ArrayPattern:
+		var names []string
+		for _, el := range p.Elements {
+			names = append(names, destructuringPatternBoundNames(el)...)
+		}
+		return names
+	case *ast.StructPattern:
+		var names []string
+		for _, f := range p.Fields {
+			names = append(names, destructuringPatternBoundNames(f.Pattern)...)
+		}
+		return names
+	case *ast.RestPattern:
+		if p.Identifier != "" {
+			return []string{p.Identifier}
+		}
+	}
+	return nil
 }

@@ -204,6 +204,12 @@ func (c *Collector) RegisterFunction(name string, stmt *ast.LambdaExpr) error {
 	return c.table.RegisterFunction(name, stmt)
 }
 
+// LookupCurrentScope returns the symbol registered under name in the current
+// (innermost) scope only, without walking parent scopes.
+func (c *Collector) LookupCurrentScope(name string) (ast.Named, bool) {
+	return c.table.CurrentScope.LookupLocal(name)
+}
+
 func (c *Collector) RegisterVariable(stmt *ast.VarDeclStmt) error {
 	return c.table.RegisterVariable(stmt)
 }

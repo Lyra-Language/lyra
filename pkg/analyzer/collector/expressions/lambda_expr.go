@@ -27,8 +27,13 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 
 	parameters := collectParameters(parametersNode, ctx)
 	for i := range parameters {
-		if err := ctx.RegisterParameter(&parameters[i]); err != nil {
-			ctx.AddError(parametersNode, collector_ctx.SeverityError, "failed to register parameter %q: %v", parameters[i].GetName(), err)
+		pName := parameters[i].GetName()
+		if existing, alreadyDeclared := ctx.LookupCurrentScope(pName); alreadyDeclared {
+			ctx.AddError(parametersNode, collector_ctx.SeverityError,
+				"parameter %s is already declared in this scope (first declared at %s)",
+				pName, existing.GetLocation().Pretty())
+		} else if err := ctx.RegisterParameter(&parameters[i]); err != nil {
+			ctx.AddError(parametersNode, collector_ctx.SeverityError, "failed to register parameter %q: %v", pName, err)
 		}
 	}
 

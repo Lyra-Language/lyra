@@ -2,6 +2,7 @@ package collector_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -42,6 +43,32 @@ func parseAndCollectFull(t *testing.T, source string, printTree bool) (*ast.Prog
 // This lets tests assert on the full collected AST shape without manual type assertions.
 func captureProgramPrint(program *ast.Program) string {
 	return printer.PrintAST(program)
+}
+
+// parseAndCollectErrors parses source, runs the collector, and returns all
+// collector errors without failing the test. It is the counterpart to
+// parseAndCollect for tests that deliberately expect errors.
+func parseAndCollectErrors(t *testing.T, source string) []error {
+	t.Helper()
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	c := collector.NewCollector([]byte(source))
+	_, _, errors := c.Collect(tree.RootNode())
+	return errors
+}
+
+// assertCollectorErrorContains verifies that at least one of the collected
+// errors has a message that contains the given substring.
+func assertCollectorErrorContains(t *testing.T, errors []error, substr string) {
+	t.Helper()
+	for _, e := range errors {
+		if strings.Contains(e.Error(), substr) {
+			return
+		}
+	}
+	t.Errorf("expected a collector error containing %q, got: %v", substr, errors)
 }
 
 func runGoldenTest(t *testing.T, source string, goldenFileName string) {

@@ -188,6 +188,21 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		})
 	}
 
+	log.Printf("analyze: checking shadowing")
+	for _, sw := range checker.CheckShadowing(program) {
+		sev := lsp.SeverityWarning
+		loc := sw.Location
+		diags = append(diags, lsp.Diagnostic{
+			Range: lsp.Range{
+				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
+				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
+			},
+			Severity: &sev,
+			Source:   "lyra",
+			Message:  sw.Message,
+		})
+	}
+
 	log.Printf("analyze: typechecking")
 	tt := typetable.New()
 	tc := typechecker.New(symTable, tt)

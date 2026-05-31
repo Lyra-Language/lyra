@@ -120,6 +120,9 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 		return
 	}
 
+	// Check that the literal value fits within the annotated integer type's range.
+	tc.checkIntegerLiteralRange(decl.Name, decl.Value, decl.Type)
+
 	// Store the annotation type — this is the effective type the expression is used as.
 	// e.g. literal 42 annotated as i32 should be recorded as i32, not the untyped int.
 	tc.typeTable.Set(decl.Value, decl.Type)
@@ -149,7 +152,10 @@ func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {
 	if !isAssignable(rhsType, effective) {
 		tc.addError(stmt.GetLocation(), SeverityError,
 			"%s: cannot assign %s to %s", stmt.Name, rhsType, effective)
+		return
 	}
+	// Check that the literal value fits within the variable's integer type's range.
+	tc.checkIntegerLiteralRange(stmt.Name, stmt.Value, effective)
 }
 
 // checkDerefAssignment handles the grammar's representation of const reassignment.
