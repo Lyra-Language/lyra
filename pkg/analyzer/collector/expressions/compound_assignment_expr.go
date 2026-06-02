@@ -3,6 +3,7 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -11,7 +12,7 @@ func collectCompoundAssignmentExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	opNode := node.ChildByFieldName("operator")
 	rightNode := node.ChildByFieldName("right")
 	if leftNode == nil || opNode == nil || rightNode == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "Invalid compound assignment expression. Must have left, operator, and right operands")
+		ctx.AddError(node, diag.SeverityError, "Invalid compound assignment expression. Must have left, operator, and right operands")
 		return nil
 	}
 	left := CollectExpression(leftNode, ctx)
@@ -22,7 +23,7 @@ func collectCompoundAssignmentExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	}
 	leftIdent, ok := left.(*ast.IdentifierExpr)
 	if !ok {
-		ctx.AddError(leftNode, collector_ctx.SeverityError, "Left side of compound assignment must be an identifier")
+		ctx.AddError(leftNode, diag.SeverityError, "Left side of compound assignment must be an identifier")
 		return nil
 	}
 
@@ -41,7 +42,7 @@ func collectCompoundAssignmentExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	case "remainder_assign_operator":
 		operator = ast.MathAssignOpRemainder
 	default:
-		ctx.AddError(opNode, collector_ctx.SeverityError, "Unknown compound assignment operator: %s", opNode.Kind())
+		ctx.AddError(opNode, diag.SeverityError, "Unknown compound assignment operator: %s", opNode.Kind())
 		return nil
 	}
 	return &ast.MathAssignOpExpr{

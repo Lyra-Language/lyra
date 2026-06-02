@@ -15,10 +15,8 @@ type ExprBase struct {
 	AstBase
 }
 
-func (e *ExprBase) node()                 {}
-func (e *ExprBase) exprNode()             {}
-func (e *ExprBase) GetLocation() Location { return e.Location }
-func (e *ExprBase) GetName() string       { return "" }
+func (e *ExprBase) exprNode()       {}
+func (e *ExprBase) GetName() string { return "" }
 
 type IdentifierExpr struct {
 	ExprBase

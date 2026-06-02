@@ -3,23 +3,24 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 func collectRangeExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
 	startNode := node.ChildByFieldName("start")
 	if startNode == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "range expression must have a start")
+		ctx.AddError(node, diag.SeverityError, "range expression must have a start")
 		return nil
 	}
 	endOperatorNode := node.ChildByFieldName("end_operator")
 	if endOperatorNode == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "range expression must have an end operator")
+		ctx.AddError(node, diag.SeverityError, "range expression must have an end operator")
 		return nil
 	}
 	endNode := node.ChildByFieldName("end")
 	if endNode == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "range expression must have an end")
+		ctx.AddError(node, diag.SeverityError, "range expression must have an end")
 		return nil
 	}
 	step := ast.Expression(nil)

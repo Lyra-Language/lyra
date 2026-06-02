@@ -3,6 +3,7 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -30,7 +31,7 @@ func collectNamedStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 	if structUpdateNode != nil {
 		baseStructNode := structUpdateNode.ChildByFieldName("base")
 		if baseStructNode == nil {
-			ctx.AddError(node, collector_ctx.SeverityError, "struct update must have a base struct")
+			ctx.AddError(node, diag.SeverityError, "struct update must have a base struct")
 			return nil
 		}
 		expr := ctx.CollectExpr(baseStructNode)
@@ -83,7 +84,7 @@ func collectBaseStruct(structUpdateNode *sitter.Node, ctx *collector_ctx.Ctx) *a
 	if ok {
 		return identifierExpr
 	} else {
-		ctx.AddError(structUpdateNode, collector_ctx.SeverityError, "expected identifier, got %s", baseStruct.GetName())
+		ctx.AddError(structUpdateNode, diag.SeverityError, "expected identifier, got %s", baseStruct.GetName())
 		return nil
 	}
 }

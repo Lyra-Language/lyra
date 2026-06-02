@@ -51,6 +51,3 @@ type Program struct {
 	AstBase
 	Statements []AstNode
 }
-
-func (p *Program) node()                 {}
-func (p *Program) GetLocation() Location { return p.Location }

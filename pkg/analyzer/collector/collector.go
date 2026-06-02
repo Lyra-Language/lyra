@@ -19,45 +19,49 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	"github.com/Lyra-Language/lyra/pkg/types"
 
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 var _ collector_ctx.Collector = (*Collector)(nil)
 
-// Re-export error types from collector_ctx so callers don't need to import both packages.
-type CollectorError = collector_ctx.CollectorError
-type CollectorErrorSeverity = collector_ctx.ErrorSeverity
-
 const (
-	CollectorErrorSeverityError   = collector_ctx.SeverityError
-	CollectorErrorSeverityWarning = collector_ctx.SeverityWarning
-	CollectorErrorSeverityInfo    = collector_ctx.SeverityInfo
+	CollectorErrorSeverityError   = diag.SeverityError
+	CollectorErrorSeverityWarning = diag.SeverityWarning
+	CollectorErrorSeverityInfo    = diag.SeverityInfo
 )
 
 // Collector walks the CST and builds an AST + symbol table.
 type Collector struct {
-	source []byte
-	table  *symbols.SymbolTable
-	ast    *ast.Program
-	errors []error
-	ctx    *collector_ctx.Ctx
+	source     []byte
+	table      *symbols.SymbolTable
+	scopeTable *symbols.ScopeTable
+	ast        *ast.Program
+	errors     []error
+	ctx        *collector_ctx.Ctx
 }
 
 func NewCollector(source []byte) *Collector {
 	c := &Collector{
-		source: source,
-		table:  symbols.NewSymbolTable(),
-		ast:    &ast.Program{},
-		errors: []error{},
+		source:     source,
+		table:      symbols.NewSymbolTable(),
+		scopeTable: symbols.NewScopeTable(),
+		ast:        &ast.Program{},
+		errors:     []error{},
 	}
 	c.ctx = collector_ctx.NewCtx(source, c, &c.errors)
+	c.ctx.ScopeTable = c.scopeTable
 	return c
 }
 
-// Collect walks the entire tree and returns the AST, symbol table, and any errors.
-func (c *Collector) Collect(root *sitter.Node) (*ast.Program, *symbols.SymbolTable, []error) {
+// Collect walks the entire tree and returns the AST, symbol table, scope table, and any errors.
+func (c *Collector) Collect(root *sitter.Node) (*ast.Program, *symbols.SymbolTable, *symbols.ScopeTable, []error) {
 	c.walkProgram(root)
-	return c.ast, c.table, c.errors
+	return c.ast, c.table, c.scopeTable, c.errors
+}
+
+func (c *Collector) RecordScope(node ast.AstNode, scope *symbols.Scope) {
+	c.scopeTable.Set(node, scope)
 }
 
 func (c *Collector) walkProgram(node *sitter.Node) {
@@ -126,7 +130,7 @@ func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 
 // Helper methods
 
-func (c *Collector) addError(node *sitter.Node, severity CollectorErrorSeverity, format string, args ...any) {
+func (c *Collector) addError(node *sitter.Node, severity diag.Severity, format string, args ...any) {
 	c.ctx.AddError(node, severity, format, args...)
 }
 
@@ -218,12 +222,12 @@ func (c *Collector) RegisterParameter(p *ast.Parameter) error {
 	return c.table.RegisterParameter(p)
 }
 
-func (c *Collector) PushFunctionScope() {
-	c.table.PushScope(symbols.ScopeFunction)
+func (c *Collector) PushBlockScope() *symbols.Scope {
+	return c.table.PushScope(symbols.ScopeBlock)
 }
 
-func (c *Collector) PushBlockScope() {
-	c.table.PushScope(symbols.ScopeBlock)
+func (c *Collector) PushFunctionScope() *symbols.Scope {
+	return c.table.PushScope(symbols.ScopeFunction)
 }
 
 func (c *Collector) PushLoopScope() {
@@ -416,12 +420,12 @@ func (c *Collector) CollectPattern(patternNode *sitter.Node) ast.Pattern {
 	switch patternNode.Kind() {
 	case "identifier":
 		return &ast.IdentifierPattern{
-			PatternBase: ast.PatternBase{Location: loc},
+			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
 			Name:        c.ctx.NodeText(patternNode),
 		}
 	case "literal_pattern":
 		return &ast.LiteralPattern{
-			PatternBase: ast.PatternBase{Location: loc},
+			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
 			Value:       c.ctx.NodeText(patternNode),
 		}
 	case "regex_pattern":
@@ -456,7 +460,7 @@ func (c *Collector) collectRegexPattern(patternNode *sitter.Node, loc ast.Locati
 		return nil
 	}
 	return &ast.RegexPattern{
-		PatternBase: ast.PatternBase{Location: loc},
+		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
 		Pattern:     raw[2 : len(raw)-1],
 	}
 }
@@ -464,7 +468,7 @@ func (c *Collector) collectRegexPattern(patternNode *sitter.Node, loc ast.Locati
 func (c *Collector) collectTuplePattern(patternNode *sitter.Node) ast.Pattern {
 	loc := c.ctx.NodeLocation(patternNode)
 	return &ast.TuplePattern{
-		PatternBase: ast.PatternBase{Location: loc},
+		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
 		Elements:    c.collectPatternElements(patternNode),
 	}
 }
@@ -477,7 +481,7 @@ func (c *Collector) collectArrayPattern(patternNode *sitter.Node) ast.Pattern {
 		return nil
 	}
 	return &ast.ArrayPattern{
-		PatternBase: ast.PatternBase{Location: loc},
+		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
 		Elements:    elements,
 	}
 }
@@ -510,7 +514,7 @@ func (c *Collector) collectStructPattern(node *sitter.Node) ast.Pattern {
 	loc := c.ctx.NodeLocation(node)
 	fields := c.collectStructPatternFields(node)
 	return &ast.StructPattern{
-		PatternBase: ast.PatternBase{Location: loc},
+		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
 		Fields:      fields,
 	}
 }
@@ -531,7 +535,7 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 	nameNode := node.ChildByFieldName("name")
 	if nameNode != nil {
 		return &ast.StructPatternField{
-			PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
 			Name:        c.ctx.NodeText(nameNode),
 			Pattern:     nil,
 		}
@@ -539,7 +543,7 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 	structFieldRenameNode := node.ChildByFieldName("struct_field_rename")
 	if structFieldRenameNode != nil {
 		return &ast.StructPatternField{
-			PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
 			Name:        c.ctx.NodeText(structFieldRenameNode.ChildByFieldName("new_name")),
 			Pattern:     nil,
 		}
@@ -547,7 +551,7 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 	structFieldWithPatternNode := node.ChildByFieldName("struct_field_with_pattern")
 	if structFieldWithPatternNode != nil {
 		return &ast.StructPatternField{
-			PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
 			Name:        c.ctx.NodeText(structFieldWithPatternNode.ChildByFieldName("name")),
 			Pattern:     c.CollectPattern(structFieldWithPatternNode.ChildByFieldName("pattern")),
 		}
@@ -555,7 +559,7 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 	restPatternNode := node.ChildByFieldName("rest_pattern")
 	if restPatternNode != nil {
 		return &ast.StructPatternField{
-			PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
 			Name:        "...",
 			Pattern:     c.collectRestPattern(restPatternNode),
 		}
@@ -563,7 +567,7 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 	wildcardPatternNode := node.ChildByFieldName("wildcard_pattern")
 	if wildcardPatternNode != nil {
 		return &ast.StructPatternField{
-			PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
 			Name:        "_",
 			Pattern:     c.collectWildcardPattern(wildcardPatternNode),
 		}
@@ -585,7 +589,7 @@ func (c *Collector) collectDataPattern(node *sitter.Node) *ast.DataPattern {
 		pattern = c.CollectPattern(patternNode)
 	}
 	return &ast.DataPattern{
-		PatternBase: ast.PatternBase{Location: loc},
+		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
 		Name:        c.ctx.NodeText(nameNode),
 		Pattern:     pattern,
 	}
@@ -598,7 +602,7 @@ func (c *Collector) collectRangePattern(node *sitter.Node) ast.Pattern {
 		endOperator = c.ctx.NodeText(endOperatorNode)
 	}
 	return &ast.RangePattern{
-		PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
 		Start:       c.CollectExpr(node.ChildByFieldName("start")),
 		End:         c.CollectExpr(node.ChildByFieldName("end")),
 		EndOperator: endOperator,
@@ -607,14 +611,14 @@ func (c *Collector) collectRangePattern(node *sitter.Node) ast.Pattern {
 
 func (c *Collector) collectRestPattern(node *sitter.Node) ast.Pattern {
 	return &ast.RestPattern{
-		PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
 		Identifier:  c.ctx.NodeText(node.ChildByFieldName("identifier")),
 	}
 }
 
 func (c *Collector) collectWildcardPattern(node *sitter.Node) ast.Pattern {
 	return &ast.WildcardPattern{
-		PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
 	}
 }
 
@@ -630,7 +634,7 @@ func (c *Collector) collectBindingPattern(node *sitter.Node) ast.Pattern {
 		return nil
 	}
 	return &ast.BindingPattern{
-		PatternBase: ast.PatternBase{Location: c.ctx.NodeLocation(node)},
+		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
 		Name:        c.ctx.NodeText(nameNode),
 		Pattern:     c.CollectPattern(patternNode),
 	}

@@ -3,6 +3,7 @@ package statements
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -23,7 +24,7 @@ func CollectForLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopE
 	if forConditionNode != nil {
 		conditionExprNode := forConditionNode.ChildByFieldName("condition_expr")
 		if conditionExprNode == nil {
-			ctx.AddError(forConditionNode, collector_ctx.SeverityError, "Expected for loop condition expression, got %s", forConditionNode.Kind())
+			ctx.AddError(forConditionNode, diag.SeverityError, "Expected for loop condition expression, got %s", forConditionNode.Kind())
 			return nil
 		}
 		maybeConditionExpr := ctx.CollectExpr(conditionExprNode)
@@ -35,7 +36,7 @@ func CollectForLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopE
 			if varDecl, ok := stmt.(*ast.VarDeclStmt); ok {
 				initExpr = varDecl
 			} else {
-				ctx.AddError(initExprNode, collector_ctx.SeverityError, "Expected variable declaration in for loop initializer, got %s", initExprNode.Kind())
+				ctx.AddError(initExprNode, diag.SeverityError, "Expected variable declaration in for loop initializer, got %s", initExprNode.Kind())
 			}
 		}
 
@@ -48,13 +49,13 @@ func CollectForLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopE
 
 	bodyNode := node.ChildByFieldName("for_body")
 	if bodyNode == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "Expected for loop body")
+		ctx.AddError(node, diag.SeverityError, "Expected for loop body")
 		return nil
 	}
 	body := ctx.CollectExpr(bodyNode)
 	bodyBlockPtr, ok := body.(*ast.BlockExpr)
 	if !ok {
-		ctx.AddError(bodyNode, collector_ctx.SeverityError, "Expected block expression for for loop body")
+		ctx.AddError(bodyNode, diag.SeverityError, "Expected block expression for for loop body")
 		return nil
 	}
 

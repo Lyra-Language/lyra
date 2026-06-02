@@ -4,27 +4,11 @@ import (
 	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
-
-type ErrorSeverity int
-
-const (
-	SeverityError ErrorSeverity = iota
-	SeverityWarning
-	SeverityInfo
-)
-
-type CollectorError struct {
-	Message  string
-	Location ast.Location
-	Severity ErrorSeverity
-}
-
-func (e CollectorError) Error() string {
-	return fmt.Sprintf("%s: %s", &e.Location, e.Message)
-}
 
 // Collector is the recursive dispatch surface that subpackages need from
 // [Ctx] without importing the root collector package. The concrete
@@ -45,10 +29,11 @@ type Collector interface {
 	RegisterFunction(string, *ast.LambdaExpr) error
 	RegisterVariable(*ast.VarDeclStmt) error
 	RegisterParameter(*ast.Parameter) error
-	PushFunctionScope()
-	PushBlockScope()
+	PushFunctionScope() *symbols.Scope
+	PushBlockScope() *symbols.Scope
 	PushLoopScope()
 	PopScope()
+	RecordScope(node ast.AstNode, scope *symbols.Scope)
 	CollectGenericParams(*sitter.Node) []ast.GenericParam
 	MergeWhereConstraints([]ast.GenericParam, *sitter.Node) []ast.GenericParam
 	CollectBounds(*sitter.Node) []string
@@ -57,8 +42,9 @@ type Collector interface {
 // Ctx carries shared mutable state (source text, error sink) plus a [Collector]
 // for expression / statement / type / symbol-table dispatch.
 type Ctx struct {
-	Source []byte
-	errors *[]error
+	Source     []byte
+	errors     *[]error
+	ScopeTable *symbols.ScopeTable
 	Collector
 }
 
@@ -66,9 +52,10 @@ type Ctx struct {
 // must remain valid for the lifetime of collection (AppendError / AddError append into it).
 func NewCtx(source []byte, coll Collector, errs *[]error) *Ctx {
 	return &Ctx{
-		Source:    source,
-		errors:    errs,
-		Collector: coll,
+		Source:     source,
+		errors:     errs,
+		ScopeTable: symbols.NewScopeTable(),
+		Collector:  coll,
 	}
 }
 
@@ -87,8 +74,8 @@ func (ctx *Ctx) NodeLocation(node *sitter.Node) ast.Location {
 	}
 }
 
-func (ctx *Ctx) AddError(node *sitter.Node, sev ErrorSeverity, format string, args ...any) {
-	*ctx.errors = append(*ctx.errors, CollectorError{
+func (ctx *Ctx) AddError(node *sitter.Node, sev diag.Severity, format string, args ...any) {
+	*ctx.errors = append(*ctx.errors, diag.Diagnostic{
 		Message:  fmt.Sprintf(format, args...),
 		Location: ctx.NodeLocation(node),
 		Severity: sev,
@@ -100,7 +87,7 @@ func (ctx *Ctx) AddError(node *sitter.Node, sev ErrorSeverity, format string, ar
 func (ctx *Ctx) MustField(node *sitter.Node, fieldName string) (*sitter.Node, bool) {
 	field := node.ChildByFieldName(fieldName)
 	if field == nil {
-		ctx.AddError(node, SeverityError, "%s is missing %q field", node.Kind(), fieldName)
+		ctx.AddError(node, diag.SeverityError, "%s is missing %q field", node.Kind(), fieldName)
 		return nil, false
 	}
 	return field, true

@@ -14,6 +14,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
@@ -144,11 +145,11 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 
 	log.Printf("analyze: collecting")
 	c := collector.NewCollector([]byte(source))
-	program, symTable, collectorErrors := c.Collect(tree.RootNode())
+	program, symTable, scopeTable, collectorErrors := c.Collect(tree.RootNode())
 	log.Printf("analyze: collect done (%d errors)", len(collectorErrors))
 
 	for _, rawErr := range collectorErrors {
-		ce, ok := rawErr.(collector.CollectorError)
+		ce, ok := rawErr.(diag.Diagnostic)
 		if !ok {
 			sev := lsp.SeverityError
 			diags = append(diags, lsp.Diagnostic{
@@ -205,7 +206,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 
 	log.Printf("analyze: typechecking")
 	tt := typetable.New()
-	tc := typechecker.New(symTable, tt)
+	tc := typechecker.New(symTable, scopeTable, tt)
 	for _, te := range tc.Check(program) {
 		sev := severityFromTypechecker(te.Severity)
 		loc := te.Location
@@ -269,7 +270,7 @@ func lspPos(oneBased int) int {
 	return oneBased - 1
 }
 
-func severityFromCollector(s collector.CollectorErrorSeverity) lsp.DiagnosticSeverity {
+func severityFromCollector(s diag.Severity) lsp.DiagnosticSeverity {
 	switch s {
 	case collector.CollectorErrorSeverityWarning:
 		return lsp.SeverityWarning

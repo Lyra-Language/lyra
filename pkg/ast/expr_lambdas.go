@@ -57,5 +57,8 @@ type ReturnStmt struct {
 func (r *ReturnStmt) statementNode() {}
 
 func (r *ReturnStmt) GetName() string {
+	if r.Value == nil {
+		return "return"
+	}
 	return fmt.Sprintf("return %s", r.Value.GetName())
 }

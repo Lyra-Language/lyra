@@ -4,6 +4,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -27,7 +28,7 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 
 	astType := ctx.ParseType(typeNode)
 	if astType == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "could not parse trait implementation type")
+		ctx.AddError(node, diag.SeverityError, "could not parse trait implementation type")
 		return nil
 	}
 

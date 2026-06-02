@@ -108,9 +108,6 @@ func (st *SymbolTable) RegisterType(node *ast.TypeDeclStmt) error {
 
 // RegisterFunction adds a function to the symbol table
 func (st *SymbolTable) RegisterFunction(name string, node *ast.LambdaExpr) error {
-	if err := st.GlobalScope.Define(node); err != nil {
-		return err
-	}
 	st.Functions[name] = node
 	return nil
 }
@@ -129,4 +126,25 @@ func (st *SymbolTable) RegisterParameter(node *ast.Parameter) error {
 		return fmt.Errorf("no current scope to register parameter %s", node.GetName())
 	}
 	return st.CurrentScope.Define(node)
+}
+
+// ScopeTable maps scope-creating AST nodes (BlockExpr, LambdaExpr, etc.)
+// to the Scope the collector pushed when it entered them.
+// Populated during collection; used by the type-checker to enter the
+// correct child scope when traversing a nested block or function body.
+type ScopeTable struct {
+	entries map[ast.AstNode]*Scope
+}
+
+func NewScopeTable() *ScopeTable {
+	return &ScopeTable{entries: make(map[ast.AstNode]*Scope)}
+}
+
+func (st *ScopeTable) Set(node ast.AstNode, scope *Scope) {
+	st.entries[node] = scope
+}
+
+func (st *ScopeTable) Get(node ast.AstNode) (*Scope, bool) {
+	s, ok := st.entries[node]
+	return s, ok
 }

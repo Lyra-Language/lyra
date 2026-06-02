@@ -3,6 +3,7 @@ package declarations
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -16,7 +17,7 @@ func bindingKind(keyword string, ctx *collector_ctx.Ctx) ast.BindingKind {
 	case "const":
 		return ast.BindingConst
 	default:
-		ctx.AddError(nil, collector_ctx.SeverityError, "invalid binding kind: %s", keyword)
+		ctx.AddError(nil, diag.SeverityError, "invalid binding kind: %s", keyword)
 		return ast.BindingUnknown
 	}
 }
@@ -32,7 +33,7 @@ func CollectVariableDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) ast.S
 	if patternNode := node.ChildByFieldName("pattern"); patternNode != nil {
 		return collectPatternDeclaration(node, patternNode, ctx)
 	}
-	ctx.AddError(node, collector_ctx.SeverityError, "declaration missing both name and pattern fields")
+	ctx.AddError(node, diag.SeverityError, "declaration missing both name and pattern fields")
 	return nil
 }
 
@@ -70,12 +71,12 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 	}
 
 	if existing, alreadyDeclared := ctx.LookupCurrentScope(name); alreadyDeclared {
-		ctx.AddError(node, collector_ctx.SeverityError,
+		ctx.AddError(node, diag.SeverityError,
 			"%s is already declared in this scope (first declared at %s)",
 			name, existing.GetLocation().Pretty())
 	} else if err := ctx.RegisterVariable(astNode); err != nil {
 		// Unexpected registration failure (should not normally happen).
-		ctx.AddError(node, collector_ctx.SeverityError, "failed to register variable %q: %v", name, err)
+		ctx.AddError(node, diag.SeverityError, "failed to register variable %q: %v", name, err)
 	}
 
 	return astNode
@@ -101,11 +102,11 @@ func collectPatternDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *co
 			continue
 		}
 		if v, ok := existing.(*ast.VarDeclStmt); ok && (v.BindingKind == ast.BindingLet || v.BindingKind == ast.BindingConst) {
-			ctx.AddError(node, collector_ctx.SeverityError,
+			ctx.AddError(node, diag.SeverityError,
 				"cannot re-declare %s %s in this scope (first declared at %s)",
 				v.BindingKind, name, v.GetLocation().Pretty())
 		} else {
-			ctx.AddError(node, collector_ctx.SeverityError,
+			ctx.AddError(node, diag.SeverityError,
 				"%s is already declared in this scope (first declared at %s)",
 				name, existing.GetLocation().Pretty())
 		}

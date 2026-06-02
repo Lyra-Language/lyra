@@ -3,6 +3,7 @@ package typedecls
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -48,7 +49,7 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	}
 
 	if err := ctx.RegisterType(astNode); err != nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "failed to register data type %q: %v", name, err)
+		ctx.AddError(node, diag.SeverityError, "failed to register data type %q: %v", name, err)
 	}
 
 	return astNode

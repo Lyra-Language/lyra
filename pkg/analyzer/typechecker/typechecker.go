@@ -12,18 +12,35 @@ import (
 
 type TypeChecker struct {
 	symTable   *symbols.SymbolTable
+	scopeTable *symbols.ScopeTable
 	typeTable  *typetable.TypeTable
 	scope      *symbols.Scope
 	errors     []TypeError
 	paramTypes map[string]types.Type // non-nil only while checking a function body
 }
 
-func New(symTable *symbols.SymbolTable, typeTable *typetable.TypeTable) *TypeChecker {
+func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
 	return &TypeChecker{
-		symTable:  symTable,
-		typeTable: typeTable,
-		scope:     symTable.GlobalScope,
+		symTable:   symTable,
+		scopeTable: scopeTable,
+		typeTable:  typeTable,
+		scope:      symTable.GlobalScope,
 	}
+}
+
+// enterScope temporarily sets tc.scope to the scope recorded for node,
+// then restores the previous scope. If node has no recorded scope (e.g. it
+// was collected before ScopeTable was introduced) the call is a no-op.
+func (tc *TypeChecker) enterScope(node ast.AstNode, fn func()) {
+	scope, ok := tc.scopeTable.Get(node)
+	if !ok {
+		fn()
+		return
+	}
+	old := tc.scope
+	tc.scope = scope
+	fn()
+	tc.scope = old
 }
 
 func (tc *TypeChecker) Check(program *ast.Program) []TypeError {
@@ -71,21 +88,22 @@ func (tc *TypeChecker) checkStructDecl(decl *ast.TypeDeclStmt) {
 }
 
 func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
-	if e, ok := n.Expression.(*ast.MathAssignOpExpr); ok {
+	switch e := n.Expression.(type) {
+	case *ast.MathAssignOpExpr:
 		tc.checkMathAssignOp(e)
-	} else if e, ok := n.Expression.(*ast.BooleanLiteralExpr); ok {
+	case *ast.BooleanLiteralExpr:
 		tc.checkBooleanLiteralExpr(e)
-	} else if e, ok := n.Expression.(*ast.BooleanBinaryOpExpr); ok {
+	case *ast.BooleanBinaryOpExpr:
 		tc.checkBooleanBinaryOpExpr(e)
-	} else if e, ok := n.Expression.(*ast.NotBooleanExpr); ok {
+	case *ast.NotBooleanExpr:
 		tc.checkNotBooleanExpr(e)
-	} else if e, ok := n.Expression.(*ast.StringConcatExpr); ok {
+	case *ast.StringConcatExpr:
 		tc.inferStringConcatExpr(e)
-	} else if e, ok := n.Expression.(*ast.FunctionCallExpr); ok {
+	case *ast.FunctionCallExpr:
 		tc.inferFunctionCallExpr(e)
-	} else if e, ok := n.Expression.(*ast.IfExpr); ok {
+	case *ast.IfExpr:
 		tc.checkIfExpr(e)
-	} else if e, ok := n.Expression.(*ast.MatchExpr); ok {
+	case *ast.MatchExpr:
 		tc.checkMatchExpr(e)
 	}
 }

@@ -8,7 +8,7 @@ import (
 
 func TestScope_BlockScopeIsolation(t *testing.T) {
 	// x is declared inside a block; it must not be visible in the global scope.
-	_, table := parseAndCollect(t, `
+	_, table, _, _ := parseAndCollect(t, `
 	let result = {
 		let x = 42
 		x
@@ -24,7 +24,7 @@ func TestScope_BlockScopeIsolation(t *testing.T) {
 
 func TestScope_NestedBlockScopes(t *testing.T) {
 	// Inner block variables must not leak into the outer block.
-	_, table := parseAndCollect(t, `
+	_, table, _, _ := parseAndCollect(t, `
 	let outer = {
 		let a = 1
 		let inner = {
@@ -46,7 +46,7 @@ func TestScope_NestedBlockScopes(t *testing.T) {
 
 func TestScope_LambdaParametersInFunctionScope(t *testing.T) {
 	// Parameters must be registered in a child scope, not the global scope.
-	_, table := parseAndCollect(t, `let add = (x: i32, y: i32) -> i32 => x + y`)
+	_, table, _, _ := parseAndCollect(t, `let add = (x: i32, y: i32) -> i32 => x + y`)
 
 	if _, ok := table.GlobalScope.LookupLocal("x"); ok {
 		t.Error("parameter x should not be in the global scope")
@@ -61,7 +61,7 @@ func TestScope_LambdaParametersInFunctionScope(t *testing.T) {
 
 func TestScope_LambdaFunctionScope_ChildExists(t *testing.T) {
 	// The global scope should have exactly one child scope for the lambda.
-	_, table := parseAndCollect(t, `let f = (a: i32) -> i32 => a * 2`)
+	_, table, _, _ := parseAndCollect(t, `let f = (a: i32) -> i32 => a * 2`)
 
 	if len(table.GlobalScope.Children) == 0 {
 		t.Fatal("expected a child scope for the lambda function, got none")
@@ -76,7 +76,7 @@ func TestScope_LambdaFunctionScope_ChildExists(t *testing.T) {
 
 func TestScope_ForLoopInitVarInLoopScope(t *testing.T) {
 	// The loop init variable must not be in the global scope.
-	_, table := parseAndCollect(t, `
+	_, table, _, _ := parseAndCollect(t, `
 	for let i = 0; i < 10; i + 1 {
 		let x = i
 	}`)
@@ -92,7 +92,7 @@ func TestScope_ForLoopInitVarInLoopScope(t *testing.T) {
 func TestScope_ForLoopScopeHierarchy(t *testing.T) {
 	// The loop scope should be a direct child of the global scope,
 	// and the body block scope should be a child of the loop scope.
-	_, table := parseAndCollect(t, `
+	_, table, _, _ := parseAndCollect(t, `
 	for let i = 0; i < 10; i + 1 {
 		let x = i
 	}`)
@@ -123,7 +123,7 @@ func TestScope_ForLoopScopeHierarchy(t *testing.T) {
 
 func TestScope_ForInLoopVarsInLoopScope(t *testing.T) {
 	// The iteration variable must not be in the global scope.
-	_, table := parseAndCollect(t, `
+	_, table, _, _ := parseAndCollect(t, `
 	for item in my_collection {
 		let x = item
 	}`)
@@ -138,7 +138,7 @@ func TestScope_ForInLoopVarsInLoopScope(t *testing.T) {
 
 func TestScope_ForInLoopKeyAndValueVars(t *testing.T) {
 	// Both key and value iteration variables must be in the loop scope.
-	_, table := parseAndCollect(t, `
+	_, table, _, _ := parseAndCollect(t, `
 	for item, idx in [1, 2, 3] {
 		let x = item
 	}`)
@@ -159,7 +159,7 @@ func TestScope_ForInLoopKeyAndValueVars(t *testing.T) {
 
 func TestScope_WithNamedBindingInScope(t *testing.T) {
 	// The named arena binding must be in a child scope, not the global scope.
-	_, table := parseAndCollect(t, `
+	_, table, _, _ := parseAndCollect(t, `
 	with frame = Arena.new(megabytes(4)) {
 		let x = 1
 	}`)
@@ -178,7 +178,7 @@ func TestScope_WithNamedBindingInScope(t *testing.T) {
 
 func TestScope_WithAnonymousNoBinding(t *testing.T) {
 	// An anonymous with statement should still push a scope for its body.
-	_, table := parseAndCollect(t, `
+	_, table, _, _ := parseAndCollect(t, `
 	with Arena.new(megabytes(4)) {
 		let x = 1
 	}`)
@@ -195,7 +195,7 @@ func TestScope_WithAnonymousNoBinding(t *testing.T) {
 
 func TestScope_LookupWalksParentChain(t *testing.T) {
 	// A global let binding should be visible from inside a nested block via Lookup.
-	_, table := parseAndCollect(t, `
+	_, table, _, _ := parseAndCollect(t, `
 	let global_val = 99
 	let result = {
 		let local_val = global_val

@@ -6,6 +6,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -39,7 +40,7 @@ func collectIntegerLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc as
 	}
 	value, err = strconv.ParseInt(valueStringToParse, int(base), 64)
 	if err != nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "failed to parse integer literal: %v", err)
+		ctx.AddError(node, diag.SeverityError, "failed to parse integer literal: %v", err)
 		return nil
 	}
 
@@ -55,7 +56,7 @@ func collectFloatLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.
 	valueStringWithoutUnderscores := strings.ReplaceAll(valueString, "_", "")
 	value, err := strconv.ParseFloat(valueStringWithoutUnderscores, 64)
 	if err != nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "failed to parse float literal: %v", err)
+		ctx.AddError(node, diag.SeverityError, "failed to parse float literal: %v", err)
 		return nil
 	}
 	return &ast.FloatLiteralExpr{

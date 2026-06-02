@@ -10,7 +10,7 @@ func CollectBlockExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locatio
 	if node == nil {
 		return nil
 	}
-	ctx.PushBlockScope()
+	scope := ctx.PushBlockScope()
 	defer ctx.PopScope()
 	statements := []ast.Statement{}
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -19,8 +19,10 @@ func CollectBlockExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locatio
 			statements = append(statements, ctx.CollectStatement(child))
 		}
 	}
-	return &ast.BlockExpr{
+	block := &ast.BlockExpr{
 		ExprBase:   ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		Statements: statements,
 	}
+	ctx.ScopeTable.Set(block, scope)
+	return block
 }

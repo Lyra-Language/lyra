@@ -3,6 +3,7 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -46,12 +47,12 @@ func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 	propertyNode := node.ChildByFieldName("property")
 	isConst := propertyNode != nil && propertyNode.Kind() == "const_identifier"
 	if propertyNode == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "member expression missing property")
+		ctx.AddError(node, diag.SeverityError, "member expression missing property")
 		return nil
 	}
 	property := CollectIdentifierExpr(propertyNode, isConst, loc, ctx)
 	if property == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "could not parse member expression property")
+		ctx.AddError(node, diag.SeverityError, "could not parse member expression property")
 		return nil
 	}
 	return &ast.MemberExpr{

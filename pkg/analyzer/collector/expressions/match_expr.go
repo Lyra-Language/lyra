@@ -3,6 +3,7 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -13,12 +14,12 @@ func CollectMatchExpression(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.L
 	}
 	value := CollectExpression(valueNode, ctx)
 	if value == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "CollectMatchExpression: value is nil")
+		ctx.AddError(node, diag.SeverityError, "CollectMatchExpression: value is nil")
 		return nil
 	}
 	matchArms := CollectMatchArms(node, ctx)
 	if matchArms == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "CollectMatchExpression: match arms are nil")
+		ctx.AddError(node, diag.SeverityError, "CollectMatchExpression: match arms are nil")
 		return nil
 	}
 	return &ast.MatchExpr{
@@ -34,7 +35,7 @@ func CollectMatchArms(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.MatchArm 
 		if node.Child(i).Kind() == "match_arm" {
 			matchArm := CollectMatchArm(node.Child(i), ctx)
 			if matchArm == nil {
-				ctx.AddError(node, collector_ctx.SeverityError, "CollectMatchArms: match arm is nil")
+				ctx.AddError(node, diag.SeverityError, "CollectMatchArms: match arm is nil")
 				return nil
 			}
 			matchArms = append(matchArms, *matchArm)
@@ -56,12 +57,12 @@ func CollectMatchArm(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.MatchArm {
 	}
 	bodyNode, ok := ctx.MustField(node, "body")
 	if !ok {
-		ctx.AddError(node, collector_ctx.SeverityError, "CollectMatchArm: body node is missing")
+		ctx.AddError(node, diag.SeverityError, "CollectMatchArm: body node is missing")
 		return nil
 	}
 	body := CollectExpression(bodyNode, ctx)
 	if body == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "CollectMatchArm: body is nil")
+		ctx.AddError(node, diag.SeverityError, "CollectMatchArm: body is nil")
 		return nil
 	}
 	return &ast.MatchArm{

@@ -3,6 +3,7 @@ package statements
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -19,26 +20,26 @@ func CollectWithStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.WithSt
 			Name:        name,
 		}
 		if err := ctx.RegisterVariable(v); err != nil {
-			ctx.AddError(nameNode, collector_ctx.SeverityError, "failed to register with binding %q: %v", name, err)
+			ctx.AddError(nameNode, diag.SeverityError, "failed to register with binding %q: %v", name, err)
 		}
 	}
 
 	arenaNode := node.ChildByFieldName("arena")
 	if arenaNode == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "Expected arena expression in with statement")
+		ctx.AddError(node, diag.SeverityError, "Expected arena expression in with statement")
 		return nil
 	}
 	arena := ctx.CollectExpr(arenaNode)
 
 	bodyNode := node.ChildByFieldName("body")
 	if bodyNode == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "Expected body block in with statement")
+		ctx.AddError(node, diag.SeverityError, "Expected body block in with statement")
 		return nil
 	}
 	body := ctx.CollectExpr(bodyNode)
 	bodyBlock, ok := body.(*ast.BlockExpr)
 	if !ok {
-		ctx.AddError(bodyNode, collector_ctx.SeverityError, "Expected block expression for with statement body")
+		ctx.AddError(bodyNode, diag.SeverityError, "Expected block expression for with statement body")
 		return nil
 	}
 

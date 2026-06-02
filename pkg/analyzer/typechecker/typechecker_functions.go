@@ -18,7 +18,7 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 			tc.paramTypes[ip.Name] = p.Type
 		}
 	}
-	fn()
+	tc.enterScope(lambda, fn)
 	tc.paramTypes = old
 }
 
@@ -85,32 +85,42 @@ func (tc *TypeChecker) checkBlockVoidReturn(funcName string, block *ast.BlockExp
 // checkBlockReturn walks the statements in block, checking:
 //   - Every explicit ReturnStmt against declaredReturn.
 //   - The last statement, when it is an ExpressionStmt, as an implicit return value.
+//
+// The block's own scope is entered for the duration so that variables declared
+// inside the body (e.g. `let local: i32 = 5`) are visible to inferExprType.
 func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, declaredReturn types.Type) {
-	stmts := block.Statements
-	for i, stmt := range stmts {
-		switch s := stmt.(type) {
-		case *ast.ReturnStmt:
-			if s.Value == nil {
-				continue // bare return – void compatibility is not checked yet
-			}
-			retType := tc.inferExprType(s.Value)
-			if retType != nil && !isAssignable(retType, declaredReturn) {
-				tc.addError(s.GetLocation(), SeverityError,
-					"%s: return type mismatch: expected %s, got %s",
-					funcName, declaredReturn, retType)
-			}
-		case *ast.ExpressionStmt:
-			if i == len(stmts)-1 {
-				// The last expression in a block is its implicit return value.
-				exprType := tc.inferExprType(s.Expression)
-				if exprType != nil && !isAssignable(exprType, declaredReturn) {
+	tc.enterScope(block, func() {
+		stmts := block.Statements
+		for i, stmt := range stmts {
+			switch s := stmt.(type) {
+			case *ast.ReturnStmt:
+				if s.Value == nil {
+					continue // bare return – void compatibility is not checked yet
+				}
+				retType := tc.inferExprType(s.Value)
+				if retType != nil && !isAssignable(retType, declaredReturn) {
 					tc.addError(s.GetLocation(), SeverityError,
 						"%s: return type mismatch: expected %s, got %s",
-						funcName, declaredReturn, exprType)
+						funcName, declaredReturn, retType)
 				}
+			case *ast.ExpressionStmt:
+				if i == len(stmts)-1 {
+					// The last expression in a block is its implicit return value.
+					exprType := tc.inferExprType(s.Expression)
+					if exprType != nil && !isAssignable(exprType, declaredReturn) {
+						tc.addError(s.GetLocation(), SeverityError,
+							"%s: return type mismatch: expected %s, got %s",
+							funcName, declaredReturn, exprType)
+					}
+				}
+			default:
+				// Type-check non-return, non-expression statements (e.g. VarDeclStmt)
+				// so their initializer types are recorded in the TypeTable before
+				// they may be referenced by later expressions in the same block.
+				tc.checkNode(stmt)
 			}
 		}
-	}
+	})
 }
 
 // inferFunctionCallExpr checks argument count and types at a call site and

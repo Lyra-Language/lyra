@@ -11,18 +11,37 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
+func hasUnguardedCatchAll(arms []ast.MatchArm) bool {
+	for _, arm := range arms {
+		if arm.Guard != nil {
+			continue
+		}
+		switch arm.Pattern.(type) {
+		case *ast.WildcardPattern, *ast.IdentifierPattern:
+			return true
+		}
+	}
+	return false
+}
+
 // inferBlockType returns the type of a block expression — the type of its last
 // expression statement. Returns nil for an empty block or one whose last
 // statement is not an ExpressionStmt (e.g. a declaration or return).
 func (tc *TypeChecker) inferBlockType(block *ast.BlockExpr) types.Type {
-	if len(block.Statements) == 0 {
-		return nil
-	}
-	last := block.Statements[len(block.Statements)-1]
-	if exprStmt, ok := last.(*ast.ExpressionStmt); ok {
-		return tc.inferExprType(exprStmt.Expression)
-	}
-	return nil
+	var result types.Type
+	tc.enterScope(block, func() {
+		if len(block.Statements) == 0 {
+			return
+		}
+		for _, stmt := range block.Statements {
+			tc.checkNode(stmt) // type-check every statement, not just the last
+		}
+		last := block.Statements[len(block.Statements)-1]
+		if exprStmt, ok := last.(*ast.ExpressionStmt); ok {
+			result = tc.inferExprType(exprStmt.Expression)
+		}
+	})
+	return result
 }
 
 // checkIfExpr type-checks an if(/else) expression and returns its inferred
@@ -248,6 +267,8 @@ func (tc *TypeChecker) checkDataMatchArm(pattern ast.Pattern, dt types.DataType)
 		}
 		tc.addError(p.GetLocation(), SeverityError,
 			"%s is not a constructor of %s", p.Name, dt.Name)
+	case *ast.BindingPattern:
+		tc.checkDataMatchArm(p.Pattern, dt)
 	case *ast.LiteralPattern:
 		tc.addError(p.GetLocation(), SeverityError,
 			"literal patterns are not allowed on a data type scrutinee")
@@ -270,14 +291,8 @@ func (tc *TypeChecker) checkDataMatchArm(pattern ast.Pattern, dt types.DataType)
 // where missingNames lists the uncovered constructors in declaration order.
 func dataMatchIsExhaustive(arms []ast.MatchArm, dt types.DataType) (bool, []string) {
 	// A wildcard or unguarded identifier catches every possible value.
-	for _, arm := range arms {
-		if arm.Guard != nil {
-			continue
-		}
-		switch arm.Pattern.(type) {
-		case *ast.WildcardPattern, *ast.IdentifierPattern:
-			return true, nil
-		}
+	if hasUnguardedCatchAll(arms) {
+		return true, nil
 	}
 
 	// Collect constructor names that are covered by unguarded DataPattern arms.
@@ -315,6 +330,8 @@ func (tc *TypeChecker) checkStringMatchArm(pattern ast.Pattern) {
 			tc.addError(p.GetLocation(), SeverityError,
 				"invalid regex pattern r/%s/: %s", p.Pattern, err.Error())
 		}
+	case *ast.BindingPattern:
+		tc.checkStringMatchArm(p.Pattern)
 	case *ast.LiteralPattern:
 		kind := literalPatternKind(p.Value)
 		if kind != types.String {
@@ -336,16 +353,7 @@ func (tc *TypeChecker) checkStringMatchArm(pattern ast.Pattern) {
 // the language, so they never on their own make the match exhaustive (we
 // don't try to prove regex unions cover Σ*).
 func stringMatchIsExhaustive(arms []ast.MatchArm) bool {
-	for _, arm := range arms {
-		if arm.Guard != nil {
-			continue
-		}
-		switch arm.Pattern.(type) {
-		case *ast.WildcardPattern, *ast.IdentifierPattern:
-			return true
-		}
-	}
-	return false
+	return hasUnguardedCatchAll(arms)
 }
 
 // isNumericMatchExhaustive reports whether the arms of a numeric match
@@ -492,18 +500,7 @@ func integerIntervalsExhaustive(arms []ast.MatchArm, typeMin, typeMax int64) boo
 // numericMatchIsExhaustive reports whether at least one arm unconditionally
 // catches every value — i.e. a WildcardPattern or an unguarded IdentifierPattern.
 func numericMatchIsExhaustive(arms []ast.MatchArm) bool {
-	for _, arm := range arms {
-		if arm.Guard != nil {
-			// A guarded arm only matches conditionally, so it never guarantees
-			// coverage on its own.
-			continue
-		}
-		switch arm.Pattern.(type) {
-		case *ast.WildcardPattern, *ast.IdentifierPattern:
-			return true
-		}
-	}
-	return false
+	return hasUnguardedCatchAll(arms)
 }
 
 func (tc *TypeChecker) checkNumericMatchArm(pattern ast.Pattern, scrutineeType types.Type) {

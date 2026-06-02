@@ -20,7 +20,7 @@ func parseCollectAndCheck(t *testing.T, source string) []checker.UseBeforeDeclar
 		t.Fatalf("Parse error: %v", err)
 	}
 	c := collector.NewCollector([]byte(source))
-	program, _, _ := c.Collect(tree.RootNode())
+	program, _, _, _ := c.Collect(tree.RootNode())
 	return checker.CheckUseBeforeDeclaration(program)
 }
 

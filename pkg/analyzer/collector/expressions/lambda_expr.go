@@ -3,13 +3,14 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
 	if node.ChildCount() < 1 {
-		ctx.AddError(node, collector_ctx.SeverityError, "collectLambdaExpr: node has no children")
+		ctx.AddError(node, diag.SeverityError, "collectLambdaExpr: node has no children")
 		return nil
 	}
 	isUnsafe := node.ChildByFieldName("is_unsafe") != nil
@@ -19,7 +20,7 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 
 	parametersNode := node.ChildByFieldName("parameters")
 	if parametersNode == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "collectLambdaExpr: lambda expression missing parameters")
+		ctx.AddError(node, diag.SeverityError, "collectLambdaExpr: lambda expression missing parameters")
 		return nil
 	}
 	ctx.PushFunctionScope()
@@ -29,11 +30,11 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 	for i := range parameters {
 		pName := parameters[i].GetName()
 		if existing, alreadyDeclared := ctx.LookupCurrentScope(pName); alreadyDeclared {
-			ctx.AddError(parametersNode, collector_ctx.SeverityError,
+			ctx.AddError(parametersNode, diag.SeverityError,
 				"parameter %s is already declared in this scope (first declared at %s)",
 				pName, existing.GetLocation().Pretty())
 		} else if err := ctx.RegisterParameter(&parameters[i]); err != nil {
-			ctx.AddError(parametersNode, collector_ctx.SeverityError, "failed to register parameter %q: %v", pName, err)
+			ctx.AddError(parametersNode, diag.SeverityError, "failed to register parameter %q: %v", pName, err)
 		}
 	}
 
@@ -45,7 +46,7 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 	} else {
 		lambdClauseNodes := node.ChildByFieldName("lambda_clauses")
 		if lambdClauseNodes == nil {
-			ctx.AddError(node, collector_ctx.SeverityError, "collectLambdaExpr: lambda expression must have either a body or lambda clauses")
+			ctx.AddError(node, diag.SeverityError, "collectLambdaExpr: lambda expression must have either a body or lambda clauses")
 			return nil
 		}
 		lambdaClauses = collectLambdaClauses(lambdClauseNodes, ctx)
@@ -120,7 +121,7 @@ func collectParameters(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Paramete
 func collectParameter(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Parameter {
 	patternNode := node.ChildByFieldName("pattern")
 	if patternNode == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "parameter node missing pattern")
+		ctx.AddError(node, diag.SeverityError, "parameter node missing pattern")
 		return ast.Parameter{}
 	}
 	pattern := ctx.CollectPattern(patternNode)
@@ -155,7 +156,7 @@ func collectReturnType(node *sitter.Node, ctx *collector_ctx.Ctx) types.ReturnTy
 	}
 	typeNode := node.ChildByFieldName("type")
 	if typeNode == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "return type node missing type")
+		ctx.AddError(node, diag.SeverityError, "return type node missing type")
 		return types.ReturnType{}
 	}
 	return types.ReturnType{

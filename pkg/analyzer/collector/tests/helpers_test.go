@@ -16,12 +16,12 @@ import (
 // parseAndCollect parses source, runs the collector, and returns the resulting
 // program and symbol table. The test is failed immediately on any parse or
 // collector error.
-func parseAndCollect(t *testing.T, source string) (*ast.Program, *symbols.SymbolTable) {
+func parseAndCollect(t *testing.T, source string) (*ast.Program, *symbols.SymbolTable, *symbols.ScopeTable, []error) {
 	t.Helper()
 	return parseAndCollectFull(t, source, false)
 }
 
-func parseAndCollectFull(t *testing.T, source string, printTree bool) (*ast.Program, *symbols.SymbolTable) {
+func parseAndCollectFull(t *testing.T, source string, printTree bool) (*ast.Program, *symbols.SymbolTable, *symbols.ScopeTable, []error) {
 	t.Helper()
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -32,11 +32,11 @@ func parseAndCollectFull(t *testing.T, source string, printTree bool) (*ast.Prog
 		p.Print(tree.RootNode())
 	}
 	c := collector.NewCollector([]byte(source))
-	program, table, errors := c.Collect(tree.RootNode())
+	program, table, scopeTable, errors := c.Collect(tree.RootNode())
 	if len(errors) > 0 {
 		t.Fatalf("Collector errors: %v", errors)
 	}
-	return program, table
+	return program, table, scopeTable, errors
 }
 
 // captureProgramPrint runs program.Print("") with stdout redirected and returns the output.
@@ -55,7 +55,7 @@ func parseAndCollectErrors(t *testing.T, source string) []error {
 		t.Fatalf("Parse error: %v", err)
 	}
 	c := collector.NewCollector([]byte(source))
-	_, _, errors := c.Collect(tree.RootNode())
+	_, _, _, errors := c.Collect(tree.RootNode())
 	return errors
 }
 
@@ -73,7 +73,7 @@ func assertCollectorErrorContains(t *testing.T, errors []error, substr string) {
 
 func runGoldenTest(t *testing.T, source string, goldenFileName string) {
 	t.Helper()
-	program, _ := parseAndCollect(t, source)
+	program, _, _, _ := parseAndCollect(t, source)
 	got := captureProgramPrint(program)
 	checkGolden(t, got, filepath.Join("testdata", goldenFileName+".golden"))
 }

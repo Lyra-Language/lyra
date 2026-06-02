@@ -13,13 +13,11 @@ type Pattern interface {
 
 // PatternBase is embedded in all pattern types
 type PatternBase struct {
-	Location Location
+	AstBase
 }
 
-func (p *PatternBase) node()                 {}
-func (p *PatternBase) patternNode()          {}
-func (p *PatternBase) GetLocation() Location { return p.Location }
-func (p *PatternBase) GetName() string       { return "" }
+func (p *PatternBase) patternNode()    {}
+func (p *PatternBase) GetName() string { return "" }
 
 // IdentifierPattern represents an identifier pattern (binds a name)
 type IdentifierPattern struct {

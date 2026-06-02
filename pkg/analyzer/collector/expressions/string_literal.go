@@ -9,6 +9,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -41,7 +42,7 @@ func collectStringLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast
 			child := node.NamedChild(i)
 			content, err := unescapeStringContent(ctx.NodeText(child))
 			if err != nil {
-				ctx.AddError(child, collector_ctx.SeverityError, "invalid string literal: %v", err)
+				ctx.AddError(child, diag.SeverityError, "invalid string literal: %v", err)
 				return nil
 			}
 			sb.WriteString(content)
@@ -56,14 +57,14 @@ func collectStringLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast
 		case "string_content":
 			content, err := unescapeStringContent(ctx.NodeText(child))
 			if err != nil {
-				ctx.AddError(child, collector_ctx.SeverityError, "invalid string literal: %v", err)
+				ctx.AddError(child, diag.SeverityError, "invalid string literal: %v", err)
 				return nil
 			}
 			segments = append(segments, newLiteral(ctx.NodeLocation(child), content))
 		case "string_interpolation":
 			exprNode := child.NamedChild(0)
 			if exprNode == nil {
-				ctx.AddError(child, collector_ctx.SeverityError, "empty string interpolation")
+				ctx.AddError(child, diag.SeverityError, "empty string interpolation")
 				return nil
 			}
 			expr := CollectExpression(exprNode, ctx)

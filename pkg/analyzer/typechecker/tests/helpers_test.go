@@ -31,12 +31,12 @@ func parseCollectAndCheck(t *testing.T, source string, printTree bool) checkResu
 		t.Fatalf("parse error: %v", err)
 	}
 	c := collector.NewCollector([]byte(source))
-	program, symTable, collectorErrors := c.Collect(tree.RootNode())
+	program, symTable, scopeTable, collectorErrors := c.Collect(tree.RootNode())
 	if len(collectorErrors) > 0 {
 		t.Fatalf("collector errors: %v", collectorErrors)
 	}
 	typeTable := typetable.New()
-	tc := typechecker.New(symTable, typeTable)
+	tc := typechecker.New(symTable, scopeTable, typeTable)
 	errors := tc.Check(program)
 	return checkResult{program, symTable, typeTable, errors}
 }

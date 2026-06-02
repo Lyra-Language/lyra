@@ -3,6 +3,7 @@ package statements
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -16,7 +17,7 @@ func CollectImportStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Impo
 	membersNode := node.ChildByFieldName("members")
 
 	if pathNode == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "Expected module path, got %s", node.Kind())
+		ctx.AddError(node, diag.SeverityError, "Expected module path, got %s", node.Kind())
 		return nil
 	}
 
@@ -50,7 +51,7 @@ func CollectImportStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Impo
 func CollectImportMember(node *sitter.Node, ctx *collector_ctx.Ctx) ast.ImportMember {
 	nameNode := node.ChildByFieldName("name")
 	if nameNode == nil {
-		ctx.AddError(node, collector_ctx.SeverityError, "Expected import member name, got %s", node.Kind())
+		ctx.AddError(node, diag.SeverityError, "Expected import member name, got %s", node.Kind())
 		return ast.ImportMember{Name: "", Alias: ""}
 	}
 	name := ctx.NodeText(nameNode)
