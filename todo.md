@@ -2,8 +2,6 @@
 ---------
 
 ### Typechecker — Critical silent failures
-- **Higher-order and non-identifier callees** — `inferFunctionCallExpr` bails when `call.Function` isn't a plain identifier; handle lambdas stored in variables and member-expression callees
-- **Member access type-checking** — `*ast.MemberExpr` is not routed through `inferExprType`; check that the object is a struct, the field exists, and record the field type in `TypeTable`
 - **Index access type-checking** — `*ast.IndexExpr` is unhandled; index must be numeric, target must be array/string/tuple, result is the element type
 
 ### LSP — Table-stakes editor features
@@ -70,11 +68,13 @@
 
 ## In Progress
 --------------
+- **Member access type-checking** — `*ast.MemberExpr` is not routed through `inferExprType`; check that the object is a struct, the field exists, and record the field type in `TypeTable`
 
 ## Completed
 ------------
 
 ### 06/03/26
+- **Higher-order and non-identifier callees** — `inferFunctionCallExpr` now handles `LambdaExpr` (direct lambda calls like `((n) => n*2)(5)`), variables holding lambdas, and `MemberExpr` callees (method calls like `obj.method(args)`). Added `inferLambdaCall`, `inferLambdaCallFromType`, `inferLambdaExprType`, and `inferMemberExprType` helpers. Member access on non-struct types, unknown fields, and non-callable fields all produce errors.
 - **Unresolved identifier references** — `inferExprType` silently returns `nil` when an `IdentifierExpr` lookup fails; emit `cannot find variable %q in this scope`
 - **Undefined function calls** — `inferFunctionCallExpr` silently returns `nil` for unknown identifiers; emit `undefined function %q`
 - **Unknown type names in annotations** — `resolveType` silently returns the unresolved type when `symTable.Types[name]` misses; emit `unknown type %q`

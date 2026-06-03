@@ -427,6 +427,10 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 			return t
 		}
 		return tc.inferFunctionCallExpr(e)
+	case *ast.LambdaExpr:
+		return tc.inferLambdaExprType(e)
+	case *ast.MemberExpr:
+		return tc.inferMemberExprType(e)
 	case *ast.NegationExpr:
 		return tc.inferNegationExpr(e)
 	case *ast.StructInstanceExpr:
@@ -759,6 +763,62 @@ func (tc *TypeChecker) convertAnonymousStructFieldsToTypeFields(fields []ast.Str
 		}
 	}
 	return structTypeFields
+}
+
+// inferLambdaExprType returns a LambdaType for a bare lambda expression,
+// recording it in the type table so subsequent uses of the same AST node
+// are handled via the cache (first line of inferExprType).
+func (tc *TypeChecker) inferLambdaExprType(lambda *ast.LambdaExpr) types.Type {
+	t := &types.LambdaType{
+		ReturnType: types.ReturnType{Type: lambda.ReturnType.Type},
+	}
+	for _, p := range lambda.Parameters {
+		t.Parameters = append(t.Parameters, types.ParameterType{
+			Type:         tc.resolveType(p.Type, p.GetLocation()),
+			DefaultValue: p.DefaultValue,
+		})
+	}
+	tc.typeTable.Set(lambda, t)
+	return t
+}
+
+// inferMemberExprType resolves member access (e.g. obj.field, obj.method())
+// on struct types. It checks that the object is a struct, the field exists,
+// and returns the field's type.
+func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
+	objType := tc.inferExprType(m.Object)
+	fieldName := m.Property.Name
+
+	switch t := objType.(type) {
+	case types.NamedStructType:
+		for _, f := range t.Fields {
+			if f.Name == fieldName {
+				tc.typeTable.Set(m, f.Type)
+				return f.Type
+			}
+		}
+		tc.addError(m.GetLocation(), SeverityError,
+			"%s has no field %q", t.Name, fieldName)
+	case types.AnonymousStructType:
+		for _, f := range t.Fields {
+			if f.Name == fieldName {
+				tc.typeTable.Set(m, f.Type)
+				return f.Type
+			}
+		}
+		tc.addError(m.GetLocation(), SeverityError,
+			"anonymous struct has no field %q", fieldName)
+	default:
+		// When the object type is nil (e.g. undefined identifier), don't
+		// report a second error here — the undefined-identifier diagnostic
+		// already explains the problem. inferMemberCall handles call-specific
+		// errors for call sites where the object resolves but the field isn't callable.
+		if objType != nil {
+			tc.addError(m.GetLocation(), SeverityError,
+				"member access on non-struct type %s", objType)
+		}
+	}
+	return nil
 }
 
 func (tc *TypeChecker) addError(loc ast.Location, sev Severity, format string, args ...any) {

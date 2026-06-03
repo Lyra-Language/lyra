@@ -130,19 +130,62 @@ func TestCall_NonCallable_AnnotatedIntVariable(t *testing.T) {
 	assertErrorsAre(t, res, `identifier "n" is not callable (type i32)`)
 }
 
-// ── 3. Function parameter call (current limitation) ───────────────────────────
+// ── 3. Lambda stored in variable (higher-order calls via VarDeclStmt) ─────────
 
-func TestCall_FunctionParameter_NotYetResolvable(t *testing.T) {
-	// Calling a parameter whose type is a lambda type (higher-order functions)
-	// is not yet implemented. The call resolver only walks VarDeclStmt → LambdaExpr,
-	// so the parameter name is not found via that path.
+func TestCall_LambdaInVariable_Valid_Ok(t *testing.T) {
+	// Lambda stored in a variable, called with correct args.
 	res := parseCollectAndCheck(t, `
-		let applyFn = (f: (int) -> int, x: int) -> int => f(x)
+		let double = (n: int) -> int => n * 2
+		let r: int = double(5)
 	`, false)
-	assertErrorsAre(t, res, `undefined function "f"`)
+	assertNoErrors(t, res)
 }
 
-// ── 4. Regression — valid calls still accepted ───────────────────────────────
+func TestCall_LambdaInVariable_WrongArgCount(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let double = (n: int) -> int => n * 2
+		double()
+	`, false)
+	assertErrorsAre(t, res, `double: expected 1 argument(s), got 0`)
+}
+
+func TestCall_LambdaInVariable_WrongArgType(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let double = (n: int) -> int => n * 2
+		let r: int = double(true)
+	`, false)
+	assertErrorsAre(t, res, `double: argument 1 (n): cannot assign boolean to int`)
+}
+
+// ── 4. Direct lambda calls ─────────────────────────────────────────────────
+
+func TestCall_DirectLambda_Valid_Ok(t *testing.T) {
+	// Calling a bare lambda expression directly.
+	res := parseCollectAndCheck(t, `((n: int) -> int => n * 2)(5)`, false)
+	assertNoErrors(t, res)
+}
+
+func TestCall_DirectLambda_WrongArgCount(t *testing.T) {
+	res := parseCollectAndCheck(t, `((n: int) -> int => n * 2)()`, false)
+	assertErrorsAre(t, res, `lambda: expected 1 argument(s), got 0`)
+}
+
+func TestCall_DirectLambda_WrongArgType(t *testing.T) {
+	res := parseCollectAndCheck(t, `((n: int) -> int => n * 2)(true)`, false)
+	assertErrorsAre(t, res, `lambda: argument 1 (n): cannot assign boolean to int`)
+}
+
+func TestCall_DirectLambda_MultipleParams_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `((a: int, b: int) -> int => a + b)(1, 2)`, false)
+	assertNoErrors(t, res)
+}
+
+func TestCall_DirectLambda_MultipleParams_WrongCount(t *testing.T) {
+	res := parseCollectAndCheck(t, `((a: int, b: int) -> int => a + b)(1)`, false)
+	assertErrorsAre(t, res, `lambda: expected 2 argument(s), got 1`)
+}
+
+// ── 5. Regression — valid calls still accepted ───────────────────────────────
 
 func TestCall_DefinedFunction_NoArgs_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `

@@ -180,3 +180,56 @@ func TestTypeCheck_AnonymousStructUpdate_Ok(t *testing.T) {
 	`, false)
 	assertNoErrors(t, res)
 }
+
+// ── Member expression callees ────────────────────────────────────────────────
+
+func TestCall_MemberExpr_Valid_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Callable {
+			fn: (int) -> int,
+		}
+		let c = Callable { fn: (n: int) -> int => n * 2 }
+		let r: int = c.fn(5)
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestCall_MemberExpr_WrongArgCount(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Callable {
+			fn: (int) -> int,
+		}
+		let c = Callable { fn: (n: int) -> int => n * 2 }
+		c.fn()
+	`, false)
+	assertErrorsAre(t, res, `fn: expected 1 argument(s), got 0`)
+}
+
+func TestCall_MemberExpr_WrongArgType(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Callable {
+			fn: (int) -> int,
+		}
+		let c = Callable { fn: (n: int) -> int => n * 2 }
+		c.fn(true)
+	`, false)
+	assertErrorsAre(t, res, `fn: argument 1: cannot assign boolean to int`)
+}
+
+func TestCall_MemberExpr_NonCallableField_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Person {
+			name: string,
+		}
+		let p = Person { name: "Alice" }
+		p.name()
+	`, false)
+	assertErrorsAre(t, res, `member "name" is not callable (type string)`)
+}
+
+func TestCall_MemberExpr_OnUnknownStruct_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let x = unknown.field()
+	`, false)
+	assertErrorsAre(t, res, `undefined identifier "unknown"`)
+}

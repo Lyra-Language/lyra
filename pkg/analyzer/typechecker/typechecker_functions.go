@@ -130,34 +130,9 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 	})
 }
 
-// inferFunctionCallExpr checks argument count and types at a call site and
-// returns the callee's declared return type (or nil when the callee is unknown
-// or has no declared return type). Only simple identifier callees are resolved;
-// method calls and other forms are skipped.
-func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.Type {
-	ident, ok := call.Function.(*ast.IdentifierExpr)
-	if !ok {
-		// Method calls, higher-order calls, etc. – not implemented yet.
-		return nil
-	}
-
-	sym, ok := tc.scope.Lookup(ident.Name)
-	if !ok {
-		tc.addError(call.GetLocation(), SeverityError, "undefined function %q", ident.Name)
-		return nil
-	}
-	decl, ok := sym.(*ast.VarDeclStmt)
-	if !ok {
-		tc.addError(call.GetLocation(), SeverityError, "cannot resolve function %q", ident.Name)
-		return nil
-	}
-	lambda, ok := decl.Value.(*ast.LambdaExpr)
-	if !ok {
-		declValType := tc.inferExprType(decl.Value)
-		tc.addError(call.GetLocation(), SeverityError, "identifier %q is not callable (type %s)", ident.Name, declValType)
-		return nil
-	}
-
+// inferLambdaCall validates a call against a LambdaExpr (from a VarDeclStmt or
+// direct lambda callee). calleeName is used in error messages.
+func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr) types.Type {
 	// Count required parameters (those without a default value).
 	required := 0
 	for _, p := range lambda.Parameters {
@@ -171,11 +146,11 @@ func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.T
 	if got < required || got > total {
 		if required == total {
 			tc.addError(call.GetLocation(), SeverityError,
-				"%s: expected %d argument(s), got %d", ident.Name, total, got)
+				"%s: expected %d argument(s), got %d", calleeName, total, got)
 		} else {
 			tc.addError(call.GetLocation(), SeverityError,
 				"%s: expected %d to %d argument(s), got %d",
-				ident.Name, required, total, got)
+				calleeName, required, total, got)
 		}
 		return lambda.ReturnType.Type
 	}
@@ -195,9 +170,122 @@ func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.T
 			paramName := param.Pattern.GetName()
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d (%s): cannot assign %s to %s",
-				ident.Name, i+1, paramName, argType, param.Type)
+				calleeName, i+1, paramName, argType, param.Type)
 		}
 	}
 
 	return lambda.ReturnType.Type
+}
+
+// inferLambdaCallFromType validates a call against a LambdaType (used for
+// member-expression callees and any future callable-type sites.
+func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *types.LambdaType, call *ast.FunctionCallExpr) types.Type {
+	required := 0
+	for _, p := range lambdaType.Parameters {
+		if p.DefaultValue == nil {
+			required++
+		}
+	}
+	total := len(lambdaType.Parameters)
+	got := len(call.Arguments)
+
+	if got < required || got > total {
+		if required == total {
+			tc.addError(call.GetLocation(), SeverityError,
+				"%s: expected %d argument(s), got %d", calleeName, total, got)
+		} else {
+			tc.addError(call.GetLocation(), SeverityError,
+				"%s: expected %d to %d argument(s), got %d",
+				calleeName, required, total, got)
+		}
+		return lambdaType.ReturnType.Type
+	}
+
+	for i, arg := range call.Arguments {
+		param := lambdaType.Parameters[i]
+		if param.Type == nil {
+			continue
+		}
+		argType := tc.inferExprType(arg)
+		if argType == nil {
+			continue
+		}
+		if !isAssignable(argType, param.Type) {
+			tc.addError(arg.GetLocation(), SeverityError,
+				"%s: argument %d: cannot assign %s to %s",
+				calleeName, i+1, argType, param.Type)
+		}
+	}
+
+	return lambdaType.ReturnType.Type
+}
+
+// inferFunctionCallExpr checks argument count and types at a call site and
+// returns the callee's declared return type (or nil when the callee is unknown
+// or has no declared return type). Handles identifier callees, direct lambda
+// expressions, and member-expression callees (method calls).
+func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.Type {
+	switch callee := call.Function.(type) {
+	case *ast.IdentifierExpr:
+		return tc.inferIdentifierCall(callee, call)
+	case *ast.LambdaExpr:
+		return tc.inferDirectLambdaCall(callee, call)
+	case *ast.MemberExpr:
+		return tc.inferMemberCall(callee, call)
+	default:
+		tc.addError(call.GetLocation(), SeverityError,
+			"cannot call %s expression", call.Function.GetName())
+		return nil
+	}
+}
+
+// inferIdentifierCall resolves the identifier in scope and validates the call
+// against a LambdaExpr found as a VarDeclStmt value.
+func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.FunctionCallExpr) types.Type {
+	sym, ok := tc.scope.Lookup(ident.Name)
+	if !ok {
+		tc.addError(call.GetLocation(), SeverityError, "undefined function %q", ident.Name)
+		return nil
+	}
+	if lambda, ok := sym.(*ast.LambdaExpr); ok {
+		return tc.inferLambdaCall(ident.Name, lambda, call)
+	}
+	if decl, ok := sym.(*ast.VarDeclStmt); ok {
+		lambda, ok := decl.Value.(*ast.LambdaExpr)
+		if !ok {
+			declValType := tc.inferExprType(decl.Value)
+			tc.addError(call.GetLocation(), SeverityError, "identifier %q is not callable (type %s)", ident.Name, declValType)
+			return nil
+		}
+		return tc.inferLambdaCall(ident.Name, lambda, call)
+	}
+	// sym is some other Named (e.g. Parameter) — fall through to lambda call
+	if lambda, ok := sym.(*ast.LambdaExpr); ok {
+		return tc.inferLambdaCall(ident.Name, lambda, call)
+	}
+	tc.addError(call.GetLocation(), SeverityError, "cannot resolve function %q", ident.Name)
+	return nil
+}
+
+// inferDirectLambdaCall type-checks a call where the callee is a bare lambda
+// expression, e.g. ((n: int) -> int => n * 2)(5).
+func (tc *TypeChecker) inferDirectLambdaCall(lambda *ast.LambdaExpr, call *ast.FunctionCallExpr) types.Type {
+	return tc.inferLambdaCall("lambda", lambda, call)
+}
+
+// inferMemberCall type-checks a call where the callee is a member expression,
+// e.g. obj.method(args). The member expression's own type inference (via
+// inferMemberExprType) must first resolve to a callable type.
+func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.FunctionCallExpr) types.Type {
+	memberType := tc.inferExprType(member)
+	if memberType == nil {
+		return nil
+	}
+	// Check if the resolved member type is itself callable (a LambdaType).
+	if lambdaType, ok := memberType.(*types.LambdaType); ok {
+		return tc.inferLambdaCallFromType(member.Property.Name, lambdaType, call)
+	}
+	tc.addError(call.GetLocation(), SeverityError,
+		"member %q is not callable (type %s)", member.Property.Name, memberType)
+	return nil
 }
