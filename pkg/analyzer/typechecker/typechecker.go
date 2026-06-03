@@ -339,6 +339,8 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return tc.inferBlockType(e)
 	case *ast.IfExpr:
 		return tc.checkIfExpr(e)
+	case *ast.MatchExpr:
+		return tc.checkMatchExpr(e)
 	case *ast.MathBinaryOpExpr:
 		return tc.inferMathBinaryExpr(e)
 	case *ast.StringConcatExpr:

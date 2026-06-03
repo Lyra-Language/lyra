@@ -126,7 +126,32 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 				dt.Name, strings.Join(missing, ", "))
 		}
 	}
-	return nil
+	// Check that all arms yield a compatible type. Untyped literals are
+	// promoted to their default concrete type first so that a bare `2` reads
+	// as `int` rather than `integer literal` in error messages.
+	if len(expr.MatchArms) == 0 {
+		return nil
+	}
+	var commonType types.Type
+	for _, arm := range expr.MatchArms {
+		armType := promoteToDefault(tc.inferExprType(arm.Body))
+		if armType == nil {
+			continue // body type unresolvable — skip rather than false-positive
+		}
+		if commonType == nil {
+			commonType = armType
+			continue
+		}
+		next, ok := branchCommonType(commonType, armType)
+		if !ok {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"match arms have incompatible types: %s vs %s",
+				commonType, armType)
+			return nil
+		}
+		commonType = next
+	}
+	return commonType
 }
 
 func (tc *TypeChecker) checkArrayMatchArm(pattern ast.Pattern, scrutineeType types.Type) {
