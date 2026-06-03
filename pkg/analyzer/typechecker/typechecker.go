@@ -409,6 +409,8 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return e.GetType()
 	case *ast.CharacterLiteralExpr:
 		return e.GetType()
+	case *ast.ArrayLiteralExpr:
+		return tc.inferArrayLiteralType(e)
 	case *ast.FunctionCallExpr:
 		if t := tc.inferTypeConversion(e); t != nil {
 			return t
@@ -464,6 +466,7 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		}
 		sym, ok := tc.scope.Lookup(e.Name)
 		if !ok {
+			tc.addError(e.GetLocation(), SeverityError, "undefined identifier %q", e.Name)
 			return nil
 		}
 		if v, ok := sym.(*ast.VarDeclStmt); ok {
@@ -474,24 +477,33 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 			}
 			return v.Type
 		}
+		tc.addError(e.GetLocation(), SeverityError, "undefined symbol %q", e.Name)
 		return nil
 	}
+	tc.addError(expr.GetLocation(), SeverityError, "unknown expression type %q", expr.GetName())
 	return nil
 }
 
-// promoteToDefault converts an untyped literal type to its default concrete type.
-// UntypedInt → int (natural register-width signed integer)
-// UntypedFloat → f64
+// promoteToDefault converts an untyped literal type to its default concrete type:
+//   - UntypedInt / UntypedSignedInt → int
+//   - UntypedFloat                 → f64
+//   - StaticArrayType              → promote element type recursively
+//
+// All other types are returned unchanged.
 func promoteToDefault(t types.Type) types.Type {
-	p, ok := t.(types.PrimitiveType)
-	if !ok {
-		return t
-	}
-	switch p.Name {
-	case types.UntypedInt, types.UntypedSignedInt:
-		return types.PrimitiveType{Name: types.Int}
-	case types.UntypedFloat:
-		return types.PrimitiveType{Name: types.Float64}
+	switch v := t.(type) {
+	case types.PrimitiveType:
+		switch v.Name {
+		case types.UntypedInt, types.UntypedSignedInt:
+			return types.PrimitiveType{Name: types.Int}
+		case types.UntypedFloat:
+			return types.PrimitiveType{Name: types.Float64}
+		}
+	case types.StaticArrayType:
+		// Promote the element type so that e.g. [1, 2, 3] (UntypedInt elements)
+		// becomes StaticArrayType{int, 3} when there is no annotation.
+		v.ElementType = promoteToDefault(v.ElementType)
+		return v
 	}
 	return t
 }
@@ -556,6 +568,41 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 	}
 
 	return result
+}
+
+// inferArrayLiteralType infers the type of an array literal expression.
+// An array literal always produces a StaticArrayType — its length is known at
+// compile time from the number of elements. The element type is the common type
+// of all elements (via branchCommonType). When the elements are empty the
+// element type is nil, which signals an unresolved/empty array.
+//
+// Whether the containing variable is static or dynamic is determined by the
+// annotation type on the VarDeclStmt, not by the literal itself. isAssignable
+// allows a StaticArrayType to widen into a DynamicArrayType so that:
+//
+//	let xs: []int = [1, 2, 3]   // OK — StaticArrayType{int,3} → DynamicArrayType{int}
+//	let xs: [3]int = [1, 2, 3]  // OK — exact match
+func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.Type {
+	var elemType types.Type
+	for _, el := range expr.Elements {
+		t := tc.inferExprType(el) // keep untyped (UntypedInt, etc.) so the annotation can widen
+		if t == nil {
+			continue
+		}
+		if elemType == nil {
+			elemType = t
+			continue
+		}
+		common, ok := branchCommonType(elemType, t)
+		if !ok {
+			tc.addError(el.GetLocation(), SeverityError,
+				"array literal: element type %s is not compatible with preceding element type %s",
+				t, elemType)
+			return nil
+		}
+		elemType = common
+	}
+	return types.StaticArrayType{ElementType: elemType, Size: len(expr.Elements)}
 }
 
 func (tc *TypeChecker) inferStringConcatExpr(expr *ast.StringConcatExpr) types.Type {

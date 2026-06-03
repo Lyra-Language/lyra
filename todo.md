@@ -2,7 +2,6 @@
 ---------
 
 ### Typechecker — Critical silent failures
-- **Unresolved identifier references** — `inferExprType` silently returns `nil` when an `IdentifierExpr` lookup fails; emit `cannot find variable %q in this scope`
 - **Undefined function calls** — `inferFunctionCallExpr` silently returns `nil` for unknown identifiers; emit `undefined function %q`
 - **Unknown type names in annotations** — `resolveType` silently returns the unresolved type when `symTable.Types[name]` misses; emit `unknown type %q`
 - **Higher-order and non-identifier callees** — `inferFunctionCallExpr` bails when `call.Function` isn't a plain identifier; handle lambdas stored in variables and member-expression callees
@@ -73,6 +72,7 @@
 
 ## In Progress
 --------------
+- **Unresolved identifier references** — `inferExprType` silently returns `nil` when an `IdentifierExpr` lookup fails; emit `cannot find variable %q in this scope`
 
 ## Completed
 ------------

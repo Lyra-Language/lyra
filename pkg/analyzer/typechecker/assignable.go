@@ -23,6 +23,29 @@ func isAssignable(from, to types.Type) bool {
 	if ct, ok := from.(*types.ConstrainedType); ok {
 		return isAssignable(ct.Type, to)
 	}
+	// A static array literal is assignable to a dynamic array with a compatible
+	// element type. This mirrors how `let xs: []int = [1, 2, 3]` should work:
+	// the literal produces StaticArrayType{int,3} which widens to DynamicArrayType{int}.
+	if fromSA, ok := from.(types.StaticArrayType); ok {
+		// An empty array literal [] (Size==0, ElementType==nil) is assignable to
+		// any array type — the element type is vacuously satisfied.
+		if fromSA.ElementType == nil {
+			switch to.(type) {
+			case types.DynamicArrayType:
+				return true
+			case types.StaticArrayType:
+				return fromSA.Size == to.(types.StaticArrayType).Size
+			}
+		}
+		if toDyn, ok := to.(types.DynamicArrayType); ok {
+			return isAssignable(fromSA.ElementType, toDyn.ElementType)
+		}
+		// StaticArrayType → StaticArrayType: sizes must match, elements must be assignable.
+		if toSA, ok := to.(types.StaticArrayType); ok {
+			return fromSA.Size == toSA.Size && isAssignable(fromSA.ElementType, toSA.ElementType)
+		}
+	}
+
 	fromP, fromIsPrim := from.(types.PrimitiveType)
 	toP, toIsPrim := to.(types.PrimitiveType)
 	if !fromIsPrim || !toIsPrim {
