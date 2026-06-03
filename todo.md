@@ -1,7 +1,6 @@
 ## To-Dos
 ---------
 ### Regex engine (resharp-style)
-- **Phase 3: Unicode properties** — `\p{Letter}`, `\p{Nd}`, etc.
 - **Phase 4: performance** — SIMD prefix scan, byte-frequency-based acceleration, bounded DFA fast path
 - Wire the engine into `RegexLiteralExpr` (typecheck regex patterns in match arms) and `PatternConstraint` (validate constrained string types)
 
@@ -10,8 +9,12 @@
 ## In Progress
 --------------
 
+
 ## Completed
 ------------
+
+### 06/02/26
+- **Regex Engine Phase 3: Unicode properties** — `\p{Letter}`, `\p{Nd}`, etc. Full `\p{X}` / `\P{X}` support: general categories (L, Lu, Nd, Z, …), long aliases (Letter, Number, …), script names (Latin, Han, …), binary properties (White_Space, …); inside character classes (positional & negated); 20 new tests.
 
 ### 06/01/26
 - Various bugfixes and improvements 

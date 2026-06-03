@@ -476,9 +476,205 @@ func TestStress_NestedRepeats(t *testing.T) {
 }
 
 func TestStress_IntersectionLength(t *testing.T) {
-	// {5,30} chars, must include an upper, lower, digit, and special.
 	re := mustCompile(t, `_{5,30}&_*[A-Z]_*&_*[a-z]_*&_*[0-9]_*&_*[!@#$%]_*`)
 	assertMatch(t, re, "Aa1!Z", true)
 	assertMatch(t, re, "Aa1!", false) // too short
 	assertMatch(t, re, "AAAAA", false)
+}
+
+// ── Phase 3: Unicode properties ──────────────────────────────────────────────
+
+// \p{L} / \p{Letter}: any Unicode letter (ASCII or multi-byte).
+func TestUnicode_LetterProperty(t *testing.T) {
+	re := mustCompile(t, `\p{L}+`)
+	assertMatch(t, re, "hello", true)       // ASCII letters
+	assertMatch(t, re, "caf\xC3\xA9", true) // UTF-8 for "café" (é = U+00E9)
+	// Greek alpha α (U+03B1) = 0xCE 0xB1
+	assertMatch(t, re, "\xCE\xB1\xCE\xB2\xCE\xB3", true) // αβγ
+	assertMatch(t, re, "123", false)                     // digits are not letters
+	assertMatch(t, re, "", false)
+	assertMatch(t, re, "hello world", false) // space is not a letter
+}
+
+// \p{Lu}: uppercase letters only.
+func TestUnicode_UppercaseLetterProperty(t *testing.T) {
+	re := mustCompile(t, `\p{Lu}+`)
+	assertMatch(t, re, "HELLO", true)
+	assertMatch(t, re, "hello", false) // lowercase letters
+	assertMatch(t, re, "Hello", false) // mixed: 'e' breaks the match
+	// Greek capital Γ (U+0393) = 0xCE 0x93
+	assertMatch(t, re, "\xCE\x93", true)
+}
+
+// \p{Ll}: lowercase letters only.
+func TestUnicode_LowercaseLetterProperty(t *testing.T) {
+	re := mustCompile(t, `\p{Ll}+`)
+	assertMatch(t, re, "hello", true)
+	assertMatch(t, re, "HELLO", false)
+	// é (U+00E9) = 0xC3 0xA9, a lowercase letter.
+	assertMatch(t, re, "caf\xC3\xA9", true)
+}
+
+// \p{Nd} / \p{Decimal_Number}: Unicode decimal digits.
+func TestUnicode_DecimalDigitProperty(t *testing.T) {
+	re := mustCompile(t, `\p{Nd}+`)
+	assertMatch(t, re, "0123456789", true) // ASCII digits
+	assertMatch(t, re, "abc", false)
+	assertMatch(t, re, "", false)
+	// Arabic-Indic digit four (U+0664) = 0xD9 0xA4
+	assertMatch(t, re, "\xD9\xA4", true)
+}
+
+// \p{N} / \p{Number}: all numeric characters (Nd, Nl, No).
+func TestUnicode_NumberProperty(t *testing.T) {
+	re := mustCompile(t, `\p{N}+`)
+	assertMatch(t, re, "42", true)
+	assertMatch(t, re, "x", false)
+}
+
+// \p{Z} / \p{Separator}: separator characters (spaces, etc.).
+func TestUnicode_SeparatorProperty(t *testing.T) {
+	re := mustCompile(t, `\p{Z}+`)
+	assertMatch(t, re, " ", true) // ASCII space (U+0020) is a Zs
+	assertMatch(t, re, "a", false)
+	// Non-breaking space U+00A0 = 0xC2 0xA0
+	assertMatch(t, re, "\xC2\xA0", true)
+}
+
+// \p{Latin}: Latin script.
+func TestUnicode_ScriptLatin(t *testing.T) {
+	re := mustCompile(t, `\p{Latin}+`)
+	assertMatch(t, re, "hello", true)
+	// é (U+00E9) is in the Latin script.
+	assertMatch(t, re, "caf\xC3\xA9", true)
+	// CJK character 中 (U+4E2D) is not Latin.
+	assertMatch(t, re, "\xE4\xB8\xAD", false)
+}
+
+// \p{Han}: CJK unified ideographs.
+func TestUnicode_ScriptHan(t *testing.T) {
+	re := mustCompile(t, `\p{Han}+`)
+	// 中 (U+4E2D) = 0xE4 0xB8 0xAD — a CJK character
+	assertMatch(t, re, "\xE4\xB8\xAD", true)
+	assertMatch(t, re, "hello", false)
+}
+
+// \P{L}: complement — matches any byte sequence that is NOT a letter encoding.
+func TestUnicode_NegatedLetterProperty(t *testing.T) {
+	re := mustCompile(t, `\P{L}+`)
+	assertMatch(t, re, "123", true)
+	assertMatch(t, re, "   ", true) // spaces
+	assertMatch(t, re, "hello", false)
+}
+
+// \p{L} inside a (non-negated) character class: [\p{L}_] matches a letter or '_'.
+func TestUnicode_PropertyInClass(t *testing.T) {
+	re := mustCompile(t, `[\p{L}_]+`)
+	assertMatch(t, re, "hello_world", true)
+	assertMatch(t, re, "_", true)
+	assertMatch(t, re, "caf\xC3\xA9", true)
+	assertMatch(t, re, "123", false) // digits not matched
+}
+
+// Multiple Unicode properties in one class: [\p{L}\p{Nd}].
+func TestUnicode_MultiplePropertiesInClass(t *testing.T) {
+	re := mustCompile(t, `[\p{L}\p{Nd}]+`)
+	assertMatch(t, re, "hello123", true)
+	assertMatch(t, re, "caf\xC3\xA9", true)
+	assertMatch(t, re, "!", false)
+	assertMatch(t, re, " ", false)
+}
+
+// Negated class with Unicode property: [^\p{Z}] matches one non-separator code point.
+func TestUnicode_NegatedClassWithProperty(t *testing.T) {
+	// [^\p{Z}]+ should match sequences of non-separator code points.
+	re := mustCompile(t, `[^\p{Z}]+`)
+	assertMatch(t, re, "hello", true)
+	assertMatch(t, re, "hello world", false) // space (U+0020) breaks it
+	assertFindAll(t, re, "foo bar baz", []string{"foo", "bar", "baz"})
+}
+
+// Mixed class: byte ranges + Unicode property.
+func TestUnicode_MixedByteAndProperty(t *testing.T) {
+	re := mustCompile(t, `[a-z\p{Lu}]+`) // lowercase ASCII OR Unicode uppercase
+	assertMatch(t, re, "helloWORLD", true)
+	assertMatch(t, re, "HELLO", true)
+	assertMatch(t, re, "hello", true)
+	assertMatch(t, re, "1234", false)
+	// Greek capital Γ (U+0393) = 0xCE 0x93 — in Lu
+	assertMatch(t, re, "\xCE\x93", true)
+}
+
+// Long name aliases.
+func TestUnicode_LongNameAliases(t *testing.T) {
+	re1 := mustCompile(t, `\p{Letter}+`)
+	re2 := mustCompile(t, `\p{L}+`)
+	// Both should accept the same inputs.
+	for _, s := range []string{"hello", "\xCE\xB1", "123", ""} {
+		got1, _ := re1.MatchString(s)
+		got2, _ := re2.MatchString(s)
+		if got1 != got2 {
+			t.Errorf("MatchString(%q): \\p{Letter}=%v but \\p{L}=%v", s, got1, got2)
+		}
+	}
+
+	re3 := mustCompile(t, `\p{Decimal_Number}+`)
+	re4 := mustCompile(t, `\p{Nd}+`)
+	for _, s := range []string{"0123", "\xD9\xA4", "abc", ""} {
+		got3, _ := re3.MatchString(s)
+		got4, _ := re4.MatchString(s)
+		if got3 != got4 {
+			t.Errorf("MatchString(%q): \\p{Decimal_Number}=%v but \\p{Nd}=%v", s, got3, got4)
+		}
+	}
+}
+
+// Unicode property combined with quantifier and intersection.
+func TestUnicode_PropertyWithIntersection(t *testing.T) {
+	// Unicode letters that are at least 3 code-points long.
+	// \p{L}{3,} & ~(_*\p{Lu}_*)  → letters-only, no uppercase.
+	re := mustCompile(t, `\p{L}{3,}&~(_*\p{Lu}_*)`)
+	assertMatch(t, re, "hello", true)  // all lowercase, ≥3 chars
+	assertMatch(t, re, "Hello", false) // has uppercase H
+	assertMatch(t, re, "hi", false)    // too short
+}
+
+// Error: unknown property name.
+func TestUnicode_UnknownProperty(t *testing.T) {
+	if _, err := Compile(`\p{Bogus}`); err == nil {
+		t.Error("expected error for unknown Unicode property")
+	}
+}
+
+// Error: missing braces after \p.
+func TestUnicode_MissingBraces(t *testing.T) {
+	if _, err := Compile(`\pL`); err == nil {
+		t.Error("expected error: \\p without '{}'")
+	}
+}
+
+// Error: empty property name.
+func TestUnicode_EmptyPropertyName(t *testing.T) {
+	if _, err := Compile(`\p{}`); err == nil {
+		t.Error("expected error: empty property name")
+	}
+}
+
+// Error: Unicode property at lower bound of range in class.
+func TestUnicode_PropertyAsRangeLower(t *testing.T) {
+	if _, err := Compile(`[\p{L}-z]`); err == nil {
+		t.Error("expected error: \\p{L} cannot be lower bound of range")
+	}
+}
+
+// FindAll with \p{L}+ — non-overlapping letter words.
+func TestUnicode_FindAllLetters(t *testing.T) {
+	re := mustCompile(t, `\p{L}+`)
+	assertFindAll(t, re, "hello 123 world", []string{"hello", "world"})
+	// Mixed ASCII + non-ASCII words
+	// "foo" + space + "\xCE\xB1\xCE\xB2" (αβ) + space + "bar"
+	assertFindAll(t, re,
+		"foo \xCE\xB1\xCE\xB2 bar",
+		[]string{"foo", "\xCE\xB1\xCE\xB2", "bar"},
+	)
 }

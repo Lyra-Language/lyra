@@ -640,6 +640,7 @@ func (p *parser) parseClass() (expr, error) {
 	}
 
 	var set byteSet
+	var extras []expr // Unicode property expressions (multi-byte)
 	first := true
 	for {
 		if p.pos >= len(p.src) {
@@ -654,6 +655,20 @@ func (p *parser) parseClass() (expr, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		// Unicode property expression (\p{…} / \P{…}): cannot form a range.
+		if lo.e != nil {
+			extras = append(extras, lo.e)
+			first = false
+			// Reject syntactically misleading range like [\p{L}-z].
+			if p.pos < len(p.src) && p.src[p.pos] == '-' &&
+				p.pos+1 < len(p.src) && p.src[p.pos+1] != ']' {
+				return nil, p.errorf(p.pos,
+					"Unicode property cannot be the lower bound of a character class range")
+			}
+			continue
+		}
+
 		// Range?
 		if p.pos+1 < len(p.src) && p.src[p.pos] == '-' && p.src[p.pos+1] != ']' {
 			p.pos++ // '-'
@@ -665,8 +680,9 @@ func (p *parser) parseClass() (expr, error) {
 				p.applyClassSet(&set, lo.set)
 				continue
 			}
-			if hi.isSet {
-				return nil, p.errorf(p.pos, "shorthand classes cannot be the upper bound of a range")
+			if hi.isSet || hi.e != nil {
+				return nil, p.errorf(p.pos,
+					"shorthand class or Unicode property cannot be the upper bound of a range")
 			}
 			if lo.b > hi.b {
 				return nil, p.errorf(p.pos, "range out of order: %q > %q", lo.b, hi.b)
@@ -690,10 +706,32 @@ func (p *parser) parseClass() (expr, error) {
 		first = false
 	}
 
-	if negate {
-		set = set.complement()
+	// ── Build result ─────────────────────────────────────────────────────────
+
+	if len(extras) == 0 {
+		// Pure byte class (no Unicode properties): preserve existing semantics.
+		// The class matches exactly one byte in (or not in) the set.
+		if negate {
+			set = set.complement()
+		}
+		return mkCls(set), nil
 	}
-	return mkCls(set), nil
+
+	// Class contains Unicode property expressions: build a union of all parts.
+	var allParts []expr
+	if !set.isEmpty() {
+		allParts = append(allParts, mkCls(set))
+	}
+	allParts = append(allParts, extras...)
+	union := mkUnion(allParts...)
+
+	if negate {
+		// [^…\p{X}…]: intersect with "any valid UTF-8 code point" so we match
+		// exactly one complete code point outside the class, not an arbitrary
+		// byte sequence outside the property encodings.
+		return mkInter(unicodeAnyCodepointExpr(), mkCompl(union)), nil
+	}
+	return union, nil
 }
 
 func (p *parser) applyClassSet(out *byteSet, in byteSet) {
@@ -709,11 +747,13 @@ func (p *parser) addCaseFolded(out *byteSet, lo, hi byte) {
 }
 
 // classChar is the result of reading one element from inside a class:
-// either a literal byte, or a shorthand set (e.g. \d -> 0-9).
+// either a literal byte, a shorthand set (e.g. \d -> 0-9), or a Unicode
+// property expression (e.g. \p{L}) that may span multiple bytes.
 type classChar struct {
 	b     byte
 	set   byteSet
 	isSet bool
+	e     expr // non-nil for \p{…} / \P{…}: a byte-level Unicode property expr
 }
 
 func (p *parser) readClassChar() (classChar, error) {
@@ -767,6 +807,27 @@ func (p *parser) readClassChar() (classChar, error) {
 			return classChar{}, err
 		}
 		return classChar{b: b}, nil
+	case 'p':
+		name, nerr := p.readPropertyName()
+		if nerr != nil {
+			return classChar{}, nerr
+		}
+		e, uerr := unicodePropertyToExpr(name)
+		if uerr != nil {
+			return classChar{}, p.errorf(p.pos, "%v", uerr)
+		}
+		return classChar{e: e}, nil
+	case 'P':
+		// \P{X} inside a class: one complete code point not in X.
+		name, nerr := p.readPropertyName()
+		if nerr != nil {
+			return classChar{}, nerr
+		}
+		e, uerr := unicodePropertyToExpr(name)
+		if uerr != nil {
+			return classChar{}, p.errorf(p.pos, "%v", uerr)
+		}
+		return classChar{e: mkInter(unicodeAnyCodepointExpr(), mkCompl(e))}, nil
 	default:
 		// Treat all other escapes as literal (\\, \[, \], \-, etc.).
 		if unicode.IsLetter(rune(esc)) {
@@ -827,6 +888,31 @@ func (p *parser) parseEscape() (expr, error) {
 			return nil, err
 		}
 		return p.literalExpr(b), nil
+	case 'p':
+		// \p{Property} — Unicode property (positive)
+		name, nerr := p.readPropertyName()
+		if nerr != nil {
+			return nil, nerr
+		}
+		e, uerr := unicodePropertyToExpr(name)
+		if uerr != nil {
+			return nil, p.errorf(startPos, "%v", uerr)
+		}
+		return e, nil
+	case 'P':
+		// \P{Property} — one complete UTF-8 code point that is NOT in the property.
+		// We intersect with unicodeAnyCodepointExpr() so that \P{L} matches
+		// exactly one non-letter code point rather than any string outside
+		// the single-letter language.
+		name, nerr := p.readPropertyName()
+		if nerr != nil {
+			return nil, nerr
+		}
+		e, uerr := unicodePropertyToExpr(name)
+		if uerr != nil {
+			return nil, p.errorf(startPos, "%v", uerr)
+		}
+		return mkInter(unicodeAnyCodepointExpr(), mkCompl(e)), nil
 	default:
 		// Reject backreferences and unknown alphabetic escapes; allow
 		// non-alphanumeric escapes through as their literal byte.
@@ -838,6 +924,28 @@ func (p *parser) parseEscape() (expr, error) {
 		}
 		return p.literalExpr(c), nil
 	}
+}
+
+// readPropertyName parses "{PropertyName}" immediately after \p or \P.
+func (p *parser) readPropertyName() (string, error) {
+	startPos := p.pos
+	if p.pos >= len(p.src) || p.src[p.pos] != '{' {
+		return "", p.errorf(startPos, "expected '{' after \\p or \\P")
+	}
+	p.pos++ // '{'
+	nameStart := p.pos
+	for p.pos < len(p.src) && p.src[p.pos] != '}' {
+		p.pos++
+	}
+	if p.pos >= len(p.src) {
+		return "", p.errorf(nameStart, "unterminated \\p{...}: missing '}'")
+	}
+	name := string(p.src[nameStart:p.pos])
+	if name == "" {
+		return "", p.errorf(nameStart, "empty Unicode property name in \\p{...}")
+	}
+	p.pos++ // '}'
+	return name, nil
 }
 
 func (p *parser) readHexEscape() (byte, error) {
