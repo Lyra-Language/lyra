@@ -10,12 +10,16 @@ import (
 // parameters. Only IdentifierPattern parameters with a declared type annotation
 // are added; complex-pattern or unannotated parameters are silently skipped.
 // Nested calls (e.g. a lambda inside a lambda) correctly save and restore.
+//
+// Each parameter's declared type is resolved through resolveType so that
+// user-defined names (constrained types, structs, etc.) are expanded and
+// unknown names emit an "unknown type" diagnostic.
 func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 	old := tc.paramTypes
 	tc.paramTypes = make(map[string]types.Type, len(lambda.Parameters))
 	for _, p := range lambda.Parameters {
 		if ip, ok := p.Pattern.(*ast.IdentifierPattern); ok && p.Type != nil {
-			tc.paramTypes[ip.Name] = p.Type
+			tc.paramTypes[ip.Name] = tc.resolveType(p.Type, p.GetLocation())
 		}
 	}
 	tc.enterScope(lambda, fn)
@@ -30,13 +34,16 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 // return statement / the implicit last expression all match the declared type.
 func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) {
 	declaredReturn := lambda.ReturnType.Type
-	if declaredReturn == nil {
-		return
-	}
-
-	_, isVoid := declaredReturn.(types.VoidType)
-
+	// Always enter the param scope: withParamScope resolves every parameter
+	// type annotation via resolveType, emitting "unknown type" for any name
+	// that has no declaration. This must happen even when there is no return
+	// type to check.
 	tc.withParamScope(lambda, func() {
+		if declaredReturn == nil {
+			return // param annotations validated; nothing else to check
+		}
+
+		_, isVoid := declaredReturn.(types.VoidType)
 		if lambda.Body != nil {
 			if block, ok := lambda.Body.(*ast.BlockExpr); ok {
 				if isVoid {
@@ -179,11 +186,12 @@ func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.T
 		if param.Type == nil {
 			continue // no type annotation on this parameter; cannot check
 		}
+		resolvedParamType := tc.resolveType(param.Type, param.GetLocation())
 		argType := tc.inferExprType(arg)
 		if argType == nil {
 			continue // cannot infer argument type; skip silently
 		}
-		if !isAssignable(argType, param.Type) {
+		if !isAssignable(argType, resolvedParamType) {
 			paramName := param.Pattern.GetName()
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d (%s): cannot assign %s to %s",

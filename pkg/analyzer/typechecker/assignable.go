@@ -30,11 +30,11 @@ func isAssignable(from, to types.Type) bool {
 		// An empty array literal [] (Size==0, ElementType==nil) is assignable to
 		// any array type — the element type is vacuously satisfied.
 		if fromSA.ElementType == nil {
-			switch to.(type) {
+			switch to := to.(type) {
 			case types.DynamicArrayType:
 				return true
 			case types.StaticArrayType:
-				return fromSA.Size == to.(types.StaticArrayType).Size
+				return fromSA.Size == to.Size
 			}
 		}
 		if toDyn, ok := to.(types.DynamicArrayType); ok {

@@ -12,20 +12,22 @@ import (
 )
 
 type TypeChecker struct {
-	symTable   *symbols.SymbolTable
-	scopeTable *symbols.ScopeTable
-	typeTable  *typetable.TypeTable
-	scope      *symbols.Scope
-	errors     []TypeError
-	paramTypes map[string]types.Type // non-nil only while checking a function body
+	symTable      *symbols.SymbolTable
+	scopeTable    *symbols.ScopeTable
+	typeTable     *typetable.TypeTable
+	scope         *symbols.Scope
+	errors        []TypeError
+	paramTypes    map[string]types.Type // non-nil only while checking a function body
+	resolvedTypes map[string]types.Type // cache for resolveType to avoid duplicate "unknown type" errors
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
 	return &TypeChecker{
-		symTable:   symTable,
-		scopeTable: scopeTable,
-		typeTable:  typeTable,
-		scope:      symTable.GlobalScope,
+		symTable:      symTable,
+		scopeTable:    scopeTable,
+		typeTable:     typeTable,
+		scope:         symTable.GlobalScope,
+		resolvedTypes: make(map[string]types.Type),
 	}
 }
 
@@ -165,7 +167,7 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 
 	// Resolve user-defined type names (e.g. UnresolvedType{"Hex"} → *ConstrainedType)
 	// so that assignability and constraint checks operate on the concrete type.
-	resolvedDeclType := tc.resolveType(decl.Type)
+	resolvedDeclType := tc.resolveType(decl.Type, decl.Location)
 
 	if !isAssignable(inferredType, resolvedDeclType) {
 		tc.typeTable.Set(decl.Value, inferredType)
@@ -366,7 +368,7 @@ func (tc *TypeChecker) addIncompatibleTypesError(expr ast.Expression, operator s
 // when the initializer was checked.
 func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
 	if decl.Type != nil {
-		return tc.resolveType(decl.Type)
+		return tc.resolveType(decl.Type, decl.Location)
 	}
 	if decl.Value != nil {
 		if t, ok := tc.typeTable.Get(decl.Value); ok {
@@ -379,15 +381,24 @@ func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
 // resolveType looks up an UnresolvedType name in the symbol table and returns
 // the concrete declared type (e.g. *ConstrainedType, NamedStructType, DataType).
 // All other type values are returned unchanged.
-func (tc *TypeChecker) resolveType(t types.Type) types.Type {
+//
+// Results are cached so that repeated resolutions of the same name only emit
+// "unknown type" once per Check run.
+func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 	ut, ok := t.(types.UnresolvedType)
 	if !ok {
 		return t
 	}
+	if cached, ok := tc.resolvedTypes[ut.Name]; ok {
+		return cached
+	}
 	decl, ok := tc.symTable.Types[ut.Name]
 	if !ok {
-		return t // unresolvable — return as-is
+		tc.addError(loc, SeverityError, "unknown type %q", t)
+		tc.resolvedTypes[ut.Name] = t // cache unresolved itself so the error fires only once
+		return t
 	}
+	tc.resolvedTypes[ut.Name] = decl.Type
 	return decl.Type
 }
 
