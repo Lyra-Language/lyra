@@ -1,6 +1,76 @@
 ## To-Dos
 ---------
 
+### Typechecker — Critical silent failures
+- **Unresolved identifier references** — `inferExprType` silently returns `nil` when an `IdentifierExpr` lookup fails; emit `cannot find variable %q in this scope`
+- **Undefined function calls** — `inferFunctionCallExpr` silently returns `nil` for unknown identifiers; emit `undefined function %q`
+- **Unknown type names in annotations** — `resolveType` silently returns the unresolved type when `symTable.Types[name]` misses; emit `unknown type %q`
+- **Higher-order and non-identifier callees** — `inferFunctionCallExpr` bails when `call.Function` isn't a plain identifier; handle lambdas stored in variables and member-expression callees
+- **Member access type-checking** — `*ast.MemberExpr` is not routed through `inferExprType`; check that the object is a struct, the field exists, and record the field type in `TypeTable`
+- **Index access type-checking** — `*ast.IndexExpr` is unhandled; index must be numeric, target must be array/string/tuple, result is the element type
+
+### LSP — Table-stakes editor features
+- **Hover** (`textDocument/hover`) — surface the type from `TypeTable` and the declaration's doc-comment for any symbol under the cursor
+- **Inlay hints** (`textDocument/inlayHint`) — show inferred types inline for unannotated `let`/`var` bindings (e.g. `: int`) using `TypeTable`
+- **Go-to-definition** (`textDocument/definition`) — resolve the name under the cursor via `Scope.Lookup` / `SymbolTable.Types` and return its `Location`
+- **Document symbols** (`textDocument/documentSymbol`) — walk top-level statements and emit symbols for type decls, functions, and constants; powers the breadcrumb/outline view
+
+### Diagnostic infrastructure
+- **Diagnostic codes** — attach a stable code (e.g. `lyra-E001`, `lyra-W014`) to each `TypeError` / `ShadowingWarning` / `UseBeforeDeclarationError`; map into the LSP `Diagnostic.Code` field
+- **`DiagnosticTag` support** — send `Unnecessary` for unused/unreachable diagnostics and `Deprecated` for deprecated-attribute symbols so VS Code renders them greyed-out or struck-through
+- **Related information** — populate `Diagnostic.RelatedInformation` for shadowing (point to original declaration), duplicate fields, missing trait methods, etc.
+- **Better parser error ranges** — walk the tree-sitter CST for `ERROR`/`MISSING` nodes and report them with real source ranges instead of the current `lsp.Range{}` (line 0:0) fallback
+
+### Checker — Control-flow validity (new `checker/` pass)
+- **`break`/`continue` outside a loop** — walk with a loop-depth counter; error at depth 0; also catch unknown labels in `break foo`/`continue foo`
+- **`return` outside a function body** — top-level or orphan `return` statements are currently silently accepted
+- **`yield`/`yield from` outside a generator function** — `LambdaExpr.IsGenerator` is collected but never consulted; error when used outside a generator
+- **`await` outside an async function** — `LambdaExpr.IsAsync` is collected but never consulted; error when used outside an async function
+- **Unreachable code after `return`/`break`/`continue`** — any statements after these in the same block are dead; emit as a warning with the `Unnecessary` diagnostic tag
+- **Unsafe operations outside `unsafe` blocks** — `AddressOfExpr`, `DerefExpr`, raw pointer access, and calls to `IsUnsafe` lambdas should require an enclosing `UnsafeBlockExpr` or unsafe function
+
+### Checker — Unused symbol detection
+- **Unused variables** — collect declared names per scope, track references, warn for unreferenced names (ignore `_`-prefixed); use `Unnecessary` diagnostic tag
+- **Unused imports** — walk `ImportStmt.Members` and warn for any alias/name that never appears as an identifier
+- **Unused function parameters** — same as unused variables, scoped to the lambda body
+
+### Typechecker — Collection-level type checking
+- **Array literal element type homogeneity** — infer element type as the common type of all elements via `branchCommonType`; error on mismatches (e.g. `[1, "two", true]`)
+- **Tuple literal element type checking** — record element types into `TypeTable`; surface mismatches in destructuring
+- **Range expression operand types** — both ends of `start..end` must be numeric and compatible; step must match; used in `for x in 0..n`
+- **For-in iterable must be iterable** — `for x in 42 { ... }` should error
+- **For loop condition must be `bool`** — `for var i = 0; i; i += 1` should error
+- **Null coalescing types** — both sides of `??` must unify via `branchCommonType`
+- **Division/modulo by literal zero** — flag `x / 0`, `x % 0`, `x %% 0` with a literal-zero RHS in `inferMathBinaryExpr`
+- **Always-true/always-false conditions** — warn on `if true`, `if false`, and loop conditions that are obviously constant
+- **Float `==`/`!=` comparison warning** — emit a warning when two float-typed values are compared with `==` or `!=`
+
+### Typechecker — Match expression polish
+- **Boolean match exhaustiveness** — for `bool` scrutinees, check that both `true` and `false` arms are present; reject non-bool literal patterns
+- **Tuple and struct match arm validation** — `checkMatchExpr` currently falls through for tuple and named-struct scrutinees without validating patterns
+- **Duplicate/overlapping match arms** — detect identical literal arms or overlapping numeric ranges using the existing interval logic
+- **Identifier pattern shadowing a constructor** — warn when `match foo { Some => ... }` binds `Some` as a variable instead of matching the constructor
+
+### Typechecker — Trait/impl conformance
+- **Impl must provide all required trait methods** — walk `TraitDeclStmt.Methods` minus default methods; report each unimplemented method on the `TraitImplStmt`
+- **Impl method signatures must match the trait** — compare `LambdaType` parameters and return type with `types.TypesEqual`, substituting `Self` for the impl's concrete type
+- **Extraneous methods in impl** — warn when `TraitImplStmt` provides a method not declared in the trait
+
+### Typechecker — Constant and value-level checks
+- **`const` requires a compile-time-constant initializer** — walk the initializer and reject anything that isn't a literal, constant identifier, or purely constant expression
+- **`@sizeof` on unknown types** — `SizeofExpr` should emit `unknown type %q` when its type argument doesn't resolve
+
+### LSP — Additional navigation and editing features
+- **Code actions / quick fixes** (`textDocument/codeAction`) — "Add missing match arms" (reuse the `missing` slice from `dataMatchIsExhaustive`), "Add missing struct fields", "Remove unused variable/import", "Insert inferred type annotation"
+- **Completion** (`textDocument/completion`) — identifiers in scope, type names, struct field names after `.`; reuse `Scope.Lookup` chain and `SymbolTable.Types`
+- **Signature help** (`textDocument/signatureHelp`) — show the lambda signature while typing inside `()`; parameter info is already on every `LambdaExpr`
+- **Find references** (`textDocument/references`) — walk the AST collecting every `IdentifierExpr` / `SpreadExpr` that matches the target symbol's declaration
+- **Rename** (`textDocument/rename`) — compute all references (see above) and return a `WorkspaceEdit`
+- **Semantic tokens** (`textDocument/semanticTokens`) — emit per-token type/modifier classifications (constant, mutable variable, type name, function, deprecated, etc.) using `SymbolTable`; the TextMate grammar can't distinguish these
+- **Workspace symbols** (`workspace/symbol`) — fuzzy-search across all type decls and functions in the workspace
+- **Document highlight** (`textDocument/documentHighlight`) — highlight all occurrences of the symbol under the cursor; cheap once references work
+- **Folding ranges** (`textDocument/foldingRange`) — emit fold regions for `match`, `data`, struct, trait, and block expressions
+
 ## In Progress
 --------------
 
