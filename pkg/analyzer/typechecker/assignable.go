@@ -11,6 +11,18 @@ func isAssignable(from, to types.Type) bool {
 	if types.TypesEqual(from, to) {
 		return true
 	}
+	// Constrained types are nominally distinct from their base types at the
+	// type-equality level, but a value is always assignable to a constrained
+	// type when it satisfies the base type (the constraint check itself is
+	// handled separately by checkPatternConstraints etc.).
+	if ct, ok := to.(*types.ConstrainedType); ok {
+		return isAssignable(from, ct.Type)
+	}
+	// A constrained type value is assignable to its base type (e.g.
+	// `let s: string = someEmail` where Email = string @pattern(...)).
+	if ct, ok := from.(*types.ConstrainedType); ok {
+		return isAssignable(ct.Type, to)
+	}
 	fromP, fromIsPrim := from.(types.PrimitiveType)
 	toP, toIsPrim := to.(types.PrimitiveType)
 	if !fromIsPrim || !toIsPrim {

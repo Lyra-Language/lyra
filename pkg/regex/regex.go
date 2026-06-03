@@ -48,7 +48,9 @@
 //   - No backreferences.
 package regex
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // Options controls compilation and matching behavior.
 type Options struct {
@@ -105,8 +107,9 @@ type Regex struct {
 	pattern string
 	opts    Options
 	dfa     *dfa
-	lbGates []lbGate // leading lookbehind gate DFAs (often nil)
-	laCache *laCache // sub-DFA cache for trailing lookahead checks
+	lbGates []lbGate   // leading lookbehind gate DFAs (often nil)
+	laCache *laCache   // sub-DFA cache for trailing lookahead checks
+	hints   accelHints // SIMD-scan acceleration hints for FindAll
 }
 
 // Compile parses pattern with DefaultOptions and returns a Regex.
@@ -160,12 +163,46 @@ func CompileWithOptions(pattern string, opts Options) (*Regex, error) {
 		mainExpr = exprEps
 	}
 
+	mainDFA := newDFA(mainExpr, opts.MaxDFAStates)
+
+	// Eagerly build and freeze the DFA when it is small enough.
+	//
+	// A frozen DFA uses a flat [states×256]int16 table for O(1) byte
+	// transitions without any map/hash overhead.
+	//
+	// We skip freezing for patterns whose initial expression key is longer
+	// than maxFreezeExprKey bytes.  Expression key length is a fast proxy for
+	// expression complexity: simple patterns (literals, \d+, character classes)
+	// have short keys (~30-300 bytes) while patterns containing Unicode property
+	// unions (\p{L}, \p{Han}, …) have keys in the tens-of-thousands of bytes.
+	// Derivative computation for complex expressions is very slow, so we avoid
+	// attempting to freeze them.
+	// maxFreezeExprKey caps the key-length threshold for DFA freezing.
+	// Expression key length is a fast proxy for pattern complexity:
+	//   simple patterns     (×+, [a-z]+, \Ahello\z): key ~ 10–150 bytes
+	//   moderate patterns   (quantified repeats, small unions): 150–200 bytes
+	//   complex patterns    (intersection, complement, Unicode props): > 200 bytes
+	// We only attempt to freeze the simple cases because derivative computation
+	// is O(expression_size²) in key length; freezing complex patterns takes
+	// tens of seconds.
+	const maxFreezeExprKey = 200
+	if len(mainExpr.key()) <= maxFreezeExprKey {
+		mainDFA.tryFreeze()
+	}
+	for i := range gates {
+		gateExpr := gates[i].dfa.states[gates[i].dfa.initial].e
+		if len(gateExpr.key()) <= maxFreezeExprKey {
+			gates[i].dfa.tryFreeze()
+		}
+	}
+
 	return &Regex{
 		pattern: pattern,
 		opts:    opts,
-		dfa:     newDFA(mainExpr, opts.MaxDFAStates),
+		dfa:     mainDFA,
 		lbGates: gates,
 		laCache: &laCache{dfas: make(map[string]*dfa), opts: opts},
+		hints:   buildAccelHints(mainExpr),
 	}, nil
 }
 
@@ -277,6 +314,24 @@ func (r *Regex) FindAllIndex(input []byte) ([][2]int, error) {
 	var out [][2]int
 	pos := 0
 	for pos <= n {
+		// ── SIMD prefix / pivot scan ──────────────────────────────────────
+		// Skip positions that provably cannot start a match:
+		//  • Multi-byte literal prefix: use bytes.Index (SIMD for len≥2).
+		//  • Pivot bytes: use bytes.IndexByte for each candidate first byte
+		//    and advance to the earliest hit.
+		// Acceleration is disabled for nullable patterns (which can match ε
+		// at every position) and when pos has reached end-of-input (where an
+		// ε-match anchored at n must still be checked).
+		if pos < n {
+			if next := r.hints.skip(input, pos, n); next > n {
+				// No pivot/prefix found in the remaining input; no match possible.
+				break
+			} else if next > pos {
+				pos = next
+			}
+		}
+		// ────────────────────────────────────────────────────────────
+
 		// Skip positions where a leading-lookbehind gate is not satisfied.
 		if !r.gateOK(gateStates, pos) {
 			pos++

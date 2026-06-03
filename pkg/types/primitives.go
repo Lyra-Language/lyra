@@ -22,6 +22,7 @@ const (
 	Boolean          PrimitiveTypeName = "boolean"
 	String           PrimitiveTypeName = "string"
 	Char             PrimitiveTypeName = "char"
+	Regex            PrimitiveTypeName = "regex"
 )
 
 type PrimitiveType struct {

@@ -6,6 +6,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
+	"github.com/Lyra-Language/lyra/pkg/regex"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
@@ -80,7 +81,38 @@ func (tc *TypeChecker) checkTypeDecl(decl *ast.TypeDeclStmt) {
 	switch decl.Type.(type) {
 	case types.NamedStructType:
 		tc.checkStructDecl(decl)
+	case *types.ConstrainedType:
+		tc.checkConstrainedTypeDecl(decl)
 	}
+}
+
+// checkConstrainedTypeDecl validates the constraints on a constrained-type
+// declaration. Currently this means compiling every PatternConstraint regex
+// at type-declaration time so users see syntax errors immediately.
+func (tc *TypeChecker) checkConstrainedTypeDecl(decl *ast.TypeDeclStmt) {
+	ct := decl.Type.(*types.ConstrainedType)
+	for _, c := range ct.Constraints {
+		pc, ok := c.(*types.PatternConstraint)
+		if !ok {
+			continue
+		}
+		body := regexPatternBody(pc.Pattern)
+		if _, err := regex.Compile(body); err != nil {
+			tc.addError(decl.GetLocation(), SeverityError,
+				"type %s: invalid pattern constraint %s: %s",
+				ct.Name, pc.Pattern, err)
+		}
+	}
+}
+
+// regexPatternBody strips the r/…/ delimiters from a PatternConstraint.Pattern
+// value.  The grammar stores the full regex-literal text (e.g. r/[0-9]+/);
+// regex.Compile expects just the inner body ([0-9]+).
+func regexPatternBody(p string) string {
+	if len(p) >= 3 && p[:2] == "r/" && p[len(p)-1] == '/' {
+		return p[2 : len(p)-1]
+	}
+	return p // already stripped or bare pattern string
 }
 
 func (tc *TypeChecker) checkStructDecl(decl *ast.TypeDeclStmt) {
@@ -131,7 +163,11 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 		return
 	}
 
-	if !isAssignable(inferredType, decl.Type) {
+	// Resolve user-defined type names (e.g. UnresolvedType{"Hex"} → *ConstrainedType)
+	// so that assignability and constraint checks operate on the concrete type.
+	resolvedDeclType := tc.resolveType(decl.Type)
+
+	if !isAssignable(inferredType, resolvedDeclType) {
 		tc.typeTable.Set(decl.Value, inferredType)
 		tc.addError(decl.GetLocation(), SeverityError,
 			"%s: cannot assign %s to %s", decl.Name, inferredType, decl.Type)
@@ -139,11 +175,50 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	}
 
 	// Check that the literal value fits within the annotated integer type's range.
-	tc.checkIntegerLiteralRange(decl.Name, decl.Value, decl.Type)
+	tc.checkIntegerLiteralRange(decl.Name, decl.Value, resolvedDeclType)
+
+	// Validate string literals against any pattern constraints on the declared type.
+	tc.checkPatternConstraints(decl.Name, decl.Value, resolvedDeclType)
 
 	// Store the annotation type — this is the effective type the expression is used as.
 	// e.g. literal 42 annotated as i32 should be recorded as i32, not the untyped int.
-	tc.typeTable.Set(decl.Value, decl.Type)
+	tc.typeTable.Set(decl.Value, resolvedDeclType)
+}
+
+// checkPatternConstraints tests a string-literal value against every
+// PatternConstraint on the declared type.  Non-string values and non-pattern
+// constraints are silently skipped — this is purely an extra check layered on
+// top of the ordinary type-assignability check.
+func (tc *TypeChecker) checkPatternConstraints(name string, value ast.Expression, declType types.Type) {
+	ct, ok := declType.(*types.ConstrainedType)
+	if !ok {
+		return
+	}
+	strLit, ok := value.(*ast.StringLiteralExpr)
+	if !ok {
+		return // only checkable at compile time for string literals
+	}
+	for _, c := range ct.Constraints {
+		pc, ok := c.(*types.PatternConstraint)
+		if !ok {
+			continue
+		}
+		re, err := regex.Compile(regexPatternBody(pc.Pattern))
+		if err != nil {
+			// The broken regex is already reported at the type declaration site;
+			// don't double-report here.
+			continue
+		}
+		matched, err := re.MatchString(strLit.Value)
+		if err != nil {
+			continue // DFA capacity exceeded — don't block the user
+		}
+		if !matched {
+			tc.addError(value.GetLocation(), SeverityError,
+				"%s: value %q does not satisfy pattern constraint r/%s/",
+				name, strLit.Value, pc.Pattern)
+		}
+	}
 }
 
 func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {
@@ -287,10 +362,11 @@ func (tc *TypeChecker) addIncompatibleTypesError(expr ast.Expression, operator s
 }
 
 // effectiveType returns the concrete type of a declaration: the annotation if
-// present, or the TypeTable entry recorded when the initializer was checked.
+// present (resolved through the symbol table), or the TypeTable entry recorded
+// when the initializer was checked.
 func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
 	if decl.Type != nil {
-		return decl.Type
+		return tc.resolveType(decl.Type)
 	}
 	if decl.Value != nil {
 		if t, ok := tc.typeTable.Get(decl.Value); ok {
@@ -298,6 +374,21 @@ func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
 		}
 	}
 	return nil
+}
+
+// resolveType looks up an UnresolvedType name in the symbol table and returns
+// the concrete declared type (e.g. *ConstrainedType, NamedStructType, DataType).
+// All other type values are returned unchanged.
+func (tc *TypeChecker) resolveType(t types.Type) types.Type {
+	ut, ok := t.(types.UnresolvedType)
+	if !ok {
+		return t
+	}
+	decl, ok := tc.symTable.Types[ut.Name]
+	if !ok {
+		return t // unresolvable — return as-is
+	}
+	return decl.Type
 }
 
 // inferExprType returns the type of expr, or nil if it cannot be determined yet.
@@ -345,6 +436,14 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return tc.inferMathBinaryExpr(e)
 	case *ast.StringConcatExpr:
 		return tc.inferStringConcatExpr(e)
+	case *ast.RegexLiteralExpr:
+		// Validate regex syntax at compile time; the type of a regex literal
+		// is the built-in `regex` type.
+		if _, err := regex.Compile(e.Pattern); err != nil {
+			tc.addError(e.GetLocation(), SeverityError,
+				"invalid regex literal r/%s/: %s", e.Pattern, err)
+		}
+		return types.PrimitiveType{Name: types.Regex}
 	case *ast.InterpolatedStringExpr:
 		return types.PrimitiveType{Name: types.String}
 	case *ast.DataConstructorExpr:

@@ -23,14 +23,29 @@ type dfaState struct {
 // deadID is the absorbing dead state — created at construction time.
 const deadID = 0
 
+// maxFrozenStates is the maximum number of DFA states for which we build a
+// flat transition table.  A frozen DFA of N states uses N*256*2 bytes of
+// memory (int16 per entry) and delivers O(1) byte-symbol lookups without any
+// map / pointer overhead.
+const maxFrozenStates = 512
+
 // dfa is a lazily constructed DFA over the extended alphabet (bytes +
 // boundary markers). States are added the first time a transition into them
 // is requested.
+//
+// When frozen is true, all byte transitions (sym < 256) have been eagerly
+// expanded and stored in flatTrans[stateID*256+sym].  Boundary-symbol
+// transitions (sym ≥ 256) are always served by the map-based path.
 type dfa struct {
 	states   []*dfaState
 	stateMap map[string]int // expr.key() → state id
 	initial  int
 	maxCap   int
+
+	// Frozen flat table: flatTrans[stateID*256 + sym] = nextStateID (int16).
+	// Populated by tryFreeze; nil when the DFA is still lazy.
+	flatTrans []int16
+	frozen    bool
 }
 
 func newDFA(start expr, maxCap int) *dfa {
@@ -82,6 +97,10 @@ func (d *dfa) trans(stateID, sym int) (int, error) {
 	if stateID == deadID {
 		return deadID, nil
 	}
+	// Fast path: frozen flat table for byte symbols.
+	if d.frozen && sym < 256 {
+		return int(d.flatTrans[stateID*256+sym]), nil
+	}
 	s := d.states[stateID]
 	if next, ok := s.trans[sym]; ok {
 		return next, nil
@@ -94,6 +113,63 @@ func (d *dfa) trans(stateID, sym int) (int, error) {
 	// re-sliced by intern, because the slice holds pointers.
 	d.states[stateID].trans[sym] = next
 	return next, nil
+}
+
+// tryFreeze attempts to eagerly build all reachable DFA states (via BFS over
+// the full extended alphabet of 260 symbols) and compile byte transitions into
+// a flat table.  If expansion would exceed maxFrozenStates the DFA stays lazy.
+//
+// After tryFreeze succeeds (frozen == true):
+//   - Byte transitions (sym < 256) are served by the flat array.
+//   - Boundary-symbol transitions (sym ≥ 256) were also expanded during BFS
+//     and are cached in each dfaState.trans map; the lazy path finds them
+//     instantly without allocating new states.
+//
+// maxFreezeWork is an upper bound on the number of derivative computations
+// performed by tryFreeze.  It provides a hard time budget so that patterns
+// whose DFA turns out to be large fail fast rather than blocking for seconds.
+// At ~260 symbols per state, this allows roughly 31 states to be fully
+// expanded before giving up.
+const maxFreezeWork = 8192
+
+func (d *dfa) tryFreeze() {
+	// BFS over the FULL extended alphabet (bytes 0-255 + boundary symbols
+	// 256-259).  We must expand boundary symbols too: they can create new
+	// states (e.g., \A fires on symBOT and transitions to the real pattern).
+	// After this loop every reachable state has ALL transitions cached, so
+	// frozen = true guarantees no new states will ever be created.
+	work := 0
+	for id := 0; id < len(d.states); id++ {
+		if len(d.states) > maxFrozenStates {
+			return // too many states; stay lazy
+		}
+		for sym := 0; sym < numSyms; sym++ { // numSyms = 260 (bytes + boundaries)
+			work++
+			if work > maxFreezeWork {
+				return // budget exhausted; stay lazy
+			}
+			if _, err := d.trans(id, sym); err != nil {
+				return // capacity error; stay lazy
+			}
+		}
+	}
+
+	// All states and their byte transitions are now cached in the per-state
+	// maps.  Build the flat array for O(1) indexed lookup.
+	n := len(d.states)
+	flat := make([]int16, n*256)
+	for id, s := range d.states {
+		base := id * 256
+		for sym := 0; sym < 256; sym++ {
+			next := deadID
+			if v, ok := s.trans[sym]; ok {
+				next = v
+			}
+			flat[base+sym] = int16(next)
+		}
+	}
+	d.flatTrans = flat
+	d.frozen = true
 }
 
 // boundaryTrans is like trans, but applies the transparency rule: if taking

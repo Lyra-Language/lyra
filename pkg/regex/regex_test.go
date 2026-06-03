@@ -678,3 +678,68 @@ func TestUnicode_FindAllLetters(t *testing.T) {
 		[]string{"foo", "\xCE\xB1\xCE\xB2", "bar"},
 	)
 }
+
+// ── Phase 4: performance benchmarks ───────────────────────────────────────────
+
+// makeHaystack builds a []byte of n bytes containing 'x' with a few
+// occurrences of the "needle" bytes scattered in at regular intervals.
+func makeHaystack(n int, needle []byte) []byte {
+	buf := make([]byte, n)
+	for i := range buf {
+		buf[i] = 'x'
+	}
+	step := n / 20 // inject 20 occurrences
+	if step < len(needle) {
+		step = len(needle)
+	}
+	for i := 0; i+len(needle) <= n; i += step {
+		copy(buf[i:], needle)
+	}
+	return buf
+}
+
+// BenchmarkFindAll_LiteralPrefix measures SIMD bytes.Index skipping
+// for a pattern with a 5-byte literal prefix.
+func BenchmarkFindAll_LiteralPrefix(b *testing.B) {
+	re := MustCompile(`hello\d+`)
+	haystack := makeHaystack(1<<18, []byte("hello7"))
+	b.SetBytes(int64(len(haystack)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		re.FindAll(haystack)
+	}
+}
+
+// BenchmarkFindAll_SinglePivot measures bytes.IndexByte skipping when the
+// pattern has a single rare first byte ('@').
+func BenchmarkFindAll_SinglePivot(b *testing.B) {
+	re := MustCompile(`@\w+`)
+	haystack := makeHaystack(1<<18, []byte("@user"))
+	b.SetBytes(int64(len(haystack)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		re.FindAll(haystack)
+	}
+}
+
+// BenchmarkFindAll_Digits measures the flat-table fast path on a frozen DFA
+// for \d+ against a mostly-non-digit input.
+func BenchmarkFindAll_Digits(b *testing.B) {
+	re := MustCompile(`\d+`)
+	haystack := makeHaystack(1<<18, []byte("12345"))
+	b.SetBytes(int64(len(haystack)))
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		re.FindAll(haystack)
+	}
+}
+
+// BenchmarkIsMatch_Literal exercises the frozen-DFA path on IsMatch.
+func BenchmarkIsMatch_Literal(b *testing.B) {
+	re := MustCompile(`hello`)
+	input := []byte("hello")
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		re.IsMatch(input)
+	}
+}
