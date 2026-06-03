@@ -10,8 +10,8 @@ func TestTypeCheck_ArrayMatchExpr_WildcardPattern_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		[head, ...tail] => println("some"),
-		_ => println("other"),
+		[head, ...tail] => "ok",
+		_ => "ok",
 	}
 	`, false)
 	assertNoErrors(t, res)
@@ -21,7 +21,7 @@ func TestTypeCheck_ArrayMatchExpr_IdentifierPattern_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		xs => println("any"),
+		xs => "ok",
 	}
 	`, false)
 	assertNoErrors(t, res)
@@ -31,8 +31,8 @@ func TestTypeCheck_ArrayMatchExpr_ArrayPattern_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		[a, b, c] => println("three"),
-		_ => println("other"),
+		[a, b, c] => "ok",
+		_ => "ok",
 	}
 	`, false)
 	assertNoErrors(t, res)
@@ -42,8 +42,8 @@ func TestTypeCheck_ArrayMatchExpr_BindingPattern_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		all @ [head, ...tail] => println("got array"),
-		_ => println("other"),
+		all @ [head, ...tail] => "ok",
+		_ => "ok",
 	}
 	`, false)
 	assertNoErrors(t, res)
@@ -53,8 +53,8 @@ func TestTypeCheck_ArrayMatchExpr_StringLiteralPattern_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		"hello" => println("string"),
-		_ => println("other"),
+		"hello" => "ok",
+		_ => "ok",
 	}
 	`, false)
 	assertErrorsAre(t, res, `expected array pattern, got "hello"`)
@@ -64,8 +64,8 @@ func TestTypeCheck_ArrayMatchExpr_RangePattern_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		0..=10 => println("range"),
-		_ => println("other"),
+		0..=10 => "ok",
+		_ => "ok",
 	}
 	`, false)
 	// RangePattern.GetName() formats via its child expression nodes.
@@ -80,8 +80,8 @@ func TestTypeCheck_ArrayMatchExpr_CorrectIntLiteralElement_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		[1, 2, ...rest] => println("starts with 1 2"),
-		_ => println("other"),
+		[1, 2, ...rest] => "ok",
+		_ => "ok",
 	}
 	`, false)
 	assertNoErrors(t, res)
@@ -91,8 +91,8 @@ func TestTypeCheck_ArrayMatchExpr_CorrectStringLiteralElement_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let words: []string = ["hello", "world"]
 	match words {
-		["hello", ...rest] => println("greeting"),
-		_ => println("other"),
+		["hello", ...rest] => "ok",
+		_ => "ok",
 	}
 	`, false)
 	assertNoErrors(t, res)
@@ -102,8 +102,8 @@ func TestTypeCheck_ArrayMatchExpr_WrongLiteralElement_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		["hello", ...rest] => println("bad"),
-		_ => println("other"),
+		["hello", ...rest] => "ok",
+		_ => "ok",
 	}
 	`, false)
 	assertErrorsAre(t, res, `element pattern "hello" does not match array element type int`)
@@ -113,8 +113,8 @@ func TestTypeCheck_ArrayMatchExpr_BoolLiteralInIntArray_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		[true, ...rest] => println("bad"),
-		_ => println("other"),
+		[true, ...rest] => "ok",
+		_ => "ok",
 	}
 	`, false)
 	assertErrorsAre(t, res, "element pattern true does not match array element type int")
@@ -124,8 +124,8 @@ func TestTypeCheck_ArrayMatchExpr_WildcardElement_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		[_, _, ...rest] => println("at least two"),
-		_ => println("other"),
+		[_, _, ...rest] => "ok",
+		_ => "ok",
 	}
 	`, false)
 	assertNoErrors(t, res)
@@ -135,7 +135,7 @@ func TestTypeCheck_ArrayMatchExpr_RestElement_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		[head, ...tail] => println("head and tail"),
+		[head, ...tail] => "ok",
 	}
 	`, false)
 	// [head, ...tail] only covers length ≥ 1 — empty arrays are missed.
@@ -148,8 +148,8 @@ func TestTypeCheck_ArrayMatchExpr_BindingElementDelegates_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		[first @ "oops", ...rest] => println("bad"),
-		_ => println("other"),
+		[first @ "oops", ...rest] => "ok",
+		_ => "ok",
 	}
 	`, false)
 	assertErrorsAre(t, res, `element pattern "oops" does not match array element type int`)
@@ -159,8 +159,8 @@ func TestTypeCheck_ArrayMatchExpr_MultipleWrongElements_MultipleErrors(t *testin
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		["a", "b", ...rest] => println("bad"),
-		_ => println("other"),
+		["a", "b", ...rest] => "ok",
+		_ => "ok",
 	}
 	`, false)
 	assertErrorsAre(t, res,
@@ -177,8 +177,8 @@ func TestTypeCheck_ArrayMatchExpr_WildcardIsExhaustive_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		[head, ...tail] => println("some"),
-		_ => println("other"),
+		[head, ...tail] => "ok",
+		_ => "ok",
 	}
 	`, false)
 	assertNoErrors(t, res)
@@ -188,7 +188,7 @@ func TestTypeCheck_ArrayMatchExpr_IdentifierIsExhaustive_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		xs => println("any array"),
+		xs => "ok",
 	}
 	`, false)
 	assertNoErrors(t, res)
@@ -198,7 +198,7 @@ func TestTypeCheck_ArrayMatchExpr_RestOnlyPatternIsExhaustive_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		[...rest] => println("any length"),
+		[...rest] => "ok",
 	}
 	`, false)
 	assertNoErrors(t, res)
@@ -209,7 +209,7 @@ func TestTypeCheck_ArrayMatchExpr_SpecificLengthOnly_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		[a, b] => println("exactly two"),
+		[a, b] => "ok",
 	}
 	`, false)
 	assertWarningsAre(t, res,
@@ -221,9 +221,9 @@ func TestTypeCheck_ArrayMatchExpr_NoArms_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		[a] => println("one"),
-		[a, b] => println("two"),
-		[a, b, c] => println("three"),
+		[a] => "ok",
+		[a, b] => "ok",
+		[a, b, c] => "ok",
 	}
 	`, false)
 	assertWarningsAre(t, res,
@@ -235,7 +235,7 @@ func TestTypeCheck_ArrayMatchExpr_GuardedCatchallOnly_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		xs if true => println("guarded"),
+		xs if true => "ok",
 	}
 	`, false)
 	assertWarningsAre(t, res,
@@ -246,7 +246,7 @@ func TestTypeCheck_ArrayMatchExpr_BindingAroundWildcard_IsExhaustive_Ok(t *testi
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		all @ _ => println("any array, also bound to all"),
+		all @ _ => "ok",
 	}
 	`, false)
 	assertNoErrors(t, res)
@@ -256,7 +256,7 @@ func TestTypeCheck_ArrayMatchExpr_BindingAroundIdentifier_IsExhaustive_Ok(t *tes
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		all @ xs => println("any array"),
+		all @ xs => "ok",
 	}
 	`, false)
 	assertNoErrors(t, res)
@@ -267,7 +267,7 @@ func TestTypeCheck_ArrayMatchExpr_BindingAroundSpecificPattern_NotExhaustive_War
 	res := parseCollectAndCheck(t, `
 	let nums: []int = [1, 2, 3]
 	match nums {
-		all @ [head, ...tail] => println("non-empty"),
+		all @ [head, ...tail] => "ok",
 	}
 	`, false)
 	assertWarningsAre(t, res,

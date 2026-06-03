@@ -531,17 +531,20 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 	if !types.IsNumeric(argType) {
 		tc.addError(call.GetLocation(), SeverityError,
 			"cannot convert %s to %s", argType, ident.Name)
-		return nil
+		// Return targetType so the caller knows this is a type-conversion expression
+		// and doesn't fall through to inferFunctionCallExpr (which would emit a
+		// spurious "undefined function" error for the type name).
+		return targetType
 	}
 	if isFloatType(argType) && isIntType(targetType) {
 		tc.addError(call.GetLocation(), SeverityError,
 			"cannot convert %s to %s: use floor(), ceil(), or round() to convert explicitly", argType, ident.Name)
-		return nil
+		return targetType
 	}
 	if srcPrec, dstPrec := floatPrecision(argType), floatPrecision(targetType); srcPrec > dstPrec && dstPrec > 0 {
 		tc.addError(call.GetLocation(), SeverityError,
 			"cannot convert %s to %s: narrowing conversion may lose precision", argType, ident.Name)
-		return nil
+		return targetType
 	}
 	return targetType
 }

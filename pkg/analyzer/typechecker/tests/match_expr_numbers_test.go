@@ -8,8 +8,8 @@ func TestTypeCheck_NumericMatchExpr_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let foo = 42
   match foo {
-    42 => println("foo is 42"),
-    _ => println("foo is not 42"),
+    42 => "ok",
+    _ => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -19,8 +19,8 @@ func TestTypeCheck_NumericMatchExpr_String_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let foo = 42
   match foo {
-    "42" => println("foo is 42"),
-    _ => println("foo is not 42"),
+    "42" => "ok",
+    _ => "ok",
   }
 	`, false)
 	assertErrorsAre(t, res, "literal pattern '\"42\"' is not an integer type")
@@ -30,8 +30,8 @@ func TestTypeCheck_NumericMatchExpr_Boolean_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let foo = 42
   match foo {
-    true => println("foo is 42"),
-    _ => println("foo is not 42"),
+    true => "ok",
+    _ => "ok",
   }
 	`, false)
 	assertErrorsAre(t, res, "literal pattern 'true' is not an integer type")
@@ -41,8 +41,8 @@ func TestTypeCheck_NumericMatchExpr_Float_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let foo = 42
   match foo {
-    4.2 => println("foo is 42"),
-    _ => println("foo is not 42"),
+    4.2 => "ok",
+    _ => "ok",
   }
 	`, false)
 	assertErrorsAre(t, res, "literal pattern '4.2' is not an integer type")
@@ -53,8 +53,8 @@ func TestTypeCheck_NumericMatchExpr_IdentifierPattern_Ok(t *testing.T) {
   let foo = 42
   let bar = 7
   match foo {
-    bar => println("foo is 7"),
-    _ => println("foo is not 7"),
+    bar => "ok",
+    _ => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -66,8 +66,8 @@ func TestTypeCheck_NumericMatchExpr_NoWildcard_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let foo = 42
   match foo {
-    1 => println("one"),
-    2 => println("two"),
+    1 => "ok",
+    2 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -78,9 +78,9 @@ func TestTypeCheck_NumericMatchExpr_WildcardIsExhaustive_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let foo = 42
   match foo {
-    1  => println("one"),
-    2  => println("two"),
-    _  => println("other"),
+    1  => "ok",
+    2  => "ok",
+    _  => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -90,8 +90,8 @@ func TestTypeCheck_NumericMatchExpr_UnguardedIdentifierIsExhaustive_Ok(t *testin
 	res := parseCollectAndCheck(t, `
   let foo = 42
   match foo {
-    1   => println("one"),
-    n   => println("other"),
+    1   => "ok",
+    n   => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -101,8 +101,8 @@ func TestTypeCheck_NumericMatchExpr_GuardedCatchallOnly_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let foo = 42
   match foo {
-    1 => println("one"),
-    n if n > 1 => println("more than one"),
+    1 => "ok",
+    n if n > 1 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -114,8 +114,8 @@ func TestTypeCheck_NumericMatchExpr_RangeOnlyNoWildcard_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let foo = 42
   match foo {
-    1..=10 => println("small"),
-    11..=99 => println("medium"),
+    1..=10 => "ok",
+    11..=99 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -128,7 +128,7 @@ func TestTypeCheck_NumericMatch_U8_FullRange_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    0..=255 => println("all"),
+    0..=255 => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -138,8 +138,8 @@ func TestTypeCheck_NumericMatch_U8_TwoRanges_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    0..=127 => println("low"),
-    128..=255 => println("high"),
+    0..=127 => "ok",
+    128..=255 => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -150,8 +150,8 @@ func TestTypeCheck_NumericMatch_U8_RangePlusLiteral_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    0..=254 => println("not max"),
-    255 => println("max"),
+    0..=254 => "ok",
+    255 => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -162,7 +162,7 @@ func TestTypeCheck_NumericMatch_U8_ExclusiveRange_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    0..<256 => println("all"),
+    0..<256 => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -173,8 +173,8 @@ func TestTypeCheck_NumericMatch_U8_OverlappingRanges_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    0..=200   => println("low"),
-    150..=255 => println("high"),
+    0..=200   => "ok",
+    150..=255 => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -184,7 +184,7 @@ func TestTypeCheck_NumericMatch_U8_MissingTop_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    0..=254 => println("not max"),
+    0..=254 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -195,7 +195,7 @@ func TestTypeCheck_NumericMatch_U8_MissingBottom_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    1..=255 => println("not zero"),
+    1..=255 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -207,8 +207,8 @@ func TestTypeCheck_NumericMatch_U8_Gap_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    0..=100  => println("low"),
-    102..=255 => println("high"),
+    0..=100  => "ok",
+    102..=255 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -219,7 +219,7 @@ func TestTypeCheck_NumericMatch_I8_FullRange_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: i8 = -5
   match x {
-    -128..=127 => println("all"),
+    -128..=127 => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -229,9 +229,9 @@ func TestTypeCheck_NumericMatch_I8_NegAndPos_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: i8 = -5
   match x {
-    -128..=-1 => println("negative"),
-    0         => println("zero"),
-    1..=127   => println("positive"),
+    -128..=-1 => "ok",
+    0         => "ok",
+    1..=127   => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -241,7 +241,7 @@ func TestTypeCheck_NumericMatch_I8_MissingNegatives_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: i8 = -5
   match x {
-    0..=127 => println("non-negative"),
+    0..=127 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -252,7 +252,7 @@ func TestTypeCheck_NumericMatch_I32_FullRange_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: i32 = 0
   match x {
-    -2147483648..=2147483647 => println("all"),
+    -2147483648..=2147483647 => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -263,7 +263,7 @@ func TestTypeCheck_NumericMatch_GuardedRangeNotExhaustive_Warning(t *testing.T) 
 	res := parseCollectAndCheck(t, `
   let x: u8 = 10
   match x {
-    n if n > 0 => println("positive"),
+    n if n > 0 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -278,8 +278,8 @@ func TestTypeCheck_FloatMatch_FloatLiteral_Wildcard_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: f64 = 3.14
   match x {
-    3.14 => println("pi-ish"),
-    _    => println("other"),
+    3.14 => "ok",
+    _    => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -290,8 +290,8 @@ func TestTypeCheck_FloatMatch_IntLiteral_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: f64 = 3.14
   match x {
-    1 => println("one"),
-    _ => println("other"),
+    1 => "ok",
+    _ => "ok",
   }
 	`, false)
 	assertErrorsAre(t, res, "literal pattern '1' is not a float type")
@@ -301,8 +301,8 @@ func TestTypeCheck_FloatMatch_BoolLiteral_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: f64 = 3.14
   match x {
-    true => println("true?"),
-    _    => println("other"),
+    true => "ok",
+    _    => "ok",
   }
 	`, false)
 	assertErrorsAre(t, res, "literal pattern 'true' is not a float type")
@@ -312,8 +312,8 @@ func TestTypeCheck_FloatMatch_StringLiteral_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: f64 = 3.14
   match x {
-    "3.14" => println("string pi"),
-    _      => println("other"),
+    "3.14" => "ok",
+    _      => "ok",
   }
 	`, false)
 	assertErrorsAre(t, res, "literal pattern '\"3.14\"' is not a float type")
@@ -323,8 +323,8 @@ func TestTypeCheck_FloatMatch_F32_IntLiteral_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: f32 = 1.5
   match x {
-    1 => println("one"),
-    _ => println("other"),
+    1 => "ok",
+    _ => "ok",
   }
 	`, false)
 	assertErrorsAre(t, res, "literal pattern '1' is not a float type")
@@ -337,8 +337,8 @@ func TestTypeCheck_FloatMatch_NoWildcard_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: f64 = 3.14
   match x {
-    0.0 => println("zero"),
-    1.0 => println("one"),
+    0.0 => "ok",
+    1.0 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -349,8 +349,8 @@ func TestTypeCheck_FloatMatch_WildcardIsExhaustive_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: f64 = 3.14
   match x {
-    0.0 => println("zero"),
-    _   => println("other"),
+    0.0 => "ok",
+    _   => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -360,8 +360,8 @@ func TestTypeCheck_FloatMatch_UnguardedIdentifier_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: f32 = 1.5
   match x {
-    0.0 => println("zero"),
-    v   => println("other"),
+    0.0 => "ok",
+    v   => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -372,8 +372,8 @@ func TestTypeCheck_FloatMatch_GuardedCatchallOnly_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: f64 = 3.14
   match x {
-    0.0      => println("zero"),
-    v if v > 0.0 => println("positive"),
+    0.0      => "ok",
+    v if v > 0.0 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -386,8 +386,8 @@ func TestTypeCheck_FloatMatch_RangePatterns_NoWildcard_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: f64 = 3.14
   match x {
-    0.0..=1.0 => println("small"),
-    1.0..=2.0 => println("medium"),
+    0.0..=1.0 => "ok",
+    1.0..=2.0 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,

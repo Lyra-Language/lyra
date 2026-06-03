@@ -136,14 +136,18 @@ func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.T
 
 	sym, ok := tc.scope.Lookup(ident.Name)
 	if !ok {
+		tc.addError(call.GetLocation(), SeverityError, "undefined function %q", ident.Name)
 		return nil
 	}
 	decl, ok := sym.(*ast.VarDeclStmt)
 	if !ok {
+		tc.addError(call.GetLocation(), SeverityError, "cannot resolve function %q", ident.Name)
 		return nil
 	}
 	lambda, ok := decl.Value.(*ast.LambdaExpr)
 	if !ok {
+		declValType := tc.inferExprType(decl.Value)
+		tc.addError(call.GetLocation(), SeverityError, "identifier %q is not callable (type %s)", ident.Name, declValType)
 		return nil
 	}
 

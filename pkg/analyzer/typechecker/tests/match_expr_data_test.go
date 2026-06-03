@@ -14,8 +14,8 @@ func TestTypeCheck_DataMatchExpr_AllConstructors_Ok(t *testing.T) {
   data Maybe = None | Some i32
   let foo = Some 42
   match foo {
-    None => println("none"),
-    Some x => println("some"),
+    None => "ok",
+    Some x => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -26,8 +26,8 @@ func TestTypeCheck_DataMatchExpr_WildcardMakesExhaustive_Ok(t *testing.T) {
   data Maybe = None | Some i32
   let foo = Some 42
   match foo {
-    Some x => println("some"),
-    _ => println("other"),
+    Some x => "ok",
+    _ => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -38,8 +38,8 @@ func TestTypeCheck_DataMatchExpr_UnguardedIdentifierMakesExhaustive_Ok(t *testin
   data Maybe = None | Some i32
   let foo = Some 42
   match foo {
-    Some x => println("some"),
-    other => println("catch-all"),
+    Some x => "ok",
+    other => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -50,8 +50,8 @@ func TestTypeCheck_DataMatchExpr_DirectScrutinee_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   data Maybe = None | Some i32
   match Some 42 {
-    None => println("none"),
-    Some x => println("some"),
+    None => "ok",
+    Some x => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -64,7 +64,7 @@ func TestTypeCheck_DataMatchExpr_MissingOneConstructor_Warning(t *testing.T) {
   data Maybe = None | Some i32
   let foo = Some 42
   match foo {
-    Some x => println("some"),
+    Some x => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -76,7 +76,7 @@ func TestTypeCheck_DataMatchExpr_MissingMultipleConstructors_Warning(t *testing.
   data Result = Ok i32 | Err i32 | Pending i32
   let r = Ok 0
   match r {
-    Ok x => println("ok"),
+    Ok x => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -89,7 +89,7 @@ func TestTypeCheck_DataMatchExpr_AllMissing_Warning(t *testing.T) {
   data Maybe = None | Some i32
   let foo = Some 42
   match foo {
-    Some x if x > 0 => println("positive"),
+    Some x if x > 0 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -102,8 +102,8 @@ func TestTypeCheck_DataMatchExpr_GuardedCatchallNotExhaustive_Warning(t *testing
   data Maybe = None | Some i32
   let foo = Some 42
   match foo {
-    None => println("none"),
-    _ if true => println("guarded wildcard"),
+    None => "ok",
+    _ if true => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -117,8 +117,8 @@ func TestTypeCheck_DataMatchExpr_LiteralPattern_Error(t *testing.T) {
   data Maybe = None | Some i32
   let foo = Some 42
   match foo {
-    42 => println("literal"),
-    _ => println("other"),
+    42 => "ok",
+    _ => "ok",
   }
 	`, false)
 	assertErrorsAre(t, res, "literal patterns are not allowed on a data type scrutinee")
@@ -129,8 +129,8 @@ func TestTypeCheck_DataMatchExpr_RangePattern_Error(t *testing.T) {
   data Maybe = None | Some i32
   let foo = Some 42
   match foo {
-    0..=100 => println("range"),
-    _ => println("other"),
+    0..=100 => "ok",
+    _ => "ok",
   }
 	`, false)
 	assertErrorsAre(t, res, "range patterns are not allowed on a data type scrutinee")
@@ -141,8 +141,8 @@ func TestTypeCheck_DataMatchExpr_RegexPattern_Error(t *testing.T) {
   data Maybe = None | Some i32
   let foo = Some 42
   match foo {
-    r/[0-9]+/ => println("regex"),
-    _ => println("other"),
+    r/[0-9]+/ => "ok",
+    _ => "ok",
   }
 	`, false)
 	assertErrorsAre(t, res, "regex patterns are not allowed on a data type scrutinee")
@@ -155,9 +155,9 @@ func TestTypeCheck_DataMatchExpr_UnknownConstructor_Error(t *testing.T) {
   data Maybe = None | Some i32
   let foo = Some 42
   match foo {
-    Unknown x => println("huh"),
-    None => println("none"),
-    Some x => println("some"),
+    Unknown x => "ok",
+    None => "ok",
+    Some x => "ok",
   }
 	`, false)
 	assertErrorsAre(t, res, "Unknown is not a constructor of Maybe")
@@ -170,9 +170,9 @@ func TestTypeCheck_DataMatchExpr_ThreeConstructors_AllCovered_Ok(t *testing.T) {
   data Shape = Circle i32 | Rect i32 | Triangle i32
   let s = Circle 5
   match s {
-    Circle r => println("circle"),
-    Rect w => println("rect"),
-    Triangle b => println("triangle"),
+    Circle r => "ok",
+    Rect w => "ok",
+    Triangle b => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -183,8 +183,8 @@ func TestTypeCheck_DataMatchExpr_ThreeConstructors_TwoCovered_Warning(t *testing
   data Shape = Circle i32 | Rect i32 | Triangle i32
   let s = Circle 5
   match s {
-    Circle r => println("circle"),
-    Rect w => println("rect"),
+    Circle r => "ok",
+    Rect w => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -198,8 +198,8 @@ func TestTypeCheck_DataMatchExpr_ViaVariable_Exhaustive_Ok(t *testing.T) {
   data Result = Ok i32 | Err i32
   let r = Ok 1
   match r {
-    Ok v => println("ok"),
-    Err e => println("err"),
+    Ok v => "ok",
+    Err e => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -210,7 +210,7 @@ func TestTypeCheck_DataMatchExpr_ViaVariable_Missing_Warning(t *testing.T) {
   data Result = Ok i32 | Err i32
   let r = Ok 1
   match r {
-    Ok v => println("ok"),
+    Ok v => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
