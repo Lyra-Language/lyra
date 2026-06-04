@@ -53,6 +53,7 @@ func (h *Handler) SetClient(c *server.Client) {
 // document store and keeps the full text in memory.
 func (h *Handler) Initialize(_ context.Context, _ *lsp.InitializeParams) (*lsp.InitializeResult, error) {
 	openClose := true
+	enabled := true
 	return &lsp.InitializeResult{
 		ServerInfo: &lsp.ServerInfo{Name: "lyra-lsp", Version: "0.1.0"},
 		Capabilities: lsp.ServerCapabilities{
@@ -60,6 +61,7 @@ func (h *Handler) Initialize(_ context.Context, _ *lsp.InitializeParams) (*lsp.I
 				OpenClose: &openClose,
 				Change:    lsp.SyncIncremental,
 			},
+			DocumentSymbolProvider: &enabled,
 		},
 	}, nil
 }
