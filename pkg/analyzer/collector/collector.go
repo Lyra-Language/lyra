@@ -274,6 +274,8 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 		return c.parseRawPointerType(node)
 	case "void_type":
 		return types.VoidType{}
+	case "fixed_point_type":
+		return c.parseFixedPointType(node)
 	}
 	c.addError(node, CollectorErrorSeverityError, "parseType: unknown type node kind: %s", node.Kind())
 	return nil
@@ -392,6 +394,25 @@ func (c *Collector) parseRawPointerType(node *sitter.Node) types.Type {
 		Pointee: c.parseType(pointeeNode),
 		IsMut:   node.ChildByFieldName("is_mut") != nil,
 	}
+}
+
+func (c *Collector) parseFixedPointType(node *sitter.Node) types.Type {
+	intBits, fracBits := 0, 0
+	idx := 0
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if child.Kind() != "integer_literal" {
+			continue
+		}
+		val, _ := strconv.Atoi(c.ctx.NodeText(child))
+		if idx == 0 {
+			intBits = val
+		} else {
+			fracBits = val
+		}
+		idx++
+	}
+	return types.FixedPointType{IntegerBits: intBits, FractionalBits: fracBits}
 }
 
 func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {

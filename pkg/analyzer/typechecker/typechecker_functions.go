@@ -289,3 +289,4 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		"member %q is not callable (type %s)", member.Property.Name, memberType)
 	return nil
 }
+

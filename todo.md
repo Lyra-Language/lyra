@@ -2,7 +2,6 @@
 ---------
 
 ### LSP — Table-stakes editor features
-- **Hover** (`textDocument/hover`) — surface the type from `TypeTable` and the declaration's doc-comment for any symbol under the cursor
 - **Inlay hints** (`textDocument/inlayHint`) — show inferred types inline for unannotated `let`/`var` bindings (e.g. `: int`) using `TypeTable`
 - **Go-to-definition** (`textDocument/definition`) — resolve the name under the cursor via `Scope.Lookup` / `SymbolTable.Types` and return its `Location`
 - **Document symbols** (`textDocument/documentSymbol`) — walk top-level statements and emit symbols for type decls, functions, and constants; powers the breadcrumb/outline view
@@ -65,12 +64,13 @@
 
 ## In Progress
 --------------
-- **Member access type-checking** — `*ast.MemberExpr` is not routed through `inferExprType`; check that the object is a struct, the field exists, and record the field type in `TypeTable`
 
 ## Completed
 ------------
 
 ### 06/03/26
+- **LSP: Hover** (`textDocument/hover`) — `Handler.Hover()` added; persists `docAnalysis` (program, symTable, typeTable) per URI; `findExprAtPos` walks the AST depth-first to find the tightest expression at the cursor; typechecker now stores IdentifierExpr types in TypeTable. Doc-comments not yet surfaced (not collected from CST).
+- **Member access type-checking** — `*ast.MemberExpr` routed through `inferExprType` via `inferMemberExprType`; validates object is a struct, field exists, records field type in `TypeTable`.
 - **Higher-order and non-identifier callees** — `inferFunctionCallExpr` now handles `LambdaExpr` (direct lambda calls like `((n) => n*2)(5)`), variables holding lambdas, and `MemberExpr` callees (method calls like `obj.method(args)`). Added `inferLambdaCall`, `inferLambdaCallFromType`, `inferLambdaExprType`, and `inferMemberExprType` helpers. Member access on non-struct types, unknown fields, and non-callable fields all produce errors.
 - **Unresolved identifier references** — `inferExprType` silently returns `nil` when an `IdentifierExpr` lookup fails; emit `cannot find variable %q in this scope`
 - **Undefined function calls** — `inferFunctionCallExpr` silently returns `nil` for unknown identifiers; emit `undefined function %q`

@@ -14,19 +14,32 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
+	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
+// docAnalysis holds the full analysis result for one open document.
+type docAnalysis struct {
+	program   *ast.Program
+	symTable  *symbols.SymbolTable
+	typeTable *typetable.TypeTable
+}
+
 type Handler struct {
-	client   *server.Client
-	mu       sync.Mutex
-	docStore map[string]string // URI → current full document text
+	client        *server.Client
+	mu            sync.Mutex
+	docStore      map[string]string      // URI → current full document text
+	analysisStore map[string]*docAnalysis // URI → last successful analysis
 }
 
 func newHandler() *Handler {
-	return &Handler{docStore: make(map[string]string)}
+	return &Handler{
+		docStore:      make(map[string]string),
+		analysisStore: make(map[string]*docAnalysis),
+	}
 }
 
 // SetClient is called by the server after the connection is established.
@@ -96,6 +109,7 @@ func (h *Handler) DidSave(ctx context.Context, params *lsp.DidSaveTextDocumentPa
 func (h *Handler) DidClose(ctx context.Context, params *lsp.DidCloseTextDocumentParams) error {
 	h.mu.Lock()
 	delete(h.docStore, string(params.TextDocument.URI))
+	delete(h.analysisStore, string(params.TextDocument.URI))
 	h.mu.Unlock()
 	return h.client.PublishDiagnostics(ctx, &lsp.PublishDiagnosticsParams{
 		URI:         params.TextDocument.URI,
@@ -221,6 +235,14 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		})
 	}
 
+	h.mu.Lock()
+	h.analysisStore[string(uri)] = &docAnalysis{
+		program:   program,
+		symTable:  symTable,
+		typeTable: tt,
+	}
+	h.mu.Unlock()
+
 	log.Printf("analyze: publishing %d diagnostics", len(diags))
 	return h.client.PublishDiagnostics(ctx, &lsp.PublishDiagnosticsParams{
 		URI:         uri,
@@ -286,6 +308,45 @@ func severityFromTypechecker(s typechecker.Severity) lsp.DiagnosticSeverity {
 		return lsp.SeverityWarning
 	}
 	return lsp.SeverityError
+}
+
+// Hover returns type information for the symbol under the cursor.
+// The go-lsp library registers textDocument/hover automatically when this
+// method is present on the handler.
+func (h *Handler) Hover(_ context.Context, params *lsp.HoverParams) (result *lsp.Hover, retErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("hover panic: %v\n%s", r, debug.Stack())
+			result, retErr = nil, nil
+		}
+	}()
+
+	uri := string(params.TextDocument.URI)
+	h.mu.Lock()
+	analysis, ok := h.analysisStore[uri]
+	h.mu.Unlock()
+	if !ok {
+		return nil, nil
+	}
+
+	// LSP positions are 0-based; ast.Location is 1-based.
+	line := params.Position.Line + 1
+	col := params.Position.Character + 1
+
+	expr := findExprAtPos(analysis.program, line, col)
+	if expr == nil {
+		return nil, nil
+	}
+
+	typ, ok := analysis.typeTable.Get(expr)
+	if !ok {
+		return nil, nil
+	}
+
+	content := hoverContent(expr, typ)
+	return &lsp.Hover{
+		Contents: lsp.MarkupContent{Kind: lsp.Markdown, Value: content},
+	}, nil
 }
 
 func main() {

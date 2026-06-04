@@ -404,6 +404,9 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 
 // inferExprType returns the type of expr, or nil if it cannot be determined yet.
 func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
+	if expr == nil {
+		return nil
+	}
 	// Check the side table first — a prior check may have already resolved this.
 	if t, ok := tc.typeTable.Get(expr); ok {
 		return t
@@ -480,6 +483,7 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		// type-checking a function body.
 		if tc.paramTypes != nil {
 			if t, ok := tc.paramTypes[e.Name]; ok {
+				tc.typeTable.Set(e, t)
 				return t
 			}
 		}
@@ -489,12 +493,19 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 			return nil
 		}
 		if v, ok := sym.(*ast.VarDeclStmt); ok {
+			var t types.Type
 			if v.Value != nil {
-				if t, ok := tc.typeTable.Get(v.Value); ok {
-					return t
+				if cached, ok := tc.typeTable.Get(v.Value); ok {
+					t = cached
 				}
 			}
-			return v.Type
+			if t == nil {
+				t = v.Type
+			}
+			if t != nil {
+				tc.typeTable.Set(e, t)
+			}
+			return t
 		}
 		tc.addError(e.GetLocation(), SeverityError, "undefined symbol %q", e.Name)
 		return nil
