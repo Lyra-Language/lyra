@@ -471,6 +471,10 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 			return dt
 		}
 		return nil
+	case *ast.TupleLiteralExpr:
+		return tc.inferTupleLiteralExpr(e)
+	case *ast.IndexExpr:
+		return tc.inferIndexExpr(e)
 	case *ast.IdentifierExpr:
 		// Consult the parameter scope installed by withParamScope while
 		// type-checking a function body.
@@ -660,6 +664,97 @@ func (tc *TypeChecker) inferNegationExpr(expr *ast.NegationExpr) types.Type {
 		return types.PrimitiveType{Name: types.UntypedSignedInt}
 	}
 	return operandType
+}
+
+func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.Type {
+	elements := make([]types.Type, len(expr.Elements))
+	for i, elem := range expr.Elements {
+		t := tc.inferExprType(elem)
+		if t == nil {
+			return nil
+		}
+		elements[i] = promoteToDefault(t)
+	}
+	name := expr.Name
+	if name == "" {
+		name = "?"
+	}
+	return types.TupleType{Name: name, Elements: elements}
+}
+
+// resolveConstantInt returns the compile-time integer value of expr, if
+// determinable. It looks through let-bound identifiers whose initializer is
+// itself a constant integer expression.
+func (tc *TypeChecker) resolveConstantInt(expr ast.Expression) (int64, bool) {
+	switch e := expr.(type) {
+	case *ast.IntegerLiteralExpr:
+		return e.Value, true
+	case *ast.IdentifierExpr:
+		sym, ok := tc.scope.Lookup(e.Name)
+		if !ok {
+			return 0, false
+		}
+		v, ok := sym.(*ast.VarDeclStmt)
+		if !ok || v.Value == nil {
+			return 0, false
+		}
+		return tc.resolveConstantInt(v.Value)
+	}
+	return 0, false
+}
+
+func (tc *TypeChecker) inferIndexExpr(expr *ast.IndexExpr) types.Type {
+	objectType := tc.inferExprType(expr.Object)
+	indexType := tc.inferExprType(expr.Index)
+
+	if objectType == nil {
+		return nil
+	}
+
+	if indexType != nil && !isIntType(indexType) {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"index must be an integer, got %s", indexType)
+		return nil
+	}
+
+	switch t := objectType.(type) {
+	case types.StaticArrayType:
+		if idx, ok := tc.resolveConstantInt(expr.Index); ok {
+			if idx < 0 || int(idx) >= t.Size {
+				tc.addError(expr.GetLocation(), SeverityError,
+					"index %d out of range for array of size %d", idx, t.Size)
+				return nil
+			}
+		}
+		return t.ElementType
+	case types.DynamicArrayType:
+		return t.ElementType
+	case types.PrimitiveType:
+		if t.Name == types.String {
+			return types.PrimitiveType{Name: types.Char}
+		}
+		tc.addError(expr.GetLocation(), SeverityError,
+			"cannot index into type %s", objectType)
+		return nil
+	case types.TupleType:
+		idxVal, ok := tc.resolveConstantInt(expr.Index)
+		if !ok {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"tuple index must be an integer literal")
+			return nil
+		}
+		idx := int(idxVal)
+		if idx < 0 || idx >= len(t.Elements) {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"tuple index %d out of range for tuple with %d elements", idx, len(t.Elements))
+			return nil
+		}
+		return t.Elements[idx]
+	default:
+		tc.addError(expr.GetLocation(), SeverityError,
+			"cannot index into type %s", objectType)
+		return nil
+	}
 }
 
 func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) types.Type {
