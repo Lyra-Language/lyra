@@ -2,7 +2,6 @@
 ---------
 
 ### LSP — Table-stakes editor features
-- **Inlay hints** (`textDocument/inlayHint`) — show inferred types inline for unannotated `let`/`var` bindings (e.g. `: int`) using `TypeTable`
 - **Go-to-definition** (`textDocument/definition`) — resolve the name under the cursor via `Scope.Lookup` / `SymbolTable.Types` and return its `Location`
 - **Document symbols** (`textDocument/documentSymbol`) — walk top-level statements and emit symbols for type decls, functions, and constants; powers the breadcrumb/outline view
 
@@ -67,6 +66,9 @@
 
 ## Completed
 ------------
+
+### 06/04/26
+- **Inlay hints** (`textDocument/inlayHint`) — show inferred types inline for unannotated `let`/`var` bindings (e.g. `: int`) using `TypeTable`
 
 ### 06/03/26
 - **LSP: Hover** (`textDocument/hover`) — `Handler.Hover()` added; persists `docAnalysis` (program, symTable, typeTable) per URI; `findExprAtPos` walks the AST depth-first to find the tightest expression at the cursor; typechecker now stores IdentifierExpr types in TypeTable. Doc-comments not yet surfaced (not collected from CST).
