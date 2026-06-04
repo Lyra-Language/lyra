@@ -23,9 +23,10 @@ import (
 
 // docAnalysis holds the full analysis result for one open document.
 type docAnalysis struct {
-	program   *ast.Program
-	symTable  *symbols.SymbolTable
-	typeTable *typetable.TypeTable
+	program    *ast.Program
+	symTable   *symbols.SymbolTable
+	scopeTable *symbols.ScopeTable
+	typeTable  *typetable.TypeTable
 }
 
 type Handler struct {
@@ -237,9 +238,10 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 
 	h.mu.Lock()
 	h.analysisStore[string(uri)] = &docAnalysis{
-		program:   program,
-		symTable:  symTable,
-		typeTable: tt,
+		program:    program,
+		symTable:   symTable,
+		scopeTable: scopeTable,
+		typeTable:  tt,
 	}
 	h.mu.Unlock()
 
