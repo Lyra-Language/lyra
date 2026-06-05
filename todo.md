@@ -11,7 +11,6 @@
 
 ### Checker — Control-flow validity (new `checker/` pass)
 - **`break`/`continue` outside a loop** — walk with a loop-depth counter; error at depth 0; also catch unknown labels in `break foo`/`continue foo`
-- **`return` outside a function body** — top-level or orphan `return` statements are currently silently accepted
 - **`yield`/`yield from` outside a generator function** — `LambdaExpr.IsGenerator` is collected but never consulted; error when used outside a generator
 - **`await` outside an async function** — `LambdaExpr.IsAsync` is collected but never consulted; error when used outside an async function
 - **Unreachable code after `return`/`break`/`continue`** — any statements after these in the same block are dead; emit as a warning with the `Unnecessary` diagnostic tag
@@ -66,6 +65,7 @@
 ------------
 
 ### 06/04/26
+- **`return` outside a function body** — `CheckReturnOutsideFunction` in `checker/` walks the AST with a depth counter; errors at depth 0
 - **Document symbols** (`textDocument/documentSymbol`) — walk top-level statements and emit symbols for type decls (`struct` → Struct, `data` → Enum, constrained → Class), traits (Interface), lambda-valued `let`/`var` bindings (Function), `const` bindings (Constant), and other bindings (Variable); powers the breadcrumb/outline view
 - **Inlay hints** (`textDocument/inlayHint`) — show inferred types inline for unannotated `let`/`var` bindings (e.g. `: int`) using `TypeTable`
 - **Go-to-definition** (`textDocument/definition`) — resolve the name under the cursor via `Scope.Lookup` / `SymbolTable.Types` and return its `Location`
