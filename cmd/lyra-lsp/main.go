@@ -206,6 +206,51 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		})
 	}
 
+	log.Printf("analyze: checking return outside function")
+	for _, re := range checker.CheckReturnOutsideFunction(program) {
+		sev := lsp.SeverityError
+		loc := re.Location
+		diags = append(diags, lsp.Diagnostic{
+			Range: lsp.Range{
+				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
+				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
+			},
+			Severity: &sev,
+			Source:   "lyra",
+			Message:  re.Message,
+		})
+	}
+
+	log.Printf("analyze: checking break/continue outside loop")
+	for _, be := range checker.CheckBreakContinueOutsideLoop(program) {
+		sev := lsp.SeverityError
+		loc := be.Location
+		diags = append(diags, lsp.Diagnostic{
+			Range: lsp.Range{
+				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
+				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
+			},
+			Severity: &sev,
+			Source:   "lyra",
+			Message:  be.Message,
+		})
+	}
+
+	log.Printf("analyze: checking yield outside generator")
+	for _, ye := range checker.CheckYieldOutsideGenerator(program) {
+		sev := lsp.SeverityError
+		loc := ye.Location
+		diags = append(diags, lsp.Diagnostic{
+			Range: lsp.Range{
+				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
+				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
+			},
+			Severity: &sev,
+			Source:   "lyra",
+			Message:  ye.Message,
+		})
+	}
+
 	log.Printf("analyze: checking shadowing")
 	for _, sw := range checker.CheckShadowing(program) {
 		sev := lsp.SeverityWarning

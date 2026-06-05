@@ -16,7 +16,7 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 	isUnsafe := node.ChildByFieldName("is_unsafe") != nil
 	isPure := node.ChildByFieldName("is_pure") != nil
 	isAsync := node.ChildByFieldName("is_async") != nil
-	isGenerator := node.ChildByFieldName("is_generator") != nil
+	isGenerator := node.ChildByFieldName("is_gen") != nil
 
 	parametersNode := node.ChildByFieldName("parameters")
 	if parametersNode == nil {

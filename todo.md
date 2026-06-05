@@ -10,8 +10,6 @@
 - **Better parser error ranges** — walk the tree-sitter CST for `ERROR`/`MISSING` nodes and report them with real source ranges instead of the current `lsp.Range{}` (line 0:0) fallback
 
 ### Checker — Control-flow validity (new `checker/` pass)
-- **`break`/`continue` outside a loop** — walk with a loop-depth counter; error at depth 0; also catch unknown labels in `break foo`/`continue foo`
-- **`yield`/`yield from` outside a generator function** — `LambdaExpr.IsGenerator` is collected but never consulted; error when used outside a generator
 - **`await` outside an async function** — `LambdaExpr.IsAsync` is collected but never consulted; error when used outside an async function
 - **Unreachable code after `return`/`break`/`continue`** — any statements after these in the same block are dead; emit as a warning with the `Unnecessary` diagnostic tag
 - **Unsafe operations outside `unsafe` blocks** — `AddressOfExpr`, `DerefExpr`, raw pointer access, and calls to `IsUnsafe` lambdas should require an enclosing `UnsafeBlockExpr` or unsafe function
@@ -65,6 +63,8 @@
 ------------
 
 ### 06/04/26
+- **`break`/`continue` outside a loop** — `CheckBreakContinueOutsideLoop` in `checker/` walks with loop-depth counter and label set; errors at depth 0 or for unknown labels
+- **`yield`/`yield from` outside a generator function** — `CheckYieldOutsideGenerator` in `checker/`; also fixed `is_generator` → `is_gen` field name in lambda collector so `LambdaExpr.IsGenerator` is now correctly populated
 - **`return` outside a function body** — `CheckReturnOutsideFunction` in `checker/` walks the AST with a depth counter; errors at depth 0
 - **Document symbols** (`textDocument/documentSymbol`) — walk top-level statements and emit symbols for type decls (`struct` → Struct, `data` → Enum, constrained → Class), traits (Interface), lambda-valued `let`/`var` bindings (Function), `const` bindings (Constant), and other bindings (Variable); powers the breadcrumb/outline view
 - **Inlay hints** (`textDocument/inlayHint`) — show inferred types inline for unannotated `let`/`var` bindings (e.g. `: int`) using `TypeTable`

@@ -40,6 +40,7 @@ Program(1 statements) {
 							}
 						}
 					}
+					IsGenerator: true
 					Parameters: {
 						Parameter {
 							Pattern: {
