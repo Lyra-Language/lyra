@@ -11,6 +11,7 @@ import (
 
 	"github.com/owenrumney/go-lsp/lsp"
 	"github.com/owenrumney/go-lsp/server"
+	sitter "github.com/tree-sitter/go-tree-sitter"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
@@ -160,6 +161,8 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 			Diagnostics: diags,
 		})
 	}
+
+	diags = append(diags, collectParseErrors(tree.RootNode(), []byte(source))...)
 
 	log.Printf("analyze: collecting")
 	c := collector.NewCollector([]byte(source))
@@ -480,6 +483,62 @@ func severityFromTypechecker(s typechecker.Severity) lsp.DiagnosticSeverity {
 		return lsp.SeverityWarning
 	}
 	return lsp.SeverityError
+}
+
+// collectParseErrors walks the tree-sitter CST and returns diagnostics for
+// ERROR and MISSING nodes. Tree-sitter embeds parse errors as named nodes in
+// the tree rather than returning a parse failure, so this is the only way to
+// surface syntax errors with accurate source ranges.
+func collectParseErrors(root *sitter.Node, source []byte) []lsp.Diagnostic {
+	if !root.HasError() {
+		return nil
+	}
+	var diags []lsp.Diagnostic
+	var walk func(*sitter.Node)
+	walk = func(node *sitter.Node) {
+		if node.IsMissing() {
+			sev := lsp.SeverityError
+			start := node.StartPosition()
+			end := node.EndPosition()
+			diags = append(diags, lsp.Diagnostic{
+				Range: lsp.Range{
+					Start: lsp.Position{Line: int(start.Row), Character: int(start.Column)},
+					End:   lsp.Position{Line: int(end.Row), Character: int(end.Column)},
+				},
+				Severity: &sev,
+				Source:   "lyra",
+				Message:  fmt.Sprintf("missing %s", node.Kind()),
+			})
+			return
+		}
+		if node.IsError() {
+			sev := lsp.SeverityError
+			start := node.StartPosition()
+			end := node.EndPosition()
+			text := node.Utf8Text(source)
+			msg := "syntax error"
+			if len(text) > 0 && len(text) <= 40 {
+				msg = fmt.Sprintf("syntax error: unexpected %q", text)
+			}
+			diags = append(diags, lsp.Diagnostic{
+				Range: lsp.Range{
+					Start: lsp.Position{Line: int(start.Row), Character: int(start.Column)},
+					End:   lsp.Position{Line: int(end.Row), Character: int(end.Column)},
+				},
+				Severity: &sev,
+				Source:   "lyra",
+				Message:  msg,
+			})
+			return
+		}
+		for i := uint(0); i < node.ChildCount(); i++ {
+			if child := node.Child(i); child != nil && child.HasError() {
+				walk(child)
+			}
+		}
+	}
+	walk(root)
+	return diags
 }
 
 // Hover returns type information for the symbol under the cursor.
