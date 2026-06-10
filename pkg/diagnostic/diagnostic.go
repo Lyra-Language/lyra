@@ -10,10 +10,17 @@ const (
 	SeverityInfo
 )
 
-type Diagnostic struct {
+// RelatedInformation points to a secondary source location that helps explain a diagnostic.
+type RelatedInformation struct {
 	Location ast.Location
-	Severity Severity
 	Message  string
+}
+
+type Diagnostic struct {
+	Location           ast.Location
+	Severity           Severity
+	Message            string
+	RelatedInformation []RelatedInformation
 }
 
 func (d Diagnostic) Error() string { return d.Message }

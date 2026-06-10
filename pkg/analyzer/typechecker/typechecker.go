@@ -6,6 +6,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/regex"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
@@ -932,5 +933,14 @@ func (tc *TypeChecker) addError(loc ast.Location, sev Severity, format string, a
 		Location: loc,
 		Severity: sev,
 		Message:  fmt.Sprintf(format, args...),
+	})
+}
+
+func (tc *TypeChecker) addErrorRelated(loc ast.Location, sev Severity, related []diag.RelatedInformation, format string, args ...any) {
+	tc.errors = append(tc.errors, TypeError{
+		Location:           loc,
+		Severity:           sev,
+		Message:            fmt.Sprintf(format, args...),
+		RelatedInformation: related,
 	})
 }

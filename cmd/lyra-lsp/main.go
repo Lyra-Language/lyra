@@ -185,9 +185,10 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
 				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
 			},
-			Severity: &sev,
-			Source:   "lyra",
-			Message:  ce.Message,
+			Severity:           &sev,
+			Source:             "lyra",
+			Message:            ce.Message,
+			RelatedInformation: toLSPRelatedInfo(uri, ce.RelatedInformation),
 		})
 	}
 
@@ -236,6 +237,21 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		})
 	}
 
+	log.Printf("analyze: checking await outside async")
+	for _, ae := range checker.CheckAwaitOutsideAsync(program) {
+		sev := lsp.SeverityError
+		loc := ae.Location
+		diags = append(diags, lsp.Diagnostic{
+			Range: lsp.Range{
+				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
+				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
+			},
+			Severity: &sev,
+			Source:   "lyra",
+			Message:  ae.Message,
+		})
+	}
+
 	log.Printf("analyze: checking yield outside generator")
 	for _, ye := range checker.CheckYieldOutsideGenerator(program) {
 		sev := lsp.SeverityError
@@ -255,14 +271,28 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 	for _, sw := range checker.CheckShadowing(program) {
 		sev := lsp.SeverityWarning
 		loc := sw.Location
+		var relatedInfo []lsp.DiagnosticRelatedInformation
+		if sw.OriginalLocation.StartLine > 0 {
+			relatedInfo = []lsp.DiagnosticRelatedInformation{{
+				Location: lsp.Location{
+					URI: uri,
+					Range: lsp.Range{
+						Start: lsp.Position{Line: lspPos(sw.OriginalLocation.StartLine), Character: lspPos(sw.OriginalLocation.StartCol)},
+						End:   lsp.Position{Line: lspPos(sw.OriginalLocation.EndLine), Character: lspPos(sw.OriginalLocation.EndCol)},
+					},
+				},
+				Message: "previously declared here",
+			}}
+		}
 		diags = append(diags, lsp.Diagnostic{
 			Range: lsp.Range{
 				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
 				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
 			},
-			Severity: &sev,
-			Source:   "lyra",
-			Message:  sw.Message,
+			Severity:           &sev,
+			Source:             "lyra",
+			Message:            sw.Message,
+			RelatedInformation: relatedInfo,
 		})
 	}
 
@@ -277,9 +307,10 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
 				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
 			},
-			Severity: &sev,
-			Source:   "lyra",
-			Message:  te.Message,
+			Severity:           &sev,
+			Source:             "lyra",
+			Message:            te.Message,
+			RelatedInformation: toLSPRelatedInfo(uri, te.RelatedInformation),
 		})
 	}
 
@@ -339,6 +370,32 @@ func lspPos(oneBased int) int {
 		return 0
 	}
 	return oneBased - 1
+}
+
+func toLSPRelatedInfo(uri lsp.DocumentURI, related []diag.RelatedInformation) []lsp.DiagnosticRelatedInformation {
+	if len(related) == 0 {
+		return nil
+	}
+	out := make([]lsp.DiagnosticRelatedInformation, 0, len(related))
+	for _, r := range related {
+		if r.Location.StartLine == 0 {
+			continue
+		}
+		out = append(out, lsp.DiagnosticRelatedInformation{
+			Location: lsp.Location{
+				URI: uri,
+				Range: lsp.Range{
+					Start: lsp.Position{Line: lspPos(r.Location.StartLine), Character: lspPos(r.Location.StartCol)},
+					End:   lsp.Position{Line: lspPos(r.Location.EndLine), Character: lspPos(r.Location.EndCol)},
+				},
+			},
+			Message: r.Message,
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func severityFromCollector(s diag.Severity) lsp.DiagnosticSeverity {

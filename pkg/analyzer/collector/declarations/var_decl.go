@@ -71,9 +71,9 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 	}
 
 	if existing, alreadyDeclared := ctx.LookupCurrentScope(name); alreadyDeclared {
-		ctx.AddError(node, diag.SeverityError,
-			"%s is already declared in this scope (first declared at %s)",
-			name, existing.GetLocation().Pretty())
+		ctx.AddErrorRelated(node, diag.SeverityError,
+			[]diag.RelatedInformation{{Location: existing.GetLocation(), Message: "previously declared here"}},
+			"%s is already declared in this scope", name)
 	} else if err := ctx.RegisterVariable(astNode); err != nil {
 		// Unexpected registration failure (should not normally happen).
 		ctx.AddError(node, diag.SeverityError, "failed to register variable %q: %v", name, err)
@@ -101,14 +101,13 @@ func collectPatternDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *co
 		if !alreadyDeclared {
 			continue
 		}
+		related := []diag.RelatedInformation{{Location: existing.GetLocation(), Message: "previously declared here"}}
 		if v, ok := existing.(*ast.VarDeclStmt); ok && (v.BindingKind == ast.BindingLet || v.BindingKind == ast.BindingConst) {
-			ctx.AddError(node, diag.SeverityError,
-				"cannot re-declare %s %s in this scope (first declared at %s)",
-				v.BindingKind, name, v.GetLocation().Pretty())
+			ctx.AddErrorRelated(node, diag.SeverityError, related,
+				"cannot re-declare %s %s in this scope", v.BindingKind, name)
 		} else {
-			ctx.AddError(node, diag.SeverityError,
-				"%s is already declared in this scope (first declared at %s)",
-				name, existing.GetLocation().Pretty())
+			ctx.AddErrorRelated(node, diag.SeverityError, related,
+				"%s is already declared in this scope", name)
 		}
 	}
 

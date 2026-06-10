@@ -2,6 +2,8 @@ package collector_test
 
 import (
 	"testing"
+
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
 // ---------------------------------------------------------------------------
@@ -48,12 +50,19 @@ func TestDuplicate_SameScope_ThreeDeclarations(t *testing.T) {
 }
 
 func TestDuplicate_ErrorMessageContainsOriginalLocation(t *testing.T) {
-	// The error message should reference the line of the original declaration.
+	// The error should carry RelatedInformation pointing to line 1 (the original declaration).
 	errors := parseAndCollectErrors(t, `let x = 1
 let x = 2`)
-	// The first declaration is on line 1; the error on the second declaration
-	// should mention that the first was at "1:".
-	assertCollectorErrorContains(t, errors, "first declared at 1:")
+	for _, e := range errors {
+		d, ok := e.(diag.Diagnostic)
+		if !ok {
+			continue
+		}
+		if len(d.RelatedInformation) > 0 && d.RelatedInformation[0].Location.StartLine == 1 {
+			return
+		}
+	}
+	t.Errorf("expected a duplicate-declaration diagnostic with RelatedInformation pointing to line 1, got: %v", errors)
 }
 
 // ---------------------------------------------------------------------------

@@ -2,13 +2,17 @@ package typedecls
 
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
+	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-// CollectStructFields returns struct fields in source declaration order.
+// CollectStructFields returns struct fields in source declaration order,
+// emitting an error for any duplicate field name.
 func CollectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []types.StructField {
 	var fields []types.StructField
+	seen := map[string]ast.Location{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "struct_member" {
@@ -17,13 +21,21 @@ func CollectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Stru
 			if fieldTypeNode != nil {
 				fieldType = ctx.ParseType(fieldTypeNode.Child(0))
 			}
-			fieldName := ctx.NodeText(child.ChildByFieldName("field_name"))
+			fieldNameNode := child.ChildByFieldName("field_name")
+			fieldName := ctx.NodeText(fieldNameNode)
 			defaultValue := ctx.CollectExpr(child.ChildByFieldName("default_value"))
-			fields = append(fields, types.StructField{
-				Name:         fieldName,
-				Type:         fieldType,
-				DefaultValue: defaultValue,
-			})
+			if prevLoc, dup := seen[fieldName]; dup {
+				ctx.AddErrorRelated(child, diag.SeverityError,
+					[]diag.RelatedInformation{{Location: prevLoc, Message: "previously declared here"}},
+					"duplicate field %q in struct", fieldName)
+			} else {
+				seen[fieldName] = ctx.NodeLocation(child)
+				fields = append(fields, types.StructField{
+					Name:         fieldName,
+					Type:         fieldType,
+					DefaultValue: defaultValue,
+				})
+			}
 		}
 	}
 	return fields

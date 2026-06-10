@@ -6,16 +6,17 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-func collectYieldExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.YieldExpr {
+func collectYieldExpr(node *sitter.Node, ctx *collector_ctx.Ctx, _ ast.Location) *ast.YieldExpr {
 	return &ast.YieldExpr{
-		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: ctx.NodeLocation(node.Child(0))}},
 		Value:    CollectExpression(node.ChildByFieldName("value"), ctx),
 	}
 }
 
-func collectYieldFromExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.YieldFromExpr {
+func collectYieldFromExpr(node *sitter.Node, ctx *collector_ctx.Ctx, _ ast.Location) *ast.YieldFromExpr {
 	return &ast.YieldFromExpr{
-		ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		// Span "yield from" (child 0 = "yield", child 1 = "from").
+		ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: spanNodes(node.Child(0), node.Child(1), ctx)}},
 		Generator: CollectExpression(node.ChildByFieldName("generator"), ctx),
 	}
 }

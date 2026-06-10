@@ -82,6 +82,15 @@ func (ctx *Ctx) AddError(node *sitter.Node, sev diag.Severity, format string, ar
 	})
 }
 
+func (ctx *Ctx) AddErrorRelated(node *sitter.Node, sev diag.Severity, related []diag.RelatedInformation, format string, args ...any) {
+	*ctx.errors = append(*ctx.errors, diag.Diagnostic{
+		Message:            fmt.Sprintf(format, args...),
+		Location:           ctx.NodeLocation(node),
+		Severity:           sev,
+		RelatedInformation: related,
+	})
+}
+
 // MustField retrieves a required child-by-field-name node.
 // If the field is missing, it records a consistent location-aware error and returns false.
 func (ctx *Ctx) MustField(node *sitter.Node, fieldName string) (*sitter.Node, bool) {

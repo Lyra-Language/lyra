@@ -17,6 +17,31 @@ func directDeclaredNames(stmt ast.Statement) []string {
 	return nil
 }
 
+type nameLocation struct {
+	Name     string
+	Location ast.Location
+}
+
+// directDeclaredNamesWithLocations is like directDeclaredNames but also
+// returns the source location of each declared name.
+func directDeclaredNamesWithLocations(stmt ast.Statement) []nameLocation {
+	if stmt == nil {
+		return nil
+	}
+	switch s := stmt.(type) {
+	case *ast.VarDeclStmt:
+		return []nameLocation{{Name: s.Name, Location: s.GetLocation()}}
+	case *ast.DestructuringDeclStmt:
+		names := patternBoundNames(s.Pattern)
+		result := make([]nameLocation, len(names))
+		for i, name := range names {
+			result[i] = nameLocation{Name: name, Location: s.GetLocation()}
+		}
+		return result
+	}
+	return nil
+}
+
 // patternBoundNames collects all variable names introduced by a pattern.
 func patternBoundNames(pat ast.Pattern) []string {
 	if pat == nil {

@@ -6,11 +6,9 @@
 ### Diagnostic infrastructure
 - **Diagnostic codes** — attach a stable code (e.g. `lyra-E001`, `lyra-W014`) to each `TypeError` / `ShadowingWarning` / `UseBeforeDeclarationError`; map into the LSP `Diagnostic.Code` field
 - **`DiagnosticTag` support** — send `Unnecessary` for unused/unreachable diagnostics and `Deprecated` for deprecated-attribute symbols so VS Code renders them greyed-out or struck-through
-- **Related information** — populate `Diagnostic.RelatedInformation` for shadowing (point to original declaration), duplicate fields, missing trait methods, etc.
 - **Better parser error ranges** — walk the tree-sitter CST for `ERROR`/`MISSING` nodes and report them with real source ranges instead of the current `lsp.Range{}` (line 0:0) fallback
 
 ### Checker — Control-flow validity (new `checker/` pass)
-- **`await` outside an async function** — `LambdaExpr.IsAsync` is collected but never consulted; error when used outside an async function
 - **Unreachable code after `return`/`break`/`continue`** — any statements after these in the same block are dead; emit as a warning with the `Unnecessary` diagnostic tag
 - **Unsafe operations outside `unsafe` blocks** — `AddressOfExpr`, `DerefExpr`, raw pointer access, and calls to `IsUnsafe` lambdas should require an enclosing `UnsafeBlockExpr` or unsafe function
 
@@ -62,7 +60,11 @@
 ## Completed
 ------------
 
+### 06/09/26
+- **Related information** — `Diagnostic.RelatedInformation` and `TypeError.RelatedInformation` fields added; shadowing warnings carry `OriginalLocation`; duplicate variable declarations and duplicate struct fields populate related info pointing to the prior declaration; LSP `analyze()` maps related info via `toLSPRelatedInfo` for all diagnostic sources
+
 ### 06/04/26
+- **`await` outside an async function** — `CheckAwaitOutsideAsync` in `checker/`; mirrors `CheckYieldOutsideGenerator`; `LambdaExpr.IsAsync` now gates await validity
 - **`break`/`continue` outside a loop** — `CheckBreakContinueOutsideLoop` in `checker/` walks with loop-depth counter and label set; errors at depth 0 or for unknown labels
 - **`yield`/`yield from` outside a generator function** — `CheckYieldOutsideGenerator` in `checker/`; also fixed `is_generator` → `is_gen` field name in lambda collector so `LambdaExpr.IsGenerator` is now correctly populated
 - **`return` outside a function body** — `CheckReturnOutsideFunction` in `checker/` walks the AST with a depth counter; errors at depth 0
