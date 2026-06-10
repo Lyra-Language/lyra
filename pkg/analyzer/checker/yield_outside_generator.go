@@ -4,11 +4,13 @@ import (
 	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
 // YieldOutsideGeneratorError reports a yield or yield-from expression that
 // appears outside a generator function body.
 type YieldOutsideGeneratorError struct {
+	Code     string
 	Message  string
 	Location ast.Location
 }
@@ -40,6 +42,7 @@ func (c *yogChecker) report(loc ast.Location, isYieldFrom bool) {
 		kw = "yield from"
 	}
 	c.errors = append(c.errors, YieldOutsideGeneratorError{
+		Code:     diag.CodeYieldOutsideGenerator,
 		Message:  fmt.Sprintf("%s expression outside of a generator function", kw),
 		Location: loc,
 	})

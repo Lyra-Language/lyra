@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
@@ -186,6 +187,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
 			},
 			Severity:           &sev,
+			Code:               codeToLSP(ce.Code),
 			Source:             "lyra",
 			Message:            ce.Message,
 			Tags:               tagsToLSP(ce.Tags),
@@ -203,6 +205,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
 			},
 			Severity: &sev,
+			Code:     codeToLSP(ube.Code),
 			Source:   "lyra",
 			Message:  ube.Message,
 		})
@@ -218,6 +221,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
 			},
 			Severity: &sev,
+			Code:     codeToLSP(re.Code),
 			Source:   "lyra",
 			Message:  re.Message,
 		})
@@ -233,6 +237,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
 			},
 			Severity: &sev,
+			Code:     codeToLSP(be.Code),
 			Source:   "lyra",
 			Message:  be.Message,
 		})
@@ -248,6 +253,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
 			},
 			Severity: &sev,
+			Code:     codeToLSP(ae.Code),
 			Source:   "lyra",
 			Message:  ae.Message,
 		})
@@ -263,6 +269,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
 			},
 			Severity: &sev,
+			Code:     codeToLSP(ye.Code),
 			Source:   "lyra",
 			Message:  ye.Message,
 		})
@@ -301,6 +308,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
 			},
 			Severity:           &sev,
+			Code:               codeToLSP(sw.Code),
 			Source:             "lyra",
 			Message:            sw.Message,
 			RelatedInformation: relatedInfo,
@@ -319,6 +327,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
 			},
 			Severity:           &sev,
+			Code:               codeToLSP(te.Code),
 			Source:             "lyra",
 			Message:            te.Message,
 			Tags:               tagsToLSP(te.Tags),
@@ -402,11 +411,20 @@ func diagToLSP(uri lsp.DocumentURI, d diag.Diagnostic) lsp.Diagnostic {
 			End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
 		},
 		Severity:           &sev,
+		Code:               codeToLSP(d.Code),
 		Source:             "lyra",
 		Message:            d.Message,
 		Tags:               tagsToLSP(d.Tags),
 		RelatedInformation: toLSPRelatedInfo(uri, d.RelatedInformation),
 	}
+}
+
+func codeToLSP(code string) json.RawMessage {
+	if code == "" {
+		return nil
+	}
+	b, _ := json.Marshal(code)
+	return b
 }
 
 func tagsToLSP(tags []diag.Tag) []lsp.DiagnosticTag {

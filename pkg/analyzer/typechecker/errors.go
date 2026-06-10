@@ -15,6 +15,7 @@ const (
 type TypeError struct {
 	Location           ast.Location
 	Severity           Severity
+	Code               string
 	Message            string
 	Tags               []diag.Tag
 	RelatedInformation []diag.RelatedInformation

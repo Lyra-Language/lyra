@@ -4,11 +4,13 @@ import (
 	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
 // UseBeforeDeclarationError reports a variable that was used before its
 // declaration within the same lexical scope.
 type UseBeforeDeclarationError struct {
+	Code     string
 	Message  string
 	Location ast.Location
 }
@@ -40,6 +42,7 @@ type ubeChecker struct {
 
 func (c *ubeChecker) report(loc ast.Location, name string) {
 	c.errors = append(c.errors, UseBeforeDeclarationError{
+		Code:     diag.CodeUseBeforeDeclaration,
 		Message:  fmt.Sprintf("variable %q used before its declaration", name),
 		Location: loc,
 	})

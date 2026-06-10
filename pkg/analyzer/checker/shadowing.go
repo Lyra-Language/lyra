@@ -5,11 +5,13 @@ import (
 	"maps"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
 // ShadowingWarning reports a variable declaration that shadows a name from an
 // enclosing scope.
 type ShadowingWarning struct {
+	Code             string
 	Message          string
 	Location         ast.Location
 	OriginalLocation ast.Location // where the shadowed name was originally declared
@@ -39,6 +41,7 @@ type shadowChecker struct {
 
 func (c *shadowChecker) warn(loc ast.Location, originalLoc ast.Location, name string) {
 	c.warnings = append(c.warnings, ShadowingWarning{
+		Code:             diag.CodeShadowing,
 		Message:          fmt.Sprintf("%s shadows a variable declared in an outer scope", name),
 		Location:         loc,
 		OriginalLocation: originalLoc,

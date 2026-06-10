@@ -4,11 +4,13 @@ import (
 	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
 // BreakContinueOutsideLoopError reports a break or continue that appears outside
 // any loop body, or a labeled break/continue whose label is not in scope.
 type BreakContinueOutsideLoopError struct {
+	Code     string
 	Message  string
 	Location ast.Location
 }
@@ -41,7 +43,7 @@ func (c *bclChecker) reportBreak(loc ast.Location, label string) {
 	} else {
 		msg = "break statement outside of a loop"
 	}
-	c.errors = append(c.errors, BreakContinueOutsideLoopError{Message: msg, Location: loc})
+	c.errors = append(c.errors, BreakContinueOutsideLoopError{Code: diag.CodeBreakContinueOutsideLoop, Message: msg, Location: loc})
 }
 
 func (c *bclChecker) reportContinue(loc ast.Location, label string) {
@@ -51,7 +53,7 @@ func (c *bclChecker) reportContinue(loc ast.Location, label string) {
 	} else {
 		msg = "continue statement outside of a loop"
 	}
-	c.errors = append(c.errors, BreakContinueOutsideLoopError{Message: msg, Location: loc})
+	c.errors = append(c.errors, BreakContinueOutsideLoopError{Code: diag.CodeBreakContinueOutsideLoop, Message: msg, Location: loc})
 }
 
 func hasLabel(labels []string, label string) bool {

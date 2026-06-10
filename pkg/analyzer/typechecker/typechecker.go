@@ -932,6 +932,7 @@ func (tc *TypeChecker) addError(loc ast.Location, sev Severity, format string, a
 	tc.errors = append(tc.errors, TypeError{
 		Location: loc,
 		Severity: sev,
+		Code:     diag.CodeTypeError,
 		Message:  fmt.Sprintf(format, args...),
 	})
 }
@@ -940,6 +941,7 @@ func (tc *TypeChecker) addErrorRelated(loc ast.Location, sev Severity, related [
 	tc.errors = append(tc.errors, TypeError{
 		Location:           loc,
 		Severity:           sev,
+		Code:               diag.CodeTypeError,
 		Message:            fmt.Sprintf(format, args...),
 		RelatedInformation: related,
 	})

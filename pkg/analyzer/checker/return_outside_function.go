@@ -4,11 +4,13 @@ import (
 	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
 // ReturnOutsideFunctionError reports a return statement that appears outside
 // any function body.
 type ReturnOutsideFunctionError struct {
+	Code     string
 	Message  string
 	Location ast.Location
 }
@@ -36,6 +38,7 @@ type rofChecker struct {
 
 func (c *rofChecker) report(loc ast.Location) {
 	c.errors = append(c.errors, ReturnOutsideFunctionError{
+		Code:     diag.CodeReturnOutsideFunction,
 		Message:  "return statement outside of a function body",
 		Location: loc,
 	})

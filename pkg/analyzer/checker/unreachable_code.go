@@ -31,6 +31,7 @@ func (c *unreachableChecker) warn(loc ast.Location) {
 	c.warnings = append(c.warnings, diag.Diagnostic{
 		Location: loc,
 		Severity: diag.SeverityWarning,
+		Code:     diag.CodeUnreachableCode,
 		Message:  "unreachable code",
 		Tags:     []diag.Tag{diag.TagUnnecessary},
 	})

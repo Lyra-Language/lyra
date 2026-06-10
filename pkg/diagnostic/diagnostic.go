@@ -30,6 +30,7 @@ type RelatedInformation struct {
 type Diagnostic struct {
 	Location           ast.Location
 	Severity           Severity
+	Code               string
 	Message            string
 	Tags               []Tag
 	RelatedInformation []RelatedInformation

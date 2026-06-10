@@ -82,6 +82,7 @@ func (c *unusedVarChecker) checkBlock(stmts []ast.Statement) {
 				c.warnings = append(c.warnings, diag.Diagnostic{
 					Location: d.loc,
 					Severity: diag.SeverityWarning,
+					Code:     diag.CodeUnusedVariable,
 					Message:  fmt.Sprintf("variable %q is declared but never used", d.name),
 					Tags:     []diag.Tag{diag.TagUnnecessary},
 				})

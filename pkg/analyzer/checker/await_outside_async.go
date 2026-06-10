@@ -4,11 +4,13 @@ import (
 	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
 // AwaitOutsideAsyncError reports an await expression that appears outside an
 // async function body.
 type AwaitOutsideAsyncError struct {
+	Code     string
 	Message  string
 	Location ast.Location
 }
@@ -43,6 +45,7 @@ func (c *aoaChecker) exprVisitor(inAsync bool) func(ast.Expression) bool {
 		case *ast.AwaitExpr:
 			if !inAsync {
 				c.errors = append(c.errors, AwaitOutsideAsyncError{
+					Code:     diag.CodeAwaitOutsideAsync,
 					Message:  "await expression outside of an async function",
 					Location: expr.GetLocation(),
 				})
