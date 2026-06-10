@@ -188,6 +188,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 			Severity:           &sev,
 			Source:             "lyra",
 			Message:            ce.Message,
+			Tags:               tagsToLSP(ce.Tags),
 			RelatedInformation: toLSPRelatedInfo(uri, ce.RelatedInformation),
 		})
 	}
@@ -267,6 +268,16 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		})
 	}
 
+	log.Printf("analyze: checking unreachable code")
+	for _, d := range checker.CheckUnreachableCode(program) {
+		diags = append(diags, diagToLSP(uri, d))
+	}
+
+	log.Printf("analyze: checking unused variables")
+	for _, d := range checker.CheckUnusedVariables(program) {
+		diags = append(diags, diagToLSP(uri, d))
+	}
+
 	log.Printf("analyze: checking shadowing")
 	for _, sw := range checker.CheckShadowing(program) {
 		sev := lsp.SeverityWarning
@@ -310,6 +321,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 			Severity:           &sev,
 			Source:             "lyra",
 			Message:            te.Message,
+			Tags:               tagsToLSP(te.Tags),
 			RelatedInformation: toLSPRelatedInfo(uri, te.RelatedInformation),
 		})
 	}
@@ -370,6 +382,42 @@ func lspPos(oneBased int) int {
 		return 0
 	}
 	return oneBased - 1
+}
+
+// diagToLSP converts a diag.Diagnostic to an lsp.Diagnostic for publishing.
+func diagToLSP(uri lsp.DocumentURI, d diag.Diagnostic) lsp.Diagnostic {
+	sev := lsp.DiagnosticSeverity(0)
+	switch d.Severity {
+	case diag.SeverityWarning:
+		sev = lsp.SeverityWarning
+	case diag.SeverityInfo:
+		sev = lsp.SeverityInformation
+	default:
+		sev = lsp.SeverityError
+	}
+	loc := d.Location
+	return lsp.Diagnostic{
+		Range: lsp.Range{
+			Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
+			End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
+		},
+		Severity:           &sev,
+		Source:             "lyra",
+		Message:            d.Message,
+		Tags:               tagsToLSP(d.Tags),
+		RelatedInformation: toLSPRelatedInfo(uri, d.RelatedInformation),
+	}
+}
+
+func tagsToLSP(tags []diag.Tag) []lsp.DiagnosticTag {
+	if len(tags) == 0 {
+		return nil
+	}
+	out := make([]lsp.DiagnosticTag, len(tags))
+	for i, t := range tags {
+		out[i] = lsp.DiagnosticTag(t)
+	}
+	return out
 }
 
 func toLSPRelatedInfo(uri lsp.DocumentURI, related []diag.RelatedInformation) []lsp.DiagnosticRelatedInformation {

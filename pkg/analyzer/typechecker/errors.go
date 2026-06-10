@@ -16,6 +16,7 @@ type TypeError struct {
 	Location           ast.Location
 	Severity           Severity
 	Message            string
+	Tags               []diag.Tag
 	RelatedInformation []diag.RelatedInformation
 }
 
