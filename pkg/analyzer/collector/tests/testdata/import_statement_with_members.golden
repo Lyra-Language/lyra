@@ -3,9 +3,25 @@ Program(1 statements) {
 		ImportStmt {
 			Members: {
 				ImportMember(Map) {
+					Location: {
+						Location {
+							EndCol: 25
+							EndLine: 1
+							StartCol: 22
+							StartLine: 1
+						}
+					}
 					Name: Map
 				}
 				ImportMember(Set) {
+					Location: {
+						Location {
+							EndCol: 30
+							EndLine: 1
+							StartCol: 27
+							StartLine: 1
+						}
+					}
 					Name: Set
 				}
 			}

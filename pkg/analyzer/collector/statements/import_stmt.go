@@ -9,7 +9,8 @@ import (
 
 func CollectImportStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ImportStmt {
 	importStmt := &ast.ImportStmt{
-		Path: []ast.ModuleName{},
+		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
+		Path:    []ast.ModuleName{},
 	}
 
 	pathNode := node.ChildByFieldName("path")
@@ -60,5 +61,5 @@ func CollectImportMember(node *sitter.Node, ctx *collector_ctx.Ctx) ast.ImportMe
 	if aliasNode != nil {
 		alias = ctx.NodeText(aliasNode)
 	}
-	return ast.ImportMember{Name: name, Alias: alias}
+	return ast.ImportMember{Name: name, Alias: alias, Location: ctx.NodeLocation(node)}
 }

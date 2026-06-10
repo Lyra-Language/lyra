@@ -12,6 +12,7 @@ func (i *ImportStmt) statementNode() {}
 func (i *ImportStmt) GetName() string { return "import" }
 
 type ImportMember struct {
-	Name string
-	Alias string
+	Name     string
+	Alias    string
+	Location Location
 }

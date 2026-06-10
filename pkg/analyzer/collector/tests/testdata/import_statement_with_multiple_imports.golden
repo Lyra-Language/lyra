@@ -14,9 +14,25 @@ Program(3 statements) {
 		ImportStmt {
 			Members: {
 				ImportMember(Map) {
+					Location: {
+						Location {
+							EndCol: 30
+							EndLine: 3
+							StartCol: 27
+							StartLine: 3
+						}
+					}
 					Name: Map
 				}
 				ImportMember(Set) {
+					Location: {
+						Location {
+							EndCol: 35
+							EndLine: 3
+							StartCol: 32
+							StartLine: 3
+						}
+					}
 					Name: Set
 				}
 			}
@@ -32,12 +48,36 @@ Program(3 statements) {
 		ImportStmt {
 			Members: {
 				ImportMember(sin) {
+					Location: {
+						Location {
+							EndCol: 19
+							EndLine: 4
+							StartCol: 16
+							StartLine: 4
+						}
+					}
 					Name: sin
 				}
 				ImportMember(cos) {
+					Location: {
+						Location {
+							EndCol: 24
+							EndLine: 4
+							StartCol: 21
+							StartLine: 4
+						}
+					}
 					Name: cos
 				}
 				ImportMember(PI) {
+					Location: {
+						Location {
+							EndCol: 28
+							EndLine: 4
+							StartCol: 26
+							StartLine: 4
+						}
+					}
 					Name: PI
 				}
 			}

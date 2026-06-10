@@ -4,9 +4,25 @@ Program(1 statements) {
 			Members: {
 				ImportMember(HashMap) {
 					Alias: HM
+					Location: {
+						Location {
+							EndCol: 39
+							EndLine: 1
+							StartCol: 26
+							StartLine: 1
+						}
+					}
 					Name: HashMap
 				}
 				ImportMember(Set) {
+					Location: {
+						Location {
+							EndCol: 44
+							EndLine: 1
+							StartCol: 41
+							StartLine: 1
+						}
+					}
 					Name: Set
 				}
 			}

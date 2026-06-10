@@ -7,7 +7,6 @@
 - **Unsafe operations outside `unsafe` blocks** — `AddressOfExpr`, `DerefExpr`, raw pointer access, and calls to `IsUnsafe` lambdas should require an enclosing `UnsafeBlockExpr` or unsafe function
 
 ### Checker — Unused symbol detection
-- **Unused imports** — walk `ImportStmt.Members` and warn for any alias/name that never appears as an identifier
 - **Unused function parameters** — same as unused variables, scoped to the lambda body
 
 ### Typechecker — Collection-level type checking
@@ -53,6 +52,7 @@
 ## Completed
 ------------
 ### 06/10/26
+- **Unused imports** — `CheckUnusedImports` in `checker/`; walks all top-level `ImportStmt` nodes and warns for any member name/alias, module alias, or plain last-path-component that never appears as an `IdentifierExpr` in the program; emits `lyra-W004` with `TagUnnecessary`; `_`-prefixed names silently ignored
 - **Diagnostic codes** — attach a stable code (e.g. `lyra-E001`, `lyra-W014`) to each `TypeError` / `ShadowingWarning` / `UseBeforeDeclarationError`; map into the LSP `Diagnostic.Code` field
 - **Better parser error ranges** — walk the tree-sitter CST for `ERROR`/`MISSING` nodes and report them with real source ranges instead of the current `lsp.Range{}` (line 0:0) fallback
 
