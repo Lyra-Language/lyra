@@ -7,8 +7,6 @@
 - **Unsafe operations outside `unsafe` blocks** — `AddressOfExpr`, `DerefExpr`, raw pointer access, and calls to `IsUnsafe` lambdas should require an enclosing `UnsafeBlockExpr` or unsafe function
 
 ### Typechecker — Collection-level type checking
-- **Range expression operand types** — both ends of `start..end` must be numeric and compatible; step must match; used in `for x in 0..n`
-- **For-in iterable must be iterable** — `for x in 42 { ... }` should error
 - **For loop condition must be `bool`** — `for var i = 0; i; i += 1` should error
 - **Null coalescing types** — both sides of `??` must unify via `branchCommonType`
 - **Division/modulo by literal zero** — flag `x / 0`, `x % 0`, `x %% 0` with a literal-zero RHS in `inferMathBinaryExpr`
@@ -47,6 +45,8 @@
 ## Completed
 ------------
 ### 06/10/26
+- **Range expression operand types** — `inferRangeExpr` validates both ends are numeric and compatible; step (if present) must also be numeric; returns `RangeType`; `RangeType.GetName()` fixed to handle nil fields
+- **For-in iterable must be iterable** — `checkForInLoopExpr` validates the iterable is array, string, or range; emits error for numeric/bool/struct iterables; `isIterableType` helper covers all valid cases
 - **Tuple literal element type checking** — `inferTupleLiteralExpr` now stores each element's type in `TypeTable`; `checkDestructuringDecl` catches non-tuple RHS and arity mismatches for tuple patterns
 - **Array literal element type homogeneity** — `inferArrayLiteralType` infers element type as the common type of all elements via `branchCommonType`; errors on mismatches (e.g. `[1, "two", true]`)
 - **Unused function parameters** — same as unused variables, scoped to the lambda body

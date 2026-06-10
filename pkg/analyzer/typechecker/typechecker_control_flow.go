@@ -567,6 +567,74 @@ func literalPatternKind(value any) types.PrimitiveTypeName {
 	}
 }
 
+// isIterableType reports whether t can be used as the iterable in a for-in loop.
+// Valid iterables are arrays, strings, and range expressions.
+func isIterableType(t types.Type) bool {
+	if types.IsArray(t) || types.IsString(t) {
+		return true
+	}
+	_, ok := t.(types.RangeType)
+	return ok
+}
+
+// inferRangeExpr validates that both ends of a range expression are numeric and
+// mutually compatible, validates the step if present, and returns a RangeType.
+func (tc *TypeChecker) inferRangeExpr(expr *ast.RangeExpr) types.Type {
+	startType := tc.inferExprType(expr.Start)
+	endType := tc.inferExprType(expr.End)
+
+	if startType != nil && !types.IsNumeric(startType) {
+		tc.addError(expr.Start.GetLocation(), SeverityError,
+			"range start must be numeric, got %s", startType)
+		startType = nil
+	}
+	if endType != nil && !types.IsNumeric(endType) {
+		tc.addError(expr.End.GetLocation(), SeverityError,
+			"range end must be numeric, got %s", endType)
+		endType = nil
+	}
+
+	var commonType types.Type
+	if startType != nil && endType != nil {
+		ct, ok := branchCommonType(startType, endType)
+		if !ok {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"range operands have incompatible types: start is %s, end is %s",
+				startType, endType)
+		} else {
+			commonType = ct
+		}
+	}
+
+	if expr.Step != nil {
+		stepType := tc.inferExprType(expr.Step)
+		if stepType != nil && !types.IsNumeric(stepType) {
+			tc.addError(expr.Step.GetLocation(), SeverityError,
+				"range step must be numeric, got %s", stepType)
+		} else if stepType != nil && commonType != nil {
+			if _, ok := branchCommonType(stepType, commonType); !ok {
+				tc.addError(expr.Step.GetLocation(), SeverityError,
+					"range step type %s is not compatible with range operand type %s",
+					stepType, commonType)
+			}
+		}
+	}
+
+	return types.RangeType{Start: startType, End: endType}
+}
+
+// checkForInLoopExpr validates that the iterable expression is actually iterable
+// (array, string, or range), then type-checks the loop body.
+func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
+	iterType := tc.inferExprType(expr.Iterable)
+	if iterType != nil && !isIterableType(iterType) {
+		tc.addError(expr.Iterable.GetLocation(), SeverityError,
+			"cannot iterate over %s: expected an array, string, or range", iterType)
+	}
+	tc.inferBlockType(&expr.Body)
+	return nil
+}
+
 // branchCommonType returns the common type for two if/else branches and
 // whether they are compatible. Exact equality wins first; then untyped→concrete
 // widening (e.g. untyped int + i32 → i32); otherwise the types are incompatible.
