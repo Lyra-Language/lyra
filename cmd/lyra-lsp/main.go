@@ -293,6 +293,11 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		diags = append(diags, diagToLSP(uri, d))
 	}
 
+	log.Printf("analyze: checking unused parameters")
+	for _, d := range checker.CheckUnusedParameters(program) {
+		diags = append(diags, diagToLSP(uri, d))
+	}
+
 	log.Printf("analyze: checking shadowing")
 	for _, sw := range checker.CheckShadowing(program) {
 		sev := lsp.SeverityWarning

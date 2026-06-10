@@ -12,4 +12,5 @@ const (
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"
 	CodeUnusedImport    = "lyra-W004"
+	CodeUnusedParameter = "lyra-W005"
 )

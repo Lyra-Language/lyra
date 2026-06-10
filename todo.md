@@ -6,9 +6,6 @@
 ### Checker — Control-flow validity (new `checker/` pass)
 - **Unsafe operations outside `unsafe` blocks** — `AddressOfExpr`, `DerefExpr`, raw pointer access, and calls to `IsUnsafe` lambdas should require an enclosing `UnsafeBlockExpr` or unsafe function
 
-### Checker — Unused symbol detection
-- **Unused function parameters** — same as unused variables, scoped to the lambda body
-
 ### Typechecker — Collection-level type checking
 - **Array literal element type homogeneity** — infer element type as the common type of all elements via `branchCommonType`; error on mismatches (e.g. `[1, "two", true]`)
 - **Tuple literal element type checking** — record element types into `TypeTable`; surface mismatches in destructuring
@@ -52,6 +49,7 @@
 ## Completed
 ------------
 ### 06/10/26
+- **Unused function parameters** — same as unused variables, scoped to the lambda body
 - **Unused imports** — `CheckUnusedImports` in `checker/`; walks all top-level `ImportStmt` nodes and warns for any member name/alias, module alias, or plain last-path-component that never appears as an `IdentifierExpr` in the program; emits `lyra-W004` with `TagUnnecessary`; `_`-prefixed names silently ignored
 - **Diagnostic codes** — attach a stable code (e.g. `lyra-E001`, `lyra-W014`) to each `TypeError` / `ShadowingWarning` / `UseBeforeDeclarationError`; map into the LSP `Diagnostic.Code` field
 - **Better parser error ranges** — walk the tree-sitter CST for `ERROR`/`MISSING` nodes and report them with real source ranges instead of the current `lsp.Range{}` (line 0:0) fallback
