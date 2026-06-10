@@ -69,6 +69,8 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 		tc.checkTypeDecl(n)
 	case *ast.VarDeclStmt:
 		tc.checkVarDecl(n)
+	case *ast.DestructuringDeclStmt:
+		tc.checkDestructuringDecl(n)
 	case *ast.VarReassignmentStmt:
 		tc.checkVarReassignment(n)
 	case *ast.ExpressionStmt:
@@ -186,6 +188,55 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// Store the annotation type — this is the effective type the expression is used as.
 	// e.g. literal 42 annotated as i32 should be recorded as i32, not the untyped int.
 	tc.typeTable.Set(decl.Value, resolvedDeclType)
+}
+
+// checkDestructuringDecl type-checks a destructuring declaration.
+// It infers the RHS type, checks any whole-expression type annotation, and for
+// tuple patterns verifies that the RHS is actually a tuple and that its arity
+// matches the number of pattern bindings (unless a rest pattern is present).
+func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
+	if decl.Value == nil {
+		return
+	}
+	inferredType := tc.inferExprType(decl.Value)
+	if inferredType == nil {
+		return
+	}
+
+	// If there's a whole-expression type annotation, verify assignability.
+	if decl.Type != nil {
+		resolvedDeclType := tc.resolveType(decl.Type, decl.Location)
+		if !isAssignable(inferredType, resolvedDeclType) {
+			tc.addError(decl.GetLocation(), SeverityError,
+				"cannot assign %s to %s", inferredType, decl.Type)
+			return
+		}
+		inferredType = resolvedDeclType
+	}
+
+	// For tuple patterns, check that the RHS is a tuple and that arities match.
+	tp, isTuplePattern := decl.Pattern.(*ast.TuplePattern)
+	if !isTuplePattern {
+		return
+	}
+	tt, isTupleType := inferredType.(types.TupleType)
+	if !isTupleType {
+		tc.addError(decl.GetLocation(), SeverityError,
+			"cannot destructure %s with a tuple pattern", inferredType)
+		return
+	}
+	hasRest := false
+	for _, el := range tp.Elements {
+		if _, ok := el.(*ast.RestPattern); ok {
+			hasRest = true
+			break
+		}
+	}
+	if !hasRest && len(tp.Elements) != len(tt.Elements) {
+		tc.addError(decl.GetLocation(), SeverityError,
+			"tuple pattern has %d element(s) but tuple has %d",
+			len(tp.Elements), len(tt.Elements))
+	}
 }
 
 // checkPatternConstraints tests a string-literal value against every
@@ -686,6 +737,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 			return nil
 		}
 		elements[i] = promoteToDefault(t)
+		tc.typeTable.Set(elem, elements[i])
 	}
 	name := expr.Name
 	if name == "" {

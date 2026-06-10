@@ -7,8 +7,6 @@
 - **Unsafe operations outside `unsafe` blocks** — `AddressOfExpr`, `DerefExpr`, raw pointer access, and calls to `IsUnsafe` lambdas should require an enclosing `UnsafeBlockExpr` or unsafe function
 
 ### Typechecker — Collection-level type checking
-- **Array literal element type homogeneity** — infer element type as the common type of all elements via `branchCommonType`; error on mismatches (e.g. `[1, "two", true]`)
-- **Tuple literal element type checking** — record element types into `TypeTable`; surface mismatches in destructuring
 - **Range expression operand types** — both ends of `start..end` must be numeric and compatible; step must match; used in `for x in 0..n`
 - **For-in iterable must be iterable** — `for x in 42 { ... }` should error
 - **For loop condition must be `bool`** — `for var i = 0; i; i += 1` should error
@@ -49,6 +47,8 @@
 ## Completed
 ------------
 ### 06/10/26
+- **Tuple literal element type checking** — `inferTupleLiteralExpr` now stores each element's type in `TypeTable`; `checkDestructuringDecl` catches non-tuple RHS and arity mismatches for tuple patterns
+- **Array literal element type homogeneity** — `inferArrayLiteralType` infers element type as the common type of all elements via `branchCommonType`; errors on mismatches (e.g. `[1, "two", true]`)
 - **Unused function parameters** — same as unused variables, scoped to the lambda body
 - **Unused imports** — `CheckUnusedImports` in `checker/`; walks all top-level `ImportStmt` nodes and warns for any member name/alias, module alias, or plain last-path-component that never appears as an `IdentifierExpr` in the program; emits `lyra-W004` with `TagUnnecessary`; `_`-prefixed names silently ignored
 - **Diagnostic codes** — attach a stable code (e.g. `lyra-E001`, `lyra-W014`) to each `TypeError` / `ShadowingWarning` / `UseBeforeDeclarationError`; map into the LSP `Diagnostic.Code` field
