@@ -144,6 +144,8 @@ func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
 		tc.checkMatchExpr(e)
 	case *ast.ForInLoopExpr:
 		tc.checkForInLoopExpr(e)
+	case *ast.ForLoopExpr:
+		tc.checkForLoopExpr(e)
 	case *ast.RangeExpr:
 		tc.inferRangeExpr(e)
 	}
@@ -538,6 +540,11 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return tc.inferRangeExpr(e)
 	case *ast.ForInLoopExpr:
 		return tc.checkForInLoopExpr(e)
+	case *ast.ForLoopExpr:
+		tc.checkForLoopExpr(e)
+		return nil
+	case *ast.NullCoalescingExpr:
+		return tc.inferNullCoalescingExpr(e)
 	case *ast.IdentifierExpr:
 		// Consult the parameter scope installed by withParamScope while
 		// type-checking a function body.

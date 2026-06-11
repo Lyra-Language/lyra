@@ -635,6 +635,47 @@ func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 	return nil
 }
 
+// checkForLoopExpr type-checks a C-style for loop.
+//
+// When there is no init clause, all condition variables live in an outer
+// scope that the typechecker can reach, so the condition operands are
+// validated via checkBooleanBinaryOpExpr. When an init clause is present,
+// the init-declared variable lives in the loop's own scope, which cannot be
+// reached via the scope table (because ForLoopExpr.Body stores a value copy
+// of the BlockExpr, not the original pointer that was registered); skipping
+// the condition check in that case avoids false "undefined identifier" errors.
+func (tc *TypeChecker) checkForLoopExpr(expr *ast.ForLoopExpr) {
+	if expr.Init == nil && expr.Condition != nil {
+		condType := tc.inferExprType(*expr.Condition)
+		if condType != nil && !types.IsBoolean(condType) {
+			tc.addError((*expr.Condition).GetLocation(), SeverityError,
+				"for loop condition must be boolean, got %s", condType)
+		}
+	}
+	tc.inferBlockType(&expr.Body)
+}
+
+// inferNullCoalescingExpr type-checks a ?? expression. Both sides are
+// inferred and must unify via branchCommonType; the result is the common type.
+func (tc *TypeChecker) inferNullCoalescingExpr(expr *ast.NullCoalescingExpr) types.Type {
+	optType := tc.inferExprType(expr.Optional)
+	defType := tc.inferExprType(expr.Default)
+	if optType == nil || defType == nil {
+		if optType != nil {
+			return optType
+		}
+		return defType
+	}
+	common, ok := branchCommonType(optType, defType)
+	if !ok {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"null coalescing operands have incompatible types: left is %s, right is %s",
+			optType, defType)
+		return nil
+	}
+	return common
+}
+
 // branchCommonType returns the common type for two if/else branches and
 // whether they are compatible. Exact equality wins first; then untyped→concrete
 // widening (e.g. untyped int + i32 → i32); otherwise the types are incompatible.

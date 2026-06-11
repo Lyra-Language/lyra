@@ -7,8 +7,6 @@
 - **Unsafe operations outside `unsafe` blocks** — `AddressOfExpr`, `DerefExpr`, raw pointer access, and calls to `IsUnsafe` lambdas should require an enclosing `UnsafeBlockExpr` or unsafe function
 
 ### Typechecker — Collection-level type checking
-- **For loop condition must be `bool`** — `for var i = 0; i; i += 1` should error
-- **Null coalescing types** — both sides of `??` must unify via `branchCommonType`
 - **Division/modulo by literal zero** — flag `x / 0`, `x % 0`, `x %% 0` with a literal-zero RHS in `inferMathBinaryExpr`
 - **Always-true/always-false conditions** — warn on `if true`, `if false`, and loop conditions that are obviously constant
 - **Float `==`/`!=` comparison warning** — emit a warning when two float-typed values are compared with `==` or `!=`
@@ -45,6 +43,8 @@
 ## Completed
 ------------
 ### 06/10/26
+- **For loop condition must be `bool`** — `checkForLoopExpr` added; validates `&&`/`||` operands in conditions that reference outer-scope variables; init-clause loops skip condition checking (scope table pointer-copy limitation documented); `ForLoopExpr` and `NullCoalescingExpr` wired into `checkExpressionStmt` and `inferExprType`
+- **Null coalescing types** — `inferNullCoalescingExpr` infers both `??` operands and unifies via `branchCommonType`; emits "null coalescing operands have incompatible types" when they don't match
 - **Range expression operand types** — `inferRangeExpr` validates both ends are numeric and compatible; step (if present) must also be numeric; returns `RangeType`; `RangeType.GetName()` fixed to handle nil fields
 - **For-in iterable must be iterable** — `checkForInLoopExpr` validates the iterable is array, string, or range; emits error for numeric/bool/struct iterables; `isIterableType` helper covers all valid cases
 - **Tuple literal element type checking** — `inferTupleLiteralExpr` now stores each element's type in `TypeTable`; `checkDestructuringDecl` catches non-tuple RHS and arity mismatches for tuple patterns
