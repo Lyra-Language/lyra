@@ -139,7 +139,7 @@ func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
 	case *ast.FunctionCallExpr:
 		tc.inferFunctionCallExpr(e)
 	case *ast.IfExpr:
-		tc.checkIfExpr(e)
+		tc.checkIfExpr(e, false)
 	case *ast.MatchExpr:
 		tc.checkMatchExpr(e)
 	case *ast.ForInLoopExpr:
@@ -387,6 +387,9 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 	case ast.BooleanBinaryOpEq, ast.BooleanBinaryOpNEq:
 		if !areEqualityCompatible(leftType, rightType) {
 			tc.addIncompatibleTypesError(expr, string(expr.Operator), leftType, rightType)
+		} else if isFloatType(leftType) || isFloatType(rightType) {
+			tc.addError(expr.GetLocation(), SeverityWarning,
+				"operator %s: comparing float values with == or != may give unexpected results due to floating-point precision", expr.Operator)
 		}
 	case ast.BooleanBinaryOpLT, ast.BooleanBinaryOpLTE, ast.BooleanBinaryOpGT, ast.BooleanBinaryOpGTE:
 		if !types.IsNumeric(leftType) || !types.IsNumeric(rightType) {
@@ -507,7 +510,7 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 	case *ast.BlockExpr:
 		return tc.inferBlockType(e)
 	case *ast.IfExpr:
-		return tc.checkIfExpr(e)
+		return tc.checkIfExpr(e, true)
 	case *ast.MatchExpr:
 		return tc.checkMatchExpr(e)
 	case *ast.MathBinaryOpExpr:
@@ -660,6 +663,14 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 		return nil
 	}
 
+	if expr.Operator == ast.MathBinaryOpDiv || expr.Operator == ast.MathBinaryOpMod || expr.Operator == ast.MathBinaryOpRemainder {
+		if isLiteralZero(expr.Right) {
+			tc.addError(expr.Right.GetLocation(), SeverityError,
+				"operator %s: division by zero", expr.Operator)
+			return nil
+		}
+	}
+
 	result := numericResultType(left, right)
 	if result == nil {
 		tc.addError(expr.GetLocation(), SeverityError,
@@ -668,6 +679,16 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 	}
 
 	return result
+}
+
+func isLiteralZero(expr ast.Expression) bool {
+	switch e := expr.(type) {
+	case *ast.IntegerLiteralExpr:
+		return e.Value == 0
+	case *ast.FloatLiteralExpr:
+		return e.Value == 0
+	}
+	return false
 }
 
 // inferArrayLiteralType infers the type of an array literal expression.

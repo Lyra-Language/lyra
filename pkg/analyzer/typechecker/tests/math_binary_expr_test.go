@@ -217,3 +217,38 @@ func TestTypeCheck_BinaryExpr_AllOps_Valid(t *testing.T) {
 		assertNoErrors(t, res)
 	}
 }
+
+// division/modulo by literal zero
+
+func TestTypeCheck_BinaryExpr_DivByLiteralZero_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = 5 / 0`, false)
+	assertErrorsAre(t, res, "operator /: division by zero")
+}
+
+func TestTypeCheck_BinaryExpr_ModByLiteralZero_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = 5 % 0`, false)
+	assertErrorsAre(t, res, "operator %: division by zero")
+}
+
+func TestTypeCheck_BinaryExpr_RemainderByLiteralZero_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = 5 %% 0`, false)
+	assertErrorsAre(t, res, "operator %%: division by zero")
+}
+
+func TestTypeCheck_BinaryExpr_DivByLiteralZeroFloat_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = 5.0 / 0.0`, false)
+	assertErrorsAre(t, res, "operator /: division by zero")
+}
+
+func TestTypeCheck_BinaryExpr_DivByNonZeroLiteral_NoError(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = 10 / 2`, false)
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_BinaryExpr_DivByVariable_NoError(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let d: int = 0
+		let x = 10 / d
+	`, false)
+	assertNoErrors(t, res)
+}

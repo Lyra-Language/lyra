@@ -45,23 +45,27 @@ func (tc *TypeChecker) inferBlockType(block *ast.BlockExpr) types.Type {
 }
 
 // checkIfExpr type-checks an if(/else) expression and returns its inferred
-// type. Two invariants are enforced:
+// type.
 //
-//  1. The condition must be bool (when its type is inferable).
-//  2. When an else branch is present and both branch types are inferable,
-//     the branches must have mutually assignable types.
-//
-// One-armed ifs (no else) are not required to have a meaningful type: the
-// result value is discarded when the expression is used as a statement, and
-// requiring an else would break the extremely common pattern
-// `if cond { do_something() }`.
-func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr) types.Type {
+// requireType controls whether branch-type compatibility is enforced:
+//   - true  (value context): both branches must have mutually assignable types;
+//     an error is emitted and nil is returned when they don't.
+//   - false (statement context): branches are type-checked individually for
+//     errors within them, but a mismatch between the two is not an error
+//     because the result is discarded. The policy propagates through else-if
+//     chains so that `if a { T } else if b { U } else { V }` used as a
+//     statement is always accepted regardless of T, U, V.
+func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr, requireType bool) types.Type {
 	// ── 1. condition must be bool ────────────────────────────────────────────
 	if expr.Condition != nil {
 		condType := tc.inferExprType(expr.Condition)
 		if condType != nil && !types.IsBoolean(condType) {
 			tc.addError(expr.Condition.GetLocation(), SeverityError,
 				"if condition must be boolean, got %s", condType)
+		}
+		if lit, ok := expr.Condition.(*ast.BooleanLiteralExpr); ok {
+			tc.addError(expr.Condition.GetLocation(), SeverityWarning,
+				"condition is always %t", lit.Value)
 		}
 	}
 
@@ -71,11 +75,18 @@ func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr) types.Type {
 		thenType = tc.inferExprType(expr.Then)
 	}
 	if expr.Else != nil {
-		elseType = tc.inferExprType(expr.Else)
+		if innerIf, ok := expr.Else.(*ast.IfExpr); ok && !requireType {
+			// Propagate statement context through else-if chains so that
+			// `if a { T } else if b { U } else { V }` as a statement never
+			// errors on branch mismatches at any level.
+			tc.checkIfExpr(innerIf, false)
+		} else {
+			elseType = tc.inferExprType(expr.Else)
+		}
 	}
 
-	// ── 3. branch compatibility (only when both branches exist) ──────────────
-	if expr.Else != nil && thenType != nil && elseType != nil {
+	// ── 3. branch compatibility (only when result is needed) ─────────────────
+	if requireType && expr.Else != nil && thenType != nil && elseType != nil {
 		common, ok := branchCommonType(thenType, elseType)
 		if !ok {
 			tc.addError(expr.GetLocation(), SeverityError,
@@ -86,7 +97,11 @@ func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr) types.Type {
 		return common
 	}
 
-	// One-armed if, or at least one branch type is unresolvable.
+	if !requireType {
+		return nil
+	}
+
+	// One-armed if (no else), or at least one branch type is unresolvable.
 	return thenType
 }
 
@@ -650,6 +665,10 @@ func (tc *TypeChecker) checkForLoopExpr(expr *ast.ForLoopExpr) {
 		if condType != nil && !types.IsBoolean(condType) {
 			tc.addError((*expr.Condition).GetLocation(), SeverityError,
 				"for loop condition must be boolean, got %s", condType)
+		}
+		if lit, ok := (*expr.Condition).(*ast.BooleanLiteralExpr); ok {
+			tc.addError((*expr.Condition).GetLocation(), SeverityWarning,
+				"condition is always %t", lit.Value)
 		}
 	}
 	tc.inferBlockType(&expr.Body)

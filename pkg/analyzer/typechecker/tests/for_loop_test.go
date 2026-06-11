@@ -55,3 +55,4 @@ func TestTypeCheck_ForLoop_OrWithStringOperand_Error(t *testing.T) {
 	`, false)
 	assertErrorsAre(t, res, "operator ||: operands must both be boolean, got boolean and string")
 }
+

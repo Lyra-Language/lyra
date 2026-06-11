@@ -10,9 +10,9 @@ func TestTypeCheck_Equality_TwoIntLiterals_NoError(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-func TestTypeCheck_Equality_TwoFloatLiterals_NoError(t *testing.T) {
+func TestTypeCheck_Equality_TwoFloatLiterals_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, "5.0 == 5.0", false)
-	assertNoErrors(t, res)
+	assertWarningsAre(t, res, "operator ==: comparing float values with == or != may give unexpected results due to floating-point precision")
 }
 
 func TestTypeCheck_Inequality_TwoIntLiterals_NoError(t *testing.T) {
@@ -20,9 +20,9 @@ func TestTypeCheck_Inequality_TwoIntLiterals_NoError(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-func TestTypeCheck_Inequality_TwoFloatLiterals_NoError(t *testing.T) {
+func TestTypeCheck_Inequality_TwoFloatLiterals_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, "5.0 != 6.0", false)
-	assertNoErrors(t, res)
+	assertWarningsAre(t, res, "operator !=: comparing float values with == or != may give unexpected results due to floating-point precision")
 }
 
 func TestTypeCheck_Equality_IntAndFloatLiterals_Error(t *testing.T) {
@@ -54,12 +54,12 @@ func TestTypeCheck_Equality_SameConcreteInt_NoError(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-func TestTypeCheck_Equality_SameConcreteFloat_NoError(t *testing.T) {
+func TestTypeCheck_Equality_SameConcreteFloat_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let a: f64 = 1.0
 		let b: f64 = 2.0
 		a == b`, false)
-	assertNoErrors(t, res)
+	assertWarningsAre(t, res, "operator ==: comparing float values with == or != may give unexpected results due to floating-point precision")
 }
 
 // Untyped int should widen to the concrete type on the other side, just as it

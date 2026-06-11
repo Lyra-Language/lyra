@@ -7,9 +7,6 @@
 - **Unsafe operations outside `unsafe` blocks** — `AddressOfExpr`, `DerefExpr`, raw pointer access, and calls to `IsUnsafe` lambdas should require an enclosing `UnsafeBlockExpr` or unsafe function
 
 ### Typechecker — Collection-level type checking
-- **Division/modulo by literal zero** — flag `x / 0`, `x % 0`, `x %% 0` with a literal-zero RHS in `inferMathBinaryExpr`
-- **Always-true/always-false conditions** — warn on `if true`, `if false`, and loop conditions that are obviously constant
-- **Float `==`/`!=` comparison warning** — emit a warning when two float-typed values are compared with `==` or `!=`
 
 ### Typechecker — Match expression polish
 - **Boolean match exhaustiveness** — for `bool` scrutinees, check that both `true` and `false` arms are present; reject non-bool literal patterns
@@ -42,6 +39,11 @@
 
 ## Completed
 ------------
+### 06/10/26 (continued)
+- **Division/modulo by literal zero** — `inferMathBinaryExpr` checks if operator is `/`, `%`, or `%%` and RHS is an integer/float literal with value 0; emits error `operator X: division by zero`; variable divisors pass through unchecked
+- **Always-true/always-false conditions** — `checkIfExpr` checks if the condition is a `*ast.BooleanLiteralExpr` and emits a warning `condition is always true/false`; grammar restricts for-loop conditions to binary expressions so bare literals there are not reachable at runtime
+- **Float `==`/`!=` comparison warning** — `checkBooleanBinaryOpExpr` emits a warning when either operand of `==` or `!=` is a float type (including untyped float literals and concrete f16/f32/f64)
+
 ### 06/10/26
 - **For loop condition must be `bool`** — `checkForLoopExpr` added; validates `&&`/`||` operands in conditions that reference outer-scope variables; init-clause loops skip condition checking (scope table pointer-copy limitation documented); `ForLoopExpr` and `NullCoalescingExpr` wired into `checkExpressionStmt` and `inferExprType`
 - **Null coalescing types** — `inferNullCoalescingExpr` infers both `??` operands and unifies via `branchCommonType`; emits "null coalescing operands have incompatible types" when they don't match
