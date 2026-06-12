@@ -168,8 +168,9 @@ func TestTypeCheck_NumericMatch_U8_ExclusiveRange_Ok(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-func TestTypeCheck_NumericMatch_U8_OverlappingRanges_Ok(t *testing.T) {
-	// Overlapping ranges still cover the full range.
+func TestTypeCheck_NumericMatch_U8_OverlappingRanges_Warning(t *testing.T) {
+	// Overlapping ranges still cover the full range, but the overlap portion
+	// of the second arm (150..=200) is unreachable — so a warning is emitted.
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
@@ -177,7 +178,7 @@ func TestTypeCheck_NumericMatch_U8_OverlappingRanges_Ok(t *testing.T) {
     150..=255 => "ok",
   }
 	`, false)
-	assertNoErrors(t, res)
+	assertWarningsAre(t, res, "overlapping match arm: this range overlaps with a previous arm")
 }
 
 func TestTypeCheck_NumericMatch_U8_MissingTop_Warning(t *testing.T) {

@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -107,7 +108,15 @@ func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr, requireType bool) types.Typ
 
 func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 	scrutineeType := tc.inferExprType(expr.Scrutinee)
-	if types.IsNumeric(scrutineeType) {
+	if types.IsBoolean(scrutineeType) {
+		for _, arm := range expr.MatchArms {
+			tc.checkBoolMatchArm(arm.Pattern)
+		}
+		if !boolMatchIsExhaustive(expr.MatchArms) {
+			tc.addError(expr.GetLocation(), SeverityWarning,
+				"match on bool is not exhaustive: add arms for both `true` and `false`, or a wildcard `_ => ...`")
+		}
+	} else if types.IsNumeric(scrutineeType) {
 		for _, arm := range expr.MatchArms {
 			tc.checkNumericMatchArm(arm.Pattern, scrutineeType)
 		}
@@ -140,7 +149,24 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 				"match on %s is not exhaustive: missing constructors: %s",
 				dt.Name, strings.Join(missing, ", "))
 		}
+	} else if tt, ok := scrutineeType.(types.TupleType); ok {
+		for _, arm := range expr.MatchArms {
+			tc.checkTupleMatchArm(arm.Pattern, tt)
+		}
+		if !hasUnguardedCatchAll(expr.MatchArms) {
+			tc.addError(expr.GetLocation(), SeverityWarning,
+				"match on tuple type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
+		}
+	} else if st, ok := tc.resolveToNamedStructType(scrutineeType); ok {
+		for _, arm := range expr.MatchArms {
+			tc.checkStructMatchArm(arm.Pattern, st)
+		}
+		if !hasUnguardedCatchAll(expr.MatchArms) {
+			tc.addError(expr.GetLocation(), SeverityWarning,
+				"match on struct type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
+		}
 	}
+	tc.checkDuplicateMatchArms(expr.MatchArms)
 	// Check that all arms yield a compatible type. Untyped literals are
 	// promoted to their default concrete type first so that a bare `2` reads
 	// as `int` rather than `integer literal` in error messages.
@@ -559,6 +585,207 @@ func (tc *TypeChecker) checkNumericMatchArm(pattern ast.Pattern, scrutineeType t
 		if isFloatType(scrutineeType) && kind != types.UntypedFloat {
 			tc.addError(p.GetLocation(), SeverityError,
 				"literal pattern '%s' is not a float type", p.Value)
+		}
+	}
+}
+
+// checkBoolMatchArm validates one arm's pattern against a bool scrutinee.
+// Only true/false literal patterns, wildcards, and identifiers are valid.
+func (tc *TypeChecker) checkBoolMatchArm(pattern ast.Pattern) {
+	switch p := pattern.(type) {
+	case *ast.WildcardPattern, *ast.IdentifierPattern:
+		return
+	case *ast.BindingPattern:
+		tc.checkBoolMatchArm(p.Pattern)
+	case *ast.LiteralPattern:
+		kind := literalPatternKind(p.Value)
+		if kind != types.Boolean {
+			tc.addError(p.GetLocation(), SeverityError,
+				"literal pattern '%s' is not a boolean value (expected true or false)", p.Value)
+		}
+	default:
+		tc.addError(pattern.GetLocation(), SeverityError,
+			"this pattern is not allowed on a bool scrutinee")
+	}
+}
+
+// boolMatchIsExhaustive reports whether the arms cover both true and false.
+// A wildcard/identifier makes it trivially exhaustive; otherwise both unguarded
+// true and false literal arms must be present.
+func boolMatchIsExhaustive(arms []ast.MatchArm) bool {
+	if hasUnguardedCatchAll(arms) {
+		return true
+	}
+	hasTrue, hasFalse := false, false
+	for _, arm := range arms {
+		if arm.Guard != nil {
+			continue
+		}
+		p, ok := arm.Pattern.(*ast.LiteralPattern)
+		if !ok {
+			continue
+		}
+		s, _ := p.Value.(string)
+		switch s {
+		case "true":
+			hasTrue = true
+		case "false":
+			hasFalse = true
+		}
+	}
+	return hasTrue && hasFalse
+}
+
+// checkTupleMatchArm validates one arm's pattern against a tuple scrutinee.
+func (tc *TypeChecker) checkTupleMatchArm(pattern ast.Pattern, tt types.TupleType) {
+	switch p := pattern.(type) {
+	case *ast.WildcardPattern, *ast.IdentifierPattern:
+		return
+	case *ast.BindingPattern:
+		tc.checkTupleMatchArm(p.Pattern, tt)
+	case *ast.TuplePattern:
+		if len(p.Elements) != len(tt.Elements) {
+			tc.addError(p.GetLocation(), SeverityError,
+				"tuple pattern has %d element(s) but scrutinee has %d",
+				len(p.Elements), len(tt.Elements))
+			return
+		}
+		for i, elem := range p.Elements {
+			tc.checkTuplePatternElement(elem, tt.Elements[i])
+		}
+	default:
+		tc.addError(pattern.GetLocation(), SeverityError,
+			"expected tuple pattern, got %s", pattern.GetName())
+	}
+}
+
+// checkTuplePatternElement validates a single element pattern against the
+// tuple element's declared type.
+func (tc *TypeChecker) checkTuplePatternElement(pattern ast.Pattern, elemType types.Type) {
+	switch p := pattern.(type) {
+	case *ast.WildcardPattern, *ast.IdentifierPattern, *ast.RestPattern:
+		return
+	case *ast.BindingPattern:
+		tc.checkTuplePatternElement(p.Pattern, elemType)
+	case *ast.LiteralPattern:
+		if elemType == nil {
+			return
+		}
+		elemPrim, ok := elemType.(types.PrimitiveType)
+		if !ok {
+			return
+		}
+		kind := literalPatternKind(p.Value)
+		if !isAssignable(types.PrimitiveType{Name: kind}, elemPrim) {
+			tc.addError(p.GetLocation(), SeverityError,
+				"tuple element pattern %s does not match element type %s", p.Value, elemType)
+		}
+	}
+}
+
+// resolveToNamedStructType returns the NamedStructType underlying t, following
+// UnresolvedType indirection, or (NamedStructType{}, false) when t is not a struct.
+func (tc *TypeChecker) resolveToNamedStructType(t types.Type) (types.NamedStructType, bool) {
+	if t == nil {
+		return types.NamedStructType{}, false
+	}
+	if st, ok := t.(types.NamedStructType); ok {
+		return st, true
+	}
+	if u, ok := t.(types.UnresolvedType); ok {
+		if decl, exists := tc.symTable.Types[u.Name]; exists {
+			if st, ok := decl.Type.(types.NamedStructType); ok {
+				return st, true
+			}
+		}
+	}
+	return types.NamedStructType{}, false
+}
+
+// checkStructMatchArm validates one arm's pattern against a named struct scrutinee.
+// Validates that struct pattern fields exist on the struct.
+func (tc *TypeChecker) checkStructMatchArm(pattern ast.Pattern, st types.NamedStructType) {
+	switch p := pattern.(type) {
+	case *ast.WildcardPattern, *ast.IdentifierPattern:
+		return
+	case *ast.BindingPattern:
+		tc.checkStructMatchArm(p.Pattern, st)
+	case *ast.StructPattern:
+		for _, field := range p.Fields {
+			if !structHasField(st, field.Name) {
+				tc.addError(field.GetLocation(), SeverityError,
+					"struct %s has no field %q", st.Name, field.Name)
+			}
+		}
+	default:
+		tc.addError(pattern.GetLocation(), SeverityError,
+			"expected struct pattern, got %s", pattern.GetName())
+	}
+}
+
+func structHasField(st types.NamedStructType, name string) bool {
+	for _, f := range st.Fields {
+		if f.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// checkDuplicateMatchArms warns about identical literal arms and overlapping
+// numeric range intervals (which make later arms unreachable).
+func (tc *TypeChecker) checkDuplicateMatchArms(arms []ast.MatchArm) {
+	// Detect duplicate literal patterns across all scrutinee types.
+	seen := make(map[string]bool)
+	for _, arm := range arms {
+		if arm.Guard != nil {
+			continue
+		}
+		p, ok := arm.Pattern.(*ast.LiteralPattern)
+		if !ok {
+			continue
+		}
+		key := fmt.Sprintf("%v", p.Value)
+		if seen[key] {
+			tc.addError(arm.Pattern.GetLocation(), SeverityWarning,
+				"duplicate match arm: pattern %s is already covered by an earlier arm", key)
+		}
+		seen[key] = true
+	}
+
+	// Detect overlapping range intervals — only for arms that use RangePattern
+	// (literal point duplicates are already caught above).
+	type intervalLoc struct {
+		lo, hi int64
+		loc    ast.Location
+	}
+	var ivs []intervalLoc
+	for _, arm := range arms {
+		if arm.Guard != nil {
+			continue
+		}
+		if _, isRange := arm.Pattern.(*ast.RangePattern); !isRange {
+			continue
+		}
+		lo, hi, ok := armIntInterval(arm)
+		if ok && lo <= hi {
+			ivs = append(ivs, intervalLoc{lo, hi, arm.Pattern.GetLocation()})
+		}
+	}
+	if len(ivs) < 2 {
+		return
+	}
+	sort.Slice(ivs, func(i, j int) bool {
+		return ivs[i].lo < ivs[j].lo
+	})
+	maxHi := ivs[0].hi
+	for i := 1; i < len(ivs); i++ {
+		if ivs[i].lo <= maxHi {
+			tc.addError(ivs[i].loc, SeverityWarning,
+				"overlapping match arm: this range overlaps with a previous arm")
+		}
+		if ivs[i].hi > maxHi {
+			maxHi = ivs[i].hi
 		}
 	}
 }

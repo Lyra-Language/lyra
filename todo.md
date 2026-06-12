@@ -9,9 +9,6 @@
 ### Typechecker — Collection-level type checking
 
 ### Typechecker — Match expression polish
-- **Boolean match exhaustiveness** — for `bool` scrutinees, check that both `true` and `false` arms are present; reject non-bool literal patterns
-- **Tuple and struct match arm validation** — `checkMatchExpr` currently falls through for tuple and named-struct scrutinees without validating patterns
-- **Duplicate/overlapping match arms** — detect identical literal arms or overlapping numeric ranges using the existing interval logic
 - **Identifier pattern shadowing a constructor** — warn when `match foo { Some => ... }` binds `Some` as a variable instead of matching the constructor
 
 ### Typechecker — Trait/impl conformance
@@ -39,6 +36,12 @@
 
 ## Completed
 ------------
+### 06/11/26 (continued, part 2)
+- **Boolean match exhaustiveness** — `checkBoolMatchArm` validates only `true`/`false` literal patterns, wildcards, identifiers; `boolMatchIsExhaustive` requires both arms or a wildcard; non-bool literals emit errors
+- **Tuple match arm validation** — `checkTupleMatchArm` validates arity and element patterns; requires wildcard for exhaustiveness
+- **Named-struct match arm validation** — `checkStructMatchArm` validates struct pattern field names against the declared struct; requires wildcard for exhaustiveness; `resolveToNamedStructType` follows `UnresolvedType` indirection
+- **Duplicate/overlapping match arms** — `checkDuplicateMatchArms` detects identical unguarded literal patterns (any scrutinee type) and overlapping `RangePattern` intervals (numeric types); duplicate literals are errors; range overlaps are warnings
+
 ### 06/10/26 (continued)
 - **Division/modulo by literal zero** — `inferMathBinaryExpr` checks if operator is `/`, `%`, or `%%` and RHS is an integer/float literal with value 0; emits error `operator X: division by zero`; variable divisors pass through unchecked
 - **Always-true/always-false conditions** — `checkIfExpr` checks if the condition is a `*ast.BooleanLiteralExpr` and emits a warning `condition is always true/false`; grammar restricts for-loop conditions to binary expressions so bare literals there are not reachable at runtime
