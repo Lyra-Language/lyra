@@ -3,12 +3,10 @@ package types
 type PrimitiveTypeName string
 
 const (
-	Int              PrimitiveTypeName = "int"
 	Int8             PrimitiveTypeName = "i8"
 	Int16            PrimitiveTypeName = "i16"
 	Int32            PrimitiveTypeName = "i32"
 	Int64            PrimitiveTypeName = "i64"
-	UInt             PrimitiveTypeName = "uint"
 	UInt8            PrimitiveTypeName = "u8"
 	UInt16           PrimitiveTypeName = "u16"
 	UInt32           PrimitiveTypeName = "u32"

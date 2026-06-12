@@ -18,10 +18,10 @@ func TestTypeCheck_Ident_RefersToAnnotatedDecl(t *testing.T) {
 }
 
 func TestTypeCheck_Ident_RefersToUnannotatedDecl(t *testing.T) {
-	// x has no annotation; TypeTable records "int". y: int = x should pass.
+	// x has no annotation; TypeTable records "i64". y: i64 = x should pass.
 	res := parseCollectAndCheck(t, `
 		let x = 42
-		let y: int = x
+		let y: i64 = x
 	`, false)
 	assertNoErrors(t, res)
 }
@@ -29,9 +29,9 @@ func TestTypeCheck_Ident_RefersToUnannotatedDecl(t *testing.T) {
 func TestTypeCheck_Ident_MismatchViaReference(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let x: string = "hi"
-		let y: int = x
+		let y: i64 = x
 	`, false)
-	assertErrorsAre(t, res, "y: cannot assign string to int")
+	assertErrorsAre(t, res, "y: cannot assign string to i64")
 }
 
 // --- binary expression inference (#1) ---
@@ -88,13 +88,13 @@ func TestTypeCheck_BinaryExpr_StringAnnotation_IntAddition(t *testing.T) {
 }
 
 func TestTypeCheck_BinaryExpr_IntAnnotation_FloatAddition(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: int = 1.0 + 2.0`, false)
-	assertErrorsAre(t, res, "x: cannot assign float literal to int")
+	res := parseCollectAndCheck(t, `let x: i64 = 1.0 + 2.0`, false)
+	assertErrorsAre(t, res, "x: cannot assign float literal to i64")
 }
 
 func TestTypeCheck_BinaryExpr_IntAnnotation_MixedAddition(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: int = 1 + 2.0`, false)
-	assertErrorsAre(t, res, "x: cannot assign float literal to int")
+	res := parseCollectAndCheck(t, `let x: i64 = 1 + 2.0`, false)
+	assertErrorsAre(t, res, "x: cannot assign float literal to i64")
 }
 
 // Incompatible concrete types
@@ -119,7 +119,7 @@ func TestTypeCheck_BinaryExpr_ConcreteIntAndConcreteFloat_Error(t *testing.T) {
 // operand type errors
 
 func TestTypeCheck_BinaryExpr_NonNumericOperand(t *testing.T) {
-	// flag is bool (non-numeric); adding it to an int should error.
+	// flag is bool (non-numeric); adding it to an i64 should error.
 	res := parseCollectAndCheck(t, `
 		let flag: bool = true
 		let x = flag + 1
@@ -136,8 +136,8 @@ func TestTypeCheck_BinaryExpr_TypeTable_UntypedInt(t *testing.T) {
 	if !ok {
 		t.Fatal("expected type table entry for binary expr")
 	}
-	if got := typ.String(); got != "int" {
-		t.Errorf("expected int, got %s", got)
+	if got := typ.String(); got != "i64" {
+		t.Errorf("expected i64, got %s", got)
 	}
 }
 
@@ -178,7 +178,7 @@ func TestTypeCheck_BinaryExpr_TypeTable_FloatPlusFloat_IsF64(t *testing.T) {
 }
 
 func TestTypeCheck_BinaryExpr_TypeTable_ConcreteInt_WinsOverUntyped(t *testing.T) {
-	// untyped int + i64 → i64
+	// untyped i64 + i64 → i64
 	res := parseCollectAndCheck(t, `
 		let a: i64 = 10
 		let x = a + 5
@@ -247,7 +247,7 @@ func TestTypeCheck_BinaryExpr_DivByNonZeroLiteral_NoError(t *testing.T) {
 
 func TestTypeCheck_BinaryExpr_DivByVariable_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let d: int = 0
+		let d: i64 = 0
 		let x = 10 / d
 	`, false)
 	assertNoErrors(t, res)

@@ -8,7 +8,7 @@ import (
 // The Lyra grammar restricts the for loop condition to boolean_expr, so the
 // condition itself is always syntactically boolean. The typechecker validates
 // that the operands of &&/|| are actually bool, catching mistakes like using
-// an int or string variable where a bool is required.
+// an i64 or string variable where a bool is required.
 //
 // When a for loop has an init clause (e.g. `for var i = 0; i < 10; ...`),
 // the init variable lives in a loop-local scope that the typechecker's scope
@@ -36,14 +36,14 @@ func TestTypeCheck_ForLoop_WithInitAndPost_NoError(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-// A for loop with && whose left operand is int (not bool) should error.
+// A for loop with && whose left operand is i64 (not bool) should error.
 func TestTypeCheck_ForLoop_AndWithIntOperand_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let a: int = 1
+		let a: i64 = 1
 		let b: bool = true
 		for a && b { }
 	`, false)
-	assertErrorsAre(t, res, "operator &&: operands must both be boolean, got int and boolean")
+	assertErrorsAre(t, res, "operator &&: operands must both be boolean, got i64 and boolean")
 }
 
 // A for loop with || whose right operand is a string should error.

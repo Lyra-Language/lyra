@@ -6,7 +6,7 @@ import (
 
 func TestIndexExpr_StaticArray_ReturnsElementType(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]int = [1, 2, 3]
+		let xs: [3]i64 = [1, 2, 3]
 		let y = xs[0]
 	`, false)
 	assertNoErrors(t, res)
@@ -30,7 +30,7 @@ func TestIndexExpr_String_ReturnsChar(t *testing.T) {
 
 func TestIndexExpr_NonIntegerIndex_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]int = [1, 2, 3]
+		let xs: [3]i64 = [1, 2, 3]
 		let y = xs[1.5]
 	`, false)
 	assertErrorsAre(t, res, "index must be an integer, got float literal")
@@ -41,12 +41,12 @@ func TestIndexExpr_NonIndexable_Error(t *testing.T) {
 		let x = 42
 		let y = x[0]
 	`, false)
-	assertErrorsAre(t, res, "cannot index into type int")
+	assertErrorsAre(t, res, "cannot index into type i64")
 }
 
 func TestIndexExpr_StaticArray_LiteralInBounds_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]int = [1, 2, 3]
+		let xs: [3]i64 = [1, 2, 3]
 		let y = xs[2]
 	`, false)
 	assertNoErrors(t, res)
@@ -54,7 +54,7 @@ func TestIndexExpr_StaticArray_LiteralInBounds_Ok(t *testing.T) {
 
 func TestIndexExpr_StaticArray_LiteralOutOfBounds_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]int = [1, 2, 3]
+		let xs: [3]i64 = [1, 2, 3]
 		let y = xs[3]
 	`, false)
 	assertErrorsAre(t, res, "index 3 out of range for array of size 3")
@@ -88,8 +88,8 @@ func TestIndexExpr_StaticArray_ConstLetIndex_OutOfBounds_Error(t *testing.T) {
 	// A let binding with a literal initializer is a compile-time constant —
 	// its value is knowable and out-of-bounds access must be caught.
 	res := parseCollectAndCheck(t, `
-		let xs: [3]int = [1, 2, 3]
-		let i: int = 10
+		let xs: [3]i64 = [1, 2, 3]
+		let i: i64 = 10
 		let y = xs[i]
 	`, false)
 	assertErrorsAre(t, res, "index 10 out of range for array of size 3")
@@ -97,8 +97,8 @@ func TestIndexExpr_StaticArray_ConstLetIndex_OutOfBounds_Error(t *testing.T) {
 
 func TestIndexExpr_StaticArray_ConstLetIndex_InBounds_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let xs: [3]int = [1, 2, 3]
-		let i: int = 2
+		let xs: [3]i64 = [1, 2, 3]
+		let i: i64 = 2
 		let y = xs[i]
 	`, false)
 	assertNoErrors(t, res)
@@ -106,7 +106,7 @@ func TestIndexExpr_StaticArray_ConstLetIndex_InBounds_Ok(t *testing.T) {
 
 func TestIndexExpr_Tuple_FirstElement_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let t: (int, string) = (42, "hello")
+		let t: (i64, string) = (42, "hello")
 		let x = t[0]
 	`, false)
 	assertNoErrors(t, res)
@@ -114,7 +114,7 @@ func TestIndexExpr_Tuple_FirstElement_Ok(t *testing.T) {
 
 func TestIndexExpr_Tuple_SecondElement_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let t: (int, string) = (42, "hello")
+		let t: (i64, string) = (42, "hello")
 		let s = t[1]
 	`, false)
 	assertNoErrors(t, res)
@@ -122,7 +122,7 @@ func TestIndexExpr_Tuple_SecondElement_Ok(t *testing.T) {
 
 func TestIndexExpr_Tuple_OutOfBounds_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let t: (int, string) = (42, "hello")
+		let t: (i64, string) = (42, "hello")
 		let x = t[2]
 	`, false)
 	assertErrorsAre(t, res, "tuple index 2 out of range for tuple with 2 elements")
@@ -132,8 +132,8 @@ func TestIndexExpr_Tuple_ConstLetIndex_Ok(t *testing.T) {
 	// A let binding with a literal initializer resolves as a compile-time constant,
 	// so tuple indexing through it is allowed.
 	res := parseCollectAndCheck(t, `
-		let t: (int, string) = (42, "hello")
-		let i: int = 1
+		let t: (i64, string) = (42, "hello")
+		let i: i64 = 1
 		let x = t[i]
 	`, false)
 	assertNoErrors(t, res)
@@ -142,8 +142,8 @@ func TestIndexExpr_Tuple_ConstLetIndex_Ok(t *testing.T) {
 func TestIndexExpr_Tuple_RuntimeVariableIndex_Error(t *testing.T) {
 	// An uninitialized var has no compile-time value — tuple index must be a constant.
 	res := parseCollectAndCheck(t, `
-		let t: (int, string) = (42, "hello")
-		var i: int
+		let t: (i64, string) = (42, "hello")
+		var i: i64
 		i = 0
 		let x = t[i]
 	`, false)

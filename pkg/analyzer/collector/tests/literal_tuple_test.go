@@ -3,7 +3,7 @@ package collector_test
 import "testing"
 
 func TestCollector_SimpleAnonymousTupleLiteral(t *testing.T) {
-	runGoldenTest(t, `let point: (int, int) = (1, 2)`, "simple_anonymous_tuple_literal")
+	runGoldenTest(t, `let point: (i64, i64) = (1, 2)`, "simple_anonymous_tuple_literal")
 }
 
 func TestCollector_SimpleNamedTupleLiteral(t *testing.T) {

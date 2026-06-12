@@ -29,7 +29,7 @@ import "testing"
 // tail expression.
 func TestTypeCheck_BlockScope_LocalVisibleAtTail(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let result: int = {
+		let result: i64 = {
 			let x = 42
 			x
 		}
@@ -47,19 +47,19 @@ func TestTypeCheck_BlockScope_LocalTypeMismatch(t *testing.T) {
 			x
 		}
 	`, false)
-	assertErrorsAre(t, res, "result: cannot assign int to string")
+	assertErrorsAre(t, res, "result: cannot assign i64 to string")
 }
 
 // TestTypeCheck_BlockScope_AnnotatedLocal_TypeMismatch verifies the same for a
 // block-local variable that carries its own type annotation.
 func TestTypeCheck_BlockScope_AnnotatedLocal_TypeMismatch(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let result: int = {
+		let result: i64 = {
 			let x: string = "hello"
 			x
 		}
 	`, false)
-	assertErrorsAre(t, res, "result: cannot assign string to int")
+	assertErrorsAre(t, res, "result: cannot assign string to i64")
 }
 
 // TestTypeCheck_BlockScope_OuterVariableVisibleInBlock verifies that a variable
@@ -91,7 +91,7 @@ func TestTypeCheck_BlockScope_OuterVariableMismatch(t *testing.T) {
 // an outer block is visible inside a deeper nested block.
 func TestTypeCheck_BlockScope_NestedBlocks(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let result: int = {
+		let result: i64 = {
 			let outer = 1
 			let inner = {
 				outer
@@ -115,7 +115,7 @@ func TestTypeCheck_BlockScope_NestedBlocks_InnerTypeMismatch(t *testing.T) {
 			inner
 		}
 	`, false)
-	assertErrorsAre(t, res, "result: cannot assign int to string")
+	assertErrorsAre(t, res, "result: cannot assign i64 to string")
 }
 
 // TestTypeCheck_BlockScope_IfElse_LocalVariables verifies that variables
@@ -124,7 +124,7 @@ func TestTypeCheck_BlockScope_NestedBlocks_InnerTypeMismatch(t *testing.T) {
 func TestTypeCheck_BlockScope_IfElse_LocalVariables(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let flag: bool = true
-		let result: int = if flag {
+		let result: i64 = if flag {
 			let a = 1
 			a
 		} else {
@@ -149,14 +149,14 @@ func TestTypeCheck_BlockScope_IfElse_BranchTypeMismatch(t *testing.T) {
 		}
 	`, false)
 	assertErrorsAre(t, res,
-		"if/else branches have incompatible types: then is int, else is string")
+		"if/else branches have incompatible types: then is i64, else is string")
 }
 
 // TestTypeCheck_BlockScope_MultipleLocals verifies that several locals can be
 // declared inside a block and all remain visible throughout the block.
 func TestTypeCheck_BlockScope_MultipleLocals(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let result: int = {
+		let result: i64 = {
 			let a = 1
 			let b = 2
 			let c = 3
@@ -209,8 +209,8 @@ func TestTypeCheck_LambdaScope_AnnotatedLocal_ReturnMismatch(t *testing.T) {
 // produces no errors when the types are compatible.
 func TestTypeCheck_LambdaScope_ParamAndAnnotatedLocal(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let add = (x: int) -> int => {
-			let y: int = 1
+		let add = (x: i64) -> i64 => {
+			let y: i64 = 1
 			x + y
 		}
 	`, false)

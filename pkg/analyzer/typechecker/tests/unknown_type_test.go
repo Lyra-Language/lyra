@@ -125,13 +125,13 @@ func TestUnknownType_MathAssign_ErrorAtBothSites(t *testing.T) {
 // ── known types do not trigger the error ─────────────────────────────────────
 
 func TestUnknownType_KnownPrimitive_NoError(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: int = 42`, false)
+	res := parseCollectAndCheck(t, `let x: i64 = 42`, false)
 	assertNoErrors(t, res)
 }
 
 func TestUnknownType_KnownStruct_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		struct Point { x: int, y: int }
+		struct Point { x: i64, y: i64 }
 		let p: Point = Point { x: 1, y: 2 }
 	`, false)
 	assertNoErrors(t, res)
@@ -152,7 +152,7 @@ func TestUnknownType_KnownDataType_NoError(t *testing.T) {
 // unknown type in a variable annotation.
 
 func TestUnknownType_FunctionParam_WithReturnType(t *testing.T) {
-	res := parseCollectAndCheck(t, `let f = (x: Frob) -> int => 42`, false)
+	res := parseCollectAndCheck(t, `let f = (x: Frob) -> i64 => 42`, false)
 	assertErrorsAre(t, res, `unknown type "Frob"`)
 }
 
@@ -165,12 +165,12 @@ func TestUnknownType_FunctionParam_NoReturnType(t *testing.T) {
 
 func TestUnknownType_FunctionParam_OneUnknownOneKnown(t *testing.T) {
 	// Only the unknown type emits an error; the known primitive is silent.
-	res := parseCollectAndCheck(t, `let f = (x: Frob, y: int) -> int => 42`, false)
+	res := parseCollectAndCheck(t, `let f = (x: Frob, y: i64) -> i64 => 42`, false)
 	assertErrorsAre(t, res, `unknown type "Frob"`)
 }
 
 func TestUnknownType_FunctionParam_TwoUnknown(t *testing.T) {
-	res := parseCollectAndCheck(t, `let f = (x: Frob, y: Bar) -> int => 42`, false)
+	res := parseCollectAndCheck(t, `let f = (x: Frob, y: Bar) -> i64 => 42`, false)
 	assertErrorsAre(t, res,
 		`unknown type "Frob"`,
 		`unknown type "Bar"`,
@@ -180,14 +180,14 @@ func TestUnknownType_FunctionParam_TwoUnknown(t *testing.T) {
 func TestUnknownType_FunctionParam_KnownStructType_NoError(t *testing.T) {
 	// A declared struct type in a parameter annotation resolves correctly.
 	res := parseCollectAndCheck(t, `
-		struct Point { x: int, y: int }
-		let origin = (p: Point) -> int => 0
+		struct Point { x: i64, y: i64 }
+		let origin = (p: Point) -> i64 => 0
 	`, false)
 	assertNoErrors(t, res)
 }
 
 func TestUnknownType_FunctionParam_KnownPrimitives_NoError(t *testing.T) {
-	res := parseCollectAndCheck(t, `let add = (a: int, b: int) -> int => a + b`, false)
+	res := parseCollectAndCheck(t, `let add = (a: i64, b: i64) -> i64 => a + b`, false)
 	assertNoErrors(t, res)
 }
 
@@ -195,7 +195,7 @@ func TestUnknownType_FunctionParam_CallSite_CompoundErrors(t *testing.T) {
 	// The declaration emits "unknown type"; the call site then emits a
 	// separate argument-type error because the param type is still unresolved.
 	res := parseCollectAndCheck(t, `
-		let f = (x: Frob) -> int => 42
+		let f = (x: Frob) -> i64 => 42
 		f(5)
 	`, false)
 	assertErrorsAre(t, res,
@@ -206,8 +206,8 @@ func TestUnknownType_FunctionParam_CallSite_CompoundErrors(t *testing.T) {
 
 func TestKnownUserType_FunctionParam_CallSite_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		newtype Degree = int where range(0..<360)
-		let f = (x: Degree) -> int => 42
+		newtype Degree = i64 where range(0..<360)
+		let f = (x: Degree) -> i64 => 42
 		f(90)
 	`, false)
 	assertNoErrors(t, res)
@@ -220,7 +220,7 @@ func TestKnownUserType_FunctionParam_CallSite_NoError(t *testing.T) {
 // mismatch is reported instead.
 
 func TestUnknownType_FunctionReturnType_MismatchNotUnknownType(t *testing.T) {
-	res := parseCollectAndCheck(t, `let f = (x: int) -> Frob => 42`, false)
+	res := parseCollectAndCheck(t, `let f = (x: i64) -> Frob => 42`, false)
 	assertErrorsAre(t, res,
 		`f: return type mismatch: expected Frob, got integer literal`,
 	)

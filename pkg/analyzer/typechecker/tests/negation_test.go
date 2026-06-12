@@ -9,7 +9,7 @@ import (
 // --- valid negation: signed integer targets ---
 
 func TestTypeCheck_Negation_IntAnnotation(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: int = -42`, false)
+	res := parseCollectAndCheck(t, `let x: i64 = -42`, false)
 	assertNoErrors(t, res)
 }
 
@@ -35,7 +35,7 @@ func TestTypeCheck_Negation_F32Annotation(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-// --- no annotation: promotes to int ---
+// --- no annotation: promotes to i64 ---
 
 func TestTypeCheck_Negation_NoAnnotation(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x = -42`, false)
@@ -51,8 +51,8 @@ func TestTypeCheck_Negation_TypeTable_NoAnnotation(t *testing.T) {
 	if !ok {
 		t.Fatal("expected type table entry for negation expr")
 	}
-	if got := typ.String(); got != "int" {
-		t.Errorf("expected int, got %s", got)
+	if got := typ.String(); got != "i64" {
+		t.Errorf("expected i64, got %s", got)
 	}
 }
 
@@ -71,7 +71,7 @@ func TestTypeCheck_Negation_TypeTable_I32Annotation(t *testing.T) {
 // --- binary expressions with negated literals ---
 
 func TestTypeCheck_Negation_BinaryExpr_NegatedPlusPositive(t *testing.T) {
-	// -3 + 5: UntypedSignedInt + UntypedInt → UntypedSignedInt (promotes to int)
+	// -3 + 5: UntypedSignedInt + UntypedInt → UntypedSignedInt (promotes to i64)
 	res := parseCollectAndCheck(t, `let x = -3 + 5`, false)
 	assertNoErrors(t, res)
 }
@@ -88,7 +88,7 @@ func TestTypeCheck_Negation_BinaryExpr_WithSignedVar(t *testing.T) {
 
 func TestTypeCheck_Negation_Reassignment_Valid(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		var x: int = 0
+		var x: i64 = 0
 		x = -5
 	`, false)
 	assertNoErrors(t, res)

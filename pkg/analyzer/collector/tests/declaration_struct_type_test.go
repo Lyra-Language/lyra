@@ -5,8 +5,8 @@ import "testing"
 func TestCollector_StructTypeDeclaration(t *testing.T) {
 	source := `
 		pub stack struct Point {
-			x: int,
-			y: int = 0,
+			x: i64,
+			y: i64 = 0,
 		}
 	`
 	runGoldenTest(t, source, "basic_struct_type_declaration")

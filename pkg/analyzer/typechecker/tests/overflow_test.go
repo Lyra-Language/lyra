@@ -62,7 +62,7 @@ func TestTypeCheck_Overflow_I64_LargeValid(t *testing.T) {
 }
 
 func TestTypeCheck_Overflow_Int_LargeValid(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x: int = 1000000000000`, false)
+	res := parseCollectAndCheck(t, `let x: i64 = 1000000000000`, false)
 	assertNoErrors(t, res)
 }
 

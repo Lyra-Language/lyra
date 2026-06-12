@@ -54,27 +54,27 @@ func TestStringConcat_TypeTable_RecordsString(t *testing.T) {
 
 func TestStringConcat_NonStringLeft_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let n: int = 42
+		let n: i64 = 42
 		let s = n ++ " world"
 	`, false)
-	assertErrorsAre(t, res, "operator ++: operands must be strings, got int and string")
+	assertErrorsAre(t, res, "operator ++: operands must be strings, got i64 and string")
 }
 
 func TestStringConcat_NonStringRight_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let n: int = 42
+		let n: i64 = 42
 		let s = "hello" ++ n
 	`, false)
-	assertErrorsAre(t, res, "operator ++: operands must be strings, got string and int")
+	assertErrorsAre(t, res, "operator ++: operands must be strings, got string and i64")
 }
 
 func TestStringConcat_BothNonString_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let n: int = 42
+		let n: i64 = 42
 		let b: bool = true
 		let s = n ++ b
 	`, false)
-	assertErrorsAre(t, res, "operator ++: operands must be strings, got int and boolean")
+	assertErrorsAre(t, res, "operator ++: operands must be strings, got i64 and boolean")
 }
 
 func TestStringConcat_BoolVar_Error(t *testing.T) {
@@ -88,6 +88,6 @@ func TestStringConcat_BoolVar_Error(t *testing.T) {
 // --- annotation mismatch ---
 
 func TestStringConcat_WrongAnnotation_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `let s: int = "hello" ++ " world"`, false)
-	assertErrorsAre(t, res, "s: cannot assign string to int")
+	res := parseCollectAndCheck(t, `let s: i64 = "hello" ++ " world"`, false)
+	assertErrorsAre(t, res, "s: cannot assign string to i64")
 }

@@ -13,7 +13,7 @@ func TestCollector_TraitDeclaration(t *testing.T) {
 
 func TestCollector_TraitImplementation(t *testing.T) {
 	source := `
-	impl Show for int {
+	impl Show for i64 {
 		show = (n) => int_to_string(n)
 	}
 
@@ -76,7 +76,7 @@ func TestCollector_TraitDeclarationWithMultipleMethodsAndGenericParameters(t *te
 		add: (c<e>, e) -> c<e>,
 		remove: (c<e>, e) -> c<e>,
 		contains: (c<e>, e) -> bool,
-		size: (c<e>) -> int
+		size: (c<e>) -> i64
 	}
 	`
 	runGoldenTest(t, source, "trait_declaration_with_multiple_methods_and_generic_parameters")

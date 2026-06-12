@@ -15,7 +15,7 @@ func TestCollectArrayRepeatInitializationWithStructs(t *testing.T) {
 }
 
 func TestCollectSimpleDynamicArrayLiteral(t *testing.T) {
-	runGoldenTest(t, `let arr: stack []int = [1, 2, 3]`, "simple_dynamic_array_literal")
+	runGoldenTest(t, `let arr: stack []i64 = [1, 2, 3]`, "simple_dynamic_array_literal")
 }
 
 func TestCollectArrayRepeatInitialization(t *testing.T) {

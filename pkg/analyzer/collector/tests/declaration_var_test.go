@@ -14,7 +14,7 @@ func TestCollector_VariableDeclarationWithLet(t *testing.T) {
 }
 
 func TestCollector_VariableDeclarationWithVar(t *testing.T) {
-	runGoldenTest(t, `var the_answer: int = 42`, "variable_declaration_with_var")
+	runGoldenTest(t, `var the_answer: i64 = 42`, "variable_declaration_with_var")
 }
 
 func TestCollector_VariableDeclarationWithConst(t *testing.T) {
@@ -26,5 +26,5 @@ func TestCollector_VariableDeclarationWithoutTypeAnnotation(t *testing.T) {
 }
 
 func TestCollector_VariableDeclarationWithTupleType(t *testing.T) {
-	runGoldenTest(t, `let the_answer: (int, int) = (42, 13)`, "variable_declaration_with_tuple_type")
+	runGoldenTest(t, `let the_answer: (i64, i64) = (42, 13)`, "variable_declaration_with_tuple_type")
 }

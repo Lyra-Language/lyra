@@ -39,7 +39,7 @@ func integerFitsInType(value int64, name types.PrimitiveTypeName) bool {
 		return value >= math.MinInt16 && value <= math.MaxInt16
 	case types.Int32:
 		return value >= math.MinInt32 && value <= math.MaxInt32
-	case types.Int64, types.Int:
+	case types.Int64:
 		// IntegerLiteralExpr.Value is int64, so any stored value already fits.
 		return true
 	case types.UInt8:
@@ -48,7 +48,7 @@ func integerFitsInType(value int64, name types.PrimitiveTypeName) bool {
 		return value >= 0 && value <= math.MaxUint16
 	case types.UInt32:
 		return value >= 0 && value <= math.MaxUint32
-	case types.UInt64, types.UInt:
+	case types.UInt64:
 		// Values > math.MaxInt64 cannot be stored in int64 by the parser, so
 		// the only out-of-range case we can catch is a negative value — which
 		// the assignability check already rejects via UntypedSignedInt. Always

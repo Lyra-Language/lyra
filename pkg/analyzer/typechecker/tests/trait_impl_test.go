@@ -4,7 +4,7 @@ import "testing"
 
 func TestTraitImpl_UnknownTrait(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-	impl Ghost for int {
+	impl Ghost for i64 {
 		foo = (n) => n
 	}
 	`, false)
@@ -17,7 +17,7 @@ func TestTraitImpl_AllRequiredMethodsProvided(t *testing.T) {
 		show: (Self) -> string
 	}
 
-	impl Show for int {
+	impl Show for i64 {
 		show = (n) => "x"
 	}
 	`, false)
@@ -30,10 +30,10 @@ func TestTraitImpl_MissingRequiredMethod(t *testing.T) {
 		show: (Self) -> string
 	}
 
-	impl Show for int {
+	impl Show for i64 {
 	}
 	`, false)
-	assertErrorsAre(t, res, `impl of Show for int: missing required method "show"`)
+	assertErrorsAre(t, res, `impl of Show for i64: missing required method "show"`)
 }
 
 func TestTraitImpl_DefaultMethodNotRequired(t *testing.T) {
@@ -42,7 +42,7 @@ func TestTraitImpl_DefaultMethodNotRequired(t *testing.T) {
 		describe: (Self) -> string = (self) => "thing"
 	}
 
-	impl Describable for int {
+	impl Describable for i64 {
 	}
 	`, false)
 	assertNoErrors(t, res)
@@ -55,11 +55,11 @@ func TestTraitImpl_MissingOneOfMultipleRequired(t *testing.T) {
 		(_!=_): (Self, Self) -> bool
 	}
 
-	impl Eq for int {
+	impl Eq for i64 {
 		(_==_) = (a, b) => true
 	}
 	`, false)
-	assertErrorsAre(t, res, `impl of Eq for int: missing required method "!="`)
+	assertErrorsAre(t, res, `impl of Eq for i64: missing required method "!="`)
 }
 
 func TestTraitImpl_ExtraneousMethod(t *testing.T) {
@@ -68,12 +68,12 @@ func TestTraitImpl_ExtraneousMethod(t *testing.T) {
 		show: (Self) -> string
 	}
 
-	impl Show for int {
+	impl Show for i64 {
 		show = (n) => "x",
 		extra = (n) => "y"
 	}
 	`, false)
-	assertWarningsAre(t, res, `impl of Show for int: method "extra" is not declared in trait`)
+	assertWarningsAre(t, res, `impl of Show for i64: method "extra" is not declared in trait`)
 }
 
 func TestTraitImpl_WrongArity(t *testing.T) {
@@ -82,11 +82,11 @@ func TestTraitImpl_WrongArity(t *testing.T) {
 		show: (Self) -> string
 	}
 
-	impl Show for int {
+	impl Show for i64 {
 		show = () => "x"
 	}
 	`, false)
-	assertErrorsAre(t, res, `impl of Show for int: method "show" has wrong number of parameters: expected 1, got 0`)
+	assertErrorsAre(t, res, `impl of Show for i64: method "show" has wrong number of parameters: expected 1, got 0`)
 }
 
 func TestTraitImpl_WrongArityTooMany(t *testing.T) {
@@ -95,11 +95,11 @@ func TestTraitImpl_WrongArityTooMany(t *testing.T) {
 		show: (Self) -> string
 	}
 
-	impl Show for int {
+	impl Show for i64 {
 		show = (a, b) => "x"
 	}
 	`, false)
-	assertErrorsAre(t, res, `impl of Show for int: method "show" has wrong number of parameters: expected 1, got 2`)
+	assertErrorsAre(t, res, `impl of Show for i64: method "show" has wrong number of parameters: expected 1, got 2`)
 }
 
 func TestTraitImpl_MixedDefaultAndRequired(t *testing.T) {
@@ -109,7 +109,7 @@ func TestTraitImpl_MixedDefaultAndRequired(t *testing.T) {
 		show_twice: (Self) -> string = (x) => "twice"
 	}
 
-	impl Show for int {
+	impl Show for i64 {
 		show = (n) => "x"
 	}
 	`, false)
@@ -119,12 +119,12 @@ func TestTraitImpl_MixedDefaultAndRequired(t *testing.T) {
 func TestTraitImpl_MultipleMissingMethods(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	trait Collection {
-		add: (Self, int) -> Self,
-		remove: (Self, int) -> Self,
-		size: (Self) -> int
+		add: (Self, i64) -> Self,
+		remove: (Self, i64) -> Self,
+		size: (Self) -> i64
 	}
 
-	impl Collection for int {
+	impl Collection for i64 {
 	}
 	`, false)
 	if len(res.errors) != 3 {

@@ -7,14 +7,14 @@ Program(1 statements) {
 					Elements: {
 						TupleType(?) {
 							Elements: {
-								PrimitiveType(int) {
-									Name: int
+								PrimitiveType(i64) {
+									Name: i64
 								}
-								PrimitiveType(int) {
-									Name: int
+								PrimitiveType(i64) {
+									Name: i64
 								}
-								PrimitiveType(int) {
-									Name: int
+								PrimitiveType(i64) {
+									Name: i64
 								}
 							}
 							Name: ?

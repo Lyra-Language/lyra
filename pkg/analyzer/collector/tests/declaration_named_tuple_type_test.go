@@ -23,5 +23,5 @@ func TestCollector_TupleTypeDeclarationWithAllocationModifier(t *testing.T) {
 }
 
 func TestCollector_TupleTypeDeclarationWithNestedTuple(t *testing.T) {
-	runGoldenTest(t, `tuple RGBA((int, int, int), f64)`, "tuple_type_declaration_with_nested_tuple")
+	runGoldenTest(t, `tuple RGBA((i64, i64, i64), f64)`, "tuple_type_declaration_with_nested_tuple")
 }

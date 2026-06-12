@@ -49,7 +49,7 @@ Concrete types:
 
 | Type | Notes |
 |---|---|
-| `PrimitiveType` | `int`, `i8`–`i64`, `uint`, `u8`–`u64`, `f16`/`f32`/`f64`, `bool`, `string`, `char` |
+| `PrimitiveType` | `i8`–`i64`, `u8`–`u64`, `f16`/`f32`/`f64`, `bool`, `string`, `char` (no platform-dependent `int`/`uint`; no bare `float` — untyped literals default to `i64`/`f64`) |
 | `PrimitiveType` (internal) | `untyped_int`, `untyped_signed_int`, `untyped_float` — for numeric literal inference |
 | `StructType` | named struct with fields |
 | `DataType` | sum type (variants) |

@@ -13,8 +13,8 @@ func TestTypeCheck_RangeExpr_IntLiterals_NoError(t *testing.T) {
 
 func TestTypeCheck_RangeExpr_IntVars_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let start: int = 1
-		let end: int = 5
+		let start: i64 = 1
+		let end: i64 = 5
 		for i in start..=end { }
 	`, false)
 	assertNoErrors(t, res)
@@ -99,10 +99,10 @@ func TestTypeCheck_ForIn_IntLiteral_Error(t *testing.T) {
 
 func TestTypeCheck_ForIn_IntVar_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let n: int = 5
+		let n: i64 = 5
 		for x in n { }
 	`, false)
-	assertErrorsAre(t, res, "cannot iterate over int: expected an array, string, or range")
+	assertErrorsAre(t, res, "cannot iterate over i64: expected an array, string, or range")
 }
 
 func TestTypeCheck_ForIn_BoolVar_Error(t *testing.T) {

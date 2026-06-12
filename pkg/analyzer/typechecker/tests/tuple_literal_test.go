@@ -22,8 +22,8 @@ func TestTupleLiteral_ElementTypesInTypeTable(t *testing.T) {
 		t.Fatal("no TypeTable entry for first tuple element")
 	}
 	p0, ok := elem0.(types.PrimitiveType)
-	if !ok || p0.Name != types.Int {
-		t.Errorf("expected first element type int, got %s", elem0)
+	if !ok || p0.Name != types.Int64 {
+		t.Errorf("expected first element type i64, got %s", elem0)
 	}
 	elem1, ok := res.typeTable.Get(tup.Elements[1])
 	if !ok {

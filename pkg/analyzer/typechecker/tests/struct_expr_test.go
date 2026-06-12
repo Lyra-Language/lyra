@@ -8,7 +8,7 @@ func TestTypeCheck_StructLiteral_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Person {
 			name: string,
-			age: int,
+			age: i64,
 		}
 		let s = Person { name: "Alice", age: 30 }
 	`, false)
@@ -19,29 +19,29 @@ func TestTypeCheck_StructLiteral_OneInvalidField_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Person {
 			name: string,
-			age: int,
+			age: i64,
 		}
 		let s = Person { name: "Alice", age: "30" }
 	`, false)
-	assertErrorsAre(t, res, "Person.age: cannot assign string to int")
+	assertErrorsAre(t, res, "Person.age: cannot assign string to i64")
 }
 
 func TestTypeCheck_StructLiteral_TwoInvalidFields_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Person {
 			name: string,
-			age: int,
+			age: i64,
 		}
 		let s = Person { name: 30, age: "Alice" }
 	`, false)
-	assertErrorsAre(t, res, "Person.name: cannot assign integer literal to string", "Person.age: cannot assign string to int")
+	assertErrorsAre(t, res, "Person.name: cannot assign integer literal to string", "Person.age: cannot assign string to i64")
 }
 
 func TestTypeCheck_StructLiteralWithDefault_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Person {
 			name: string,
-			age: int = 0,
+			age: i64 = 0,
 		}
 		let s = Person { name: "Alice" }
 	`, false)
@@ -52,7 +52,7 @@ func TestTypeCheck_StructLiteralWithAllDefaults_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Person {
 			name: string = "",
-			age: int = 0,
+			age: i64 = 0,
 		}
 		let s = Person {}
 	`, false)
@@ -63,7 +63,7 @@ func TestTypeCheck_StructLiteralWithDefault_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Person {
 			name: string,
-			age: int = 0,
+			age: i64 = 0,
 		}
 		let s = Person { name: 32 }
 	`, false)
@@ -75,7 +75,7 @@ func TestTypeCheck_StructLiteralWithExpression_Ok(t *testing.T) {
 		let oldAge = 30
 		struct Person {
 			name: string,
-			age: int,
+			age: i64,
 		}
 		let s = Person { name: "Alice", age: oldAge + 1 }
 	`, false)
@@ -86,7 +86,7 @@ func TestTypeCheck_StructLiteral_Shorthand_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Person {
 			name: string,
-			age: int,
+			age: i64,
 		}
 		let s = Person { "Alice", 30 }
 	`, false)
@@ -97,11 +97,11 @@ func TestTypeCheck_StructLiteral_Shorthand_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Person {
 			name: string,
-			age: int,
+			age: i64,
 		}
 		let s = Person { 30, "Alice" }
 	`, false)
-	assertErrorsAre(t, res, "Person.name: cannot assign integer literal to string", "Person.age: cannot assign string to int")
+	assertErrorsAre(t, res, "Person.name: cannot assign integer literal to string", "Person.age: cannot assign string to i64")
 }
 
 func TestTypeCheck_StructLiteral_GenericArgs_Ok(t *testing.T) {
@@ -129,7 +129,7 @@ func TestTypeCheck_StructLiteral_GenericArgs_Error(t *testing.T) {
 
 func TestTypeCheck_NamedStructMissingField_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		struct Person { name: string, age: int, sex: string }
+		struct Person { name: string, age: i64, sex: string }
 		let person = Person { name: "Alice", age: 30 }
 	`, false)
 	assertErrorsAre(t, res, "Person: missing field \"sex\"")
@@ -137,7 +137,7 @@ func TestTypeCheck_NamedStructMissingField_Error(t *testing.T) {
 
 func TestTypeCheck_NamedStructUpdate_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		struct Person { name: string, age: int, sex: string = "male" }
+		struct Person { name: string, age: i64, sex: string = "male" }
 		let person = Person { name: "Alice", age: 30 }
 		let updated = Person { person | age: 31, sex: "female" }
 	`, false)
@@ -146,7 +146,7 @@ func TestTypeCheck_NamedStructUpdate_Ok(t *testing.T) {
 
 func TestTypeCheck_NamedStructUpdateUnknownField_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		struct Person { name: string, age: int }
+		struct Person { name: string, age: i64 }
 		let person = Person { name: "Alice", age: 30 }
 		let updated = Person { person | age: 31, sex: "female" }
 	`, false)
@@ -157,12 +157,12 @@ func TestTypeCheck_NamedStructUpdateUnknownField_Error(t *testing.T) {
 
 func TestTypeCheck_NamedStructUpdateWrongType_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		struct Person { name: string, age: int }
+		struct Person { name: string, age: i64 }
 		let person = Person { name: "Alice", age: 30 }
 		let updated = Person { person | age: "31" }
 	`, false)
 	assertErrorsAre(t, res,
-		"Person.age: cannot assign string to int",
+		"Person.age: cannot assign string to i64",
 	)
 }
 
@@ -186,10 +186,10 @@ func TestTypeCheck_AnonymousStructUpdate_Ok(t *testing.T) {
 func TestCall_MemberExpr_Valid_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Callable {
-			fn: (int) -> int,
+			fn: (i64) -> i64,
 		}
-		let c = Callable { fn: (n: int) -> int => n * 2 }
-		let r: int = c.fn(5)
+		let c = Callable { fn: (n: i64) -> i64 => n * 2 }
+		let r: i64 = c.fn(5)
 	`, false)
 	assertNoErrors(t, res)
 }
@@ -197,9 +197,9 @@ func TestCall_MemberExpr_Valid_Ok(t *testing.T) {
 func TestCall_MemberExpr_WrongArgCount(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Callable {
-			fn: (int) -> int,
+			fn: (i64) -> i64,
 		}
-		let c = Callable { fn: (n: int) -> int => n * 2 }
+		let c = Callable { fn: (n: i64) -> i64 => n * 2 }
 		c.fn()
 	`, false)
 	assertErrorsAre(t, res, `fn: expected 1 argument(s), got 0`)
@@ -208,12 +208,12 @@ func TestCall_MemberExpr_WrongArgCount(t *testing.T) {
 func TestCall_MemberExpr_WrongArgType(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Callable {
-			fn: (int) -> int,
+			fn: (i64) -> i64,
 		}
-		let c = Callable { fn: (n: int) -> int => n * 2 }
+		let c = Callable { fn: (n: i64) -> i64 => n * 2 }
 		c.fn(true)
 	`, false)
-	assertErrorsAre(t, res, `fn: argument 1: cannot assign boolean to int`)
+	assertErrorsAre(t, res, `fn: argument 1: cannot assign boolean to i64`)
 }
 
 func TestCall_MemberExpr_NonCallableField_Error(t *testing.T) {

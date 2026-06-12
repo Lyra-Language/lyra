@@ -118,8 +118,8 @@ func numericResultType(a, b types.Type) types.Type {
 // (t, true) if name is a known concrete numeric primitive, (nil, false) otherwise.
 func numericPrimitiveByName(name string) (types.Type, bool) {
 	switch types.PrimitiveTypeName(name) {
-	case types.Int, types.Int8, types.Int16, types.Int32, types.Int64,
-		types.UInt, types.UInt8, types.UInt16, types.UInt32, types.UInt64,
+	case types.Int8, types.Int16, types.Int32, types.Int64,
+		types.UInt8, types.UInt16, types.UInt32, types.UInt64,
 		types.Float16, types.Float32, types.Float64:
 		return types.PrimitiveType{Name: types.PrimitiveTypeName(name)}, true
 	}
@@ -166,7 +166,7 @@ func isAnyConcreteInt(n types.PrimitiveTypeName) bool {
 
 func isAnyConcreteSignedInt(n types.PrimitiveTypeName) bool {
 	switch n {
-	case types.Int, types.Int8, types.Int16, types.Int32, types.Int64:
+	case types.Int8, types.Int16, types.Int32, types.Int64:
 		return true
 	}
 	return false
@@ -174,7 +174,7 @@ func isAnyConcreteSignedInt(n types.PrimitiveTypeName) bool {
 
 func isAnyConcreteUnsignedInt(n types.PrimitiveTypeName) bool {
 	switch n {
-	case types.UInt, types.UInt8, types.UInt16, types.UInt32, types.UInt64:
+	case types.UInt8, types.UInt16, types.UInt32, types.UInt64:
 		return true
 	}
 	return false

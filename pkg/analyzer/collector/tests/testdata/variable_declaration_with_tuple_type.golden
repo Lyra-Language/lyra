@@ -6,11 +6,11 @@ Program(1 statements) {
 			Type: {
 				TupleType(?) {
 					Elements: {
-						PrimitiveType(int) {
-							Name: int
+						PrimitiveType(i64) {
+							Name: i64
 						}
-						PrimitiveType(int) {
-							Name: int
+						PrimitiveType(i64) {
+							Name: i64
 						}
 					}
 					Name: ?

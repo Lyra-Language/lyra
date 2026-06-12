@@ -29,8 +29,8 @@ Program(1 statements) {
 								}
 							}
 							Type: {
-								PrimitiveType(int) {
-									Name: int
+								PrimitiveType(i64) {
+									Name: i64
 								}
 							}
 						}
@@ -41,17 +41,17 @@ Program(1 statements) {
 								}
 							}
 							Type: {
-								PrimitiveType(int) {
-									Name: int
+								PrimitiveType(i64) {
+									Name: i64
 								}
 							}
 						}
 					}
 					ReturnType: {
-						ReturnType(int) {
+						ReturnType(i64) {
 							Type: {
-								PrimitiveType(int) {
-									Name: int
+								PrimitiveType(i64) {
+									Name: i64
 								}
 							}
 						}

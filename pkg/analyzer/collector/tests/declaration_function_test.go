@@ -35,7 +35,7 @@ func TestCollector_DefaultValueAsCallExpression(t *testing.T) {
 
 func TestCollector_DefaultValueWithMultipleClauses(t *testing.T) {
 	source := `
-	let factorial = pure (n: int, acc: int = 1) -> int {
+	let factorial = pure (n: i64, acc: i64 = 1) -> i64 {
 		(0, acc) => acc,
 		(n, acc) => factorial(n - 1, acc * n),
 	}`
@@ -44,7 +44,7 @@ func TestCollector_DefaultValueWithMultipleClauses(t *testing.T) {
 
 func TestCollector_PureFunctionDeclaration(t *testing.T) {
 	runGoldenTest(t, `
-	let add = pure (a: int, b: int) -> int => a + b`, "pure_function_declaration")
+	let add = pure (a: i64, b: i64) -> i64 => a + b`, "pure_function_declaration")
 }
 
 func TestCollector_AsyncFunctionDeclaration(t *testing.T) {
@@ -58,12 +58,12 @@ func TestCollector_AsyncFunctionDeclaration(t *testing.T) {
 
 func TestCollector_PureAsyncFunctionDeclaration(t *testing.T) {
 	runGoldenTest(t, `
-	let compute = pure async (n: int) -> int => n * 2`, "pure_async_function_declaration")
+	let compute = pure async (n: i64) -> i64 => n * 2`, "pure_async_function_declaration")
 }
 
 func TestCollector_PureRecursiveFunctionWithPatternMatching(t *testing.T) {
 	source := `
-	let fib = pure (n: int) -> int {
+	let fib = pure (n: i64) -> i64 {
 		(0) => 0,
 		(1) => 1,
 		(n) => fib(n-1) + fib(n-2),
@@ -73,7 +73,7 @@ func TestCollector_PureRecursiveFunctionWithPatternMatching(t *testing.T) {
 
 func TestCollector_PureRecursiveFunctionWithMultipleFunctionClausesAndGuard(t *testing.T) {
 	source := `
-	let fib = pure (n: int) -> int {
+	let fib = pure (n: i64) -> i64 {
 		(n) if n < 2 => n,
 		(n) => fib(n-2) + fib(n-1),
 	}`

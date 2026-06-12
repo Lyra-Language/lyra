@@ -5,7 +5,7 @@ import "testing"
 const personDecl = `
 struct Person {
   name: string,
-  age: int,
+  age: i64,
 }`
 
 // ── arm pattern type-checking ─────────────────────────────────────────────────

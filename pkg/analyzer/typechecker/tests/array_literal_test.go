@@ -43,8 +43,8 @@ func TestArrayLiteral_NoAnnotation_InferredAsStaticArray(t *testing.T) {
 		t.Errorf("expected size 3, got %d", sa.Size)
 	}
 	p, ok := sa.ElementType.(types.PrimitiveType)
-	if !ok || p.Name != types.Int {
-		t.Errorf("expected element type int, got %s", sa.ElementType)
+	if !ok || p.Name != types.Int64 {
+		t.Errorf("expected element type i64, got %s", sa.ElementType)
 	}
 }
 
@@ -98,29 +98,29 @@ func TestArrayLiteral_NoAnnotation_SingleElement(t *testing.T) {
 // ── static array annotation: exact-match and size errors ─────────────────────
 
 func TestArrayLiteral_StaticAnnotation_MatchingSize_Ok(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs: [3]int = [1, 2, 3]`, false)
+	res := parseCollectAndCheck(t, `let xs: [3]i64 = [1, 2, 3]`, false)
 	assertNoErrors(t, res)
 }
 
 func TestArrayLiteral_StaticAnnotation_FewerElements_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs: [3]int = [1, 2]`, false)
-	assertErrorsAre(t, res, "xs: cannot assign StaticArray<integer literal, 2> to StaticArray<int, 3>")
+	res := parseCollectAndCheck(t, `let xs: [3]i64 = [1, 2]`, false)
+	assertErrorsAre(t, res, "xs: cannot assign StaticArray<integer literal, 2> to StaticArray<i64, 3>")
 }
 
 func TestArrayLiteral_StaticAnnotation_MoreElements_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs: [3]int = [1, 2, 3, 4]`, false)
-	assertErrorsAre(t, res, "xs: cannot assign StaticArray<integer literal, 4> to StaticArray<int, 3>")
+	res := parseCollectAndCheck(t, `let xs: [3]i64 = [1, 2, 3, 4]`, false)
+	assertErrorsAre(t, res, "xs: cannot assign StaticArray<integer literal, 4> to StaticArray<i64, 3>")
 }
 
 func TestArrayLiteral_StaticAnnotation_OneElement_Ok(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs: [1]int = [99]`, false)
+	res := parseCollectAndCheck(t, `let xs: [1]i64 = [99]`, false)
 	assertNoErrors(t, res)
 }
 
 // ── dynamic array annotation: literal widens to DynamicArrayType ─────────────
 
 func TestArrayLiteral_DynamicAnnotation_Ok(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs: []int = [1, 2, 3]`, false)
+	res := parseCollectAndCheck(t, `let xs: []i64 = [1, 2, 3]`, false)
 	assertNoErrors(t, res)
 }
 
@@ -132,7 +132,7 @@ func TestArrayLiteral_DynamicAnnotation_SingleElement_Ok(t *testing.T) {
 func TestArrayLiteral_DynamicAnnotation_Empty_Ok(t *testing.T) {
 	// An empty literal [] has no element type; it is vacuously assignable to any
 	// dynamic array type.
-	res := parseCollectAndCheck(t, `let xs: []int = []`, false)
+	res := parseCollectAndCheck(t, `let xs: []i64 = []`, false)
 	assertNoErrors(t, res)
 }
 
@@ -145,22 +145,22 @@ func TestArrayLiteral_DynamicAnnotation_UntypedIntWidensToAnnotatedElemType_Ok(t
 // ── you cannot assign a dynamic-annotated variable to a static one ───────────
 
 func TestArrayLiteral_CannotAssignDynamicVarToStaticAnnotation_Error(t *testing.T) {
-	// The variable `dyn` has type DynamicArrayType{int}; `stat` expects
-	// StaticArrayType{int, 3}.  isAssignable only widens Static→Dynamic, never
+	// The variable `dyn` has type DynamicArrayType{i64}; `stat` expects
+	// StaticArrayType{i64, 3}.  isAssignable only widens Static→Dynamic, never
 	// Dynamic→Static, so this must be an error.
 	res := parseCollectAndCheck(t, `
-		let dyn: []int = [1, 2, 3]
-		let stat: [3]int = dyn
+		let dyn: []i64 = [1, 2, 3]
+		let stat: [3]i64 = dyn
 	`, false)
-	assertErrorsAre(t, res, "stat: cannot assign DynamicArray<int> to StaticArray<int, 3>")
+	assertErrorsAre(t, res, "stat: cannot assign DynamicArray<i64> to StaticArray<i64, 3>")
 }
 
 func TestArrayLiteral_CannotAssignDynamicVarToDifferentSizeStaticAnnotation_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let dyn: []int = [1, 2, 3]
-		let stat: [5]int = dyn
+		let dyn: []i64 = [1, 2, 3]
+		let stat: [5]i64 = dyn
 	`, false)
-	assertErrorsAre(t, res, "stat: cannot assign DynamicArray<int> to StaticArray<int, 5>")
+	assertErrorsAre(t, res, "stat: cannot assign DynamicArray<i64> to StaticArray<i64, 5>")
 }
 
 // ── element type mismatches ───────────────────────────────────────────────────
@@ -181,48 +181,48 @@ func TestArrayLiteral_MixedIntAndBool_Error(t *testing.T) {
 }
 
 func TestArrayLiteral_StaticAnnotation_WrongElementType_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs: [3]int = [1, "two", 3]`, false)
+	res := parseCollectAndCheck(t, `let xs: [3]i64 = [1, "two", 3]`, false)
 	// The mixed-type error fires first; no separate annotation error.
 	assertErrorsAre(t, res,
 		"array literal: element type string is not compatible with preceding element type integer literal")
 }
 
 func TestArrayLiteral_DynamicAnnotation_WrongElementType_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `let xs: []int = ["a", "b"]`, false)
-	assertErrorsAre(t, res, "xs: cannot assign StaticArray<string, 2> to DynamicArray<int>")
+	res := parseCollectAndCheck(t, `let xs: []i64 = ["a", "b"]`, false)
+	assertErrorsAre(t, res, "xs: cannot assign StaticArray<string, 2> to DynamicArray<i64>")
 }
 
 // ── static ↔ static size mismatch via variable ───────────────────────────────
 
 func TestArrayLiteral_StaticToStaticSameSizeVar_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let a: [3]int = [1, 2, 3]
-		let b: [3]int = a
+		let a: [3]i64 = [1, 2, 3]
+		let b: [3]i64 = a
 	`, false)
 	assertNoErrors(t, res)
 }
 
 func TestArrayLiteral_StaticToStaticDifferentSizeVar_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let a: [3]int = [1, 2, 3]
-		let b: [4]int = a
+		let a: [3]i64 = [1, 2, 3]
+		let b: [4]i64 = a
 	`, false)
-	assertErrorsAre(t, res, "b: cannot assign StaticArray<int, 3> to StaticArray<int, 4>")
+	assertErrorsAre(t, res, "b: cannot assign StaticArray<i64, 3> to StaticArray<i64, 4>")
 }
 
-// ── unannotated: untyped integer elements promote to int ─────────────────────
+// ── unannotated: untyped integer elements promote to i64 ─────────────────────
 
 func TestArrayLiteral_NoAnnotation_ElementsPromoteToDefaultInt(t *testing.T) {
 	// Without an annotation the literal's element type goes through
-	// promoteToDefault: UntypedInt → int.
+	// promoteToDefault: UntypedInt → i64.
 	typ := arrayLiteralType(t, `let xs = [10, 20, 30]`)
 	sa, ok := typ.(types.StaticArrayType)
 	if !ok {
 		t.Fatalf("expected StaticArrayType, got %T", typ)
 	}
 	p, ok := sa.ElementType.(types.PrimitiveType)
-	if !ok || p.Name != types.Int {
-		t.Errorf("expected promoted element type int, got %v", sa.ElementType)
+	if !ok || p.Name != types.Int64 {
+		t.Errorf("expected promoted element type i64, got %v", sa.ElementType)
 	}
 }
 

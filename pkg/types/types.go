@@ -17,7 +17,7 @@ func IsNumeric(t Type) bool {
 		return false
 	}
 	switch primitive.Name {
-	case Int, Int8, Int16, Int32, Int64, UInt, UInt8, UInt16, UInt32, UInt64,
+	case Int8, Int16, Int32, Int64, UInt8, UInt16, UInt32, UInt64,
 		Float16, Float32, Float64, UntypedInt, UntypedSignedInt, UntypedFloat:
 		return true
 	default:

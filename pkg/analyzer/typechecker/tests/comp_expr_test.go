@@ -62,7 +62,7 @@ func TestTypeCheck_Equality_SameConcreteFloat_Warning(t *testing.T) {
 	assertWarningsAre(t, res, "operator ==: comparing float values with == or != may give unexpected results due to floating-point precision")
 }
 
-// Untyped int should widen to the concrete type on the other side, just as it
+// Untyped i64 should widen to the concrete type on the other side, just as it
 // does for ordering operators and arithmetic. The equality checker currently
 // has a bug where it uses strict Go interface equality after the numeric guard,
 // so this test is expected to fail until that is fixed.

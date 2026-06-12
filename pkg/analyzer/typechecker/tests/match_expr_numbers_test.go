@@ -110,7 +110,7 @@ func TestTypeCheck_NumericMatchExpr_GuardedCatchallOnly_Warning(t *testing.T) {
 }
 
 func TestTypeCheck_NumericMatchExpr_RangeOnlyNoWildcard_Warning(t *testing.T) {
-	// Untyped int (no fixed bounds) — interval analysis can't help; wildcard needed.
+	// Untyped i64 (no fixed bounds) — interval analysis can't help; wildcard needed.
 	res := parseCollectAndCheck(t, `
   let foo = 42
   match foo {

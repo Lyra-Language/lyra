@@ -23,7 +23,7 @@ func TestCollector_RangeConstrainedTypeWithConstantMultiplication(t *testing.T) 
 }
 
 func TestCollector_RangeConstrainedTypeWithNegation(t *testing.T) {
-	runGoldenTest(t, `newtype Temp = int where range(-100..<200)`, "range_constrained_type_with_negation")
+	runGoldenTest(t, `newtype Temp = i64 where range(-100..<200)`, "range_constrained_type_with_negation")
 }
 
 func TestCollector_RangeConstrainedTypeWithVariableAdditionAndSubtraction(t *testing.T) {
@@ -39,7 +39,7 @@ func TestCollector_MultipleConstraints(t *testing.T) {
 }
 
 func TestCollector_StepConstrainedType(t *testing.T) {
-	runGoldenTest(t, `newtype CompassHeading = int where range(0..<360), step(15)`, "step_constrained_type")
+	runGoldenTest(t, `newtype CompassHeading = i64 where range(0..<360), step(15)`, "step_constrained_type")
 }
 
 func TestCollector_PatternConstrainedType(t *testing.T) {

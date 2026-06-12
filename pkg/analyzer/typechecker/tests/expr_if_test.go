@@ -29,7 +29,7 @@ func TestTypeCheck_If_Condition_BoolVar_NoError(t *testing.T) {
 
 func TestTypeCheck_If_Condition_BooleanExpr_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let x: int = 5
+		let x: i64 = 5
 		if x == 3 { 1 }
 	`, false)
 	assertNoErrors(t, res)
@@ -37,10 +37,10 @@ func TestTypeCheck_If_Condition_BooleanExpr_NoError(t *testing.T) {
 
 func TestTypeCheck_If_Condition_IntVar_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let n: int = 42
+		let n: i64 = 42
 		if n { 1 }
 	`, false)
-	assertErrorsAre(t, res, "if condition must be boolean, got int")
+	assertErrorsAre(t, res, "if condition must be boolean, got i64")
 }
 
 func TestTypeCheck_If_Condition_StringVar_Error(t *testing.T) {
@@ -98,7 +98,7 @@ func TestTypeCheck_IfElse_SameBoolType_NoError(t *testing.T) {
 }
 
 func TestTypeCheck_IfElse_UntypedIntAndConcreteInt_NoError(t *testing.T) {
-	// Untyped int literal widens to i32 — branches are compatible.
+	// Untyped integer literal widens to i32 — branches are compatible.
 	res := parseCollectAndCheck(t, `
 		let x: i32 = 1
 		let cond: bool = true
@@ -162,7 +162,7 @@ func TestTypeCheck_IfElse_AsValue_StringAnnotation_NoError(t *testing.T) {
 func TestTypeCheck_IfElse_AsValue_IntAnnotation_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let cond: bool = true
-		let n: int = if cond { 1 } else { 2 }
+		let n: i64 = if cond { 1 } else { 2 }
 	`, false)
 	assertNoErrors(t, res)
 }
@@ -170,9 +170,9 @@ func TestTypeCheck_IfElse_AsValue_IntAnnotation_NoError(t *testing.T) {
 func TestTypeCheck_IfElse_AsValue_WrongAnnotation_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let cond: bool = true
-		let n: int = if cond { "yes" } else { "no" }
+		let n: i64 = if cond { "yes" } else { "no" }
 	`, false)
-	assertErrorsAre(t, res, "n: cannot assign string to int")
+	assertErrorsAre(t, res, "n: cannot assign string to i64")
 }
 
 func TestTypeCheck_IfElse_AsValue_IncompatibleBranches_Error(t *testing.T) {
@@ -207,7 +207,7 @@ func TestTypeCheck_IfElse_TypeTable_RecordsCommonType(t *testing.T) {
 func TestTypeCheck_ElseIf_AllCompatible_NoError(t *testing.T) {
 	// if { string } else if { string } else { string } → ok
 	res := parseCollectAndCheck(t, `
-		let x: int = 1
+		let x: i64 = 1
 		if x == 1 { "one" } else if x == 2 { "two" } else { "other" }
 	`, false)
 	assertNoErrors(t, res)
@@ -215,7 +215,7 @@ func TestTypeCheck_ElseIf_AllCompatible_NoError(t *testing.T) {
 
 func TestTypeCheck_ElseIf_AsValue_AllCompatible_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let x: int = 1
+		let x: i64 = 1
 		let s: string = if x == 1 { "one" } else if x == 2 { "two" } else { "other" }
 	`, false)
 	assertNoErrors(t, res)
@@ -223,10 +223,10 @@ func TestTypeCheck_ElseIf_AsValue_AllCompatible_NoError(t *testing.T) {
 
 func TestTypeCheck_ElseIf_AsValue_WrongAnnotation_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let x: int = 1
-		let n: int = if x == 1 { "one" } else if x == 2 { "two" } else { "other" }
+		let x: i64 = 1
+		let n: i64 = if x == 1 { "one" } else if x == 2 { "two" } else { "other" }
 	`, false)
-	assertErrorsAre(t, res, "n: cannot assign string to int")
+	assertErrorsAre(t, res, "n: cannot assign string to i64")
 }
 
 // Statement-position else-if chains: no branch-type requirement at any level.
@@ -270,11 +270,11 @@ func TestTypeCheck_ElseIf_MiddleBranchMismatch_Value_Error(t *testing.T) {
 func TestTypeCheck_ElseIf_BadCondition_Error(t *testing.T) {
 	// Non-bool condition inside the else-if clause — always an error regardless of context.
 	res := parseCollectAndCheck(t, `
-		let n: int = 5
+		let n: i64 = 5
 		let cond: bool = true
 		if cond { 1 } else if n { 2 } else { 3 }
 	`, false)
-	assertErrorsAre(t, res, "if condition must be boolean, got int")
+	assertErrorsAre(t, res, "if condition must be boolean, got i64")
 }
 
 // ── condition and branch errors ──────────────────────────────────────────────
@@ -282,17 +282,17 @@ func TestTypeCheck_ElseIf_BadCondition_Error(t *testing.T) {
 func TestTypeCheck_IfElse_BadCondition_Statement_NoError(t *testing.T) {
 	// Bad condition errors; branch mismatch in statement position does not.
 	res := parseCollectAndCheck(t, `
-		let n: int = 5
+		let n: i64 = 5
 		if n { 1 } else { "oops" }
 	`, false)
-	assertErrorsAre(t, res, "if condition must be boolean, got int")
+	assertErrorsAre(t, res, "if condition must be boolean, got i64")
 }
 
 func TestTypeCheck_IfElse_BadConditionAndBranches_Value_BothErrors(t *testing.T) {
 	// In value context both errors fire.
 	res := parseCollectAndCheck(t, `
-		let n: int = 5
+		let n: i64 = 5
 		let x = if n { 1 } else { "oops" }
 	`, false)
-	assertErrorsAre(t, res, "if condition must be boolean, got int", "if/else branches have incompatible types: then is integer literal, else is string")
+	assertErrorsAre(t, res, "if condition must be boolean, got i64", "if/else branches have incompatible types: then is integer literal, else is string")
 }

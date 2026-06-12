@@ -1,12 +1,33 @@
 ## To-Dos
 ---------
 
+### Pit of Success — language design (ordered by importance)
+These make the *safe/correct* path the *easy/default* path, and force the unsafe path to be loud and explicit. Listed highest-leverage first.
+
+1. **Must-use `Result`/`Maybe` + a `?` propagation operator** — *Right now the easy thing (ignore a returned error) is the wrong thing.* Two coordinated changes:
+   - Mark `Result<T,E>` and `Maybe<T>` as **must-use**: a statement that discards one (no binding, no match, no propagation) emits a warning/error. Implement as a new `checker/` pass that flags `ExpressionStmt`s whose inferred type is `Result`/`Maybe` and whose value is dropped; allow an explicit `_ = expr` opt-out.
+   - Add a `?` (try) postfix operator: `let x = parse(s)?` unwraps `Ok`/`Some` or early-returns the `Err`/`None` from the enclosing function. Requires the enclosing lambda's return type to be a compatible `Result`/`Maybe` (mirror the `await`-outside-async check for the "used outside a Result-returning fn" error). Goal: propagation must be *less* typing than ignoring.
+
+2. **Checked arithmetic by default; wraparound must be explicit** — overflow is currently only caught for *literals* assigned to annotated types (`overflow.go`); `a + b` on two `i8` wraps silently at runtime. This contradicts the determinism goal behind `fixed<I,F>`. Decide the default = trapping/checked arithmetic, and make modular math the explicit opt-in: `wrapping_add`/`saturating_add` methods or a `wrapping { ... }` block. At minimum, add a typechecker warning for arithmetic on small fixed-width ints whose result provably can overflow the operand type.
+
+3. **Restrict `??` to optional (`Maybe<T>`) operands** — `null-coalescing.lyra` currently accepts `let x: i64 = 0; x ?? y`, which teaches that *any* value is nullable (the billion-dollar mistake by the side door). Change `inferNullCoalescingExpr`: the left operand must be `Maybe<T>` (result type `T`); a non-optional left operand is a warning ("left operand is never null"). Keep nullability expressible *only* through `Maybe<T>`, never as an ambient property of every type.
+
+4. **Non-exhaustive `match` on closed types is an error, not a warning** — warnings are ignorable, which defeats exhaustiveness. For `data`/sum types and `bool`, a missing arm should be `SeverityError` (the author can still write an explicit `_ =>` to opt out). Keep the warning only for genuinely open types (wide integers, strings). The exhaustiveness machinery already exists — this is a severity change in the match checkers.
+
+5. **One conversion syntax; lossy conversions must be loud** — today both `x as f32` and `f16(x)` exist (two ways to do one thing), and `as` silently truncates (`i64 as i8`, `f64 as f16`). Pick one form for lossless/widening conversions, and give lossy/narrowing conversions a distinct, named spelling (`narrow`/`truncate`/`saturate`) so precision/range loss is never invisible. Warn (or error) on any `as` that loses bits.
+
+6. **Definite-assignment analysis** — verify that `var x: T` with no initializer (if the grammar allows it) cannot be read before being assigned on every path; otherwise require initialization at declaration. Prevents use-of-uninitialized, a classic pit of failure. (First confirm whether uninitialized declarations are even grammatically reachable.)
+
+7. **Reconsider shadowing severity** — same-scope sequential rebind (`let x = parse(x)`) is idiomatic and safe in ML-family languages; warning on it pushes users toward worse `x2` names. Narrow `shadowing.go` to warn only on *nested-scope* shadowing (the genuinely confusing case) and allow same-scope rebind, OR document the decision explicitly.
+
+8. **Consistency cleanups (lower-stakes pit-of-failure removal)**
+   - Unify `Void` vs `void` casing on one spelling across grammar + typechecker.
+   - Write down "use a tuple vs named `tuple` vs `struct` vs inline `data` record" guidance so the product-type choice isn't a coin flip.
+
 ### LSP — Table-stakes editor features
 
 ### Checker — Control-flow validity (new `checker/` pass)
 - **Unsafe operations outside `unsafe` blocks** — `AddressOfExpr`, `DerefExpr`, raw pointer access, and calls to `IsUnsafe` lambdas should require an enclosing `UnsafeBlockExpr` or unsafe function
-
-### Typechecker — Trait/impl conformance
 
 ### Typechecker — Constant and value-level checks
 - **`const` requires a compile-time-constant initializer** — walk the initializer and reject anything that isn't a literal, constant identifier, or purely constant expression
@@ -28,6 +49,9 @@
 
 ## Completed
 ------------
+### 06/12/26 (continued)
+- **Removed platform-dependent `int`/`uint` and the bare `float` type** (pit-of-success / determinism) — `int`/`uint` removed from the grammar (`number_types.js` `signed_integer_type`/`unsigned_integer_type`) and from `pkg/types` (`Int`/`UInt` `PrimitiveTypeName` constants deleted); `IsNumeric`, `numericPrimitiveByName`, `isAnyConcreteSignedInt`/`Unsigned`, and `integerFitsInType` updated. Untyped integer-literal default promotion now resolves to `i64` (`promoteToDefault` in `typechecker.go`), preserving the 64-bit range a platform `int` had. There was never a bare `float` keyword in the grammar; example `.lyra` files used it as an unresolved type — migrated all `float` → `f64`, `int` → `i64`, `uint` → `u64` in the example fixtures (code only, comment prose preserved). All Go test sources/expected messages and the collector golden files migrated and regenerated (`UPDATE_GOLDEN=1`); full suite green. `.zed/rules.md` (root + `lyra/`) primitive-type listings updated.
+
 ### 06/12/26
 - **Trait/impl conformance** — `checkTraitImpl` in `typechecker/`; (1) errors for each required (non-default) trait method absent from the impl, (2) arity check: clause pattern count must match trait signature parameter count, (3) warning for impl methods not declared in the trait; `Traits map[string]*ast.TraitDeclStmt` added to `SymbolTable` and populated during collection; `collectPatternParameters` bug fixed: now handles concrete pattern node kinds (tree-sitter inlines the `pattern` rule) so `LambdaClause.Patterns` is correctly populated for multi-clause functions and trait impl clauses; golden files updated
 

@@ -587,7 +587,7 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 }
 
 // promoteToDefault converts an untyped literal type to its default concrete type:
-//   - UntypedInt / UntypedSignedInt → int
+//   - UntypedInt / UntypedSignedInt → i64
 //   - UntypedFloat                 → f64
 //   - StaticArrayType              → promote element type recursively
 //
@@ -597,7 +597,7 @@ func promoteToDefault(t types.Type) types.Type {
 	case types.PrimitiveType:
 		switch v.Name {
 		case types.UntypedInt, types.UntypedSignedInt:
-			return types.PrimitiveType{Name: types.Int}
+			return types.PrimitiveType{Name: types.Int64}
 		case types.UntypedFloat:
 			return types.PrimitiveType{Name: types.Float64}
 		}

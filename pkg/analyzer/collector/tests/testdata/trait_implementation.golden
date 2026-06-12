@@ -36,8 +36,8 @@ Program(2 statements) {
 			}
 			TraitName: Show
 			Type: {
-				PrimitiveType(int) {
-					Name: int
+				PrimitiveType(i64) {
+					Name: i64
 				}
 			}
 		}

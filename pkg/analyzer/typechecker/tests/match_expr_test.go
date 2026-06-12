@@ -37,7 +37,7 @@ func TestMatchExpr_ArmsHaveDifferentTypes(t *testing.T) {
 		3 => "three",
 		_ => "other",
 	}`, false)
-	assertErrorsAre(t, res, "match arms have incompatible types: string vs int")
+	assertErrorsAre(t, res, "match arms have incompatible types: string vs i64")
 }
 
 func TestMatchExpr_ArmsHaveDifferentTypesWithBlocks(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 // FunctionTypes correctly rather than silently returning false because the
 // switch only matched the value form.
 func TestTypesEqualFunctionTypePointerConvention(t *testing.T) {
-	intT := types.PrimitiveType{Name: types.Int}
+	intT := types.PrimitiveType{Name: types.Int64}
 	floatT := types.PrimitiveType{Name: types.Float64}
 
 	makeSig := func(ret types.ReturnType, params ...types.Type) *types.LambdaType {
@@ -72,7 +72,7 @@ func TestTypesEqualFunctionTypePointerConvention(t *testing.T) {
 // Before the fix, TypesEqual had no case for it at all and every comparison
 // silently returned false.
 func TestTypesEqualConstrainedTypePointerConvention(t *testing.T) {
-	intT := types.PrimitiveType{Name: types.Int}
+	intT := types.PrimitiveType{Name: types.Int64}
 
 	t.Run("same declared name is equal (nominal equality)", func(t *testing.T) {
 		a := &types.ConstrainedType{Name: "Angle", Type: intT}
@@ -105,7 +105,7 @@ func TestTypesEqualConstrainedTypePointerConvention(t *testing.T) {
 // Cross-type comparisons should never report equality, even when the stored
 // concrete types live on different sides of the value/pointer convention.
 func TestTypesEqualMixedConventions(t *testing.T) {
-	intT := types.PrimitiveType{Name: types.Int}
+	intT := types.PrimitiveType{Name: types.Int64}
 	fn := &types.LambdaType{ReturnType: types.ReturnType{Type: intT}}
 	ct := &types.ConstrainedType{Name: "Angle", Type: intT}
 
@@ -146,14 +146,14 @@ func TestTypesNotEqualNamedStruct(t *testing.T) {
 func TestTypesEqualAnonymousStruct(t *testing.T) {
 	a := types.AnonymousStructType{
 		Fields: []types.StructField{
-			{Name: "x", Type: types.PrimitiveType{Name: types.Int}},
-			{Name: "y", Type: types.PrimitiveType{Name: types.Int}},
+			{Name: "x", Type: types.PrimitiveType{Name: types.Int64}},
+			{Name: "y", Type: types.PrimitiveType{Name: types.Int64}},
 		},
 	}
 	b := types.AnonymousStructType{
 		Fields: []types.StructField{
-			{Name: "x", Type: types.PrimitiveType{Name: types.Int}},
-			{Name: "y", Type: types.PrimitiveType{Name: types.Int}},
+			{Name: "x", Type: types.PrimitiveType{Name: types.Int64}},
+			{Name: "y", Type: types.PrimitiveType{Name: types.Int64}},
 		},
 	}
 	if !types.TypesEqual(a, b) {
@@ -164,14 +164,14 @@ func TestTypesEqualAnonymousStruct(t *testing.T) {
 func TestTypesNotEqualAnonymousStruct(t *testing.T) {
 	a := types.AnonymousStructType{
 		Fields: []types.StructField{
-			{Name: "x", Type: types.PrimitiveType{Name: types.Int}},
-			{Name: "y", Type: types.PrimitiveType{Name: types.Int}},
+			{Name: "x", Type: types.PrimitiveType{Name: types.Int64}},
+			{Name: "y", Type: types.PrimitiveType{Name: types.Int64}},
 		},
 	}
 	b := types.AnonymousStructType{
 		Fields: []types.StructField{
-			{Name: "x", Type: types.PrimitiveType{Name: types.Int}},
-			{Name: "z", Type: types.PrimitiveType{Name: types.Int}},
+			{Name: "x", Type: types.PrimitiveType{Name: types.Int64}},
+			{Name: "z", Type: types.PrimitiveType{Name: types.Int64}},
 		},
 	}
 	if types.TypesEqual(a, b) {

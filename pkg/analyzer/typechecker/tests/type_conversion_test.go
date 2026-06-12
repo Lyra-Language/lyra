@@ -10,7 +10,7 @@ import (
 
 func TestTypeCheck_TypeConversion_IntToF64(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let i: int = 123
+		let i: i64 = 123
 		let f: f64 = f64(i)
 	`, false)
 	assertNoErrors(t, res)
@@ -26,7 +26,7 @@ func TestTypeCheck_TypeConversion_F64ToU32_Error(t *testing.T) {
 
 func TestTypeCheck_TypeConversion_IntToI32(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let x: int = 100
+		let x: i64 = 100
 		let y: i32 = i32(x)
 	`, false)
 	assertNoErrors(t, res)
@@ -42,7 +42,7 @@ func TestTypeCheck_TypeConversion_I32ToU64(t *testing.T) {
 }
 
 func TestTypeCheck_TypeConversion_UntypedIntToF32(t *testing.T) {
-	// literal int cast to float via explicit conversion
+	// literal i64 cast to float via explicit conversion
 	res := parseCollectAndCheck(t, `let f: f32 = f32(42)`, false)
 	assertNoErrors(t, res)
 }
@@ -56,7 +56,7 @@ func TestTypeCheck_TypeConversion_UntypedFloatToI64_Error(t *testing.T) {
 
 func TestTypeCheck_TypeConversion_TypeTable(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let i: int = 1
+		let i: i64 = 1
 		let f: f64 = f64(i)
 	`, false)
 	decl := res.program.Statements[1].(*ast.VarDeclStmt)
@@ -74,9 +74,9 @@ func TestTypeCheck_TypeConversion_TypeTable(t *testing.T) {
 func TestTypeCheck_TypeConversion_NonNumericArg(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let s: string = "hello"
-		let x: int = int(s)
+		let x: i64 = i64(s)
 	`, false)
-	assertErrorsAre(t, res, "cannot convert string to int")
+	assertErrorsAre(t, res, "cannot convert string to i64")
 }
 
 func TestTypeCheck_TypeConversion_TooManyArgs(t *testing.T) {
@@ -152,7 +152,7 @@ func TestTypeCheck_TypeConversion_UntypedFloatToF32(t *testing.T) {
 func TestTypeCheck_TypeConversion_AnnotationMismatch(t *testing.T) {
 	// Converting to i32 and then assigning to string annotation should error.
 	res := parseCollectAndCheck(t, `
-		let x: int = 5
+		let x: i64 = 5
 		let y: string = i32(x)
 	`, false)
 	assertErrorsAre(t, res, "y: cannot assign i32 to string")
