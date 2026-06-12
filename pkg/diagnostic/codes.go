@@ -7,6 +7,7 @@ const (
 	CodeBreakContinueOutsideLoop = "lyra-E004"
 	CodeAwaitOutsideAsync        = "lyra-E005"
 	CodeYieldOutsideGenerator    = "lyra-E006"
+	CodePurityViolation          = "lyra-E007"
 
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
