@@ -44,6 +44,11 @@ Program(1 statements) {
 									}
 								}
 							}
+							Patterns: {
+								IdentifierPattern(x) {
+									Name: x
+								}
+							}
 						}
 					}
 					Name: {

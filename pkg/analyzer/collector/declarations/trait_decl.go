@@ -41,7 +41,7 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Tra
 	}
 	methods := collectMethods(methodsNode, ctx)
 
-	return &ast.TraitDeclStmt{
+	stmt := &ast.TraitDeclStmt{
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
 		Name:          name,
 		GenericParams: genericParams,
@@ -49,6 +49,10 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Tra
 		Methods:       methods,
 		IsPublic:      isPublic,
 	}
+	if err := ctx.RegisterTrait(stmt); err != nil {
+		ctx.AddError(node, diag.SeverityError, "failed to register trait %q: %v", name, err)
+	}
+	return stmt
 }
 
 func collectMethods(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.TraitMethod {

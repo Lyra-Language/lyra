@@ -204,6 +204,10 @@ func (c *Collector) RegisterType(stmt *ast.TypeDeclStmt) error {
 	return c.table.RegisterType(stmt)
 }
 
+func (c *Collector) RegisterTrait(stmt *ast.TraitDeclStmt) error {
+	return c.table.RegisterTrait(stmt)
+}
+
 func (c *Collector) RegisterFunction(name string, stmt *ast.LambdaExpr) error {
 	return c.table.RegisterFunction(name, stmt)
 }

@@ -100,8 +100,11 @@ func collectPatternParameters(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.P
 	patterns := []ast.Pattern{}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
-		if child.Kind() == "pattern" {
-			patterns = append(patterns, ctx.CollectPattern(child))
+		// tree-sitter inlines the `pattern` rule, so the concrete child kind
+		// is used directly (e.g. "identifier") instead of a "pattern" wrapper.
+		p := ctx.CollectPattern(child)
+		if p != nil {
+			patterns = append(patterns, p)
 		}
 	}
 	return patterns

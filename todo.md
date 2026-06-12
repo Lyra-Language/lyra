@@ -6,15 +6,7 @@
 ### Checker — Control-flow validity (new `checker/` pass)
 - **Unsafe operations outside `unsafe` blocks** — `AddressOfExpr`, `DerefExpr`, raw pointer access, and calls to `IsUnsafe` lambdas should require an enclosing `UnsafeBlockExpr` or unsafe function
 
-### Typechecker — Collection-level type checking
-
-### Typechecker — Match expression polish
-- **Identifier pattern shadowing a constructor** — warn when `match foo { Some => ... }` binds `Some` as a variable instead of matching the constructor
-
 ### Typechecker — Trait/impl conformance
-- **Impl must provide all required trait methods** — walk `TraitDeclStmt.Methods` minus default methods; report each unimplemented method on the `TraitImplStmt`
-- **Impl method signatures must match the trait** — compare `LambdaType` parameters and return type with `types.TypesEqual`, substituting `Self` for the impl's concrete type
-- **Extraneous methods in impl** — warn when `TraitImplStmt` provides a method not declared in the trait
 
 ### Typechecker — Constant and value-level checks
 - **`const` requires a compile-time-constant initializer** — walk the initializer and reject anything that isn't a literal, constant identifier, or purely constant expression
@@ -36,6 +28,9 @@
 
 ## Completed
 ------------
+### 06/12/26
+- **Trait/impl conformance** — `checkTraitImpl` in `typechecker/`; (1) errors for each required (non-default) trait method absent from the impl, (2) arity check: clause pattern count must match trait signature parameter count, (3) warning for impl methods not declared in the trait; `Traits map[string]*ast.TraitDeclStmt` added to `SymbolTable` and populated during collection; `collectPatternParameters` bug fixed: now handles concrete pattern node kinds (tree-sitter inlines the `pattern` rule) so `LambdaClause.Patterns` is correctly populated for multi-clause functions and trait impl clauses; golden files updated
+
 ### 06/11/26 (continued, part 2)
 - **Boolean match exhaustiveness** — `checkBoolMatchArm` validates only `true`/`false` literal patterns, wildcards, identifiers; `boolMatchIsExhaustive` requires both arms or a wildcard; non-bool literals emit errors
 - **Tuple match arm validation** — `checkTupleMatchArm` validates arity and element patterns; requires wildcard for exhaustiveness

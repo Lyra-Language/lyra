@@ -79,6 +79,8 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 		tc.checkDerefAssignment(n)
 	case *ast.BooleanBinaryOpExpr:
 		tc.checkBooleanBinaryOpExpr(n)
+	case *ast.TraitImplStmt:
+		tc.checkTraitImpl(n)
 	}
 }
 

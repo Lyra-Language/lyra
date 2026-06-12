@@ -38,11 +38,10 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 		constraints = collectTraitImplConstraints(constraintsNode, ctx)
 	}
 
-	methodsNode, ok := ctx.MustField(node, "methods")
-	if !ok {
-		return nil
+	methods := []ast.TraitMethodImpl{}
+	if methodsNode := node.ChildByFieldName("methods"); methodsNode != nil {
+		methods = collectTraitMethodImpls(methodsNode, ctx)
 	}
-	methods := collectTraitMethodImpls(methodsNode, ctx)
 
 	return &ast.TraitImplStmt{
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},

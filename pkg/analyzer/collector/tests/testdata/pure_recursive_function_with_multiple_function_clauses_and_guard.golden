@@ -33,6 +33,11 @@ Program(1 statements) {
 									}
 								}
 							}
+							Patterns: {
+								IdentifierPattern(n) {
+									Name: n
+								}
+							}
 						}
 						LambdaClause {
 							Body: {
@@ -88,6 +93,11 @@ Program(1 statements) {
 											}
 										}
 									}
+								}
+							}
+							Patterns: {
+								IdentifierPattern(n) {
+									Name: n
 								}
 							}
 						}

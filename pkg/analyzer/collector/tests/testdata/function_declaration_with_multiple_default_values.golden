@@ -13,6 +13,14 @@ Program(1 statements) {
 									Name: acc
 								}
 							}
+							Patterns: {
+								LiteralPattern {
+									Value: 0
+								}
+								IdentifierPattern(acc) {
+									Name: acc
+								}
+							}
 						}
 						LambdaClause {
 							Body: {
@@ -51,6 +59,14 @@ Program(1 statements) {
 											Name: factorial
 										}
 									}
+								}
+							}
+							Patterns: {
+								IdentifierPattern(n) {
+									Name: n
+								}
+								IdentifierPattern(acc) {
+									Name: acc
 								}
 							}
 						}

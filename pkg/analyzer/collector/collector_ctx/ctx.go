@@ -26,6 +26,7 @@ type Collector interface {
 	ParseType(*sitter.Node) types.Type
 	ParseLambdaType(*sitter.Node) *types.LambdaType
 	RegisterType(*ast.TypeDeclStmt) error
+	RegisterTrait(*ast.TraitDeclStmt) error
 	RegisterFunction(string, *ast.LambdaExpr) error
 	RegisterVariable(*ast.VarDeclStmt) error
 	RegisterParameter(*ast.Parameter) error

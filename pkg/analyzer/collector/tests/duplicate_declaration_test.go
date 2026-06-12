@@ -170,6 +170,19 @@ func TestDuplicate_Destructuring_WildcardNoError(t *testing.T) {
 	}
 }
 
+func TestDuplicate_Trait(t *testing.T) {
+	errors := parseAndCollectErrors(t, `
+		trait Show {
+			show: (Self) -> string
+		}
+		trait Show {
+			show: (Self) -> string
+		}
+	`)
+	assertCollectorErrorContains(t, errors, `trait "Show" already defined`)
+}
+
+
 func TestDuplicate_Destructuring_NoConflict_NoError(t *testing.T) {
 	errors := parseAndCollectErrors(t, `
 		let a = 1

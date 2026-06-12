@@ -14,11 +14,21 @@ Program(1 statements) {
 									Value: 0
 								}
 							}
+							Patterns: {
+								LiteralPattern {
+									Value: 0
+								}
+							}
 						}
 						LambdaClause {
 							Body: {
 								IntegerLiteralExpr {
 									Base: 10
+									Value: 1
+								}
+							}
+							Patterns: {
+								LiteralPattern {
 									Value: 1
 								}
 							}
@@ -77,6 +87,11 @@ Program(1 statements) {
 											}
 										}
 									}
+								}
+							}
+							Patterns: {
+								IdentifierPattern(n) {
+									Name: n
 								}
 							}
 						}

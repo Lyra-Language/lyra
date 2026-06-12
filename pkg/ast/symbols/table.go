@@ -74,6 +74,7 @@ type SymbolTable struct {
 	// Quick lookup tables - these point to AST nodes directly
 	Types     map[string]*ast.TypeDeclStmt
 	Functions map[string]*ast.LambdaExpr
+	Traits    map[string]*ast.TraitDeclStmt
 }
 
 func NewSymbolTable() *SymbolTable {
@@ -81,6 +82,7 @@ func NewSymbolTable() *SymbolTable {
 		GlobalScope: NewScope(nil, ScopeGlobal),
 		Types:       make(map[string]*ast.TypeDeclStmt),
 		Functions:   make(map[string]*ast.LambdaExpr),
+		Traits:      make(map[string]*ast.TraitDeclStmt),
 	}
 	st.CurrentScope = st.GlobalScope
 	return st
@@ -103,6 +105,16 @@ func (st *SymbolTable) RegisterType(node *ast.TypeDeclStmt) error {
 		return err
 	}
 	st.Types[node.Name] = node
+	return nil
+}
+
+// RegisterTrait adds a trait declaration to the symbol table.
+// Returns an error if a trait with the same name is already registered.
+func (st *SymbolTable) RegisterTrait(node *ast.TraitDeclStmt) error {
+	if _, exists := st.Traits[node.Name]; exists {
+		return fmt.Errorf("trait %q already defined", node.Name)
+	}
+	st.Traits[node.Name] = node
 	return nil
 }
 
