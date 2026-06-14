@@ -262,6 +262,22 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		})
 	}
 
+	log.Printf("analyze: checking try outside result")
+	for _, te := range checker.CheckTryOutsideResult(program) {
+		sev := lsp.SeverityError
+		loc := te.Location
+		diags = append(diags, lsp.Diagnostic{
+			Range: lsp.Range{
+				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
+				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
+			},
+			Severity: &sev,
+			Code:     codeToLSP(te.Code),
+			Source:   "lyra",
+			Message:  te.Message,
+		})
+	}
+
 	log.Printf("analyze: checking yield outside generator")
 	for _, ye := range checker.CheckYieldOutsideGenerator(program) {
 		sev := lsp.SeverityError

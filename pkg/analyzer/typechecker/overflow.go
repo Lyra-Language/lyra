@@ -7,11 +7,20 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
-// extractIntLiteralValue attempts to read a compile-time integer constant from
-// expr. It handles two cases:
+// extractIntLiteralValue attempts to fold expr to a compile-time integer
+// constant. It handles:
 //
-//   - *ast.IntegerLiteralExpr            → (value, true)
-//   - *ast.NegationExpr(*IntegerLiteralExpr) → (-value, true)
+//   - *ast.IntegerLiteralExpr                → (value, true)
+//   - *ast.NegationExpr over a foldable expr → (-value, true)
+//   - *ast.MathBinaryOpExpr (+, -, *) over    → (folded value, true)
+//     two foldable integer operands
+//
+// Folding is done in int64. If any intermediate result overflows int64 the
+// whole expression is treated as non-constant (returns false) rather than
+// reporting a wrapped value — i64-range overflow is a separate concern and a
+// wrapped value would produce a misleading message. Division/modulo are not
+// folded: they cannot increase magnitude (so they can't cause the overflow
+// this check targets) and Lyra's `%`/`%%` semantics shouldn't be guessed here.
 //
 // All other expressions return (0, false).
 func extractIntLiteralValue(expr ast.Expression) (int64, bool) {
@@ -19,13 +28,56 @@ func extractIntLiteralValue(expr ast.Expression) (int64, bool) {
 	case *ast.IntegerLiteralExpr:
 		return e.Value, true
 	case *ast.NegationExpr:
-		if inner, ok := e.Operand.(*ast.IntegerLiteralExpr); ok {
+		if inner, ok := extractIntLiteralValue(e.Operand); ok {
 			// -math.MinInt64 would overflow; in practice the parser can't
 			// produce a positive int64 that large, so this is safe.
-			return -inner.Value, true
+			return -inner, true
+		}
+	case *ast.MathBinaryOpExpr:
+		left, lok := extractIntLiteralValue(e.Left)
+		right, rok := extractIntLiteralValue(e.Right)
+		if !lok || !rok {
+			return 0, false
+		}
+		switch e.Operator {
+		case ast.MathBinaryOpAdd:
+			return checkedAddInt64(left, right)
+		case ast.MathBinaryOpSub:
+			return checkedSubInt64(left, right)
+		case ast.MathBinaryOpMul:
+			return checkedMulInt64(left, right)
 		}
 	}
 	return 0, false
+}
+
+// checkedAddInt64 / checkedSubInt64 / checkedMulInt64 perform the operation in
+// int64, returning ok=false if the result overflows the int64 range.
+func checkedAddInt64(a, b int64) (int64, bool) {
+	sum := a + b
+	if (a > 0 && b > 0 && sum < 0) || (a < 0 && b < 0 && sum >= 0) {
+		return 0, false
+	}
+	return sum, true
+}
+
+func checkedSubInt64(a, b int64) (int64, bool) {
+	diff := a - b
+	if (b < 0 && diff < a) || (b > 0 && diff > a) {
+		return 0, false
+	}
+	return diff, true
+}
+
+func checkedMulInt64(a, b int64) (int64, bool) {
+	if a == 0 || b == 0 {
+		return 0, true
+	}
+	product := a * b
+	if product/b != a {
+		return 0, false
+	}
+	return product, true
 }
 
 // integerFitsInType reports whether value is within the valid range for the

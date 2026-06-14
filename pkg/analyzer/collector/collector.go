@@ -287,19 +287,22 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 
 func (c *Collector) parseParameterizedType(node *sitter.Node) types.Type {
 	name := c.ctx.NodeText(node.ChildByFieldName("name"))
-	typeArgumentsNode := node.ChildByFieldName("type_arguments")
-	if typeArgumentsNode == nil {
-		c.addError(node, CollectorErrorSeverityError, "parseParameterizedType: type arguments node is nil")
-		return nil
-	}
-	typeArguments := []types.Type{}
-	for i := uint(0); i < typeArgumentsNode.ChildCount(); i++ {
-		child := typeArgumentsNode.Child(i)
-		if child.IsNamed() {
-			typeArguments = append(typeArguments, c.parseType(child))
+	// The grammar applies the "type_arguments" field to each type in the
+	// comma-separated list (field("type_arguments", commaSep1($.type))), so the
+	// args are sibling fields on this node, not children of one container.
+	cursor := node.Walk()
+	defer cursor.Close()
+	// commaSep1 puts the field on the whole list, so the separating commas are
+	// also tagged "type_arguments"; skip those unnamed nodes.
+	argNodes := node.ChildrenByFieldName("type_arguments", cursor)
+	typeArguments := make([]types.Type, 0, len(argNodes))
+	for i := range argNodes {
+		if argNodes[i].IsNamed() {
+			typeArguments = append(typeArguments, c.parseType(&argNodes[i]))
 		}
 	}
 	if len(typeArguments) == 0 {
+		c.addError(node, CollectorErrorSeverityError, "parseParameterizedType: no type arguments")
 		return nil
 	}
 	return types.ParameterizedType{Name: name, TypeArguments: typeArguments}

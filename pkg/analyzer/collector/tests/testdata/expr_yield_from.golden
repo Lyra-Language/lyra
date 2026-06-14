@@ -55,6 +55,20 @@ Program(1 statements) {
 							}
 						}
 					}
+					ReturnType: {
+						ReturnType(Gen) {
+							Type: {
+								ParameterizedType(Gen) {
+									Name: Gen
+									TypeArguments: {
+										UnresolvedType(Command) {
+											Name: Command
+										}
+									}
+								}
+							}
+						}
+					}
 				}
 			}
 		}

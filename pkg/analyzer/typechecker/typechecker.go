@@ -20,6 +20,7 @@ type TypeChecker struct {
 	errors        []TypeError
 	paramTypes    map[string]types.Type // non-nil only while checking a function body
 	resolvedTypes map[string]types.Type // cache for resolveType to avoid duplicate "unknown type" errors
+	enclosingRet  *types.ReturnType     // declared return type of the lambda body currently being checked; nil at top level
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
@@ -139,7 +140,14 @@ func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
 	case *ast.StringConcatExpr:
 		tc.inferStringConcatExpr(e)
 	case *ast.FunctionCallExpr:
-		tc.inferFunctionCallExpr(e)
+		// inferExprType also handles type-conversion calls (e.g. f32(x)); for an
+		// ordinary call it resolves to the callee's return type, which the
+		// must-use check then inspects for a silently-dropped Result/Maybe.
+		tc.checkMustUseResult(e, tc.inferExprType(e))
+	case *ast.TryExpr:
+		// `foo()?` propagates the error and yields the success payload; flag only
+		// when that payload is itself an unhandled Result/Maybe (a nested one).
+		tc.checkMustUseResult(e, tc.inferExprType(e))
 	case *ast.IfExpr:
 		tc.checkIfExpr(e, false)
 	case *ast.MatchExpr:
@@ -497,6 +505,8 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return tc.inferLambdaExprType(e)
 	case *ast.MemberExpr:
 		return tc.inferMemberExprType(e)
+	case *ast.TryExpr:
+		return tc.inferTryExpr(e)
 	case *ast.NegationExpr:
 		return tc.inferNegationExpr(e)
 	case *ast.StructInstanceExpr:
@@ -1023,6 +1033,17 @@ func (tc *TypeChecker) addError(loc ast.Location, sev Severity, format string, a
 		Location: loc,
 		Severity: sev,
 		Code:     diag.CodeTypeError,
+		Message:  fmt.Sprintf(format, args...),
+	})
+}
+
+// addErrorCode is addError with an explicit diagnostic code instead of the
+// generic CodeTypeError, for checks that want a stable, distinguishable code.
+func (tc *TypeChecker) addErrorCode(loc ast.Location, sev Severity, code, format string, args ...any) {
+	tc.errors = append(tc.errors, TypeError{
+		Location: loc,
+		Severity: sev,
+		Code:     code,
 		Message:  fmt.Sprintf(format, args...),
 	})
 }

@@ -61,6 +61,20 @@ Program(1 statements) {
 						}
 					}
 					IsGenerator: true
+					ReturnType: {
+						ReturnType(Gen) {
+							Type: {
+								ParameterizedType(Gen) {
+									Name: Gen
+									TypeArguments: {
+										PrimitiveType(i32) {
+											Name: i32
+										}
+									}
+								}
+							}
+						}
+					}
 				}
 			}
 		}

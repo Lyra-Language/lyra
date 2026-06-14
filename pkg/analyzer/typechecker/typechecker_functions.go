@@ -34,6 +34,12 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 // return statement / the implicit last expression all match the declared type.
 func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) {
 	declaredReturn := lambda.ReturnType.Type
+	// Track the enclosing return type so inferTryExpr can match a `?` operand's
+	// kind (Result/Maybe) against it. Save/restore handles nested lambdas.
+	prevRet := tc.enclosingRet
+	ret := lambda.ReturnType
+	tc.enclosingRet = &ret
+	defer func() { tc.enclosingRet = prevRet }()
 	// Always enter the param scope: withParamScope resolves every parameter
 	// type annotation via resolveType, emitting "unknown type" for any name
 	// that has no declaration. This must happen even when there is no return
@@ -112,13 +118,20 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 				}
 			case *ast.ExpressionStmt:
 				if i == len(stmts)-1 {
-					// The last expression in a block is its implicit return value.
+					// The last expression in a block is its implicit return value,
+					// so it is being used (returned), not dropped — check only that
+					// its type matches the declared return type.
 					exprType := tc.inferExprType(s.Expression)
 					if exprType != nil && !isAssignable(exprType, declaredReturn) {
 						tc.addError(s.GetLocation(), SeverityError,
 							"%s: return type mismatch: expected %s, got %s",
 							funcName, declaredReturn, exprType)
 					}
+				} else {
+					// A non-final expression statement is evaluated for effect and
+					// its value discarded; run the full statement check so dropped
+					// Result/Maybe values (must-use) and other diagnostics surface.
+					tc.checkExpressionStmt(s)
 				}
 			default:
 				// Type-check non-return, non-expression statements (e.g. VarDeclStmt)

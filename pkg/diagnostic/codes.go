@@ -8,10 +8,12 @@ const (
 	CodeAwaitOutsideAsync        = "lyra-E005"
 	CodeYieldOutsideGenerator    = "lyra-E006"
 	CodePurityViolation          = "lyra-E007"
+	CodeTryOutsideResult         = "lyra-E008"
 
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"
 	CodeUnusedImport    = "lyra-W004"
 	CodeUnusedParameter = "lyra-W005"
+	CodeUnusedResult    = "lyra-W006"
 )

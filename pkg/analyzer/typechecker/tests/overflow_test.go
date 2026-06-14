@@ -139,6 +139,65 @@ func TestTypeCheck_Overflow_Reassignment_U8_TooLarge(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Constant-folded arithmetic overflow
+// ---------------------------------------------------------------------------
+
+func TestTypeCheck_Overflow_Folded_Add_I8(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: i8 = 100 + 100`, false)
+	assertErrorsAre(t, res, "x: literal value 200 overflows i8")
+}
+
+func TestTypeCheck_Overflow_Folded_Add_I8_Valid(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: i8 = 100 + 27`, false)
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_Overflow_Folded_Mul_I8(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: i8 = 64 * 2`, false)
+	assertErrorsAre(t, res, "x: literal value 128 overflows i8")
+}
+
+func TestTypeCheck_Overflow_Folded_Nested_I8(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: i8 = 10 * 10 + 50`, false)
+	assertErrorsAre(t, res, "x: literal value 150 overflows i8")
+}
+
+func TestTypeCheck_Overflow_Folded_Sub_Negative_I8(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: i8 = 0 - 200`, false)
+	assertErrorsAre(t, res, "x: literal value -200 overflows i8")
+}
+
+func TestTypeCheck_Overflow_Folded_U8(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: u8 = 200 + 100`, false)
+	assertErrorsAre(t, res, "x: literal value 300 overflows u8")
+}
+
+func TestTypeCheck_Overflow_Folded_Reassignment_I8(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		var x: i8 = 0
+		x = 100 + 100
+	`, false)
+	assertErrorsAre(t, res, "x: literal value 200 overflows i8")
+}
+
+func TestTypeCheck_Overflow_Folded_I64_NoFalsePositive(t *testing.T) {
+	// Fits comfortably in i64; folding must not report anything.
+	res := parseCollectAndCheck(t, `let x: i64 = 1000000 * 1000000`, false)
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_Overflow_Folded_NonConstant_NotReported(t *testing.T) {
+	// One operand is a variable, so the expression is not a compile-time
+	// constant and this static check stays silent (runtime/range analysis is
+	// a separate, deferred concern).
+	res := parseCollectAndCheck(t, `
+		let a: i8 = 100
+		let x: i8 = a + 100
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// ---------------------------------------------------------------------------
 // No overflow for non-integer targets (floats, strings, etc.)
 // ---------------------------------------------------------------------------
 
