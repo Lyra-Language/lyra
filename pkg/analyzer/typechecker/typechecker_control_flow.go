@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/regex"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -901,8 +902,15 @@ func (tc *TypeChecker) checkForLoopExpr(expr *ast.ForLoopExpr) {
 	tc.inferBlockType(&expr.Body)
 }
 
-// inferNullCoalescingExpr type-checks a ?? expression. Both sides are
-// inferred and must unify via branchCommonType; the result is the common type.
+// inferNullCoalescingExpr type-checks a `??` expression. The left operand must
+// be a Maybe<T>: nullability is expressible only through Maybe<T>, never as an
+// ambient property of every type, so `??` unwraps the optional. The result is
+// the payload T unified with the default operand via branchCommonType.
+//
+// A non-optional left operand can never be null, which makes the `??` pointless;
+// it is reported as a warning (lyra-W007). We still recover by treating the left
+// type as the payload so one such mistake does not cascade into spurious
+// incompatible-type errors.
 func (tc *TypeChecker) inferNullCoalescingExpr(expr *ast.NullCoalescingExpr) types.Type {
 	optType := tc.inferExprType(expr.Optional)
 	defType := tc.inferExprType(expr.Default)
@@ -912,11 +920,22 @@ func (tc *TypeChecker) inferNullCoalescingExpr(expr *ast.NullCoalescingExpr) typ
 		}
 		return defType
 	}
-	common, ok := branchCommonType(optType, defType)
+
+	// The left operand must be optional (Maybe<T>); unwrap it to its payload.
+	payload := optType
+	if kind, t, ok := resultOrMaybeKind(optType); ok && kind == "Maybe" {
+		payload = t
+	} else {
+		tc.addErrorCode(expr.Optional.GetLocation(), SeverityWarning,
+			diag.CodeNonOptionalCoalescing,
+			"left operand of `??` is never null: expected a Maybe<T>, got %s", optType)
+	}
+
+	common, ok := branchCommonType(payload, defType)
 	if !ok {
 		tc.addError(expr.GetLocation(), SeverityError,
 			"null coalescing operands have incompatible types: left is %s, right is %s",
-			optType, defType)
+			payload, defType)
 		return nil
 	}
 	return common

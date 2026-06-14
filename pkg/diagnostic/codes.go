@@ -16,4 +16,8 @@ const (
 	CodeUnusedImport    = "lyra-W004"
 	CodeUnusedParameter = "lyra-W005"
 	CodeUnusedResult    = "lyra-W006"
+
+	// CodeNonOptionalCoalescing: the left operand of `??` is not a Maybe<T>, so
+	// it can never be null and the coalescing is pointless.
+	CodeNonOptionalCoalescing = "lyra-W007"
 )
