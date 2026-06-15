@@ -19,3 +19,16 @@ func collectDataConstructorExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc a
 		Value:       CollectExpression(node.ChildByFieldName("value"), ctx),
 	}
 }
+
+// collectNullaryConstructorExpr handles a bare `user_defined_type_name` used as
+// an expression value — a nullary data constructor like `None` or `Red`. (The
+// applied form `Some x` parses as `data_constructor_expr`; `Some(x)` parses as a
+// `tuple_literal`.) The owning data type is resolved later by the typechecker
+// from the constructor name, so Value is left nil.
+func collectNullaryConstructorExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.DataConstructorExpr {
+	return &ast.DataConstructorExpr{
+		ExprBase:    ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Constructor: ctx.NodeText(node),
+		Value:       nil,
+	}
+}

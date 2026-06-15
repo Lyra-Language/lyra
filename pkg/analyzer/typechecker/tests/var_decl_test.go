@@ -272,3 +272,22 @@ func TestTypeCheck_TypeTable_Mismatch_FloatToInt_StoresInferredType(t *testing.T
 		t.Errorf("expected inferred float literal on mismatch, got %s", got)
 	}
 }
+
+// --- initialization is required at declaration (pit-of-success #6) ---
+
+func TestTypeCheck_UninitializedLet_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: i64`, false)
+	assertErrorsAre(t, res,
+		"`let x` must be initialized: add `= <value>` (uninitialized declarations are not allowed)")
+}
+
+func TestTypeCheck_UninitializedVar_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `var x: i64`, false)
+	assertErrorsAre(t, res,
+		"`var x` must be initialized: add `= <value>` (uninitialized declarations are not allowed)")
+}
+
+func TestTypeCheck_InitializedVar_NoError(t *testing.T) {
+	res := parseCollectAndCheck(t, `var x: i64 = 0`, false)
+	assertNoErrors(t, res)
+}

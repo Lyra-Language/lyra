@@ -20,6 +20,11 @@ Program(1 statements) {
 					}
 					Function: {
 						MemberExpr {
+							Object: {
+								DataConstructorExpr {
+									Constructor: Arena
+								}
+							}
 							Property: {
 								IdentifierExpr(new) {
 									Name: new

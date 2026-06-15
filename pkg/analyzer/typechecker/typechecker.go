@@ -163,6 +163,12 @@ func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
 
 func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	if decl.Value == nil {
+		// Uninitialized declarations are not allowed: a binding must have a value
+		// at its declaration so it can never be read before assignment. (Allowing
+		// uninitialized `var` behind a definite-assignment pass may come later.)
+		tc.addErrorCode(decl.GetLocation(), SeverityError, diag.CodeUninitializedDeclaration,
+			"`%s %s` must be initialized: add `= <value>` (uninitialized declarations are not allowed)",
+			decl.BindingKind, decl.Name)
 		return
 	}
 

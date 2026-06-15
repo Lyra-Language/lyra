@@ -140,11 +140,11 @@ func TestIndexExpr_Tuple_ConstLetIndex_Ok(t *testing.T) {
 }
 
 func TestIndexExpr_Tuple_RuntimeVariableIndex_Error(t *testing.T) {
-	// An uninitialized var has no compile-time value — tuple index must be a constant.
+	// A runtime value has no compile-time constant — tuple index must be a constant.
 	res := parseCollectAndCheck(t, `
+		let runtime = () => 0
 		let t: (i64, string) = (42, "hello")
-		var i: i64
-		i = 0
+		var i: i64 = runtime()
 		let x = t[i]
 	`, false)
 	assertErrorsAre(t, res, "tuple index must be an integer literal")

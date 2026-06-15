@@ -16,6 +16,12 @@ const (
 	// to opt out. Open types (wide integers, strings) stay a warning.
 	CodeNonExhaustiveMatch = "lyra-E009"
 
+	// CodeUninitializedDeclaration: a `let`/`var` binding has no initializer.
+	// Initialization is required at declaration so a binding can never be read
+	// before assignment (no use-of-uninitialized). Allowing uninitialized `var`
+	// behind a definite-assignment pass may be revisited later.
+	CodeUninitializedDeclaration = "lyra-E010"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

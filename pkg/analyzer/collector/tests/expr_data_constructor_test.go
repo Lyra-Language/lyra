@@ -31,3 +31,10 @@ func TestCollect_DataConstructorExprWithTuple(t *testing.T) {
 	source := `let v = Some Pair(1, 2)`
 	runGoldenTest(t, source, "expr_data_constructor_with_tuple")
 }
+
+// A bare nullary constructor (`None`, `Red`) used as a value collects to a
+// DataConstructorExpr with a nil Value — previously the initializer was dropped.
+func TestCollect_NullaryDataConstructorExpr(t *testing.T) {
+	source := `let v = None`
+	runGoldenTest(t, source, "expr_data_constructor_nullary")
+}
