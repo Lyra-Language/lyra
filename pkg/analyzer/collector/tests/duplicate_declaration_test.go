@@ -7,52 +7,74 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Same-scope duplicate variable declarations
+// Same-scope sequential rebinding (allowed for let/var, ML-style)
 // ---------------------------------------------------------------------------
 
-func TestDuplicate_SameScope_TwoLet(t *testing.T) {
+// Sequential rebinding such as `let x = parse(x)` is idiomatic and safe in
+// ML-family languages, so re-declaring a let/var in the same scope is allowed
+// (no diagnostic). Only nested-scope shadowing is reported, by CheckShadowing.
+
+func TestRebind_SameScope_TwoLet_NoError(t *testing.T) {
 	errors := parseAndCollectErrors(t, `
 		let x = 1
 		let x = 2
 	`)
-	assertCollectorErrorContains(t, errors, "x is already declared in this scope")
+	if len(errors) > 0 {
+		t.Errorf("expected no errors for same-scope let rebinding, got: %v", errors)
+	}
 }
 
-func TestDuplicate_SameScope_LetThenVar(t *testing.T) {
+func TestRebind_SameScope_LetThenVar_NoError(t *testing.T) {
 	errors := parseAndCollectErrors(t, `
 		let x = 1
 		var x = 2
 	`)
-	assertCollectorErrorContains(t, errors, "x is already declared in this scope")
+	if len(errors) > 0 {
+		t.Errorf("expected no errors for same-scope rebinding, got: %v", errors)
+	}
 }
 
-func TestDuplicate_SameScope_VarThenLet(t *testing.T) {
+func TestRebind_SameScope_VarThenLet_NoError(t *testing.T) {
 	errors := parseAndCollectErrors(t, `
 		var x = 1
 		let x = 2
 	`)
-	assertCollectorErrorContains(t, errors, "x is already declared in this scope")
-}
-
-func TestDuplicate_SameScope_ThreeDeclarations(t *testing.T) {
-	errors := parseAndCollectErrors(t, `
-		let x = 1
-		let y = 2
-		let x = 3
-	`)
-	assertCollectorErrorContains(t, errors, "x is already declared in this scope")
-	// y is fine
-	for _, e := range errors {
-		if e.Error() != "" {
-			break
-		}
+	if len(errors) > 0 {
+		t.Errorf("expected no errors for same-scope rebinding, got: %v", errors)
 	}
 }
 
+func TestRebind_SameScope_SequentialUsingPrior_NoError(t *testing.T) {
+	// The motivating idiom: rebind a name using its own prior value.
+	errors := parseAndCollectErrors(t, `
+		let x = 1
+		let x = x + 1
+	`)
+	if len(errors) > 0 {
+		t.Errorf("expected no errors for `let x = x + 1`, got: %v", errors)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// const may not be re-declared
+// ---------------------------------------------------------------------------
+
+// const names are SCREAMING_CASE and let/var names are lowercase, so a const can
+// only ever collide with another const. const is immutable and may not be
+// re-declared.
+func TestDuplicate_SameScope_RedeclareConst(t *testing.T) {
+	errors := parseAndCollectErrors(t, `
+		const X = 1
+		const X = 2
+	`)
+	assertCollectorErrorContains(t, errors, "cannot re-declare const X in this scope")
+}
+
 func TestDuplicate_ErrorMessageContainsOriginalLocation(t *testing.T) {
-	// The error should carry RelatedInformation pointing to line 1 (the original declaration).
-	errors := parseAndCollectErrors(t, `let x = 1
-let x = 2`)
+	// A const re-declaration error should carry RelatedInformation pointing to
+	// line 1 (the original declaration).
+	errors := parseAndCollectErrors(t, `const X = 1
+const X = 2`)
 	for _, e := range errors {
 		d, ok := e.(diag.Diagnostic)
 		if !ok {
@@ -62,7 +84,7 @@ let x = 2`)
 			return
 		}
 	}
-	t.Errorf("expected a duplicate-declaration diagnostic with RelatedInformation pointing to line 1, got: %v", errors)
+	t.Errorf("expected a re-declaration diagnostic with RelatedInformation pointing to line 1, got: %v", errors)
 }
 
 // ---------------------------------------------------------------------------
@@ -134,30 +156,28 @@ func TestDuplicate_Parameters_DistinctNames_NoError(t *testing.T) {
 // Destructuring re-declares an existing let / const / var binding
 // ---------------------------------------------------------------------------
 
-func TestDuplicate_Destructuring_RedeclaresLet(t *testing.T) {
+func TestRebind_Destructuring_RebindsLet_NoError(t *testing.T) {
+	// Re-binding a let via destructuring is same-scope sequential rebinding and
+	// is allowed.
 	errors := parseAndCollectErrors(t, `
 		let x = 1
 		let [x, y] = some_array
 	`)
-	assertCollectorErrorContains(t, errors, "cannot re-declare let x")
+	if len(errors) > 0 {
+		t.Errorf("expected no errors for destructuring rebind of a let, got: %v", errors)
+	}
 }
 
-func TestDuplicate_Destructuring_RedeclaresVar(t *testing.T) {
-	// var is mutable but re-declaring it via destructuring is still a duplicate.
+func TestRebind_Destructuring_RebindsVar_NoError(t *testing.T) {
 	errors := parseAndCollectErrors(t, `
 		var x = 1
 		let [x, y] = some_array
 	`)
-	assertCollectorErrorContains(t, errors, "x is already declared in this scope")
+	if len(errors) > 0 {
+		t.Errorf("expected no errors for destructuring rebind of a var, got: %v", errors)
+	}
 }
 
-func TestDuplicate_Destructuring_TupleRedeclaresLet(t *testing.T) {
-	errors := parseAndCollectErrors(t, `
-		let a = 1
-		let (a, b) = some_tuple
-	`)
-	assertCollectorErrorContains(t, errors, "cannot re-declare let a")
-}
 
 func TestDuplicate_Destructuring_WildcardNoError(t *testing.T) {
 	// Wildcard _ should never trigger a duplicate error.

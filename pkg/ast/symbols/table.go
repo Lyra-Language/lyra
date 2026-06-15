@@ -132,6 +132,16 @@ func (st *SymbolTable) RegisterVariable(node *ast.VarDeclStmt) error {
 	return st.CurrentScope.Define(node)
 }
 
+// RedefineVariable replaces an existing binding under the same name in the
+// current scope. It is used for same-scope sequential rebinding (e.g.
+// `let x = parse(x)`), where the most recent declaration must win so that
+// later references resolve to it.
+func (st *SymbolTable) RedefineVariable(node *ast.VarDeclStmt) {
+	if st.CurrentScope != nil {
+		st.CurrentScope.Symbols[node.Name] = node
+	}
+}
+
 // RegisterParameter adds a lambda/function parameter to the current scope
 func (st *SymbolTable) RegisterParameter(node *ast.Parameter) error {
 	if st.CurrentScope == nil {

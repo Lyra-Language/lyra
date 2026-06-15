@@ -222,6 +222,13 @@ func (c *Collector) RegisterVariable(stmt *ast.VarDeclStmt) error {
 	return c.table.RegisterVariable(stmt)
 }
 
+// RedefineVariable replaces an existing same-scope binding with stmt, used for
+// same-scope sequential rebinding so that later references resolve to the newest
+// declaration.
+func (c *Collector) RedefineVariable(stmt *ast.VarDeclStmt) {
+	c.table.RedefineVariable(stmt)
+}
+
 func (c *Collector) RegisterParameter(p *ast.Parameter) error {
 	return c.table.RegisterParameter(p)
 }

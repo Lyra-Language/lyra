@@ -1,6 +1,8 @@
 package declarations
 
 import (
+	"fmt"
+
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -71,9 +73,18 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 	}
 
 	if existing, alreadyDeclared := ctx.LookupCurrentScope(name); alreadyDeclared {
-		ctx.AddErrorRelated(node, diag.SeverityError,
-			[]diag.RelatedInformation{{Location: existing.GetLocation(), Message: "previously declared here"}},
-			"%s is already declared in this scope", name)
+		if v, ok := existing.(*ast.VarDeclStmt); ok && v.BindingKind != ast.BindingConst {
+			// Same-scope sequential rebinding (e.g. `let x = parse(x)`) is
+			// idiomatic and safe in ML-family languages, so it is allowed for
+			// let/var bindings. Replace the prior binding so later references
+			// resolve to this declaration. Genuinely confusing nested-scope
+			// shadowing is still reported separately by CheckShadowing.
+			ctx.RedefineVariable(astNode)
+		} else {
+			ctx.AddErrorRelated(node, diag.SeverityError,
+				[]diag.RelatedInformation{{Location: existing.GetLocation(), Message: "previously declared here"}},
+				"%s", redeclarationMessage(existing, name))
+		}
 	} else if err := ctx.RegisterVariable(astNode); err != nil {
 		// Unexpected registration failure (should not normally happen).
 		ctx.AddError(node, diag.SeverityError, "failed to register variable %q: %v", name, err)
@@ -94,21 +105,21 @@ func collectPatternDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *co
 	value := ctx.CollectExpr(node.ChildByFieldName("value"))
 
 	// Check each pattern-bound name for conflicts with existing declarations in
-	// the current scope. A let or const binding is immutable and cannot be
-	// re-declared; any other duplicate is also an error.
+	// the current scope. Same-scope sequential rebinding is allowed for let/var
+	// bindings (see collectIdentifierDeclaration); only a const may not be
+	// re-declared, and a name occupied by a non-variable symbol is still a
+	// conflict.
 	for _, name := range destructuringPatternBoundNames(pattern) {
 		existing, alreadyDeclared := ctx.LookupCurrentScope(name)
 		if !alreadyDeclared {
 			continue
 		}
-		related := []diag.RelatedInformation{{Location: existing.GetLocation(), Message: "previously declared here"}}
-		if v, ok := existing.(*ast.VarDeclStmt); ok && (v.BindingKind == ast.BindingLet || v.BindingKind == ast.BindingConst) {
-			ctx.AddErrorRelated(node, diag.SeverityError, related,
-				"cannot re-declare %s %s in this scope", v.BindingKind, name)
-		} else {
-			ctx.AddErrorRelated(node, diag.SeverityError, related,
-				"%s is already declared in this scope", name)
+		if v, ok := existing.(*ast.VarDeclStmt); ok && v.BindingKind != ast.BindingConst {
+			continue
 		}
+		ctx.AddErrorRelated(node, diag.SeverityError,
+			[]diag.RelatedInformation{{Location: existing.GetLocation(), Message: "previously declared here"}},
+			"%s", redeclarationMessage(existing, name))
 	}
 
 	return &ast.DestructuringDeclStmt{
@@ -118,6 +129,16 @@ func collectPatternDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *co
 		Type:    varType,
 		Value:   value,
 	}
+}
+
+// redeclarationMessage builds the diagnostic message for an illegal re-declaration
+// of name. A const may never be re-declared; any other occupied name (e.g. a
+// parameter or type) reports a generic already-declared conflict.
+func redeclarationMessage(existing ast.Named, name string) string {
+	if v, ok := existing.(*ast.VarDeclStmt); ok && v.BindingKind == ast.BindingConst {
+		return fmt.Sprintf("cannot re-declare const %s in this scope", name)
+	}
+	return fmt.Sprintf("%s is already declared in this scope", name)
 }
 
 // destructuringPatternBoundNames returns all variable names introduced by a

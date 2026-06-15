@@ -29,6 +29,10 @@ type Collector interface {
 	RegisterTrait(*ast.TraitDeclStmt) error
 	RegisterFunction(string, *ast.LambdaExpr) error
 	RegisterVariable(*ast.VarDeclStmt) error
+	// RedefineVariable replaces an existing same-scope binding, used to allow
+	// same-scope sequential rebinding (e.g. `let x = parse(x)`) so that later
+	// references resolve to the newest declaration.
+	RedefineVariable(*ast.VarDeclStmt)
 	RegisterParameter(*ast.Parameter) error
 	PushFunctionScope() *symbols.Scope
 	PushBlockScope() *symbols.Scope
