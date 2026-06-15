@@ -41,6 +41,11 @@ func CollectVariableDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) ast.S
 
 func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *collector_ctx.Ctx) *ast.VarDeclStmt {
 	kind := bindingKind(ctx.NodeText(node.ChildByFieldName("keyword")), ctx)
+	isMut := node.ChildByFieldName("mutability") != nil
+	if isMut && kind == ast.BindingVar {
+		ctx.AddError(node, diag.SeverityWarning,
+			"`var mut` is redundant: a `var` is already interior-mutable; write `var` (or use `let mut` for a non-reassignable but interior-mutable binding)")
+	}
 	name := ctx.NodeText(nameNode)
 
 	genericParametersNode := node.ChildByFieldName("generic_parameters")
@@ -66,6 +71,7 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 	astNode := &ast.VarDeclStmt{
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
 		BindingKind:   kind,
+		IsMut:         isMut,
 		Name:          name,
 		GenericParams: genericParameters,
 		Type:          varType,
@@ -125,6 +131,7 @@ func collectPatternDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *co
 	return &ast.DestructuringDeclStmt{
 		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
 		Keyword: keyword,
+		IsMut:   node.ChildByFieldName("mutability") != nil,
 		Pattern: pattern,
 		Type:    varType,
 		Value:   value,

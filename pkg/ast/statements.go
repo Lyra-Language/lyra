@@ -60,19 +60,31 @@ func (k BindingKind) String() string {
 // VariableDeclarationStmt represents a let/var/const binding
 type VarDeclStmt struct {
 	AstBase
-	BindingKind   BindingKind
+	BindingKind BindingKind
+	// IsMut records the `mut` modifier on a `let mut x` binding: the name may
+	// not be reassigned, but the value's interior may be mutated. It is only
+	// meaningful for BindingLet; a `var` is always interior-mutable and a
+	// `const` never is.
+	IsMut         bool
 	Name          string
 	GenericParams []GenericParam
 	Type          types.Type // may be nil if needs inference
-	Value   Expression
+	Value         Expression
 }
 
 func (v *VarDeclStmt) statementNode() {}
 
 func (v *VarDeclStmt) GetName() string { return v.Name }
 
-// IsMutable returns true if this is a var declaration
+// IsMutable returns true if the binding's *name* may be reassigned (a `var`).
 func (v *VarDeclStmt) IsMutable() bool { return v.BindingKind == BindingVar }
+
+// CanMutateInterior reports whether the value's interior (struct fields, array
+// elements, …) may be mutated through this binding. True for a `var` and for a
+// `let mut`; false for a plain `let` (deeply immutable) and a `const`.
+func (v *VarDeclStmt) CanMutateInterior() bool {
+	return v.BindingKind == BindingVar || (v.BindingKind == BindingLet && v.IsMut)
+}
 
 // IsConstant returns true if this is a const declaration
 func (v *VarDeclStmt) IsConstant() bool { return v.BindingKind == BindingConst }
@@ -96,3 +108,16 @@ type DerefAssignmentStmt struct {
 
 func (d *DerefAssignmentStmt) statementNode()  {}
 func (d *DerefAssignmentStmt) GetName() string { return "deref_assignment" }
+
+// LValueAssignmentStmt represents interior mutation of an aggregate through a
+// member or index path: `p.x = v`, `arr[i] = v`, `grid[i].y = v`. Target is a
+// *MemberExpr or *IndexExpr. The typechecker enforces that the root binding the
+// path is rooted at permits interior mutation (a `var` or a `let mut`).
+type LValueAssignmentStmt struct {
+	AstBase
+	Target Expression
+	Value  Expression
+}
+
+func (l *LValueAssignmentStmt) statementNode()  {}
+func (l *LValueAssignmentStmt) GetName() string { return "lvalue_assignment" }

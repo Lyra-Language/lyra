@@ -39,6 +39,9 @@ func walkStmtChildren(stmt Statement, onStmt func(Statement) bool, onExpr func(E
 	case *DerefAssignmentStmt:
 		WalkExpr(s.Target.Operand, onStmt, onExpr)
 		WalkExpr(s.Value, onStmt, onExpr)
+	case *LValueAssignmentStmt:
+		WalkExpr(s.Target, onStmt, onExpr)
+		WalkExpr(s.Value, onStmt, onExpr)
 	case *ReturnStmt:
 		WalkExpr(s.Value, onStmt, onExpr)
 	case *BreakStmt:

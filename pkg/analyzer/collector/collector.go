@@ -118,6 +118,8 @@ func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 		return statements.CollectVarReassignmentStmt(node, c.ctx)
 	case "deref_assignment":
 		return statements.CollectDerefAssignmentStmt(node, c.ctx)
+	case "member_assignment", "index_assignment":
+		return statements.CollectLValueAssignmentStmt(node, c.ctx)
 	case "break_statement":
 		return statements.CollectBreakStatement(node, c.ctx)
 	case "continue_statement":

@@ -9,6 +9,7 @@ import (
 type DestructuringDeclStmt struct {
 	AstBase
 	Keyword string
+	IsMut   bool // `let mut (a, b) = ...`: interior of the bound values may be mutated
 	Pattern Pattern
 	Type    types.Type
 	Value   Expression

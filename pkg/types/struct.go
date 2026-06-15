@@ -18,8 +18,12 @@ func (s NamedStructType) String() string {
 }
 
 type StructField struct {
-	Name         string
-	Type         Type
+	Name string
+	Type Type
+	// Frozen marks a field declared with the `readonly` marker: it may never be
+	// mutated after construction, even through a mutable (`var`/`let mut`)
+	// instance. Unmarked fields are mutable and follow the holding binding.
+	Frozen       bool
 	DefaultValue any
 }
 

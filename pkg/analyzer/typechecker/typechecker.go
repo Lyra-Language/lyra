@@ -78,6 +78,8 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 		tc.checkExpressionStmt(n)
 	case *ast.DerefAssignmentStmt:
 		tc.checkDerefAssignment(n)
+	case *ast.LValueAssignmentStmt:
+		tc.checkLValueAssignment(n)
 	case *ast.BooleanBinaryOpExpr:
 		tc.checkBooleanBinaryOpExpr(n)
 	case *ast.TraitImplStmt:
@@ -336,6 +338,116 @@ func (tc *TypeChecker) checkDerefAssignment(stmt *ast.DerefAssignmentStmt) {
 		return
 	}
 	tc.addImmutableBindingError(stmt.Target.Operand.GetLocation(), ident.Name, ast.BindingConst)
+}
+
+// checkLValueAssignment type-checks an interior-mutation statement
+// (`p.x = v`, `arr[i] = v`, `grid[i].y = v`) and enforces the mutability rule:
+// the path must be rooted at a binding that permits interior mutation, i.e. a
+// `var` or a `let mut`. A plain `let` is deeply immutable — interior mutation is
+// rejected even several hops down the path (`a.b.c = v` walks back to `a`).
+func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
+	// Enforce mutability of the root binding first; this is the point of the
+	// statement form and should be reported even if the value doesn't type-check.
+	if root := rootIdentifier(stmt.Target); root != nil {
+		if root.IsConst {
+			tc.addImmutableBindingError(root.GetLocation(), root.Name, ast.BindingConst)
+		} else if sym, ok := tc.scope.Lookup(root.Name); ok {
+			if decl, ok := sym.(*ast.VarDeclStmt); ok && !decl.CanMutateInterior() {
+				tc.addInteriorImmutableError(root.GetLocation(), root.Name, decl.BindingKind)
+			}
+		}
+	}
+
+	// A field declared `readonly` is frozen: it cannot be mutated even through a
+	// mutable binding, and (like a deeply-immutable `let` binding) nothing
+	// reached *through* it can be mutated either. Walk every member hop in the
+	// path and reject the write if any traverses a frozen field.
+	tc.checkFrozenFieldPath(stmt.Target)
+
+	targetType := tc.inferExprType(stmt.Target)
+	valueType := tc.inferExprType(stmt.Value)
+	if targetType == nil || valueType == nil {
+		return
+	}
+	if !isAssignable(valueType, targetType) {
+		tc.addError(stmt.GetLocation(), SeverityError,
+			"cannot assign %s to %s", valueType, targetType)
+		return
+	}
+	tc.checkIntegerLiteralRange(stmt.Target.GetName(), stmt.Value, targetType)
+}
+
+// rootIdentifier walks a member/index path back to the identifier it is rooted
+// at (`grid[i].y` → `grid`). Returns nil when the path is not rooted at a plain
+// identifier (e.g. a function-call result or a parenthesized expression), in
+// which case interior-mutability cannot be attributed to a local binding.
+func rootIdentifier(expr ast.Expression) *ast.IdentifierExpr {
+	for {
+		switch e := expr.(type) {
+		case *ast.IdentifierExpr:
+			return e
+		case *ast.MemberExpr:
+			expr = e.Object
+		case *ast.IndexExpr:
+			expr = e.Object
+		default:
+			return nil
+		}
+	}
+}
+
+// checkFrozenFieldPath walks the member hops of an assignment target from the
+// written field inward and reports a write that traverses a `readonly` field.
+// The outermost hop (the field actually being written) is checked first so it is
+// reported in preference to a frozen field deeper in the path. Index hops carry
+// no field-mutability information and are skipped over.
+func (tc *TypeChecker) checkFrozenFieldPath(target ast.Expression) {
+	for {
+		switch e := target.(type) {
+		case *ast.MemberExpr:
+			objType := tc.resolveType(tc.inferExprType(e.Object), e.Object.GetLocation())
+			if f, ok := structFieldByName(objType, e.Property.Name); ok && f.Frozen {
+				tc.addError(e.GetLocation(), SeverityError,
+					"cannot mutate readonly field %q: it is immutable after construction", e.Property.Name)
+				return
+			}
+			target = e.Object
+		case *ast.IndexExpr:
+			target = e.Object
+		default:
+			return
+		}
+	}
+}
+
+// structFieldByName returns the named field of a (named or anonymous) struct type.
+func structFieldByName(t types.Type, name string) (types.StructField, bool) {
+	var fields []types.StructField
+	switch s := t.(type) {
+	case types.NamedStructType:
+		fields = s.Fields
+	case types.AnonymousStructType:
+		fields = s.Fields
+	default:
+		return types.StructField{}, false
+	}
+	for _, f := range fields {
+		if f.Name == name {
+			return f, true
+		}
+	}
+	return types.StructField{}, false
+}
+
+// addInteriorImmutableError reports an attempt to mutate the interior of a value
+// reached through an immutable binding.
+func (tc *TypeChecker) addInteriorImmutableError(loc ast.Location, name string, kind ast.BindingKind) {
+	if kind == ast.BindingConst {
+		tc.addImmutableBindingError(loc, name, kind)
+		return
+	}
+	tc.addError(loc, SeverityError,
+		"%s: `let` binding is deeply immutable; its interior cannot be mutated (use `let mut` to allow interior mutation, or `var` to also allow reassignment)", name)
 }
 
 func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
@@ -928,7 +1040,11 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 			tc.addError(expr.GetLocation(), SeverityError, "%s: unknown field %q", expr.Name, name)
 			continue
 		}
-		actual := tc.inferExprType(f.Value)
+		// Resolve both sides: a field declared with a named-struct type is stored
+		// as an UnresolvedType, which would otherwise never compare equal to the
+		// inferred NamedStructType of a nested struct literal (`Point{...}`).
+		expected = tc.resolveType(expected, f.Value.GetLocation())
+		actual := tc.resolveType(tc.inferExprType(f.Value), f.Value.GetLocation())
 		if actual != nil && !isAssignable(actual, expected) {
 			tc.addError(f.Value.GetLocation(), SeverityError, "%s.%s: cannot assign %s to %s", expr.Name, name, actual, expected)
 		}
@@ -1000,6 +1116,11 @@ func (tc *TypeChecker) inferLambdaExprType(lambda *ast.LambdaExpr) types.Type {
 // and returns the field's type.
 func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 	objType := tc.inferExprType(m.Object)
+	// A field whose declared type is itself a named struct is stored as an
+	// UnresolvedType (just the name), so member access on it (`line.start.x`)
+	// would otherwise fall through to the non-struct error. Resolve the object
+	// type through the symbol table first so nested-struct paths work.
+	objType = tc.resolveType(objType, m.Object.GetLocation())
 	fieldName := m.Property.Name
 
 	switch t := objType.(type) {

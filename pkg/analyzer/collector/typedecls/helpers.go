@@ -24,6 +24,7 @@ func CollectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Stru
 			fieldNameNode := child.ChildByFieldName("field_name")
 			fieldName := ctx.NodeText(fieldNameNode)
 			defaultValue := ctx.CollectExpr(child.ChildByFieldName("default_value"))
+			frozen := child.ChildByFieldName("frozen") != nil
 			if prevLoc, dup := seen[fieldName]; dup {
 				ctx.AddErrorRelated(child, diag.SeverityError,
 					[]diag.RelatedInformation{{Location: prevLoc, Message: "previously declared here"}},
@@ -33,6 +34,7 @@ func CollectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Stru
 				fields = append(fields, types.StructField{
 					Name:         fieldName,
 					Type:         fieldType,
+					Frozen:       frozen,
 					DefaultValue: defaultValue,
 				})
 			}
