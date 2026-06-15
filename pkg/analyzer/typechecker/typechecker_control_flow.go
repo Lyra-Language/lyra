@@ -114,7 +114,7 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.checkBoolMatchArm(arm.Pattern)
 		}
 		if !boolMatchIsExhaustive(expr.MatchArms) {
-			tc.addError(expr.GetLocation(), SeverityWarning,
+			tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNonExhaustiveMatch,
 				"match on bool is not exhaustive: add arms for both `true` and `false`, or a wildcard `_ => ...`")
 		}
 	} else if types.IsNumeric(scrutineeType) {
@@ -146,7 +146,7 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.checkDataMatchArm(arm.Pattern, dt)
 		}
 		if exhaustive, missing := dataMatchIsExhaustive(expr.MatchArms, dt); !exhaustive {
-			tc.addError(expr.GetLocation(), SeverityWarning,
+			tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNonExhaustiveMatch,
 				"match on %s is not exhaustive: missing constructors: %s",
 				dt.Name, strings.Join(missing, ", "))
 		}

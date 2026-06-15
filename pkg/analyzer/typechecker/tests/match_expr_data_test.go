@@ -57,9 +57,9 @@ func TestTypeCheck_DataMatchExpr_DirectScrutinee_Ok(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-// ── exhaustiveness warnings ───────────────────────────────────────────────────
+// ── exhaustiveness (closed type -> error) ───────────────────────────────────────────────────
 
-func TestTypeCheck_DataMatchExpr_MissingOneConstructor_Warning(t *testing.T) {
+func TestTypeCheck_DataMatchExpr_MissingOneConstructor_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   data Maybe = None | Some i32
   let foo = Some 42
@@ -67,11 +67,11 @@ func TestTypeCheck_DataMatchExpr_MissingOneConstructor_Warning(t *testing.T) {
     Some x => "ok",
   }
 	`, false)
-	assertWarningsAre(t, res,
+	assertErrorsAre(t, res,
 		"match on Maybe is not exhaustive: missing constructors: None")
 }
 
-func TestTypeCheck_DataMatchExpr_MissingMultipleConstructors_Warning(t *testing.T) {
+func TestTypeCheck_DataMatchExpr_MissingMultipleConstructors_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   data Result = Ok i32 | Err i32 | Pending i32
   let r = Ok 0
@@ -79,11 +79,11 @@ func TestTypeCheck_DataMatchExpr_MissingMultipleConstructors_Warning(t *testing.
     Ok x => "ok",
   }
 	`, false)
-	assertWarningsAre(t, res,
+	assertErrorsAre(t, res,
 		"match on Result is not exhaustive: missing constructors: Err, Pending")
 }
 
-func TestTypeCheck_DataMatchExpr_AllMissing_Warning(t *testing.T) {
+func TestTypeCheck_DataMatchExpr_AllMissing_Error(t *testing.T) {
 	// Only a guarded arm — not exhaustive.
 	res := parseCollectAndCheck(t, `
   data Maybe = None | Some i32
@@ -92,11 +92,11 @@ func TestTypeCheck_DataMatchExpr_AllMissing_Warning(t *testing.T) {
     Some x if x > 0 => "ok",
   }
 	`, false)
-	assertWarningsAre(t, res,
+	assertErrorsAre(t, res,
 		"match on Maybe is not exhaustive: missing constructors: None, Some")
 }
 
-func TestTypeCheck_DataMatchExpr_GuardedCatchallNotExhaustive_Warning(t *testing.T) {
+func TestTypeCheck_DataMatchExpr_GuardedCatchallNotExhaustive_Error(t *testing.T) {
 	// A guarded wildcard does not count as a catch-all.
 	res := parseCollectAndCheck(t, `
   data Maybe = None | Some i32
@@ -106,7 +106,7 @@ func TestTypeCheck_DataMatchExpr_GuardedCatchallNotExhaustive_Warning(t *testing
     _ if true => "ok",
   }
 	`, false)
-	assertWarningsAre(t, res,
+	assertErrorsAre(t, res,
 		"match on Maybe is not exhaustive: missing constructors: Some")
 }
 
@@ -178,7 +178,7 @@ func TestTypeCheck_DataMatchExpr_ThreeConstructors_AllCovered_Ok(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-func TestTypeCheck_DataMatchExpr_ThreeConstructors_TwoCovered_Warning(t *testing.T) {
+func TestTypeCheck_DataMatchExpr_ThreeConstructors_TwoCovered_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   data Shape = Circle i32 | Rect i32 | Triangle i32
   let s = Circle 5
@@ -187,7 +187,7 @@ func TestTypeCheck_DataMatchExpr_ThreeConstructors_TwoCovered_Warning(t *testing
     Rect w => "ok",
   }
 	`, false)
-	assertWarningsAre(t, res,
+	assertErrorsAre(t, res,
 		"match on Shape is not exhaustive: missing constructors: Triangle")
 }
 
@@ -205,7 +205,7 @@ func TestTypeCheck_DataMatchExpr_ViaVariable_Exhaustive_Ok(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-func TestTypeCheck_DataMatchExpr_ViaVariable_Missing_Warning(t *testing.T) {
+func TestTypeCheck_DataMatchExpr_ViaVariable_Missing_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   data Result = Ok i32 | Err i32
   let r = Ok 1
@@ -213,6 +213,6 @@ func TestTypeCheck_DataMatchExpr_ViaVariable_Missing_Warning(t *testing.T) {
     Ok v => "ok",
   }
 	`, false)
-	assertWarningsAre(t, res,
+	assertErrorsAre(t, res,
 		"match on Result is not exhaustive: missing constructors: Err")
 }

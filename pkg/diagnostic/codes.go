@@ -10,6 +10,12 @@ const (
 	CodePurityViolation          = "lyra-E007"
 	CodeTryOutsideResult         = "lyra-E008"
 
+	// CodeNonExhaustiveMatch: a match on a closed type (`bool` or a `data`/sum
+	// type) leaves cases uncovered. Error rather than warning because the set of
+	// cases is finite and known — the author can still write an explicit `_ =>`
+	// to opt out. Open types (wide integers, strings) stay a warning.
+	CodeNonExhaustiveMatch = "lyra-E009"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

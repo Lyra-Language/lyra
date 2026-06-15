@@ -56,27 +56,27 @@ func TestTypeCheck_BoolMatch_StringLiteral_Error(t *testing.T) {
 
 // ── exhaustiveness ────────────────────────────────────────────────────────────
 
-func TestTypeCheck_BoolMatch_MissingFalse_Warning(t *testing.T) {
+func TestTypeCheck_BoolMatch_MissingFalse_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let flag = true
   match flag {
     true => "yes",
   }`, false)
-	assertWarningsAre(t, res,
+	assertErrorsAre(t, res,
 		"match on bool is not exhaustive: add arms for both `true` and `false`, or a wildcard `_ => ...`")
 }
 
-func TestTypeCheck_BoolMatch_MissingTrue_Warning(t *testing.T) {
+func TestTypeCheck_BoolMatch_MissingTrue_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let flag = true
   match flag {
     false => "no",
   }`, false)
-	assertWarningsAre(t, res,
+	assertErrorsAre(t, res,
 		"match on bool is not exhaustive: add arms for both `true` and `false`, or a wildcard `_ => ...`")
 }
 
-func TestTypeCheck_BoolMatch_GuardedOnly_Warning(t *testing.T) {
+func TestTypeCheck_BoolMatch_GuardedOnly_Error(t *testing.T) {
 	// A guarded arm does not count toward exhaustiveness.
 	res := parseCollectAndCheck(t, `
   let flag = true
@@ -84,6 +84,6 @@ func TestTypeCheck_BoolMatch_GuardedOnly_Warning(t *testing.T) {
     true  => "yes",
     x if x => "also yes",
   }`, false)
-	assertWarningsAre(t, res,
+	assertErrorsAre(t, res,
 		"match on bool is not exhaustive: add arms for both `true` and `false`, or a wildcard `_ => ...`")
 }
