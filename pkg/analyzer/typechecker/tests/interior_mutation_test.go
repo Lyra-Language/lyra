@@ -231,3 +231,46 @@ func TestTypeCheck_LetMut_Reassign_Name_Error(t *testing.T) {
 	`, false)
 	assertErrorsAre(t, res, "p: 'let' binding is immutable; use 'var' to allow reassignment")
 }
+
+// --- parameter `ref`/`mut`/`own` modifiers govern interior mutation ---
+//
+// A bare or `ref` parameter is an immutable borrow (no interior mutation); `mut`
+// (mutable borrow) and `own` (owned local) both permit it.
+
+func TestTypeCheck_ParamAssign_Bare_Immutable_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let f = (p: Point) -> void => {
+			p.x = 5
+		}
+	`, false)
+	assertErrorsAre(t, res,
+		"p: parameter is an immutable borrow by default; its interior cannot be mutated (declare it `mut <type>` to mutate the caller's value, or `own <type>` for an owned local copy)")
+}
+
+func TestTypeCheck_ParamAssign_Ref_Immutable_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let f = (p: ref Point) -> void => {
+			p.x = 5
+		}
+	`, false)
+	assertErrorsAre(t, res,
+		"p: parameter is a `ref` (immutable borrow); its interior cannot be mutated (declare it `mut <type>` to mutate the caller's value, or `own <type>` for an owned local copy)")
+}
+
+func TestTypeCheck_ParamAssign_Mut_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let f = (p: mut Point) -> void => {
+			p.x = 5
+		}
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_ParamAssign_Own_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let f = (p: own Point) -> void => {
+			p.x = 5
+		}
+	`, false)
+	assertNoErrors(t, res)
+}

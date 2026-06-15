@@ -91,6 +91,7 @@ type TypeModifier string
 const (
 	Mut TypeModifier = "mut"
 	Ref TypeModifier = "ref"
+	Own TypeModifier = "own"
 )
 
 type ReturnType struct {

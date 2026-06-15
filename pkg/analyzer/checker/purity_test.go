@@ -110,3 +110,44 @@ let bump = (n: i64) -> i64 => {
 }`
 	assertPurityCount(t, checkPurity(t, src), 0)
 }
+
+// Mutating through a `mut`-borrowed parameter writes to the caller's value, so
+// it escapes the pure function and must be reported.
+func TestPurity_MutBorrowParamMutation_Error(t *testing.T) {
+	src := `
+let reset = pure (p: mut Point) -> void => {
+    p.x = 0
+}`
+	assertPurityCount(t, checkPurity(t, src), 1)
+}
+
+// An `own` parameter is an owned local copy: mutating it is invisible to the
+// caller, so it is allowed inside a pure function.
+func TestPurity_OwnParamMutation_Ok(t *testing.T) {
+	src := `
+let bump = pure (p: own Point) -> Point => {
+    p.x = 1
+    p
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// Interior mutation of a captured outer binding likewise escapes and is reported.
+func TestPurity_CapturedInteriorMutation_Error(t *testing.T) {
+	src := `
+var origin = Point { x: 0, y: 0 }
+let shift = pure (n: i64) -> void => {
+    origin.x = n
+}`
+	assertPurityCount(t, checkPurity(t, src), 1)
+}
+
+// An impure function may freely mutate through a `mut` parameter — the
+// constraint only applies inside `pure`.
+func TestPurity_MutBorrowParam_ImpureOk(t *testing.T) {
+	src := `
+let reset = (p: mut Point) -> void => {
+    p.x = 0
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}

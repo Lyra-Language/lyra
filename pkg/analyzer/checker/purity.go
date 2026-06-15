@@ -5,6 +5,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // PurityError reports an observable side effect that occurs inside a function
@@ -53,26 +54,42 @@ var knownImpureBuiltins = map[string]bool{
 // lambda nested in an impure one is still checked, and vice-versa), mirroring how
 // CheckAwaitOutsideAsync scopes `inAsync` per lambda.
 //
+// Interior mutation (`p.x = v`, `arr[i] = v`) is an effect when the value being
+// mutated is not a local the function owns: it escapes through a `mut`-borrowed
+// parameter (a borrow of the caller's value) or a captured outer binding. An
+// `own` parameter and any `var`/`let mut` declared in the body are owned locally,
+// so mutating them is invisible to callers and allowed.
+//
 // Calls to *user-defined* impure functions are caught for top-level function
 // bindings via inferImpureFunctions (transitive, fixpoint). Not yet handled
 // (needs symbol-table / scope info; see todo items #3/#4):
 //   - reading captured *mutable* (`var`) state — also breaks referential
 //     transparency, but distinguishing captured `var` from `let` needs scope info
 //   - impurity of non-top-level functions, methods, and imported functions
-//   - mutation through a `mut`-borrowed parameter (once `ref`/`mut`/`own` are
-//     wired into the typechecker, a `mut` param's name should be treated as
-//     non-local for the purposes of the captured-mutation check)
 func CheckPurity(program *ast.Program) []PurityError {
 	c := &purityChecker{impureFns: inferImpureFunctions(program)}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
-			// Top level is an impure context: locals == nil means "not inside a
-			// pure function, don't check".
+			// Top level is an impure context: a nil scope means "not inside a pure
+			// function, don't check".
 			ast.WalkStmt(stmt, c.stmtVisitor(nil), c.exprVisitor(nil))
 		}
 	}
 	return c.errors
 }
+
+// funcScope describes the binding environment of the pure function currently
+// being walked. A nil *funcScope means "not inside a pure function". locals holds
+// every name owned locally (parameters + body declarations); mutBorrows is the
+// subset of parameters declared `mut` — owned for *name* reassignment (rebinding
+// the borrow is local) but a borrow for *interior* mutation (writing through it
+// escapes to the caller's value).
+type funcScope struct {
+	locals     map[string]bool
+	mutBorrows map[string]bool
+}
+
+func (s *funcScope) isLocal(name string) bool { return s != nil && s.locals[name] }
 
 type purityChecker struct {
 	errors []PurityError
@@ -90,21 +107,23 @@ func (c *purityChecker) isImpureCallee(name string) bool {
 	return knownImpureBuiltins[name] || c.impureFns[name]
 }
 
-// stmtVisitor returns a statement callback. locals is non-nil exactly when we are
-// inside a `pure` function body; it holds every name bound locally within that
-// function (parameters + body declarations), so a mutation of a name *not* in the
-// set is a mutation of captured outer state.
-func (c *purityChecker) stmtVisitor(locals map[string]bool) func(ast.Statement) bool {
+// stmtVisitor returns a statement callback. sc is non-nil exactly when we are
+// inside a `pure` function body. A mutation of a name not owned locally is a
+// mutation of captured outer state; interior mutation through a `mut`-borrowed
+// parameter escapes to the caller's value.
+func (c *purityChecker) stmtVisitor(sc *funcScope) func(ast.Statement) bool {
 	return func(stmt ast.Statement) bool {
-		if locals == nil {
+		if sc == nil {
 			return true // impure context: descend, but don't flag anything
 		}
 		switch s := stmt.(type) {
 		case *ast.VarReassignmentStmt:
-			if !locals[s.Name] {
+			if !sc.isLocal(s.Name) {
 				c.report(s.GetLocation(),
 					"pure function reassigns captured binding %q; mutation must not escape the function", s.Name)
 			}
+		case *ast.LValueAssignmentStmt:
+			c.checkInteriorMutation(sc, s.Target, s.GetLocation())
 		case *ast.DerefAssignmentStmt:
 			c.report(s.GetLocation(),
 				"pure function writes through a pointer; pointer writes may mutate external state")
@@ -113,34 +132,54 @@ func (c *purityChecker) stmtVisitor(locals map[string]bool) func(ast.Statement) 
 	}
 }
 
-func (c *purityChecker) exprVisitor(locals map[string]bool) func(ast.Expression) bool {
+// checkInteriorMutation reports an interior-mutation target (`p.x = v`) whose
+// root binding is not a value the pure function owns: a `mut`-borrowed parameter
+// writes through to the caller's value, and a captured outer binding mutates
+// state observable elsewhere. A root that is an owned local (`own` param,
+// body-declared `var`/`let mut`) is fine; an unrooted target (e.g. a call result)
+// can't be attributed to a binding, so it is left alone.
+func (c *purityChecker) checkInteriorMutation(sc *funcScope, target ast.Expression, loc ast.Location) {
+	root := rootIdentName(target)
+	switch {
+	case root == "":
+		return
+	case sc.mutBorrows[root]:
+		c.report(loc,
+			"pure function mutates through `mut`-borrowed parameter %q; the write escapes to the caller's value", root)
+	case !sc.isLocal(root):
+		c.report(loc,
+			"pure function mutates captured binding %q; mutation must not escape the function", root)
+	}
+}
+
+func (c *purityChecker) exprVisitor(sc *funcScope) func(ast.Expression) bool {
 	return func(expr ast.Expression) bool {
 		switch e := expr.(type) {
 		case *ast.LambdaExpr:
 			// Default values execute at the call site, in the *enclosing* context.
 			for i := range e.Parameters {
-				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(locals), c.exprVisitor(locals))
+				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(sc), c.exprVisitor(sc))
 			}
-			// The body runs in this lambda's own context: pure → build its local
-			// binding set; impure → nil (no checking).
-			var childLocals map[string]bool
+			// The body runs in this lambda's own context: pure → build its scope;
+			// impure → nil (no checking).
+			var child *funcScope
 			if e.IsPure {
-				childLocals = localBindings(e)
+				child = &funcScope{locals: localBindings(e), mutBorrows: mutBorrowParams(e)}
 			}
-			ast.WalkExpr(e.Body, c.stmtVisitor(childLocals), c.exprVisitor(childLocals))
+			ast.WalkExpr(e.Body, c.stmtVisitor(child), c.exprVisitor(child))
 			for _, clause := range e.LambdaClauses {
-				ast.WalkExpr(clause.Body, c.stmtVisitor(childLocals), c.exprVisitor(childLocals))
+				ast.WalkExpr(clause.Body, c.stmtVisitor(child), c.exprVisitor(child))
 			}
 			return false // recursed manually
 
 		case *ast.MathAssignOpExpr:
-			if locals != nil && !locals[e.Left.Name] {
+			if sc != nil && !sc.isLocal(e.Left.Name) {
 				c.report(e.GetLocation(),
 					"pure function mutates captured binding %q; mutation must not escape the function", e.Left.Name)
 			}
 
 		case *ast.FunctionCallExpr:
-			if locals != nil {
+			if sc != nil {
 				if name := calleeName(e.Function); name != "" && c.isImpureCallee(name) {
 					c.report(e.GetLocation(),
 						"pure function calls impure function %q", name)
@@ -208,6 +247,44 @@ func localBindings(lambda *ast.LambdaExpr) map[string]bool {
 	return locals
 }
 
+// mutBorrowParams collects the names of a lambda's `mut`-modified parameters.
+// Writing through such a parameter mutates the caller's value (a borrow), so it
+// is an effect that escapes a pure function; `own`/`ref`/bare parameters are not
+// in this set.
+func mutBorrowParams(lambda *ast.LambdaExpr) map[string]bool {
+	mut := map[string]bool{}
+	for i := range lambda.Parameters {
+		p := &lambda.Parameters[i]
+		if p.TypeModifier != types.Mut {
+			continue
+		}
+		if ip, ok := p.Pattern.(*ast.IdentifierPattern); ok {
+			mut[ip.Name] = true
+		}
+	}
+	return mut
+}
+
+// rootIdentName walks an interior-mutation target (a member/index chain like
+// `grid[i].y`) back to the identifier it is rooted at, returning its name. It
+// returns "" when the target is not rooted at a plain identifier (e.g. a
+// function-call result), in which case the write cannot be attributed to a
+// binding.
+func rootIdentName(expr ast.Expression) string {
+	for {
+		switch e := expr.(type) {
+		case *ast.IdentifierExpr:
+			return e.Name
+		case *ast.MemberExpr:
+			expr = e.Object
+		case *ast.IndexExpr:
+			expr = e.Object
+		default:
+			return ""
+		}
+	}
+}
+
 // inferImpureFunctions returns the set of top-level function bindings whose
 // bodies have an observable effect — directly (captured mutation, pointer write,
 // call to an impure builtin) or transitively (a call to another impure
@@ -260,11 +337,16 @@ func topLevelFunctions(program *ast.Program) map[string]*ast.LambdaExpr {
 // descend into nested lambdas (they have their own boundary).
 func lambdaHasObservableEffect(lam *ast.LambdaExpr, impureFns map[string]bool) bool {
 	locals := localBindings(lam)
+	mutBorrows := mutBorrowParams(lam)
 	found := false
 	onStmt := func(s ast.Statement) bool {
 		switch st := s.(type) {
 		case *ast.VarReassignmentStmt:
 			if !locals[st.Name] {
+				found = true
+			}
+		case *ast.LValueAssignmentStmt:
+			if root := rootIdentName(st.Target); root != "" && (mutBorrows[root] || !locals[root]) {
 				found = true
 			}
 		case *ast.DerefAssignmentStmt:

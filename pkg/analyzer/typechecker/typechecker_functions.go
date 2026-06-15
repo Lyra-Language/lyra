@@ -15,15 +15,21 @@ import (
 // user-defined names (constrained types, structs, etc.) are expanded and
 // unknown names emit an "unknown type" diagnostic.
 func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
-	old := tc.paramTypes
+	oldTypes, oldMods := tc.paramTypes, tc.paramMods
 	tc.paramTypes = make(map[string]types.Type, len(lambda.Parameters))
+	tc.paramMods = make(map[string]types.TypeModifier, len(lambda.Parameters))
 	for _, p := range lambda.Parameters {
-		if ip, ok := p.Pattern.(*ast.IdentifierPattern); ok && p.Type != nil {
-			tc.paramTypes[ip.Name] = tc.resolveType(p.Type, p.GetLocation())
+		if ip, ok := p.Pattern.(*ast.IdentifierPattern); ok {
+			// Record the modifier even when the parameter has no type annotation,
+			// so the interior-mutation check can attribute mutability to the param.
+			tc.paramMods[ip.Name] = p.TypeModifier
+			if p.Type != nil {
+				tc.paramTypes[ip.Name] = tc.resolveType(p.Type, p.GetLocation())
+			}
 		}
 	}
 	tc.enterScope(lambda, fn)
-	tc.paramTypes = old
+	tc.paramTypes, tc.paramMods = oldTypes, oldMods
 }
 
 // checkLambdaBody verifies that the lambda's body is consistent with the
@@ -84,15 +90,27 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 	})
 }
 
-// checkBlockVoidReturn walks block looking for explicit `return <expr>`
-// statements, which are illegal in a void function. Bare `return` is allowed.
+// checkBlockVoidReturn walks block reporting explicit `return <expr>` statements,
+// which are illegal in a void function (bare `return` is allowed), and otherwise
+// runs the full statement check on every statement so body-level diagnostics
+// (interior mutation, must-use, etc.) surface. A void body has no typed implicit
+// return, so even the final expression statement is checked for effect.
 func (tc *TypeChecker) checkBlockVoidReturn(funcName string, block *ast.BlockExpr) {
-	for _, stmt := range block.Statements {
-		if ret, ok := stmt.(*ast.ReturnStmt); ok && ret.Value != nil {
-			tc.addError(ret.GetLocation(), SeverityError,
-				"%s: void function must not return a value", funcName)
+	tc.enterScope(block, func() {
+		for _, stmt := range block.Statements {
+			switch s := stmt.(type) {
+			case *ast.ReturnStmt:
+				if s.Value != nil {
+					tc.addError(s.GetLocation(), SeverityError,
+						"%s: void function must not return a value", funcName)
+				}
+			case *ast.ExpressionStmt:
+				tc.checkExpressionStmt(s)
+			default:
+				tc.checkNode(stmt)
+			}
 		}
-	}
+	})
 }
 
 // checkBlockReturn walks the statements in block, checking:

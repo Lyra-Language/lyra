@@ -18,8 +18,9 @@ type TypeChecker struct {
 	typeTable     *typetable.TypeTable
 	scope         *symbols.Scope
 	errors        []TypeError
-	paramTypes    map[string]types.Type // non-nil only while checking a function body
-	resolvedTypes map[string]types.Type // cache for resolveType to avoid duplicate "unknown type" errors
+	paramTypes    map[string]types.Type         // non-nil only while checking a function body
+	paramMods     map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
+	resolvedTypes map[string]types.Type         // cache for resolveType to avoid duplicate "unknown type" errors
 	enclosingRet  *types.ReturnType     // declared return type of the lambda body currently being checked; nil at top level
 }
 
@@ -351,6 +352,16 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	if root := rootIdentifier(stmt.Target); root != nil {
 		if root.IsConst {
 			tc.addImmutableBindingError(root.GetLocation(), root.Name, ast.BindingConst)
+		} else if mod, ok := tc.paramMods[root.Name]; ok {
+			// The path is rooted at a function parameter. The `ref`/`mut`/`own`
+			// modifier governs whether its interior may be mutated: a bare or
+			// `ref` parameter is an immutable borrow, while `mut` (mutable borrow)
+			// and `own` (owned local) both permit interior mutation. Checked
+			// before the scope lookup because a parameter shadows any outer
+			// binding of the same name (mirroring IdentifierExpr resolution).
+			if !paramAllowsInteriorMutation(mod) {
+				tc.addParamImmutableError(root.GetLocation(), root.Name, mod)
+			}
 		} else if sym, ok := tc.scope.Lookup(root.Name); ok {
 			if decl, ok := sym.(*ast.VarDeclStmt); ok && !decl.CanMutateInterior() {
 				tc.addInteriorImmutableError(root.GetLocation(), root.Name, decl.BindingKind)
@@ -448,6 +459,26 @@ func (tc *TypeChecker) addInteriorImmutableError(loc ast.Location, name string, 
 	}
 	tc.addError(loc, SeverityError,
 		"%s: `let` binding is deeply immutable; its interior cannot be mutated (use `let mut` to allow interior mutation, or `var` to also allow reassignment)", name)
+}
+
+// paramAllowsInteriorMutation reports whether a parameter with the given
+// `ref`/`mut`/`own` modifier may have its interior mutated. A bare parameter
+// (no modifier) and a `ref` parameter are immutable borrows; `mut` (mutable
+// borrow) and `own` (owned local) both permit interior mutation.
+func paramAllowsInteriorMutation(mod types.TypeModifier) bool {
+	return mod == types.Mut || mod == types.Own
+}
+
+// addParamImmutableError reports an attempt to mutate the interior of a value
+// reached through an immutable-borrow parameter (bare or `ref`).
+func (tc *TypeChecker) addParamImmutableError(loc ast.Location, name string, mod types.TypeModifier) {
+	kind := "an immutable borrow by default"
+	if mod == types.Ref {
+		kind = "a `ref` (immutable borrow)"
+	}
+	tc.addError(loc, SeverityError,
+		"%s: parameter is %s; its interior cannot be mutated (declare it `mut <type>` to mutate the caller's value, or `own <type>` for an owned local copy)",
+		name, kind)
 }
 
 func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
