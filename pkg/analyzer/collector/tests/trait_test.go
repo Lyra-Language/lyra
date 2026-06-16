@@ -104,7 +104,7 @@ func TestCollector_TraitWithDefaultMethodImplementation(t *testing.T) {
 	source := `
 	trait Show {
 		show: (Self) -> string,
-		show_twice: (Self) -> string = (x) => show(x) + " " + show(x)
+		show_twice: (Self) -> string = (x) => show(x) ++ " " ++ show(x)
 	}
 	`
 	runGoldenTest(t, source, "trait_with_default_method_implementation")

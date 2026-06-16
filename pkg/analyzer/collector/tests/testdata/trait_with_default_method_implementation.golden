@@ -31,15 +31,39 @@ Program(1 statements) {
 					DefaultMethod: {
 						LambdaClause {
 							Body: {
-								FunctionCallExpr {
-									Arguments: {
-										IdentifierExpr(x) {
-											Name: x
+								StringConcatExpr {
+									Left: {
+										StringConcatExpr {
+											Left: {
+												FunctionCallExpr {
+													Arguments: {
+														IdentifierExpr(x) {
+															Name: x
+														}
+													}
+													Function: {
+														IdentifierExpr(show) {
+															Name: show
+														}
+													}
+												}
+											}
+											Operator: ++
 										}
 									}
-									Function: {
-										IdentifierExpr(show) {
-											Name: show
+									Operator: ++
+									Right: {
+										FunctionCallExpr {
+											Arguments: {
+												IdentifierExpr(x) {
+													Name: x
+												}
+											}
+											Function: {
+												IdentifierExpr(show) {
+													Name: show
+												}
+											}
 										}
 									}
 								}

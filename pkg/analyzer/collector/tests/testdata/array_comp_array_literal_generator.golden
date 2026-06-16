@@ -4,24 +4,31 @@ Program(1 statements) {
 			BindingKind: let
 			Name: foo
 			Value: {
-				ArrayLiteralExpr {
-					Elements: {
-						ArrayLiteralExpr {
-							Elements: {
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 1
-								}
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 2
-								}
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 3
+				ArrayCompExpr {
+					Generators: {
+						Generator {
+							Identifier: x
+							Value: {
+								ArrayLiteralExpr {
+									Elements: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 1
+										}
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 2
+										}
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 3
+										}
+									}
 								}
 							}
 						}
+					}
+					Result: {
 						MathBinaryOpExpr {
 							Left: {
 								IdentifierExpr(x) {

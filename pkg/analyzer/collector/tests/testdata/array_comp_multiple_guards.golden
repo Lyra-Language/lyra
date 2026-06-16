@@ -4,36 +4,50 @@ Program(1 statements) {
 			BindingKind: let
 			Name: foo
 			Value: {
-				ArrayLiteralExpr {
-					Elements: {
-						RangeExpr {
-							End: {
-								IdentifierExpr(x) {
-									Name: x
-								}
-							}
-							EndOperator: =
-							Start: {
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 1
-								}
-							}
-						}
-						RangeExpr {
-							End: {
-								IdentifierExpr(y) {
-									Name: y
-								}
-							}
-							EndOperator: =
-							Start: {
-								IntegerLiteralExpr {
-									Base: 10
-									Value: 1
+				ArrayCompExpr {
+					Generators: {
+						Generator {
+							Identifier: x
+							Value: {
+								RangeExpr {
+									End: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 5
+										}
+									}
+									EndOperator: =
+									Start: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 1
+										}
+									}
 								}
 							}
 						}
+						Generator {
+							Identifier: y
+							Value: {
+								RangeExpr {
+									End: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 5
+										}
+									}
+									EndOperator: =
+									Start: {
+										IntegerLiteralExpr {
+											Base: 10
+											Value: 1
+										}
+									}
+								}
+							}
+						}
+					}
+					Guards: {
 						FunctionCallExpr {
 							Arguments: {
 								IdentifierExpr(x) {
@@ -58,26 +72,32 @@ Program(1 statements) {
 								}
 							}
 						}
-						IdentifierExpr(x) {
-							Name: x
-						}
-						IdentifierExpr(y) {
-							Name: y
-						}
-						MathBinaryOpExpr {
-							Left: {
+					}
+					Result: {
+						TupleLiteralExpr(?) {
+							Elements: {
 								IdentifierExpr(x) {
 									Name: x
 								}
-							}
-							Operator: *
-							Right: {
 								IdentifierExpr(y) {
 									Name: y
 								}
+								MathBinaryOpExpr {
+									Left: {
+										IdentifierExpr(x) {
+											Name: x
+										}
+									}
+									Operator: *
+									Right: {
+										IdentifierExpr(y) {
+											Name: y
+										}
+									}
+								}
 							}
+							Name: ?
 						}
-						nil
 					}
 				}
 			}
