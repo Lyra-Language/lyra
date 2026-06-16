@@ -39,10 +39,15 @@ func (h *Handler) DocumentSymbol(_ context.Context, params *lsp.DocumentSymbolPa
 }
 
 // stmtToSymbol converts a top-level AST statement to a DocumentSymbol, or
-// returns nil for statements that don't contribute to the outline.
+// returns nil for statements that don't contribute to the outline. A
+// half-typed declaration (e.g. a lone `let`) collects with an empty Name;
+// LSP forbids a falsy symbol name, so such nodes are skipped.
 func stmtToSymbol(node ast.AstNode) *lsp.DocumentSymbol {
 	switch s := node.(type) {
 	case *ast.TypeDeclStmt:
+		if s.Name == "" {
+			return nil
+		}
 		kind := typeDeclKind(s.Type)
 		loc := s.GetLocation()
 		r := astLocToRange(loc)
@@ -54,6 +59,9 @@ func stmtToSymbol(node ast.AstNode) *lsp.DocumentSymbol {
 		}
 
 	case *ast.TraitDeclStmt:
+		if s.Name == "" {
+			return nil
+		}
 		loc := s.GetLocation()
 		r := astLocToRange(loc)
 		return &lsp.DocumentSymbol{
@@ -64,6 +72,9 @@ func stmtToSymbol(node ast.AstNode) *lsp.DocumentSymbol {
 		}
 
 	case *ast.VarDeclStmt:
+		if s.Name == "" {
+			return nil
+		}
 		kind := varDeclSymbolKind(s)
 		loc := s.GetLocation()
 		r := astLocToRange(loc)

@@ -41,7 +41,6 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 - **`@sizeof` on unknown types** — `SizeofExpr` should emit `unknown type %q` when its type argument doesn't resolve
 
 ### LSP — Additional navigation and editing features
-- **Completion** (`textDocument/completion`) — identifiers in scope, type names, struct field names after `.`; reuse `Scope.Lookup` chain and `SymbolTable.Types`
 - **Signature help** (`textDocument/signatureHelp`) — show the lambda signature while typing inside `()`; parameter info is already on every `LambdaExpr`
 - **Rename** (`textDocument/rename`) — compute all references (see `references.go`) and return a `WorkspaceEdit`
 - **Semantic tokens** (`textDocument/semanticTokens`) — emit per-token type/modifier classifications (constant, mutable variable, type name, function, deprecated, etc.) using `SymbolTable`; the TextMate grammar can't distinguish these
@@ -56,6 +55,7 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ------------
 
 ### 06/16/26
+- **Completion** (`textDocument/completion`) — `cmd/lyra-lsp/completion.go` offers field names after `.` (receiver chain resolved via scope→struct fields, source-text prefix scan so a broken `p.` parse still works) and, otherwise, every identifier in the scope chain plus all declared type names, each classified to an LSP item kind. Auto-registers via the `CompletionHandler` interface; `Initialize` advertises `.` as a trigger character. Tests: `completion_test.go`.
 - **Find references** (`textDocument/references`) — `cmd/lyra-lsp/references.go` returns every occurrence resolving to the same binding as the identifier under the cursor; matching is scope-aware (per-occurrence `findScopeAtPos`+`Scope.Lookup`, compared by declaration location) so shadowed/sibling same-named bindings are excluded, and `IncludeDeclaration` adds the decl. Handles `IdentifierExpr` and `...spread`; capability auto-registers via the `ReferencesHandler` interface. Unblocks Rename + Document highlight. Tests: `references_test.go`.
 
 ### 06/15/26

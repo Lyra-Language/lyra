@@ -161,3 +161,19 @@ func TestDocumentSymbol_Empty(t *testing.T) {
 		t.Errorf("expected 0 symbols for empty document, got %d", len(syms))
 	}
 }
+
+// A half-typed declaration (a lone `let`) collects with an empty name. LSP
+// forbids a falsy symbol name, so it must be omitted from the outline.
+func TestDocumentSymbol_IncompleteDecl_NoEmptyName(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	openAndWait(t, h, "let alpha = 1\nlet")
+	syms, err := h.DocumentSymbol(testURI)
+	if err != nil {
+		t.Fatalf("DocumentSymbol: %v", err)
+	}
+	for _, s := range syms {
+		if s.Name == "" {
+			t.Errorf("emitted a symbol with an empty name: %v", symbolNames(syms))
+		}
+	}
+}

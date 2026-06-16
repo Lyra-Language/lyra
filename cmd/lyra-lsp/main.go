@@ -64,6 +64,11 @@ func (h *Handler) Initialize(_ context.Context, _ *lsp.InitializeParams) (*lsp.I
 				Change:    lsp.SyncIncremental,
 			},
 			DocumentSymbolProvider: &enabled,
+			// `.` triggers member completion as soon as it is typed; other
+			// completions are still offered on the usual identifier characters.
+			CompletionProvider: &lsp.CompletionOptions{
+				TriggerCharacters: []string{"."},
+			},
 		},
 	}, nil
 }
