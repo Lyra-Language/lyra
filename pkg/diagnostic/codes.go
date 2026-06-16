@@ -27,6 +27,14 @@ const (
 	// or `unsafe` function body. The unsafe surface must be explicit and loud.
 	CodeUnsafeOutsideUnsafe = "lyra-E011"
 
+	// CodeNonConstantConstInitializer: a `const` binding's initializer is not a
+	// compile-time constant. A `const` must be evaluable at compile time, so its
+	// initializer may only be a literal, another constant, or an expression built
+	// purely from those (arithmetic, boolean, string concatenation, array/tuple
+	// of constants). Anything depending on runtime state (function calls, non-const
+	// variables, interpolation, etc.) is rejected.
+	CodeNonConstantConstInitializer = "lyra-E012"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

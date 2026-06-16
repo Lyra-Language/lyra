@@ -175,6 +175,12 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 		return
 	}
 
+	// A `const` must be evaluable at compile time: reject any initializer that
+	// isn't a literal, another constant, or an expression built purely from those.
+	if decl.BindingKind == ast.BindingConst {
+		tc.checkConstInitializer(decl.Value)
+	}
+
 	// Lambda values (function declarations) are handled separately.
 	// Full lambda type inference is not yet implemented, so the regular
 	// annotation check is skipped for them.

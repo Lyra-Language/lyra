@@ -37,11 +37,7 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 
 ### LSP — Table-stakes editor features
 
-### Checker — Control-flow validity (new `checker/` pass)
-_(all current items done — see Completed)_
-
 ### Typechecker — Constant and value-level checks
-- **`const` requires a compile-time-constant initializer** — walk the initializer and reject anything that isn't a literal, constant identifier, or purely constant expression
 - **`@sizeof` on unknown types** — `SizeofExpr` should emit `unknown type %q` when its type argument doesn't resolve
 
 ### LSP — Additional navigation and editing features
@@ -61,6 +57,7 @@ _(all current items done — see Completed)_
 ## Completed
 ------------
 ### 06/15/26
+- **`const` requires a compile-time-constant initializer** — `checkConstInitializer` (`typechecker_const.go`, `lyra-E012`) rejects a `const` whose value isn't a literal, another `const`, or an expression built purely from those (unary, math/boolean binary, `++`, array/tuple of constants); reports the first non-constant sub-expression. Tests: `const_initializer_test.go`.
 - **Unsafe operations outside `unsafe` require an `unsafe` context** — new `checker/unsafe_outside_unsafe.go` pass (`lyra-E011`) flags a raw-pointer take (`&x`), deref (`p^`), pointer write (`p^ = v`), or a call to an `unsafe` function when not inside an `unsafe { }` block or `unsafe` function body. Mirrors the `CheckAwaitOutsideAsync` enclosing-context walk; unsafe-ness resets at each function boundary (a plain lambda inside an `unsafe` block is its own safe context). Wired into the LSP. Tests: `unsafe_outside_unsafe_test.go`; demo `lyra-vscode-ext/test/unsafe.lyra`.
 - **Wire `ref`/`mut`/`own` parameter modifiers into mutation/purity checks** (FP-blend #4) — a parameter's modifier now governs interior mutation: bare and `ref` are immutable borrows (`p.x = v` errors), while `mut` (mutable borrow) and `own` (owned local) permit it. Typechecker tracks per-param modifiers (`tc.paramMods`) and `checkLValueAssignment` consults them before the scope lookup; `checkBlockVoidReturn` now also dispatches body statements through `checkNode` (previously interior mutation inside a void body was never checked). The purity pass (`checker/purity.go`) treats interior mutation through a `mut` param — and through any captured binding — as an escaping effect (new `LValueAssignmentStmt` handling), while `own`/local mutation stays pure. Tests: `interior_mutation_test.go` (param section), `purity_test.go`; demo `lyra-vscode-ext/test/purity.lyra`.
 - **Struct field mutability: default mutable + `readonly` freeze marker** — struct fields are now mutable by default (a field follows the mutability of the binding holding the struct); a field declared `readonly id: u64` is **frozen** — writable once at construction, immutable forever after, even through a `var`/`let mut` instance, for invariant fields. Composition is intersection (most-restrictive-wins): `p.f = v` is legal iff the root binding permits interior mutation **and** the field isn't `readonly`; the `let`-binding row stays absolute. `readonly` is also **deep** (can't mutate *through* a readonly struct-typed field). Grammar: struct_member `var` keyword replaced by `optional(field("frozen","readonly"))` (the old `var` field keyword was parsed-but-ignored); `readonly` added to the reserved-identifier list. `types.StructField.Frozen`; collector sets it; `checkFrozenFieldPath` (typechecker) walks member hops. Tests: `interior_mutation_test.go`, `collector/tests/let_mut_test.go`, corpus `types/struct.txt`.
