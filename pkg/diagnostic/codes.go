@@ -22,6 +22,11 @@ const (
 	// behind a definite-assignment pass may be revisited later.
 	CodeUninitializedDeclaration = "lyra-E010"
 
+	// CodeUnsafeOutsideUnsafe: a raw-pointer operation (`&x`, `*p`, a pointer
+	// write) or a call to an `unsafe` function appears outside an `unsafe` block
+	// or `unsafe` function body. The unsafe surface must be explicit and loud.
+	CodeUnsafeOutsideUnsafe = "lyra-E011"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

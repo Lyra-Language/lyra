@@ -294,6 +294,22 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		})
 	}
 
+	log.Printf("analyze: checking unsafe outside unsafe")
+	for _, ue := range checker.CheckUnsafeOutsideUnsafe(program) {
+		sev := lsp.SeverityError
+		loc := ue.Location
+		diags = append(diags, lsp.Diagnostic{
+			Range: lsp.Range{
+				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
+				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
+			},
+			Severity: &sev,
+			Code:     codeToLSP(ue.Code),
+			Source:   "lyra",
+			Message:  ue.Message,
+		})
+	}
+
 	log.Printf("analyze: checking purity")
 	for _, pe := range checker.CheckPurity(program) {
 		sev := lsp.SeverityError
