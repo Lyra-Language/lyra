@@ -27,8 +27,9 @@ func collectConstrainedTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx
 	}
 
 	astNode := &ast.TypeDeclStmt{
-		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
-		Name:    name,
+		AstBase:      ast.AstBase{Location: ctx.NodeLocation(node)},
+		Name:         name,
+		NameLocation: ctx.NodeLocation(nameNode),
 		Type: &types.ConstrainedType{
 			Name:        name,
 			Type:        typeType,

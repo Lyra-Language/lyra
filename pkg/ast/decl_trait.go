@@ -7,6 +7,7 @@ import (
 type TraitDeclStmt struct {
 	AstBase
 	Name          string
+	NameLocation  Location `print:"-"` // span of just the trait name (Location covers the whole decl)
 	GenericParams []GenericParam
 	Bounds        []string
 	Methods       []TraitMethod

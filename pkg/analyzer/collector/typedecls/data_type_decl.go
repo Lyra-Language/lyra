@@ -10,6 +10,7 @@ import (
 
 func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.TypeDeclStmt {
 	var name string
+	var nameLoc ast.Location
 	var genericParams []ast.GenericParam
 	var allocation types.AllocationModifier
 	var constructors []types.DataTypeConstructor
@@ -27,6 +28,7 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 			isPublic = true
 		case "data_type_name":
 			name = ctx.NodeText(child)
+			nameLoc = ctx.NodeLocation(child)
 		case "generic_parameters":
 			genericParams = ctx.CollectGenericParams(child)
 		case "data_type_constructor":
@@ -38,6 +40,7 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	astNode := &ast.TypeDeclStmt{
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
 		Name:          name,
+		NameLocation:  nameLoc,
 		GenericParams: genericParams,
 		Type: types.DataType{
 			Name:         name,

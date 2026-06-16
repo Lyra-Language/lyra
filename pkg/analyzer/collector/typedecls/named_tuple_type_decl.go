@@ -10,6 +10,7 @@ import (
 
 func collectNamedTupleTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.TypeDeclStmt {
 	var name string
+	var nameLoc ast.Location
 	var genericParams []ast.GenericParam
 	var allocation types.AllocationModifier
 	var elements []types.Type
@@ -23,6 +24,7 @@ func collectNamedTupleTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx)
 	}
 	if nameNode := node.ChildByFieldName("name"); nameNode != nil {
 		name = ctx.NodeText(nameNode)
+		nameLoc = ctx.NodeLocation(nameNode)
 	}
 	if genericParamsNode := node.ChildByFieldName("generic_parameters"); genericParamsNode != nil {
 		genericParams = ctx.CollectGenericParams(genericParamsNode)
@@ -34,6 +36,7 @@ func collectNamedTupleTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx)
 	astNode := &ast.TypeDeclStmt{
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
 		Name:          name,
+		NameLocation:  nameLoc,
 		GenericParams: genericParams,
 		IsPublic:      isPublic,
 		Allocation:    allocation,

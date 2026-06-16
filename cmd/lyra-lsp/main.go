@@ -69,6 +69,18 @@ func (h *Handler) Initialize(_ context.Context, _ *lsp.InitializeParams) (*lsp.I
 			CompletionProvider: &lsp.CompletionOptions{
 				TriggerCharacters: []string{"."},
 			},
+			// Semantic tokens augment the TextMate grammar with classifications
+			// it can't make (constant vs mutable variable, function, type, …).
+			// The handler implements SemanticTokensFullHandler, so the provider
+			// is set explicitly here only to carry the legend; mergeCapabilities
+			// keeps this over the empty auto-built one.
+			SemanticTokensProvider: &lsp.SemanticTokensOptions{
+				Legend: lsp.SemanticTokensLegend{
+					TokenTypes:     semanticTokenTypes,
+					TokenModifiers: semanticTokenModifiers,
+				},
+				Full: &lsp.SemanticTokensFull{},
+			},
 		},
 	}, nil
 }

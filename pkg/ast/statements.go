@@ -14,6 +14,7 @@ type Statement interface {
 type TypeDeclStmt struct {
 	AstBase
 	Name          string
+	NameLocation  Location `print:"-"` // span of just the type name (Location covers the whole decl)
 	GenericParams []GenericParam
 	Type          types.Type
 	IsPublic      bool
@@ -67,6 +68,7 @@ type VarDeclStmt struct {
 	// `const` never is.
 	IsMut         bool
 	Name          string
+	NameLocation  Location `print:"-"` // span of just the bound name (Location covers the whole decl)
 	GenericParams []GenericParam
 	Type          types.Type // may be nil if needs inference
 	Value         Expression

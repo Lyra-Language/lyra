@@ -50,7 +50,7 @@ func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 		ctx.AddError(node, diag.SeverityError, "member expression missing property")
 		return nil
 	}
-	property := CollectIdentifierExpr(propertyNode, isConst, loc, ctx)
+	property := CollectIdentifierExpr(propertyNode, isConst, ctx.NodeLocation(propertyNode), ctx)
 	if property == nil {
 		ctx.AddError(node, diag.SeverityError, "could not parse member expression property")
 		return nil

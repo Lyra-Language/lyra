@@ -43,7 +43,6 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ### LSP — Additional navigation and editing features
 - **Signature help** (`textDocument/signatureHelp`) — show the lambda signature while typing inside `()`; parameter info is already on every `LambdaExpr`
 - **Rename** (`textDocument/rename`) — compute all references (see `references.go`) and return a `WorkspaceEdit`
-- **Semantic tokens** (`textDocument/semanticTokens`) — emit per-token type/modifier classifications (constant, mutable variable, type name, function, deprecated, etc.) using `SymbolTable`; the TextMate grammar can't distinguish these
 - **Workspace symbols** (`workspace/symbol`) — fuzzy-search across all type decls and functions in the workspace
 - **Document highlight** (`textDocument/documentHighlight`) — highlight all occurrences of the symbol under the cursor; cheap once references work
 - **Folding ranges** (`textDocument/foldingRange`) — emit fold regions for `match`, `data`, struct, trait, and block expressions
@@ -55,6 +54,7 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ------------
 
 ### 06/16/26
+- **Semantic tokens** (`textDocument/semanticTokens/full`) — `cmd/lyra-lsp/semantictokens.go` classifies both declaration names and usages: variable/parameter/function/type (`readonly` modifier for `const` and immutable `let`), member-access property, data constructor (`enumMember`), and struct-literal type name, delta-encoded for the client. Walks statements (decl names) + expressions (usages, lambda params); usages classified via scope resolution. Auto-registers via `SemanticTokensFullHandler`; `Initialize` carries the legend. Added `NameLocation` (tagged `print:"-"`) to `VarDeclStmt`/`TypeDeclStmt`/`TraitDeclStmt` so decl names have precise spans; the AST printer now skips `print:"-"` fields (keeps goldens location-free). Also fixed `collectMemberExpr` to give `MemberExpr.Property` its own location. Tests: `semantictokens_test.go`.
 - **Completion** (`textDocument/completion`) — `cmd/lyra-lsp/completion.go` offers field names after `.` (receiver chain resolved via scope→struct fields, source-text prefix scan so a broken `p.` parse still works) and, otherwise, every identifier in the scope chain plus all declared type names, each classified to an LSP item kind. Auto-registers via the `CompletionHandler` interface; `Initialize` advertises `.` as a trigger character. Tests: `completion_test.go`.
 - **Find references** (`textDocument/references`) — `cmd/lyra-lsp/references.go` returns every occurrence resolving to the same binding as the identifier under the cursor; matching is scope-aware (per-occurrence `findScopeAtPos`+`Scope.Lookup`, compared by declaration location) so shadowed/sibling same-named bindings are excluded, and `IncludeDeclaration` adds the decl. Handles `IdentifierExpr` and `...spread`; capability auto-registers via the `ReferencesHandler` interface. Unblocks Rename + Document highlight. Tests: `references_test.go`.
 

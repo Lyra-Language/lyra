@@ -188,6 +188,12 @@ func exportedFields(v reflect.Value) []reflect.StructField {
 		if f.Anonymous && (f.Name == "AstBase" || f.Name == "ExprBase" || f.Name == "PatternBase") {
 			continue
 		}
+		// Fields tagged `print:"-"` (e.g. NameLocation) carry auxiliary source
+		// positions for tooling, not structural content; omit them so goldens
+		// stay stable under unrelated edits.
+		if f.Tag.Get("print") == "-" {
+			continue
+		}
 		fields = append(fields, f)
 	}
 	sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })

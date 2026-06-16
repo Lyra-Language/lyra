@@ -73,6 +73,7 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 		BindingKind:   kind,
 		IsMut:         isMut,
 		Name:          name,
+		NameLocation:  ctx.NodeLocation(nameNode),
 		GenericParams: genericParameters,
 		Type:          varType,
 		Value:         initExpr,

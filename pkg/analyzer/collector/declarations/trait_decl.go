@@ -44,6 +44,7 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Tra
 	stmt := &ast.TraitDeclStmt{
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
 		Name:          name,
+		NameLocation:  ctx.NodeLocation(nameNode),
 		GenericParams: genericParams,
 		Bounds:        bounds,
 		Methods:       methods,

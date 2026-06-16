@@ -10,6 +10,7 @@ import (
 
 func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.TypeDeclStmt {
 	var name string
+	var nameLoc ast.Location
 	var genericParams []ast.GenericParam
 	var fields []types.StructField
 	var derives []string
@@ -27,6 +28,7 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *as
 			isPublic = true
 		case "struct_name":
 			name = ctx.NodeText(child)
+			nameLoc = ctx.NodeLocation(child)
 		case "generic_parameters":
 			genericParams = ctx.CollectGenericParams(child)
 		case "struct_type_body":
@@ -37,6 +39,7 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *as
 	astNode := &ast.TypeDeclStmt{
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
 		Name:          name,
+		NameLocation:  nameLoc,
 		GenericParams: genericParams,
 		Type: types.NamedStructType{
 			Name:       name,
