@@ -1103,7 +1103,7 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 				if f.DefaultValue != nil {
 					continue
 				}
-				tc.addError(expr.GetLocation(), SeverityError, "%s: missing field %q", expr.Name, f.Name)
+				tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeMissingStructField, "%s: missing field %q", expr.Name, f.Name)
 			}
 		}
 	}

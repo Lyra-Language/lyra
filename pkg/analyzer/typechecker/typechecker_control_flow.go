@@ -351,6 +351,16 @@ func (tc *TypeChecker) checkDataMatchArm(pattern ast.Pattern, dt types.DataType)
 	}
 }
 
+// MissingMatchConstructors returns the constructors of dt that the match arms
+// leave uncovered, in declaration order — the exact set the exhaustiveness
+// check (lyra-E009) reports. Returns nil when the match is already exhaustive.
+// Exported so the LSP's "Add missing match arms" code action can reuse the same
+// computation rather than re-deriving it.
+func MissingMatchConstructors(arms []ast.MatchArm, dt types.DataType) []string {
+	_, missing := dataMatchIsExhaustive(arms, dt)
+	return missing
+}
+
 // dataMatchIsExhaustive reports whether the match arms fully cover all
 // constructors of dt. Returns (true, nil) when a wildcard or unguarded
 // identifier is present. Returns (true, nil) when every constructor has at

@@ -35,6 +35,11 @@ const (
 	// variables, interpolation, etc.) is rejected.
 	CodeNonConstantConstInitializer = "lyra-E012"
 
+	// CodeMissingStructField: a struct literal omits a declared field that has no
+	// default value. Carries its own code (rather than the generic type error) so
+	// the LSP can offer an "Add missing struct fields" quick fix.
+	CodeMissingStructField = "lyra-E013"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"
