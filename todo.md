@@ -43,8 +43,7 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ### LSP — Additional navigation and editing features
 - **Completion** (`textDocument/completion`) — identifiers in scope, type names, struct field names after `.`; reuse `Scope.Lookup` chain and `SymbolTable.Types`
 - **Signature help** (`textDocument/signatureHelp`) — show the lambda signature while typing inside `()`; parameter info is already on every `LambdaExpr`
-- **Find references** (`textDocument/references`) — walk the AST collecting every `IdentifierExpr` / `SpreadExpr` that matches the target symbol's declaration
-- **Rename** (`textDocument/rename`) — compute all references (see above) and return a `WorkspaceEdit`
+- **Rename** (`textDocument/rename`) — compute all references (see `references.go`) and return a `WorkspaceEdit`
 - **Semantic tokens** (`textDocument/semanticTokens`) — emit per-token type/modifier classifications (constant, mutable variable, type name, function, deprecated, etc.) using `SymbolTable`; the TextMate grammar can't distinguish these
 - **Workspace symbols** (`workspace/symbol`) — fuzzy-search across all type decls and functions in the workspace
 - **Document highlight** (`textDocument/documentHighlight`) — highlight all occurrences of the symbol under the cursor; cheap once references work
@@ -55,6 +54,10 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 
 ## Completed
 ------------
+
+### 06/16/26
+- **Find references** (`textDocument/references`) — `cmd/lyra-lsp/references.go` returns every occurrence resolving to the same binding as the identifier under the cursor; matching is scope-aware (per-occurrence `findScopeAtPos`+`Scope.Lookup`, compared by declaration location) so shadowed/sibling same-named bindings are excluded, and `IncludeDeclaration` adds the decl. Handles `IdentifierExpr` and `...spread`; capability auto-registers via the `ReferencesHandler` interface. Unblocks Rename + Document highlight. Tests: `references_test.go`.
+
 ### 06/15/26
 - **Code actions / quick fixes** (`textDocument/codeAction`) — `cmd/lyra-lsp/codeaction.go` offers four fixes off the diagnostics in range plus a range-driven refactor: "Add missing match arms" (lyra-E009; reuses exported `typechecker.MissingMatchConstructors`, emits `Ctor _` for payload constructors / bare `Ctor` for nullary), "Add missing struct fields" (new code lyra-E013, dedupes the per-field diags into one edit), "Remove unused variable/import" (lyra-W003/W004; whole-line deletion, import removal only when the whole statement can go), and "Insert inferred type annotation" for unannotated `let`/`var` (reuses the inlay-hint inferred type). Capability auto-registers via the `CodeActionHandler` interface. Tests: `codeaction_test.go`.
 - **Fixed: nullary constructor swallowed the following statement** (grammar) — `let c = None\nmatch c {…}` parsed as `None(match …)` because `data_constructor_expr`'s argument was the full `expression` set and Lyra has no statement terminators. Restricted the argument to a new `_constructor_value` = atomic/primary value forms only (literals minus `anonymous_struct_literal`, numbers, postfix, nested constructor, negation, group, address-of, sizeof, array-comp); control-flow/block/binary-op forms are excluded, so application now binds tighter than binary ops (`Some 42 ?? d` = `(Some 42) ?? d`) and `match`/`if`/`{…}` after a nullary stay separate statements. `Some 42` / `Some foo(x)` / `Err -1` still construct. Corpus: `test/corpus/expressions/data_constructor.txt`. **Residual:** a nullary binding immediately followed by a bare *call/identifier* expression-statement (`let c = None\nfoo()`) is still swallowed — postfix args can't be distinguished from a following call without statement terminators (separate, larger effort).
