@@ -63,11 +63,12 @@ func editText(t *testing.T, a *lsp.CodeAction) (lsp.TextEdit, string) {
 
 func TestCodeAction_MissingMatchArms(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	// The scrutinee is bound to a payload constructor (`Pos 1`); a nullary value
-	// like `let s = Zero` currently mis-parses (the value swallows the following
-	// `match`), an unrelated grammar bug. The missing arms still exercise both a
-	// payload constructor (Neg → `Neg _`) and a nullary one (Zero → bare).
-	src := "data Sign = Pos i32 | Neg i32 | Zero\nlet s = Pos 1\nmatch s {\n    Pos x => 1,\n}"
+	// The scrutinee is bound to a *nullary* constructor (`let s = Zero`) and
+	// matched on the next line — the exact shape that used to mis-parse (the
+	// nullary value swallowing the following `match`), now fixed in the grammar.
+	// The missing arms exercise both a payload constructor (Pos → `Pos _`) and a
+	// nullary one (Unknown → bare).
+	src := "data Sign = Pos i32 | Zero | Unknown\nlet s = Zero\nmatch s {\n    Zero => 0,\n}"
 	diags := openAndDiags(t, h, src)
 	actions := requestActions(t, h, diags)
 
@@ -76,11 +77,11 @@ func TestCodeAction_MissingMatchArms(t *testing.T) {
 		t.Fatalf("no match-arms action; actions=%v", titles(actions))
 	}
 	_, text := editText(t, a)
-	if !strings.Contains(text, "Neg _ => todo()") {
-		t.Errorf("expected payload constructor arm `Neg _`, got: %q", text)
+	if !strings.Contains(text, "Pos _ => todo()") {
+		t.Errorf("expected payload constructor arm `Pos _`, got: %q", text)
 	}
-	if !strings.Contains(text, "Zero => todo()") || strings.Contains(text, "Zero _") {
-		t.Errorf("expected bare nullary arm `Zero`, got: %q", text)
+	if !strings.Contains(text, "Unknown => todo()") || strings.Contains(text, "Unknown _") {
+		t.Errorf("expected bare nullary arm `Unknown`, got: %q", text)
 	}
 }
 
