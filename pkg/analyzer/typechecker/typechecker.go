@@ -715,6 +715,9 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 		return nil
 	case *ast.NullCoalescingExpr:
 		return tc.inferNullCoalescingExpr(e)
+	case *ast.SizeofExpr:
+		tc.resolveType(e.Type, e.GetLocation())
+		return types.PrimitiveType{Name: types.UInt64}
 	case *ast.IdentifierExpr:
 		// Consult the parameter scope installed by withParamScope while
 		// type-checking a function body.

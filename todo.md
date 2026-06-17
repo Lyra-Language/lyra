@@ -38,7 +38,6 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ### LSP — Table-stakes editor features
 
 ### Typechecker — Constant and value-level checks
-- **`@sizeof` on unknown types** — `SizeofExpr` should emit `unknown type %q` when its type argument doesn't resolve
 
 ### LSP — Additional navigation and editing features
 - **Signature help** (`textDocument/signatureHelp`) — show the lambda signature while typing inside `()`; parameter info is already on every `LambdaExpr`
@@ -52,6 +51,9 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 
 ## Completed
 ------------
+
+### 06/17/26
+- **`@sizeof` on unknown types** — added `case *ast.SizeofExpr` to `inferExprType`: calls `resolveType` on the type argument (emits `unknown type %q` if unresolved) and returns `u64`. Tests: `sizeof_test.go`.
 
 ### 06/16/26
 - **Fixed keyword carving in identifiers** (grammar) — raised `IDENTIFIER_TOKEN` -1→0 so keywords stop being lexed out of longer names (`letter`→`let`+`ter`, `mutable`→`mut`+`able`, `matcher()`, `weakness`). Needed three zero-regression compensations: float exponent `[eE]` precedence, a data-ctor payload alias for bare lowercase params (`Some t`), and correcting two pre-existing malformed-syntax tests (array-comp arrow→`in`, trait default `+`→`++`). Corpus + Go suite green.
