@@ -26,9 +26,12 @@ func openAndWait(t *testing.T, h *servertest.Harness, source string) {
 
 func TestHover_IdentifierExpr_ShowsType(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	openAndWait(t, h, "let xs: [3]int = [1, 2, 3]\nlet y = xs")
-	// "xs" in "let y = xs" starts at line 1 (0-based), col 8 (0-based)
-	hover, err := h.Hover(testURI, 1, 8)
+	src := `
+	let xs: [3]int = [1, 2, 3]
+	let y = xs`
+	openAndWait(t, h, src)
+	// "xs" in "let y = xs" starts at line 2 (0-based), col 9 (0-based).
+	hover, err := h.Hover(testURI, 2, 9)
 	if err != nil {
 		t.Fatalf("Hover: %v", err)
 	}
@@ -45,9 +48,12 @@ func TestHover_IdentifierExpr_ShowsType(t *testing.T) {
 
 func TestHover_IndexExpr_ShowsElementType(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	openAndWait(t, h, "let xs: [3]int = [1, 2, 3]\nlet y = xs[0]")
-	// "xs[0]" starts at line 1, col 8; hover on the whole expression
-	hover, err := h.Hover(testURI, 1, 9)
+	src := `
+	let xs: [3]int = [1, 2, 3]
+	let y = xs[0]`
+	openAndWait(t, h, src)
+	// "xs[0]" starts at line 2, col 9; hover on the 's' of xs.
+	hover, err := h.Hover(testURI, 2, 10)
 	if err != nil {
 		t.Fatalf("Hover: %v", err)
 	}

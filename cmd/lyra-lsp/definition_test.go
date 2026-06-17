@@ -8,38 +8,47 @@ import (
 
 func TestDefinition_LocalVariable(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	// "let x = 5" on line 0, "let y = x" on line 1; cursor on "x" in "let y = x"
-	openAndWait(t, h, "let x = 5\nlet y = x")
-	// "x" in "let y = x" is at line 1 (0-based), col 8 (0-based)
-	locs, err := h.Definition(testURI, 1, 8)
+	src := `
+	let x = 5
+	let y = x`
+	openAndWait(t, h, src)
+	// "x" in "let y = x" is at line 2 (0-based), col 9 (0-based).
+	locs, err := h.Definition(testURI, 2, 9)
 	if err != nil {
 		t.Fatalf("Definition: %v", err)
 	}
 	if len(locs) != 1 {
 		t.Fatalf("expected 1 location, got %d", len(locs))
 	}
-	// "let x = 5" is on line 0 (0-based)
-	if locs[0].Range.Start.Line != 0 {
-		t.Errorf("expected definition on line 0, got line %d", locs[0].Range.Start.Line)
+	// "let x = 5" is on line 1 (0-based).
+	if locs[0].Range.Start.Line != 1 {
+		t.Errorf("expected definition on line 1, got line %d", locs[0].Range.Start.Line)
 	}
 }
 
 func TestDefinition_StructTypeName(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	// "Point" struct defined on line 0, used as struct literal on line 1.
-	src := "struct Point {\n  x: i32,\n  y: i32,\n}\nvar origin = Point {\n  x: 0,\n  y: 0,\n}"
+	src := `
+	struct Point {
+		x: i32,
+		y: i32,
+	}
+	var origin = Point {
+		x: 0,
+		y: 0,
+	}`
 	openAndWait(t, h, src)
-	// "Point" in "var origin = Point {" starts at line 4, col 13 (0-based)
-	locs, err := h.Definition(testURI, 4, 13)
+	// "Point" in "var origin = Point {" starts at line 5, col 14 (0-based).
+	locs, err := h.Definition(testURI, 5, 14)
 	if err != nil {
 		t.Fatalf("Definition: %v", err)
 	}
 	if len(locs) != 1 {
 		t.Fatalf("expected 1 location for struct type name, got %d", len(locs))
 	}
-	// struct declaration is on line 0
-	if locs[0].Range.Start.Line != 0 {
-		t.Errorf("expected definition on line 0, got line %d", locs[0].Range.Start.Line)
+	// struct declaration is on line 1.
+	if locs[0].Range.Start.Line != 1 {
+		t.Errorf("expected definition on line 1, got line %d", locs[0].Range.Start.Line)
 	}
 }
 
@@ -58,38 +67,44 @@ func TestDefinition_NoResult_OnLiteral(t *testing.T) {
 
 func TestDefinition_NestedScope(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	// lambda with inner variable; cursor on inner use of "n"
-	src := "let f = () -> i32 => {\n  let n = 10\n  n\n}"
+	src := `
+	let f = () -> i32 => {
+		let n = 10
+		n
+	}`
 	openAndWait(t, h, src)
-	// "n" on line 2 (0-based), col 2
-	locs, err := h.Definition(testURI, 2, 2)
+	// "n" on line 3 (0-based), col 2.
+	locs, err := h.Definition(testURI, 3, 2)
 	if err != nil {
 		t.Fatalf("Definition: %v", err)
 	}
 	if len(locs) != 1 {
 		t.Fatalf("expected 1 location, got %d", len(locs))
 	}
-	// "let n = 10" is on line 1 (0-based)
-	if locs[0].Range.Start.Line != 1 {
-		t.Errorf("expected definition on line 1, got line %d", locs[0].Range.Start.Line)
+	// "let n = 10" is on line 2 (0-based).
+	if locs[0].Range.Start.Line != 2 {
+		t.Errorf("expected definition on line 2, got line %d", locs[0].Range.Start.Line)
 	}
 }
 
 func TestDefinition_OuterScopeFromInner(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	// outer variable referenced inside a lambda
-	src := "let x = 99\nlet f = () -> i32 => {\n  x\n}"
+	src := `
+	let x = 99
+	let f = () -> i32 => {
+		x
+	}`
 	openAndWait(t, h, src)
-	// "x" on line 2 (0-based), col 2
-	locs, err := h.Definition(testURI, 2, 2)
+	// "x" on line 3 (0-based), col 2.
+	locs, err := h.Definition(testURI, 3, 2)
 	if err != nil {
 		t.Fatalf("Definition: %v", err)
 	}
 	if len(locs) != 1 {
 		t.Fatalf("expected 1 location, got %d", len(locs))
 	}
-	// "let x = 99" is on line 0
-	if locs[0].Range.Start.Line != 0 {
-		t.Errorf("expected definition on line 0, got line %d", locs[0].Range.Start.Line)
+	// "let x = 99" is on line 1.
+	if locs[0].Range.Start.Line != 1 {
+		t.Errorf("expected definition on line 1, got line %d", locs[0].Range.Start.Line)
 	}
 }

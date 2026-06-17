@@ -78,12 +78,14 @@ func TestSemanticTokens_BindingKinds(t *testing.T) {
 	h := servertest.New(t, newHandler())
 	// A let, a var, and a function binding, each referenced so the usage gets a
 	// token; the declaration name itself is left to the TextMate grammar.
-	src := "let a = 1\n" +
-		"var b = 2\n" +
-		"let f = (n: i32) -> i32 => n\n" +
-		"let ra = a\n" +
-		"let rb = b\n" +
-		"let rf = f\n"
+	src := `
+	let a = 1
+	var b = 2
+	let f = (n: i32) -> i32 => n
+	let ra = a
+	let rb = b
+	let rf = f
+`
 	openAndWait(t, h, src)
 
 	got, err := h.SemanticTokensFull(testURI)
@@ -115,11 +117,13 @@ func TestSemanticTokens_DeclarationNames(t *testing.T) {
 	h := servertest.New(t, newHandler())
 	// Every binding here is a declaration with no later usage; the declaration
 	// names themselves must still be tokenized.
-	src := "const MAX = 10\n" +
-		"let imm = 1\n" +
-		"var counter = 2\n" +
-		"struct Point { x: i64, y: i64 }\n" +
-		"data Color = Red | Green | Blue\n"
+	src := `
+	const MAX = 10
+	let imm = 1
+	var counter = 2
+	struct Point { x: i64, y: i64 }
+	data Color = Red | Green | Blue
+`
 	openAndWait(t, h, src)
 
 	got, err := h.SemanticTokensFull(testURI)
@@ -158,10 +162,17 @@ func TestSemanticTokens_ParameterAndType(t *testing.T) {
 	h := servertest.New(t, newHandler())
 	// The lambda has a block body so its parameter scope is reachable; the
 	// function scope holding `n` is only registered against a BlockExpr.
-	src := "struct Point {\n\tx: i64,\n\ty: i64,\n}\n" +
-		"let f = (n: i32) -> i32 => {\n\tn\n}\n" +
-		"let p = Point { x: 1, y: 2 }\n" +
-		"let q = p.x\n"
+	src := `
+	struct Point {
+		x: i64,
+		y: i64,
+	}
+	let f = (n: i32) -> i32 => {
+		n
+	}
+	let p = Point { x: 1, y: 2 }
+	let q = p.x
+`
 	openAndWait(t, h, src)
 
 	got, err := h.SemanticTokensFull(testURI)
@@ -198,8 +209,10 @@ func TestSemanticTokens_ParameterAndType(t *testing.T) {
 
 func TestSemanticTokens_DataConstructor(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	src := "data Color = Red | Green | Blue\n" +
-		"let c = Red\n"
+	src := `
+	data Color = Red | Green | Blue
+	let c = Red
+`
 	openAndWait(t, h, src)
 
 	got, err := h.SemanticTokensFull(testURI)

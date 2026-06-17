@@ -68,7 +68,12 @@ func TestCodeAction_MissingMatchArms(t *testing.T) {
 	// nullary value swallowing the following `match`), now fixed in the grammar.
 	// The missing arms exercise both a payload constructor (Pos → `Pos _`) and a
 	// nullary one (Unknown → bare).
-	src := "data Sign = Pos i32 | Zero | Unknown\nlet s = Zero\nmatch s {\n    Zero => 0,\n}"
+	src := `
+	data Sign = Pos i32 | Zero | Unknown
+	let s = Zero
+	match s {
+	    Zero => 0,
+	}`
 	diags := openAndDiags(t, h, src)
 	actions := requestActions(t, h, diags)
 
@@ -87,7 +92,9 @@ func TestCodeAction_MissingMatchArms(t *testing.T) {
 
 func TestCodeAction_MissingStructFields(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	src := "struct Point { x: i64, y: i64 }\nlet p = Point { x: 1 }"
+	src := `
+	struct Point { x: i64, y: i64 }
+	let p = Point { x: 1 }`
 	diags := openAndDiags(t, h, src)
 	actions := requestActions(t, h, diags)
 
@@ -106,7 +113,11 @@ func TestCodeAction_MissingStructFields(t *testing.T) {
 
 func TestCodeAction_RemoveUnusedVariable(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	src := "let f = () -> i64 => {\n  let unused = 5\n  42\n}"
+	src := `
+	let f = () -> i64 => {
+		let unused = 5
+		42
+	}`
 	diags := openAndDiags(t, h, src)
 	actions := requestActions(t, h, diags)
 
@@ -118,15 +129,18 @@ func TestCodeAction_RemoveUnusedVariable(t *testing.T) {
 	if text != "" {
 		t.Errorf("expected an empty (deletion) edit, got: %q", text)
 	}
-	// The deletion should span the whole `let unused = 5` line (line 1).
-	if edit.Range.Start.Line != 1 || edit.Range.End.Line != 2 {
-		t.Errorf("expected deletion of line 1, got range %+v", edit.Range)
+	// The deletion should span the whole `let unused = 5` line (line 2).
+	if edit.Range.Start.Line != 2 || edit.Range.End.Line != 3 {
+		t.Errorf("expected deletion of line 2, got range %+v", edit.Range)
 	}
 }
 
 func TestCodeAction_RemoveUnusedImport(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	src := "import foo.bar\nlet x = 1\nx"
+	src := `
+	import foo.bar
+	let x = 1
+	x`
 	diags := openAndDiags(t, h, src)
 	actions := requestActions(t, h, diags)
 

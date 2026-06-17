@@ -20,16 +20,19 @@ func refLines(locs []lsp.Location) []int {
 
 func TestReferences_LocalVariable(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	// "let x = 5" (line 0), "let y = x" (line 1), "let z = x" (line 2).
-	openAndWait(t, h, "let x = 5\nlet y = x\nlet z = x")
-	// Cursor on "x" in "let y = x" (line 1, col 8).
-	locs, err := h.References(testURI, 1, 8, false)
+	src := `
+	let x = 5
+	let y = x
+	let z = x`
+	openAndWait(t, h, src)
+	// Cursor on "x" in "let y = x" (line 2, col 9).
+	locs, err := h.References(testURI, 2, 9, false)
 	if err != nil {
 		t.Fatalf("References: %v", err)
 	}
-	// Two usages on lines 1 and 2; declaration excluded.
+	// Two usages on lines 2 and 3; declaration excluded.
 	got := refLines(locs)
-	want := []int{1, 2}
+	want := []int{2, 3}
 	if len(got) != len(want) {
 		t.Fatalf("expected %d references, got %d (%v)", len(want), len(got), got)
 	}
@@ -42,14 +45,17 @@ func TestReferences_LocalVariable(t *testing.T) {
 
 func TestReferences_IncludeDeclaration(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	openAndWait(t, h, "let x = 5\nlet y = x")
-	// includeDecl=true should add the declaration (line 0) to the two usages.
-	locs, err := h.References(testURI, 1, 8, true)
+	src := `
+	let x = 5
+	let y = x`
+	openAndWait(t, h, src)
+	// includeDecl=true should add the declaration (line 1) to the usage on line 2.
+	locs, err := h.References(testURI, 2, 9, true)
 	if err != nil {
 		t.Fatalf("References: %v", err)
 	}
 	got := refLines(locs)
-	want := []int{0, 1} // declaration on line 0, usage on line 1
+	want := []int{1, 2} // declaration on line 1, usage on line 2
 	if len(got) != len(want) {
 		t.Fatalf("expected %d references, got %d (%v)", len(want), len(got), got)
 	}
@@ -62,50 +68,66 @@ func TestReferences_IncludeDeclaration(t *testing.T) {
 
 func TestReferences_ShadowedNameExcluded(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	// Top-level "x" used on line 1; a lambda on lines 2-4 shadows "x" with its
+	// Top-level "x" used on line 2; a lambda on lines 3-6 shadows "x" with its
 	// own binding and uses it. The inner usage must NOT be reported for the outer.
-	src := "let x = 1\nlet a = x\nlet f = () -> i32 => {\n  let x = 2\n  x\n}"
+	src := `
+	let x = 1
+	let a = x
+	let f = () -> i32 => {
+		let x = 2
+		x
+	}`
 	openAndWait(t, h, src)
-	// Cursor on outer "x" usage in "let a = x" (line 1, col 8).
-	locs, err := h.References(testURI, 1, 8, false)
+	// Cursor on outer "x" usage in "let a = x" (line 2, col 9).
+	locs, err := h.References(testURI, 2, 9, false)
 	if err != nil {
 		t.Fatalf("References: %v", err)
 	}
 	got := refLines(locs)
-	// Only the outer usage on line 1; the shadowed inner "x" (line 4) excluded.
-	if len(got) != 1 || got[0] != 1 {
-		t.Fatalf("expected only line 1, got %v", got)
+	// Only the outer usage on line 2; the shadowed inner "x" (line 5) excluded.
+	if len(got) != 1 || got[0] != 2 {
+		t.Fatalf("expected only line 2, got %v", got)
 	}
 }
 
 func TestReferences_FromInnerShadow(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	// Same source; this time the cursor is on the inner shadowing "x" (line 4).
-	src := "let x = 1\nlet a = x\nlet f = () -> i32 => {\n  let x = 2\n  x\n}"
+	// Same source; this time the cursor is on the inner shadowing "x" (line 5).
+	src := `
+	let x = 1
+	let a = x
+	let f = () -> i32 => {
+		let x = 2
+		x
+	}`
 	openAndWait(t, h, src)
-	locs, err := h.References(testURI, 4, 2, false)
+	locs, err := h.References(testURI, 5, 2, false)
 	if err != nil {
 		t.Fatalf("References: %v", err)
 	}
 	got := refLines(locs)
-	// Only the inner usage on line 4; the outer "x" usages excluded.
-	if len(got) != 1 || got[0] != 4 {
-		t.Fatalf("expected only line 4, got %v", got)
+	// Only the inner usage on line 5; the outer "x" usages excluded.
+	if len(got) != 1 || got[0] != 5 {
+		t.Fatalf("expected only line 5, got %v", got)
 	}
 }
 
 func TestReferences_Parameter(t *testing.T) {
 	h := servertest.New(t, newHandler())
 	// Parameter "n" used twice in the body.
-	src := "let f = (n: i32) -> i32 => {\n  let m = n\n  n\n}"
+	src := `
+	let f = (n: i32) -> i32 => {
+		let m = n
+		n
+	}`
 	openAndWait(t, h, src)
-	// Cursor on "n" in "let m = n" (line 1, col 10).
-	locs, err := h.References(testURI, 1, 10, false)
+	// Cursor on "n" in "let m = n" (line 2, col 10).
+	locs, err := h.References(testURI, 2, 10, false)
 	if err != nil {
 		t.Fatalf("References: %v", err)
 	}
 	got := refLines(locs)
-	want := []int{1, 2}
+	want := []int{2, 3}
 	if len(got) != len(want) {
 		t.Fatalf("expected %d references, got %d (%v)", len(want), len(got), got)
 	}

@@ -58,7 +58,11 @@ func TestDocumentSymbol_TypeDecl_Data(t *testing.T) {
 
 func TestDocumentSymbol_TraitDecl(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	openAndWait(t, h, "trait Show {\n  show: (Self) -> string\n}")
+	src := `
+	trait Show {
+		show: (Self) -> string
+	}`
+	openAndWait(t, h, src)
 	syms, err := h.DocumentSymbol(testURI)
 	if err != nil {
 		t.Fatalf("DocumentSymbol: %v", err)
@@ -123,11 +127,14 @@ func TestDocumentSymbol_VarDecl(t *testing.T) {
 }
 
 func TestDocumentSymbol_Mixed(t *testing.T) {
-	src := "struct Color { r: int, g: int, b: int }\n" +
-		"trait Render {\n  render: (Self) -> string\n}\n" +
-		"let makeColor = (r: int, g: int, b: int) -> Color => Color { r: r, g: g, b: b }\n" +
-		"const BLACK: Color = Color { r: 0, g: 0, b: 0 }"
 	h := servertest.New(t, newHandler())
+	src := `
+	struct Color { r: int, g: int, b: int }
+	trait Render {
+		render: (Self) -> string
+	}
+	let makeColor = (r: int, g: int, b: int) -> Color => Color { r: r, g: g, b: b }
+	const BLACK: Color = Color { r: 0, g: 0, b: 0 }`
 	openAndWait(t, h, src)
 	syms, err := h.DocumentSymbol(testURI)
 	if err != nil {
@@ -166,7 +173,10 @@ func TestDocumentSymbol_Empty(t *testing.T) {
 // forbids a falsy symbol name, so it must be omitted from the outline.
 func TestDocumentSymbol_IncompleteDecl_NoEmptyName(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	openAndWait(t, h, "let alpha = 1\nlet")
+	src := `
+	let alpha = 1
+	let`
+	openAndWait(t, h, src)
 	syms, err := h.DocumentSymbol(testURI)
 	if err != nil {
 		t.Fatalf("DocumentSymbol: %v", err)

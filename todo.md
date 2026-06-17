@@ -43,7 +43,6 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 - **Signature help** (`textDocument/signatureHelp`) — show the lambda signature while typing inside `()`; parameter info is already on every `LambdaExpr`
 - **Rename** (`textDocument/rename`) — compute all references (see `references.go`) and return a `WorkspaceEdit`
 - **Workspace symbols** (`workspace/symbol`) — fuzzy-search across all type decls and functions in the workspace
-- **Document highlight** (`textDocument/documentHighlight`) — highlight all occurrences of the symbol under the cursor; cheap once references work
 - **Folding ranges** (`textDocument/foldingRange`) — emit fold regions for `match`, `data`, struct, trait, and block expressions
 
 ## In Progress
@@ -53,6 +52,7 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ------------
 
 ### 06/17/26
+- **Document highlight** (`textDocument/documentHighlight`) — `documenthighlight.go` reuses `referenceOccurrence`/`resolveDeclLocation` from `references.go`; always includes the declaration site; auto-registers via `DocumentHighlightHandler`. Tests: `documenthighlight_test.go`.
 - **`@sizeof` on unknown types** — added `case *ast.SizeofExpr` to `inferExprType`: calls `resolveType` on the type argument (emits `unknown type %q` if unresolved) and returns `u64`. Tests: `sizeof_test.go`.
 
 ### 06/16/26

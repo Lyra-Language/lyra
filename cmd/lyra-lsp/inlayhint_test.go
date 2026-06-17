@@ -57,7 +57,10 @@ func TestInlayHint_AnnotatedLet_NoHint(t *testing.T) {
 
 func TestInlayHint_MultipleUnannotated(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	openAndWait(t, h, "let x = 5\nlet y = true")
+	src := `
+	let x = 5
+	let y = true`
+	openAndWait(t, h, src)
 	hints, err := h.InlayHint(testURI, fullRange())
 	if err != nil {
 		t.Fatalf("InlayHint: %v", err)
@@ -85,7 +88,12 @@ func TestInlayHint_HintPosition(t *testing.T) {
 
 func TestInlayHint_NestedInLambda(t *testing.T) {
 	h := servertest.New(t, newHandler())
-	openAndWait(t, h, "let f = () -> i32 => {\n  let n = 42\n  n\n}")
+	src := `
+	let f = () -> i32 => {
+		let n = 42
+		n
+	}`
+	openAndWait(t, h, src)
 	hints, err := h.InlayHint(testURI, fullRange())
 	if err != nil {
 		t.Fatalf("InlayHint: %v", err)
