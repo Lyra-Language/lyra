@@ -50,6 +50,7 @@ package regex
 
 import (
 	"fmt"
+	"sync"
 )
 
 // Options controls compilation and matching behavior.
@@ -95,14 +96,19 @@ type lbGate struct {
 
 // laCache holds compiled sub-DFAs used by lookaheadNullable to verify
 // trailing lookahead assertions without modifying the main DFA.
+//
+// mu guards dfas so concurrent IsMatch/FindAll calls can populate it safely;
+// the cached sub-DFAs carry their own locks for lazy state construction.
 type laCache struct {
+	mu   sync.Mutex
 	dfas map[string]*dfa
 	opts Options
 }
 
 // Regex is a compiled regular expression. Safe for concurrent IsMatch /
-// FindAll calls: lazily computed DFA states are added under a single
-// builder lock per call.
+// FindAll calls: any DFA states computed lazily during matching are added
+// under the DFA's mutex (the frozen fast path for simple patterns is
+// lock-free), and the trailing-lookahead sub-DFA cache is mutex-guarded.
 type Regex struct {
 	pattern string
 	opts    Options
@@ -439,7 +445,7 @@ func (r *Regex) scanFrom(input []byte, startPos int) (int, bool, error) {
 		bestEnd = startPos
 	}
 	// Check trailing lookaheads on the initial state (before any bytes consumed).
-	if lookaheadNullable(r.dfa.states[state].e, input, startPos, r.laCache) {
+	if lookaheadNullable(r.dfa.exprAt(state), input, startPos, r.laCache) {
 		bestEnd = startPos
 	}
 
@@ -450,7 +456,7 @@ func (r *Regex) scanFrom(input []byte, startPos int) (int, bool, error) {
 		// Check trailing lookaheads BEFORE consuming input[j].
 		// A trailing lookahead fires at position j (zero-width: the match
 		// endpoint is j, not j+1).
-		if lookaheadNullable(r.dfa.states[state].e, input, j, r.laCache) {
+		if lookaheadNullable(r.dfa.exprAt(state), input, j, r.laCache) {
 			bestEnd = j
 		}
 
@@ -494,7 +500,7 @@ func (r *Regex) scanFrom(input []byte, startPos int) (int, bool, error) {
 	// End-of-input boundaries.
 	if state != deadID {
 		// Check trailing lookaheads at the end of input.
-		if lookaheadNullable(r.dfa.states[state].e, input, n, r.laCache) {
+		if lookaheadNullable(r.dfa.exprAt(state), input, n, r.laCache) {
 			bestEnd = n
 		}
 		if r.opts.MultiLine {
@@ -576,11 +582,13 @@ func checkLAPass(pos bool, laExpr expr, input []byte, startPos int, cache *laCac
 	// Get or compile the DFA for laExpr·_* (accepts if a prefix of input[startPos:]
 	// is in L(laExpr), i.e. the lookahead is satisfied).
 	key := laExpr.key()
+	cache.mu.Lock()
 	laDFA, ok := cache.dfas[key]
 	if !ok {
 		laDFA = newDFA(mkConcat(laExpr, exprAnyStr), cache.opts.MaxDFAStates)
 		cache.dfas[key] = laDFA
 	}
+	cache.mu.Unlock()
 
 	// Run the sub-DFA on input[startPos:] until it accepts or dies.
 	st := laDFA.initial

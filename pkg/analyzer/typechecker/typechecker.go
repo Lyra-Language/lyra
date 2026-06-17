@@ -813,6 +813,18 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 			"cannot convert %s to %s: narrowing conversion may lose precision", argType, ident.Name)
 		return targetType
 	}
+	// Integer→integer conversion of a compile-time constant that does not fit the
+	// target (e.g. u8(256), i8(300), u8(-1)). This makes lossy int conversions
+	// loud for the constant case, matching the float-narrowing error above.
+	// Non-constant int narrowing is deferred to a future value-range pass, the
+	// same scope limit checkIntegerLiteralRange already has.
+	if toP, ok := targetType.(types.PrimitiveType); ok && isAnyConcreteInt(toP.Name) && isIntType(argType) {
+		if value, isConst := extractIntLiteralValue(call.Arguments[0]); isConst && !integerFitsInType(value, toP.Name) {
+			tc.addError(call.GetLocation(), SeverityError,
+				"cannot convert %d to %s: literal value is out of range", value, ident.Name)
+			return targetType
+		}
+	}
 	return targetType
 }
 

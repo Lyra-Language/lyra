@@ -1,6 +1,9 @@
 package regex
 
-import "errors"
+import (
+	"errors"
+	"sync"
+)
 
 // errCapacityExceeded is returned when the lazy DFA would exceed
 // Options.MaxDFAStates. Patterns combining heavy intersection / complement
@@ -37,6 +40,12 @@ const maxFrozenStates = 512
 // expanded and stored in flatTrans[stateID*256+sym].  Boundary-symbol
 // transitions (sym ≥ 256) are always served by the map-based path.
 type dfa struct {
+	// mu guards the lazily-mutated fields (states, stateMap, and each
+	// dfaState.trans map) so a compiled Regex is safe for concurrent matching,
+	// as advertised. The frozen fast path (flatTrans, byte symbols) is lock-free:
+	// frozen and flatTrans are written only by tryFreeze before the owning Regex
+	// is published, and never mutated afterwards.
+	mu       sync.Mutex
 	states   []*dfaState
 	stateMap map[string]int // expr.key() → state id
 	initial  int
@@ -73,6 +82,9 @@ func newDFA(start expr, maxCap int) *dfa {
 
 // intern returns the state id for an expression, creating it on first sight.
 // Returns (deadID, errCapacityExceeded) if maxCap would be exceeded.
+//
+// Callers must hold d.mu (or run during single-threaded construction, before
+// the owning Regex is shared). It mutates d.states and d.stateMap.
 func (d *dfa) intern(e expr) (int, error) {
 	k := e.key()
 	if id, ok := d.stateMap[k]; ok {
@@ -97,10 +109,14 @@ func (d *dfa) trans(stateID, sym int) (int, error) {
 	if stateID == deadID {
 		return deadID, nil
 	}
-	// Fast path: frozen flat table for byte symbols.
+	// Fast path: frozen flat table for byte symbols. Lock-free: a frozen DFA's
+	// flatTrans is immutable after construction.
 	if d.frozen && sym < 256 {
 		return int(d.flatTrans[stateID*256+sym]), nil
 	}
+	// Lazy path mutates shared maps/slices; serialize it.
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	s := d.states[stateID]
 	if next, ok := s.trans[sym]; ok {
 		return next, nil
@@ -187,5 +203,26 @@ func (d *dfa) boundaryTrans(stateID, sym int) (int, error) {
 }
 
 func (d *dfa) accept(stateID int) bool {
+	// A frozen DFA's states slice never grows, so reading it is lock-free.
+	// A lazy DFA may have d.states appended concurrently by trans, which
+	// reallocates the backing array — guard the slice-header read.
+	if d.frozen {
+		return d.states[stateID].accept
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	return d.states[stateID].accept
+}
+
+// exprAt returns the residual expression of a state. Like accept, it guards the
+// states slice-header read for lazy DFAs that may be growing concurrently.
+// A dfaState's .e field is immutable after creation, so only the slice access
+// needs synchronization.
+func (d *dfa) exprAt(stateID int) expr {
+	if d.frozen {
+		return d.states[stateID].e
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.states[stateID].e
 }

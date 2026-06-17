@@ -147,6 +147,52 @@ func TestTypeCheck_TypeConversion_UntypedFloatToF32(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
+// --- integer narrowing of compile-time constants (lossy, blocked) ---
+
+func TestTypeCheck_TypeConversion_U8Overflow_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = u8(256)`, false)
+	assertErrorsAre(t, res, "cannot convert 256 to u8: literal value is out of range")
+}
+
+func TestTypeCheck_TypeConversion_I8Overflow_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = i8(300)`, false)
+	assertErrorsAre(t, res, "cannot convert 300 to i8: literal value is out of range")
+}
+
+func TestTypeCheck_TypeConversion_UnsignedNegative_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = u8(-1)`, false)
+	assertErrorsAre(t, res, "cannot convert -1 to u8: literal value is out of range")
+}
+
+func TestTypeCheck_TypeConversion_FoldedConstantOverflow_Error(t *testing.T) {
+	// The argument is folded (200 + 100 = 300) before the range check.
+	res := parseCollectAndCheck(t, `let x = i8(200 + 100)`, false)
+	assertErrorsAre(t, res, "cannot convert 300 to i8: literal value is out of range")
+}
+
+func TestTypeCheck_TypeConversion_IntInRange_OK(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = u8(255)`, false)
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_TypeConversion_IntWidening_OK(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let a: i8 = 5
+		let b = i64(a)
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_TypeConversion_NonConstantNarrowing_OK(t *testing.T) {
+	// Non-constant int narrowing is deferred to a future value-range pass, so it
+	// is intentionally NOT reported here even though it may overflow at runtime.
+	res := parseCollectAndCheck(t, `
+		let a: i64 = 5
+		let b = i8(a)
+	`, false)
+	assertNoErrors(t, res)
+}
+
 // --- annotation mismatch after conversion ---
 
 func TestTypeCheck_TypeConversion_AnnotationMismatch(t *testing.T) {
