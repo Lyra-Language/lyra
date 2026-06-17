@@ -73,6 +73,12 @@ func checkedMulInt64(a, b int64) (int64, bool) {
 	if a == 0 || b == 0 {
 		return 0, true
 	}
+	// MinInt64 * -1 overflows, but the product/b check below misses it: the
+	// wrapped product is MinInt64 and MinInt64 / -1 == MinInt64 (two's-complement,
+	// no panic in Go), so product/b == a would wrongly report no overflow.
+	if (a == math.MinInt64 && b == -1) || (b == math.MinInt64 && a == -1) {
+		return 0, false
+	}
 	product := a * b
 	if product/b != a {
 		return 0, false

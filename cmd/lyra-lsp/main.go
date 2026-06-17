@@ -455,13 +455,6 @@ func posToOffset(text string, line, char int) int {
 	return len(text)
 }
 
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 // lspPos converts a 1-based ast.Location line/column to a 0-based LSP position,
 // clamping at zero to guard against uninitialized (zero-value) locations.
 func lspPos(oneBased int) int {
