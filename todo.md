@@ -41,7 +41,6 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 
 ### LSP — Additional navigation and editing features
 - **Signature help** (`textDocument/signatureHelp`) — show the lambda signature while typing inside `()`; parameter info is already on every `LambdaExpr`
-- **Rename** (`textDocument/rename`) — compute all references (see `references.go`) and return a `WorkspaceEdit`
 - **Workspace symbols** (`workspace/symbol`) — fuzzy-search across all type decls and functions in the workspace
 - **Folding ranges** (`textDocument/foldingRange`) — emit fold regions for `match`, `data`, struct, trait, and block expressions
 
@@ -52,6 +51,7 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ------------
 
 ### 06/17/26
+- **Rename** (`textDocument/rename` + `textDocument/prepareRename`) — `rename.go` reuses `referenceOccurrence`/`resolveDeclLocation`/`walkExprs` from `references.go`; collects all scope-aware occurrences (declaration + usages) and returns a `WorkspaceEdit` with one `TextEdit` per occurrence; `PrepareRename` validates the cursor is on a bound identifier and returns its range/placeholder. Both capabilities auto-register via the `RenameHandler`/`PrepareRenameHandler` interfaces. Tests: `rename_test.go`.
 - **Document highlight** (`textDocument/documentHighlight`) — `documenthighlight.go` reuses `referenceOccurrence`/`resolveDeclLocation` from `references.go`; always includes the declaration site; auto-registers via `DocumentHighlightHandler`. Tests: `documenthighlight_test.go`.
 - **`@sizeof` on unknown types** — added `case *ast.SizeofExpr` to `inferExprType`: calls `resolveType` on the type argument (emits `unknown type %q` if unresolved) and returns `u64`. Tests: `sizeof_test.go`.
 
