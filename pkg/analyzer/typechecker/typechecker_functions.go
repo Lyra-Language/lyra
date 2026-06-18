@@ -55,6 +55,14 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 			return // param annotations validated; nothing else to check
 		}
 
+		// Resolve the declared return type so that user-defined names (structs,
+		// data types, constrained types) compare equal to the resolved parameter
+		// types produced by withParamScope. Without this, `(v: Vec2) -> Vec2 => v`
+		// would compare NamedStructType("Vec2") against UnresolvedType("Vec2").
+		// Use resolveTypeIfKnown (not resolveType) to avoid emitting a duplicate
+		// "unknown type" diagnostic when the return annotation names an unknown type.
+		declaredReturn = tc.resolveTypeIfKnown(declaredReturn)
+
 		_, isVoid := declaredReturn.(types.VoidType)
 		if lambda.Body != nil {
 			if block, ok := lambda.Body.(*ast.BlockExpr); ok {

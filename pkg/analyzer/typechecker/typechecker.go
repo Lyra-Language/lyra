@@ -628,6 +628,26 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 	return decl.Type
 }
 
+// resolveTypeIfKnown resolves an UnresolvedType only when the name is actually
+// in the symbol table, returning t unchanged and emitting no diagnostic when it
+// is not found. Use this instead of resolveType when the caller must not produce
+// a duplicate "unknown type" diagnostic (e.g. the return-type annotation in
+// checkLambdaBody, where the parameter-annotation pass may have already emitted
+// the error or where the caller intends to report a different error).
+func (tc *TypeChecker) resolveTypeIfKnown(t types.Type) types.Type {
+	ut, ok := t.(types.UnresolvedType)
+	if !ok {
+		return t
+	}
+	if cached, ok := tc.resolvedTypes[ut.Name]; ok {
+		return cached
+	}
+	if decl, ok := tc.symTable.Types[ut.Name]; ok {
+		return decl.Type
+	}
+	return t
+}
+
 // inferExprType returns the type of expr, or nil if it cannot be determined yet.
 func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 	if expr == nil {

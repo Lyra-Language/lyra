@@ -40,7 +40,6 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ### Typechecker — Constant and value-level checks
 
 ### LSP — Additional navigation and editing features
-- **Workspace symbols** (`workspace/symbol`) — fuzzy-search across all type decls and functions in the workspace
 - **Folding ranges** (`textDocument/foldingRange`) — emit fold regions for `match`, `data`, struct, trait, and block expressions
 
 ## In Progress
@@ -50,6 +49,7 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ------------
 
 ### 06/17/26
+- **Workspace symbols** (`workspace/symbol`) — `workspacesymbols.go` iterates all open documents in `analysisStore`, converts top-level type decls, traits, functions, and constants to `SymbolInformation`, and filters by case-insensitive subsequence fuzzy match. Auto-registers via `WorkspaceSymbolHandler`; plain `var` bindings excluded as too noisy. Tests: `workspacesymbols_test.go`.
 - **Signature help** (`textDocument/signatureHelp`) — `cmd/lyra-lsp/signaturehelp.go` scans the source prefix backwards from the cursor to find the innermost unclosed `(`, counts top-level commas for the active parameter index, resolves the callee name via scope lookup to a `LambdaExpr`, and builds a `SignatureInformation` with `[start, end]` byte-offset label ranges per parameter. Auto-registers via `SignatureHelpHandler`; `Initialize` advertises `(` and `,` as trigger/retrigger characters. Tests: `signaturehelp_test.go`.
 - **Rename** (`textDocument/rename` + `textDocument/prepareRename`) — `rename.go` reuses `referenceOccurrence`/`resolveDeclLocation`/`walkExprs` from `references.go`; collects all scope-aware occurrences (declaration + usages) and returns a `WorkspaceEdit` with one `TextEdit` per occurrence; `PrepareRename` validates the cursor is on a bound identifier and returns its range/placeholder. Both capabilities auto-register via the `RenameHandler`/`PrepareRenameHandler` interfaces. Tests: `rename_test.go`.
 - **Document highlight** (`textDocument/documentHighlight`) — `documenthighlight.go` reuses `referenceOccurrence`/`resolveDeclLocation` from `references.go`; always includes the declaration site; auto-registers via `DocumentHighlightHandler`. Tests: `documenthighlight_test.go`.
