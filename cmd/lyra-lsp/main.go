@@ -69,6 +69,14 @@ func (h *Handler) Initialize(_ context.Context, _ *lsp.InitializeParams) (*lsp.I
 			CompletionProvider: &lsp.CompletionOptions{
 				TriggerCharacters: []string{"."},
 			},
+			// `(` triggers signature help as soon as the call is opened; `,` re-
+			// triggers it when the user moves to the next argument. The handler
+			// implements SignatureHelpHandler so the capability auto-registers,
+			// but we set it explicitly here to carry the trigger characters.
+			SignatureHelpProvider: &lsp.SignatureHelpOptions{
+				TriggerCharacters:   []string{"("},
+				RetriggerCharacters: []string{","},
+			},
 			// Semantic tokens augment the TextMate grammar with classifications
 			// it can't make (constant vs mutable variable, function, type, …).
 			// The handler implements SemanticTokensFullHandler, so the provider
