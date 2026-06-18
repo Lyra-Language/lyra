@@ -40,7 +40,6 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ### Typechecker — Constant and value-level checks
 
 ### LSP — Additional navigation and editing features
-- **Folding ranges** (`textDocument/foldingRange`) — emit fold regions for `match`, `data`, struct, trait, and block expressions
 
 ## In Progress
 --------------
@@ -49,6 +48,7 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ------------
 
 ### 06/17/26
+- **Folding ranges** (`textDocument/foldingRange`) — `foldingrange.go` walks top-level statements for struct/data/trait declarations and expressions for `match` and block expressions, emitting a fold for each multi-line region. Auto-registers via `FoldingRangeHandler`. Tests: `foldingrange_test.go`.
 - **Workspace symbols** (`workspace/symbol`) — `workspacesymbols.go` iterates all open documents in `analysisStore`, converts top-level type decls, traits, functions, and constants to `SymbolInformation`, and filters by case-insensitive subsequence fuzzy match. Auto-registers via `WorkspaceSymbolHandler`; plain `var` bindings excluded as too noisy. Tests: `workspacesymbols_test.go`.
 - **Signature help** (`textDocument/signatureHelp`) — `cmd/lyra-lsp/signaturehelp.go` scans the source prefix backwards from the cursor to find the innermost unclosed `(`, counts top-level commas for the active parameter index, resolves the callee name via scope lookup to a `LambdaExpr`, and builds a `SignatureInformation` with `[start, end]` byte-offset label ranges per parameter. Auto-registers via `SignatureHelpHandler`; `Initialize` advertises `(` and `,` as trigger/retrigger characters. Tests: `signaturehelp_test.go`.
 - **Rename** (`textDocument/rename` + `textDocument/prepareRename`) — `rename.go` reuses `referenceOccurrence`/`resolveDeclLocation`/`walkExprs` from `references.go`; collects all scope-aware occurrences (declaration + usages) and returns a `WorkspaceEdit` with one `TextEdit` per occurrence; `PrepareRename` validates the cursor is on a bound identifier and returns its range/placeholder. Both capabilities auto-register via the `RenameHandler`/`PrepareRenameHandler` interfaces. Tests: `rename_test.go`.
