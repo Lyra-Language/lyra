@@ -58,8 +58,6 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 		return CollectIdentifierExpr(node, true, loc, ctx)
 	case "tuple_literal":
 		return collectTupleLiteralExpr(node, ctx, loc)
-	case "data_constructor_expr":
-		return collectDataConstructorExpr(node, ctx, loc)
 	case "user_defined_type_name":
 		return collectNullaryConstructorExpr(node, ctx, loc)
 	case "named_struct_literal":

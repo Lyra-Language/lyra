@@ -2,38 +2,10 @@ package collector_test
 
 import "testing"
 
-func TestCollect_DataConstructorExpr(t *testing.T) {
-	source := `let wrapped = Some 42`
-	runGoldenTest(t, source, "expr_data_constructor")
-}
-
-func TestCollect_DataConstructorExprWithCall(t *testing.T) {
-	source := `let result = Ok compute()`
-	runGoldenTest(t, source, "expr_data_constructor_with_call")
-}
-
-func TestCollect_DataConstructorExprWithStruct(t *testing.T) {
-	source := `let v = Some Point { x: 1, y: 2 }`
-	runGoldenTest(t, source, "expr_data_constructor_with_struct")
-}
-
-func TestCollect_DataConstructorExprWithIdentifier(t *testing.T) {
-	source := `let v = Some user`
-	runGoldenTest(t, source, "expr_data_constructor_with_identifier")
-}
-
-func TestCollect_DataConstructorExprWithNegation(t *testing.T) {
-	source := `let v = Err -1`
-	runGoldenTest(t, source, "expr_data_constructor_with_negation")
-}
-
-func TestCollect_DataConstructorExprWithTuple(t *testing.T) {
-	source := `let v = Some Pair(1, 2)`
-	runGoldenTest(t, source, "expr_data_constructor_with_tuple")
-}
-
 // A bare nullary constructor (`None`, `Red`) used as a value collects to a
-// DataConstructorExpr with a nil Value — previously the initializer was dropped.
+// DataConstructorExpr with a nil Value. The applied form uses call syntax
+// (`Some(42)`) and collects as a named TupleLiteralExpr — see
+// literal_tuple_test.go — which the typechecker resolves to its data type.
 func TestCollect_NullaryDataConstructorExpr(t *testing.T) {
 	source := `let v = None`
 	runGoldenTest(t, source, "expr_data_constructor_nullary")

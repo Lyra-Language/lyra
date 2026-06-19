@@ -968,18 +968,40 @@ func (tc *TypeChecker) inferNegationExpr(expr *ast.NegationExpr) types.Type {
 }
 
 func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.Type {
+	name := expr.Name
+	if name == "" {
+		name = "?"
+	}
+
+	// A capitalized application like `Some(42)` parses as a named tuple literal,
+	// but if its name is a data-type constructor it denotes that data type, not a
+	// tuple. (Juxtaposition application `Some 42` was removed; call syntax is the
+	// only applied-constructor form.) Resolve it the same way a nullary
+	// constructor or the old `data_constructor_expr` did — by constructor name —
+	// so `?`, `??`, and must-use see the owning data type (e.g. `Maybe`).
+	dt, isCtor := types.DataType{}, false
+	if name != "?" {
+		dt, isCtor = tc.findDataTypeByConstructor(name)
+	}
+
 	elements := make([]types.Type, len(expr.Elements))
 	for i, elem := range expr.Elements {
 		t := tc.inferExprType(elem)
 		if t == nil {
+			// A data constructor resolves by name regardless of whether its
+			// payload type-checks (matching the previous data_constructor_expr
+			// behavior); a plain tuple needs every element's type.
+			if isCtor {
+				continue
+			}
 			return nil
 		}
 		elements[i] = promoteToDefault(t)
 		tc.typeTable.Set(elem, elements[i])
 	}
-	name := expr.Name
-	if name == "" {
-		name = "?"
+
+	if isCtor {
+		return dt
 	}
 	return types.TupleType{Name: name, Elements: elements}
 }

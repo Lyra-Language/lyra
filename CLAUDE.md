@@ -1,4 +1,4 @@
-# lyra (Go) — Project Context for Zed AI
+# lyra (Go) — Project Context
 
 This is the main compiler infrastructure for the Lyra programming language. It contains the parser, AST, type system, collector, typechecker, a standalone semantic checker, and the LSP server.
 

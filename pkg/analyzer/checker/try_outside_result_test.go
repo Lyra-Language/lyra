@@ -40,7 +40,7 @@ func TestTry_NoDiag_InsideResultFn(t *testing.T) {
 let parseBoth = (a: string, b: string) -> Result<i64, ParseError> => {
     let x = parse(a)?
     let y = parse(b)?
-    Ok x
+    Ok(x)
 }`
 	assertNoTryErrors(t, parseCollectAndCheckTry(t, source))
 }
@@ -51,7 +51,7 @@ func TestTry_NoDiag_InsideMaybeFn(t *testing.T) {
 	source := `
 let firstField = (s: string) -> Maybe<i64> => {
     let x = lookup(s)?
-    Some x
+    Some(x)
 }`
 	assertNoTryErrors(t, parseCollectAndCheckTry(t, source))
 }
@@ -86,7 +86,7 @@ let outer = (s: string) -> Result<i64, E> => {
     let inner = (t: string) -> i64 => {
         parse(t)?
     }
-    Ok 0
+    Ok(0)
 }`
 	assertTryErrorCount(t, parseCollectAndCheckTry(t, source), 1)
 }

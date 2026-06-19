@@ -11,6 +11,15 @@ func isAssignable(from, to types.Type) bool {
 	if types.TypesEqual(from, to) {
 		return true
 	}
+	// A data-type value is assignable to the same nominal type whether the slot
+	// is written as a bare name, with generic arguments (`Maybe<i64>`), or as
+	// another reference to the data type. The checker does not instantiate
+	// generics, so nominal types unify by head name. This is required because a
+	// constructor application like `Some(42)` infers to the bare `Maybe`
+	// DataType while annotations are usually written `Maybe<T>`.
+	if nominalDataMatch(from, to) {
+		return true
+	}
 	// Constrained types are nominally distinct from their base types at the
 	// type-equality level, but a value is always assignable to a constrained
 	// type when it satisfies the base type (the constraint check itself is
@@ -60,6 +69,48 @@ func isAssignable(from, to types.Type) bool {
 		return isAnyConcreteFloat(toP.Name)
 	}
 	return false
+}
+
+// nominalDataMatch reports whether from and to denote the same nominal data
+// type by head name, ignoring generic arguments. At least one side must be a
+// concrete DataType; the other may be a DataType, a ParameterizedType
+// (`Maybe<i64>`), or an UnresolvedType naming the same data type. Used so a
+// constructor application (which infers to the bare DataType) is accepted
+// against a written instantiation of that type.
+func nominalDataMatch(from, to types.Type) bool {
+	if name, ok := dataTypeName(from); ok {
+		if other, ok := nominalName(to); ok {
+			return name == other
+		}
+	}
+	if name, ok := dataTypeName(to); ok {
+		if other, ok := nominalName(from); ok {
+			return name == other
+		}
+	}
+	return false
+}
+
+// dataTypeName returns the name of t when it is a concrete DataType.
+func dataTypeName(t types.Type) (string, bool) {
+	if dt, ok := t.(types.DataType); ok {
+		return dt.Name, true
+	}
+	return "", false
+}
+
+// nominalName returns the head name of any nominal type reference: a DataType,
+// a ParameterizedType, or an UnresolvedType.
+func nominalName(t types.Type) (string, bool) {
+	switch v := t.(type) {
+	case types.DataType:
+		return v.Name, true
+	case types.ParameterizedType:
+		return v.Name, true
+	case types.UnresolvedType:
+		return v.Name, true
+	}
+	return "", false
 }
 
 // areEqualityCompatible reports whether two types can be compared with == or !=.

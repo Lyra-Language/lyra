@@ -11,8 +11,10 @@ func mustUseMsg(kind string) string {
 }
 
 const mustUsePrelude = `
-let parse = (s: string) -> Result<i64, E> => { Ok 0 }
-let lookup = (s: string) -> Maybe<i64> => { Some 0 }
+data Result<T, E> = Ok T | Err E
+data Maybe<T> = Some T | None
+let parse = (s: string) -> Result<i64, E> => { Ok(0) }
+let lookup = (s: string) -> Maybe<i64> => { Some(0) }
 `
 
 // --- positive cases: a dropped Result/Maybe is flagged ----------------------
@@ -86,7 +88,7 @@ func TestMustUse_TryPropagationIsUse(t *testing.T) {
 	src := mustUsePrelude + `
 let run = () -> Result<i64, E> => {
     parse("x")?
-    Ok 0
+    Ok(0)
 }`
 	res := parseCollectAndCheck(t, src, false)
 	assertNoMustUseWarnings(t, res)
