@@ -151,3 +151,82 @@ let reset = (p: mut Point) -> void => {
 }`
 	assertPurityCount(t, checkPurity(t, src), 0)
 }
+
+// Reading a captured `var` global from a pure function is non-deterministic (the
+// value can change between calls), so it breaks referential transparency.
+func TestPurity_ReadsCapturedVar_Error(t *testing.T) {
+	src := `
+var counter = 0
+let peek = pure (n: i64) -> i64 => {
+    n + counter
+}`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	want := `pure function reads captured mutable binding "counter"; its value can change between calls, breaking referential transparency`
+	if errs[0].Message != want {
+		t.Errorf("unexpected message: %q", errs[0].Message)
+	}
+}
+
+// Reading a captured `let mut` global (frozen name, mutable interior) is likewise
+// non-deterministic: the interior can change between calls.
+func TestPurity_ReadsCapturedLetMut_Error(t *testing.T) {
+	src := `
+let mut origin = Point { x: 0, y: 0 }
+let peek = pure (n: i64) -> i64 => {
+    n + origin.x
+}`
+	assertPurityCount(t, checkPurity(t, src), 1)
+}
+
+// Reading a captured plain `let` (deeply immutable) is fine — its value never
+// changes, so referential transparency holds.
+func TestPurity_ReadsCapturedLet_Ok(t *testing.T) {
+	src := `
+let base = 100
+let add = pure (n: i64) -> i64 => {
+    n + base
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// A mutable global used as an array index is a genuine read (not part of an
+// assignment target), so it is still flagged inside a pure function.
+func TestPurity_ReadsMutableGlobalAsIndex_Error(t *testing.T) {
+	src := `
+var idx = 0
+let get = pure (xs: own Grid) -> i64 => {
+    xs[idx]
+}`
+	assertPurityCount(t, checkPurity(t, src), 1)
+}
+
+// Writing a captured binding's field must not also be double-reported as a read
+// of the base: a single mutation diagnostic is expected.
+func TestPurity_CapturedFieldWrite_NotDoubleReported(t *testing.T) {
+	src := `
+var origin = Point { x: 0, y: 0 }
+let shift = pure (n: i64) -> void => {
+    origin.x = n
+}`
+	assertPurityCount(t, checkPurity(t, src), 1)
+}
+
+// A pure function that calls a user-defined function which only reads mutable
+// global state is reported: the callee is inferred impure (non-deterministic)
+// and the violation propagates across the call boundary.
+func TestPurity_CallsFunctionReadingMutableGlobal_Error(t *testing.T) {
+	src := `
+var counter = 0
+let snapshot = (n: i64) -> i64 => {
+    n + counter
+}
+let record = pure (n: i64) -> i64 => {
+    snapshot(n)
+}`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	if errs[0].Message != `pure function calls impure function "snapshot"` {
+		t.Errorf("unexpected message: %q", errs[0].Message)
+	}
+}

@@ -127,6 +127,37 @@ func TestTypeCheck_StructLiteral_GenericArgs_Error(t *testing.T) {
 	)
 }
 
+// Generic arguments are optional: when the turbofish is omitted, the type
+// parameters are inferred from the field values.
+func TestTypeCheck_StructLiteral_GenericArgs_Inferred_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Point<n> { x: n, y: n }
+		let int_point = Point { x: 10, y: 20 }
+		let float_point = Point { x: 10.5, y: 20.5 }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// Inference fixes the parameter from the first field, so a later field of a
+// different type is still rejected.
+func TestTypeCheck_StructLiteral_GenericArgs_Inferred_Inconsistent_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Point<n> { x: n, y: n }
+		let p = Point { x: 10, y: "twenty" }
+	`, false)
+	assertErrorsAre(t, res, "Point.y: cannot assign string to i64")
+}
+
+// An explicit but wrong-arity turbofish is still an error (inference only kicks
+// in when the arguments are omitted entirely).
+func TestTypeCheck_StructLiteral_GenericArgs_WrongCount_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Point<n> { x: n, y: n }
+		let p = Point::<i32, f64> { x: 1, y: 2 }
+	`, false)
+	assertErrorsAre(t, res, "Point: expected 1 generic arguments, got 2")
+}
+
 func TestTypeCheck_NamedStructMissingField_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		struct Person { name: string, age: i64, sex: string }

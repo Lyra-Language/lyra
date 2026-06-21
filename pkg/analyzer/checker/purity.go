@@ -61,13 +61,21 @@ var knownImpureBuiltins = map[string]bool{
 // so mutating them is invisible to callers and allowed.
 //
 // Calls to *user-defined* impure functions are caught for top-level function
-// bindings via inferImpureFunctions (transitive, fixpoint). Not yet handled
-// (needs symbol-table / scope info; see todo items #3/#4):
-//   - reading captured *mutable* (`var`) state — also breaks referential
-//     transparency, but distinguishing captured `var` from `let` needs scope info
-//   - impurity of non-top-level functions, methods, and imported functions
+// bindings via inferImpureFunctions (transitive, fixpoint). Reading captured
+// *mutable* top-level state (`var` / `let mut`, whose value can change between
+// calls) is also reported — it breaks referential transparency even though no
+// effect escapes. Not yet handled (needs symbol-table / scope info; see todo
+// items #3/#4):
+//   - reading captured mutable state declared in a *non-top-level* enclosing
+//     scope — distinguishing a captured `var` from a `let` there needs scope info
+//   - impurity of methods and imported functions
 func CheckPurity(program *ast.Program) []PurityError {
-	c := &purityChecker{impureFns: inferImpureFunctions(program)}
+	mutGlobals := mutableGlobals(program)
+	c := &purityChecker{
+		impureFns:      inferImpureFunctions(program, mutGlobals),
+		mutableGlobals: mutGlobals,
+		assignTargets:  map[*ast.IdentifierExpr]bool{},
+	}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
 			// Top level is an impure context: a nil scope means "not inside a pure
@@ -98,6 +106,14 @@ type purityChecker struct {
 	// builtin. Populated by inferImpureFunctions (a first slice of purity
 	// inference, todo #3).
 	impureFns map[string]bool
+	// mutableGlobals holds the names of top-level bindings whose *value* can change
+	// over the program's lifetime (`var`, `let mut`). Reading one from a pure
+	// function is non-deterministic, so it breaks referential transparency.
+	mutableGlobals map[string]bool
+	// assignTargets records IdentifierExpr nodes that are the root of an assignment
+	// target (the LHS of `x += …`, or the base of `x.f = …`). The write is reported
+	// by the mutation checks, so the same node must not be re-reported as a read.
+	assignTargets map[*ast.IdentifierExpr]bool
 }
 
 // isImpureCallee reports whether a call target with the given dotted name is
@@ -124,6 +140,12 @@ func (c *purityChecker) stmtVisitor(sc *funcScope) func(ast.Statement) bool {
 			}
 		case *ast.LValueAssignmentStmt:
 			c.checkInteriorMutation(sc, s.Target, s.GetLocation())
+			// The base of the target (`origin` in `origin.x = v`) is a write, not a
+			// read; suppress the read-check on it. A mutable global used as an *index*
+			// (`grid[i]`) is left untouched, so reading it is still flagged.
+			if id := rootIdentExpr(s.Target); id != nil {
+				c.assignTargets[id] = true
+			}
 		case *ast.DerefAssignmentStmt:
 			c.report(s.GetLocation(),
 				"pure function writes through a pointer; pointer writes may mutate external state")
@@ -172,7 +194,19 @@ func (c *purityChecker) exprVisitor(sc *funcScope) func(ast.Expression) bool {
 			}
 			return false // recursed manually
 
+		case *ast.IdentifierExpr:
+			// A read of a captured binding whose value can change between calls is
+			// non-deterministic — it breaks referential transparency even though no
+			// effect escapes. Writes through this node (an assignment target) are
+			// reported elsewhere, so skip those.
+			if sc != nil && !c.assignTargets[e] && !sc.isLocal(e.Name) && c.mutableGlobals[e.Name] {
+				c.report(e.GetLocation(),
+					"pure function reads captured mutable binding %q; its value can change between calls, breaking referential transparency", e.Name)
+			}
+
 		case *ast.MathAssignOpExpr:
+			// The LHS is a write target (reported below); don't also flag it as a read.
+			c.assignTargets[&e.Left] = true
 			if sc != nil && !sc.isLocal(e.Left.Name) {
 				c.report(e.GetLocation(),
 					"pure function mutates captured binding %q; mutation must not escape the function", e.Left.Name)
@@ -265,24 +299,54 @@ func mutBorrowParams(lambda *ast.LambdaExpr) map[string]bool {
 	return mut
 }
 
-// rootIdentName walks an interior-mutation target (a member/index chain like
-// `grid[i].y`) back to the identifier it is rooted at, returning its name. It
-// returns "" when the target is not rooted at a plain identifier (e.g. a
-// function-call result), in which case the write cannot be attributed to a
-// binding.
-func rootIdentName(expr ast.Expression) string {
+// rootIdentExpr walks an interior-mutation target (a member/index chain like
+// `grid[i].y`) back to the identifier it is rooted at, returning that node. It
+// returns nil when the target is not rooted at a plain identifier (e.g. a
+// function-call result). Note it follows only the *object* spine: an index
+// expression's index (`i` in `grid[i]`) is a separate sub-read, not the root.
+func rootIdentExpr(expr ast.Expression) *ast.IdentifierExpr {
 	for {
 		switch e := expr.(type) {
 		case *ast.IdentifierExpr:
-			return e.Name
+			return e
 		case *ast.MemberExpr:
 			expr = e.Object
 		case *ast.IndexExpr:
 			expr = e.Object
 		default:
-			return ""
+			return nil
 		}
 	}
+}
+
+// rootIdentName is rootIdentExpr's name, or "" when the target is not rooted at a
+// plain identifier, in which case the write cannot be attributed to a binding.
+func rootIdentName(expr ast.Expression) string {
+	if id := rootIdentExpr(expr); id != nil {
+		return id.Name
+	}
+	return ""
+}
+
+// mutableGlobals returns the names of top-level bindings whose *value* can change
+// over time — a `var` (name and interior mutable) or a `let mut` (interior
+// mutable). Reading one from a pure function is non-deterministic. Function
+// bindings (lambda values) are excluded: call purity is handled by
+// inferImpureFunctions, and treating a function name as mutable data would be
+// confusing. Plain `let` (deeply immutable) and `const` are safe to read.
+func mutableGlobals(program *ast.Program) map[string]bool {
+	globals := map[string]bool{}
+	for _, node := range program.Statements {
+		vd, ok := node.(*ast.VarDeclStmt)
+		if !ok || !vd.CanMutateInterior() {
+			continue
+		}
+		if _, isLambda := vd.Value.(*ast.LambdaExpr); isLambda {
+			continue
+		}
+		globals[vd.Name] = true
+	}
+	return globals
 }
 
 // inferImpureFunctions returns the set of top-level function bindings whose
@@ -295,7 +359,7 @@ func rootIdentName(expr ast.Expression) string {
 // bindings; it is the minimal inference needed to flag a `pure` function that
 // calls a user-defined impure function (todo #3 builds this out with proper
 // scope/symbol-table backing).
-func inferImpureFunctions(program *ast.Program) map[string]bool {
+func inferImpureFunctions(program *ast.Program, mutGlobals map[string]bool) map[string]bool {
 	fns := topLevelFunctions(program)
 	impure := map[string]bool{}
 	for {
@@ -304,7 +368,7 @@ func inferImpureFunctions(program *ast.Program) map[string]bool {
 			if impure[name] {
 				continue
 			}
-			if lambdaHasObservableEffect(lam, impure) {
+			if lambdaHasObservableEffect(lam, impure, mutGlobals) {
 				impure[name] = true
 				changed = true
 			}
@@ -335,7 +399,7 @@ func topLevelFunctions(program *ast.Program) map[string]*ast.LambdaExpr {
 // functions. It mirrors the checks in the main pass but accumulates a bool
 // instead of emitting diagnostics, and is used only for inference. It does not
 // descend into nested lambdas (they have their own boundary).
-func lambdaHasObservableEffect(lam *ast.LambdaExpr, impureFns map[string]bool) bool {
+func lambdaHasObservableEffect(lam *ast.LambdaExpr, impureFns, mutGlobals map[string]bool) bool {
 	locals := localBindings(lam)
 	mutBorrows := mutBorrowParams(lam)
 	found := false
@@ -358,6 +422,14 @@ func lambdaHasObservableEffect(lam *ast.LambdaExpr, impureFns map[string]bool) b
 		switch ex := e.(type) {
 		case *ast.LambdaExpr:
 			return false // nested lambda: separate boundary
+		case *ast.IdentifierExpr:
+			// Reading mutable global state is non-deterministic. (An assignment
+			// target also visits its root as an IdentifierExpr, but those nodes are
+			// already counted by the mutation cases above, so double-counting a
+			// bool here is harmless.)
+			if !locals[ex.Name] && mutGlobals[ex.Name] {
+				found = true
+			}
 		case *ast.MathAssignOpExpr:
 			if !locals[ex.Left.Name] {
 				found = true

@@ -1082,32 +1082,62 @@ func (tc *TypeChecker) inferIndexExpr(expr *ast.IndexExpr) types.Type {
 }
 
 func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) types.Type {
-	decl, ok := tc.symTable.Types[expr.Name]
-	if !ok {
+	// The name is either a struct type (`Point { … }`) or a data constructor with
+	// an inline-record payload (`data Tree = … | Node { … }`, built as `Node { … }`).
+	var decl *ast.TypeDeclStmt
+	var structType types.NamedStructType
+	// resultType is what the literal evaluates to: the struct itself for a real
+	// struct, or the owning data type for an inline-record constructor.
+	var resultType types.Type
+
+	if d, ok := tc.symTable.Types[expr.Name]; ok {
+		st, ok := d.Type.(types.NamedStructType)
+		if !ok {
+			tc.addError(expr.GetLocation(), SeverityError, "%s: not a struct type", expr.Name)
+			return nil
+		}
+		if len(st.Fields) == 0 {
+			tc.addError(expr.GetLocation(), SeverityError, "%s: no fields declared", expr.Name)
+			return nil
+		}
+		decl, structType, resultType = d, st, st
+	} else if dDecl, fields, dt, ok := tc.findInlineRecordConstructor(expr.Name); ok {
+		// `Node { … }` where Node is a data constructor whose payload is an inline
+		// record (anonymous struct). Check the supplied fields against the record's
+		// fields; the literal evaluates to the owning data type. decl is the data
+		// type's declaration so its generic parameters drive the same inference as
+		// a generic struct (`data Box<t> = Wrap { value: t }`).
+		decl = dDecl
+		structType = types.NamedStructType{Name: expr.Name, Fields: fields}
+		resultType = dt
+	} else {
 		tc.addError(expr.GetLocation(), SeverityError, "undefined struct type %q", expr.Name)
 		return nil
 	}
 
-	structType, ok := decl.Type.(types.NamedStructType)
-
-	if !ok {
-		tc.addError(expr.GetLocation(), SeverityError, "%s: not a struct type", expr.Name)
-		return nil
-	} else {
-		if len(structType.Fields) == 0 {
-			tc.addError(expr.GetLocation(), SeverityError, "%s: no fields declared", expr.Name)
-			return nil
-		}
-	}
-
+	// Resolve the generic type parameters for this instantiation.
 	typeSubst := make(map[string]types.Type, len(decl.GenericParams))
-	if len(decl.GenericParams) != len(expr.GenericArgs) {
-		tc.addError(expr.GetLocation(), SeverityError, "%s: expected %d generic arguments, got %d", expr.Name, len(decl.GenericParams), len(expr.GenericArgs))
-		return nil
-	} else if len(decl.GenericParams) > 0 {
+	genericParamNames := make(map[string]bool, len(decl.GenericParams))
+	for _, p := range decl.GenericParams {
+		genericParamNames[p.Name] = true
+	}
+	switch {
+	case len(expr.GenericArgs) == len(decl.GenericParams):
+		// Explicit turbofish arguments (`Point2::<i32> { … }`). This branch also
+		// covers a non-generic struct, where both lengths are 0 and the loop is
+		// a no-op.
 		for i, param := range decl.GenericParams {
 			typeSubst[param.Name] = expr.GenericArgs[i]
 		}
+	case len(expr.GenericArgs) == 0:
+		// No turbofish: infer each type parameter from the value supplied for a
+		// field declared with that parameter (`Point2 { x: 1, y: 2 }` infers
+		// t = i64). A parameter with no inferable field stays unbound, and its
+		// fields are checked leniently below.
+		tc.inferStructGenericArgs(expr, structType, genericParamNames, typeSubst)
+	default:
+		tc.addError(expr.GetLocation(), SeverityError, "%s: expected %d generic arguments, got %d", expr.Name, len(decl.GenericParams), len(expr.GenericArgs))
+		return nil
 	}
 
 	// Build a quick name->type lookup for the declared fields.
@@ -1132,6 +1162,13 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		expected, ok := fieldTypes[name]
 		if !ok {
 			tc.addError(expr.GetLocation(), SeverityError, "%s: unknown field %q", expr.Name, name)
+			continue
+		}
+		// A field still typed as a generic parameter (one we could not infer)
+		// accepts any value: this checker does not fully reason about generics,
+		// so an un-inferred parameter must not produce a spurious mismatch.
+		if genericParamNames[expected.GetName()] {
+			tc.inferExprType(f.Value) // still record the value's type
 			continue
 		}
 		// Resolve both sides: a field declared with a named-struct type is stored
@@ -1165,7 +1202,67 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		}
 	}
 
-	return structType
+	return resultType
+}
+
+// findInlineRecordConstructor looks up a data constructor by name and, when its
+// payload is a single inline record (anonymous struct), returns the data type's
+// declaration, the record's fields, and the owning data type. Used so that
+// `Node { … }` for a `data Tree = … | Node { … }` constructor type-checks like a
+// struct literal but evaluates to the data type. Returns ok=false when no such
+// constructor exists or its payload is not an inline record.
+func (tc *TypeChecker) findInlineRecordConstructor(ctorName string) (*ast.TypeDeclStmt, []types.StructField, types.DataType, bool) {
+	for _, decl := range tc.symTable.Types {
+		dt, ok := decl.Type.(types.DataType)
+		if !ok {
+			continue
+		}
+		for _, ctor := range dt.Constructors {
+			if ctor.Name != ctorName {
+				continue
+			}
+			if len(ctor.Params) == 1 {
+				if anon, ok := ctor.Params[0].(types.AnonymousStructType); ok {
+					return decl, anon.Fields, dt, true
+				}
+			}
+			return nil, nil, types.DataType{}, false
+		}
+	}
+	return nil, nil, types.DataType{}, false
+}
+
+// inferStructGenericArgs infers a generic struct's type arguments from the
+// values supplied to fields declared with a bare type parameter, writing the
+// bindings into typeSubst. Used when a generic struct literal is written without
+// a turbofish (`Point2 { x: 1, y: 2 }`): the value for the first field declared
+// as `t` fixes `t`. Fields whose declared type is not a bare parameter, and
+// parameters never matched by a field, are left for the caller to handle.
+func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, structType types.NamedStructType, genericParamNames map[string]bool, typeSubst map[string]types.Type) {
+	declaredByName := make(map[string]types.Type, len(structType.Fields))
+	for _, f := range structType.Fields {
+		declaredByName[f.Name] = f.Type
+	}
+	for idx, f := range expr.Fields {
+		fieldName := f.Name
+		if fieldName == "" && idx < len(structType.Fields) {
+			fieldName = structType.Fields[idx].Name
+		}
+		declared, ok := declaredByName[fieldName]
+		if !ok {
+			continue
+		}
+		paramName := declared.GetName()
+		if !genericParamNames[paramName] {
+			continue // field is not declared with a bare type parameter
+		}
+		if _, done := typeSubst[paramName]; done {
+			continue // already inferred from an earlier field
+		}
+		if vt := tc.inferExprType(f.Value); vt != nil {
+			typeSubst[paramName] = promoteToDefault(vt)
+		}
+	}
 }
 
 func (tc *TypeChecker) inferAnonymousStructInstanceExpr(expr *ast.AnonymousStructInstanceExpr) types.Type {
