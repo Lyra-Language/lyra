@@ -267,6 +267,49 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 		tc.addError(decl.GetLocation(), SeverityError,
 			"tuple pattern has %d element(s) but tuple has %d",
 			len(tp.Elements), len(tt.Elements))
+		return // mismatched arity: elements below can't be paired up reliably
+	}
+	tc.bindTuplePatternNames(decl, tp, tt)
+}
+
+// bindTuplePatternNames registers each identifier in a tuple-destructuring
+// pattern (`let (a, b) = ...`) directly into the current (real) scope, with
+// the type of its corresponding tuple element — e.g. `a` gets `t.Elements[0]`.
+//
+// This has to happen here, at typecheck time, rather than at collection time:
+// unlike a plain `let x = ...`, a destructured name has no single initializer
+// expression of its own to resolve a type from later (`x`'s type comes from
+// caching `tc.typeTable.Get(x's Value)`; "a" and "b" share one Value, the
+// whole tuple). The element type is only known once decl.Value is inferred, so
+// binding happens immediately after that, into the block scope already
+// pushed by the collector — which is exactly why this is safe: it mutates the
+// real `*symbols.Scope` for this block, so nested/sibling blocks stay
+// correctly isolated, unlike a flat ad-hoc map would.
+//
+// `var`/`let mut` are threaded through so interior-mutation and purity
+// checks treat a destructured name the same as any other binding. A RestPattern
+// element or a nested (non-identifier) sub-pattern is left unbound — only a
+// flat tuple of plain names is supported today.
+func (tc *TypeChecker) bindTuplePatternNames(decl *ast.DestructuringDeclStmt, pat *ast.TuplePattern, t types.TupleType) {
+	bindingKind := ast.BindingLet
+	if decl.Keyword == "var" {
+		bindingKind = ast.BindingVar
+	}
+	for i, el := range pat.Elements {
+		ip, ok := el.(*ast.IdentifierPattern)
+		if !ok || ip.Name == "_" || i >= len(t.Elements) {
+			continue
+		}
+		// Errors (e.g. a genuine duplicate) are intentionally ignored here: the
+		// collector's collectPatternDeclaration already reports name conflicts
+		// against existing declarations in this scope.
+		_ = tc.scope.Define(&ast.VarDeclStmt{
+			AstBase:     ast.AstBase{Location: ip.GetLocation()},
+			BindingKind: bindingKind,
+			IsMut:       decl.IsMut,
+			Name:        ip.Name,
+			Type:        t.Elements[i],
+		})
 	}
 }
 

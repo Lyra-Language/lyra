@@ -7,9 +7,15 @@ import (
 
 // withParamScope temporarily installs a parameter-type map for the duration of
 // fn. This lets inferExprType resolve identifiers that name the lambda's
-// parameters. Only IdentifierPattern parameters with a declared type annotation
-// are added; complex-pattern or unannotated parameters are silently skipped.
-// Nested calls (e.g. a lambda inside a lambda) correctly save and restore.
+// parameters. IdentifierPattern parameters are added directly; a TuplePattern
+// parameter with a tuple type annotation has each of its names bound to the
+// corresponding element type (bindTuplePatternParam) — this is the parameter
+// counterpart of bindTuplePatternNames for destructuring declarations, except
+// the type is already known statically from the annotation, so it can be done
+// up front here rather than lazily during body-checking. Other complex
+// patterns (struct, array, data) or an unannotated parameter are silently
+// skipped. Nested calls (e.g. a lambda inside a lambda) correctly save and
+// restore.
 //
 // Each parameter's declared type is resolved through resolveType so that
 // user-defined names (constrained types, structs, etc.) are expanded and
@@ -19,17 +25,40 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 	tc.paramTypes = make(map[string]types.Type, len(lambda.Parameters))
 	tc.paramMods = make(map[string]types.TypeModifier, len(lambda.Parameters))
 	for _, p := range lambda.Parameters {
-		if ip, ok := p.Pattern.(*ast.IdentifierPattern); ok {
+		switch pat := p.Pattern.(type) {
+		case *ast.IdentifierPattern:
 			// Record the modifier even when the parameter has no type annotation,
 			// so the interior-mutation check can attribute mutability to the param.
-			tc.paramMods[ip.Name] = p.TypeModifier
+			tc.paramMods[pat.Name] = p.TypeModifier
 			if p.Type != nil {
-				tc.paramTypes[ip.Name] = tc.resolveType(p.Type, p.GetLocation())
+				tc.paramTypes[pat.Name] = tc.resolveType(p.Type, p.GetLocation())
+			}
+		case *ast.TuplePattern:
+			if p.Type != nil {
+				tc.bindTuplePatternParam(pat, tc.resolveType(p.Type, p.GetLocation()))
 			}
 		}
 	}
 	tc.enterScope(lambda, fn)
 	tc.paramTypes, tc.paramMods = oldTypes, oldMods
+}
+
+// bindTuplePatternParam binds each identifier in a destructured tuple
+// parameter (`((a, b): (i64, i64)) -> ...`) to its corresponding element of t
+// in paramTypes, mirroring bindTuplePatternNames's element-by-element pairing.
+// A RestPattern element or a nested (non-identifier) sub-pattern is left
+// unbound, and a non-tuple t (annotation/pattern arity mismatch) is a no-op —
+// only a flat tuple of plain names is supported today.
+func (tc *TypeChecker) bindTuplePatternParam(pat *ast.TuplePattern, t types.Type) {
+	tt, ok := t.(types.TupleType)
+	if !ok || len(tt.Elements) != len(pat.Elements) {
+		return
+	}
+	for i, el := range pat.Elements {
+		if ip, ok := el.(*ast.IdentifierPattern); ok && ip.Name != "_" {
+			tc.paramTypes[ip.Name] = tt.Elements[i]
+		}
+	}
 }
 
 // checkLambdaBody verifies that the lambda's body is consistent with the
