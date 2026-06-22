@@ -579,10 +579,19 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 	}
 	structFieldRenameNode := node.ChildByFieldName("struct_field_rename")
 	if structFieldRenameNode != nil {
+		// `{ oldName: newName }`: Name is the *struct's* field (what binding.go's
+		// field lookups match against — same convention as the shorthand and
+		// with-pattern cases above), and the local bound name is represented as
+		// an ordinary identifier sub-pattern, exactly like the with-pattern case
+		// (`{ oldName: somePattern }`) just below.
+		newNameNode := structFieldRenameNode.ChildByFieldName("new_name")
 		return &ast.StructPatternField{
 			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
-			Name:        c.ctx.NodeText(structFieldRenameNode.ChildByFieldName("new_name")),
-			Pattern:     nil,
+			Name:        c.ctx.NodeText(structFieldRenameNode.ChildByFieldName("name")),
+			Pattern: &ast.IdentifierPattern{
+				PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(newNameNode)}},
+				Name:        c.ctx.NodeText(newNameNode),
+			},
 		}
 	}
 	structFieldWithPatternNode := node.ChildByFieldName("struct_field_with_pattern")

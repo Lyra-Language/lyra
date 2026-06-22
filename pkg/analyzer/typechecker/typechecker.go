@@ -221,10 +221,24 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	tc.typeTable.Set(decl.Value, resolvedDeclType)
 }
 
-// checkDestructuringDecl type-checks a destructuring declaration.
-// It infers the RHS type, checks any whole-expression type annotation, and for
-// tuple patterns verifies that the RHS is actually a tuple and that its arity
-// matches the number of pattern bindings (unless a rest pattern is present).
+// checkDestructuringDecl type-checks a destructuring declaration. It infers
+// the RHS type, checks any whole-expression type annotation, then walks the
+// pattern against that type (walkDestructuredPattern) — reporting any
+// shape mismatch (tuple arity, missing struct field, pattern/type kind
+// mismatch) — binding each name it introduces directly into the current
+// (real) scope.
+//
+// Binding has to happen here, at typecheck time, rather than at collection
+// time: unlike a plain `let x = ...`, a destructured name has no single
+// initializer expression of its own to resolve a type from later (`x`'s type
+// comes from caching `tc.typeTable.Get(x's Value)`; "a" and "b" in `let (a, b)
+// = ...` share one Value, the whole tuple). The type of each name is only
+// known once decl.Value has been inferred, so binding happens immediately
+// after that, into the block scope already pushed by the collector — which is
+// exactly why this is safe: it mutates the real `*symbols.Scope` for this
+// block, so nested/sibling blocks stay correctly isolated, unlike a flat
+// ad-hoc map would. `var`/`let mut` are threaded through so interior-mutation
+// and purity checks treat a destructured name the same as any other binding.
 func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 	if decl.Value == nil {
 		return
@@ -245,72 +259,156 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 		inferredType = resolvedDeclType
 	}
 
-	// For tuple patterns, check that the RHS is a tuple and that arities match.
-	tp, isTuplePattern := decl.Pattern.(*ast.TuplePattern)
-	if !isTuplePattern {
-		return
-	}
-	tt, isTupleType := inferredType.(types.TupleType)
-	if !isTupleType {
-		tc.addError(decl.GetLocation(), SeverityError,
-			"cannot destructure %s with a tuple pattern", inferredType)
-		return
-	}
-	hasRest := false
-	for _, el := range tp.Elements {
-		if _, ok := el.(*ast.RestPattern); ok {
-			hasRest = true
-			break
-		}
-	}
-	if !hasRest && len(tp.Elements) != len(tt.Elements) {
-		tc.addError(decl.GetLocation(), SeverityError,
-			"tuple pattern has %d element(s) but tuple has %d",
-			len(tp.Elements), len(tt.Elements))
-		return // mismatched arity: elements below can't be paired up reliably
-	}
-	tc.bindTuplePatternNames(decl, tp, tt)
-}
-
-// bindTuplePatternNames registers each identifier in a tuple-destructuring
-// pattern (`let (a, b) = ...`) directly into the current (real) scope, with
-// the type of its corresponding tuple element — e.g. `a` gets `t.Elements[0]`.
-//
-// This has to happen here, at typecheck time, rather than at collection time:
-// unlike a plain `let x = ...`, a destructured name has no single initializer
-// expression of its own to resolve a type from later (`x`'s type comes from
-// caching `tc.typeTable.Get(x's Value)`; "a" and "b" share one Value, the
-// whole tuple). The element type is only known once decl.Value is inferred, so
-// binding happens immediately after that, into the block scope already
-// pushed by the collector — which is exactly why this is safe: it mutates the
-// real `*symbols.Scope` for this block, so nested/sibling blocks stay
-// correctly isolated, unlike a flat ad-hoc map would.
-//
-// `var`/`let mut` are threaded through so interior-mutation and purity
-// checks treat a destructured name the same as any other binding. A RestPattern
-// element or a nested (non-identifier) sub-pattern is left unbound — only a
-// flat tuple of plain names is supported today.
-func (tc *TypeChecker) bindTuplePatternNames(decl *ast.DestructuringDeclStmt, pat *ast.TuplePattern, t types.TupleType) {
 	bindingKind := ast.BindingLet
 	if decl.Keyword == "var" {
 		bindingKind = ast.BindingVar
 	}
-	for i, el := range pat.Elements {
-		ip, ok := el.(*ast.IdentifierPattern)
-		if !ok || ip.Name == "_" || i >= len(t.Elements) {
-			continue
-		}
+	tc.walkDestructuredPattern(decl.Pattern, inferredType, func(name string, typ types.Type) {
 		// Errors (e.g. a genuine duplicate) are intentionally ignored here: the
 		// collector's collectPatternDeclaration already reports name conflicts
 		// against existing declarations in this scope.
 		_ = tc.scope.Define(&ast.VarDeclStmt{
-			AstBase:     ast.AstBase{Location: ip.GetLocation()},
+			AstBase:     ast.AstBase{Location: decl.GetLocation()},
 			BindingKind: bindingKind,
 			IsMut:       decl.IsMut,
-			Name:        ip.Name,
-			Type:        t.Elements[i],
+			Name:        name,
+			Type:        typ,
 		})
+	})
+}
+
+// walkDestructuredPattern recursively type-checks pat against t (the type it
+// is being destructured against) and calls bind(name, type) for every
+// identifier pat introduces, with the type its position/field corresponds to
+// within t:
+//   - tuple positions pair element-by-element; arity must match exactly
+//     unless a RestPattern is present.
+//   - struct fields pair by name against t's fields. A field's nested Pattern
+//     — including the `{x: y}` rename form, which the collector represents
+//     identically to a with-pattern field `{x: somePattern}` — is walked
+//     recursively against that field's type; a rest field (`...rest`)
+//     matches any remaining fields with no error (struct destructuring is
+//     inherently partial).
+//   - array elements all pair against the array's uniform element type
+//     (no arity check: array length is often only known at runtime,
+//     mirroring the existing leniency in checkArrayMatchArm); a *named* rest
+//     element (`...rest`) binds the whole array type.
+//
+// Any mismatch (wrong tuple arity, missing struct field, a pattern that
+// doesn't match the *kind* of t) is reported as an error, and that
+// sub-pattern's names are left unbound rather than guessed. An IdentifierPattern
+// of "_" is the conventional discard and never binds. DataPattern (destructuring
+// straight into a data constructor's payload) is not yet supported.
+func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bind func(name string, typ types.Type)) {
+	if pat == nil || t == nil {
+		return
 	}
+	t = tc.resolveType(t, pat.GetLocation())
+
+	switch p := pat.(type) {
+	case *ast.IdentifierPattern:
+		if p.Name != "_" {
+			bind(p.Name, t)
+		}
+
+	case *ast.TuplePattern:
+		tt, ok := t.(types.TupleType)
+		if !ok {
+			tc.addError(p.GetLocation(), SeverityError,
+				"cannot destructure %s with a tuple pattern", t)
+			return
+		}
+		hasRest := false
+		for _, el := range p.Elements {
+			if _, ok := el.(*ast.RestPattern); ok {
+				hasRest = true
+				break
+			}
+		}
+		if !hasRest && len(p.Elements) != len(tt.Elements) {
+			tc.addError(p.GetLocation(), SeverityError,
+				"tuple pattern has %d element(s) but tuple has %d",
+				len(p.Elements), len(tt.Elements))
+			return // mismatched arity: elements below can't be paired up reliably
+		}
+		for i, el := range p.Elements {
+			if i < len(tt.Elements) {
+				tc.walkDestructuredPattern(el, tt.Elements[i], bind)
+			}
+		}
+
+	case *ast.ArrayPattern:
+		elemType := arrayElementType(t)
+		if elemType == nil {
+			tc.addError(p.GetLocation(), SeverityError,
+				"cannot destructure %s with an array pattern", t)
+			return
+		}
+		for _, el := range p.Elements {
+			if rp, isRest := el.(*ast.RestPattern); isRest {
+				if rp.Identifier != "" {
+					bind(rp.Identifier, t)
+				}
+				continue
+			}
+			tc.walkDestructuredPattern(el, elemType, bind)
+		}
+
+	case *ast.StructPattern:
+		fields := structFieldTypes(t)
+		if fields == nil {
+			tc.addError(p.GetLocation(), SeverityError,
+				"cannot destructure %s with a struct pattern", t)
+			return
+		}
+		for _, f := range p.Fields {
+			if _, isRest := f.Pattern.(*ast.RestPattern); isRest {
+				continue
+			}
+			fieldType, ok := fields[f.Name]
+			if !ok {
+				tc.addError(f.GetLocation(), SeverityError,
+					"%s has no field %q", t, f.Name)
+				continue
+			}
+			if f.Pattern != nil {
+				tc.walkDestructuredPattern(f.Pattern, fieldType, bind)
+			} else {
+				bind(f.Name, fieldType)
+			}
+		}
+	}
+}
+
+// arrayElementType extracts the element type of a dynamic or static array
+// type, or nil if t is neither.
+func arrayElementType(t types.Type) types.Type {
+	switch at := t.(type) {
+	case types.DynamicArrayType:
+		return at.ElementType
+	case types.StaticArrayType:
+		return at.ElementType
+	}
+	return nil
+}
+
+// structFieldTypes maps each field name of a named or anonymous struct type
+// to its type, or nil if t is neither.
+func structFieldTypes(t types.Type) map[string]types.Type {
+	var fields []types.StructField
+	switch st := t.(type) {
+	case types.NamedStructType:
+		fields = st.Fields
+	case types.AnonymousStructType:
+		fields = st.Fields
+	default:
+		return nil
+	}
+	m := make(map[string]types.Type, len(fields))
+	for _, f := range fields {
+		m[f.Name] = f.Type
+	}
+	return m
 }
 
 // checkPatternConstraints tests a string-literal value against every

@@ -5,14 +5,29 @@ Program(1 statements) {
 			Pattern: {
 				StructPattern {
 					Fields: {
-						StructPatternField(foo) {
-							Name: foo
+						StructPatternField(a) {
+							Name: a
+							Pattern: {
+								IdentifierPattern(foo) {
+									Name: foo
+								}
+							}
 						}
-						StructPatternField(bar) {
-							Name: bar
+						StructPatternField(b) {
+							Name: b
+							Pattern: {
+								IdentifierPattern(bar) {
+									Name: bar
+								}
+							}
 						}
-						StructPatternField(baz) {
-							Name: baz
+						StructPatternField(c) {
+							Name: c
+							Pattern: {
+								IdentifierPattern(baz) {
+									Name: baz
+								}
+							}
 						}
 					}
 				}
