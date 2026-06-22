@@ -283,3 +283,75 @@ let outer = (n: i64) -> i64 => {
 }`
 	assertPurityCount(t, checkPurity(t, src), 0)
 }
+
+// A `pure` function that calls a sibling function declared in the same
+// *non-top-level* enclosing scope is reported, just like calling a top-level
+// impure function. `logIt` is inferred impure (mutates the outer-scope
+// `counter`); calling it from the nested `pure record` propagates the
+// violation, even though neither function is a top-level binding.
+func TestPurity_CallsNonTopLevelImpureFunction_Error(t *testing.T) {
+	src := `
+let outer = (n: i64) -> i64 => {
+    var counter = 0
+    let logIt = (msg: string) -> void => {
+        counter += 1
+    }
+    let record = pure (msg: string) -> i64 => {
+        logIt(msg)
+        n
+    }
+    record("x")
+}`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	want := `pure function calls impure function "logIt"`
+	if errs[0].Message != want {
+		t.Errorf("unexpected message: %q", errs[0].Message)
+	}
+}
+
+// Sibling resolution within a scope must not depend on declaration order: the
+// fixpoint inference should still find that `record` (declared *before*
+// `logIt` and `counter` here) calls an impure sibling.
+func TestPurity_CallsSiblingDeclaredAfter_Error(t *testing.T) {
+	src := `
+let outer = (n: i64) -> i64 => {
+    let record = pure (msg: string) -> i64 => {
+        logIt(msg)
+        n
+    }
+    var counter = 0
+    let logIt = (msg: string) -> void => {
+        counter += 1
+    }
+    record("x")
+}`
+	assertPurityCount(t, checkPurity(t, src), 1)
+}
+
+// Two unrelated functions in different scopes that happen to share a name
+// must not be confused with each other: `helper` in `scopeA` is impure, but
+// the *different* `helper` in `scopeB` is pure, and `scopeB`'s pure `run`
+// calls its own local `helper` — this must resolve to scopeB's (pure) one and
+// report nothing, even though a same-named function elsewhere is impure.
+func TestPurity_NameCollisionAcrossScopes_NotConfused(t *testing.T) {
+	src := `
+let scopeA = (n: i64) -> i64 => {
+    var counter = 0
+    let helper = (m: i64) -> i64 => {
+        counter += 1
+        m
+    }
+    helper(n)
+}
+let scopeB = (n: i64) -> i64 => {
+    let helper = (m: i64) -> i64 => {
+        m + 1
+    }
+    let run = pure (m: i64) -> i64 => {
+        helper(m)
+    }
+    run(n)
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
