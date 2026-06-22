@@ -47,7 +47,7 @@ func TestInlineRecordConstructor_GenericInferred_Ok(t *testing.T) {
 
 func TestDataConstructorCall_AppliedResolvesToDataType(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-  data Maybe<T> = None | Some T
+  data Maybe<t> = None | Some t
   let wrap = (n: i64) -> Maybe<i64> => Some(n)
 	`, false)
 	assertNoErrors(t, res)
@@ -55,7 +55,7 @@ func TestDataConstructorCall_AppliedResolvesToDataType(t *testing.T) {
 
 func TestDataConstructorCall_NullaryResolvesToDataType(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-  data Maybe<T> = None | Some T
+  data Maybe<t> = None | Some t
   let empty = () -> Maybe<i64> => None
 	`, false)
 	assertNoErrors(t, res)
@@ -63,7 +63,7 @@ func TestDataConstructorCall_NullaryResolvesToDataType(t *testing.T) {
 
 func TestDataConstructorCall_ResultConstructor(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-  data Result<T, E> = Ok T | Err E
+  data Result<t, e> = Ok t | Err e
   let ok = (n: i64) -> Result<i64, string> => Ok(n)
 	`, false)
 	assertNoErrors(t, res)
@@ -73,7 +73,7 @@ func TestDataConstructorCall_ResultConstructor(t *testing.T) {
 // assignable to the annotated data type (it is not "any data type passes").
 func TestDataConstructorCall_WrongDataTypeRejected(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-  data Maybe<T> = None | Some T
+  data Maybe<t> = None | Some t
   data Color = Red | Green
   let bad = () -> Maybe<i64> => Red
 	`, false)

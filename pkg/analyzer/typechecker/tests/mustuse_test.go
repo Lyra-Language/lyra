@@ -11,8 +11,8 @@ func mustUseMsg(kind string) string {
 }
 
 const mustUsePrelude = `
-data Result<T, E> = Ok T | Err E
-data Maybe<T> = Some T | None
+data Result<t, e> = Ok t | Err e
+data Maybe<t> = Some t | None
 let parse = (s: string) -> Result<i64, E> => { Ok(0) }
 let lookup = (s: string) -> Maybe<i64> => { Some(0) }
 `
