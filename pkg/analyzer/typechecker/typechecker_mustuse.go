@@ -20,15 +20,14 @@ import (
 // statement a declaration rather than an ExpressionStmt, so it never reaches
 // this check — there is no separate suppression to maintain.
 //
-// Recognition is by name (resultOrMaybeKind), the same stop-gap used by the `?`
-// checks; it will mis-fire on a user's own `data Result`/`data Maybe` until
-// Result/Maybe gain a canonical/prelude identity. See the note on
-// checker.isResultOrMaybeName.
+// Recognition is via resultOrMaybeKind, the same name-plus-shape check used by
+// the `?` checks; see its doc comment for what "shape" means without a
+// canonical/prelude identity.
 func (tc *TypeChecker) checkMustUseResult(expr ast.Expression, t types.Type) {
 	if t == nil {
 		return
 	}
-	kind, _, ok := resultOrMaybeKind(t)
+	kind, _, ok := tc.resultOrMaybeKind(t)
 	if !ok {
 		return
 	}

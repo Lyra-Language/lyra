@@ -106,6 +106,20 @@ let main = () -> i64 => {
 	assertNoMustUseWarnings(t, res)
 }
 
+// A `data Result` whose constructors aren't Ok/Err isn't must-use-eligible:
+// there's no Err channel to silently discard, so dropping it is fine.
+func TestMustUse_NonCanonicalResultShapeNotFlagged(t *testing.T) {
+	src := `
+data Result<a, b> = Foo a | Bar b
+let make = (n: i64) -> Result<i64, i64> => { Foo(n) }
+let main = () -> i64 => {
+    make(0)
+    0
+}`
+	res := parseCollectAndCheck(t, src, false)
+	assertNoMustUseWarnings(t, res)
+}
+
 // assertNoMustUseWarnings fails if any must-use (lyra-W006) warning was emitted.
 // Other diagnostics (if any) are ignored so these cases stay focused.
 func assertNoMustUseWarnings(t *testing.T, res checkResult) {

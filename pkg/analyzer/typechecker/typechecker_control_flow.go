@@ -933,7 +933,7 @@ func (tc *TypeChecker) inferNullCoalescingExpr(expr *ast.NullCoalescingExpr) typ
 
 	// The left operand must be optional (Maybe<T>); unwrap it to its payload.
 	payload := optType
-	if kind, t, ok := resultOrMaybeKind(optType); ok && kind == "Maybe" {
+	if kind, t, ok := tc.resultOrMaybeKind(optType); ok && kind == "Maybe" {
 		payload = t
 	} else {
 		tc.addErrorCode(expr.Optional.GetLocation(), SeverityWarning,
