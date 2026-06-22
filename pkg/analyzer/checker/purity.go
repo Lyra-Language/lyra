@@ -62,25 +62,28 @@ var knownImpureBuiltins = map[string]bool{
 //
 // Calls to *user-defined* impure functions are caught for top-level function
 // bindings via inferImpureFunctions (transitive, fixpoint). Reading captured
-// *mutable* top-level state (`var` / `let mut`, whose value can change between
-// calls) is also reported — it breaks referential transparency even though no
-// effect escapes. Not yet handled (needs symbol-table / scope info; see todo
-// items #3/#4):
-//   - reading captured mutable state declared in a *non-top-level* enclosing
-//     scope — distinguishing a captured `var` from a `let` there needs scope info
+// *mutable* state (`var` / `let mut`, whose value can change between calls) is
+// also reported — it breaks referential transparency even though no effect
+// escapes. This covers mutable state declared at the top level as well as in
+// any non-top-level enclosing function scope (see the capture-stack built by
+// directScopeMutability). Not yet handled (needs symbol-table backing; see
+// todo items #3/#4):
 //   - impurity of methods and imported functions
 func CheckPurity(program *ast.Program) []PurityError {
 	mutGlobals := mutableGlobals(program)
 	c := &purityChecker{
-		impureFns:      inferImpureFunctions(program, mutGlobals),
-		mutableGlobals: mutGlobals,
-		assignTargets:  map[*ast.IdentifierExpr]bool{},
+		impureFns:     inferImpureFunctions(program, mutGlobals),
+		assignTargets: map[*ast.IdentifierExpr]bool{},
 	}
+	// capture is the stack of enclosing-scope mutability maps, outermost
+	// (top-level) first. A read inside a pure function resolves a captured
+	// name by walking this stack from the innermost frame outward.
+	capture := []map[string]bool{mutGlobals}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
 			// Top level is an impure context: a nil scope means "not inside a pure
 			// function, don't check".
-			ast.WalkStmt(stmt, c.stmtVisitor(nil), c.exprVisitor(nil))
+			ast.WalkStmt(stmt, c.stmtVisitor(nil, capture), c.exprVisitor(nil, capture))
 		}
 	}
 	return c.errors
@@ -106,10 +109,6 @@ type purityChecker struct {
 	// builtin. Populated by inferImpureFunctions (a first slice of purity
 	// inference, todo #3).
 	impureFns map[string]bool
-	// mutableGlobals holds the names of top-level bindings whose *value* can change
-	// over the program's lifetime (`var`, `let mut`). Reading one from a pure
-	// function is non-deterministic, so it breaks referential transparency.
-	mutableGlobals map[string]bool
 	// assignTargets records IdentifierExpr nodes that are the root of an assignment
 	// target (the LHS of `x += …`, or the base of `x.f = …`). The write is reported
 	// by the mutation checks, so the same node must not be re-reported as a read.
@@ -124,10 +123,12 @@ func (c *purityChecker) isImpureCallee(name string) bool {
 }
 
 // stmtVisitor returns a statement callback. sc is non-nil exactly when we are
-// inside a `pure` function body. A mutation of a name not owned locally is a
-// mutation of captured outer state; interior mutation through a `mut`-borrowed
-// parameter escapes to the caller's value.
-func (c *purityChecker) stmtVisitor(sc *funcScope) func(ast.Statement) bool {
+// inside a `pure` function body. capture is unused here but threaded through
+// so the signature matches exprVisitor's manual-recursion call sites. A
+// mutation of a name not owned locally is a mutation of captured outer state;
+// interior mutation through a `mut`-borrowed parameter escapes to the caller's
+// value.
+func (c *purityChecker) stmtVisitor(sc *funcScope, capture []map[string]bool) func(ast.Statement) bool {
 	return func(stmt ast.Statement) bool {
 		if sc == nil {
 			return true // impure context: descend, but don't flag anything
@@ -174,23 +175,32 @@ func (c *purityChecker) checkInteriorMutation(sc *funcScope, target ast.Expressi
 	}
 }
 
-func (c *purityChecker) exprVisitor(sc *funcScope) func(ast.Expression) bool {
+func (c *purityChecker) exprVisitor(sc *funcScope, capture []map[string]bool) func(ast.Expression) bool {
 	return func(expr ast.Expression) bool {
 		switch e := expr.(type) {
 		case *ast.LambdaExpr:
 			// Default values execute at the call site, in the *enclosing* context.
 			for i := range e.Parameters {
-				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(sc), c.exprVisitor(sc))
+				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(sc, capture), c.exprVisitor(sc, capture))
 			}
 			// The body runs in this lambda's own context: pure → build its scope;
-			// impure → nil (no checking).
+			// impure → nil (no checking). Either way it introduces a new lexical
+			// scope, so push its mutability frame onto the capture stack regardless
+			// of purity — a pure lambda nested deeper still needs to resolve names
+			// captured through this (possibly impure) intermediate scope.
 			var child *funcScope
+			scope := directScopeMutability(e)
 			if e.IsPure {
-				child = &funcScope{locals: localBindings(e), mutBorrows: mutBorrowParams(e)}
+				locals := make(map[string]bool, len(scope))
+				for name := range scope {
+					locals[name] = true
+				}
+				child = &funcScope{locals: locals, mutBorrows: mutBorrowParams(e)}
 			}
-			ast.WalkExpr(e.Body, c.stmtVisitor(child), c.exprVisitor(child))
+			childCapture := append(capture, scope)
+			ast.WalkExpr(e.Body, c.stmtVisitor(child, childCapture), c.exprVisitor(child, childCapture))
 			for _, clause := range e.LambdaClauses {
-				ast.WalkExpr(clause.Body, c.stmtVisitor(child), c.exprVisitor(child))
+				ast.WalkExpr(clause.Body, c.stmtVisitor(child, childCapture), c.exprVisitor(child, childCapture))
 			}
 			return false // recursed manually
 
@@ -199,7 +209,7 @@ func (c *purityChecker) exprVisitor(sc *funcScope) func(ast.Expression) bool {
 			// non-deterministic — it breaks referential transparency even though no
 			// effect escapes. Writes through this node (an assignment target) are
 			// reported elsewhere, so skip those.
-			if sc != nil && !c.assignTargets[e] && !sc.isLocal(e.Name) && c.mutableGlobals[e.Name] {
+			if sc != nil && !c.assignTargets[e] && !sc.isLocal(e.Name) && capturedMutable(capture, e.Name) {
 				c.report(e.GetLocation(),
 					"pure function reads captured mutable binding %q; its value can change between calls, breaking referential transparency", e.Name)
 			}
@@ -237,19 +247,44 @@ func (c *purityChecker) report(loc ast.Location, format string, args ...any) {
 // declaration in its body. It deliberately does NOT descend into nested lambdas —
 // those own their own scope, and their bindings are not local to this function.
 func localBindings(lambda *ast.LambdaExpr) map[string]bool {
-	locals := map[string]bool{}
-	add := func(names []string) {
+	scope := directScopeMutability(lambda)
+	locals := make(map[string]bool, len(scope))
+	for name := range scope {
+		locals[name] = true
+	}
+	return locals
+}
+
+// directScopeMutability maps every name declared directly within lambda's own
+// scope — parameter patterns, clause patterns, and any `let`/`var`/destructuring
+// declaration in its body — to whether it is an interior-mutable binding
+// (`var` or `let mut`; parameters are always recorded as immutable). It
+// deliberately does NOT descend into nested lambdas — those own their own
+// scope. This is the per-lambda analogue of mutableGlobals's top-level scan:
+// it forms one frame of the capture stack used to resolve, for a name a
+// nested `pure` function reads but does not own, whether the *enclosing*
+// scope it is captured from made it mutable storage — recording immutable
+// names too (rather than just omitting them) so a closer declaration
+// correctly shadows a farther one of either kind.
+func directScopeMutability(lambda *ast.LambdaExpr) map[string]bool {
+	scope := map[string]bool{}
+	addImmutable := func(names []string) {
 		for _, n := range names {
-			locals[n] = true
+			scope[n] = false
+		}
+	}
+	merge := func(m map[string]bool) {
+		for name, mutable := range m {
+			scope[name] = mutable
 		}
 	}
 	for i := range lambda.Parameters {
-		add(patternBoundNames(lambda.Parameters[i].Pattern))
+		addImmutable(patternBoundNames(lambda.Parameters[i].Pattern))
 	}
 	collectBody := func(body ast.Expression) {
 		ast.WalkExpr(body,
 			func(s ast.Statement) bool {
-				add(directDeclaredNames(s))
+				merge(declaredMutability(s))
 				return true
 			},
 			func(e ast.Expression) bool {
@@ -261,7 +296,7 @@ func localBindings(lambda *ast.LambdaExpr) map[string]bool {
 					// The walker exposes the C-style loop's init as a special
 					// field (ForLoopExpr.Init), not as a visited statement, so
 					// collect the loop variable explicitly.
-					add(directDeclaredNames(n.Init))
+					merge(declaredMutability(n.Init))
 				}
 				// NOTE: other binding-introducing special fields not surfaced as
 				// statements by the walker (if-let / else destructuring patterns,
@@ -274,11 +309,44 @@ func localBindings(lambda *ast.LambdaExpr) map[string]bool {
 	collectBody(lambda.Body)
 	for _, clause := range lambda.LambdaClauses {
 		for _, pat := range clause.Patterns {
-			add(patternBoundNames(pat))
+			addImmutable(patternBoundNames(pat))
 		}
 		collectBody(clause.Body)
 	}
-	return locals
+	return scope
+}
+
+// declaredMutability returns the name(s) bound directly by stmt — a
+// `let`/`var`/const declaration or a destructuring decl — mapped to whether
+// each is an interior-mutable binding (`var`, or `let mut`/destructuring with
+// the `mut` modifier). Returns nil for any other statement kind.
+func declaredMutability(stmt ast.Statement) map[string]bool {
+	switch s := stmt.(type) {
+	case *ast.VarDeclStmt:
+		return map[string]bool{s.Name: s.CanMutateInterior()}
+	case *ast.DestructuringDeclStmt:
+		mutable := s.Keyword == "var" || s.IsMut
+		out := map[string]bool{}
+		for _, n := range patternBoundNames(s.Pattern) {
+			out[n] = mutable
+		}
+		return out
+	}
+	return nil
+}
+
+// capturedMutable reports whether name resolves, via the given enclosing-scope
+// capture stack (outermost first), to a binding whose value can change without
+// this function reassigning it — a `var` or `let mut`. The stack is searched
+// from the innermost frame outward so a closer declaration correctly shadows a
+// farther one of either kind.
+func capturedMutable(capture []map[string]bool, name string) bool {
+	for i := len(capture) - 1; i >= 0; i-- {
+		if mutable, declared := capture[i][name]; declared {
+			return mutable
+		}
+	}
+	return false
 }
 
 // mutBorrowParams collects the names of a lambda's `mut`-modified parameters.

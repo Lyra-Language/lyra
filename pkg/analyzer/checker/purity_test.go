@@ -230,3 +230,56 @@ let record = pure (n: i64) -> i64 => {
 		t.Errorf("unexpected message: %q", errs[0].Message)
 	}
 }
+
+// Reading a captured `var` declared in a *non-top-level* enclosing function is
+// just as non-deterministic as reading a top-level global: the nested pure
+// function's capture-stack lookup must walk out through the intermediate
+// (impure) scope to find it.
+func TestPurity_ReadsNonTopLevelCapturedVar_Error(t *testing.T) {
+	src := `
+let outer = (n: i64) -> i64 => {
+    var counter = 0
+    let peek = pure () -> i64 => {
+        counter
+    }
+    peek()
+}`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	want := `pure function reads captured mutable binding "counter"; its value can change between calls, breaking referential transparency`
+	if errs[0].Message != want {
+		t.Errorf("unexpected message: %q", errs[0].Message)
+	}
+}
+
+// Same as above, but the mutable binding is two scopes out (top-level `var`
+// captured through an intermediate plain function before reaching the nested
+// pure lambda) — the capture stack must accumulate frames across every level.
+func TestPurity_ReadsCapturedVarThroughIntermediateScope_Error(t *testing.T) {
+	src := `
+var counter = 0
+let outer = (n: i64) -> i64 => {
+    let peek = pure () -> i64 => {
+        counter
+    }
+    peek()
+}`
+	assertPurityCount(t, checkPurity(t, src), 1)
+}
+
+// A `let` declared in a non-top-level enclosing scope shadows an outer `var` of
+// the same name: the nested pure function reads the closer, immutable
+// declaration, so this must NOT be flagged even though a same-named binding
+// further out is mutable.
+func TestPurity_ShadowedImmutableLocal_Ok(t *testing.T) {
+	src := `
+var counter = 0
+let outer = (n: i64) -> i64 => {
+    let counter = 5
+    let peek = pure () -> i64 => {
+        counter
+    }
+    peek()
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
