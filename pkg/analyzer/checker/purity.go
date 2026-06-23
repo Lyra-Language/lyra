@@ -355,10 +355,9 @@ func directScopeBindings(lambda *ast.LambdaExpr) scopeBindings {
 					// collect the loop variable explicitly.
 					mergeStmt(n.Init)
 				}
-				// NOTE: other binding-introducing special fields not surfaced as
-				// statements by the walker (if-let / else destructuring patterns,
-				// `with`-arena bindings) should be collected here too once those
-				// forms can appear in pure code.
+				// if-let / else destructuring and `with`-arena bindings ARE surfaced
+				// as statements by the walker, so mergeStmt (via declaredMutability)
+				// already collects their bound names — no special handling here.
 				return true
 			},
 		)
@@ -374,12 +373,13 @@ func directScopeBindings(lambda *ast.LambdaExpr) scopeBindings {
 }
 
 // declaredMutability returns the name(s) bound directly by stmt — a
-// `let`/`var`/const declaration or a destructuring decl — mapped to whether
-// each is an interior-mutable binding (`var`, or `let mut`/destructuring with
-// the `mut` modifier). A name bound to a function value is always reported as
-// immutable here: call purity for it is handled separately (via
-// scopeBindings.functions / inferImpureLambdas), and treating a function name
-// as mutable data would be confusing. Returns nil for any other statement kind.
+// `let`/`var`/const declaration, a destructuring decl, an `if let`/`else`
+// destructuring, or a `with`-arena statement — mapped to whether each is an
+// interior-mutable binding (`var`, or `let mut`/destructuring with the `mut`
+// modifier). A name bound to a function value is always reported as immutable
+// here: call purity for it is handled separately (via scopeBindings.functions /
+// inferImpureLambdas), and treating a function name as mutable data would be
+// confusing. Returns nil for any other statement kind.
 func declaredMutability(stmt ast.Statement) map[string]bool {
 	switch s := stmt.(type) {
 	case *ast.VarDeclStmt:
@@ -388,14 +388,34 @@ func declaredMutability(stmt ast.Statement) map[string]bool {
 		}
 		return map[string]bool{s.Name: s.CanMutateInterior()}
 	case *ast.DestructuringDeclStmt:
-		mutable := s.Keyword == "var" || s.IsMut
-		out := map[string]bool{}
-		for _, n := range patternBoundNames(s.Pattern) {
-			out[n] = mutable
-		}
-		return out
+		return destructuredMutability(s)
+	case *ast.IfDestructuringStmt:
+		// `if let <pat> = v { ... }` binds the pattern names locally to the pure
+		// function; mutating or reassigning them must not be mistaken for an
+		// escaping effect on captured state.
+		return destructuredMutability(&s.DestructuringStatement)
+	case *ast.ElseDestructuringStmt:
+		// `let <pat> = v else { ... }` binds the pattern names for the code after
+		// the diverging else, same as a plain destructuring decl.
+		return destructuredMutability(&s.DestructuringStatement)
+	case *ast.WithStmt:
+		// The arena handle is a local owned binding; it's a stateful allocator, so
+		// treat its interior as mutable (a nested pure lambda reading the captured
+		// arena is still non-deterministic).
+		return map[string]bool{s.Name: true}
 	}
 	return nil
+}
+
+// destructuredMutability returns each name a destructuring decl binds, mapped to
+// whether its interior is mutable (`var` or the `mut` modifier).
+func destructuredMutability(s *ast.DestructuringDeclStmt) map[string]bool {
+	mutable := s.Keyword == "var" || s.IsMut
+	out := map[string]bool{}
+	for _, n := range patternBoundNames(s.Pattern) {
+		out[n] = mutable
+	}
+	return out
 }
 
 // mutBorrowParams collects the names of a lambda's `mut`-modified parameters.

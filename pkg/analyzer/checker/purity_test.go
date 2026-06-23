@@ -40,6 +40,46 @@ let sum = pure (n: i64) -> i64 => {
 	assertPurityCount(t, checkPurity(t, src), 0)
 }
 
+// Names bound by an `if let` destructuring are locals the pure function owns, so
+// reassigning one inside the branch is not an escaping effect.
+func TestPurity_IfLetBoundReassign_Ok(t *testing.T) {
+	src := `
+let f = pure (arr: [3]i64) -> i64 => {
+    if let [a, b, c] = arr {
+        a = 5
+    }
+    0
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// A named `with`-arena handle is a local owned binding, so mutating its interior
+// from a pure function is allowed (the mutation never escapes the call).
+func TestPurity_WithArenaInteriorMutation_Ok(t *testing.T) {
+	src := `
+let f = pure () -> i64 => {
+    with frame = Arena.new(megabytes(4)) {
+        frame.counter = 1
+    }
+    0
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// Collecting if-let bindings as locals must not mask a genuine escaping effect:
+// mutating an actual captured `var` inside the branch is still reported.
+func TestPurity_CapturedMutationInsideIfLet_Error(t *testing.T) {
+	src := `
+var counter = 0
+let f = pure (arr: [3]i64) -> i64 => {
+    if let [a, b, c] = arr {
+        counter = a
+    }
+    0
+}`
+	assertPurityCount(t, checkPurity(t, src), 1)
+}
+
 // Reassigning a captured (outer-scope) binding from a pure function is an
 // observable effect and must be reported.
 func TestPurity_CapturedReassignment_Error(t *testing.T) {
