@@ -1078,11 +1078,14 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 }
 
 func isLiteralZero(expr ast.Expression) bool {
-	switch e := expr.(type) {
-	case *ast.IntegerLiteralExpr:
+	if e, ok := expr.(*ast.FloatLiteralExpr); ok {
 		return e.Value == 0
-	case *ast.FloatLiteralExpr:
-		return e.Value == 0
+	}
+	// Fold compile-time integer constants so a constant zero divisor is caught
+	// even when it isn't written as a bare 0 literal (e.g. 5 - 5, 2 * 0). A bare
+	// 0 still folds through extractIntLiteralValue's IntegerLiteralExpr case.
+	if value, ok := extractIntLiteralValue(expr); ok {
+		return value == 0
 	}
 	return false
 }

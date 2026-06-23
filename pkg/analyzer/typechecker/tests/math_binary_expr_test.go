@@ -240,6 +240,21 @@ func TestTypeCheck_BinaryExpr_DivByLiteralZeroFloat_Error(t *testing.T) {
 	assertErrorsAre(t, res, "operator /: division by zero")
 }
 
+func TestTypeCheck_BinaryExpr_DivByFoldedZero_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = 10 / (5 - 5)`, false)
+	assertErrorsAre(t, res, "operator /: division by zero")
+}
+
+func TestTypeCheck_BinaryExpr_ModByFoldedZero_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = 10 % (2 * 0)`, false)
+	assertErrorsAre(t, res, "operator %: division by zero")
+}
+
+func TestTypeCheck_BinaryExpr_DivByFoldedNonZero_NoError(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = 10 / (5 - 3)`, false)
+	assertNoErrors(t, res)
+}
+
 func TestTypeCheck_BinaryExpr_DivByNonZeroLiteral_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x = 10 / 2`, false)
 	assertNoErrors(t, res)
