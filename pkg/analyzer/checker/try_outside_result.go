@@ -70,10 +70,7 @@ func (c *tryChecker) exprVisitor(enclosing *types.ReturnType) func(ast.Expressio
 			// The nearest enclosing lambda's declared return type governs `?`
 			// inside its body and clauses.
 			ret := e.ReturnType
-			ast.WalkExpr(e.Body, c.stmtVisitor(), c.exprVisitor(&ret))
-			for _, clause := range e.LambdaClauses {
-				ast.WalkExpr(clause.Body, c.stmtVisitor(), c.exprVisitor(&ret))
-			}
+			walkLambdaBodies(e, c.stmtVisitor(), c.exprVisitor(&ret))
 			return false
 		}
 		return true

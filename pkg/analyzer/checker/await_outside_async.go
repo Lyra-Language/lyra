@@ -58,10 +58,7 @@ func (c *aoaChecker) exprVisitor(inAsync bool) func(ast.Expression) bool {
 				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(false), c.exprVisitor(false))
 			}
 			isAsync := e.IsAsync
-			ast.WalkExpr(e.Body, c.stmtVisitor(isAsync), c.exprVisitor(isAsync))
-			for _, clause := range e.LambdaClauses {
-				ast.WalkExpr(clause.Body, c.stmtVisitor(isAsync), c.exprVisitor(isAsync))
-			}
+			walkLambdaBodies(e, c.stmtVisitor(isAsync), c.exprVisitor(isAsync))
 			return false
 		}
 		return true

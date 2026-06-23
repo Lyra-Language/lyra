@@ -73,10 +73,7 @@ func (c *yogChecker) exprVisitor(inGenerator bool) func(ast.Expression) bool {
 				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(false), c.exprVisitor(false))
 			}
 			isGen := e.IsGenerator
-			ast.WalkExpr(e.Body, c.stmtVisitor(isGen), c.exprVisitor(isGen))
-			for _, clause := range e.LambdaClauses {
-				ast.WalkExpr(clause.Body, c.stmtVisitor(isGen), c.exprVisitor(isGen))
-			}
+			walkLambdaBodies(e, c.stmtVisitor(isGen), c.exprVisitor(isGen))
 			return false
 		}
 		return true

@@ -242,10 +242,7 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 				child = &funcScope{locals: locals, mutBorrows: mutBorrowParams(e)}
 			}
 			childCapture := pushScope(capture, scope)
-			ast.WalkExpr(e.Body, c.stmtVisitor(child, childCapture), c.exprVisitor(child, childCapture))
-			for _, clause := range e.LambdaClauses {
-				ast.WalkExpr(clause.Body, c.stmtVisitor(child, childCapture), c.exprVisitor(child, childCapture))
-			}
+			walkLambdaBodies(e, c.stmtVisitor(child, childCapture), c.exprVisitor(child, childCapture))
 			return false // recursed manually
 
 		case *ast.IdentifierExpr:
@@ -511,10 +508,7 @@ func collectFuncBindings(program *ast.Program, base []scopeBindings) map[*ast.La
 			ast.WalkExpr(lam.Parameters[i].DefaultValue, nil, findIn(capture))
 		}
 		childCapture := pushScope(capture, directScopeBindings(lam))
-		ast.WalkExpr(lam.Body, nil, findIn(childCapture))
-		for _, clause := range lam.LambdaClauses {
-			ast.WalkExpr(clause.Body, nil, findIn(childCapture))
-		}
+		walkLambdaBodies(lam, nil, findIn(childCapture))
 	}
 	findAtTop := func(e ast.Expression) bool {
 		if lam, ok := e.(*ast.LambdaExpr); ok {
@@ -617,10 +611,7 @@ func lambdaHasObservableEffect(lam *ast.LambdaExpr, defCapture []scopeBindings, 
 		}
 		return true
 	}
-	ast.WalkExpr(lam.Body, onStmt, onExpr)
-	for _, clause := range lam.LambdaClauses {
-		ast.WalkExpr(clause.Body, onStmt, onExpr)
-	}
+	walkLambdaBodies(lam, onStmt, onExpr)
 	return found
 }
 

@@ -108,10 +108,7 @@ func (c *unsafeChecker) exprVisitor(inUnsafe bool) func(ast.Expression) bool {
 			// function body is unsafe; unsafe-ness does not leak in from an
 			// enclosing block.
 			childUnsafe := e.IsUnsafe
-			ast.WalkExpr(e.Body, c.stmtVisitor(childUnsafe), c.exprVisitor(childUnsafe))
-			for _, clause := range e.LambdaClauses {
-				ast.WalkExpr(clause.Body, c.stmtVisitor(childUnsafe), c.exprVisitor(childUnsafe))
-			}
+			walkLambdaBodies(e, c.stmtVisitor(childUnsafe), c.exprVisitor(childUnsafe))
 			return false
 		}
 		return true

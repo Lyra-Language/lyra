@@ -97,10 +97,7 @@ func (c *bclChecker) exprVisitor(loopDepth int, labels []string) func(ast.Expres
 			for i := range e.Parameters {
 				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(0, nil), c.exprVisitor(0, nil))
 			}
-			ast.WalkExpr(e.Body, c.stmtVisitor(0, nil), c.exprVisitor(0, nil))
-			for _, clause := range e.LambdaClauses {
-				ast.WalkExpr(clause.Body, c.stmtVisitor(0, nil), c.exprVisitor(0, nil))
-			}
+			walkLambdaBodies(e, c.stmtVisitor(0, nil), c.exprVisitor(0, nil))
 			return false
 
 		case *ast.ForLoopExpr:

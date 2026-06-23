@@ -21,7 +21,7 @@ type TypeChecker struct {
 	paramTypes    map[string]types.Type         // non-nil only while checking a function body
 	paramMods     map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
 	resolvedTypes map[string]types.Type         // cache for resolveType to avoid duplicate "unknown type" errors
-	enclosingRet  *types.ReturnType     // declared return type of the lambda body currently being checked; nil at top level
+	enclosingRet  *types.ReturnType             // declared return type of the lambda body currently being checked; nil at top level
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
@@ -454,16 +454,23 @@ func arrayElementType(t types.Type) types.Type {
 	return nil
 }
 
+// structFields returns the fields of a named or anonymous struct type,
+// with ok=false if t is neither.
+func structFields(t types.Type) ([]types.StructField, bool) {
+	switch st := t.(type) {
+	case types.NamedStructType:
+		return st.Fields, true
+	case types.AnonymousStructType:
+		return st.Fields, true
+	}
+	return nil, false
+}
+
 // structFieldTypes maps each field name of a named or anonymous struct type
 // to its type, or nil if t is neither.
 func structFieldTypes(t types.Type) map[string]types.Type {
-	var fields []types.StructField
-	switch st := t.(type) {
-	case types.NamedStructType:
-		fields = st.Fields
-	case types.AnonymousStructType:
-		fields = st.Fields
-	default:
+	fields, ok := structFields(t)
+	if !ok {
 		return nil
 	}
 	m := make(map[string]types.Type, len(fields))
@@ -509,30 +516,45 @@ func (tc *TypeChecker) checkPatternConstraints(name string, value ast.Expression
 	}
 }
 
-func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {
-	sym, ok := tc.scope.Lookup(stmt.Name)
+// checkAssignToBinding verifies that value can be assigned to the existing
+// binding named name. It enforces that the binding exists, is a reassignable
+// variable, and that value's inferred type is assignable to the binding's
+// effective type. Any failure emits the appropriate diagnostic and returns nil;
+// on success it returns the binding's effective type so callers can run
+// follow-up checks (e.g. an integer-literal range check). loc anchors the
+// mutability and assignability errors.
+func (tc *TypeChecker) checkAssignToBinding(name string, value ast.Expression, loc ast.Location) types.Type {
+	sym, ok := tc.scope.Lookup(name)
 	if !ok {
-		return
+		return nil
 	}
 	decl, ok := sym.(*ast.VarDeclStmt)
 	if !ok {
-		return
+		return nil
 	}
 	if !decl.IsMutable() {
-		tc.addImmutableBindingError(stmt.GetLocation(), stmt.Name, decl.BindingKind)
-		return
+		tc.addImmutableBindingError(loc, name, decl.BindingKind)
+		return nil
 	}
 	effective := tc.effectiveType(decl)
 	if effective == nil {
-		return
+		return nil
 	}
-	rhsType := tc.inferExprType(stmt.Value)
+	rhsType := tc.inferExprType(value)
 	if rhsType == nil {
-		return
+		return nil
 	}
 	if !isAssignable(rhsType, effective) {
-		tc.addError(stmt.GetLocation(), SeverityError,
-			"%s: cannot assign %s to %s", stmt.Name, rhsType, effective)
+		tc.addError(loc, SeverityError,
+			"%s: cannot assign %s to %s", name, rhsType, effective)
+		return nil
+	}
+	return effective
+}
+
+func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {
+	effective := tc.checkAssignToBinding(stmt.Name, stmt.Value, stmt.GetLocation())
+	if effective == nil {
 		return
 	}
 	// Check that the literal value fits within the variable's integer type's range.
@@ -642,15 +664,7 @@ func (tc *TypeChecker) checkFrozenFieldPath(target ast.Expression) {
 
 // structFieldByName returns the named field of a (named or anonymous) struct type.
 func structFieldByName(t types.Type, name string) (types.StructField, bool) {
-	var fields []types.StructField
-	switch s := t.(type) {
-	case types.NamedStructType:
-		fields = s.Fields
-	case types.AnonymousStructType:
-		fields = s.Fields
-	default:
-		return types.StructField{}, false
-	}
+	fields, _ := structFields(t)
 	for _, f := range fields {
 		if f.Name == name {
 			return f, true
@@ -691,30 +705,7 @@ func (tc *TypeChecker) addParamImmutableError(loc ast.Location, name string, mod
 }
 
 func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
-	sym, ok := tc.scope.Lookup(expr.Left.Name)
-	if !ok {
-		return
-	}
-	decl, ok := sym.(*ast.VarDeclStmt)
-	if !ok {
-		return
-	}
-	if !decl.IsMutable() {
-		tc.addImmutableBindingError(expr.GetLocation(), expr.Left.Name, decl.BindingKind)
-		return
-	}
-	effective := tc.effectiveType(decl)
-	if effective == nil {
-		return
-	}
-	rhsType := tc.inferExprType(expr.Right)
-	if rhsType == nil {
-		return
-	}
-	if !isAssignable(rhsType, effective) {
-		tc.addError(expr.GetLocation(), SeverityError,
-			"%s: cannot assign %s to %s", expr.Left.Name, rhsType, effective)
-	}
+	tc.checkAssignToBinding(expr.Left.Name, expr.Right, expr.GetLocation())
 }
 
 func (tc *TypeChecker) checkBooleanLiteralExpr(expr *ast.BooleanLiteralExpr) {
@@ -1517,23 +1508,16 @@ func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 	objType = tc.resolveType(objType, m.Object.GetLocation())
 	fieldName := m.Property.Name
 
+	if f, ok := structFieldByName(objType, fieldName); ok {
+		tc.typeTable.Set(m, f.Type)
+		return f.Type
+	}
+
 	switch t := objType.(type) {
 	case types.NamedStructType:
-		for _, f := range t.Fields {
-			if f.Name == fieldName {
-				tc.typeTable.Set(m, f.Type)
-				return f.Type
-			}
-		}
 		tc.addError(m.GetLocation(), SeverityError,
 			"%s has no field %q", t.Name, fieldName)
 	case types.AnonymousStructType:
-		for _, f := range t.Fields {
-			if f.Name == fieldName {
-				tc.typeTable.Set(m, f.Type)
-				return f.Type
-			}
-		}
 		tc.addError(m.GetLocation(), SeverityError,
 			"anonymous struct has no field %q", fieldName)
 	default:
@@ -1550,12 +1534,7 @@ func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 }
 
 func (tc *TypeChecker) addError(loc ast.Location, sev Severity, format string, args ...any) {
-	tc.errors = append(tc.errors, TypeError{
-		Location: loc,
-		Severity: sev,
-		Code:     diag.CodeTypeError,
-		Message:  fmt.Sprintf(format, args...),
-	})
+	tc.addErrorCode(loc, sev, diag.CodeTypeError, format, args...)
 }
 
 // addErrorCode is addError with an explicit diagnostic code instead of the

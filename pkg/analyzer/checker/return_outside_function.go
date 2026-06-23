@@ -60,10 +60,7 @@ func (c *rofChecker) exprVisitor(depth int) func(ast.Expression) bool {
 			return true
 		}
 		// Lambda body is a new function scope — recurse with depth+1.
-		ast.WalkExpr(lambda.Body, c.stmtVisitor(depth+1), c.exprVisitor(depth+1))
-		for _, clause := range lambda.LambdaClauses {
-			ast.WalkExpr(clause.Body, c.stmtVisitor(depth+1), c.exprVisitor(depth+1))
-		}
+		walkLambdaBodies(lambda, c.stmtVisitor(depth+1), c.exprVisitor(depth+1))
 		return false
 	}
 }
