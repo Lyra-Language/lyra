@@ -111,31 +111,51 @@ func collectPatternDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *co
 
 	value := ctx.CollectExpr(node.ChildByFieldName("value"))
 
-	// Check each pattern-bound name for conflicts with existing declarations in
-	// the current scope. Same-scope sequential rebinding is allowed for let/var
-	// bindings (see collectIdentifierDeclaration); only a const may not be
-	// re-declared, and a name occupied by a non-variable symbol is still a
-	// conflict.
-	for _, name := range destructuringPatternBoundNames(pattern) {
-		existing, alreadyDeclared := ctx.LookupCurrentScope(name)
-		if !alreadyDeclared {
-			continue
-		}
-		if v, ok := existing.(*ast.VarDeclStmt); ok && v.BindingKind != ast.BindingConst {
-			continue
-		}
-		ctx.AddErrorRelated(node, diag.SeverityError,
-			[]diag.RelatedInformation{{Location: existing.GetLocation(), Message: "previously declared here"}},
-			"%s", redeclarationMessage(existing, name))
-	}
-
-	return &ast.DestructuringDeclStmt{
+	decl := &ast.DestructuringDeclStmt{
 		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
 		Keyword: keyword,
 		IsMut:   node.ChildByFieldName("mutability") != nil,
 		Pattern: pattern,
 		Type:    varType,
 		Value:   value,
+	}
+
+	registerDestructuredNames(node, pattern, decl, ctx)
+
+	return decl
+}
+
+// registerDestructuredNames checks each name pattern binds for a conflict with
+// a declaration that already existed in the *current* scope, then registers
+// the non-conflicting ones so later references resolve to decl. All conflict
+// checks run before any registration so that a name legitimately repeated
+// across sub-patterns of one destructuring (e.g. two `...rest` slots) is not
+// flagged against itself. Same-scope sequential rebinding is allowed for
+// let/var bindings (see collectIdentifierDeclaration); a const may not be
+// re-declared and a name occupied by a non-variable symbol is a conflict — in
+// both cases the prior binding is kept and the name not registered.
+//
+// Shared by plain destructuring decls (collectPatternDeclaration) and if-let /
+// let-else declarations, which call this against whichever scope is current
+// at the point they invoke it (their scoping differs — see
+// destructuring_if_stmt.go / destructuring_else_stmt.go).
+func registerDestructuredNames(node *sitter.Node, pattern ast.Pattern, decl *ast.DestructuringDeclStmt, ctx *collector_ctx.Ctx) {
+	boundNames := destructuringPatternBoundNames(pattern)
+	conflicted := map[string]bool{}
+	for _, name := range boundNames {
+		if existing, alreadyDeclared := ctx.LookupCurrentScope(name); alreadyDeclared {
+			if v, ok := existing.(*ast.VarDeclStmt); !ok || v.BindingKind == ast.BindingConst {
+				ctx.AddErrorRelated(node, diag.SeverityError,
+					[]diag.RelatedInformation{{Location: existing.GetLocation(), Message: "previously declared here"}},
+					"%s", redeclarationMessage(existing, name))
+				conflicted[name] = true
+			}
+		}
+	}
+	for _, name := range boundNames {
+		if !conflicted[name] {
+			ctx.RegisterDestructuredName(name, decl)
+		}
 	}
 }
 
@@ -177,6 +197,14 @@ func destructuringPatternBoundNames(pat ast.Pattern) []string {
 	case *ast.StructPattern:
 		var names []string
 		for _, f := range p.Fields {
+			if f.Pattern == nil {
+				// Shorthand `{a}` binds the field name itself; a rename or nested
+				// pattern (`{a: b}`, `{a: [x, y]}`) carries its bindings in Pattern.
+				if f.Name != "" && f.Name != "_" {
+					names = append(names, f.Name)
+				}
+				continue
+			}
 			names = append(names, destructuringPatternBoundNames(f.Pattern)...)
 		}
 		return names

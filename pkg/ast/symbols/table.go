@@ -142,6 +142,19 @@ func (st *SymbolTable) RedefineVariable(node *ast.VarDeclStmt) {
 	}
 }
 
+// RegisterDestructuredName binds a single name introduced by a destructuring
+// declaration (e.g. `x` in `let (x, y) = pair`) to that declaration in the
+// current scope. The owning DestructuringDeclStmt is stored — rather than the
+// leaf pattern — so consumers can recover the binding's mutability (`var` /
+// `let mut`). Insertion is direct and last-wins (mirroring RedefineVariable) so
+// same-scope rebinding does not error here; the collector emits duplicate
+// diagnostics separately.
+func (st *SymbolTable) RegisterDestructuredName(name string, decl *ast.DestructuringDeclStmt) {
+	if st.CurrentScope != nil {
+		st.CurrentScope.Symbols[name] = decl
+	}
+}
+
 // RegisterParameter adds a lambda/function parameter to the current scope
 func (st *SymbolTable) RegisterParameter(node *ast.Parameter) error {
 	if st.CurrentScope == nil {

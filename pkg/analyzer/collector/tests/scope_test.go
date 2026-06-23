@@ -2,6 +2,9 @@ package collector_test
 
 import (
 	"testing"
+
+	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 )
 
 // --- block scope ---
@@ -213,5 +216,111 @@ func TestScope_LookupWalksParentChain(t *testing.T) {
 	child := table.GlobalScope.Children[0]
 	if _, ok := child.Lookup("global_val"); !ok {
 		t.Error("global_val should be visible from child scope via Lookup")
+	}
+}
+
+// --- destructuring declarations register their bound names ---
+
+// findDestructuredName walks the scope tree looking for name bound to a
+// DestructuringDeclStmt (the placeholder the collector registers for a
+// destructured binding).
+func findDestructuredName(s *symbols.Scope, name string) bool {
+	if sym, ok := s.Symbols[name]; ok {
+		if _, isDecl := sym.(*ast.DestructuringDeclStmt); isDecl {
+			return true
+		}
+	}
+	for _, child := range s.Children {
+		if findDestructuredName(child, name) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestScope_TupleAndArrayDestructuringBindsNames(t *testing.T) {
+	// Tuple and array destructuring register each bound name in the scope so
+	// later references resolve. Each maps to the owning DestructuringDeclStmt
+	// (which carries var/let mutability).
+	_, table, _, _ := parseAndCollect(t, `
+	let (a, b) = pair
+	let [c, d] = arr`)
+
+	for _, name := range []string{"a", "b", "c", "d"} {
+		sym, ok := table.GlobalScope.LookupLocal(name)
+		if !ok {
+			t.Errorf("destructured name %q should be registered in the scope", name)
+			continue
+		}
+		if _, ok := sym.(*ast.DestructuringDeclStmt); !ok {
+			t.Errorf("name %q should map to a *ast.DestructuringDeclStmt, got %T", name, sym)
+		}
+	}
+}
+
+func TestScope_StructDestructuringBindsNames(t *testing.T) {
+	// Struct destructuring — shorthand `{x}` and rename `{y: b}` — registers its
+	// bound names (the shorthand field name and the renamed local, respectively).
+	_, table, _, _ := parseAndCollect(t, `
+	struct Point { x: i64, y: i64 }
+	let f = (p: Point) -> i64 => {
+	    let {x, y: b} = p
+	    x + b
+	}`)
+
+	for _, name := range []string{"x", "b"} {
+		if !findDestructuredName(table.GlobalScope, name) {
+			t.Errorf("struct-destructured name %q should be registered in some scope", name)
+		}
+	}
+}
+
+func TestScope_IfLetBindsNamesOnlyInThenBranch(t *testing.T) {
+	// `if let [a,b,c] = arr { Then } else { Else }` scopes a/b/c to Then only
+	// (mirroring Rust's if-let): visible inside Then, but not in Else (reaching
+	// Else means the pattern failed to match) and not in the function scope
+	// after the if-let statement.
+	_, table, _, errs := parseAndCollect(t, `
+	let f = (arr: [3]i64) -> i64 => {
+	    if let [a, b, c] = arr {
+	        a
+	    } else {
+	        0
+	    }
+	    a
+	}`)
+	if len(errs) != 0 {
+		t.Fatalf("expected no collector errors, got %v", errs)
+	}
+
+	fnScope := table.GlobalScope.Children[0]
+	if _, ok := fnScope.LookupLocal("a"); ok {
+		t.Error("a should not leak into the enclosing function scope")
+	}
+	if !findDestructuredName(table.GlobalScope, "a") {
+		t.Error("a should be registered somewhere (Then's scope or its parent)")
+	}
+}
+
+func TestScope_LetElseBindsNamesAfterTheStatement(t *testing.T) {
+	// `let {x, y} = rec else { Else }` binds x/y for code following the
+	// statement (like a plain `let`), but not inside the diverging Else branch.
+	_, table, _, errs := parseAndCollect(t, `
+	struct Point { x: i64, y: i64 }
+	let f = (p: Point) -> i64 => {
+	    let {x, y} = p else {
+	        return 0
+	    }
+	    x + y
+	}`)
+	if len(errs) != 0 {
+		t.Fatalf("expected no collector errors, got %v", errs)
+	}
+
+	if !findDestructuredName(table.GlobalScope, "x") {
+		t.Error("x should be registered in the function scope after the let-else statement")
+	}
+	if !findDestructuredName(table.GlobalScope, "y") {
+		t.Error("y should be registered in the function scope after the let-else statement")
 	}
 }

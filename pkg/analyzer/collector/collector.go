@@ -231,6 +231,10 @@ func (c *Collector) RedefineVariable(stmt *ast.VarDeclStmt) {
 	c.table.RedefineVariable(stmt)
 }
 
+func (c *Collector) RegisterDestructuredName(name string, decl *ast.DestructuringDeclStmt) {
+	c.table.RegisterDestructuredName(name, decl)
+}
+
 func (c *Collector) RegisterParameter(p *ast.Parameter) error {
 	return c.table.RegisterParameter(p)
 }

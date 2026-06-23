@@ -138,6 +138,43 @@ let record = pure (msg: string) -> string => {
 	}
 }
 
+// `await` suspends on external I/O, an observable effect, so it may not appear in
+// a pure function.
+func TestPurity_Await_Error(t *testing.T) {
+	src := `
+let f = pure (h: Handle) -> i64 => {
+    let x = await fetch(h)
+    x
+}`
+	assertPurityCount(t, checkPurity(t, src), 1)
+}
+
+// A `pure` function calling an un-annotated function that awaits is reported: the
+// callee is inferred impure because it performs an await.
+func TestPurity_CallsAwaitingFunction_Error(t *testing.T) {
+	src := `
+let load = (h: Handle) -> i64 => {
+    await fetch(h)
+}
+let f = pure (h: Handle) -> i64 => {
+    load(h)
+}`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	if errs[0].Message != `pure function calls impure function "load"` {
+		t.Errorf("unexpected message: %q", errs[0].Message)
+	}
+}
+
+// `await` in a non-pure function is fine — purity only constrains `pure`.
+func TestPurity_AwaitInImpureFunction_Ok(t *testing.T) {
+	src := `
+let f = (h: Handle) -> i64 => {
+    await fetch(h)
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
 // The same operations in a non-pure function are fine — purity only constrains
 // functions marked `pure`.
 func TestPurity_ImpureFunction_NoConstraint(t *testing.T) {

@@ -42,6 +42,8 @@ Lexical `SymbolTable` with a tree of `Scope` nodes:
 - `Scope.LookupLocal(name)` — current scope only
 - `SymbolTable.Types` / `.Functions` — flat maps for fast global lookup by name
 
+Destructuring-declaration names (`let (a,b) = …`, `let {x} = …`, `if let [a,b] = … { }`, `let {x} = … else { }`) are registered via `RegisterDestructuredName(name, decl)`, which maps each bound name to its owning `*ast.DestructuringDeclStmt` (so the binding's `var`/`let mut` mutability is recoverable). The typechecker later overwrites that placeholder with a typed synthetic `VarDeclStmt` once it infers each leaf's type (plain `let`/`var` only — if-let/else aren't type-checked at all yet, see Current Development Focus). Scoping differs by form: plain `let`/`var` registers into the current scope; `if let … { Then } else { Else }` registers into a scope pushed around `Then` only (names visible there via the parent chain, not in `Else`); `let … = v else { Else }` registers into the *enclosing* scope only after collecting the diverging `Else` block, so `Else` never sees the names but code after the statement does.
+
 ### `pkg/types`
 Type system. All types implement the `Type` interface (`typeNode()`, `String()`, `GetName()`).
 
@@ -186,5 +188,4 @@ The typechecker is the active area. See `todo.md` at the project root for the fu
 
 Queued:
 - Match exhaustiveness for `string`, `data`, and `array` types
-- Overflow/range checking for integer literals (e.g. `let x: i8 = 200`)
-- Duplicate variable declaration detection within the same scope
+- `checkNode`'s switch has no case for `*ast.IfDestructuringStmt` / `*ast.ElseDestructuringStmt` (if-let / let-else) — it never descends into their bodies, so a type error inside an if-let `Then` block currently passes silently (found 06/22/26)

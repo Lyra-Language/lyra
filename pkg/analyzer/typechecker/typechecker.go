@@ -264,16 +264,18 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 		bindingKind = ast.BindingVar
 	}
 	tc.walkDestructuredPattern(decl.Pattern, inferredType, func(name string, typ types.Type) {
-		// Errors (e.g. a genuine duplicate) are intentionally ignored here: the
-		// collector's collectPatternDeclaration already reports name conflicts
-		// against existing declarations in this scope.
-		_ = tc.scope.Define(&ast.VarDeclStmt{
+		// Overwrite (rather than Define) so this typed entry replaces the
+		// untyped DestructuringDeclStmt placeholder the collector registered for
+		// this name; later identifier references then resolve to the leaf's
+		// type. Genuine name conflicts are already reported by the collector's
+		// collectPatternDeclaration, so no duplicate error is raised here.
+		tc.scope.Symbols[name] = &ast.VarDeclStmt{
 			AstBase:     ast.AstBase{Location: decl.GetLocation()},
 			BindingKind: bindingKind,
 			IsMut:       decl.IsMut,
 			Name:        name,
 			Type:        typ,
-		})
+		}
 	})
 }
 
@@ -960,6 +962,16 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 				tc.typeTable.Set(e, t)
 			}
 			return t
+		}
+		if _, ok := sym.(*ast.DestructuringDeclStmt); ok {
+			// The collector registers each destructured name as a placeholder
+			// pointing at its declaration; a successful destructuring overwrites it
+			// with a typed VarDeclStmt (checkDestructuringDecl). A remaining
+			// placeholder means the destructuring never bound this name with a type
+			// (e.g. arity mismatch / non-destructurable scrutinee), so the name is
+			// effectively undefined.
+			tc.addError(e.GetLocation(), SeverityError, "undefined identifier %q", e.Name)
+			return nil
 		}
 		tc.addError(e.GetLocation(), SeverityError, "undefined symbol %q", e.Name)
 		return nil

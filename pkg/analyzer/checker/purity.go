@@ -47,6 +47,7 @@ var knownImpureBuiltins = map[string]bool{
 //   - reassigning / compound-assigning a *captured* (outer-scope) binding
 //   - writing through a pointer (`*p = v`)
 //   - calling a non-pure function
+//   - awaiting (`await e`) — suspends on external I/O
 //
 // The membrane is one-way: pure code may not perform these; impure code may
 // freely call pure code. Nested lambdas re-establish their own context (a `pure`
@@ -269,6 +270,15 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 					c.report(e.GetLocation(),
 						"pure function calls impure function %q", name)
 				}
+			}
+
+		case *ast.AwaitExpr:
+			// `await` suspends until an external asynchronous operation completes —
+			// an observable I/O effect that breaks determinism and referential
+			// transparency, so it may never appear in a pure function.
+			if sc != nil {
+				c.report(e.GetLocation(),
+					"pure function performs `await`; awaiting suspends on external I/O and must not cross the function boundary")
 			}
 		}
 		return true
@@ -628,6 +638,10 @@ func lambdaHasObservableEffect(lam *ast.LambdaExpr, defCapture []scopeBindings, 
 					found = true
 				}
 			}
+		case *ast.AwaitExpr:
+			// Awaiting is an observable I/O effect (see exprVisitor), so a function
+			// that awaits is impure.
+			found = true
 		}
 		return true
 	}
