@@ -300,8 +300,16 @@ func (tc *TypeChecker) findDataTypeByConstructor(ctorName string) (types.DataTyp
 	return types.DataType{}, false
 }
 
-// resolveToDataType returns the DataType underlying t, or (DataType{}, false) if
-// t is neither a DataType nor an UnresolvedType that names a DataType.
+// resolveToDataType returns the DataType underlying t, or (DataType{}, false)
+// if t doesn't name one. Three forms of t are accepted:
+//   - an already-resolved DataType, returned as-is;
+//   - an UnresolvedType naming a non-generic data type;
+//   - a ParameterizedType (`Maybe<i64>`, `Result<i64, string>`) naming a
+//     *generic* data type — its constructors are returned with each
+//     occurrence of a generic parameter (e.g. the `t` in `Some t`) substituted
+//     for the corresponding concrete type argument (substituteGenerics), so a
+//     caller pattern-matching/destructuring `Some(x)` against a `Maybe<i64>`
+//     value gets `x: i64`, not the unsubstituted type variable `t`.
 func (tc *TypeChecker) resolveToDataType(t types.Type) (types.DataType, bool) {
 	if t == nil {
 		return types.DataType{}, false
@@ -316,7 +324,62 @@ func (tc *TypeChecker) resolveToDataType(t types.Type) (types.DataType, bool) {
 			}
 		}
 	}
+	if p, ok := t.(types.ParameterizedType); ok {
+		decl, exists := tc.symTable.Types[p.Name]
+		if !exists {
+			return types.DataType{}, false
+		}
+		dt, ok := decl.Type.(types.DataType)
+		if !ok || len(decl.GenericParams) != len(p.TypeArguments) {
+			return types.DataType{}, false
+		}
+		subst := make(map[string]types.Type, len(decl.GenericParams))
+		for i, gp := range decl.GenericParams {
+			subst[gp.Name] = p.TypeArguments[i]
+		}
+		substituted := dt
+		substituted.Constructors = make([]types.DataTypeConstructor, len(dt.Constructors))
+		for i, ctor := range dt.Constructors {
+			substituted.Constructors[i] = ctor
+			substituted.Constructors[i].Params = make([]types.Type, len(ctor.Params))
+			for j, param := range ctor.Params {
+				substituted.Constructors[i].Params[j] = substituteGenerics(param, subst)
+			}
+		}
+		return substituted, true
+	}
 	return types.DataType{}, false
+}
+
+// substituteGenerics replaces every occurrence of a generic type variable in
+// t with its concrete binding from subst (param name -> argument type),
+// recursing into the handful of compound type shapes a data constructor's
+// payload realistically takes today (tuples and arrays). Anything else —
+// including a generic nested inside a struct/another data type's payload —
+// is left as-is rather than guessed; that's a sharper-edged case than this
+// destructuring/match-arm support targets.
+func substituteGenerics(t types.Type, subst map[string]types.Type) types.Type {
+	switch tt := t.(type) {
+	case types.GenericType:
+		if concrete, ok := subst[tt.Name]; ok {
+			return concrete
+		}
+		return tt
+	case types.TupleType:
+		elems := make([]types.Type, len(tt.Elements))
+		for i, el := range tt.Elements {
+			elems[i] = substituteGenerics(el, subst)
+		}
+		tt.Elements = elems
+		return tt
+	case types.DynamicArrayType:
+		tt.ElementType = substituteGenerics(tt.ElementType, subst)
+		return tt
+	case types.StaticArrayType:
+		tt.ElementType = substituteGenerics(tt.ElementType, subst)
+		return tt
+	}
+	return t
 }
 
 // checkDataMatchArm validates one arm's pattern against a data-type scrutinee.

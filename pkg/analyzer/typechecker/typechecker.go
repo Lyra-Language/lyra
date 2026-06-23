@@ -293,12 +293,17 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 //     (no arity check: array length is often only known at runtime,
 //     mirroring the existing leniency in checkArrayMatchArm); a *named* rest
 //     element (`...rest`) binds the whole array type.
+//   - a data pattern (`Some(x)`, `Ok(x)`, bare-payload `Some x`) resolves t to
+//     a DataType, matches the named constructor, and pairs its nested Pattern
+//     against that constructor's positional payload types
+//     (bindDataPatternPayload) — same idea as a tuple, just sourced from the
+//     constructor's declared params instead of a TupleType.
 //
-// Any mismatch (wrong tuple arity, missing struct field, a pattern that
-// doesn't match the *kind* of t) is reported as an error, and that
-// sub-pattern's names are left unbound rather than guessed. An IdentifierPattern
-// of "_" is the conventional discard and never binds. DataPattern (destructuring
-// straight into a data constructor's payload) is not yet supported.
+// Any mismatch (wrong tuple/constructor arity, missing struct field, unknown
+// constructor, a pattern that doesn't match the *kind* of t) is reported as
+// an error, and that sub-pattern's names are left unbound rather than
+// guessed. An IdentifierPattern of "_" is the conventional discard and never
+// binds.
 func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bind func(name string, typ types.Type)) {
 	if pat == nil || t == nil {
 		return
@@ -377,7 +382,64 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 				bind(f.Name, fieldType)
 			}
 		}
+
+	case *ast.DataPattern:
+		dt, ok := tc.resolveToDataType(t)
+		if !ok {
+			tc.addError(p.GetLocation(), SeverityError,
+				"cannot destructure %s with a data pattern", t)
+			return
+		}
+		var ctor *types.DataTypeConstructor
+		for i := range dt.Constructors {
+			if dt.Constructors[i].Name == p.Name {
+				ctor = &dt.Constructors[i]
+				break
+			}
+		}
+		if ctor == nil {
+			tc.addError(p.GetLocation(), SeverityError,
+				"%s is not a constructor of %s", p.Name, dt.Name)
+			return
+		}
+		tc.bindDataPatternPayload(p, ctor.Params, bind)
 	}
+}
+
+// bindDataPatternPayload pairs a DataPattern's nested Pattern (if any)
+// against the matched constructor's positional payload types. `Ctor(...)`
+// syntax always wraps the payload in a TuplePattern — even for a single
+// argument (`Some(x)` is `Pattern: TuplePattern{[x]}`) — so a one-element
+// TuplePattern against a one-param constructor is paired directly against
+// that param's type, never treated as if the payload itself were a real
+// tuple type. Bare `Ctor x` syntax (no parens) is only valid for a
+// single-param constructor and binds directly. A zero-param constructor with
+// no pattern (plain `None`) binds nothing; any arity mismatch is reported.
+func (tc *TypeChecker) bindDataPatternPayload(p *ast.DataPattern, params []types.Type, bind func(name string, typ types.Type)) {
+	if p.Pattern == nil {
+		if len(params) != 0 {
+			tc.addError(p.GetLocation(), SeverityError,
+				"%s takes %d argument(s) but the pattern has none", p.Name, len(params))
+		}
+		return
+	}
+	if tp, ok := p.Pattern.(*ast.TuplePattern); ok {
+		if len(tp.Elements) != len(params) {
+			tc.addError(p.GetLocation(), SeverityError,
+				"%s takes %d argument(s) but the pattern has %d", p.Name, len(params), len(tp.Elements))
+			return
+		}
+		for i, el := range tp.Elements {
+			tc.walkDestructuredPattern(el, params[i], bind)
+		}
+		return
+	}
+	if len(params) != 1 {
+		tc.addError(p.GetLocation(), SeverityError,
+			"%s takes %d argument(s) but the pattern has 1", p.Name, len(params))
+		return
+	}
+	tc.walkDestructuredPattern(p.Pattern, params[0], bind)
 }
 
 // arrayElementType extracts the element type of a dynamic or static array

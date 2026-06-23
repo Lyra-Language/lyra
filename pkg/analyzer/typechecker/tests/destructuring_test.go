@@ -244,3 +244,129 @@ let f = (n: i64) -> i64 => {
 		"cannot destructure i64 with an array pattern",
 		`undefined identifier "a"`)
 }
+
+// TestDestructuring_DataDeclParenPayloadBindsName: `let Some(x) = m` binds `x`
+// to the constructor's payload type, substituted for the concrete type
+// argument of the generic data type (Maybe<i64> -> x: i64, not the
+// unsubstituted type variable `t`).
+func TestDestructuring_DataDeclParenPayloadBindsName(t *testing.T) {
+	source := `
+data Maybe<t> = Some t | None
+let f = (m: Maybe<i64>) -> i64 => {
+    let Some(x) = m
+    x
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
+
+// TestDestructuring_DataDeclBarePayloadBindsName: the same as above but with
+// the bare (unparenthesized) single-argument payload form, `let Some x = m`.
+func TestDestructuring_DataDeclBarePayloadBindsName(t *testing.T) {
+	source := `
+data Maybe<t> = Some t | None
+let f = (m: Maybe<i64>) -> i64 => {
+    let Some x = m
+    x
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
+
+// TestDestructuring_DataDeclVarIsMutable / LetIsImmutable: the same let/var
+// mutability distinction applies to a data-pattern payload binding.
+func TestDestructuring_DataDeclVarIsMutable(t *testing.T) {
+	source := `
+data Maybe<t> = Some t | None
+let f = (m: Maybe<i64>) -> i64 => {
+    var Some(x) = m
+    x = 5
+    x
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
+
+func TestDestructuring_DataDeclLetIsImmutable(t *testing.T) {
+	source := `
+data Maybe<t> = Some t | None
+let f = (m: Maybe<i64>) -> i64 => {
+    let Some(x) = m
+    x = 5
+    x
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertErrorsAre(t, res, "x: 'let' binding is immutable; use 'var' to allow reassignment")
+}
+
+// TestDestructuring_DataDeclUnknownConstructor_Errors: a constructor name not
+// declared on the data type is rejected, and its payload stays unbound.
+func TestDestructuring_DataDeclUnknownConstructor_Errors(t *testing.T) {
+	source := `
+data Maybe<t> = Some t | None
+let f = (m: Maybe<i64>) -> i64 => {
+    let Other(x) = m
+    x
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertErrorsAre(t, res,
+		"Other is not a constructor of Maybe",
+		`undefined identifier "x"`)
+}
+
+// TestDestructuring_DataDeclZeroArgConstructor_NoBinding: a zero-payload
+// constructor (`None`) used with no pattern binds nothing and is not an error.
+func TestDestructuring_DataDeclZeroArgConstructor_NoBinding(t *testing.T) {
+	source := `
+data Maybe<t> = Some t | None
+let f = (m: Maybe<i64>) -> i64 => {
+    let None = m
+    0
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
+
+// TestDestructuring_DataDeclNonData_Errors: destructuring a non-data value
+// with a data pattern is rejected, and the payload name stays unbound.
+func TestDestructuring_DataDeclNonData_Errors(t *testing.T) {
+	source := `
+let f = (n: i64) -> i64 => {
+    let Some(x) = n
+    x
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertErrorsAre(t, res,
+		"cannot destructure i64 with a data pattern",
+		`undefined identifier "x"`)
+}
+
+// TestDestructuring_DataDeclNestedPattern: a constructor's tuple payload is
+// destructured further (Maybe<(i64,i64)>'s Some carries a real tuple, unlike
+// the parens around a single-argument payload, which are pattern syntax
+// only — see TestDestructuring_DataDeclTuplePayloadConstructor for that case).
+func TestDestructuring_DataDeclNestedPattern(t *testing.T) {
+	source := `
+data Maybe<t> = Some t | None
+let f = (m: Maybe<(i64, i64)>) -> i64 => {
+    let Some((a, b)) = m
+    a + b
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
+
+// TestDestructuring_DataDeclTuplePayloadConstructor: a constructor declared
+// with a tuple payload (`MkPair (a, b)`, the project's recommended form for a
+// positional multi-value payload) is destructured with a matching tuple
+// sub-pattern.
+func TestDestructuring_DataDeclTuplePayloadConstructor(t *testing.T) {
+	source := `
+data Pair<a, b> = MkPair (a, b)
+let f = (p: Pair<i64, string>) -> i64 => {
+    let MkPair((x, y)) = p
+    x
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}

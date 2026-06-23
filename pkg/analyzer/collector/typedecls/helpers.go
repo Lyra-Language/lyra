@@ -43,7 +43,14 @@ func CollectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Stru
 	return fields
 }
 
-// collectDataConstructor parses a data_type_constructor node.
+// collectDataConstructor parses a data_type_constructor node. Each payload
+// argument is a "param"-field child (the grammar's repeat1(field('param',
+// ...)) — see data_type.js), so params are picked out by field name rather
+// than by enumerating every type-node kind a payload could be; the previous
+// kind-enumeration silently dropped any kind it didn't list (e.g.
+// anonymous_tuple_type, for a parenthesized payload like `C (i64, i64)` —
+// the project's own recommended positional-multi-value form — came back
+// with zero params).
 func collectDataConstructor(node *sitter.Node, ctx *collector_ctx.Ctx) (string, types.DataTypeConstructor) {
 	var name string
 	ctor := types.DataTypeConstructor{
@@ -52,11 +59,11 @@ func collectDataConstructor(node *sitter.Node, ctx *collector_ctx.Ctx) (string, 
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
-		switch child.Kind() {
-		case "data_type_constructor_name":
+		if child.Kind() == "data_type_constructor_name" {
 			name = ctx.NodeText(child)
-		case "generic_type", "user_defined_type_name", "signed_integer_type", "string_type",
-			"boolean_type", "float_type", "anonymous_struct_type":
+			continue
+		}
+		if node.FieldNameForChild(uint32(i)) == "param" {
 			ctor.Params = append(ctor.Params, ctx.ParseType(child))
 		}
 	}
