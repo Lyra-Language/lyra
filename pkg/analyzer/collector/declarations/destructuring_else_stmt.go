@@ -30,7 +30,8 @@ func CollectDestructuringElseStatement(node *sitter.Node, ctx *collector_ctx.Ctx
 	}
 	registerDestructuredNames(declNode, destructuringStatement.Pattern, destructuringStatement, ctx)
 	return &ast.ElseDestructuringStmt{
+		AstBase:                ast.AstBase{Location: ctx.NodeLocation(node)},
 		DestructuringStatement: *destructuringStatement,
-		Else:                   *elseBlock,
+		Else:                   elseBlock,
 	}
 }

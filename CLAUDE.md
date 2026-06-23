@@ -42,7 +42,7 @@ Lexical `SymbolTable` with a tree of `Scope` nodes:
 - `Scope.LookupLocal(name)` — current scope only
 - `SymbolTable.Types` / `.Functions` — flat maps for fast global lookup by name
 
-Destructuring-declaration names (`let (a,b) = …`, `let {x} = …`, `if let [a,b] = … { }`, `let {x} = … else { }`) are registered via `RegisterDestructuredName(name, decl)`, which maps each bound name to its owning `*ast.DestructuringDeclStmt` (so the binding's `var`/`let mut` mutability is recoverable). The typechecker later overwrites that placeholder with a typed synthetic `VarDeclStmt` once it infers each leaf's type (plain `let`/`var` only — if-let/else aren't type-checked at all yet, see Current Development Focus). Scoping differs by form: plain `let`/`var` registers into the current scope; `if let … { Then } else { Else }` registers into a scope pushed around `Then` only (names visible there via the parent chain, not in `Else`); `let … = v else { Else }` registers into the *enclosing* scope only after collecting the diverging `Else` block, so `Else` never sees the names but code after the statement does.
+Destructuring-declaration names (`let (a,b) = …`, `let {x} = …`, `if let [a,b] = … { }`, `let {x} = … else { }`) are registered via `RegisterDestructuredName(name, decl)`, which maps each bound name to its owning `*ast.DestructuringDeclStmt` (so the binding's `var`/`let mut` mutability is recoverable). The typechecker later overwrites that placeholder with a typed synthetic `VarDeclStmt` once it infers each leaf's type, via `checkDestructuringDecl` — shared by plain `let`/`var`, `if let`, and `let … else`. Scoping differs by form: plain `let`/`var` registers into the current scope; `if let … { Then } else { Else }` registers into a scope pushed around `Then` only (names visible there via the parent chain, not in `Else`); `let … = v else { Else }` registers into the *enclosing* scope only after collecting the diverging `Else` block, so `Else` never sees the names but code after the statement does.
 
 ### `pkg/types`
 Type system. All types implement the `Type` interface (`typeNode()`, `String()`, `GetName()`).
@@ -110,13 +110,14 @@ Standalone AST-level semantic passes that run after collection but before typech
 ### `pkg/analyzer/typechecker`
 Walks the collected AST and infers/verifies types, writing results into a `TypeTable`.
 
-**Entry point:** `typechecker.New(symTable, typeTable)` → `tc.Check(program) []TypeError`
+**Entry point:** `typechecker.New(symTable, scopeTable, typeTable)` → `tc.Check(program) []TypeError`
 
 **`TypeError`** has `Message string`, `Location ast.Location`, `Severity` (`SeverityError` / `SeverityWarning`).
 
 Key methods:
 - `inferExprType(expr)` — returns the `types.Type` for an expression and records it in the `TypeTable`
 - `checkNode(node)` / `checkVarDecl` / `checkVarReassignment` / `checkExpressionStmt` — statement-level checks
+- `checkIfDestructuringStmt` / `checkElseDestructuringStmt` — type-check `if let`/`let … else` bodies, reusing `checkDestructuringDecl` to bind pattern names with the right scope (if-let's names are local to `Then`, entered via `enterScope` against a scope the collector pushed and recorded against the `*ast.IfDestructuringStmt` node itself; let-else's persist in the enclosing scope, like a plain `let`)
 - `assignable.go` — `effectiveType` and unification logic for type compatibility
 
 Files split by concern: `typechecker.go` (core + var decls + expressions), `typechecker_control_flow.go` (if/match), `typechecker_functions.go` (lambda/call), `errors.go` (error helpers), `assignable.go` (type compatibility).
@@ -188,4 +189,4 @@ The typechecker is the active area. See `todo.md` at the project root for the fu
 
 Queued:
 - Match exhaustiveness for `string`, `data`, and `array` types
-- `checkNode`'s switch has no case for `*ast.IfDestructuringStmt` / `*ast.ElseDestructuringStmt` (if-let / let-else) — it never descends into their bodies, so a type error inside an if-let `Then` block currently passes silently (found 06/22/26)
+- Generic substitution bug: a data-pattern destructuring against a generic instantiation parsed from a parameter type annotation (`let f = (m: Maybe<i64>) -> i64 => { let Some(x) = m; x + 1 }`) binds `x` to a malformed type that prints as `?(i64)` instead of `i64`, so arithmetic on it then fails with a confusing "operands must be numeric" error. Reproduces with plain `let Some(x) = m`, independent of if-let — likely an incomplete case in `substituteGenerics`/`resolveToDataType` (found 06/22/26 while testing if-let against data types)

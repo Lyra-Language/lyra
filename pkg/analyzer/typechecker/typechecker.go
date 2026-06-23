@@ -73,6 +73,10 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 		tc.checkVarDecl(n)
 	case *ast.DestructuringDeclStmt:
 		tc.checkDestructuringDecl(n)
+	case *ast.IfDestructuringStmt:
+		tc.checkIfDestructuringStmt(n)
+	case *ast.ElseDestructuringStmt:
+		tc.checkElseDestructuringStmt(n)
 	case *ast.VarReassignmentStmt:
 		tc.checkVarReassignment(n)
 	case *ast.ExpressionStmt:
@@ -277,6 +281,39 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 			Type:        typ,
 		}
 	})
+}
+
+// checkIfDestructuringStmt type-checks `if let pat = v { Then } else { Else }`.
+// The collector pushed a scope around Then that holds pat's bound names (see
+// CollectDestructuringIfStatement) and recorded it against stmt itself, so
+// entering stmt's scope and binding there — via the same checkDestructuringDecl
+// used for a plain `let` — makes the names resolvable from Then (a nested
+// child scope of stmt's, so Lookup finds them through the parent chain) without
+// leaking them into Else or the enclosing scope. Else is checked in whatever
+// scope was already current (the enclosing one), matching reaching Else
+// meaning the pattern failed to match.
+func (tc *TypeChecker) checkIfDestructuringStmt(stmt *ast.IfDestructuringStmt) {
+	tc.enterScope(stmt, func() {
+		tc.checkDestructuringDecl(&stmt.DestructuringStatement)
+	})
+	tc.inferBlockType(stmt.Then)
+	if stmt.Else != nil {
+		tc.inferBlockType(stmt.Else)
+	}
+}
+
+// checkElseDestructuringStmt type-checks `let pat = v else { Else }`. Unlike
+// if-let, pat's names belong to the *enclosing* scope (persisting after the
+// statement, like a plain `let`) — so binding goes through checkDestructuringDecl
+// directly, no enterScope wrapper, writing into whatever scope is already
+// current. Else is checked first so it never resolves the names being bound
+// (matching the collector's CollectDestructuringElseStatement, which registers
+// them only after collecting Else); the order has no effect on correctness
+// here since Else type-checks in its own nested scope regardless, but mirrors
+// the collector for readability.
+func (tc *TypeChecker) checkElseDestructuringStmt(stmt *ast.ElseDestructuringStmt) {
+	tc.inferBlockType(stmt.Else)
+	tc.checkDestructuringDecl(&stmt.DestructuringStatement)
 }
 
 // walkDestructuredPattern recursively type-checks pat against t (the type it
