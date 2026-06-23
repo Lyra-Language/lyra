@@ -370,3 +370,36 @@ let f = (p: Pair<i64, string>) -> i64 => {
 	res := parseCollectAndCheck(t, source, false)
 	assertNoErrors(t, res)
 }
+
+// TestDestructuring_DataParamBindsName: a data pattern used directly as a
+// parameter (`(Some(x): Maybe<i64>) -> ...`) binds its payload name, for both
+// a single-expression and a block body. This previously mis-parsed at the
+// grammar level — `Some(x)` in parameter-pattern position lost to the
+// constructor-call *expression* reading (tuple_literal) because data_pattern
+// had no explicit precedence to win that tie; fixed via PREC.DATA_PATTERN
+// (tree-sitter-lyra/include/prec.js) plus a declared 3-way GLR conflict
+// (`_tuple_name`, `_primary_expr`, `data_pattern`) in grammar.js.
+func TestDestructuring_DataParamBindsName(t *testing.T) {
+	for _, source := range []string{
+		`data Maybe<t> = Some t | None
+let f = (Some(x): Maybe<i64>) -> i64 => x`,
+		`data Maybe<t> = Some t | None
+let f = (Some(x): Maybe<i64>) -> i64 => {
+    x
+}`,
+	} {
+		res := parseCollectAndCheck(t, source, false)
+		assertNoErrors(t, res)
+	}
+}
+
+// TestDestructuring_DataParamTuplePayloadConstructor: a data parameter whose
+// constructor carries a tuple payload is destructured further, same as the
+// declaration form.
+func TestDestructuring_DataParamTuplePayloadConstructor(t *testing.T) {
+	source := `
+data Pair<a, b> = MkPair (a, b)
+let f = (MkPair((x, y)): Pair<i64, string>) -> i64 => x`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
