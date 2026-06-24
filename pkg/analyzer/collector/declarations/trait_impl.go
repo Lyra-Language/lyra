@@ -105,6 +105,7 @@ func collectTraitMethodImpl(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Trait
 	clause := *expressions.CollectLambdaClause(clauseNode, ctx)
 	return ast.TraitMethodImpl{
 		Name:   methodName,
+		IsPure: node.ChildByFieldName("is_pure") != nil,
 		Clause: clause,
 	}
 }

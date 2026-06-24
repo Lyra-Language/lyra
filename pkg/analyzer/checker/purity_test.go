@@ -5,10 +5,16 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/parser"
+	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
+// checkPurity runs the typechecker first (so method-call dispatch is
+// resolved, same as the real LSP pipeline) and passes its MethodTable into
+// CheckPurity, so tests exercising trait-method purity work through the same
+// helper as every other purity test.
 func checkPurity(t *testing.T, source string) []checker.PurityError {
 	t.Helper()
 	tree, err := parser.Parse(source)
@@ -16,8 +22,10 @@ func checkPurity(t *testing.T, source string) []checker.PurityError {
 		t.Fatalf("Parse error: %v", err)
 	}
 	c := collector.NewCollector([]byte(source))
-	program, _, _, _ := c.Collect(tree.RootNode())
-	return checker.CheckPurity(program)
+	program, symTable, scopeTable, _ := c.Collect(tree.RootNode())
+	tc := typechecker.New(symTable, scopeTable, typetable.New())
+	tc.Check(program)
+	return checker.CheckPurity(program, tc.MethodTable())
 }
 
 func assertPurityCount(t *testing.T, errs []checker.PurityError, want int) {
@@ -480,4 +488,95 @@ func parseAndCollectProgram(t *testing.T, source string) *ast.Program {
 	c := collector.NewCollector([]byte(source))
 	program, _, _, _ := c.Collect(tree.RootNode())
 	return program
+}
+
+// --- trait-method purity ---
+
+// A pure caller invoking a method whose impl is itself marked `pure` is fine.
+func TestPurity_PureMethodCalledFromPure_Ok(t *testing.T) {
+	src := `
+trait Show {
+    show: (Self) -> string
+}
+impl Show for i64 {
+    show = pure (n) => "x"
+}
+let f = pure (n: i64) -> string => {
+    n.show()
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// A pure caller invoking a method whose impl is NOT marked `pure` is reported
+// — the same escaping-call check a non-pure function gets, now extended to
+// dispatch resolved via the type-checker.
+func TestPurity_NonPureMethodCalledFromPure_Error(t *testing.T) {
+	src := `
+trait Show {
+    show: (Self) -> string
+}
+impl Show for i64 {
+    show = (n) => "x"
+}
+let f = pure (n: i64) -> string => {
+    n.show()
+}`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	if errs[0].Message != `pure function calls non-pure trait method "show"` {
+		t.Errorf("unexpected message: %q", errs[0].Message)
+	}
+}
+
+// The fully-qualified call form gets the same treatment as a `.`-call.
+func TestPurity_NonPureMethodCalledFromPure_QualifiedForm_Error(t *testing.T) {
+	src := `
+trait Show {
+    show: (Self) -> string
+}
+impl Show for i64 {
+    show = (n) => "x"
+}
+let f = pure (n: i64) -> string => {
+    Show::show(n)
+}`
+	assertPurityCount(t, checkPurity(t, src), 1)
+}
+
+// A method explicitly marked `pure` is checked for its own internal
+// violations, the same as a pure lambda.
+func TestPurity_PureMethodBodyViolation_Error(t *testing.T) {
+	src := `
+var counter = 0
+trait Show {
+    show: (Self) -> string
+}
+impl Show for i64 {
+    show = pure (n) => {
+        counter = n
+        "x"
+    }
+}`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	want := `pure function reassigns captured binding "counter"; mutation must not escape the function`
+	if errs[0].Message != want {
+		t.Errorf("unexpected message: %q", errs[0].Message)
+	}
+}
+
+// Calling a non-pure method from a non-pure function is unconstrained —
+// purity only governs `pure` contexts.
+func TestPurity_NonPureMethodInImpureFunction_Ok(t *testing.T) {
+	src := `
+trait Show {
+    show: (Self) -> string
+}
+impl Show for i64 {
+    show = (n) => "x"
+}
+let f = (n: i64) -> string => {
+    n.show()
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
 }

@@ -88,6 +88,8 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 		return collectIndexExpr(node, ctx, loc, true)
 	case "try_expr":
 		return collectTryExpr(node, ctx, loc)
+	case "trait_method_path":
+		return collectTraitMethodPathExpr(node, ctx, loc)
 	case "range_expr":
 		return collectRangeExpr(node, ctx, loc)
 	case "null_coalescing_expr":

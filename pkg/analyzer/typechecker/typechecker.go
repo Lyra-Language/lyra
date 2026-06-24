@@ -16,12 +16,14 @@ type TypeChecker struct {
 	symTable      *symbols.SymbolTable
 	scopeTable    *symbols.ScopeTable
 	typeTable     *typetable.TypeTable
+	methodTable   *typetable.MethodTable
 	scope         *symbols.Scope
 	errors        []TypeError
 	paramTypes    map[string]types.Type         // non-nil only while checking a function body
 	paramMods     map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
 	resolvedTypes map[string]types.Type         // cache for resolveType to avoid duplicate "unknown type" errors
 	enclosingRet  *types.ReturnType             // declared return type of the lambda body currently being checked; nil at top level
+	traitImpls    []*ast.TraitImplStmt          // every impl block in the program, collected up front by Check; see resolveTraitMethod
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
@@ -29,9 +31,17 @@ func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTabl
 		symTable:      symTable,
 		scopeTable:    scopeTable,
 		typeTable:     typeTable,
+		methodTable:   typetable.NewMethodTable(),
 		scope:         symTable.GlobalScope,
 		resolvedTypes: make(map[string]types.Type),
 	}
+}
+
+// MethodTable exposes the call-site -> resolved-trait-method mapping built
+// during Check, for passes that run after typechecking (e.g. the purity
+// checker) and need to know which method body a given call dispatches to.
+func (tc *TypeChecker) MethodTable() *typetable.MethodTable {
+	return tc.methodTable
 }
 
 // enterScope temporarily sets tc.scope to the scope recorded for node,
@@ -50,6 +60,14 @@ func (tc *TypeChecker) enterScope(node ast.AstNode, fn func()) {
 }
 
 func (tc *TypeChecker) Check(program *ast.Program) []TypeError {
+	// Collected up front (not lazily) so a method call site can dispatch
+	// against an impl declared later in the same file — Lyra has no
+	// declare-before-use requirement for top-level type/trait/impl blocks.
+	for _, stmt := range program.Statements {
+		if impl, ok := stmt.(*ast.TraitImplStmt); ok {
+			tc.traitImpls = append(tc.traitImpls, impl)
+		}
+	}
 	for _, stmt := range program.Statements {
 		tc.checkNode(stmt)
 	}

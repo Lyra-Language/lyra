@@ -21,7 +21,8 @@ type TraitImplConstraint struct {
 }
 
 type TraitMethodImpl struct {
-	Name MethodName
+	Name   MethodName
+	IsPure bool
 	Clause LambdaClause
 }
 

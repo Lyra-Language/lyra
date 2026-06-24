@@ -6,6 +6,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
+	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
 // PurityError reports an observable side effect that occurs inside a function
@@ -62,19 +63,28 @@ var knownImpureBuiltins = map[string]bool{
 //
 // Calls to *user-defined* impure functions are caught via inferImpureLambdas
 // (transitive, fixpoint) — for a function declared at any nesting depth, not
-// just the top level. Reading captured *mutable* state (`var` / `let mut`,
-// whose value can change between calls) is also reported — it breaks
-// referential transparency even though no effect escapes — for state captured
-// from any enclosing scope, again not just the top level. Both resolve names
-// via the capture stack of scopeBindings frames built as the walk descends
-// through lambda boundaries. Not yet handled (needs symbol-table backing; see
-// todo items #3/#4):
-//   - impurity of methods and imported functions
-func CheckPurity(program *ast.Program) []PurityError {
+// just the top level. When methodTable is non-nil (the type-checker has
+// already run and resolved method dispatch), a method call — `obj.method(…)`
+// or the fully-qualified `Trait::method(…)` — gets the same treatment: it is
+// flagged unless the resolved method is itself marked `pure`. A trait-impl
+// method marked `pure` is also checked for its own internal violations, the
+// method-level counterpart of the per-statement walk over pure lambdas below.
+// Reading captured *mutable* state (`var` / `let mut`, whose value can change
+// between calls) is also reported — it breaks referential transparency even
+// though no effect escapes — for state captured from any enclosing scope,
+// again not just the top level. Both resolve names via the capture stack of
+// scopeBindings frames built as the walk descends through lambda boundaries.
+// Not yet handled (needs symbol-table backing; see todo items #3/#4):
+//   - bottom-up purity *inference* for methods — today only an explicit
+//     `pure` marker on the method itself is trusted; an unannotated method is
+//     always treated as potentially impure, unlike a free function
+//   - impurity of imported functions
+func CheckPurity(program *ast.Program, methodTable *typetable.MethodTable) []PurityError {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
 	c := &purityChecker{
-		impureLambdas: inferImpureLambdas(collectFuncBindings(program, base)),
+		impureLambdas: inferImpureLambdas(collectFuncBindings(program, base), methodTable),
 		assignTargets: map[*ast.IdentifierExpr]bool{},
+		methodTable:   methodTable,
 	}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -82,8 +92,34 @@ func CheckPurity(program *ast.Program) []PurityError {
 			// function, don't check".
 			ast.WalkStmt(stmt, c.stmtVisitor(nil, base), c.exprVisitor(nil, base))
 		}
+		if impl, ok := node.(*ast.TraitImplStmt); ok {
+			c.checkPureTraitMethods(impl, base)
+		}
 	}
 	return c.errors
+}
+
+// checkPureTraitMethods checks every pure-marked method in impl for purity
+// violations — the method-level counterpart of the main loop's per-statement
+// walk over pure lambdas. A non-pure method's body is not walked (it's an
+// impure context, same as any other non-pure binding).
+func (c *purityChecker) checkPureTraitMethods(impl *ast.TraitImplStmt, base []scopeBindings) {
+	for i := range impl.Methods {
+		m := &impl.Methods[i]
+		if !m.IsPure {
+			continue
+		}
+		scope := directScopeBindingsForClause(&m.Clause)
+		locals := make(map[string]bool, len(scope.mutable))
+		for name := range scope.mutable {
+			locals[name] = true
+		}
+		// Method parameters have no mut/own/ref modifier syntax yet (unlike a
+		// lambda's), so there is no mutBorrows set to populate here.
+		sc := &funcScope{locals: locals, mutBorrows: map[string]bool{}}
+		childCapture := pushScope(base, scope)
+		ast.WalkExpr(m.Clause.Body, c.stmtVisitor(sc, childCapture), c.exprVisitor(sc, childCapture))
+	}
 }
 
 // InferredPureFunctions returns, for every top-level `let`/`var name = <lambda>`
@@ -102,7 +138,11 @@ func CheckPurity(program *ast.Program) []PurityError {
 // CheckPurity, just not exposed here by name.
 func InferredPureFunctions(program *ast.Program) map[string]bool {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
-	impure := inferImpureLambdas(collectFuncBindings(program, base))
+	// nil methodTable: this entry point has no typechecker output available
+	// (it only takes the AST), so a function that calls a trait method is
+	// never marked impure on that basis alone — a narrower scope than
+	// CheckPurity gets when the caller supplies a real MethodTable.
+	impure := inferImpureLambdas(collectFuncBindings(program, base), nil)
 	result := make(map[string]bool, len(base[0].functions))
 	for name, lam := range base[0].functions {
 		result[name] = !impure[lam]
@@ -189,6 +229,12 @@ type purityChecker struct {
 	// target (the LHS of `x += …`, or the base of `x.f = …`). The write is reported
 	// by the mutation checks, so the same node must not be re-reported as a read.
 	assignTargets map[*ast.IdentifierExpr]bool
+	// methodTable maps a call site to the trait-impl method the type-checker
+	// resolved it to (nil-safe: a nil table behaves as "no resolutions", so
+	// this is optional — passing nil into CheckPurity simply skips
+	// method-call purity checking, e.g. for callers that haven't run the
+	// typechecker first).
+	methodTable *typetable.MethodTable
 }
 
 // stmtVisitor returns a statement callback. sc is non-nil exactly when we are
@@ -290,7 +336,12 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 
 		case *ast.FunctionCallExpr:
 			if sc != nil {
-				if name := calleeName(e.Function); name != "" && c.isImpureCallee(capture, name) {
+				if method, ok := c.methodTable.Get(e); ok {
+					if !method.IsPure {
+						c.report(e.GetLocation(),
+							"pure function calls non-pure trait method %q", method.Name.GetName())
+					}
+				} else if name := calleeName(e.Function); name != "" && c.isImpureCallee(capture, name) {
 					c.report(e.GetLocation(),
 						"pure function calls impure function %q", name)
 				}
@@ -403,6 +454,47 @@ func directScopeBindings(lambda *ast.LambdaExpr) scopeBindings {
 		}
 		collectBody(clause.Body)
 	}
+	return scope
+}
+
+// directScopeBindingsForClause is directScopeBindings's counterpart for a
+// bare trait-method clause — a method is always exactly one ordinary clause
+// (the grammar never gives it a multi-clause or bare-body form the way a
+// regular lambda can take), so there is no LambdaExpr wrapper to dispatch on.
+// The inner walk logic (collecting let/var/destructuring bindings and
+// stopping at nested lambdas) mirrors directScopeBindings's collectBody.
+func directScopeBindingsForClause(clause *ast.LambdaClause) scopeBindings {
+	scope := scopeBindings{mutable: map[string]bool{}, functions: map[string]*ast.LambdaExpr{}}
+	for _, pat := range clause.Patterns {
+		for _, n := range patternBoundNames(pat) {
+			scope.mutable[n] = false
+		}
+	}
+	mergeStmt := func(s ast.Statement) {
+		for name, mutable := range declaredMutability(s) {
+			scope.mutable[name] = mutable
+		}
+		if vd, ok := s.(*ast.VarDeclStmt); ok {
+			if lam, ok := vd.Value.(*ast.LambdaExpr); ok {
+				scope.functions[vd.Name] = lam
+			}
+		}
+	}
+	ast.WalkExpr(clause.Body,
+		func(s ast.Statement) bool {
+			mergeStmt(s)
+			return true
+		},
+		func(e ast.Expression) bool {
+			switch n := e.(type) {
+			case *ast.LambdaExpr:
+				return false
+			case *ast.ForLoopExpr:
+				mergeStmt(n.Init)
+			}
+			return true
+		},
+	)
 	return scope
 }
 
@@ -582,10 +674,12 @@ func collectFuncBindings(program *ast.Program, base []scopeBindings) map[*ast.La
 // inferImpureLambdas returns the set of function literals (from defs, which
 // pairs each with the capture stack visible at its definition site) whose
 // bodies have an observable effect — directly (captured mutation, pointer
-// write, call to an impure builtin) or transitively (a call to another impure
-// function). It iterates to a fixpoint so impurity propagates through call
-// chains regardless of declaration order, for functions at any nesting depth.
-func inferImpureLambdas(defs map[*ast.LambdaExpr][]scopeBindings) map[*ast.LambdaExpr]bool {
+// write, call to an impure builtin or non-pure trait method) or transitively
+// (a call to another impure function). It iterates to a fixpoint so impurity
+// propagates through call chains regardless of declaration order, for
+// functions at any nesting depth. methodTable is nil-safe — see
+// purityChecker.methodTable.
+func inferImpureLambdas(defs map[*ast.LambdaExpr][]scopeBindings, methodTable *typetable.MethodTable) map[*ast.LambdaExpr]bool {
 	impure := map[*ast.LambdaExpr]bool{}
 	for {
 		changed := false
@@ -593,7 +687,7 @@ func inferImpureLambdas(defs map[*ast.LambdaExpr][]scopeBindings) map[*ast.Lambd
 			if impure[lam] {
 				continue
 			}
-			if lambdaHasObservableEffect(lam, capture, impure) {
+			if lambdaHasObservableEffect(lam, capture, impure, methodTable) {
 				impure[lam] = true
 				changed = true
 			}
@@ -611,7 +705,7 @@ func inferImpureLambdas(defs map[*ast.LambdaExpr][]scopeBindings) map[*ast.Lambd
 // mirrors the checks in the main pass but accumulates a bool instead of
 // emitting diagnostics, and is used only for inference. It does not descend
 // into nested lambdas (they have their own boundary).
-func lambdaHasObservableEffect(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambdas map[*ast.LambdaExpr]bool) bool {
+func lambdaHasObservableEffect(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambdas map[*ast.LambdaExpr]bool, methodTable *typetable.MethodTable) bool {
 	scope := directScopeBindings(lam)
 	locals := make(map[string]bool, len(scope.mutable))
 	for name := range scope.mutable {
@@ -655,7 +749,11 @@ func lambdaHasObservableEffect(lam *ast.LambdaExpr, defCapture []scopeBindings, 
 				found = true
 			}
 		case *ast.FunctionCallExpr:
-			if name := calleeName(ex.Function); name != "" {
+			if method, ok := methodTable.Get(ex); ok {
+				if !method.IsPure {
+					found = true
+				}
+			} else if name := calleeName(ex.Function); name != "" {
 				if knownImpureBuiltins[name] {
 					found = true
 				} else if target, ok := resolveFunction(bodyCapture, name); ok && impureLambdas[target] {

@@ -70,7 +70,8 @@ Helper predicates: `types.IsNumeric(t)`, `types.IsString(t)`, `types.IsBoolean(t
 Allocation modifiers: `None`, `Stack`, `Shared`. Type modifiers: `Mut`, `Ref`.
 
 ### `pkg/typetable`
-Maps `ast.Expression` nodes → resolved `types.Type`. Populated by the typechecker; read by later passes. Use `TypeTable.Set(expr, typ)` / `TypeTable.Get(expr)`.
+- `TypeTable` — maps `ast.Expression` nodes → resolved `types.Type`. Populated by the typechecker; read by later passes. `Set(expr, typ)` / `Get(expr)`.
+- `MethodTable` — maps a `*ast.FunctionCallExpr` (a `.`-call or `Trait::method` call resolved to a trait-impl method) → the matched `*ast.TraitMethodImpl`. Populated by the typechecker during dispatch (`typechecker_trait_dispatch.go`); read by the purity checker so it doesn't have to re-derive dispatch. `Get` is nil-receiver-safe (no resolutions) so callers without a typechecker pass can pass `nil`.
 
 ### `pkg/analyzer/collector`
 Converts a tree-sitter CST into `*ast.Program` and `*symbols.SymbolTable`.
@@ -102,10 +103,11 @@ Converts a tree-sitter CST into `*ast.Program` and `*symbols.SymbolTable`.
 - `node.FieldNameForChild(uint32(i))` — field name at index `i`; use when a rule repeats the same field name (e.g. multiple `value:` fields in `commaSep1`)
 
 ### `pkg/analyzer/checker`
-Standalone AST-level semantic passes that run after collection but before typechecking. Currently contains one pass:
+Standalone AST-level semantic passes. Most (e.g. `use_before_declaration.go`, `shadowing.go`, `unused_variables.go`) run after collection but before typechecking and only need the AST. **`purity.go` is the exception** — `CheckPurity(program, methodTable)` takes the typechecker's `*typetable.MethodTable` (nil-safe) so a pure function/method calling a trait method can be checked against the method it actually dispatches to; it must run *after* `typechecker.Check`, not before (see `cmd/lyra-lsp/main.go`'s ordering).
 
 - **`use_before_declaration.go`** — `CheckUseBeforeDeclaration(program) []UseBeforeDeclarationError`
   Two-pass algorithm: collect all names declared directly in a block, then walk in order flagging any use of a not-yet-seen name.
+- **`purity.go`** — `CheckPurity` enforces `pure` (lambdas and, since 06/24/26, trait-impl methods): no captured mutation, no calls to non-pure functions/methods, no `await`. `InferredPureFunctions(program)` separately exposes bottom-up-inferred purity (explicit or not) for top-level functions by name; methods aren't covered by that one yet (explicit `pure` only).
 
 ### `pkg/analyzer/typechecker`
 Walks the collected AST and infers/verifies types, writing results into a `TypeTable`.
@@ -119,8 +121,9 @@ Key methods:
 - `checkNode(node)` / `checkVarDecl` / `checkVarReassignment` / `checkExpressionStmt` — statement-level checks
 - `checkIfDestructuringStmt` / `checkElseDestructuringStmt` — type-check `if let`/`let … else` bodies, reusing `checkDestructuringDecl` to bind pattern names with the right scope (if-let's names are local to `Then`, entered via `enterScope` against a scope the collector pushed and recorded against the `*ast.IfDestructuringStmt` node itself; let-else's persist in the enclosing scope, like a plain `let`)
 - `assignable.go` — `effectiveType` and unification logic for type compatibility
+- `resolveTraitMethod(receiverType, methodName, requiredTrait)` (`typechecker_trait_dispatch.go`) — finds every impl whose target type structurally equals `receiverType` (`types.TypesEqual`) providing that method, optionally restricted to one trait; multiple matches with no `requiredTrait` is the "two traits, same method name" ambiguity a fully-qualified `Trait::method(...)` call resolves. Drives both `inferMemberCall`'s fallback (after struct-field lookup fails) and `inferTraitMethodPathCall`. Records each resolution in `tc.MethodTable()` for the purity checker. Generic impls (`impl<T> Show for Box<T>`) don't match yet — `TypesEqual` against a concrete receiver correctly returns false, but that's a separate, larger dispatch feature.
 
-Files split by concern: `typechecker.go` (core + var decls + expressions), `typechecker_control_flow.go` (if/match), `typechecker_functions.go` (lambda/call), `errors.go` (error helpers), `assignable.go` (type compatibility).
+Files split by concern: `typechecker.go` (core + var decls + expressions), `typechecker_control_flow.go` (if/match), `typechecker_functions.go` (lambda/call/member-call dispatch), `typechecker_trait_dispatch.go` (trait-method resolution), `typechecker_traits.go` (impl conformance), `errors.go` (error helpers), `assignable.go` (type compatibility).
 
 ### `pkg/printer`
 Reflection-based AST printer used only in tests. `printer.PrintAST(program)` walks exported struct fields; zero/nil/empty values are omitted. `printer.NewPrinter().Print(node)` pretty-prints a raw tree-sitter CST node (useful for debugging).
@@ -128,7 +131,7 @@ Reflection-based AST printer used only in tests. `printer.PrintAST(program)` wal
 ### `cmd/lyra-lsp`
 LSP server. Uses `github.com/owenrumney/go-lsp` over stdio. On every `textDocument/didOpen` or `textDocument/didChange`:
 1. Applies incremental edits to an in-memory doc store
-2. Runs `parser.Parse` → `collector.Collect` → `checker.CheckUseBeforeDeclaration` → `typechecker.Check`
+2. Runs `parser.Parse` → `collector.Collect` → most `checker.Check*` passes → `typechecker.Check` → `checker.CheckPurity` (purity must come *after* typechecking — it needs the resolved `MethodTable`)
 3. Publishes all collected diagnostics via `textDocument/publishDiagnostics`
 
 Logs to `/tmp/lyra-lsp.log`. Build with `go build ./cmd/lyra-lsp`.

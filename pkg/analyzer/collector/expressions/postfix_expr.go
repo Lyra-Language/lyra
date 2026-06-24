@@ -63,6 +63,20 @@ func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 	}
 }
 
+func collectTraitMethodPathExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
+	traitNameNode := node.ChildByFieldName("trait_name")
+	methodNode := node.ChildByFieldName("method")
+	if traitNameNode == nil || methodNode == nil {
+		ctx.AddError(node, diag.SeverityError, "trait method path missing trait name or method")
+		return nil
+	}
+	return &ast.TraitMethodPathExpr{
+		ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		TraitName: ctx.NodeText(traitNameNode),
+		Method:    *CollectIdentifierExpr(methodNode, false, ctx.NodeLocation(methodNode), ctx),
+	}
+}
+
 func collectIndexExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location, optional bool) *ast.IndexExpr {
 	return &ast.IndexExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},

@@ -335,8 +335,13 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		})
 	}
 
+	log.Printf("analyze: typechecking")
+	tt := typetable.New()
+	tc := typechecker.New(symTable, scopeTable, tt)
+	typeErrors := tc.Check(program)
+
 	log.Printf("analyze: checking purity")
-	for _, pe := range checker.CheckPurity(program) {
+	for _, pe := range checker.CheckPurity(program, tc.MethodTable()) {
 		sev := lsp.SeverityError
 		loc := pe.Location
 		diags = append(diags, lsp.Diagnostic{
@@ -401,10 +406,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		})
 	}
 
-	log.Printf("analyze: typechecking")
-	tt := typetable.New()
-	tc := typechecker.New(symTable, scopeTable, tt)
-	for _, te := range tc.Check(program) {
+	for _, te := range typeErrors {
 		sev := severityFromTypechecker(te.Severity)
 		loc := te.Location
 		diags = append(diags, lsp.Diagnostic{

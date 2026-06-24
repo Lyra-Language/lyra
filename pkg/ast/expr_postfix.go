@@ -47,3 +47,19 @@ type TryExpr struct {
 func (t *TryExpr) GetName() string {
 	return fmt.Sprintf("TryExpr(%s)", t.Operand.GetName())
 }
+
+// TraitMethodPathExpr is the fully-qualified `TraitName::method` call form —
+// disambiguates which trait's implementation to call when a plain
+// `obj.method(args)` would be ambiguous (two traits implementing a
+// same-named method for the same type). It always appears as the Function
+// of a FunctionCallExpr; the receiver is then an ordinary first argument
+// (`Show::show(n)`), not an implicit object the way MemberExpr's is.
+type TraitMethodPathExpr struct {
+	ExprBase
+	TraitName string
+	Method    IdentifierExpr
+}
+
+func (t *TraitMethodPathExpr) GetName() string {
+	return fmt.Sprintf("TraitMethodPathExpr(%s::%s)", t.TraitName, t.Method.GetName())
+}

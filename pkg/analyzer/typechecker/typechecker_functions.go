@@ -275,7 +275,8 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 // inferFunctionCallExpr checks argument count and types at a call site and
 // returns the callee's declared return type (or nil when the callee is unknown
 // or has no declared return type). Handles identifier callees, direct lambda
-// expressions, and member-expression callees (method calls).
+// expressions, member-expression callees (method calls), and fully-qualified
+// trait-method-path callees (TraitName::method(...)).
 func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.Type {
 	switch callee := call.Function.(type) {
 	case *ast.IdentifierExpr:
@@ -284,11 +285,47 @@ func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.T
 		return tc.inferDirectLambdaCall(callee, call)
 	case *ast.MemberExpr:
 		return tc.inferMemberCall(callee, call)
+	case *ast.TraitMethodPathExpr:
+		return tc.inferTraitMethodPathCall(callee, call)
 	default:
 		tc.addError(call.GetLocation(), SeverityError,
 			"cannot call %s expression", call.Function.GetName())
 		return nil
 	}
+}
+
+// inferTraitMethodPathCall type-checks a fully-qualified trait method call
+// (`Show::show(n)`). Unlike a `.`-call, the receiver is an ordinary first
+// element of call.Arguments (there is no object to imply it), so its type
+// drives dispatch and the whole parameter list — including Self — lines up
+// directly against call.Arguments.
+func (tc *TypeChecker) inferTraitMethodPathCall(path *ast.TraitMethodPathExpr, call *ast.FunctionCallExpr) types.Type {
+	if _, ok := tc.symTable.Traits[path.TraitName]; !ok {
+		tc.addError(call.GetLocation(), SeverityError, "unknown trait %q", path.TraitName)
+		return nil
+	}
+	if len(call.Arguments) == 0 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"%s::%s: expected a receiver argument", path.TraitName, path.Method.Name)
+		return nil
+	}
+	receiverType := tc.inferExprType(call.Arguments[0])
+	if receiverType == nil {
+		return nil
+	}
+	receiverType = tc.resolveType(receiverType, call.Arguments[0].GetLocation())
+
+	matches := tc.resolveTraitMethod(receiverType, path.Method.Name, path.TraitName)
+	if len(matches) == 0 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"no implementation of %s::%s for %s", path.TraitName, path.Method.Name, receiverType)
+		return nil
+	}
+	// requiredTrait already narrows resolveTraitMethod to one trait, and a
+	// well-formed program has at most one impl of a given trait for a given
+	// concrete type, so matches[0] is unambiguous here.
+	qualifiedName := path.TraitName + "::" + path.Method.Name
+	return tc.inferResolvedTraitMethodCall(qualifiedName, matches[0], call, nil)
 }
 
 // inferIdentifierCall resolves the identifier in scope and validates the call
@@ -326,19 +363,51 @@ func (tc *TypeChecker) inferDirectLambdaCall(lambda *ast.LambdaExpr, call *ast.F
 }
 
 // inferMemberCall type-checks a call where the callee is a member expression,
-// e.g. obj.method(args). The member expression's own type inference (via
-// inferMemberExprType) must first resolve to a callable type.
+// e.g. obj.method(args). A struct field holding a callable (function) value
+// is checked first — same priority as plain (non-call) member access via
+// inferMemberExprType — falling back to trait-method dispatch only when no
+// such field exists. This can't simply delegate to inferMemberExprType (as it
+// did before trait dispatch existed): that function emits a "has no field"
+// error itself when the lookup misses, which would be wrong/duplicated for a
+// name that turns out to resolve via a trait instead.
 func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.FunctionCallExpr) types.Type {
-	memberType := tc.inferExprType(member)
-	if memberType == nil {
+	objType := tc.inferExprType(member.Object)
+	if objType == nil {
 		return nil
 	}
-	// Check if the resolved member type is itself callable (a LambdaType).
-	if lambdaType, ok := memberType.(*types.LambdaType); ok {
-		return tc.inferLambdaCallFromType(member.Property.Name, lambdaType, call)
+	objType = tc.resolveType(objType, member.Object.GetLocation())
+	methodName := member.Property.Name
+
+	if f, ok := structFieldByName(objType, methodName); ok {
+		tc.typeTable.Set(member, f.Type)
+		if lambdaType, ok := f.Type.(*types.LambdaType); ok {
+			return tc.inferLambdaCallFromType(methodName, lambdaType, call)
+		}
+		tc.addError(call.GetLocation(), SeverityError,
+			"member %q is not callable (type %s)", methodName, f.Type)
+		return nil
 	}
-	tc.addError(call.GetLocation(), SeverityError,
-		"member %q is not callable (type %s)", member.Property.Name, memberType)
+
+	if matches := tc.resolveTraitMethod(objType, methodName, ""); len(matches) > 0 {
+		if len(matches) > 1 {
+			tc.addError(call.GetLocation(), SeverityError,
+				"call to %q is ambiguous between traits %s; use TraitName::%s(...) to disambiguate",
+				methodName, traitNamesOf(matches), methodName)
+			return nil
+		}
+		return tc.inferResolvedTraitMethodCall(methodName, matches[0], call, member.Object)
+	}
+
+	switch t := objType.(type) {
+	case types.NamedStructType:
+		tc.addError(member.GetLocation(), SeverityError, "%s has no field or method %q", t.Name, methodName)
+	case types.AnonymousStructType:
+		tc.addError(member.GetLocation(), SeverityError, "anonymous struct has no field %q", methodName)
+	default:
+		if objType != nil {
+			tc.addError(member.GetLocation(), SeverityError, "member access on non-struct type %s", objType)
+		}
+	}
 	return nil
 }
 
