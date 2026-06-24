@@ -61,6 +61,8 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 			continue
 		}
 
+		traitSig := substituteSelf(traitMethod.Signature, impl.Type)
+
 		// Full parameter-type and return-type comparison using TypesEqual with
 		// Self substituted by the impl's concrete type.  This only fires when
 		// the impl clause body is a *LambdaExpr with explicit parameter types
@@ -68,16 +70,44 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 		// wired up so it works when the grammar gains that capability).
 		if lambda, ok := implMethod.Clause.Body.(*ast.LambdaExpr); ok {
 			implSig := implLambdaSignature(lambda)
-			if implSig != nil {
-				traitSig := substituteSelf(traitMethod.Signature, impl.Type)
-				if !types.TypesEqual(implSig, traitSig) {
-					tc.addError(implMethod.Clause.GetLocation(), SeverityError,
-						"impl of %s for %s: method %q signature mismatch: expected %s, got %s",
-						impl.TraitName, impl.Type, implMethod.Name.GetName(), traitSig, implSig)
-				}
+			if implSig != nil && !types.TypesEqual(implSig, traitSig) {
+				tc.addError(implMethod.Clause.GetLocation(), SeverityError,
+					"impl of %s for %s: method %q signature mismatch: expected %s, got %s",
+					impl.TraitName, impl.Type, implMethod.Name.GetName(), traitSig, implSig)
 			}
 		}
+
+		// Type-check the body so that any method calls inside are registered in
+		// tc.methodTable, which is what lets inferImpurity's fixpoint track
+		// method-to-method call chains when computing purity (FP/Imperative #3).
+		tc.checkTraitImplMethodBody(implMethod, traitSig)
 	}
+}
+
+// checkTraitImplMethodBody type-checks the body of one trait-impl method clause
+// by calling inferExprType on it. The primary effect is that any method calls
+// found inside the body get registered in tc.methodTable via the normal
+// inferMemberCall → inferResolvedTraitMethodCall path, making them visible to
+// inferImpurity's fixpoint for method-to-method purity tracking (FP/Imperative #3).
+//
+// traitSig is the trait's declared signature with Self already substituted for
+// the impl's concrete type. Pattern names are bound in tc.paramTypes so that
+// identifier references inside the body (e.g. the receiver "self") resolve to
+// the correct types for dispatch.
+func (tc *TypeChecker) checkTraitImplMethodBody(implMethod ast.TraitMethodImpl, traitSig *types.LambdaType) {
+	oldTypes, oldMods := tc.paramTypes, tc.paramMods
+	tc.paramTypes = make(map[string]types.Type)
+	tc.paramMods = make(map[string]types.TypeModifier)
+	for i, pat := range implMethod.Clause.Patterns {
+		if i >= len(traitSig.Parameters) {
+			break
+		}
+		if ip, ok := pat.(*ast.IdentifierPattern); ok && traitSig.Parameters[i].Type != nil {
+			tc.paramTypes[ip.Name] = traitSig.Parameters[i].Type
+		}
+	}
+	tc.inferExprType(implMethod.Clause.Body)
+	tc.paramTypes, tc.paramMods = oldTypes, oldMods
 }
 
 // implLambdaSignature builds a *types.LambdaType from a LambdaExpr only when

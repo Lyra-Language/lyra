@@ -719,12 +719,7 @@ let f = pure (n: i64) -> string => {
 // An unannotated method that transitively calls a free function with a
 // genuine effect is still flagged impure (the fixpoint propagates from a
 // function callee back up into the method that calls it, not just between
-// functions or within a single method body). Method-to-method call chains
-// (`n.describe()` from inside another method's body) aren't covered yet:
-// the typechecker only dispatches/records a `.`-call in MethodTable when it
-// actually type-checks that call expression, and trait-impl method bodies
-// aren't walked for general type-checking today (checkTraitImpl validates
-// signature conformance only) — a separate, larger gap than purity inference.
+// functions or within a single method body).
 func TestInferredPureMethods_TransitiveImpurity_Flagged(t *testing.T) {
 	src := `
 let describe = (n: i64) -> string => { println(n); "x" }
@@ -778,6 +773,49 @@ impl Show for i64 {
 }
 let f = (n: i64) -> string => {
     n.show()
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// --- method-to-method call tracking (FP/Imperative #3) ---
+
+// A method body that calls another method on the same receiver, where the
+// callee method is impure, must propagate impurity up through the MethodTable
+// fixpoint so a pure caller is flagged.
+func TestPurity_MethodToMethod_TransitiveImpurity_Error(t *testing.T) {
+	src := `
+trait Fmt {
+    raw: (Self) -> string,
+    display: (Self) -> string
+}
+impl Fmt for i64 {
+    raw = (n) => { println(n); "x" },
+    display = (n) => n.raw()
+}
+let f = pure (n: i64) -> string => {
+    n.display()
+}`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	if errs[0].Message != `pure function calls non-pure trait method "display"` {
+		t.Errorf("unexpected message: %q", errs[0].Message)
+	}
+}
+
+// A method body that calls another method on the same receiver, where the
+// callee is inferred pure, must not be flagged from a pure caller.
+func TestPurity_MethodToMethod_PureChain_Ok(t *testing.T) {
+	src := `
+trait Fmt {
+    raw: (Self) -> string,
+    display: (Self) -> string
+}
+impl Fmt for i64 {
+    raw = (n) => "x",
+    display = (n) => n.raw()
+}
+let f = pure (n: i64) -> string => {
+    n.display()
 }`
 	assertPurityCount(t, checkPurity(t, src), 0)
 }
