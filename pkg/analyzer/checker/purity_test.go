@@ -507,16 +507,20 @@ let f = pure (n: i64) -> string => {
 	assertPurityCount(t, checkPurity(t, src), 0)
 }
 
-// A pure caller invoking a method whose impl is NOT marked `pure` is reported
-// — the same escaping-call check a non-pure function gets, now extended to
-// dispatch resolved via the type-checker.
+// A pure caller invoking a method whose impl is NOT marked `pure` and whose
+// body genuinely performs an effect is reported — the same escaping-call
+// check a non-pure function gets, now extended to dispatch resolved via the
+// type-checker. (An unannotated method with no actual effect is inferred
+// pure instead — see TestInferredPureMethods_UnannotatedPureMethod_NotFlagged
+// below — so the body here must call a known-impure builtin to stay
+// impure under inference.)
 func TestPurity_NonPureMethodCalledFromPure_Error(t *testing.T) {
 	src := `
 trait Show {
     show: (Self) -> string
 }
 impl Show for i64 {
-    show = (n) => "x"
+    show = (n) => { println(n); "x" }
 }
 let f = pure (n: i64) -> string => {
     n.show()
@@ -535,12 +539,60 @@ trait Show {
     show: (Self) -> string
 }
 impl Show for i64 {
-    show = (n) => "x"
+    show = (n) => { println(n); "x" }
 }
 let f = pure (n: i64) -> string => {
     Show::show(n)
 }`
 	assertPurityCount(t, checkPurity(t, src), 1)
+}
+
+// --- InferredPureFunctions / CheckPurity: bottom-up purity inference for
+// unannotated trait-impl methods (FP/Imperative todo #3, the method half) ---
+
+// An unannotated method (no `pure` keyword) whose body has no detected
+// effect is inferred pure, so calling it from a pure function is not
+// flagged — mirroring how an unannotated free function is treated.
+func TestInferredPureMethods_UnannotatedPureMethod_NotFlagged(t *testing.T) {
+	src := `
+trait Show {
+    show: (Self) -> string
+}
+impl Show for i64 {
+    show = (n) => "x"
+}
+let f = pure (n: i64) -> string => {
+    n.show()
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// An unannotated method that transitively calls a free function with a
+// genuine effect is still flagged impure (the fixpoint propagates from a
+// function callee back up into the method that calls it, not just between
+// functions or within a single method body). Method-to-method call chains
+// (`n.describe()` from inside another method's body) aren't covered yet:
+// the typechecker only dispatches/records a `.`-call in MethodTable when it
+// actually type-checks that call expression, and trait-impl method bodies
+// aren't walked for general type-checking today (checkTraitImpl validates
+// signature conformance only) — a separate, larger gap than purity inference.
+func TestInferredPureMethods_TransitiveImpurity_Flagged(t *testing.T) {
+	src := `
+let describe = (n: i64) -> string => { println(n); "x" }
+trait Show {
+    show: (Self) -> string
+}
+impl Show for i64 {
+    show = (n) => describe(n)
+}
+let f = pure (n: i64) -> string => {
+    n.show()
+}`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	if errs[0].Message != `pure function calls non-pure trait method "show"` {
+		t.Errorf("unexpected message: %q", errs[0].Message)
+	}
 }
 
 // A method explicitly marked `pure` is checked for its own internal
