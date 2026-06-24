@@ -5,6 +5,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
+	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 )
 
@@ -431,4 +432,52 @@ let scopeB = (n: i64) -> i64 => {
     run(n)
 }`
 	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// --- InferredPureFunctions: bottom-up purity inference, not just impurity ---
+
+// TestInferredPureFunctions_UnannotatedPureFunction_True: a function with no
+// `pure` keyword is still reported pure if it has no detected effect, making
+// *pure* (not just impure) a recorded result usable by callers other than the
+// purity checker itself.
+func TestInferredPureFunctions_UnannotatedPureFunction_True(t *testing.T) {
+	src := `
+let explicitPure = pure (n: i64) -> i64 => { n + 1 }
+let inferredPure = (n: i64) -> i64 => { n + 1 }`
+	program := parseAndCollectProgram(t, src)
+	result := checker.InferredPureFunctions(program)
+	if !result["explicitPure"] {
+		t.Error("explicitPure should be reported pure")
+	}
+	if !result["inferredPure"] {
+		t.Error("inferredPure should be reported pure despite no `pure` keyword")
+	}
+}
+
+// TestInferredPureFunctions_ImpureFunction_False: a function with a direct
+// effect, or that transitively calls one, is reported impure.
+func TestInferredPureFunctions_ImpureFunction_False(t *testing.T) {
+	src := `
+var counter = 0
+let actuallyImpure = (n: i64) -> i64 => { counter = n; n }
+let callsImpure = (n: i64) -> i64 => { actuallyImpure(n) }`
+	program := parseAndCollectProgram(t, src)
+	result := checker.InferredPureFunctions(program)
+	if result["actuallyImpure"] {
+		t.Error("actuallyImpure should be reported impure")
+	}
+	if result["callsImpure"] {
+		t.Error("callsImpure should be reported impure (transitively, via actuallyImpure)")
+	}
+}
+
+func parseAndCollectProgram(t *testing.T, source string) *ast.Program {
+	t.Helper()
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+	c := collector.NewCollector([]byte(source))
+	program, _, _, _ := c.Collect(tree.RootNode())
+	return program
 }

@@ -75,6 +75,13 @@ type SymbolTable struct {
 	Types     map[string]*ast.TypeDeclStmt
 	Functions map[string]*ast.LambdaExpr
 	Traits    map[string]*ast.TraitDeclStmt
+
+	// PureFuncs maps the name of each function declared with the `pure`
+	// keyword to its lambda expression. Populated during collection; used
+	// by the purity checker to know which functions are explicitly pure
+	// (and which are implicitly pure by default). PureFuncs is a subset
+	// of Functions.
+	PureFuncs map[string]*ast.LambdaExpr
 }
 
 func NewSymbolTable() *SymbolTable {
@@ -83,6 +90,7 @@ func NewSymbolTable() *SymbolTable {
 		Types:       make(map[string]*ast.TypeDeclStmt),
 		Functions:   make(map[string]*ast.LambdaExpr),
 		Traits:      make(map[string]*ast.TraitDeclStmt),
+		PureFuncs:   make(map[string]*ast.LambdaExpr),
 	}
 	st.CurrentScope = st.GlobalScope
 	return st
@@ -118,9 +126,13 @@ func (st *SymbolTable) RegisterTrait(node *ast.TraitDeclStmt) error {
 	return nil
 }
 
-// RegisterFunction adds a function to the symbol table
+// RegisterFunction adds a function to the symbol table. If node is declared
+// `pure`, it is also recorded in PureFuncs (a subset of Functions).
 func (st *SymbolTable) RegisterFunction(name string, node *ast.LambdaExpr) error {
 	st.Functions[name] = node
+	if node.IsPure {
+		st.PureFuncs[name] = node
+	}
 	return nil
 }
 

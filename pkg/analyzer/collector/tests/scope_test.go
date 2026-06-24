@@ -324,3 +324,41 @@ func TestScope_LetElseBindsNamesAfterTheStatement(t *testing.T) {
 		t.Error("y should be registered in the function scope after the let-else statement")
 	}
 }
+
+// --- top-level function registration (Functions / PureFuncs) ---
+
+func TestScope_TopLevelFunctionsRegistered(t *testing.T) {
+	// Every top-level `let`/`var name = <lambda>` binding is registered in
+	// SymbolTable.Functions; PureFuncs holds only the ones declared `pure`.
+	_, table, _, _ := parseAndCollect(t, `
+	let explicitPure = pure (n: i64) -> i64 => n + 1
+	let plain = (n: i64) -> i64 => n + 1`)
+
+	if _, ok := table.Functions["explicitPure"]; !ok {
+		t.Error("explicitPure should be registered in Functions")
+	}
+	if _, ok := table.Functions["plain"]; !ok {
+		t.Error("plain should be registered in Functions")
+	}
+	if _, ok := table.PureFuncs["explicitPure"]; !ok {
+		t.Error("explicitPure should be registered in PureFuncs")
+	}
+	if _, ok := table.PureFuncs["plain"]; ok {
+		t.Error("plain should not be registered in PureFuncs (not declared `pure`)")
+	}
+}
+
+func TestScope_NestedFunctionsNotRegisteredAtTopLevel(t *testing.T) {
+	// Functions/PureFuncs are flat, name-keyed maps scoped to top-level bindings
+	// only — a nested function (which could collide by name with an unrelated
+	// top-level or sibling binding) is deliberately not registered here.
+	_, table, _, _ := parseAndCollect(t, `
+	let outer = () -> i64 => {
+	    let nestedPure = pure (n: i64) -> i64 => n
+	    0
+	}`)
+
+	if _, ok := table.Functions["nestedPure"]; ok {
+		t.Error("nestedPure should not be registered in the top-level Functions map")
+	}
+}

@@ -86,6 +86,30 @@ func CheckPurity(program *ast.Program) []PurityError {
 	return c.errors
 }
 
+// InferredPureFunctions returns, for every top-level `let`/`var name = <lambda>`
+// binding in program, whether it is pure — either explicitly annotated `pure`
+// or, the purity-inference goal (FP/Imperative todo #3), implicitly pure
+// because the same fixpoint CheckPurity uses to flag impure callees found no
+// observable effect in its body or transitive callees. This makes *pure* (not
+// just impure) a recorded, queryable result for any top-level function, not
+// only ones explicitly marked `pure` or ones a `pure` caller happens to call —
+// e.g. for IDE tooling or a future auto-parallelism pass that wants to know
+// "is this callable safe to run as pure" without re-deriving the analysis.
+//
+// Scoped to top-level bindings only, matching topLevelFunctions/mutableGlobals
+// (a name-keyed map can't distinguish same-named functions in different
+// scopes); a non-top-level function's purity is still checked structurally by
+// CheckPurity, just not exposed here by name.
+func InferredPureFunctions(program *ast.Program) map[string]bool {
+	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
+	impure := inferImpureLambdas(collectFuncBindings(program, base))
+	result := make(map[string]bool, len(base[0].functions))
+	for name, lam := range base[0].functions {
+		result[name] = !impure[lam]
+	}
+	return result
+}
+
 // scopeBindings holds everything declared directly within one lexical scope (a
 // lambda body, or the top level): which names are interior-mutable bindings
 // (`var`/`let mut` — the per-scope analogue of mutableGlobals) and which names

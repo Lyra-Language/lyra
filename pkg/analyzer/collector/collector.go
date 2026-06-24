@@ -57,7 +57,26 @@ func NewCollector(source []byte) *Collector {
 // Collect walks the entire tree and returns the AST, symbol table, scope table, and any errors.
 func (c *Collector) Collect(root *sitter.Node) (*ast.Program, *symbols.SymbolTable, *symbols.ScopeTable, []error) {
 	c.walkProgram(root)
+	c.registerTopLevelFunctions()
 	return c.ast, c.table, c.scopeTable, c.errors
+}
+
+// registerTopLevelFunctions populates SymbolTable.Functions (and its
+// PureFuncs subset) for every top-level `let`/`var name = <lambda>` binding.
+// Only top-level bindings are registered here — Functions/PureFuncs are flat
+// maps keyed by name, so a nested same-named binding in a different scope
+// would silently collide; scope-aware resolution for non-top-level functions
+// is handled separately (see checker/purity.go's capture-stack walk).
+func (c *Collector) registerTopLevelFunctions() {
+	for _, stmt := range c.ast.Statements {
+		vd, ok := stmt.(*ast.VarDeclStmt)
+		if !ok {
+			continue
+		}
+		if lam, ok := vd.Value.(*ast.LambdaExpr); ok {
+			c.table.RegisterFunction(vd.Name, lam)
+		}
+	}
 }
 
 func (c *Collector) RecordScope(node ast.AstNode, scope *symbols.Scope) {
