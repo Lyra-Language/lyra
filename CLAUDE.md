@@ -67,7 +67,7 @@ Concrete types:
 
 Helper predicates: `types.IsNumeric(t)`, `types.IsString(t)`, `types.IsBoolean(t)`.
 
-Allocation modifiers: `None`, `Stack`, `Shared`. Type modifiers: `Mut`, `Ref`.
+Allocation modifiers: `Unspecified` (`""`, the zero value / "resolve from default later"), `Stack`, `Shared` (the old `None` was retired — it conflated unspecified with stack and was applied only to arrays). Read a type's flavor via `types.AllocationOf(t)` (centralizes the per-concrete-type field location; returns `Unspecified` for types that can't carry one — primitives, lambdas, and tuples, whose named-tuple modifier lives on `TypeDeclStmt.Allocation`). Allocation is *not* part of nominal identity — `TypesEqual` ignores it (see todo #5's allocation-as-type-identity model). Type modifiers: `Mut`, `Ref`.
 
 ### `pkg/typetable`
 - `TypeTable` — maps `ast.Expression` nodes → resolved `types.Type`. Populated by the typechecker; read by later passes. `Set(expr, typ)` / `Get(expr)`.
@@ -110,6 +110,7 @@ Standalone AST-level semantic passes. Most (e.g. `use_before_declaration.go`, `s
 - **`use_before_declaration.go`** — `CheckUseBeforeDeclaration(program) []UseBeforeDeclarationError`
   Two-pass algorithm: collect all names declared directly in a block, then walk in order flagging any use of a not-yet-seen name.
 - **`purity.go`** — `CheckPurity` enforces `pure` (lambdas and, since 06/24/26, trait-impl methods): no captured mutation, no calls to non-pure functions/methods, no `await`. Both `CheckPurity` and the call-site "non-pure method" check consult `inferImpurity`'s bottom-up fixpoint (not just the explicit `pure` flag) for whether a callee is actually pure — it runs over free functions and trait-impl methods jointly (`collectMethodImpls`), since either can call the other. `InferredPureFunctions(program)` separately exposes that result by name for top-level functions only (a name-keyed map can't disambiguate methods across impls). Known gap: a method-to-method call isn't tracked by the fixpoint, because `checkTraitImpl` never type-checks a method body's expressions (signature conformance only), so that call never reaches `MethodTable`.
+- **`effects.go`** — `checker.Effect`, a bitmask generalizing the old impure/pure bool (`EffectMut`, `EffectIO`, `EffectAlloc`, plus reserved-but-undetected `EffectRand`/`EffectTime`; `EffectNone` = pure). `inferImpurity` accumulates this per function/method (set-monotonic fixpoint) instead of a bool; `InferredEffects(program)` exposes it by name. **`PurityEffects = Mut|IO`** is the subset that violates `pure`: `pure` enforcement and `InferredPureFunctions` are defined against this mask, so `EffectAlloc` is *orthogonal* — a `pure` function may allocate. `EffectAlloc` detection (first slice, `purity.go`'s `allocContext`/`buildAllocContext`): constructing a `shared`-declared struct/data/named-tuple value, *unless* lexically inside a `with`-arena block (a hard-coded discharge — Lyra has no general effect handlers). Implicit allocation (dynamic arrays/strings, escaping closures) and precise arena escape are deferred to a future layout/escape pass. No user-facing effect syntax yet — `pure` still means `EffectNone`; see `todo.md` FP/Imperative #5.
 
 ### `pkg/analyzer/typechecker`
 Walks the collected AST and infers/verifies types, writing results into a `TypeTable`.

@@ -21,21 +21,6 @@ func (e PurityError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Location.Pretty(), e.Message)
 }
 
-// knownImpureBuiltins lists builtins that perform observable effects (I/O, etc.)
-// and therefore may never be called from a `pure` function.
-//
-// This hard-coded set is a stop-gap for *builtins* specifically — user-defined
-// functions (at any nesting depth) are covered by inferImpureLambdas instead;
-// see todo: purity inference, item #3.
-var knownImpureBuiltins = map[string]bool{
-	"print":       true,
-	"println":     true,
-	"fmt.print":   true,
-	"fmt.println": true,
-	"read":        true,
-	"write":       true,
-}
-
 // CheckPurity walks the program and reports observable side effects that occur
 // inside any function marked `pure`.
 //
@@ -81,7 +66,7 @@ var knownImpureBuiltins = map[string]bool{
 //   - impurity of imported functions
 func CheckPurity(program *ast.Program, methodTable *typetable.MethodTable) []PurityError {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
-	impureLambdas, impureMethods := inferImpurity(collectFuncBindings(program, base), collectMethodImpls(program), base, methodTable)
+	impureLambdas, impureMethods := inferImpurity(collectFuncBindings(program, base), collectMethodImpls(program), base, methodTable, buildAllocContext(program))
 	c := &purityChecker{
 		impureLambdas: impureLambdas,
 		impureMethods: impureMethods,
@@ -139,15 +124,38 @@ func (c *purityChecker) checkPureTraitMethods(impl *ast.TraitImplStmt, base []sc
 // scopes); a non-top-level function's purity is still checked structurally by
 // CheckPurity, just not exposed here by name.
 func InferredPureFunctions(program *ast.Program) map[string]bool {
+	effects := InferredEffects(program)
+	result := make(map[string]bool, len(effects))
+	for name, e := range effects {
+		// Mask with PurityEffects, not IsPure(): a function that only allocates
+		// (EffectAlloc) is still pure — allocation is orthogonal to purity (see
+		// PurityEffects). Use InferredEffects directly to see the alloc bit.
+		result[name] = e&PurityEffects == 0
+	}
+	return result
+}
+
+// InferredEffects is InferredPureFunctions generalized to the full effect
+// row (FP/Imperative todo #5): for every top-level `let`/`var name = <lambda>`
+// binding in program, the set of effects inferred for it — EffectNone for a
+// function with no detected effect (the purity-inference result
+// InferredPureFunctions exposes as a bool), or the specific bit(s) found
+// otherwise. Exists so a caller that cares about *which* effect a function
+// has (e.g. "deterministic but allocates" tooling, once EffectAlloc
+// detection lands) doesn't have to re-derive the analysis once that
+// distinction is wired up — today only EffectMut/EffectIO are ever set,
+// matching what CheckPurity already detected before this existed.
+//
+// Same scoping caveat as InferredPureFunctions: top-level bindings only, and
+// no MethodTable (this entry point only has the AST), so a function whose
+// only "effect" is calling a trait method resolved by the type-checker is
+// not picked up here — see CheckPurity for the MethodTable-aware version.
+func InferredEffects(program *ast.Program) map[string]Effect {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
-	// nil methodTable: this entry point has no typechecker output available
-	// (it only takes the AST), so a function that calls a trait method is
-	// never marked impure on that basis alone — a narrower scope than
-	// CheckPurity gets when the caller supplies a real MethodTable.
-	impure, _ := inferImpurity(collectFuncBindings(program, base), collectMethodImpls(program), base, nil)
-	result := make(map[string]bool, len(base[0].functions))
+	impure, _ := inferImpurity(collectFuncBindings(program, base), collectMethodImpls(program), base, nil, buildAllocContext(program))
+	result := make(map[string]Effect, len(base[0].functions))
 	for name, lam := range base[0].functions {
-		result[name] = !impure[lam]
+		result[name] = impure[lam]
 	}
 	return result
 }
@@ -222,15 +230,15 @@ func (s *funcScope) isLocal(name string) bool { return s != nil && s.locals[name
 
 type purityChecker struct {
 	errors []PurityError
-	// impureLambdas holds the function literals inferred to be impure, keyed by
-	// pointer (not name) so that two unrelated functions in different scopes
-	// that happen to share a name are never confused with each other. Populated
-	// by inferImpureLambdas (purity inference, todo #3).
-	impureLambdas map[*ast.LambdaExpr]bool
+	// impureLambdas holds the inferred effect set for each function literal,
+	// keyed by pointer (not name) so that two unrelated functions in different
+	// scopes that happen to share a name are never confused with each other.
+	// EffectNone means inferred pure. Populated by inferImpurity (purity
+	// inference, todo #3; generalized to a full effect row, todo #5).
+	impureLambdas map[*ast.LambdaExpr]Effect
 	// impureMethods is impureLambdas' counterpart for trait-impl methods,
-	// populated by the same call to inferImpurity (purity inference, todo #3,
-	// the method half).
-	impureMethods map[*ast.TraitMethodImpl]bool
+	// populated by the same call to inferImpurity.
+	impureMethods map[*ast.TraitMethodImpl]Effect
 	// assignTargets records IdentifierExpr nodes that are the root of an assignment
 	// target (the LHS of `x += …`, or the base of `x.f = …`). The write is reported
 	// by the mutation checks, so the same node must not be re-reported as a read.
@@ -343,7 +351,10 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 		case *ast.FunctionCallExpr:
 			if sc != nil {
 				if method, ok := c.methodTable.Get(e); ok {
-					if c.impureMethods[method] {
+					// Mask with PurityEffects: only correctness effects (mut/io)
+					// make a callee non-pure — EffectAlloc is orthogonal, so a
+					// pure function may call a method that merely allocates.
+					if c.impureMethods[method]&PurityEffects != 0 {
 						c.report(e.GetLocation(),
 							"pure function calls non-pure trait method %q", method.Name.GetName())
 					}
@@ -371,11 +382,13 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 // user-defined function that resolves (via the capture stack) to a lambda
 // inferImpureLambdas has flagged.
 func (c *purityChecker) isImpureCallee(capture []scopeBindings, name string) bool {
-	if knownImpureBuiltins[name] {
+	if builtinEffects[name]&PurityEffects != 0 {
 		return true
 	}
 	lam, ok := resolveFunction(capture, name)
-	return ok && c.impureLambdas[lam]
+	// Mask with PurityEffects: an alloc-only callee is still pure to call from
+	// a pure function (EffectAlloc is orthogonal to purity).
+	return ok && c.impureLambdas[lam]&PurityEffects != 0
 }
 
 func (c *purityChecker) report(loc ast.Location, format string, args ...any) {
@@ -618,6 +631,103 @@ func mutableGlobals(program *ast.Program) map[string]bool {
 	return globals
 }
 
+// allocContext holds the program-level information the effect inference needs
+// to detect EffectAlloc: which type *names* are heap-allocated (declared
+// `shared`) and which construction expressions are lexically inside a
+// `with`-arena block (so their allocation is discharged into the arena rather
+// than counting as an escaping heap allocation). Computed once per program by
+// buildAllocContext and threaded into the effect-inference functions.
+//
+// First-slice scope (FP/Imperative todo #5): only *explicit, modifier-marked*
+// allocation is detected — constructing a value of a `shared`-declared struct
+// or data type. Implicit allocation (dynamic arrays/strings, escaping
+// closures) is deferred to a future layout/escape-analysis pass, and the
+// arena discharge is deliberately approximate: a `shared` value built inside a
+// `with` block but *returned out* of it still escapes the arena, but detecting
+// that needs the same escape analysis, so for now anything lexically inside
+// the block is treated as discharged.
+type allocContext struct {
+	// sharedNames is every type or constructor *name* whose by-name
+	// construction heap-allocates: a `shared`-declared struct or named-tuple
+	// type name, and every constructor name of a `shared` data type. A
+	// construction expression (StructInstanceExpr / TupleLiteralExpr /
+	// DataConstructorExpr) whose name is in this set allocates.
+	sharedNames map[string]bool
+	// discharged holds construction exprs lexically inside a `with`-arena
+	// block, whose allocation goes into the arena rather than escaping.
+	discharged map[ast.Expression]bool
+}
+
+// allocates reports whether constructing via name (a struct/named-tuple type
+// name or a data constructor name) heap-allocates — i.e. the type was declared
+// `shared` — and the construction expr is not discharged into an enclosing
+// arena.
+func (a *allocContext) allocates(name string, expr ast.Expression) bool {
+	if a == nil || a.discharged[expr] {
+		return false
+	}
+	return a.sharedNames[name]
+}
+
+// buildAllocContext scans program for `shared`-declared types (the heap /
+// ref-counted allocation modifier; `stack` and unmodified types do not
+// allocate on the shared heap) and for construction expressions enclosed in a
+// `with`-arena block. For structs and data types the modifier lives on the
+// inner type stored in the TypeDeclStmt (NamedStructType.Allocation /
+// DataType.Allocation); for named tuples it lives on TypeDeclStmt.Allocation
+// itself (a collector inconsistency, handled per-case here).
+func buildAllocContext(program *ast.Program) *allocContext {
+	a := &allocContext{
+		sharedNames: map[string]bool{},
+		discharged:  map[ast.Expression]bool{},
+	}
+	for _, node := range program.Statements {
+		td, ok := node.(*ast.TypeDeclStmt)
+		if !ok {
+			continue
+		}
+		switch t := td.Type.(type) {
+		case types.NamedStructType:
+			if types.AllocationOf(t) == types.Shared {
+				a.sharedNames[td.Name] = true
+			}
+		case types.DataType:
+			if types.AllocationOf(t) == types.Shared {
+				for _, ctor := range t.Constructors {
+					a.sharedNames[ctor.Name] = true
+				}
+			}
+		case types.TupleType:
+			// A named tuple's modifier lives on the decl, not the TupleType, so
+			// AllocationOf can't see it — read TypeDeclStmt.Allocation directly.
+			if td.Allocation == types.Shared {
+				a.sharedNames[td.Name] = true
+			}
+		}
+	}
+	// Mark every expression lexically inside a `with`-arena body as discharged.
+	// WithStmt is a *statement*, so it is caught in the onStmt callback; the
+	// outer walk descends through the whole program (including into lambda
+	// bodies, via the walker's stmt/expr mutual recursion), so a construction's
+	// pointer marked here is the same object the effect walk later visits,
+	// making set membership exact.
+	markInsideArenas := func(stmt ast.Statement) bool {
+		if w, ok := stmt.(*ast.WithStmt); ok {
+			ast.WalkExpr(&w.Body, nil, func(inner ast.Expression) bool {
+				a.discharged[inner] = true
+				return true
+			})
+		}
+		return true
+	}
+	for _, node := range program.Statements {
+		if stmt, ok := node.(ast.Statement); ok {
+			ast.WalkStmt(stmt, markInsideArenas, nil)
+		}
+	}
+	return a
+}
+
 // topLevelFunctions maps each top-level `let`/`var name = <lambda>` binding to
 // its lambda. Used as the base (outermost) frame of every capture stack.
 func topLevelFunctions(program *ast.Program) map[string]*ast.LambdaExpr {
@@ -691,26 +801,28 @@ func collectFuncBindings(program *ast.Program, base []scopeBindings) map[*ast.La
 // with no detected effect is inferred pure exactly like an unannotated
 // function (FP/Imperative todo #3, "bottom-up purity inference for
 // unannotated methods"). methodTable is nil-safe — see purityChecker.methodTable.
-func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*ast.TraitMethodImpl, base []scopeBindings, methodTable *typetable.MethodTable) (map[*ast.LambdaExpr]bool, map[*ast.TraitMethodImpl]bool) {
-	impureLambdas := map[*ast.LambdaExpr]bool{}
-	impureMethods := map[*ast.TraitMethodImpl]bool{}
+func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*ast.TraitMethodImpl, base []scopeBindings, methodTable *typetable.MethodTable, alloc *allocContext) (map[*ast.LambdaExpr]Effect, map[*ast.TraitMethodImpl]Effect) {
+	impureLambdas := map[*ast.LambdaExpr]Effect{}
+	impureMethods := map[*ast.TraitMethodImpl]Effect{}
+	// Fixpoint over an effect *set*: a callable's effect can only grow as more
+	// of its callees are analyzed, so each pass ORs in any newly found bits and
+	// we iterate until nothing changes. (This must recompute every callable
+	// each pass — not skip the ones already non-pure — because a function found
+	// to allocate early might still gain an io/mut bit from a callee resolved
+	// later; a boolean "already impure, skip" early-out would miss that.)
 	for {
 		changed := false
 		for lam, capture := range lambdaDefs {
-			if impureLambdas[lam] {
-				continue
-			}
-			if lambdaHasObservableEffect(lam, capture, impureLambdas, impureMethods, methodTable) {
-				impureLambdas[lam] = true
+			e := impureLambdas[lam] | lambdaEffects(lam, capture, impureLambdas, impureMethods, methodTable, alloc)
+			if e != impureLambdas[lam] {
+				impureLambdas[lam] = e
 				changed = true
 			}
 		}
 		for _, m := range methods {
-			if impureMethods[m] {
-				continue
-			}
-			if methodHasObservableEffect(m, base, impureLambdas, impureMethods, methodTable) {
-				impureMethods[m] = true
+			e := impureMethods[m] | methodEffects(m, base, impureLambdas, impureMethods, methodTable, alloc)
+			if e != impureMethods[m] {
+				impureMethods[m] = e
 				changed = true
 			}
 		}
@@ -739,13 +851,14 @@ func collectMethodImpls(program *ast.Program) []*ast.TraitMethodImpl {
 	return methods
 }
 
-// lambdaHasObservableEffect reports whether lam's body performs any effect
+// lambdaEffects returns the set of effects lam's body performs that are
 // observable outside the call, given defCapture (the capture stack at lam's
-// definition site) and the sets of lambdas/methods already known to be
-// impure. It mirrors the checks in the main pass but accumulates a bool
-// instead of emitting diagnostics, and is used only for inference. It does
-// not descend into nested lambdas (they have their own boundary).
-func lambdaHasObservableEffect(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambdas map[*ast.LambdaExpr]bool, impureMethods map[*ast.TraitMethodImpl]bool, methodTable *typetable.MethodTable) bool {
+// definition site) and the effect sets already inferred for lambdas/methods
+// it might call. It mirrors the checks in the main enforcement pass but
+// accumulates an Effect bitmask instead of emitting diagnostics, and is used
+// only for inference. It does not descend into nested lambdas (they have
+// their own boundary). EffectNone means no effect was found (inferred pure).
+func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, alloc *allocContext) Effect {
 	scope := directScopeBindings(lam)
 	locals := make(map[string]bool, len(scope.mutable))
 	for name := range scope.mutable {
@@ -756,19 +869,19 @@ func lambdaHasObservableEffect(lam *ast.LambdaExpr, defCapture []scopeBindings, 
 	// alongside lam in the same body), not just the scope it was defined in.
 	bodyCapture := pushScope(defCapture, scope)
 	mutBorrows := mutBorrowParams(lam)
-	found := false
+	var found Effect
 	onStmt := func(s ast.Statement) bool {
 		switch st := s.(type) {
 		case *ast.VarReassignmentStmt:
 			if !locals[st.Name] {
-				found = true
+				found |= EffectMut
 			}
 		case *ast.LValueAssignmentStmt:
 			if root := rootIdentName(st.Target); root != "" && (mutBorrows[root] || !locals[root]) {
-				found = true
+				found |= EffectMut
 			}
 		case *ast.DerefAssignmentStmt:
-			found = true
+			found |= EffectMut
 		}
 		return true
 	}
@@ -779,31 +892,46 @@ func lambdaHasObservableEffect(lam *ast.LambdaExpr, defCapture []scopeBindings, 
 		case *ast.IdentifierExpr:
 			// Reading captured mutable state is non-deterministic. (An assignment
 			// target also visits its root as an IdentifierExpr, but those nodes are
-			// already counted by the mutation cases above, so double-counting a
-			// bool here is harmless.)
+			// already counted by the mutation cases above, so double-counting the
+			// bit here is harmless.)
 			if !locals[ex.Name] && capturedMutable(bodyCapture, ex.Name) {
-				found = true
+				found |= EffectMut
 			}
 		case *ast.MathAssignOpExpr:
 			if !locals[ex.Left.Name] {
-				found = true
+				found |= EffectMut
 			}
 		case *ast.FunctionCallExpr:
 			if method, ok := methodTable.Get(ex); ok {
-				if impureMethods[method] {
-					found = true
-				}
+				found |= impureMethods[method]
 			} else if name := calleeName(ex.Function); name != "" {
-				if knownImpureBuiltins[name] {
-					found = true
-				} else if target, ok := resolveFunction(bodyCapture, name); ok && impureLambdas[target] {
-					found = true
+				if e, ok := builtinEffects[name]; ok {
+					found |= e
+				} else if target, ok := resolveFunction(bodyCapture, name); ok {
+					found |= impureLambdas[target]
 				}
+			}
+		case *ast.StructInstanceExpr:
+			// Constructing a `shared`-declared struct heap-allocates.
+			if alloc.allocates(ex.Name, ex) {
+				found |= EffectAlloc
+			}
+		case *ast.TupleLiteralExpr:
+			// A named tuple literal: either a payload data construction
+			// (`Branch(5)`) or a named-tuple type construction (`Foo(1, 2)`).
+			// Both heap-allocate when the name is a `shared` constructor/type.
+			if alloc.allocates(ex.Name, ex) {
+				found |= EffectAlloc
+			}
+		case *ast.DataConstructorExpr:
+			// A nullary constructor (`Leaf`) of a `shared` data type.
+			if alloc.allocates(ex.Constructor, ex) {
+				found |= EffectAlloc
 			}
 		case *ast.AwaitExpr:
 			// Awaiting is an observable I/O effect (see exprVisitor), so a function
 			// that awaits is impure.
-			found = true
+			found |= EffectIO
 		}
 		return true
 	}
@@ -811,34 +939,34 @@ func lambdaHasObservableEffect(lam *ast.LambdaExpr, defCapture []scopeBindings, 
 	return found
 }
 
-// methodHasObservableEffect is lambdaHasObservableEffect's counterpart for a
-// trait-impl method: same effect checks as lambdaHasObservableEffect, but
-// over a bare LambdaClause (a method is always exactly one clause, never a
-// multi-clause or bare-body lambda) and with no mut-borrow parameter set to
-// consult (methods have no mut/own/ref parameter-modifier syntax yet, unlike
-// a lambda's — see directScopeBindingsForClause). base is the program's
-// top-level capture frame; a method's own scope never nests inside another
-// lambda's, so that is the entire capture stack besides the method's own.
-func methodHasObservableEffect(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas map[*ast.LambdaExpr]bool, impureMethods map[*ast.TraitMethodImpl]bool, methodTable *typetable.MethodTable) bool {
+// methodEffects is lambdaEffects's counterpart for a trait-impl method: same
+// effect checks as lambdaEffects, but over a bare LambdaClause (a method is
+// always exactly one clause, never a multi-clause or bare-body lambda) and
+// with no mut-borrow parameter set to consult (methods have no mut/own/ref
+// parameter-modifier syntax yet, unlike a lambda's — see
+// directScopeBindingsForClause). base is the program's top-level capture
+// frame; a method's own scope never nests inside another lambda's, so that
+// is the entire capture stack besides the method's own.
+func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, alloc *allocContext) Effect {
 	scope := directScopeBindingsForClause(&m.Clause)
 	locals := make(map[string]bool, len(scope.mutable))
 	for name := range scope.mutable {
 		locals[name] = true
 	}
 	bodyCapture := pushScope(base, scope)
-	found := false
+	var found Effect
 	onStmt := func(s ast.Statement) bool {
 		switch st := s.(type) {
 		case *ast.VarReassignmentStmt:
 			if !locals[st.Name] {
-				found = true
+				found |= EffectMut
 			}
 		case *ast.LValueAssignmentStmt:
 			if root := rootIdentName(st.Target); root != "" && !locals[root] {
-				found = true
+				found |= EffectMut
 			}
 		case *ast.DerefAssignmentStmt:
-			found = true
+			found |= EffectMut
 		}
 		return true
 	}
@@ -848,26 +976,36 @@ func methodHasObservableEffect(m *ast.TraitMethodImpl, base []scopeBindings, imp
 			return false // nested lambda: separate boundary
 		case *ast.IdentifierExpr:
 			if !locals[ex.Name] && capturedMutable(bodyCapture, ex.Name) {
-				found = true
+				found |= EffectMut
 			}
 		case *ast.MathAssignOpExpr:
 			if !locals[ex.Left.Name] {
-				found = true
+				found |= EffectMut
 			}
 		case *ast.FunctionCallExpr:
 			if method, ok := methodTable.Get(ex); ok {
-				if impureMethods[method] {
-					found = true
-				}
+				found |= impureMethods[method]
 			} else if name := calleeName(ex.Function); name != "" {
-				if knownImpureBuiltins[name] {
-					found = true
-				} else if target, ok := resolveFunction(bodyCapture, name); ok && impureLambdas[target] {
-					found = true
+				if e, ok := builtinEffects[name]; ok {
+					found |= e
+				} else if target, ok := resolveFunction(bodyCapture, name); ok {
+					found |= impureLambdas[target]
 				}
 			}
+		case *ast.StructInstanceExpr:
+			if alloc.allocates(ex.Name, ex) {
+				found |= EffectAlloc
+			}
+		case *ast.TupleLiteralExpr:
+			if alloc.allocates(ex.Name, ex) {
+				found |= EffectAlloc
+			}
+		case *ast.DataConstructorExpr:
+			if alloc.allocates(ex.Constructor, ex) {
+				found |= EffectAlloc
+			}
 		case *ast.AwaitExpr:
-			found = true
+			found |= EffectIO
 		}
 		return true
 	}
@@ -876,7 +1014,7 @@ func methodHasObservableEffect(m *ast.TraitMethodImpl, base []scopeBindings, imp
 }
 
 // calleeName renders a call target as a dotted name ("foo", "fmt.println") for
-// lookup against knownImpureBuiltins. Returns "" for callees that aren't a plain
+// lookup against builtinEffects. Returns "" for callees that aren't a plain
 // identifier or member chain (e.g. an immediately-invoked lambda).
 func calleeName(fn ast.Expression) string {
 	switch f := fn.(type) {

@@ -479,6 +479,155 @@ let callsImpure = (n: i64) -> i64 => { actuallyImpure(n) }`
 	}
 }
 
+// TestInferredEffects_DistinguishesMutFromIO: InferredEffects (the effect-row
+// generalization of InferredPureFunctions, FP/Imperative todo #5) reports
+// *which* effect was found, not just impure/pure — a mutation-only function
+// should carry EffectMut but not EffectIO, a print-only function the
+// reverse, and a function combining both should carry both bits.
+func TestInferredEffects_DistinguishesMutFromIO(t *testing.T) {
+	src := `
+var counter = 0
+let mutates = (n: i64) -> i64 => {
+    counter = n
+    n
+}
+let prints = (n: i64) -> i64 => {
+    print(n)
+    n
+}
+let both = (n: i64) -> i64 => {
+    counter = n
+    print(n)
+    n
+}
+let pureFn = (n: i64) -> i64 => { n + 1 }`
+	program := parseAndCollectProgram(t, src)
+	effects := checker.InferredEffects(program)
+
+	if !effects["mutates"].Has(checker.EffectMut) || effects["mutates"].Has(checker.EffectIO) {
+		t.Errorf("mutates: want EffectMut only, got %v", effects["mutates"])
+	}
+	if !effects["prints"].Has(checker.EffectIO) || effects["prints"].Has(checker.EffectMut) {
+		t.Errorf("prints: want EffectIO only, got %v", effects["prints"])
+	}
+	if !effects["both"].Has(checker.EffectMut) || !effects["both"].Has(checker.EffectIO) {
+		t.Errorf("both: want EffectMut|EffectIO, got %v", effects["both"])
+	}
+	if !effects["pureFn"].IsPure() {
+		t.Errorf("pureFn: want EffectNone, got %v", effects["pureFn"])
+	}
+}
+
+// --- EffectAlloc: explicit, modifier-marked allocation (FP/Imperative #5) ---
+
+// Constructing a `shared`-declared struct (heap/ref-counted) carries
+// EffectAlloc — and *only* EffectAlloc, since allocation is orthogonal to
+// purity: the function is still reported pure by InferredPureFunctions.
+func TestInferredEffects_SharedStructConstruction_AllocButPure(t *testing.T) {
+	src := `
+shared struct Node { v: i64 }
+stack struct Pos { x: i64 }
+let allocs = () -> i64 => {
+    let n = Node { v: 1 }
+    n.v
+}
+let stackOnly = () -> i64 => {
+    let p = Pos { x: 1 }
+    p.x
+}`
+	program := parseAndCollectProgram(t, src)
+	effects := checker.InferredEffects(program)
+
+	if !effects["allocs"].Has(checker.EffectAlloc) {
+		t.Errorf("allocs: want EffectAlloc, got %v", effects["allocs"])
+	}
+	if effects["allocs"]&checker.PurityEffects != 0 {
+		t.Errorf("allocs: must have no purity-violating effect, got %v", effects["allocs"])
+	}
+	// A `stack` struct is not a shared-heap allocation, so no EffectAlloc.
+	if effects["stackOnly"].Has(checker.EffectAlloc) {
+		t.Errorf("stackOnly: stack construction must not be EffectAlloc, got %v", effects["stackOnly"])
+	}
+
+	// Orthogonality: an allocating-but-otherwise-pure function is still pure.
+	pure := checker.InferredPureFunctions(program)
+	if !pure["allocs"] {
+		t.Error("allocs should be reported pure despite allocating (alloc is orthogonal to purity)")
+	}
+}
+
+// Constructing a `shared` data type — both a nullary constructor (`Leaf`) and
+// a payload constructor (`Branch(5)`, which parses as a named tuple literal) —
+// carries EffectAlloc; constructing an unmodified data type does not.
+func TestInferredEffects_SharedDataConstruction_Alloc(t *testing.T) {
+	src := `
+shared data Tree = Leaf | Branch(i64)
+data Plain = A | B(i64)
+let sharedNullary = () -> i64 => {
+    let x = Leaf
+    0
+}
+let sharedPayload = () -> i64 => {
+    let x = Branch(5)
+    0
+}
+let plain = () -> i64 => {
+    let x = B(5)
+    0
+}`
+	program := parseAndCollectProgram(t, src)
+	effects := checker.InferredEffects(program)
+
+	if !effects["sharedNullary"].Has(checker.EffectAlloc) {
+		t.Errorf("sharedNullary: want EffectAlloc, got %v", effects["sharedNullary"])
+	}
+	if !effects["sharedPayload"].Has(checker.EffectAlloc) {
+		t.Errorf("sharedPayload: want EffectAlloc, got %v", effects["sharedPayload"])
+	}
+	if effects["plain"].Has(checker.EffectAlloc) {
+		t.Errorf("plain: unmodified data construction must not be EffectAlloc, got %v", effects["plain"])
+	}
+}
+
+// A `shared` construction lexically inside a `with`-arena block is discharged
+// into the arena, so it does not count as an escaping heap allocation.
+func TestInferredEffects_ArenaDischargesAlloc(t *testing.T) {
+	src := `
+shared struct Node { v: i64 }
+let outside = () -> i64 => {
+    let n = Node { v: 1 }
+    n.v
+}
+let inside = () -> i64 => {
+    with Arena.new(4) {
+        let n = Node { v: 1 }
+        n.v
+    }
+    0
+}`
+	program := parseAndCollectProgram(t, src)
+	effects := checker.InferredEffects(program)
+
+	if !effects["outside"].Has(checker.EffectAlloc) {
+		t.Errorf("outside: want EffectAlloc, got %v", effects["outside"])
+	}
+	if effects["inside"].Has(checker.EffectAlloc) {
+		t.Errorf("inside: arena-discharged construction must not be EffectAlloc, got %v", effects["inside"])
+	}
+}
+
+// A `pure`-annotated function that allocates a `shared` value produces no
+// purity diagnostic — allocation is orthogonal to `pure` enforcement.
+func TestPurity_PureFunctionMayAllocate(t *testing.T) {
+	src := `
+shared struct Node { v: i64 }
+let build = pure () -> i64 => {
+    let n = Node { v: 1 }
+    n.v
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
 func parseAndCollectProgram(t *testing.T, source string) *ast.Program {
 	t.Helper()
 	tree, err := parser.Parse(source)

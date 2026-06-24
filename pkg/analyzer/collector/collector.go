@@ -293,7 +293,7 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 	case "parameterized_type":
 		return c.parseParameterizedType(node)
 	case "array_type":
-		return c.parseArrayType(node, types.None)
+		return c.parseArrayType(node, types.Unspecified)
 	case "constrained_type":
 		return c.parseConstrainedType(node)
 	case "allocated_type":

@@ -33,7 +33,6 @@ Program(1 statements) {
 							}
 							Type: {
 								DynamicArrayType(DynamicArray<t>) {
-									Allocation: none
 									ElementType: {
 										GenericType(t) {
 											Name: t
@@ -76,7 +75,6 @@ Program(1 statements) {
 						ReturnType(DynamicArray<u>) {
 							Type: {
 								DynamicArrayType(DynamicArray<u>) {
-									Allocation: none
 									ElementType: {
 										GenericType(u) {
 											Name: u

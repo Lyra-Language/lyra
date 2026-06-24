@@ -78,13 +78,47 @@ func (UnresolvedType) typeNode()         {}
 func (u UnresolvedType) GetName() string { return u.Name }
 func (u UnresolvedType) String() string  { return u.GetName() }
 
+// AllocationModifier is the storage flavor of a value: where/how it lives.
+// It is a property carried *alongside* a nominal type, not part of nominal
+// identity (TypesEqual ignores it); see AllocationOf and FP/Imperative todo #5.
 type AllocationModifier string
 
 const (
-	None   AllocationModifier = "none"
-	Stack  AllocationModifier = "stack"
+	// Unspecified means no modifier was written at this site. It is the zero
+	// value, so an un-set Allocation field reads as Unspecified — the canonical
+	// "not specified, resolve from the declaration default later" sentinel.
+	// (Replaces the old "none" value, which conflated unspecified with stack
+	// and was applied inconsistently — only to array types, never to
+	// struct/data/tuple, which were left as "".)
+	Unspecified AllocationModifier = ""
+	// Stack — stack/inline allocation: value semantics, no heap. The language
+	// default flavor for a type with no declared allocation.
+	Stack AllocationModifier = "stack"
+	// Shared — heap, reference-counted (the `shared` modifier). Constructing a
+	// Shared value heap-allocates (see checker.EffectAlloc).
 	Shared AllocationModifier = "shared"
 )
+
+// AllocationOf returns the allocation flavor a type carries, or Unspecified for
+// a type that does not (or cannot) carry one: primitives, generics, lambdas,
+// and — for now — tuples, whose named-tuple modifier lives on the declaration
+// statement (TypeDeclStmt.Allocation) rather than on TupleType itself. This is
+// the single accessor every pass should use to read a type's flavor, so the
+// per-concrete-type location of the field is centralized in one place.
+func AllocationOf(t Type) AllocationModifier {
+	switch t := t.(type) {
+	case NamedStructType:
+		return t.Allocation
+	case DataType:
+		return t.Allocation
+	case StaticArrayType:
+		return t.Allocation
+	case DynamicArrayType:
+		return t.Allocation
+	default:
+		return Unspecified
+	}
+}
 
 type TypeModifier string
 

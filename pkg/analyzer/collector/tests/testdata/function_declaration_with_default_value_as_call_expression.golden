@@ -14,7 +14,6 @@ Program(1 statements) {
 							}
 							Type: {
 								DynamicArrayType(DynamicArray<string>) {
-									Allocation: none
 									ElementType: {
 										PrimitiveType(string) {
 											Name: string
