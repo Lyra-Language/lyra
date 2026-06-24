@@ -80,6 +80,8 @@ Converts a tree-sitter CST into `*ast.Program` and `*symbols.SymbolTable`.
 
 **Dispatch:** `collector.go` owns `CollectStatement` and `CollectExpr` (switch on `node.Kind()`), and `ParseType`. Subpackages call back into the root collector via the `Collector` interface to avoid circular imports.
 
+**Nil-node hazard:** `node.ChildByFieldName(...)` returns a genuine Go `nil` `*sitter.Node` for an absent *optional* grammar field (e.g. a zero-parameter `lambda_type`'s `parameter_types`). Calling any accessor (`ChildCount`, `Child`, `Kind`, …) on that nil node **hangs inside the go-tree-sitter CGO binding instead of panicking** — found via a real bug (`parseParameterTypes`, fixed 06/24/26) where this silently froze the whole collector. Always nil-check before touching the result of an optional field lookup, the same way `parseType`/`CollectExpression` already do.
+
 **Subpackages** (all pass `*collector_ctx.Ctx` as their first argument):
 
 | Subpackage | Files handle |

@@ -1,9 +1,6 @@
 ## To-Dos
 ---------
 
-### BUG (found 06/24/26) — parser hangs on a lambda-typed struct field
-A struct field annotated with a lambda type, e.g. `struct Box { show: () -> string }`, sends the tree-sitter parser into an infinite loop (confirmed pre-existing — reproduces with the trait-method-dispatch grammar changes from the same day fully reverted; unrelated to them). Needs its own dedicated investigation before anyone writes a function-valued struct field in real code. Found incidentally while testing trait-method dispatch against a struct field of the same name as a trait method.
-
 ### Pit of Success — language design (ordered by importance)
 These make the *safe/correct* path the *easy/default* path, and force the unsafe path to be loud and explicit. Listed highest-leverage first.
 
@@ -55,6 +52,7 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ------------
 
 ### 06/24/26
+- **Fixed: parser hangs on a lambda-typed struct field** — `struct Box { show: () -> string }` sent the collector into an infinite loop. Root cause: `parseLambdaType`'s zero-parameter case has no `parameter_types` CST node at all (it's an optional grammar field), so `ChildByFieldName` returns nil — and calling an accessor (`ChildCount`, `Child`) on a nil `*sitter.Node` hangs inside the go-tree-sitter CGO binding instead of panicking. Added a nil guard to `parseParameterTypes`. Tests: `lambda_type_test.go` (regression test runs on a goroutine with a 3s deadline so a reintroduced hang fails fast instead of stalling the suite; confirmed it actually catches the bug by reverting the fix and re-running).
 - **Trait methods can be marked `pure`; real method-call dispatch** (FP/Imperative #3) — `obj.method(args)` and the new fully-qualified `Trait::method(args)` form (disambiguates when two traits implement the same method name for a type) now resolve to a specific impl, type-check against the trait's signature, and report ambiguity — previously trait methods couldn't be called at all. Resolution is recorded in a new `typetable.MethodTable` so the purity checker (reordered to run after typechecking) can flag a pure function/method calling a non-pure one. Required a real grammar fix, not a precedence tweak: turbofish and the new `Trait::method` form both started with `TypeName ::`; made `::<` one atomic lexer token so the *lexer* disambiguates instead of the parser guessing wrong. Tests: `traits.txt`/`postfix.txt` (corpus), `trait_method_dispatch_test.go`, `purity_test.go`.
 
 ### 06/23/26

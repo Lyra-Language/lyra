@@ -358,6 +358,15 @@ func (c *Collector) parseLambdaType(node *sitter.Node) *types.LambdaType {
 
 func (c *Collector) parseParameterTypes(node *sitter.Node) []types.ParameterType {
 	parameterTypes := []types.ParameterType{}
+	if node == nil {
+		// `parameter_types` is an optional field (lambda_type.js): a
+		// zero-parameter lambda type like `() -> string` omits it entirely,
+		// so ChildByFieldName returns nil here — not an error, just no
+		// parameters. Calling a *sitter.Node accessor (ChildCount, Child, …)
+		// on a nil node hangs inside the go-tree-sitter CGO binding instead
+		// of panicking, so this guard is load-bearing, not defensive fluff.
+		return parameterTypes
+	}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "parameter_type" {
