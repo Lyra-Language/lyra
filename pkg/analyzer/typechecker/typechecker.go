@@ -859,6 +859,12 @@ func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
 // the concrete declared type (e.g. *ConstrainedType, NamedStructType, DataType).
 // All other type values are returned unchanged.
 //
+// If the UnresolvedType carries a usage-site allocation modifier (e.g. from
+// `let n: shared Node`), it is applied on top of the declaration's default via
+// types.WithAllocation after the name is resolved. The cache stores the base
+// type (declaration-level allocation) so that allocation-annotated and
+// unannotated references to the same name both benefit from it.
+//
 // Results are cached so that repeated resolutions of the same name only emit
 // "unknown type" once per Check run.
 func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
@@ -867,7 +873,7 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 		return t
 	}
 	if cached, ok := tc.resolvedTypes[ut.Name]; ok {
-		return cached
+		return types.WithAllocation(cached, ut.Allocation)
 	}
 	decl, ok := tc.symTable.Types[ut.Name]
 	if !ok {
@@ -876,7 +882,7 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 		return t
 	}
 	tc.resolvedTypes[ut.Name] = decl.Type
-	return decl.Type
+	return types.WithAllocation(decl.Type, ut.Allocation)
 }
 
 // resolveTypeIfKnown resolves an UnresolvedType only when the name is actually
@@ -891,10 +897,10 @@ func (tc *TypeChecker) resolveTypeIfKnown(t types.Type) types.Type {
 		return t
 	}
 	if cached, ok := tc.resolvedTypes[ut.Name]; ok {
-		return cached
+		return types.WithAllocation(cached, ut.Allocation)
 	}
 	if decl, ok := tc.symTable.Types[ut.Name]; ok {
-		return decl.Type
+		return types.WithAllocation(decl.Type, ut.Allocation)
 	}
 	return t
 }

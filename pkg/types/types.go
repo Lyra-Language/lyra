@@ -69,9 +69,13 @@ func (VoidType) typeNode()       {}
 func (VoidType) GetName() string { return "void" }
 func (VoidType) String() string  { return VoidType{}.GetName() }
 
-// UnresolvedType represents a type reference that hasn't been resolved yet
+// UnresolvedType represents a type reference that hasn't been resolved yet.
+// Allocation carries a usage-site modifier (e.g. from `let n: shared Node`) that
+// the typechecker applies on top of the declaration's default after resolution.
+// Allocation is NOT part of nominal identity — TypesEqual ignores it.
 type UnresolvedType struct {
-	Name string // e.g., "Tree", "Point", "Maybe"
+	Name       string             // e.g., "Tree", "Point", "Maybe"
+	Allocation AllocationModifier // usage-site override; Unspecified = inherit from decl
 }
 
 func (UnresolvedType) typeNode()         {}
@@ -115,8 +119,45 @@ func AllocationOf(t Type) AllocationModifier {
 		return t.Allocation
 	case DynamicArrayType:
 		return t.Allocation
+	case ParameterizedType:
+		return t.Allocation
+	case UnresolvedType:
+		return t.Allocation
 	default:
 		return Unspecified
+	}
+}
+
+// WithAllocation returns a copy of t with its allocation modifier overridden to
+// mod. When mod is Unspecified the original value is returned unchanged —
+// Unspecified means "inherit from the declaration default", so no override.
+// Types that cannot carry a flavor (primitives, generics, lambdas, tuples) are
+// returned unchanged regardless of mod.
+func WithAllocation(t Type, mod AllocationModifier) Type {
+	if mod == Unspecified {
+		return t
+	}
+	switch t := t.(type) {
+	case NamedStructType:
+		t.Allocation = mod
+		return t
+	case DataType:
+		t.Allocation = mod
+		return t
+	case StaticArrayType:
+		t.Allocation = mod
+		return t
+	case DynamicArrayType:
+		t.Allocation = mod
+		return t
+	case ParameterizedType:
+		t.Allocation = mod
+		return t
+	case UnresolvedType:
+		t.Allocation = mod
+		return t
+	default:
+		return t
 	}
 }
 

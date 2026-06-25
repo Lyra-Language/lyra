@@ -471,13 +471,15 @@ func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {
 		c.addError(node, CollectorErrorSeverityError, "parseAllocatedType: type node is nil")
 		return nil
 	}
-	switch typeNode.Kind() {
-	case "array_type":
+	// Arrays are built with the modifier directly (it becomes part of the array
+	// type at construction). All other types are parsed normally and then have
+	// the modifier overlaid via WithAllocation, which handles UnresolvedType,
+	// ParameterizedType, NamedStructType, etc., and is a no-op for types that
+	// cannot carry a flavor (primitives, generics, lambdas).
+	if typeNode.Kind() == "array_type" {
 		return c.parseArrayType(typeNode, allocation)
-	default:
-		c.addError(node, CollectorErrorSeverityError, "parseAllocatedType: unknown allocated type node kind: %s", typeNode.Kind())
-		return nil
 	}
+	return types.WithAllocation(c.parseType(typeNode), allocation)
 }
 
 func (c *Collector) ParseDestructuringPattern(patternNode *sitter.Node) ast.Pattern {
