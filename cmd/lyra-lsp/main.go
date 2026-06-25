@@ -335,6 +335,22 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		})
 	}
 
+	log.Printf("analyze: checking recursive types")
+	for _, re := range checker.CheckRecursiveTypes(program) {
+		sev := lsp.SeverityError
+		loc := re.Location
+		diags = append(diags, lsp.Diagnostic{
+			Range: lsp.Range{
+				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
+				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
+			},
+			Severity: &sev,
+			Code:     codeToLSP(re.Code),
+			Source:   "lyra",
+			Message:  re.Message,
+		})
+	}
+
 	log.Printf("analyze: typechecking")
 	tt := typetable.New()
 	tc := typechecker.New(symTable, scopeTable, tt)

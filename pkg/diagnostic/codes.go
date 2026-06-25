@@ -40,6 +40,12 @@ const (
 	// the LSP can offer an "Add missing struct fields" quick fix.
 	CodeMissingStructField = "lyra-E013"
 
+	// CodeRecursiveType: a struct, data, or named-tuple type contains itself
+	// by value (directly or through a cycle of by-value references), giving it
+	// unbounded size. The fix is to break the cycle with a `shared` modifier on
+	// the type declaration or on the recursive field/constructor-parameter.
+	CodeRecursiveType = "lyra-E014"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"
