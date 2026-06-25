@@ -76,4 +76,14 @@ var builtinEffects = map[string]Effect{
 	"fmt.println": EffectIO,
 	"read":        EffectIO,
 	"write":       EffectIO,
+	// Arena helpers: pure (EffectNone). An arena is the *solution* to heap
+	// allocation tracking — its creation cost is a one-time bounded setup, not
+	// a per-frame GC-visible alloc. Objects built *inside* a `with`-arena block
+	// that would ordinarily be EffectAlloc are discharged by the `with` block.
+	// Size helpers (megabytes, kilobytes, bytes) are pure arithmetic.
+	"Arena.new":   EffectNone,
+	"Arena.alloc": EffectNone,
+	"megabytes":   EffectNone,
+	"kilobytes":   EffectNone,
+	"bytes":       EffectNone,
 }

@@ -147,15 +147,29 @@ let record = pure (msg: string) -> string => {
 	}
 }
 
-// `await` suspends on external I/O, an observable effect, so it may not appear in
-// a pure function.
+// `await` suspends on external I/O, an observable effect, so it may not appear
+// in a pure function. Calling an unresolved function (here `fetch`, which is
+// external/imported and unverifiable) is also a purity violation, so two errors
+// are reported: one for the `await` and one for the call to `fetch`.
 func TestPurity_Await_Error(t *testing.T) {
 	src := `
 let f = pure (h: Handle) -> i64 => {
     let x = await fetch(h)
     x
 }`
-	assertPurityCount(t, checkPurity(t, src), 1)
+	errs := checkPurity(t, src)
+	if len(errs) < 1 {
+		t.Fatalf("expected at least 1 purity error, got 0")
+	}
+	hasAwaitErr := false
+	for _, e := range errs {
+		if e.Message == "pure function performs `await`; awaiting suspends on external I/O and must not cross the function boundary" {
+			hasAwaitErr = true
+		}
+	}
+	if !hasAwaitErr {
+		t.Errorf("expected await purity error, got: %v", errs)
+	}
 }
 
 // A `pure` function calling an un-annotated function that awaits is reported: the
@@ -818,4 +832,67 @@ let f = pure (n: i64) -> string => {
     n.display()
 }`
 	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// --- imported-function impurity ---
+
+// TestPurity_ImportedFunctionCall_TreatedAsImpure: a `pure` function that calls
+// an imported function is flagged — we can't verify the callee's purity.
+func TestPurity_ImportedFunctionCall_TreatedAsImpure(t *testing.T) {
+	src := `
+import math.{ sqrt }
+let f = pure (x: i64) -> i64 => {
+    sqrt(x)
+}`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	if errs[0].Message != `pure function calls impure function "sqrt"` {
+		t.Errorf("unexpected message: %q", errs[0].Message)
+	}
+}
+
+// TestPurity_ImportedFunctionCall_InferredImpure: an unannotated function that
+// calls an imported function is inferred impure via InferredEffects.
+func TestPurity_ImportedFunctionCall_InferredImpure(t *testing.T) {
+	src := `
+import http.{ get }
+let fetch = (url: string) -> string => {
+    get(url)
+}`
+	program := parseAndCollectProgram(t, src)
+	result := checker.InferredPureFunctions(program)
+	if result["fetch"] {
+		t.Error("fetch calls an imported function and should be inferred impure")
+	}
+}
+
+// TestPurity_TypeConversionCall_StillPure: numeric type-conversion calls like
+// `i64(x)` are pure and must not be treated as imported/external calls.
+func TestPurity_TypeConversionCall_StillPure(t *testing.T) {
+	src := `
+let f = pure (x: i32) -> i64 => {
+    i64(x)
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// TestPurity_ImportedFunctionCallTransitive_Impure: a local function that calls
+// an imported function is inferred impure, and any function calling it is too.
+func TestPurity_ImportedFunctionCallTransitive_Impure(t *testing.T) {
+	src := `
+import fs.{ readFile }
+let loadConfig = (path: string) -> string => {
+    readFile(path)
+}
+let bootstrap = () -> string => {
+    loadConfig("config.txt")
+}`
+	program := parseAndCollectProgram(t, src)
+	result := checker.InferredPureFunctions(program)
+	if result["loadConfig"] {
+		t.Error("loadConfig calls imported readFile and should be inferred impure")
+	}
+	if result["bootstrap"] {
+		t.Error("bootstrap calls impure loadConfig and should be inferred impure transitively")
+	}
 }

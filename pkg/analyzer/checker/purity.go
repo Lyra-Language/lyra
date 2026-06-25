@@ -63,7 +63,6 @@ func (e PurityError) Error() string {
 //   - bottom-up purity *inference* for methods — today only an explicit
 //     `pure` marker on the method itself is trusted; an unannotated method is
 //     always treated as potentially impure, unlike a free function
-//   - impurity of imported functions
 func CheckPurity(program *ast.Program, methodTable *typetable.MethodTable) []PurityError {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
 	impureLambdas, impureMethods := inferImpurity(collectFuncBindings(program, base), collectMethodImpls(program), base, methodTable, buildAllocContext(program))
@@ -378,17 +377,29 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 }
 
 // isImpureCallee reports whether a call target with the given dotted name is
-// known to be impure — either a hard-coded effectful builtin, or a
-// user-defined function that resolves (via the capture stack) to a lambda
-// inferImpureLambdas has flagged.
+// known or assumed to be impure. Returns true for:
+//   - hard-coded effectful builtins (print, read, …) — those with PurityEffects
+//   - user-defined functions whose lambda inferImpurity has flagged
+//   - names that can't be resolved to any local lambda AND aren't in
+//     builtinEffects (known builtins with non-purity effects are fine) AND
+//     aren't pure type-conversion calls — these are treated conservatively as
+//     impure (imported/external functions whose purity we can't verify)
 func (c *purityChecker) isImpureCallee(capture []scopeBindings, name string) bool {
-	if builtinEffects[name]&PurityEffects != 0 {
-		return true
+	if e, ok := builtinEffects[name]; ok {
+		// Known builtin: only flag if it has a purity-violating effect.
+		// Builtins with EffectAlloc only (e.g. Arena.new) are fine to call from
+		// a pure function — allocation is orthogonal to purity.
+		return e&PurityEffects != 0
 	}
 	lam, ok := resolveFunction(capture, name)
-	// Mask with PurityEffects: an alloc-only callee is still pure to call from
-	// a pure function (EffectAlloc is orthogonal to purity).
-	return ok && c.impureLambdas[lam]&PurityEffects != 0
+	if ok {
+		// Mask with PurityEffects: an alloc-only callee is still pure to call
+		// from a pure function (EffectAlloc is orthogonal to purity).
+		return c.impureLambdas[lam]&PurityEffects != 0
+	}
+	// Unresolvable — could be an imported/external function. Conservatively
+	// treat as impure unless it's a known pure type-conversion call.
+	return !isTypeConversionCall(name)
 }
 
 func (c *purityChecker) report(loc ast.Location, format string, args ...any) {
@@ -909,6 +920,11 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 					found |= e
 				} else if target, ok := resolveFunction(bodyCapture, name); ok {
 					found |= impureLambdas[target]
+				} else if !isTypeConversionCall(name) {
+					// Cannot resolve to a local lambda or known builtin, and not a
+					// pure type-conversion call. Conservatively treat as impure —
+					// the callee is imported/external and we can't verify its purity.
+					found |= PurityEffects
 				}
 			}
 		case *ast.StructInstanceExpr:
@@ -990,6 +1006,11 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 					found |= e
 				} else if target, ok := resolveFunction(bodyCapture, name); ok {
 					found |= impureLambdas[target]
+				} else if !isTypeConversionCall(name) {
+					// Cannot resolve to a local lambda or known builtin, and not a
+					// pure type-conversion call. Conservatively treat as impure —
+					// the callee is imported/external and we can't verify its purity.
+					found |= PurityEffects
 				}
 			}
 		case *ast.StructInstanceExpr:
@@ -1013,13 +1034,32 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 	return found
 }
 
-// calleeName renders a call target as a dotted name ("foo", "fmt.println") for
-// lookup against builtinEffects. Returns "" for callees that aren't a plain
-// identifier or member chain (e.g. an immediately-invoked lambda).
+// isTypeConversionCall reports whether name is a numeric primitive type name
+// used as a type-conversion call (e.g. `i32(x)`, `f64(val)`). These are always
+// pure — they don't allocate, observe external state, or mutate anything — so
+// they must not be treated as impure even though they have no lambda binding.
+func isTypeConversionCall(name string) bool {
+	switch name {
+	case "i8", "i16", "i32", "i64",
+		"u8", "u16", "u32", "u64",
+		"f16", "f32", "f64":
+		return true
+	}
+	return false
+}
+
+// calleeName renders a call target as a dotted name ("foo", "fmt.println",
+// "Arena.new") for lookup against builtinEffects. Returns "" for callees that
+// aren't a plain identifier/constructor or member chain (e.g. an
+// immediately-invoked lambda). Uppercase names like `Arena` are collected as
+// DataConstructorExpr (user_defined_type_name), so that case is handled here
+// too — otherwise `Arena.new(...)` would produce just "new".
 func calleeName(fn ast.Expression) string {
 	switch f := fn.(type) {
 	case *ast.IdentifierExpr:
 		return f.Name
+	case *ast.DataConstructorExpr:
+		return f.Constructor
 	case *ast.MemberExpr:
 		if obj := calleeName(f.Object); obj != "" {
 			return obj + "." + f.Property.Name
