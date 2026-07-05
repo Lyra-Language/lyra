@@ -15,6 +15,8 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 	}
 	isUnsafe := node.ChildByFieldName("is_unsafe") != nil
 	isPure := node.ChildByFieldName("is_pure") != nil
+	isDet := node.ChildByFieldName("is_det") != nil
+	isNoAlloc := node.ChildByFieldName("is_noalloc") != nil
 	isAsync := node.ChildByFieldName("is_async") != nil
 	isGenerator := node.ChildByFieldName("is_gen") != nil
 
@@ -61,6 +63,8 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 		ExprBase:      ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		IsUnsafe:      isUnsafe,
 		IsPure:        isPure,
+		IsDet:         isDet,
+		IsNoAlloc:     isNoAlloc,
 		IsAsync:       isAsync,
 		IsGenerator:   isGenerator,
 		Parameters:    parameters,

@@ -351,6 +351,22 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		})
 	}
 
+	log.Printf("analyze: checking effect bounds")
+	for _, eb := range checker.CheckEffectBounds(program) {
+		sev := lsp.SeverityError
+		loc := eb.Location
+		diags = append(diags, lsp.Diagnostic{
+			Range: lsp.Range{
+				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
+				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
+			},
+			Severity: &sev,
+			Code:     codeToLSP(eb.Code),
+			Source:   "lyra",
+			Message:  eb.Message,
+		})
+	}
+
 	log.Printf("analyze: typechecking")
 	tt := typetable.New()
 	tc := typechecker.New(symTable, scopeTable, tt)

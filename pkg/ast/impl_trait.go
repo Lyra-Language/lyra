@@ -21,9 +21,11 @@ type TraitImplConstraint struct {
 }
 
 type TraitMethodImpl struct {
-	Name   MethodName
-	IsPure bool
-	Clause LambdaClause
+	Name      MethodName
+	IsPure    bool
+	IsDet     bool
+	IsNoAlloc bool
+	Clause    LambdaClause
 }
 
 func (t *TraitMethodImpl) GetName() string { return t.Name.GetName() }

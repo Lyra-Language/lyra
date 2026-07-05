@@ -46,6 +46,13 @@ const (
 	// the type declaration or on the recursive field/constructor-parameter.
 	CodeRecursiveType = "lyra-E014"
 
+	// CodeConflictingEffectBounds: a function or method carries two mutually
+	// exclusive correctness-axis bounds — `pure` and `det`. They sit on the same
+	// axis and `pure` is the stronger guarantee (it already implies determinism),
+	// so writing both is contradictory. `noalloc` is a separate resource axis and
+	// stacks freely with either, so it is never part of this conflict.
+	CodeConflictingEffectBounds = "lyra-E015"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

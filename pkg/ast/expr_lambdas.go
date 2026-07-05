@@ -14,6 +14,8 @@ type LambdaExpr struct {
 	LambdaClauses []LambdaClause
 	IsUnsafe      bool
 	IsPure        bool
+	IsDet         bool
+	IsNoAlloc     bool
 	IsAsync       bool
 	IsGenerator   bool
 }
