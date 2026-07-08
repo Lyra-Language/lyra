@@ -90,6 +90,26 @@ func TestCollector_FunctionWithGenericParamsAndConstraints(t *testing.T) {
 	let compare<n> where n: Ord = (a: n, b: n) -> n => a <=> b`, "function_with_generic_params_and_constraints")
 }
 
+// Function-definition sugar (`let name(params) => body`, no `=`) must collect
+// to exactly the same AST as the equivalent `let name = (params) => body`
+// form — the grammar stores the sugar's lambda in the same `value` field, so
+// there is no dedicated AST node. Each test below reuses the `=`-form's golden
+// file; a pass asserts the two forms produce byte-identical ASTs.
+func TestCollector_SugarFunctionWithParams(t *testing.T) {
+	runGoldenTest(t, `
+	let add(a: Int, b: String) => a + b`, "basic_function_declaration_with_params")
+}
+
+func TestCollector_SugarFunctionWithGenericParams(t *testing.T) {
+	runGoldenTest(t, `
+	let sum<n>(a: n, b: n) -> n => a + b`, "function_with_generic_params")
+}
+
+func TestCollector_SugarFunctionWithGenericParamsAndConstraints(t *testing.T) {
+	runGoldenTest(t, `
+	let compare<n> where n: Ord (a: n, b: n) -> n => a <=> b`, "function_with_generic_params_and_constraints")
+}
+
 func TestCollector_FunctionWithPatternParams(t *testing.T) {
 	source := `
 	let foo = ({ x, y }: Point, [one, two, three, ...rest]: []string, (alpha, beta): SomeTuple) -> void => {

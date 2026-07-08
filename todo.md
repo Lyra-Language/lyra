@@ -75,6 +75,9 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ## Completed
 ------------
 
+### 07/08/26
+- **ML-style function-definition sugar** — `let name(params) => body` (no `=`) now parses as an alternative to `let name = (params) => body`, so a function definition reads like a function rather than a variable assignment. The grammar stores the sugar's lambda in the same `value` field, so it desugars to an identical `VarDeclStmt{Value: LambdaExpr}` with no collector/typechecker change. A `where` clause now requires a value (an `=` form or the sugar) — a value-less `let f<n> where n: Ord` is a parse error — which removes the ambiguity that otherwise split `let f<n> where n: Ord (a) => a` into two statements. Tests: `definitions.txt` (corpus, incl. `:error`), `declaration_function_test.go` (reuses `=`-form goldens to assert identical AST), `function_sugar_test.go` (typechecker).
+
 ### 06/24/26 (continued)
 - **Impurity of imported/external functions** (FP/Imperative #3) — calls to names that can't be resolved to a local lambda and aren't in `builtinEffects` or a type-conversion call are conservatively treated as impure in both `lambdaEffects`/`methodEffects` (inference fixpoint) and `isImpureCallee` (CheckPurity error path). `calleeName` extended to handle `DataConstructorExpr` bases (uppercase names like `Arena`). Arena/size helpers (`Arena.new`, `megabytes`, etc.) added to `builtinEffects` as `EffectNone`. Tests: `purity_test.go` (4 new tests).
 
