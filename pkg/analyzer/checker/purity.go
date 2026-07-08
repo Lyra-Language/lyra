@@ -79,19 +79,22 @@ func CheckPurity(program *ast.Program, methodTable *typetable.MethodTable) []Pur
 			ast.WalkStmt(stmt, c.stmtVisitor(nil, base), c.exprVisitor(nil, base))
 		}
 		if impl, ok := node.(*ast.TraitImplStmt); ok {
-			c.checkPureTraitMethods(impl, base)
+			c.checkTraitMethodBounds(impl, base)
 		}
 	}
 	return c.errors
 }
 
-// checkPureTraitMethods checks every pure-marked method in impl for purity
-// violations — the method-level counterpart of the main loop's per-statement
-// walk over pure lambdas. A non-pure method's body is not walked (it's an
-// impure context, same as any other non-pure binding).
-func (c *purityChecker) checkPureTraitMethods(impl *ast.TraitImplStmt, base []scopeBindings) {
+// checkTraitMethodBounds checks each method in impl against its declared effect
+// bounds: `det`/`noalloc` for every method (against its full inferred effect
+// set, like checkBoundedEffects for lambdas), plus the fine-grained `pure` walk
+// for pure-marked methods — the method-level counterpart of the main loop's
+// per-statement walk over pure lambdas. A non-pure method's body is not walked
+// for purity (it's an impure context, same as any other non-pure binding).
+func (c *purityChecker) checkTraitMethodBounds(impl *ast.TraitImplStmt, base []scopeBindings) {
 	for i := range impl.Methods {
 		m := &impl.Methods[i]
+		c.checkBoundedEffects(m.IsDet, m.IsNoAlloc, c.impureMethods[m], m.Clause.GetLocation())
 		if !m.IsPure {
 			continue
 		}
@@ -307,6 +310,9 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 	return func(expr ast.Expression) bool {
 		switch e := expr.(type) {
 		case *ast.LambdaExpr:
+			// `det`/`noalloc` are enforced against this lambda's full inferred
+			// (transitive) effect set, independent of the enclosing context.
+			c.checkBoundedEffects(e.IsDet, e.IsNoAlloc, c.impureLambdas[e], e.GetLocation())
 			// Default values execute at the call site, in the *enclosing* context.
 			for i := range e.Parameters {
 				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(sc, capture), c.exprVisitor(sc, capture))
@@ -403,11 +409,54 @@ func (c *purityChecker) isImpureCallee(capture []scopeBindings, name string) boo
 }
 
 func (c *purityChecker) report(loc ast.Location, format string, args ...any) {
+	c.reportCode(diag.CodePurityViolation, loc, format, args...)
+}
+
+// reportCode appends a diagnostic with an explicit code. Used by the det/noalloc
+// bound checks (CodeEffectBoundViolation), which share this pass with `pure`
+// (CodePurityViolation) but are a distinct diagnostic.
+func (c *purityChecker) reportCode(code string, loc ast.Location, format string, args ...any) {
 	c.errors = append(c.errors, PurityError{
-		Code:     diag.CodePurityViolation,
+		Code:     code,
 		Message:  fmt.Sprintf(format, args...),
 		Location: loc,
 	})
+}
+
+// checkBoundedEffects enforces the `det` and `noalloc` bounds for a callable
+// whose fully-inferred (transitive) effect set is `effects`. `det` forbids the
+// non-determinism sources (DetEffects = input/rand/time) while still allowing
+// mutation, allocation, and output; `noalloc` forbids EffectAlloc. Unlike the
+// fine-grained `pure` walk, this reports once at the callable's own location,
+// naming the offending effect — per-operation locating is a later refinement.
+// `pure` is handled by the walk (precise per-op diagnostics), not here; a
+// `pure`+`det` pair is already an error (CodeConflictingEffectBounds).
+func (c *purityChecker) checkBoundedEffects(isDet, isNoAlloc bool, effects Effect, loc ast.Location) {
+	if isDet {
+		if bad := effects & DetEffects; bad != 0 {
+			c.reportCode(diag.CodeEffectBoundViolation, loc,
+				"`det` function %s; a `det` function must be reproducible from its inputs — thread external state (a seed, the tick) through parameters instead", nondeterminismDescription(bad))
+		}
+	}
+	if isNoAlloc && effects.Has(EffectAlloc) {
+		c.reportCode(diag.CodeEffectBoundViolation, loc,
+			"`noalloc` function heap-allocates by constructing a `shared`-typed value; a `noalloc` function must not allocate")
+	}
+}
+
+// nondeterminismDescription names the first non-determinism source set in e
+// (only EffectInput is detected today; EffectRand/EffectTime are reserved).
+func nondeterminismDescription(e Effect) string {
+	switch {
+	case e.Has(EffectInput):
+		return "reads external input (I/O whose result depends on the outside world)"
+	case e.Has(EffectRand):
+		return "draws from a random source"
+	case e.Has(EffectTime):
+		return "reads the system clock"
+	default:
+		return "performs a non-deterministic effect"
+	}
 }
 
 // localBindings collects every name bound locally within a pure lambda: its
@@ -945,9 +994,10 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 				found |= EffectAlloc
 			}
 		case *ast.AwaitExpr:
-			// Awaiting is an observable I/O effect (see exprVisitor), so a function
-			// that awaits is impure.
-			found |= EffectIO
+			// Awaiting resumes with the result of an external async operation, so
+			// its value is non-deterministic — an input effect (forbidden in
+			// `pure` and `det`).
+			found |= EffectInput
 		}
 		return true
 	}
@@ -1026,7 +1076,7 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 				found |= EffectAlloc
 			}
 		case *ast.AwaitExpr:
-			found |= EffectIO
+			found |= EffectInput
 		}
 		return true
 	}

@@ -53,6 +53,12 @@ const (
 	// stacks freely with either, so it is never part of this conflict.
 	CodeConflictingEffectBounds = "lyra-E015"
 
+	// CodeEffectBoundViolation: a function or method declared `det` performs a
+	// non-deterministic effect (reads external input, randomness, or the clock),
+	// or one declared `noalloc` heap-allocates. `pure`'s equivalent is the older
+	// CodePurityViolation (E007); `det`/`noalloc` get their own code.
+	CodeEffectBoundViolation = "lyra-E016"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"
