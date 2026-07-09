@@ -8,9 +8,9 @@ package checker
 // PurityEffects mask), `det` (deterministic, via DetEffects), and `noalloc`
 // (via EffectAlloc).
 //
-// EffectMut, the two IO bits, and EffectAlloc are detected today; EffectRand and
-// EffectTime are reserved (declared so a later pass can set them without a type
-// change). IO is split into two bits because the halves threaten determinism
+// EffectMut, the two IO bits, EffectAlloc, and (via the ambient `Random.global()`
+// / `wallClock()` builtins) EffectRand and EffectTime are all detected today. IO
+// is split into two bits because the halves threaten determinism
 // asymmetrically — that asymmetry is exactly what lets `det` be more permissive
 // than `pure`:
 //
@@ -42,11 +42,14 @@ const (
 	// outside a `with`-arena block. A resource/budget effect, orthogonal to
 	// determinism: forbidden only by `noalloc`, never by `pure` or `det`.
 	EffectAlloc
-	// EffectRand: draws from a non-deterministic random source. Not yet detected
-	// — reserved for when a `rand`-style ambient builtin exists.
+	// EffectRand: draws from a non-deterministic random source (the ambient
+	// `Random.global()`). Non-deterministic, so it breaks `pure` and `det`. A
+	// *threaded* RNG value reached through a local binding (`rng.next()`) is
+	// ordinary data, not this effect.
 	EffectRand
-	// EffectTime: reads wall-clock/system time. Not yet detected — reserved for
-	// when a time-reading ambient builtin exists.
+	// EffectTime: reads wall-clock/system time (the ambient `wallClock()`).
+	// Non-deterministic, so it breaks `pure` and `det`. A *threaded* tick passed
+	// in as a parameter is ordinary data, not this effect.
 	EffectTime
 )
 
@@ -109,4 +112,19 @@ var builtinEffects = map[string]Effect{
 	"megabytes":   EffectNone,
 	"kilobytes":   EffectNone,
 	"bytes":       EffectNone,
+	// Ambient nondeterminism sources — the entries that give `det` its teeth.
+	// Only the *ambient* (globally-reachable, un-threaded) sources are tagged:
+	// `Random.global()` reaches a process-wide RNG and `wallClock()` reads the
+	// system clock, so their results depend on external state the caller never
+	// passed in — non-deterministic, forbidden in both `pure` and `det`.
+	//
+	// The ambient-vs-threaded split lives in the *call shape*, not here: a
+	// threaded RNG value's `rng.next()` or a passed-in `tick` parameter is
+	// ordinary `mut`/`own` data reached through a local binding (base `rng`,
+	// `tick`), never one of these ambient entry points — so it carries no
+	// Rand/Time bit and a `det` function may use seeded randomness and sim-time.
+	// That is exactly what lets `det` be reproducible-from-its-inputs without
+	// banning randomness or time outright.
+	"Random.global": EffectRand,
+	"wallClock":     EffectTime,
 }

@@ -445,7 +445,7 @@ func (c *purityChecker) checkBoundedEffects(isDet, isNoAlloc bool, effects Effec
 }
 
 // nondeterminismDescription names the first non-determinism source set in e
-// (only EffectInput is detected today; EffectRand/EffectTime are reserved).
+// (input, then randomness, then time — all three detected today).
 func nondeterminismDescription(e Effect) string {
 	switch {
 	case e.Has(EffectInput):

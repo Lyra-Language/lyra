@@ -1,6 +1,7 @@
 package checker_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
@@ -61,6 +62,46 @@ let helper = (p: string) -> string => { read(p) }
 let load = det (p: string) -> string => { helper(p) }`
 	// Only the `det` function is flagged; the unannotated helper is fine.
 	assertBoundError(t, checkPurity(t, src), "lyra-E016")
+}
+
+// Drawing from the ambient global RNG is non-deterministic, so it breaks `det`.
+// The message must name the *random* source specifically — proving the Rand bit
+// was detected, not the conservative "unknown external call" Input fallback that
+// would also produce E016 but describe it as reading input.
+func TestDet_AmbientRandom_Violates(t *testing.T) {
+	src := `let roll = det (n: i64) -> i64 => { Random.global() }`
+	errs := checkPurity(t, src)
+	assertBoundError(t, errs, "lyra-E016")
+	if !strings.Contains(errs[0].Message, "random source") {
+		t.Errorf("expected message to name the random source, got: %q", errs[0].Message)
+	}
+}
+
+// Reading the ambient wall clock is non-deterministic, so it breaks `det`. As
+// with the RNG, the message must name the *clock* specifically (the Time bit),
+// not the Input fallback.
+func TestDet_AmbientClock_Violates(t *testing.T) {
+	src := `let stamp = det (n: i64) -> i64 => { wallClock() }`
+	errs := checkPurity(t, src)
+	assertBoundError(t, errs, "lyra-E016")
+	if !strings.Contains(errs[0].Message, "system clock") {
+		t.Errorf("expected message to name the system clock, got: %q", errs[0].Message)
+	}
+}
+
+// The ambient-vs-threaded split: a seed threaded in as a parameter is ordinary
+// data, not an effect, so a `det` function may derive pseudo-randomness from it
+// (an LCG step here) and stay deterministic — reproducible from its input.
+func TestDet_ThreadedSeed_Ok(t *testing.T) {
+	src := `let next = det (seed: u64) -> u64 => { seed * 6364136223846793005 + 1442695040888963407 }`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// Ambient randomness breaks `pure` too (Rand ∈ PurityEffects), reported by the
+// fine-grained per-op walk as E007 rather than the E016 bound check.
+func TestPure_AmbientRandom_Violates(t *testing.T) {
+	src := `let roll = pure (n: i64) -> i64 => { Random.global() }`
+	assertBoundError(t, checkPurity(t, src), "lyra-E007")
 }
 
 // --- noalloc: heap allocation is forbidden; output / mutation are allowed ---
