@@ -142,3 +142,7 @@ Language features are provided by `cmd/lyra-lsp` over LSP. The
 [`lyra-vscode-ext`](../lyra-vscode-ext) extension is the reference client; point
 it at a built `lyra-lsp` binary via the `lyra.languageServerPath` setting, or put
 `lyra-lsp` on your `$PATH`.
+
+## License
+
+[MIT](LICENSE) © Avram Eisner

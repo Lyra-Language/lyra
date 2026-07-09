@@ -1,10 +1,6 @@
 ## To-Dos
 ---------
 
-### Add Root README.md file
-- A description of the project
-- Instructions on how to set up
-
 ### Pit of Success — language design (ordered by importance)
 These make the *safe/correct* path the *easy/default* path, and force the unsafe path to be loud and explicit. Listed highest-leverage first.
 
