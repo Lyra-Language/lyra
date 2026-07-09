@@ -110,6 +110,35 @@ func TestCollector_SugarFunctionWithGenericParamsAndConstraints(t *testing.T) {
 	let compare<n> where n: Ord (a: n, b: n) -> n => a <=> b`, "function_with_generic_params_and_constraints")
 }
 
+// Modifiers leading the name (`let pure add(…)`) must be lifted onto the lambda,
+// producing the same AST as the `= pure (…)` form — reusing that golden proves it.
+func TestCollector_SugarFunctionWithLeadingModifier(t *testing.T) {
+	runGoldenTest(t, `
+	let pure add(a: i64, b: i64) -> i64 => a + b`, "pure_function_declaration")
+}
+
+func TestCollector_SugarFunctionWithLeadingPureAsync(t *testing.T) {
+	runGoldenTest(t, `
+	let pure async compute(n: i64) -> i64 => n * 2`, "pure_async_function_declaration")
+}
+
+// The grammar's fn_modifiers rule accepts any order / duplicates; the collector
+// enforces the canonical order and rejects duplicates (parity with the fixed
+// order the `= <lambda>` grammar enforces).
+func TestCollector_SugarModifierOutOfOrderIsError(t *testing.T) {
+	if errs := parseAndCollectErrors(t, `
+	let async pure compute(n: i64) -> i64 => n`); len(errs) == 0 {
+		t.Fatalf("expected an out-of-order modifier error, got none")
+	}
+}
+
+func TestCollector_SugarDuplicateModifierIsError(t *testing.T) {
+	if errs := parseAndCollectErrors(t, `
+	let pure pure compute(n: i64) -> i64 => n`); len(errs) == 0 {
+		t.Fatalf("expected a duplicate modifier error, got none")
+	}
+}
+
 func TestCollector_FunctionWithPatternParams(t *testing.T) {
 	source := `
 	let foo = ({ x, y }: Point, [one, two, three, ...rest]: []string, (alpha, beta): SomeTuple) -> void => {

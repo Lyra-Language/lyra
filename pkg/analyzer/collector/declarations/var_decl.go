@@ -68,6 +68,21 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 		initExpr = ctx.CollectExpr(valueNode)
 	}
 
+	// Modifier-led function sugar (`let pure name(params) => body`): the
+	// modifiers lead the name rather than the lambda, so lift them onto the
+	// collected LambdaExpr value. The result is identical to the equivalent
+	// `let name = pure (params) => body` binding. The grammar only admits a
+	// lambda value in this arm, so any non-lambda here is a parse-level
+	// impossibility; guard anyway and report it rather than silently drop.
+	if modifiersNode := node.ChildByFieldName("modifiers"); modifiersNode != nil {
+		if lambda, ok := initExpr.(*ast.LambdaExpr); ok {
+			applyFunctionModifiers(modifiersNode, lambda, ctx)
+		} else {
+			ctx.AddError(modifiersNode, diag.SeverityError,
+				"function modifiers may only lead a function definition")
+		}
+	}
+
 	astNode := &ast.VarDeclStmt{
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
 		BindingKind:   kind,
@@ -98,6 +113,64 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 	}
 
 	return astNode
+}
+
+// fnModifierRanks gives the one canonical order for function modifiers, matching
+// the fixed order the `lambda_expr` grammar enforces for the `= <lambda>` form.
+// The sugar's `fn_modifiers` rule accepts them in any order (repeat1), so the
+// collector enforces order and rejects duplicates here for parity — `pure async`
+// is accepted, `async pure` and `pure pure` are reported.
+var fnModifierRanks = map[string]int{
+	"unsafe_modifier":  0,
+	"pure_modifier":    1,
+	"det_modifier":     2,
+	"noalloc_modifier": 3,
+	"async_modifier":   4,
+	"gen_modifier":     5,
+	"rec_modifier":     6,
+}
+
+// applyFunctionModifiers reads a `fn_modifiers` node and lifts each modifier
+// onto the function's LambdaExpr, so `let pure add(…)` yields the same AST as
+// `let add = pure (…)`. `rec_modifier` is accepted for order/duplicate checking
+// but, like the lambda collector, is not recorded on the AST (there is no
+// IsRec field yet).
+func applyFunctionModifiers(modifiersNode *sitter.Node, lambda *ast.LambdaExpr, ctx *collector_ctx.Ctx) {
+	prevRank := -1
+	seen := map[string]bool{}
+	for i := uint(0); i < modifiersNode.NamedChildCount(); i++ {
+		child := modifiersNode.NamedChild(i)
+		kind := child.Kind()
+		rank, ok := fnModifierRanks[kind]
+		if !ok {
+			continue
+		}
+		if seen[kind] {
+			ctx.AddError(child, diag.SeverityError, "duplicate `%s` modifier", ctx.NodeText(child))
+			continue
+		}
+		if rank < prevRank {
+			ctx.AddError(child, diag.SeverityError,
+				"function modifier `%s` is out of order", ctx.NodeText(child))
+		}
+		seen[kind] = true
+		prevRank = rank
+
+		switch kind {
+		case "unsafe_modifier":
+			lambda.IsUnsafe = true
+		case "pure_modifier":
+			lambda.IsPure = true
+		case "det_modifier":
+			lambda.IsDet = true
+		case "noalloc_modifier":
+			lambda.IsNoAlloc = true
+		case "async_modifier":
+			lambda.IsAsync = true
+		case "gen_modifier":
+			lambda.IsGenerator = true
+		}
+	}
 }
 
 func collectPatternDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *collector_ctx.Ctx) *ast.DestructuringDeclStmt {
