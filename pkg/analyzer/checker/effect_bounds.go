@@ -44,6 +44,13 @@ func CheckEffectBounds(program *ast.Program) []EffectBoundsError {
 				c.check(m.IsPure, m.IsDet, m.Clause.GetLocation())
 			}
 		}
+		// Bounds declared on a trait method (`trait X { pure show: … }`) are on the
+		// TraitMethod struct, likewise unreachable by the expression walk.
+		if td, ok := node.(*ast.TraitDeclStmt); ok {
+			for i := range td.Methods {
+				c.check(td.Methods[i].IsPure, td.Methods[i].IsDet, td.GetLocation())
+			}
+		}
 	}
 	return c.errors
 }

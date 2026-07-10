@@ -22,6 +22,13 @@ type TraitMethod struct {
 	Name          MethodName
 	Signature     *types.LambdaType
 	DefaultMethod *LambdaClause
+	// IsPure/IsDet/IsNoAlloc are effect bounds declared on the method in the
+	// trait (`pure show: (Self) -> string`). They are a *contract*: every impl of
+	// the method must satisfy the bound, and a call through a `where` bound to
+	// this trait can rely on it.
+	IsPure    bool
+	IsDet     bool
+	IsNoAlloc bool
 }
 
 func (t *TraitMethod) GetName() string {

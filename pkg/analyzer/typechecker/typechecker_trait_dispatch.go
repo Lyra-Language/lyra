@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/typetable"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -271,6 +272,10 @@ func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodNam
 		if tm == nil || tm.Signature == nil {
 			continue
 		}
+		// Record the abstract resolution so the purity checker can account for it
+		// (joining over the bound trait method's concrete impls) instead of
+		// treating the call as an unverifiable external one.
+		tc.methodTable.SetBound(call, typetable.BoundMethodRef{Trait: traitName, Method: methodName})
 		sig := substituteSelf(tm.Signature, recv)
 		return tc.inferDotCallFromType(traitName+"::"+methodName, sig, call), true
 	}

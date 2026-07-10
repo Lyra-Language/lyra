@@ -98,6 +98,9 @@ func collectTraitMethodDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) as
 		Name:          name,
 		Signature:     signature,
 		DefaultMethod: defaultMethod,
+		IsPure:        node.ChildByFieldName("is_pure") != nil,
+		IsDet:         node.ChildByFieldName("is_det") != nil,
+		IsNoAlloc:     node.ChildByFieldName("is_noalloc") != nil,
 	}
 }
 

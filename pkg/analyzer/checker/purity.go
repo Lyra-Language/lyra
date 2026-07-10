@@ -65,12 +65,15 @@ func (e PurityError) Error() string {
 //     always treated as potentially impure, unlike a free function
 func CheckPurity(program *ast.Program, methodTable *typetable.MethodTable) []PurityError {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
-	impureLambdas, impureMethods := inferImpurity(collectFuncBindings(program, base), collectMethodImpls(program), base, methodTable, buildAllocContext(program))
+	boundGroups := collectTraitMethodGroups(program)
+	impureLambdas, impureMethods := inferImpurity(collectFuncBindings(program, base), collectMethodImpls(program), base, methodTable, boundGroups, buildAllocContext(program))
 	c := &purityChecker{
 		impureLambdas: impureLambdas,
 		impureMethods: impureMethods,
 		assignTargets: map[*ast.IdentifierExpr]bool{},
 		methodTable:   methodTable,
+		boundGroups:   boundGroups,
+		traitDecls:    collectTraitDecls(program),
 	}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -94,8 +97,17 @@ func CheckPurity(program *ast.Program, methodTable *typetable.MethodTable) []Pur
 func (c *purityChecker) checkTraitMethodBounds(impl *ast.TraitImplStmt, base []scopeBindings) {
 	for i := range impl.Methods {
 		m := &impl.Methods[i]
-		c.checkBoundedEffects(m.IsDet, m.IsNoAlloc, c.impureMethods[m], m.Clause.GetLocation())
-		if !m.IsPure {
+		// The effective bound is the impl method's own annotation OR the one the
+		// trait declares on that method (`trait Show { pure show: … }`) — a bound
+		// on the trait is a contract every impl must satisfy.
+		isPure, isDet, isNoAlloc := m.IsPure, m.IsDet, m.IsNoAlloc
+		if td := traitMethodDecl(c.traitDecls, impl.TraitName, m.Name); td != nil {
+			isPure = isPure || td.IsPure
+			isDet = isDet || td.IsDet
+			isNoAlloc = isNoAlloc || td.IsNoAlloc
+		}
+		c.checkBoundedEffects(isDet, isNoAlloc, c.impureMethods[m], m.Clause.GetLocation())
+		if !isPure {
 			continue
 		}
 		scope := directScopeBindingsForClause(&m.Clause)
@@ -154,7 +166,7 @@ func InferredPureFunctions(program *ast.Program) map[string]bool {
 // not picked up here — see CheckPurity for the MethodTable-aware version.
 func InferredEffects(program *ast.Program) map[string]Effect {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
-	impure, _ := inferImpurity(collectFuncBindings(program, base), collectMethodImpls(program), base, nil, buildAllocContext(program))
+	impure, _ := inferImpurity(collectFuncBindings(program, base), collectMethodImpls(program), base, nil, collectTraitMethodGroups(program), buildAllocContext(program))
 	result := make(map[string]Effect, len(base[0].functions))
 	for name, lam := range base[0].functions {
 		result[name] = impure[lam]
@@ -251,6 +263,13 @@ type purityChecker struct {
 	// method-call purity checking, e.g. for callers that haven't run the
 	// typechecker first).
 	methodTable *typetable.MethodTable
+	// boundGroups maps a (trait, method) to every impl providing it, so a call
+	// resolved by abstract bound dispatch (methodTable.GetBound) can be scored as
+	// the join over those impls' effects.
+	boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl
+	// traitDecls indexes trait declarations by name, so an impl method inherits
+	// and is checked against the effect bounds its trait declares on that method.
+	traitDecls map[string]*ast.TraitDeclStmt
 }
 
 // stmtVisitor returns a statement callback. sc is non-nil exactly when we are
@@ -361,6 +380,13 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 					if c.impureMethods[method]&PurityEffects != 0 {
 						c.report(e.GetLocation(),
 							"pure function calls non-pure trait method %q", method.Name.GetName())
+					}
+				} else if ref, ok := c.methodTable.GetBound(e); ok {
+					// Abstract dispatch through a `where` bound: pure only if every
+					// impl of the bound trait method is pure.
+					if boundCallEffect(ref, c.boundGroups, c.impureMethods)&PurityEffects != 0 {
+						c.report(e.GetLocation(),
+							"pure function calls non-pure trait method %q via a bound", ref.Method)
 					}
 				} else if name := calleeName(e.Function); name != "" && c.isImpureCallee(capture, name) {
 					c.report(e.GetLocation(),
@@ -847,7 +873,7 @@ func collectFuncBindings(program *ast.Program, base []scopeBindings) map[*ast.La
 // with no detected effect is inferred pure exactly like an unannotated
 // function (FP/Imperative todo #3, "bottom-up purity inference for
 // unannotated methods"). methodTable is nil-safe — see purityChecker.methodTable.
-func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*ast.TraitMethodImpl, base []scopeBindings, methodTable *typetable.MethodTable, alloc *allocContext) (map[*ast.LambdaExpr]Effect, map[*ast.TraitMethodImpl]Effect) {
+func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*ast.TraitMethodImpl, base []scopeBindings, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext) (map[*ast.LambdaExpr]Effect, map[*ast.TraitMethodImpl]Effect) {
 	impureLambdas := map[*ast.LambdaExpr]Effect{}
 	impureMethods := map[*ast.TraitMethodImpl]Effect{}
 	// Fixpoint over an effect *set*: a callable's effect can only grow as more
@@ -859,14 +885,14 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 	for {
 		changed := false
 		for lam, capture := range lambdaDefs {
-			e := impureLambdas[lam] | lambdaEffects(lam, capture, impureLambdas, impureMethods, methodTable, alloc)
+			e := impureLambdas[lam] | lambdaEffects(lam, capture, impureLambdas, impureMethods, methodTable, boundGroups, alloc)
 			if e != impureLambdas[lam] {
 				impureLambdas[lam] = e
 				changed = true
 			}
 		}
 		for _, m := range methods {
-			e := impureMethods[m] | methodEffects(m, base, impureLambdas, impureMethods, methodTable, alloc)
+			e := impureMethods[m] | methodEffects(m, base, impureLambdas, impureMethods, methodTable, boundGroups, alloc)
 			if e != impureMethods[m] {
 				impureMethods[m] = e
 				changed = true
@@ -897,6 +923,68 @@ func collectMethodImpls(program *ast.Program) []*ast.TraitMethodImpl {
 	return methods
 }
 
+// collectTraitDecls indexes the program's trait declarations by name, so an
+// impl method can be checked against the effect bounds (`pure`/`det`/`noalloc`)
+// its trait declares on the corresponding method.
+func collectTraitDecls(program *ast.Program) map[string]*ast.TraitDeclStmt {
+	decls := map[string]*ast.TraitDeclStmt{}
+	for _, node := range program.Statements {
+		if td, ok := node.(*ast.TraitDeclStmt); ok {
+			decls[td.Name] = td
+		}
+	}
+	return decls
+}
+
+// traitMethodDecl returns the declaration of the named method in trait
+// traitName, or nil if the trait or method isn't found.
+func traitMethodDecl(traitDecls map[string]*ast.TraitDeclStmt, traitName string, name ast.MethodName) *ast.TraitMethod {
+	td, ok := traitDecls[traitName]
+	if !ok {
+		return nil
+	}
+	for i := range td.Methods {
+		if td.Methods[i].Name.Kind == name.Kind && td.Methods[i].Name.Value == name.Value {
+			return &td.Methods[i]
+		}
+	}
+	return nil
+}
+
+// collectTraitMethodGroups groups every identifier-named trait-impl method by the
+// (trait, method-name) it implements. A call resolved abstractly through a bound
+// (`t: Show` → `Show::show`) dispatches, at instantiation, to one of the impls in
+// the matching group; its effect is the join over the group (below).
+func collectTraitMethodGroups(program *ast.Program) map[typetable.BoundMethodRef][]*ast.TraitMethodImpl {
+	groups := map[typetable.BoundMethodRef][]*ast.TraitMethodImpl{}
+	for _, node := range program.Statements {
+		impl, ok := node.(*ast.TraitImplStmt)
+		if !ok {
+			continue
+		}
+		for i := range impl.Methods {
+			m := &impl.Methods[i]
+			if m.Name.Kind == ast.MethodNameKindIdentifier {
+				key := typetable.BoundMethodRef{Trait: impl.TraitName, Method: m.Name.Value}
+				groups[key] = append(groups[key], m)
+			}
+		}
+	}
+	return groups
+}
+
+// boundCallEffect is the effect of a call resolved through a bound: the join over
+// every concrete impl of that trait method. A `pure`/`det`/`noalloc` caller is
+// only safe if *all* impls of the bound method are — the bound admits any of
+// them. With no impls in scope the join is empty (EffectNone).
+func boundCallEffect(ref typetable.BoundMethodRef, groups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, impureMethods map[*ast.TraitMethodImpl]Effect) Effect {
+	var found Effect
+	for _, m := range groups[ref] {
+		found |= impureMethods[m]
+	}
+	return found
+}
+
 // lambdaEffects returns the set of effects lam's body performs that are
 // observable outside the call, given defCapture (the capture stack at lam's
 // definition site) and the effect sets already inferred for lambdas/methods
@@ -904,7 +992,7 @@ func collectMethodImpls(program *ast.Program) []*ast.TraitMethodImpl {
 // accumulates an Effect bitmask instead of emitting diagnostics, and is used
 // only for inference. It does not descend into nested lambdas (they have
 // their own boundary). EffectNone means no effect was found (inferred pure).
-func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, alloc *allocContext) Effect {
+func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext) Effect {
 	scope := directScopeBindings(lam)
 	locals := make(map[string]bool, len(scope.mutable))
 	for name := range scope.mutable {
@@ -950,6 +1038,10 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 		case *ast.FunctionCallExpr:
 			if method, ok := methodTable.Get(ex); ok {
 				found |= impureMethods[method]
+			} else if ref, ok := methodTable.GetBound(ex); ok {
+				// Abstract dispatch through a `where` bound: join over the impls of
+				// the bound trait method (pure only if all of them are).
+				found |= boundCallEffect(ref, boundGroups, impureMethods)
 			} else if name := calleeName(ex.Function); name != "" {
 				if e, ok := builtinEffects[name]; ok {
 					found |= e
@@ -1001,7 +1093,7 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 // directScopeBindingsForClause). base is the program's top-level capture
 // frame; a method's own scope never nests inside another lambda's, so that
 // is the entire capture stack besides the method's own.
-func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, alloc *allocContext) Effect {
+func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext) Effect {
 	scope := directScopeBindingsForClause(&m.Clause)
 	locals := make(map[string]bool, len(scope.mutable))
 	for name := range scope.mutable {
@@ -1039,6 +1131,10 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 		case *ast.FunctionCallExpr:
 			if method, ok := methodTable.Get(ex); ok {
 				found |= impureMethods[method]
+			} else if ref, ok := methodTable.GetBound(ex); ok {
+				// Abstract dispatch through a `where` bound: join over the impls of
+				// the bound trait method (pure only if all of them are).
+				found |= boundCallEffect(ref, boundGroups, impureMethods)
 			} else if name := calleeName(ex.Function); name != "" {
 				if e, ok := builtinEffects[name]; ok {
 					found |= e

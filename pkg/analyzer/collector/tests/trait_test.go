@@ -68,6 +68,32 @@ impl Get<t> for Box<t> {
 	}
 }
 
+// Effect-bound modifiers on a trait method declaration (`pure show: …`) are
+// collected onto TraitMethod.IsPure/IsDet/IsNoAlloc.
+func TestCollector_TraitMethodEffectBounds(t *testing.T) {
+	source := `
+trait Show {
+    pure show: (Self) -> string,
+    det now: (Self) -> i64,
+    plain: (Self) -> bool
+}`
+	_, table, _, _ := parseAndCollect(t, source)
+	methods := table.Traits["Show"].Methods
+	if len(methods) != 3 {
+		t.Fatalf("expected 3 methods, got %d", len(methods))
+	}
+	if !methods[0].IsPure || methods[0].IsDet {
+		t.Errorf("show: IsPure=%v IsDet=%v, want pure", methods[0].IsPure, methods[0].IsDet)
+	}
+	if !methods[1].IsDet || methods[1].IsPure {
+		t.Errorf("now: IsDet=%v IsPure=%v, want det", methods[1].IsDet, methods[1].IsPure)
+	}
+	if methods[2].IsPure || methods[2].IsDet || methods[2].IsNoAlloc {
+		t.Errorf("plain: expected no bounds, got pure=%v det=%v noalloc=%v",
+			methods[2].IsPure, methods[2].IsDet, methods[2].IsNoAlloc)
+	}
+}
+
 func TestCollector_TraitDeclaration(t *testing.T) {
 	source := `
 	trait Show {
