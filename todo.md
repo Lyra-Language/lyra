@@ -1,386 +1,185 @@
 ## To-Dos
 ---------
 
-### Pit of Success — language design (ordered by importance)
-These make the *safe/correct* path the *easy/default* path, and force the unsafe path to be loud and explicit. Listed highest-leverage first.
+### Pit of Success — language design (make the safe path the default)
 
-1. **Must-use `Result`/`Maybe` + a `?` propagation operator** — *Right now the easy thing (ignore a returned error) is the wrong thing.*
-   - **DONE (07/09/26) — Canonicalize Result/Maybe (stop name-matching).** Identity is now a `CanonicalKind` stamp on `TypeDeclStmt`, resolved once after collection (`collector/canonical.go` `resolveCanonicalTypes`) and read by every site (`?`, must-use, `??`, the try-context check) instead of re-matching name+shape. Conferred by a **name-independent `@builtin(Result)`/`@builtin(Maybe)` attribute** (reuses the `@derive` attribute grammar — no grammar change; a type named `Either` can be canonical Result), shape-validated; with no marker, an unmarked type literally named "Result"/"Maybe" with the canonical shape is the fallback (the only path today — no prelude). Malformed markers (wrong shape / unknown kind / duplicate claim) → `lyra-E017`. This also unified the previously-split recognition (checker was name-only, typechecker was name+shape), so a function returning a bogus `data Result<a,b>=Foo a|Bar b` is consistently rejected as a `?` context. Prelude/module coexistence is now a data-only concern (mark the prelude's decl `@builtin`); the mechanism is in place. Tests: `collector/tests/canonical_test.go`, `try_expr_test.go`, `try_outside_result_test.go`. **Note — `@builtin(Result)`/`@builtin(Maybe)` is prelude-only infrastructure, NOT an app-facing feature.** No realistic app code writes it today: the name+shape fallback already recognizes a plain `data Result<t,e> = Ok t | Err e` with zero ceremony, and the marker only matters once two `Result`s can coexist (needs a module system, which doesn't exist). Its intended sole consumer is a future prelude/stdlib file (one marker, so the compiler knows the canonical decl). It was cheap (reused `@derive` grammar) and rode in on the recognition-unification fix, which had standalone present-day value. Don't surface/document it as a user feature until a prelude exists.
-   - **Partial (07/09/26) — Error-type conversion for `Result?` propagation.** `?` now compares the `E` in the operand's `Result<T,E1>` against the enclosing `Result<_,E2>` (previously ignored). Interim rule is **assignability-only** (`errorTypesCompatible` in `typechecker_try.go`): `E1` must be assignable to `E2` — same nominal error type, untyped-literal widening, or a constrained/base relation; a genuine `GenericType` on either side (a function polymorphic over its error) accepts anything. Two different nominal error types (`IoError` vs `ParseError`) now error, with "convert it explicitly". `resultOrMaybeKind`/`enclosingReturnKind` extended to surface `E`. Tests: `try_expr_test.go` (`TestTry_SameErrorType_Ok`, `TestTry_DifferentErrorType_Error`). **Still open (the From part):** widen to accept a declared `E1`→`E2` conversion once a From-style conversion trait exists (deferred — a whole canonical-trait convention, and its payoff needs real multi-error programs; today the escape hatch is an explicit map at the call site). No codegen yet, so this is a pure type-check-time acceptance rule.
+1. **Must-use `Result`/`Maybe` + `?` propagation**
+   - **[DONE 07/09]** Canonical Result/Maybe identity — a `CanonicalKind` stamp (via a name-independent `@builtin` attr or an unmarked name+shape fallback) replaces per-site name matching. `@builtin` is prelude-only infra, not an app feature.
+   - **[PARTIAL 07/09]** `?` now checks the operand's error type against the enclosing return (assignability-only). **Open:** From-style declared error conversion, once a conversion trait exists.
 
-2. **Checked arithmetic by default; wraparound must be explicit** — `a + b` on two `i8` wraps silently at runtime. This contradicts the determinism goal behind `fixed<I,F>`.
-   - **Trapping runtime semantics still blocked on a backend** (no codegen yet, so a trap on overflow can't be emitted). **Builtin-method registration DONE (07/10/26):** the "somewhere to live" now exists — `typechecker/builtins.go`, a registry consulted in `inferMemberCall` after struct-field/trait resolution miss (so user types/traits shadow builtins). `wrapping_add`/`wrapping_sub`/`wrapping_mul` + `saturating_add`/`saturating_sub`/`saturating_mul` type-check on any concrete integer receiver as `(self: T, other: T) -> T`; a primitive is now a valid method receiver (missing methods report `T has no method "x"`). A backend lowers these to two's-complement add/sub/mul (wrapping) and `llvm.{s,u}{add,sub}.sat` (saturating). **Still open:** `checked_*` (returns `Maybe<T>` — needs Maybe reachable, i.e. a prelude) and the trap-on-overflow default for plain `+` (backend). Registry chosen over a `wrapping { … }` block — local/greppable at the op, matches "unsafe path must be loud"; no grammar change (ordinary method calls).
-   - **TODO — Range/interval analysis for non-constant operands** — catching `a + b` on two concrete `i8` *variables* needs a value-range abstract-interpretation pass; a blanket "any small-int arithmetic might overflow" warning would fire on essentially every expression (too noisy). Separate, larger pass (would also subsume div-by-zero and always-true-condition checks). Not the constant-fold slice above.
+2. **Checked arithmetic by default; wraparound explicit**
+   - **[DONE 07/10]** Explicit `wrapping_{add,sub,mul}` / `saturating_{add,sub,mul}` on integer receivers via the builtin-method registry (`typechecker/builtins.go`).
+   - **[BLOCKED: backend]** Trap-on-overflow default for plain `+`. **[Open]** `checked_*` (returns `Maybe<T>`, needs a prelude).
+   - **[TODO]** Range/interval analysis to catch overflow on non-constant `i8` *variables* — a separate value-range pass (would also subsume div-by-zero/always-true checks).
 
-5. **One conversion syntax; lossy conversions must be loud** — *Widening syntax is already settled: `f32(x)` is the one form (decided 06/14/26).* The todo's old premise was stale — there is **no `x as f32` cast** in the grammar (`as` is reserved but wired only to `import_alias`), so there were never "two ways"; only `f32(x)` exists, and `inferTypeConversion` (`typechecker.go`) already **errors** (not silently truncates) on float→int, narrowing float (`f64→f16`), and non-numeric. So the remaining work is NOT picking a widening form — it's that lossy/narrowing has **no escape hatch at all** today (you literally can't express an intentional `f64→f16`). Give narrowing a distinct, named, loud spelling so it's *expressible but explicit*. **Decision: methods, not a cast keyword** — `x.truncate()` / `x.saturate()` / `x.narrow()` — to stay consistent with #2's "methods, not a `wrapping {}` block" choice (local, greppable at the op, composes with `wrapping_add`/`saturating_add`, no grammar change). **Builtin-method registration now exists** (`typechecker/builtins.go`, landed 07/10/26 for #2's arithmetic ops), so the *home* for `truncate`/`saturate`/`narrow` is no longer the blocker — the remaining work is specific to these: their return type is the *narrower* target, which has no argument and must be inferred from context (the binding annotation), e.g. `let x: f16 = y.truncate()`. That's context-directed return-type inference for a method call, which the current `inferMemberCall`/`inferLambdaCallFromType` path doesn't do (it infers the callee's declared return, not from the expected type). So this needs either a target-type parameter on the signature resolver (thread the expected type into `builtinMethodSignature`) or a turbofish (`y.truncate::<f16>()`). Until then `f32(x)` correctly hard-errors on narrowing, a safe (if strict) interim state.
+5. **Lossy conversions must be loud** — widening `f32(x)` is settled and already hard-errors on narrowing.
+   - **[DECIDED]** Narrowing gets named methods `truncate`/`saturate`/`narrow` (not a cast keyword). The builtin-method home now exists (#2). **Open:** their return type is the narrower target with no argument, so it needs context-directed return-type inference (or a turbofish).
 
-8. **Consistency cleanups (lower-stakes pit-of-failure removal)**
-   - **Product-type choice — guidance (decided 06/19/26).** Lyra keeps all of these on purpose; they sit at different points on "does this grouping need a name, and named fields?", not "N ways to do one thing." Pick by this rule of thumb:
-     - **Alternatives (a sum)? → `data`.** For each variant's payload:
-       - no payload → bare constructor (`None`, `Red`)
-       - positional payload → `C i64` / `C (i64, i64)`
-       - named-field payload, **one-off** (only built/matched through this variant) → **inline record** `C { field: T, … }`
-       - named-field payload you'll **name, reuse across variants/types, pass around, or `impl` on** → reference a `struct`: `C MyStruct`. *Rule: start inline; promote to a named struct the moment the payload earns a name — same instinct as extracting a function.*
-     - **Always all fields together (no alternatives)? → a product.**
-       - fields benefit from names → `struct` (the default for records)
-       - purely positional but you want a distinct nominal type → named `tuple Foo(...)`
-       - ad-hoc / local / structural, no name needed → anonymous tuple `(a, b)`
-   - **Inline vs. struct-reference are genuinely different** (anonymous-to-the-variant vs. own reusable named type), mirroring Rust's struct-variants vs. variants-wrapping-a-struct — so both stay.
-   - **Inline-record construction (FIXED 06/19/26).** `data Tree = Nil | Node { left: i64, value: i64 }` then `Node { left: 1, value: 2 }` now type-checks. `inferStructInstanceExpr` (typechecker.go) falls back, when `expr.Name` isn't a `symTable.Types` struct, to `findInlineRecordConstructor(Name)` — which finds the constructor whose single payload is an `AnonymousStructType` and returns its fields + the owning data type. The fields are checked with the existing struct-literal machinery (missing/extra/mismatched fields all reported), the data type's generic params drive the same inference as a generic struct (`data Box<t> = Wrap { value: t }`; `Wrap { value: 42 }` infers `t`), and the literal evaluates to the data type. Struct-reference construction (`C(MyStruct { … })`) already worked via the constructor-call path. Tests: `data_constructor_call_test.go` (`TestInlineRecordConstructor_*`).
-   - **DONE (07/10/26) — removed the `given` keyword.** `X given { … }` (postfix where-clause) was pure sugar for a plain block Lyra already has (`{ …; X }`), earning a keyword + grammar rules only on the "punchline-first" reading — not worth the surface area. Retired: `given_expr`/`given_bindings` rules + `PREC.GIVEN` (grammar), the `given` reserved word (freed as an identifier), `ast.GivenExpr` + its collector/walk/checker cases, and all tests/goldens. See the Completed entry.
+8. **Consistency cleanups**
+   - **[DECIDED 06/19]** Keep `data` / `struct` / named `tuple` / anonymous tuple — they sit at different points on "does this grouping need a name + named fields?", not redundant. Rule of thumb: sum → `data` (inline record for one-off named payloads, promote to a `struct` when the payload earns a name); product → `struct` (named) / named `tuple` (positional nominal) / anonymous tuple (ad-hoc).
+   - **[FIXED 06/19]** Inline-record construction (`Node { left: 1, value: 2 }` for a `data` variant) type-checks.
+   - **[DONE 07/10]** Removed the `given` keyword (postfix where-clause was pure sugar for a block).
 
-### Functional / Imperative blend — enforce the pure/mutable split (ordered)
-Goal: give the FP half real *guarantees* (determinism, referential transparency, safe auto-parallelism) while keeping ergonomic in-place mutation for games. Current state: `pure` is parsed (`LambdaExpr.IsPure`) but **unenforced** — it's a no-op annotation; `ref`/`mut`/`own` modifiers are parsed but unchecked at *parameter* boundaries. Safe aggregate mutation (`p.x = v`, `arr[i] = v`) **is now expressible and checked** for local bindings via the three-level `let` / `let mut` / `var` model (#2 below, done 06/15/26); the remaining teeth are purity enforcement and the `ref`/`mut`/`own` *parameter* modifiers.
+### Functional / Imperative blend — enforce the pure/mutable split
 
-**Guiding model:** purity = *no observable effect crossing the function boundary* (NOT "no mutation happens"). Local mutation of owned values inside a `pure` function is allowed and encouraged (the ST-monad / Rust-`fn` / "functional but in-place" trick) — that's what lets pure code stay fast. The membrane is one-way: pure may not call impure; impure may freely call pure. The `ref`/`mut`/`own` modifiers are the machinery that tells the checker whether a mutation escapes (`own`/`ref` ok in pure, `mut` borrow = external effect = forbidden in pure). Frame the whole thing as *the compiler's license to memoize, reorder, and auto-parallelize* (ECS systems as pure functions over component arrays → job-system scheduling with no data-race analysis) — that's the games payoff that justifies the work.
+**Model:** purity = no observable effect crossing the function boundary (local mutation of owned values is fine). `ref`/`mut`/`own` tell the checker whether a mutation escapes. Payoff: license to memoize/reorder/auto-parallelize.
 
-1. **Purity-enforcement checker pass** (`checker/purity.go`) — walk each `pure` lambda body; error on observable effects: reassignment/math-assign/deref-assign of anything not declared locally within the function, calls to non-pure functions, `await`/I/O/effectful builtins, and (later) mutation through a `mut`-borrowed parameter. Mirror the `CheckAwaitOutsideAsync` enclosing-context walk. Landed in `checker/purity.go` and **wired into the LSP** (`cmd/lyra-lsp/main.go` analyze pass; verified end-to-end over stdio). Start strict-but-simple, expand the effect surface incrementally. Diagnostic code `lyra-E007` (impure op in pure fn). Demo fixture: `lyra-vscode-ext/test/purity.lyra`.
-2. **Safe mutable lvalues — three-level binding model** (DONE 06/15/26; see Completed) — *the binding keyword answers "may the **name** be rebound?", the `mut` modifier answers "may the **interior** change?", giving three useful levels instead of the old single axis:*
-   - `let x` — frozen name, **deeply immutable** interior (nothing inside ever changes, transitively).
-   - `let mut x` — frozen name, **mutable interior**. This is JavaScript's `const` (`const obj` blocks `obj = …` but allows `obj.x = …`) and is the *common* mutable case — it grants the least, so prefer it over `var`.
-   - `var x` — mutable name **and** interior (reassign the whole binding *and* mutate fields).
-   *Rationale (vs. the old two-level `let`-deep / `var`-mutable plan): forcing any field mutation all the way to `var` over-granted (you also got name reassignment you didn't ask for). Lyra's **deep** `let` is exactly what opens this gap — the `let`→`var` jump is a cliff from "nothing mutates anywhere" to "everything mutates + rebindable"; `let mut` is the missing middle rung. JS leans `const`-heavy because that keyword is the shallow/off-diagonal one; the instinct points at `let mut`, not `let`.* Interior mutation is now expressible without `unsafe`. Nested structs work end-to-end (the pre-existing `inferMemberExprType` / struct-literal `UnresolvedType` non-resolution that broke `l.start.x` and `Line { start: Point{…} }` was fixed alongside, 06/15/26). **Still deferred:** wiring `mut`/`own` **parameter** paths into this check (that's FP/Imperative #4 below — today a path rooted at a non-local binding is left permissive).
-3. **Purity inference** — infer purity bottom-up over the call graph so `pure` is the cheap default and the keyword becomes a *checked assertion*, not a tax. A function that only calls pure functions, mutates only locals, and does no I/O is pure; record it on the symbol so callers can use it. *Partial:* `inferImpureLambdas` in `purity.go` infers impurity of function bindings at **any** nesting depth transitively (fixpoint, keyed by lambda pointer) so a `pure` fn calling a user-defined impure fn — sibling or top-level — is flagged; reading a mutable (`var`/`let mut`) binding captured from any enclosing scope is flagged too (referential transparency). Both resolve names via a capture stack of `scopeBindings` frames threaded through the walk (done 06/19/26, extended to non-top-level scopes 06/21/26). **Pure-as-recorded-default (done 06/23/26):** `checker.InferredPureFunctions` exposes the complement of the impurity fixpoint by name — any top-level function's inferred purity, explicit or not, not just the ones a `pure` caller happens to touch. **Methods (done 06/24/26):** trait methods can now be marked `pure` and are checked/enforced at call sites — see the Completed entry. **Method inference (done 06/24/26):** an unannotated method is now inferred pure the same way an unannotated function is, via a joint fixpoint over functions and methods together (see Completed entry). **Method-to-method call tracking (done 06/24/26):** `checkTraitImpl` now type-checks each impl method's body via `checkTraitImplMethodBody` (setting up a param scope from the trait signature), so `.`-calls inside one method body are dispatched and recorded in `MethodTable` — the purity fixpoint can now propagate impurity through method-to-method chains, not just function↔method ones. **Impurity of imported functions (done 06/24/26):** calls to names that can't be resolved to a local lambda and aren't in `builtinEffects` or a known pure type-conversion (`i8`–`f64`) are conservatively treated as impure by both `lambdaEffects`/`methodEffects` (inference) and `isImpureCallee` (error reporting). `calleeName` extended to handle `DataConstructorExpr` bases (uppercase names like `Arena`). Arena/size helpers (`Arena.new`, `megabytes`, etc.) added to `builtinEffects` as `EffectNone` so arena code stays pure. Tests: `purity_test.go` (`TestPurity_ImportedFunctionCall_*`, `TestPurity_TypeConversionCall_StillPure`, `TestPurity_ImportedFunctionCallTransitive_Impure`). **Still to do: symbol-table-backed scope info (vs. the current AST-walk reconstruction) — two phases:** *Phase 1 (DONE 07/09/26)* — the `ScopeTable` was essentially unpopulated (only block exprs + if-let); the collector now records a node→scope entry for lambda parameter scopes (`ScopeFunction` on the `*ast.LambdaExpr`), both loop forms (`ScopeLoop`), and `with` blocks (`ScopeBlock`) too. This is the node→scope mapping Phase 2 will consume; it also activates the typechecker's previously-inert `enterScope(lambda, …)` (full suite still green — the body block's own scope dominates body-checking). Tests: `collector/tests/scope_recording_test.go`. *Phase 2 (lambdas + free functions DONE 07/10/26; methods deferred)* — replaced purity's per-lambda AST re-walk (`directScopeBindings`) with `scopeFrames.forLambda`, which reads the collector's `ScopeTable`: it flattens the lambda's recorded `ScopeFunction` subtree (down to but not through a nested lambda's own function scope) into the same flat frame, deriving each name's interior-mutability from its declaring node (`VarDeclStmt.CanMutateInterior`, destructuring `var`/`IsMut`, lambda-valued bindings → `functions`). Params/multi-clause patterns are still read off the node (clause patterns aren't registered in the tree). Two collector quirks are reconciled for bit-for-bit fidelity: a `with`-arena handle (stored as a plain `let`) reads as interior-mutable, and a `for … in` loop var (in the loop scope but never a body binding the old walk saw) is skipped — precomputed `arenaScopes`/`forInScopes` sets carry both. `CheckPurity`/`InferredEffects`/`InferredPureFunctions` now take a `*symbols.ScopeTable`. Zero behavior change (full suite green). Tests: `purity_test.go` (`TestPurity_ForInBodyLocalMutation_Ok`, `TestPurity_CapturedMutationInsideForIn_Error`, plus the existing local-mutation/arena/if-let cases as the fidelity oracle). **Methods still pending:** the trait-method path (`directScopeBindingsForClause`) still re-walks — `CollectLambdaClause` records no scope for method clauses (and doesn't register their params), so converting it needs a collector change (push a `ScopeFunction` + register params for method clauses) reconciled with the typechecker's `checkTraitImplMethodBody` scope setup — a separate, higher-risk change deliberately deferred.
-4. **Wire `ref`/`mut`/`own` into the typechecker** (DONE 06/15/26; see Completed) — parameter modifiers now constrain interior mutation: bare/`ref` = immutable borrow (can't mutate), `mut` = mutable borrow (can), `own` = owned local (can). The purity check treats interior mutation through a `mut` param (and through captured bindings) as an escaping effect; `own`/local mutation stays allowed. **Still deferred:** `ref`/`mut`/`own` on *non-parameter* positions (return types, struct fields) and using the modifiers to drive copy/move/borrow semantics once a backend exists.
-5. **Generalize `pure` to a coarse effect row** — once 1–4 exist, model effects as a set `{io, alloc, rand, time, mut}` where `pure` == empty set. Lets you express "deterministic but allocates" (valuable for netcode/replay even when not fully pure) instead of a single boolean. Keep immutable data as plain owned **value-semantics** types (copy/move/COW), not heap-allocated persistent structures — stays layout-friendly for `fixed<>`/packed/arena.
-   - **DECIDED (07/08/26) — the surface is a named-bound ladder, NOT effect-row annotations.** The coarser-than-`pure` spelling is a small set of *named* guarantees, each a union over the internal effect row:
-     - `pure` — `EffectNone` under the `PurityEffects = Mut|IO` mask (allocation permitted). Unchanged.
-     - `det` (deterministic) — forbid `{io, rand, time}`, **allow** `{mut, alloc}`. This is *the* netcode/physics/replay bound. Implement as a third mask (`DetEffects = IO|Rand|Time`) alongside `PurityEffects`, on the same seam that already makes `EffectAlloc` orthogonal.
-     - `noalloc` — forbid `EffectAlloc`. Orthogonal *resource* bound; stacks onto any purity rung (`pure noalloc`, `det noalloc`) for hot loops / audio / real-time.
-     - Lattice: `pure` ⊆ `det` ⊆ unannotated on the correctness axis; `noalloc` is a separate axis.
-     - **Why named bounds beat a raw effect-row annotation syntax:** (1) `alloc`/`mut` bits aren't concepts a domain programmer reasons in — "deterministic" is; (2) putting effects on signatures forces effect-polymorphism / row variables (Koka-grade cost) for every higher-order fn; (3) an unannotated fn carries no annotation, so *reading* stays cheap; (4) named bounds are unions over the row, so adding one later is additive. The effect row stays 100% internal (mechanism); bounds are the interface.
-     - **Effect-row annotation syntax (`fn ->{io,alloc}`) is RULED OUT** until Lyra grows *user-defined* effects + handlers — it has neither today (no `perform`/`resume`). Revisit only then.
-     - All three bounds are **inferred**; the keyword is a *checked assertion* placed at an API boundary (like `pure` today), never a per-helper tax.
-     - **`det` prerequisite — split ambient vs threaded rand/time in `builtinEffects`:** `Random.global()`/`wallClock()` carry `EffectRand`/`EffectTime`; a threaded RNG value or a passed-in tick are ordinary `mut`/`own` data (not effects). That split is what lets `det` allow seeded randomness + sim-time while still forbidding nondeterminism.
-     - **Grammar + collection + checks + enforcement landed (07/08/26):**
-       - *Grammar/collection:* `det`/`noalloc` reserved keywords + `optional(field(...))` modifiers on `lambda_expr` (`is_det`/`is_noalloc`) and `trait_method_implementation`, mirroring `pure`; collected onto `LambdaExpr.IsDet`/`IsNoAlloc` and `TraitMethodImpl.IsDet`/`IsNoAlloc`. Corpus: `test/corpus/expressions/effect_bounds.txt`.
-       - *Conflict check:* `checker.CheckEffectBounds` (`checker/effect_bounds.go`, `lyra-E015`) errors on the one contradictory pair `pure`+`det` (noalloc orthogonal, never flagged); wired into the LSP before typechecking (AST-only). Tests: `effect_bounds_test.go`.
-       - *IO split:* `EffectIO` → `EffectInput` (world→program, non-deterministic — forbidden in pure+det) + `EffectOutput` (program→world void result — forbidden in pure, ALLOWED in det); `EffectIO` kept as the `Input|Output` alias. `builtinEffects`: print/println→Output, read→Input, write→Input|Output; `await`→Input. Masks: `PurityEffects = Mut|Input|Output|Rand|Time` (all but Alloc), `DetEffects = Input|Rand|Time` (⊆ PurityEffects ⇒ pure⟹det).
-       - *Enforcement:* `checkBoundedEffects` in `purity.go` (inside `CheckPurity`, `lyra-E016 CodeEffectBoundViolation`) checks each lambda/method's full inferred (transitive) effect set — `det` against `DetEffects`, `noalloc` against `EffectAlloc` — reporting once at the callable (per-op locating is a later refinement; `pure` keeps its fine-grained per-op walk, E007). Tests: `checker/det_noalloc_enforcement_test.go`.
-       - **Rand/Time detection landed (07/09/26):** `builtinEffects` now maps the ambient `Random.global()`→`EffectRand` and `wallClock()`→`EffectTime`, so `det` forbids all three nondeterminism sources (input/rand/time), each with its own diagnostic message. The ambient-vs-threaded split falls out of the *call shape*: only these ambient entry points carry the bit, so a threaded RNG's `rng.next()` / a passed-in `tick` (reached through a local binding) stays ordinary `mut`/`own` data and a `det` fn may use seeded randomness + sim-time. Tests: `det_noalloc_enforcement_test.go` (message-asserting, so they'd fail if it regressed to the Input fallback).
-       - **Unknown-call alloc taint (DONE 07/09/26):** an unresolvable external call now taints the full effect set (`AllEffects = PurityEffects | EffectAlloc`), not just `PurityEffects`, so `noalloc` flags a function that calls one — we can't verify it doesn't allocate. `pure`/`det` behavior is unchanged (Alloc is orthogonal to their masks). Tests: `det_noalloc_enforcement_test.go` (`TestNoAlloc_UnknownExternalCall_Violates`, `*_TransitiveUnknownCall_*`). This closes the effect-bounds thread's remaining slice; the only imprecision left is the approximate arena discharge (a `shared` value built inside `with {}` but returned out still escapes — needs escape analysis).
-   - **Partial (06/24/26)** — internal effect-row infrastructure: `checker.Effect` bitmask (`EffectMut`/`EffectIO`/`EffectAlloc`/`EffectRand`/`EffectTime`, `EffectNone`=pure) flows through `inferImpurity`; `InferredEffects(program)` exposes the per-function set (`InferredPureFunctions` wraps it). `EffectMut`/`EffectIO` detected as before. `Rand`/`Time` now detected too (07/09/26) via the ambient `Random.global()`/`wallClock()` builtins; they sit in `PurityEffects` and `DetEffects` (they break determinism).
-   - **Partial (06/24/26)** — **`EffectAlloc` orthogonal to `pure`, first slice detected.** Decided alloc is a resource/budget effect, NOT a correctness one: a `pure` fn may allocate. Mechanically, `pure` enforcement (and callee-purity) is defined against `PurityEffects = Mut|IO`, so the alloc bit never makes a function impure; `EffectAlloc` is inferred and surfaced via `InferredEffects` only. Detection (explicit, modifier-marked sites only): constructing a value of a `shared`-declared struct / data type / named tuple sets `EffectAlloc`. Arena discharge is a **hard-coded special case for `with`** (Lyra has no general effect-handler mechanism): a `shared` construction lexically inside a `with`-arena block doesn't count. Tests in `purity_test.go` (`TestInferredEffects_Shared*`, `*ArenaDischarges*`, `TestPurity_PureFunctionMayAllocate`).
-   - **Still open:** (a) *implicit* allocation — dynamic arrays/strings, escaping closures — deferred to a layout/escape-analysis pass (no settled layout yet); (b) the arena discharge is approximate — a `shared` value built inside `with {}` but *returned out* still escapes, but catching that needs the same escape analysis; (c) ~~`Rand`/`Time` builtins + detection~~ (DONE 07/09/26 — ambient `Random.global()`/`wallClock()`); (d) **DECIDED 07/08/26** — the coarser-than-`pure` surface is the named-bound ladder `pure`/`det`/`noalloc` (see the DECIDED bullet above), not an effect row; grammar, collection, and enforcement have all landed.
-   - **Partial (06/24/26) — alloc as type identity, first safe step.** Plan: allocation is a *storage flavor on a nominal type*, not part of nominal identity. `TypesEqual` stays allocation-blind; a *separate* allocation-compatibility axis will live in `isAssignable`/`effectiveType`. Flavor resolution priority: explicit site modifier (`shared T {…}`, grammar TBD — see decision (a)) > binding annotation (`let n: shared Node`) > type-decl default (`shared struct`) > implicit `Stack`. **Decision (b), DECIDED:** owned params/returns carry a flavor (decl default if unwritten); **borrowed (`ref`/`mut`) params are allocation-polymorphic**. **Decision (a), OPEN:** add `shared T {…}` construction-site syntax, or rely on binding annotations? (trade-offs noted in chat 06/24/26 — defer; leaning toward annotations-only until no-binding overrides prove common.) Done: (1) `Unspecified`/`Stack`/`Shared` sentinels normalized (old `None` retired). (2) `types.AllocationOf(t)` covers `NamedStructType`, `DataType`, `StaticArrayType`, `DynamicArrayType`, `ParameterizedType`, `UnresolvedType`. (3) `types.WithAllocation(t, mod)` returns a copy with the modifier overridden (no-op when `mod == Unspecified`). (4) `UnresolvedType.Allocation` and `ParameterizedType.Allocation` carry usage-site modifiers through the AST. (5) `parseAllocatedType` (collector) now handles all non-array types generically — `shared Node` / `shared Box<T>` in a type annotation no longer errors. (6) `resolveType`/`resolveTypeIfKnown` (typechecker) propagate `UnresolvedType.Allocation` onto the resolved type via `WithAllocation` after the name lookup, while still caching the base (declaration-level) type. Tests: `pkg/types/allocation_test.go` (`TestWithAllocation`), `pkg/analyzer/typechecker/tests/allocation_test.go`. **(a) allocation-compatibility check — DONE 07/10/26** (`lyra-E018`): owning a value across a concrete flavor boundary (`stack`↔`shared`) is now flagged at the owning sites (annotated `let`/`var` init, destructuring-decl annotation, reassignment, interior lvalue write) via `allocationCompatible`/`tc.checkAllocationCompat`. Conservative rule — fires only when *both* sides carry a concrete, differing flavor; `Unspecified` inherits from context (polymorphic), so unannotated code and the common "construct a literal, bind it `shared`" path stay clean. `TypesEqual`/`isAssignable` remain allocation-blind (separate axis). **Args/returns now covered too (Decision (b)):** an `own` parameter is checked against its argument (bare/`ref`/`mut` borrows are polymorphic → skipped, via `paramOwnsArgument`); an owned return (bare/`own`, not `ref`/`mut`, via `isOwnedReturn`) is checked at every return site incl. trait-impl method bodies. Still skipped: the `LambdaType`-callee path (`inferLambdaCallFromType`) and element-level flavor (array/tuple interiors). Tests: `allocation_test.go` (`TestAlloc_Own*`, `*BorrowedParam*`, `*OwnedReturn*`, `*BorrowedReturn*`, `*SameFlavor*`, `*UnspecifiedIsPolymorphic*`, `*ReassignAcrossFlavor*`). Still open: (c) construction-site syntax `shared T {…}` pending Decision (a); (d) backend representation (inline vs pointer vs refcount).
-   - **Done (06/24/26) — recursive-type well-formedness check** (`lyra-E014`, `checker/recursive_type.go`). `CheckRecursiveTypes` builds a by-value dependency graph from the program's type declarations (struct fields, data constructor params, named-tuple elements) and runs a three-color DFS to find cycles. A cycle is only safe if every type in it is declared `shared` (heap-allocated, pointer-sized) or the recursive field/param is annotated `shared` — either way the size is bounded. `data Tree = Nil | Branch(Tree, Tree)`, `struct Tree { left: Tree }`, and mutual recursion like `struct A { b: B } / struct B { a: A }` all error; `shared data List = Nil | Cons(i64, List)` and `struct Tree { left: shared Tree }` are accepted. Wired into the LSP analyze pass. Tests: `pkg/analyzer/checker/recursive_type_test.go`.
-6. **Use-after-move check for `own` parameters** — **Decision (06/15/26): `own` is a move that *consumes* the caller's binding** (not a pass-by-value copy). Rationale: it's the one non-redundant mode (copy-`own` ≈ `ref` + an explicit local copy; move is the only way to get single-ownership/zero-cost transfer), a silent copy would violate "expensive path must be loud" (keep copying an explicit op), and it's the right model for single-owner resources (`shared`/`weak`/arena) + the aliasing guarantee auto-parallelism needs. **The teeth this requires:** a definite-move analysis that errors on *use-after-move* — reading or re-passing a binding after it was moved into an `own` parameter. Sibling of the definite-assignment pass (Pit-of-Success #6); flow-sensitive. Until it lands, `own` is safe-but-incomplete (front-end allows it; no backend means no actual move yet), so this is **not urgent** — natural trigger is a backend with real move/copy codegen.
+1. **[DONE]** Purity-enforcement pass (`checker/purity.go`, `lyra-E007`), wired into the LSP.
+2. **[DONE 06/15]** Three-level binding: `let` (deeply immutable) / `let mut` (mutable interior) / `var` (mutable name + interior).
+3. **[DONE]** Purity inference (bottom-up over functions + trait methods, transitive); `InferredPureFunctions` exposes it. Phase 2 (read the ScopeTable instead of re-walking the AST) done for lambdas + free functions; **method clauses still re-walk** (deferred — needs a collector change).
+4. **[DONE 06/15]** `ref`/`mut`/`own` parameter modifiers constrain interior mutation and purity. **Deferred:** modifiers on non-parameter positions + driving move/copy/borrow semantics (needs a backend).
+5. **[DECIDED 07/08 + landed]** Named-bound ladder `pure` ⊆ `det` ⊆ unannotated, plus orthogonal `noalloc` — grammar, collection, and enforcement all in (`lyra-E015`/`E016`); rand/time and unknown-call alloc taint detected. Raw effect-row annotation syntax ruled out until user-defined effects exist.
+   - **Alloc as a storage flavor** (not nominal identity): **[DONE 07/10]** `stack`↔`shared` compatibility check (`lyra-E018`) at owning sites incl. args/`own`, returns, and tuple/array elements. **[DONE 06/24]** recursive-type well-formedness (`lyra-E014`). **Open:** construction-site `shared T {…}` syntax; implicit-alloc / escape analysis; backend representation (inline vs pointer vs refcount).
+6. **[TODO, BLOCKED: backend]** Use-after-move check for `own` params (definite-move analysis). `own` = consuming move (decided 06/15); not urgent until real move/copy codegen.
 
 ## In Progress
 --------------
 
-### Backend (codegen) — groundwork started 07/10/26
-The backend is the dependency blocking Pit-of-Success #2 (trapping/wrapping arithmetic), #5 (narrowing methods), #6 (use-after-move), and the alloc representation. Groundwork landed so it can be written:
-- **`pkg/driver.Analyze`** — the front-end pipeline is now a single reusable call returning the typed program + all tables (`Program`/`SymbolTable`/`ScopeTable`/`TypeTable`/`MethodTable`) + normalized `[]diagnostic.Diagnostic`. This is the backend's input.
-- **`cmd/lyrac`** — real CLI (`check`/`build`) on the driver; codegen seam is `lowerAndEmit(path, res, entry)`, which receives an error-free typed `Result` and the resolved entry point.
-- **Target DECIDED (07/10/26): LLVM IR.** Recommended library `github.com/llir/llvm` (pure Go, emits textual IR, no CGO/system-LLVM dep) → `llc`/`clang`; graduate to `tinygo.org/x/go-llvm` bindings later for the in-process optimizer. Lowering order: types → a trivial `main` (validate toolchain) → expressions → control flow → runtime shims (`print`, overflow trap via `llvm.sadd.with.overflow`).
-- **Entry-point convention DONE (07/10/26):** `driver.ResolveEntryPoint` — a top-level `let main = () -> i64` (exit code) or `() -> void`/no-annotation; zero params. Build-time only (not in `Analyze`); `lyrac build` enforces it. See Completed.
-- **Builtin-method registration DONE (07/10/26)** for the integer overflow ops (#2) — `typechecker/builtins.go`; enumerates ops the backend lowers.
-- **Next prep:** (1) migrate `cmd/lyra-lsp` onto `driver.Analyze` (removes the duplicated inline pipeline — do before the pipeline changes again); (2) allocation representation for `stack`/`shared` (inline vs pointer vs refcount, todo #5 (d)) — needed once codegen touches aggregates.
+### Backend (codegen) — target: LLVM IR (decided 07/10)
+Groundwork done; this is where backend work now happens. Blocks #2 (traps), #5 (narrowing), #6 (use-after-move), and alloc representation.
+- **[DONE]** `pkg/driver.Analyze(source) → Result` — one call returning the typed program + all tables + normalized diagnostics (the backend's input).
+- **[DONE]** `pkg/backend` interface + `pkg/backend/llvm` skeleton; `cmd/lyrac check`/`build` on top. `build` emits a placeholder `main` module that compiles with `clang` and runs — toolchain path proven.
+- **[DONE]** Entry point: top-level `let main = () -> i64` (exit code) or `-> void` (`driver.ResolveEntryPoint`, build-time only).
+- **Recommended:** library `github.com/llir/llvm` (pure Go) → `clang`. Lowering order: types → trivial `main` → expressions → control flow → runtime shims (`print`, overflow trap).
+- **First milestone:** lower `entry.Lambda.Body` for `let main = () -> i64 => <int>` so the exit code matches the source (replace `lowerEntry`'s placeholder `ret`).
+- **Next prep (on request):** migrate `cmd/lyra-lsp` onto `driver.Analyze` (kill the duplicated inline pipeline); decide `stack`/`shared` representation (#5).
 
 ## Completed
 ------------
 
-### 07/10/26 (continued)
-- **Program entry-point convention** (backend groundwork) — `driver.ResolveEntryPoint(res)` (`pkg/driver/entrypoint.go`): an executable must declare a top-level `let main` that is a zero-parameter function returning `i64` (process exit code, `EntryReturnExitCode`) or `void`/no-annotation (`EntryReturnVoid`). Returns the resolved `*EntryPoint` (Decl + Lambda + Returns) or nil + diagnostics (absent / not a function / has params / wrong return). Build-time requirement (a library or `lyrac check` needs no `main`), so it is *not* in `Analyze`; `lyrac build` calls it and hands the entry point to `lowerAndEmit`. `main` name + `-> i64`/`-> void` is the chosen convention (revisit if a games entry shape wants args/config). Tests: `pkg/driver/entrypoint_test.go` (6 cases).
-- **Builtin-method registration + integer overflow-arithmetic methods** (Pit-of-Success #2; backend groundwork) — new `typechecker/builtins.go` registry, consulted in `inferMemberCall` *after* struct-field and trait-method resolution miss (so a user type or trait impl always shadows a builtin). `wrapping_add`/`wrapping_sub`/`wrapping_mul` + `saturating_add`/`saturating_sub`/`saturating_mul` now type-check on any concrete integer receiver as `(self: T, other: T) -> T` (untyped-literal receiver promoted to its default). Primitives are now valid method receivers, so a missing method on one reports `T has no method "x"` instead of "member access on non-struct type" (updated `TestTraitDispatch_NoMatchingMethod_Error`). This is the "somewhere to live" #2/#5 needed — a registry, not a prelude — and it enumerates the integer overflow ops a backend must lower (two's-complement +/−/× for wrapping, `llvm.{s,u}{add,sub}.sat` for saturating). Deferred: `checked_*` (returns `Maybe<T>`, needs Maybe reachable) and the narrowing conversions `truncate`/`saturate`/`narrow` (need context-directed return-type inference — see #5). Tests: `builtin_methods_test.go` (7 cases).
-
 ### 07/10/26
-- **Retired the `given` keyword** (Pit-of-Success #8 consistency cleanup) — `X given { … }` (postfix where-clause) was pure sugar for a block Lyra already has (`{ …; X }`), so it was removed rather than kept for the "punchline-first" reading. Deleted the `given_expr`/`given_bindings` grammar rules + `PREC.GIVEN` and freed the `given` reserved word (now a plain identifier), and on the Go side `ast.GivenExpr`, `collectGivenExpr`, the `walk.go` case, and the four checker-pass cases (unused-vars/shadowing/use-before-decl/unreachable-code). All `expr_given` tests + goldens and the `expressions/given.txt` corpus removed; added an `assignments.txt` corpus guard that `let given = 5` parses (catches a future re-reservation). Grammar regenerated (`parser.c`), `go clean -cache`; corpus 356/356 and full Go suite green.
-- **Purity scope Phase 2 — read the Scope tree (lambdas + free functions)** (FP/Imperative #3) — replaced purity's per-lambda AST re-walk (`directScopeBindings`) with `scopeFrames.forLambda` in `purity.go`, which reads the collector's `ScopeTable` recorded in Phase 1. It flattens the lambda's `ScopeFunction` subtree (pruning at a nested lambda's own function scope) into the identical flat frame, deriving interior-mutability from declaring nodes (`VarDeclStmt.CanMutateInterior`, destructuring `var`/`IsMut`, lambda-valued → `functions`); params/multi-clause patterns still read off the node. Two collector quirks reconciled for bit-for-bit fidelity via precomputed `arenaScopes`/`forInScopes`: a `with`-arena handle (stored as plain `let`) reads mutable, and a `for … in` loop var (loop-scope symbol, never a body binding) is skipped while its body block is still walked. `CheckPurity`/`InferredEffects`/`InferredPureFunctions` now take a `*symbols.ScopeTable`. Zero behavior change — full suite green. Tests: `purity_test.go` (`TestPurity_ForInBodyLocalMutation_Ok`, `TestPurity_CapturedMutationInsideForIn_Error`; existing local-mutation/arena/if-let cases are the fidelity oracle). Methods (`directScopeBindingsForClause`) deferred — method clauses have no recorded scope (needs a collector + `checkTraitImplMethodBody` change).
-- **Allocation-compatibility check** (FP/Imperative #5, alloc-as-identity open item (a), `lyra-E018`) — owning a value across a concrete storage-flavor boundary (`stack`↔`shared`) is now an explicit op, not a silent coercion. `allocationCompatible` (`assignable.go`) + `tc.checkAllocationCompat` (`typechecker.go`) gate the *owning* sites: annotated `let`/`var` init, destructuring-decl annotation, reassignment, interior lvalue write. Conservative: fires only when both sides carry a concrete, differing flavor — `Unspecified` inherits from context (polymorphic), so unannotated code and the `let n: shared Node = Node{…}` (construct-then-bind-shared) path stay clean. `TypesEqual`/`isAssignable` stay allocation-blind (it's a separate axis, checked alongside not inside). Flows to LSP diagnostics via the existing typechecker publish. Tests: `allocation_test.go` (5 cases).
-- **Args/returns extension** (same slice, Decision (b) — owned carry a flavor, borrowed are polymorphic) — the check now also covers call arguments and return values, gated by mode: `paramOwnsArgument`/`isOwnedReturn` (`assignable.go`). Only an **`own`** parameter adopts the argument into its own storage, so only it is checked (bare/`ref`/`mut` are borrows → polymorphic → skipped); wired in `inferLambdaCall` (`typechecker_functions.go`). A return is owned-out unless the return type carries a `ref`/`mut` modifier (a borrowed return → polymorphic); wired at all return sites in `checkLambdaBody`/`checkBlockReturn` and the trait-impl method-body path (`checkTraitImplMethodBody`). Grammar already supports `own shared Node` params and `-> mut shared Node` returns (type-modifier field is separate from the allocation modifier). Tests: `allocation_test.go` (4 more cases: `*OwnParam*`, `*BorrowedParam*`, `*OwnedReturn*`, `*BorrowedReturn*`).
-- **Element-level flavor + tuple/array element resolution** (same slice, finishing the leftovers) — the allocation check now recurses structurally into array element and tuple element types (`firstAllocationMismatch` in `assignable.go`, replacing the flat `allocationCompatible`), so a `stack` element owned into a `(shared …, …)` slot is caught and the diagnostic names the *element* flavors, not the container's. This surfaced (and fixed) a pre-existing, allocation-independent bug: `resolveType`/`resolveTypeIfKnown` never resolved named element types inside array/tuple annotations, so even a plain `let p: (Node, Node) = …` failed assignability with "cannot assign ?(Node, Node) to ?(Node, Node)". Both now recurse into element types. **The `LambdaType`-callee path stays skipped by design** — the collector's `parseParameterType` never populates a param mode (`own`/`ref`/`mut`) for lambda-*type* params, so there's no ownership info to gate on; enabling it needs grammar+collector work and is low-value (lambda-typed struct fields being called). **Array element-level flavor isn't expressible in surface syntax** (`[N]shared T` mis-parses `shared` as the element name); the recursion covers it for when it becomes expressible, and array-*level* flavor works. Tests: `allocation_test.go` (`TestResolve_Named{Tuple,Array}ElementType_Ok`, `TestAlloc_TupleElementFlavorMismatch_Error`).
+- **LLVM backend skeleton** — `pkg/backend` interface + `pkg/backend/llvm` (textual IR); `lyrac build` writes a placeholder `main` module confirmed to compile and run (exit 0).
+- **Program entry-point convention** — `driver.ResolveEntryPoint`: a zero-param top-level `let main` returning `i64`/`void`; build-time only, enforced by `lyrac build`.
+- **Builtin-method registration** — `typechecker/builtins.go`; `wrapping_/saturating_{add,sub,mul}` type-check on integer receivers. Primitives are now valid method receivers (missing → `T has no method "x"`).
+- **Removed the `given` keyword** — retired the grammar rules, reserved word, AST node, and checker cases; corpus + suite green.
+- **Purity scope Phase 2 (lambdas + free functions)** — purity reads the collector's ScopeTable instead of re-walking the AST; zero behavior change. Methods deferred.
+- **Allocation-compatibility check (`lyra-E018`)** — owning a value across a `stack`↔`shared` boundary is an error at binding/reassign/lvalue sites; fires only on concrete differing flavors (`Unspecified` is polymorphic).
+- **…args/returns** — E018 extended to `own` arguments and owned returns; borrowed (`ref`/`mut`) are polymorphic and skipped.
+- **…element-level** — E018 recurses into tuple/array elements; fixed a pre-existing bug where named tuple/array element types weren't resolved by `resolveType`.
 
 ### 07/09/26
-- **Per-trait-method effect bounds** (FP/Imperative #5) — a trait method may be declared `pure`/`det`/`noalloc` (`trait Show { pure show: (Self) -> string }`), a *contract* every impl must satisfy. Grammar: `optional(field(...))` modifiers leading the name in `trait_method` (mirrors `trait_method_implementation`); collected onto `ast.TraitMethod.IsPure/IsDet/IsNoAlloc`. Enforcement: `checkTraitMethodBounds` (`purity.go`) now checks each impl against the *effective* bound — the impl method's own OR the trait's declared — so an impl of a `pure`-declared method is enforced pure without its own marker (`lyra-E007`; `det`/`noalloc` → `lyra-E016`). `CheckEffectBounds` extended to flag a contradictory `pure det` on a trait declaration too (`lyra-E015`). This makes a `where t: Show` bound carry the purity guarantee at the API boundary (the modular model the bound-dispatch join approximated). Tests: `trait_method_bounds_test.go` (5 cases), `collector/tests/trait_test.go` (`TestCollector_TraitMethodEffectBounds`), corpus `traits.txt` (`Trait Method with Pure Bound`). Grammar regen: `parser.c` rebuilt, `go clean -cache`.
-- **Bound-dispatched calls visible to the purity checker** (FP/Imperative #3) — a call resolved through a `where` bound (`self.value.show()`, `t: Show`) was treated as an unverifiable external call (`AllEffects`), so a `pure`/`det` method dispatching through a pure bound method was falsely flagged. Now the typechecker records it in the MethodTable via `SetBound`/`GetBound` (`typetable.BoundMethodRef{Trait, Method}`), and the purity checker scores it as the **join over every impl of that trait method** (`boundCallEffect`/`collectTraitMethodGroups` in `purity.go`, threaded through `inferImpurity`/`lambdaEffects`/`methodEffects` and the enforcement walk): pure/det only if *all* impls are — the bound admits any. So `pure show = self.value.show()` is clean when every `Show` impl is pure, and flagged (`lyra-E007`, or `lyra-E016` for `det`) when any is impure. Sound within the compilation unit; the tighter model — a per-trait-method `pure` bound annotation — landed the same day (see next entry). Tests: `bound_dispatch_purity_test.go` (4 cases).
-- **Impl method body return-type checking** (trait system) — `checkTraitImplMethodBody` (`typechecker_traits.go`) now verifies each impl method body against the trait's declared return type (mirroring `checkLambdaBody`: single-expr and block bodies, `?`-scope tracking), where before it only inferred the body for `MethodTable` population. The `traitSig` it checks against has Self *and* the trait's own type params substituted (`e → t`), so a generic impl returning the element type (`impl Get<t> for Box<t> { get = (self) => self.value }`) is not falsely flagged, while genuine mismatches (`impl Show for i64 { show = (n) => n }` → expected string, got i64) are caught. Closes the soundness gap noted in the previous entries. Tests: `impl_method_return_test.go` (6 cases). Full suite green — no existing impl body was non-conforming.
-- **Binding a trait's own type parameters** (trait system / generics) — `trait Get<e> { get: (Self) -> e }` + `impl Get<t> for Box<t>`: `box.get()` on `Box<i64>` now returns `i64`. The impl's trait arguments (`Get<t>` → `[t]`) are collected into `TraitImplStmt.TraitArgs` (via `FieldNameForChild` iteration — the `<…>` grammar field labels every child, so `ChildByFieldName` only saw `<`); `resolveTraitMethod` maps each trait param to its positional arg resolved through the receiver bindings (`e → t → i64`) and applies it to the method signature with `substituteSigGenerics` (params + return). Works in return and argument positions, and for concrete trait args (`impl Get<i64> for Widget`). Non-generic traits unaffected (empty param list → no-op). Tests: `generic_trait_param_test.go` (5 cases), `collector/tests/trait_test.go` (`TestCollector_TraitImplTraitArgs`). This closes the trait-generics arc (dispatch → bounds → constraint-check → field access → bounded bodies → trait params).
-- **Bounded polymorphism in method bodies** (trait system / generics) — calling a trait method on a value of bare type-parameter type (`self.value.show()` where `self.value : t`) now dispatches through the parameter's `where` bound. `checkTraitImpl` loads the impl's `where` constraints into `tc.genericBounds` around body checks; `inferMemberCall` on a `GenericType` receiver resolves the method via `dispatchViaGenericBound` against the bound trait's signature (Self = the parameter, so a Self-returning method yields `t`). Abstract dispatch — no concrete impl here (chosen at the enclosing generic's instantiation, where `checkImplConstraints` already verified the bound); recorded in the MethodTable as a `BoundMethodRef` so the purity checker accounts for it (see 07/09/26 bound-purity entry, done). No bound → actionable error naming the missing `where`. Tests: `generic_bound_dispatch_test.go` (5 cases). 
-- **Generic struct field access** (trait system / generics) — member access on a generic struct instance now resolves: `resolveGenericStruct` (`typechecker.go`) turns a `ParameterizedType` (`Box<i64>`, or `Box<t>` for `self` in a generic impl body) into the struct with its type arguments substituted into the field types (`substituteGenerics`, extended with a `ParameterizedType` case and shared with the match-arm code). So `b.value` on `Box<i64>` is `i64`, `p.second` on `Pair<i64,string>` is `string`, and `self.value` in an impl body is the parameter `t` — the prerequisite for using generic params in method bodies. Applied to field lookup only; dispatch keeps the original `ParameterizedType`. Param names come from `decl.GenericParams` (`NamedStructType.GenericParams` is unpopulated — a latent collector gap, noted). **Not yet:** calling a trait method on a generic-typed field via a bound (`self.value.show()` → "member access on non-struct type t"). Tests: `generic_struct_field_test.go` (5 cases incl. the boundary).
-- **Generic impl dispatch + bound checking** (trait system) — a generic impl (`impl Show<t> for Box<t>`) is now dispatchable against a concrete receiver: `resolveTraitMethod`'s match (`implTargetMatches`/`unifyGenericTarget`, `typechecker_trait_dispatch.go`) unifies the target's lowercase `GenericType` variables (Lyra's implicit type params — read off the target, since the grammar's `<…>` field is the trait's arg list and `impl.GenericParams` is always empty) against the receiver's subterms, with binding-consistency (`Pair<t,t>` rejects `Pair<i64,string>`); parameterized/array/tuple targets. `Self` is substituted with the concrete receiver so Show/Debug/Hash-style methods type-check. **Bounded impls checked:** `impl Ord<t> for Box<t> where t: Ord` — the unifier's bindings feed `checkImplConstraints`, which verifies each `where` bound holds for the bound type (`typeImplementsTrait`); `Box<Widget>` errors when Widget isn't `Ord`, `Box<i64>` is accepted. Single-level (a satisfying impl's own bounds aren't recursively re-checked). Also fixed a latent collector bug: the `where`-clause bounds field was read as `trait_bounds` but the grammar names it `trait_impl_bounds`, so `impl.Constraints` silently collected empty — now fixed. **Not done:** binding a trait's own type params so a method returning the element type (`Get<e>.get -> e`) is instantiated — a separate, larger feature (deliberately scoped out). Tests: `generic_impl_dispatch_test.go` (10 cases), `collector/tests/trait_test.go` (`TestCollector_TraitImplWhereConstraints`).
-- **`noalloc` catches unknown external calls** (FP/Imperative #5) — an unresolvable external call now taints `AllEffects` (`PurityEffects | EffectAlloc`) instead of just `PurityEffects`, so a `noalloc` function calling one is flagged (can't verify it doesn't allocate). `pure`/`det` unchanged. Closes the effect-bounds thread's last slice. Tests: `det_noalloc_enforcement_test.go`. (Fixed a stale test that used a single-letter constructor `B(5)` — which lexes as a `const_identifier`, not a constructor, so it was hitting the unknown-call path — by renaming to a multi-char constructor.)
-- **ScopeTable population — Phase 1 of symbol-table-backed purity scope** (FP/Imperative #3) — the collector now records a node→scope entry for lambda parameter scopes, both loop forms, and `with` blocks (previously only block exprs + if-let). `PushLoopScope` now returns the scope; each consumer records it. This is the foundation Phase 2 (rewriting purity's AST-walk `scopeBindings` to consume it) will read; it also activates the typechecker's previously-inert `enterScope(lambda, …)` with no test breakage. Tests: `collector/tests/scope_recording_test.go`. Phase 2 (the purity rewrite) deliberately deferred — pure refactor, real regression risk.
-- **Error-type checking for `Result?` propagation** (Pit-of-Success #1) — `?` now compares the operand's error type `E1` against the enclosing function's `E2` instead of ignoring it. Interim assignability-only rule (`errorTypesCompatible`): same nominal error type / widening / generic accepts; two different nominal error types error ("map the error first"). From-style declared conversions deferred until a conversion trait exists. `resultOrMaybeKind`/`enclosingReturnKind` now surface `E`. Tests: `try_expr_test.go`.
-- **Canonical Result/Maybe identity** (Pit-of-Success #1) — replaced usage-site name+shape matching with a `TypeDeclStmt.CanonicalKind` stamp resolved once at collection time (`collector/canonical.go`). A name-independent `@builtin(Result)`/`@builtin(Maybe)` attribute (reuses `@derive` grammar, no grammar change) confers identity (shape-validated); unmarked name+shape is the fallback. Malformed markers → `lyra-E017`. Unified the checker's (name-only) and typechecker's (name+shape) recognition into one read-side. Tests: `canonical_test.go`, `try_expr_test.go`, `try_outside_result_test.go`; one collector golden regenerated (`data Result` now shows `CanonicalKind: Result`).
-- **`det` Rand/Time detection** (FP/Imperative #5, the 07/08/26 "Remaining" slice) — `builtinEffects` now tags the ambient `Random.global()`→`EffectRand` and `wallClock()`→`EffectTime`, so `det` forbids all three nondeterminism sources (input/rand/time), each with its own message. All downstream machinery (`DetEffects`, `nondeterminismDescription`, `checkBoundedEffects`, `isImpureCallee` masking) already existed — this was pure detection. Ambient-vs-threaded split falls out of the call shape (only these ambient entry points carry the bit; a threaded `rng.next()`/passed-in `tick` stays ordinary data). Tests: `det_noalloc_enforcement_test.go` (message-asserting). Demo fixture: `lyra-vscode-ext/test/det.lyra` (covers E016 det/noalloc, E015 pure+det, E007 pure-calls-random, plus the ambient-vs-threaded ok-cases).
+- **Per-trait-method effect bounds** — a trait method may be declared `pure`/`det`/`noalloc` as a contract every impl must satisfy (`E007`/`E016`; `E015` for `pure det`).
+- **Bound-dispatched calls visible to purity** — a call through a `where` bound scores as the join over all impls (pure/det only if all are).
+- **Impl method body return-type checking** — each impl method body is checked against the trait's declared return type (Self + trait params substituted).
+- **Binding a trait's own type params** — `impl Get<t> for Box<t>`; `box.get()` on `Box<i64>` returns `i64`.
+- **Bounded polymorphism in method bodies** — calling a trait method on a bare type-param value dispatches through its `where` bound (abstract dispatch).
+- **Generic struct field access** — `b.value` on `Box<i64>` substitutes type args into field types → `i64`.
+- **Generic impl dispatch + bound checking** — `impl Show<t> for Box<t>` unifies against a concrete receiver; `where` bounds constraint-checked.
+- **`noalloc` catches unknown external calls** — an unresolvable call taints alloc too, so `noalloc` flags it.
+- **ScopeTable population (Phase 1)** — collector records node→scope for lambda params, both loops, and `with` blocks.
+- **Error-type checking for `Result?`** — `?` compares the operand's error type against the enclosing return (assignability-only).
+- **Canonical Result/Maybe identity** — a `CanonicalKind` stamp replaces per-site name matching (`@builtin` or name+shape fallback).
+- **`det` rand/time detection** — ambient `Random.global()`/`wallClock()` carry Rand/Time so `det` forbids all nondeterminism sources.
 
 ### 07/08/26
-- **ML-style function-definition sugar** — `let name(params) => body` (no `=`), and with modifiers leading the name (`let pure async name(params) => body`), now parse as alternatives to `let name = (params) => body`, so a definition reads like a function rather than a variable assignment. All spellings desugar to an identical `VarDeclStmt{Value: LambdaExpr}`; the modifier-led form lifts flags off the declaration's `modifiers` field onto the lambda (`applyFunctionModifiers`). Two invariants keep the parse unambiguous: a `where` clause requires a value, and the modifier-led arm requires its lambda (else `let f<n> where n: Ord (a) => a` / `let pure add (a) => a` split into two statements). Modifiers are one `fn_modifiers` rule, not seven optional fields — seven doubled `parser.c` to 247 MB and broke correctness; order/duplicates are checked in the collector. `rec` is now reserved (it is a modifier). Tests: `definitions.txt` (corpus, incl. 3 `:error`), `declaration_function_test.go` (reuses `=`-form goldens to assert identical AST + order/dup errors), `function_sugar_test.go` (typechecker).
-
-### 06/24/26 (continued)
-- **Impurity of imported/external functions** (FP/Imperative #3) — calls to names that can't be resolved to a local lambda and aren't in `builtinEffects` or a type-conversion call are conservatively treated as impure in both `lambdaEffects`/`methodEffects` (inference fixpoint) and `isImpureCallee` (CheckPurity error path). `calleeName` extended to handle `DataConstructorExpr` bases (uppercase names like `Arena`). Arena/size helpers (`Arena.new`, `megabytes`, etc.) added to `builtinEffects` as `EffectNone`. Tests: `purity_test.go` (4 new tests).
+- **ML-style function sugar** — `let name(params) => body` (and modifier-led `let pure name(...)`) desugar to `let name = (params) => body`.
 
 ### 06/24/26
-- **Recursive-type well-formedness check** (`lyra-E014`) — `checker.CheckRecursiveTypes` builds a by-value dependency graph from type declarations and runs a three-color DFS; errors when a cycle has no `shared` indirection. Direct (`struct Tree { left: Tree }`) and mutual recursion both caught; `shared` on the decl or field breaks the cycle. Wired into the LSP. Tests: `recursive_type_test.go`.
-- **Alloc as type identity — first safe step**: `UnresolvedType`/`ParameterizedType` carry `Allocation`; `types.WithAllocation(t, mod)` added; `parseAllocatedType` (collector) extended to handle all non-array types; `resolveType`/`resolveTypeIfKnown` propagate usage-site allocation via `WithAllocation`. `let n: shared Node` and `shared Box<T>` annotations now parse and carry their flavor. Tests: `allocation_test.go` (types), `allocation_test.go` (typechecker).
-- **Method-to-method call tracking** (FP/Imperative #3) — `checkTraitImpl` now calls `checkTraitImplMethodBody` on each impl method body: it sets up a param scope from the trait signature (Self substituted with the impl's concrete type) and calls `tc.inferExprType` on the body, which causes any `.`-call inside to go through `inferMemberCall` → `inferResolvedTraitMethodCall` → `tc.methodTable.Set`. The purity inference fixpoint (`inferImpurity`) already handles method-to-method via `methodTable.Get` in `methodEffects` — it was just never populated for calls inside method bodies before. Tests: `purity_test.go` (`TestPurity_MethodToMethod_TransitiveImpurity_Error`, `TestPurity_MethodToMethod_PureChain_Ok`).
-- **Fixed: parser hangs on a lambda-typed struct field** — `struct Box { show: () -> string }` sent the collector into an infinite loop. Root cause: `parseLambdaType`'s zero-parameter case has no `parameter_types` CST node at all (it's an optional grammar field), so `ChildByFieldName` returns nil — and calling an accessor (`ChildCount`, `Child`) on a nil `*sitter.Node` hangs inside the go-tree-sitter CGO binding instead of panicking. Added a nil guard to `parseParameterTypes`. Tests: `lambda_type_test.go` (regression test runs on a goroutine with a 3s deadline so a reintroduced hang fails fast instead of stalling the suite; confirmed it actually catches the bug by reverting the fix and re-running).
-- **Trait methods can be marked `pure`; real method-call dispatch** (FP/Imperative #3) — `obj.method(args)` and the new fully-qualified `Trait::method(args)` form (disambiguates when two traits implement the same method name for a type) now resolve to a specific impl, type-check against the trait's signature, and report ambiguity — previously trait methods couldn't be called at all. Resolution is recorded in a new `typetable.MethodTable` so the purity checker (reordered to run after typechecking) can flag a pure function/method calling a non-pure one. Required a real grammar fix, not a precedence tweak: turbofish and the new `Trait::method` form both started with `TypeName ::`; made `::<` one atomic lexer token so the *lexer* disambiguates instead of the parser guessing wrong. Tests: `traits.txt`/`postfix.txt` (corpus), `trait_method_dispatch_test.go`, `purity_test.go`.
-- **Purity inference for unannotated methods** (FP/Imperative #3) — an unannotated method (no `pure` keyword) is now inferred pure when it actually has no effect, instead of always being distrusted; `checker.inferImpurity` runs one joint fixpoint over free functions and trait methods together (`collectMethodImpls`), since each can call the other. Surfaced a real gap: a call from inside one method's body to another method is never dispatched into `MethodTable`, because `checkTraitImpl` only checks signature conformance and never type-checks a method body's expressions — function↔method chains work, method→method doesn't (separate, larger fix). Also confirmed the "generic substitution bug" previously logged here (`let Some(x) = m` on a `Maybe<i64>` param binding `x` to the wrong type) no longer reproduces — it was already fixed by the 06/22/26 destructuring work; the original repro used `;` as a statement separator, which the grammar doesn't support, and masked the real (already-correct) behavior. Tests: `purity_test.go` (`TestInferredPureMethods_*`, updated `TestPurity_NonPureMethodCalledFromPure*` to use a genuinely-effectful method body).
+- **Recursive-type well-formedness check (`lyra-E014`)** — a by-value type cycle errors unless broken by `shared`.
+- **Alloc as type identity (first step)** — types carry an `Allocation` flavor through the AST; `AllocationOf`/`WithAllocation` added.
+- **Method-to-method call tracking** — impl method bodies are type-checked so inner `.`-calls dispatch into MethodTable, feeding the purity fixpoint.
+- **Trait methods can be `pure`; real method dispatch** — `obj.method()` / `Trait::method()` resolve to an impl, type-check, and report ambiguity; recorded in a new MethodTable.
+- **Purity inference for unannotated methods** — inferred via a joint fixpoint over functions + methods.
+- **Impurity of imported/external functions** — unresolvable calls (not builtins/conversions) are conservatively impure.
+- **Fixed: parser hang on a lambda-typed struct field** — nil-guard on an absent optional `parameter_types` node.
 
 ### 06/23/26
-- **Purity inference: record *pure* (not just impure) as a queryable result** (FP/Imperative #3) — added `checker.InferredPureFunctions(program)`, returning every top-level function's inferred purity by name (explicit `pure` or not), reusing the existing impurity fixpoint. Also fixed `SymbolTable.Functions`/`PureFuncs` (parsed but never populated) by wiring top-level lambda-valued bindings into them during collection. Tests: `purity_test.go`, `scope_test.go`.
+- **Purity inference records *pure* as queryable** — `InferredPureFunctions` exposes every top-level function's inferred purity by name.
 
-### 06/22/26 (continued)
-- **Fixed: `if let`/`let … else` were never type-checked at all** — `checkNode` had no case for these statements, so a type error inside an if-let branch passed silently. Added `checkIfDestructuringStmt`/`checkElseDestructuringStmt` (reusing `checkDestructuringDecl`), and fixed `Then`/`Else` to be pointer fields so the collector's recorded scopes resolve correctly. Tests: `if_let_else_test.go`.
-- **Symbol-table-backed purity — foundation, part 2: register if-let/else names** (FP/Imperative #3 prereq) — if-let/let-else pattern names are now registered with correct scoping (if-let's local to `Then`; let-else's persisting into the enclosing scope). Tests: `scope_test.go`.
-- **Purity checker: `await` is an impure effect** — `purity.go` now flags `await` inside a `pure` function (and infers impurity for functions that await), since it suspends on external I/O. Tests: `purity_test.go`.
-- **Purity checker: if-let / else-destructuring / `with`-arena bindings are locals** — fixes false-positive "escaping effect" errors when a pure function mutates a name bound by one of these forms. Tests: `purity_test.go`.
-- **Constant-folded division-by-zero** — `isLiteralZero` now folds constant integer expressions (e.g. `10 / (5 - 5)`), not just bare `0` literals. Tests: `math_binary_expr_test.go`.
-- **Fixed: `DataPattern` as a lambda parameter mis-parsed (grammar)** — `(Some(x): Maybe<i64>) -> ...` lost to the constructor-call expression reading for lack of precedence. Added `PREC.DATA_PATTERN: 10`. Corpus + Go suite green.
-- **Fixed: destructuring never bound names** — `let (a,b)=...`, `let {x,y}=p`, `let Some(x)=m`, etc. type-checked the value but never made the bound names resolvable; `walkDestructuredPattern` now handles all pattern kinds, including generic data constructors. Tests: `destructuring_test.go`.
-- **Result/Maybe shape validation** (Pit-of-Success #1) — `resultOrMaybeKind` now checks a declared Result/Maybe's actual constructor shape, not just its name, so a same-named-but-different type no longer gets `?`/must-use treatment. Tests: `try_expr_test.go`, `mustuse_test.go`.
-- **Confirmed generic type params are lowercase-only by design** (not a bug) — uppercase `<T,E>` mis-parses because a single uppercase letter lexes as `const_identifier`. Fixed two tests that relied on the invalid form; no grammar change.
-
-### 06/21/26 (continued)
-- **Purity: impurity inference for non-top-level functions** (FP/Imperative #3 slice) — calling an impure sibling function is now flagged regardless of nesting depth, keyed by lambda pointer so same-named functions in unrelated scopes aren't confused. Tests: `purity_test.go`.
+### 06/22/26
+- **Fixed: `if let`/`let … else` were never type-checked** — added the missing `checkNode` cases.
+- **Purity foundation** — if-let/let-else names registered with correct scoping; if-let/else/`with`-arena bindings treated as locals.
+- **Purity: `await` is an impure effect.**
+- **Constant-folded division-by-zero** — folds constant int expressions, not just bare `0`.
+- **Fixed: `DataPattern` as a lambda parameter mis-parsed** — added `PREC.DATA_PATTERN`.
+- **Fixed: destructuring never bound names** — `walkDestructuredPattern` binds all pattern kinds.
+- **Result/Maybe shape validation** — recognition checks constructor shape, not just name.
+- **Confirmed generic type params are lowercase-only by design** (not a bug).
 
 ### 06/21/26
-- **Purity: track captured mutable bindings from non-top-level enclosing scopes** (FP/Imperative #3 slice) — reading a captured `var`/`let mut` is now flagged regardless of how many function scopes out it was declared. Tests: `purity_test.go`.
+- **Purity: impurity inference for non-top-level functions** (keyed by lambda pointer).
+- **Purity: track captured mutable bindings from non-top-level enclosing scopes.**
 
 ### 06/19/26
-- **Purity: reject reading captured mutable globals** (FP/Imperative #3 slice) — a `pure` function reading a top-level `var`/`let mut` now errors (`lyra-E007`), since its value can change between calls. Tests: `purity_test.go`. Still deferred: mutable state captured from a non-top-level scope.
+- **Purity: reject reading captured mutable globals (`lyra-E007`).**
 
 ### 06/17/26
-- **Folding ranges** (`textDocument/foldingRange`) — emits a fold for each multi-line struct/data/trait declaration and `match`/block expression. Tests: `foldingrange_test.go`.
-- **Workspace symbols** (`workspace/symbol`) — returns top-level type decls, traits, functions, and constants across open documents, fuzzy-matched by name. Tests: `workspacesymbols_test.go`.
-- **Signature help** (`textDocument/signatureHelp`) — resolves the active call and parameter index from the source text and the callee's `LambdaExpr`. Tests: `signaturehelp_test.go`.
-- **Rename + prepare rename** (`textDocument/rename`, `prepareRename`) — renames every scope-aware occurrence of a binding. Tests: `rename_test.go`.
-- **Document highlight** (`textDocument/documentHighlight`) — highlights every occurrence of the binding under the cursor. Tests: `documenthighlight_test.go`.
-- **`@sizeof` on unknown types** now resolves its type argument and returns `u64`, erroring if unresolved. Tests: `sizeof_test.go`.
+- **LSP:** folding ranges, workspace symbols, signature help, rename + prepare-rename, document highlight; `@sizeof` on unknown types.
 
 ### 06/16/26
-- **Fixed keyword carving in identifiers** (grammar) — keywords were being lexed out of longer names (`letter`→`let`+`ter`); raised `IDENTIFIER_TOKEN` precedence to fix, with a few small compensating grammar changes. Corpus + Go suite green.
-- **Semantic tokens** (`textDocument/semanticTokens/full`) — classifies declarations and usages (variables, functions, types, members, constructors) for client-side highlighting. Tests: `semantictokens_test.go`.
-- **Completion** (`textDocument/completion`) — offers struct field names after `.`, and all in-scope identifiers/types otherwise. Tests: `completion_test.go`.
-- **Find references** (`textDocument/references`) — returns every scope-aware occurrence of the binding under the cursor, excluding shadowed/sibling same-named bindings. Tests: `references_test.go`.
+- **Fixed keyword carving in identifiers** (grammar) — `letter` no longer lexes as `let`+`ter`.
+- **LSP:** semantic tokens, completion, find references.
 
 ### 06/15/26
-- **Code actions / quick fixes** (`textDocument/codeAction`) — four diagnostic-driven fixes (missing match arms, missing struct fields, unused var/import removal) plus an inferred-type-annotation insertion. Tests: `codeaction_test.go`.
-- **Fixed: nullary constructor swallowed the following statement** (grammar) — `let c = None` followed by `match c {…}` parsed as one expression for lack of a statement terminator; restricted constructor arguments to atomic value forms. Corpus updated. Residual: a nullary binding immediately followed by a bare call statement is still swallowed (separate, larger effort).
-- **`const` requires a compile-time-constant initializer** (`lyra-E012`) — rejects any initializer not built purely from literals/consts. Tests: `const_initializer_test.go`.
-- **Unsafe operations outside `unsafe` require an `unsafe` context** (`lyra-E011`) — flags a raw-pointer take/deref/write or an unsafe call outside an `unsafe` block/function. Tests: `unsafe_outside_unsafe_test.go`.
-- **Wire `ref`/`mut`/`own` parameter modifiers into mutation/purity checks** (FP-blend #4) — bare/`ref` params are immutable borrows, `mut`/`own` permit interior mutation; purity now treats `mut`-param mutation as an escaping effect. Tests: `interior_mutation_test.go`, `purity_test.go`.
-- **Struct field mutability: mutable by default, with a `readonly` freeze marker** for write-once invariant fields (deep — applies through nested struct fields too). Tests: `interior_mutation_test.go`, `let_mut_test.go`.
-- **Fixed: named-struct field types weren't resolved**, breaking nested member access/literals (`l.start.x`, `Line { start: Point{…} }`). `inferMemberExprType` now resolves the type before use.
-- **Safe mutable lvalues / three-level binding model** (pit-of-success FP #2) — added `let mut` as the middle rung between deeply-immutable `let` and fully-mutable `var`, making `p.x = v`/`arr[i] = v` expressible. Tests: `interior_mutation_test.go`, `let_mut_test.go`.
+- **LSP:** code actions / quick fixes.
+- **Fixed: nullary constructor swallowed the following statement** (grammar) — residual: nullary binding + bare call still swallowed.
+- **`const` requires a compile-time-constant initializer (`lyra-E012`).**
+- **Unsafe ops outside `unsafe` require an `unsafe` context (`lyra-E011`).**
+- **Wire `ref`/`mut`/`own` parameter modifiers into mutation/purity checks.**
+- **Struct field mutability** — mutable by default, with a deep `readonly` freeze marker.
+- **Fixed: named-struct field types weren't resolved** (broke nested member access/literals).
+- **Safe mutable lvalues / three-level binding** — added `let mut`.
 
 ### 06/14/26
-- **Allow same-scope sequential rebinding** (pit-of-success #7) — `let x = parse(x)` now compiles; same-scope `let`/`var` re-declaration re-registers via `RedefineVariable`, while `const` still may not be re-declared. Tests: `duplicate_declaration_test.go`, `rebind_test.go`.
-- **Require initialization at declaration** (pit-of-success #6, interim) — an uninitialized `let`/`var` now errors (`lyra-E010`), closing the use-of-uninitialized hole without flow analysis. Tests: `var_decl_test.go`.
-- **Fixed: nullary data constructors as values were being dropped** — `let c = None` silently lost the initializer (collector bug, missing `user_defined_type_name` case). Tests: golden `expr_data_constructor_nullary`.
-- **One conversion syntax decided** (pit-of-success #5) — `f32(x)` is the single widening form; a loud spelling for intentional narrowing is still blocked on builtin-method registration.
-- **Non-exhaustive `match` on closed types is now an error** (pit-of-success #4, `lyra-E009`) — `bool`/`data` matches must cover all cases or have a wildcard; open types keep the warning.
-- **Restrict `??` to optional (`Maybe<T>`) operands** (pit-of-success #3) — a non-optional left operand now warns (`lyra-W007`) instead of treating every type as nullable. Tests: `null_coalescing_test.go`.
+- **Allow same-scope sequential rebinding** (`let x = parse(x)`).
+- **Require initialization at declaration (`lyra-E010`).**
+- **Fixed: nullary data constructors as values were dropped.**
+- **One conversion syntax decided** — `f32(x)` is the single widening form.
+- **Non-exhaustive `match` on closed types is an error (`lyra-E009`).**
+- **Restrict `??` to optional operands (`lyra-W007`).**
 
 ### 06/13/26
-- **Must-use `Result`/`Maybe`** (pit-of-success #1, first half, `lyra-W006`) — dropping a Result/Maybe-producing statement without binding/match/`?` now warns; opt out via `let _ = expr`. Also fixed a latent bug where non-final statement expressions in a function body were never type-checked. Tests: `mustuse_test.go`.
-
-### 06/12/26 (continued)
-- **Subtraction parser bug fixed** — `let x = 0 - 200` was dropping the `- 200` due to a precedence conflict between the literal/operand choice and unary negation. Corpus regression test added; full suite green.
-- **Constant-folded arithmetic overflow** (pit-of-success #2, static slice) — folds `+`/`-`/`*` over integer constants and flags overflow against the annotated type (e.g. `let x: i8 = 100 + 100`). Tests: `overflow_test.go`.
-- **`?` (try) propagation operator** (pit-of-success #1, second half, `lyra-E008`) — flags `?` outside a Result/Maybe-returning function and enforces same-kind propagation. Also fixed a collector bug dropping generic return/annotation types (`-> Result<i64,E>`) to `nil`.
-- **Removed platform-dependent `int`/`uint` and the bare `float` type** (determinism) — untyped integer literals now default to `i64`; all fixtures, tests, and golden files migrated (`float`→`f64`, `int`→`i64`, `uint`→`u64`).
+- **Must-use `Result`/`Maybe` (`lyra-W006`)** — dropping one without binding/match/`?` warns.
 
 ### 06/12/26
-- **Trait/impl conformance** — `checkTraitImpl` errors on missing required trait methods and arity mismatches, and warns on impl methods not declared in the trait. Also fixed `collectPatternParameters` to populate `LambdaClause.Patterns` for multi-clause functions.
+- **Subtraction parser bug fixed** (`let x = 0 - 200` dropped `- 200`).
+- **Constant-folded arithmetic overflow** (static slice, annotated types).
+- **`?` (try) propagation operator (`lyra-E008`).**
+- **Removed platform-dependent `int`/`uint` and bare `float`** — untyped int literals default to `i64`.
+- **Trait/impl conformance** — missing-method/arity errors, warns on extra methods.
 
-### 06/11/26 (continued, part 2)
-- **Boolean match exhaustiveness** — `checkBoolMatchArm` validates only `true`/`false` literal patterns, wildcards, identifiers; `boolMatchIsExhaustive` requires both arms or a wildcard; non-bool literals emit errors
-- **Tuple match arm validation** — `checkTupleMatchArm` validates arity and element patterns; requires wildcard for exhaustiveness
-- **Named-struct match arm validation** — `checkStructMatchArm` validates struct pattern field names against the declared struct; requires wildcard for exhaustiveness; `resolveToNamedStructType` follows `UnresolvedType` indirection
-- **Duplicate/overlapping match arms** — `checkDuplicateMatchArms` detects identical unguarded literal patterns (any scrutinee type) and overlapping `RangePattern` intervals (numeric types); duplicate literals are errors; range overlaps are warnings
-
-### 06/10/26 (continued)
-- **Division/modulo by literal zero** — `inferMathBinaryExpr` checks if operator is `/`, `%`, or `%%` and RHS is an integer/float literal with value 0; emits error `operator X: division by zero`; variable divisors pass through unchecked
-- **Always-true/always-false conditions** — `checkIfExpr` checks if the condition is a `*ast.BooleanLiteralExpr` and emits a warning `condition is always true/false`; grammar restricts for-loop conditions to binary expressions so bare literals there are not reachable at runtime
-- **Float `==`/`!=` comparison warning** — `checkBooleanBinaryOpExpr` emits a warning when either operand of `==` or `!=` is a float type (including untyped float literals and concrete f16/f32/f64)
+### 06/11/26
+- **Match arm validation + exhaustiveness** for boolean, tuple, and named-struct scrutinees; duplicate/overlapping arms.
 
 ### 06/10/26
-- **For loop condition must be `bool`** — `checkForLoopExpr` added; validates `&&`/`||` operands in conditions that reference outer-scope variables; init-clause loops skip condition checking (scope table pointer-copy limitation documented); `ForLoopExpr` and `NullCoalescingExpr` wired into `checkExpressionStmt` and `inferExprType`
-- **Null coalescing types** — `inferNullCoalescingExpr` infers both `??` operands and unifies via `branchCommonType`; emits "null coalescing operands have incompatible types" when they don't match
-- **Range expression operand types** — `inferRangeExpr` validates both ends are numeric and compatible; step (if present) must also be numeric; returns `RangeType`; `RangeType.GetName()` fixed to handle nil fields
-- **For-in iterable must be iterable** — `checkForInLoopExpr` validates the iterable is array, string, or range; emits error for numeric/bool/struct iterables; `isIterableType` helper covers all valid cases
-- **Tuple literal element type checking** — `inferTupleLiteralExpr` now stores each element's type in `TypeTable`; `checkDestructuringDecl` catches non-tuple RHS and arity mismatches for tuple patterns
-- **Array literal element type homogeneity** — `inferArrayLiteralType` infers element type as the common type of all elements via `branchCommonType`; errors on mismatches (e.g. `[1, "two", true]`)
-- **Unused function parameters** — same as unused variables, scoped to the lambda body
-- **Unused imports** — `CheckUnusedImports` in `checker/`; walks all top-level `ImportStmt` nodes and warns for any member name/alias, module alias, or plain last-path-component that never appears as an `IdentifierExpr` in the program; emits `lyra-W004` with `TagUnnecessary`; `_`-prefixed names silently ignored
-- **Diagnostic codes** — attach a stable code (e.g. `lyra-E001`, `lyra-W014`) to each `TypeError` / `ShadowingWarning` / `UseBeforeDeclarationError`; map into the LSP `Diagnostic.Code` field
-- **Better parser error ranges** — walk the tree-sitter CST for `ERROR`/`MISSING` nodes and report them with real source ranges instead of the current `lsp.Range{}` (line 0:0) fallback
+- **Type checks:** division/modulo by literal zero; always-true/false conditions; float `==`/`!=` warning; for-loop condition must be `bool`; null-coalescing operand types; range operand types; for-in iterable must be iterable; tuple/array literal element types.
+- **Unused function parameters; unused imports (`lyra-W004`).**
+- **Diagnostic codes** attached to all diagnostics; **better parser error ranges** from CST ERROR/MISSING nodes.
 
 ### 06/09/26
-- **Unreachable code** — `CheckUnreachableCode` in `checker/`; scans each block for `return`/`break`/`continue` terminators and emits `TagUnnecessary` warnings for any statements that follow in the same block; recurses into all nested scopes including lambda bodies
-- **Unused variables** — `CheckUnusedVariables` in `checker/`; checks each `BlockExpr` scope for `VarDeclStmt`/`DestructuringDeclStmt` declarations that have no identifier reference; emits `TagUnnecessary` warnings; conservative ref collection includes nested lambdas to avoid false positives on closures; top-level bindings are skipped; `_foo`-prefixed names are silently ignored (conventional "intentionally unused" marker)
-- **`_`-prefixed identifier grammar fix** — tree-sitter grammar now preserves the leading `_` on identifiers in all contexts: identifier regex updated to `(_[a-zA-Z0-9_]+|[a-z][a-zA-Z0-9_]*)`, `decimal_int` regex tightened to `/[0-9][0-9_]*/` (require leading digit), and argument-list partial-application wildcard `_` given `PARTIAL_WILDCARD_TOKEN: -2` priority (below identifier) so `print(_x)` parses `_x` as a single identifier token
-- **`DiagnosticTag` support** — `Tag` type with `TagUnnecessary`/`TagDeprecated` constants added to `pkg/diagnostic`; `Tags []Tag` field added to `Diagnostic` and `TypeError`; `tagsToLSP()` helper in LSP server maps tags to `lsp.DiagnosticTag` for collector and typechecker diagnostics so VS Code renders them greyed-out or struck-through
-- **Related information** — `Diagnostic.RelatedInformation` and `TypeError.RelatedInformation` fields added; shadowing warnings carry `OriginalLocation`; duplicate variable declarations and duplicate struct fields populate related info pointing to the prior declaration; LSP `analyze()` maps related info via `toLSPRelatedInfo` for all diagnostic sources
+- **Unreachable code; unused variables** (`TagUnnecessary`).
+- **`_`-prefixed identifier grammar fix.**
+- **`DiagnosticTag` + related-information support** in diagnostics.
 
 ### 06/04/26
-- **`await` outside an async function** — `CheckAwaitOutsideAsync` in `checker/`; mirrors `CheckYieldOutsideGenerator`; `LambdaExpr.IsAsync` now gates await validity
-- **`break`/`continue` outside a loop** — `CheckBreakContinueOutsideLoop` in `checker/` walks with loop-depth counter and label set; errors at depth 0 or for unknown labels
-- **`yield`/`yield from` outside a generator function** — `CheckYieldOutsideGenerator` in `checker/`; also fixed `is_generator` → `is_gen` field name in lambda collector so `LambdaExpr.IsGenerator` is now correctly populated
-- **`return` outside a function body** — `CheckReturnOutsideFunction` in `checker/` walks the AST with a depth counter; errors at depth 0
-- **Document symbols** (`textDocument/documentSymbol`) — walk top-level statements and emit symbols for type decls (`struct` → Struct, `data` → Enum, constrained → Class), traits (Interface), lambda-valued `let`/`var` bindings (Function), `const` bindings (Constant), and other bindings (Variable); powers the breadcrumb/outline view
-- **Inlay hints** (`textDocument/inlayHint`) — show inferred types inline for unannotated `let`/`var` bindings (e.g. `: int`) using `TypeTable`
-- **Go-to-definition** (`textDocument/definition`) — resolve the name under the cursor via `Scope.Lookup` / `SymbolTable.Types` and return its `Location`
+- **Context checks:** `await`/`break`/`continue`/`yield`/`return` outside their valid context.
+- **LSP:** document symbols, inlay hints, go-to-definition.
 
 ### 06/03/26
-- **LSP: Hover** (`textDocument/hover`) — `Handler.Hover()` added; persists `docAnalysis` (program, symTable, typeTable) per URI; `findExprAtPos` walks the AST depth-first to find the tightest expression at the cursor; typechecker now stores IdentifierExpr types in TypeTable. Doc-comments not yet surfaced (not collected from CST).
-- **Member access type-checking** — `*ast.MemberExpr` routed through `inferExprType` via `inferMemberExprType`; validates object is a struct, field exists, records field type in `TypeTable`.
-- **Higher-order and non-identifier callees** — `inferFunctionCallExpr` now handles `LambdaExpr` (direct lambda calls like `((n) => n*2)(5)`), variables holding lambdas, and `MemberExpr` callees (method calls like `obj.method(args)`). Added `inferLambdaCall`, `inferLambdaCallFromType`, `inferLambdaExprType`, and `inferMemberExprType` helpers. Member access on non-struct types, unknown fields, and non-callable fields all produce errors.
-- **Unresolved identifier references** — `inferExprType` silently returns `nil` when an `IdentifierExpr` lookup fails; emit `cannot find variable %q in this scope`
-- **Undefined function calls** — `inferFunctionCallExpr` silently returns `nil` for unknown identifiers; emit `undefined function %q`
-- **Unknown type names in annotations** — `resolveType` silently returns the unresolved type when `symTable.Types[name]` misses; emit `unknown type %q`
-- **Index access type-checking** — `*ast.IndexExpr` is unhandled; index must be numeric, target must be array/string/tuple, result is the element type
+- **LSP: hover.**
+- **Type checks:** member access; higher-order/non-identifier callees; unresolved identifiers; undefined functions; unknown type names; index access.
 
 ### 06/02/26
-- **Regex Engine Phase 3: Unicode properties** — `\p{Letter}`, `\p{Nd}`, etc. Full `\p{X}` / `\P{X}` support: general categories (L, Lu, Nd, Z, …), long aliases (Letter, Number, …), script names (Latin, Han, …), binary properties (White_Space, …); inside character classes (positional & negated); 20 new tests.
-- **Regex Engine Phase 4: performance** — SIMD prefix scan, byte-frequency-based acceleration, bounded DFA fast path
-- Wire the engine into `RegexLiteralExpr` (typecheck regex patterns in match arms) and `PatternConstraint` (validate constrained string types)
+- **Regex engine:** Unicode properties (`\p{…}`) and performance (SIMD/DFA); wired into `RegexLiteralExpr` + `PatternConstraint`.
 
 ### 06/01/26
-- Various bugfixes and improvements 
+- Various bugfixes and improvements.
 
 ### 05/31/26
-- **Overflow/range checking for integer literals** — flag literal values that don't fit the annotated type (e.g. `let x: i8 = 200`)
-- **Duplicate variable declaration detection** — error when the same name is declared twice in the same scope
-- **Shadowing detection** — warn when a variable is shadowed by a local variable
-- **Regex engine: lookarounds** — `(?=...)`, `(?!...)`, `(?<=...)`, `(?<!...)` compiled into the automaton
+- **Integer-literal overflow/range checking; duplicate-declaration detection; shadowing detection; regex lookarounds.**
 
-### 05/29/26
-- **Match expression exhaustiveness** — for `array` types, warn when a match arm is missing; type-check the scrutinee and arm patterns
+### 05/27–29/26
+- **Match exhaustiveness** for array/string/number/data scrutinees.
+- **Regex engine Phase 1** — derivative DFA (intersection, complement, flags, `IsMatch`/`FindAll`).
 
-### 05/27/26
-- **Match expression exhaustiveness** — for `string` types, warn when a match arm is missing; type-check the scrutinee and arm patterns. Allow regex patterns
-- **Match expression exhaustiveness** — for `number` types, warn when a match arm is missing; type-check the scrutinee and arm patterns. Allow range patterns
-- **Match expression exhaustiveness** — for `data` types, warn when a match arm is missing; type-check the scrutinee and arm patterns. Infer data type from constructor expressions
-- **Phase 1: core derivative DFA** — symbolic-byte-set expression algebra, Brzozowski derivatives, lazy DFA, intersection (`&`), complement (`~(...)`), wildcard `_`, standard syntax, multiline anchors, `(?i)`/`(?s)`/`(?m)`/`(?-m)`/`(?x)` flags, `IsMatch` + `FindAll` with leftmost-longest semantics
+### 05/16–20/26
+- **Struct-literal + record-update type-checking; function-declaration type-checking; if/else type-checking; scope-aware variable resolution.**
 
-### 05/20/26
-- for struct record update syntax, include fields in the base struct when checking for missing fields
+### 05/13–15/26
+- **Comparison / boolean operators; string concatenation (`++`); type conversion; int-as-float literals.**
+- **Added the typechecker; added the LSP server** (wired to the VS Code extension).
+- **Collected:** arena statements, regex, pointers, negation, var reassignment, data constructors, unsafe blocks, compose/yield/generators; `@sizeof`.
 
-### 05/19/26
-- **Struct literal type-checking** — verify field names exist on the struct, field value types match field declarations, no missing required fields
-
-### 05/16/26
-- **Function declaration type-checking** — verify that return expressions match the declared return type; check parameter types against call-site arguments
-- **If/else expression type-checking** — branches must have compatible types; condition must be `bool`
-- **Scope-aware variable resolution** — variables declared inside blocks (if, for, match) should not be visible outside them; detect use-before-declaration
-
-### 05/15/26
-- **Comparison operators** — type-check `==`, `!=`, `<`, `>`, `<=`, `>=`; operands must be compatible, result is `bool`
-- Added LSP server and hooked it up to vscode extension
-- **String concatenation** — allow `++` on two `string` operands as a special case of binary expressions
-
-### 05/14/26
-- Removed "float" type (still have f16, f32, and f64)
-- Added type converting
-- Allowing int literal to be treated as a float
-- **Boolean operators** — type-check `&&`, `||`, `!`; operands must be `bool`, result is `bool`
-
-### 05/13/26
-- Collect arena statements
-- Collect regex
-- Collect pointer syntax
-- Collect negation
-- Collect var reassignment
-- Collect data_constructor_expr
-- Collect unsafe blocks
-- Collect given expr
-- Collect compose expr
-- Collect yield expr
-- Collect yield/from expr
-- Collect generators
-- Add @sizeof() attr to query type sizes
-- Added typechecker
-
-### 05/11/26
-- Add tests for trait declarations with default methods
-- Collect math assignment operators (i.e. +=, \*=, etc)
-- Collect character literals
-- Collect for loops
-- Add for loop labels and break/continue statements
-- Collect and test for/in loops
-
-### 04/18/26
-
-- Collect trait declarations
-- Collect trait implementations
-
-### 04/17/26
-
-- Collect function types (lambdas)
-- Collect and test null coalescing expressions (??)
-- Collect module declarations and import statements
-
-### 04/11/26
-
-- Test very complex nested patterns
-- Collect and test postfix expressions (i.e. foo.blah[3].baz())
-
-### 04/10/26
-
-- Collect and test match expressions
-
-### 04/09/26
-
-- Collect and Test "If Let Destructuring Expressions"
-- Collect and Test "If Let Else Destructuring Expressions"
-- Collect and Test "If Else Destructuring Expressions"
-
-### 03/16/26
-
-- Collect array destructuring and write tests
-- Collect struct destructuring and write tests
-- Collect data type destructuring and write tests
-
-### 03/14/26
-
-- Refactor collect directory into sub-directories and sub-packages
-- Collect and test tuple destructuring
-
-### 03/13/26
-
-- Collect and test array literal collection
-- Collect and test if expressions
-
-### 03/09/26
-
-- Collect and Test struct literal collection
-
-### 03/08/26
-
-- Refactor collector tests to use new "capture_program_print" function
-
-### 03/02/26
-
-- Collect range expressions
-- Collect array comprehensions
-- Refactor collect_expression.go - break up into smaller files
-
-### 02/23/26
-
-- Collect tuple types
-
-### 01/31/26
-
-- Collect Array literals
-- Handle i8, i16, f32, etc
-- Store allocation modifiers in AST
-
-### 01/30/26
-
-- Add step constrained type decl
-- Add pattern constrained type decl
-
-### 01/29/26
-
-- Add range constrained type decl
-- Add precedence constrained type decl
-- Add literal union constrained type decl
-
-### 01/19/26
-
-- Parse function guards and body (expressions)
+### Earlier (01–05/26)
+- **Grammar/collector foundation:** trait decls + impls, function/lambda types, modules + imports, match expressions, if-let destructuring forms, tuple/struct/array/data destructuring, postfix expressions, array literals + comprehensions, range expressions, tuple types, constrained types (range/precision/literal/step/pattern), for/for-in loops with labels, math-assignment operators, character literals, function guards + bodies, `i8`/`i16`/`f32`/etc.
+- **Collector refactored** into subpackages; tests moved to the golden-print harness.

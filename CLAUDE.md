@@ -140,6 +140,11 @@ The single reusable entry point to the whole front-end. `driver.Analyze(source [
 
 `driver.ResolveEntryPoint(res) (*EntryPoint, []diagnostic.Diagnostic)` (`entrypoint.go`) finds and validates the program's entry function: a top-level `let main` that is a zero-parameter function returning `i64` (the process exit code, `EntryReturnExitCode`) or `void`/no-annotation (`EntryReturnVoid`). Absent/non-function/parametered/wrong-return `main` → nil + diagnostics. It is a **build-time** requirement (a library or a `check` needs no `main`), so it is intentionally *not* part of `Analyze` — only `lyrac build` calls it. **Note:** `cmd/lyrac` calls this; `cmd/lyra-lsp` still has its own byte-identical inline copy of the pipeline and should be migrated onto `driver.Analyze` (then the pipeline lives in exactly one place).
 
+### `pkg/backend`
+The seam between the front-end and code generation. `backend.Backend` is the interface a code generator implements: `Name() string` and `Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, error)`. `Emit` is called by `cmd/lyrac` only after analysis is error-free and the entry point resolves, so an implementation may assume a well-typed program.
+
+**`pkg/backend/llvm`** — the LLVM IR backend, **skeleton status**. `llvm.New()` returns a `*Backend` that emits textual LLVM IR (assembled as strings to stay dependency-free; swap in `github.com/llir/llvm` for a structured builder when it outgrows that). `Emit` currently produces a *valid but placeholder* module — `define i64 @main()` with a hardcoded `ret i64 0` — so `lyrac build` yields real, `clang`-compilable IR that exits 0, proving the toolchain path before any real translation. The lowering grows from `lowerEntry` (replace the placeholder `ret` with real body lowering) plus `lowerType`/expression/statement lowering; the doc comment lists the order. The builtin overflow-arithmetic methods (`typechecker/builtins.go`) and the todo #5 (d) allocation representation (value vs pointer for `stack`/`shared`) are the notable lowering decisions.
+
 ### `pkg/printer`
 Reflection-based AST printer used only in tests. `printer.PrintAST(program)` walks exported struct fields; zero/nil/empty values are omitted. `printer.NewPrinter().Print(node)` pretty-prints a raw tree-sitter CST node (useful for debugging).
 
@@ -152,7 +157,7 @@ LSP server. Uses `github.com/owenrumney/go-lsp` over stdio. On every `textDocume
 Logs to `/tmp/lyra-lsp.log`. Build with `go build ./cmd/lyra-lsp`.
 
 ### `cmd/lyrac`
-Compiler CLI, built on `pkg/driver`. Two subcommands: `lyrac check <file.lyra>` (parse + typecheck, print diagnostics, exit 1 on any error) and `lyrac build <file.lyra>` (check, resolve the entry point via `driver.ResolveEntryPoint`, then hand the typed program to the backend). Diagnostics print as `path:line:col: severity[code]: message` (the `line:col` is omitted for a program-level error with no location, e.g. a missing `main`). **Codegen is not implemented** — a clean `build` stops in `lowerAndEmit`, the seam where a backend gets wired in (it currently just prints a "not implemented" notice and exits 0). This is the scaffold the backend grows into: `lowerAndEmit(path, res, entry)` receives a fully-typed, error-free `driver.Result` and the resolved `*driver.EntryPoint`. Build with `go build ./cmd/lyrac`.
+Compiler CLI, built on `pkg/driver`. Two subcommands: `lyrac check <file.lyra>` (parse + typecheck, print diagnostics, exit 1 on any error) and `lyrac build <file.lyra>` (check, resolve the entry point via `driver.ResolveEntryPoint`, then hand the typed program to the backend). Diagnostics print as `path:line:col: severity[code]: message` (the `line:col` is omitted for a program-level error with no location, e.g. a missing `main`). `build` runs the `pkg/backend/llvm` backend (skeleton) via `lowerAndEmit`, writing `<name>.ll` next to the source and printing the `clang` command to compile it. The emitted IR is valid but a placeholder (a no-op `main`) until real lowering lands. Build with `go build ./cmd/lyrac`.
 
 ## Testing
 

@@ -9,7 +9,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
+	"github.com/Lyra-Language/lyra/pkg/backend/llvm"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/driver"
 )
@@ -91,13 +93,31 @@ func analyze(path string) (*driver.Result, bool) {
 	return driver.Analyze(source), true
 }
 
-// lowerAndEmit is the backend seam: given a fully-typed, error-free program and
-// its resolved entry point, lower it to a target and emit an artifact. Not
-// implemented yet.
+// lowerAndEmit runs the backend over a fully-typed, error-free program and
+// writes the emitted artifact. The LLVM backend is a skeleton: it produces a
+// valid module with a placeholder body (see pkg/backend/llvm), so the output is
+// real, compilable IR but not yet a translation of the source.
 func lowerAndEmit(path string, res *driver.Result, entry *driver.EntryPoint) int {
-	fmt.Printf("%s: analysis passed (%d statement(s)); entry point %q returns %s; code generation is not implemented yet\n",
-		path, len(res.Program.Statements), entry.Name, entry.Returns)
+	be := llvm.New()
+	ir, err := be.Emit(res, entry)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lyrac: %s backend: %v\n", be.Name(), err)
+		return 1
+	}
+	out := replaceExt(path, ".ll")
+	if err := os.WriteFile(out, ir, 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
+		return 1
+	}
+	fmt.Printf("%s: wrote %s (%s backend, skeleton — body lowering not implemented)\n", path, out, be.Name())
+	fmt.Printf("  compile with: clang %s -o %s\n", out, replaceExt(path, ""))
 	return 0
+}
+
+// replaceExt returns path with a trailing ".lyra" replaced by ext (ext may be
+// empty to drop the extension).
+func replaceExt(path, ext string) string {
+	return strings.TrimSuffix(path, ".lyra") + ext
 }
 
 // printDiagnostics writes each diagnostic as `path:line:col: severity[code]: message`,
