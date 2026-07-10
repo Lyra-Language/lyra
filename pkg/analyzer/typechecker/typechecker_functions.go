@@ -437,11 +437,23 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		return nil
 	}
 
+	// A compiler-provided method on a primitive receiver (e.g. `x.wrapping_add(y)`
+	// on an integer). Checked last so a user type or trait impl of the same name
+	// always takes priority (see builtins.go).
+	if sig, ok := builtinMethodSignature(objType, methodName); ok {
+		tc.typeTable.Set(member, sig)
+		return tc.inferLambdaCallFromType(methodName, sig, call)
+	}
+
 	switch t := objType.(type) {
 	case types.NamedStructType:
 		tc.addError(member.GetLocation(), SeverityError, "%s has no field or method %q", t.Name, methodName)
 	case types.AnonymousStructType:
 		tc.addError(member.GetLocation(), SeverityError, "anonymous struct has no field %q", methodName)
+	case types.PrimitiveType:
+		// A primitive is a valid method receiver (see the builtin methods above),
+		// so report the missing method rather than "non-struct type".
+		tc.addError(member.GetLocation(), SeverityError, "%s has no method %q", t, methodName)
 	default:
 		if objType != nil {
 			tc.addError(member.GetLocation(), SeverityError, "member access on non-struct type %s", objType)

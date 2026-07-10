@@ -82,7 +82,7 @@ let f = (n: i64) -> string => {
     n.show()
 }`
 	res := parseCollectAndCheck(t, source, false)
-	assertErrorsAre(t, res, "member access on non-struct type i64")
+	assertErrorsAre(t, res, `i64 has no method "show"`)
 }
 
 // TestTraitDispatch_UnknownTraitInQualifiedCall_Error: TraitName::method
