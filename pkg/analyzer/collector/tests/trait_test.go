@@ -1,6 +1,42 @@
 package collector_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Lyra-Language/lyra/pkg/ast"
+)
+
+// A trait impl's `where` clause is collected into TraitImplStmt.Constraints:
+// each bound variable with its trait bounds. (Regression pin — the collector
+// once read the wrong grammar field name and dropped these silently.)
+func TestCollector_TraitImplWhereConstraints(t *testing.T) {
+	source := `
+struct Box<t> { value: t }
+trait Ord { compare: (Self, Self) -> i64 }
+impl Ord<t> for Box<t> where t: Ord {
+    compare = (self, other) => 0
+}`
+	program, _, _, _ := parseAndCollect(t, source)
+	var impl *ast.TraitImplStmt
+	for _, st := range program.Statements {
+		if ti, ok := st.(*ast.TraitImplStmt); ok {
+			impl = ti
+		}
+	}
+	if impl == nil {
+		t.Fatal("no trait impl collected")
+	}
+	if len(impl.Constraints) != 1 {
+		t.Fatalf("expected 1 constraint, got %d: %#v", len(impl.Constraints), impl.Constraints)
+	}
+	c := impl.Constraints[0]
+	if c.GenericType != "t" {
+		t.Errorf("constraint variable = %q, want %q", c.GenericType, "t")
+	}
+	if len(c.TraitBounds) != 1 || c.TraitBounds[0] != "Ord" {
+		t.Errorf("constraint bounds = %#v, want [Ord]", c.TraitBounds)
+	}
+}
 
 func TestCollector_TraitDeclaration(t *testing.T) {
 	source := `

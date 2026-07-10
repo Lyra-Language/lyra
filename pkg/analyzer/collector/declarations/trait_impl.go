@@ -70,7 +70,7 @@ func collectTraitImplConstraint(node *sitter.Node, ctx *collector_ctx.Ctx) ast.T
 		return ast.TraitImplConstraint{}
 	}
 	genericType := ctx.NodeText(genericTypeNode)
-	traitBoundsNode, ok := ctx.MustField(node, "trait_bounds")
+	traitBoundsNode, ok := ctx.MustField(node, "trait_impl_bounds")
 	if !ok {
 		return ast.TraitImplConstraint{}
 	}

@@ -14,6 +14,10 @@ type resolvedTraitMethod struct {
 	Impl      *ast.TraitImplStmt
 	Method    *ast.TraitMethodImpl
 	Signature *types.LambdaType // trait's declared signature, Self already substituted; nil if the trait method has none
+	// Bindings maps each of a generic impl's type variables to the concrete type
+	// it unified with at this call site (empty for a non-generic impl). Consumed
+	// by checkImplConstraints to verify the impl's `where` bounds.
+	Bindings map[string]types.Type
 }
 
 // resolveTraitMethod finds every impl in the program whose target type
@@ -26,11 +30,17 @@ type resolvedTraitMethod struct {
 //
 // Only identifier-named methods participate (operator-overload methods like
 // `(_==_)` are invoked through the operator itself, never through `.name()`
-// or `TraitName::name()` syntax, so they're never a candidate here). Generic
-// impls (`impl<T> Show for Box<T>`) are not matched: types.TypesEqual
-// correctly returns false against a concrete receiver since the impl's
-// GenericType type argument can never equal a concrete one — resolving a
-// call against a generic impl is a separate, larger feature.
+// or `TraitName::name()` syntax, so they're never a candidate here).
+//
+// A generic impl (`impl<t> Show for Box<t>`) matches when its target *unifies*
+// with the receiver — its own `<t,…>` parameters act as wildcards binding to
+// the receiver's corresponding type arguments (`Box<t>` matches `Box<i64>`),
+// with binding-consistency (`Pair<t, t>` matches `Pair<i64, i64>` but not
+// `Pair<i64, string>`). See implTargetMatches. Self is substituted with the
+// concrete receiver type, so a method whose signature is in terms of Self and
+// concrete types (Show/Debug/Hash-style) type-checks against the instantiation.
+// A method that returns the impl's element type (`Container<e>.get -> e`) is not
+// yet fully instantiated — trait-type-parameter binding is a separate feature.
 func (tc *TypeChecker) resolveTraitMethod(receiverType types.Type, methodName string, requiredTrait string) []resolvedTraitMethod {
 	var matches []resolvedTraitMethod
 	for _, impl := range tc.traitImpls {
@@ -38,7 +48,8 @@ func (tc *TypeChecker) resolveTraitMethod(receiverType types.Type, methodName st
 			continue
 		}
 		implType := tc.resolveTypeIfKnown(impl.Type)
-		if !types.TypesEqual(implType, receiverType) {
+		bindings, ok := implTargetMatches(implType, receiverType)
+		if !ok {
 			continue
 		}
 		trait, ok := tc.symTable.Traits[impl.TraitName]
@@ -58,12 +69,175 @@ func (tc *TypeChecker) resolveTraitMethod(receiverType types.Type, methodName st
 			}
 			var sig *types.LambdaType
 			if traitMethod.Signature != nil {
-				sig = substituteSelf(traitMethod.Signature, impl.Type)
+				// Substitute Self with the concrete receiver (not impl.Type,
+				// which for a generic impl still holds the `<t>` placeholder).
+				sig = substituteSelf(traitMethod.Signature, receiverType)
 			}
-			matches = append(matches, resolvedTraitMethod{Impl: impl, Method: m, Signature: sig})
+			matches = append(matches, resolvedTraitMethod{Impl: impl, Method: m, Signature: sig, Bindings: bindings})
 		}
 	}
 	return matches
+}
+
+// implTargetMatches reports whether an impl's target type matches receiverType.
+// A concrete target matches by structural equality (types.TypesEqual). A generic
+// target — one containing any lowercase GenericType, Lyra's implicit type
+// variables (an uppercase name is a concrete type, never a parameter) — matches
+// when it *unifies* with the receiver, its GenericTypes binding to the receiver's
+// corresponding subterms. (The impl's `<…>` after the trait name is the trait's
+// argument list, not a parameter binder, so the variables are read off the
+// target itself rather than a separate binder list.)
+func implTargetMatches(implType, receiverType types.Type) (map[string]types.Type, bool) {
+	bindings := map[string]types.Type{}
+	if types.TypesEqual(implType, receiverType) {
+		return bindings, true
+	}
+	generics := map[string]bool{}
+	collectGenericNames(implType, generics)
+	if len(generics) == 0 {
+		return bindings, false
+	}
+	ok := unifyGenericTarget(implType, receiverType, generics, bindings)
+	return bindings, ok
+}
+
+// collectGenericNames adds the name of every GenericType reachable within t to
+// set — the implicit type variables of a generic impl target. It descends the
+// composite types a target can take (parameterized, array, tuple).
+func collectGenericNames(t types.Type, set map[string]bool) {
+	switch v := t.(type) {
+	case types.GenericType:
+		set[v.Name] = true
+	case types.ParameterizedType:
+		for _, a := range v.TypeArguments {
+			collectGenericNames(a, set)
+		}
+	case types.StaticArrayType:
+		collectGenericNames(v.ElementType, set)
+	case types.DynamicArrayType:
+		collectGenericNames(v.ElementType, set)
+	case types.TupleType:
+		for _, e := range v.Elements {
+			collectGenericNames(e, set)
+		}
+	}
+}
+
+// unifyGenericTarget reports whether implType matches receiverType, treating any
+// GenericType named in `generics` (the impl's own parameters) as a wildcard that
+// binds to the receiver's corresponding subterm. A parameter used more than once
+// must bind consistently. Non-generic positions require structural equality;
+// nominal types unify by head name, then pairwise over their type arguments —
+// with a lenient fallback to head-name match when either side omits arguments
+// (e.g. a receiver typed as the bare struct without instantiation).
+func unifyGenericTarget(implType, receiverType types.Type, generics map[string]bool, bindings map[string]types.Type) bool {
+	if g, ok := implType.(types.GenericType); ok && generics[g.Name] {
+		if prior, bound := bindings[g.Name]; bound {
+			return types.TypesEqual(prior, receiverType)
+		}
+		bindings[g.Name] = receiverType
+		return true
+	}
+	switch it := implType.(type) {
+	case types.DynamicArrayType:
+		rt, ok := receiverType.(types.DynamicArrayType)
+		return ok && unifyGenericTarget(it.ElementType, rt.ElementType, generics, bindings)
+	case types.StaticArrayType:
+		rt, ok := receiverType.(types.StaticArrayType)
+		return ok && it.Size == rt.Size && unifyGenericTarget(it.ElementType, rt.ElementType, generics, bindings)
+	case types.TupleType:
+		rt, ok := receiverType.(types.TupleType)
+		if !ok || len(it.Elements) != len(rt.Elements) {
+			return false
+		}
+		for i := range it.Elements {
+			if !unifyGenericTarget(it.Elements[i], rt.Elements[i], generics, bindings) {
+				return false
+			}
+		}
+		return true
+	}
+	implName, implArgs, implNominal := nominalHead(implType)
+	recvName, recvArgs, recvNominal := nominalHead(receiverType)
+	if implNominal && recvNominal {
+		if implName != recvName {
+			return false
+		}
+		if len(implArgs) == 0 || len(recvArgs) == 0 {
+			return true // one side carries no type arguments: match on head name
+		}
+		if len(implArgs) != len(recvArgs) {
+			return false
+		}
+		for i := range implArgs {
+			if !unifyGenericTarget(implArgs[i], recvArgs[i], generics, bindings) {
+				return false
+			}
+		}
+		return true
+	}
+	return types.TypesEqual(implType, receiverType)
+}
+
+// nominalHead extracts the head name and type arguments of a nominal type: a
+// ParameterizedType carries both; a NamedStructType, DataType, or UnresolvedType
+// carries only a name (its concrete instantiation, when any, lives in a
+// ParameterizedType). Returns ok=false for non-nominal types (primitives,
+// tuples, lambdas, …).
+func nominalHead(t types.Type) (name string, args []types.Type, ok bool) {
+	switch v := t.(type) {
+	case types.ParameterizedType:
+		return v.Name, v.TypeArguments, true
+	case types.NamedStructType:
+		return v.Name, nil, true
+	case types.DataType:
+		return v.Name, nil, true
+	case types.UnresolvedType:
+		return v.Name, nil, true
+	}
+	return "", nil, false
+}
+
+// checkImplConstraints verifies a matched generic impl's `where` bounds against
+// the types its variables unified with. For `impl Ord<t> for Box<t> where t:
+// Ord` dispatched on `Box<Widget>`, the variable `t` is bound to Widget, so each
+// bound (`Ord`) must be satisfied by Widget — i.e. some impl of that trait must
+// exist for Widget. An unbound variable (a receiver that carried no type
+// argument in that position) is skipped: there is nothing concrete to check.
+func (tc *TypeChecker) checkImplConstraints(match resolvedTraitMethod, loc ast.Location) {
+	for _, c := range match.Impl.Constraints {
+		bound, ok := match.Bindings[c.GenericType]
+		if !ok || bound == nil {
+			continue
+		}
+		for _, traitName := range c.TraitBounds {
+			if !tc.typeImplementsTrait(bound, traitName) {
+				tc.addError(loc, SeverityError,
+					"%s does not implement %s, required by this impl's `%s: %s` bound",
+					bound, traitName, c.GenericType, traitName)
+			}
+		}
+	}
+}
+
+// typeImplementsTrait reports whether some impl of traitName applies to t — the
+// bound-satisfaction test for a generic impl's `where` clause. It reuses the
+// same target-matching used for dispatch (so `i64` satisfies `Ord` via `impl Ord
+// for i64`, and a generic `impl Ord<u> for Box<u>` would satisfy `Box<i64>`).
+// This is a single level: the matched impl's *own* `where` bounds are not
+// recursively verified here (a deliberate first-cut limit — the recursive
+// obligation surfaces when that impl is itself dispatched).
+func (tc *TypeChecker) typeImplementsTrait(t types.Type, traitName string) bool {
+	for _, impl := range tc.traitImpls {
+		if impl.TraitName != traitName {
+			continue
+		}
+		implType := tc.resolveTypeIfKnown(impl.Type)
+		if _, ok := implTargetMatches(implType, t); ok {
+			return true
+		}
+	}
+	return false
 }
 
 func findTraitMethod(trait *ast.TraitDeclStmt, methodName string) *ast.TraitMethod {
@@ -97,6 +271,7 @@ func traitNamesOf(matches []resolvedTraitMethod) string {
 // a fully-qualified call (`Show::show(n)`), where the receiver is already an
 // ordinary call.Arguments[0] and the whole parameter list lines up directly.
 func (tc *TypeChecker) inferResolvedTraitMethodCall(calleeName string, match resolvedTraitMethod, call *ast.FunctionCallExpr, receiver ast.Expression) types.Type {
+	tc.checkImplConstraints(match, call.GetLocation())
 	tc.methodTable.Set(call, match.Method)
 	if match.Signature == nil {
 		// No declared signature to check args against (shouldn't normally

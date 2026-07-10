@@ -523,6 +523,49 @@ func structFields(t types.Type) ([]types.StructField, bool) {
 	return nil, false
 }
 
+// resolveGenericStruct turns a ParameterizedType naming a generic struct into
+// that struct with its type arguments substituted into the field types — so
+// `Box<i64>` becomes a struct whose `value` field is `i64`, and `Box<t>` (the
+// Self type inside a generic impl body) keeps `value` as `t`. This is what lets
+// field and method access work on a generic struct instance. Any other type
+// (including a ParameterizedType whose head isn't a struct) is returned
+// unchanged, so callers can keep the original for trait dispatch, which needs
+// the type arguments the substituted struct no longer carries.
+func (tc *TypeChecker) resolveGenericStruct(t types.Type) types.Type {
+	p, ok := t.(types.ParameterizedType)
+	if !ok {
+		return t
+	}
+	decl, ok := tc.symTable.Types[p.Name]
+	if !ok {
+		return t
+	}
+	st, ok := decl.Type.(types.NamedStructType)
+	if !ok {
+		return t
+	}
+	// The generic parameter names live on the declaration (the NamedStructType's
+	// own GenericParams field is not populated by the collector today); pair them
+	// positionally with the usage-site type arguments.
+	subst := make(map[string]types.Type, len(decl.GenericParams))
+	for i, gp := range decl.GenericParams {
+		if i < len(p.TypeArguments) {
+			subst[gp.Name] = p.TypeArguments[i]
+		}
+	}
+	fields := make([]types.StructField, len(st.Fields))
+	copy(fields, st.Fields)
+	for i := range fields {
+		fields[i].Type = substituteGenerics(fields[i].Type, subst)
+	}
+	return types.NamedStructType{
+		Name:          st.Name,
+		Fields:        fields,
+		GenericParams: st.GenericParams,
+		Allocation:    st.Allocation,
+	}
+}
+
 // structFieldTypes maps each field name of a named or anonymous struct type
 // to its type, or nil if t is neither.
 func structFieldTypes(t types.Type) map[string]types.Type {
@@ -1582,6 +1625,12 @@ func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 	// would otherwise fall through to the non-struct error. Resolve the object
 	// type through the symbol table first so nested-struct paths work.
 	objType = tc.resolveType(objType, m.Object.GetLocation())
+	// A generic struct instance (`Box<i64>`, or `Box<t>` for Self in an impl
+	// body) arrives as a ParameterizedType; resolve it to the struct with its
+	// type arguments substituted so its fields are visible. A field read needs no
+	// trait dispatch, so resolving fully here (also improving the error message)
+	// is safe.
+	objType = tc.resolveGenericStruct(objType)
 	fieldName := m.Property.Name
 
 	if f, ok := structFieldByName(objType, fieldName); ok {

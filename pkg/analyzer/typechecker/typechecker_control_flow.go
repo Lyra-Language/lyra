@@ -378,6 +378,13 @@ func substituteGenerics(t types.Type, subst map[string]types.Type) types.Type {
 	case types.StaticArrayType:
 		tt.ElementType = substituteGenerics(tt.ElementType, subst)
 		return tt
+	case types.ParameterizedType:
+		args := make([]types.Type, len(tt.TypeArguments))
+		for i, a := range tt.TypeArguments {
+			args[i] = substituteGenerics(a, subst)
+		}
+		tt.TypeArguments = args
+		return tt
 	}
 	return t
 }
