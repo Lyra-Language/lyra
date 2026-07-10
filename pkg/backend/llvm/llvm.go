@@ -15,9 +15,10 @@
 // lyra/todo.md's backend section):
 //
 //  1. lowerType(t types.Type) — Lyra type → LLVM type (i8..i64/u* → iN, f16/32/64
-//     → half/float/double, bool → i1, struct → named %T, stack vs shared →
-//     value vs pointer). This is where todo #5 (d) allocation representation is
-//     decided.
+//     → half/float/double, bool → i1, struct → named %T). `stack` values lower
+//     by value, `shared` values to a `ptr` to a ref-counted box — see
+//     ALLOCATION.md for the full representation (retain/release, ownership
+//     modifiers, arena interaction, runtime shims).
 //  2. Replace lowerEntry's placeholder `ret` with real lowering of
 //     entry.Lambda's body: constants, then arithmetic/calls, then let/if/blocks.
 //  3. Runtime shims: print, and the overflow trap for todo #2 (via

@@ -29,7 +29,7 @@
 3. **[DONE]** Purity inference (bottom-up over functions + trait methods, transitive); `InferredPureFunctions` exposes it. Phase 2 (read the ScopeTable instead of re-walking the AST) done for lambdas + free functions; **method clauses still re-walk** (deferred — needs a collector change).
 4. **[DONE 06/15]** `ref`/`mut`/`own` parameter modifiers constrain interior mutation and purity. **Deferred:** modifiers on non-parameter positions + driving move/copy/borrow semantics (needs a backend).
 5. **[DECIDED 07/08 + landed]** Named-bound ladder `pure` ⊆ `det` ⊆ unannotated, plus orthogonal `noalloc` — grammar, collection, and enforcement all in (`lyra-E015`/`E016`); rand/time and unknown-call alloc taint detected. Raw effect-row annotation syntax ruled out until user-defined effects exist.
-   - **Alloc as a storage flavor** (not nominal identity): **[DONE 07/10]** `stack`↔`shared` compatibility check (`lyra-E018`) at owning sites incl. args/`own`, returns, and tuple/array elements. **[DONE 06/24]** recursive-type well-formedness (`lyra-E014`). **Open:** construction-site `shared T {…}` syntax; implicit-alloc / escape analysis; backend representation (inline vs pointer vs refcount).
+   - **Alloc as a storage flavor** (not nominal identity): **[DONE 07/10]** `stack`↔`shared` compatibility check (`lyra-E018`) at owning sites incl. args/`own`, returns, and tuple/array elements. **[DONE 06/24]** recursive-type well-formedness (`lyra-E014`). **[DECIDED 07/10]** backend representation — `stack` = inline value, `shared` = `ptr` to a ref-counted box `{rc, payload}`; retain/release driven by `own`/`ref`/`mut`; arena values pin the rc and bulk-free (spec: `pkg/backend/llvm/ALLOCATION.md`). **Open:** construction-site `shared T {…}` syntax; implicit-alloc / escape analysis; atomic refcounts (deferred to the job system).
 6. **[TODO, BLOCKED: backend]** Use-after-move check for `own` params (definite-move analysis). `own` = consuming move (decided 06/15); not urgent until real move/copy codegen.
 
 ## In Progress
@@ -42,13 +42,14 @@ Groundwork done; this is where backend work now happens. Blocks #2 (traps), #5 (
 - **[DONE]** Entry point: top-level `let main = () -> i64` (exit code) or `-> void` (`driver.ResolveEntryPoint`, build-time only).
 - **Recommended:** library `github.com/llir/llvm` (pure Go) → `clang`. Lowering order: types → trivial `main` → expressions → control flow → runtime shims (`print`, overflow trap).
 - **[DONE 07/10]** `cmd/lyra-lsp` migrated onto `driver.Analyze` — the pipeline lives in one place now.
+- **[DECIDED 07/10]** `stack`/`shared` representation — inline value vs `ptr` to a ref-counted box; spec in `pkg/backend/llvm/ALLOCATION.md`.
 - **First milestone:** lower `entry.Lambda.Body` for `let main = () -> i64 => <int>` so the exit code matches the source (replace `lowerEntry`'s placeholder `ret`).
-- **Next prep (on request):** decide `stack`/`shared` representation (#5) once codegen touches aggregates.
 
 ## Completed
 ------------
 
 ### 07/10/26
+- **`stack`/`shared` representation decided** (#5 (d)) — `stack` = inline value; `shared` = `ptr` to a ref-counted box `{rc, payload}` with retain/release driven by `own`/`ref`/`mut`, and arena values pinning the rc for bulk free. Full spec + runtime-shim signatures in `pkg/backend/llvm/ALLOCATION.md`. Non-atomic refcounts (parallel readers borrow, so no rc races); atomic/weak/COW deferred.
 - **LSP migrated onto `driver.Analyze`** — `cmd/lyra-lsp`'s ~300-line inline pipeline replaced by a thin `driver.Analyze` + `diagToLSP` wrapper; pipeline now defined once. LSP suite green.
 - **LLVM backend skeleton** — `pkg/backend` interface + `pkg/backend/llvm` (textual IR); `lyrac build` writes a placeholder `main` module confirmed to compile and run (exit 0).
 - **Program entry-point convention** — `driver.ResolveEntryPoint`: a zero-param top-level `let main` returning `i64`/`void`; build-time only, enforced by `lyrac build`.
