@@ -15,10 +15,12 @@
 // lyra/todo.md's backend section):
 //
 //  1. lowerType(t types.Type) — Lyra type → LLVM type (i8..i64/u* → iN, f16/32/64
-//     → half/float/double, bool → i1, struct → named %T). `stack` values lower
-//     by value, `shared` values to a `ptr` to a ref-counted box — see
-//     ALLOCATION.md for the full representation (retain/release, ownership
-//     modifiers, arena interaction, runtime shims).
+//     → half/float/double, bool → i1, struct → named %T, data/sum → a tagged
+//     union { tag, payload } per DATA_LAYOUT.md). `stack` values lower by value,
+//     `shared` values to a `ptr` to a ref-counted box — see ALLOCATION.md for the
+//     full representation (retain/release, ownership modifiers, arena, runtime
+//     shims). The two docs compose: the sum-type layout is the payload; the flavor
+//     decides inline vs boxed.
 //  2. Replace lowerEntry's placeholder `ret` with real lowering of
 //     entry.Lambda's body: constants, then arithmetic/calls, then let/if/blocks.
 //  3. Runtime shims: print, and the overflow trap for todo #2 (via

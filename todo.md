@@ -43,12 +43,14 @@ Groundwork done; this is where backend work now happens. Blocks #2 (traps), #5 (
 - **Recommended:** library `github.com/llir/llvm` (pure Go) → `clang`. Lowering order: types → trivial `main` → expressions → control flow → runtime shims (`print`, overflow trap).
 - **[DONE 07/10]** `cmd/lyra-lsp` migrated onto `driver.Analyze` — the pipeline lives in one place now.
 - **[DECIDED 07/10]** `stack`/`shared` representation — inline value vs `ptr` to a ref-counted box; spec in `pkg/backend/llvm/ALLOCATION.md`.
+- **[DECIDED 07/10]** `data`/sum-type layout — tagged union `{ tag, payload }` (monomorphized, niche-opt deferred); spec in `pkg/backend/llvm/DATA_LAYOUT.md`.
 - **First milestone:** lower `entry.Lambda.Body` for `let main = () -> i64 => <int>` so the exit code matches the source (replace `lowerEntry`'s placeholder `ret`).
 
 ## Completed
 ------------
 
 ### 07/10/26
+- **`data`/sum-type layout decided** (backend) — tagged union `%T = { tag, payload-blob }`: smallest-fitting int tag in declaration order, payload sized/aligned to the largest variant and accessed as the active variant's struct. Orthogonal to the alloc flavor (inline vs boxed). Monomorphized generics; recursive occurrence is `shared` (a `ptr`, finite size). Niche/tag-fold optimization (e.g. `Maybe<ptr>` = null) deferred. Spec: `pkg/backend/llvm/DATA_LAYOUT.md`.
 - **`stack`/`shared` representation decided** (#5 (d)) — `stack` = inline value; `shared` = `ptr` to a ref-counted box `{rc, payload}` with retain/release driven by `own`/`ref`/`mut`, and arena values pinning the rc for bulk free. Full spec + runtime-shim signatures in `pkg/backend/llvm/ALLOCATION.md`. Non-atomic refcounts (parallel readers borrow, so no rc races); atomic/weak/COW deferred.
 - **LSP migrated onto `driver.Analyze`** — `cmd/lyra-lsp`'s ~300-line inline pipeline replaced by a thin `driver.Analyze` + `diagToLSP` wrapper; pipeline now defined once. LSP suite green.
 - **LLVM backend skeleton** — `pkg/backend` interface + `pkg/backend/llvm` (textual IR); `lyrac build` writes a placeholder `main` module confirmed to compile and run (exit 0).
