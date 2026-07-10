@@ -957,9 +957,11 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 					found |= impureLambdas[target]
 				} else if !isTypeConversionCall(name) {
 					// Cannot resolve to a local lambda or known builtin, and not a
-					// pure type-conversion call. Conservatively treat as impure —
-					// the callee is imported/external and we can't verify its purity.
-					found |= PurityEffects
+					// pure type-conversion call. Conservatively assume the worst —
+					// the callee is imported/external and we can't verify anything
+					// about it, including whether it allocates (AllEffects, not just
+					// PurityEffects, so `noalloc` catches it too).
+					found |= AllEffects
 				}
 			}
 		case *ast.StructInstanceExpr:
@@ -1044,9 +1046,11 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 					found |= impureLambdas[target]
 				} else if !isTypeConversionCall(name) {
 					// Cannot resolve to a local lambda or known builtin, and not a
-					// pure type-conversion call. Conservatively treat as impure —
-					// the callee is imported/external and we can't verify its purity.
-					found |= PurityEffects
+					// pure type-conversion call. Conservatively assume the worst —
+					// the callee is imported/external and we can't verify anything
+					// about it, including whether it allocates (AllEffects, not just
+					// PurityEffects, so `noalloc` catches it too).
+					found |= AllEffects
 				}
 			}
 		case *ast.StructInstanceExpr:

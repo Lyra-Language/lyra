@@ -69,6 +69,14 @@ const EffectIO = EffectInput | EffectOutput
 // function may allocate (e.g. build and return a list) and stay deterministic.
 const PurityEffects = EffectMut | EffectInput | EffectOutput | EffectRand | EffectTime
 
+// AllEffects is every tracked effect bit set — the maximally conservative
+// assumption for a callee whose body we cannot inspect (an imported/external
+// function that resolves to no local lambda, builtin, or type conversion). It
+// includes EffectAlloc, unlike PurityEffects: since we can't verify the callee
+// doesn't allocate, a `noalloc` caller must be flagged for calling it, just as a
+// `pure`/`det` caller is flagged by the PurityEffects bits.
+const AllEffects = PurityEffects | EffectAlloc
+
 // DetEffects is the subset of effects that violate `det` (deterministic) — the
 // non-determinism sources only. `det` is coarser than `pure`: it permits
 // mutation (EffectMut), allocation (EffectAlloc), and output (EffectOutput), so

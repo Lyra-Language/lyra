@@ -576,7 +576,7 @@ let stackOnly = () -> i64 => {
 func TestInferredEffects_SharedDataConstruction_Alloc(t *testing.T) {
 	src := `
 shared data Tree = Leaf | Branch(i64)
-data Plain = A | B(i64)
+data Plain = Empty | Wrap(i64)
 let sharedNullary = () -> i64 => {
     let x = Leaf
     0
@@ -586,7 +586,7 @@ let sharedPayload = () -> i64 => {
     0
 }
 let plain = () -> i64 => {
-    let x = B(5)
+    let x = Wrap(5)
     0
 }`
 	program := parseAndCollectProgram(t, src)

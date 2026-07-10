@@ -117,6 +117,26 @@ let make = noalloc (x: i64) -> i64 => {
 	assertBoundError(t, checkPurity(t, src), "lyra-E016")
 }
 
+// An unknown external call could allocate, and we can't inspect its body to know
+// otherwise, so a `noalloc` function that calls one is conservatively flagged —
+// the alloc-axis sibling of the same taint that makes an unknown call impure for
+// `pure`/`det`. (Before this taint included EffectAlloc, `noalloc` only caught
+// known `shared` constructions and silently passed such calls.)
+func TestNoAlloc_UnknownExternalCall_Violates(t *testing.T) {
+	src := `let make = noalloc (n: i64) -> i64 => { helper(n) }`
+	assertBoundError(t, checkPurity(t, src), "lyra-E016")
+}
+
+// The conservative alloc taint propagates transitively: a `noalloc` function
+// calling a local helper that itself calls an unknown external function is
+// flagged too (the helper's inferred effect set carries EffectAlloc).
+func TestNoAlloc_TransitiveUnknownCall_Violates(t *testing.T) {
+	src := `
+let helper = (n: i64) -> i64 => { external(n) }
+let make = noalloc (n: i64) -> i64 => { helper(n) }`
+	assertBoundError(t, checkPurity(t, src), "lyra-E016")
+}
+
 // A `shared` construction lexically inside a `with`-arena block is discharged,
 // so a `noalloc` function may build into an arena.
 func TestNoAlloc_ArenaDischarged_Ok(t *testing.T) {
