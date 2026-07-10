@@ -76,7 +76,7 @@ func CheckPurity(program *ast.Program, methodTable *typetable.MethodTable) []Pur
 		if stmt, ok := node.(ast.Statement); ok {
 			// Top level is an impure context: a nil scope means "not inside a pure
 			// function, don't check".
-			ast.WalkStmt(stmt, c.stmtVisitor(nil, base), c.exprVisitor(nil, base))
+			ast.WalkStmt(stmt, c.stmtVisitor(nil), c.exprVisitor(nil, base))
 		}
 		if impl, ok := node.(*ast.TraitImplStmt); ok {
 			c.checkTraitMethodBounds(impl, base)
@@ -107,7 +107,7 @@ func (c *purityChecker) checkTraitMethodBounds(impl *ast.TraitImplStmt, base []s
 		// lambda's), so there is no mutBorrows set to populate here.
 		sc := &funcScope{locals: locals, mutBorrows: map[string]bool{}}
 		childCapture := pushScope(base, scope)
-		ast.WalkExpr(m.Clause.Body, c.stmtVisitor(sc, childCapture), c.exprVisitor(sc, childCapture))
+		ast.WalkExpr(m.Clause.Body, c.stmtVisitor(sc), c.exprVisitor(sc, childCapture))
 	}
 }
 
@@ -254,12 +254,11 @@ type purityChecker struct {
 }
 
 // stmtVisitor returns a statement callback. sc is non-nil exactly when we are
-// inside a `pure` function body. capture is unused here but threaded through
-// so the signature matches exprVisitor's manual-recursion call sites. A
-// mutation of a name not owned locally is a mutation of captured outer state;
-// interior mutation through a `mut`-borrowed parameter escapes to the caller's
-// value.
-func (c *purityChecker) stmtVisitor(sc *funcScope, capture []scopeBindings) func(ast.Statement) bool {
+// inside a `pure` function body. A mutation of a name not owned locally is a
+// mutation of captured outer state; interior mutation through a `mut`-borrowed
+// parameter escapes to the caller's value. (Unlike exprVisitor, this needs no
+// capture stack — statement-level mutation checks resolve names via sc alone.)
+func (c *purityChecker) stmtVisitor(sc *funcScope) func(ast.Statement) bool {
 	return func(stmt ast.Statement) bool {
 		if sc == nil {
 			return true // impure context: descend, but don't flag anything
@@ -315,7 +314,7 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 			c.checkBoundedEffects(e.IsDet, e.IsNoAlloc, c.impureLambdas[e], e.GetLocation())
 			// Default values execute at the call site, in the *enclosing* context.
 			for i := range e.Parameters {
-				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(sc, capture), c.exprVisitor(sc, capture))
+				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(sc), c.exprVisitor(sc, capture))
 			}
 			// The body runs in this lambda's own context: pure → build its scope;
 			// impure → nil (no checking). Either way it introduces a new lexical
@@ -332,7 +331,7 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 				child = &funcScope{locals: locals, mutBorrows: mutBorrowParams(e)}
 			}
 			childCapture := pushScope(capture, scope)
-			walkLambdaBodies(e, c.stmtVisitor(child, childCapture), c.exprVisitor(child, childCapture))
+			walkLambdaBodies(e, c.stmtVisitor(child), c.exprVisitor(child, childCapture))
 			return false // recursed manually
 
 		case *ast.IdentifierExpr:
@@ -457,19 +456,6 @@ func nondeterminismDescription(e Effect) string {
 	default:
 		return "performs a non-deterministic effect"
 	}
-}
-
-// localBindings collects every name bound locally within a pure lambda: its
-// parameter patterns, its clause patterns, and any `let`/`var`/destructuring
-// declaration in its body. It deliberately does NOT descend into nested lambdas —
-// those own their own scope, and their bindings are not local to this function.
-func localBindings(lambda *ast.LambdaExpr) map[string]bool {
-	scope := directScopeBindings(lambda)
-	locals := make(map[string]bool, len(scope.mutable))
-	for name := range scope.mutable {
-		locals[name] = true
-	}
-	return locals
 }
 
 // directScopeBindings scans every name declared directly within lambda's own
