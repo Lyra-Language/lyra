@@ -373,7 +373,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 	typeErrors := tc.Check(program)
 
 	log.Printf("analyze: checking purity")
-	for _, pe := range checker.CheckPurity(program, tc.MethodTable()) {
+	for _, pe := range checker.CheckPurity(program, scopeTable, tc.MethodTable()) {
 		sev := lsp.SeverityError
 		loc := pe.Location
 		diags = append(diags, lsp.Diagnostic{

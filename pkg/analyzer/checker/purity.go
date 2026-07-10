@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
@@ -63,10 +64,11 @@ func (e PurityError) Error() string {
 //   - bottom-up purity *inference* for methods — today only an explicit
 //     `pure` marker on the method itself is trusted; an unannotated method is
 //     always treated as potentially impure, unlike a free function
-func CheckPurity(program *ast.Program, methodTable *typetable.MethodTable) []PurityError {
+func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, methodTable *typetable.MethodTable) []PurityError {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
+	frames := newScopeFrames(program, scopeTable)
 	boundGroups := collectTraitMethodGroups(program)
-	impureLambdas, impureMethods := inferImpurity(collectFuncBindings(program, base), collectMethodImpls(program), base, methodTable, boundGroups, buildAllocContext(program))
+	impureLambdas, impureMethods := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, methodTable, boundGroups, buildAllocContext(program), frames)
 	c := &purityChecker{
 		impureLambdas: impureLambdas,
 		impureMethods: impureMethods,
@@ -74,6 +76,7 @@ func CheckPurity(program *ast.Program, methodTable *typetable.MethodTable) []Pur
 		methodTable:   methodTable,
 		boundGroups:   boundGroups,
 		traitDecls:    collectTraitDecls(program),
+		frames:        frames,
 	}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -137,8 +140,8 @@ func (c *purityChecker) checkTraitMethodBounds(impl *ast.TraitImplStmt, base []s
 // (a name-keyed map can't distinguish same-named functions in different
 // scopes); a non-top-level function's purity is still checked structurally by
 // CheckPurity, just not exposed here by name.
-func InferredPureFunctions(program *ast.Program) map[string]bool {
-	effects := InferredEffects(program)
+func InferredPureFunctions(program *ast.Program, scopeTable *symbols.ScopeTable) map[string]bool {
+	effects := InferredEffects(program, scopeTable)
 	result := make(map[string]bool, len(effects))
 	for name, e := range effects {
 		// Mask with PurityEffects, not IsPure(): a function that only allocates
@@ -164,9 +167,10 @@ func InferredPureFunctions(program *ast.Program) map[string]bool {
 // no MethodTable (this entry point only has the AST), so a function whose
 // only "effect" is calling a trait method resolved by the type-checker is
 // not picked up here — see CheckPurity for the MethodTable-aware version.
-func InferredEffects(program *ast.Program) map[string]Effect {
+func InferredEffects(program *ast.Program, scopeTable *symbols.ScopeTable) map[string]Effect {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
-	impure, _ := inferImpurity(collectFuncBindings(program, base), collectMethodImpls(program), base, nil, collectTraitMethodGroups(program), buildAllocContext(program))
+	frames := newScopeFrames(program, scopeTable)
+	impure, _ := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, nil, collectTraitMethodGroups(program), buildAllocContext(program), frames)
 	result := make(map[string]Effect, len(base[0].functions))
 	for name, lam := range base[0].functions {
 		result[name] = impure[lam]
@@ -270,6 +274,9 @@ type purityChecker struct {
 	// traitDecls indexes trait declarations by name, so an impl method inherits
 	// and is checked against the effect bounds its trait declares on that method.
 	traitDecls map[string]*ast.TraitDeclStmt
+	// frames builds a lambda's flat scope-bindings frame from the collector's
+	// Scope tree (see scopeFrames), replacing the earlier AST re-walk.
+	frames *scopeFrames
 }
 
 // stmtVisitor returns a statement callback. sc is non-nil exactly when we are
@@ -341,7 +348,7 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 			// of purity — a pure lambda nested deeper still needs to resolve names
 			// captured through this (possibly impure) intermediate scope.
 			var child *funcScope
-			scope := directScopeBindings(e)
+			scope := c.frames.forLambda(e)
 			if e.IsPure {
 				locals := make(map[string]bool, len(scope.mutable))
 				for name := range scope.mutable {
@@ -484,68 +491,139 @@ func nondeterminismDescription(e Effect) string {
 	}
 }
 
-// directScopeBindings scans every name declared directly within lambda's own
-// scope — parameter patterns, clause patterns, and any `let`/`var`/destructuring
-// declaration in its body (not descending into nested lambdas) — producing one
-// full capture-stack frame: which of those names are interior-mutable bindings
-// (`var`/`let mut`), and which are bound to a function value declared directly
-// here. This is the per-lambda analogue of mutableGlobals/topLevelFunctions's
-// top-level scan, used to resolve a name a *nested* function reads or calls but
-// does not own, against the scope it is actually captured from — recording
-// immutable/non-function names too (rather than just omitting them) so a
-// closer declaration correctly shadows a farther one of either kind.
-func directScopeBindings(lambda *ast.LambdaExpr) scopeBindings {
-	scope := scopeBindings{mutable: map[string]bool{}, functions: map[string]*ast.LambdaExpr{}}
-	addImmutable := func(names []string) {
-		for _, n := range names {
-			scope.mutable[n] = false
+// scopeFrames builds a lambda's flat capture-stack frame (scopeBindings) from
+// the collector's Scope tree instead of re-walking the AST (FP/Imperative todo
+// #3, Phase 2). The collector already recorded, per lambda, the parameter
+// `ScopeFunction` it pushed (ScopeTable keyed on the *ast.LambdaExpr) and, as
+// descendant scopes, every block / loop / `with` / if-let scope in its body —
+// each holding the names declared directly there as ast.Named symbols. forLambda
+// flattens that subtree (down to but not through a nested lambda's own
+// ScopeFunction) into the single per-lambda frame the purity analysis expects,
+// reproducing directScopeBindings' result exactly. Two collector quirks are
+// reconciled so behavior is unchanged: a `with`-arena handle is registered as a
+// plain `let` in the scope but must read as interior-mutable (a captured arena
+// is a stateful allocator), and a `for … in` loop variable lives in the loop
+// scope but was never a body binding the old AST walk collected — precomputed
+// arenaScopes / forInScopes carry both facts. Method clauses are not covered
+// (the collector records no scope for them; see directScopeBindingsForClause).
+type scopeFrames struct {
+	scopeTable *symbols.ScopeTable
+	// arenaScopes are the `with`-block scopes whose sole binding (the arena
+	// handle) must read as interior-mutable despite being a plain `let`.
+	arenaScopes map[*symbols.Scope]bool
+	// forInScopes are `for … in` loop scopes whose own symbols (the key/value
+	// loop variables) are skipped — the AST walk never collected them.
+	forInScopes map[*symbols.Scope]bool
+}
+
+// newScopeFrames precomputes the arena / for-in scope classifications by walking
+// the program once and mapping each WithStmt / ForInLoopExpr node to the scope
+// the collector recorded for it. A nil scopeTable yields empty maps and a
+// forLambda that contributes only parameter/clause names (defensive — the real
+// pipeline always passes the collected table).
+func newScopeFrames(program *ast.Program, scopeTable *symbols.ScopeTable) *scopeFrames {
+	f := &scopeFrames{
+		scopeTable:  scopeTable,
+		arenaScopes: map[*symbols.Scope]bool{},
+		forInScopes: map[*symbols.Scope]bool{},
+	}
+	if scopeTable == nil {
+		return f
+	}
+	onStmt := func(s ast.Statement) bool {
+		if w, ok := s.(*ast.WithStmt); ok {
+			if sc, ok := scopeTable.Get(w); ok {
+				f.arenaScopes[sc] = true
+			}
+		}
+		return true
+	}
+	onExpr := func(e ast.Expression) bool {
+		if fin, ok := e.(*ast.ForInLoopExpr); ok {
+			if sc, ok := scopeTable.Get(fin); ok {
+				f.forInScopes[sc] = true
+			}
+		}
+		return true
+	}
+	for _, node := range program.Statements {
+		if stmt, ok := node.(ast.Statement); ok {
+			ast.WalkStmt(stmt, onStmt, onExpr)
 		}
 	}
-	mergeStmt := func(s ast.Statement) {
-		for name, mutable := range declaredMutability(s) {
-			scope.mutable[name] = mutable
+	return f
+}
+
+// forLambda produces the single flat scopeBindings frame for lambda: which names
+// declared in its own scope are interior-mutable (`var`/`let mut`, or an arena
+// handle) and which are bound to a function value. Parameters and multi-clause
+// patterns are read directly off the node (they are immutable, and clause
+// patterns are not registered in the scope tree); body declarations come from
+// the recorded Scope subtree.
+func (f *scopeFrames) forLambda(lambda *ast.LambdaExpr) scopeBindings {
+	frame := scopeBindings{mutable: map[string]bool{}, functions: map[string]*ast.LambdaExpr{}}
+	for i := range lambda.Parameters {
+		for _, n := range patternBoundNames(lambda.Parameters[i].Pattern) {
+			frame.mutable[n] = false
 		}
-		if vd, ok := s.(*ast.VarDeclStmt); ok {
-			if lam, ok := vd.Value.(*ast.LambdaExpr); ok {
-				scope.functions[vd.Name] = lam
+	}
+	for _, clause := range lambda.LambdaClauses {
+		for _, pat := range clause.Patterns {
+			for _, n := range patternBoundNames(pat) {
+				frame.mutable[n] = false
 			}
 		}
 	}
-	for i := range lambda.Parameters {
-		addImmutable(patternBoundNames(lambda.Parameters[i].Pattern))
-	}
-	collectBody := func(body ast.Expression) {
-		ast.WalkExpr(body,
-			func(s ast.Statement) bool {
-				mergeStmt(s)
-				return true
-			},
-			func(e ast.Expression) bool {
-				switch n := e.(type) {
-				case *ast.LambdaExpr:
-					// Stop at nested lambdas: their inner bindings are not ours.
-					return false
-				case *ast.ForLoopExpr:
-					// The walker exposes the C-style loop's init as a special
-					// field (ForLoopExpr.Init), not as a visited statement, so
-					// collect the loop variable explicitly.
-					mergeStmt(n.Init)
-				}
-				// if-let / else destructuring and `with`-arena bindings ARE surfaced
-				// as statements by the walker, so mergeStmt (via declaredMutability)
-				// already collects their bound names — no special handling here.
-				return true
-			},
-		)
-	}
-	collectBody(lambda.Body)
-	for _, clause := range lambda.LambdaClauses {
-		for _, pat := range clause.Patterns {
-			addImmutable(patternBoundNames(pat))
+	if f.scopeTable != nil {
+		if scope, ok := f.scopeTable.Get(lambda); ok {
+			f.collectSubtree(scope, &frame)
 		}
-		collectBody(clause.Body)
 	}
-	return scope
+	return frame
+}
+
+// collectSubtree walks scope's descendants (its children are the lambda body's
+// block/loop/with scopes), folding each scope's declarations into frame. It
+// stops at a nested lambda's own ScopeFunction — those bindings belong to that
+// lambda's frame, mirroring the old walk's "return false at a nested LambdaExpr".
+func (f *scopeFrames) collectSubtree(scope *symbols.Scope, frame *scopeBindings) {
+	for _, child := range scope.Children {
+		if child.Kind == symbols.ScopeFunction {
+			continue
+		}
+		f.addScopeSymbols(child, frame)
+		f.collectSubtree(child, frame)
+	}
+}
+
+// addScopeSymbols folds one scope's directly-declared names into frame, deriving
+// each name's interior-mutability from its declaring node. A `for … in` loop
+// scope's own key/value variables are skipped (never body bindings); an arena
+// scope's handle reads as mutable.
+func (f *scopeFrames) addScopeSymbols(scope *symbols.Scope, frame *scopeBindings) {
+	if f.forInScopes[scope] {
+		return
+	}
+	arena := f.arenaScopes[scope]
+	for name, sym := range scope.Symbols {
+		switch d := sym.(type) {
+		case *ast.VarDeclStmt:
+			if lam, ok := d.Value.(*ast.LambdaExpr); ok {
+				frame.functions[name] = lam
+				frame.mutable[name] = false
+			} else if arena {
+				frame.mutable[name] = true
+			} else {
+				frame.mutable[name] = d.CanMutateInterior()
+			}
+		case *ast.DestructuringDeclStmt:
+			frame.mutable[name] = d.Keyword == "var" || d.IsMut
+		default:
+			// A parameter (edge cases where one is reached via the subtree) or any
+			// other named symbol is an immutable, non-function binding.
+			frame.mutable[name] = false
+		}
+	}
 }
 
 // directScopeBindingsForClause is directScopeBindings's counterpart for a
@@ -822,7 +900,7 @@ func topLevelFunctions(program *ast.Program) map[string]*ast.LambdaExpr {
 // Keying the result by lambda pointer (rather than name) also means two
 // unrelated functions in different scopes that happen to share a name are
 // never confused with each other.
-func collectFuncBindings(program *ast.Program, base []scopeBindings) map[*ast.LambdaExpr][]scopeBindings {
+func collectFuncBindings(program *ast.Program, base []scopeBindings, frames *scopeFrames) map[*ast.LambdaExpr][]scopeBindings {
 	defs := map[*ast.LambdaExpr][]scopeBindings{}
 	var visit func(capture []scopeBindings, lam *ast.LambdaExpr)
 	visit = func(capture []scopeBindings, lam *ast.LambdaExpr) {
@@ -841,7 +919,7 @@ func collectFuncBindings(program *ast.Program, base []scopeBindings) map[*ast.La
 		for i := range lam.Parameters {
 			ast.WalkExpr(lam.Parameters[i].DefaultValue, nil, findIn(capture))
 		}
-		childCapture := pushScope(capture, directScopeBindings(lam))
+		childCapture := pushScope(capture, frames.forLambda(lam))
 		walkLambdaBodies(lam, nil, findIn(childCapture))
 	}
 	findAtTop := func(e ast.Expression) bool {
@@ -873,7 +951,7 @@ func collectFuncBindings(program *ast.Program, base []scopeBindings) map[*ast.La
 // with no detected effect is inferred pure exactly like an unannotated
 // function (FP/Imperative todo #3, "bottom-up purity inference for
 // unannotated methods"). methodTable is nil-safe — see purityChecker.methodTable.
-func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*ast.TraitMethodImpl, base []scopeBindings, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext) (map[*ast.LambdaExpr]Effect, map[*ast.TraitMethodImpl]Effect) {
+func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*ast.TraitMethodImpl, base []scopeBindings, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext, frames *scopeFrames) (map[*ast.LambdaExpr]Effect, map[*ast.TraitMethodImpl]Effect) {
 	impureLambdas := map[*ast.LambdaExpr]Effect{}
 	impureMethods := map[*ast.TraitMethodImpl]Effect{}
 	// Fixpoint over an effect *set*: a callable's effect can only grow as more
@@ -885,7 +963,7 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 	for {
 		changed := false
 		for lam, capture := range lambdaDefs {
-			e := impureLambdas[lam] | lambdaEffects(lam, capture, impureLambdas, impureMethods, methodTable, boundGroups, alloc)
+			e := impureLambdas[lam] | lambdaEffects(lam, capture, impureLambdas, impureMethods, methodTable, boundGroups, alloc, frames)
 			if e != impureLambdas[lam] {
 				impureLambdas[lam] = e
 				changed = true
@@ -992,8 +1070,8 @@ func boundCallEffect(ref typetable.BoundMethodRef, groups map[typetable.BoundMet
 // accumulates an Effect bitmask instead of emitting diagnostics, and is used
 // only for inference. It does not descend into nested lambdas (they have
 // their own boundary). EffectNone means no effect was found (inferred pure).
-func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext) Effect {
-	scope := directScopeBindings(lam)
+func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext, frames *scopeFrames) Effect {
+	scope := frames.forLambda(lam)
 	locals := make(map[string]bool, len(scope.mutable))
 	for name := range scope.mutable {
 		locals[name] = true

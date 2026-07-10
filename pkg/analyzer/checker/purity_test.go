@@ -7,6 +7,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
@@ -25,7 +26,7 @@ func checkPurity(t *testing.T, source string) []checker.PurityError {
 	program, symTable, scopeTable, _ := c.Collect(tree.RootNode())
 	tc := typechecker.New(symTable, scopeTable, typetable.New())
 	tc.Check(program)
-	return checker.CheckPurity(program, tc.MethodTable())
+	return checker.CheckPurity(program, scopeTable, tc.MethodTable())
 }
 
 func assertPurityCount(t *testing.T, errs []checker.PurityError, want int) {
@@ -73,6 +74,39 @@ let f = pure () -> i64 => {
     0
 }`
 	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// A `var` declared in a pure function's body and mutated inside a `for … in`
+// loop body is a local: the body block is a descendant scope the frame builder
+// flattens in, so `acc` resolves as owned. The loop variable `x` lives in the
+// loop scope itself, which the builder skips (it was never a body binding), but
+// the loop *body* block is still walked — a regression that dropped the whole
+// for-in subtree would misread `acc` as captured and falsely flag this.
+func TestPurity_ForInBodyLocalMutation_Ok(t *testing.T) {
+	src := `
+let total = pure (items: [3]i64) -> i64 => {
+    var acc = 0
+    for x in items {
+        acc += x
+    }
+    acc
+}`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// The counterpart: mutating an actual captured `var` inside a `for … in` body is
+// still an escaping effect. Confirms skipping the loop scope's own symbols did
+// not accidentally swallow its body (which would suppress this diagnostic).
+func TestPurity_CapturedMutationInsideForIn_Error(t *testing.T) {
+	src := `
+var sink = 0
+let leak = pure (items: [3]i64) -> i64 => {
+    for x in items {
+        sink += x
+    }
+    0
+}`
+	assertPurityCount(t, checkPurity(t, src), 1)
 }
 
 // Collecting if-let bindings as locals must not mask a genuine escaping effect:
@@ -466,8 +500,8 @@ func TestInferredPureFunctions_UnannotatedPureFunction_True(t *testing.T) {
 	src := `
 let explicitPure = pure (n: i64) -> i64 => { n + 1 }
 let inferredPure = (n: i64) -> i64 => { n + 1 }`
-	program := parseAndCollectProgram(t, src)
-	result := checker.InferredPureFunctions(program)
+	program, scopeTable := parseAndCollectProgram(t, src)
+	result := checker.InferredPureFunctions(program, scopeTable)
 	if !result["explicitPure"] {
 		t.Error("explicitPure should be reported pure")
 	}
@@ -483,8 +517,8 @@ func TestInferredPureFunctions_ImpureFunction_False(t *testing.T) {
 var counter = 0
 let actuallyImpure = (n: i64) -> i64 => { counter = n; n }
 let callsImpure = (n: i64) -> i64 => { actuallyImpure(n) }`
-	program := parseAndCollectProgram(t, src)
-	result := checker.InferredPureFunctions(program)
+	program, scopeTable := parseAndCollectProgram(t, src)
+	result := checker.InferredPureFunctions(program, scopeTable)
 	if result["actuallyImpure"] {
 		t.Error("actuallyImpure should be reported impure")
 	}
@@ -515,8 +549,8 @@ let both = (n: i64) -> i64 => {
     n
 }
 let pureFn = (n: i64) -> i64 => { n + 1 }`
-	program := parseAndCollectProgram(t, src)
-	effects := checker.InferredEffects(program)
+	program, scopeTable := parseAndCollectProgram(t, src)
+	effects := checker.InferredEffects(program, scopeTable)
 
 	if !effects["mutates"].Has(checker.EffectMut) || effects["mutates"].Has(checker.EffectIO) {
 		t.Errorf("mutates: want EffectMut only, got %v", effects["mutates"])
@@ -549,8 +583,8 @@ let stackOnly = () -> i64 => {
     let p = Pos { x: 1 }
     p.x
 }`
-	program := parseAndCollectProgram(t, src)
-	effects := checker.InferredEffects(program)
+	program, scopeTable := parseAndCollectProgram(t, src)
+	effects := checker.InferredEffects(program, scopeTable)
 
 	if !effects["allocs"].Has(checker.EffectAlloc) {
 		t.Errorf("allocs: want EffectAlloc, got %v", effects["allocs"])
@@ -564,7 +598,7 @@ let stackOnly = () -> i64 => {
 	}
 
 	// Orthogonality: an allocating-but-otherwise-pure function is still pure.
-	pure := checker.InferredPureFunctions(program)
+	pure := checker.InferredPureFunctions(program, scopeTable)
 	if !pure["allocs"] {
 		t.Error("allocs should be reported pure despite allocating (alloc is orthogonal to purity)")
 	}
@@ -589,8 +623,8 @@ let plain = () -> i64 => {
     let x = Wrap(5)
     0
 }`
-	program := parseAndCollectProgram(t, src)
-	effects := checker.InferredEffects(program)
+	program, scopeTable := parseAndCollectProgram(t, src)
+	effects := checker.InferredEffects(program, scopeTable)
 
 	if !effects["sharedNullary"].Has(checker.EffectAlloc) {
 		t.Errorf("sharedNullary: want EffectAlloc, got %v", effects["sharedNullary"])
@@ -619,8 +653,8 @@ let inside = () -> i64 => {
     }
     0
 }`
-	program := parseAndCollectProgram(t, src)
-	effects := checker.InferredEffects(program)
+	program, scopeTable := parseAndCollectProgram(t, src)
+	effects := checker.InferredEffects(program, scopeTable)
 
 	if !effects["outside"].Has(checker.EffectAlloc) {
 		t.Errorf("outside: want EffectAlloc, got %v", effects["outside"])
@@ -642,15 +676,15 @@ let build = pure () -> i64 => {
 	assertPurityCount(t, checkPurity(t, src), 0)
 }
 
-func parseAndCollectProgram(t *testing.T, source string) *ast.Program {
+func parseAndCollectProgram(t *testing.T, source string) (*ast.Program, *symbols.ScopeTable) {
 	t.Helper()
 	tree, err := parser.Parse(source)
 	if err != nil {
 		t.Fatalf("Parse error: %v", err)
 	}
 	c := collector.NewCollector([]byte(source))
-	program, _, _, _ := c.Collect(tree.RootNode())
-	return program
+	program, _, scopeTable, _ := c.Collect(tree.RootNode())
+	return program, scopeTable
 }
 
 // --- trait-method purity ---
@@ -859,8 +893,8 @@ import http.{ get }
 let fetch = (url: string) -> string => {
     get(url)
 }`
-	program := parseAndCollectProgram(t, src)
-	result := checker.InferredPureFunctions(program)
+	program, scopeTable := parseAndCollectProgram(t, src)
+	result := checker.InferredPureFunctions(program, scopeTable)
 	if result["fetch"] {
 		t.Error("fetch calls an imported function and should be inferred impure")
 	}
@@ -887,8 +921,8 @@ let loadConfig = (path: string) -> string => {
 let bootstrap = () -> string => {
     loadConfig("config.txt")
 }`
-	program := parseAndCollectProgram(t, src)
-	result := checker.InferredPureFunctions(program)
+	program, scopeTable := parseAndCollectProgram(t, src)
+	result := checker.InferredPureFunctions(program, scopeTable)
 	if result["loadConfig"] {
 		t.Error("loadConfig calls imported readFile and should be inferred impure")
 	}
