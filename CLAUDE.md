@@ -136,7 +136,7 @@ Key methods:
 Files split by concern: `typechecker.go` (core + var decls + expressions), `typechecker_control_flow.go` (if/match), `typechecker_functions.go` (lambda/call/member-call dispatch), `typechecker_trait_dispatch.go` (trait-method resolution), `typechecker_traits.go` (impl conformance), `builtins.go` (builtin methods on primitives), `errors.go` (error helpers), `assignable.go` (type compatibility).
 
 ### `pkg/driver`
-The single reusable entry point to the whole front-end. `driver.Analyze(source []byte) *Result` runs parse → collect → the standalone `checker.Check*` passes → `typechecker.Check` → `checker.CheckPurity` (in that order, purity last so it sees the resolved `MethodTable`) and returns a `Result{Program, SymbolTable, ScopeTable, TypeTable, MethodTable, Diagnostics}`. Every pass's errors are normalized to `[]diagnostic.Diagnostic` (CST parse errors converted from tree-sitter's 0-based positions to 1-based `ast.Location`). `Result.HasErrors()` / `Result.Errors()` filter by severity. This is where a backend (or any tool needing a typed program) starts, instead of re-implementing the pipeline.
+The single reusable entry point to the whole front-end. `driver.Analyze(source []byte) *Result` runs parse → collect → the standalone `checker.Check*` passes → `typechecker.Check` → `checker.CheckPurity` (in that order, purity last so it sees the resolved `MethodTable`) and returns a `Result{Program, SymbolTable, ScopeTable, TypeTable, MethodTable, Diagnostics}`. Every pass's errors are normalized to `[]diagnostic.Diagnostic` (CST parse errors converted from tree-sitter's 0-based positions to 1-based `ast.Location`). `Result.HasErrors()` / `Result.Errors()` filter by severity. This is where a backend (or any tool needing a typed program) starts, instead of re-implementing the pipeline. Both `cmd/lyrac` and `cmd/lyra-lsp` call it, so the pipeline is defined in exactly one place.
 
 `driver.ResolveEntryPoint(res) (*EntryPoint, []diagnostic.Diagnostic)` (`entrypoint.go`) finds and validates the program's entry function: a top-level `let main` that is a zero-parameter function returning `i64` (the process exit code, `EntryReturnExitCode`) or `void`/no-annotation (`EntryReturnVoid`). Absent/non-function/parametered/wrong-return `main` → nil + diagnostics. It is a **build-time** requirement (a library or a `check` needs no `main`), so it is intentionally *not* part of `Analyze` — only `lyrac build` calls it. **Note:** `cmd/lyrac` calls this; `cmd/lyra-lsp` still has its own byte-identical inline copy of the pipeline and should be migrated onto `driver.Analyze` (then the pipeline lives in exactly one place).
 
@@ -151,8 +151,10 @@ Reflection-based AST printer used only in tests. `printer.PrintAST(program)` wal
 ### `cmd/lyra-lsp`
 LSP server. Uses `github.com/owenrumney/go-lsp` over stdio. On every `textDocument/didOpen` or `textDocument/didChange`:
 1. Applies incremental edits to an in-memory doc store
-2. Runs `parser.Parse` → `collector.Collect` → most `checker.Check*` passes → `typechecker.Check` → `checker.CheckPurity` (purity must come *after* typechecking — it needs the resolved `MethodTable`)
-3. Publishes all collected diagnostics via `textDocument/publishDiagnostics`
+2. Calls `driver.Analyze` (the shared pipeline) and persists the returned `docAnalysis` (program + tables) for hover/definition/etc.
+3. Maps the returned `[]diagnostic.Diagnostic` to LSP via `diagToLSP` and publishes them
+
+The `analyze` method is now a thin wrapper over `driver.Analyze` — it no longer re-implements the pass sequence.
 
 Logs to `/tmp/lyra-lsp.log`. Build with `go build ./cmd/lyra-lsp`.
 

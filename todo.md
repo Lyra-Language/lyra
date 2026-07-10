@@ -41,13 +41,15 @@ Groundwork done; this is where backend work now happens. Blocks #2 (traps), #5 (
 - **[DONE]** `pkg/backend` interface + `pkg/backend/llvm` skeleton; `cmd/lyrac check`/`build` on top. `build` emits a placeholder `main` module that compiles with `clang` and runs — toolchain path proven.
 - **[DONE]** Entry point: top-level `let main = () -> i64` (exit code) or `-> void` (`driver.ResolveEntryPoint`, build-time only).
 - **Recommended:** library `github.com/llir/llvm` (pure Go) → `clang`. Lowering order: types → trivial `main` → expressions → control flow → runtime shims (`print`, overflow trap).
+- **[DONE 07/10]** `cmd/lyra-lsp` migrated onto `driver.Analyze` — the pipeline lives in one place now.
 - **First milestone:** lower `entry.Lambda.Body` for `let main = () -> i64 => <int>` so the exit code matches the source (replace `lowerEntry`'s placeholder `ret`).
-- **Next prep (on request):** migrate `cmd/lyra-lsp` onto `driver.Analyze` (kill the duplicated inline pipeline); decide `stack`/`shared` representation (#5).
+- **Next prep (on request):** decide `stack`/`shared` representation (#5) once codegen touches aggregates.
 
 ## Completed
 ------------
 
 ### 07/10/26
+- **LSP migrated onto `driver.Analyze`** — `cmd/lyra-lsp`'s ~300-line inline pipeline replaced by a thin `driver.Analyze` + `diagToLSP` wrapper; pipeline now defined once. LSP suite green.
 - **LLVM backend skeleton** — `pkg/backend` interface + `pkg/backend/llvm` (textual IR); `lyrac build` writes a placeholder `main` module confirmed to compile and run (exit 0).
 - **Program entry-point convention** — `driver.ResolveEntryPoint`: a zero-param top-level `let main` returning `i64`/`void`; build-time only, enforced by `lyrac build`.
 - **Builtin-method registration** — `typechecker/builtins.go`; `wrapping_/saturating_{add,sub,mul}` type-check on integer receivers. Primitives are now valid method receivers (missing → `T has no method "x"`).

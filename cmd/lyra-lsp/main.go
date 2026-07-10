@@ -11,15 +11,11 @@ import (
 
 	"github.com/owenrumney/go-lsp/lsp"
 	"github.com/owenrumney/go-lsp/server"
-	sitter "github.com/tree-sitter/go-tree-sitter"
 
-	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
-	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
-	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
-	"github.com/Lyra-Language/lyra/pkg/parser"
+	"github.com/Lyra-Language/lyra/pkg/driver"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
@@ -34,7 +30,7 @@ type docAnalysis struct {
 type Handler struct {
 	client        *server.Client
 	mu            sync.Mutex
-	docStore      map[string]string      // URI → current full document text
+	docStore      map[string]string       // URI → current full document text
 	analysisStore map[string]*docAnalysis // URI → last successful analysis
 }
 
@@ -147,7 +143,8 @@ func (h *Handler) DidClose(ctx context.Context, params *lsp.DidCloseTextDocument
 	})
 }
 
-// analyze runs parser → collector → typechecker and pushes diagnostics.
+// analyze runs the shared front-end pipeline (driver.Analyze), persists the
+// typed result for other requests, and publishes the diagnostics.
 func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -166,303 +163,25 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		}
 	}()
 
-	diags := []lsp.Diagnostic{}
+	res := driver.Analyze([]byte(source))
 
-	log.Printf("analyze: parsing %s", uri)
-	tree, err := parser.Parse(source)
-	if tree == nil && err == nil {
-		err = fmt.Errorf("parser returned nil tree")
-	}
-	if err != nil {
-		sev := lsp.SeverityError
-		diags = append(diags, lsp.Diagnostic{
-			Range:    lsp.Range{},
-			Severity: &sev,
-			Source:   "lyra",
-			Message:  fmt.Sprintf("parse error: %v", err),
-		})
-		return h.client.PublishDiagnostics(ctx, &lsp.PublishDiagnosticsParams{
-			URI:         uri,
-			Diagnostics: diags,
-		})
+	diags := make([]lsp.Diagnostic, 0, len(res.Diagnostics))
+	for i := range res.Diagnostics {
+		diags = append(diags, diagToLSP(uri, res.Diagnostics[i]))
 	}
 
-	diags = append(diags, collectParseErrors(tree.RootNode(), []byte(source))...)
-
-	log.Printf("analyze: collecting")
-	c := collector.NewCollector([]byte(source))
-	program, symTable, scopeTable, collectorErrors := c.Collect(tree.RootNode())
-	log.Printf("analyze: collect done (%d errors)", len(collectorErrors))
-
-	for _, rawErr := range collectorErrors {
-		ce, ok := rawErr.(diag.Diagnostic)
-		if !ok {
-			sev := lsp.SeverityError
-			diags = append(diags, lsp.Diagnostic{
-				Range:    lsp.Range{},
-				Severity: &sev,
-				Source:   "lyra",
-				Message:  rawErr.Error(),
-			})
-			continue
+	// Persist the analysis for hover/definition/etc. Program is nil only on a
+	// fatal parse failure; there is nothing to store then.
+	if res.Program != nil {
+		h.mu.Lock()
+		h.analysisStore[string(uri)] = &docAnalysis{
+			program:    res.Program,
+			symTable:   res.SymbolTable,
+			scopeTable: res.ScopeTable,
+			typeTable:  res.TypeTable,
 		}
-
-		sev := severityFromCollector(ce.Severity)
-		loc := ce.Location
-		diags = append(diags, lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Severity:           &sev,
-			Code:               codeToLSP(ce.Code),
-			Source:             "lyra",
-			Message:            ce.Message,
-			Tags:               tagsToLSP(ce.Tags),
-			RelatedInformation: toLSPRelatedInfo(uri, ce.RelatedInformation),
-		})
+		h.mu.Unlock()
 	}
-
-	log.Printf("analyze: checking use-before-declaration")
-	for _, ube := range checker.CheckUseBeforeDeclaration(program) {
-		sev := lsp.SeverityError
-		loc := ube.Location
-		diags = append(diags, lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Severity: &sev,
-			Code:     codeToLSP(ube.Code),
-			Source:   "lyra",
-			Message:  ube.Message,
-		})
-	}
-
-	log.Printf("analyze: checking return outside function")
-	for _, re := range checker.CheckReturnOutsideFunction(program) {
-		sev := lsp.SeverityError
-		loc := re.Location
-		diags = append(diags, lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Severity: &sev,
-			Code:     codeToLSP(re.Code),
-			Source:   "lyra",
-			Message:  re.Message,
-		})
-	}
-
-	log.Printf("analyze: checking break/continue outside loop")
-	for _, be := range checker.CheckBreakContinueOutsideLoop(program) {
-		sev := lsp.SeverityError
-		loc := be.Location
-		diags = append(diags, lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Severity: &sev,
-			Code:     codeToLSP(be.Code),
-			Source:   "lyra",
-			Message:  be.Message,
-		})
-	}
-
-	log.Printf("analyze: checking await outside async")
-	for _, ae := range checker.CheckAwaitOutsideAsync(program) {
-		sev := lsp.SeverityError
-		loc := ae.Location
-		diags = append(diags, lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Severity: &sev,
-			Code:     codeToLSP(ae.Code),
-			Source:   "lyra",
-			Message:  ae.Message,
-		})
-	}
-
-	log.Printf("analyze: checking try outside result")
-	for _, te := range checker.CheckTryOutsideResult(program, symTable) {
-		sev := lsp.SeverityError
-		loc := te.Location
-		diags = append(diags, lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Severity: &sev,
-			Code:     codeToLSP(te.Code),
-			Source:   "lyra",
-			Message:  te.Message,
-		})
-	}
-
-	log.Printf("analyze: checking yield outside generator")
-	for _, ye := range checker.CheckYieldOutsideGenerator(program) {
-		sev := lsp.SeverityError
-		loc := ye.Location
-		diags = append(diags, lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Severity: &sev,
-			Code:     codeToLSP(ye.Code),
-			Source:   "lyra",
-			Message:  ye.Message,
-		})
-	}
-
-	log.Printf("analyze: checking unsafe outside unsafe")
-	for _, ue := range checker.CheckUnsafeOutsideUnsafe(program) {
-		sev := lsp.SeverityError
-		loc := ue.Location
-		diags = append(diags, lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Severity: &sev,
-			Code:     codeToLSP(ue.Code),
-			Source:   "lyra",
-			Message:  ue.Message,
-		})
-	}
-
-	log.Printf("analyze: checking recursive types")
-	for _, re := range checker.CheckRecursiveTypes(program) {
-		sev := lsp.SeverityError
-		loc := re.Location
-		diags = append(diags, lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Severity: &sev,
-			Code:     codeToLSP(re.Code),
-			Source:   "lyra",
-			Message:  re.Message,
-		})
-	}
-
-	log.Printf("analyze: checking effect bounds")
-	for _, eb := range checker.CheckEffectBounds(program) {
-		sev := lsp.SeverityError
-		loc := eb.Location
-		diags = append(diags, lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Severity: &sev,
-			Code:     codeToLSP(eb.Code),
-			Source:   "lyra",
-			Message:  eb.Message,
-		})
-	}
-
-	log.Printf("analyze: typechecking")
-	tt := typetable.New()
-	tc := typechecker.New(symTable, scopeTable, tt)
-	typeErrors := tc.Check(program)
-
-	log.Printf("analyze: checking purity")
-	for _, pe := range checker.CheckPurity(program, scopeTable, tc.MethodTable()) {
-		sev := lsp.SeverityError
-		loc := pe.Location
-		diags = append(diags, lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Severity: &sev,
-			Code:     codeToLSP(pe.Code),
-			Source:   "lyra",
-			Message:  pe.Message,
-		})
-	}
-
-	log.Printf("analyze: checking unreachable code")
-	for _, d := range checker.CheckUnreachableCode(program) {
-		diags = append(diags, diagToLSP(uri, d))
-	}
-
-	log.Printf("analyze: checking unused variables")
-	for _, d := range checker.CheckUnusedVariables(program) {
-		diags = append(diags, diagToLSP(uri, d))
-	}
-
-	log.Printf("analyze: checking unused imports")
-	for _, d := range checker.CheckUnusedImports(program) {
-		diags = append(diags, diagToLSP(uri, d))
-	}
-
-	log.Printf("analyze: checking unused parameters")
-	for _, d := range checker.CheckUnusedParameters(program) {
-		diags = append(diags, diagToLSP(uri, d))
-	}
-
-	log.Printf("analyze: checking shadowing")
-	for _, sw := range checker.CheckShadowing(program) {
-		sev := lsp.SeverityWarning
-		loc := sw.Location
-		var relatedInfo []lsp.DiagnosticRelatedInformation
-		if sw.OriginalLocation.StartLine > 0 {
-			relatedInfo = []lsp.DiagnosticRelatedInformation{{
-				Location: lsp.Location{
-					URI: uri,
-					Range: lsp.Range{
-						Start: lsp.Position{Line: lspPos(sw.OriginalLocation.StartLine), Character: lspPos(sw.OriginalLocation.StartCol)},
-						End:   lsp.Position{Line: lspPos(sw.OriginalLocation.EndLine), Character: lspPos(sw.OriginalLocation.EndCol)},
-					},
-				},
-				Message: "previously declared here",
-			}}
-		}
-		diags = append(diags, lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Severity:           &sev,
-			Code:               codeToLSP(sw.Code),
-			Source:             "lyra",
-			Message:            sw.Message,
-			RelatedInformation: relatedInfo,
-		})
-	}
-
-	for _, te := range typeErrors {
-		sev := severityFromTypechecker(te.Severity)
-		loc := te.Location
-		diags = append(diags, lsp.Diagnostic{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Severity:           &sev,
-			Code:               codeToLSP(te.Code),
-			Source:             "lyra",
-			Message:            te.Message,
-			Tags:               tagsToLSP(te.Tags),
-			RelatedInformation: toLSPRelatedInfo(uri, te.RelatedInformation),
-		})
-	}
-
-	h.mu.Lock()
-	h.analysisStore[string(uri)] = &docAnalysis{
-		program:    program,
-		symTable:   symTable,
-		scopeTable: scopeTable,
-		typeTable:  tt,
-	}
-	h.mu.Unlock()
 
 	log.Printf("analyze: publishing %d diagnostics", len(diags))
 	return h.client.PublishDiagnostics(ctx, &lsp.PublishDiagnosticsParams{
@@ -575,80 +294,6 @@ func toLSPRelatedInfo(uri lsp.DocumentURI, related []diag.RelatedInformation) []
 		return nil
 	}
 	return out
-}
-
-func severityFromCollector(s diag.Severity) lsp.DiagnosticSeverity {
-	switch s {
-	case collector.CollectorErrorSeverityWarning:
-		return lsp.SeverityWarning
-	case collector.CollectorErrorSeverityInfo:
-		return lsp.SeverityInformation
-	default:
-		return lsp.SeverityError
-	}
-}
-
-func severityFromTypechecker(s typechecker.Severity) lsp.DiagnosticSeverity {
-	if s == typechecker.SeverityWarning {
-		return lsp.SeverityWarning
-	}
-	return lsp.SeverityError
-}
-
-// collectParseErrors walks the tree-sitter CST and returns diagnostics for
-// ERROR and MISSING nodes. Tree-sitter embeds parse errors as named nodes in
-// the tree rather than returning a parse failure, so this is the only way to
-// surface syntax errors with accurate source ranges.
-func collectParseErrors(root *sitter.Node, source []byte) []lsp.Diagnostic {
-	if !root.HasError() {
-		return nil
-	}
-	var diags []lsp.Diagnostic
-	var walk func(*sitter.Node)
-	walk = func(node *sitter.Node) {
-		if node.IsMissing() {
-			sev := lsp.SeverityError
-			start := node.StartPosition()
-			end := node.EndPosition()
-			diags = append(diags, lsp.Diagnostic{
-				Range: lsp.Range{
-					Start: lsp.Position{Line: int(start.Row), Character: int(start.Column)},
-					End:   lsp.Position{Line: int(end.Row), Character: int(end.Column)},
-				},
-				Severity: &sev,
-				Source:   "lyra",
-				Message:  fmt.Sprintf("missing %s", node.Kind()),
-			})
-			return
-		}
-		if node.IsError() {
-			sev := lsp.SeverityError
-			start := node.StartPosition()
-			end := node.EndPosition()
-			text := node.Utf8Text(source)
-			msg := "syntax error"
-			if len(text) > 0 && len(text) <= 40 {
-				msg = fmt.Sprintf("syntax error: unexpected %q", text)
-			}
-			diags = append(diags, lsp.Diagnostic{
-				Range: lsp.Range{
-					Start: lsp.Position{Line: int(start.Row), Character: int(start.Column)},
-					End:   lsp.Position{Line: int(end.Row), Character: int(end.Column)},
-				},
-				Severity: &sev,
-				Source:   "lyra",
-				Message:  msg,
-			})
-			return
-		}
-		for i := uint(0); i < node.ChildCount(); i++ {
-			if child := node.Child(i); child != nil && child.HasError() {
-				walk(child)
-			}
-		}
-	}
-	walk(root)
-	return diags
 }
 
 // Hover returns type information for the symbol under the cursor.
