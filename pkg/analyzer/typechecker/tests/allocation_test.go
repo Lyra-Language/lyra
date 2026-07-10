@@ -75,3 +75,72 @@ func TestAlloc_DeclaredSharedStruct(t *testing.T) {
 	`, false)
 	assertNoErrors(t, res)
 }
+
+// TestAlloc_OwnStackIntoSharedBinding_Error verifies lyra-E018: a `stack`-flavored
+// value owned into a `shared` slot is a storage-flavor boundary that must be
+// explicit, not an implicit coercion.
+func TestAlloc_OwnStackIntoSharedBinding_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		stack struct Node {
+			value: i64,
+		}
+		let n: shared Node = Node { value: 1 }
+	`, false)
+	assertErrorsAre(t, res,
+		"n: cannot store a 'stack' value where a 'shared' value is expected; converting allocation is an explicit operation")
+}
+
+// TestAlloc_OwnSharedIntoStackBinding_Error is the mirror: a `shared` value owned
+// into a `stack` slot.
+func TestAlloc_OwnSharedIntoStackBinding_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		shared struct Node {
+			value: i64,
+		}
+		let n: stack Node = Node { value: 1 }
+	`, false)
+	assertErrorsAre(t, res,
+		"n: cannot store a 'shared' value where a 'stack' value is expected; converting allocation is an explicit operation")
+}
+
+// TestAlloc_SameFlavor_Ok verifies that owning across matching concrete flavors
+// is fine — the check only fires on a mismatch.
+func TestAlloc_SameFlavor_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		shared struct Node {
+			value: i64,
+		}
+		let n: shared Node = Node { value: 1 }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// TestAlloc_UnspecifiedIsPolymorphic_Ok verifies that an Unspecified flavor
+// (here, a plain struct literal) inherits from context: binding it `shared` is
+// the common "allocate as shared" path, not a boundary crossing.
+func TestAlloc_UnspecifiedIsPolymorphic_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node {
+			value: i64,
+		}
+		let n: shared Node = Node { value: 1 }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// TestAlloc_ReassignAcrossFlavor_Error verifies the check also guards
+// reassignment: storing a `shared`-typed value into a `stack`-typed variable.
+// The binding's own initializer is Unspecified→Stack (compatible), so only the
+// reassignment is flagged.
+func TestAlloc_ReassignAcrossFlavor_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node {
+			value: i64,
+		}
+		var n: stack Node = Node { value: 1 }
+		let s: shared Node = Node { value: 2 }
+		n = s
+	`, false)
+	assertErrorsAre(t, res,
+		"n: cannot store a 'shared' value where a 'stack' value is expected; converting allocation is an explicit operation")
+}

@@ -71,6 +71,30 @@ func isAssignable(from, to types.Type) bool {
 	return false
 }
 
+// allocationCompatible reports whether owning a value of type from into a slot
+// of type to crosses a storage-flavor boundary that must be spelled explicitly.
+//
+// Allocation (stack vs shared) is NOT part of nominal identity — isAssignable
+// and TypesEqual ignore it, so the structural check is unchanged. This is a
+// separate axis, applied only at *owning* sites (a binding's initializer, a
+// reassignment, an interior lvalue write): storing a `shared` value where a
+// `stack` value is expected (or vice versa) changes representation and so is an
+// explicit operation, never a silent coercion.
+//
+// The rule is deliberately conservative: it flags only a concrete, differing
+// pair. An Unspecified flavor on either side means "inherit from context" (an
+// unannotated binding, a plain type reference), which is polymorphic and stays
+// compatible with either flavor — this keeps all unannotated code, and the
+// common "construct a literal, bind it `shared`" pattern, error-free.
+func allocationCompatible(from, to types.Type) bool {
+	fromA := types.AllocationOf(from)
+	toA := types.AllocationOf(to)
+	if fromA == types.Unspecified || toA == types.Unspecified {
+		return true
+	}
+	return fromA == toA
+}
+
 // nominalDataMatch reports whether from and to denote the same nominal data
 // type by head name, ignoring generic arguments. At least one side must be a
 // concrete DataType; the other may be a DataType, a ParameterizedType

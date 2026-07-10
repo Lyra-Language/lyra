@@ -233,6 +233,11 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 		return
 	}
 
+	if !tc.checkAllocationCompat(inferredType, resolvedDeclType, decl.GetLocation(), decl.Name) {
+		tc.typeTable.Set(decl.Value, inferredType)
+		return
+	}
+
 	// Check that the literal value fits within the annotated integer type's range.
 	tc.checkIntegerLiteralRange(decl.Name, decl.Value, resolvedDeclType)
 
@@ -277,6 +282,9 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 		if !isAssignable(inferredType, resolvedDeclType) {
 			tc.addError(decl.GetLocation(), SeverityError,
 				"cannot assign %s to %s", inferredType, decl.Type)
+			return
+		}
+		if !tc.checkAllocationCompat(inferredType, resolvedDeclType, decl.GetLocation(), "") {
 			return
 		}
 		inferredType = resolvedDeclType
@@ -650,6 +658,9 @@ func (tc *TypeChecker) checkAssignToBinding(name string, value ast.Expression, l
 			"%s: cannot assign %s to %s", name, rhsType, effective)
 		return nil
 	}
+	if !tc.checkAllocationCompat(rhsType, effective, loc, name) {
+		return nil
+	}
 	return effective
 }
 
@@ -715,6 +726,9 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	if !isAssignable(valueType, targetType) {
 		tc.addError(stmt.GetLocation(), SeverityError,
 			"cannot assign %s to %s", valueType, targetType)
+		return
+	}
+	if !tc.checkAllocationCompat(valueType, targetType, stmt.GetLocation(), "") {
 		return
 	}
 	tc.checkIntegerLiteralRange(stmt.Target.GetName(), stmt.Value, targetType)
@@ -1672,6 +1686,26 @@ func (tc *TypeChecker) addErrorCode(loc ast.Location, sev Severity, code, format
 		Code:     code,
 		Message:  fmt.Sprintf(format, args...),
 	})
+}
+
+// checkAllocationCompat verifies that owning a value of type from into a slot of
+// type to does not silently cross a storage-flavor boundary (see
+// allocationCompatible). On a concrete mismatch it emits lyra-E018 and returns
+// false; otherwise returns true. subject names the binding/target for the
+// message ("" to omit the prefix). Call only at owning sites, after isAssignable
+// has confirmed the types are otherwise compatible.
+func (tc *TypeChecker) checkAllocationCompat(from, to types.Type, loc ast.Location, subject string) bool {
+	if allocationCompatible(from, to) {
+		return true
+	}
+	prefix := ""
+	if subject != "" {
+		prefix = subject + ": "
+	}
+	tc.addErrorCode(loc, SeverityError, diag.CodeAllocationMismatch,
+		"%scannot store a '%s' value where a '%s' value is expected; converting allocation is an explicit operation",
+		prefix, types.AllocationOf(from), types.AllocationOf(to))
+	return false
 }
 
 func (tc *TypeChecker) addErrorRelated(loc ast.Location, sev Severity, related []diag.RelatedInformation, format string, args ...any) {

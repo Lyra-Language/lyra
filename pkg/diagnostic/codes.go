@@ -65,6 +65,17 @@ const (
 	// constructors), or a second declaration claiming a kind already taken.
 	CodeMalformedBuiltin = "lyra-E017"
 
+	// CodeAllocationMismatch: a value is *owned* into a slot whose storage flavor
+	// differs — a `shared` (heap, ref-counted) value stored where a `stack`
+	// (inline, value-semantics) value is expected, or vice versa. Allocation is
+	// not part of nominal identity (assignability otherwise ignores it), but
+	// crossing the flavor boundary changes representation, so it must be an
+	// explicit operation rather than a silent coercion. Only fires when both
+	// sides carry a concrete, differing flavor; an unspecified flavor inherits
+	// from context and is compatible with either. Borrowed (`ref`/`mut`)
+	// parameters are allocation-polymorphic and are not subject to this check.
+	CodeAllocationMismatch = "lyra-E018"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"
