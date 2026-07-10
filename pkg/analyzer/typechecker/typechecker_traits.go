@@ -145,12 +145,15 @@ func (tc *TypeChecker) checkTraitImplMethodBody(methodName string, implMethod as
 		tc.inferExprType(body) // no declared return to check against; still infer
 		return
 	}
+	// An owned return must match the declared return type's allocation flavor; a
+	// `ref`/`mut` return is a borrow and polymorphic (see isOwnedReturn).
+	ownedReturn := isOwnedReturn(traitSig.ReturnType.TypeModifier)
 	_, isVoid := declaredReturn.(types.VoidType)
 	if block, ok := body.(*ast.BlockExpr); ok {
 		if isVoid {
 			tc.checkBlockVoidReturn(methodName, block)
 		} else {
-			tc.checkBlockReturn(methodName, block, declaredReturn)
+			tc.checkBlockReturn(methodName, block, declaredReturn, ownedReturn)
 		}
 		return
 	}
@@ -159,6 +162,8 @@ func (tc *TypeChecker) checkTraitImplMethodBody(methodName string, implMethod as
 	if !isVoid && bodyType != nil && !isAssignable(bodyType, declaredReturn) {
 		tc.addError(body.GetLocation(), SeverityError,
 			"%s: return type mismatch: expected %s, got %s", methodName, declaredReturn, bodyType)
+	} else if !isVoid && bodyType != nil && ownedReturn {
+		tc.checkAllocationCompat(bodyType, declaredReturn, body.GetLocation(), methodName)
 	}
 }
 

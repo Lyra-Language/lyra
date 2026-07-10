@@ -1,6 +1,8 @@
 package typechecker
 
 import (
+	"fmt"
+
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -76,13 +78,18 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 		// "unknown type" diagnostic when the return annotation names an unknown type.
 		declaredReturn = tc.resolveTypeIfKnown(declaredReturn)
 
+		// An owned return (bare or `own`) transfers the value to the caller, so its
+		// allocation flavor must match the declared return type; a `ref`/`mut`
+		// return is a borrow and is allocation-polymorphic (see isOwnedReturn).
+		ownedReturn := isOwnedReturn(lambda.ReturnType.TypeModifier)
+
 		_, isVoid := declaredReturn.(types.VoidType)
 		if lambda.Body != nil {
 			if block, ok := lambda.Body.(*ast.BlockExpr); ok {
 				if isVoid {
 					tc.checkBlockVoidReturn(funcName, block)
 				} else {
-					tc.checkBlockReturn(funcName, block, declaredReturn)
+					tc.checkBlockReturn(funcName, block, declaredReturn, ownedReturn)
 				}
 			} else if !isVoid {
 				// Single-expression body: the expression value is the return value.
@@ -92,6 +99,8 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 					tc.addError(lambda.Body.GetLocation(), SeverityError,
 						"%s: return type mismatch: expected %s, got %s",
 						funcName, declaredReturn, bodyType)
+				} else if bodyType != nil && ownedReturn {
+					tc.checkAllocationCompat(bodyType, declaredReturn, lambda.Body.GetLocation(), funcName)
 				}
 			}
 		}
@@ -105,6 +114,8 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 					tc.addError(clause.Body.GetLocation(), SeverityError,
 						"%s: return type mismatch: expected %s, got %s",
 						funcName, declaredReturn, clauseType)
+				} else if clauseType != nil && ownedReturn {
+					tc.checkAllocationCompat(clauseType, declaredReturn, clause.Body.GetLocation(), funcName)
 				}
 			}
 		}
@@ -140,7 +151,7 @@ func (tc *TypeChecker) checkBlockVoidReturn(funcName string, block *ast.BlockExp
 //
 // The block's own scope is entered for the duration so that variables declared
 // inside the body (e.g. `let local: i32 = 5`) are visible to inferExprType.
-func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, declaredReturn types.Type) {
+func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, declaredReturn types.Type, ownedReturn bool) {
 	tc.enterScope(block, func() {
 		stmts := block.Statements
 		for i, stmt := range stmts {
@@ -154,6 +165,8 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 					tc.addError(s.GetLocation(), SeverityError,
 						"%s: return type mismatch: expected %s, got %s",
 						funcName, declaredReturn, retType)
+				} else if retType != nil && ownedReturn {
+					tc.checkAllocationCompat(retType, declaredReturn, s.GetLocation(), funcName)
 				}
 			case *ast.ExpressionStmt:
 				if i == len(stmts)-1 {
@@ -165,6 +178,8 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 						tc.addError(s.GetLocation(), SeverityError,
 							"%s: return type mismatch: expected %s, got %s",
 							funcName, declaredReturn, exprType)
+					} else if exprType != nil && ownedReturn {
+						tc.checkAllocationCompat(exprType, declaredReturn, s.GetLocation(), funcName)
 					}
 				} else {
 					// A non-final expression statement is evaluated for effect and
@@ -218,11 +233,17 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 		if argType == nil {
 			continue // cannot infer argument type; skip silently
 		}
+		paramName := param.Pattern.GetName()
 		if !isAssignable(argType, resolvedParamType) {
-			paramName := param.Pattern.GetName()
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d (%s): cannot assign %s to %s",
 				calleeName, i+1, paramName, argType, param.Type)
+		} else if paramOwnsArgument(param.TypeModifier) {
+			// An `own` parameter adopts the argument into its own storage, so the
+			// flavors must match; a borrowed parameter is allocation-polymorphic
+			// and is skipped.
+			tc.checkAllocationCompat(argType, resolvedParamType, arg.GetLocation(),
+				fmt.Sprintf("%s: argument %d (%s)", calleeName, i+1, paramName))
 		}
 	}
 

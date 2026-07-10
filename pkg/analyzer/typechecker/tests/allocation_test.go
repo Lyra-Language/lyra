@@ -144,3 +144,60 @@ func TestAlloc_ReassignAcrossFlavor_Error(t *testing.T) {
 	assertErrorsAre(t, res,
 		"n: cannot store a 'shared' value where a 'stack' value is expected; converting allocation is an explicit operation")
 }
+
+// TestAlloc_OwnParamFlavorMismatch_Error verifies E018 at a call site: an `own`
+// parameter adopts the argument into its own storage, so passing a `stack` value
+// to an `own shared` parameter crosses the flavor boundary.
+func TestAlloc_OwnParamFlavorMismatch_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		stack struct Node {
+			value: i64,
+		}
+		let consume = (n: own shared Node) => n.value
+		let x = Node { value: 1 }
+		consume(x)
+	`, false)
+	assertErrorsAre(t, res,
+		"consume: argument 1 (n): cannot store a 'stack' value where a 'shared' value is expected; converting allocation is an explicit operation")
+}
+
+// TestAlloc_BorrowedParamFlavorMismatch_Ok verifies the polymorphism half of
+// Decision (b): a borrowed (`ref`) parameter references the caller's value in
+// place, so it accepts any flavor — no boundary is crossed.
+func TestAlloc_BorrowedParamFlavorMismatch_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		stack struct Node {
+			value: i64,
+		}
+		let peek = (n: ref shared Node) => n.value
+		let x = Node { value: 1 }
+		peek(x)
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// TestAlloc_OwnedReturnFlavorMismatch_Error verifies E018 in return position: an
+// owned (bare) return transfers the value to the caller, so a `stack` body value
+// returned as `shared` crosses the boundary.
+func TestAlloc_OwnedReturnFlavorMismatch_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		stack struct Node {
+			value: i64,
+		}
+		let make = () -> shared Node => Node { value: 1 }
+	`, false)
+	assertErrorsAre(t, res,
+		"make: cannot store a 'stack' value where a 'shared' value is expected; converting allocation is an explicit operation")
+}
+
+// TestAlloc_BorrowedReturnFlavorMismatch_Ok verifies a `mut`/`ref` return is a
+// borrow — allocation-polymorphic — so the flavor check is skipped.
+func TestAlloc_BorrowedReturnFlavorMismatch_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		stack struct Node {
+			value: i64,
+		}
+		let make = () -> mut shared Node => Node { value: 1 }
+	`, false)
+	assertNoErrors(t, res)
+}

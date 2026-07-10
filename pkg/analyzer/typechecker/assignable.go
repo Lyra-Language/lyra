@@ -95,6 +95,27 @@ func allocationCompatible(from, to types.Type) bool {
 	return fromA == toA
 }
 
+// paramOwnsArgument reports whether passing an argument to a parameter with this
+// mode transfers ownership, so the argument's allocation flavor must match the
+// parameter's declared flavor (allocationCompatible). Borrowed parameters
+// (bare / `ref` / `mut`) are allocation-polymorphic — the callee references the
+// caller's value in place, whatever its flavor — so only `own`, which adopts the
+// value into the callee's own storage, is subject to the flavor check. This is
+// FP/Imperative todo #5 Decision (b): "owned params carry a flavor; borrowed
+// params are allocation-polymorphic."
+func paramOwnsArgument(mod types.TypeModifier) bool {
+	return mod == types.Own
+}
+
+// isOwnedReturn reports whether a function's return value is owned out to the
+// caller — so its allocation flavor must match the declared return type — rather
+// than borrowed. A `ref`/`mut` return is a borrow (allocation-polymorphic); a
+// bare or `own` return transfers ownership. Mirror of paramOwnsArgument for the
+// return position (Decision (b) applies symmetrically to owned returns).
+func isOwnedReturn(mod types.TypeModifier) bool {
+	return mod != types.Ref && mod != types.Mut
+}
+
 // nominalDataMatch reports whether from and to denote the same nominal data
 // type by head name, ignoring generic arguments. At least one side must be a
 // concrete DataType; the other may be a DataType, a ParameterizedType
