@@ -133,6 +133,9 @@ Key methods:
 
 Files split by concern: `typechecker.go` (core + var decls + expressions), `typechecker_control_flow.go` (if/match), `typechecker_functions.go` (lambda/call/member-call dispatch), `typechecker_trait_dispatch.go` (trait-method resolution), `typechecker_traits.go` (impl conformance), `errors.go` (error helpers), `assignable.go` (type compatibility).
 
+### `pkg/driver`
+The single reusable entry point to the whole front-end. `driver.Analyze(source []byte) *Result` runs parse → collect → the standalone `checker.Check*` passes → `typechecker.Check` → `checker.CheckPurity` (in that order, purity last so it sees the resolved `MethodTable`) and returns a `Result{Program, SymbolTable, ScopeTable, TypeTable, MethodTable, Diagnostics}`. Every pass's errors are normalized to `[]diagnostic.Diagnostic` (CST parse errors converted from tree-sitter's 0-based positions to 1-based `ast.Location`). `Result.HasErrors()` / `Result.Errors()` filter by severity. This is where a backend (or any tool needing a typed program) starts, instead of re-implementing the pipeline. **Note:** `cmd/lyrac` calls this; `cmd/lyra-lsp` still has its own byte-identical inline copy of the pipeline and should be migrated onto `driver.Analyze` (then the pipeline lives in exactly one place).
+
 ### `pkg/printer`
 Reflection-based AST printer used only in tests. `printer.PrintAST(program)` walks exported struct fields; zero/nil/empty values are omitted. `printer.NewPrinter().Print(node)` pretty-prints a raw tree-sitter CST node (useful for debugging).
 
@@ -145,7 +148,7 @@ LSP server. Uses `github.com/owenrumney/go-lsp` over stdio. On every `textDocume
 Logs to `/tmp/lyra-lsp.log`. Build with `go build ./cmd/lyra-lsp`.
 
 ### `cmd/lyrac`
-Compiler CLI — currently empty/scaffolded.
+Compiler CLI, built on `pkg/driver`. Two subcommands: `lyrac check <file.lyra>` (parse + typecheck, print diagnostics, exit 1 on any error) and `lyrac build <file.lyra>` (check, then hand the typed program to the backend). Diagnostics print as `path:line:col: severity[code]: message`. **Codegen is not implemented** — a clean `build` stops in `lowerAndEmit`, the seam where a backend gets wired in (it currently just prints a "not implemented" notice and exits 0). This is the scaffold the backend grows into: `lowerAndEmit(path, res)` receives a fully-typed, error-free `driver.Result`. Build with `go build ./cmd/lyrac`.
 
 ## Testing
 

@@ -69,6 +69,13 @@ Goal: give the FP half real *guarantees* (determinism, referential transparency,
 ## In Progress
 --------------
 
+### Backend (codegen) — groundwork started 07/10/26
+The backend is the dependency blocking Pit-of-Success #2 (trapping/wrapping arithmetic), #5 (narrowing methods), #6 (use-after-move), and the alloc representation. Groundwork landed so it can be written:
+- **`pkg/driver.Analyze`** — the front-end pipeline is now a single reusable call returning the typed program + all tables (`Program`/`SymbolTable`/`ScopeTable`/`TypeTable`/`MethodTable`) + normalized `[]diagnostic.Diagnostic`. This is the backend's input.
+- **`cmd/lyrac`** — real CLI (`check`/`build`) on the driver; codegen seam is `lowerAndEmit(path, res)`, which receives an error-free typed `Result`.
+- **Next prep, pick per target:** (1) migrate `cmd/lyra-lsp` onto `driver.Analyze` (removes the duplicated inline pipeline — do before the pipeline changes again); (2) **builtin-method registration** — the mechanism #2/#5 need (a place for `wrapping_add`/`saturating_add`/`checked_add`/`truncate`/`saturate`/`narrow` to be declared + typechecked), which also enumerates the primitive ops the backend must lower; (3) a program entry-point convention (what is `main`?), undecided.
+- **Open design question (blocks lowering choices):** target — native via LLVM/C, or a bytecode VM, or a tree-walking interpreter first? And allocation representation (inline vs pointer vs refcount) for `stack`/`shared` (todo #5 (d)).
+
 ## Completed
 ------------
 
