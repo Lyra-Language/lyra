@@ -20,7 +20,9 @@
 //     `shared` values to a `ptr` to a ref-counted box — see ALLOCATION.md for the
 //     full representation (retain/release, ownership modifiers, arena, runtime
 //     shims). The two docs compose: the sum-type layout is the payload; the flavor
-//     decides inline vs boxed.
+//     decides inline vs boxed. layout.go/runtime.go already provide the building
+//     blocks — LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign,
+//     and emitRuntimeDeclarations (wired into Emit) — for lowerType to dispatch over.
 //  2. Replace lowerEntry's placeholder `ret` with real lowering of
 //     entry.Lambda's body: constants, then arithmetic/calls, then let/if/blocks.
 //  3. Runtime shims: print, and the overflow trap for todo #2 (via
@@ -65,6 +67,8 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 	var m module
 	m.comment("Lyra -> LLVM IR (skeleton output; body lowering not implemented)")
 	m.comment(fmt.Sprintf("source declares %d top-level statement(s)", len(res.Program.Statements)))
+	m.blank()
+	emitRuntimeDeclarations(&m)
 	m.blank()
 	b.lowerEntry(&m, entry)
 	return []byte(m.String()), nil
