@@ -140,6 +140,25 @@ func implLambdaSignature(lambda *ast.LambdaExpr) *types.LambdaType {
 	}
 }
 
+// substituteSigGenerics applies a generic substitution (type-parameter name →
+// concrete type) to every parameter type and the return type of sig — used to
+// bind a trait's own type parameters (`get: (self) -> e` with e → i64). A nil
+// signature or empty substitution is returned unchanged.
+func substituteSigGenerics(sig *types.LambdaType, subst map[string]types.Type) *types.LambdaType {
+	if sig == nil || len(subst) == 0 {
+		return sig
+	}
+	params := make([]types.ParameterType, len(sig.Parameters))
+	for i, p := range sig.Parameters {
+		params[i] = p
+		params[i].Type = substituteGenerics(p.Type, subst)
+	}
+	return &types.LambdaType{
+		Parameters: params,
+		ReturnType: types.ReturnType{Type: substituteGenerics(sig.ReturnType.Type, subst)},
+	}
+}
+
 // substituteSelf replaces every SelfType occurrence in sig with concreteType.
 func substituteSelf(sig *types.LambdaType, concreteType types.Type) *types.LambdaType {
 	if sig == nil {

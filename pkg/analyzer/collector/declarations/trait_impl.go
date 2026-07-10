@@ -5,6 +5,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
+	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -15,10 +16,24 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	}
 	traitName := ctx.NodeText(traitNameNode)
 
-	genericParamsNode := node.ChildByFieldName("generic_parameters")
 	genericParams := []ast.GenericParam{}
-	if genericParamsNode != nil {
-		genericParams = ctx.CollectGenericParams(genericParamsNode)
+	// The `<…>` after the trait name is the trait's argument list, whose grammar
+	// (`field("generic_parameters", seq("<", commaSep1($.type), ">"))`) labels
+	// every child — the `<`/`>` tokens and each type — with the same field name,
+	// so ChildByFieldName would return only the `<`. Iterate with
+	// FieldNameForChild and parse the named (type) children into trait args, used
+	// to bind the trait's own type parameters at dispatch.
+	var traitArgs []types.Type
+	for i := uint(0); i < node.ChildCount(); i++ {
+		if node.FieldNameForChild(uint32(i)) != "generic_parameters" {
+			continue
+		}
+		child := node.Child(i)
+		if child.IsNamed() {
+			if arg := ctx.ParseType(child); arg != nil {
+				traitArgs = append(traitArgs, arg)
+			}
+		}
 	}
 
 	typeNode, ok := ctx.MustField(node, "type")
@@ -47,6 +62,7 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
 		TraitName:     traitName,
 		GenericParams: genericParams,
+		TraitArgs:     traitArgs,
 		Type:          astType,
 		Constraints:   constraints,
 		Methods:       methods,

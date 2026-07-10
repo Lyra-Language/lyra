@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // A trait impl's `where` clause is collected into TraitImplStmt.Constraints:
@@ -35,6 +36,35 @@ impl Ord<t> for Box<t> where t: Ord {
 	}
 	if len(c.TraitBounds) != 1 || c.TraitBounds[0] != "Ord" {
 		t.Errorf("constraint bounds = %#v, want [Ord]", c.TraitBounds)
+	}
+}
+
+// The trait's type arguments after the trait name (`impl Get<t> for Box<t>`) are
+// collected into TraitImplStmt.TraitArgs. (The grammar labels every child of the
+// `<…>` list with one field name, so this needs FieldNameForChild iteration, not
+// ChildByFieldName — a regression pin for that.)
+func TestCollector_TraitImplTraitArgs(t *testing.T) {
+	source := `
+struct Box<t> { value: t }
+trait Get<e> { get: (Self) -> e }
+impl Get<t> for Box<t> {
+    get = (self) => self.value
+}`
+	program, _, _, _ := parseAndCollect(t, source)
+	var impl *ast.TraitImplStmt
+	for _, st := range program.Statements {
+		if ti, ok := st.(*ast.TraitImplStmt); ok {
+			impl = ti
+		}
+	}
+	if impl == nil {
+		t.Fatal("no trait impl collected")
+	}
+	if len(impl.TraitArgs) != 1 {
+		t.Fatalf("expected 1 trait arg, got %d: %#v", len(impl.TraitArgs), impl.TraitArgs)
+	}
+	if g, ok := impl.TraitArgs[0].(types.GenericType); !ok || g.Name != "t" {
+		t.Errorf("trait arg = %#v, want GenericType{t}", impl.TraitArgs[0])
 	}
 }
 

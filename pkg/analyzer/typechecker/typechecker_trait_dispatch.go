@@ -56,6 +56,16 @@ func (tc *TypeChecker) resolveTraitMethod(receiverType types.Type, methodName st
 		if !ok {
 			continue
 		}
+		// Bind the trait's own type parameters: each declared param (`Get<e>` → e)
+		// maps to the impl's corresponding trait argument (`impl Get<t>` → t),
+		// with that argument's own variables resolved through the receiver
+		// bindings ({t: i64}). So the trait method's `-> e` return becomes i64.
+		traitSubst := map[string]types.Type{}
+		for i, gp := range trait.GenericParams {
+			if i < len(impl.TraitArgs) {
+				traitSubst[gp.Name] = substituteGenerics(impl.TraitArgs[i], bindings)
+			}
+		}
 		for i := range impl.Methods {
 			m := &impl.Methods[i]
 			if m.Name.Kind != ast.MethodNameKindIdentifier || m.Name.Value != methodName {
@@ -70,8 +80,10 @@ func (tc *TypeChecker) resolveTraitMethod(receiverType types.Type, methodName st
 			var sig *types.LambdaType
 			if traitMethod.Signature != nil {
 				// Substitute Self with the concrete receiver (not impl.Type,
-				// which for a generic impl still holds the `<t>` placeholder).
+				// which for a generic impl still holds the `<t>` placeholder),
+				// then bind the trait's own type parameters.
 				sig = substituteSelf(traitMethod.Signature, receiverType)
+				sig = substituteSigGenerics(sig, traitSubst)
 			}
 			matches = append(matches, resolvedTraitMethod{Impl: impl, Method: m, Signature: sig, Bindings: bindings})
 		}
