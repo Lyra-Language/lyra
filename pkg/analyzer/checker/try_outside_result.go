@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -29,8 +30,8 @@ func (e TryOutsideResultError) Error() string {
 // CheckAwaitOutsideAsync. Whether the operand's *kind* matches the enclosing
 // return kind (e.g. propagating a Maybe out of a Result-returning function) is
 // checked in the typechecker, which has access to inferred types.
-func CheckTryOutsideResult(program *ast.Program) []TryOutsideResultError {
-	c := &tryChecker{}
+func CheckTryOutsideResult(program *ast.Program, symTable *symbols.SymbolTable) []TryOutsideResultError {
+	c := &tryChecker{symTable: symTable}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
 			// nil enclosing return => not inside any function (top level).
@@ -41,7 +42,8 @@ func CheckTryOutsideResult(program *ast.Program) []TryOutsideResultError {
 }
 
 type tryChecker struct {
-	errors []TryOutsideResultError
+	errors   []TryOutsideResultError
+	symTable *symbols.SymbolTable
 }
 
 func (c *tryChecker) stmtVisitor() func(ast.Statement) bool {
@@ -52,7 +54,7 @@ func (c *tryChecker) exprVisitor(enclosing *types.ReturnType) func(ast.Expressio
 	return func(expr ast.Expression) bool {
 		switch e := expr.(type) {
 		case *ast.TryExpr:
-			if enclosing == nil || !isResultOrMaybeName(enclosing.Type) {
+			if enclosing == nil || c.canonicalKindOfType(enclosing.Type) == "" {
 				c.errors = append(c.errors, TryOutsideResultError{
 					Code:     diag.CodeTryOutsideResult,
 					Message:  "`?` can only be used inside a function returning Result or Maybe",
@@ -77,12 +79,12 @@ func (c *tryChecker) exprVisitor(enclosing *types.ReturnType) func(ast.Expressio
 	}
 }
 
-// isResultOrMaybeName reports whether t names the built-in Result or Maybe type.
-//
-// Recognition is by name only: Result and Maybe are currently ordinary
-// user-defined data types with no canonical/prelude identity, so this also
-// matches a user's own `data Result`/`data Maybe`. Harden once a prelude exists.
-func isResultOrMaybeName(t types.Type) bool {
+// canonicalKindOfType returns the canonical kind ("Result"/"Maybe") of t's type
+// name, or "" if t is not a canonical Result/Maybe. It reads the same stamped
+// identity the typechecker uses (via canonicalKindOfName), so the `?`-context
+// check here and the operand/kind checks there agree: a function returning a
+// same-named-but-differently-shaped `data Result` is not a valid `?` context.
+func (c *tryChecker) canonicalKindOfType(t types.Type) string {
 	var name string
 	switch tt := t.(type) {
 	case types.ParameterizedType:
@@ -92,7 +94,24 @@ func isResultOrMaybeName(t types.Type) bool {
 	case types.DataType:
 		name = tt.Name
 	default:
-		return false
+		return ""
 	}
-	return name == "Result" || name == "Maybe"
+	return canonicalKindOfName(c.symTable, name)
+}
+
+// canonicalKindOfName resolves a type name to its canonical kind using the
+// declaration stamped at collection time. A declared type is authoritative (its
+// CanonicalKind, possibly ""); only an undeclared bare "Result"/"Maybe" falls
+// back to the ambient legacy name recognition. Shared shape/identity resolution
+// lives in the collector (resolveCanonicalTypes); this is the read side.
+func canonicalKindOfName(symTable *symbols.SymbolTable, name string) string {
+	if symTable != nil {
+		if decl, ok := symTable.Types[name]; ok {
+			return decl.CanonicalKind
+		}
+	}
+	if name == "Result" || name == "Maybe" {
+		return name
+	}
+	return ""
 }

@@ -71,6 +71,55 @@ let f = (s: string) -> Maybe<i64> => {
 	assertNoErrors(t, res)
 }
 
+// TestTry_SameErrorType_Ok: `?` propagating a Result whose error type matches the
+// enclosing function's error type is accepted — no conversion is needed.
+func TestTry_SameErrorType_Ok(t *testing.T) {
+	source := `
+data Result<t, e> = Ok t | Err e
+data AppError = NotFound | Invalid
+let read = (p: string) -> Result<i64, AppError> => { Ok(0) }
+let run = (p: string) -> Result<i64, AppError> => {
+    let x = read(p)?
+    Ok(x)
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
+
+// TestTry_DifferentErrorType_Error: `?` propagating a Result<_, IoError> out of a
+// Result<_, ParseError>-returning function is rejected — the error types differ
+// and there is no conversion trait, so the mismatch must be made explicit.
+func TestTry_DifferentErrorType_Error(t *testing.T) {
+	source := `
+data Result<t, e> = Ok t | Err e
+data IoError = Eof | Broken
+data ParseError = Bad
+let read = (p: string) -> Result<i64, IoError> => { Ok(0) }
+let run = (p: string) -> Result<i64, ParseError> => {
+    let x = read(p)?
+    Ok(x)
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertErrorsAre(t, res,
+		"cannot propagate Result with `?`: error type IoError is not convertible to the enclosing function's error type ParseError; convert it explicitly")
+}
+
+// TestTry_BuiltinMarkedResult_NameIndependent: an `@builtin(Result)`-marked type
+// named `Either` (not "Result") is recognized as the canonical Result, so `?`
+// propagation works through it — identity comes from the marker, not the name.
+func TestTry_BuiltinMarkedResult_NameIndependent(t *testing.T) {
+	source := `
+@builtin(Result)
+data Either<t, e> = Ok t | Err e
+let parse = (s: string) -> Either<i64, i64> => { Ok(0) }
+let f = (s: string) -> Either<i64, i64> => {
+    let x = parse(s)?
+    Ok(x)
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
+
 // TestTry_NonCanonicalResultShape: a `data Result` whose constructors aren't
 // Ok/Err (e.g. a totally unrelated sum type that just happens to share the
 // name and arity) is not treated as Result-shaped: `?` on it is rejected the

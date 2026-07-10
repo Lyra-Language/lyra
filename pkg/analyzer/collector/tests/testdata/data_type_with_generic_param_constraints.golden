@@ -1,6 +1,7 @@
 Program(1 statements) {
 	Statements: {
 		TypeDeclStmt(Result) {
+			CanonicalKind: Result
 			GenericParams: {
 				GenericParam(ok) {
 					Constraints: {

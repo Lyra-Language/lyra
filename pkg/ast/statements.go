@@ -20,6 +20,19 @@ type TypeDeclStmt struct {
 	IsPublic      bool
 	Allocation    types.AllocationModifier
 	Derives       []string
+	// Builtin is the raw argument of a `@builtin(X)` attribute on the declaration
+	// ("Result", "Maybe", …), or "" if absent. It is the *request* to be treated
+	// as a canonical compiler-known type; whether that request is honored (shape
+	// validated, not superseded) is resolved into CanonicalKind.
+	Builtin string
+	// CanonicalKind is the resolved canonical identity of this declaration
+	// ("Result", "Maybe", or "" for an ordinary type). It is stamped once, after
+	// collection, by the canonical-type resolution pass — from a valid `@builtin`
+	// marker, or (with no marker) from the legacy name-plus-shape fallback. Every
+	// downstream consumer (`?`, must-use, `??`, the try-context check) reads this
+	// instead of re-matching name and shape, so recognition has one source of
+	// truth and no longer hinges on the literal type name.
+	CanonicalKind string
 }
 
 func (t *TypeDeclStmt) statementNode() {}

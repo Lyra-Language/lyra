@@ -288,7 +288,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 	}
 
 	log.Printf("analyze: checking try outside result")
-	for _, te := range checker.CheckTryOutsideResult(program) {
+	for _, te := range checker.CheckTryOutsideResult(program, symTable) {
 		sev := lsp.SeverityError
 		loc := te.Location
 		diags = append(diags, lsp.Diagnostic{

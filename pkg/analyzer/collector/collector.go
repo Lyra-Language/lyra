@@ -58,6 +58,7 @@ func NewCollector(source []byte) *Collector {
 func (c *Collector) Collect(root *sitter.Node) (*ast.Program, *symbols.SymbolTable, *symbols.ScopeTable, []error) {
 	c.walkProgram(root)
 	c.registerTopLevelFunctions()
+	c.resolveCanonicalTypes()
 	return c.ast, c.table, c.scopeTable, c.errors
 }
 

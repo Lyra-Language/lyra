@@ -59,6 +59,12 @@ const (
 	// CodePurityViolation (E007); `det`/`noalloc` get their own code.
 	CodeEffectBoundViolation = "lyra-E016"
 
+	// CodeMalformedBuiltin: a `@builtin(X)` attribute is invalid — an unrecognized
+	// builtin name, a target whose shape doesn't match the canonical kind it
+	// claims (e.g. `@builtin(Result)` on a type without single-payload Ok/Err
+	// constructors), or a second declaration claiming a kind already taken.
+	CodeMalformedBuiltin = "lyra-E017"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

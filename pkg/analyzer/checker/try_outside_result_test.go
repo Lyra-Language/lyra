@@ -15,8 +15,8 @@ func parseCollectAndCheckTry(t *testing.T, source string) []checker.TryOutsideRe
 		t.Fatalf("Parse error: %v", err)
 	}
 	c := collector.NewCollector([]byte(source))
-	program, _, _, _ := c.Collect(tree.RootNode())
-	return checker.CheckTryOutsideResult(program)
+	program, symTable, _, _ := c.Collect(tree.RootNode())
+	return checker.CheckTryOutsideResult(program, symTable)
 }
 
 func assertNoTryErrors(t *testing.T, errs []checker.TryOutsideResultError) {
@@ -100,6 +100,33 @@ let f = (s: string) -> i64 => {
         parse(t)?
     }
     0
+}`
+	assertNoTryErrors(t, parseCollectAndCheckTry(t, source))
+}
+
+// TestTry_Diag_InsideNonCanonicalResultFn verifies the context check uses
+// canonical identity, not the bare name: a function returning a same-named but
+// differently-shaped `data Result` (Foo/Bar, not Ok/Err) is not a valid `?`
+// context, so `?` inside it is rejected — matching the typechecker's operand
+// check rather than being silently accepted on the name alone.
+func TestTry_Diag_InsideNonCanonicalResultFn(t *testing.T) {
+	source := `
+data Result<a, b> = Foo a | Bar b
+let f = (n: i64) -> Result<i64, i64> => {
+    parse(n)?
+}`
+	assertTryErrorCount(t, parseCollectAndCheckTry(t, source), 1)
+}
+
+// TestTry_NoDiag_InsideBuiltinMarkedFn verifies the context check honors an
+// `@builtin(Result)` marker on a differently-named type: `?` inside an
+// Either-returning function is valid.
+func TestTry_NoDiag_InsideBuiltinMarkedFn(t *testing.T) {
+	source := `
+@builtin(Result)
+data Either<t, e> = Ok t | Err e
+let f = (s: string) -> Either<i64, i64> => {
+    parse(s)?
 }`
 	assertNoTryErrors(t, parseCollectAndCheckTry(t, source))
 }

@@ -20,14 +20,14 @@ import (
 // statement a declaration rather than an ExpressionStmt, so it never reaches
 // this check — there is no separate suppression to maintain.
 //
-// Recognition is via resultOrMaybeKind, the same name-plus-shape check used by
-// the `?` checks; see its doc comment for what "shape" means without a
-// canonical/prelude identity.
+// Recognition is via resultOrMaybeKind, which reads the canonical identity
+// stamped at collection time (an `@builtin` marker or the name-plus-shape
+// fallback) — the same source of truth the `?` checks use.
 func (tc *TypeChecker) checkMustUseResult(expr ast.Expression, t types.Type) {
 	if t == nil {
 		return
 	}
-	kind, _, ok := tc.resultOrMaybeKind(t)
+	kind, _, _, ok := tc.resultOrMaybeKind(t)
 	if !ok {
 		return
 	}
