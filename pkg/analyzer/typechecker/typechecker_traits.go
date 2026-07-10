@@ -72,6 +72,20 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 		}
 
 		traitSig := substituteSelf(traitMethod.Signature, impl.Type)
+		// Bind the trait's own type parameters to the impl's trait arguments
+		// (`Get<e>`'s `e` → `impl Get<t>`'s `t`), so the signature — in particular
+		// the return type — is expressed in the impl's own variables and matches
+		// what the body produces (`get = (self) => self.value` yields `t`). No
+		// receiver bindings here: this is the abstract impl-definition check.
+		if len(trait.GenericParams) > 0 && len(impl.TraitArgs) > 0 {
+			traitParamSubst := map[string]types.Type{}
+			for i, gp := range trait.GenericParams {
+				if i < len(impl.TraitArgs) {
+					traitParamSubst[gp.Name] = impl.TraitArgs[i]
+				}
+			}
+			traitSig = substituteSigGenerics(traitSig, traitParamSubst)
+		}
 
 		// Full parameter-type and return-type comparison using TypesEqual with
 		// Self substituted by the impl's concrete type.  This only fires when
@@ -87,27 +101,28 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 			}
 		}
 
-		// Type-check the body so that any method calls inside are registered in
-		// tc.methodTable, which is what lets inferImpurity's fixpoint track
-		// method-to-method call chains when computing purity (FP/Imperative #3).
-		tc.checkTraitImplMethodBody(implMethod, traitSig)
+		// Type-check the body: verify it against the declared return type, and
+		// register any method calls inside in tc.methodTable (which lets
+		// inferImpurity's fixpoint track method-to-method call chains — FP/Imperative #3).
+		tc.checkTraitImplMethodBody(implMethod.Name.GetName(), implMethod, traitSig)
 	}
 }
 
-// checkTraitImplMethodBody type-checks the body of one trait-impl method clause
-// by calling inferExprType on it. The primary effect is that any method calls
-// found inside the body get registered in tc.methodTable via the normal
-// inferMemberCall → inferResolvedTraitMethodCall path, making them visible to
+// checkTraitImplMethodBody type-checks one trait-impl method clause body against
+// the trait's declared return type, mirroring checkLambdaBody for a free
+// function. It also causes any method calls inside the body to be registered in
+// tc.methodTable via the normal inferMemberCall path, making them visible to
 // inferImpurity's fixpoint for method-to-method purity tracking (FP/Imperative #3).
 //
-// traitSig is the trait's declared signature with Self already substituted for
-// the impl's concrete type. Pattern names are bound in tc.paramTypes so that
-// identifier references inside the body (e.g. the receiver "self") resolve to
-// the correct types for dispatch.
-func (tc *TypeChecker) checkTraitImplMethodBody(implMethod ast.TraitMethodImpl, traitSig *types.LambdaType) {
+// traitSig is the trait's declared signature with Self substituted for the
+// impl's concrete type and the trait's own type parameters bound to the impl's
+// trait arguments — so both the parameter types bound into tc.paramTypes and the
+// return type checked against the body are expressed in the impl's variables.
+func (tc *TypeChecker) checkTraitImplMethodBody(methodName string, implMethod ast.TraitMethodImpl, traitSig *types.LambdaType) {
 	oldTypes, oldMods := tc.paramTypes, tc.paramMods
 	tc.paramTypes = make(map[string]types.Type)
 	tc.paramMods = make(map[string]types.TypeModifier)
+	defer func() { tc.paramTypes, tc.paramMods = oldTypes, oldMods }()
 	for i, pat := range implMethod.Clause.Patterns {
 		if i >= len(traitSig.Parameters) {
 			break
@@ -116,8 +131,35 @@ func (tc *TypeChecker) checkTraitImplMethodBody(implMethod ast.TraitMethodImpl, 
 			tc.paramTypes[ip.Name] = traitSig.Parameters[i].Type
 		}
 	}
-	tc.inferExprType(implMethod.Clause.Body)
-	tc.paramTypes, tc.paramMods = oldTypes, oldMods
+
+	// Track the enclosing return type so a `?` inside the body resolves (mirrors
+	// checkLambdaBody). Save/restore handles nesting.
+	prevRet := tc.enclosingRet
+	ret := traitSig.ReturnType
+	tc.enclosingRet = &ret
+	defer func() { tc.enclosingRet = prevRet }()
+
+	body := implMethod.Clause.Body
+	declaredReturn := tc.resolveTypeIfKnown(traitSig.ReturnType.Type)
+	if declaredReturn == nil {
+		tc.inferExprType(body) // no declared return to check against; still infer
+		return
+	}
+	_, isVoid := declaredReturn.(types.VoidType)
+	if block, ok := body.(*ast.BlockExpr); ok {
+		if isVoid {
+			tc.checkBlockVoidReturn(methodName, block)
+		} else {
+			tc.checkBlockReturn(methodName, block, declaredReturn)
+		}
+		return
+	}
+	// Single-expression body: its value is the return value.
+	bodyType := tc.inferExprType(body)
+	if !isVoid && bodyType != nil && !isAssignable(bodyType, declaredReturn) {
+		tc.addError(body.GetLocation(), SeverityError,
+			"%s: return type mismatch: expected %s, got %s", methodName, declaredReturn, bodyType)
+	}
 }
 
 // implLambdaSignature builds a *types.LambdaType from a LambdaExpr only when
