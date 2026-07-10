@@ -40,7 +40,7 @@ type Collector interface {
 	RegisterParameter(*ast.Parameter) error
 	PushFunctionScope() *symbols.Scope
 	PushBlockScope() *symbols.Scope
-	PushLoopScope()
+	PushLoopScope() *symbols.Scope
 	PopScope()
 	RecordScope(node ast.AstNode, scope *symbols.Scope)
 	CollectGenericParams(*sitter.Node) []ast.GenericParam

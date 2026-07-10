@@ -8,7 +8,7 @@ import (
 )
 
 func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInLoopExpr {
-	ctx.PushLoopScope()
+	loopScope := ctx.PushLoopScope()
 	defer ctx.PopScope()
 
 	var label, key, value string
@@ -45,13 +45,15 @@ func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInL
 		return nil
 	}
 
-	return &ast.ForInLoopExpr{
+	loop := &ast.ForInLoopExpr{
 		Label:    label,
 		Key:      key,
 		Value:    value,
 		Iterable: iterable,
 		Body:     *body,
 	}
+	ctx.RecordScope(loop, loopScope)
+	return loop
 }
 
 func collectForInCondition(node *sitter.Node, ctx *collector_ctx.Ctx) (key, value string, iterable ast.Expression) {

@@ -25,7 +25,7 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 		ctx.AddError(node, diag.SeverityError, "collectLambdaExpr: lambda expression missing parameters")
 		return nil
 	}
-	ctx.PushFunctionScope()
+	funcScope := ctx.PushFunctionScope()
 	defer ctx.PopScope()
 
 	parameters := collectParameters(parametersNode, ctx)
@@ -59,7 +59,7 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 		returnType = collectReturnType(returnTypeNode, ctx)
 	}
 
-	return &ast.LambdaExpr{
+	lambda := &ast.LambdaExpr{
 		ExprBase:      ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
 		IsUnsafe:      isUnsafe,
 		IsPure:        isPure,
@@ -72,6 +72,11 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 		LambdaClauses: lambdaClauses,
 		ReturnType:    returnType,
 	}
+	// Record the lambda's parameter/function scope so passes keyed on the node
+	// (the typechecker's enterScope, and purity's scope resolution) can recover
+	// it without re-walking. The body block records its own child scope.
+	ctx.RecordScope(lambda, funcScope)
+	return lambda
 }
 
 func collectLambdaClauses(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.LambdaClause {

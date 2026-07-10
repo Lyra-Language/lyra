@@ -8,7 +8,7 @@ import (
 )
 
 func CollectForLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopExpr {
-	ctx.PushLoopScope()
+	loopScope := ctx.PushLoopScope()
 	defer ctx.PopScope()
 
 	labelNode := node.ChildByFieldName("label")
@@ -59,11 +59,13 @@ func CollectForLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopE
 		return nil
 	}
 
-	return &ast.ForLoopExpr{
+	loop := &ast.ForLoopExpr{
 		Label:     label,
 		Init:      initExpr,
 		Condition: conditionExpr,
 		Post:      postExpr,
 		Body:      *bodyBlockPtr,
 	}
+	ctx.RecordScope(loop, loopScope)
+	return loop
 }

@@ -267,8 +267,8 @@ func (c *Collector) PushFunctionScope() *symbols.Scope {
 	return c.table.PushScope(symbols.ScopeFunction)
 }
 
-func (c *Collector) PushLoopScope() {
-	c.table.PushScope(symbols.ScopeLoop)
+func (c *Collector) PushLoopScope() *symbols.Scope {
+	return c.table.PushScope(symbols.ScopeLoop)
 }
 
 func (c *Collector) PopScope() {

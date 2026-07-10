@@ -8,7 +8,7 @@ import (
 )
 
 func CollectWithStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.WithStmt {
-	ctx.PushBlockScope()
+	withScope := ctx.PushBlockScope()
 	defer ctx.PopScope()
 
 	name := ""
@@ -43,10 +43,14 @@ func CollectWithStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.WithSt
 		return nil
 	}
 
-	return &ast.WithStmt{
+	with := &ast.WithStmt{
 		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
 		Name:    name,
 		Arena:   arena,
 		Body:    *bodyBlock,
 	}
+	// The with-binding (`with a = Arena.new(...)`) lives in this scope, above the
+	// body block's own child scope.
+	ctx.RecordScope(with, withScope)
+	return with
 }
