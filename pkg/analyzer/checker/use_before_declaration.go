@@ -169,11 +169,6 @@ func (c *ubeChecker) checkExpr(expr ast.Expression, declared, seen map[string]bo
 		case *ast.UnsafeBlockExpr:
 			c.checkStatements(ex.Body.Statements)
 			return false
-
-		case *ast.GivenExpr:
-			c.checkStatements(ex.Bindings)
-			c.checkExprNewScope(ex.Body)
-			return false
 		}
 
 		return true

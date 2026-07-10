@@ -123,10 +123,6 @@ func (c *unreachableChecker) checkExpr(expr ast.Expression) {
 		case *ast.UnsafeBlockExpr:
 			c.checkStmts(ex.Body.Statements)
 			return false
-		case *ast.GivenExpr:
-			c.checkStmts(ex.Bindings)
-			c.checkExpr(ex.Body)
-			return false
 		}
 		return true
 	})

@@ -189,22 +189,6 @@ func (c *shadowChecker) checkExpr(expr ast.Expression, outerNames map[string]ast
 		case *ast.UnsafeBlockExpr:
 			c.checkStatements(ex.Body.Statements, outerNames)
 			return false
-
-		case *ast.GivenExpr:
-			bindingOuter := copyLocMap(outerNames)
-			for _, bstmt := range ex.Bindings {
-				switch bs := bstmt.(type) {
-				case *ast.VarDeclStmt:
-					c.checkExpr(bs.Value, bindingOuter)
-				case *ast.DestructuringDeclStmt:
-					c.checkExpr(bs.Value, bindingOuter)
-				}
-				for _, nl := range directDeclaredNamesWithLocations(bstmt) {
-					bindingOuter[nl.Name] = nl.Location
-				}
-			}
-			c.checkExpr(ex.Body, bindingOuter)
-			return false
 		}
 
 		return true

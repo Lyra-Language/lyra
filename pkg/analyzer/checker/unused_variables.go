@@ -163,10 +163,6 @@ func (c *unusedVarChecker) findScopesInExpr(expr ast.Expression) {
 		case *ast.UnsafeBlockExpr:
 			c.checkBlock(ex.Body.Statements)
 			return false
-		case *ast.GivenExpr:
-			c.checkBlock(ex.Bindings)
-			c.findScopesInExpr(ex.Body)
-			return false
 		case *ast.MatchExpr:
 			c.findScopesInExpr(ex.Scrutinee)
 			for _, arm := range ex.MatchArms {

@@ -213,11 +213,6 @@ func walkExprChildren(expr Expression, onStmt func(Statement) bool, onExpr func(
 		for _, stmt := range e.Body.Statements {
 			WalkStmt(stmt, onStmt, onExpr)
 		}
-	case *GivenExpr:
-		for _, bstmt := range e.Bindings {
-			WalkStmt(bstmt, onStmt, onExpr)
-		}
-		WalkExpr(e.Body, onStmt, onExpr)
 	case *DataConstructorExpr:
 		WalkExpr(e.Value, onStmt, onExpr)
 	case *GuardExpr:
