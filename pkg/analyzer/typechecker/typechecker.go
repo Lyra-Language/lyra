@@ -926,21 +926,46 @@ func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
 // Results are cached so that repeated resolutions of the same name only emit
 // "unknown type" once per Check run.
 func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
-	ut, ok := t.(types.UnresolvedType)
-	if !ok {
+	switch tt := t.(type) {
+	case types.UnresolvedType:
+		if cached, ok := tc.resolvedTypes[tt.Name]; ok {
+			return types.WithAllocation(cached, tt.Allocation)
+		}
+		decl, ok := tc.symTable.Types[tt.Name]
+		if !ok {
+			tc.addError(loc, SeverityError, "unknown type %q", t)
+			tc.resolvedTypes[tt.Name] = t // cache unresolved itself so the error fires only once
+			return t
+		}
+		tc.resolvedTypes[tt.Name] = decl.Type
+		return types.WithAllocation(decl.Type, tt.Allocation)
+	case types.StaticArrayType:
+		// Resolve the element type too, so a named element (`[3]Node`) compares
+		// equal to the resolved element type of a literal. Without this the
+		// annotation keeps an UnresolvedType element and assignability fails with
+		// a confusing "cannot assign StaticArray<Node,3> to StaticArray<Node,3>".
+		if tt.ElementType != nil {
+			tt.ElementType = tc.resolveType(tt.ElementType, loc)
+		}
+		return tt
+	case types.DynamicArrayType:
+		if tt.ElementType != nil {
+			tt.ElementType = tc.resolveType(tt.ElementType, loc)
+		}
+		return tt
+	case types.TupleType:
+		// Resolve each element type for the same reason (`(Node, Node)`).
+		if len(tt.Elements) > 0 {
+			elems := make([]types.Type, len(tt.Elements))
+			for i, e := range tt.Elements {
+				elems[i] = tc.resolveType(e, loc)
+			}
+			tt.Elements = elems
+		}
+		return tt
+	default:
 		return t
 	}
-	if cached, ok := tc.resolvedTypes[ut.Name]; ok {
-		return types.WithAllocation(cached, ut.Allocation)
-	}
-	decl, ok := tc.symTable.Types[ut.Name]
-	if !ok {
-		tc.addError(loc, SeverityError, "unknown type %q", t)
-		tc.resolvedTypes[ut.Name] = t // cache unresolved itself so the error fires only once
-		return t
-	}
-	tc.resolvedTypes[ut.Name] = decl.Type
-	return types.WithAllocation(decl.Type, ut.Allocation)
 }
 
 // resolveTypeIfKnown resolves an UnresolvedType only when the name is actually
@@ -950,17 +975,37 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 // checkLambdaBody, where the parameter-annotation pass may have already emitted
 // the error or where the caller intends to report a different error).
 func (tc *TypeChecker) resolveTypeIfKnown(t types.Type) types.Type {
-	ut, ok := t.(types.UnresolvedType)
-	if !ok {
+	switch tt := t.(type) {
+	case types.UnresolvedType:
+		if cached, ok := tc.resolvedTypes[tt.Name]; ok {
+			return types.WithAllocation(cached, tt.Allocation)
+		}
+		if decl, ok := tc.symTable.Types[tt.Name]; ok {
+			return types.WithAllocation(decl.Type, tt.Allocation)
+		}
+		return t
+	case types.StaticArrayType:
+		if tt.ElementType != nil {
+			tt.ElementType = tc.resolveTypeIfKnown(tt.ElementType)
+		}
+		return tt
+	case types.DynamicArrayType:
+		if tt.ElementType != nil {
+			tt.ElementType = tc.resolveTypeIfKnown(tt.ElementType)
+		}
+		return tt
+	case types.TupleType:
+		if len(tt.Elements) > 0 {
+			elems := make([]types.Type, len(tt.Elements))
+			for i, e := range tt.Elements {
+				elems[i] = tc.resolveTypeIfKnown(e)
+			}
+			tt.Elements = elems
+		}
+		return tt
+	default:
 		return t
 	}
-	if cached, ok := tc.resolvedTypes[ut.Name]; ok {
-		return types.WithAllocation(cached, ut.Allocation)
-	}
-	if decl, ok := tc.symTable.Types[ut.Name]; ok {
-		return types.WithAllocation(decl.Type, ut.Allocation)
-	}
-	return t
 }
 
 // inferExprType returns the type of expr, or nil if it cannot be determined yet.
@@ -1695,7 +1740,8 @@ func (tc *TypeChecker) addErrorCode(loc ast.Location, sev Severity, code, format
 // message ("" to omit the prefix). Call only at owning sites, after isAssignable
 // has confirmed the types are otherwise compatible.
 func (tc *TypeChecker) checkAllocationCompat(from, to types.Type, loc ast.Location, subject string) bool {
-	if allocationCompatible(from, to) {
+	fromA, toA, mismatch := firstAllocationMismatch(from, to)
+	if !mismatch {
 		return true
 	}
 	prefix := ""
@@ -1704,7 +1750,7 @@ func (tc *TypeChecker) checkAllocationCompat(from, to types.Type, loc ast.Locati
 	}
 	tc.addErrorCode(loc, SeverityError, diag.CodeAllocationMismatch,
 		"%scannot store a '%s' value where a '%s' value is expected; converting allocation is an explicit operation",
-		prefix, types.AllocationOf(from), types.AllocationOf(to))
+		prefix, fromA, toA)
 	return false
 }
 

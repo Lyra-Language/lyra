@@ -71,28 +71,71 @@ func isAssignable(from, to types.Type) bool {
 	return false
 }
 
-// allocationCompatible reports whether owning a value of type from into a slot
-// of type to crosses a storage-flavor boundary that must be spelled explicitly.
+// firstAllocationMismatch decides whether owning a value of type from into a
+// slot of type to crosses a storage-flavor boundary that must be spelled
+// explicitly. It walks from and to in parallel — the top-level flavor first,
+// then structurally into array element types and tuple element types — and
+// returns the first concrete, differing flavor pair it finds (found=true), or
+// found=false when the two are flavor-compatible throughout.
 //
 // Allocation (stack vs shared) is NOT part of nominal identity — isAssignable
 // and TypesEqual ignore it, so the structural check is unchanged. This is a
 // separate axis, applied only at *owning* sites (a binding's initializer, a
-// reassignment, an interior lvalue write): storing a `shared` value where a
-// `stack` value is expected (or vice versa) changes representation and so is an
-// explicit operation, never a silent coercion.
+// reassignment, an interior lvalue write, an `own` argument, an owned return):
+// storing a `shared` value where a `stack` value is expected (or vice versa)
+// changes representation and so is an explicit operation, never a silent
+// coercion.
 //
 // The rule is deliberately conservative: it flags only a concrete, differing
 // pair. An Unspecified flavor on either side means "inherit from context" (an
 // unannotated binding, a plain type reference), which is polymorphic and stays
 // compatible with either flavor — this keeps all unannotated code, and the
-// common "construct a literal, bind it `shared`" pattern, error-free.
-func allocationCompatible(from, to types.Type) bool {
+// common "construct a literal, bind it `shared`" pattern, error-free. The
+// structural recursion catches an element-level boundary such as a `stack`
+// element assigned into a `[N]shared` slot, which the top-level flavors (both
+// the array's own, here Unspecified) would miss; returning the offending pair
+// lets the diagnostic name the actual flavors that clashed, even several levels
+// down.
+func firstAllocationMismatch(from, to types.Type) (types.AllocationModifier, types.AllocationModifier, bool) {
 	fromA := types.AllocationOf(from)
 	toA := types.AllocationOf(to)
-	if fromA == types.Unspecified || toA == types.Unspecified {
-		return true
+	if fromA != types.Unspecified && toA != types.Unspecified && fromA != toA {
+		return fromA, toA, true
 	}
-	return fromA == toA
+	switch f := from.(type) {
+	case types.StaticArrayType:
+		switch t := to.(type) {
+		case types.StaticArrayType:
+			return elementAllocationMismatch(f.ElementType, t.ElementType)
+		case types.DynamicArrayType:
+			return elementAllocationMismatch(f.ElementType, t.ElementType)
+		}
+	case types.DynamicArrayType:
+		switch t := to.(type) {
+		case types.DynamicArrayType:
+			return elementAllocationMismatch(f.ElementType, t.ElementType)
+		case types.StaticArrayType:
+			return elementAllocationMismatch(f.ElementType, t.ElementType)
+		}
+	case types.TupleType:
+		if t, ok := to.(types.TupleType); ok && len(f.Elements) == len(t.Elements) {
+			for i := range f.Elements {
+				if fa, ta, ok := firstAllocationMismatch(f.Elements[i], t.Elements[i]); ok {
+					return fa, ta, true
+				}
+			}
+		}
+	}
+	return "", "", false
+}
+
+// elementAllocationMismatch recurses into a pair of container element types,
+// guarding the nil element that an empty array literal ([]) carries.
+func elementAllocationMismatch(from, to types.Type) (types.AllocationModifier, types.AllocationModifier, bool) {
+	if from == nil || to == nil {
+		return "", "", false
+	}
+	return firstAllocationMismatch(from, to)
 }
 
 // paramOwnsArgument reports whether passing an argument to a parameter with this

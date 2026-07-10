@@ -201,3 +201,45 @@ func TestAlloc_BorrowedReturnFlavorMismatch_Ok(t *testing.T) {
 	`, false)
 	assertNoErrors(t, res)
 }
+
+// TestResolve_NamedTupleElementType_Ok is a regression test for the resolveType
+// gap this slice fixed: a named struct/data used as a tuple element type in an
+// annotation was never resolved, so even an allocation-free `(Node, Node)`
+// annotation failed assignability with a confusing "cannot assign ?(Node, Node)
+// to ?(Node, Node)". Element types now resolve, so it type-checks.
+func TestResolve_NamedTupleElementType_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node {
+			value: i64,
+		}
+		let p: (Node, Node) = (Node { value: 1 }, Node { value: 2 })
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// TestResolve_NamedArrayElementType_Ok is the array counterpart of the same
+// resolveType fix.
+func TestResolve_NamedArrayElementType_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node {
+			value: i64,
+		}
+		let xs: [2]Node = [Node { value: 1 }, Node { value: 2 }]
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// TestAlloc_TupleElementFlavorMismatch_Error verifies element-level flavor
+// checking: the tuple's own flavor matches (both unspecified), but its first
+// element is owned across a boundary (a `stack` value into a `shared` element
+// slot). The recursion drills to the element and names the element flavors.
+func TestAlloc_TupleElementFlavorMismatch_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		stack struct Node {
+			value: i64,
+		}
+		let p: (shared Node, Node) = (Node { value: 1 }, Node { value: 2 })
+	`, false)
+	assertErrorsAre(t, res,
+		"p: cannot store a 'stack' value where a 'shared' value is expected; converting allocation is an explicit operation")
+}
