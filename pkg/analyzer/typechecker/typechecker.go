@@ -24,6 +24,7 @@ type TypeChecker struct {
 	resolvedTypes map[string]types.Type         // cache for resolveType to avoid duplicate "unknown type" errors
 	enclosingRet  *types.ReturnType             // declared return type of the lambda body currently being checked; nil at top level
 	traitImpls    []*ast.TraitImplStmt          // every impl block in the program, collected up front by Check; see resolveTraitMethod
+	genericBounds map[string][]string           // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {

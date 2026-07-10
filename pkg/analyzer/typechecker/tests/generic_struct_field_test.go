@@ -52,18 +52,3 @@ let f = (p: Pair<i64, string>) -> i64 => {
 }`, false)
 	assertErrorsAre(t, res, "f: return type mismatch: expected i64, got string")
 }
-
-// Boundary (documents current scope): calling a trait method *on* a generic-typed
-// field (`self.value.show()`, needing `t: Show` to dispatch through the bound) is
-// not yet supported — dispatching on a type variable via its bound is a separate
-// feature. When it lands, update this test.
-func TestGenericField_MethodOnGenericField_NotYetSupported(t *testing.T) {
-	res := parseCollectAndCheck(t, `
-struct Box<t> { value: t }
-trait Show { show: (Self) -> string }
-impl Show for i64 { show = (n) => "i" }
-impl Show<t> for Box<t> where t: Show {
-    show = (self) => self.value.show()
-}`, false)
-	assertErrorsAre(t, res, "member access on non-struct type t")
-}

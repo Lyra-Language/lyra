@@ -13,6 +13,16 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 		return
 	}
 
+	// Put the impl's `where` bounds (`t: Show`) in scope for the duration of its
+	// method-body checks, so a call on a value of type `t` can dispatch through
+	// the bound (see dispatchViaGenericBound). Save/restore handles nesting.
+	oldBounds := tc.genericBounds
+	tc.genericBounds = map[string][]string{}
+	for _, c := range impl.Constraints {
+		tc.genericBounds[c.GenericType] = c.TraitBounds
+	}
+	defer func() { tc.genericBounds = oldBounds }()
+
 	traitMethods := make(map[traitMethodKey]ast.TraitMethod, len(trait.Methods))
 	for _, m := range trait.Methods {
 		traitMethods[makeTraitMethodKey(m.Name)] = m

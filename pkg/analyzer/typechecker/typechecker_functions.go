@@ -402,6 +402,20 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		return tc.inferResolvedTraitMethodCall(methodName, matches[0], call, member.Object)
 	}
 
+	// The receiver's type may be a bare type parameter (`self.value` of type `t`
+	// inside a generic impl body). It has no concrete impl, but a `where t: Trait`
+	// bound in scope lets a method the bound's trait declares be dispatched
+	// against that trait's signature (Self = the parameter).
+	if g, ok := objType.(types.GenericType); ok {
+		if ret, ok := tc.dispatchViaGenericBound(g, methodName, call); ok {
+			return ret
+		}
+		tc.addError(member.GetLocation(), SeverityError,
+			"type parameter %s has no method %q; add a `where %s: Trait` bound whose trait declares it",
+			g.Name, methodName, g.Name)
+		return nil
+	}
+
 	switch t := objType.(type) {
 	case types.NamedStructType:
 		tc.addError(member.GetLocation(), SeverityError, "%s has no field or method %q", t.Name, methodName)

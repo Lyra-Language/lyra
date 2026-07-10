@@ -240,6 +240,31 @@ func (tc *TypeChecker) typeImplementsTrait(t types.Type, traitName string) bool 
 	return false
 }
 
+// dispatchViaGenericBound resolves a `.method()` call whose receiver is a bare
+// type parameter `recv` (e.g. `self.value` of type `t` inside a generic impl
+// body) against the traits `recv` is bounded by in scope (`where t: Show`). If
+// one of those traits declares an identifier method of that name, the call is
+// type-checked against the trait's signature with Self substituted by the
+// parameter, and its return type is returned. This is *abstract* dispatch: there
+// is no concrete impl to record (the actual impl is chosen when the enclosing
+// generic is instantiated at its own call site, where checkImplConstraints has
+// already verified the bound holds), so nothing is written to the MethodTable.
+func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodName string, call *ast.FunctionCallExpr) (types.Type, bool) {
+	for _, traitName := range tc.genericBounds[recv.Name] {
+		trait, ok := tc.symTable.Traits[traitName]
+		if !ok {
+			continue
+		}
+		tm := findTraitMethod(trait, methodName)
+		if tm == nil || tm.Signature == nil {
+			continue
+		}
+		sig := substituteSelf(tm.Signature, recv)
+		return tc.inferDotCallFromType(traitName+"::"+methodName, sig, call), true
+	}
+	return nil, false
+}
+
 func findTraitMethod(trait *ast.TraitDeclStmt, methodName string) *ast.TraitMethod {
 	for i := range trait.Methods {
 		if trait.Methods[i].Name.Kind == ast.MethodNameKindIdentifier && trait.Methods[i].Name.Value == methodName {
