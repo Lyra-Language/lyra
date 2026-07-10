@@ -59,9 +59,10 @@ func check(path string) int {
 	return 0
 }
 
-// build runs the same analysis and then hands the typed program to the backend.
-// The backend does not exist yet, so a clean build stops at lowerAndEmit with a
-// clear notice rather than silently producing nothing.
+// build runs the same analysis, resolves the program's entry point, and then
+// hands the typed program to the backend. The backend does not exist yet, so a
+// clean build stops at lowerAndEmit with a clear notice rather than silently
+// producing nothing.
 func build(path string) int {
 	res, ok := analyze(path)
 	if !ok {
@@ -71,7 +72,12 @@ func build(path string) int {
 	if res.HasErrors() {
 		return 1
 	}
-	return lowerAndEmit(path, res)
+	entry, entryDiags := driver.ResolveEntryPoint(res)
+	printDiagnostics(path, entryDiags)
+	if entry == nil {
+		return 1
+	}
+	return lowerAndEmit(path, res, entry)
 }
 
 // analyze reads path and runs the front-end pipeline. Returns ok=false (after
@@ -85,15 +91,18 @@ func analyze(path string) (*driver.Result, bool) {
 	return driver.Analyze(source), true
 }
 
-// lowerAndEmit is the backend seam: given a fully-typed program with no errors,
-// lower it to a target and emit an artifact. Not implemented yet.
-func lowerAndEmit(path string, res *driver.Result) int {
-	fmt.Printf("%s: analysis passed (%d statement(s)); code generation is not implemented yet\n",
-		path, len(res.Program.Statements))
+// lowerAndEmit is the backend seam: given a fully-typed, error-free program and
+// its resolved entry point, lower it to a target and emit an artifact. Not
+// implemented yet.
+func lowerAndEmit(path string, res *driver.Result, entry *driver.EntryPoint) int {
+	fmt.Printf("%s: analysis passed (%d statement(s)); entry point %q returns %s; code generation is not implemented yet\n",
+		path, len(res.Program.Statements), entry.Name, entry.Returns)
 	return 0
 }
 
-// printDiagnostics writes each diagnostic as `path:line:col: severity[code]: message`.
+// printDiagnostics writes each diagnostic as `path:line:col: severity[code]: message`,
+// omitting the line:col when the diagnostic has no source location (a
+// program-level error such as a missing entry point).
 func printDiagnostics(path string, diags []diag.Diagnostic) {
 	for _, d := range diags {
 		loc := d.Location
@@ -101,8 +110,12 @@ func printDiagnostics(path string, diags []diag.Diagnostic) {
 		if d.Code != "" {
 			code = fmt.Sprintf(" [%s]", d.Code)
 		}
-		fmt.Fprintf(os.Stderr, "%s:%d:%d: %s%s: %s\n",
-			path, loc.StartLine, loc.StartCol, severityLabel(d.Severity), code, d.Message)
+		where := path
+		if loc.StartLine > 0 {
+			where = fmt.Sprintf("%s:%d:%d", path, loc.StartLine, loc.StartCol)
+		}
+		fmt.Fprintf(os.Stderr, "%s: %s%s: %s\n",
+			where, severityLabel(d.Severity), code, d.Message)
 	}
 }
 
