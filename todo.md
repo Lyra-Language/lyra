@@ -46,7 +46,8 @@ Groundwork done; this is where backend work now happens. Blocks #2 (traps), #5 (
 - **[DECIDED 07/10]** `stack`/`shared` representation — inline value vs `ptr` to a ref-counted box; spec in `pkg/backend/llvm/ALLOCATION.md`.
 - **[DECIDED 07/10]** `data`/sum-type layout — tagged union `{ tag, payload }` (monomorphized, niche-opt deferred); spec in `pkg/backend/llvm/DATA_LAYOUT.md`.
 - **[DONE 07/10]** Layout helpers in code (`runtime.go`, `layout.go`): runtime-shim `declare`s (`emitRuntimeDeclarations`, wired into `Emit`), `SharedBoxType`, `TagType`, `DataUnionType`, and a `SizeAndAlign` engine (shared = ptr-sized). Ready for `lowerType` to call.
-- **[DONE 07/11]** First lowering — `lowerEntry`/`lowerExpr` lower an integer-literal body, so `let main = () -> i64 => 42` exits 42 (`=> 7` → 7, `-> void` → 0). Unsupported bodies error loudly. Next: grow `lowerExpr` (arithmetic → `let`/`if`/blocks).
+- **[DONE 07/11]** First lowering — `lowerEntry`/`lowerExpr` lower an integer-literal body, so `let main = () -> i64 => 42` exits 42 (`=> 7` → 7, `-> void` → 0). Unsupported bodies error loudly. Next: `let`/`if`/blocks.
+- **[DONE 07/11]** Arithmetic — `+ - * / % %% -(unary)` all lower and are tested behaviorally (compile+run+check exit code, since IR isn't constant-folded). Signed vs unsigned `Div`/`Rem` chosen via a new `IsSignedInt` helper. **Decided:** `%` and `%%` are distinct grammar tokens but deliberately lower identically — C-style truncating (sign follows dividend, matching LLVM's native `srem`/`urem`), not floored/Python-style. Integer negation lowers as `sub 0, x` (LLVM has no dedicated int negate); float negation uses `fneg`. Also fixed a real gap: `inferExprType` only cached a type when a specific case called `Set` itself, so a bare literal used directly as a binary operand had no TypeTable entry — split into a caching wrapper + `inferExprTypeUncached` so every non-nil result is cached.
 
 ## Completed
 ------------

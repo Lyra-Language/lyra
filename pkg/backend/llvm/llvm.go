@@ -143,18 +143,45 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 				return block.NewSDiv(left, right), nil
 			}
 			return block.NewUDiv(left, right), nil
-		case ast.MathBinaryOpMod:
-			if signed {
-				return block.NewSRem(left, right), nil
-			}
-			return block.NewURem(left, right), nil
-		case ast.MathBinaryOpRemainder:
+		case ast.MathBinaryOpMod, ast.MathBinaryOpRemainder:
+			// Mod (%) and Remainder (%%) are distinct grammar tokens but
+			// deliberately lower identically for now: C-style truncating
+			// semantics (sign follows the dividend), which is exactly what
+			// LLVM's srem/urem give natively — 11 % -3 = 2, -1 % 2 = -1
+			// (decided over a floored/Python-style alternative, where
+			// 11 % -3 = -1). Revisit if Lyra ever wants Mod to be floored
+			// (sign follows the divisor) as a distinct operation from
+			// Remainder; that would need a sign-fixup after srem/urem.
 			if signed {
 				return block.NewSRem(left, right), nil
 			}
 			return block.NewURem(left, right), nil
 		default:
 			return nil, fmt.Errorf("llvm: math binary op lowering not implemented for %v", e.Operator)
+		}
+	case *ast.NegationExpr:
+		operand, err := l.lowerExpr(block, e.Operand)
+		if err != nil {
+			return nil, err
+		}
+		// Branch on the already-lowered value's own LLVM type rather than a
+		// second TypeTable lookup: the typechecker (inferNegationExpr) already
+		// rejects a non-numeric or unsigned operand, so by the time a
+		// well-typed program reaches here the operand is always a signed int
+		// or a float.
+		switch t := operand.Type().(type) {
+		case *lltypes.IntType:
+			// LLVM IR has no dedicated integer negate; `sub 0, x` is the
+			// standard idiom (what clang emits for unary minus on an int).
+			// Deliberately plain `sub`, not `sub nsw`: an nsw flag tells the
+			// optimizer overflow is undefined behavior, which conflicts with
+			// Lyra's "checked arithmetic by default" goal (todo #2) — revisit
+			// once overflow trapping exists.
+			return block.NewSub(constant.NewInt(t, 0), operand), nil
+		case *lltypes.FloatType:
+			return block.NewFNeg(operand), nil
+		default:
+			return nil, fmt.Errorf("llvm: negation lowering not implemented for operand type %s", operand.Type())
 		}
 	}
 	return nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)

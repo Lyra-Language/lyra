@@ -116,13 +116,24 @@ func TestExec_Arithmetic(t *testing.T) {
 	}
 }
 
+// TestExec_SignedArithmetic checks signed division/negation/mod against
+// C-style truncating semantics (sign follows the dividend) — decided over a
+// floored/Python-style alternative, since LLVM's sdiv/srem give truncating
+// behavior natively. Expected values are verified against a real C program,
+// not computed by hand: -1/2 truncates toward zero (0, not floor's -1), and
+// 11 % -3's sign follows the positive dividend (2, not floor's -1).
 func TestExec_SignedArithmetic(t *testing.T) {
 	cases := []struct {
 		src  string
 		want int
 	}{
-		{"let main = () -> i64 => -1 / 2\n", 1},
-		{"let main = () -> i64 => 11 % -3\n", -2},
+		{"let main = () -> i64 => -1 / 2\n", 0},
+		{"let main = () -> i64 => 11 % -3\n", 2},
+		// Mod (%) and Remainder (%%) are distinct operators that deliberately
+		// lower identically (see the MathBinaryOpMod/Remainder case comment in
+		// llvm.go) — this pins that they actually agree, not just that each
+		// independently matches C semantics.
+		{"let main = () -> i64 => 11 %% -3\n", 2},
 	}
 	for _, c := range cases {
 		if got := buildAndRun(t, c.src); got != c.want {
