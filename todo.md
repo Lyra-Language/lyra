@@ -41,7 +41,7 @@ Groundwork done; this is where backend work now happens. Blocks #2 (traps), #5 (
 - **[DONE]** `pkg/driver.Analyze(source) → Result` — one call returning the typed program + all tables + normalized diagnostics (the backend's input).
 - **[DONE]** `pkg/backend` interface + `pkg/backend/llvm` skeleton; `cmd/lyrac check`/`build` on top. `build` emits a placeholder `main` module that compiles with `clang` and runs — toolchain path proven.
 - **[DONE]** Entry point: top-level `let main = () -> i64` (exit code) or `-> void` (`driver.ResolveEntryPoint`, build-time only).
-- **Recommended:** library `github.com/llir/llvm` (pure Go) → `clang`. Lowering order: types → trivial `main` → expressions → control flow → runtime shims (`print`, overflow trap).
+- **[DONE 07/11]** `github.com/llir/llvm` (v0.3.6, pure Go) set up: `Emit` builds a real `ir.Module`, `layout.go` returns llir types, runtime shims declared. Emitted IR compiles + runs. Note: typed pointers (`i8*`), not opaque. Lowering order: types → trivial `main` → expressions → control flow → runtime shims (`print`, overflow trap).
 - **[DONE 07/10]** `cmd/lyra-lsp` migrated onto `driver.Analyze` — the pipeline lives in one place now.
 - **[DECIDED 07/10]** `stack`/`shared` representation — inline value vs `ptr` to a ref-counted box; spec in `pkg/backend/llvm/ALLOCATION.md`.
 - **[DECIDED 07/10]** `data`/sum-type layout — tagged union `{ tag, payload }` (monomorphized, niche-opt deferred); spec in `pkg/backend/llvm/DATA_LAYOUT.md`.
@@ -50,6 +50,9 @@ Groundwork done; this is where backend work now happens. Blocks #2 (traps), #5 (
 
 ## Completed
 ------------
+
+### 07/11/26
+- **llir/llvm set up for the backend** — added `github.com/llir/llvm` v0.3.6 (pure Go); `Emit`/`lowerEntry`/`declareRuntime` now build a real `ir.Module` instead of string assembly, and `layout.go`'s type helpers (`LLVMPrimitive`/`SharedBoxType`/`TagType`/`DataUnionType`) return llir `types.Type`. Placeholder `@main` module still compiles + runs via clang. Typed pointers (`i8*`), not opaque — fine for the scalar milestone. Tests updated to compare via `.String()`; full suite green.
 
 ### 07/10/26
 - **Backend layout helpers scaffolded** — `pkg/backend/llvm/runtime.go` (shim names + `PinnedRC` + `emitRuntimeDeclarations`, now emitted into every module) and `layout.go` (`LLVMPrimitive`, `SharedBoxType`, `TagType`, `DataUnionType`, `SizeAndAlign`). `SizeAndAlign` implements C-style struct padding, static-array stride, and the sum-type union sizing, and treats a `shared` value as pointer-sized (so recursive `shared` types are finite). Emitted IR (now with the shim `declare`s) still compiles+runs. Tests: `layout_test.go` (12 cases). The type toolkit `lowerType` will call; expression/statement codegen is still the from-scratch work.

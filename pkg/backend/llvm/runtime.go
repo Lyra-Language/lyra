@@ -1,9 +1,13 @@
 package llvm
 
+import (
+	"github.com/llir/llvm/ir"
+	"github.com/llir/llvm/ir/types"
+)
+
 // Runtime shim ABI for `shared` (ref-counted) values — see ALLOCATION.md. A
-// `shared` value is a `ptr` to a box `{ i64 rc, payload }`; the backend emits
+// `shared` value is a pointer to a box `{ i64 rc, payload }`; the backend emits
 // calls to these entry points and links a small runtime that provides them.
-// Opaque pointers throughout; i64 for sizes/counts.
 const (
 	// ShimRCAlloc(size i64) -> ptr : malloc a box of `size` bytes, rc = 1.
 	ShimRCAlloc = "lyra_rc_alloc"
@@ -20,15 +24,16 @@ const (
 // it is never individually retained/released or freed (the arena frees it in
 // bulk). Max u64 (all bits set) keeps the check a single compare and can't
 // collide with a real count.
-const PinnedRC = "18446744073709551615" // 2^64 - 1, as an LLVM i64 literal
+const PinnedRC uint64 = 1<<64 - 1
 
-// emitRuntimeDeclarations writes the `declare` lines for the runtime shims into
-// the module. Unused declarations are harmless (nothing links until a call is
-// emitted), so it is safe to include them unconditionally.
-func emitRuntimeDeclarations(m *module) {
-	m.comment("runtime shims for `shared` values (see ALLOCATION.md)")
-	m.line("declare ptr @" + ShimRCAlloc + "(i64)")
-	m.line("declare void @" + ShimRCRetain + "(ptr)")
-	m.line("declare void @" + ShimRCRelease + "(ptr, ptr)")
-	m.line("declare ptr @" + ShimArenaAlloc + "(ptr, i64)")
+// declareRuntime adds `declare` entries for the runtime shims to the module. A
+// Func with no basic blocks prints as a `declare`. Unused declarations are
+// harmless (nothing links until a call is emitted), so it is safe to add them
+// unconditionally.
+func declareRuntime(m *ir.Module) {
+	i8ptr := types.NewPointer(types.I8)
+	m.NewFunc(ShimRCAlloc, i8ptr, ir.NewParam("", types.I64))
+	m.NewFunc(ShimRCRetain, types.Void, ir.NewParam("", i8ptr))
+	m.NewFunc(ShimRCRelease, types.Void, ir.NewParam("", i8ptr), ir.NewParam("", i8ptr))
+	m.NewFunc(ShimArenaAlloc, i8ptr, ir.NewParam("", i8ptr), ir.NewParam("", types.I64))
 }

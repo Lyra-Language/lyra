@@ -3,6 +3,8 @@ package llvm
 import (
 	"testing"
 
+	lltypes "github.com/llir/llvm/ir/types"
+
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -17,8 +19,8 @@ func TestLLVMPrimitive(t *testing.T) {
 	}
 	for name, want := range cases {
 		got, ok := LLVMPrimitive(name)
-		if !ok || got != want {
-			t.Errorf("LLVMPrimitive(%s) = %q,%v; want %q", name, got, ok, want)
+		if !ok || got.String() != want {
+			t.Errorf("LLVMPrimitive(%s) = %v,%v; want %q", name, got, ok, want)
 		}
 	}
 	if _, ok := LLVMPrimitive(types.String); ok {
@@ -90,14 +92,16 @@ func TestSizeAndAlign_DeferredString(t *testing.T) {
 func TestTagType(t *testing.T) {
 	cases := map[int]string{1: "i8", 256: "i8", 257: "i16", 70000: "i32"}
 	for n, want := range cases {
-		if got := TagType(n); got != want {
+		if got := TagType(n).String(); got != want {
 			t.Errorf("TagType(%d) = %q; want %q", n, got, want)
 		}
 	}
 }
 
 func TestSharedBoxType(t *testing.T) {
-	if got := SharedBoxType("%Node"); got != "{ i64, %Node }" {
+	node := lltypes.NewStruct()
+	node.TypeName = "Node"
+	if got := SharedBoxType(node).String(); got != "{ i64, %Node }" {
 		t.Errorf("SharedBoxType = %q", got)
 	}
 }
@@ -110,8 +114,8 @@ func TestDataUnionType_MaybeLike(t *testing.T) {
 		{Name: "Some", Params: []types.Type{prim(types.Int64)}},
 	}}
 	got, ok := DataUnionType(dt)
-	if !ok || got != "{ i8, [1 x i64] }" {
-		t.Fatalf("DataUnionType = %q,%v; want { i8, [1 x i64] }", got, ok)
+	if !ok || got.String() != "{ i8, [1 x i64] }" {
+		t.Fatalf("DataUnionType = %v,%v; want { i8, [1 x i64] }", got, ok)
 	}
 	// Whole value: tag(1) padded to 8, + payload 8 ⇒ 16, align 8.
 	s, a, _ := SizeAndAlign(dt)
@@ -126,8 +130,8 @@ func TestDataUnionType_Enum(t *testing.T) {
 		{Name: "Red"}, {Name: "Green"}, {Name: "Blue"},
 	}}
 	got, ok := DataUnionType(dt)
-	if !ok || got != "{ i8 }" {
-		t.Fatalf("DataUnionType(enum) = %q,%v; want { i8 }", got, ok)
+	if !ok || got.String() != "{ i8 }" {
+		t.Fatalf("DataUnionType(enum) = %v,%v; want { i8 }", got, ok)
 	}
 }
 
@@ -139,8 +143,8 @@ func TestDataUnionType_MixedWidths(t *testing.T) {
 		{Name: "B", Params: []types.Type{prim(types.Int32), prim(types.Int8)}},
 	}}
 	got, ok := DataUnionType(dt)
-	if !ok || got != "{ i8, [2 x i32] }" {
-		t.Fatalf("DataUnionType = %q,%v; want { i8, [2 x i32] }", got, ok)
+	if !ok || got.String() != "{ i8, [2 x i32] }" {
+		t.Fatalf("DataUnionType = %v,%v; want { i8, [2 x i32] }", got, ok)
 	}
 }
 
