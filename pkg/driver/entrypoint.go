@@ -18,15 +18,24 @@ const (
 	// EntryReturnVoid: `() -> void` (or no return annotation). The backend
 	// synthesizes a 0 exit code.
 	EntryReturnVoid EntryReturn = iota
-	// EntryReturnExitCode: `() -> i64`. The returned value is the process exit
+	// EntryReturnExitCode: `() -> u8`. The returned value is the process exit
 	// code.
+	//
+	// u8, not a wider int: the OS truncates a process exit code to its low 8
+	// bits regardless of what width the language lets you write (verified —
+	// even a real C `int main() { return 300; }` exits 44, not 300), so a
+	// wider return type doesn't add real range, only the silent-truncation
+	// surprise Lyra rejects everywhere else (checked arithmetic, loud
+	// narrowing conversions, …). u8 makes the 0-255 constraint visible in the
+	// type itself — the same reasoning behind Zig's `pub fn main() u8` and
+	// Rust's move to the narrow std::process::ExitCode over a raw wide int.
 	EntryReturnExitCode
 )
 
 func (r EntryReturn) String() string {
 	switch r {
 	case EntryReturnExitCode:
-		return "i64 exit code"
+		return "u8 exit code"
 	default:
 		return "void"
 	}
@@ -44,11 +53,11 @@ type EntryPoint struct {
 // ResolveEntryPoint finds and validates a program's entry function. To be built
 // into an executable, a program must declare a top-level
 //
-//	let main = () -> i64 => …   // the i64 is the process exit code
+//	let main = () -> u8 => …   // the u8 is the process exit code
 //
 // or `() -> void` (a missing return annotation is treated as void). It returns
 // the resolved entry point, or nil plus diagnostics when main is absent, is not
-// a function, takes parameters, or returns something other than i64/void.
+// a function, takes parameters, or returns something other than u8/void.
 //
 // This is a *build-time* requirement — a library, or a plain `lyrac check`,
 // needs no main — so it is deliberately not part of Analyze (which the LSP and
@@ -65,7 +74,7 @@ func ResolveEntryPoint(res *Result) (*EntryPoint, []diag.Diagnostic) {
 	if decl == nil {
 		return nil, []diag.Diagnostic{{
 			Severity: diag.SeverityError,
-			Message:  fmt.Sprintf("no entry point: define a top-level `let %s = () -> i64` (or `-> void`)", EntryPointName),
+			Message:  fmt.Sprintf("no entry point: define a top-level `let %s = () -> u8` (or `-> void`)", EntryPointName),
 		}}
 	}
 	if lambda == nil {
@@ -89,7 +98,7 @@ func ResolveEntryPoint(res *Result) (*EntryPoint, []diag.Diagnostic) {
 		diags = append(diags, diag.Diagnostic{
 			Severity: diag.SeverityError,
 			Location: decl.GetLocation(),
-			Message:  fmt.Sprintf("entry point %q must return i64 or void, got %s", EntryPointName, lambda.ReturnType.Type),
+			Message:  fmt.Sprintf("entry point %q must return u8 or void, got %s", EntryPointName, lambda.ReturnType.Type),
 		})
 	}
 	if len(diags) > 0 {
@@ -120,7 +129,7 @@ func findTopLevelFunction(program *ast.Program, name string) (*ast.VarDeclStmt, 
 }
 
 // entryReturnOf classifies an entry function's declared return type. A nil or
-// void type is EntryReturnVoid; i64 is EntryReturnExitCode; anything else is
+// void type is EntryReturnVoid; u8 is EntryReturnExitCode; anything else is
 // rejected (ok=false).
 func entryReturnOf(rt types.ReturnType) (EntryReturn, bool) {
 	t := rt.Type
@@ -130,7 +139,7 @@ func entryReturnOf(rt types.ReturnType) (EntryReturn, bool) {
 	if _, ok := t.(types.VoidType); ok {
 		return EntryReturnVoid, true
 	}
-	if p, ok := t.(types.PrimitiveType); ok && p.Name == types.Int64 {
+	if p, ok := t.(types.PrimitiveType); ok && p.Name == types.UInt8 {
 		return EntryReturnExitCode, true
 	}
 	// Defensive: an unresolved type name (primitives normally parse to
@@ -138,7 +147,7 @@ func entryReturnOf(rt types.ReturnType) (EntryReturn, bool) {
 	switch t.GetName() {
 	case "void":
 		return EntryReturnVoid, true
-	case "i64":
+	case "u8":
 		return EntryReturnExitCode, true
 	}
 	return EntryReturnVoid, false

@@ -8,7 +8,7 @@ import (
 )
 
 func TestResolveEntryPoint_ExitCode(t *testing.T) {
-	res := Analyze([]byte("let main = () -> i64 => 0\n"))
+	res := Analyze([]byte("let main = () -> u8 => 0\n"))
 	ep, diags := ResolveEntryPoint(res)
 	if len(diags) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", diags)
@@ -60,7 +60,7 @@ func TestResolveEntryPoint_NotAFunction(t *testing.T) {
 }
 
 func TestResolveEntryPoint_HasParameters(t *testing.T) {
-	res := Analyze([]byte("let main = (x: i64) -> i64 => x\n"))
+	res := Analyze([]byte("let main = (x: i64) -> u8 => 0\n"))
 	ep, diags := ResolveEntryPoint(res)
 	if ep != nil {
 		t.Fatal("expected no entry point")
@@ -76,8 +76,8 @@ func TestResolveEntryPoint_WrongReturnType(t *testing.T) {
 	if ep != nil {
 		t.Fatal("expected no entry point")
 	}
-	if !diagContains(diags, "must return i64 or void") {
-		t.Fatalf("expected 'must return i64 or void', got %v", diags)
+	if !diagContains(diags, "must return u8 or void") {
+		t.Fatalf("expected 'must return u8 or void', got %v", diags)
 	}
 }
 

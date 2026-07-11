@@ -1,9 +1,11 @@
 // Command lyrac is the Lyra compiler CLI.
 //
-// Today it runs the full front-end (parse → collect → check → typecheck) via
-// pkg/driver and reports diagnostics. Code generation is not implemented yet:
-// `lyrac build` stops after a clean analysis at the seam where a backend will
-// be wired in (see lowerAndEmit).
+// It runs the full front-end (parse → collect → check → typecheck) via
+// pkg/driver and reports diagnostics; `lyrac build` then hands the typed
+// program to the pkg/backend/llvm backend (see lowerAndEmit). Codegen is
+// early — literals, arithmetic, and int-width conversions lower to real IR
+// (see that package's doc comment for exactly what's covered) — so a
+// non-trivial `main` may still hit an unimplemented form.
 package main
 
 import (
@@ -94,9 +96,9 @@ func analyze(path string) (*driver.Result, bool) {
 }
 
 // lowerAndEmit runs the backend over a fully-typed, error-free program and
-// writes the emitted artifact. The LLVM backend is a skeleton: it produces a
-// valid module with a placeholder body (see pkg/backend/llvm), so the output is
-// real, compilable IR but not yet a translation of the source.
+// writes the emitted artifact. The LLVM backend is early (see pkg/backend/llvm's
+// doc comment for what's covered); a form it doesn't lower yet returns an error
+// here rather than silently emitting wrong code.
 func lowerAndEmit(path string, res *driver.Result, entry *driver.EntryPoint) int {
 	be := llvm.New()
 	ir, err := be.Emit(res, entry)
@@ -109,7 +111,7 @@ func lowerAndEmit(path string, res *driver.Result, entry *driver.EntryPoint) int
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
 		return 1
 	}
-	fmt.Printf("%s: wrote %s (%s backend, skeleton — body lowering not implemented)\n", path, out, be.Name())
+	fmt.Printf("%s: wrote %s (%s backend)\n", path, out, be.Name())
 	fmt.Printf("  compile with: clang %s -o %s\n", out, replaceExt(path, ""))
 	return 0
 }

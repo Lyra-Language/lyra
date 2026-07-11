@@ -87,10 +87,30 @@ type lowerer struct {
 }
 
 // lowerEntry defines `@main` and returns the entry function's value as the
-// process exit code. An i64 entry returns its body's value; a void entry runs
+// process exit code. A u8 entry returns its body's value; a void entry runs
 // the body for effect (none expressible yet) and returns 0.
+//
+// `@main` itself is declared `i32`, not the u8 Lyra's entry-point convention
+// exposes to the user — that's the actual C ABI signature the C runtime
+// startup code expects (verified: clang emits `define i32 @main()` for a
+// trivial C program), regardless of what a language lets its own `main`
+// return.
+//
+// The body's lowered value is coerced to u8 (via coerceIntWidth) before that
+// zero-extend, not assumed to already be i8: literal-width inference isn't
+// context-directed yet (a bare literal always lowers to i64 regardless of the
+// declared return type — see lowerExpr's IntegerLiteralExpr case), so a body
+// like `42` produces an i64 value even though the typechecker has already
+// confirmed it's assignable to u8. Coercing at this one boundary is exact for
+// +/-/* (two's-complement truncation composes: `(a+b) truncated to u8` equals
+// doing the add at u8 width throughout), but NOT equivalent to native u8
+// arithmetic for `/`/`%`/`%%` if the untruncated intermediate value would
+// itself overflow u8 before the division — e.g. `(300 / 7)` truncated to u8
+// (42) differs from truncating 300 to u8 first and then dividing (44/7 = 6).
+// Closing that gap needs the same context-directed literal-width inference
+// this comment already flags as deferred elsewhere in this package.
 func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
-	fn := l.module.NewFunc("main", lltypes.I64)
+	fn := l.module.NewFunc("main", lltypes.I32)
 	block := fn.NewBlock("entry")
 
 	switch entry.Returns {
@@ -99,9 +119,10 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 		if err != nil {
 			return err
 		}
-		block.NewRet(v)
+		u8Val := coerceIntWidth(block, v, false, lltypes.I8)
+		block.NewRet(block.NewZExt(u8Val, lltypes.I32))
 	default: // EntryReturnVoid — nothing observable to run yet; exit 0.
-		block.NewRet(constant.NewInt(lltypes.I64, 0))
+		block.NewRet(constant.NewInt(lltypes.I32, 0))
 	}
 	return nil
 }
@@ -250,19 +271,30 @@ func (l *lowerer) lowerNumericConversion(block *ir.Block, call *ast.FunctionCall
 		// ever exercise.
 		return nil, fmt.Errorf("llvm: conversion to/from float not implemented yet (%s to %s)", arg.Type(), targetName)
 	}
-	src, ok := arg.Type().(*lltypes.IntType)
-	if !ok {
+	if _, ok := arg.Type().(*lltypes.IntType); !ok {
 		return nil, fmt.Errorf("llvm: conversion from %s to %s not implemented", arg.Type(), targetName)
 	}
+	return coerceIntWidth(block, arg, IsSignedInt(srcP.Name), dst), nil
+}
+
+// coerceIntWidth adjusts v (an integer value) to dst's bit width: unchanged if
+// already that width, `trunc` if narrower, or `sext`/`zext` if wider — the
+// widening choice comes from srcSigned (v's *source* Lyra type's signedness;
+// LLVM integers don't carry that themselves). Shared by lowerNumericConversion
+// (an explicit `i8(x)`-style conversion call) and lowerEntry (coercing the
+// entry body's value to the declared return width — see its doc comment for
+// why that coercion is needed at all).
+func coerceIntWidth(block *ir.Block, v value.Value, srcSigned bool, dst *lltypes.IntType) value.Value {
+	src := v.Type().(*lltypes.IntType)
 	switch {
 	case dst.BitSize == src.BitSize:
-		return arg, nil // identity, e.g. i64(someI64Value)
+		return v
 	case dst.BitSize < src.BitSize:
-		return block.NewTrunc(arg, dst), nil
-	case IsSignedInt(srcP.Name):
-		return block.NewSExt(arg, dst), nil
+		return block.NewTrunc(v, dst)
+	case srcSigned:
+		return block.NewSExt(v, dst)
 	default:
-		return block.NewZExt(arg, dst), nil
+		return block.NewZExt(v, dst)
 	}
 }
 
