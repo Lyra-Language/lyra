@@ -5,8 +5,9 @@
 // # Status: early
 //
 // Emit defines `@main` and lowers its body via lowerExpr, which so far handles
-// integer literals — so `let main = () -> i64 => 42` compiles to a binary that
-// exits 42. Any other body form errors (the build fails loudly rather than
+// integer literals, arithmetic (`+ - * / % %% -(unary)`, incl. Odin-style
+// floored `%%` vs truncated `%`), and int-to-int numeric conversions (`i8(x)`,
+// `u32(x)`, …). Any other body form errors (the build fails loudly rather than
 // emitting wrong code). Grow lowerExpr and lowerType from here.
 //
 // # Where to build
@@ -22,9 +23,12 @@
 //     flavor decides inline vs boxed. layout.go/runtime.go provide the building
 //     blocks — LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign,
 //     and declareRuntime (wired into Emit) — for lowerType to dispatch over.
-//  2. Grow lowerExpr past integer literals: arithmetic/calls, then let/if/blocks.
-//     Model mutable locals as `alloca` + load/store (let mem2reg build SSA) rather
-//     than hand-writing phi nodes.
+//  2. Grow lowerExpr past arithmetic/int-conversions: let/if/blocks next. Model
+//     mutable locals as `alloca` + load/store (let mem2reg build SSA) rather than
+//     hand-writing phi nodes. Float literals/arithmetic and any conversion
+//     touching float are deferred — genuinely unreachable by a valid program
+//     today (no `let`/blocks, `main` must return i64, no float→int builtin); see
+//     lowerNumericConversion's doc comment.
 //  3. Runtime shims: print, and the overflow trap for todo #2 (via
 //     llvm.sadd.with.overflow); the builtin overflow-arithmetic methods
 //     (typechecker/builtins.go) lower to two's-complement +/-/* and
@@ -189,8 +193,77 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		default:
 			return nil, fmt.Errorf("llvm: negation lowering not implemented for operand type %s", operand.Type())
 		}
+	case *ast.FunctionCallExpr:
+		if ident, ok := e.Function.(*ast.IdentifierExpr); ok {
+			if targetName := types.PrimitiveTypeName(ident.Name); IsNumericConversionTarget(targetName) {
+				return l.lowerNumericConversion(block, e, targetName)
+			}
+		}
+		return nil, fmt.Errorf("llvm: call lowering not implemented except numeric type conversions (e.g. i32(x))")
 	}
 	return nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
+}
+
+// lowerNumericConversion lowers a Lyra type-conversion call (`i8(x)`,
+// `u32(x)`, … — Pit-of-Success #5's one conversion syntax) to the matching
+// LLVM conversion instruction: identity (same width), `trunc` (narrowing), or
+// `sext`/`zext` (widening, picked from the *source* Lyra type's signedness —
+// LLVM's integer types don't carry that themselves; width/kind come from the
+// already-lowered argument's own LLVM type).
+//
+// Int-only for now, not by oversight: a float target or source is deferred,
+// since there is no valid, type-checked Lyra program that can reach it today
+// (verified — see the error site below) given the current scope (no
+// `let`/blocks yet, `main` must return i64, no float→int builtin).
+func (l *lowerer) lowerNumericConversion(block *ir.Block, call *ast.FunctionCallExpr, targetName types.PrimitiveTypeName) (value.Value, error) {
+	if len(call.Arguments) != 1 {
+		return nil, fmt.Errorf("llvm: type conversion %q expects 1 argument, got %d", targetName, len(call.Arguments))
+	}
+	arg, err := l.lowerExpr(block, call.Arguments[0])
+	if err != nil {
+		return nil, err
+	}
+	srcT, ok := l.res.TypeTable.Get(call.Arguments[0])
+	if !ok {
+		return nil, fmt.Errorf("llvm: type not found for %T", call.Arguments[0])
+	}
+	srcP, ok := srcT.(types.PrimitiveType)
+	if !ok {
+		return nil, fmt.Errorf("llvm: type not found for %T", call.Arguments[0])
+	}
+	dstLL, ok := LLVMPrimitive(targetName)
+	if !ok {
+		return nil, fmt.Errorf("llvm: no LLVM representation for %q", targetName)
+	}
+
+	dst, ok := dstLL.(*lltypes.IntType)
+	if !ok {
+		// A float target (or float source): deferred, not just unimplemented
+		// by oversight. Given today's scope — no `let`/blocks yet (a single
+		// expression is the whole entry body), `main` must return i64, and
+		// there's no float→int builtin — there is no valid, type-checked
+		// Lyra program that can reach this path at all (verified: even
+		// `i64(f64(200))` is rejected at typecheck, "use floor()/ceil()/
+		// round()"). Implement once one of those changes (print, non-main
+		// function returns, or rounding builtins) makes it observable/
+		// testable, rather than shipping an instruction sequence nothing can
+		// ever exercise.
+		return nil, fmt.Errorf("llvm: conversion to/from float not implemented yet (%s to %s)", arg.Type(), targetName)
+	}
+	src, ok := arg.Type().(*lltypes.IntType)
+	if !ok {
+		return nil, fmt.Errorf("llvm: conversion from %s to %s not implemented", arg.Type(), targetName)
+	}
+	switch {
+	case dst.BitSize == src.BitSize:
+		return arg, nil // identity, e.g. i64(someI64Value)
+	case dst.BitSize < src.BitSize:
+		return block.NewTrunc(arg, dst), nil
+	case IsSignedInt(srcP.Name):
+		return block.NewSExt(arg, dst), nil
+	default:
+		return block.NewZExt(arg, dst), nil
+	}
 }
 
 // lowerFlooredSRem computes the floored-division remainder of two signed

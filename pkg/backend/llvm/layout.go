@@ -47,6 +47,23 @@ func LLVMPrimitive(name types.PrimitiveTypeName) (lltypes.Type, bool) {
 	return nil, false
 }
 
+// IsNumericConversionTarget reports whether name is one of the eleven
+// concrete numeric primitives that a Lyra type-conversion call (`i8(x)`,
+// `f32(x)`, …) may target — Lyra's one conversion syntax (Pit-of-Success #5).
+// Mirrors the typechecker's numericPrimitiveByName exactly (bool/char/string
+// are not conversion targets this way, even though LLVMPrimitive maps them to
+// an LLVM type for other purposes).
+func IsNumericConversionTarget(name types.PrimitiveTypeName) bool {
+	switch name {
+	case types.Int8, types.Int16, types.Int32, types.Int64,
+		types.UInt8, types.UInt16, types.UInt32, types.UInt64,
+		types.Float16, types.Float32, types.Float64:
+		return true
+	default:
+		return false
+	}
+}
+
 // IsSignedInt reports whether name is a signed integer type. LLVM's integer
 // types carry no signedness (i8 alone doesn't say signed-or-unsigned) —
 // signedness lives in the *operation*, not the type — so LLVMPrimitive can't

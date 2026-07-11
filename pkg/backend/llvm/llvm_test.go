@@ -162,6 +162,43 @@ func TestExec_FlooredRemainder(t *testing.T) {
 	}
 }
 
+// TestExec_IntWidthConversions checks Lyra's one conversion syntax (`i8(x)`,
+// `u32(x)`, …, Pit-of-Success #5) narrows/widens to the actual bit width, not
+// just the right value in the common case. Every value here is wrapped back
+// to i64 via a second conversion so it's observable as an exit code (main
+// must return i64) — this is the only way to exercise a non-i64 width in
+// valid Lyra source today: bare int literals always default to i64, and
+// isAssignable doesn't permit implicit width changes between two concrete int
+// types, so a conversion call is the sole vehicle.
+func TestExec_IntWidthConversions(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		// Narrowing, no overflow: fits cleanly in the target width.
+		{"let main = () -> i64 => i64(u8(200) + u8(50))\n", 250},
+		{"let main = () -> i64 => i64(i8(100) + i8(20))\n", 120},
+		// Narrowing WITH overflow — the width-proving cases. If the add
+		// silently stayed at i64 width (i.e. the conversion were a no-op
+		// instead of a real trunc), these would give the un-wrapped sums
+		// (300, 200) instead.
+		{"let main = () -> i64 => i64(u8(200) + u8(100))\n", 44},  // 300 wraps mod 256 = 44
+		{"let main = () -> i64 => i64(i8(100) + i8(100))\n", 200}, // 200 (=100+100) doesn't fit signed i8 (-128..127); wraps to the bit pattern for -56, which as an exit code (mod 256, i.e. 256-56) reads back as 200
+		// Widening: zext (unsigned source) vs sext (signed source) must pick
+		// correctly, not just "a wide value of the right magnitude" — sign-
+		// extending vs zero-extending a negative i8 differ by exactly 256,
+		// which an additive exit-code check can't see (invisible mod 256), so
+		// this uses division to actually distinguish them: sign-extended -1
+		// truncate-divides to 0; zero-extended (bug) would give 255/2 = 127.
+		{"let main = () -> i64 => i64(i8(-1)) / 2\n", 0},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+		}
+	}
+}
+
 func TestEmit_NilArgs(t *testing.T) {
 	if _, err := New().Emit(nil, nil); err == nil {
 		t.Fatal("expected an error for nil program/entry point")
