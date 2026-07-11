@@ -36,6 +36,7 @@ import (
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
+	"github.com/llir/llvm/ir/enum"
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
@@ -143,17 +144,22 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 				return block.NewSDiv(left, right), nil
 			}
 			return block.NewUDiv(left, right), nil
-		case ast.MathBinaryOpMod, ast.MathBinaryOpRemainder:
-			// Mod (%) and Remainder (%%) are distinct grammar tokens but
-			// deliberately lower identically for now: C-style truncating
-			// semantics (sign follows the dividend), which is exactly what
-			// LLVM's srem/urem give natively — 11 % -3 = 2, -1 % 2 = -1
-			// (decided over a floored/Python-style alternative, where
-			// 11 % -3 = -1). Revisit if Lyra ever wants Mod to be floored
-			// (sign follows the divisor) as a distinct operation from
-			// Remainder; that would need a sign-fixup after srem/urem.
+		case ast.MathBinaryOpMod:
+			// Mod (%): Odin's "modulo (truncated)" — sign follows the
+			// dividend, exactly what LLVM's srem/urem give natively.
+			// 11 % -3 = 2.
 			if signed {
 				return block.NewSRem(left, right), nil
+			}
+			return block.NewURem(left, right), nil
+		case ast.MathBinaryOpRemainder:
+			// Remainder (%%): Odin's "remainder (floored)" — sign follows the
+			// divisor, distinct from Mod above. 11 %% -3 = -1 (vs Mod's 2).
+			// Unsigned floored remainder is identical to truncated (every
+			// value is non-negative, so there's nothing to floor), hence
+			// urem directly; the signed case needs lowerFlooredSRem's fixup.
+			if signed {
+				return l.lowerFlooredSRem(block, left, right), nil
 			}
 			return block.NewURem(left, right), nil
 		default:
@@ -185,4 +191,27 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		}
 	}
 	return nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
+}
+
+// lowerFlooredSRem computes the floored-division remainder of two signed
+// integers of the same LLVM type — Odin's "remainder (floored)" (%%), sign
+// follows the divisor, distinct from the truncated remainder LLVM's srem
+// gives natively (sign follows the dividend, which is what Lyra's `%` uses
+// directly via a plain block.NewSRem).
+//
+// The fixup is the standard branchless idiom: take the truncated remainder,
+// and if it's non-zero and its sign disagrees with the divisor's, add the
+// divisor back (this is exactly what floors it — the same correction
+// CPython's `%` applies internally). Built with `select` rather than extra
+// basic blocks/branches, since this sits inside a single expression.
+func (l *lowerer) lowerFlooredSRem(block *ir.Block, left, right value.Value) value.Value {
+	zero := constant.NewInt(left.Type().(*lltypes.IntType), 0)
+	r := block.NewSRem(left, right)
+	rNeg := block.NewICmp(enum.IPredSLT, r, zero)
+	divisorNeg := block.NewICmp(enum.IPredSLT, right, zero)
+	signsDiffer := block.NewXor(rNeg, divisorNeg)
+	nonZero := block.NewICmp(enum.IPredNE, r, zero)
+	needsFixup := block.NewAnd(nonZero, signsDiffer)
+	fixed := block.NewAdd(r, right)
+	return block.NewSelect(needsFixup, fixed, r)
 }

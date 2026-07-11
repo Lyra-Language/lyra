@@ -116,10 +116,9 @@ func TestExec_Arithmetic(t *testing.T) {
 	}
 }
 
-// TestExec_SignedArithmetic checks signed division/negation/mod against
-// C-style truncating semantics (sign follows the dividend) — decided over a
-// floored/Python-style alternative, since LLVM's sdiv/srem give truncating
-// behavior natively. Expected values are verified against a real C program,
+// TestExec_SignedArithmetic checks signed division and Mod (%) against
+// C-style truncating semantics (sign follows the dividend) — LLVM's sdiv/srem
+// give this natively. Expected values are verified against a real C program,
 // not computed by hand: -1/2 truncates toward zero (0, not floor's -1), and
 // 11 % -3's sign follows the positive dividend (2, not floor's -1).
 func TestExec_SignedArithmetic(t *testing.T) {
@@ -129,11 +128,32 @@ func TestExec_SignedArithmetic(t *testing.T) {
 	}{
 		{"let main = () -> i64 => -1 / 2\n", 0},
 		{"let main = () -> i64 => 11 % -3\n", 2},
-		// Mod (%) and Remainder (%%) are distinct operators that deliberately
-		// lower identically (see the MathBinaryOpMod/Remainder case comment in
-		// llvm.go) — this pins that they actually agree, not just that each
-		// independently matches C semantics.
-		{"let main = () -> i64 => 11 %% -3\n", 2},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+		}
+	}
+}
+
+// TestExec_FlooredRemainder checks Remainder (%%) against Odin's "remainder
+// (floored)" semantics (odin-lang.org/docs/overview/#arithmetic-operators):
+// sign follows the divisor, distinct from Mod (%) above, whose sign follows
+// the dividend. 11 %% -3 = -1 (vs Mod's 2 for the same operands — the
+// floor(11/-3) = -4, so -4*-3 + (-1) = 11); -11 %% 3 = 1 (vs Mod's -2).
+// Expected values are verified by hand against the floor(a/b) definition, not
+// just asserted from whatever the implementation happens to produce.
+func TestExec_FlooredRemainder(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		{"let main = () -> i64 => -11 %% 3\n", 1},
+		// 11 %% -3 = -1, which as an 8-bit process exit code wraps to 255
+		// (256 - 1) — same pairing as TestExec_SignedArithmetic's `11 % -3`
+		// above (= 2), so the two tests directly contrast Mod vs Remainder on
+		// identical operands.
+		{"let main = () -> i64 => 11 %% -3\n", 255},
 	}
 	for _, c := range cases {
 		if got := buildAndRun(t, c.src); got != c.want {
