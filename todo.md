@@ -31,6 +31,7 @@
 5. **[DECIDED 07/08 + landed]** Named-bound ladder `pure` ⊆ `det` ⊆ unannotated, plus orthogonal `noalloc` — grammar, collection, and enforcement all in (`lyra-E015`/`E016`); rand/time and unknown-call alloc taint detected. Raw effect-row annotation syntax ruled out until user-defined effects exist.
    - **Alloc as a storage flavor** (not nominal identity): **[DONE 07/10]** `stack`↔`shared` compatibility check (`lyra-E018`) at owning sites incl. args/`own`, returns, and tuple/array elements. **[DONE 06/24]** recursive-type well-formedness (`lyra-E014`). **[DECIDED 07/10]** backend representation — `stack` = inline value, `shared` = `ptr` to a ref-counted box `{rc, payload}`; retain/release driven by `own`/`ref`/`mut`; arena values pin the rc and bulk-free (spec: `pkg/backend/llvm/ALLOCATION.md`). **Open:** construction-site `shared T {…}` syntax; implicit-alloc / escape analysis; atomic refcounts (deferred to the job system).
 6. **[TODO, BLOCKED: backend]** Use-after-move check for `own` params (definite-move analysis). `own` = consuming move (decided 06/15); not urgent until real move/copy codegen.
+7. **[ROADMAP]** Explicit SIMD (`simd<T,N>` → LLVM `<N x T>`) for determinism + games: Layer 1 primitive vector type, then Layer 2 data-parallel map over `pure`/`det` component arrays (the auto-parallel payoff). SoA-for-components, distinct from `[N]T`. Sequenced after the scalar backend; spec: `pkg/backend/llvm/SIMD.md`.
 
 ## In Progress
 --------------
