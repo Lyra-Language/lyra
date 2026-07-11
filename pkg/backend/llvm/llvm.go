@@ -2,13 +2,12 @@
 // program from pkg/driver to LLVM IR (built with github.com/llir/llvm), which
 // llc/clang then compiles.
 //
-// # Status: skeleton
+// # Status: early
 //
-// Emit currently produces a minimal, valid module that defines the entry point
-// with a PLACEHOLDER body (it returns 0 regardless of the source). The real
-// lowering is not implemented yet — this package exists to give that work a home
-// with the wiring already in place (cmd/lyrac calls it; the Backend contract is
-// satisfied; a smoke test pins the output shape).
+// Emit defines `@main` and lowers its body via lowerExpr, which so far handles
+// integer literals — so `let main = () -> i64 => 42` compiles to a binary that
+// exits 42. Any other body form errors (the build fails loudly rather than
+// emitting wrong code). Grow lowerExpr and lowerType from here.
 //
 // # Where to build
 //
@@ -23,10 +22,9 @@
 //     flavor decides inline vs boxed. layout.go/runtime.go provide the building
 //     blocks — LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign,
 //     and declareRuntime (wired into Emit) — for lowerType to dispatch over.
-//  2. Replace lowerEntry's placeholder `ret` with real lowering of entry.Lambda's
-//     body: constants, then arithmetic/calls, then let/if/blocks. Model mutable
-//     locals as `alloca` + load/store (let mem2reg build SSA) rather than hand-
-//     writing phi nodes.
+//  2. Grow lowerExpr past integer literals: arithmetic/calls, then let/if/blocks.
+//     Model mutable locals as `alloca` + load/store (let mem2reg build SSA) rather
+//     than hand-writing phi nodes.
 //  3. Runtime shims: print, and the overflow trap for todo #2 (via
 //     llvm.sadd.with.overflow); the builtin overflow-arithmetic methods
 //     (typechecker/builtins.go) lower to two's-complement +/-/* and
@@ -39,7 +37,9 @@ import (
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
 	"github.com/llir/llvm/ir/types"
+	"github.com/llir/llvm/ir/value"
 
+	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/backend"
 	"github.com/Lyra-Language/lyra/pkg/driver"
 )
@@ -67,20 +67,44 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 	}
 	m := ir.NewModule()
 	declareRuntime(m)
-	b.lowerEntry(m, entry)
+	if err := b.lowerEntry(m, entry); err != nil {
+		return nil, err
+	}
 	return []byte(m.String()), nil
 }
 
-// lowerEntry defines `@main`. The process exit code is the entry function's
-// return value (0 for a void entry).
-//
-// TODO(backend): lower entry.Lambda.Body here. For an i64 entry the return value
-// is the body's value; for a void entry, `ret i64 0`. Today it always returns 0,
-// so a built program is a valid no-op that exits 0 — proof the toolchain path
-// works, not a real translation.
-func (b *Backend) lowerEntry(m *ir.Module, entry *driver.EntryPoint) {
-	_ = entry // will drive the body lowering
+// lowerEntry defines `@main` and returns the entry function's value as the
+// process exit code. An i64 entry returns its body's value; a void entry runs
+// the body for effect (none expressible yet) and returns 0.
+func (b *Backend) lowerEntry(m *ir.Module, entry *driver.EntryPoint) error {
 	fn := m.NewFunc("main", types.I64)
-	entryBlock := fn.NewBlock("entry")
-	entryBlock.NewRet(constant.NewInt(types.I64, 0))
+	block := fn.NewBlock("entry")
+
+	switch entry.Returns {
+	case driver.EntryReturnExitCode:
+		v, err := lowerExpr(block, entry.Lambda.Body)
+		if err != nil {
+			return err
+		}
+		block.NewRet(v)
+	default: // EntryReturnVoid — nothing observable to run yet; exit 0.
+		block.NewRet(constant.NewInt(types.I64, 0))
+	}
+	return nil
+}
+
+// lowerExpr lowers a Lyra expression to an LLVM value, appending any instructions
+// it needs to block. This is the seed of expression lowering — grow the switch as
+// you add forms. It returns an error (rather than emitting wrong code) for a form
+// that isn't handled yet, so `lyrac build` fails loudly.
+//
+// Integer literals lower to an i64 constant for now: the only caller is the i64
+// entry point, whose body is i64. As more callers appear, the target width
+// should come from res.TypeTable rather than being hardcoded.
+func lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, error) {
+	switch e := expr.(type) {
+	case *ast.IntegerLiteralExpr:
+		return constant.NewInt(types.I64, e.Value), nil
+	}
+	return nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
 }

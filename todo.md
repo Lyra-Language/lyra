@@ -46,12 +46,13 @@ Groundwork done; this is where backend work now happens. Blocks #2 (traps), #5 (
 - **[DECIDED 07/10]** `stack`/`shared` representation — inline value vs `ptr` to a ref-counted box; spec in `pkg/backend/llvm/ALLOCATION.md`.
 - **[DECIDED 07/10]** `data`/sum-type layout — tagged union `{ tag, payload }` (monomorphized, niche-opt deferred); spec in `pkg/backend/llvm/DATA_LAYOUT.md`.
 - **[DONE 07/10]** Layout helpers in code (`runtime.go`, `layout.go`): runtime-shim `declare`s (`emitRuntimeDeclarations`, wired into `Emit`), `SharedBoxType`, `TagType`, `DataUnionType`, and a `SizeAndAlign` engine (shared = ptr-sized). Ready for `lowerType` to call.
-- **First milestone:** lower `entry.Lambda.Body` for `let main = () -> i64 => <int>` so the exit code matches the source (replace `lowerEntry`'s placeholder `ret`).
+- **[DONE 07/11]** First lowering — `lowerEntry`/`lowerExpr` lower an integer-literal body, so `let main = () -> i64 => 42` exits 42 (`=> 7` → 7, `-> void` → 0). Unsupported bodies error loudly. Next: grow `lowerExpr` (arithmetic → `let`/`if`/blocks).
 
 ## Completed
 ------------
 
 ### 07/11/26
+- **First real lowering** — `lowerEntry` + `lowerExpr` (`llvm.go`) lower an integer-literal `main` body to a real `ret`, so `let main = () -> i64 => 42` compiles+runs to exit 42 (`=> 7` → 7; `-> void` → 0). `lowerExpr` returns an error for unhandled forms so the build fails loudly rather than emitting wrong code. Tests: `llvm_test.go` (`TestEmit_IntegerLiteralBody`/`_VoidEntry`/`_UnsupportedBody`).
 - **llir/llvm set up for the backend** — added `github.com/llir/llvm` v0.3.6 (pure Go); `Emit`/`lowerEntry`/`declareRuntime` now build a real `ir.Module` instead of string assembly, and `layout.go`'s type helpers (`LLVMPrimitive`/`SharedBoxType`/`TagType`/`DataUnionType`) return llir `types.Type`. Placeholder `@main` module still compiles + runs via clang. Typed pointers (`i8*`), not opaque — fine for the scalar milestone. Tests updated to compare via `.String()`; full suite green.
 
 ### 07/10/26
