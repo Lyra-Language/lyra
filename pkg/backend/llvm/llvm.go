@@ -36,12 +36,13 @@ import (
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
-	"github.com/llir/llvm/ir/types"
+	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/backend"
 	"github.com/Lyra-Language/lyra/pkg/driver"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // Backend is the LLVM IR code generator.
@@ -67,28 +68,35 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 	}
 	m := ir.NewModule()
 	declareRuntime(m)
-	if err := b.lowerEntry(m, entry); err != nil {
+	l := &lowerer{module: m, res: res}
+	if err := l.lowerEntry(entry); err != nil {
 		return nil, err
 	}
 	return []byte(m.String()), nil
 }
 
+type lowerer struct {
+	module *ir.Module
+	res    *driver.Result // gives you TypeTable, SymbolTable, MethodTable, …
+	// grows over time: locals map[string]value.Value, funcs map[string]*ir.Func, etc.
+}
+
 // lowerEntry defines `@main` and returns the entry function's value as the
 // process exit code. An i64 entry returns its body's value; a void entry runs
 // the body for effect (none expressible yet) and returns 0.
-func (b *Backend) lowerEntry(m *ir.Module, entry *driver.EntryPoint) error {
-	fn := m.NewFunc("main", types.I64)
+func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
+	fn := l.module.NewFunc("main", lltypes.I64)
 	block := fn.NewBlock("entry")
 
 	switch entry.Returns {
 	case driver.EntryReturnExitCode:
-		v, err := lowerExpr(block, entry.Lambda.Body)
+		v, err := l.lowerExpr(block, entry.Lambda.Body)
 		if err != nil {
 			return err
 		}
 		block.NewRet(v)
 	default: // EntryReturnVoid — nothing observable to run yet; exit 0.
-		block.NewRet(constant.NewInt(types.I64, 0))
+		block.NewRet(constant.NewInt(lltypes.I64, 0))
 	}
 	return nil
 }
@@ -101,10 +109,53 @@ func (b *Backend) lowerEntry(m *ir.Module, entry *driver.EntryPoint) error {
 // Integer literals lower to an i64 constant for now: the only caller is the i64
 // entry point, whose body is i64. As more callers appear, the target width
 // should come from res.TypeTable rather than being hardcoded.
-func lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, error) {
+func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, error) {
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
-		return constant.NewInt(types.I64, e.Value), nil
+		return constant.NewInt(lltypes.I64, e.Value), nil
+	case *ast.MathBinaryOpExpr:
+		left, err := l.lowerExpr(block, e.Left)
+		if err != nil {
+			return nil, err
+		}
+		right, err := l.lowerExpr(block, e.Right)
+		if err != nil {
+			return nil, err
+		}
+		t, ok := l.res.TypeTable.Get(e.Left)
+		if !ok {
+			return nil, fmt.Errorf("llvm: type not found for %T", e.Left)
+		}
+		pt, ok := t.(types.PrimitiveType) // assert it's a primitive
+		if !ok {
+			return nil, fmt.Errorf("llvm: type not found for %T", e.Left)
+		}
+		signed := IsSignedInt(pt.Name)
+		switch e.Operator {
+		case ast.MathBinaryOpAdd:
+			return block.NewAdd(left, right), nil
+		case ast.MathBinaryOpSub:
+			return block.NewSub(left, right), nil
+		case ast.MathBinaryOpMul:
+			return block.NewMul(left, right), nil
+		case ast.MathBinaryOpDiv:
+			if signed {
+				return block.NewSDiv(left, right), nil
+			}
+			return block.NewUDiv(left, right), nil
+		case ast.MathBinaryOpMod:
+			if signed {
+				return block.NewSRem(left, right), nil
+			}
+			return block.NewURem(left, right), nil
+		case ast.MathBinaryOpRemainder:
+			if signed {
+				return block.NewSRem(left, right), nil
+			}
+			return block.NewURem(left, right), nil
+		default:
+			return nil, fmt.Errorf("llvm: math binary op lowering not implemented for %v", e.Operator)
+		}
 	}
 	return nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
 }

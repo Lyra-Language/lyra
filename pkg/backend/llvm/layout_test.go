@@ -28,6 +28,27 @@ func TestLLVMPrimitive(t *testing.T) {
 	}
 }
 
+func TestIsSignedInt(t *testing.T) {
+	signed := []types.PrimitiveTypeName{
+		types.Int8, types.Int16, types.Int32, types.Int64,
+		types.UntypedInt, types.UntypedSignedInt,
+	}
+	for _, n := range signed {
+		if !IsSignedInt(n) {
+			t.Errorf("IsSignedInt(%s) = false; want true", n)
+		}
+	}
+	unsigned := []types.PrimitiveTypeName{
+		types.UInt8, types.UInt16, types.UInt32, types.UInt64,
+		types.Float32, types.Float64, types.Boolean, types.Char, types.String,
+	}
+	for _, n := range unsigned {
+		if IsSignedInt(n) {
+			t.Errorf("IsSignedInt(%s) = true; want false", n)
+		}
+	}
+}
+
 func TestSizeAndAlign_Primitives(t *testing.T) {
 	cases := []struct {
 		name       types.PrimitiveTypeName

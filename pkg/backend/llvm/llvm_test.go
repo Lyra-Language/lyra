@@ -1,6 +1,10 @@
 package llvm
 
 import (
+	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -47,15 +51,83 @@ func TestEmit_VoidEntry(t *testing.T) {
 	}
 }
 
-// TestEmit_UnsupportedBody: a body form lowering doesn't handle yet fails the
-// build loudly rather than emitting wrong code.
-func TestEmit_UnsupportedBody(t *testing.T) {
-	_, err := emitSource(t, "let main = () -> i64 => 1 + 2\n")
-	if err == nil {
-		t.Fatal("expected an error for a not-yet-lowerable body")
+// buildAndRun emits IR for src, compiles it with clang, runs the binary, and
+// returns its exit code. This is the honest test of codegen: it observes what
+// the program *does*, not what the IR text looks like — so it survives IR
+// spelling changes (add nsw, optimizations) and, unlike a string match, actually
+// catches invalid IR (clang rejects it). Skips when clang isn't on PATH so the
+// suite still passes in environments without a toolchain.
+//
+// Note: a process exit code is only 8 bits on Unix (0–255), so keep expected
+// values small.
+func buildAndRun(t *testing.T, src string) int {
+	t.Helper()
+	clang, err := exec.LookPath("clang")
+	if err != nil {
+		t.Skip("clang not found on PATH; skipping behavioral test")
 	}
-	if !strings.Contains(err.Error(), "not implemented") {
-		t.Errorf("expected 'not implemented' error, got: %v", err)
+
+	ir, err := emitSource(t, src)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+
+	dir := t.TempDir() // auto-removed when the test finishes
+	llPath := filepath.Join(dir, "prog.ll")
+	binPath := filepath.Join(dir, "prog")
+	if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command(clang, llPath, "-o", binPath).CombinedOutput(); err != nil {
+		t.Fatalf("clang rejected the IR: %v\n%s\n--- IR ---\n%s", err, out, ir)
+	}
+
+	runErr := exec.Command(binPath).Run()
+	if runErr == nil {
+		return 0
+	}
+	var ee *exec.ExitError
+	if errors.As(runErr, &ee) {
+		return ee.ExitCode() // non-zero exit is reported as an *exec.ExitError
+	}
+	t.Fatalf("running the binary failed: %v", runErr)
+	return -1
+}
+
+// TestExec_Arithmetic checks that arithmetic bodies compute the right value by
+// running the compiled program, not by inspecting the IR (LLVM emits an `add`,
+// not a folded `3` — folding is an optimizer pass).
+func TestExec_Arithmetic(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		{"let main = () -> i64 => 42\n", 42},
+		{"let main = () -> i64 => 1 + 2\n", 3},
+		{"let main = () -> i64 => 20 - 6\n", 14},
+		{"let main = () -> i64 => 2 * 3 + 4\n", 10},
+		{"let main = () -> i64 => 6 / 2\n", 3},
+		{"let main = () -> i64 => 10 % 3\n", 1},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+		}
+	}
+}
+
+func TestExec_SignedArithmetic(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		{"let main = () -> i64 => -1 / 2\n", 1},
+		{"let main = () -> i64 => 11 % -3\n", -2},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+		}
 	}
 }
 

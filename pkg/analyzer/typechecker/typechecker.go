@@ -1009,6 +1009,17 @@ func (tc *TypeChecker) resolveTypeIfKnown(t types.Type) types.Type {
 }
 
 // inferExprType returns the type of expr, or nil if it cannot be determined yet.
+//
+// Every non-nil result is cached in the TypeTable before returning, so a later
+// pass (e.g. codegen) can look up any expression's type via typeTable.Get
+// without having to re-run inference — previously only some expression kinds
+// were cached (whichever case happened to call tc.typeTable.Set itself), so a
+// node like the bare literal `1` in `1 + 2` used directly as a lambda's
+// single-expression body had no entry at all. Caching is safe to do
+// unconditionally here: TypeTable.Set is a plain overwrite, so any later
+// explicit Set elsewhere (promoting an untyped literal to its default,
+// recording an annotation's resolved type) still wins — it just runs after
+// this and replaces the value.
 func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 	if expr == nil {
 		return nil
@@ -1017,7 +1028,18 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 	if t, ok := tc.typeTable.Get(expr); ok {
 		return t
 	}
+	t := tc.inferExprTypeUncached(expr)
+	if t != nil {
+		tc.typeTable.Set(expr, t)
+	}
+	return t
+}
 
+// inferExprTypeUncached computes expr's type via the dispatch switch below,
+// without consulting or populating the cache — that happens once, in
+// inferExprType, the only entry point callers (including the cases in this
+// switch, recursing into sub-expressions) should use.
+func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
 		return e.GetType()

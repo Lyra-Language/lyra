@@ -47,6 +47,33 @@ func LLVMPrimitive(name types.PrimitiveTypeName) (lltypes.Type, bool) {
 	return nil, false
 }
 
+// IsSignedInt reports whether name is a signed integer type. LLVM's integer
+// types carry no signedness (i8 alone doesn't say signed-or-unsigned) —
+// signedness lives in the *operation*, not the type — so LLVMPrimitive can't
+// tell a caller whether to emit sdiv/srem (signed) or udiv/urem (unsigned), or
+// sext vs zext on a widening conversion. Look up signedness here, from the
+// original Lyra type, before choosing the instruction.
+//
+// UntypedInt/UntypedSignedInt are treated as signed, matching the i64
+// LLVMPrimitive promotes them to: by the time codegen sees an untyped literal,
+// something upstream failed to resolve it (promoteToDefault should already
+// have run), so this defaults to the same "i64 signed" reading rather than
+// silently picking unsigned.
+//
+// False for unsigned ints, floats, bool, char, and string/regex (i.e. anything
+// that isn't a signed integer) — call only after establishing the operand is
+// an integer (e.g. via LLVMPrimitive's ok result together with a concrete-int
+// check).
+func IsSignedInt(name types.PrimitiveTypeName) bool {
+	switch name {
+	case types.Int8, types.Int16, types.Int32, types.Int64,
+		types.UntypedInt, types.UntypedSignedInt:
+		return true
+	default:
+		return false
+	}
+}
+
 // SharedBoxType returns the llir type of a ref-counted box wrapping payload:
 // `{ i64, <payload> }` with the refcount first. A `shared` value is a pointer to
 // this box (ALLOCATION.md).
