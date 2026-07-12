@@ -160,6 +160,69 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 			bit = 1
 		}
 		return constant.NewInt(lltypes.I1, bit), block, nil
+	case *ast.BooleanBinaryOpExpr:
+		left, block, err := l.lowerExpr(block, e.Left)
+		if err != nil {
+			return nil, nil, err
+		}
+		right, block, err := l.lowerExpr(block, e.Right)
+		if err != nil {
+			return nil, nil, err
+		}
+		// Comparisons are integer-only for now (bool `==`/`!=` included — i1 is
+		// an integer type). `icmp` requires both operands to have the same
+		// integer type, so two cases are deferred and reported explicitly rather
+		// than emitting invalid IR clang would reject: a float operand (would
+		// need `fcmp`, and no float value is lowerable yet anyway), and a width
+		// mismatch between the operands (a bare literal still lowers to i64, so
+		// `i8(x) < 3` mixes i8 and i64 — closing that needs context-directed
+		// literal-width inference, deferred elsewhere in this package too).
+		lt, lok := left.Type().(*lltypes.IntType)
+		rt, rok := right.Type().(*lltypes.IntType)
+		if !lok || !rok {
+			return nil, nil, fmt.Errorf("llvm: comparison of non-integer operands not implemented (%s, %s)", left.Type(), right.Type())
+		}
+		if lt.BitSize != rt.BitSize {
+			return nil, nil, fmt.Errorf("llvm: comparison of mismatched integer widths not implemented (%s vs %s)", left.Type(), right.Type())
+		}
+		signed, err := l.getIntSignedness(e.Left)
+		if err != nil {
+			return nil, nil, err
+		}
+		var cmpOp enum.IPred
+		switch e.Operator {
+		case ast.BooleanBinaryOpEq:
+			cmpOp = enum.IPredEQ
+		case ast.BooleanBinaryOpNEq:
+			cmpOp = enum.IPredNE
+		case ast.BooleanBinaryOpLT:
+			if signed {
+				cmpOp = enum.IPredSLT
+			} else {
+				cmpOp = enum.IPredULT
+			}
+		case ast.BooleanBinaryOpLTE:
+			if signed {
+				cmpOp = enum.IPredSLE
+			} else {
+				cmpOp = enum.IPredULE
+			}
+		case ast.BooleanBinaryOpGT:
+			if signed {
+				cmpOp = enum.IPredSGT
+			} else {
+				cmpOp = enum.IPredUGT
+			}
+		case ast.BooleanBinaryOpGTE:
+			if signed {
+				cmpOp = enum.IPredSGE
+			} else {
+				cmpOp = enum.IPredUGE
+			}
+		default:
+			return nil, nil, fmt.Errorf("llvm: boolean operator %v not implemented", e.Operator)
+		}
+		return block.NewICmp(cmpOp, left, right), block, nil
 	case *ast.MathBinaryOpExpr:
 		left, block, err := l.lowerExpr(block, e.Left)
 		if err != nil {
@@ -169,15 +232,10 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		if err != nil {
 			return nil, nil, err
 		}
-		t, ok := l.res.TypeTable.Get(e.Left)
-		if !ok {
-			return nil, nil, fmt.Errorf("llvm: type not found for %T", e.Left)
+		signed, err := l.getIntSignedness(e.Left)
+		if err != nil {
+			return nil, nil, err
 		}
-		pt, ok := t.(types.PrimitiveType) // assert it's a primitive
-		if !ok {
-			return nil, nil, fmt.Errorf("llvm: type not found for %T", e.Left)
-		}
-		signed := IsSignedInt(pt.Name)
 		switch e.Operator {
 		case ast.MathBinaryOpAdd:
 			return block.NewAdd(left, right), block, nil
@@ -429,4 +487,16 @@ func (l *lowerer) lowerFlooredSRem(block *ir.Block, left, right value.Value) val
 	needsFixup := block.NewAnd(nonZero, signsDiffer)
 	fixed := block.NewAdd(r, right)
 	return block.NewSelect(needsFixup, fixed, r)
+}
+
+func (l *lowerer) getIntSignedness(e ast.Expression) (bool, error) {
+	t, ok := l.res.TypeTable.Get(e)
+	if !ok {
+		return false, fmt.Errorf("llvm: type not found for %T", e)
+	}
+	pt, ok := t.(types.PrimitiveType) // assert it's a primitive
+	if !ok {
+		return false, fmt.Errorf("llvm: type not found for %T", e)
+	}
+	return IsSignedInt(pt.Name), nil
 }

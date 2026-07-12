@@ -277,6 +277,49 @@ func TestExec_IntWidthConversions(t *testing.T) {
 	}
 }
 
+func TestEmit_BoolBinaryOp(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		{"let main() -> u8 => if true == false { 1 } else { 0 }\n", 0},
+		{"let main() -> u8 => if true != false { 1 } else { 0 }\n", 1},
+		{"let main() -> u8 => if 2 == 3 { 1 } else { 0 }\n", 0},
+		{"let main() -> u8 => if 2 == 2 { 1 } else { 0 }\n", 1},
+		{"let main() -> u8 => if 2 != 2 { 1 } else { 0 }\n", 0},
+		{"let main() -> u8 => if 2 != 3 { 1 } else { 0 }\n", 1},
+		{"let main() -> u8 => if 2 < 3 { 1 } else { 0 }\n", 1},
+		{"let main() -> u8 => if 2 < 2 { 1 } else { 0 }\n", 0},
+		{"let main() -> u8 => if 2 > 3 { 1 } else { 0 }\n", 0},
+		{"let main() -> u8 => if 2 > 2 { 1 } else { 0 }\n", 0},
+		{"let main() -> u8 => if 2 <= 3 { 1 } else { 0 }\n", 1},
+		{"let main() -> u8 => if 2 <= 2 { 1 } else { 0 }\n", 1},
+		{"let main() -> u8 => if 2 >= 3 { 1 } else { 0 }\n", 0},
+		{"let main() -> u8 => if 2 >= 2 { 1 } else { 0 }\n", 1},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+		}
+	}
+}
+
+// TestEmit_ComparisonMixedWidth_Error: comparing operands of different integer
+// widths (`i8(5) < 3` mixes i8 and i64, since a bare literal still lowers to
+// i64) is deferred pending context-directed literal-width inference. It type-
+// checks (the typechecker considers i8 and an untyped literal compatible) but
+// the backend errors explicitly rather than emitting an invalid `icmp` clang
+// would reject.
+func TestEmit_ComparisonMixedWidth_Error(t *testing.T) {
+	_, err := emitSource(t, "let main() -> u8 => if i8(5) < 3 { 1 } else { 0 }\n")
+	if err == nil {
+		t.Fatal("expected an error for a mismatched-width comparison")
+	}
+	if !strings.Contains(err.Error(), "mismatched integer widths") {
+		t.Errorf("expected a width-mismatch error, got: %v", err)
+	}
+}
+
 func TestEmit_NilArgs(t *testing.T) {
 	if _, err := New().Emit(nil, nil); err == nil {
 		t.Fatal("expected an error for nil program/entry point")
