@@ -103,7 +103,21 @@ func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr, requireType bool) types.Typ
 		return nil
 	}
 
-	// One-armed if (no else), or at least one branch type is unresolvable.
+	// requireType (value context): the if's result is used, so a one-armed if
+	// (no else) is invalid — it has no value when the condition is false.
+	// (As a statement — requireType == false, handled above — a one-armed if
+	// is fine: a conditional side effect.) This also correctly requires a
+	// terminal else on an `if … else if …` chain used as a value: each inner
+	// if is reached here with requireType == true (via inferExprType on the
+	// else branch), so the last one, lacking an else, is flagged.
+	if expr.Else == nil {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"`if` used as a value must have an `else` branch")
+		return nil
+	}
+
+	// Two-armed, but at least one branch type was unresolvable (a nested error
+	// is already reported); return the then type as a best effort.
 	return thenType
 }
 

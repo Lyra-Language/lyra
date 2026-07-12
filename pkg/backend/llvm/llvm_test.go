@@ -107,12 +107,12 @@ func TestExec_Arithmetic(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"let main = () -> u8 => 42\n", 42},
-		{"let main = () -> u8 => 1 + 2\n", 3},
-		{"let main = () -> u8 => 20 - 6\n", 14},
-		{"let main = () -> u8 => 2 * 3 + 4\n", 10},
-		{"let main = () -> u8 => 6 / 2\n", 3},
-		{"let main = () -> u8 => 10 % 3\n", 1},
+		{"let main() -> u8 => 42\n", 42},
+		{"let main() -> u8 => 1 + 2\n", 3},
+		{"let main() -> u8 => 20 - 6\n", 14},
+		{"let main() -> u8 => 2 * 3 + 4\n", 10},
+		{"let main() -> u8 => 6 / 2\n", 3},
+		{"let main() -> u8 => 10 % 3\n", 1},
 	}
 	for _, c := range cases {
 		if got := buildAndRun(t, c.src); got != c.want {
@@ -140,21 +140,21 @@ func TestExec_SignedArithmetic(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"let main = () -> u8 => u8(-1 / 2)\n", 0},
-		{"let main = () -> u8 => u8(11 % -3)\n", 2},
+		{"let main() -> u8 => u8(-1 / 2)\n", 0},
+		{"let main() -> u8 => u8(11 % -3)\n", 2},
 		// -/- division truncates toward zero to a positive quotient: -7/-2 =
 		// 3.5 truncated = 3 (no wrap; fits u8 directly).
-		{"let main = () -> u8 => u8(-7 / -2)\n", 3},
+		{"let main() -> u8 => u8(-7 / -2)\n", 3},
 		// +/- division: 7/-2 = -3.5 truncated toward zero = -3, which as an
 		// 8-bit exit code wraps to 253 (256-3).
-		{"let main = () -> u8 => u8(7 / -2)\n", 253},
+		{"let main() -> u8 => u8(7 / -2)\n", 253},
 		// Mod's sign follows the (negative) dividend here, not the (positive)
 		// divisor: -11 % 3 = -2, wrapping to 254 (256-2). The direct sign
 		// contrast with -11 %% 3 = 1 (TestExec_FlooredRemainder) is the point.
-		{"let main = () -> u8 => u8(-11 % 3)\n", 254},
+		{"let main() -> u8 => u8(-11 % 3)\n", 254},
 		// Both operands negative: -7 % -2 = -1 (sign follows the dividend,
 		// itself negative), wrapping to 255 (256-1).
-		{"let main = () -> u8 => u8(-7 % -2)\n", 255},
+		{"let main() -> u8 => u8(-7 % -2)\n", 255},
 	}
 	for _, c := range cases {
 		if got := buildAndRun(t, c.src); got != c.want {
@@ -182,12 +182,12 @@ func TestExec_FlooredRemainder(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"let main = () -> u8 => u8(-11 %% 3)\n", 1},
+		{"let main() -> u8 => u8(-11 %% 3)\n", 1},
 		// 11 %% -3 = -1, which as an 8-bit process exit code wraps to 255
 		// (256 - 1) — same pairing as TestExec_SignedArithmetic's `11 % -3`
 		// above (= 2), so the two tests directly contrast Mod vs Remainder on
 		// identical operands.
-		{"let main = () -> u8 => u8(11 %% -3)\n", 255},
+		{"let main() -> u8 => u8(11 %% -3)\n", 255},
 		// Both operands negative: floor(-7/-2) = floor(3.5) = 3, so
 		// -7 %% -2 = -7 - (3 * -2) = -1 (sign follows the negative divisor),
 		// wrapping to 255 (256-1) — same wrapped byte as the case above, but a
@@ -195,7 +195,39 @@ func TestExec_FlooredRemainder(t *testing.T) {
 		// TestExec_SignedArithmetic's -7 % -2 (also -1, since sign-follows-
 		// dividend and sign-follows-divisor happen to agree when both operands
 		// share a sign).
-		{"let main = () -> u8 => u8(-7 %% -2)\n", 255},
+		{"let main() -> u8 => u8(-7 %% -2)\n", 255},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+		}
+	}
+}
+
+// TestExec_If checks if/else lowering by running the compiled program: the
+// right branch must actually be taken (the phi selects on the predecessor
+// block, so this verifies both the cond-br and the phi). Conditions are bool
+// literals for now — comparisons aren't lowered yet, so a non-constant
+// condition isn't expressible; -O0 doesn't fold the branch, so the cond-br is
+// still exercised at runtime.
+func TestExec_If(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		{"let main() -> u8 => if true { 1 } else { 2 }\n", 1},
+		{"let main() -> u8 => if false { 1 } else { 2 }\n", 2},
+		// Arithmetic in the branches — the branch value is a real computation,
+		// not just a literal, so this also confirms instructions land in the
+		// correct branch block.
+		{"let main() -> u8 => if false { 1 } else { 3 * 4 }\n", 12},
+		{"let main() -> u8 => if false { 1 } else if true { 2 } else { 3 }\n", 2},
+		// Nested if inside a branch: the branch's control ends in the INNER
+		// merge block, so the outer phi must reference that, not the outer
+		// branch block. A wrong predecessor here would be invalid IR (clang
+		// rejects) or the wrong value — this is the block-threading payoff.
+		{"let main() -> u8 => if true { if false { 10 } else { 20 } } else { 30 }\n", 20},
+		{"let main() -> u8 => if false { 10 } else { if true { 40 } else { 50 } }\n", 40},
 	}
 	for _, c := range cases {
 		if got := buildAndRun(t, c.src); got != c.want {
@@ -220,14 +252,14 @@ func TestExec_IntWidthConversions(t *testing.T) {
 		// arithmetic is already main's declared return type, no wrapper
 		// needed; i8(...) arithmetic needs an outer u8(...) (signedness
 		// differs, even though both are 8 bits).
-		{"let main = () -> u8 => u8(200) + u8(50)\n", 250},
-		{"let main = () -> u8 => u8(i8(100) + i8(20))\n", 120},
+		{"let main() -> u8 => u8(200) + u8(50)\n", 250},
+		{"let main() -> u8 => u8(i8(100) + i8(20))\n", 120},
 		// Narrowing WITH overflow — the width-proving cases. If the add
 		// silently stayed at i64 width (i.e. the conversion were a no-op
 		// instead of a real trunc), these would give the un-wrapped sums
 		// (300, 200) instead.
-		{"let main = () -> u8 => u8(200) + u8(100)\n", 44},      // 300 wraps mod 256 = 44
-		{"let main = () -> u8 => u8(i8(100) + i8(100))\n", 200}, // 200 (=100+100) doesn't fit signed i8 (-128..127); wraps to the bit pattern for -56, which as an exit code (mod 256, i.e. 256-56) reads back as 200
+		{"let main() -> u8 => u8(200) + u8(100)\n", 44},      // 300 wraps mod 256 = 44
+		{"let main() -> u8 => u8(i8(100) + i8(100))\n", 200}, // 200 (=100+100) doesn't fit signed i8 (-128..127); wraps to the bit pattern for -56, which as an exit code (mod 256, i.e. 256-56) reads back as 200
 		// Widening: zext (unsigned source) vs sext (signed source) must pick
 		// correctly, not just "a wide value of the right magnitude" — sign-
 		// extending vs zero-extending a negative i8 differ by exactly 256,

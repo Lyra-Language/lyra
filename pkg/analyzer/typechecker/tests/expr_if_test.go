@@ -71,6 +71,34 @@ func TestTypeCheck_If_OneArmed_MixedBodyTypes_NoError(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
+func TestTypeCheck_If_OneArmed_Value_Error(t *testing.T) {
+	// Used as a value (an initializer), a one-armed if has no result when the
+	// condition is false, so an else is required.
+	res := parseCollectAndCheck(t, `
+		let cond: bool = true
+		let x = if cond { 1 }
+	`, false)
+	assertErrorsAre(t, res, "`if` used as a value must have an `else` branch")
+}
+
+func TestTypeCheck_If_ElseIfChain_Value_NoTerminalElse_Error(t *testing.T) {
+	// An if…else-if chain used as a value must end in an else; the terminal
+	// one-armed if is flagged.
+	res := parseCollectAndCheck(t, `
+		let cond: bool = true
+		let x = if cond { 1 } else if cond { 2 }
+	`, false)
+	assertErrorsAre(t, res, "`if` used as a value must have an `else` branch")
+}
+
+func TestTypeCheck_If_ElseIfChain_Value_WithTerminalElse_NoError(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let cond: bool = true
+		let x = if cond { 1 } else if cond { 2 } else { 3 }
+	`, false)
+	assertNoErrors(t, res)
+}
+
 // ── if/else branch compatibility ─────────────────────────────────────────────
 
 func TestTypeCheck_IfElse_SameIntType_NoError(t *testing.T) {

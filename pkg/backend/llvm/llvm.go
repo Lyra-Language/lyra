@@ -5,9 +5,10 @@
 // # Status: early
 //
 // Emit defines `@main` and lowers its body via lowerExpr, which so far handles
-// integer literals, arithmetic (`+ - * / % %% -(unary)`, incl. Odin-style
-// floored `%%` vs truncated `%`), and int-to-int numeric conversions (`i8(x)`,
-// `u32(x)`, …). Any other body form errors (the build fails loudly rather than
+// integer/bool literals, arithmetic (`+ - * / % %% -(unary)`, incl. Odin-style
+// floored `%%` vs truncated `%`), int-to-int numeric conversions (`i8(x)`,
+// `u32(x)`, …), blocks (value = last expression), and `if`/`else` (cond-br +
+// phi diamond). Any other body form errors (the build fails loudly rather than
 // emitting wrong code). Grow lowerExpr and lowerType from here.
 //
 // # Where to build
@@ -23,12 +24,17 @@
 //     flavor decides inline vs boxed. layout.go/runtime.go provide the building
 //     blocks — LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign,
 //     and declareRuntime (wired into Emit) — for lowerType to dispatch over.
-//  2. Grow lowerExpr past arithmetic/int-conversions: let/if/blocks next. Model
-//     mutable locals as `alloca` + load/store (let mem2reg build SSA) rather than
-//     hand-writing phi nodes. Float literals/arithmetic and any conversion
-//     touching float are deferred — genuinely unreachable by a valid program
-//     today (no `let`/blocks, `main` must return i64, no float→int builtin); see
-//     lowerNumericConversion's doc comment.
+//  2. Grow lowerExpr further: `let` bindings (and other block statements),
+//     `match`, comparisons/boolean ops (to enable non-constant `if`
+//     conditions), and calls. `if`/blocks already lower (lowerIf/lowerBlock);
+//     model mutable locals as `alloca` + load/store (let mem2reg build SSA)
+//     rather than hand-writing phi nodes. Float literals/arithmetic and any
+//     conversion touching float are deferred — genuinely unreachable by a valid
+//     program today (no `let`, `main` must return u8, no float→int builtin); see
+//     lowerNumericConversion's doc comment. Note lowerExpr returns the block
+//     control ends in, not just a value — threaded so a branching form (`if`)
+//     can move the insertion point; every non-branching case returns its own
+//     block unchanged.
 //  3. Runtime shims: print, and the overflow trap for todo #2 (via
 //     llvm.sadd.with.overflow); the builtin overflow-arithmetic methods
 //     (typechecker/builtins.go) lower to two's-complement +/-/* and
@@ -115,10 +121,13 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 
 	switch entry.Returns {
 	case driver.EntryReturnExitCode:
-		v, err := l.lowerExpr(block, entry.Lambda.Body)
+		v, block, err := l.lowerExpr(block, entry.Lambda.Body)
 		if err != nil {
 			return err
 		}
+		// `block` here is whatever block the body's evaluation ends in — for an
+		// `if` body that's the merge block, not the entry block — so the `ret`
+		// is emitted in the right place.
 		u8Val := coerceIntWidth(block, v, false, lltypes.I8)
 		block.NewRet(block.NewZExt(u8Val, lltypes.I32))
 	default: // EntryReturnVoid — nothing observable to run yet; exit 0.
@@ -127,56 +136,68 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 	return nil
 }
 
-// lowerExpr lowers a Lyra expression to an LLVM value, appending any instructions
-// it needs to block. This is the seed of expression lowering — grow the switch as
-// you add forms. It returns an error (rather than emitting wrong code) for a form
-// that isn't handled yet, so `lyrac build` fails loudly.
+// lowerExpr lowers a Lyra expression to an LLVM value, appending any
+// instructions it needs to block. It returns both the value and *the block
+// control ends up in* — for a straight-line expression that's the same block
+// it was given, but a branching form (an `if`) leaves control in a different
+// (merge) block, and callers must keep lowering into that one. This is the
+// Go-explicit version of what LLVM's C++ IRBuilder tracks as an implicit
+// "current insertion point"; llir has no such hidden state, so we thread it.
 //
-// Integer literals lower to an i64 constant for now: the only caller is the i64
-// entry point, whose body is i64. As more callers appear, the target width
-// should come from res.TypeTable rather than being hardcoded.
-func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, error) {
+// It returns an error (rather than emitting wrong code) for a form that isn't
+// handled yet, so `lyrac build` fails loudly.
+//
+// Integer literals lower to an i64 constant for now (the target width should
+// eventually come from res.TypeTable rather than being hardcoded); callers that
+// need a narrower width coerce via coerceIntWidth.
+func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
-		return constant.NewInt(lltypes.I64, e.Value), nil
-	case *ast.MathBinaryOpExpr:
-		left, err := l.lowerExpr(block, e.Left)
-		if err != nil {
-			return nil, err
+		return constant.NewInt(lltypes.I64, e.Value), block, nil
+	case *ast.BooleanLiteralExpr:
+		bit := int64(0)
+		if e.Value {
+			bit = 1
 		}
-		right, err := l.lowerExpr(block, e.Right)
+		return constant.NewInt(lltypes.I1, bit), block, nil
+	case *ast.MathBinaryOpExpr:
+		left, block, err := l.lowerExpr(block, e.Left)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		right, block, err := l.lowerExpr(block, e.Right)
+		if err != nil {
+			return nil, nil, err
 		}
 		t, ok := l.res.TypeTable.Get(e.Left)
 		if !ok {
-			return nil, fmt.Errorf("llvm: type not found for %T", e.Left)
+			return nil, nil, fmt.Errorf("llvm: type not found for %T", e.Left)
 		}
 		pt, ok := t.(types.PrimitiveType) // assert it's a primitive
 		if !ok {
-			return nil, fmt.Errorf("llvm: type not found for %T", e.Left)
+			return nil, nil, fmt.Errorf("llvm: type not found for %T", e.Left)
 		}
 		signed := IsSignedInt(pt.Name)
 		switch e.Operator {
 		case ast.MathBinaryOpAdd:
-			return block.NewAdd(left, right), nil
+			return block.NewAdd(left, right), block, nil
 		case ast.MathBinaryOpSub:
-			return block.NewSub(left, right), nil
+			return block.NewSub(left, right), block, nil
 		case ast.MathBinaryOpMul:
-			return block.NewMul(left, right), nil
+			return block.NewMul(left, right), block, nil
 		case ast.MathBinaryOpDiv:
 			if signed {
-				return block.NewSDiv(left, right), nil
+				return block.NewSDiv(left, right), block, nil
 			}
-			return block.NewUDiv(left, right), nil
+			return block.NewUDiv(left, right), block, nil
 		case ast.MathBinaryOpMod:
 			// Mod (%): Odin's "modulo (truncated)" — sign follows the
 			// dividend, exactly what LLVM's srem/urem give natively.
 			// 11 % -3 = 2.
 			if signed {
-				return block.NewSRem(left, right), nil
+				return block.NewSRem(left, right), block, nil
 			}
-			return block.NewURem(left, right), nil
+			return block.NewURem(left, right), block, nil
 		case ast.MathBinaryOpRemainder:
 			// Remainder (%%): Odin's "remainder (floored)" — sign follows the
 			// divisor, distinct from Mod above. 11 %% -3 = -1 (vs Mod's 2).
@@ -184,16 +205,16 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 			// value is non-negative, so there's nothing to floor), hence
 			// urem directly; the signed case needs lowerFlooredSRem's fixup.
 			if signed {
-				return l.lowerFlooredSRem(block, left, right), nil
+				return l.lowerFlooredSRem(block, left, right), block, nil
 			}
-			return block.NewURem(left, right), nil
+			return block.NewURem(left, right), block, nil
 		default:
-			return nil, fmt.Errorf("llvm: math binary op lowering not implemented for %v", e.Operator)
+			return nil, nil, fmt.Errorf("llvm: math binary op lowering not implemented for %v", e.Operator)
 		}
 	case *ast.NegationExpr:
-		operand, err := l.lowerExpr(block, e.Operand)
+		operand, block, err := l.lowerExpr(block, e.Operand)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		// Branch on the already-lowered value's own LLVM type rather than a
 		// second TypeTable lookup: the typechecker (inferNegationExpr) already
@@ -208,11 +229,11 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 			// optimizer overflow is undefined behavior, which conflicts with
 			// Lyra's "checked arithmetic by default" goal (todo #2) — revisit
 			// once overflow trapping exists.
-			return block.NewSub(constant.NewInt(t, 0), operand), nil
+			return block.NewSub(constant.NewInt(t, 0), operand), block, nil
 		case *lltypes.FloatType:
-			return block.NewFNeg(operand), nil
+			return block.NewFNeg(operand), block, nil
 		default:
-			return nil, fmt.Errorf("llvm: negation lowering not implemented for operand type %s", operand.Type())
+			return nil, nil, fmt.Errorf("llvm: negation lowering not implemented for operand type %s", operand.Type())
 		}
 	case *ast.FunctionCallExpr:
 		if ident, ok := e.Function.(*ast.IdentifierExpr); ok {
@@ -220,9 +241,98 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 				return l.lowerNumericConversion(block, e, targetName)
 			}
 		}
-		return nil, fmt.Errorf("llvm: call lowering not implemented except numeric type conversions (e.g. i32(x))")
+		return nil, nil, fmt.Errorf("llvm: call lowering not implemented except numeric type conversions (e.g. i32(x))")
+	case *ast.BlockExpr:
+		return l.lowerBlock(block, e)
+	case *ast.IfExpr:
+		return l.lowerIf(block, e)
 	}
-	return nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
+	return nil, nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
+}
+
+// lowerBlock lowers a block expression. Its value is the value of its last
+// statement (matching the typechecker's inferBlockType); earlier statements are
+// evaluated for effect and their values discarded. Returns the block control
+// ends in (a nested `if` in one of the statements can move it).
+//
+// Minimal for now: every statement must be an ExpressionStmt. `let`/`var`
+// bindings, loops, reassignment, etc. inside a block aren't lowered yet and
+// error loudly rather than being silently skipped.
+func (l *lowerer) lowerBlock(block *ir.Block, be *ast.BlockExpr) (value.Value, *ir.Block, error) {
+	var v value.Value
+	for _, stmt := range be.Statements {
+		exprStmt, ok := stmt.(*ast.ExpressionStmt)
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: block statement lowering not implemented for %T", stmt)
+		}
+		var err error
+		v, block, err = l.lowerExpr(block, exprStmt.Expression)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if v == nil {
+		return nil, nil, fmt.Errorf("llvm: block has no value (empty, or last statement is not an expression)")
+	}
+	return v, block, nil
+}
+
+// lowerIf lowers an if/else expression to the standard four-block diamond with
+// a phi at the merge:
+//
+//	         cond br
+//	current ─────────┬──> then ──br──┐
+//	                 └──> else ──br──┴──> merge: phi [thenVal, thenEnd], [elseVal, elseEnd]
+//
+// Each branch computes its value, then jumps to a shared merge block whose phi
+// selects the result based on which predecessor control arrived from — and that
+// phi is the if-expression's value.
+//
+// Value position only: the typechecker requires an `else` on an `if` used as a
+// value (checkIfExpr), so e.Else is non-nil here; a one-armed `if` reaches the
+// backend only as a discarded statement, which isn't lowered yet.
+//
+// The phi's incoming predecessors and the branches into merge use the block
+// each branch *ends in* (thenEnd/elseEnd), NOT the block we started it in: a
+// branch whose body contains its own `if` will have moved control into a
+// different block by the time it produces its value. Using the start block here
+// would be the classic phi/branch bug.
+func (l *lowerer) lowerIf(block *ir.Block, e *ast.IfExpr) (value.Value, *ir.Block, error) {
+	if e.Condition == nil || e.Then == nil || e.Else == nil {
+		return nil, nil, fmt.Errorf("llvm: if lowering requires condition, then, and else")
+	}
+	cond, block, err := l.lowerExpr(block, e.Condition)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	fn := block.Parent
+	thenBlock := fn.NewBlock("")
+	elseBlock := fn.NewBlock("")
+	mergeBlock := fn.NewBlock("")
+	block.NewCondBr(cond, thenBlock, elseBlock)
+
+	thenVal, thenEnd, err := l.lowerExpr(thenBlock, e.Then)
+	if err != nil {
+		return nil, nil, err
+	}
+	thenEnd.NewBr(mergeBlock)
+
+	elseVal, elseEnd, err := l.lowerExpr(elseBlock, e.Else)
+	if err != nil {
+		return nil, nil, err
+	}
+	elseEnd.NewBr(mergeBlock)
+
+	// Both incoming values must share an LLVM type for a well-formed phi. The
+	// typechecker's branchCommonType guarantees the branches are type-
+	// compatible; a genuine width mismatch that slipped through would produce
+	// invalid IR that clang rejects (loud), not silently-wrong code.
+	phi := mergeBlock.NewPhi(
+		ir.NewIncoming(thenVal, thenEnd),
+		ir.NewIncoming(elseVal, elseEnd),
+	)
+	return phi, mergeBlock, nil
 }
 
 // lowerNumericConversion lowers a Lyra type-conversion call (`i8(x)`,
@@ -236,25 +346,25 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 // since there is no valid, type-checked Lyra program that can reach it today
 // (verified — see the error site below) given the current scope (no
 // `let`/blocks yet, `main` must return i64, no float→int builtin).
-func (l *lowerer) lowerNumericConversion(block *ir.Block, call *ast.FunctionCallExpr, targetName types.PrimitiveTypeName) (value.Value, error) {
+func (l *lowerer) lowerNumericConversion(block *ir.Block, call *ast.FunctionCallExpr, targetName types.PrimitiveTypeName) (value.Value, *ir.Block, error) {
 	if len(call.Arguments) != 1 {
-		return nil, fmt.Errorf("llvm: type conversion %q expects 1 argument, got %d", targetName, len(call.Arguments))
+		return nil, nil, fmt.Errorf("llvm: type conversion %q expects 1 argument, got %d", targetName, len(call.Arguments))
 	}
-	arg, err := l.lowerExpr(block, call.Arguments[0])
+	arg, block, err := l.lowerExpr(block, call.Arguments[0])
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	srcT, ok := l.res.TypeTable.Get(call.Arguments[0])
 	if !ok {
-		return nil, fmt.Errorf("llvm: type not found for %T", call.Arguments[0])
+		return nil, nil, fmt.Errorf("llvm: type not found for %T", call.Arguments[0])
 	}
 	srcP, ok := srcT.(types.PrimitiveType)
 	if !ok {
-		return nil, fmt.Errorf("llvm: type not found for %T", call.Arguments[0])
+		return nil, nil, fmt.Errorf("llvm: type not found for %T", call.Arguments[0])
 	}
 	dstLL, ok := LLVMPrimitive(targetName)
 	if !ok {
-		return nil, fmt.Errorf("llvm: no LLVM representation for %q", targetName)
+		return nil, nil, fmt.Errorf("llvm: no LLVM representation for %q", targetName)
 	}
 
 	dst, ok := dstLL.(*lltypes.IntType)
@@ -269,12 +379,12 @@ func (l *lowerer) lowerNumericConversion(block *ir.Block, call *ast.FunctionCall
 		// function returns, or rounding builtins) makes it observable/
 		// testable, rather than shipping an instruction sequence nothing can
 		// ever exercise.
-		return nil, fmt.Errorf("llvm: conversion to/from float not implemented yet (%s to %s)", arg.Type(), targetName)
+		return nil, nil, fmt.Errorf("llvm: conversion to/from float not implemented yet (%s to %s)", arg.Type(), targetName)
 	}
 	if _, ok := arg.Type().(*lltypes.IntType); !ok {
-		return nil, fmt.Errorf("llvm: conversion from %s to %s not implemented", arg.Type(), targetName)
+		return nil, nil, fmt.Errorf("llvm: conversion from %s to %s not implemented", arg.Type(), targetName)
 	}
-	return coerceIntWidth(block, arg, IsSignedInt(srcP.Name), dst), nil
+	return coerceIntWidth(block, arg, IsSignedInt(srcP.Name), dst), block, nil
 }
 
 // coerceIntWidth adjusts v (an integer value) to dst's bit width: unchanged if
