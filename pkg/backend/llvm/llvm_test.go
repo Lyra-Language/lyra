@@ -304,6 +304,41 @@ func TestEmit_BoolBinaryOp(t *testing.T) {
 	}
 }
 
+// TestExec_BoolShortCircuit checks && and || by running the compiled program.
+// It covers the full truth table for each (so both the taken and the skipped
+// branch are exercised), plus chained comparisons that feed real i1 values in
+// (`2 < 3 && 5 > 4`) rather than bare literals. Short-circuit itself — that the
+// right operand's block is only entered conditionally — is visible in the IR
+// (the rhs block is unreachable when the left operand decides the result); a
+// faulting right operand to prove it observably isn't expressible yet (no
+// runtime-conditional faulting expression), so this pins the values.
+func TestExec_BoolShortCircuit(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		// && truth table
+		{"let main() -> u8 => if true && true { 1 } else { 0 }\n", 1},
+		{"let main() -> u8 => if true && false { 1 } else { 0 }\n", 0},
+		{"let main() -> u8 => if false && true { 1 } else { 0 }\n", 0},
+		{"let main() -> u8 => if false && false { 1 } else { 0 }\n", 0},
+		// || truth table
+		{"let main() -> u8 => if true || true { 1 } else { 0 }\n", 1},
+		{"let main() -> u8 => if true || false { 1 } else { 0 }\n", 1},
+		{"let main() -> u8 => if false || true { 1 } else { 0 }\n", 1},
+		{"let main() -> u8 => if false || false { 1 } else { 0 }\n", 0},
+		// operands from comparisons, not literals
+		{"let main() -> u8 => if 2 < 3 && 5 > 4 { 1 } else { 0 }\n", 1},
+		{"let main() -> u8 => if 2 < 3 && 5 < 4 { 1 } else { 0 }\n", 0},
+		{"let main() -> u8 => if 2 > 3 || 5 > 4 { 1 } else { 0 }\n", 1},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+		}
+	}
+}
+
 // TestEmit_ComparisonMixedWidth_Error: comparing operands of different integer
 // widths (`i8(5) < 3` mixes i8 and i64, since a bare literal still lowers to
 // i64) is deferred pending context-directed literal-width inference. It type-

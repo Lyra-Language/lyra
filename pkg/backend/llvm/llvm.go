@@ -7,9 +7,10 @@
 // Emit defines `@main` and lowers its body via lowerExpr, which so far handles
 // integer/bool literals, arithmetic (`+ - * / % %% -(unary)`, incl. Odin-style
 // floored `%%` vs truncated `%`), int-to-int numeric conversions (`i8(x)`,
-// `u32(x)`, …), blocks (value = last expression), and `if`/`else` (cond-br +
-// phi diamond). Any other body form errors (the build fails loudly rather than
-// emitting wrong code). Grow lowerExpr and lowerType from here.
+// `u32(x)`, …), integer comparisons (`< <= > >= == !=` → icmp), short-circuit
+// `&&`/`||` (cond-br + phi), blocks (value = last expression), and `if`/`else`
+// (cond-br + phi diamond). Any other body form errors (the build fails loudly
+// rather than emitting wrong code). Grow lowerExpr and lowerType from here.
 //
 // # Where to build
 //
@@ -25,8 +26,8 @@
 //     blocks — LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign,
 //     and declareRuntime (wired into Emit) — for lowerType to dispatch over.
 //  2. Grow lowerExpr further: `let` bindings (and other block statements),
-//     `match`, comparisons/boolean ops (to enable non-constant `if`
-//     conditions), and calls. `if`/blocks already lower (lowerIf/lowerBlock);
+//     `match`, and calls. Comparisons, `&&`/`||`, and `if`/blocks already lower
+//     (lowerBooleanBinaryOpExpr/lowerBooleanAnd/lowerBooleanOr/lowerIf/lowerBlock);
 //     model mutable locals as `alloca` + load/store (let mem2reg build SSA)
 //     rather than hand-writing phi nodes. Float literals/arithmetic and any
 //     conversion touching float are deferred — genuinely unreachable by a valid
@@ -181,6 +182,13 @@ func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinary
 	if err != nil {
 		return nil, nil, err
 	}
+
+	if e.Operator == ast.BooleanBinaryOpAnd {
+		return l.lowerBooleanAnd(block, left, e.Right)
+	} else if e.Operator == ast.BooleanBinaryOpOr {
+		return l.lowerBooleanOr(block, left, e.Right)
+	}
+
 	right, block, err := l.lowerExpr(block, e.Right)
 	if err != nil {
 		return nil, nil, err
@@ -239,6 +247,60 @@ func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinary
 		return nil, nil, fmt.Errorf("llvm: boolean operator %v not implemented", e.Operator)
 	}
 	return block.NewICmp(cmpOp, left, right), block, nil
+}
+
+// lowerBooleanAnd lowers `a && b` with short-circuit semantics: b is evaluated
+// only when a is true. It's `if a { b } else { false }` (lowerIf's diamond),
+// with one simplification — the `else { false }` branch is *virtual*: it needs
+// no block of its own, because there's nothing to compute. The cond-br's false
+// edge points straight at the merge block, and the phi supplies the constant
+// `false` for that predecessor. So only rhsBlock (where b is evaluated) plus
+// merge are created, not two branch blocks.
+//
+// leftVal is a's already-lowered i1 value; block is where a *finished* (a may
+// itself have branched). rightExpr is b's AST node, lowered lazily inside
+// rhsBlock so it doesn't run when a is false. The phi's predecessors are `block`
+// (a-false edge → false) and rhsEnd (a-true edge → b's value) — rhsEnd, not
+// rhsBlock, since b can itself contain an `if` that moves control onward.
+func (l *lowerer) lowerBooleanAnd(block *ir.Block, leftVal value.Value, rightExpr ast.Expression) (value.Value, *ir.Block, error) {
+	fn := block.Parent
+	rhsBlock := fn.NewBlock("")
+	mergeBlock := fn.NewBlock("")
+	block.NewCondBr(leftVal, rhsBlock, mergeBlock) // a true → eval b; a false → skip to merge
+	rightVal, rhsEnd, err := l.lowerExpr(rhsBlock, rightExpr)
+	if err != nil {
+		return nil, nil, err
+	}
+	rhsEnd.NewBr(mergeBlock)
+
+	phi := mergeBlock.NewPhi(
+		ir.NewIncoming(constant.NewInt(lltypes.I1, 0), block), // a was false ⇒ false
+		ir.NewIncoming(rightVal, rhsEnd),                      // a was true  ⇒ b's value
+	)
+	return phi, mergeBlock, nil
+}
+
+// lowerBooleanOr lowers `a || b` with short-circuit semantics: b is evaluated
+// only when a is false. The mirror of lowerBooleanAnd — it's
+// `if a { true } else { b }`, so the cond-br targets are swapped (a true skips
+// straight to merge; a false evaluates b) and the virtual constant branch
+// supplies `true`. See lowerBooleanAnd's comment for the block/phi reasoning.
+func (l *lowerer) lowerBooleanOr(block *ir.Block, leftVal value.Value, rightExpr ast.Expression) (value.Value, *ir.Block, error) {
+	fn := block.Parent
+	rhsBlock := fn.NewBlock("")
+	mergeBlock := fn.NewBlock("")
+	block.NewCondBr(leftVal, mergeBlock, rhsBlock) // a true → skip to merge; a false → eval b
+	rightVal, rhsEnd, err := l.lowerExpr(rhsBlock, rightExpr)
+	if err != nil {
+		return nil, nil, err
+	}
+	rhsEnd.NewBr(mergeBlock)
+
+	phi := mergeBlock.NewPhi(
+		ir.NewIncoming(constant.NewInt(lltypes.I1, 1), block), // a was true  ⇒ true
+		ir.NewIncoming(rightVal, rhsEnd),                      // a was false ⇒ b's value
+	)
+	return phi, mergeBlock, nil
 }
 
 func (l *lowerer) lowerMathBinaryOpExpr(block *ir.Block, e *ast.MathBinaryOpExpr) (value.Value, *ir.Block, error) {
