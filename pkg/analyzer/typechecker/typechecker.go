@@ -13,18 +13,19 @@ import (
 )
 
 type TypeChecker struct {
-	symTable      *symbols.SymbolTable
-	scopeTable    *symbols.ScopeTable
-	typeTable     *typetable.TypeTable
-	methodTable   *typetable.MethodTable
-	scope         *symbols.Scope
-	errors        []TypeError
-	paramTypes    map[string]types.Type         // non-nil only while checking a function body
-	paramMods     map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
-	resolvedTypes map[string]types.Type         // cache for resolveType to avoid duplicate "unknown type" errors
-	enclosingRet  *types.ReturnType             // declared return type of the lambda body currently being checked; nil at top level
-	traitImpls    []*ast.TraitImplStmt          // every impl block in the program, collected up front by Check; see resolveTraitMethod
-	genericBounds map[string][]string           // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
+	symTable       *symbols.SymbolTable
+	scopeTable     *symbols.ScopeTable
+	typeTable      *typetable.TypeTable
+	methodTable    *typetable.MethodTable
+	scope          *symbols.Scope
+	errors         []TypeError
+	paramTypes     map[string]types.Type         // non-nil only while checking a function body
+	paramMods      map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
+	resolvedTypes  map[string]types.Type         // cache for resolveType to avoid duplicate "unknown type" errors
+	enclosingRet   *types.ReturnType             // declared return type of the lambda body currently being checked; nil at top level
+	traitImpls     []*ast.TraitImplStmt          // every impl block in the program, collected up front by Check; see resolveTraitMethod
+	genericBounds  map[string][]string           // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
+	currentVarDecl *ast.VarDeclStmt              // the var decl whose initializer is currently being inferred; lets a self-reference in a rebind's initializer resolve to VarDeclStmt.Shadows (the prior binding) instead of itself
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
@@ -212,7 +213,14 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 		return
 	}
 
+	// Track the decl being initialized so a self-reference in its own
+	// initializer (`let x = x + 1`, sequential rebinding) resolves to the prior
+	// binding (decl.Shadows), not to this not-yet-typed declaration. Save/restore
+	// handles a nested decl inside the initializer (`let a = { let b = ...; b }`).
+	prevVarDecl := tc.currentVarDecl
+	tc.currentVarDecl = decl
 	inferredType := tc.inferExprType(decl.Value)
+	tc.currentVarDecl = prevVarDecl
 	if inferredType == nil {
 		return
 	}
@@ -247,6 +255,9 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// Store the annotation type — this is the effective type the expression is used as.
 	// e.g. literal 42 annotated as i32 should be recorded as i32, not the untyped int.
 	tc.typeTable.Set(decl.Value, resolvedDeclType)
+	// Push the annotation width down onto untyped literal leaves too, so the
+	// backend lowers `let x: u8 = 5 + 3` with u8 leaves, not i64 ones.
+	tc.propagateLiteralType(decl.Value, resolvedDeclType)
 }
 
 // checkDestructuringDecl type-checks a destructuring declaration. It infers
@@ -671,6 +682,9 @@ func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {
 	}
 	// Check that the literal value fits within the variable's integer type's range.
 	tc.checkIntegerLiteralRange(stmt.Name, stmt.Value, effective)
+	// Record the variable's width on untyped literal leaves of the RHS (`x = x + 1`
+	// where x: i8 lowers `1` as i8), matching an annotated let binding.
+	tc.propagateLiteralType(stmt.Value, effective)
 }
 
 // checkDerefAssignment handles the grammar's representation of const reassignment.
@@ -864,6 +878,8 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 		} else if isFloatType(leftType) || isFloatType(rightType) {
 			tc.addError(expr.GetLocation(), SeverityWarning,
 				"operator %s: comparing float values with == or != may give unexpected results due to floating-point precision", expr.Operator)
+		} else {
+			tc.propagateComparisonWidth(expr, leftType, rightType)
 		}
 	case ast.BooleanBinaryOpLT, ast.BooleanBinaryOpLTE, ast.BooleanBinaryOpGT, ast.BooleanBinaryOpGTE:
 		if !types.IsNumeric(leftType) || !types.IsNumeric(rightType) {
@@ -873,8 +889,25 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 		}
 		if numericResultType(leftType, rightType) == nil {
 			tc.addIncompatibleTypesError(expr, string(expr.Operator), leftType, rightType)
+		} else {
+			tc.propagateComparisonWidth(expr, leftType, rightType)
 		}
 	}
+}
+
+// propagateComparisonWidth pushes the common concrete width of a comparison down
+// onto whichever operand held untyped literals. Unlike arithmetic, a comparison's
+// own result is bool, so the shared width comes from the operands themselves
+// (`numericResultType`) rather than the expression's type — e.g. `i8(x) < 3`
+// gives common type i8, so `3` is recorded as i8 and the backend emits a single
+// i8 `icmp` instead of mixing i8 and i64.
+func (tc *TypeChecker) propagateComparisonWidth(expr *ast.BooleanBinaryOpExpr, leftType, rightType types.Type) {
+	common := numericResultType(leftType, rightType)
+	if common == nil {
+		return
+	}
+	tc.propagateLiteralType(expr.Left, common)
+	tc.propagateLiteralType(expr.Right, common)
 }
 
 func (tc *TypeChecker) addImmutableBindingError(loc ast.Location, name string, kind ast.BindingKind) {
@@ -1134,6 +1167,13 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 			tc.addError(e.GetLocation(), SeverityError, "undefined identifier %q", e.Name)
 			return nil
 		}
+		// Sequential rebinding: inside `let x = x + 1`, the name `x` resolves in
+		// scope to the declaration being initialized (the collector overwrote the
+		// prior binding). Redirect that self-reference to the prior binding so it
+		// reads the previous value's type, not this not-yet-typed one.
+		if vd, ok := sym.(*ast.VarDeclStmt); ok && vd == tc.currentVarDecl && vd.Shadows != nil {
+			sym = vd.Shadows
+		}
 		if v, ok := sym.(*ast.VarDeclStmt); ok {
 			var t types.Type
 			if v.Value != nil {
@@ -1272,7 +1312,80 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 		return nil
 	}
 
+	// Context-directed literal-width inference: if the operation resolved to a
+	// concrete numeric type (e.g. one operand was `i8`, the other an untyped
+	// literal), push that width down into any untyped literal leaves so the
+	// backend can lower them at the right width instead of the i64 default.
+	tc.propagateLiteralType(expr.Left, result)
+	tc.propagateLiteralType(expr.Right, result)
+
 	return result
+}
+
+// propagateLiteralType pushes a concrete numeric context type down onto the
+// untyped integer/float literal leaves of expr, recording it in the TypeTable in
+// place of the leaf's untyped default. This is the "context-directed" half of
+// literal-width inference: bottom-up inference already computes each expression's
+// result type, but leaves an untyped literal (`5`, `3`) recorded as untyped_int
+// until a context — an annotation, a concrete sibling operand, a declared return
+// type — fixes its width. The backend reads these recorded widths, so without
+// this a mixed-width expression like `i8(x) < 3` would leave `3` as i64.
+//
+// It recurses only through width-preserving arithmetic (`+ - * / % %%` and unary
+// `-`), where an operand's width equals the result's, and stops at anything with
+// its own independent type (identifiers, calls, conversions) — a conversion like
+// `i8(x)` is exactly the boundary where a new width begins. concrete must be a
+// resolved concrete numeric primitive; a nil or non-primitive concrete is a
+// no-op, as is a leaf that is already concretely typed.
+func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.Type) {
+	cp, ok := concrete.(types.PrimitiveType)
+	if !ok {
+		return
+	}
+	switch e := expr.(type) {
+	case *ast.IntegerLiteralExpr:
+		if !isAnyConcreteInt(cp.Name) {
+			return // e.g. an int literal in a float context is handled by assignability, not here
+		}
+		if !tc.currentTypeIsUntyped(e) {
+			return
+		}
+		// Only narrow when the literal actually fits the context width. A value
+		// that doesn't (`i8(x) < 300`) is left untyped rather than silently wrapped
+		// to the narrow type; it then surfaces loudly downstream (a fold-based
+		// overflow error at a decl/reassign site, or a width mismatch in the
+		// backend) instead of miscompiling. This also keeps propagation from
+		// double-reporting the overflow that checkIntegerLiteralRange already owns.
+		if !integerFitsInType(e.Value, cp.Name) {
+			return
+		}
+		tc.typeTable.Set(e, cp)
+	case *ast.FloatLiteralExpr:
+		if !isAnyConcreteFloat(cp.Name) || !tc.currentTypeIsUntyped(e) {
+			return
+		}
+		tc.typeTable.Set(e, cp)
+	case *ast.MathBinaryOpExpr:
+		tc.propagateLiteralType(e.Left, concrete)
+		tc.propagateLiteralType(e.Right, concrete)
+	case *ast.NegationExpr:
+		tc.propagateLiteralType(e.Operand, concrete)
+	}
+}
+
+// currentTypeIsUntyped reports whether expr's currently recorded type is an
+// untyped literal type (so propagateLiteralType may overwrite it with a concrete
+// width). A leaf that already has a concrete type is left alone.
+func (tc *TypeChecker) currentTypeIsUntyped(expr ast.Expression) bool {
+	t, ok := tc.typeTable.Get(expr)
+	if !ok {
+		return true // not yet recorded — safe to set
+	}
+	p, ok := t.(types.PrimitiveType)
+	if !ok {
+		return false
+	}
+	return p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt || p.Name == types.UntypedFloat
 }
 
 func isLiteralZero(expr ast.Expression) bool {

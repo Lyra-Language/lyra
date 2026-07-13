@@ -101,6 +101,10 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 			// let/var bindings. Replace the prior binding so later references
 			// resolve to this declaration. Genuinely confusing nested-scope
 			// shadowing is still reported separately by CheckShadowing.
+			// Remember the prior binding so the typechecker can resolve a
+			// self-reference in this declaration's own initializer (`let x = x + 1`)
+			// to the previous value rather than to this not-yet-typed one.
+			astNode.Shadows = v
 			ctx.RedefineVariable(astNode)
 		} else {
 			ctx.AddErrorRelated(node, diag.SeverityError,

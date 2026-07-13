@@ -99,8 +99,13 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 					tc.addError(lambda.Body.GetLocation(), SeverityError,
 						"%s: return type mismatch: expected %s, got %s",
 						funcName, declaredReturn, bodyType)
-				} else if bodyType != nil && ownedReturn {
-					tc.checkAllocationCompat(bodyType, declaredReturn, lambda.Body.GetLocation(), funcName)
+				} else if bodyType != nil {
+					// The declared return type is the body's context: push its width
+					// onto untyped literal leaves so `() -> u8 => 5 + 3` lowers at u8.
+					tc.propagateLiteralType(lambda.Body, declaredReturn)
+					if ownedReturn {
+						tc.checkAllocationCompat(bodyType, declaredReturn, lambda.Body.GetLocation(), funcName)
+					}
 				}
 			}
 		}
@@ -165,8 +170,11 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 					tc.addError(s.GetLocation(), SeverityError,
 						"%s: return type mismatch: expected %s, got %s",
 						funcName, declaredReturn, retType)
-				} else if retType != nil && ownedReturn {
-					tc.checkAllocationCompat(retType, declaredReturn, s.GetLocation(), funcName)
+				} else if retType != nil {
+					tc.propagateLiteralType(s.Value, declaredReturn)
+					if ownedReturn {
+						tc.checkAllocationCompat(retType, declaredReturn, s.GetLocation(), funcName)
+					}
 				}
 			case *ast.ExpressionStmt:
 				if i == len(stmts)-1 {
@@ -178,8 +186,13 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 						tc.addError(s.GetLocation(), SeverityError,
 							"%s: return type mismatch: expected %s, got %s",
 							funcName, declaredReturn, exprType)
-					} else if exprType != nil && ownedReturn {
-						tc.checkAllocationCompat(exprType, declaredReturn, s.GetLocation(), funcName)
+					} else if exprType != nil {
+						// The declared return type is the context for the block's
+						// value; push its width onto untyped literal leaves.
+						tc.propagateLiteralType(s.Expression, declaredReturn)
+						if ownedReturn {
+							tc.checkAllocationCompat(exprType, declaredReturn, s.GetLocation(), funcName)
+						}
 					}
 				} else {
 					// A non-final expression statement is evaluated for effect and
@@ -461,4 +474,3 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	}
 	return nil
 }
-

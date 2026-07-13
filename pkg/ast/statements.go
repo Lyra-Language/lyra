@@ -85,6 +85,13 @@ type VarDeclStmt struct {
 	GenericParams []GenericParam
 	Type          types.Type // may be nil if needs inference
 	Value         Expression
+	// Shadows points to the prior same-scope binding of this name that this
+	// declaration replaced via sequential rebinding (`let x = 5; let x = x + 1`).
+	// It lets the typechecker resolve a self-reference inside this binding's own
+	// initializer to the *previous* value rather than to this (not-yet-typed)
+	// declaration. nil for a first binding. `print:"-"`: excluded from golden
+	// output (it would recurse into the prior decl).
+	Shadows *VarDeclStmt `print:"-"`
 }
 
 func (v *VarDeclStmt) statementNode() {}

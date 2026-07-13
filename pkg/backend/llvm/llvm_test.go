@@ -29,18 +29,22 @@ func emitSource(t *testing.T, src string) (string, error) {
 // TestEmit_IntegerLiteralBody: a u8 entry whose body is an integer literal
 // returns that literal — the source value reaches the exit code. `@main`
 // itself is i32 (the actual C ABI signature, not Lyra's u8 return type — see
-// lowerEntry's doc comment), so the u8 body value is coerced (trunc, since a
-// bare literal still lowers to i64 — literal-width inference isn't
-// context-directed yet) and then zero-extended into that i32 slot.
+// lowerEntry's doc comment). Context-directed literal-width inference types the
+// body literal `42` as u8 (the declared return type), so it lowers directly as
+// an i8 constant and is zero-extended into the i32 slot — no i64→i8 trunc, since
+// the literal was never i64 in the first place.
 func TestEmit_IntegerLiteralBody(t *testing.T) {
 	got, err := emitSource(t, "let main = () -> u8 => 42\n")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"define i32 @main()", "trunc i64 42 to i8", "zext i8", "ret i32"} {
+	for _, want := range []string{"define i32 @main()", "zext i8 42 to i32", "ret i32"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("emitted IR missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "trunc") {
+		t.Errorf("expected no trunc (literal is typed u8 directly), got:\n%s", got)
 	}
 }
 
@@ -339,16 +343,81 @@ func TestExec_BoolShortCircuit(t *testing.T) {
 	}
 }
 
-// TestEmit_ComparisonMixedWidth_Error: comparing operands of different integer
-// widths (`i8(5) < 3` mixes i8 and i64, since a bare literal still lowers to
-// i64) is deferred pending context-directed literal-width inference. It type-
-// checks (the typechecker considers i8 and an untyped literal compatible) but
-// the backend errors explicitly rather than emitting an invalid `icmp` clang
-// would reject.
-func TestEmit_ComparisonMixedWidth_Error(t *testing.T) {
-	_, err := emitSource(t, "let main() -> u8 => if i8(5) < 3 { 1 } else { 0 }\n")
+func TestExec_VarDecl(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		// A value passed through a `let` binding becomes a concrete i64 (untyped
+		// literals default to i64), so — unlike a bare-literal body — it needs an
+		// explicit u8(...) to return: Lyra rejects the implicit i64→u8 narrowing.
+		{"let main() -> u8 => {\n  let x = 40\n  let y = 2\n  u8(x + y)\n}\n", 42},
+		// Sequential rebinding whose RHS reads the prior value (VarDeclStmt.Shadows):
+		// the second `x` must see the first x's value (5), not itself.
+		{"let main() -> u8 => {\n  let x = 5\n  let x = x + 1\n  u8(x)\n}\n", 6},
+		// `var` reassignment: the store updates the alloca and a later read loads
+		// the new value. The locals entry must stay the alloca slot across the
+		// store, so reading `x` after `x = x + 20` loads through it (not a stale
+		// value or a non-alloca).
+		{"let main() -> u8 => {\n  var x = 22\n  x = x + 20\n  u8(x)\n}\n", 42},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+		}
+	}
+}
+
+// TestExec_MixedWidthComparison: `i8(5) < 3` used to be deferred (the bare `3`
+// lowered to i64, mismatching the i8 lhs). Context-directed literal-width
+// inference now types `3` as i8 from its concrete sibling, so the comparison
+// lowers to a single i8 `icmp` and runs: 5 < 3 is false, so the else branch
+// (0) is taken.
+func TestExec_MixedWidthComparison(t *testing.T) {
+	if got := buildAndRun(t, "let main() -> u8 => if i8(5) < 3 { 1 } else { 0 }\n"); got != 0 {
+		t.Errorf("i8(5) < 3 exited %d; want 0 (false → else)", got)
+	}
+	if got := buildAndRun(t, "let main() -> u8 => if i8(5) < 100 { 1 } else { 0 }\n"); got != 1 {
+		t.Errorf("i8(5) < 100 exited %d; want 1 (true → then)", got)
+	}
+}
+
+// TestExec_LiteralWidthArithmetic proves context-directed literal-width
+// inference lowers arithmetic at the narrow width, not i64. Each case is chosen
+// so the answer *differs* if the untyped literals were left i64:
+//   - `x + 3` (x: i8): the `3` takes i8; without inference it'd be i64 and the
+//     i8+i64 add would be a hard IR error, not 8.
+//   - `(x * 20) / 7` (x: u8): u8-width `20*20` wraps mod 256 to 144, so 144/7=20.
+//     Done at i64 it would be 400/7=57 — a different exit code, so this pins the
+//     wrap to the operand width, not just the final truncation.
+//   - `var y: u8`, `y = y + x`: reassignment RHS literals/width flow through the
+//     alloca; 100+200 wraps to 44 at u8.
+func TestExec_LiteralWidthArithmetic(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		{"let main() -> u8 => {\n  let x: i8 = 5\n  u8(x + 3)\n}\n", 8},
+		{"let main() -> u8 => {\n  let x: u8 = 20\n  (x * 20) / 7\n}\n", 20},
+		{"let main() -> u8 => {\n  let x: u8 = 200\n  var y: u8 = 100\n  y = y + x\n  u8(y)\n}\n", 44},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+		}
+	}
+}
+
+// TestEmit_LiteralExceedsContextWidth_Error: a literal too large for the width
+// its context demands (`i8(5) < 300` — 300 doesn't fit i8) is deliberately left
+// untyped by the typechecker rather than silently wrapped, so it lowers to the
+// i64 default and mismatches the i8 lhs. The backend's defensive width-mismatch
+// guard then fires — a loud error, not miscompiled code. (A nicer typechecker
+// diagnostic for this is a possible follow-up; today it's caught at lowering.)
+func TestEmit_LiteralExceedsContextWidth_Error(t *testing.T) {
+	_, err := emitSource(t, "let main() -> u8 => if i8(5) < 300 { 1 } else { 0 }\n")
 	if err == nil {
-		t.Fatal("expected an error for a mismatched-width comparison")
+		t.Fatal("expected an error: 300 does not fit i8, leaving a mismatched-width comparison")
 	}
 	if !strings.Contains(err.Error(), "mismatched integer widths") {
 		t.Errorf("expected a width-mismatch error, got: %v", err)

@@ -80,7 +80,7 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 	}
 	m := ir.NewModule()
 	declareRuntime(m)
-	l := &lowerer{module: m, res: res}
+	l := &lowerer{module: m, res: res, locals: map[string]value.Value{}}
 	if err := l.lowerEntry(entry); err != nil {
 		return nil, err
 	}
@@ -91,6 +91,7 @@ type lowerer struct {
 	module *ir.Module
 	res    *driver.Result // gives you TypeTable, SymbolTable, MethodTable, …
 	// grows over time: locals map[string]value.Value, funcs map[string]*ir.Func, etc.
+	locals map[string]value.Value // name → its alloca (a pointer)
 }
 
 // lowerEntry defines `@main` and returns the entry function's value as the
@@ -148,19 +149,28 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 // It returns an error (rather than emitting wrong code) for a form that isn't
 // handled yet, so `lyrac build` fails loudly.
 //
-// Integer literals lower to an i64 constant for now (the target width should
-// eventually come from res.TypeTable rather than being hardcoded); callers that
-// need a narrower width coerce via coerceIntWidth.
+// Integer literals lower at the width the typechecker recorded for them
+// (literalIntType) — context-directed literal-width inference pushes the
+// surrounding width (an annotation, a concrete sibling operand, a declared
+// return type) onto the literal, so `i8(x) < 3` lowers `3` as i8. A literal with
+// no resolved context (e.g. an unannotated `let x = 5`) defaults to i64.
 func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
-		return constant.NewInt(lltypes.I64, e.Value), block, nil
+		return constant.NewInt(l.literalIntType(e), e.Value), block, nil
 	case *ast.BooleanLiteralExpr:
 		bit := int64(0)
 		if e.Value {
 			bit = 1
 		}
 		return constant.NewInt(lltypes.I1, bit), block, nil
+	case *ast.IdentifierExpr:
+		slot, ok := l.locals[e.Name]
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: unbound identifier %q", e.Name)
+		}
+		ptr := slot.(*ir.InstAlloca)
+		return block.NewLoad(ptr.ElemType, slot), block, nil
 	case *ast.BooleanBinaryOpExpr:
 		return l.lowerBooleanBinaryOpExpr(block, e)
 	case *ast.MathBinaryOpExpr:
@@ -175,6 +185,24 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		return l.lowerIf(block, e)
 	}
 	return nil, nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
+}
+
+// literalIntType returns the LLVM integer type an integer literal should lower
+// at: the concrete width the typechecker recorded for it (via context-directed
+// literal-width inference), or i64 when the literal has no resolved context (an
+// unannotated binding, or a literal whose value didn't fit the context width so
+// the typechecker deliberately left it untyped — see propagateLiteralType).
+func (l *lowerer) literalIntType(e ast.Expression) *lltypes.IntType {
+	if t, ok := l.res.TypeTable.Get(e); ok {
+		if p, ok := t.(types.PrimitiveType); ok {
+			if ll, ok := LLVMPrimitive(p.Name); ok {
+				if it, ok := ll.(*lltypes.IntType); ok {
+					return it
+				}
+			}
+		}
+	}
+	return lltypes.I64
 }
 
 func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinaryOpExpr) (value.Value, *ir.Block, error) {
@@ -195,12 +223,14 @@ func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinary
 	}
 	// Comparisons are integer-only for now (bool `==`/`!=` included — i1 is
 	// an integer type). `icmp` requires both operands to have the same
-	// integer type, so two cases are deferred and reported explicitly rather
-	// than emitting invalid IR clang would reject: a float operand (would
-	// need `fcmp`, and no float value is lowerable yet anyway), and a width
-	// mismatch between the operands (a bare literal still lowers to i64, so
-	// `i8(x) < 3` mixes i8 and i64 — closing that needs context-directed
-	// literal-width inference, deferred elsewhere in this package too).
+	// integer type, so two cases are reported explicitly rather than emitting
+	// invalid IR clang would reject: a float operand (would need `fcmp`, and no
+	// float value is lowerable yet anyway), and a width mismatch. With
+	// context-directed literal-width inference a literal sibling now takes the
+	// concrete operand's width (`i8(x) < 3` → both i8), so the width guard is
+	// defensive: it fires only when a literal is too large for that width and
+	// was left untyped (`i8(x) < 300`), lowering to the i64 default — loud, not
+	// miscompiled.
 	lt, lok := left.Type().(*lltypes.IntType)
 	rt, rok := right.Type().(*lltypes.IntType)
 	if !lok || !rok {
@@ -397,20 +427,60 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 func (l *lowerer) lowerBlock(block *ir.Block, be *ast.BlockExpr) (value.Value, *ir.Block, error) {
 	var v value.Value
 	for _, stmt := range be.Statements {
-		exprStmt, ok := stmt.(*ast.ExpressionStmt)
-		if !ok {
+		switch s := stmt.(type) {
+		case *ast.ExpressionStmt:
+			var err error
+			v, block, err = l.lowerExpr(block, s.Expression)
+			if err != nil {
+				return nil, nil, err
+			}
+		case *ast.VarDeclStmt:
+			var err error
+			block, err = l.lowerVarDecl(block, s)
+			if err != nil {
+				return nil, nil, err
+			}
+			v = nil // a binding is not itself the block's value
+		case *ast.VarReassignmentStmt:
+			var err error
+			block, err = l.lowerVarReassignment(block, s)
+			if err != nil {
+				return nil, nil, err
+			}
+			v = nil // a binding is not itself the block's value
+		default:
 			return nil, nil, fmt.Errorf("llvm: block statement lowering not implemented for %T", stmt)
-		}
-		var err error
-		v, block, err = l.lowerExpr(block, exprStmt.Expression)
-		if err != nil {
-			return nil, nil, err
 		}
 	}
 	if v == nil {
 		return nil, nil, fmt.Errorf("llvm: block has no value (empty, or last statement is not an expression)")
 	}
 	return v, block, nil
+}
+
+func (l *lowerer) lowerVarDecl(block *ir.Block, vds *ast.VarDeclStmt) (*ir.Block, error) {
+	init, block, err := l.lowerExpr(block, vds.Value)
+	if err != nil {
+		return nil, err
+	}
+	// Alloca in the *entry* block (mem2reg only promotes entry-block allocas).
+	entry := block.Parent.Blocks[0]
+	slot := entry.NewAlloca(init.Type())
+	block.NewStore(init, slot)
+	l.locals[vds.Name] = slot // later re-declaration of the same name just overwrites
+	return block, nil
+}
+
+func (l *lowerer) lowerVarReassignment(block *ir.Block, vrs *ast.VarReassignmentStmt) (*ir.Block, error) {
+	rhsVal, block, err := l.lowerExpr(block, vrs.Value)
+	if err != nil {
+		return nil, err
+	}
+	// Store into the existing alloca; the locals entry stays the alloca slot
+	// (a pointer), NOT the stored value — a later read loads from it. Overwriting
+	// it with rhsVal would break the next IdentifierExpr load (slot.(*InstAlloca)).
+	block.NewStore(rhsVal, l.locals[vrs.Name])
+	return block, nil
 }
 
 // lowerIf lowers an if/else expression to the standard four-block diamond with
