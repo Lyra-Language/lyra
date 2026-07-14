@@ -351,19 +351,130 @@ func TestExec_VarDecl(t *testing.T) {
 		// A value passed through a `let` binding becomes a concrete i64 (untyped
 		// literals default to i64), so — unlike a bare-literal body — it needs an
 		// explicit u8(...) to return: Lyra rejects the implicit i64→u8 narrowing.
-		{"let main() -> u8 => {\n  let x = 40\n  let y = 2\n  u8(x + y)\n}\n", 42},
+		{`
+let main() -> u8 => {
+  let x = 40
+  let y = 2
+  u8(x + y)
+}
+`, 42},
 		// Sequential rebinding whose RHS reads the prior value (VarDeclStmt.Shadows):
 		// the second `x` must see the first x's value (5), not itself.
-		{"let main() -> u8 => {\n  let x = 5\n  let x = x + 1\n  u8(x)\n}\n", 6},
+		{`
+let main() -> u8 => {
+  let x = 5
+  let x = x + 1
+  u8(x)
+}
+`, 6},
 		// `var` reassignment: the store updates the alloca and a later read loads
 		// the new value. The locals entry must stay the alloca slot across the
 		// store, so reading `x` after `x = x + 20` loads through it (not a stale
 		// value or a non-alloca).
-		{"let main() -> u8 => {\n  var x = 22\n  x = x + 20\n  u8(x)\n}\n", 42},
+		{`
+let main() -> u8 => {
+  var x = 22
+  x = x + 20
+  u8(x)
+}
+`, 42},
 	}
 	for _, c := range cases {
 		if got := buildAndRun(t, c.src); got != c.want {
 			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+		}
+	}
+}
+
+// TestExec_ForLoop exercises the cond/body/post/exit CFG end to end. Only the
+// infinite (`for {}`) and condition-only (`for cond {}`) forms type-check today
+// (the init/`+=` three-clause form is blocked on two frontend gaps — see the
+// package doc + lyra/todo.md), so the loop variable is an outer `var` mutated
+// with plain reassignment in the body. Each case's exit code distinguishes a
+// correct CFG from a broken one:
+//   - accumulator: proves the back-edge runs the body N times (0+1+2+3+4 = 10).
+//   - break: an infinite loop that would never exit without break leaves at 4.
+//   - continue: `continue` still runs the loop step, so odd i are skipped and
+//     the even values 2+4+6+8+10 = 30 accumulate (proves continue targets the
+//     post/step path, not straight back to the condition losing the increment).
+//   - nested + labeled break: `break outer` from the inner loop exits both;
+//     control reaches it after exactly two inner increments, so 2.
+func TestExec_ForLoop(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			"accumulator",
+			`
+let main() -> u8 => {
+  var s = 0
+  var i = 0
+  for i < 5 {
+    s = s + i
+    i = i + 1
+  }
+  u8(s)
+}
+`,
+			10,
+		},
+		{
+			"infinite + break",
+			`
+let main() -> u8 => {
+  var s = 0
+  for {
+    if s > 3 { break }
+    s = s + 1
+  }
+  u8(s)
+}
+`,
+			4,
+		},
+		{
+			"continue",
+			`
+let main() -> u8 => {
+  var s = 0
+  var i = 0
+  for i < 10 {
+    i = i + 1
+    if i % 2 == 1 { continue }
+    s = s + i
+  }
+  u8(s)
+}
+`,
+			30,
+		},
+		{
+			"nested + labeled break",
+			`
+let main() -> u8 => {
+  var c = 0
+  var i = 0
+  var j = 0
+  outer: for i < 3 {
+    j = 0
+    for j < 3 {
+      if j == 2 { break outer }
+      c = c + 1
+      j = j + 1
+    }
+    i = i + 1
+  }
+  u8(c)
+}
+`,
+			2,
+		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
 		}
 	}
 }
@@ -397,9 +508,26 @@ func TestExec_LiteralWidthArithmetic(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"let main() -> u8 => {\n  let x: i8 = 5\n  u8(x + 3)\n}\n", 8},
-		{"let main() -> u8 => {\n  let x: u8 = 20\n  (x * 20) / 7\n}\n", 20},
-		{"let main() -> u8 => {\n  let x: u8 = 200\n  var y: u8 = 100\n  y = y + x\n  u8(y)\n}\n", 44},
+		{`
+let main() -> u8 => {
+  let x: i8 = 5
+  u8(x + 3)
+}
+`, 8},
+		{`
+let main() -> u8 => {
+  let x: u8 = 20
+  (x * 20) / 7
+}
+`, 20},
+		{`
+let main() -> u8 => {
+  let x: u8 = 200
+  var y: u8 = 100
+  y = y + x
+  u8(y)
+}
+`, 44},
 	}
 	for _, c := range cases {
 		if got := buildAndRun(t, c.src); got != c.want {
