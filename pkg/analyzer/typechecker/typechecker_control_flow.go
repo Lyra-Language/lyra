@@ -974,26 +974,40 @@ func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 
 // checkForLoopExpr type-checks a C-style for loop.
 //
-// When there is no init clause, all condition variables live in an outer
-// scope that the typechecker can reach, so the condition operands are
-// validated via checkBooleanBinaryOpExpr. When an init clause is present,
-// the init-declared variable lives in the loop's own scope, which cannot be
-// reached via the scope table (because ForLoopExpr.Body stores a value copy
-// of the BlockExpr, not the original pointer that was registered); skipping
-// the condition check in that case avoids false "undefined identifier" errors.
+// The whole loop is checked inside the loop's own scope (registered on the loop
+// node by the collector, RecordScope(loop, loopScope)), which holds an init
+// clause's variable. Entering it lets the init variable resolve in the condition,
+// the post clause, and the body — so the three-clause `for var i = 0; i < n; i +=
+// 1` form type-checks. The init clause is checked first so its variable's type is
+// recorded before those uses.
+//
+// Known limitation: a `let`/`var` declared *inside* the body still doesn't
+// resolve there. The collector puts body-locals in a child block scope keyed to
+// the original body pointer, but ForLoopExpr.Body is a value copy, so
+// inferBlockType's enterScope can't find that scope and the body is checked in
+// loopScope directly. The loop variable lives in loopScope so it resolves; a
+// body-local does not (see lyra/todo.md — fixing it means making Body a pointer).
 func (tc *TypeChecker) checkForLoopExpr(expr *ast.ForLoopExpr) {
-	if expr.Init == nil && expr.Condition != nil {
-		condType := tc.inferExprType(*expr.Condition)
-		if condType != nil && !types.IsBoolean(condType) {
-			tc.addError((*expr.Condition).GetLocation(), SeverityError,
-				"for loop condition must be boolean, got %s", condType)
+	tc.enterScope(expr, func() {
+		if expr.Init != nil {
+			tc.checkVarDecl(expr.Init)
 		}
-		if lit, ok := (*expr.Condition).(*ast.BooleanLiteralExpr); ok {
-			tc.addError((*expr.Condition).GetLocation(), SeverityWarning,
-				"condition is always %t", lit.Value)
+		if expr.Condition != nil {
+			condType := tc.inferExprType(*expr.Condition)
+			if condType != nil && !types.IsBoolean(condType) {
+				tc.addError((*expr.Condition).GetLocation(), SeverityError,
+					"for loop condition must be boolean, got %s", condType)
+			}
+			if lit, ok := (*expr.Condition).(*ast.BooleanLiteralExpr); ok {
+				tc.addError((*expr.Condition).GetLocation(), SeverityWarning,
+					"condition is always %t", lit.Value)
+			}
 		}
-	}
-	tc.inferBlockType(&expr.Body)
+		if expr.Post != nil {
+			tc.inferExprType(*expr.Post)
+		}
+		tc.inferBlockType(&expr.Body)
+	})
 }
 
 // inferNullCoalescingExpr type-checks a `??` expression. The left operand must

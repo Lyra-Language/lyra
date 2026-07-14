@@ -386,12 +386,11 @@ let main() -> u8 => {
 	}
 }
 
-// TestExec_ForLoop exercises the cond/body/post/exit CFG end to end. Only the
-// infinite (`for {}`) and condition-only (`for cond {}`) forms type-check today
-// (the init/`+=` three-clause form is blocked on two frontend gaps — see the
-// package doc + lyra/todo.md), so the loop variable is an outer `var` mutated
-// with plain reassignment in the body. Each case's exit code distinguishes a
-// correct CFG from a broken one:
+// TestExec_ForLoop exercises the cond/body/post/exit CFG end to end. These cases
+// use the infinite (`for {}`) and condition-only (`for cond {}`) forms with the
+// loop variable as an outer `var`; the three-clause `for var i=…; …; i+=…` form
+// is covered separately in TestExec_ForLoopThreeClause. Each case's exit code
+// distinguishes a correct CFG from a broken one:
 //   - accumulator: proves the back-edge runs the body N times (0+1+2+3+4 = 10).
 //   - break: an infinite loop that would never exit without break leaves at 4.
 //   - continue: `continue` still runs the loop step, so odd i are skipped and
@@ -470,6 +469,83 @@ let main() -> u8 => {
 }
 `,
 			2,
+		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestExec_ForLoopThreeClause covers the full `for var i = init; cond; i op= step`
+// form, now that the two frontend gaps are fixed (a MathAssignOpExpr inferExprType
+// case for the `+=` post/body; entering the loop's scope so the init variable
+// resolves in the condition/post/body). Each case's exit code pins a distinct
+// behavior:
+//   - upward `+= 1` with the counter read in the body: 0+1+2+3+4 = 10.
+//   - `+=` used *inside* the body (not just the post) also lowers (load/op/store).
+//   - downward `-= 1` from 5 while `i > 0`: 5+4+3+2+1 = 15 (proves the post step
+//     and condition compose for a decreasing counter).
+//   - a narrow `u8` counter: the `+=` RHS literal takes the counter's width
+//     (checkMathAssignOp propagation), so it lowers at u8 instead of mismatching.
+func TestExec_ForLoopThreeClause(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			"upward",
+			`
+let main() -> u8 => {
+  var s = 0
+  for var i = 0; i < 5; i += 1 {
+    s = s + i
+  }
+  u8(s)
+}
+`,
+			10,
+		},
+		{
+			"compound-assign in body",
+			`
+let main() -> u8 => {
+  var s = 0
+  for var i = 0; i < 5; i += 1 {
+    s += i
+  }
+  u8(s)
+}
+`,
+			10,
+		},
+		{
+			"downward",
+			`
+let main() -> u8 => {
+  var s = 0
+  for var i = 5; i > 0; i -= 1 {
+    s += i
+  }
+  u8(s)
+}
+`,
+			15,
+		},
+		{
+			"narrow u8 counter",
+			`
+let main() -> u8 => {
+  var s: u8 = 0
+  for var i: u8 = 0; i < 5; i += 1 {
+    s = s + i
+  }
+  u8(s)
+}
+`,
+			10,
 		},
 	}
 	for _, c := range cases {

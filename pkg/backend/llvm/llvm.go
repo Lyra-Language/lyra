@@ -9,11 +9,12 @@
 // floored `%%` vs truncated `%`), int-to-int numeric conversions (`i8(x)`,
 // `u32(x)`, …), integer comparisons (`< <= > >= == !=` → icmp), short-circuit
 // `&&`/`||` (cond-br + phi), blocks (value = last expression), `if`/`else`
-// (cond-br + phi diamond; one-armed `if` as a statement), `let`/`var` bindings
-// and reassignment, and `for` loops with `break`/`continue` (cond/body/post/exit
-// CFG; only the infinite and condition-only forms type-check today — see
-// lowerForLoop). Any other body form errors (the build fails loudly rather than
-// emitting wrong code). Grow lowerExpr and lowerType from here.
+// (cond-br + phi diamond; one-armed `if` as a statement), `let`/`var` bindings,
+// reassignment and compound assignment (`i += 1`), and `for` loops with
+// `break`/`continue` (cond/body/post/exit CFG; all forms — infinite,
+// condition-only, and three-clause `for var i = 0; i < n; i += 1`). Any other
+// body form errors (the build fails loudly rather than emitting wrong code).
+// Grow lowerExpr and lowerType from here.
 //
 // Break/continue make a block terminate mid-stream, so lowering now follows a
 // termination discipline: lowerBlockStmts stops at a sealed block and every
@@ -212,6 +213,8 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		return l.lowerBooleanBinaryOpExpr(block, e)
 	case *ast.MathBinaryOpExpr:
 		return l.lowerMathBinaryOpExpr(block, e)
+	case *ast.MathAssignOpExpr:
+		return l.lowerMathAssignOp(block, e)
 	case *ast.NegationExpr:
 		return l.lowerNegationExpr(block, e)
 	case *ast.FunctionCallExpr:
@@ -386,26 +389,35 @@ func (l *lowerer) lowerMathBinaryOpExpr(block *ir.Block, e *ast.MathBinaryOpExpr
 	if err != nil {
 		return nil, nil, err
 	}
-	switch e.Operator {
+	v, err := l.applyIntMathOp(block, e.Operator, left, right, signed)
+	return v, block, err
+}
+
+// applyIntMathOp emits the instruction(s) for a binary integer arithmetic op on
+// two already-lowered same-width values. Shared by lowerMathBinaryOpExpr and
+// lowerMathAssignOp (`i += x` is `i = i <op> x`). signed selects sdiv/srem vs
+// udiv/urem and the floored-remainder fixup; add/sub/mul are signedness-agnostic.
+func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value, signed bool) (value.Value, error) {
+	switch op {
 	case ast.MathBinaryOpAdd:
-		return block.NewAdd(left, right), block, nil
+		return block.NewAdd(left, right), nil
 	case ast.MathBinaryOpSub:
-		return block.NewSub(left, right), block, nil
+		return block.NewSub(left, right), nil
 	case ast.MathBinaryOpMul:
-		return block.NewMul(left, right), block, nil
+		return block.NewMul(left, right), nil
 	case ast.MathBinaryOpDiv:
 		if signed {
-			return block.NewSDiv(left, right), block, nil
+			return block.NewSDiv(left, right), nil
 		}
-		return block.NewUDiv(left, right), block, nil
+		return block.NewUDiv(left, right), nil
 	case ast.MathBinaryOpMod:
 		// Mod (%): Odin's "modulo (truncated)" — sign follows the
 		// dividend, exactly what LLVM's srem/urem give natively.
 		// 11 % -3 = 2.
 		if signed {
-			return block.NewSRem(left, right), block, nil
+			return block.NewSRem(left, right), nil
 		}
-		return block.NewURem(left, right), block, nil
+		return block.NewURem(left, right), nil
 	case ast.MathBinaryOpRemainder:
 		// Remainder (%%): Odin's "remainder (floored)" — sign follows the
 		// divisor, distinct from Mod above. 11 %% -3 = -1 (vs Mod's 2).
@@ -413,12 +425,57 @@ func (l *lowerer) lowerMathBinaryOpExpr(block *ir.Block, e *ast.MathBinaryOpExpr
 		// value is non-negative, so there's nothing to floor), hence
 		// urem directly; the signed case needs lowerFlooredSRem's fixup.
 		if signed {
-			return l.lowerFlooredSRem(block, left, right), block, nil
+			return l.lowerFlooredSRem(block, left, right), nil
 		}
-		return block.NewURem(left, right), block, nil
+		return block.NewURem(left, right), nil
 	default:
-		return nil, nil, fmt.Errorf("llvm: math binary op lowering not implemented for %v", e.Operator)
+		return nil, fmt.Errorf("llvm: math binary op lowering not implemented for %v", op)
 	}
+}
+
+// mathAssignToBinaryOp maps a compound-assignment operator to the plain binary op
+// it applies (`+=` → `+`), so lowerMathAssignOp reuses applyIntMathOp.
+var mathAssignToBinaryOp = map[ast.MathAssignOp]ast.MathBinaryOp{
+	ast.MathAssignOpAdd:       ast.MathBinaryOpAdd,
+	ast.MathAssignOpSub:       ast.MathBinaryOpSub,
+	ast.MathAssignOpMul:       ast.MathBinaryOpMul,
+	ast.MathAssignOpDiv:       ast.MathBinaryOpDiv,
+	ast.MathAssignOpMod:       ast.MathBinaryOpMod,
+	ast.MathAssignOpRemainder: ast.MathBinaryOpRemainder,
+}
+
+// lowerMathAssignOp lowers a compound assignment (`i += x`) to load / op / store
+// against the target's alloca: load the current value, apply the binary op with
+// the lowered RHS, store the result back. The target is always a local binding
+// (an lvalue name), so its slot is in l.locals. Signedness comes from the RHS,
+// whose width the typechecker propagated to match the target (checkMathAssignOp),
+// so both operands share a width for the op.
+func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (value.Value, *ir.Block, error) {
+	slot, ok := l.locals[e.Left.Name]
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: compound assignment to unbound identifier %q", e.Left.Name)
+	}
+	binOp, ok := mathAssignToBinaryOp[e.Operator]
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: compound assignment %q not implemented", e.Operator)
+	}
+	ptr := slot.(*ir.InstAlloca)
+	cur := block.NewLoad(ptr.ElemType, slot)
+	rhs, block, err := l.lowerExpr(block, e.Right)
+	if err != nil {
+		return nil, nil, err
+	}
+	signed, err := l.getIntSignedness(e.Right)
+	if err != nil {
+		return nil, nil, err
+	}
+	result, err := l.applyIntMathOp(block, binOp, cur, rhs, signed)
+	if err != nil {
+		return nil, nil, err
+	}
+	block.NewStore(result, slot)
+	// A compound assignment yields no value (see the typechecker's void result).
+	return nil, block, nil
 }
 
 func (l *lowerer) lowerNegationExpr(block *ir.Block, e *ast.NegationExpr) (value.Value, *ir.Block, error) {
@@ -564,11 +621,10 @@ func (l *lowerer) lowerContinue(block *ir.Block, s *ast.ContinueStmt) error {
 // ended in break/continue/return has already sealed its block, and emitting a
 // second terminator would be invalid IR.
 //
-// Init and Post are lowered when present (so the machinery is ready), but the
-// init/`+=` `for` form doesn't type-check yet (a `MathAssignOpExpr` post has no
-// inferExprType case, and the init variable isn't scoped into the body), so today
-// only the infinite (`for {}`) and condition-only (`for cond {}`) forms reach
-// here — see lyra/todo.md.
+// All three forms reach here: infinite (`for {}`, nil condition → an
+// unconditional branch into the body), condition-only (`for cond {}`), and the
+// three-clause `for var i = 0; i < n; i += 1` (Init via lowerVarDecl, Post a
+// MathAssignOpExpr via lowerMathAssignOp).
 func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value, *ir.Block, error) {
 	if e.Init != nil {
 		var err error

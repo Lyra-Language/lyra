@@ -834,7 +834,13 @@ func (tc *TypeChecker) addParamImmutableError(loc ast.Location, name string, mod
 }
 
 func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
-	tc.checkAssignToBinding(expr.Left.Name, expr.Right, expr.GetLocation())
+	effective := tc.checkAssignToBinding(expr.Left.Name, expr.Right, expr.GetLocation())
+	if effective != nil {
+		// Record the target's width on untyped literal leaves of the RHS, so
+		// `i += 1` with a narrow `i` lowers `1` at that width (matching plain
+		// reassignment — see checkVarReassignment) rather than the i64 default.
+		tc.propagateLiteralType(expr.Right, effective)
+	}
 }
 
 func (tc *TypeChecker) checkBooleanLiteralExpr(expr *ast.BooleanLiteralExpr) {
@@ -1117,6 +1123,15 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		return tc.checkMatchExpr(e)
 	case *ast.MathBinaryOpExpr:
 		return tc.inferMathBinaryExpr(e)
+	case *ast.MathAssignOpExpr:
+		// A compound assignment (`i += 1`) is a statement-like expression: it
+		// mutates its target and yields no usable value. It reaches inferExprType
+		// (rather than checkExpressionStmt's dedicated case) when it sits in value
+		// position — a block's last statement, or a `for` loop's post clause. Void
+		// is the right "no value" result; a caller that needs a real value (e.g. a
+		// non-void function body) then correctly fails the assignability check.
+		tc.checkMathAssignOp(e)
+		return types.VoidType{}
 	case *ast.StringConcatExpr:
 		return tc.inferStringConcatExpr(e)
 	case *ast.RegexLiteralExpr:
