@@ -15,6 +15,7 @@ func TestCollect_ForLoopWithCondition(t *testing.T) {
 	var i = 0
 	for i < 10 {
 		println("i == ${i}")
+		i += 1
 	}`
 	runGoldenTest(t, source, "for_loop_with_condition")
 }

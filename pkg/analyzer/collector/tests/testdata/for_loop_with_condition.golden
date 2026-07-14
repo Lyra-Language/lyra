@@ -39,6 +39,24 @@ Program(2 statements) {
 										}
 									}
 								}
+								ExpressionStmt {
+									Expression: {
+										MathAssignOpExpr {
+											Left: {
+												IdentifierExpr(i) {
+													Name: i
+												}
+											}
+											Operator: +=
+											Right: {
+												IntegerLiteralExpr {
+													Base: 10
+													Value: 1
+												}
+											}
+										}
+									}
+								}
 							}
 						}
 					}
