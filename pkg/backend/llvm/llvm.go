@@ -89,10 +89,19 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 	}
 	m := ir.NewModule()
 	declareRuntime(m)
-	l := &lowerer{module: m, res: res, locals: map[string]value.Value{}}
+	l := &lowerer{
+		module: m,
+		res:    res,
+		locals: map[string]value.Value{},
+		funcs:  map[string]*ir.Func{},
+	}
 	if err := l.lowerEntry(entry); err != nil {
 		return nil, err
 	}
+	if err := l.lowerTopLevelFunctions(res.Program, entry.Lambda); err != nil {
+		return nil, err
+	}
+
 	return []byte(m.String()), nil
 }
 
@@ -102,6 +111,7 @@ type lowerer struct {
 	// grows over time: funcs map[string]*ir.Func, etc.
 	locals map[string]value.Value // name → its alloca (a pointer)
 	loops  []loopCtx              // stack of enclosing loops; top is the innermost
+	funcs  map[string]*ir.Func    // name → its function IR
 }
 
 // loopCtx records the blocks a break/continue in the current loop jumps to. It's
@@ -174,6 +184,62 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 		block.NewRet(constant.NewInt(lltypes.I32, 0))
 	}
 	return nil
+}
+
+func (l *lowerer) lowerTopLevelFunctions(program *ast.Program, entry *ast.LambdaExpr) error {
+	for _, stmt := range program.Statements {
+		decl, ok := stmt.(*ast.VarDeclStmt)
+		if !ok {
+			continue
+		}
+		fn, ok := decl.Value.(*ast.LambdaExpr)
+		if !ok || fn == entry {
+			continue // main is emitted by lowerEntry with the special i32 ABI
+		}
+		if err := l.lowerFunction(decl, fn); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (l *lowerer) lowerFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) error {
+	retType, err := l.lowerType(fn.ReturnType.Type)
+	if err != nil {
+		return err
+	}
+	irParams := make([]*ir.Param, 0, len(fn.Parameters))
+	for _, param := range fn.Parameters {
+		irParam, err := l.lowerParameter(param)
+		if err != nil {
+			return err
+		}
+		irParams = append(irParams, irParam)
+	}
+	irFn := l.module.NewFunc(decl.Name, retType, irParams...)
+	l.funcs[decl.Name] = irFn
+	return nil
+}
+
+func (l *lowerer) lowerParameter(param ast.Parameter) (*ir.Param, error) {
+	irType, err := l.lowerType(param.Type)
+	if err != nil {
+		return nil, err
+	}
+	return ir.NewParam(param.GetName(), irType), nil
+}
+
+func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
+	switch t := lyraType.(type) {
+	case types.PrimitiveType:
+		irType, ok := LLVMPrimitive(t.Name)
+		if !ok {
+			return nil, fmt.Errorf("unknown primitive type: %s", t.Name)
+		}
+		return irType, nil
+	default:
+		return nil, fmt.Errorf("unknown type: %s", lyraType)
+	}
 }
 
 // lowerExpr lowers a Lyra expression to an LLVM value, appending any

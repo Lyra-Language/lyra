@@ -251,12 +251,19 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d (%s): cannot assign %s to %s",
 				calleeName, i+1, paramName, argType, param.Type)
-		} else if paramOwnsArgument(param.TypeModifier) {
-			// An `own` parameter adopts the argument into its own storage, so the
-			// flavors must match; a borrowed parameter is allocation-polymorphic
-			// and is skipped.
-			tc.checkAllocationCompat(argType, resolvedParamType, arg.GetLocation(),
-				fmt.Sprintf("%s: argument %d (%s)", calleeName, i+1, paramName))
+		} else {
+			// The parameter type is the argument's context: push its width onto
+			// untyped literal args so the backend lowers `add(200)` at the param's
+			// width, not the i64 default. Applies to every assignable arg, not just
+			// `own` ones (width is orthogonal to ownership).
+			tc.propagateLiteralType(arg, resolvedParamType)
+			if paramOwnsArgument(param.TypeModifier) {
+				// An `own` parameter adopts the argument into its own storage, so
+				// the flavors must match; a borrowed parameter is allocation-
+				// polymorphic and is skipped.
+				tc.checkAllocationCompat(argType, resolvedParamType, arg.GetLocation(),
+					fmt.Sprintf("%s: argument %d (%s)", calleeName, i+1, paramName))
+			}
 		}
 	}
 
