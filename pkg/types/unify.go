@@ -77,17 +77,30 @@ func TypesEqual(a, b Type) bool {
 		}
 		return true
 	case TupleType:
-		if bt, ok := b.(TupleType); ok {
-			if len(at.Elements) != len(bt.Elements) {
+		bt, ok := b.(TupleType)
+		if !ok {
+			return false
+		}
+		if !IsAnonymousTupleName(at.Name) || !IsAnonymousTupleName(bt.Name) {
+			// A named tuple is nominal (Pit-of-Success #8, todo.md: "positional
+			// nominal"), matching NamedStructType's name-only equality —
+			// construction validates a named literal's shape against its
+			// declaration (inferTupleLiteralExpr), so name equality alone is
+			// sound here (a name-vs-anonymous or differing-name pair is simply
+			// unequal, same as the two branches below never needing a separate
+			// case).
+			return at.Name == bt.Name
+		}
+		// Both anonymous: structural (element-wise) equality, as before.
+		if len(at.Elements) != len(bt.Elements) {
+			return false
+		}
+		for i := range at.Elements {
+			if !TypesEqual(at.Elements[i], bt.Elements[i]) {
 				return false
 			}
-			for i := range at.Elements {
-				if !TypesEqual(at.Elements[i], bt.Elements[i]) {
-					return false
-				}
-			}
-			return true
 		}
+		return true
 	case DataType:
 		if bt, ok := b.(DataType); ok {
 			return at.Name == bt.Name

@@ -3,8 +3,13 @@ Program(1 statements) {
 		VarDeclStmt(point) {
 			BindingKind: let
 			Name: point
+			Type: {
+				UnresolvedType(Point) {
+					Name: Point
+				}
+			}
 			Value: {
-				TupleLiteralExpr(Point) {
+				TupleLiteralExpr(?) {
 					Elements: {
 						IntegerLiteralExpr {
 							Base: 10
@@ -15,7 +20,7 @@ Program(1 statements) {
 							Value: 2
 						}
 					}
-					Name: Point
+					Name: ?
 				}
 			}
 		}

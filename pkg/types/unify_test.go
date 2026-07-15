@@ -178,3 +178,57 @@ func TestTypesNotEqualAnonymousStruct(t *testing.T) {
 		t.Fatalf("expected %s and %s to be unequal", a, b)
 	}
 }
+
+// A named tuple (`tuple Point(i32, i32)`) is nominal — Pit-of-Success #8
+// (todo.md) decided named tuples are "positional nominal", matching
+// NamedStructType's name-only equality above. Before this fix, TypeType's case
+// ignored Name entirely and compared purely by element shape.
+func TestTypesEqualNamedTuple(t *testing.T) {
+	a := types.TupleType{Name: "Point", Elements: []types.Type{types.PrimitiveType{Name: types.Int32}, types.PrimitiveType{Name: types.Int32}}}
+	b := types.TupleType{Name: "Point", Elements: []types.Type{types.PrimitiveType{Name: types.Int32}, types.PrimitiveType{Name: types.Int32}}}
+	if !types.TypesEqual(a, b) {
+		t.Fatalf("expected %s and %s to be equal", a, b)
+	}
+}
+
+// The motivating case: two named tuples with identical element shapes but
+// different names must be unequal — the whole point of making them nominal.
+func TestTypesNotEqualNamedTupleDifferentNames(t *testing.T) {
+	shape := []types.Type{types.PrimitiveType{Name: types.Int32}, types.PrimitiveType{Name: types.Int32}}
+	a := types.TupleType{Name: "Point", Elements: shape}
+	b := types.TupleType{Name: "Vector", Elements: shape}
+	if types.TypesEqual(a, b) {
+		t.Fatalf("expected %s and %s to be unequal (same shape, different name)", a, b)
+	}
+}
+
+// A named tuple is never equal to an anonymous tuple, even of the same shape
+// — nominal identity, not structural.
+func TestTypesNotEqualNamedTupleVsAnonymous(t *testing.T) {
+	shape := []types.Type{types.PrimitiveType{Name: types.Int32}, types.PrimitiveType{Name: types.Int32}}
+	named := types.TupleType{Name: "Point", Elements: shape}
+	for _, anonName := range []string{"", "?"} {
+		anon := types.TupleType{Name: anonName, Elements: shape}
+		if types.TypesEqual(named, anon) {
+			t.Fatalf("expected %s and %s (anonName=%q) to be unequal", named, anon, anonName)
+		}
+	}
+}
+
+// Anonymous tuples (Name == "" or "?", IsAnonymousTupleName's two sentinels)
+// stay structural: same element types, different Name sentinel, still equal.
+func TestTypesEqualAnonymousTupleStructural(t *testing.T) {
+	a := types.TupleType{Name: "?", Elements: []types.Type{types.PrimitiveType{Name: types.Int64}, types.PrimitiveType{Name: types.String}}}
+	b := types.TupleType{Name: "", Elements: []types.Type{types.PrimitiveType{Name: types.Int64}, types.PrimitiveType{Name: types.String}}}
+	if !types.TypesEqual(a, b) {
+		t.Fatalf("expected two anonymous tuples of the same shape to be equal regardless of Name sentinel: %s vs %s", a, b)
+	}
+}
+
+func TestTypesNotEqualAnonymousTupleDifferentShape(t *testing.T) {
+	a := types.TupleType{Name: "?", Elements: []types.Type{types.PrimitiveType{Name: types.Int64}, types.PrimitiveType{Name: types.Int64}}}
+	b := types.TupleType{Name: "?", Elements: []types.Type{types.PrimitiveType{Name: types.Int64}, types.PrimitiveType{Name: types.String}}}
+	if types.TypesEqual(a, b) {
+		t.Fatalf("expected anonymous tuples of different shapes to be unequal: %s vs %s", a, b)
+	}
+}

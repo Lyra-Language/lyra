@@ -1502,31 +1502,124 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 	// only applied-constructor form.) Resolve it the same way a nullary
 	// constructor or the old `data_constructor_expr` did — by constructor name —
 	// so `?`, `??`, and must-use see the owning data type (e.g. `Maybe`).
-	dt, isCtor := types.DataType{}, false
 	if name != "?" {
-		dt, isCtor = tc.findDataTypeByConstructor(name)
-	}
-
-	elements := make([]types.Type, len(expr.Elements))
-	for i, elem := range expr.Elements {
-		t := tc.inferExprType(elem)
-		if t == nil {
-			// A data constructor resolves by name regardless of whether its
-			// payload type-checks (matching the previous data_constructor_expr
-			// behavior); a plain tuple needs every element's type.
-			if isCtor {
-				continue
+		if dt, isCtor := tc.findDataTypeByConstructor(name); isCtor {
+			for _, elem := range expr.Elements {
+				// A data constructor resolves by name regardless of whether its
+				// payload type-checks (matching the previous data_constructor_expr
+				// behavior), so a failed element is simply skipped, not fatal.
+				if t := tc.inferExprType(elem); t != nil {
+					tc.typeTable.Set(elem, promoteToDefault(t))
+				}
 			}
-			return nil
+			return dt
 		}
-		elements[i] = promoteToDefault(t)
-		tc.typeTable.Set(elem, elements[i])
 	}
 
-	if isCtor {
-		return dt
+	if name == "?" {
+		// Anonymous tuple: structural, so every element's type is required (no
+		// declaration exists to fall back on for a failed element).
+		elements := make([]types.Type, len(expr.Elements))
+		for i, elem := range expr.Elements {
+			t := tc.inferExprType(elem)
+			if t == nil {
+				return nil
+			}
+			elements[i] = promoteToDefault(t)
+			tc.typeTable.Set(elem, elements[i])
+		}
+		return types.TupleType{Name: name, Elements: elements}
 	}
-	return types.TupleType{Name: name, Elements: elements}
+
+	return tc.inferNamedTupleLiteralExpr(expr, name)
+}
+
+// inferNamedTupleLiteralExpr type-checks a named-tuple literal (`Point(3, 4)`).
+// A named tuple is nominal (Pit-of-Success #8, todo.md: "positional nominal"),
+// matching NamedStructType — so, mirroring inferStructInstanceExpr for structs,
+// the literal must reference a declared named-tuple type (`tuple Point(i32,
+// i32)`), and its shape (arity + element types, positionally) is validated
+// against that declaration. Without this, TypesEqual's name-only comparison for
+// TupleType would be unsound: two unrelated literals sharing a name could
+// compare equal despite different shapes.
+func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, name string) types.Type {
+	decl, ok := tc.symTable.Types[name]
+	if !ok {
+		tc.addError(expr.GetLocation(), SeverityError, "undefined tuple type %q", name)
+		return nil
+	}
+	declType, ok := decl.Type.(types.TupleType)
+	if !ok {
+		tc.addError(expr.GetLocation(), SeverityError, "%s: not a tuple type", name)
+		return nil
+	}
+
+	// Resolve the generic type parameters for this instantiation, mirroring
+	// inferStructInstanceExpr: explicit turbofish args substitute positionally;
+	// with none, a position whose declared type is a bare (still-unbound)
+	// generic parameter is simply left unconstrained below — unlike structs,
+	// this doesn't attempt to *infer* the parameter from the supplied values,
+	// since a tuple's positions carry no field names to key that inference on
+	// in a way that would clearly generalize; deferred rather than guessed.
+	genericParamNames := make(map[string]bool, len(decl.GenericParams))
+	for _, p := range decl.GenericParams {
+		genericParamNames[p.Name] = true
+	}
+	typeSubst := make(map[string]types.Type, len(decl.GenericParams))
+	switch {
+	case len(expr.GenericArguments) == len(decl.GenericParams):
+		for i, param := range decl.GenericParams {
+			typeSubst[param.Name] = expr.GenericArguments[i]
+		}
+	case len(expr.GenericArguments) == 0:
+		// No turbofish — see the comment above.
+	default:
+		tc.addError(expr.GetLocation(), SeverityError,
+			"%s: expected %d generic argument(s), got %d", name, len(decl.GenericParams), len(expr.GenericArguments))
+		return nil
+	}
+
+	// On an arity mismatch there's no declared position to check each element
+	// against, so — mirroring inferLambdaCall's argument-count check — report
+	// the error and stop without inferring the elements at all.
+	if len(expr.Elements) != len(declType.Elements) {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"%s: expected %d element(s), got %d", name, len(declType.Elements), len(expr.Elements))
+		return declType
+	}
+
+	for i, declaredElem := range declType.Elements {
+		elemExpr := expr.Elements[i]
+		actual := tc.inferExprType(elemExpr)
+		if actual == nil {
+			continue // failed to type-check; already reported
+		}
+		paramName := declaredElem.GetName()
+		if sub, ok := typeSubst[paramName]; ok {
+			declaredElem = sub
+		} else if genericParamNames[paramName] {
+			// Unbound generic parameter: accept any value. No expected type to
+			// propagate against, so just settle the element to its own default
+			// (matching how an anonymous tuple's elements are recorded).
+			tc.typeTable.Set(elemExpr, promoteToDefault(actual))
+			continue
+		}
+		expected := tc.resolveType(declaredElem, elemExpr.GetLocation())
+		if !isAssignable(actual, expected) {
+			tc.addError(elemExpr.GetLocation(), SeverityError,
+				"%s: element %d: cannot assign %s to %s", name, i+1, actual, expected)
+			continue
+		}
+		// Assignable: push the declared width onto an untyped literal leaf
+		// (context-directed literal-width propagation — the same treatment
+		// inferLambdaCall gives a call argument against its parameter type),
+		// then record the declared type as the element's effective type,
+		// mirroring how checkVarDecl records an annotation over the raw
+		// inferred type.
+		tc.propagateLiteralType(elemExpr, expected)
+		tc.typeTable.Set(elemExpr, expected)
+	}
+	return declType
 }
 
 // resolveConstantInt returns the compile-time integer value of expr, if
