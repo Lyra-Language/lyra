@@ -555,6 +555,101 @@ let main() -> u8 => {
 	}
 }
 
+// TestExec_Functions exercises user-defined function definitions and calls end
+// to end. Each case's exit code pins a distinct piece of the two-pass
+// declare/define machinery:
+//   - simple call: params bind (as allocas) and the return value flows back.
+//   - narrow-arg literal: the arg `200`/`100` take the u8 param width (arg
+//     propagation), so `a + b` wraps mod 256 to 44 — proof the args are i8, not
+//     i64. i64 args would have been a hard IR error, not 44.
+//   - early return: an explicit `return` inside a one-armed `if` seals the block
+//     and returns 7; the tail `x` is the not-taken path.
+//   - recursion: factorial(5) = 120 — the self-call resolves because all
+//     functions are declared before any body is lowered.
+//   - mutual recursion: isEven/isOdd call each other — forward reference across
+//     two functions.
+//   - call in a loop: inc(i) is called each iteration; 1+2+3+4+5 = 15.
+func TestExec_Functions(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			"simple call",
+			`
+let add = (a: u8, b: u8) -> u8 => a + b
+let main() -> u8 => add(40, 2)
+`,
+			42,
+		},
+		{
+			"narrow-arg literal wraps at u8",
+			`
+let add = (a: u8, b: u8) -> u8 => a + b
+let main() -> u8 => add(200, 100)
+`,
+			44,
+		},
+		{
+			"early return",
+			`
+let clamp = (x: u8) -> u8 => {
+  if x > 7 { return 7 }
+  x
+}
+let main() -> u8 => clamp(200)
+`,
+			7,
+		},
+		{
+			"recursion",
+			`
+let fact = (n: u8) -> u8 => {
+  if n <= 1 { return 1 }
+  n * fact(n - 1)
+}
+let main() -> u8 => fact(5)
+`,
+			120,
+		},
+		{
+			"mutual recursion",
+			`
+let isEven = (n: u8) -> u8 => {
+  if n == 0 { return 1 }
+  isOdd(n - 1)
+}
+let isOdd = (n: u8) -> u8 => {
+  if n == 0 { return 0 }
+  isEven(n - 1)
+}
+let main() -> u8 => isEven(10)
+`,
+			1,
+		},
+		{
+			"call in a loop",
+			`
+let inc = (x: u8) -> u8 => x + 1
+let main() -> u8 => {
+  var s: u8 = 0
+  for var i: u8 = 0; i < 5; i += 1 {
+    s = s + inc(i)
+  }
+  u8(s)
+}
+`,
+			15,
+		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}
+
 // TestExec_MixedWidthComparison: `i8(5) < 3` used to be deferred (the bare `3`
 // lowered to i64, mismatching the i8 lhs). Context-directed literal-width
 // inference now types `3` as i8 from its concrete sibling, so the comparison

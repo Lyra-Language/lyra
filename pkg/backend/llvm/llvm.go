@@ -10,11 +10,19 @@
 // `u32(x)`, …), integer comparisons (`< <= > >= == !=` → icmp), short-circuit
 // `&&`/`||` (cond-br + phi), blocks (value = last expression), `if`/`else`
 // (cond-br + phi diamond; one-armed `if` as a statement), `let`/`var` bindings,
-// reassignment and compound assignment (`i += 1`), and `for` loops with
+// reassignment and compound assignment (`i += 1`), `for` loops with
 // `break`/`continue` (cond/body/post/exit CFG; all forms — infinite,
-// condition-only, and three-clause `for var i = 0; i < n; i += 1`). Any other
-// body form errors (the build fails loudly rather than emitting wrong code).
-// Grow lowerExpr and lowerType from here.
+// condition-only, and three-clause `for var i = 0; i < n; i += 1`), and
+// user-defined functions with calls, `return`, and recursion. Any other body
+// form errors (the build fails loudly rather than emitting wrong code).
+//
+// Functions lower in two passes (Emit): every user function is declared before
+// any body, so a call — from main, between functions, or recursive — resolves
+// against l.funcs. main is emitted by lowerEntry (special i32 ABI); the rest by
+// declareFunction/defineFunction. Each body gets fresh per-function state via
+// beginFunction; params bind as entry-block allocas like `let`/`var`. Deferred
+// with loud errors: void/multi-clause functions, default params, destructuring
+// params, and higher-order (lambda-value) calls.
 //
 // Break/continue make a block terminate mid-stream, so lowering now follows a
 // termination discipline: lowerBlockStmts stops at a sealed block and every
@@ -95,23 +103,69 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 		locals: map[string]value.Value{},
 		funcs:  map[string]*ir.Func{},
 	}
+	// Two passes so a call — from main, between functions, or a recursive
+	// self-call — can reference any function before its body exists: declare all
+	// user functions, then lower main (whose body may call them), then lower the
+	// user-function bodies.
+	if err := l.forEachUserFunction(res.Program, entry.Lambda, l.declareFunction); err != nil {
+		return nil, err
+	}
 	if err := l.lowerEntry(entry); err != nil {
 		return nil, err
 	}
-	if err := l.lowerTopLevelFunctions(res.Program, entry.Lambda); err != nil {
+	if err := l.forEachUserFunction(res.Program, entry.Lambda, l.defineFunction); err != nil {
 		return nil, err
 	}
-
 	return []byte(m.String()), nil
 }
 
 type lowerer struct {
 	module *ir.Module
-	res    *driver.Result // gives you TypeTable, SymbolTable, MethodTable, …
-	// grows over time: funcs map[string]*ir.Func, etc.
-	locals map[string]value.Value // name → its alloca (a pointer)
-	loops  []loopCtx              // stack of enclosing loops; top is the innermost
-	funcs  map[string]*ir.Func    // name → its function IR
+	res    *driver.Result      // gives you TypeTable, SymbolTable, MethodTable, …
+	funcs  map[string]*ir.Func // name → its function IR (all declared before any body)
+
+	// Per-function state, reset by beginFunction at the start of each function
+	// body (main and every user function get their own).
+	locals    map[string]value.Value // name → its alloca (a pointer)
+	loops     []loopCtx              // stack of enclosing loops; top is innermost
+	retType   lltypes.Type           // the current function's LLVM return type
+	retSigned bool                   // whether that return type is a signed integer
+	entryABI  bool                   // true only for main (u8 body → i32 ABI slot)
+}
+
+// beginFunction resets the per-function lowering state before a body is lowered.
+func (l *lowerer) beginFunction(retType lltypes.Type, retSigned, entryABI bool) {
+	l.locals = map[string]value.Value{}
+	l.loops = nil
+	l.retType = retType
+	l.retSigned = retSigned
+	l.entryABI = entryABI
+}
+
+// emitReturn lowers a `ret` for the current function, coercing val to the
+// function's return type. main is the one special case: its Lyra u8 value goes
+// through the C ABI's i32 slot (coerce to u8, then zero-extend). A nil val is a
+// bare `return` (or a void function) → `ret void`.
+func (l *lowerer) emitReturn(block *ir.Block, val value.Value) error {
+	if l.entryABI {
+		if val == nil {
+			block.NewRet(constant.NewInt(lltypes.I32, 0))
+			return nil
+		}
+		u8 := coerceIntWidth(block, val, false, lltypes.I8)
+		block.NewRet(block.NewZExt(u8, lltypes.I32))
+		return nil
+	}
+	if val == nil {
+		block.NewRet(nil) // ret void
+		return nil
+	}
+	intTy, ok := l.retType.(*lltypes.IntType)
+	if !ok {
+		return fmt.Errorf("llvm: return of non-integer type %s not implemented", l.retType)
+	}
+	block.NewRet(coerceIntWidth(block, val, l.retSigned, intTy))
+	return nil
 }
 
 // loopCtx records the blocks a break/continue in the current loop jumps to. It's
@@ -143,30 +197,19 @@ func (l *lowerer) loopTarget(label string) (loopCtx, error) {
 }
 
 // lowerEntry defines `@main` and returns the entry function's value as the
-// process exit code. A u8 entry returns its body's value; a void entry runs
-// the body for effect (none expressible yet) and returns 0.
+// process exit code. A u8 entry returns its body's value; a void entry runs the
+// body for effect (none expressible yet) and returns 0.
 //
-// `@main` itself is declared `i32`, not the u8 Lyra's entry-point convention
-// exposes to the user — that's the actual C ABI signature the C runtime
-// startup code expects (verified: clang emits `define i32 @main()` for a
-// trivial C program), regardless of what a language lets its own `main`
-// return.
-//
-// The body's lowered value is coerced to u8 (via coerceIntWidth) before that
-// zero-extend, not assumed to already be i8: literal-width inference isn't
-// context-directed yet (a bare literal always lowers to i64 regardless of the
-// declared return type — see lowerExpr's IntegerLiteralExpr case), so a body
-// like `42` produces an i64 value even though the typechecker has already
-// confirmed it's assignable to u8. Coercing at this one boundary is exact for
-// +/-/* (two's-complement truncation composes: `(a+b) truncated to u8` equals
-// doing the add at u8 width throughout), but NOT equivalent to native u8
-// arithmetic for `/`/`%`/`%%` if the untruncated intermediate value would
-// itself overflow u8 before the division — e.g. `(300 / 7)` truncated to u8
-// (42) differs from truncating 300 to u8 first and then dividing (44/7 = 6).
-// Closing that gap needs the same context-directed literal-width inference
-// this comment already flags as deferred elsewhere in this package.
+// `@main` is declared `i32`, not the u8 that Lyra's entry-point convention
+// exposes to the user — that's the actual C ABI signature the C runtime startup
+// code expects (verified: clang emits `define i32 @main()` for a trivial C
+// program), regardless of what a language lets its own `main` return. The u8→i32
+// coercion (coerce to u8, then zero-extend) is the `entryABI` path of emitReturn,
+// which lowerEntry shares with every explicit `return` and the implicit tail
+// return; that's why main is set up with beginFunction like any other function.
 func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 	fn := l.module.NewFunc("main", lltypes.I32)
+	l.beginFunction(lltypes.I32, false, true) // entryABI: emitReturn handles the u8→i32 coercion
 	block := fn.NewBlock("entry")
 
 	switch entry.Returns {
@@ -176,49 +219,112 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 			return err
 		}
 		// `block` here is whatever block the body's evaluation ends in — for an
-		// `if` body that's the merge block, not the entry block — so the `ret`
-		// is emitted in the right place.
-		u8Val := coerceIntWidth(block, v, false, lltypes.I8)
-		block.NewRet(block.NewZExt(u8Val, lltypes.I32))
+		// `if` body that's the merge block, not the entry block — so the `ret` is
+		// emitted in the right place. Guard on Term: the body may now end in an
+		// explicit `return` (which already emitted the ret and sealed the block).
+		if block.Term == nil {
+			if err := l.emitReturn(block, v); err != nil {
+				return err
+			}
+		}
 	default: // EntryReturnVoid — nothing observable to run yet; exit 0.
 		block.NewRet(constant.NewInt(lltypes.I32, 0))
 	}
 	return nil
 }
 
-func (l *lowerer) lowerTopLevelFunctions(program *ast.Program, entry *ast.LambdaExpr) error {
+// forEachUserFunction calls fn for every top-level `let name = <lambda>` binding
+// except the entry lambda (main, emitted by lowerEntry). Used for both the
+// declare and define passes so they walk the program identically.
+func (l *lowerer) forEachUserFunction(program *ast.Program, entry *ast.LambdaExpr, fn func(*ast.VarDeclStmt, *ast.LambdaExpr) error) error {
 	for _, stmt := range program.Statements {
 		decl, ok := stmt.(*ast.VarDeclStmt)
 		if !ok {
 			continue
 		}
-		fn, ok := decl.Value.(*ast.LambdaExpr)
-		if !ok || fn == entry {
-			continue // main is emitted by lowerEntry with the special i32 ABI
+		lambda, ok := decl.Value.(*ast.LambdaExpr)
+		if !ok || lambda == entry {
+			continue
 		}
-		if err := l.lowerFunction(decl, fn); err != nil {
+		if err := fn(decl, lambda); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (l *lowerer) lowerFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) error {
+// declareFunction emits the function's signature (an ir.Func with no body) and
+// records it in l.funcs, so calls can resolve it before its body is lowered.
+// Several forms are deferred with a loud error rather than mis-lowered.
+func (l *lowerer) declareFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) error {
+	if len(fn.LambdaClauses) > 0 {
+		return fmt.Errorf("llvm: multi-clause functions are not implemented yet (%q)", decl.Name)
+	}
+	if _, isVoid := fn.ReturnType.Type.(types.VoidType); isVoid {
+		return fmt.Errorf("llvm: void-returning functions are not implemented yet (%q)", decl.Name)
+	}
+	if fn.ReturnType.Type == nil {
+		return fmt.Errorf("llvm: function %q needs a return type annotation", decl.Name)
+	}
 	retType, err := l.lowerType(fn.ReturnType.Type)
 	if err != nil {
 		return err
 	}
 	irParams := make([]*ir.Param, 0, len(fn.Parameters))
 	for _, param := range fn.Parameters {
+		if param.DefaultValue != nil {
+			return fmt.Errorf("llvm: default parameter values are not implemented yet (%q)", decl.Name)
+		}
 		irParam, err := l.lowerParameter(param)
 		if err != nil {
 			return err
 		}
 		irParams = append(irParams, irParam)
 	}
-	irFn := l.module.NewFunc(decl.Name, retType, irParams...)
-	l.funcs[decl.Name] = irFn
+	l.funcs[decl.Name] = l.module.NewFunc(decl.Name, retType, irParams...)
 	return nil
+}
+
+// defineFunction lowers a declared function's body: bind each parameter into a
+// fresh alloca (so the body reads it like any local), lower the body, and emit
+// the implicit tail return (unless the body already ended in an explicit one).
+func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) error {
+	irFn := l.funcs[decl.Name]
+	retType, err := l.lowerType(fn.ReturnType.Type)
+	if err != nil {
+		return err
+	}
+	l.beginFunction(retType, returnSigned(fn), false)
+
+	entry := irFn.NewBlock("entry")
+	for i, param := range fn.Parameters {
+		ident, ok := param.Pattern.(*ast.IdentifierPattern)
+		if !ok {
+			return fmt.Errorf("llvm: destructuring parameters are not implemented yet (%q)", decl.Name)
+		}
+		p := irFn.Params[i]
+		slot := entry.NewAlloca(p.Type())
+		entry.NewStore(p, slot)
+		l.locals[ident.Name] = slot
+	}
+
+	v, end, err := l.lowerExpr(entry, fn.Body)
+	if err != nil {
+		return err
+	}
+	if end.Term == nil {
+		if err := l.emitReturn(end, v); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// returnSigned reports whether fn's declared return type is a signed integer
+// (so emitReturn widens with sext rather than zext when it must).
+func returnSigned(fn *ast.LambdaExpr) bool {
+	p, ok := fn.ReturnType.Type.(types.PrimitiveType)
+	return ok && IsSignedInt(p.Name)
 }
 
 func (l *lowerer) lowerParameter(param ast.Parameter) (*ir.Param, error) {
@@ -571,12 +677,37 @@ func (l *lowerer) lowerNegationExpr(block *ir.Block, e *ast.NegationExpr) (value
 }
 
 func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr) (value.Value, *ir.Block, error) {
-	if ident, ok := e.Function.(*ast.IdentifierExpr); ok {
-		if targetName := types.PrimitiveTypeName(ident.Name); IsNumericConversionTarget(targetName) {
-			return l.lowerNumericConversion(block, e, targetName)
-		}
+	ident, ok := e.Function.(*ast.IdentifierExpr)
+	if !ok {
+		// Higher-order calls (calling a lambda value / a function-typed local)
+		// aren't lowered yet — only direct calls by name.
+		return nil, nil, fmt.Errorf("llvm: only direct calls by function name are implemented, got %T callee", e.Function)
 	}
-	return nil, nil, fmt.Errorf("llvm: call lowering not implemented except numeric type conversions (e.g. i32(x))")
+	// A type-name callee is a numeric conversion (`i32(x)`), not a function call.
+	if targetName := types.PrimitiveTypeName(ident.Name); IsNumericConversionTarget(targetName) {
+		return l.lowerNumericConversion(block, e, targetName)
+	}
+	fn, ok := l.funcs[ident.Name]
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: call to unknown function %q", ident.Name)
+	}
+	// Arguments match the parameters positionally. The typechecker validated
+	// arity and assignability, and propagated each parameter's width onto its
+	// argument (inferLambdaCall), so a literal arg already lowers at the param's
+	// width — no coercion needed here.
+	args := make([]value.Value, 0, len(e.Arguments))
+	for _, argExpr := range e.Arguments {
+		var (
+			v   value.Value
+			err error
+		)
+		v, block, err = l.lowerExpr(block, argExpr)
+		if err != nil {
+			return nil, nil, err
+		}
+		args = append(args, v)
+	}
+	return block.NewCall(fn, args...), block, nil
 }
 
 // lowerBlockStmts lowers each statement of be into block, threading the current
@@ -611,6 +742,9 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr) (value.Val
 			v = nil
 		case *ast.ContinueStmt:
 			err = l.lowerContinue(block, s)
+			v = nil
+		case *ast.ReturnStmt:
+			block, err = l.lowerReturn(block, s)
 			v = nil
 		default:
 			return nil, nil, fmt.Errorf("llvm: block statement lowering not implemented for %T", stmt)
@@ -669,6 +803,22 @@ func (l *lowerer) lowerContinue(block *ir.Block, s *ast.ContinueStmt) error {
 	}
 	block.NewBr(ctx.continueTarget)
 	return nil
+}
+
+// lowerReturn lowers an explicit `return [value]`, emitting the `ret` via
+// emitReturn (which coerces to the current function's return type) and sealing
+// the block. Returns the block the value evaluation ended in — a value
+// containing an `if` moves control onward before the `ret` — so lowerBlockStmts
+// sees a sealed block and stops.
+func (l *lowerer) lowerReturn(block *ir.Block, s *ast.ReturnStmt) (*ir.Block, error) {
+	if s.Value == nil {
+		return block, l.emitReturn(block, nil)
+	}
+	v, block, err := l.lowerExpr(block, s.Value)
+	if err != nil {
+		return nil, err
+	}
+	return block, l.emitReturn(block, v)
 }
 
 // lowerForLoop lowers a C-style `for` loop to the standard cond/body/post/exit
