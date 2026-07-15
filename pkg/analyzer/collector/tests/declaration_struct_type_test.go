@@ -4,7 +4,7 @@ import "testing"
 
 func TestCollector_StructTypeDeclaration(t *testing.T) {
 	source := `
-		pub stack struct Point {
+		pub struct Point {
 			x: i64,
 			y: i64 = 0,
 		}
@@ -14,7 +14,7 @@ func TestCollector_StructTypeDeclaration(t *testing.T) {
 
 func TestCollector_StructTypeDeclarationWithGenericParameters(t *testing.T) {
 	source := `
-		pub stack struct Point<t> {
+		pub struct Point<t> {
 			x: t,
 			y: t,
 		}

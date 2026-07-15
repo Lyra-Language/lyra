@@ -104,16 +104,16 @@ const (
 )
 
 // AllocationOf returns the allocation flavor a type carries, or Unspecified for
-// a type that does not (or cannot) carry one: primitives, generics, lambdas,
-// and — for now — tuples, whose named-tuple modifier lives on the declaration
-// statement (TypeDeclStmt.Allocation) rather than on TupleType itself. This is
-// the single accessor every pass should use to read a type's flavor, so the
-// per-concrete-type location of the field is centralized in one place.
+// a type that does not (or cannot) carry one: primitives, generics, and lambdas.
+// This is the single accessor every pass should use to read a type's flavor, so
+// the per-concrete-type location of the field is centralized in one place.
 func AllocationOf(t Type) AllocationModifier {
 	switch t := t.(type) {
 	case NamedStructType:
 		return t.Allocation
 	case DataType:
+		return t.Allocation
+	case TupleType:
 		return t.Allocation
 	case StaticArrayType:
 		return t.Allocation
@@ -130,9 +130,9 @@ func AllocationOf(t Type) AllocationModifier {
 
 // WithAllocation returns a copy of t with its allocation modifier overridden to
 // mod. When mod is Unspecified the original value is returned unchanged —
-// Unspecified means "inherit from the declaration default", so no override.
-// Types that cannot carry a flavor (primitives, generics, lambdas, tuples) are
-// returned unchanged regardless of mod.
+// Unspecified means "inherit from context / default to stack", so no override.
+// Types that cannot carry a flavor (primitives, generics, lambdas) are returned
+// unchanged regardless of mod.
 func WithAllocation(t Type, mod AllocationModifier) Type {
 	if mod == Unspecified {
 		return t
@@ -142,6 +142,9 @@ func WithAllocation(t Type, mod AllocationModifier) Type {
 		t.Allocation = mod
 		return t
 	case DataType:
+		t.Allocation = mod
+		return t
+	case TupleType:
 		t.Allocation = mod
 		return t
 	case StaticArrayType:

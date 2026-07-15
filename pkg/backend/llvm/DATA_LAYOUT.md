@@ -66,9 +66,10 @@ orthogonal.
 ## Recursive & `shared`
 
 - A recursive occurrence must be `shared` (`lyra-E014`), i.e. a `ptr` in the payload,
-  so the union has finite size. `shared data List = Nil | Cons(i64, List)`: the
-  `Cons` payload is `{ i64, ptr }`, and a `List` value is a `ptr` to a box of the
-  union.
+  so the union has finite size. Allocation is a use-site flavor (there is no
+  declaration-level modifier), so the recursion is broken on the recursive *field*:
+  `data List = Nil | Cons(i64, shared List)` — the `Cons` payload is `{ i64, ptr }`,
+  and a `shared List` value is a `ptr` to a box of the union.
 
 ## Generics
 

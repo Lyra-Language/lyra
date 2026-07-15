@@ -64,11 +64,11 @@ func (e PurityError) Error() string {
 //   - bottom-up purity *inference* for methods — today only an explicit
 //     `pure` marker on the method itself is trusted; an unannotated method is
 //     always treated as potentially impure, unlike a free function
-func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, methodTable *typetable.MethodTable) []PurityError {
+func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable, methodTable *typetable.MethodTable) []PurityError {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
 	frames := newScopeFrames(program, scopeTable)
 	boundGroups := collectTraitMethodGroups(program)
-	impureLambdas, impureMethods := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, methodTable, boundGroups, buildAllocContext(program), frames)
+	impureLambdas, impureMethods := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, methodTable, boundGroups, buildAllocContext(program, typeTable), frames)
 	c := &purityChecker{
 		impureLambdas: impureLambdas,
 		impureMethods: impureMethods,
@@ -167,10 +167,16 @@ func InferredPureFunctions(program *ast.Program, scopeTable *symbols.ScopeTable)
 // no MethodTable (this entry point only has the AST), so a function whose
 // only "effect" is calling a trait method resolved by the type-checker is
 // not picked up here — see CheckPurity for the MethodTable-aware version.
+// EffectAlloc is likewise never set here: allocation is a use-site flavor read
+// off the TypeTable, which this AST-only entry point doesn't have (its sole
+// consumer, InferredPureFunctions, masks with PurityEffects and so ignores the
+// alloc bit anyway) — CheckPurity is the alloc-aware path.
 func InferredEffects(program *ast.Program, scopeTable *symbols.ScopeTable) map[string]Effect {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
 	frames := newScopeFrames(program, scopeTable)
-	impure, _ := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, nil, collectTraitMethodGroups(program), buildAllocContext(program), frames)
+	// No TypeTable here (AST-only entry point), so alloc detection is disabled —
+	// consistent with this helper's documented limited analysis.
+	impure, _ := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, nil, collectTraitMethodGroups(program), buildAllocContext(program, nil), frames)
 	result := make(map[string]Effect, len(base[0].functions))
 	for name, lam := range base[0].functions {
 		result[name] = impure[lam]
@@ -782,78 +788,56 @@ func mutableGlobals(program *ast.Program) map[string]bool {
 }
 
 // allocContext holds the program-level information the effect inference needs
-// to detect EffectAlloc: which type *names* are heap-allocated (declared
-// `shared`) and which construction expressions are lexically inside a
+// to detect EffectAlloc: the TypeTable (so a construction's resolved flavor can
+// be read) and which construction expressions are lexically inside a
 // `with`-arena block (so their allocation is discharged into the arena rather
 // than counting as an escaping heap allocation). Computed once per program by
 // buildAllocContext and threaded into the effect-inference functions.
 //
-// First-slice scope (FP/Imperative todo #5): only *explicit, modifier-marked*
-// allocation is detected — constructing a value of a `shared`-declared struct
-// or data type. Implicit allocation (dynamic arrays/strings, escaping
-// closures) is deferred to a future layout/escape-analysis pass, and the
-// arena discharge is deliberately approximate: a `shared` value built inside a
-// `with` block but *returned out* of it still escapes the arena, but detecting
-// that needs the same escape analysis, so for now anything lexically inside
-// the block is treated as discharged.
+// Allocation is a *use-site* property: there is no declaration-level flavor, so
+// constructing a value heap-allocates exactly when the value is used as
+// `shared` — recorded on the construction expression's TypeTable entry by the
+// typechecker (an annotated binding `let n: shared Node = Node{…}` records the
+// annotation's flavor over the raw inferred type, so AllocationOf sees Shared).
+//
+// First-slice scope (FP/Imperative todo #5): a construction is detected as
+// allocating only where the typechecker recorded a `shared` type on it — today
+// that's an annotated `let`/`var` binding. A `shared` construction in a
+// return/argument position (where the flavor isn't yet recorded on the
+// construction node) and implicit allocation (dynamic arrays/strings, escaping
+// closures) are deferred to a future layout/escape-analysis pass. The arena
+// discharge is likewise approximate: a `shared` value built inside a `with`
+// block but *returned out* still escapes, but detecting that needs the same
+// escape analysis, so anything lexically inside the block is treated as
+// discharged.
 type allocContext struct {
-	// sharedNames is every type or constructor *name* whose by-name
-	// construction heap-allocates: a `shared`-declared struct or named-tuple
-	// type name, and every constructor name of a `shared` data type. A
-	// construction expression (StructInstanceExpr / TupleLiteralExpr /
-	// DataConstructorExpr) whose name is in this set allocates.
-	sharedNames map[string]bool
+	// typeTable resolves a construction expression to its recorded type, whose
+	// flavor (AllocationOf) decides whether it heap-allocates. nil for entry
+	// points that run without a typechecker pass (InferredEffects) — alloc
+	// detection is then disabled, matching that entry point's limited contract.
+	typeTable *typetable.TypeTable
 	// discharged holds construction exprs lexically inside a `with`-arena
 	// block, whose allocation goes into the arena rather than escaping.
 	discharged map[ast.Expression]bool
 }
 
-// allocates reports whether constructing via name (a struct/named-tuple type
-// name or a data constructor name) heap-allocates — i.e. the type was declared
-// `shared` — and the construction expr is not discharged into an enclosing
-// arena.
-func (a *allocContext) allocates(name string, expr ast.Expression) bool {
-	if a == nil || a.discharged[expr] {
+// allocates reports whether the construction expr heap-allocates: its recorded
+// type is `shared` and it is not discharged into an enclosing arena.
+func (a *allocContext) allocates(expr ast.Expression) bool {
+	if a == nil || a.typeTable == nil || a.discharged[expr] {
 		return false
 	}
-	return a.sharedNames[name]
+	t, ok := a.typeTable.Get(expr)
+	return ok && types.AllocationOf(t) == types.Shared
 }
 
-// buildAllocContext scans program for `shared`-declared types (the heap /
-// ref-counted allocation modifier; `stack` and unmodified types do not
-// allocate on the shared heap) and for construction expressions enclosed in a
-// `with`-arena block. For structs and data types the modifier lives on the
-// inner type stored in the TypeDeclStmt (NamedStructType.Allocation /
-// DataType.Allocation); for named tuples it lives on TypeDeclStmt.Allocation
-// itself (a collector inconsistency, handled per-case here).
-func buildAllocContext(program *ast.Program) *allocContext {
+// buildAllocContext records the TypeTable (for reading each construction's
+// resolved flavor) and marks construction expressions enclosed in a `with`-arena
+// block as discharged. typeTable may be nil (see allocContext.typeTable).
+func buildAllocContext(program *ast.Program, typeTable *typetable.TypeTable) *allocContext {
 	a := &allocContext{
-		sharedNames: map[string]bool{},
-		discharged:  map[ast.Expression]bool{},
-	}
-	for _, node := range program.Statements {
-		td, ok := node.(*ast.TypeDeclStmt)
-		if !ok {
-			continue
-		}
-		switch t := td.Type.(type) {
-		case types.NamedStructType:
-			if types.AllocationOf(t) == types.Shared {
-				a.sharedNames[td.Name] = true
-			}
-		case types.DataType:
-			if types.AllocationOf(t) == types.Shared {
-				for _, ctor := range t.Constructors {
-					a.sharedNames[ctor.Name] = true
-				}
-			}
-		case types.TupleType:
-			// A named tuple's modifier lives on the decl, not the TupleType, so
-			// AllocationOf can't see it — read TypeDeclStmt.Allocation directly.
-			if td.Allocation == types.Shared {
-				a.sharedNames[td.Name] = true
-			}
-		}
+		typeTable:  typeTable,
+		discharged: map[ast.Expression]bool{},
 	}
 	// Mark every expression lexically inside a `with`-arena body as discharged.
 	// WithStmt is a *statement*, so it is caught in the onStmt callback; the
@@ -1135,20 +1119,20 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 				}
 			}
 		case *ast.StructInstanceExpr:
-			// Constructing a `shared`-declared struct heap-allocates.
-			if alloc.allocates(ex.Name, ex) {
+			// Constructing a value used as `shared` heap-allocates (allocates
+			// reads the flavor the typechecker recorded on this construction).
+			if alloc.allocates(ex) {
 				found |= EffectAlloc
 			}
 		case *ast.TupleLiteralExpr:
-			// A named tuple literal: either a payload data construction
-			// (`Branch(5)`) or a named-tuple type construction (`Foo(1, 2)`).
-			// Both heap-allocate when the name is a `shared` constructor/type.
-			if alloc.allocates(ex.Name, ex) {
+			// A named tuple literal (`Foo(1, 2)`) or a data construction
+			// (`Branch(5)`) — allocates when its recorded flavor is `shared`.
+			if alloc.allocates(ex) {
 				found |= EffectAlloc
 			}
 		case *ast.DataConstructorExpr:
-			// A nullary constructor (`Leaf`) of a `shared` data type.
-			if alloc.allocates(ex.Constructor, ex) {
+			// A nullary constructor (`Leaf`) — allocates when used as `shared`.
+			if alloc.allocates(ex) {
 				found |= EffectAlloc
 			}
 		case *ast.AwaitExpr:
@@ -1228,15 +1212,15 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 				}
 			}
 		case *ast.StructInstanceExpr:
-			if alloc.allocates(ex.Name, ex) {
+			if alloc.allocates(ex) {
 				found |= EffectAlloc
 			}
 		case *ast.TupleLiteralExpr:
-			if alloc.allocates(ex.Name, ex) {
+			if alloc.allocates(ex) {
 				found |= EffectAlloc
 			}
 		case *ast.DataConstructorExpr:
-			if alloc.allocates(ex.Constructor, ex) {
+			if alloc.allocates(ex) {
 				found |= EffectAlloc
 			}
 		case *ast.AwaitExpr:

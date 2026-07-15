@@ -64,27 +64,18 @@ func TestAlloc_UnannotatedNamedType(t *testing.T) {
 	}
 }
 
-// TestAlloc_DeclaredSharedStruct verifies that when the struct itself is declared
-// with `shared`, resolveType returns the type with Shared allocation.
-func TestAlloc_DeclaredSharedStruct(t *testing.T) {
-	res := parseCollectAndCheck(t, `
-		shared struct Node {
-			value: i64,
-		}
-		let n = Node { value: 1 }
-	`, false)
-	assertNoErrors(t, res)
-}
-
 // TestAlloc_OwnStackIntoSharedBinding_Error verifies lyra-E018: a `stack`-flavored
 // value owned into a `shared` slot is a storage-flavor boundary that must be
-// explicit, not an implicit coercion.
+// explicit, not an implicit coercion. The value's concrete `stack` flavor comes
+// from an annotated binding (there is no declaration-level flavor): a bare
+// construction is Unspecified/polymorphic, so it must be pinned to `stack` first.
 func TestAlloc_OwnStackIntoSharedBinding_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		stack struct Node {
+		struct Node {
 			value: i64,
 		}
-		let n: shared Node = Node { value: 1 }
+		let s: stack Node = Node { value: 1 }
+		let n: shared Node = s
 	`, false)
 	assertErrorsAre(t, res,
 		"n: cannot store a 'stack' value where a 'shared' value is expected; converting allocation is an explicit operation")
@@ -94,10 +85,11 @@ func TestAlloc_OwnStackIntoSharedBinding_Error(t *testing.T) {
 // into a `stack` slot.
 func TestAlloc_OwnSharedIntoStackBinding_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		shared struct Node {
+		struct Node {
 			value: i64,
 		}
-		let n: stack Node = Node { value: 1 }
+		let s: shared Node = Node { value: 1 }
+		let n: stack Node = s
 	`, false)
 	assertErrorsAre(t, res,
 		"n: cannot store a 'shared' value where a 'stack' value is expected; converting allocation is an explicit operation")
@@ -107,10 +99,11 @@ func TestAlloc_OwnSharedIntoStackBinding_Error(t *testing.T) {
 // is fine — the check only fires on a mismatch.
 func TestAlloc_SameFlavor_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		shared struct Node {
+		struct Node {
 			value: i64,
 		}
-		let n: shared Node = Node { value: 1 }
+		let s: shared Node = Node { value: 1 }
+		let n: shared Node = s
 	`, false)
 	assertNoErrors(t, res)
 }
@@ -150,11 +143,11 @@ func TestAlloc_ReassignAcrossFlavor_Error(t *testing.T) {
 // to an `own shared` parameter crosses the flavor boundary.
 func TestAlloc_OwnParamFlavorMismatch_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		stack struct Node {
+		struct Node {
 			value: i64,
 		}
 		let consume = (n: own shared Node) => n.value
-		let x = Node { value: 1 }
+		let x: stack Node = Node { value: 1 }
 		consume(x)
 	`, false)
 	assertErrorsAre(t, res,
@@ -166,11 +159,11 @@ func TestAlloc_OwnParamFlavorMismatch_Error(t *testing.T) {
 // place, so it accepts any flavor — no boundary is crossed.
 func TestAlloc_BorrowedParamFlavorMismatch_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		stack struct Node {
+		struct Node {
 			value: i64,
 		}
 		let peek = (n: ref shared Node) => n.value
-		let x = Node { value: 1 }
+		let x: stack Node = Node { value: 1 }
 		peek(x)
 	`, false)
 	assertNoErrors(t, res)
@@ -181,10 +174,10 @@ func TestAlloc_BorrowedParamFlavorMismatch_Ok(t *testing.T) {
 // returned as `shared` crosses the boundary.
 func TestAlloc_OwnedReturnFlavorMismatch_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		stack struct Node {
+		struct Node {
 			value: i64,
 		}
-		let make = () -> shared Node => Node { value: 1 }
+		let make = (n: stack Node) -> shared Node => n
 	`, false)
 	assertErrorsAre(t, res,
 		"make: cannot store a 'stack' value where a 'shared' value is expected; converting allocation is an explicit operation")
@@ -194,10 +187,10 @@ func TestAlloc_OwnedReturnFlavorMismatch_Error(t *testing.T) {
 // borrow — allocation-polymorphic — so the flavor check is skipped.
 func TestAlloc_BorrowedReturnFlavorMismatch_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		stack struct Node {
+		struct Node {
 			value: i64,
 		}
-		let make = () -> mut shared Node => Node { value: 1 }
+		let make = (n: stack Node) -> mut shared Node => n
 	`, false)
 	assertNoErrors(t, res)
 }
@@ -235,10 +228,11 @@ func TestResolve_NamedArrayElementType_Ok(t *testing.T) {
 // slot). The recursion drills to the element and names the element flavors.
 func TestAlloc_TupleElementFlavorMismatch_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		stack struct Node {
+		struct Node {
 			value: i64,
 		}
-		let p: (shared Node, Node) = (Node { value: 1 }, Node { value: 2 })
+		let src: (stack Node, Node) = (Node { value: 1 }, Node { value: 2 })
+		let p: (shared Node, Node) = src
 	`, false)
 	assertErrorsAre(t, res,
 		"p: cannot store a 'stack' value where a 'shared' value is expected; converting allocation is an explicit operation")

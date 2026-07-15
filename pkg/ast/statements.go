@@ -18,7 +18,6 @@ type TypeDeclStmt struct {
 	GenericParams []GenericParam
 	Type          types.Type
 	IsPublic      bool
-	Allocation    types.AllocationModifier
 	Derives       []string
 	// Builtin is the raw argument of a `@builtin(X)` attribute on the declaration
 	// ("Result", "Maybe", …), or "" if absent. It is the *request* to be treated

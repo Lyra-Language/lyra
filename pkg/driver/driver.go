@@ -130,7 +130,7 @@ func Analyze(source []byte) *Result {
 	res.MethodTable = tc.MethodTable()
 
 	// Purity must run after typechecking — it consumes the resolved MethodTable.
-	for _, e := range checker.CheckPurity(program, scopeTable, tc.MethodTable()) {
+	for _, e := range checker.CheckPurity(program, scopeTable, tt, tc.MethodTable()) {
 		res.err(e.Location, e.Code, e.Message)
 	}
 

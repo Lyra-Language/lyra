@@ -15,15 +15,12 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *as
 	var fields []types.StructField
 	var derives []string
 	isPublic := false
-	var allocation types.AllocationModifier
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
 		case "attribute_list":
 			derives = collectDerives(child, ctx)
-		case "allocation_modifier":
-			allocation = allocModifier(child, ctx)
 		case "visibility":
 			isPublic = true
 		case "struct_name":
@@ -42,9 +39,8 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *as
 		NameLocation:  nameLoc,
 		GenericParams: genericParams,
 		Type: types.NamedStructType{
-			Name:       name,
-			Fields:     fields,
-			Allocation: allocation,
+			Name:   name,
+			Fields: fields,
 		},
 		IsPublic: isPublic,
 		Derives:  derives,

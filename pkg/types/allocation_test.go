@@ -25,11 +25,11 @@ func TestAllocationOf(t *testing.T) {
 		{"unset parameterized", types.ParameterizedType{Name: "Maybe"}, types.Unspecified},
 		{"shared unresolved", types.UnresolvedType{Name: "Node", Allocation: types.Shared}, types.Shared},
 		{"unset unresolved", types.UnresolvedType{Name: "Node"}, types.Unspecified},
+		// A tuple carries a use-site flavor like the other nominal types.
+		{"shared tuple", types.TupleType{Name: "Foo", Allocation: types.Shared}, types.Shared},
+		{"unset tuple", types.TupleType{Name: "Foo"}, types.Unspecified},
 		// Types that cannot carry a flavor read as Unspecified.
 		{"primitive", types.PrimitiveType{Name: types.Int64}, types.Unspecified},
-		// A named tuple's modifier lives on the declaration, not the TupleType,
-		// so AllocationOf can't see it (documented limitation).
-		{"tuple", types.TupleType{Name: "Foo"}, types.Unspecified},
 	}
 	for _, c := range cases {
 		if got := types.AllocationOf(c.typ); got != c.want {
@@ -55,12 +55,13 @@ func TestWithAllocation(t *testing.T) {
 		{"dynamic array→shared", types.DynamicArrayType{}, types.Shared, types.Shared},
 		{"parameterized→shared", types.ParameterizedType{Name: "Box"}, types.Shared, types.Shared},
 		{"unresolved→shared", types.UnresolvedType{Name: "N"}, types.Shared, types.Shared},
+		{"tuple→shared", types.TupleType{Name: "Foo"}, types.Shared, types.Shared},
 		// Unspecified mod is a no-op — returns the original allocation.
 		{"struct no override", types.NamedStructType{Name: "N", Allocation: types.Stack}, types.Unspecified, types.Stack},
 		{"data no override", types.DataType{Name: "T", Allocation: types.Shared}, types.Unspecified, types.Shared},
+		{"tuple no override", types.TupleType{Name: "Foo", Allocation: types.Stack}, types.Unspecified, types.Stack},
 		// Types that can't carry a flavor are returned unchanged.
 		{"primitive unchanged", types.PrimitiveType{Name: types.Int64}, types.Shared, types.Unspecified},
-		{"tuple unchanged", types.TupleType{Name: "Foo"}, types.Shared, types.Unspecified},
 	}
 	for _, c := range cases {
 		got := types.AllocationOf(types.WithAllocation(c.base, c.mod))

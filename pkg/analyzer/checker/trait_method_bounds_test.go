@@ -42,11 +42,11 @@ impl Clock for i64 {
 // violates the no-allocation contract.
 func TestTraitBound_NoAlloc_AllocImpl_Flagged(t *testing.T) {
 	src := `
-shared struct Node { v: i64 }
+struct Node { v: i64 }
 trait Make { noalloc make: (Self) -> i64 }
 impl Make for i64 {
     make = (self) => {
-        let n = Node { v: 1 }
+        let n: shared Node = Node { v: 1 }
         n.v
     }
 }`

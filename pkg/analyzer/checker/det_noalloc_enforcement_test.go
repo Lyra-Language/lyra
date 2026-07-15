@@ -106,15 +106,29 @@ func TestPure_AmbientRandom_Violates(t *testing.T) {
 
 // --- noalloc: heap allocation is forbidden; output / mutation are allowed ---
 
-// Constructing a `shared`-declared value heap-allocates, so it breaks `noalloc`.
+// Constructing a value used as `shared` heap-allocates, so it breaks `noalloc`.
+// Allocation is a use-site flavor now: the binding is annotated `shared`, and the
+// typechecker records that flavor on the construction (AllocationOf sees it).
 func TestNoAlloc_SharedConstruction_Violates(t *testing.T) {
 	src := `
-shared struct Node { v: i64 }
+struct Node { v: i64 }
+let make = noalloc (x: i64) -> i64 => {
+    let n: shared Node = Node { v: x }
+    n.v
+}`
+	assertBoundError(t, checkPurity(t, src), "lyra-E016")
+}
+
+// A construction NOT used as `shared` (an unannotated / stack binding) does not
+// heap-allocate, so it is clean under `noalloc`.
+func TestNoAlloc_StackConstruction_Ok(t *testing.T) {
+	src := `
+struct Node { v: i64 }
 let make = noalloc (x: i64) -> i64 => {
     let n = Node { v: x }
     n.v
 }`
-	assertBoundError(t, checkPurity(t, src), "lyra-E016")
+	assertPurityCount(t, checkPurity(t, src), 0)
 }
 
 // An unknown external call could allocate, and we can't inspect its body to know
@@ -141,10 +155,10 @@ let make = noalloc (n: i64) -> i64 => { helper(n) }`
 // so a `noalloc` function may build into an arena.
 func TestNoAlloc_ArenaDischarged_Ok(t *testing.T) {
 	src := `
-shared struct Node { v: i64 }
+struct Node { v: i64 }
 let make = noalloc (x: i64) -> i64 => {
     with Arena.new(bytes(64)) {
-        let n = Node { v: x }
+        let n: shared Node = Node { v: x }
         x
     }
 }`

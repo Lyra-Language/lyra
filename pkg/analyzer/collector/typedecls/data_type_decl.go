@@ -12,7 +12,6 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	var name string
 	var nameLoc ast.Location
 	var genericParams []ast.GenericParam
-	var allocation types.AllocationModifier
 	var constructors []types.DataTypeConstructor
 	var derives []string
 	var builtin string
@@ -24,8 +23,6 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 		case "attribute_list":
 			derives = collectDerives(child, ctx)
 			builtin = collectBuiltin(child, ctx)
-		case "allocation_modifier":
-			allocation = allocModifier(child, ctx)
 		case "visibility":
 			isPublic = true
 		case "data_type_name":
@@ -47,7 +44,6 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 		Type: types.DataType{
 			Name:         name,
 			Constructors: constructors,
-			Allocation:   allocation,
 		},
 		IsPublic: isPublic,
 		Derives:  derives,

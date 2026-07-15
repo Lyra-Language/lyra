@@ -92,24 +92,11 @@ func TestRecursiveType_DirectSelfRef_DataInlineRecord_Error(t *testing.T) {
 	`, "Tree")
 }
 
-// --- Shared declaration breaks the cycle ---
-
-func TestRecursiveType_SharedDecl_Struct_Ok(t *testing.T) {
-	assertNoRecursiveTypeErrors(t, `
-		shared struct Tree {
-			value: i64,
-			left: Tree,
-		}
-	`)
-}
-
-func TestRecursiveType_SharedDecl_Data_Ok(t *testing.T) {
-	assertNoRecursiveTypeErrors(t, `
-		shared data List = Nil | Cons(i64, List)
-	`)
-}
-
 // --- Shared field annotation breaks the cycle ---
+//
+// A recursive cycle is broken only by a `shared` field (there is no
+// declaration-level allocation flavor): the field holds a pointer, so the type
+// has finite by-value size.
 
 func TestRecursiveType_SharedFieldAnnotation_Ok(t *testing.T) {
 	assertNoRecursiveTypeErrors(t, `
@@ -143,13 +130,13 @@ func TestRecursiveType_MutualRecursion_Error(t *testing.T) {
 }
 
 func TestRecursiveType_MutualRecursion_OneShared_Ok(t *testing.T) {
-	// Foo→Bar is by-value, but Bar is shared — so the owner of Foo holds a
-	// pointer to Bar, and there's no size-bound issue.
+	// The Foo→Bar edge is a `shared` field, so Foo holds a pointer to Bar and
+	// the by-value cycle is broken — no size-bound issue.
 	assertNoRecursiveTypeErrors(t, `
 		struct Foo {
-			bar: Bar,
+			bar: shared Bar,
 		}
-		shared struct Bar {
+		struct Bar {
 			foo: Foo,
 		}
 	`)

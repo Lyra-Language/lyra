@@ -8,6 +8,11 @@ import (
 type TupleType struct {
 	Name     string // uppercase letter optionally followed by any number of letters or numbers
 	Elements []Type
+	// Allocation is the storage flavor a *use site* gives this tuple value
+	// (`let p: shared Point`), applied via WithAllocation during resolveType.
+	// Allocation is never declared on the type (there are no declaration-level
+	// modifiers) — it's a property of the value's storage, read via AllocationOf.
+	Allocation AllocationModifier
 }
 
 func (TupleType) typeNode() {}

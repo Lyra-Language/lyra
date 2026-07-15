@@ -20,10 +20,10 @@ type RecursiveTypeError struct {
 func (e RecursiveTypeError) Error() string { return e.Message }
 
 // CheckRecursiveTypes walks all type declarations in the program and reports
-// any by-value recursive cycle. A cycle is safe only when every type in it is
-// declared `shared` (heap-allocated, pointer-sized) or a recursive
-// field/constructor-parameter is annotated `shared` — either way the size is
-// bounded.
+// any by-value recursive cycle. A cycle is safe only when a recursive
+// field/constructor-parameter is annotated `shared` (heap-allocated,
+// pointer-sized), which bounds the size — there is no declaration-level
+// allocation flavor, so a `shared` field is the only cycle-breaker.
 //
 // The check does not require the typechecker output; it runs directly on the
 // collected AST.
@@ -84,12 +84,12 @@ func CheckRecursiveTypes(program *ast.Program) []RecursiveTypeError {
 						Code: diag.CodeRecursiveType,
 						Message: fmt.Sprintf(
 							"type %q is recursive without indirection: by-value self-reference gives it unbounded size; "+
-								"declare `shared %s` or annotate the recursive field/constructor parameter as `shared`",
-							dep, dep),
+								"annotate the recursive field/constructor parameter as `shared`",
+							dep),
 						Location: decl.GetLocation(),
 					})
 				}
-			// black: already processed, no new cycle through this path.
+				// black: already processed, no new cycle through this path.
 			}
 		}
 		color[name] = black
@@ -105,13 +105,11 @@ func CheckRecursiveTypes(program *ast.Program) []RecursiveTypeError {
 }
 
 // byValueDepsOf returns the names of user-defined types that decl contains
-// directly by value (not through shared or raw-pointer indirection). The
-// declaration's own allocation is checked first: if the type is shared, it is
-// heap-allocated and its owner holds a pointer, so no size-bound issue.
+// directly by value (not through shared or raw-pointer indirection). A cycle is
+// broken only where a *field* takes the type by shared indirection (`next:
+// shared Node`) — there is no declaration-level allocation flavor, so the whole
+// type is always laid out by value here and only its fields' flavors matter.
 func byValueDepsOf(decl *ast.TypeDeclStmt, decls map[string]*ast.TypeDeclStmt) []string {
-	if declIsSharedType(decl) {
-		return nil // entire type is shared → owners hold a pointer
-	}
 	seen := map[string]bool{}
 	var deps []string
 
@@ -135,18 +133,6 @@ func byValueDepsOf(decl *ast.TypeDeclStmt, decls map[string]*ast.TypeDeclStmt) [
 	}
 
 	return deps
-}
-
-// declIsSharedType reports whether a type declaration's *own* storage is
-// shared (heap-allocated). When true, owners of this type hold a pointer, so
-// the type's internal layout does not affect the owner's size.
-func declIsSharedType(decl *ast.TypeDeclStmt) bool {
-	// Named tuples store their allocation modifier on TypeDeclStmt.Allocation.
-	if decl.Allocation == types.Shared {
-		return true
-	}
-	// Structs and data types store it inside the type value itself.
-	return types.AllocationOf(decl.Type) == types.Shared
 }
 
 // collectByValueNames appends to deps every user-defined type name that t
@@ -181,15 +167,15 @@ func collectByValueNames(t types.Type, decls map[string]*ast.TypeDeclStmt, seen 
 			collectByValueNames(e, decls, seen, deps)
 		}
 
-	// Primitives, generics, lambdas, pointers, void, fixed-point, constrained,
-	// range, parameterized — either not nominal types or bounded by construction.
+		// Primitives, generics, lambdas, pointers, void, fixed-point, constrained,
+		// range, parameterized — either not nominal types or bounded by construction.
 	}
 }
 
 // addIfByValue appends name to deps if it names a by-value user-defined type:
-// - it must be declared in this program (present in decls),
-// - the field annotation must not be `shared` (fieldMod != Shared), and
-// - the type's own declaration must not be `shared`.
+//   - it must be declared in this program (present in decls), and
+//   - the field annotation must not be `shared` (fieldMod != Shared), which is the
+//     only way a recursive cycle is broken (there is no declaration-level flavor).
 func addIfByValue(name string, fieldMod types.AllocationModifier, decls map[string]*ast.TypeDeclStmt, seen map[string]bool, deps *[]string) {
 	if fieldMod == types.Shared {
 		return // field annotated `shared` → pointer-sized at the call site
@@ -197,12 +183,8 @@ func addIfByValue(name string, fieldMod types.AllocationModifier, decls map[stri
 	if seen[name] {
 		return
 	}
-	decl, ok := decls[name]
-	if !ok {
+	if _, ok := decls[name]; !ok {
 		return // not a user-defined nominal type in this program
-	}
-	if declIsSharedType(decl) {
-		return // the declaration itself is shared → owners hold a pointer
 	}
 	seen[name] = true
 	*deps = append(*deps, name)

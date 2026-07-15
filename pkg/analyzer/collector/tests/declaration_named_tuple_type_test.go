@@ -18,10 +18,6 @@ func TestCollector_TupleTypeDeclarationWithVisibility(t *testing.T) {
 	runGoldenTest(t, `pub tuple Point2D(f64, f64)`, "tuple_type_declaration_with_visibility")
 }
 
-func TestCollector_TupleTypeDeclarationWithAllocationModifier(t *testing.T) {
-	runGoldenTest(t, `pub stack tuple Point2D(f64, f64)`, "tuple_type_declaration_with_allocation_modifier")
-}
-
 func TestCollector_TupleTypeDeclarationWithNestedTuple(t *testing.T) {
 	runGoldenTest(t, `tuple RGBA((i64, i64, i64), f64)`, "tuple_type_declaration_with_nested_tuple")
 }

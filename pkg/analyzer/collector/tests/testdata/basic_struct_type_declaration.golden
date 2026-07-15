@@ -5,7 +5,6 @@ Program(1 statements) {
 			Name: Point
 			Type: {
 				NamedStructType(Point) {
-					Allocation: stack
 					Fields: {
 						StructField(x) {
 							Name: x

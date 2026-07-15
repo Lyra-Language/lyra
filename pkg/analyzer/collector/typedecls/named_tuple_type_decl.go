@@ -12,13 +12,9 @@ func collectNamedTupleTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx)
 	var name string
 	var nameLoc ast.Location
 	var genericParams []ast.GenericParam
-	var allocation types.AllocationModifier
 	var elements []types.Type
 	isPublic := false
 
-	if allocationNode := node.ChildByFieldName("allocation"); allocationNode != nil {
-		allocation = allocModifier(allocationNode, ctx)
-	}
 	if visibilityNode := node.ChildByFieldName("visibility"); visibilityNode != nil {
 		isPublic = true
 	}
@@ -39,7 +35,6 @@ func collectNamedTupleTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx)
 		NameLocation:  nameLoc,
 		GenericParams: genericParams,
 		IsPublic:      isPublic,
-		Allocation:    allocation,
 		Type:          types.TupleType{Name: name, Elements: elements},
 	}
 

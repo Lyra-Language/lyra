@@ -3,7 +3,7 @@ package collector_test
 import "testing"
 
 func TestCollector_BasicDataType(t *testing.T) {
-	runGoldenTest(t, `pub stack data ColorName = Red | Green | Blue`, "basic_data_type")
+	runGoldenTest(t, `pub data ColorName = Red | Green | Blue`, "basic_data_type")
 }
 
 func TestCollector_DataTypeWithGenericParameter(t *testing.T) {
