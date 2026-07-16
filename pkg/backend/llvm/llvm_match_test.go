@@ -134,19 +134,123 @@ func TestEmit_MatchGuard_Deferred(t *testing.T) {
 	}
 }
 
-// TestEmit_MatchNonData_Deferred: a non-data scrutinee (here an integer) isn't
-// lowered yet — only data-type matches are — so it errors loudly.
-func TestEmit_MatchNonData_Deferred(t *testing.T) {
-	src := `let f = (n: u8) -> u8 => match n {
-	   0 => 1,
-	   _ => 2,
+// TestEmit_MatchAggregate_Deferred: a match on an aggregate scrutinee (here a
+// struct; tuples likewise) isn't lowered yet — only data types and integer/bool
+// scalars are — so it errors loudly. (A string/float scrutinee can't even reach
+// here: those types don't lower, so a parameter or value of that type fails
+// first.)
+func TestEmit_MatchAggregate_Deferred(t *testing.T) {
+	src := `struct Pt {
+	   x: u8,
 	 }
-	 let main = () -> u8 => f(0)`
+	 let f = (p: Pt) -> u8 => match p {
+	   _ => 0,
+	 }
+	 let main = () -> u8 => f(Pt { x: 1 })`
 	_, err := emitSource(t, src)
 	if err == nil {
-		t.Fatal("expected an error: non-data-type match is not implemented yet")
+		t.Fatal("expected an error: a struct-scrutinee match is not implemented yet")
 	}
 	if !strings.Contains(err.Error(), "not implemented") {
 		t.Errorf("expected a not-implemented error, got: %v", err)
+	}
+}
+
+// `match` on a bool or integer scrutinee lowers to an if-else ladder of
+// comparisons feeding a merge phi. These run the compiled program so a wrong
+// predicate or arm selection shows up as the wrong exit code.
+func TestExec_ScalarMatch(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		// Integer literal arms: the matching literal's arm is taken.
+		{
+			"int literal arm",
+			`let f = (n: u8) -> u8 => match n {
+			   0 => 10,
+			   1 => 20,
+			   _ => 30,
+			 }
+			 let main = () -> u8 => f(1)`,
+			20,
+		},
+		// The wildcard is taken when no literal matches.
+		{
+			"int wildcard fallthrough",
+			`let f = (n: u8) -> u8 => match n {
+			   0 => 10,
+			   1 => 20,
+			   _ => 30,
+			 }
+			 let main = () -> u8 => f(9)`,
+			30,
+		},
+		// Bool scrutinee: true/false arms are exhaustive (no wildcard needed).
+		{
+			"bool",
+			`let f = (b: bool) -> u8 => match b {
+			   true => 1,
+			   false => 2,
+			 }
+			 let main = () -> u8 => f(false)`,
+			2,
+		},
+		// An identifier catch-all binds the scrutinee value and is usable in the arm.
+		{
+			"identifier catch-all binds the value",
+			`let f = (n: u8) -> u8 => match n {
+			   0 => 100,
+			   other => other + 1,
+			 }
+			 let main = () -> u8 => f(41)`,
+			42,
+		},
+		// Range pattern (half-open) — the value falls inside the range.
+		{
+			"range hit",
+			`let f = (n: u8) -> u8 => match n {
+			   0..<10 => 1,
+			   _ => 2,
+			 }
+			 let main = () -> u8 => f(5)`,
+			1,
+		},
+		// Range pattern — the value is outside, so the wildcard is taken.
+		{
+			"range miss",
+			`let f = (n: u8) -> u8 => match n {
+			   0..<10 => 1,
+			   _ => 2,
+			 }
+			 let main = () -> u8 => f(20)`,
+			2,
+		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestEmit_ScalarMatchIR pins the ladder shape: an icmp test per literal arm and
+// a cond-br to the arm body or the next test (no `switch` — the ladder is used
+// uniformly so a range arm fits).
+func TestEmit_ScalarMatchIR(t *testing.T) {
+	got, err := emitSource(t, `let f = (n: u8) -> u8 => match n {
+	   0 => 10,
+	   1 => 20,
+	   _ => 30,
+	 }
+	 let main = () -> u8 => f(1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"icmp eq", "br i1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("scalar-match IR missing %q:\n%s", want, got)
+		}
 	}
 }

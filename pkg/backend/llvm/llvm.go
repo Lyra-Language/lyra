@@ -57,12 +57,12 @@
 //     inline vs boxed. layout.go/runtime.go provide the building blocks —
 //     LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign, and
 //     declareRuntime (wired into Emit) — for lowerType to dispatch over.
-//  2. Grow lowerExpr further: non-`data` `match` (int/bool/string/tuple/struct
-//     scrutinees), arm guards, and float. Already lowering: arithmetic,
-//     comparisons, `&&`/`||`, `if`/blocks, `let`/`var`, calls, tuple and struct
-//     instances, `data` construction (alloca + typed payload store), and `match`
-//     on a `data` value (tag switch + payload extraction + field binding).
-//     Mutable locals are modeled as `alloca` + load/store
+//  2. Grow lowerExpr further: tuple/struct/string `match`, arm guards, and float.
+//     Already lowering: arithmetic, comparisons, `&&`/`||`, `if`/blocks,
+//     `let`/`var`, calls, tuple and struct instances, `data` construction (alloca
+//     + typed payload store), `match` on a `data` value (tag switch + payload
+//     extraction + field binding), and `match` on a bool/integer scalar (an
+//     if-else comparison ladder). Mutable locals are modeled as `alloca` + load/store
 //     (let mem2reg build SSA) rather than hand-written phi nodes. Float
 //     literals/arithmetic and any conversion touching float are deferred: a float
 //     literal is now reachable via a `let x: f64 = …` binding, but it errors
@@ -81,6 +81,7 @@ package llvm
 import (
 	"fmt"
 	"slices"
+	"strconv"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -974,7 +975,187 @@ func (l *lowerer) lowerMatch(block *ir.Block, e *ast.MatchExpr) (value.Value, *i
 	if dt, ok := l.resolveDataType(scrutType); ok {
 		return l.lowerDataMatch(block, e, dt)
 	}
-	return nil, nil, fmt.Errorf("llvm: match on %s not implemented yet (only data types)", scrutType)
+	// A scalar scrutinee (bool or a concrete integer) lowers to an if-else ladder
+	// of comparisons. Detected by whether the scrutinee's primitive maps to an
+	// LLVM integer type (i1 for bool, iN for ints) — float and string fall through.
+	if prim, ok := scrutType.(types.PrimitiveType); ok {
+		if ll, ok := LLVMPrimitive(prim.Name); ok {
+			if _, isInt := ll.(*lltypes.IntType); isInt {
+				return l.lowerScalarMatch(block, e, prim)
+			}
+		}
+	}
+	return nil, nil, fmt.Errorf("llvm: match on %s not implemented yet (only data types and integer/bool scalars)", scrutType)
+}
+
+// lowerScalarMatch lowers a `match` on a bool or integer scrutinee as an if-else
+// ladder: each non-catch-all arm becomes a comparison that cond-brs to the arm
+// body or on to the next test, in source order (first match wins). A wildcard or
+// identifier arm is an unconditional match that ends the ladder (an identifier
+// binds the scrutinee value); later arms are unreachable. Arm bodies feed a merge
+// phi, so the match is a value like `if`.
+//
+// (A pure-literal match would lower more compactly to an LLVM `switch`; the
+// ladder is used uniformly because a range pattern — `0..<10` — isn't a single
+// switch case. The optimizer recovers the switch for the literal-only shape.)
+//
+// The fall-through past the last test is `unreachable`: a bool match covering
+// true/false, or an exhaustive integer match, never reaches it; a non-exhaustive
+// integer match was already warned by the typechecker.
+func (l *lowerer) lowerScalarMatch(block *ir.Block, e *ast.MatchExpr, scrutPrim types.PrimitiveType) (value.Value, *ir.Block, error) {
+	for _, arm := range e.MatchArms {
+		if arm.Guard != nil {
+			return nil, nil, fmt.Errorf("llvm: match guards not implemented yet")
+		}
+	}
+	scrut, block, err := l.lowerExpr(block, e.Scrutinee)
+	if err != nil {
+		return nil, nil, err
+	}
+	intTy, ok := scrut.Type().(*lltypes.IntType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: scalar match scrutinee did not lower to an integer (%s)", scrut.Type())
+	}
+	isBool := scrutPrim.Name == types.Boolean
+	signed := IsSignedInt(scrutPrim.Name)
+	fn := block.Parent
+
+	merge := fn.NewBlock("")
+	type incoming struct {
+		val value.Value
+		end *ir.Block
+	}
+	var incomings []incoming
+	current := block
+	sealed := false // a catch-all consumed the fall-through
+
+	for _, arm := range e.MatchArms {
+		switch p := arm.Pattern.(type) {
+		case *ast.WildcardPattern, *ast.IdentifierPattern:
+			if ip, ok := p.(*ast.IdentifierPattern); ok && ip.Name != "_" {
+				slot := fn.Blocks[0].NewAlloca(intTy)
+				current.NewStore(scrut, slot)
+				l.locals[ip.Name] = slot
+			}
+			val, end, err := l.lowerExpr(current, arm.Body)
+			if err != nil {
+				return nil, nil, err
+			}
+			if end.Term == nil {
+				end.NewBr(merge)
+				incomings = append(incomings, incoming{val, end})
+			}
+			sealed = true
+		default:
+			cond, err := l.scalarMatchTest(current, scrut, arm.Pattern, isBool, signed)
+			if err != nil {
+				return nil, nil, err
+			}
+			bodyBlock := fn.NewBlock("")
+			nextBlock := fn.NewBlock("")
+			current.NewCondBr(cond, bodyBlock, nextBlock)
+			val, end, err := l.lowerExpr(bodyBlock, arm.Body)
+			if err != nil {
+				return nil, nil, err
+			}
+			if end.Term == nil {
+				end.NewBr(merge)
+				incomings = append(incomings, incoming{val, end})
+			}
+			current = nextBlock
+		}
+		if sealed {
+			break // remaining arms are unreachable after an unconditional match
+		}
+	}
+	if !sealed {
+		current.NewUnreachable()
+	}
+
+	if len(incomings) == 0 {
+		return nil, merge, nil
+	}
+	incs := make([]*ir.Incoming, len(incomings))
+	for i, in := range incomings {
+		incs[i] = ir.NewIncoming(in.val, in.end)
+	}
+	return merge.NewPhi(incs...), merge, nil
+}
+
+// scalarMatchTest builds the i1 "does the scrutinee match this pattern?" test for
+// one arm of a scalar match: an `icmp eq` for a literal, or a two-sided range
+// check (`scrut >= lo && scrut </<= hi`) for a range pattern. signed selects the
+// signed vs unsigned comparison predicates.
+func (l *lowerer) scalarMatchTest(block *ir.Block, scrut value.Value, pattern ast.Pattern, isBool, signed bool) (value.Value, error) {
+	intTy := scrut.Type().(*lltypes.IntType)
+	switch p := pattern.(type) {
+	case *ast.LiteralPattern:
+		s, ok := p.Value.(string)
+		if !ok {
+			return nil, fmt.Errorf("llvm: unexpected literal pattern value %T", p.Value)
+		}
+		if isBool {
+			var bit int64
+			switch s {
+			case "true":
+				bit = 1
+			case "false":
+				bit = 0
+			default:
+				return nil, fmt.Errorf("llvm: non-bool literal pattern %q on a bool scrutinee", s)
+			}
+			return block.NewICmp(enum.IPredEQ, scrut, constant.NewInt(intTy, bit)), nil
+		}
+		n, err := strconv.ParseInt(s, 0, 64)
+		if err != nil {
+			return nil, fmt.Errorf("llvm: invalid integer literal pattern %q: %v", s, err)
+		}
+		return block.NewICmp(enum.IPredEQ, scrut, constant.NewInt(intTy, n)), nil
+	case *ast.RangePattern:
+		lo, ok := constIntFromExpr(p.Start, intTy)
+		if !ok {
+			return nil, fmt.Errorf("llvm: unsupported range start in match pattern")
+		}
+		hi, ok := constIntFromExpr(p.End, intTy)
+		if !ok {
+			return nil, fmt.Errorf("llvm: unsupported range end in match pattern")
+		}
+		gePred := enum.IPredUGE
+		if signed {
+			gePred = enum.IPredSGE
+		}
+		geLo := block.NewICmp(gePred, scrut, lo)
+		var hiPred enum.IPred
+		switch {
+		case p.EndOperator == "<" && signed:
+			hiPred = enum.IPredSLT
+		case p.EndOperator == "<":
+			hiPred = enum.IPredULT
+		case signed:
+			hiPred = enum.IPredSLE
+		default:
+			hiPred = enum.IPredULE
+		}
+		leHi := block.NewICmp(hiPred, scrut, hi)
+		return block.NewAnd(geLo, leHi), nil
+	default:
+		return nil, fmt.Errorf("llvm: match pattern %T not implemented for a scalar scrutinee", pattern)
+	}
+}
+
+// constIntFromExpr builds an integer constant of type ty from a range-bound
+// expression: an integer literal, or a negated one (`-128`). Returns ok=false for
+// a bound the backend can't fold at compile time.
+func constIntFromExpr(e ast.Expression, ty *lltypes.IntType) (value.Value, bool) {
+	switch v := e.(type) {
+	case *ast.IntegerLiteralExpr:
+		return constant.NewInt(ty, v.Value), true
+	case *ast.NegationExpr:
+		if inner, ok := v.Operand.(*ast.IntegerLiteralExpr); ok {
+			return constant.NewInt(ty, -inner.Value), true
+		}
+	}
+	return nil, false
 }
 
 // lowerDataMatch lowers a `match` on a `data` value: store the scrutinee, load
