@@ -124,12 +124,13 @@ let main = () -> u8 => 0
 }
 
 // TestEmit_UnsupportedTypeDecl_Error: a type-decl kind the backend doesn't lower
-// yet (here a `data` sum type) fails loudly rather than being silently skipped —
-// the whole build errors so no half-lowered module escapes.
+// yet (here a `newtype`/constrained type) fails loudly rather than being silently
+// skipped — the whole build errors so no half-lowered module escapes. (tuple,
+// struct, and data decls now lower; newtype is what's left.)
 func TestEmit_UnsupportedTypeDecl_Error(t *testing.T) {
-	_, err := emitSource(t, "data Color = Red | Green | Blue\nlet main = () -> u8 => 0\n")
+	_, err := emitSource(t, "newtype Meters = i32\nlet main = () -> u8 => 0\n")
 	if err == nil {
-		t.Fatal("expected an error for an unsupported (data) type declaration")
+		t.Fatal("expected an error for an unsupported (newtype) type declaration")
 	}
 	if !strings.Contains(err.Error(), "unsupported type") {
 		t.Errorf("expected an 'unsupported type' error, got: %v", err)

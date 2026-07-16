@@ -48,8 +48,10 @@
 //  1. lowerType(t types.Type) — Lyra type → an llir `types.Type`. Scalars
 //     (i8..i64/u* → iN, f16/32/64 → half/float/double, bool → i1) and named
 //     tuple/struct references (→ the struct type the type-decl passes registered,
-//     via lookupNamedType) already lower; remaining is data/sum → a tagged union
-//     { tag, payload } per DATA_LAYOUT.md. `stack` values lower by value,
+//     via lookupNamedType) lower; `data`/sum decls lower to their tagged union
+//     { tag, payload-blob } per DATA_LAYOUT.md (lowerDataDef via DataUnionType) —
+//     the layout is done; a value of that type (construction/match) is not.
+//     `stack` values lower by value,
 //     `shared` values to a pointer to a ref-counted box — see ALLOCATION.md. The
 //     two docs compose: the sum-type layout is the payload; the flavor decides
 //     inline vs boxed. layout.go/runtime.go provide the building blocks —
@@ -175,11 +177,12 @@ func (l *lowerer) lowerTypeDecl(typeDeclStmt *ast.TypeDeclStmt) error {
 		return nil
 	}
 	switch t := typeDeclStmt.Type.(type) {
-	case types.TupleType, types.NamedStructType:
+	case types.TupleType, types.NamedStructType, types.DataType:
 		// Key by the declaration's name (typeDeclStmt.Name), not t.GetName():
 		// TupleType.GetName() renders the full shape ("Point(i32, i32)"), while
 		// the definition pass and lowerType both look the type up by its bare
-		// declared name ("Point").
+		// declared name ("Point"). A `data` type registers the same way — its
+		// definition is the tagged union `{ tag, payload-blob }`.
 		return l.declareNamedStruct(typeDeclStmt.Name)
 	default:
 		return fmt.Errorf("llvm: unsupported type %s", t)
@@ -221,9 +224,31 @@ func (l *lowerer) lowerTypeDef(typeDeclStmt *ast.TypeDeclStmt) error {
 		return l.lowerTupleDef(t)
 	case types.NamedStructType:
 		return l.lowerStructDef(t)
+	case types.DataType:
+		return l.lowerDataDef(t)
 	default:
 		return fmt.Errorf("llvm: unsupported type %s", t)
 	}
+}
+
+// lowerDataDef fills a `data` type's registered placeholder with its tagged-union
+// layout `{ iTAG, [K x iA] }` (DATA_LAYOUT.md): a tag sized to the variant count,
+// followed by a payload blob sized/aligned to the largest variant. DataUnionType
+// (layout.go) computes the shape; an all-nullary `data` (an enum) is just
+// `{ iTAG }` with no blob.
+//
+// DataUnionType fails (ok=false) when a variant payload can't be sized yet — a
+// string field, a by-value reference to another named type (a recursive one must
+// be `shared`, i.e. a pointer, per lyra-E014, which *is* sizeable), or an
+// un-monomorphized generic. That's a loud error here rather than a wrong layout.
+func (l *lowerer) lowerDataDef(t types.DataType) error {
+	st := l.structTypes[t.Name]
+	union, ok := DataUnionType(t)
+	if !ok {
+		return fmt.Errorf("llvm: cannot lay out data type %q yet (a variant payload isn't sizeable — e.g. a string, a by-value named-type field, or an un-monomorphized generic)", t.Name)
+	}
+	st.Fields = append(st.Fields, union.Fields...)
+	return nil
 }
 
 func (l *lowerer) lowerTupleDef(t types.TupleType) error {
