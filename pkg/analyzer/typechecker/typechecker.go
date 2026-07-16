@@ -1101,6 +1101,8 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		return tc.inferLambdaExprType(e)
 	case *ast.MemberExpr:
 		return tc.inferMemberExprType(e)
+	case *ast.TupleIndexExpr:
+		return tc.inferTupleIndexExprType(e)
 	case *ast.TryExpr:
 		return tc.inferTryExpr(e)
 	case *ast.NegationExpr:
@@ -1959,6 +1961,37 @@ func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 		}
 	}
 	return nil
+}
+
+// inferTupleIndexExprType types positional tuple access (`pair.0`): the object
+// must be a tuple, the index must be in range, and the result is that element's
+// (resolved) type. Mirrors inferMemberExprType, but positional — the index is a
+// number rather than a field name. Works for both named tuples (`Point(i32,
+// i32)`) and anonymous ones (`(1, 2)`), since both carry Elements.
+func (tc *TypeChecker) inferTupleIndexExprType(t *ast.TupleIndexExpr) types.Type {
+	objType := tc.inferExprType(t.Object)
+	// A tuple-typed field or binding may be recorded as an UnresolvedType (just
+	// the name), so resolve through the symbol table first — same reason
+	// inferMemberExprType does before a struct-field lookup.
+	objType = tc.resolveType(objType, t.Object.GetLocation())
+	tup, ok := objType.(types.TupleType)
+	if !ok {
+		// A nil object type already produced its own diagnostic (e.g. undefined
+		// identifier); don't pile on a second, less specific error.
+		if objType != nil {
+			tc.addError(t.GetLocation(), SeverityError,
+				"tuple index access on non-tuple type %s", objType)
+		}
+		return nil
+	}
+	if t.Index < 0 || t.Index >= len(tup.Elements) {
+		tc.addError(t.GetLocation(), SeverityError,
+			"tuple index %d out of range (tuple has %d element(s))", t.Index, len(tup.Elements))
+		return nil
+	}
+	elem := tc.resolveType(tup.Elements[t.Index], t.GetLocation())
+	tc.typeTable.Set(t, elem)
+	return elem
 }
 
 func (tc *TypeChecker) addError(loc ast.Location, sev Severity, format string, args ...any) {

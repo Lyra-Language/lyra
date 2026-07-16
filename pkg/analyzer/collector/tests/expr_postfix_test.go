@@ -18,6 +18,14 @@ func TestCollectPostfixArrayIndexing(t *testing.T) {
 	runGoldenTest(t, `let first = array[0]`, "postfix_array_indexing")
 }
 
+func TestCollectPostfixTupleIndex(t *testing.T) {
+	runGoldenTest(t, `let x = pair.0`, "postfix_tuple_index")
+}
+
+func TestCollectPostfixNestedTupleIndex(t *testing.T) {
+	runGoldenTest(t, `let x = pair.0.1`, "postfix_nested_tuple_index")
+}
+
 func TestCollectPostfixOptionalArrayIndexing(t *testing.T) {
 	runGoldenTest(t, `let first = array?[0]`, "postfix_optional_array_indexing")
 }

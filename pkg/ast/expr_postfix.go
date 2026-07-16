@@ -39,6 +39,19 @@ func (i *IndexExpr) GetName() string {
 	return fmt.Sprintf("IndexExpr(%s[%s])", i.Object.GetName(), i.Index.GetName())
 }
 
+// TupleIndexExpr is positional tuple element access (`pair.0`, `pair.1`) — the
+// numeric-index counterpart to MemberExpr's named field access. Index is the
+// parsed, zero-based element position.
+type TupleIndexExpr struct {
+	ExprBase
+	Object Expression
+	Index  int
+}
+
+func (t *TupleIndexExpr) GetName() string {
+	return fmt.Sprintf("TupleIndexExpr(%s.%d)", t.Object.GetName(), t.Index)
+}
+
 type TryExpr struct {
 	ExprBase
 	Operand Expression

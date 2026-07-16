@@ -1,0 +1,23 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(x) {
+			BindingKind: let
+			Name: x
+			Value: {
+				TupleIndexExpr {
+					Index: 1
+					Object: {
+						TupleIndexExpr {
+							Index: 0
+							Object: {
+								IdentifierExpr(pair) {
+									Name: pair
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

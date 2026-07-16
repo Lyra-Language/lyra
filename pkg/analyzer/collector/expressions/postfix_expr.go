@@ -1,6 +1,9 @@
 package expressions
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -60,6 +63,28 @@ func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 		Object:   CollectExpression(node.ChildByFieldName("object"), ctx),
 		Property: *property,
 		Optional: optional,
+	}
+}
+
+func collectTupleIndexExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
+	indexNode := node.ChildByFieldName("index")
+	if indexNode == nil {
+		ctx.AddError(node, diag.SeverityError, "tuple index expression missing index")
+		return nil
+	}
+	// The index is a decimal_int token (`[0-9][0-9_]*`), so strip any digit
+	// separators before parsing. A value too large to be a Go int is not a
+	// plausible tuple arity, so it's a parse-level error rather than a panic.
+	indexText := strings.ReplaceAll(ctx.NodeText(indexNode), "_", "")
+	index, err := strconv.Atoi(indexText)
+	if err != nil {
+		ctx.AddError(indexNode, diag.SeverityError, "invalid tuple index %q", ctx.NodeText(indexNode))
+		return nil
+	}
+	return &ast.TupleIndexExpr{
+		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Object:   CollectExpression(node.ChildByFieldName("object"), ctx),
+		Index:    index,
 	}
 }
 

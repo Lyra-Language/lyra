@@ -82,6 +82,8 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 		return collectMemberExpr(node, ctx, loc, false)
 	case "optional_member_expr":
 		return collectMemberExpr(node, ctx, loc, true)
+	case "tuple_index_expr":
+		return collectTupleIndexExpr(node, ctx, loc)
 	case "index_expr":
 		return collectIndexExpr(node, ctx, loc, false)
 	case "optional_index_expr":

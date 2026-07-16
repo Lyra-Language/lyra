@@ -55,9 +55,10 @@
 //     inline vs boxed. layout.go/runtime.go provide the building blocks —
 //     LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign, and
 //     declareRuntime (wired into Emit) — for lowerType to dispatch over.
-//  2. Grow lowerExpr further: `match`, struct/tuple construction, and field
-//     access (arithmetic, comparisons, `&&`/`||`, `if`/blocks, `let`/`var`, and
-//     calls already lower). Mutable locals are modeled as `alloca` + load/store
+//  2. Grow lowerExpr further: `match`, struct construction, and struct field
+//     access (arithmetic, comparisons, `&&`/`||`, `if`/blocks, `let`/`var`,
+//     calls, and tuple instances — construction + positional `.0` access via
+//     insertvalue/extractvalue — already lower). Mutable locals are modeled as `alloca` + load/store
 //     (let mem2reg build SSA) rather than hand-written phi nodes. Float
 //     literals/arithmetic and any conversion touching float are deferred: a float
 //     literal is now reachable via a `let x: f64 = …` binding, but it errors
@@ -460,9 +461,13 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		}
 		return irType, nil
 	case types.TupleType:
-		// A named tuple used as a field/element resolves to the struct type
-		// registered in the declaration pass. Key by t.Name, not GetName()
-		// (which renders the full shape) — see declareNamedStruct.
+		// A named tuple resolves to the struct type registered in the declaration
+		// pass (key by t.Name, not GetName() which renders the full shape — see
+		// declareNamedStruct). An anonymous tuple (`(1, 2)`) has no declaration,
+		// so build its structural struct type on the fly from its elements.
+		if types.IsAnonymousTupleName(t.Name) {
+			return l.lowerAnonymousTupleType(t)
+		}
 		return l.lookupNamedType(t.Name)
 	case types.NamedStructType:
 		return l.lookupNamedType(t.Name)
@@ -487,6 +492,23 @@ func (l *lowerer) lookupNamedType(name string) (lltypes.Type, error) {
 		return nil, fmt.Errorf("llvm: unknown named type %q", name)
 	}
 	return st, nil
+}
+
+// lowerAnonymousTupleType builds the (unnamed) LLVM struct type for an anonymous
+// tuple `(1, 2)` from its element types. Unlike a named tuple it has no
+// declaration to register against, and LLVM struct types are structural, so a
+// fresh NewStruct is the whole representation — two anonymous tuples of the same
+// shape lower to equal (interchangeable) LLVM types.
+func (l *lowerer) lowerAnonymousTupleType(t types.TupleType) (*lltypes.StructType, error) {
+	fields := make([]lltypes.Type, len(t.Elements))
+	for i, elem := range t.Elements {
+		ft, err := l.lowerType(elem)
+		if err != nil {
+			return nil, err
+		}
+		fields[i] = ft
+	}
+	return lltypes.NewStruct(fields...), nil
 }
 
 // lowerExpr lowers a Lyra expression to an LLVM value, appending any
@@ -538,8 +560,67 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		return l.lowerIf(block, e)
 	case *ast.ForLoopExpr:
 		return l.lowerForLoop(block, e)
+	case *ast.TupleLiteralExpr:
+		return l.lowerTupleLiteralExpr(block, e)
+	case *ast.TupleIndexExpr:
+		return l.lowerTupleIndexExpr(block, e)
 	}
 	return nil, nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
+}
+
+// lowerTupleLiteralExpr lowers tuple construction (`Point(3, 4)`, `(1, 2)`) to an
+// SSA aggregate: start from an undef struct and `insertvalue` each element in
+// declaration order. The result is a first-class struct *value* — a `let` binding
+// then allocas it by its `.Type()` and store/loads it like any scalar (mem2reg
+// promotes it), and lowerTupleIndexExpr reads elements back with `extractvalue`.
+//
+// Only tuple-typed literals lower here. A capitalized call that the typechecker
+// resolved to a data-type constructor (`Some(42)`) records a DataType, not a
+// TupleType — that lowering (tagged unions, DATA_LAYOUT.md) isn't implemented, so
+// it errors loudly rather than mis-building a struct.
+func (l *lowerer) lowerTupleLiteralExpr(block *ir.Block, e *ast.TupleLiteralExpr) (value.Value, *ir.Block, error) {
+	recorded, ok := l.res.TypeTable.Get(e)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no type recorded for tuple literal")
+	}
+	tupleType, ok := recorded.(types.TupleType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: tuple literal lowering not implemented for %s", recorded)
+	}
+	llType, err := l.lowerType(tupleType)
+	if err != nil {
+		return nil, nil, err
+	}
+	structType, ok := llType.(*lltypes.StructType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: tuple type %s did not lower to a struct", tupleType)
+	}
+
+	var agg value.Value = constant.NewUndef(structType)
+	for i, elemExpr := range e.Elements {
+		var elemVal value.Value
+		elemVal, block, err = l.lowerExpr(block, elemExpr)
+		if err != nil {
+			return nil, nil, err
+		}
+		agg = block.NewInsertValue(agg, elemVal, uint64(i))
+	}
+	return agg, block, nil
+}
+
+// lowerTupleIndexExpr lowers positional tuple access (`pair.0`) to an
+// `extractvalue` on the (already first-class) struct value the object lowers to.
+// The typechecker validated the index is in range, so it maps straight to the
+// struct element position.
+func (l *lowerer) lowerTupleIndexExpr(block *ir.Block, e *ast.TupleIndexExpr) (value.Value, *ir.Block, error) {
+	obj, block, err := l.lowerExpr(block, e.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, ok := obj.Type().(*lltypes.StructType); !ok {
+		return nil, nil, fmt.Errorf("llvm: tuple index on non-struct value of type %s", obj.Type())
+	}
+	return block.NewExtractValue(obj, uint64(e.Index)), block, nil
 }
 
 // literalIntType returns the LLVM integer type an integer literal should lower
