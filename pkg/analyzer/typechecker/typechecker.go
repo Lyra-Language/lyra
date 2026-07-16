@@ -1796,6 +1796,16 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		actual := tc.resolveType(tc.inferExprType(f.Value), f.Value.GetLocation())
 		if actual != nil && !isAssignable(actual, expected) {
 			tc.addError(f.Value.GetLocation(), SeverityError, "%s.%s: cannot assign %s to %s", expr.Name, name, actual, expected)
+		} else if actual != nil {
+			// Assignable: push the declared field width onto an untyped literal
+			// leaf (context-directed literal-width propagation — the same treatment
+			// a named-tuple element and a call argument get against their declared
+			// type), then record the declared type as the field's effective type.
+			// Without this a narrow field's literal (`Node { value: 3 }` with
+			// `value: u8`) stays untyped_int and the backend lowers it at the i64
+			// default, mismatching the struct's i8 field.
+			tc.propagateLiteralType(f.Value, expected)
+			tc.typeTable.Set(f.Value, expected)
 		}
 	}
 

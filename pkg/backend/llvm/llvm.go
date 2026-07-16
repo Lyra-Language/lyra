@@ -55,9 +55,9 @@
 //     inline vs boxed. layout.go/runtime.go provide the building blocks —
 //     LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign, and
 //     declareRuntime (wired into Emit) — for lowerType to dispatch over.
-//  2. Grow lowerExpr further: `match`, struct construction, and struct field
-//     access (arithmetic, comparisons, `&&`/`||`, `if`/blocks, `let`/`var`,
-//     calls, and tuple instances — construction + positional `.0` access via
+//  2. Grow lowerExpr further: `match` and `data` construction/matching
+//     (arithmetic, comparisons, `&&`/`||`, `if`/blocks, `let`/`var`, calls, and
+//     both tuple and struct instances — construction + `.0`/`.field` access via
 //     insertvalue/extractvalue — already lower). Mutable locals are modeled as `alloca` + load/store
 //     (let mem2reg build SSA) rather than hand-written phi nodes. Float
 //     literals/arithmetic and any conversion touching float are deferred: a float
@@ -564,6 +564,10 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		return l.lowerTupleLiteralExpr(block, e)
 	case *ast.TupleIndexExpr:
 		return l.lowerTupleIndexExpr(block, e)
+	case *ast.StructInstanceExpr:
+		return l.lowerStructInstanceExpr(block, e)
+	case *ast.MemberExpr:
+		return l.lowerMemberExpr(block, e)
 	}
 	return nil, nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
 }
@@ -621,6 +625,120 @@ func (l *lowerer) lowerTupleIndexExpr(block *ir.Block, e *ast.TupleIndexExpr) (v
 		return nil, nil, fmt.Errorf("llvm: tuple index on non-struct value of type %s", obj.Type())
 	}
 	return block.NewExtractValue(obj, uint64(e.Index)), block, nil
+}
+
+// lowerStructInstanceExpr lowers struct construction (`Node { value: 3 }`) to a
+// first-class struct value, the same insertvalue-over-undef shape as a tuple.
+// The one extra concern is ordering: a struct literal names its fields and may
+// list them in any order, but the LLVM struct is in *declaration* order — so the
+// fields are keyed by name and built in the declared order (also the index each
+// insertvalue targets).
+//
+// Deferred with a loud error: record-update syntax (`P { base | f: v }`), a
+// missing field relying on a default value, and an inline-record data
+// constructor (which records the owning DataType, not a struct — that's the
+// data/tagged-union work).
+func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstanceExpr) (value.Value, *ir.Block, error) {
+	if e.BaseStruct != nil {
+		return nil, nil, fmt.Errorf("llvm: struct record-update syntax not implemented yet (%q)", e.Name)
+	}
+	recorded, ok := l.res.TypeTable.Get(e)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no type recorded for struct instance %q", e.Name)
+	}
+	structType, ok := recorded.(types.NamedStructType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: struct instance lowering not implemented for %s", recorded)
+	}
+	llType, err := l.lowerType(structType)
+	if err != nil {
+		return nil, nil, err
+	}
+	structTy, ok := llType.(*lltypes.StructType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: struct type %s did not lower to a struct", structType.Name)
+	}
+
+	// Key each supplied field's value by name (a positional literal field — Name
+	// "" — takes the declared name at that position), then build in declared order.
+	valueByName := make(map[string]ast.Expression, len(e.Fields))
+	for i, f := range e.Fields {
+		name := f.Name
+		if name == "" {
+			name = structType.Fields[i].Name
+		}
+		valueByName[name] = f.Value
+	}
+
+	var agg value.Value = constant.NewUndef(structTy)
+	for i, declField := range structType.Fields {
+		valExpr, ok := valueByName[declField.Name]
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: struct %s field %q has no value (default values not implemented yet)", structType.Name, declField.Name)
+		}
+		var v value.Value
+		v, block, err = l.lowerExpr(block, valExpr)
+		if err != nil {
+			return nil, nil, err
+		}
+		agg = block.NewInsertValue(agg, v, uint64(i))
+	}
+	return agg, block, nil
+}
+
+// lowerMemberExpr lowers struct field access (`node.value`) to an `extractvalue`
+// on the object's struct value. The field's position comes from the object's
+// declared struct type (looked up by name), since the LLVM struct type carries
+// no field names. A method call (`obj.method()`) never reaches here — it's a
+// FunctionCallExpr whose callee is the MemberExpr — so this is field access only.
+func (l *lowerer) lowerMemberExpr(block *ir.Block, e *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	if e.Optional {
+		return nil, nil, fmt.Errorf("llvm: optional member access (?.) not implemented yet")
+	}
+	objType, ok := l.res.TypeTable.Get(e.Object)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no type recorded for member-access object")
+	}
+	fields, ok := l.namedStructFields(objType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: field access on non-struct type %s not implemented", objType)
+	}
+	idx := -1
+	for i, f := range fields {
+		if f.Name == e.Property.Name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return nil, nil, fmt.Errorf("llvm: struct has no field %q", e.Property.Name)
+	}
+	obj, block, err := l.lowerExpr(block, e.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, ok := obj.Type().(*lltypes.StructType); !ok {
+		return nil, nil, fmt.Errorf("llvm: member access on non-struct value of type %s", obj.Type())
+	}
+	return block.NewExtractValue(obj, uint64(idx)), block, nil
+}
+
+// namedStructFields returns the declared fields (name + order) of a named-struct
+// type. It resolves an UnresolvedType — which is how a field or binding typed as
+// another named struct is recorded — through the symbol table, so nested field
+// access (`line.start.x`) finds the inner struct's fields too.
+func (l *lowerer) namedStructFields(t types.Type) ([]types.StructField, bool) {
+	switch s := t.(type) {
+	case types.NamedStructType:
+		return s.Fields, true
+	case types.UnresolvedType:
+		if decl, ok := l.res.SymbolTable.Types[s.Name]; ok {
+			if ns, ok := decl.Type.(types.NamedStructType); ok {
+				return ns.Fields, true
+			}
+		}
+	}
+	return nil, false
 }
 
 // literalIntType returns the LLVM integer type an integer literal should lower
