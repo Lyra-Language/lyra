@@ -24,6 +24,18 @@
 // with loud errors: void/multi-clause functions, default params, destructuring
 // params, and higher-order (lambda-value) calls.
 //
+// Type declarations lower before any function, also in two passes
+// (lowerTypeDeclarations then lowerTypeDefinitions): each `tuple`/`struct` decl
+// becomes a named LLVM struct type. declareNamedStruct registers an empty
+// placeholder for every decl first (keyed by its declared name in
+// l.structTypes), then lowerTupleDef/lowerStructDef fill in the fields — so a
+// field may reference another named type in any source order, forward references
+// included (`struct Line { a: Point }` → `%Line = type { %Point, %Point }`).
+// Fields lower by value for now (a `shared` field becomes a pointer-to-box once
+// ALLOCATION.md's flavor lowering lands). data/newtype/constrained decls error
+// loudly. Instances of these types (construction, field access) aren't lowered
+// yet — only the type shapes.
+//
 // Break/continue make a block terminate mid-stream, so lowering now follows a
 // termination discipline: lowerBlockStmts stops at a sealed block and every
 // fall-through `br` is guarded by `end.Term == nil`.
@@ -33,21 +45,24 @@
 // The lowering grows out from lowerEntry in roughly this order (see
 // lyra/todo.md's backend section):
 //
-//  1. lowerType(t types.Type) — Lyra type → an llir `types.Type` (i8..i64/u* → iN,
-//     f16/32/64 → half/float/double, bool → i1, struct → a struct type, data/sum
-//     → a tagged union { tag, payload } per DATA_LAYOUT.md). `stack` values lower
-//     by value, `shared` values to a pointer to a ref-counted box — see
-//     ALLOCATION.md. The two docs compose: the sum-type layout is the payload; the
-//     flavor decides inline vs boxed. layout.go/runtime.go provide the building
-//     blocks — LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign,
-//     and declareRuntime (wired into Emit) — for lowerType to dispatch over.
-//  2. Grow lowerExpr further: `let` bindings (and other block statements),
-//     `match`, and calls. Comparisons, `&&`/`||`, and `if`/blocks already lower
-//     (lowerBooleanBinaryOpExpr/lowerBooleanAnd/lowerBooleanOr/lowerIf/lowerBlock);
-//     model mutable locals as `alloca` + load/store (let mem2reg build SSA)
-//     rather than hand-writing phi nodes. Float literals/arithmetic and any
-//     conversion touching float are deferred — genuinely unreachable by a valid
-//     program today (no `let`, `main` must return u8, no float→int builtin); see
+//  1. lowerType(t types.Type) — Lyra type → an llir `types.Type`. Scalars
+//     (i8..i64/u* → iN, f16/32/64 → half/float/double, bool → i1) and named
+//     tuple/struct references (→ the struct type the type-decl passes registered,
+//     via lookupNamedType) already lower; remaining is data/sum → a tagged union
+//     { tag, payload } per DATA_LAYOUT.md. `stack` values lower by value,
+//     `shared` values to a pointer to a ref-counted box — see ALLOCATION.md. The
+//     two docs compose: the sum-type layout is the payload; the flavor decides
+//     inline vs boxed. layout.go/runtime.go provide the building blocks —
+//     LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign, and
+//     declareRuntime (wired into Emit) — for lowerType to dispatch over.
+//  2. Grow lowerExpr further: `match`, struct/tuple construction, and field
+//     access (arithmetic, comparisons, `&&`/`||`, `if`/blocks, `let`/`var`, and
+//     calls already lower). Mutable locals are modeled as `alloca` + load/store
+//     (let mem2reg build SSA) rather than hand-written phi nodes. Float
+//     literals/arithmetic and any conversion touching float are deferred: a float
+//     literal is now reachable via a `let x: f64 = …` binding, but it errors
+//     loudly (FloatLiteralExpr is unhandled) rather than miscompiling — no float
+//     value can reach the u8 exit code until float→int lowering exists; see
 //     lowerNumericConversion's doc comment. Note lowerExpr returns the block
 //     control ends in, not just a value — threaded so a branching form (`if`)
 //     can move the insertion point; every non-branching case returns its own
@@ -98,10 +113,19 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 	m := ir.NewModule()
 	declareRuntime(m)
 	l := &lowerer{
-		module: m,
-		res:    res,
-		locals: map[string]value.Value{},
-		funcs:  map[string]*ir.Func{},
+		module:      m,
+		res:         res,
+		locals:      map[string]value.Value{},
+		funcs:       map[string]*ir.Func{},
+		structTypes: map[string]*lltypes.StructType{},
+	}
+	// Lower type declarations
+	if err := l.lowerTypeDeclarations(res.Program); err != nil {
+		return nil, err
+	}
+	// Lower type definitions
+	if err := l.lowerTypeDefinitions(res.Program); err != nil {
+		return nil, err
 	}
 	// Two passes so a call — from main, between functions, or a recursive
 	// self-call — can reference any function before its body exists: declare all
@@ -120,9 +144,10 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 }
 
 type lowerer struct {
-	module *ir.Module
-	res    *driver.Result      // gives you TypeTable, SymbolTable, MethodTable, …
-	funcs  map[string]*ir.Func // name → its function IR (all declared before any body)
+	module      *ir.Module
+	res         *driver.Result                 // gives you TypeTable, SymbolTable, MethodTable, …
+	funcs       map[string]*ir.Func            // name → its function IR (all declared before any body)
+	structTypes map[string]*lltypes.StructType // name → its struct type (for named tuple and struct lowering)
 
 	// Per-function state, reset by beginFunction at the start of each function
 	// body (main and every user function get their own).
@@ -131,6 +156,97 @@ type lowerer struct {
 	retType   lltypes.Type           // the current function's LLVM return type
 	retSigned bool                   // whether that return type is a signed integer
 	entryABI  bool                   // true only for main (u8 body → i32 ABI slot)
+}
+
+func (l *lowerer) lowerTypeDeclarations(program *ast.Program) error {
+	for _, statement := range program.Statements {
+		if typeDeclStmt, ok := statement.(*ast.TypeDeclStmt); ok {
+			if err := l.lowerTypeDecl(typeDeclStmt); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (l *lowerer) lowerTypeDecl(typeDeclStmt *ast.TypeDeclStmt) error {
+	if typeDeclStmt.Name == "?" {
+		return nil
+	}
+	switch t := typeDeclStmt.Type.(type) {
+	case types.TupleType, types.NamedStructType:
+		// Key by the declaration's name (typeDeclStmt.Name), not t.GetName():
+		// TupleType.GetName() renders the full shape ("Point(i32, i32)"), while
+		// the definition pass and lowerType both look the type up by its bare
+		// declared name ("Point").
+		return l.declareNamedStruct(typeDeclStmt.Name)
+	default:
+		return fmt.Errorf("llvm: unsupported type %s", t)
+	}
+}
+
+// declareNamedStruct registers an empty, named LLVM struct type as a placeholder
+// for a tuple/struct declaration. The definition pass (lowerTupleDef/
+// lowerStructDef) fills in its fields; declaring every named type first lets a
+// later type's fields reference an earlier one — and a type reference itself,
+// once boxed layout lands.
+func (l *lowerer) declareNamedStruct(name string) error {
+	if name == "" {
+		return fmt.Errorf("llvm: tuple or struct type must have a name")
+	}
+	st := lltypes.NewStruct()     // empty placeholder
+	l.module.NewTypeDef(name, st) // registers it, sets TypeName — st now has identity
+	l.structTypes[name] = st
+	return nil
+}
+
+func (l *lowerer) lowerTypeDefinitions(program *ast.Program) error {
+	for _, statement := range program.Statements {
+		if typeDeclStmt, ok := statement.(*ast.TypeDeclStmt); ok {
+			if err := l.lowerTypeDef(typeDeclStmt); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (l *lowerer) lowerTypeDef(typeDeclStmt *ast.TypeDeclStmt) error {
+	if typeDeclStmt.Name == "?" {
+		return nil
+	}
+	switch t := typeDeclStmt.Type.(type) {
+	case types.TupleType:
+		return l.lowerTupleDef(t)
+	case types.NamedStructType:
+		return l.lowerStructDef(t)
+	default:
+		return fmt.Errorf("llvm: unsupported type %s", t)
+	}
+}
+
+func (l *lowerer) lowerTupleDef(t types.TupleType) error {
+	st := l.structTypes[t.Name]
+	for _, element := range t.Elements {
+		elementType, err := l.lowerType(element)
+		if err != nil {
+			return err
+		}
+		st.Fields = append(st.Fields, elementType)
+	}
+	return nil
+}
+
+func (l *lowerer) lowerStructDef(t types.NamedStructType) error {
+	st := l.structTypes[t.Name]
+	for _, field := range t.Fields {
+		fieldType, err := l.lowerType(field.Type)
+		if err != nil {
+			return err
+		}
+		st.Fields = append(st.Fields, fieldType)
+	}
+	return nil
 }
 
 // beginFunction resets the per-function lowering state before a body is lowered.
@@ -343,9 +459,34 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 			return nil, fmt.Errorf("unknown primitive type: %s", t.Name)
 		}
 		return irType, nil
+	case types.TupleType:
+		// A named tuple used as a field/element resolves to the struct type
+		// registered in the declaration pass. Key by t.Name, not GetName()
+		// (which renders the full shape) — see declareNamedStruct.
+		return l.lookupNamedType(t.Name)
+	case types.NamedStructType:
+		return l.lookupNamedType(t.Name)
+	case types.UnresolvedType:
+		// A named type referenced from another type declaration's field/element
+		// (`struct Line { a: Point }`) stays an UnresolvedType — the typechecker
+		// doesn't rewrite it to the concrete tuple/struct. Both declaration
+		// passes ran first, so the name resolves against structTypes.
+		return l.lookupNamedType(t.Name)
 	default:
 		return nil, fmt.Errorf("unknown type: %s", lyraType)
 	}
+}
+
+// lookupNamedType returns the LLVM struct type registered for a named tuple or
+// struct. It must already exist: every top-level type decl is declared (via
+// declareNamedStruct) before any definition is lowered, so a field/element
+// referencing another named type always resolves.
+func (l *lowerer) lookupNamedType(name string) (lltypes.Type, error) {
+	st, ok := l.structTypes[name]
+	if !ok {
+		return nil, fmt.Errorf("llvm: unknown named type %q", name)
+	}
+	return st, nil
 }
 
 // lowerExpr lowers a Lyra expression to an LLVM value, appending any
