@@ -57,14 +57,14 @@
 //     inline vs boxed. layout.go/runtime.go provide the building blocks —
 //     LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign, and
 //     declareRuntime (wired into Emit) — for lowerType to dispatch over.
-//  2. Grow lowerExpr further: string `match`, arm guards, nested sub-patterns,
-//     and float. Already lowering: arithmetic, comparisons, `&&`/`||`,
-//     `if`/blocks, `let`/`var`, calls, tuple and struct instances, `data`
-//     construction (alloca + typed payload store), `match` on a `data` value (tag
-//     switch + payload extraction + field binding), `match` on a bool/integer
-//     scalar (an if-else comparison ladder), and `match` on a struct or tuple (one
-//     shared aggregate ladder binding fields/elements via extractvalue). Mutable
-//     locals are modeled as `alloca` + load/store
+//  2. Grow lowerExpr further: string `match`, arm guards, nested `data`
+//     sub-patterns / data-payload destructuring, and float. Already lowering:
+//     arithmetic, comparisons, `&&`/`||`, `if`/blocks, `let`/`var`, calls, tuple
+//     and struct instances, `data` construction (alloca + typed payload store),
+//     `match` on a `data` value (tag switch + payload extraction + field binding),
+//     `match` on a bool/integer scalar (an if-else comparison ladder), and `match`
+//     on a struct or tuple (one shared aggregate ladder, recursing into nested
+//     struct/tuple sub-patterns via extractvalue). Mutable locals are modeled as `alloca` + load/store
 //     (let mem2reg build SSA) rather than hand-written phi nodes. Float
 //     literals/arithmetic and any conversion touching float are deferred: a float
 //     literal is now reachable via a `let x: f64 = …` binding, but it errors
@@ -1197,18 +1197,10 @@ func (l *lowerer) lowerStructMatch(block *ir.Block, e *ast.MatchExpr, st types.N
 	}
 	return l.lowerAggregateMatch(block, e, scrut, structTy,
 		func(b *ir.Block, pat ast.Pattern) (value.Value, error) {
-			sp, ok := pat.(*ast.StructPattern)
-			if !ok {
-				return nil, fmt.Errorf("llvm: match pattern %T not implemented for a struct scrutinee", pat)
-			}
-			return l.structPatternTest(b, scrut, sp, st)
+			return l.aggPatternTest(b, scrut, pat, st)
 		},
 		func(b *ir.Block, pat ast.Pattern) error {
-			sp, ok := pat.(*ast.StructPattern)
-			if !ok {
-				return fmt.Errorf("llvm: match pattern %T not implemented for a struct scrutinee", pat)
-			}
-			return l.bindStructPattern(b, scrut, sp, st, structTy)
+			return l.aggPatternBind(b, scrut, pat, st)
 		},
 	)
 }
@@ -1322,86 +1314,162 @@ func matchCatchAll(pat ast.Pattern) (*ast.IdentifierPattern, bool) {
 	return nil, false
 }
 
-// structPatternTest builds the i1 test for a struct pattern: the AND of an
-// `icmp`/range check per field that has a literal (or range) sub-pattern
-// (`{ x: 0, y }` tests field x). Returns a nil value when the pattern has no such
-// fields — meaning it matches unconditionally (all shorthand/identifier bindings).
-func (l *lowerer) structPatternTest(block *ir.Block, scrut value.Value, p *ast.StructPattern, st types.NamedStructType) (value.Value, error) {
-	var cond value.Value
-	for _, f := range p.Fields {
-		switch f.Pattern.(type) {
-		case *ast.LiteralPattern, *ast.RangePattern:
-		default:
-			continue // shorthand/identifier/wildcard bind, they don't test
-		}
-		idx, fieldPrim, ok := structFieldScalar(st, f.Name)
+// aggPatternTest builds the i1 condition that a first-class struct/tuple value
+// `val` (of Lyra type valType) matches `pat` — the AND of a scalar comparison per
+// literal/range sub-pattern, recursing into nested struct/tuple sub-patterns via
+// `extractvalue` (safe on a single-shape aggregate, no tag/branch needed). Returns
+// nil when the pattern imposes no test (all identifier/wildcard/shorthand
+// bindings). A nested `data` sub-pattern is deferred (it needs a tag check).
+func (l *lowerer) aggPatternTest(block *ir.Block, val value.Value, pat ast.Pattern, valType types.Type) (value.Value, error) {
+	switch p := pat.(type) {
+	case nil, *ast.WildcardPattern, *ast.IdentifierPattern:
+		return nil, nil // binding leaves impose no test
+	case *ast.LiteralPattern, *ast.RangePattern:
+		prim, ok := valType.(types.PrimitiveType)
 		if !ok {
-			return nil, fmt.Errorf("llvm: literal pattern on non-scalar or unknown struct field %q", f.Name)
+			return nil, fmt.Errorf("llvm: literal pattern on non-scalar value of type %s", valType)
 		}
-		fieldVal := block.NewExtractValue(scrut, uint64(idx))
-		test, err := l.scalarMatchTest(block, fieldVal, f.Pattern, fieldPrim.Name == types.Boolean, IsSignedInt(fieldPrim.Name))
-		if err != nil {
-			return nil, err
+		return l.scalarMatchTest(block, val, pat, prim.Name == types.Boolean, IsSignedInt(prim.Name))
+	case *ast.StructPattern:
+		st, ok := l.resolveStructType(valType)
+		if !ok {
+			return nil, fmt.Errorf("llvm: struct pattern on non-struct value of type %s", valType)
 		}
-		if cond == nil {
-			cond = test
-		} else {
-			cond = block.NewAnd(cond, test)
-		}
-	}
-	return cond, nil
-}
-
-// bindStructPattern binds a struct pattern's shorthand/identifier fields into
-// l.locals for the arm body: each is an extractvalue of the struct value into a
-// fresh alloca. Literal/range fields are tests (handled by structPatternTest);
-// a wildcard field binds nothing; a nested sub-pattern is deferred.
-func (l *lowerer) bindStructPattern(block *ir.Block, scrut value.Value, p *ast.StructPattern, st types.NamedStructType, structTy *lltypes.StructType) error {
-	entry := block.Parent.Blocks[0]
-	for _, f := range p.Fields {
-		var name string
-		switch fp := f.Pattern.(type) {
-		case nil:
-			name = f.Name // shorthand `{ x }` binds x
-		case *ast.IdentifierPattern:
-			if fp.Name == "_" {
+		var cond value.Value
+		for _, f := range p.Fields {
+			if isBindingLeaf(f.Pattern) {
 				continue
 			}
-			name = fp.Name // `{ x: a }` binds a
-		case *ast.WildcardPattern, *ast.LiteralPattern, *ast.RangePattern:
-			continue
-		default:
-			return fmt.Errorf("llvm: nested pattern %T in a struct field not implemented yet", f.Pattern)
-		}
-		idx := -1
-		for i, sf := range st.Fields {
-			if sf.Name == f.Name {
-				idx = i
-				break
+			idx, ftype, ok := structFieldIndexAndType(st, f.Name)
+			if !ok {
+				return nil, fmt.Errorf("llvm: struct %s has no field %q", st.Name, f.Name)
 			}
+			c, err := l.aggPatternTest(block, block.NewExtractValue(val, uint64(idx)), f.Pattern, ftype)
+			if err != nil {
+				return nil, err
+			}
+			cond = andConds(block, cond, c)
 		}
-		if idx < 0 {
-			return fmt.Errorf("llvm: struct %s has no field %q", st.Name, f.Name)
+		return cond, nil
+	case *ast.TuplePattern:
+		tt, ok := l.resolveTupleType(valType)
+		if !ok {
+			return nil, fmt.Errorf("llvm: tuple pattern on non-tuple value of type %s", valType)
 		}
-		fieldVal := block.NewExtractValue(scrut, uint64(idx))
-		slot := entry.NewAlloca(structTy.Fields[idx])
-		block.NewStore(fieldVal, slot)
-		l.locals[name] = slot
+		var cond value.Value
+		for i, el := range p.Elements {
+			if isBindingLeaf(el) {
+				continue
+			}
+			if i >= len(tt.Elements) {
+				return nil, fmt.Errorf("llvm: tuple pattern element %d out of range", i)
+			}
+			c, err := l.aggPatternTest(block, block.NewExtractValue(val, uint64(i)), el, tt.Elements[i])
+			if err != nil {
+				return nil, err
+			}
+			cond = andConds(block, cond, c)
+		}
+		return cond, nil
+	default:
+		return nil, fmt.Errorf("llvm: match sub-pattern %T not implemented yet", pat)
 	}
-	return nil
 }
 
-// structFieldScalar returns a struct field's index and its scalar (primitive)
-// type by name — used to test a literal field sub-pattern. ok=false if the field
-// is unknown or not a primitive (a literal can't match a non-scalar field).
-func structFieldScalar(st types.NamedStructType, name string) (int, types.PrimitiveType, bool) {
+// aggPatternBind binds the identifier leaves of a struct/tuple pattern into
+// l.locals for the arm body, recursing into nested struct/tuple sub-patterns via
+// `extractvalue`. The alloca type is the extracted value's own LLVM type, so nested
+// aggregate fields bind correctly. Literal/range/wildcard sub-patterns bind
+// nothing; a nested `data` sub-pattern is deferred.
+func (l *lowerer) aggPatternBind(block *ir.Block, val value.Value, pat ast.Pattern, valType types.Type) error {
+	switch p := pat.(type) {
+	case *ast.IdentifierPattern:
+		if p.Name != "_" {
+			l.bindValue(block, p.Name, val)
+		}
+		return nil
+	case nil, *ast.WildcardPattern, *ast.LiteralPattern, *ast.RangePattern:
+		return nil // no binding
+	case *ast.StructPattern:
+		st, ok := l.resolveStructType(valType)
+		if !ok {
+			return fmt.Errorf("llvm: struct pattern on non-struct value of type %s", valType)
+		}
+		for _, f := range p.Fields {
+			idx, ftype, ok := structFieldIndexAndType(st, f.Name)
+			if !ok {
+				return fmt.Errorf("llvm: struct %s has no field %q", st.Name, f.Name)
+			}
+			fieldVal := block.NewExtractValue(val, uint64(idx))
+			if f.Pattern == nil { // shorthand `{ x }` binds x
+				l.bindValue(block, f.Name, fieldVal)
+				continue
+			}
+			if err := l.aggPatternBind(block, fieldVal, f.Pattern, ftype); err != nil {
+				return err
+			}
+		}
+		return nil
+	case *ast.TuplePattern:
+		tt, ok := l.resolveTupleType(valType)
+		if !ok {
+			return fmt.Errorf("llvm: tuple pattern on non-tuple value of type %s", valType)
+		}
+		for i, el := range p.Elements {
+			if i >= len(tt.Elements) {
+				return fmt.Errorf("llvm: tuple pattern element %d out of range", i)
+			}
+			if err := l.aggPatternBind(block, block.NewExtractValue(val, uint64(i)), el, tt.Elements[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return fmt.Errorf("llvm: match sub-pattern %T binding not implemented yet", pat)
+	}
+}
+
+// bindValue stores val into a fresh entry-block alloca and records it under name
+// in l.locals, so the arm body reads the binding like any local.
+func (l *lowerer) bindValue(block *ir.Block, name string, val value.Value) {
+	slot := block.Parent.Blocks[0].NewAlloca(val.Type())
+	block.NewStore(val, slot)
+	l.locals[name] = slot
+}
+
+// andConds combines two optional i1 conditions (nil = "always true"), returning
+// nil when both are nil, the other when one is nil, or their `and`.
+func andConds(block *ir.Block, a, b value.Value) value.Value {
+	switch {
+	case a == nil:
+		return b
+	case b == nil:
+		return a
+	default:
+		return block.NewAnd(a, b)
+	}
+}
+
+// isBindingLeaf reports whether a sub-pattern only binds (or ignores) and imposes
+// no test: a shorthand field (nil), a wildcard, or an identifier.
+func isBindingLeaf(pat ast.Pattern) bool {
+	switch pat.(type) {
+	case nil, *ast.WildcardPattern, *ast.IdentifierPattern:
+		return true
+	}
+	return false
+}
+
+// structFieldIndexAndType returns a struct field's position and declared type by
+// name (the type may be an UnresolvedType for a nested named type — resolved by
+// the recursive caller).
+func structFieldIndexAndType(st types.NamedStructType, name string) (int, types.Type, bool) {
 	for i, f := range st.Fields {
 		if f.Name == name {
-			p, ok := f.Type.(types.PrimitiveType)
-			return i, p, ok
+			return i, f.Type, true
 		}
 	}
-	return 0, types.PrimitiveType{}, false
+	return 0, nil, false
 }
 
 // resolveTupleType resolves a scrutinee type to its TupleType — directly (named
@@ -1435,83 +1503,12 @@ func (l *lowerer) lowerTupleMatch(block *ir.Block, e *ast.MatchExpr, tt types.Tu
 	}
 	return l.lowerAggregateMatch(block, e, scrut, structTy,
 		func(b *ir.Block, pat ast.Pattern) (value.Value, error) {
-			tp, ok := pat.(*ast.TuplePattern)
-			if !ok {
-				return nil, fmt.Errorf("llvm: match pattern %T not implemented for a tuple scrutinee", pat)
-			}
-			return l.tuplePatternTest(b, scrut, tp, tt)
+			return l.aggPatternTest(b, scrut, pat, tt)
 		},
 		func(b *ir.Block, pat ast.Pattern) error {
-			tp, ok := pat.(*ast.TuplePattern)
-			if !ok {
-				return fmt.Errorf("llvm: match pattern %T not implemented for a tuple scrutinee", pat)
-			}
-			return l.bindTuplePattern(b, scrut, tp, structTy)
+			return l.aggPatternBind(b, scrut, pat, tt)
 		},
 	)
-}
-
-// tuplePatternTest builds the i1 test for a tuple pattern: the AND of an
-// `icmp`/range check per element that has a literal (or range) sub-pattern
-// (`(0, b)` tests element 0). Returns nil when the pattern has no such elements —
-// it then matches unconditionally (all identifier/wildcard bindings).
-func (l *lowerer) tuplePatternTest(block *ir.Block, scrut value.Value, p *ast.TuplePattern, tt types.TupleType) (value.Value, error) {
-	var cond value.Value
-	for i, el := range p.Elements {
-		switch el.(type) {
-		case *ast.LiteralPattern, *ast.RangePattern:
-		default:
-			continue // identifier/wildcard bind, they don't test
-		}
-		if i >= len(tt.Elements) {
-			return nil, fmt.Errorf("llvm: tuple pattern element %d out of range", i)
-		}
-		prim, ok := tt.Elements[i].(types.PrimitiveType)
-		if !ok {
-			return nil, fmt.Errorf("llvm: literal pattern on non-scalar tuple element %d", i)
-		}
-		elemVal := block.NewExtractValue(scrut, uint64(i))
-		test, err := l.scalarMatchTest(block, elemVal, el, prim.Name == types.Boolean, IsSignedInt(prim.Name))
-		if err != nil {
-			return nil, err
-		}
-		if cond == nil {
-			cond = test
-		} else {
-			cond = block.NewAnd(cond, test)
-		}
-	}
-	return cond, nil
-}
-
-// bindTuplePattern binds a tuple pattern's identifier elements into l.locals for
-// the arm body: each is an extractvalue at that position into a fresh alloca.
-// Literal/range elements are tests (handled by tuplePatternTest); a wildcard binds
-// nothing; a nested sub-pattern is deferred.
-func (l *lowerer) bindTuplePattern(block *ir.Block, scrut value.Value, p *ast.TuplePattern, structTy *lltypes.StructType) error {
-	entry := block.Parent.Blocks[0]
-	for i, el := range p.Elements {
-		var name string
-		switch ep := el.(type) {
-		case *ast.IdentifierPattern:
-			if ep.Name == "_" {
-				continue
-			}
-			name = ep.Name
-		case *ast.WildcardPattern, *ast.LiteralPattern, *ast.RangePattern:
-			continue
-		default:
-			return fmt.Errorf("llvm: nested pattern %T in a tuple element not implemented yet", el)
-		}
-		if i >= len(structTy.Fields) {
-			return fmt.Errorf("llvm: tuple pattern element %d out of range", i)
-		}
-		elemVal := block.NewExtractValue(scrut, uint64(i))
-		slot := entry.NewAlloca(structTy.Fields[i])
-		block.NewStore(elemVal, slot)
-		l.locals[name] = slot
-	}
-	return nil
 }
 
 // lowerDataMatch lowers a `match` on a `data` value: store the scrutinee, load

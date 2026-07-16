@@ -134,25 +134,23 @@ func TestEmit_MatchGuard_Deferred(t *testing.T) {
 	}
 }
 
-// TestEmit_MatchNestedPattern_Deferred: a nested sub-pattern inside an aggregate
-// element (here a tuple element that is itself a tuple pattern) isn't bound yet,
-// so it errors loudly. (Scrutinee kinds now all lower — data/struct/tuple/scalar;
-// string/float/array scrutinees can't even reach here, as those types don't
-// lower, so a parameter or value of that type fails first.)
-func TestEmit_MatchNestedPattern_Deferred(t *testing.T) {
-	src := `let main = () -> u8 => {
-	   let t = ((1, 2), 3)
-	   match t {
-	     ((a, b), c) => u8(a + b + c),
-	     _ => 0,
-	   }
-	 }`
+// TestEmit_MatchDataPayloadDestructure_Deferred: destructuring inside a `data`
+// variant's payload (here a tuple payload matched with an inner tuple pattern)
+// isn't bound yet, so it errors loudly. (Nested sub-patterns inside struct/tuple
+// scrutinees now lower — a data value's payload needs a tag check + memory
+// reinterpretation, which this path doesn't do yet.)
+func TestEmit_MatchDataPayloadDestructure_Deferred(t *testing.T) {
+	src := `data Wrap = W((u8, u8))
+	 let f = (w: Wrap) -> u8 => match w {
+	   W((a, b)) => a + b,
+	 }
+	 let main = () -> u8 => 0`
 	_, err := emitSource(t, src)
 	if err == nil {
-		t.Fatal("expected an error: a nested tuple sub-pattern is not implemented yet")
+		t.Fatal("expected an error: destructuring a data payload is not implemented yet")
 	}
-	if !strings.Contains(err.Error(), "nested pattern") {
-		t.Errorf("expected a nested-pattern error, got: %v", err)
+	if !strings.Contains(err.Error(), "not implemented") {
+		t.Errorf("expected a not-implemented error, got: %v", err)
 	}
 }
 
@@ -439,6 +437,90 @@ func TestExec_TupleMatch(t *testing.T) {
 			 }
 			 let main = () -> u8 => f(Point(20, 22))`,
 			42,
+		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// Nested sub-patterns inside a struct/tuple scrutinee recurse via extractvalue
+// (no tag/branch needed on a single-shape aggregate): a struct/tuple sub-pattern
+// binds and tests its own elements, to arbitrary depth.
+func TestExec_NestedAggregatePatterns(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		// A tuple nested in a tuple: ((a, b), c) binds all three.
+		{
+			"tuple in tuple",
+			`let main = () -> u8 => {
+			   let t = ((1, 2), 3)
+			   match t {
+			     ((a, b), c) => u8(a + b + c),
+			     _ => 0,
+			   }
+			 }`,
+			6,
+		},
+		// A struct field that is itself a struct, destructured two levels deep.
+		{
+			"struct in struct",
+			`struct Inner {
+			   v: u8,
+			 }
+			 struct Outer {
+			   inner: Inner,
+			 }
+			 let f = (o: Outer) -> u8 => match o {
+			   { inner: { v } } => v,
+			   _ => 0,
+			 }
+			 let main = () -> u8 => f(Outer { inner: Inner { v: 7 } })`,
+			7,
+		},
+		// A struct nested inside a tuple element, using the type-named form.
+		{
+			"named struct in tuple",
+			`struct Pt {
+			   x: u8,
+			   y: u8,
+			 }
+			 let main = () -> u8 => {
+			   let t = (Pt { x: 20, y: 22 }, 0)
+			   match t {
+			     (Pt { x, y }, _) => u8(x + y),
+			     _ => 0,
+			   }
+			 }`,
+			42,
+		},
+		// A literal deep inside the nesting makes the whole arm conditional.
+		{
+			"nested literal test",
+			`let main = () -> u8 => {
+			   let t = ((0, 5), 9)
+			   match t {
+			     ((0, b), c) => u8(b + c),
+			     _ => 99,
+			   }
+			 }`,
+			14,
+		},
+		{
+			"nested literal skipped",
+			`let main = () -> u8 => {
+			   let t = ((3, 5), 9)
+			   match t {
+			     ((0, b), c) => u8(b + c),
+			     _ => 99,
+			   }
+			 }`,
+			99,
 		},
 	}
 	for _, c := range cases {
