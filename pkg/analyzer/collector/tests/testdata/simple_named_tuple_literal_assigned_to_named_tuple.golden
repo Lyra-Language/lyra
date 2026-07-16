@@ -1,0 +1,44 @@
+Program(2 statements) {
+	Statements: {
+		TypeDeclStmt(Point) {
+			Name: Point
+			Type: {
+				TupleType(Point) {
+					Elements: {
+						PrimitiveType(i32) {
+							Name: i32
+						}
+						PrimitiveType(i32) {
+							Name: i32
+						}
+					}
+					Name: Point
+				}
+			}
+		}
+		VarDeclStmt(point) {
+			BindingKind: let
+			Name: point
+			Type: {
+				UnresolvedType(Point) {
+					Name: Point
+				}
+			}
+			Value: {
+				TupleLiteralExpr(Point) {
+					Elements: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 1
+						}
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 2
+						}
+					}
+					Name: Point
+				}
+			}
+		}
+	}
+}

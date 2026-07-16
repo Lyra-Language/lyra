@@ -10,6 +10,13 @@ func TestCollector_SimpleAnonymousTupleLiteralAssignedToNamedTuple(t *testing.T)
 	runGoldenTest(t, `let point: Point = (1, 2)`, "simple_anonymous_tuple_literal_assigned_to_named_tuple")
 }
 
+func TestCollector_SimpleNamedTupleLiteralAssignedToNamedTuple(t *testing.T) {
+	runGoldenTest(t, `
+tuple Point(i32, i32)
+let point: Point = Point(1, 2)
+	`, "simple_named_tuple_literal_assigned_to_named_tuple")
+}
+
 func TestCollector_SimpleNamedTupleLiteral(t *testing.T) {
 	runGoldenTest(t, `let point = Point(1, 2)`, "simple_named_tuple_literal")
 }
