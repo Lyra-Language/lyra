@@ -134,21 +134,25 @@ func TestEmit_MatchGuard_Deferred(t *testing.T) {
 	}
 }
 
-// TestEmit_MatchTuple_Deferred: a match on a tuple scrutinee isn't lowered yet —
-// only data types, structs, and integer/bool scalars are — so it errors loudly.
-// (A string/float scrutinee can't even reach here: those types don't lower, so a
-// parameter or value of that type fails first.)
-func TestEmit_MatchTuple_Deferred(t *testing.T) {
-	src := `let f = (t: (i64, i64)) -> u8 => match t {
-	   _ => 0,
-	 }
-	 let main = () -> u8 => f((3, 4))`
+// TestEmit_MatchNestedPattern_Deferred: a nested sub-pattern inside an aggregate
+// element (here a tuple element that is itself a tuple pattern) isn't bound yet,
+// so it errors loudly. (Scrutinee kinds now all lower — data/struct/tuple/scalar;
+// string/float/array scrutinees can't even reach here, as those types don't
+// lower, so a parameter or value of that type fails first.)
+func TestEmit_MatchNestedPattern_Deferred(t *testing.T) {
+	src := `let main = () -> u8 => {
+	   let t = ((1, 2), 3)
+	   match t {
+	     ((a, b), c) => u8(a + b + c),
+	     _ => 0,
+	   }
+	 }`
 	_, err := emitSource(t, src)
 	if err == nil {
-		t.Fatal("expected an error: a tuple-scrutinee match is not implemented yet")
+		t.Fatal("expected an error: a nested tuple sub-pattern is not implemented yet")
 	}
-	if !strings.Contains(err.Error(), "not implemented") {
-		t.Errorf("expected a not-implemented error, got: %v", err)
+	if !strings.Contains(err.Error(), "nested pattern") {
+		t.Errorf("expected a nested-pattern error, got: %v", err)
 	}
 }
 
@@ -367,5 +371,79 @@ func TestEmit_StructMatchIR(t *testing.T) {
 	}
 	if !strings.Contains(got, "extractvalue") {
 		t.Errorf("struct-match IR should read fields via extractvalue:\n%s", got)
+	}
+}
+
+// `match` on a tuple value lowers to the same aggregate ladder as a struct, but
+// positional: a tuple pattern `(a, b)` binds elements by index (extractvalue),
+// and a literal element (`(0, b)`) makes the arm conditional on that position.
+func TestExec_TupleMatch(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		// Bind both elements positionally and combine them.
+		{
+			"bind positional",
+			`let main = () -> u8 => {
+			   let t = (20, 22)
+			   match t {
+			     (a, b) => u8(a + b),
+			     _ => 0,
+			   }
+			 }`,
+			42,
+		},
+		// A literal element makes the arm conditional; here it matches.
+		{
+			"literal element taken",
+			`let main = () -> u8 => {
+			   let t = (0, 5)
+			   match t {
+			     (0, b) => u8(b),
+			     _ => 99,
+			   }
+			 }`,
+			5,
+		},
+		// The literal element doesn't match, so the wildcard arm is taken.
+		{
+			"literal element skipped",
+			`let main = () -> u8 => {
+			   let t = (3, 5)
+			   match t {
+			     (0, b) => u8(b),
+			     _ => 99,
+			   }
+			 }`,
+			99,
+		},
+		// A wildcard element binds nothing; only the first element is used.
+		{
+			"wildcard element",
+			`let main = () -> u8 => {
+			   let t = (7, 9)
+			   match t {
+			     (a, _) => u8(a),
+			   }
+			 }`,
+			7,
+		},
+		// A named tuple scrutinee matched positionally.
+		{
+			"named tuple",
+			`tuple Point(u8, u8)
+			 let f = (p: Point) -> u8 => match p {
+			   (a, b) => a + b,
+			 }
+			 let main = () -> u8 => f(Point(20, 22))`,
+			42,
+		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
 	}
 }
