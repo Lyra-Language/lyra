@@ -57,12 +57,13 @@
 //     inline vs boxed. layout.go/runtime.go provide the building blocks —
 //     LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign, and
 //     declareRuntime (wired into Emit) — for lowerType to dispatch over.
-//  2. Grow lowerExpr further: tuple/struct/string `match`, arm guards, and float.
+//  2. Grow lowerExpr further: tuple/string `match`, arm guards, and float.
 //     Already lowering: arithmetic, comparisons, `&&`/`||`, `if`/blocks,
 //     `let`/`var`, calls, tuple and struct instances, `data` construction (alloca
 //     + typed payload store), `match` on a `data` value (tag switch + payload
-//     extraction + field binding), and `match` on a bool/integer scalar (an
-//     if-else comparison ladder). Mutable locals are modeled as `alloca` + load/store
+//     extraction + field binding), `match` on a bool/integer scalar (an if-else
+//     comparison ladder), and `match` on a struct (a ladder binding fields via
+//     extractvalue). Mutable locals are modeled as `alloca` + load/store
 //     (let mem2reg build SSA) rather than hand-written phi nodes. Float
 //     literals/arithmetic and any conversion touching float are deferred: a float
 //     literal is now reachable via a `let x: f64 = …` binding, but it errors
@@ -975,6 +976,9 @@ func (l *lowerer) lowerMatch(block *ir.Block, e *ast.MatchExpr) (value.Value, *i
 	if dt, ok := l.resolveDataType(scrutType); ok {
 		return l.lowerDataMatch(block, e, dt)
 	}
+	if st, ok := l.resolveStructType(scrutType); ok {
+		return l.lowerStructMatch(block, e, st)
+	}
 	// A scalar scrutinee (bool or a concrete integer) lowers to an if-else ladder
 	// of comparisons. Detected by whether the scrutinee's primitive maps to an
 	// LLVM integer type (i1 for bool, iN for ints) — float and string fall through.
@@ -985,7 +989,7 @@ func (l *lowerer) lowerMatch(block *ir.Block, e *ast.MatchExpr) (value.Value, *i
 			}
 		}
 	}
-	return nil, nil, fmt.Errorf("llvm: match on %s not implemented yet (only data types and integer/bool scalars)", scrutType)
+	return nil, nil, fmt.Errorf("llvm: match on %s not implemented yet (only data types, structs, and integer/bool scalars)", scrutType)
 }
 
 // lowerScalarMatch lowers a `match` on a bool or integer scrutinee as an if-else
@@ -1156,6 +1160,209 @@ func constIntFromExpr(e ast.Expression, ty *lltypes.IntType) (value.Value, bool)
 		}
 	}
 	return nil, false
+}
+
+// resolveStructType resolves a scrutinee type to its NamedStructType — directly,
+// or via the symbol table for an UnresolvedType naming a struct.
+func (l *lowerer) resolveStructType(t types.Type) (types.NamedStructType, bool) {
+	switch v := t.(type) {
+	case types.NamedStructType:
+		return v, true
+	case types.UnresolvedType:
+		if decl, ok := l.res.SymbolTable.Types[v.Name]; ok {
+			if st, ok := decl.Type.(types.NamedStructType); ok {
+				return st, true
+			}
+		}
+	}
+	return types.NamedStructType{}, false
+}
+
+// lowerStructMatch lowers a `match` on a struct value. A struct has a single
+// shape (no tag), so — unlike a `data` match — there's no switch: a struct-pattern
+// arm `{ x, y }` matches unconditionally and just binds fields, while a pattern
+// with a literal field sub-pattern (`{ x: 0, y }`) is conditional on that field's
+// value. So it lowers to the same if-else ladder as a scalar match: each arm's
+// test is the AND of its literal field comparisons (none → unconditional), binding
+// the fields (extractvalue on the struct value) on the taken path. A `_`/identifier
+// arm is an unconditional catch-all (an identifier binds the whole struct).
+func (l *lowerer) lowerStructMatch(block *ir.Block, e *ast.MatchExpr, st types.NamedStructType) (value.Value, *ir.Block, error) {
+	for _, arm := range e.MatchArms {
+		if arm.Guard != nil {
+			return nil, nil, fmt.Errorf("llvm: match guards not implemented yet")
+		}
+	}
+	scrut, block, err := l.lowerExpr(block, e.Scrutinee)
+	if err != nil {
+		return nil, nil, err
+	}
+	structTy, ok := scrut.Type().(*lltypes.StructType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: struct match scrutinee did not lower to a struct (%s)", scrut.Type())
+	}
+	fn := block.Parent
+
+	merge := fn.NewBlock("")
+	type incoming struct {
+		val value.Value
+		end *ir.Block
+	}
+	var incomings []incoming
+	current := block
+	sealed := false
+
+	// lowerArmInto lowers an arm body in b, threading it to merge for the phi.
+	lowerArmInto := func(b *ir.Block, body ast.Expression) error {
+		val, end, err := l.lowerExpr(b, body)
+		if err != nil {
+			return err
+		}
+		if end.Term == nil {
+			end.NewBr(merge)
+			incomings = append(incomings, incoming{val, end})
+		}
+		return nil
+	}
+
+	for _, arm := range e.MatchArms {
+		switch p := arm.Pattern.(type) {
+		case *ast.WildcardPattern, *ast.IdentifierPattern:
+			if ip, ok := p.(*ast.IdentifierPattern); ok && ip.Name != "_" {
+				slot := fn.Blocks[0].NewAlloca(structTy)
+				current.NewStore(scrut, slot)
+				l.locals[ip.Name] = slot
+			}
+			if err := lowerArmInto(current, arm.Body); err != nil {
+				return nil, nil, err
+			}
+			sealed = true
+		case *ast.StructPattern:
+			cond, err := l.structPatternTest(current, scrut, p, st)
+			if err != nil {
+				return nil, nil, err
+			}
+			if cond == nil {
+				// No literal field sub-patterns → the arm always matches.
+				if err := l.bindStructPattern(current, scrut, p, st, structTy); err != nil {
+					return nil, nil, err
+				}
+				if err := lowerArmInto(current, arm.Body); err != nil {
+					return nil, nil, err
+				}
+				sealed = true
+			} else {
+				bodyBlock := fn.NewBlock("")
+				nextBlock := fn.NewBlock("")
+				current.NewCondBr(cond, bodyBlock, nextBlock)
+				if err := l.bindStructPattern(bodyBlock, scrut, p, st, structTy); err != nil {
+					return nil, nil, err
+				}
+				if err := lowerArmInto(bodyBlock, arm.Body); err != nil {
+					return nil, nil, err
+				}
+				current = nextBlock
+			}
+		default:
+			return nil, nil, fmt.Errorf("llvm: match pattern %T not implemented for a struct scrutinee", arm.Pattern)
+		}
+		if sealed {
+			break
+		}
+	}
+	if !sealed {
+		current.NewUnreachable()
+	}
+
+	if len(incomings) == 0 {
+		return nil, merge, nil
+	}
+	incs := make([]*ir.Incoming, len(incomings))
+	for i, in := range incomings {
+		incs[i] = ir.NewIncoming(in.val, in.end)
+	}
+	return merge.NewPhi(incs...), merge, nil
+}
+
+// structPatternTest builds the i1 test for a struct pattern: the AND of an
+// `icmp`/range check per field that has a literal (or range) sub-pattern
+// (`{ x: 0, y }` tests field x). Returns a nil value when the pattern has no such
+// fields — meaning it matches unconditionally (all shorthand/identifier bindings).
+func (l *lowerer) structPatternTest(block *ir.Block, scrut value.Value, p *ast.StructPattern, st types.NamedStructType) (value.Value, error) {
+	var cond value.Value
+	for _, f := range p.Fields {
+		switch f.Pattern.(type) {
+		case *ast.LiteralPattern, *ast.RangePattern:
+		default:
+			continue // shorthand/identifier/wildcard bind, they don't test
+		}
+		idx, fieldPrim, ok := structFieldScalar(st, f.Name)
+		if !ok {
+			return nil, fmt.Errorf("llvm: literal pattern on non-scalar or unknown struct field %q", f.Name)
+		}
+		fieldVal := block.NewExtractValue(scrut, uint64(idx))
+		test, err := l.scalarMatchTest(block, fieldVal, f.Pattern, fieldPrim.Name == types.Boolean, IsSignedInt(fieldPrim.Name))
+		if err != nil {
+			return nil, err
+		}
+		if cond == nil {
+			cond = test
+		} else {
+			cond = block.NewAnd(cond, test)
+		}
+	}
+	return cond, nil
+}
+
+// bindStructPattern binds a struct pattern's shorthand/identifier fields into
+// l.locals for the arm body: each is an extractvalue of the struct value into a
+// fresh alloca. Literal/range fields are tests (handled by structPatternTest);
+// a wildcard field binds nothing; a nested sub-pattern is deferred.
+func (l *lowerer) bindStructPattern(block *ir.Block, scrut value.Value, p *ast.StructPattern, st types.NamedStructType, structTy *lltypes.StructType) error {
+	entry := block.Parent.Blocks[0]
+	for _, f := range p.Fields {
+		var name string
+		switch fp := f.Pattern.(type) {
+		case nil:
+			name = f.Name // shorthand `{ x }` binds x
+		case *ast.IdentifierPattern:
+			if fp.Name == "_" {
+				continue
+			}
+			name = fp.Name // `{ x: a }` binds a
+		case *ast.WildcardPattern, *ast.LiteralPattern, *ast.RangePattern:
+			continue
+		default:
+			return fmt.Errorf("llvm: nested pattern %T in a struct field not implemented yet", f.Pattern)
+		}
+		idx := -1
+		for i, sf := range st.Fields {
+			if sf.Name == f.Name {
+				idx = i
+				break
+			}
+		}
+		if idx < 0 {
+			return fmt.Errorf("llvm: struct %s has no field %q", st.Name, f.Name)
+		}
+		fieldVal := block.NewExtractValue(scrut, uint64(idx))
+		slot := entry.NewAlloca(structTy.Fields[idx])
+		block.NewStore(fieldVal, slot)
+		l.locals[name] = slot
+	}
+	return nil
+}
+
+// structFieldScalar returns a struct field's index and its scalar (primitive)
+// type by name — used to test a literal field sub-pattern. ok=false if the field
+// is unknown or not a primitive (a literal can't match a non-scalar field).
+func structFieldScalar(st types.NamedStructType, name string) (int, types.PrimitiveType, bool) {
+	for i, f := range st.Fields {
+		if f.Name == name {
+			p, ok := f.Type.(types.PrimitiveType)
+			return i, p, ok
+		}
+	}
+	return 0, types.PrimitiveType{}, false
 }
 
 // lowerDataMatch lowers a `match` on a `data` value: store the scrutinee, load

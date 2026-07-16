@@ -443,6 +443,15 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 				"cannot destructure %s with a struct pattern", t)
 			return
 		}
+		// A named struct pattern (`Pt { … }`) must name the destructured type.
+		// Report a mismatch but still bind the fields below (best-effort), so the
+		// body doesn't then cascade into spurious "undefined identifier" errors.
+		if p.Name != "" {
+			if nst, ok := t.(types.NamedStructType); ok && p.Name != nst.Name {
+				tc.addError(p.GetLocation(), SeverityError,
+					"struct pattern names %s but the value is %s", p.Name, nst.Name)
+			}
+		}
 		for _, f := range p.Fields {
 			if _, isRest := f.Pattern.(*ast.RestPattern); isRest {
 				continue

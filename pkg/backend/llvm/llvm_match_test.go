@@ -134,22 +134,18 @@ func TestEmit_MatchGuard_Deferred(t *testing.T) {
 	}
 }
 
-// TestEmit_MatchAggregate_Deferred: a match on an aggregate scrutinee (here a
-// struct; tuples likewise) isn't lowered yet — only data types and integer/bool
-// scalars are — so it errors loudly. (A string/float scrutinee can't even reach
-// here: those types don't lower, so a parameter or value of that type fails
-// first.)
-func TestEmit_MatchAggregate_Deferred(t *testing.T) {
-	src := `struct Pt {
-	   x: u8,
-	 }
-	 let f = (p: Pt) -> u8 => match p {
+// TestEmit_MatchTuple_Deferred: a match on a tuple scrutinee isn't lowered yet —
+// only data types, structs, and integer/bool scalars are — so it errors loudly.
+// (A string/float scrutinee can't even reach here: those types don't lower, so a
+// parameter or value of that type fails first.)
+func TestEmit_MatchTuple_Deferred(t *testing.T) {
+	src := `let f = (t: (i64, i64)) -> u8 => match t {
 	   _ => 0,
 	 }
-	 let main = () -> u8 => f(Pt { x: 1 })`
+	 let main = () -> u8 => f((3, 4))`
 	_, err := emitSource(t, src)
 	if err == nil {
-		t.Fatal("expected an error: a struct-scrutinee match is not implemented yet")
+		t.Fatal("expected an error: a tuple-scrutinee match is not implemented yet")
 	}
 	if !strings.Contains(err.Error(), "not implemented") {
 		t.Errorf("expected a not-implemented error, got: %v", err)
@@ -252,5 +248,124 @@ func TestEmit_ScalarMatchIR(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("scalar-match IR missing %q:\n%s", want, got)
 		}
+	}
+}
+
+// `match` on a struct value lowers to a ladder (a struct has one shape, so no
+// tag/switch): a struct pattern `{ x, y }` matches unconditionally and binds its
+// fields (extractvalue), while a literal field sub-pattern (`{ x: 0, y }`) makes
+// the arm conditional on that field. These run the compiled program.
+func TestExec_StructMatch(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		// Bind every field (shorthand) and use both in the body.
+		{
+			"bind all fields",
+			`struct Pt {
+			   x: u8,
+			   y: u8,
+			 }
+			 let f = (p: Pt) -> u8 => match p {
+			   { x, y } => x + y,
+			 }
+			 let main = () -> u8 => f(Pt { x: 20, y: 22 })`,
+			42,
+		},
+		// Bind only a subset of the fields.
+		{
+			"partial fields",
+			`struct Pt {
+			   x: u8,
+			   y: u8,
+			 }
+			 let f = (p: Pt) -> u8 => match p {
+			   { x } => x,
+			 }
+			 let main = () -> u8 => f(Pt { x: 7, y: 9 })`,
+			7,
+		},
+		// A literal field sub-pattern makes the arm conditional; here the field
+		// matches, so the arm is taken and the other field binds.
+		{
+			"literal field test taken",
+			`struct Pt {
+			   x: u8,
+			   y: u8,
+			 }
+			 let f = (p: Pt) -> u8 => match p {
+			   { x: 0, y } => y,
+			   _ => 99,
+			 }
+			 let main = () -> u8 => f(Pt { x: 0, y: 5 })`,
+			5,
+		},
+		// The literal field doesn't match, so the wildcard arm is taken.
+		{
+			"literal field test skipped",
+			`struct Pt {
+			   x: u8,
+			   y: u8,
+			 }
+			 let f = (p: Pt) -> u8 => match p {
+			   { x: 0, y } => y,
+			   _ => 99,
+			 }
+			 let main = () -> u8 => f(Pt { x: 3, y: 5 })`,
+			99,
+		},
+		// `{ x: a, y: b }` renames the fields to a/b in the arm body.
+		{
+			"rename bindings",
+			`struct Pt {
+			   x: u8,
+			   y: u8,
+			 }
+			 let f = (p: Pt) -> u8 => match p {
+			   { x: a, y: b } => a + b,
+			 }
+			 let main = () -> u8 => f(Pt { x: 1, y: 2 })`,
+			3,
+		},
+		// The type-named form `Pt { x, y }` (symmetric with construction) lowers
+		// identically — the collector reclassifies it to a named StructPattern.
+		{
+			"type-named struct pattern",
+			`struct Pt {
+			   x: u8,
+			   y: u8,
+			 }
+			 let f = (p: Pt) -> u8 => match p {
+			   Pt { x, y } => x + y,
+			 }
+			 let main = () -> u8 => f(Pt { x: 20, y: 22 })`,
+			42,
+		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestEmit_StructMatchIR pins the shape: fields read via extractvalue (no tag
+// switch, since a struct has a single shape).
+func TestEmit_StructMatchIR(t *testing.T) {
+	got, err := emitSource(t, `struct Pt {
+	   x: u8,
+	   y: u8,
+	 }
+	 let f = (p: Pt) -> u8 => match p {
+	   { x, y } => x + y,
+	 }
+	 let main = () -> u8 => f(Pt { x: 1, y: 2 })`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "extractvalue") {
+		t.Errorf("struct-match IR should read fields via extractvalue:\n%s", got)
 	}
 }

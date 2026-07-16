@@ -849,6 +849,13 @@ func (tc *TypeChecker) checkStructMatchArm(pattern ast.Pattern, st types.NamedSt
 	case *ast.BindingPattern:
 		tc.checkStructMatchArm(p.Pattern, st)
 	case *ast.StructPattern:
+		// A named struct pattern (`Pt { … }`) must name the scrutinee's type; the
+		// brace-only form (`{ … }`, Name "") matches any struct structurally.
+		if p.Name != "" && p.Name != st.Name {
+			tc.addError(p.GetLocation(), SeverityError,
+				"struct pattern names %s but the scrutinee is %s", p.Name, st.Name)
+			return
+		}
 		for _, field := range p.Fields {
 			if !structHasField(st, field.Name) {
 				tc.addError(field.GetLocation(), SeverityError,

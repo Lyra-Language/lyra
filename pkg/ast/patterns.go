@@ -53,13 +53,25 @@ type ArrayPattern struct {
 func (p *ArrayPattern) patternNode()    {}
 func (p *ArrayPattern) GetName() string { return fmt.Sprintf("[%v]", p.Elements) }
 
+// StructPattern destructures a struct value by field. Name is the struct type it
+// names ("" for the anonymous/brace-only form `{ x, y }`); the named form
+// `Pt { x, y }` is produced by the collector's reclassifyStructPatterns pass,
+// which rewrites a DataPattern whose name is a struct type into this node (so
+// struct patterns and data-constructor patterns are distinct AST nodes even
+// though `Pt { … }` and `Node { … }` are syntactically identical).
 type StructPattern struct {
 	PatternBase
+	Name   string
 	Fields []StructPatternField
 }
 
-func (p *StructPattern) patternNode()    {}
-func (p *StructPattern) GetName() string { return fmt.Sprintf("{%v}", p.Fields) }
+func (p *StructPattern) patternNode() {}
+func (p *StructPattern) GetName() string {
+	if p.Name != "" {
+		return fmt.Sprintf("%s{%v}", p.Name, p.Fields)
+	}
+	return fmt.Sprintf("{%v}", p.Fields)
+}
 
 type StructPatternField struct {
 	PatternBase

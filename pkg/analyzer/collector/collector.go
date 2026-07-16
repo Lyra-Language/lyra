@@ -58,8 +58,96 @@ func NewCollector(source []byte) *Collector {
 func (c *Collector) Collect(root *sitter.Node) (*ast.Program, *symbols.SymbolTable, *symbols.ScopeTable, []error) {
 	c.walkProgram(root)
 	c.registerTopLevelFunctions()
+	c.reclassifyStructPatterns()
 	c.resolveCanonicalTypes()
 	return c.ast, c.table, c.scopeTable, c.errors
+}
+
+// reclassifyStructPatterns rewrites every `Pt { … }` pattern whose name is a
+// declared struct type from a DataPattern into a (named) StructPattern. The
+// grammar can't tell `Pt { x, y }` (a struct pattern) from `Node { l, r }` (a
+// data-constructor inline-record pattern) — they're identical shapes, both
+// parsed as a DataPattern with an inner StructPattern payload — so the split is
+// semantic and runs here, after walkProgram has registered every type in the
+// symbol table (so a forward-referenced struct still resolves). A name that
+// isn't a struct type (a data constructor, or unknown) is left as a DataPattern.
+func (c *Collector) reclassifyStructPatterns() {
+	onStmt := func(stmt ast.Statement) bool {
+		switch s := stmt.(type) {
+		case *ast.DestructuringDeclStmt:
+			s.Pattern = c.reclassifyPattern(s.Pattern)
+		case *ast.IfDestructuringStmt:
+			s.DestructuringStatement.Pattern = c.reclassifyPattern(s.DestructuringStatement.Pattern)
+		case *ast.ElseDestructuringStmt:
+			s.DestructuringStatement.Pattern = c.reclassifyPattern(s.DestructuringStatement.Pattern)
+		}
+		return true
+	}
+	onExpr := func(expr ast.Expression) bool {
+		switch e := expr.(type) {
+		case *ast.MatchExpr:
+			for i := range e.MatchArms {
+				e.MatchArms[i].Pattern = c.reclassifyPattern(e.MatchArms[i].Pattern)
+			}
+		case *ast.LambdaExpr:
+			for i := range e.Parameters {
+				e.Parameters[i].Pattern = c.reclassifyPattern(e.Parameters[i].Pattern)
+			}
+			for ci := range e.LambdaClauses {
+				for pi := range e.LambdaClauses[ci].Patterns {
+					e.LambdaClauses[ci].Patterns[pi] = c.reclassifyPattern(e.LambdaClauses[ci].Patterns[pi])
+				}
+			}
+		}
+		return true
+	}
+	for _, node := range c.ast.Statements {
+		if stmt, ok := node.(ast.Statement); ok {
+			ast.WalkStmt(stmt, onStmt, onExpr)
+		}
+	}
+}
+
+// reclassifyPattern converts a `Pt { … }` DataPattern into a named StructPattern
+// when Pt is a declared struct type, recursing into sub-patterns first so nested
+// occurrences (a struct pattern inside a tuple/struct/data pattern) are rewritten
+// too. Any other pattern is returned unchanged (after recursion).
+func (c *Collector) reclassifyPattern(pat ast.Pattern) ast.Pattern {
+	if pat == nil {
+		return nil
+	}
+	switch p := pat.(type) {
+	case *ast.DataPattern:
+		p.Pattern = c.reclassifyPattern(p.Pattern)
+		if decl, ok := c.table.Types[p.Name]; ok {
+			if _, isStruct := decl.Type.(types.NamedStructType); isStruct {
+				if sp, ok := p.Pattern.(*ast.StructPattern); ok {
+					sp.Name = p.Name
+					return sp
+				}
+			}
+		}
+		return p
+	case *ast.StructPattern:
+		for i := range p.Fields {
+			p.Fields[i].Pattern = c.reclassifyPattern(p.Fields[i].Pattern)
+		}
+		return p
+	case *ast.TuplePattern:
+		for i := range p.Elements {
+			p.Elements[i] = c.reclassifyPattern(p.Elements[i])
+		}
+		return p
+	case *ast.ArrayPattern:
+		for i := range p.Elements {
+			p.Elements[i] = c.reclassifyPattern(p.Elements[i])
+		}
+		return p
+	case *ast.BindingPattern:
+		p.Pattern = c.reclassifyPattern(p.Pattern)
+		return p
+	}
+	return pat
 }
 
 // registerTopLevelFunctions populates SymbolTable.Functions (and its
