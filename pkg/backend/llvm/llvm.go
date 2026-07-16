@@ -57,10 +57,11 @@
 //     inline vs boxed. layout.go/runtime.go provide the building blocks —
 //     LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign, and
 //     declareRuntime (wired into Emit) — for lowerType to dispatch over.
-//  2. Grow lowerExpr further: `match`/destructuring (arithmetic, comparisons,
-//     `&&`/`||`, `if`/blocks, `let`/`var`, calls, tuple and struct instances, and
-//     `data` construction — the tagged union materialized via alloca + typed
-//     payload store — already lower; reading a data value back needs `match`).
+//  2. Grow lowerExpr further: non-`data` `match` (int/bool/string/tuple/struct
+//     scrutinees), arm guards, and float. Already lowering: arithmetic,
+//     comparisons, `&&`/`||`, `if`/blocks, `let`/`var`, calls, tuple and struct
+//     instances, `data` construction (alloca + typed payload store), and `match`
+//     on a `data` value (tag switch + payload extraction + field binding).
 //     Mutable locals are modeled as `alloca` + load/store
 //     (let mem2reg build SSA) rather than hand-written phi nodes. Float
 //     literals/arithmetic and any conversion touching float are deferred: a float
@@ -654,6 +655,8 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		return l.lowerMemberExpr(block, e)
 	case *ast.DataConstructorExpr:
 		return l.lowerDataConstructorExpr(block, e)
+	case *ast.MatchExpr:
+		return l.lowerMatch(block, e)
 	}
 	return nil, nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
 }
@@ -941,6 +944,202 @@ func (l *lowerer) dataPayloadStructType(ctor types.DataTypeConstructor) (*lltype
 		fields[i] = ft
 	}
 	return lltypes.NewStruct(fields...), nil
+}
+
+// resolveDataType resolves a scrutinee type to its DataType — directly, or via
+// the symbol table for an UnresolvedType naming a non-generic data type. A
+// generic (ParameterizedType) data type is not handled (monomorphization TODO).
+func (l *lowerer) resolveDataType(t types.Type) (types.DataType, bool) {
+	switch v := t.(type) {
+	case types.DataType:
+		return v, true
+	case types.UnresolvedType:
+		if decl, ok := l.res.SymbolTable.Types[v.Name]; ok {
+			if dt, ok := decl.Type.(types.DataType); ok {
+				return dt, true
+			}
+		}
+	}
+	return types.DataType{}, false
+}
+
+// lowerMatch lowers a `match` expression. Only a `data` scrutinee is handled so
+// far (the tagged-union tag switch); other scrutinee kinds (int/bool/string/
+// tuple/struct/array) are deferred with a loud error.
+func (l *lowerer) lowerMatch(block *ir.Block, e *ast.MatchExpr) (value.Value, *ir.Block, error) {
+	scrutType, ok := l.res.TypeTable.Get(e.Scrutinee)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no type recorded for match scrutinee")
+	}
+	if dt, ok := l.resolveDataType(scrutType); ok {
+		return l.lowerDataMatch(block, e, dt)
+	}
+	return nil, nil, fmt.Errorf("llvm: match on %s not implemented yet (only data types)", scrutType)
+}
+
+// lowerDataMatch lowers a `match` on a `data` value: store the scrutinee, load
+// its tag, and `switch` on it to one block per arm (DATA_LAYOUT.md). Each data
+// pattern's arm reinterprets the payload blob as its variant's payload struct and
+// binds the fields; a wildcard/identifier arm is the switch default. The arms
+// feed a merge phi, so the match is a value (like `if`). The front-end guarantees
+// exhaustiveness (lyra-E009), so a match with no catch-all gets an `unreachable`
+// default.
+func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.DataType) (value.Value, *ir.Block, error) {
+	for _, arm := range e.MatchArms {
+		if arm.Guard != nil {
+			return nil, nil, fmt.Errorf("llvm: match guards not implemented yet")
+		}
+	}
+
+	scrut, block, err := l.lowerExpr(block, e.Scrutinee)
+	if err != nil {
+		return nil, nil, err
+	}
+	unionTy, ok := scrut.Type().(*lltypes.StructType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: data match scrutinee did not lower to a struct (%s)", scrut.Type())
+	}
+	fn := block.Parent
+
+	// Store the scrutinee so a variant's payload can be reinterpreted out of the
+	// blob (the mirror of construction), and load its tag.
+	slot := fn.Blocks[0].NewAlloca(unionTy)
+	block.NewStore(scrut, slot)
+	tagTy := unionTy.Fields[0].(*lltypes.IntType)
+	tagPtr := block.NewGetElementPtr(unionTy, slot, constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 0))
+	tag := block.NewLoad(tagTy, tagPtr)
+
+	mergeBlock := fn.NewBlock("")
+	type incoming struct {
+		val value.Value
+		end *ir.Block
+	}
+	var incomings []incoming
+	var cases []*ir.Case
+	var defaultBlock *ir.Block
+
+	for _, arm := range e.MatchArms {
+		armBlock := fn.NewBlock("")
+		switch p := arm.Pattern.(type) {
+		case *ast.DataPattern:
+			idx := -1
+			for i, c := range dt.Constructors {
+				if c.Name == p.Name {
+					idx = i
+					break
+				}
+			}
+			if idx < 0 {
+				return nil, nil, fmt.Errorf("llvm: %q is not a constructor of %s", p.Name, dt.Name)
+			}
+			if err := l.bindDataPayload(armBlock, p, dt.Constructors[idx], slot, unionTy); err != nil {
+				return nil, nil, err
+			}
+			cases = append(cases, ir.NewCase(constant.NewInt(tagTy, int64(idx)), armBlock))
+		case *ast.WildcardPattern:
+			defaultBlock = armBlock
+		case *ast.IdentifierPattern:
+			if p.Name != "_" {
+				// Bind the whole scrutinee value; slot already holds it.
+				l.locals[p.Name] = slot
+			}
+			defaultBlock = armBlock
+		default:
+			return nil, nil, fmt.Errorf("llvm: match pattern %T not implemented for a data scrutinee", arm.Pattern)
+		}
+
+		val, end, err := l.lowerExpr(armBlock, arm.Body)
+		if err != nil {
+			return nil, nil, err
+		}
+		if end.Term == nil {
+			end.NewBr(mergeBlock)
+			incomings = append(incomings, incoming{val, end})
+		}
+	}
+
+	if defaultBlock == nil {
+		// Exhaustive over the constructors, so the default is unreachable.
+		defaultBlock = fn.NewBlock("")
+		defaultBlock.NewUnreachable()
+	}
+	block.NewSwitch(tag, defaultBlock, cases...)
+
+	if len(incomings) == 0 {
+		return nil, mergeBlock, nil // every arm diverged (e.g. all `return`)
+	}
+	incs := make([]*ir.Incoming, len(incomings))
+	for i, in := range incomings {
+		incs[i] = ir.NewIncoming(in.val, in.end)
+	}
+	return mergeBlock.NewPhi(incs...), mergeBlock, nil
+}
+
+// bindDataPayload binds a data pattern's payload sub-patterns into l.locals for
+// the arm body. It reinterprets the union's payload blob as the variant's payload
+// struct (bitcast + load) and, per bound field, extractvalue + alloca + store.
+// Only flat positional (`Rect(w, h)`) and bare single (`Some x`) forms bind here;
+// tuple-payload destructuring (`MkPair((x, y))`) and nested sub-patterns are
+// deferred with a loud error.
+func (l *lowerer) bindDataPayload(armBlock *ir.Block, p *ast.DataPattern, ctor types.DataTypeConstructor, slot value.Value, unionTy *lltypes.StructType) error {
+	fieldPatterns, err := payloadFieldPatterns(p, ctor)
+	if err != nil {
+		return err
+	}
+	if len(fieldPatterns) == 0 {
+		return nil // nullary variant — nothing to bind
+	}
+	payloadStructTy, err := l.dataPayloadStructType(ctor)
+	if err != nil {
+		return err
+	}
+	blobPtr := armBlock.NewGetElementPtr(unionTy, slot, constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+	typedPtr := armBlock.NewBitCast(blobPtr, lltypes.NewPointer(payloadStructTy))
+	payload := armBlock.NewLoad(payloadStructTy, typedPtr)
+
+	entry := armBlock.Parent.Blocks[0]
+	for i, fp := range fieldPatterns {
+		switch fpp := fp.(type) {
+		case *ast.IdentifierPattern:
+			if fpp.Name == "_" {
+				continue
+			}
+			fieldVal := armBlock.NewExtractValue(payload, uint64(i))
+			s := entry.NewAlloca(payloadStructTy.Fields[i])
+			armBlock.NewStore(fieldVal, s)
+			l.locals[fpp.Name] = s
+		case *ast.WildcardPattern:
+			continue
+		default:
+			return fmt.Errorf("llvm: nested pattern %T in a data payload not implemented yet", fp)
+		}
+	}
+	return nil
+}
+
+// payloadFieldPatterns returns the flat list of sub-patterns, one per payload
+// field, for a data pattern — or an error for a form the backend doesn't bind
+// yet. Flat positional (`Rect(w, h)` against `[i64, i64]`, `Circle(r)` against
+// `[i64]`) and bare single (`Some x`) are supported; tuple-payload destructuring
+// (`MkPair((x, y))`) is deferred.
+func payloadFieldPatterns(p *ast.DataPattern, ctor types.DataTypeConstructor) ([]ast.Pattern, error) {
+	flat := ctor.FieldTypes()
+	if p.Pattern == nil {
+		if len(flat) != 0 {
+			return nil, fmt.Errorf("llvm: constructor %q has a payload but the pattern binds none", p.Name)
+		}
+		return nil, nil
+	}
+	if tp, ok := p.Pattern.(*ast.TuplePattern); ok {
+		if len(tp.Elements) == len(flat) {
+			return tp.Elements, nil
+		}
+		return nil, fmt.Errorf("llvm: tuple-payload destructuring for %q not implemented yet", p.Name)
+	}
+	if len(flat) == 1 {
+		return []ast.Pattern{p.Pattern}, nil
+	}
+	return nil, fmt.Errorf("llvm: payload pattern for %q not implemented yet", p.Name)
 }
 
 // literalIntType returns the LLVM integer type an integer literal should lower

@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"maps"
 	"math"
 	"sort"
 	"strconv"
@@ -121,6 +122,28 @@ func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr, requireType bool) types.Typ
 	return thenType
 }
 
+// withPatternBindings runs fn with the variables a match arm's pattern binds
+// installed as parameter types (merged over any enclosing ones), so the arm body
+// can reference them. It reuses walkDestructuredPattern to derive each binding's
+// type from the scrutinee type, the same machinery a destructuring `let` uses.
+func (tc *TypeChecker) withPatternBindings(pattern ast.Pattern, scrutineeType types.Type, fn func()) {
+	old := tc.paramTypes
+	merged := make(map[string]types.Type, len(old)+2)
+	maps.Copy(merged, old)
+	tc.paramTypes = merged
+	// walkDestructuredPattern validates as it binds, but the arm-pattern check
+	// (checkDataMatchArm/checkStructMatchArm/…) already reported any mismatch, so
+	// discard errors from this pass to avoid duplicates — it's used here only for
+	// its bindings.
+	errCount := len(tc.errors)
+	tc.walkDestructuredPattern(pattern, scrutineeType, func(name string, typ types.Type) {
+		tc.paramTypes[name] = typ
+	})
+	tc.errors = tc.errors[:errCount]
+	fn()
+	tc.paramTypes = old
+}
+
 func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 	scrutineeType := tc.inferExprType(expr.Scrutinee)
 	if types.IsBoolean(scrutineeType) {
@@ -182,15 +205,22 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 		}
 	}
 	tc.checkDuplicateMatchArms(expr.MatchArms)
-	// Check that all arms yield a compatible type. Untyped literals are
-	// promoted to their default concrete type first so that a bare `2` reads
-	// as `int` rather than `integer literal` in error messages.
 	if len(expr.MatchArms) == 0 {
 		return nil
 	}
+	// Fold the arms to a common type. Each arm body is inferred with its pattern's
+	// bound variables in scope (`Some(x) => x + 1`), so an identifier a pattern
+	// introduces resolves and gets its type recorded (via the paramTypes mechanism,
+	// which also records each resolved identifier into the TypeTable the backend
+	// reads). An untyped-literal result is left un-promoted so a bare `0` arm can
+	// adapt to a concrete sibling (`Some x => x` with x: u8) or to the match's
+	// outer context — rather than defaulting to i64 and clashing.
 	var commonType types.Type
 	for _, arm := range expr.MatchArms {
-		armType := promoteToDefault(tc.inferExprType(arm.Body))
+		var armType types.Type
+		tc.withPatternBindings(arm.Pattern, scrutineeType, func() {
+			armType = tc.inferExprType(arm.Body)
+		})
 		if armType == nil {
 			continue // body type unresolvable — skip rather than false-positive
 		}
@@ -202,10 +232,23 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 		if !ok {
 			tc.addError(expr.GetLocation(), SeverityError,
 				"match arms have incompatible types: %s vs %s",
-				commonType, armType)
+				promoteToDefault(commonType), promoteToDefault(armType))
 			return nil
 		}
 		commonType = next
+	}
+	if commonType == nil {
+		return nil
+	}
+	// Push the resolved common width down onto any untyped-literal arm body (the
+	// match-arm context propagation site), so every arm lowers at the match's
+	// result type. When the common type is itself still untyped (all arms were
+	// untyped literals), this is a no-op — an outer context (a declared return
+	// type, an annotation) narrows the whole match later via propagateLiteralType.
+	for _, arm := range expr.MatchArms {
+		tc.withPatternBindings(arm.Pattern, scrutineeType, func() {
+			tc.propagateLiteralType(arm.Body, commonType)
+		})
 	}
 	return commonType
 }

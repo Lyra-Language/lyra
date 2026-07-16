@@ -479,7 +479,7 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 				"%s is not a constructor of %s", p.Name, dt.Name)
 			return
 		}
-		tc.bindDataPatternPayload(p, ctor.Params, bind)
+		tc.bindDataPatternPayload(p, ctor, bind)
 	}
 }
 
@@ -492,31 +492,42 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 // tuple type. Bare `Ctor x` syntax (no parens) is only valid for a
 // single-param constructor and binds directly. A zero-param constructor with
 // no pattern (plain `None`) binds nothing; any arity mismatch is reported.
-func (tc *TypeChecker) bindDataPatternPayload(p *ast.DataPattern, params []types.Type, bind func(name string, typ types.Type)) {
+func (tc *TypeChecker) bindDataPatternPayload(p *ast.DataPattern, ctor *types.DataTypeConstructor, bind func(name string, typ types.Type)) {
+	flat := ctor.FieldTypes()
 	if p.Pattern == nil {
-		if len(params) != 0 {
+		if len(flat) != 0 {
 			tc.addError(p.GetLocation(), SeverityError,
-				"%s takes %d argument(s) but the pattern has none", p.Name, len(params))
+				"%s takes %d argument(s) but the pattern has none", p.Name, len(flat))
 		}
 		return
 	}
 	if tp, ok := p.Pattern.(*ast.TuplePattern); ok {
-		if len(tp.Elements) != len(params) {
-			tc.addError(p.GetLocation(), SeverityError,
-				"%s takes %d argument(s) but the pattern has %d", p.Name, len(params), len(tp.Elements))
+		// Flat positional: `Rect(w, h)` against the flat field types `[i64, i64]`
+		// (and `Circle(r)` against `[i64]`).
+		if len(tp.Elements) == len(flat) {
+			for i, el := range tp.Elements {
+				tc.walkDestructuredPattern(el, flat[i], bind)
+			}
 			return
 		}
-		for i, el := range tp.Elements {
-			tc.walkDestructuredPattern(el, params[i], bind)
+		// A single tuple-typed param destructured as a whole: `MkPair((x, y))` for
+		// `MkPair (a, b)`, where the sole param is the tuple and the pattern's one
+		// element is a tuple sub-pattern matched against it.
+		if len(tp.Elements) == 1 && len(ctor.Params) == 1 {
+			tc.walkDestructuredPattern(tp.Elements[0], ctor.Params[0], bind)
+			return
 		}
-		return
-	}
-	if len(params) != 1 {
 		tc.addError(p.GetLocation(), SeverityError,
-			"%s takes %d argument(s) but the pattern has 1", p.Name, len(params))
+			"%s takes %d argument(s) but the pattern has %d", p.Name, len(flat), len(tp.Elements))
 		return
 	}
-	tc.walkDestructuredPattern(p.Pattern, params[0], bind)
+	// Bare single-payload with no parens: `Some x`.
+	if len(flat) == 1 {
+		tc.walkDestructuredPattern(p.Pattern, flat[0], bind)
+		return
+	}
+	tc.addError(p.GetLocation(), SeverityError,
+		"%s takes %d argument(s) but the pattern has 1", p.Name, len(flat))
 }
 
 // arrayElementType extracts the element type of a dynamic or static array
@@ -1387,6 +1398,37 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 		tc.propagateLiteralType(e.Right, concrete)
 	case *ast.NegationExpr:
 		tc.propagateLiteralType(e.Operand, concrete)
+	case *ast.MatchExpr:
+		// A match/if is a value made of its arm/branch bodies, so a context width
+		// pushes through to each of them (the match-arm/branch context site) — and
+		// if the whole expression was left untyped (all arms were untyped literals),
+		// it now takes the concrete width too.
+		for _, arm := range e.MatchArms {
+			tc.propagateLiteralType(arm.Body, concrete)
+		}
+		if tc.currentTypeIsUntyped(e) {
+			tc.typeTable.Set(e, cp)
+		}
+	case *ast.IfExpr:
+		if e.Then != nil {
+			tc.propagateLiteralType(e.Then, concrete)
+		}
+		if e.Else != nil {
+			tc.propagateLiteralType(e.Else, concrete)
+		}
+		if tc.currentTypeIsUntyped(e) {
+			tc.typeTable.Set(e, cp)
+		}
+	case *ast.BlockExpr:
+		// A block's value is its last statement, when that's an expression.
+		if n := len(e.Statements); n > 0 {
+			if es, ok := e.Statements[n-1].(*ast.ExpressionStmt); ok {
+				tc.propagateLiteralType(es.Expression, concrete)
+			}
+		}
+		if tc.currentTypeIsUntyped(e) {
+			tc.typeTable.Set(e, cp)
+		}
 	}
 }
 
