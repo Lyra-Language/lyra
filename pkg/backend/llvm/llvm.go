@@ -57,10 +57,11 @@
 //     inline vs boxed. layout.go/runtime.go provide the building blocks —
 //     LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign, and
 //     declareRuntime (wired into Emit) — for lowerType to dispatch over.
-//  2. Grow lowerExpr further: `match` and `data` construction/matching
-//     (arithmetic, comparisons, `&&`/`||`, `if`/blocks, `let`/`var`, calls, and
-//     both tuple and struct instances — construction + `.0`/`.field` access via
-//     insertvalue/extractvalue — already lower). Mutable locals are modeled as `alloca` + load/store
+//  2. Grow lowerExpr further: `match`/destructuring (arithmetic, comparisons,
+//     `&&`/`||`, `if`/blocks, `let`/`var`, calls, tuple and struct instances, and
+//     `data` construction — the tagged union materialized via alloca + typed
+//     payload store — already lower; reading a data value back needs `match`).
+//     Mutable locals are modeled as `alloca` + load/store
 //     (let mem2reg build SSA) rather than hand-written phi nodes. Float
 //     literals/arithmetic and any conversion touching float are deferred: a float
 //     literal is now reachable via a `let x: f64 = …` binding, but it errors
@@ -237,18 +238,73 @@ func (l *lowerer) lowerTypeDef(typeDeclStmt *ast.TypeDeclStmt) error {
 // (layout.go) computes the shape; an all-nullary `data` (an enum) is just
 // `{ iTAG }` with no blob.
 //
-// DataUnionType fails (ok=false) when a variant payload can't be sized yet — a
-// string field, a by-value reference to another named type (a recursive one must
-// be `shared`, i.e. a pointer, per lyra-E014, which *is* sizeable), or an
-// un-monomorphized generic. That's a loud error here rather than a wrong layout.
+// A by-value reference to another named type in a payload (`data W = Wrap(P)`)
+// arrives as an UnresolvedType, which SizeAndAlign can't size on its own, so the
+// payload types are first resolved through the symbol table (resolveForLayout).
+// DataUnionType still fails (ok=false) for a genuinely un-sizeable payload — a
+// string field or an un-monomorphized generic — a loud error, not a wrong layout.
+// (A recursive reference must be `shared`, i.e. a pointer per lyra-E014, which is
+// pointer-sized and stops the resolution before it recurses.)
 func (l *lowerer) lowerDataDef(t types.DataType) error {
 	st := l.structTypes[t.Name]
-	union, ok := DataUnionType(t)
+	resolved := l.resolveForLayout(t).(types.DataType)
+	union, ok := DataUnionType(resolved)
 	if !ok {
-		return fmt.Errorf("llvm: cannot lay out data type %q yet (a variant payload isn't sizeable — e.g. a string, a by-value named-type field, or an un-monomorphized generic)", t.Name)
+		return fmt.Errorf("llvm: cannot lay out data type %q yet (a variant payload isn't sizeable — e.g. a string field or an un-monomorphized generic)", t.Name)
 	}
 	st.Fields = append(st.Fields, union.Fields...)
 	return nil
+}
+
+// resolveForLayout deep-resolves a type's UnresolvedType leaves against the
+// symbol table so SizeAndAlign can size it — a named-type reference in a `data`
+// payload or a struct field (`Wrap(P)`, `struct S { p: P }`) is stored as just a
+// name. It short-circuits a `shared` reference (pointer-sized, so its referent is
+// never chased) — which is also what keeps resolution finite: a recursive type's
+// cycle must pass through a `shared` field (lyra-E014), so every by-value chain is
+// acyclic and terminates.
+func (l *lowerer) resolveForLayout(t types.Type) types.Type {
+	switch v := t.(type) {
+	case types.UnresolvedType:
+		if v.Allocation == types.Shared {
+			return t // a pointer; don't chase the referent (it may be recursive)
+		}
+		decl, ok := l.res.SymbolTable.Types[v.Name]
+		if !ok {
+			return t // unknown name; SizeAndAlign will fail loudly downstream
+		}
+		return l.resolveForLayout(types.WithAllocation(decl.Type, v.Allocation))
+	case types.NamedStructType:
+		fields := make([]types.StructField, len(v.Fields))
+		for i, f := range v.Fields {
+			f.Type = l.resolveForLayout(f.Type)
+			fields[i] = f
+		}
+		v.Fields = fields
+		return v
+	case types.TupleType:
+		elems := make([]types.Type, len(v.Elements))
+		for i, e := range v.Elements {
+			elems[i] = l.resolveForLayout(e)
+		}
+		v.Elements = elems
+		return v
+	case types.DataType:
+		ctors := make([]types.DataTypeConstructor, len(v.Constructors))
+		for i, c := range v.Constructors {
+			params := make([]types.Type, len(c.Params))
+			for j, p := range c.Params {
+				params[j] = l.resolveForLayout(p)
+			}
+			ctors[i] = types.DataTypeConstructor{Name: c.Name, Params: params}
+		}
+		v.Constructors = ctors
+		return v
+	case types.StaticArrayType:
+		v.ElementType = l.resolveForLayout(v.ElementType)
+		return v
+	}
+	return t
 }
 
 func (l *lowerer) lowerTupleDef(t types.TupleType) error {
@@ -496,6 +552,9 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		return l.lookupNamedType(t.Name)
 	case types.NamedStructType:
 		return l.lookupNamedType(t.Name)
+	case types.DataType:
+		// A `data` value resolves to its registered tagged-union struct.
+		return l.lookupNamedType(t.Name)
 	case types.UnresolvedType:
 		// A named type referenced from another type declaration's field/element
 		// (`struct Line { a: Point }`) stays an UnresolvedType — the typechecker
@@ -593,6 +652,8 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		return l.lowerStructInstanceExpr(block, e)
 	case *ast.MemberExpr:
 		return l.lowerMemberExpr(block, e)
+	case *ast.DataConstructorExpr:
+		return l.lowerDataConstructorExpr(block, e)
 	}
 	return nil, nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
 }
@@ -603,14 +664,17 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 // then allocas it by its `.Type()` and store/loads it like any scalar (mem2reg
 // promotes it), and lowerTupleIndexExpr reads elements back with `extractvalue`.
 //
-// Only tuple-typed literals lower here. A capitalized call that the typechecker
-// resolved to a data-type constructor (`Some(42)`) records a DataType, not a
-// TupleType — that lowering (tagged unions, DATA_LAYOUT.md) isn't implemented, so
-// it errors loudly rather than mis-building a struct.
+// Only tuple-typed literals build a plain aggregate here. A capitalized call the
+// typechecker resolved to a data constructor (`Cons(1, tail)`) records a DataType,
+// not a TupleType — that's a positional variant, routed to lowerDataConstruction
+// (the tagged union, DATA_LAYOUT.md).
 func (l *lowerer) lowerTupleLiteralExpr(block *ir.Block, e *ast.TupleLiteralExpr) (value.Value, *ir.Block, error) {
 	recorded, ok := l.res.TypeTable.Get(e)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for tuple literal")
+	}
+	if dt, ok := recorded.(types.DataType); ok {
+		return l.lowerDataConstruction(block, dt, e.Name, e.Elements)
 	}
 	tupleType, ok := recorded.(types.TupleType)
 	if !ok {
@@ -764,6 +828,119 @@ func (l *lowerer) namedStructFields(t types.Type) ([]types.StructField, bool) {
 		}
 	}
 	return nil, false
+}
+
+// lowerDataConstructorExpr lowers a nullary data constructor (`Red`, `Nil`,
+// `None` — a DataConstructorExpr with no payload). It records the owning DataType,
+// so construction is just materializing the union with the variant's tag and no
+// payload.
+func (l *lowerer) lowerDataConstructorExpr(block *ir.Block, e *ast.DataConstructorExpr) (value.Value, *ir.Block, error) {
+	if e.Value != nil {
+		return nil, nil, fmt.Errorf("llvm: non-nullary DataConstructorExpr %q not expected here", e.Constructor)
+	}
+	recorded, ok := l.res.TypeTable.Get(e)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no type recorded for data constructor %q", e.Constructor)
+	}
+	dt, ok := recorded.(types.DataType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: data constructor %q did not record a data type (got %s)", e.Constructor, recorded)
+	}
+	return l.lowerDataConstruction(block, dt, e.Constructor, nil)
+}
+
+// lowerDataConstruction materializes a `data` value of type dt for the variant
+// ctorName with positional argument expressions args (empty for a nullary
+// variant). Following DATA_LAYOUT.md, it goes through memory rather than an SSA
+// aggregate, because the payload blob (`[K x iA]`) is reinterpreted as this
+// variant's payload struct: alloca the union, store the tag, and — for a variant
+// with a payload — GEP the blob field, bitcast it to the variant's payload-struct
+// pointer, and store the built payload struct. The union value is then loaded back
+// as a first-class value so it flows through `let`/calls like a tuple or struct.
+//
+// A `shared` payload field (a recursive variant like `Cons(i64, shared List)`)
+// needs ref-counted-box allocation (ALLOCATION.md), which isn't lowered yet, so
+// it errors loudly. Inline-record variants (`Node { … }`) route through
+// lowerStructInstanceExpr and are deferred there.
+func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctorName string, args []ast.Expression) (value.Value, *ir.Block, error) {
+	tag := -1
+	var ctor types.DataTypeConstructor
+	for i, c := range dt.Constructors {
+		if c.Name == ctorName {
+			tag, ctor = i, c
+			break
+		}
+	}
+	if tag < 0 {
+		return nil, nil, fmt.Errorf("llvm: data type %q has no constructor %q", dt.Name, ctorName)
+	}
+	fields := ctor.FieldTypes()
+	if len(args) != len(fields) {
+		return nil, nil, fmt.Errorf("llvm: constructor %q expects %d argument(s), got %d", ctorName, len(fields), len(args))
+	}
+
+	llType, err := l.lowerType(dt)
+	if err != nil {
+		return nil, nil, err
+	}
+	unionTy, ok := llType.(*lltypes.StructType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: data type %q did not lower to a struct", dt.Name)
+	}
+
+	// Alloca the union in the entry block (mem2reg-promotable), then fill it.
+	entry := block.Parent.Blocks[0]
+	slot := entry.NewAlloca(unionTy)
+
+	// Store the tag (field 0).
+	tagTy := unionTy.Fields[0].(*lltypes.IntType)
+	tagPtr := block.NewGetElementPtr(unionTy, slot,
+		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 0))
+	block.NewStore(constant.NewInt(tagTy, int64(tag)), tagPtr)
+
+	// Store the payload (field 1, the blob) reinterpreted as this variant's
+	// payload struct — only when the variant carries fields (a nullary variant of
+	// a type that *has* payloads just leaves the blob undefined).
+	if len(fields) > 0 {
+		payloadStructTy, err := l.dataPayloadStructType(ctor)
+		if err != nil {
+			return nil, nil, err
+		}
+		var payload value.Value = constant.NewUndef(payloadStructTy)
+		for i, argExpr := range args {
+			var v value.Value
+			v, block, err = l.lowerExpr(block, argExpr)
+			if err != nil {
+				return nil, nil, err
+			}
+			payload = block.NewInsertValue(payload, v, uint64(i))
+		}
+		blobPtr := block.NewGetElementPtr(unionTy, slot,
+			constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+		typedPtr := block.NewBitCast(blobPtr, lltypes.NewPointer(payloadStructTy))
+		block.NewStore(payload, typedPtr)
+	}
+
+	return block.NewLoad(unionTy, slot), block, nil
+}
+
+// dataPayloadStructType is the LLVM struct of a variant's payload fields, in
+// order — what gets stored into (and later read from) the union's payload blob.
+// A `shared` field is deferred (it needs ref-counted-box allocation).
+func (l *lowerer) dataPayloadStructType(ctor types.DataTypeConstructor) (*lltypes.StructType, error) {
+	fieldTypes := ctor.FieldTypes()
+	fields := make([]lltypes.Type, len(fieldTypes))
+	for i, p := range fieldTypes {
+		if types.AllocationOf(p) == types.Shared {
+			return nil, fmt.Errorf("llvm: `shared` payload field in constructor %q not implemented yet (needs ref-counted allocation)", ctor.Name)
+		}
+		ft, err := l.lowerType(p)
+		if err != nil {
+			return nil, err
+		}
+		fields[i] = ft
+	}
+	return lltypes.NewStruct(fields...), nil
 }
 
 // literalIntType returns the LLVM integer type an integer literal should lower

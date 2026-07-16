@@ -1506,11 +1506,31 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 	// so `?`, `??`, and must-use see the owning data type (e.g. `Maybe`).
 	if name != "?" {
 		if dt, isCtor := tc.findDataTypeByConstructor(name); isCtor {
-			for _, elem := range expr.Elements {
+			// The constructor's declared payload field types (flat), so an untyped
+			// literal argument (`B(3)` with `B(u8)`) takes the field's width instead
+			// of promoting to i64 — the same context-directed propagation structs and
+			// tuples get, and what the backend's tagged-union construction needs to
+			// emit a correctly-typed payload.
+			var declaredFields []types.Type
+			for _, c := range dt.Constructors {
+				if c.Name == name {
+					declaredFields = c.FieldTypes()
+					break
+				}
+			}
+			for i, elem := range expr.Elements {
 				// A data constructor resolves by name regardless of whether its
 				// payload type-checks (matching the previous data_constructor_expr
 				// behavior), so a failed element is simply skipped, not fatal.
-				if t := tc.inferExprType(elem); t != nil {
+				t := tc.inferExprType(elem)
+				if t == nil {
+					continue
+				}
+				if i < len(declaredFields) {
+					expected := tc.resolveType(declaredFields[i], elem.GetLocation())
+					tc.propagateLiteralType(elem, expected)
+					tc.typeTable.Set(elem, expected)
+				} else {
 					tc.typeTable.Set(elem, promoteToDefault(t))
 				}
 			}

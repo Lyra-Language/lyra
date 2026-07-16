@@ -207,11 +207,11 @@ func dataSizeAndAlign(dt types.DataType) (int, int, bool) {
 }
 
 // maxVariantPayload returns the max size and max alignment over all variants'
-// payload structs (a variant's payload is the struct of its Params).
+// payload structs (a variant's payload is the struct of its flat field types).
 func maxVariantPayload(dt types.DataType) (size, align int, ok bool) {
 	align = 1
 	for _, c := range dt.Constructors {
-		ps, pa, ok := aggregateSizeAndAlign(c.Params)
+		ps, pa, ok := aggregateSizeAndAlign(c.FieldTypes())
 		if !ok {
 			return 0, 0, false
 		}
