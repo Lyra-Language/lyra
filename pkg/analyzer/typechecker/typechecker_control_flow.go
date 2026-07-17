@@ -219,6 +219,16 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 	for _, arm := range expr.MatchArms {
 		var armType types.Type
 		tc.withPatternBindings(arm.Pattern, scrutineeType, func() {
+			// A guard (`Some(x) if x > 0`) is checked with the pattern's bindings in
+			// scope — it may reference them — and must be a bool. Inferring it here
+			// also records its sub-expressions in the TypeTable, which the backend
+			// reads to lower the guard.
+			if arm.Guard != nil {
+				if gt := tc.inferExprType(arm.Guard.Condition); gt != nil && !types.IsBoolean(gt) {
+					tc.addError(arm.Guard.Condition.GetLocation(), SeverityError,
+						"match arm guard must be a bool, got %s", promoteToDefault(gt))
+				}
+			}
 			armType = tc.inferExprType(arm.Body)
 		})
 		if armType == nil {

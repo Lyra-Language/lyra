@@ -58,3 +58,29 @@ let f = (c: Color) -> u8 => match c {
 `, false)
 	assertNoErrors(t, res)
 }
+
+// An arm guard is type-checked with the pattern's bindings in scope, so it may
+// reference them (`Some(x) if x > 0`). A guarded arm doesn't count toward
+// exhaustiveness, so the following unguarded arms must still cover the type.
+func TestMatch_GuardReferencesBinding(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Maybe = None | Some(u8)
+let f = (m: Maybe) -> u8 => match m {
+  Some(x) if x > 0 => x,
+  Some(x) => 0,
+  None => 9,
+}
+`, false)
+	assertNoErrors(t, res)
+}
+
+// A guard condition that isn't a bool is an error.
+func TestMatch_GuardMustBeBool(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let f = (n: u8) -> u8 => match n {
+  x if x => 1,
+  _ => 2,
+}
+`, false)
+	assertErrorsAre(t, res, "match arm guard must be a bool, got u8")
+}

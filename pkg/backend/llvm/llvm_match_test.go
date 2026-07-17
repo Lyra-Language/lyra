@@ -116,21 +116,115 @@ func TestEmit_DataMatchIR(t *testing.T) {
 	}
 }
 
-// TestEmit_MatchGuard_Deferred: an arm guard (`if x > 0`) isn't lowered yet, so
-// it errors loudly rather than silently dropping the condition.
-func TestEmit_MatchGuard_Deferred(t *testing.T) {
-	src := `data Maybe = None | Some(u8)
-	 let f = (m: Maybe) -> u8 => match m {
-	   Some x if x > 0 => x,
-	   _ => 0,
-	 }
-	 let main = () -> u8 => f(Some(5))`
-	_, err := emitSource(t, src)
-	if err == nil {
-		t.Fatal("expected an error: match guards are not implemented yet")
+// An arm guard (`if x > 0`) is a boolean test evaluated after the pattern matches
+// and its variables are bound; when it fails, control falls through to the next
+// arm. These exercise guards across every scrutinee kind that lowers to an if-else
+// ladder — data, scalar, struct, and tuple — running the program so a mis-wired
+// fall-through shows up as the wrong exit code.
+func TestExec_MatchGuards(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		// Data guard passes: the guarded arm is taken, its binding usable.
+		{
+			"data guard true",
+			`data Maybe = None | Some(u8)
+			 let f = (m: Maybe) -> u8 => match m {
+			   Some(x) if x > 3 => x,
+			   Some(x) => 0,
+			   None => 9,
+			 }
+			 let main = () -> u8 => f(Some(5))`,
+			5,
+		},
+		// Data guard fails: fall through to the next same-tag arm.
+		{
+			"data guard false falls through",
+			`data Maybe = None | Some(u8)
+			 let f = (m: Maybe) -> u8 => match m {
+			   Some(x) if x > 3 => x,
+			   Some(x) => 100,
+			   None => 9,
+			 }
+			 let main = () -> u8 => f(Some(2))`,
+			100,
+		},
+		// A guarded identifier catch-all that fails falls through to a later arm.
+		{
+			"scalar guarded catch-all falls through",
+			`let f = (n: u8) -> u8 => match n {
+			   x if x > 100 => 1,
+			   _ => 2,
+			 }
+			 let main = () -> u8 => f(5)`,
+			2,
+		},
+		// Scalar literal arm with a guard: the guard gates the matched literal.
+		{
+			"scalar literal guard",
+			`let f = (n: u8) -> u8 => match n {
+			   5 if n < 3 => 1,
+			   x => x,
+			 }
+			 let main = () -> u8 => f(5)`,
+			5,
+		},
+		// Struct guard referencing bound fields.
+		{
+			"struct guard on fields",
+			`struct Pt {
+			   x: u8,
+			   y: u8,
+			 }
+			 let f = (p: Pt) -> u8 => match p {
+			   { x, y } if x > y => x,
+			   { x, y } => y,
+			 }
+			 let main = () -> u8 => f(Pt { x: 10, y: 40 })`,
+			40,
+		},
+		// Tuple guard referencing bound elements. The tuple literal is passed
+		// directly so the u8 element widths propagate from the parameter type.
+		{
+			"tuple guard",
+			`let f = (t: (u8, u8)) -> u8 => match t {
+			   (a, b) if a < b => b,
+			   (a, b) => a,
+			 }
+			 let main = () -> u8 => f((3, 7))`,
+			7,
+		},
 	}
-	if !strings.Contains(err.Error(), "guard") {
-		t.Errorf("expected a guard error, got: %v", err)
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestEmit_MatchGuardIR pins the guard shape: the guarded data arm forces the
+// ladder (no `switch`), and the guard adds its own `icmp`/`br i1` after the tag
+// test.
+func TestEmit_MatchGuardIR(t *testing.T) {
+	got, err := emitSource(t, `data Maybe = None | Some(u8)
+	 let f = (m: Maybe) -> u8 => match m {
+	   Some(x) if x > 3 => x,
+	   Some(x) => 0,
+	   None => 9,
+	 }
+	 let main = () -> u8 => f(Some(5))`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"icmp", "br i1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("guard IR missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "switch") {
+		t.Errorf("a guarded data match should lower to a ladder, not a switch:\n%s", got)
 	}
 }
 
