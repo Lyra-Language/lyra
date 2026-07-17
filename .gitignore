@@ -2,3 +2,4 @@
 
 # Compiled lyra-lsp binary (built by `go build ./cmd/lyra-lsp/`)
 /lyra-lsp
+/lyrac
