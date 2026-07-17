@@ -66,15 +66,16 @@
 //     recurse, a nested data tag becoming a comparison), value-testing payload
 //     sub-patterns (`Some(0)`) and arm guards (both falling back from the tag
 //     switch to the shared ladder). Mutable locals are modeled as `alloca` + load/store
-//     (let mem2reg build SSA) rather than hand-written phi nodes. Float
-//     literals/arithmetic and any conversion touching float are deferred: a float
-//     literal is now reachable via a `let x: f64 = …` binding, but it errors
-//     loudly (FloatLiteralExpr is unhandled) rather than miscompiling — no float
-//     value can reach the u8 exit code until float→int lowering exists; see
-//     lowerNumericConversion's doc comment. Note lowerExpr returns the block
-//     control ends in, not just a value — threaded so a branching form (`if`)
-//     can move the insertion point; every non-branching case returns its own
-//     block unchanged.
+//     (let mem2reg build SSA) rather than hand-written phi nodes. Floats lower —
+//     literals (at their context-inferred width, default f64), arithmetic
+//     (`fadd`/`fsub`/`fmul`/`fdiv`, `frem` for `%`, floored `frem` for `%%`),
+//     `fneg`, comparisons (`fcmp`, ordered except `!=`), and float params/returns.
+//     A float still can't reach the u8 exit code directly (no float→int
+//     conversion — see lowerNumericConversion's doc), so a float is observed
+//     through a comparison; float `match` is still deferred (loud error). Note
+//     lowerExpr returns the block control ends in, not just a value — threaded so
+//     a branching form (`if`) can move the insertion point; every non-branching
+//     case returns its own block unchanged.
 //  3. Runtime shims: print, and the overflow trap for todo #2 (via
 //     llvm.sadd.with.overflow); the builtin overflow-arithmetic methods
 //     (typechecker/builtins.go) lower to two's-complement +/-/* and
@@ -363,6 +364,10 @@ func (l *lowerer) emitReturn(block *ir.Block, val value.Value) error {
 		block.NewRet(nil) // ret void
 		return nil
 	}
+	if floatTy, ok := l.retType.(*lltypes.FloatType); ok {
+		block.NewRet(coerceFloatWidth(block, val, floatTy))
+		return nil
+	}
 	intTy, ok := l.retType.(*lltypes.IntType)
 	if !ok {
 		return fmt.Errorf("llvm: return of non-integer type %s not implemented", l.retType)
@@ -620,6 +625,8 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
 		return constant.NewInt(l.literalIntType(e), e.Value), block, nil
+	case *ast.FloatLiteralExpr:
+		return constant.NewFloat(l.literalFloatType(e), e.Value), block, nil
 	case *ast.BooleanLiteralExpr:
 		bit := int64(0)
 		if e.Value {
@@ -1922,6 +1929,24 @@ func (l *lowerer) literalIntType(e ast.Expression) *lltypes.IntType {
 	return lltypes.I64
 }
 
+// literalFloatType returns the LLVM float type a float literal should lower at:
+// the concrete width the typechecker recorded for it (via context-directed
+// literal-width inference), or double (f64) when the literal has no resolved
+// context — matching the language's untyped-float default. The integer analogue
+// is literalIntType.
+func (l *lowerer) literalFloatType(e ast.Expression) *lltypes.FloatType {
+	if t, ok := l.res.TypeTable.Get(e); ok {
+		if p, ok := t.(types.PrimitiveType); ok {
+			if ll, ok := LLVMPrimitive(p.Name); ok {
+				if ft, ok := ll.(*lltypes.FloatType); ok {
+					return ft
+				}
+			}
+		}
+	}
+	return lltypes.Double
+}
+
 func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinaryOpExpr) (value.Value, *ir.Block, error) {
 	left, block, err := l.lowerExpr(block, e.Left)
 	if err != nil {
@@ -1939,15 +1964,17 @@ func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinary
 	if err != nil {
 		return nil, nil, err
 	}
-	// Comparisons are integer-only for now (bool `==`/`!=` included — i1 is
-	// an integer type). `icmp` requires both operands to have the same
-	// integer type, so two cases are reported explicitly rather than emitting
-	// invalid IR clang would reject: a float operand (would need `fcmp`, and no
-	// float value is lowerable yet anyway), and a width mismatch. With
-	// context-directed literal-width inference a literal sibling now takes the
-	// concrete operand's width (`i8(x) < 3` → both i8), so the width guard is
-	// defensive: it fires only when a literal is too large for that width and
-	// was left untyped (`i8(x) < 300`), lowering to the i64 default — loud, not
+	if _, isFloat := left.Type().(*lltypes.FloatType); isFloat {
+		v, err := l.lowerFloatComparison(block, e.Operator, left, right)
+		return v, block, err
+	}
+	// Integer comparisons (bool `==`/`!=` included — i1 is an integer type).
+	// `icmp` requires both operands to have the same integer type, so a width
+	// mismatch is reported explicitly rather than emitting invalid IR clang would
+	// reject. With context-directed literal-width inference a literal sibling takes
+	// the concrete operand's width (`i8(x) < 3` → both i8), so the width guard is
+	// defensive: it fires only when a literal is too large for that width and was
+	// left untyped (`i8(x) < 300`), lowering to the i64 default — loud, not
 	// miscompiled.
 	lt, lok := left.Type().(*lltypes.IntType)
 	rt, rok := right.Type().(*lltypes.IntType)
@@ -1995,6 +2022,33 @@ func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinary
 		return nil, nil, fmt.Errorf("llvm: boolean operator %v not implemented", e.Operator)
 	}
 	return block.NewICmp(cmpOp, left, right), block, nil
+}
+
+// lowerFloatComparison lowers a comparison of two already-lowered same-type float
+// values to an `fcmp`. Relational ops and `==` use the *ordered* predicates
+// (false when either operand is NaN — the C `<`/`==` semantics); `!=` uses the
+// *unordered* `une` (true when either is NaN), so `x != x` is true for a NaN, as
+// IEEE requires. (The typechecker already warns that float `==`/`!=` is precision-
+// sensitive.)
+func (l *lowerer) lowerFloatComparison(block *ir.Block, op ast.BooleanBinaryOp, left, right value.Value) (value.Value, error) {
+	var pred enum.FPred
+	switch op {
+	case ast.BooleanBinaryOpEq:
+		pred = enum.FPredOEQ
+	case ast.BooleanBinaryOpNEq:
+		pred = enum.FPredUNE
+	case ast.BooleanBinaryOpLT:
+		pred = enum.FPredOLT
+	case ast.BooleanBinaryOpLTE:
+		pred = enum.FPredOLE
+	case ast.BooleanBinaryOpGT:
+		pred = enum.FPredOGT
+	case ast.BooleanBinaryOpGTE:
+		pred = enum.FPredOGE
+	default:
+		return nil, fmt.Errorf("llvm: float comparison operator %v not implemented", op)
+	}
+	return block.NewFCmp(pred, left, right), nil
 }
 
 // lowerBooleanAnd lowers `a && b` with short-circuit semantics: b is evaluated
@@ -2060,12 +2114,58 @@ func (l *lowerer) lowerMathBinaryOpExpr(block *ir.Block, e *ast.MathBinaryOpExpr
 	if err != nil {
 		return nil, nil, err
 	}
+	if _, isFloat := left.Type().(*lltypes.FloatType); isFloat {
+		v, err := l.applyFloatMathOp(block, e.Operator, left, right)
+		return v, block, err
+	}
 	signed, err := l.getIntSignedness(e.Left)
 	if err != nil {
 		return nil, nil, err
 	}
 	v, err := l.applyIntMathOp(block, e.Operator, left, right, signed)
 	return v, block, err
+}
+
+// applyFloatMathOp emits a binary floating-point arithmetic op on two
+// already-lowered same-type float values — the float counterpart to
+// applyIntMathOp, shared by lowerMathBinaryOpExpr and lowerMathAssignOp. `%` (Mod)
+// is `frem` (LLVM's frem matches C fmod — the result's sign follows the dividend,
+// the truncated form, exactly mirroring the integer `%`); `%%` (Remainder,
+// floored) applies the sign-of-divisor fixup on top, mirroring the integer `%%`.
+func (l *lowerer) applyFloatMathOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value) (value.Value, error) {
+	switch op {
+	case ast.MathBinaryOpAdd:
+		return block.NewFAdd(left, right), nil
+	case ast.MathBinaryOpSub:
+		return block.NewFSub(left, right), nil
+	case ast.MathBinaryOpMul:
+		return block.NewFMul(left, right), nil
+	case ast.MathBinaryOpDiv:
+		return block.NewFDiv(left, right), nil
+	case ast.MathBinaryOpMod:
+		return block.NewFRem(left, right), nil
+	case ast.MathBinaryOpRemainder:
+		return l.lowerFlooredFRem(block, left, right), nil
+	default:
+		return nil, fmt.Errorf("llvm: float math binary op lowering not implemented for %v", op)
+	}
+}
+
+// lowerFlooredFRem computes the floored-division remainder of two floats — Odin's
+// "remainder (floored)" (%%), sign following the divisor — the float analogue of
+// lowerFlooredSRem. Take the truncated remainder (`frem`, sign of the dividend);
+// if it's non-zero and its sign disagrees with the divisor's, add the divisor
+// back. Built branchlessly with `select`, since it sits inside one expression.
+func (l *lowerer) lowerFlooredFRem(block *ir.Block, left, right value.Value) value.Value {
+	zero := constant.NewFloat(left.Type().(*lltypes.FloatType), 0)
+	r := block.NewFRem(left, right)
+	rNeg := block.NewFCmp(enum.FPredOLT, r, zero)
+	divisorNeg := block.NewFCmp(enum.FPredOLT, right, zero)
+	signsDiffer := block.NewXor(rNeg, divisorNeg)
+	nonZero := block.NewFCmp(enum.FPredONE, r, zero)
+	needsFixup := block.NewAnd(nonZero, signsDiffer)
+	fixed := block.NewFAdd(r, right)
+	return block.NewSelect(needsFixup, fixed, r)
 }
 
 // applyIntMathOp emits the instruction(s) for a binary integer arithmetic op on
@@ -2140,11 +2240,15 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 	if err != nil {
 		return nil, nil, err
 	}
-	signed, err := l.getIntSignedness(e.Right)
-	if err != nil {
-		return nil, nil, err
+	var result value.Value
+	if _, isFloat := cur.Type().(*lltypes.FloatType); isFloat {
+		result, err = l.applyFloatMathOp(block, binOp, cur, rhs)
+	} else {
+		var signed bool
+		if signed, err = l.getIntSignedness(e.Right); err == nil {
+			result, err = l.applyIntMathOp(block, binOp, cur, rhs, signed)
+		}
 	}
-	result, err := l.applyIntMathOp(block, binOp, cur, rhs, signed)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -2507,10 +2611,11 @@ func (l *lowerer) lowerIf(block *ir.Block, e *ast.IfExpr) (value.Value, *ir.Bloc
 // LLVM's integer types don't carry that themselves; width/kind come from the
 // already-lowered argument's own LLVM type).
 //
-// Int-only for now, not by oversight: a float target or source is deferred,
-// since there is no valid, type-checked Lyra program that can reach it today
-// (verified — see the error site below) given the current scope (no
-// `let`/blocks yet, `main` must return i64, no float→int builtin).
+// Covers the conversions the typechecker admits (Pit-of-Success #5): int→int
+// (trunc/sext/zext), int→float (sitofp/uitofp, from the source's signedness),
+// and float→float *widening* (fpext — narrowing is a typecheck error directing
+// to floor/ceil/round). float→int is not a language operation (same rejection),
+// so its arm here is defensive only.
 func (l *lowerer) lowerNumericConversion(block *ir.Block, call *ast.FunctionCallExpr, targetName types.PrimitiveTypeName) (value.Value, *ir.Block, error) {
 	if len(call.Arguments) != 1 {
 		return nil, nil, fmt.Errorf("llvm: type conversion %q expects 1 argument, got %d", targetName, len(call.Arguments))
@@ -2531,25 +2636,33 @@ func (l *lowerer) lowerNumericConversion(block *ir.Block, call *ast.FunctionCall
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no LLVM representation for %q", targetName)
 	}
+	srcSigned := IsSignedInt(srcP.Name)
+
+	if dstFloat, ok := dstLL.(*lltypes.FloatType); ok {
+		switch arg.Type().(type) {
+		case *lltypes.FloatType:
+			// float→float: only widening reaches here (narrowing is a typecheck error).
+			return coerceFloatWidth(block, arg, dstFloat), block, nil
+		case *lltypes.IntType:
+			// int→float: signed vs unsigned source picks sitofp vs uitofp.
+			if srcSigned {
+				return block.NewSIToFP(arg, dstFloat), block, nil
+			}
+			return block.NewUIToFP(arg, dstFloat), block, nil
+		}
+		return nil, nil, fmt.Errorf("llvm: conversion from %s to %s not implemented", arg.Type(), targetName)
+	}
 
 	dst, ok := dstLL.(*lltypes.IntType)
 	if !ok {
-		// A float target (or float source): deferred, not just unimplemented
-		// by oversight. Given today's scope — no `let`/blocks yet (a single
-		// expression is the whole entry body), `main` must return i64, and
-		// there's no float→int builtin — there is no valid, type-checked
-		// Lyra program that can reach this path at all (verified: even
-		// `i64(f64(200))` is rejected at typecheck, "use floor()/ceil()/
-		// round()"). Implement once one of those changes (print, non-main
-		// function returns, or rounding builtins) makes it observable/
-		// testable, rather than shipping an instruction sequence nothing can
-		// ever exercise.
-		return nil, nil, fmt.Errorf("llvm: conversion to/from float not implemented yet (%s to %s)", arg.Type(), targetName)
+		return nil, nil, fmt.Errorf("llvm: no integer/float LLVM representation for %q", targetName)
 	}
 	if _, ok := arg.Type().(*lltypes.IntType); !ok {
-		return nil, nil, fmt.Errorf("llvm: conversion from %s to %s not implemented", arg.Type(), targetName)
+		// A float→int target reaches here only if the typechecker's rejection
+		// (use floor/ceil/round) were bypassed — defensive, not a real path.
+		return nil, nil, fmt.Errorf("llvm: conversion from %s to %s not implemented (float→int is not a conversion; use floor/ceil/round)", arg.Type(), targetName)
 	}
-	return coerceIntWidth(block, arg, IsSignedInt(srcP.Name), dst), block, nil
+	return coerceIntWidth(block, arg, srcSigned, dst), block, nil
 }
 
 // coerceAggregateElem defensively reconciles a lowered aggregate element value
@@ -2600,6 +2713,38 @@ func coerceIntWidth(block *ir.Block, v value.Value, srcSigned bool, dst *lltypes
 	default:
 		return block.NewZExt(v, dst)
 	}
+}
+
+// coerceFloatWidth adapts an already-lowered float value to the destination float
+// type (fptrunc to narrow, fpext to widen, identity when equal) — the float
+// analogue of coerceIntWidth. In a well-typed program the widths already match
+// (the typechecker propagates the target width onto untyped literal leaves and
+// rejects implicit float widening otherwise), so this is normally the identity;
+// the trunc/ext arms keep a residual mismatch from panicking llir's NewRet.
+func coerceFloatWidth(block *ir.Block, v value.Value, dst *lltypes.FloatType) value.Value {
+	src := v.Type().(*lltypes.FloatType)
+	switch {
+	case src.Kind == dst.Kind:
+		return v
+	case floatKindBits(dst.Kind) < floatKindBits(src.Kind):
+		return block.NewFPTrunc(v, dst)
+	default:
+		return block.NewFPExt(v, dst)
+	}
+}
+
+// floatKindBits maps the float kinds Lyra lowers (f16/f32/f64) to their bit
+// widths, for ordering fptrunc vs fpext. An unexpected kind returns 0.
+func floatKindBits(k lltypes.FloatKind) int {
+	switch k {
+	case lltypes.FloatKindHalf:
+		return 16
+	case lltypes.FloatKindFloat:
+		return 32
+	case lltypes.FloatKindDouble:
+		return 64
+	}
+	return 0
 }
 
 // lowerFlooredSRem computes the floored-division remainder of two signed
