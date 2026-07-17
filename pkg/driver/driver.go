@@ -15,6 +15,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/ownership"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
@@ -34,6 +35,7 @@ type Result struct {
 	ScopeTable  *symbols.ScopeTable
 	TypeTable   *typetable.TypeTable
 	MethodTable *typetable.MethodTable
+	Ownership   *ownership.Table
 	Diagnostics []diag.Diagnostic
 }
 
@@ -133,6 +135,11 @@ func Analyze(source []byte) *Result {
 	for _, e := range checker.CheckPurity(program, scopeTable, tt, tc.MethodTable()) {
 		res.err(e.Location, e.Code, e.Message)
 	}
+
+	// Ownership analysis (retain/release-temp decisions for managed values) runs
+	// after typechecking — it reads the TypeTable to identify managed types. It
+	// produces no diagnostics; the backend consumes the table.
+	res.Ownership = ownership.Analyze(program, symTable, tt)
 
 	// Post-typecheck checker passes that already return diag.Diagnostic (they
 	// carry their own severity and Unnecessary/Deprecated tags).

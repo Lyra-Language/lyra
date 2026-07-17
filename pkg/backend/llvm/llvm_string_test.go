@@ -250,6 +250,25 @@ func TestEmit_NoRuntimeWhenUnused(t *testing.T) {
 	}
 }
 
+// TestEmit_StringLiteralIsPinnedBox pins the literal representation: a static
+// { i64, [N x i8] } box with a PinnedRC (-1) header, so retain/release no-op on
+// it and the ownership model can treat every string value uniformly. `data`
+// points past the header (index 0,1,0 → box+8), no runtime allocation.
+func TestEmit_StringLiteralIsPinnedBox(t *testing.T) {
+	got, err := emitSource(t, `let main = () -> u8 => if "hi" == "hi" { 1 } else { 0 }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`private constant { i64, [2 x i8] } { i64 -1,`, // pinned box in static memory
+		`i32 0, i32 1, i32 0`,                          // data points past the rc header
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("literal-box IR missing %q:\n%s", want, got)
+		}
+	}
+}
+
 // TestEmit_StringIR pins the representation: a private constant for the bytes,
 // the { i8*, i64 } fat pointer, and a memcmp call for equality.
 func TestEmit_StringIR(t *testing.T) {

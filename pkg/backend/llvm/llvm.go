@@ -87,9 +87,12 @@
 //     rather than hand-written phi nodes. Note lowerExpr returns the block control
 //     ends in, not just a value — threaded so a branching form (`if`) can move the
 //     insertion point; every non-branching case returns its own block unchanged.
-//  3. Runtime: the ref-counted heap allocator now exists (runtime.go —
-//     lyra_rc_alloc/retain/release on libc malloc/free); still to come are
-//     release-on-scope-exit (heap values leak today), `shared`-value lowering,
+//  3. Runtime: the ref-counted heap allocator exists (runtime.go —
+//     lyra_rc_alloc/retain/release on libc malloc/free), and the ownership model
+//     (pkg/analyzer/ownership + ownership_lower.go) frees managed strings —
+//     retain on copy, transfer on return/own-arg, release at scope exit, with the
+//     placement dominating its uses. Still to come: strings-in-aggregates and
+//     break/continue paths (leak conservatively today), `shared`-value lowering,
 //     `print` output, the overflow trap for todo #2 (via llvm.sadd.with.overflow),
 //     and the builtin overflow-arithmetic methods (typechecker/builtins.go →
 //     two's-complement +/-/* and llvm.{s,u}{add,sub}.sat).
@@ -107,7 +110,8 @@
 //   - match.go — match dispatch, guards, and the scalar (int/float/string) if-else ladder
 //   - match_aggregate.go — struct/tuple/data pattern matching (aggPattern* + shared ladder + data payloads)
 //   - arithmetic.go — math ops, comparisons, &&/||, numeric conversions, width coercions
-//   - strings.go — string fat-pointer helpers (literals, equality via memcmp, ++ concatenation)
+//   - strings.go — string fat-pointer helpers (literals as pinned boxes, equality via memcmp, ++ concatenation, retain/release)
+//   - ownership_lower.go — scope-exit release of managed bindings (the managed-frame stack)
 //   - rounding.go — builtin method calls (x.floor()/.ceil()/.round()) via lazily-declared LLVM intrinsics
 //   - layout.go — llir type toolkit + SizeAndAlign
 //   - runtime.go — the ref-counted heap runtime (lyra_rc_alloc/retain/release), emitted lazily
@@ -209,6 +213,27 @@ type lowerer struct {
 	retType   lltypes.Type           // the current function's LLVM return type
 	retSigned bool                   // whether that return type is a signed integer
 	entryABI  bool                   // true only for main (u8 body → i32 ABI slot)
+
+	// Ownership bookkeeping for managed (ref-counted) values — strings today (see
+	// pkg/analyzer/ownership and ALLOCATION.md). Both reset by beginFunction.
+	//   - managedFrames is a stack of scope frames; each holds the allocas of the
+	//     managed bindings declared in that scope, released at the scope's exit
+	//     (frame[0] is the function root: `own` params).
+	//   - pendingReleases are managed temporaries (owned values consumed in a
+	//     borrowing position) awaiting release at the end of the current statement.
+	//     Each remembers the block it was produced in, so its release is emitted
+	//     there (dominating its uses) even when the statement spans branches — a
+	//     temp built in an `&&` right-hand block, say, is freed in that block, not
+	//     in the merge block it doesn't dominate.
+	managedFrames   [][]value.Value
+	pendingReleases []pendingTemp
+}
+
+// pendingTemp is a managed temporary awaiting release, tagged with the block it
+// was produced in (where its release must go to stay dominated).
+type pendingTemp struct {
+	val   value.Value
+	block *ir.Block
 }
 
 // lowerExpr lowers a Lyra expression to an LLVM value, appending any
@@ -227,7 +252,42 @@ type lowerer struct {
 // surrounding width (an annotation, a concrete sibling operand, a declared
 // return type) onto the literal, so `i8(x) < 3` lowers `3` as i8. A literal with
 // no resolved context (e.g. an unannotated `let x = 5`) defaults to i64.
+//
+// lowerExpr wraps the dispatch (lowerExprDispatch) with the ownership actions the
+// analysis pass computed for this expression node (pkg/analyzer/ownership): a
+// borrowed managed value flowing into an owning position is retained here; an
+// owned managed temporary flowing into a borrowing position is scheduled for
+// release at the end of the enclosing statement (flushTempReleases). Both operate
+// on the value in the block control *ends* in, and only on a real string value.
 func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {
+	v, end, err := l.lowerExprDispatch(block, expr)
+	if err != nil {
+		return nil, nil, err
+	}
+	if v != nil && isStringLLVMType(v.Type()) {
+		if l.res.Ownership.ShouldRetain(expr) {
+			l.lowerStringRetain(end, v)
+		}
+		if l.res.Ownership.ShouldReleaseTemp(expr) {
+			l.pendingReleases = append(l.pendingReleases, pendingTemp{v, end})
+		}
+	}
+	return v, end, nil
+}
+
+// flushTempReleases releases every managed temporary awaiting release, each in
+// the block it was produced in (so the release dominates the value's uses even
+// across branches), then clears the pending list. Called after each statement
+// (and before a return/break/continue seals a block). The `block` argument is
+// unused for placement — each temp carries its own — but marks the flush point.
+func (l *lowerer) flushTempReleases(_ *ir.Block) {
+	for _, p := range l.pendingReleases {
+		l.lowerStringRelease(p.block, p.val)
+	}
+	l.pendingReleases = nil
+}
+
+func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
 		return constant.NewInt(l.literalIntType(e), e.Value), block, nil

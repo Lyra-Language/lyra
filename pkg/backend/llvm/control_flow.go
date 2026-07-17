@@ -38,22 +38,32 @@ func (l *lowerer) loopTarget(label string) (loopCtx, error) {
 	return loopCtx{}, fmt.Errorf("llvm: no enclosing loop labeled %q", label)
 }
 
-// lowerBlockStmts lowers each statement of be into block, threading the current
-// block (a nested `if`/loop moves control onward). It returns the value of the
-// last statement — nil when that statement is a binding/reassignment/loop or the
-// block terminated early via break/continue — so it serves both value-position
-// blocks (via lowerBlock) and effect-position blocks (loop and one-armed-if
-// bodies, via lowerForEffect).
+// lowerBlockStmts lowers a block's statements, threading the current block (a
+// nested `if`/loop moves control onward) and returning the value of the last
+// statement — nil when that's a binding/reassignment/loop or the block sealed
+// early via break/continue/return. Break/continue/return terminate a block
+// mid-stream, so iteration stops once the block has a terminator rather than
+// lowering into a sealed block (invalid IR).
 //
-// Break/continue are the first constructs that terminate a block mid-stream:
-// anything after them is unreachable, so the loop stops once the current block
-// has a terminator (`block.Term != nil`) rather than lowering into a sealed block
-// (which would be invalid IR).
-func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr) (value.Value, *ir.Block, error) {
+// It also manages the ownership bookkeeping
+// for the scope: it pushes a managed frame on entry (holding the scope's managed
+// bindings) and, on the fall-through exit, releases that frame before popping it.
+// Managed temporaries are released at each statement boundary via flushTempReleases
+// — except, when flushTail is false (a value block), the *last* statement's
+// temporaries are left pending so they propagate to the enclosing statement: the
+// block's value may itself be such a temporary, and releasing it here would free
+// it before the outer expression consumes it. An effect block (flushTail true, a
+// loop/one-armed-if body) discards its tail, so its temporaries are released here
+// — they must be, since their SSA values live in per-iteration blocks.
+func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail bool) (value.Value, *ir.Block, error) {
+	l.pushManagedFrame()
+	defer l.popManagedFrame()
+
 	var v value.Value
-	for _, stmt := range be.Statements {
+	last := len(be.Statements) - 1
+	for i, stmt := range be.Statements {
 		if block.Term != nil {
-			break // a prior break/continue sealed this block; the rest is unreachable
+			break // a prior break/continue/return sealed this block; the rest is unreachable
 		}
 		var err error
 		switch s := stmt.(type) {
@@ -80,15 +90,26 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr) (value.Val
 		if err != nil {
 			return nil, nil, err
 		}
+		// Release this statement's managed temporaries — but hold the tail
+		// statement's when the block is a value (flushTail false), so they reach
+		// the enclosing statement (the tail may be the escaping block value).
+		if block.Term == nil && (i != last || flushTail) {
+			l.flushTempReleases(block)
+		}
+	}
+	if block.Term == nil {
+		l.releaseTopManagedFrame(block) // fall-through scope exit
 	}
 	return v, block, nil
 }
 
 // lowerBlock lowers a value-position block: its value is the value of its last
 // statement (matching the typechecker's inferBlockType). It requires that value
-// to exist — a block used where a value is needed must end in an expression.
+// to exist — a block used where a value is needed must end in an expression. The
+// tail statement's managed temporaries are not flushed here (flushTail false) —
+// the value flows to the enclosing statement, which releases them.
 func (l *lowerer) lowerBlock(block *ir.Block, be *ast.BlockExpr) (value.Value, *ir.Block, error) {
-	v, end, err := l.lowerBlockStmts(block, be)
+	v, end, err := l.lowerBlockStmts(block, be, false)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -99,15 +120,22 @@ func (l *lowerer) lowerBlock(block *ir.Block, be *ast.BlockExpr) (value.Value, *
 }
 
 // lowerForEffect lowers an expression for its side effects, discarding any value.
-// A block goes through lowerBlockStmts (so a body ending in a reassignment or
-// break is fine — no value required); any other expression through lowerExpr.
+// A block goes through lowerBlockStmts (flushTail true — the discarded tail's
+// temporaries are released here, not propagated); any other expression through
+// lowerExpr, followed by a temp flush since its value is discarded too.
 func (l *lowerer) lowerForEffect(block *ir.Block, expr ast.Expression) (*ir.Block, error) {
 	if be, ok := expr.(*ast.BlockExpr); ok {
-		_, end, err := l.lowerBlockStmts(block, be)
+		_, end, err := l.lowerBlockStmts(block, be, true)
 		return end, err
 	}
 	_, end, err := l.lowerExpr(block, expr)
-	return end, err
+	if err != nil {
+		return nil, err
+	}
+	if end.Term == nil {
+		l.flushTempReleases(end)
+	}
+	return end, nil
 }
 
 // lowerBreak / lowerContinue transfer control to the target loop's exit / post
@@ -120,6 +148,10 @@ func (l *lowerer) lowerBreak(block *ir.Block, s *ast.BreakStmt) error {
 	if err != nil {
 		return err
 	}
+	// Release temporaries pending in this iteration before the jump seals the
+	// block. Managed *bindings* in the loop body are conservatively left to leak on
+	// the break path (never a double free) — refining that is future work.
+	l.flushTempReleases(block)
 	block.NewBr(ctx.breakTarget)
 	return nil
 }
@@ -129,6 +161,7 @@ func (l *lowerer) lowerContinue(block *ir.Block, s *ast.ContinueStmt) error {
 	if err != nil {
 		return err
 	}
+	l.flushTempReleases(block)
 	block.NewBr(ctx.continueTarget)
 	return nil
 }
@@ -233,6 +266,12 @@ func (l *lowerer) lowerVarDecl(block *ir.Block, vds *ast.VarDeclStmt) (*ir.Block
 	slot := entry.NewAlloca(init.Type())
 	block.NewStore(init, slot)
 	l.locals[vds.Name] = slot // later re-declaration of the same name just overwrites
+	// A managed binding owns a reference-counted value (its initializer was
+	// coerced to +1 by the ownership pass); record it so this scope's exit
+	// releases it.
+	if isManagedSlot(slot) {
+		l.addManagedBinding(slot)
+	}
 	return block, nil
 }
 
@@ -241,10 +280,20 @@ func (l *lowerer) lowerVarReassignment(block *ir.Block, vrs *ast.VarReassignment
 	if err != nil {
 		return nil, err
 	}
+	slot := l.locals[vrs.Name]
+	// Reassigning a managed binding drops the old value's reference before the new
+	// one overwrites it. The new value was coerced to +1 by the ownership pass, and
+	// it's computed *before* this release (so `s = s ++ x`, which reads the old s,
+	// is safe: the concat has already happened).
+	if isManagedSlot(slot) {
+		a := slot.(*ir.InstAlloca)
+		old := block.NewLoad(a.ElemType, slot)
+		l.lowerStringRelease(block, old)
+	}
 	// Store into the existing alloca; the locals entry stays the alloca slot
 	// (a pointer), NOT the stored value — a later read loads from it. Overwriting
 	// it with rhsVal would break the next IdentifierExpr load (slot.(*InstAlloca)).
-	block.NewStore(rhsVal, l.locals[vrs.Name])
+	block.NewStore(rhsVal, slot)
 	return block, nil
 }
 

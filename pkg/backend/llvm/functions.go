@@ -14,19 +14,31 @@ import (
 )
 
 // beginFunction resets the per-function lowering state before a body is lowered.
+// managedFrames starts with one root frame (holding `own` string params, added
+// by defineFunction); block lowering pushes nested frames on top.
 func (l *lowerer) beginFunction(retType lltypes.Type, retSigned, entryABI bool) {
 	l.locals = map[string]value.Value{}
 	l.loops = nil
 	l.retType = retType
 	l.retSigned = retSigned
 	l.entryABI = entryABI
+	l.managedFrames = [][]value.Value{nil}
+	l.pendingReleases = nil
 }
 
 // emitReturn lowers a `ret` for the current function, coercing val to the
 // function's return type. main is the one special case: its Lyra u8 value goes
 // through the C ABI's i32 slot (coerce to u8, then zero-extend). A nil val is a
 // bare `return` (or a void function) → `ret void`.
+//
+// A return leaves every enclosing scope at once, so it first releases all live
+// managed bindings (and any pending managed temporaries). This runs before the
+// coercion/`ret`: `val` is a snapshot of the returned value, and a value that
+// escapes via the return was retained by the ownership pass, so dropping the
+// local references here can't free the box out from under the caller.
 func (l *lowerer) emitReturn(block *ir.Block, val value.Value) error {
+	l.flushTempReleases(block)
+	l.releaseAllManagedFrames(block)
 	if l.entryABI {
 		if val == nil {
 			block.NewRet(constant.NewInt(lltypes.I32, 0))
@@ -168,6 +180,13 @@ func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) erro
 		slot := entry.NewAlloca(p.Type())
 		entry.NewStore(p, slot)
 		l.locals[ident.Name] = slot
+		// An `own` managed parameter is consumed by the callee: the caller
+		// transferred its +1, so the callee releases it at function exit. A
+		// bare/`ref`/`mut` managed param is a borrow — the caller still owns it, so
+		// it is not recorded here.
+		if param.TypeModifier == types.Own && isManagedSlot(slot) {
+			l.addManagedBinding(slot)
+		}
 	}
 
 	v, end, err := l.lowerExpr(entry, fn.Body)

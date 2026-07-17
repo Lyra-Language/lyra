@@ -13,24 +13,60 @@ import (
 )
 
 // lowerStringConstant materializes a compile-time string (a literal's bytes, or a
-// match pattern's text) as a fat-pointer value { i8* data, i64 len }: it interns
-// the bytes in a private, immutable global `[N x i8]` and builds the struct from
-// a pointer to that global's first byte plus the byte length. No allocation — the
-// bytes live in the module's constant data. Returns the value in `block` (the two
+// match pattern's text) as a fat-pointer value { i8* data, i64 len }. The bytes
+// are interned in a private, immutable global shaped as a **pinned ref-counted
+// box** `{ i64 PinnedRC, [N x i8] }` (rc first, exactly like a heap box), with
+// `data` pointing at the first payload byte (`box + rcHeaderSize`) — the same
+// layout a `lyra_rc_alloc` box has. This costs no allocation (the box lives in
+// static constant data), and the PinnedRC sentinel makes retain/release safe
+// no-ops on a literal — so the ownership model can retain/release *any* string
+// value uniformly without first asking whether it's a literal or heap-allocated
+// (see ALLOCATION.md / STRING_LAYOUT.md). Returns the value in `block` (the two
 // insertvalues don't branch).
 func (l *lowerer) lowerStringConstant(block *ir.Block, content string) value.Value {
 	bytes := []byte(content)
 	arrTy := lltypes.NewArray(uint64(len(bytes)), lltypes.I8)
-	g := l.module.NewGlobalDef(fmt.Sprintf(".str.%d", l.strLitCount), constant.NewCharArray(bytes))
+	boxTy := lltypes.NewStruct(lltypes.I64, arrTy) // { rc, payload } — a pinned static box
+	pinned := constant.NewInt(lltypes.I64, -1)     // PinnedRC bit pattern: retain/release no-op
+	g := l.module.NewGlobalDef(fmt.Sprintf(".str.%d", l.strLitCount),
+		constant.NewStruct(boxTy, pinned, constant.NewCharArray(bytes)))
 	g.Immutable = true
 	g.Linkage = enum.LinkagePrivate
 	l.strLitCount++
 
 	zero := constant.NewInt(lltypes.I32, 0)
-	dataPtr := constant.NewGetElementPtr(arrTy, g, zero, zero) // i8* to the first byte
+	one := constant.NewInt(lltypes.I32, 1)
+	// i8* to the first payload byte: &box.payload[0] == box + rcHeaderSize.
+	dataPtr := constant.NewGetElementPtr(boxTy, g, zero, one, zero)
 	strTy := StringLLVMType()
 	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dataPtr, 0)
 	return block.NewInsertValue(withPtr, constant.NewInt(lltypes.I64, int64(len(bytes))), 1)
+}
+
+// stringBox recovers the ref-counted box pointer from a string fat pointer. The
+// data pointer always points rcHeaderSize bytes past the box header (the i64
+// refcount) — for a heap string (lyra_rc_alloc) and a literal (a pinned static
+// box) alike — so box = data - rcHeaderSize. This uniformity is what lets retain
+// and release operate on any string value without distinguishing the two.
+func (l *lowerer) stringBox(block *ir.Block, str value.Value) value.Value {
+	data := block.NewExtractValue(str, 0)
+	return block.NewGetElementPtr(lltypes.I8, data, constant.NewInt(lltypes.I64, -rcHeaderSize))
+}
+
+// lowerStringRetain / lowerStringRelease emit a refcount bump / drop on a string
+// value's box. Both are safe on any string: a literal's box is pinned (PinnedRC),
+// so the runtime no-ops; only a heap string's count actually moves, and release
+// frees it at zero. release passes a null drop_fn — a string's payload is plain
+// bytes with no nested owned resources.
+func (l *lowerer) lowerStringRetain(block *ir.Block, str value.Value) {
+	l.ensureRCRuntime()
+	block.NewCall(l.rcRetain, l.stringBox(block, str))
+}
+
+func (l *lowerer) lowerStringRelease(block *ir.Block, str value.Value) {
+	l.ensureRCRuntime()
+	null := constant.NewNull(lltypes.NewPointer(lltypes.I8))
+	block.NewCall(l.rcRelease, l.stringBox(block, str), null)
 }
 
 // memcmpFunc lazily declares libc's `i32 @memcmp(i8*, i8*, i64)` (clang links

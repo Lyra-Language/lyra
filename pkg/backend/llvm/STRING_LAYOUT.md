@@ -64,10 +64,13 @@ This is the Go `string` / Rust `&str` / Swift contiguous-UTF-8 representation.
   operands are ordinary fat pointers wherever their bytes live (literal global,
   another heap box, a parameter), so a chain `a ++ b ++ c` composes left-to-right,
   each step a fresh box; `memcpy` of length 0 is a valid no-op, so an empty
-  operand needs no special case. **Ownership:** the box is *not* freed yet — a
-  heap string leaks (no double-free / use-after-free, just unreclaimed memory).
-  Release-on-scope-exit via `lyra_rc_release` is the deferred ownership story; the
-  box header is already in place for it.
+  operand needs no special case. **Ownership:** a heap string is freed by the
+  ownership model (`pkg/analyzer/ownership` + the backend's retain/release
+  lowering, ALLOCATION.md). Every string value is a box — a literal's is pinned so
+  retain/release no-op on it, a `++`'s is heap — so refcounting is uniform: a
+  binding is released at its scope exit, a copy retains, a `return`/`own`-arg
+  transfers, a temporary is released after its statement. Verified memory-safe
+  under AddressSanitizer.
 
 ## Deferred
 
@@ -82,7 +85,6 @@ This is the Go `string` / Rust `&str` / Swift contiguous-UTF-8 representation.
   literal bytes; deferred with a loud error rather than risking a silent mismatch.
 - **Regex patterns** in a string `match` (`r/…/`) — the engine exists
   (`pkg/regex`) but isn't wired into codegen.
-- **Ownership / freeing** — a literal points to static memory (never freed); a
-  heap string (from `++`) now allocates a ref-counted box but is not yet released,
-  so it leaks. Release/retain following the ALLOCATION.md `shared` box rules
-  (driven by `own`/`ref`/`mut` and scope exit) is the deferred ownership work.
+- **Ownership / freeing** is done for the common cases (above). Still leaking
+  conservatively (safe, never a double free): a string stored in an aggregate
+  field, and bindings on a break/continue path (ALLOCATION.md).

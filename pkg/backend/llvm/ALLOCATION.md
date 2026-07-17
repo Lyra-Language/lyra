@@ -88,18 +88,42 @@ box via `rcAllocPayload` and `memcpy`s into it (STRING_LAYOUT.md). It does not y
 reserved name (the `with`-block work). A real bump/pool allocator replaces
 `malloc`/`free` later; `drop_fn` may become a per-type generated function.
 
+## Ownership: emitting retain/release (implemented for strings)
+
+The retain/release *placement* is driven by a front-end **ownership pass**
+(`pkg/analyzer/ownership`), which computes — for each managed value — the two
+context-dependent adjustments the backend can't see locally: a **retain** when a
+borrowed value flows into an owning position (a binding, an owned `return`, an
+`own` argument), and a **release-after-statement** when an owned temporary flows
+into a borrowing position (a comparison operand, a match scrutinee, a `++`
+operand, a discarded statement, a borrowed argument). The backend
+(`ownership_lower.go` + `lowerExpr`/`emitReturn`) then:
+
+- releases each managed binding at its **scope exit** via a stack of scope frames
+  (a `return` releases every live frame before it seals; break/continue paths
+  conservatively leak — never a double free);
+- honors param modes: an **`own`** managed param is released by the callee at its
+  exit; **bare/`ref`/`mut`** are borrows the caller still owns;
+- makes an `if`/`match` produce one merged owned value (each branch coerced to
+  +1) released once at the phi, never per-branch;
+- releases each temporary in the block it was produced in, so a temp built inside
+  an `&&`/`if` branch is freed there (dominating its uses), not at a merge block.
+
+This is live for **strings** today (uniform boxed representation makes retain/
+release total — a literal's box is pinned, a `++` box is heap; STRING_LAYOUT.md).
+Verified memory-safe under AddressSanitizer.
+
 ## Deferred / out of scope for this decision
 
-- **Emitting retain/release at Lyra call/scope sites** — the shims exist and are
-  correct, but nothing wires an owning copy to a `retain` or a scope exit to a
-  `release` yet (the backend doesn't read `own`/`ref`/`mut` param modes, and
-  there's no scope-liveness tracking). So heap values (today: `++` strings)
-  allocate and **leak**. This is the next allocation slice; it needs the
-  ownership-modifier plumbing plus per-scope release insertion.
+- **Managed values inside aggregates** — a string stored in a struct/tuple/`data`
+  field is conservatively *transferred* into the aggregate and then **leaks**
+  (per-type aggregate drop isn't implemented). Safe (never a double free), but not
+  yet reclaimed. break/continue paths also leak the current iteration's bindings.
 - **`shared`-value lowering** — `lowerType` still resolves a `shared T` to its
   by-value struct rather than a `ptr`-to-box; constructing a `shared` value
-  (`let n: shared Node = …`) isn't lowered. The box runtime it will use now
-  exists.
+  (`let n: shared Node = …`) isn't lowered. The box runtime and the ownership
+  pass it will reuse now exist (the pass's "managed" set just needs to grow from
+  strings to `shared`).
 - **Atomic refcounts** — *not* needed while refcount mutations happen only through
   owning bindings in sequential code and auto-parallelized `pure`/`det` functions
   take **borrows** (`ref`), which touch no refcount. Revisit only when the job
