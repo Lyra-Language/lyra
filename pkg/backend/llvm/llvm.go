@@ -1001,35 +1001,21 @@ func (l *lowerer) lowerMatch(block *ir.Block, e *ast.MatchExpr) (value.Value, *i
 	if tt, ok := l.resolveTupleType(scrutType); ok {
 		return l.lowerTupleMatch(block, e, tt)
 	}
-	// A scalar scrutinee (bool or a concrete integer) lowers to an if-else ladder
-	// of comparisons. Detected by whether the scrutinee's primitive maps to an
-	// LLVM integer type (i1 for bool, iN for ints) — float and string fall through.
+	// A scalar scrutinee (bool, a concrete integer, or a float) lowers to an
+	// if-else ladder of comparisons. Detected by whether the scrutinee's primitive
+	// maps to an LLVM integer (i1 for bool, iN for ints) or float type — string
+	// falls through (no representation yet).
 	if prim, ok := scrutType.(types.PrimitiveType); ok {
 		if ll, ok := LLVMPrimitive(prim.Name); ok {
-			if _, isInt := ll.(*lltypes.IntType); isInt {
+			switch ll.(type) {
+			case *lltypes.IntType, *lltypes.FloatType:
 				return l.lowerScalarMatch(block, e, prim)
 			}
 		}
 	}
-	return nil, nil, fmt.Errorf("llvm: match on %s not implemented yet (only data types, structs, tuples, and integer/bool scalars)", scrutType)
+	return nil, nil, fmt.Errorf("llvm: match on %s not implemented yet (only data types, structs, tuples, and integer/bool/float scalars)", scrutType)
 }
 
-// lowerScalarMatch lowers a `match` on a bool or integer scrutinee as an if-else
-// ladder: each non-catch-all arm becomes a comparison that cond-brs to the arm
-// body or on to the next test, in source order (first match wins). A wildcard or
-// identifier arm is an unconditional match that ends the ladder (an identifier
-// binds the scrutinee value); later arms are unreachable. An `if` guard adds a
-// second test after the pattern (via lowerGuardedArmBody): when it fails, control
-// falls through to the next arm, so a *guarded* catch-all doesn't end the ladder.
-// Arm bodies feed a merge phi, so the match is a value like `if`.
-//
-// (A pure-literal match would lower more compactly to an LLVM `switch`; the
-// ladder is used uniformly because a range pattern — `0..<10` — isn't a single
-// switch case. The optimizer recovers the switch for the literal-only shape.)
-//
-// The fall-through past the last test is `unreachable`: a bool match covering
-// true/false, or an exhaustive integer match, never reaches it; a non-exhaustive
-// integer match was already warned by the typechecker.
 // matchHasGuard reports whether any arm carries an `if` guard.
 func matchHasGuard(e *ast.MatchExpr) bool {
 	for _, arm := range e.MatchArms {
@@ -1061,14 +1047,36 @@ func (l *lowerer) lowerGuardedArmBody(matched *ir.Block, guard *ast.GuardExpr, b
 	return lowerBody(bodyBlock, body)
 }
 
+// lowerScalarMatch lowers a `match` on a scalar scrutinee — a bool, a concrete
+// integer, or a float — as an if-else ladder: each non-catch-all arm becomes a
+// comparison (`icmp`/`fcmp` for a literal, a two-sided range check for a range
+// pattern) that cond-brs to the arm body or on to the next test, in source order
+// (first match wins). A wildcard or identifier arm is an unconditional match that
+// ends the ladder (an identifier binds the scrutinee value); later arms are
+// unreachable. An `if` guard adds a second test after the pattern (via
+// lowerGuardedArmBody): when it fails, control falls through to the next arm, so a
+// *guarded* catch-all doesn't end the ladder. Arm bodies feed a merge phi, so the
+// match is a value like `if`.
+//
+// (A pure-literal integer match would lower more compactly to an LLVM `switch`;
+// the ladder is used uniformly because a range pattern — `0..<10` — isn't a single
+// switch case, and a float match has no switch form at all. The optimizer recovers
+// the switch for the integer literal-only shape.)
+//
+// The fall-through past the last test is `unreachable`: a bool match covering
+// true/false, or an exhaustive integer match, never reaches it; a non-exhaustive
+// (or float, which always needs a wildcard) match was already warned by the
+// typechecker.
 func (l *lowerer) lowerScalarMatch(block *ir.Block, e *ast.MatchExpr, scrutPrim types.PrimitiveType) (value.Value, *ir.Block, error) {
 	scrut, block, err := l.lowerExpr(block, e.Scrutinee)
 	if err != nil {
 		return nil, nil, err
 	}
-	intTy, ok := scrut.Type().(*lltypes.IntType)
-	if !ok {
-		return nil, nil, fmt.Errorf("llvm: scalar match scrutinee did not lower to an integer (%s)", scrut.Type())
+	scrutTy := scrut.Type()
+	switch scrutTy.(type) {
+	case *lltypes.IntType, *lltypes.FloatType:
+	default:
+		return nil, nil, fmt.Errorf("llvm: scalar match scrutinee did not lower to an integer or float (%s)", scrutTy)
 	}
 	isBool := scrutPrim.Name == types.Boolean
 	signed := IsSignedInt(scrutPrim.Name)
@@ -1098,7 +1106,7 @@ func (l *lowerer) lowerScalarMatch(block *ir.Block, e *ast.MatchExpr, scrutPrim 
 		switch p := arm.Pattern.(type) {
 		case *ast.WildcardPattern, *ast.IdentifierPattern:
 			if ip, ok := p.(*ast.IdentifierPattern); ok && ip.Name != "_" {
-				slot := fn.Blocks[0].NewAlloca(intTy)
+				slot := fn.Blocks[0].NewAlloca(scrutTy)
 				current.NewStore(scrut, slot)
 				l.locals[ip.Name] = slot
 			}
@@ -1149,8 +1157,13 @@ func (l *lowerer) lowerScalarMatch(block *ir.Block, e *ast.MatchExpr, scrutPrim 
 // scalarMatchTest builds the i1 "does the scrutinee match this pattern?" test for
 // one arm of a scalar match: an `icmp eq` for a literal, or a two-sided range
 // check (`scrut >= lo && scrut </<= hi`) for a range pattern. signed selects the
-// signed vs unsigned comparison predicates.
+// signed vs unsigned comparison predicates. A float scrutinee is delegated to
+// floatScalarMatchTest (dispatched on the already-lowered value's LLVM type, so
+// isBool/signed are ignored there).
 func (l *lowerer) scalarMatchTest(block *ir.Block, scrut value.Value, pattern ast.Pattern, isBool, signed bool) (value.Value, error) {
+	if _, isFloat := scrut.Type().(*lltypes.FloatType); isFloat {
+		return l.floatScalarMatchTest(block, scrut, pattern)
+	}
 	intTy := scrut.Type().(*lltypes.IntType)
 	switch p := pattern.(type) {
 	case *ast.LiteralPattern:
@@ -1217,6 +1230,67 @@ func constIntFromExpr(e ast.Expression, ty *lltypes.IntType) (value.Value, bool)
 	case *ast.NegationExpr:
 		if inner, ok := v.Operand.(*ast.IntegerLiteralExpr); ok {
 			return constant.NewInt(ty, -inner.Value), true
+		}
+	}
+	return nil, false
+}
+
+// floatScalarMatchTest is the float counterpart to scalarMatchTest's integer
+// path: an `fcmp oeq` for a literal, or a two-sided ordered range check
+// (`scrut >= lo && scrut </<= hi`) for a range pattern. Float comparisons use the
+// ordered predicates (false when either side is NaN). A literal float pattern is an
+// exact-equality request — the typechecker already warns that float `==` is
+// precision-sensitive; the pattern is the user's explicit choice.
+func (l *lowerer) floatScalarMatchTest(block *ir.Block, scrut value.Value, pattern ast.Pattern) (value.Value, error) {
+	floatTy := scrut.Type().(*lltypes.FloatType)
+	switch p := pattern.(type) {
+	case *ast.LiteralPattern:
+		s, ok := p.Value.(string)
+		if !ok {
+			return nil, fmt.Errorf("llvm: unexpected literal pattern value %T", p.Value)
+		}
+		f, err := strconv.ParseFloat(s, 64)
+		if err != nil {
+			return nil, fmt.Errorf("llvm: invalid float literal pattern %q: %v", s, err)
+		}
+		return block.NewFCmp(enum.FPredOEQ, scrut, constant.NewFloat(floatTy, f)), nil
+	case *ast.RangePattern:
+		lo, ok := constFloatFromExpr(p.Start, floatTy)
+		if !ok {
+			return nil, fmt.Errorf("llvm: unsupported range start in float match pattern")
+		}
+		hi, ok := constFloatFromExpr(p.End, floatTy)
+		if !ok {
+			return nil, fmt.Errorf("llvm: unsupported range end in float match pattern")
+		}
+		geLo := block.NewFCmp(enum.FPredOGE, scrut, lo)
+		hiPred := enum.FPredOLE
+		if p.EndOperator == "<" {
+			hiPred = enum.FPredOLT
+		}
+		leHi := block.NewFCmp(hiPred, scrut, hi)
+		return block.NewAnd(geLo, leHi), nil
+	default:
+		return nil, fmt.Errorf("llvm: match pattern %T not implemented for a float scrutinee", pattern)
+	}
+}
+
+// constFloatFromExpr builds a float constant of type ty from a range-bound
+// expression: a float literal, an integer literal (a whole-number bound such as
+// `0` written on a float range), or either negated. Returns ok=false for a bound
+// the backend can't fold at compile time.
+func constFloatFromExpr(e ast.Expression, ty *lltypes.FloatType) (value.Value, bool) {
+	switch v := e.(type) {
+	case *ast.FloatLiteralExpr:
+		return constant.NewFloat(ty, v.Value), true
+	case *ast.IntegerLiteralExpr:
+		return constant.NewFloat(ty, float64(v.Value)), true
+	case *ast.NegationExpr:
+		switch inner := v.Operand.(type) {
+		case *ast.FloatLiteralExpr:
+			return constant.NewFloat(ty, -inner.Value), true
+		case *ast.IntegerLiteralExpr:
+			return constant.NewFloat(ty, -float64(inner.Value)), true
 		}
 	}
 	return nil, false

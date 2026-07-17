@@ -169,6 +169,108 @@ func TestExec_FloatFunction(t *testing.T) {
 	}
 }
 
+// A float scrutinee lowers to the same if-else ladder as an integer scalar match,
+// but with `fcmp` tests: an ordered `oeq` for a literal arm, and a two-sided
+// ordered range check for a range arm. A float match always needs a wildcard (the
+// reals can't be enumerated); an identifier catch-all binds the float value.
+func TestExec_FloatMatch(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		// Literal arm hit (fcmp oeq).
+		{
+			"literal hit",
+			`let f = (x: f64) -> u8 => match x {
+			   1.5 => 1,
+			   2.5 => 2,
+			   _ => 0,
+			 }
+			 let main = () -> u8 => f(2.5)`,
+			2,
+		},
+		// No literal matches → the wildcard arm.
+		{
+			"wildcard fallthrough",
+			`let f = (x: f64) -> u8 => match x {
+			   1.5 => 1,
+			   2.5 => 2,
+			   _ => 0,
+			 }
+			 let main = () -> u8 => f(9.5)`,
+			0,
+		},
+		// Range arms (half-open): 1.5 falls in [1.0, 2.0).
+		{
+			"range arm",
+			`let f = (x: f64) -> u8 => match x {
+			   0.0..<1.0 => 1,
+			   1.0..<2.0 => 2,
+			   _ => 3,
+			 }
+			 let main = () -> u8 => f(1.5)`,
+			2,
+		},
+		// An identifier catch-all binds the float, usable in a comparison.
+		{
+			"identifier catch-all binds the float",
+			`let f = (x: f64) -> u8 => match x {
+			   0.0 => 100,
+			   other => if other > 5.0 { 7 } else { 8 },
+			 }
+			 let main = () -> u8 => f(9.0)`,
+			7,
+		},
+		// f32 scrutinee (LLVM `float`).
+		{
+			"f32 literal",
+			`let f = (x: f32) -> u8 => match x {
+			   1.5 => 15,
+			   _ => 0,
+			 }
+			 let main = () -> u8 => f(1.5)`,
+			15,
+		},
+		// A guard on a float match arm (data/scalar guard machinery reused).
+		{
+			"float match guard",
+			`let f = (x: f64) -> u8 => match x {
+			   n if n > 3.0 => 1,
+			   _ => 2,
+			 }
+			 let main = () -> u8 => f(5.0)`,
+			1,
+		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestEmit_FloatMatchIR pins the float-match ladder: `fcmp` tests and a `br i1`
+// per arm, no `switch` (a float match has no switch form).
+func TestEmit_FloatMatchIR(t *testing.T) {
+	got, err := emitSource(t, `let f = (x: f64) -> u8 => match x {
+	   1.5 => 1,
+	   _ => 0,
+	 }
+	 let main = () -> u8 => f(1.5)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"fcmp", "br i1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("float-match IR missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "switch") {
+		t.Errorf("a float match should lower to an fcmp ladder, not a switch:\n%s", got)
+	}
+}
+
 // TestEmit_FloatIR pins the float instruction selection: a `double` literal, an
 // `fadd`, and an `fcmp` (not their integer counterparts).
 func TestEmit_FloatIR(t *testing.T) {
