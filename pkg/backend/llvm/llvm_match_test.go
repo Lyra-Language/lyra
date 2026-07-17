@@ -134,26 +134,105 @@ func TestEmit_MatchGuard_Deferred(t *testing.T) {
 	}
 }
 
-// TestEmit_MatchLiteralPayload_Deferred: a value-testing payload sub-pattern (a
-// literal `Some(0)`) in a `data` match arm isn't implemented — the tag switch
-// selects the Some variant but can't also test the payload and fall through to
-// another Some arm, which would need a per-variant test ladder. (Destructuring
-// payloads — `W((a, b))`, `Boxed({ x, y })` — and a data pattern nested in an
-// aggregate — `(c, Some(x))` — now lower.)
-func TestEmit_MatchLiteralPayload_Deferred(t *testing.T) {
-	src := `data Maybe = None | Some(u8)
+// A value-testing payload sub-pattern (`Some(0)`) lets two arms share a variant
+// tag but discriminate on the payload. Since a single tag `switch` routes each tag
+// to one block, such a match lowers to the if-else ladder instead: each arm's
+// condition is the tag check ANDed with its payload test, first-match-wins.
+func TestExec_DataLiteralPayload(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		// The literal-payload arm wins when the payload matches.
+		{
+			"literal payload hit",
+			`data Maybe = None | Some(u8)
+			 let f = (m: Maybe) -> u8 => match m {
+			   Some(0) => 1,
+			   Some(x) => x,
+			   None => 9,
+			 }
+			 let main = () -> u8 => f(Some(0))`,
+			1,
+		},
+		// A non-matching payload falls through to the binding `Some(x)` arm.
+		{
+			"literal payload miss falls to binder",
+			`data Maybe = None | Some(u8)
+			 let f = (m: Maybe) -> u8 => match m {
+			   Some(0) => 1,
+			   Some(x) => x,
+			   None => 9,
+			 }
+			 let main = () -> u8 => f(Some(42))`,
+			42,
+		},
+		// A different tag skips both Some arms.
+		{
+			"other tag",
+			`data Maybe = None | Some(u8)
+			 let f = (m: Maybe) -> u8 => match m {
+			   Some(0) => 1,
+			   Some(x) => x,
+			   None => 9,
+			 }
+			 let main = () -> u8 => f(None)`,
+			9,
+		},
+		// Two literal-payload arms with the same tag, plus a wildcard catch-all.
+		{
+			"two literal arms then wildcard",
+			`data Maybe = None | Some(u8)
+			 let f = (m: Maybe) -> u8 => match m {
+			   Some(1) => 10,
+			   Some(2) => 20,
+			   _ => 30,
+			 }
+			 let main = () -> u8 => f(Some(2))`,
+			20,
+		},
+		// The wildcard catch-all is taken when no literal payload matches.
+		{
+			"wildcard fallthrough",
+			`data Maybe = None | Some(u8)
+			 let f = (m: Maybe) -> u8 => match m {
+			   Some(1) => 10,
+			   Some(2) => 20,
+			   _ => 30,
+			 }
+			 let main = () -> u8 => f(Some(9))`,
+			30,
+		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestEmit_DataLiteralPayloadIR pins the ladder shape for a value-testing payload
+// match: no `switch` (the tag `switch` can't test payloads), an `icmp eq` for both
+// the tag check and the payload literal, and a `br i1` cond-branch per arm.
+func TestEmit_DataLiteralPayloadIR(t *testing.T) {
+	got, err := emitSource(t, `data Maybe = None | Some(u8)
 	 let f = (m: Maybe) -> u8 => match m {
 	   Some(0) => 1,
 	   Some(x) => x,
 	   None => 9,
 	 }
-	 let main = () -> u8 => 0`
-	_, err := emitSource(t, src)
-	if err == nil {
-		t.Fatal("expected an error: a value-testing data payload sub-pattern is not implemented yet")
+	 let main = () -> u8 => f(Some(0))`)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "not implemented") {
-		t.Errorf("expected a not-implemented error, got: %v", err)
+	for _, want := range []string{"icmp eq", "br i1"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("data literal-payload IR missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "switch") {
+		t.Errorf("data literal-payload match should lower to a ladder, not a switch:\n%s", got)
 	}
 }
 
@@ -592,6 +671,34 @@ func TestExec_NestedDataPatterns(t *testing.T) {
 			   }
 			 }`,
 			7,
+		},
+		// A value-testing data sub-pattern nested in a tuple: `(c, Some(0))` tests
+		// both the tuple's tag and the payload literal in one aggregate ladder arm.
+		{
+			"value-testing data in tuple (hit)",
+			`data Maybe = None | Some(u8)
+			 let main = () -> u8 => {
+			   let t = (7, Some(0))
+			   match t {
+			     (c, Some(0)) => 100,
+			     (c, Some(x)) => u8(x),
+			     (c, None) => u8(c),
+			   }
+			 }`,
+			100,
+		},
+		{
+			"value-testing data in tuple (payload miss)",
+			`data Maybe = None | Some(u8)
+			 let main = () -> u8 => {
+			   let t = (7, Some(5))
+			   match t {
+			     (c, Some(0)) => 100,
+			     (c, Some(x)) => u8(x),
+			     (c, None) => u8(c),
+			   }
+			 }`,
+			5,
 		},
 		// A data value in a struct field, with its payload bound.
 		{

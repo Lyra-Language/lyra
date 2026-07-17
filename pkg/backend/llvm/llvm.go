@@ -1213,14 +1213,16 @@ func (l *lowerer) lowerStructMatch(block *ir.Block, e *ast.MatchExpr, st types.N
 	)
 }
 
-// lowerAggregateMatch lowers a `match` on a single-shape aggregate (a struct or a
-// tuple — no variant tag, so no `switch`) as an if-else ladder. A `_`/identifier
-// arm is an unconditional catch-all (an identifier binds the whole aggregate).
-// Every other arm calls `test` for its condition in the current block (nil →
-// unconditional) and, on the taken path, `bind` for its sub-pattern bindings; the
-// aggregate-specific pattern shape (StructPattern vs TuplePattern) lives entirely
-// in those two closures. Arms feed a merge phi, so the match is a value like `if`;
-// the unmatched fall-through is `unreachable`.
+// lowerAggregateMatch lowers a `match` as an if-else ladder driven by the `test`
+// and `bind` closures. Used for a single-shape aggregate (a struct or a tuple —
+// no variant tag, so no `switch`) and, when a payload value test rules out the
+// tag `switch`, for a `data` scrutinee too (its closures encode the tag check in
+// `test`). A `_`/identifier arm is an unconditional catch-all (an identifier binds
+// the whole value). Every other arm calls `test` for its condition in the current
+// block (nil → unconditional) and, on the taken path, `bind` for its sub-pattern
+// bindings; the scrutinee-specific pattern shape lives entirely in those two
+// closures. Arms feed a merge phi, so the match is a value like `if`; the
+// unmatched fall-through is `unreachable`.
 func (l *lowerer) lowerAggregateMatch(
 	block *ir.Block, e *ast.MatchExpr, scrut value.Value, aggTy *lltypes.StructType,
 	test func(b *ir.Block, pat ast.Pattern) (value.Value, error),
@@ -1327,7 +1329,8 @@ func matchCatchAll(pat ast.Pattern) (*ast.IdentifierPattern, bool) {
 // literal/range sub-pattern, recursing into nested struct/tuple sub-patterns via
 // `extractvalue` (safe on a single-shape aggregate, no tag/branch needed). Returns
 // nil when the pattern imposes no test (all identifier/wildcard/shorthand
-// bindings). A nested `data` sub-pattern is deferred (it needs a tag check).
+// bindings). A nested `data` sub-pattern contributes its tag check plus a test for
+// each value-testing payload field (`Some(0)`), computed branchlessly and ANDed.
 func (l *lowerer) aggPatternTest(block *ir.Block, val value.Value, pat ast.Pattern, valType types.Type) (value.Value, error) {
 	switch p := pat.(type) {
 	case nil, *ast.WildcardPattern, *ast.IdentifierPattern:
@@ -1380,10 +1383,14 @@ func (l *lowerer) aggPatternTest(block *ir.Block, val value.Value, pat ast.Patte
 		}
 		return cond, nil
 	case *ast.DataPattern:
-		// A `data` sub-pattern's test is its tag check: `extractvalue`-the-tag ==
-		// the variant index. A value-testing payload sub-pattern (a literal, or a
-		// nested data pattern) is deferred — that would need testing the payload,
-		// which requires the tag to already hold, i.e. a per-variant branch.
+		// A `data` sub-pattern's test is its tag check (`extractvalue`-the-tag ==
+		// the variant index), ANDed with a value test for each payload field that
+		// imposes one (`Some(0)`, or a nested data pattern). The payload test is
+		// computed unconditionally and ANDed after the tag check: when the tag
+		// doesn't match, the payload blob reinterpreted as this variant is
+		// meaningless, but the tag comparison has already forced the whole
+		// condition false — so reading those bits is harmless (they stay within the
+		// union's own stack blob, sized to the largest variant).
 		dt, ok := l.resolveDataType(valType)
 		if !ok {
 			return nil, fmt.Errorf("llvm: data pattern on non-data value of type %s", valType)
@@ -1392,22 +1399,33 @@ func (l *lowerer) aggPatternTest(block *ir.Block, val value.Value, pat ast.Patte
 		if !ok {
 			return nil, fmt.Errorf("llvm: %q is not a constructor of %s", p.Name, dt.Name)
 		}
-		fieldPatterns, err := payloadFieldPatterns(p, ctor)
-		if err != nil {
-			return nil, err
-		}
-		for _, fp := range fieldPatterns {
-			if patternHasTest(fp) {
-				return nil, fmt.Errorf("llvm: a value-testing payload sub-pattern (%T) inside a nested data pattern is not implemented yet", fp)
-			}
-		}
 		unionSt, ok := val.Type().(*lltypes.StructType)
 		if !ok {
 			return nil, fmt.Errorf("llvm: data value did not lower to a struct (%s)", val.Type())
 		}
 		tagTy := unionSt.Fields[0].(*lltypes.IntType)
 		tag := block.NewExtractValue(val, 0)
-		return block.NewICmp(enum.IPredEQ, tag, constant.NewInt(tagTy, int64(idx))), nil
+		cond := value.Value(block.NewICmp(enum.IPredEQ, tag, constant.NewInt(tagTy, int64(idx))))
+
+		fieldPatterns, err := payloadFieldPatterns(p, ctor)
+		if err != nil {
+			return nil, err
+		}
+		if slices.ContainsFunc(fieldPatterns, patternHasTest) {
+			payload, err := l.extractDataPayload(block, val, ctor)
+			if err != nil {
+				return nil, err
+			}
+			fieldTypes := ctor.FieldTypes()
+			for i, fp := range fieldPatterns {
+				c, err := l.aggPatternTest(block, block.NewExtractValue(payload, uint64(i)), fp, fieldTypes[i])
+				if err != nil {
+					return nil, err
+				}
+				cond = andConds(block, cond, c)
+			}
+		}
+		return cond, nil
 	default:
 		return nil, fmt.Errorf("llvm: match sub-pattern %T not implemented yet", pat)
 	}
@@ -1578,6 +1596,32 @@ func (l *lowerer) lowerTupleMatch(block *ir.Block, e *ast.MatchExpr, tt types.Tu
 	)
 }
 
+// dataMatchHasPayloadTest reports whether any arm of a `data` match imposes a
+// value test on a payload sub-pattern (`Some(0)`, `Some(Wrapped(0))`) — i.e. a
+// test beyond the variant tag. Such a match can't lower to a single tag `switch`
+// (two same-tag arms need distinct payload tests) and instead uses the if-else
+// ladder. A non-data or unknown-constructor arm contributes no payload test here.
+func dataMatchHasPayloadTest(e *ast.MatchExpr, dt types.DataType) bool {
+	for _, arm := range e.MatchArms {
+		dp, ok := arm.Pattern.(*ast.DataPattern)
+		if !ok {
+			continue
+		}
+		ctor, _, ok := findConstructor(dt, dp.Name)
+		if !ok {
+			continue
+		}
+		fps, err := payloadFieldPatterns(dp, ctor)
+		if err != nil {
+			continue
+		}
+		if slices.ContainsFunc(fps, patternHasTest) {
+			return true
+		}
+	}
+	return false
+}
+
 // lowerDataMatch lowers a `match` on a `data` value: store the scrutinee, load
 // its tag, and `switch` on it to one block per arm (DATA_LAYOUT.md). Each data
 // pattern's arm reinterprets the payload blob as its variant's payload struct and
@@ -1600,6 +1644,24 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: data match scrutinee did not lower to a struct (%s)", scrut.Type())
 	}
+
+	// A value-testing payload sub-pattern (`Some(0)`) lets two arms share a tag
+	// but differ on the payload — which a single tag `switch` can't express (it
+	// routes each tag to exactly one block). Fall back to the if-else ladder
+	// shared with struct/tuple matches, where each arm's condition is the tag
+	// check ANDed with its payload tests (aggPatternTest) and first-match-wins is
+	// preserved. The common no-payload-test case keeps the compact switch below.
+	if dataMatchHasPayloadTest(e, dt) {
+		return l.lowerAggregateMatch(block, e, scrut, unionTy,
+			func(b *ir.Block, pat ast.Pattern) (value.Value, error) {
+				return l.aggPatternTest(b, scrut, pat, dt)
+			},
+			func(b *ir.Block, pat ast.Pattern) error {
+				return l.aggPatternBind(b, scrut, pat, dt)
+			},
+		)
+	}
+
 	fn := block.Parent
 
 	// Store the scrutinee so a variant's payload can be reinterpreted out of the
