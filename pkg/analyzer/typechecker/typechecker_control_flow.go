@@ -730,9 +730,18 @@ func (tc *TypeChecker) checkNumericMatchArm(pattern ast.Pattern, scrutineeType t
 			tc.addError(p.GetLocation(), SeverityError,
 				"literal pattern '%s' is not an integer type", p.Value)
 		}
-		if isFloatType(scrutineeType) && kind != types.UntypedFloat {
-			tc.addError(p.GetLocation(), SeverityError,
-				"literal pattern '%s' is not a float type", p.Value)
+		if isFloatType(scrutineeType) {
+			if kind != types.UntypedFloat {
+				tc.addError(p.GetLocation(), SeverityError,
+					"literal pattern '%s' is not a float type", p.Value)
+			} else {
+				// A float literal pattern tests exact equality (it lowers to an
+				// `fcmp oeq`) — the same precision hazard the `==`/`!=` operator
+				// warns about: a value off by an ULP silently won't match. A range
+				// pattern (`0.0..<1.0`) is the reliable alternative.
+				tc.addError(p.GetLocation(), SeverityWarning,
+					"matching a float against the literal '%s' tests exact equality, which may be unreliable due to floating-point precision; use a range pattern instead", p.Value)
+			}
 		}
 	}
 }

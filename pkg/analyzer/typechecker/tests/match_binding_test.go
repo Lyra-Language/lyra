@@ -84,3 +84,26 @@ let f = (n: u8) -> u8 => match n {
 `, false)
 	assertErrorsAre(t, res, "match arm guard must be a bool, got u8")
 }
+
+// A float literal pattern tests exact equality (lowered to `fcmp oeq`), the same
+// precision hazard the `==`/`!=` operator warns about — so it warns.
+func TestMatch_FloatLiteralPatternWarns(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let f = (x: f64) -> u8 => match x {
+  1.5 => 1,
+  _ => 0,
+}
+`, false)
+	assertWarningsAre(t, res, "matching a float against the literal '1.5' tests exact equality, which may be unreliable due to floating-point precision; use a range pattern instead")
+}
+
+// A float *range* pattern is the reliable alternative and must not warn.
+func TestMatch_FloatRangePatternNoWarn(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let f = (x: f64) -> u8 => match x {
+  0.0..<1.0 => 1,
+  _ => 2,
+}
+`, false)
+	assertNoErrors(t, res)
+}

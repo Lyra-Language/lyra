@@ -275,7 +275,9 @@ func TestTypeCheck_NumericMatch_GuardedRangeNotExhaustive_Warning(t *testing.T) 
 
 // — Literal kind checking —
 
-func TestTypeCheck_FloatMatch_FloatLiteral_Wildcard_Ok(t *testing.T) {
+func TestTypeCheck_FloatMatch_FloatLiteral_Warns(t *testing.T) {
+	// A float literal pattern is valid, but warns: it tests exact equality, the
+	// same precision hazard the `==`/`!=` operator warns about.
 	res := parseCollectAndCheck(t, `
   let x: f64 = 3.14
   match x {
@@ -283,7 +285,8 @@ func TestTypeCheck_FloatMatch_FloatLiteral_Wildcard_Ok(t *testing.T) {
     _    => "ok",
   }
 	`, false)
-	assertNoErrors(t, res)
+	assertWarningsAre(t, res,
+		"matching a float against the literal '3.14' tests exact equality, which may be unreliable due to floating-point precision; use a range pattern instead")
 }
 
 func TestTypeCheck_FloatMatch_IntLiteral_Error(t *testing.T) {
@@ -335,6 +338,8 @@ func TestTypeCheck_FloatMatch_F32_IntLiteral_Error(t *testing.T) {
 //   or an unguarded identifier can make the match exhaustive. —
 
 func TestTypeCheck_FloatMatch_NoWildcard_Warning(t *testing.T) {
+	// Both the per-arm float-equality warnings and the exhaustiveness warning
+	// fire (arm checks run before the exhaustiveness check).
 	res := parseCollectAndCheck(t, `
   let x: f64 = 3.14
   match x {
@@ -343,37 +348,44 @@ func TestTypeCheck_FloatMatch_NoWildcard_Warning(t *testing.T) {
   }
 	`, false)
 	assertWarningsAre(t, res,
+		"matching a float against the literal '0.0' tests exact equality, which may be unreliable due to floating-point precision; use a range pattern instead",
+		"matching a float against the literal '1.0' tests exact equality, which may be unreliable due to floating-point precision; use a range pattern instead",
 		"match on numeric type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 }
 
 func TestTypeCheck_FloatMatch_WildcardIsExhaustive_Ok(t *testing.T) {
+	// A range arm (no equality warning) keeps this focused on exhaustiveness: the
+	// wildcard alone makes the match exhaustive.
 	res := parseCollectAndCheck(t, `
   let x: f64 = 3.14
   match x {
-    0.0 => "ok",
-    _   => "ok",
+    0.0..<1.0 => "ok",
+    _         => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_FloatMatch_UnguardedIdentifier_Ok(t *testing.T) {
+	// A range arm (no equality warning) keeps this focused on exhaustiveness: the
+	// unguarded identifier alone makes the match exhaustive.
 	res := parseCollectAndCheck(t, `
   let x: f32 = 1.5
   match x {
-    0.0 => "ok",
-    v   => "ok",
+    0.0..<1.0 => "ok",
+    v         => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_FloatMatch_GuardedCatchallOnly_Warning(t *testing.T) {
-	// A guarded identifier does not guarantee exhaustiveness.
+	// A guarded identifier does not guarantee exhaustiveness. The first arm is a
+	// range (no equality warning) so the only warning is the exhaustiveness one.
 	res := parseCollectAndCheck(t, `
   let x: f64 = 3.14
   match x {
-    0.0      => "ok",
+    0.0..<1.0    => "ok",
     v if v > 0.0 => "ok",
   }
 	`, false)
