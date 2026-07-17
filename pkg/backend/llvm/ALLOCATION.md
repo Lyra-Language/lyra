@@ -113,6 +113,18 @@ This is live for **strings** today (uniform boxed representation makes retain/
 release total — a literal's box is pinned, a `++` box is heap; STRING_LAYOUT.md).
 Verified memory-safe under AddressSanitizer.
 
+**[DECIDED 07/17] Direction: Perceus** (PLDI 2021 "Perceus: Garbage Free
+Reference Counting with Reuse" — the Koka/Lean technique). The placement above
+is scope-exit; it evolves to **last-use** dup/drop insertion (garbage-free — a
+value is released at its last use, not its lexical scope end; also the natural
+fix for the pass's conservative leaks below), then drop specialization +
+dup/drop fusion, then reuse analysis (in-place update of unique `shared` values
+— FBIP; `is-unique` is `rc == 1`, which a `PinnedRC` arena box correctly
+fails), then reuse specialization. Last-use timing means no user-observable
+finalizers unless separately decided. `own`/`ref`/`mut` are exactly Perceus's
+owned/borrowed calling conventions, already honored above. See `todo.md`
+Backend `[DECIDED 07/17]`.
+
 ## Deferred / out of scope for this decision
 
 - **Managed values inside aggregates** — a string stored in a struct/tuple/`data`
