@@ -86,6 +86,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -158,6 +159,8 @@ type lowerer struct {
 	res         *driver.Result                 // gives you TypeTable, SymbolTable, MethodTable, …
 	funcs       map[string]*ir.Func            // name → its function IR (all declared before any body)
 	structTypes map[string]*lltypes.StructType // name → its struct type (for named tuple and struct lowering)
+	strLitCount int                            // counter for unique string-literal global names
+	memcmp      *ir.Func                       // libc memcmp, declared lazily on first string comparison
 
 	// Per-function state, reset by beginFunction at the start of each function
 	// body (main and every user function get their own).
@@ -366,6 +369,12 @@ func (l *lowerer) emitReturn(block *ir.Block, val value.Value) error {
 	}
 	if floatTy, ok := l.retType.(*lltypes.FloatType); ok {
 		block.NewRet(coerceFloatWidth(block, val, floatTy))
+		return nil
+	}
+	if _, ok := l.retType.(*lltypes.StructType); ok {
+		// An aggregate return (a string fat pointer, or a tuple/struct) is returned
+		// by value; the typechecker already guaranteed the body matches the type.
+		block.NewRet(val)
 		return nil
 	}
 	intTy, ok := l.retType.(*lltypes.IntType)
@@ -627,6 +636,12 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		return constant.NewInt(l.literalIntType(e), e.Value), block, nil
 	case *ast.FloatLiteralExpr:
 		return constant.NewFloat(l.literalFloatType(e), e.Value), block, nil
+	case *ast.StringLiteralExpr:
+		return l.lowerStringConstant(block, e.Value), block, nil
+	case *ast.StringConcatExpr:
+		return nil, nil, fmt.Errorf("llvm: string concatenation (`++`) not implemented yet (needs heap allocation)")
+	case *ast.InterpolatedStringExpr:
+		return nil, nil, fmt.Errorf("llvm: string interpolation not implemented yet (needs heap allocation)")
 	case *ast.BooleanLiteralExpr:
 		bit := int64(0)
 		if e.Value {
@@ -1001,19 +1016,23 @@ func (l *lowerer) lowerMatch(block *ir.Block, e *ast.MatchExpr) (value.Value, *i
 	if tt, ok := l.resolveTupleType(scrutType); ok {
 		return l.lowerTupleMatch(block, e, tt)
 	}
-	// A scalar scrutinee (bool, a concrete integer, or a float) lowers to an
-	// if-else ladder of comparisons. Detected by whether the scrutinee's primitive
-	// maps to an LLVM integer (i1 for bool, iN for ints) or float type — string
-	// falls through (no representation yet).
+	// A scalar scrutinee (bool, a concrete integer, a float, or a string) lowers to
+	// an if-else ladder of comparisons. Detected by whether the scrutinee's
+	// primitive maps to an LLVM integer (i1 for bool, iN for ints), float, or the
+	// string fat-pointer struct.
 	if prim, ok := scrutType.(types.PrimitiveType); ok {
 		if ll, ok := LLVMPrimitive(prim.Name); ok {
 			switch ll.(type) {
 			case *lltypes.IntType, *lltypes.FloatType:
 				return l.lowerScalarMatch(block, e, prim)
+			case *lltypes.StructType: // string
+				if prim.Name == types.String {
+					return l.lowerScalarMatch(block, e, prim)
+				}
 			}
 		}
 	}
-	return nil, nil, fmt.Errorf("llvm: match on %s not implemented yet (only data types, structs, tuples, and integer/bool/float scalars)", scrutType)
+	return nil, nil, fmt.Errorf("llvm: match on %s not implemented yet (only data types, structs, tuples, and integer/bool/float/string scalars)", scrutType)
 }
 
 // matchHasGuard reports whether any arm carries an `if` guard.
@@ -1048,9 +1067,10 @@ func (l *lowerer) lowerGuardedArmBody(matched *ir.Block, guard *ast.GuardExpr, b
 }
 
 // lowerScalarMatch lowers a `match` on a scalar scrutinee — a bool, a concrete
-// integer, or a float — as an if-else ladder: each non-catch-all arm becomes a
-// comparison (`icmp`/`fcmp` for a literal, a two-sided range check for a range
-// pattern) that cond-brs to the arm body or on to the next test, in source order
+// integer, a float, or a string — as an if-else ladder: each non-catch-all arm
+// becomes a comparison (`icmp`/`fcmp` for a numeric literal, a byte-equality test
+// for a string literal, a two-sided range check for a range pattern) that
+// cond-brs to the arm body or on to the next test, in source order
 // (first match wins). A wildcard or identifier arm is an unconditional match that
 // ends the ladder (an identifier binds the scrutinee value); later arms are
 // unreachable. An `if` guard adds a second test after the pattern (via
@@ -1075,8 +1095,12 @@ func (l *lowerer) lowerScalarMatch(block *ir.Block, e *ast.MatchExpr, scrutPrim 
 	scrutTy := scrut.Type()
 	switch scrutTy.(type) {
 	case *lltypes.IntType, *lltypes.FloatType:
+	case *lltypes.StructType: // string fat pointer
+		if !isStringLLVMType(scrutTy) {
+			return nil, nil, fmt.Errorf("llvm: scalar match scrutinee lowered to an unexpected struct (%s)", scrutTy)
+		}
 	default:
-		return nil, nil, fmt.Errorf("llvm: scalar match scrutinee did not lower to an integer or float (%s)", scrutTy)
+		return nil, nil, fmt.Errorf("llvm: scalar match scrutinee did not lower to an integer, float, or string (%s)", scrutTy)
 	}
 	isBool := scrutPrim.Name == types.Boolean
 	signed := IsSignedInt(scrutPrim.Name)
@@ -1163,6 +1187,9 @@ func (l *lowerer) lowerScalarMatch(block *ir.Block, e *ast.MatchExpr, scrutPrim 
 func (l *lowerer) scalarMatchTest(block *ir.Block, scrut value.Value, pattern ast.Pattern, isBool, signed bool) (value.Value, error) {
 	if _, isFloat := scrut.Type().(*lltypes.FloatType); isFloat {
 		return l.floatScalarMatchTest(block, scrut, pattern)
+	}
+	if isStringLLVMType(scrut.Type()) {
+		return l.stringScalarMatchTest(block, scrut, pattern)
 	}
 	intTy := scrut.Type().(*lltypes.IntType)
 	switch p := pattern.(type) {
@@ -1294,6 +1321,33 @@ func constFloatFromExpr(e ast.Expression, ty *lltypes.FloatType) (value.Value, b
 		}
 	}
 	return nil, false
+}
+
+// stringScalarMatchTest is the string counterpart to scalarMatchTest's integer
+// path: a literal arm (`"yes" =>`) tests string equality against the scrutinee
+// (lowerStringEquality). The pattern's raw source text is quoted (unlike a
+// StringLiteralExpr, whose Value the collector already unescaped), so we strip the
+// surrounding quotes to get the bytes. An *escaped* pattern (containing a
+// backslash) is deferred with a loud error rather than risking a mismatch against
+// the collector's Lyra-specific unescaping. Regex patterns are also deferred.
+func (l *lowerer) stringScalarMatchTest(block *ir.Block, scrut value.Value, pattern ast.Pattern) (value.Value, error) {
+	lp, ok := pattern.(*ast.LiteralPattern)
+	if !ok {
+		return nil, fmt.Errorf("llvm: match pattern %T not implemented for a string scrutinee (only string literals; regex patterns deferred)", pattern)
+	}
+	raw, ok := lp.Value.(string)
+	if !ok {
+		return nil, fmt.Errorf("llvm: unexpected literal pattern value %T", lp.Value)
+	}
+	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
+		return nil, fmt.Errorf("llvm: expected a quoted string pattern, got %q", raw)
+	}
+	content := raw[1 : len(raw)-1]
+	if strings.ContainsRune(content, '\\') {
+		return nil, fmt.Errorf("llvm: escaped string patterns not implemented yet (%q)", raw)
+	}
+	lit := l.lowerStringConstant(block, content)
+	return l.lowerStringEquality(block, scrut, lit), nil
 }
 
 // resolveStructType resolves a scrutinee type to its NamedStructType — directly,
@@ -2021,6 +2075,95 @@ func (l *lowerer) literalFloatType(e ast.Expression) *lltypes.FloatType {
 	return lltypes.Double
 }
 
+// lowerStringConstant materializes a compile-time string (a literal's bytes, or a
+// match pattern's text) as a fat-pointer value { i8* data, i64 len }: it interns
+// the bytes in a private, immutable global `[N x i8]` and builds the struct from
+// a pointer to that global's first byte plus the byte length. No allocation — the
+// bytes live in the module's constant data. Returns the value in `block` (the two
+// insertvalues don't branch).
+func (l *lowerer) lowerStringConstant(block *ir.Block, content string) value.Value {
+	bytes := []byte(content)
+	arrTy := lltypes.NewArray(uint64(len(bytes)), lltypes.I8)
+	g := l.module.NewGlobalDef(fmt.Sprintf(".str.%d", l.strLitCount), constant.NewCharArray(bytes))
+	g.Immutable = true
+	g.Linkage = enum.LinkagePrivate
+	l.strLitCount++
+
+	zero := constant.NewInt(lltypes.I32, 0)
+	dataPtr := constant.NewGetElementPtr(arrTy, g, zero, zero) // i8* to the first byte
+	strTy := StringLLVMType()
+	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dataPtr, 0)
+	return block.NewInsertValue(withPtr, constant.NewInt(lltypes.I64, int64(len(bytes))), 1)
+}
+
+// memcmpFunc lazily declares libc's `i32 @memcmp(i8*, i8*, i64)` (clang links
+// libc), caching it so string comparisons share one declaration.
+func (l *lowerer) memcmpFunc() *ir.Func {
+	if l.memcmp == nil {
+		i8ptr := lltypes.NewPointer(lltypes.I8)
+		l.memcmp = l.module.NewFunc("memcmp", lltypes.I32,
+			ir.NewParam("", i8ptr), ir.NewParam("", i8ptr), ir.NewParam("", lltypes.I64))
+	}
+	return l.memcmp
+}
+
+// lowerStringEquality builds the i1 "are these two strings equal?" test,
+// branchlessly: strings are equal iff their byte lengths match AND the first
+// min(la, lb) bytes compare equal. memcmp over min(la, lb) never reads past
+// either buffer (so it's memory-safe even when the lengths differ — the length
+// check then rejects), and n = 0 is a valid no-op compare (two empty strings are
+// equal). Returns an i1 in `block`.
+func (l *lowerer) lowerStringEquality(block *ir.Block, a, b value.Value) value.Value {
+	pa := block.NewExtractValue(a, 0)
+	la := block.NewExtractValue(a, 1)
+	pb := block.NewExtractValue(b, 0)
+	lb := block.NewExtractValue(b, 1)
+
+	lenEq := block.NewICmp(enum.IPredEQ, la, lb)
+	aShorter := block.NewICmp(enum.IPredULT, la, lb)
+	n := block.NewSelect(aShorter, la, lb) // min(la, lb)
+	cmp := block.NewCall(l.memcmpFunc(), pa, pb, n)
+	bytesEq := block.NewICmp(enum.IPredEQ, cmp, constant.NewInt(lltypes.I32, 0))
+	return block.NewAnd(lenEq, bytesEq)
+}
+
+// lowerStringComparison lowers `==`/`!=` on two already-lowered string values.
+// Strings support only equality (the typechecker requires numeric operands for
+// ordering), so any other operator is an error.
+func (l *lowerer) lowerStringComparison(block *ir.Block, op ast.BooleanBinaryOp, left, right value.Value) (value.Value, error) {
+	eq := l.lowerStringEquality(block, left, right)
+	switch op {
+	case ast.BooleanBinaryOpEq:
+		return eq, nil
+	case ast.BooleanBinaryOpNEq:
+		return block.NewXor(eq, constant.NewInt(lltypes.I1, 1)), nil
+	default:
+		return nil, fmt.Errorf("llvm: string comparison operator %v not implemented (strings support only == and !=)", op)
+	}
+}
+
+// isStringLLVMType reports whether t is the fat-pointer string representation
+// { i8*, i64 } (see StringLLVMType). Used to route comparisons and match tests to
+// the string path. A user aggregate can't spell this shape in surface syntax, and
+// a struct/tuple scrutinee is dispatched before the scalar path anyway, so there's
+// no ambiguity in practice.
+func isStringLLVMType(t lltypes.Type) bool {
+	st, ok := t.(*lltypes.StructType)
+	if !ok || len(st.Fields) != 2 {
+		return false
+	}
+	ptr, ok := st.Fields[0].(*lltypes.PointerType)
+	if !ok {
+		return false
+	}
+	elem, ok := ptr.ElemType.(*lltypes.IntType)
+	if !ok || elem.BitSize != 8 {
+		return false
+	}
+	lenTy, ok := st.Fields[1].(*lltypes.IntType)
+	return ok && lenTy.BitSize == 64
+}
+
 func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinaryOpExpr) (value.Value, *ir.Block, error) {
 	left, block, err := l.lowerExpr(block, e.Left)
 	if err != nil {
@@ -2040,6 +2183,10 @@ func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinary
 	}
 	if _, isFloat := left.Type().(*lltypes.FloatType); isFloat {
 		v, err := l.lowerFloatComparison(block, e.Operator, left, right)
+		return v, block, err
+	}
+	if isStringLLVMType(left.Type()) {
+		v, err := l.lowerStringComparison(block, e.Operator, left, right)
 		return v, block, err
 	}
 	// Integer comparisons (bool `==`/`!=` included — i1 is an integer type).

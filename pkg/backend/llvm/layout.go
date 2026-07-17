@@ -42,9 +42,19 @@ func LLVMPrimitive(name types.PrimitiveTypeName) (lltypes.Type, bool) {
 		return lltypes.I1, true
 	case types.Char:
 		return lltypes.I32, true
+	case types.String:
+		return StringLLVMType(), true
 	}
-	// string (and anything unhandled) — representation deferred.
+	// anything unhandled — representation deferred.
 	return nil, false
+}
+
+// StringLLVMType is the LLVM representation of a Lyra `string`: an immutable "fat
+// pointer" { i8* data, i64 len } — a pointer to the UTF-8 bytes plus a byte
+// length (not NUL-terminated). Literals point into a global constant; a future
+// heap string (concatenation) points into a ref-counted box. See STRING_LAYOUT.md.
+func StringLLVMType() *lltypes.StructType {
+	return lltypes.NewStruct(lltypes.NewPointer(lltypes.I8), lltypes.I64)
 }
 
 // IsNumericConversionTarget reports whether name is one of the eleven
@@ -170,8 +180,10 @@ func primitiveSizeAndAlign(name types.PrimitiveTypeName) (int, int, bool) {
 	case types.Int64, types.UInt64, types.Float64,
 		types.UntypedInt, types.UntypedSignedInt, types.UntypedFloat:
 		return 8, 8, true
+	case types.String:
+		// Fat pointer { i8*, i64 }: two pointer-sized words. See StringLLVMType.
+		return pointerSize * 2, pointerSize, true
 	}
-	// string — representation deferred.
 	return 0, 0, false
 }
 

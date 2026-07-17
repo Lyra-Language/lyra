@@ -23,8 +23,9 @@ func TestLLVMPrimitive(t *testing.T) {
 			t.Errorf("LLVMPrimitive(%s) = %v,%v; want %q", name, got, ok, want)
 		}
 	}
-	if _, ok := LLVMPrimitive(types.String); ok {
-		t.Error("string representation should be deferred (ok=false)")
+	// A string lowers to the fat-pointer struct { i8*, i64 } (STRING_LAYOUT.md).
+	if got, ok := LLVMPrimitive(types.String); !ok || got.String() != "{ i8*, i64 }" {
+		t.Errorf("LLVMPrimitive(string) = %v,%v; want %q", got, ok, "{ i8*, i64 }")
 	}
 }
 
@@ -104,9 +105,10 @@ func TestSizeAndAlign_StaticArray(t *testing.T) {
 	}
 }
 
-func TestSizeAndAlign_DeferredString(t *testing.T) {
-	if _, _, ok := SizeAndAlign(prim(types.String)); ok {
-		t.Error("string sizing should be deferred (ok=false)")
+func TestSizeAndAlign_String(t *testing.T) {
+	// A string is a fat pointer { i8*, i64 }: two pointer-sized words.
+	if s, a, ok := SizeAndAlign(prim(types.String)); !ok || s != 16 || a != 8 {
+		t.Errorf("SizeAndAlign(string) = %d,%d,%v; want 16,8,true", s, a, ok)
 	}
 }
 
