@@ -134,20 +134,23 @@ func TestEmit_MatchGuard_Deferred(t *testing.T) {
 	}
 }
 
-// TestEmit_MatchDataPayloadDestructure_Deferred: destructuring inside a `data`
-// variant's payload (here a tuple payload matched with an inner tuple pattern)
-// isn't bound yet, so it errors loudly. (Nested sub-patterns inside struct/tuple
-// scrutinees now lower — a data value's payload needs a tag check + memory
-// reinterpretation, which this path doesn't do yet.)
-func TestEmit_MatchDataPayloadDestructure_Deferred(t *testing.T) {
-	src := `data Wrap = W((u8, u8))
-	 let f = (w: Wrap) -> u8 => match w {
-	   W((a, b)) => a + b,
+// TestEmit_MatchLiteralPayload_Deferred: a value-testing payload sub-pattern (a
+// literal `Some(0)`) in a `data` match arm isn't implemented — the tag switch
+// selects the Some variant but can't also test the payload and fall through to
+// another Some arm, which would need a per-variant test ladder. (Destructuring
+// payloads — `W((a, b))`, `Boxed({ x, y })` — and a data pattern nested in an
+// aggregate — `(c, Some(x))` — now lower.)
+func TestEmit_MatchLiteralPayload_Deferred(t *testing.T) {
+	src := `data Maybe = None | Some(u8)
+	 let f = (m: Maybe) -> u8 => match m {
+	   Some(0) => 1,
+	   Some(x) => x,
+	   None => 9,
 	 }
 	 let main = () -> u8 => 0`
 	_, err := emitSource(t, src)
 	if err == nil {
-		t.Fatal("expected an error: destructuring a data payload is not implemented yet")
+		t.Fatal("expected an error: a value-testing data payload sub-pattern is not implemented yet")
 	}
 	if !strings.Contains(err.Error(), "not implemented") {
 		t.Errorf("expected a not-implemented error, got: %v", err)
@@ -521,6 +524,133 @@ func TestExec_NestedAggregatePatterns(t *testing.T) {
 			   }
 			 }`,
 			99,
+		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// Nested `data` patterns: destructuring inside a data payload (the tag switch
+// selects the variant, then the payload is bound recursively), and a data pattern
+// nested inside an aggregate (the data value's tag becomes a comparison in the
+// aggregate ladder, then its payload is bound on the taken path).
+func TestExec_NestedDataPatterns(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		// A data payload that is a tuple, destructured (`Wrapped((a, b))`). i64
+		// payload avoids the separate nested-tuple-literal construction-width gap.
+		{
+			"data payload tuple",
+			`data Wrap = Wrapped((i64, i64))
+			 let f = (w: Wrap) -> u8 => match w {
+			   Wrapped((a, b)) => u8(a + b),
+			 }
+			 let main = () -> u8 => f(Wrapped((20, 22)))`,
+			42,
+		},
+		// A data payload that is a struct, destructured (`Boxed({ x, y })`).
+		{
+			"data payload struct",
+			`struct Pt {
+			   x: u8,
+			   y: u8,
+			 }
+			 data Box = Boxed(Pt)
+			 let f = (b: Box) -> u8 => match b {
+			   Boxed({ x, y }) => x + y,
+			 }
+			 let main = () -> u8 => f(Boxed(Pt { x: 20, y: 22 }))`,
+			42,
+		},
+		// A data value nested in a tuple: the arm's tag decides which is taken.
+		{
+			"data in tuple (Some arm)",
+			`data Maybe = None | Some(u8)
+			 let main = () -> u8 => {
+			   let t = (7, Some(5))
+			   match t {
+			     (c, Some(x)) => u8(x),
+			     (c, None) => u8(c),
+			   }
+			 }`,
+			5,
+		},
+		{
+			"data in tuple (None arm)",
+			`data Maybe = None | Some(u8)
+			 let main = () -> u8 => {
+			   let t = (7, None)
+			   match t {
+			     (c, Some(x)) => u8(x),
+			     (c, None) => u8(c),
+			   }
+			 }`,
+			7,
+		},
+		// A data value in a struct field, with its payload bound.
+		{
+			"data in struct",
+			`data Maybe = None | Some(u8)
+			 struct Box {
+			   m: Maybe,
+			 }
+			 let f = (b: Box) -> u8 => match b {
+			   { m: Some(x) } => x,
+			   _ => 0,
+			 }
+			 let main = () -> u8 => f(Box { m: Some(9) })`,
+			9,
+		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// A tuple literal whose *first* element is a bare name — an identifier (`(a, b)`)
+// or a nullary constructor (`(None, 7)`) — used to fail to parse: the leading
+// name was precedence-committed to a lambda parameter / data pattern with no GLR
+// fallback to the tuple reading (grammar fix in tree-sitter-lyra). These construct
+// such a tuple and match it, exercising the parse end to end.
+func TestExec_LeadingNameTupleMatch(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		// Leading bare identifier: `(a, b)`.
+		{
+			"leading identifier",
+			`let main = () -> u8 => {
+			   let a = 20
+			   let b = 22
+			   let t = (a, b)
+			   match t {
+			     (x, y) => u8(x + y),
+			   }
+			 }`,
+			42,
+		},
+		// Leading nullary constructor: `(None, 7)` — the None arm is taken.
+		{
+			"leading nullary constructor",
+			`data Maybe = None | Some(u8)
+			 let main = () -> u8 => {
+			   let t = (None, 7)
+			   match t {
+			     (Some(x), c) => u8(x),
+			     (None, c) => u8(c),
+			   }
+			 }`,
+			7,
 		},
 	}
 	for _, c := range cases {
