@@ -198,6 +198,12 @@ func (l *lowerer) lowerParameter(param ast.Parameter) (*ir.Param, error) {
 }
 
 func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr) (value.Value, *ir.Block, error) {
+	if member, ok := e.Function.(*ast.MemberExpr); ok {
+		// A MemberExpr callee the typechecker resolved to a builtin method
+		// (`x.floor()`, builtins.go) rather than a struct field, trait method,
+		// or user function — those aren't lowered yet (see lowerBuiltinMethodCall).
+		return l.lowerBuiltinMethodCall(block, e, member)
+	}
 	ident, ok := e.Function.(*ast.IdentifierExpr)
 	if !ok {
 		// Higher-order calls (calling a lambda value / a function-typed local)

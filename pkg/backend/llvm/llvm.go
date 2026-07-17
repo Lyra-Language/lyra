@@ -15,8 +15,10 @@
 // loops with `break`/`continue` (cond/body/post/exit CFG; all forms — infinite,
 // condition-only, and three-clause `for var i = 0; i < n; i += 1`), user-defined
 // functions with calls, `return`, and recursion, tuple/struct/`data` construction
-// and field/index access, and `match` over every scrutinee kind. Any other body
-// form errors (the build fails loudly rather than emitting wrong code).
+// and field/index access, `match` over every scrutinee kind, and explicit
+// float→int rounding (`x.floor()`/`.ceil()`/`.round()`, a builtin method call —
+// see rounding.go). Any other body form errors (the build fails loudly rather
+// than emitting wrong code).
 //
 // Functions lower in two passes (Emit): every user function is declared before
 // any body, so a call — from main, between functions, or recursive — resolves
@@ -62,21 +64,23 @@
 //     LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign, and
 //     declareRuntime (wired into Emit) — for lowerType to dispatch over.
 //  2. What's next in lowerExpr: string concatenation (`++`) and interpolation
-//     (both build a new string → need a heap allocator, `lyra_rc_alloc` + memcpy),
-//     `print`, and float→int rounding (`floor`/`ceil`/`round`). Already lowering:
-//     arithmetic and comparisons on ints and floats, string `==`/`!=`, `&&`/`||`,
-//     `if`/blocks, `let`/`var`, calls, tuple/struct instances, `data` construction
-//     (alloca + typed payload store), strings (fat pointer, STRING_LAYOUT.md), and
-//     `match` over every scrutinee kind — `data` (tag switch), int/float/string
-//     scalar (comparison ladder), and struct/tuple (shared aggregate ladder) —
-//     with nested struct/tuple/`data` sub-patterns (aggPatternTest/aggPatternBind
-//     recurse, a nested data tag becoming a comparison), value-testing payload
-//     sub-patterns (`Some(0)`), and arm guards (both falling back from the tag
-//     switch to the shared ladder). Floats: literals (context-inferred width,
-//     default f64), `fadd`/`fsub`/`fmul`/`fdiv`, `frem`/floored-`frem`, `fneg`,
-//     `fcmp` (ordered except `!=`), int→float/widening conversions, and params/
-//     returns — but a float can't reach the u8 exit code directly (no float→int
-//     conversion), so it's observed through a comparison or a float `match`.
+//     (both build a new string → need a heap allocator, `lyra_rc_alloc` + memcpy)
+//     and `print`. Already lowering: arithmetic and comparisons on ints and
+//     floats, string `==`/`!=`, `&&`/`||`, `if`/blocks, `let`/`var`, calls,
+//     tuple/struct instances, `data` construction (alloca + typed payload store),
+//     strings (fat pointer, STRING_LAYOUT.md), and `match` over every scrutinee
+//     kind — `data` (tag switch), int/float/string scalar (comparison ladder),
+//     and struct/tuple (shared aggregate ladder) — with nested struct/tuple/`data`
+//     sub-patterns (aggPatternTest/aggPatternBind recurse, a nested data tag
+//     becoming a comparison), value-testing payload sub-patterns (`Some(0)`), and
+//     arm guards (both falling back from the tag switch to the shared ladder).
+//     Floats: literals (context-inferred width, default f64), `fadd`/`fsub`/
+//     `fmul`/`fdiv`, `frem`/floored-`frem`, `fneg`, `fcmp` (ordered except `!=`),
+//     int→float/widening conversions, and params/returns. The `i64(x)`-style
+//     conversion call still rejects float→int (lossy, no rounding mode implied);
+//     the explicit escape hatch is `x.floor()`/`.ceil()`/`.round()` (rounding.go:
+//     the matching `llvm.<op>.<width>` intrinsic + `fptosi` to a fixed i64 —
+//     narrow further via `i32(x.floor())`).
 //     Mutable locals are modeled as `alloca` + load/store (let mem2reg build SSA)
 //     rather than hand-written phi nodes. Note lowerExpr returns the block control
 //     ends in, not just a value — threaded so a branching form (`if`) can move the
@@ -100,6 +104,7 @@
 //   - match_aggregate.go — struct/tuple/data pattern matching (aggPattern* + shared ladder + data payloads)
 //   - arithmetic.go — math ops, comparisons, &&/||, numeric conversions, width coercions
 //   - strings.go — string fat-pointer helpers (literals, equality via memcmp)
+//   - rounding.go — builtin method calls (x.floor()/.ceil()/.round()) via lazily-declared LLVM intrinsics
 //   - layout.go — llir type toolkit + SizeAndAlign; runtime.go — runtime shim declarations
 package llvm
 
@@ -140,11 +145,12 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 	m := ir.NewModule()
 	declareRuntime(m)
 	l := &lowerer{
-		module:      m,
-		res:         res,
-		locals:      map[string]value.Value{},
-		funcs:       map[string]*ir.Func{},
-		structTypes: map[string]*lltypes.StructType{},
+		module:             m,
+		res:                res,
+		locals:             map[string]value.Value{},
+		funcs:              map[string]*ir.Func{},
+		structTypes:        map[string]*lltypes.StructType{},
+		roundingIntrinsics: map[string]*ir.Func{},
 	}
 	// Lower type declarations
 	if err := l.lowerTypeDeclarations(res.Program); err != nil {
@@ -177,6 +183,10 @@ type lowerer struct {
 	structTypes map[string]*lltypes.StructType // name → its struct type (for named tuple and struct lowering)
 	strLitCount int                            // counter for unique string-literal global names
 	memcmp      *ir.Func                       // libc memcmp, declared lazily on first string comparison
+
+	// roundingIntrinsics caches lazily-declared llvm.{floor,ceil,round}.<width>
+	// intrinsics (rounding.go), keyed by full intrinsic name.
+	roundingIntrinsics map[string]*ir.Func
 
 	// Per-function state, reset by beginFunction at the start of each function
 	// body (main and every user function get their own).

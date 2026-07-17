@@ -110,8 +110,10 @@ func TestExec_FloatArithmetic(t *testing.T) {
 }
 
 // Numeric conversions involving float: int→float (sitofp/uitofp, from the
-// source's signedness) and float→float widening (fpext). float→int stays a
-// typecheck error (floor/ceil/round), so it isn't exercised here.
+// source's signedness) and float→float widening (fpext). float→int via the
+// `i64(x)`-style conversion call is still a typecheck error — the explicit
+// escape hatch is the `.floor()`/`.ceil()`/`.round()` builtin methods
+// (TestExec_FloatRounding), a different call shape entirely.
 func TestExec_FloatConversions(t *testing.T) {
 	cases := []struct {
 		name string
@@ -148,6 +150,58 @@ func TestExec_FloatConversions(t *testing.T) {
 			 }`,
 			15,
 		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// Explicit float→int rounding via the .floor()/.ceil()/.round() builtin
+// methods (builtins.go's floatRoundingOps): each lowers to the matching
+// llvm.<op>.<width> intrinsic, then fptosi to the builtin's fixed i64 return
+// type — the escape hatch the numeric-conversion typecheck error points to.
+func TestExec_FloatRounding(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"floor positive", `let main = () -> u8 => {
+			   let x: f64 = 3.7
+			   u8(x.floor())
+			 }`, 3},
+		{"floor negative", `let main = () -> u8 => {
+			   let x: f64 = -3.2
+			   let n: i64 = x.floor()
+			   if n == -4 { 1 } else { 0 }
+			 }`, 1},
+		{"ceil positive", `let main = () -> u8 => {
+			   let x: f64 = 3.2
+			   u8(x.ceil())
+			 }`, 4},
+		{"ceil negative", `let main = () -> u8 => {
+			   let x: f64 = -3.7
+			   let n: i64 = x.ceil()
+			   if n == -3 { 1 } else { 0 }
+			 }`, 1},
+		{"round half away from zero", `let main = () -> u8 => {
+			   let x: f64 = 3.5
+			   u8(x.round())
+			 }`, 4},
+		{"round down", `let main = () -> u8 => {
+			   let x: f64 = 3.4
+			   u8(x.round())
+			 }`, 3},
+		{"round on f32", `let main = () -> u8 => {
+			   let x: f32 = 2.5
+			   u8(x.round())
+			 }`, 3},
+		{"narrow via explicit int conversion", `let main = () -> u8 => {
+			   let x: f64 = 200.9
+			   u8(x.floor())
+			 }`, 200},
 	}
 	for _, c := range cases {
 		if got := buildAndRun(t, c.src); got != c.want {
@@ -284,6 +338,24 @@ func TestEmit_FloatIR(t *testing.T) {
 	for _, want := range []string{"fadd", "fcmp", "double"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("float IR missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// TestEmit_FloatRoundingIR pins the instruction selection for a rounding
+// builtin: a call to the matched llvm.<op>.<width> intrinsic followed by an
+// fptosi to the fixed i64 return type — not, say, a manual truncation.
+func TestEmit_FloatRoundingIR(t *testing.T) {
+	got, err := emitSource(t, `let main = () -> u8 => {
+	   let x: f64 = 3.7
+	   u8(x.floor())
+	 }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"call double @llvm.floor.f64", "fptosi"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("rounding IR missing %q:\n%s", want, got)
 		}
 	}
 }

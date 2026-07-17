@@ -29,6 +29,21 @@ var intBinaryOps = map[string]bool{
 	"saturating_mul": true,
 }
 
+// floatRoundingOps are the explicit float→int rounding builtins — the escape
+// hatch the numeric-conversion error (`inferTypeConversion`) points to, since
+// `i64(x)` on a float is rejected as lossy. Each takes no arguments and
+// returns a fixed i64 (mirrors how an unannotated numeric literal defaults to
+// i64/f64, todo.md's promoteToDefault pattern) rather than inferring a
+// narrower width from context — that's the same open "return type from
+// context" problem the still-unregistered truncate/saturate/narrow builtins
+// have (todo.md Pit-of-Success #5). Narrow further with the existing explicit
+// int conversion: `i32(x.floor())`.
+var floatRoundingOps = map[string]bool{
+	"floor": true,
+	"ceil":  true,
+	"round": true,
+}
+
 // builtinMethodSignature returns the LambdaType of the builtin method name for a
 // receiver of type recv, specialized to recv's concrete type, or ok=false when
 // no builtin of that name applies to that receiver. The signature's parameters
@@ -51,6 +66,15 @@ func builtinMethodSignature(recv types.Type, name string) (*types.LambdaType, bo
 		return &types.LambdaType{
 			Parameters: []types.ParameterType{{Type: recv}}, // the second operand
 			ReturnType: types.ReturnType{Type: recv},
+		}, true
+	}
+	if floatRoundingOps[name] {
+		if !isAnyConcreteFloat(p.Name) {
+			return nil, false
+		}
+		return &types.LambdaType{
+			Parameters: nil,
+			ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.Int64}},
 		}, true
 	}
 	return nil, false

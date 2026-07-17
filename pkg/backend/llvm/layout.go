@@ -101,6 +101,19 @@ func IsSignedInt(name types.PrimitiveTypeName) bool {
 	}
 }
 
+// floatIntrinsicSuffix reports the LLVM intrinsic name suffix (e.g.
+// `llvm.floor.f64`) for a concrete Lyra float type. Lyra's PrimitiveTypeName
+// constants for floats are already spelled "f16"/"f32"/"f64" (pkg/types), so
+// this is a direct name check rather than a width lookup through the
+// already-lowered LLVM type.
+func floatIntrinsicSuffix(name types.PrimitiveTypeName) (string, bool) {
+	switch name {
+	case types.Float16, types.Float32, types.Float64:
+		return string(name), true
+	}
+	return "", false
+}
+
 // SharedBoxType returns the llir type of a ref-counted box wrapping payload:
 // `{ i64, <payload> }` with the refcount first. A `shared` value is a pointer to
 // this box (ALLOCATION.md).
