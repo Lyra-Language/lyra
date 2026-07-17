@@ -55,6 +55,25 @@ func isAssignable(from, to types.Type) bool {
 		}
 	}
 
+	// Two anonymous tuples are structural: assignable when arities match and each
+	// element is assignable. This lets a tuple literal's untyped element widen to
+	// an annotation's element type — `let a: (i32, i32) = (1, 2)` — the same way a
+	// bare untyped literal widens to a scalar annotation. Named tuples are nominal
+	// (handled by TypesEqual above), so a name-vs-name or named-vs-anonymous pair
+	// is deliberately not coerced here.
+	if fromT, ok := from.(types.TupleType); ok {
+		if toT, ok := to.(types.TupleType); ok &&
+			types.IsAnonymousTupleName(fromT.Name) && types.IsAnonymousTupleName(toT.Name) &&
+			len(fromT.Elements) == len(toT.Elements) {
+			for i := range fromT.Elements {
+				if !isAssignable(fromT.Elements[i], toT.Elements[i]) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+
 	fromP, fromIsPrim := from.(types.PrimitiveType)
 	toP, toIsPrim := to.(types.PrimitiveType)
 	if !fromIsPrim || !toIsPrim {

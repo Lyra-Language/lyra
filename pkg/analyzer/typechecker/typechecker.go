@@ -226,6 +226,12 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	}
 
 	if decl.Type == nil {
+		// promoteToDefault settles the tuple *type*'s element widths (and the outer
+		// tuple the backend reads) to their i64/f64 defaults. The untyped element
+		// *leaves* are intentionally left untyped — the same "unannotated leaf
+		// stays untyped, backend maps it to the i64 default" rule scalars follow
+		// (TestLiteralWidth_Unannotated_StaysUntyped); a narrowing annotation/
+		// data-ctor/struct-field context is the only thing that fixes a leaf width.
 		tc.typeTable.Set(decl.Value, promoteToDefault(inferredType))
 		return
 	}
@@ -1263,6 +1269,17 @@ func promoteToDefault(t types.Type) types.Type {
 		// becomes StaticArrayType{int, 3} when there is no annotation.
 		v.ElementType = promoteToDefault(v.ElementType)
 		return v
+	case types.TupleType:
+		// An anonymous tuple keeps untyped element leaves (see
+		// inferTupleLiteralExpr); with no narrowing context they settle to their
+		// defaults here — `(1, 2)` → `(i64, i64)`. Build a fresh slice so the
+		// shared Elements backing array of any recorded copy isn't mutated.
+		promoted := make([]types.Type, len(v.Elements))
+		for i, el := range v.Elements {
+			promoted[i] = promoteToDefault(el)
+		}
+		v.Elements = promoted
+		return v
 	}
 	return t
 }
@@ -1375,6 +1392,25 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 // resolved concrete numeric primitive; a nil or non-primitive concrete is a
 // no-op, as is a leaf that is already concretely typed.
 func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.Type) {
+	// Aggregate context: a tuple literal narrows element-wise against a tuple
+	// context type, so `(20, 22)` against `(u8, u8)` pushes each declared element
+	// width onto the matching literal leaf (recursing into a nested tuple). This
+	// is the aggregate analogue of the scalar leaf cases below — concrete here is
+	// a TupleType, not a primitive, so it's handled before the primitive check
+	// that would otherwise reject it. Needed because an anonymous tuple literal's
+	// elements are left untyped by inferTupleLiteralExpr precisely so a
+	// surrounding annotation / data-ctor / struct field can narrow them here.
+	if tl, ok := expr.(*ast.TupleLiteralExpr); ok {
+		tt, ok := concrete.(types.TupleType)
+		if !ok || len(tt.Elements) != len(tl.Elements) {
+			return
+		}
+		for i, elem := range tl.Elements {
+			tc.propagateLiteralType(elem, tc.resolveType(tt.Elements[i], elem.GetLocation()))
+		}
+		return
+	}
+
 	cp, ok := concrete.(types.PrimitiveType)
 	if !ok {
 		return
@@ -1598,8 +1634,14 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 			if t == nil {
 				return nil
 			}
-			elements[i] = promoteToDefault(t)
-			tc.typeTable.Set(elem, elements[i])
+			// Keep an untyped leaf untyped (don't promote to i64/f64 here) so a
+			// surrounding context — a tuple annotation, a data-ctor or struct tuple
+			// field — can still narrow it via propagateLiteralType, mirroring how
+			// inferArrayLiteralType keeps array elements untyped for annotation
+			// widening. inferExprType already recorded the (untyped) leaf type; with
+			// no narrowing context the no-annotation settle (promoteToDefault plus a
+			// settling propagateLiteralType) fixes the default width later.
+			elements[i] = t
 		}
 		return types.TupleType{Name: name, Elements: elements}
 	}

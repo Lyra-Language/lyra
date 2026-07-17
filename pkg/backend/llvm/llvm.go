@@ -57,14 +57,14 @@
 //     inline vs boxed. layout.go/runtime.go provide the building blocks —
 //     LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign, and
 //     declareRuntime (wired into Emit) — for lowerType to dispatch over.
-//  2. Grow lowerExpr further: string `match`, arm guards, nested `data`
-//     sub-patterns / data-payload destructuring, and float. Already lowering:
-//     arithmetic, comparisons, `&&`/`||`, `if`/blocks, `let`/`var`, calls, tuple
-//     and struct instances, `data` construction (alloca + typed payload store),
-//     `match` on a `data` value (tag switch + payload extraction + field binding),
-//     `match` on a bool/integer scalar (an if-else comparison ladder), and `match`
-//     on a struct or tuple (one shared aggregate ladder, recursing into nested
-//     struct/tuple sub-patterns via extractvalue). Mutable locals are modeled as `alloca` + load/store
+//  2. Grow lowerExpr further: string `match`, arm guards, value-testing `data`
+//     payload sub-patterns, and float. Already lowering: arithmetic, comparisons,
+//     `&&`/`||`, `if`/blocks, `let`/`var`, calls, tuple and struct instances,
+//     `data` construction (alloca + typed payload store), and `match` over every
+//     scrutinee kind — `data` (tag switch), bool/integer scalar (comparison
+//     ladder), and struct/tuple (shared aggregate ladder) — with nested
+//     struct/tuple/`data` sub-patterns (aggPatternTest/aggPatternBind recurse,
+//     a nested data tag becoming a comparison). Mutable locals are modeled as `alloca` + load/store
 //     (let mem2reg build SSA) rather than hand-written phi nodes. Float
 //     literals/arithmetic and any conversion touching float are deferred: a float
 //     literal is now reachable via a `let x: f64 = …` binding, but it errors
@@ -702,6 +702,10 @@ func (l *lowerer) lowerTupleLiteralExpr(block *ir.Block, e *ast.TupleLiteralExpr
 		if err != nil {
 			return nil, nil, err
 		}
+		elemVal, err = l.coerceAggregateElem(block, elemVal, structType.Fields[i], elemExpr)
+		if err != nil {
+			return nil, nil, err
+		}
 		agg = block.NewInsertValue(agg, elemVal, uint64(i))
 	}
 	return agg, block, nil
@@ -916,6 +920,10 @@ func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctor
 		for i, argExpr := range args {
 			var v value.Value
 			v, block, err = l.lowerExpr(block, argExpr)
+			if err != nil {
+				return nil, nil, err
+			}
+			v, err = l.coerceAggregateElem(block, v, payloadStructTy.Fields[i], argExpr)
 			if err != nil {
 				return nil, nil, err
 			}
@@ -1371,6 +1379,35 @@ func (l *lowerer) aggPatternTest(block *ir.Block, val value.Value, pat ast.Patte
 			cond = andConds(block, cond, c)
 		}
 		return cond, nil
+	case *ast.DataPattern:
+		// A `data` sub-pattern's test is its tag check: `extractvalue`-the-tag ==
+		// the variant index. A value-testing payload sub-pattern (a literal, or a
+		// nested data pattern) is deferred — that would need testing the payload,
+		// which requires the tag to already hold, i.e. a per-variant branch.
+		dt, ok := l.resolveDataType(valType)
+		if !ok {
+			return nil, fmt.Errorf("llvm: data pattern on non-data value of type %s", valType)
+		}
+		ctor, idx, ok := findConstructor(dt, p.Name)
+		if !ok {
+			return nil, fmt.Errorf("llvm: %q is not a constructor of %s", p.Name, dt.Name)
+		}
+		fieldPatterns, err := payloadFieldPatterns(p, ctor)
+		if err != nil {
+			return nil, err
+		}
+		for _, fp := range fieldPatterns {
+			if patternHasTest(fp) {
+				return nil, fmt.Errorf("llvm: a value-testing payload sub-pattern (%T) inside a nested data pattern is not implemented yet", fp)
+			}
+		}
+		unionSt, ok := val.Type().(*lltypes.StructType)
+		if !ok {
+			return nil, fmt.Errorf("llvm: data value did not lower to a struct (%s)", val.Type())
+		}
+		tagTy := unionSt.Fields[0].(*lltypes.IntType)
+		tag := block.NewExtractValue(val, 0)
+		return block.NewICmp(enum.IPredEQ, tag, constant.NewInt(tagTy, int64(idx))), nil
 	default:
 		return nil, fmt.Errorf("llvm: match sub-pattern %T not implemented yet", pat)
 	}
@@ -1420,6 +1457,36 @@ func (l *lowerer) aggPatternBind(block *ir.Block, val value.Value, pat ast.Patte
 				return fmt.Errorf("llvm: tuple pattern element %d out of range", i)
 			}
 			if err := l.aggPatternBind(block, block.NewExtractValue(val, uint64(i)), el, tt.Elements[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	case *ast.DataPattern:
+		// Reached only on the taken path (aggPatternTest's tag check already held),
+		// so bind the payload: reinterpret it as the variant's payload struct and
+		// recurse into each field's sub-pattern.
+		dt, ok := l.resolveDataType(valType)
+		if !ok {
+			return fmt.Errorf("llvm: data pattern on non-data value of type %s", valType)
+		}
+		ctor, _, ok := findConstructor(dt, p.Name)
+		if !ok {
+			return fmt.Errorf("llvm: %q is not a constructor of %s", p.Name, dt.Name)
+		}
+		fieldPatterns, err := payloadFieldPatterns(p, ctor)
+		if err != nil {
+			return err
+		}
+		if len(fieldPatterns) == 0 {
+			return nil // nullary variant
+		}
+		payload, err := l.extractDataPayload(block, val, ctor)
+		if err != nil {
+			return err
+		}
+		fieldTypes := ctor.FieldTypes()
+		for i, fp := range fieldPatterns {
+			if err := l.aggPatternBind(block, block.NewExtractValue(payload, uint64(i)), fp, fieldTypes[i]); err != nil {
 				return err
 			}
 		}
@@ -1611,10 +1678,12 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 
 // bindDataPayload binds a data pattern's payload sub-patterns into l.locals for
 // the arm body. It reinterprets the union's payload blob as the variant's payload
-// struct (bitcast + load) and, per bound field, extractvalue + alloca + store.
-// Only flat positional (`Rect(w, h)`) and bare single (`Some x`) forms bind here;
-// tuple-payload destructuring (`MkPair((x, y))`) and nested sub-patterns are
-// deferred with a loud error.
+// struct (bitcast + load) and binds each field's sub-pattern via aggPatternBind,
+// so a payload that is (or contains) a struct/tuple is destructured recursively
+// (`W((a, b))`, `Some({ x, y })`). A *value-testing* payload sub-pattern (a
+// literal, or a nested data pattern) is deferred: this arm was already selected by
+// the tag switch, which can't also test the payload and fall through to another
+// arm (see patternHasTest).
 func (l *lowerer) bindDataPayload(armBlock *ir.Block, p *ast.DataPattern, ctor types.DataTypeConstructor, slot value.Value, unionTy *lltypes.StructType) error {
 	fieldPatterns, err := payloadFieldPatterns(p, ctor)
 	if err != nil {
@@ -1622,6 +1691,11 @@ func (l *lowerer) bindDataPayload(armBlock *ir.Block, p *ast.DataPattern, ctor t
 	}
 	if len(fieldPatterns) == 0 {
 		return nil // nullary variant — nothing to bind
+	}
+	for _, fp := range fieldPatterns {
+		if patternHasTest(fp) {
+			return fmt.Errorf("llvm: a value-testing payload sub-pattern (%T) in a `data` match arm is not implemented yet", fp)
+		}
 	}
 	payloadStructTy, err := l.dataPayloadStructType(ctor)
 	if err != nil {
@@ -1631,24 +1705,64 @@ func (l *lowerer) bindDataPayload(armBlock *ir.Block, p *ast.DataPattern, ctor t
 	typedPtr := armBlock.NewBitCast(blobPtr, lltypes.NewPointer(payloadStructTy))
 	payload := armBlock.NewLoad(payloadStructTy, typedPtr)
 
-	entry := armBlock.Parent.Blocks[0]
+	fieldTypes := ctor.FieldTypes()
 	for i, fp := range fieldPatterns {
-		switch fpp := fp.(type) {
-		case *ast.IdentifierPattern:
-			if fpp.Name == "_" {
-				continue
-			}
-			fieldVal := armBlock.NewExtractValue(payload, uint64(i))
-			s := entry.NewAlloca(payloadStructTy.Fields[i])
-			armBlock.NewStore(fieldVal, s)
-			l.locals[fpp.Name] = s
-		case *ast.WildcardPattern:
-			continue
-		default:
-			return fmt.Errorf("llvm: nested pattern %T in a data payload not implemented yet", fp)
+		if err := l.aggPatternBind(armBlock, armBlock.NewExtractValue(payload, uint64(i)), fp, fieldTypes[i]); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// extractDataPayload reinterprets a first-class data value's payload blob as the
+// given variant's payload struct, returning the loaded payload struct value. It
+// goes through memory (alloca + store + bitcast + load), the mirror of
+// construction — the same move as lowerDataMatch, but on an arbitrary value rather
+// than the match scrutinee's pre-stored slot, so it works for a data value nested
+// inside another pattern.
+func (l *lowerer) extractDataPayload(block *ir.Block, val value.Value, ctor types.DataTypeConstructor) (value.Value, error) {
+	payloadStructTy, err := l.dataPayloadStructType(ctor)
+	if err != nil {
+		return nil, err
+	}
+	unionSt, ok := val.Type().(*lltypes.StructType)
+	if !ok {
+		return nil, fmt.Errorf("llvm: data value did not lower to a struct (%s)", val.Type())
+	}
+	slot := block.Parent.Blocks[0].NewAlloca(unionSt)
+	block.NewStore(val, slot)
+	blobPtr := block.NewGetElementPtr(unionSt, slot, constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+	typedPtr := block.NewBitCast(blobPtr, lltypes.NewPointer(payloadStructTy))
+	return block.NewLoad(payloadStructTy, typedPtr), nil
+}
+
+// findConstructor returns a data type's constructor by name, plus its
+// declaration-order index (the variant tag).
+func findConstructor(dt types.DataType, name string) (types.DataTypeConstructor, int, bool) {
+	for i, c := range dt.Constructors {
+		if c.Name == name {
+			return c, i, true
+		}
+	}
+	return types.DataTypeConstructor{}, 0, false
+}
+
+// patternHasTest reports whether a pattern imposes a runtime value test (rather
+// than only binding/ignoring): a literal or range, a data pattern (a tag check),
+// or any aggregate containing one. Used to defer a payload sub-pattern that a
+// tag-switch `data` arm can't test-and-fall-through on.
+func patternHasTest(pat ast.Pattern) bool {
+	switch p := pat.(type) {
+	case *ast.LiteralPattern, *ast.RangePattern, *ast.DataPattern:
+		return true
+	case *ast.StructPattern:
+		return slices.ContainsFunc(p.Fields, func(f ast.StructPatternField) bool {
+			return patternHasTest(f.Pattern)
+		})
+	case *ast.TuplePattern:
+		return slices.ContainsFunc(p.Elements, patternHasTest)
+	}
+	return false
 }
 
 // payloadFieldPatterns returns the flat list of sub-patterns, one per payload
@@ -2322,6 +2436,35 @@ func (l *lowerer) lowerNumericConversion(block *ir.Block, call *ast.FunctionCall
 		return nil, nil, fmt.Errorf("llvm: conversion from %s to %s not implemented", arg.Type(), targetName)
 	}
 	return coerceIntWidth(block, arg, IsSignedInt(srcP.Name), dst), block, nil
+}
+
+// coerceAggregateElem defensively reconciles a lowered aggregate element value
+// with its destination field type before an insertvalue/store. A well-typed
+// program already has matching widths — the typechecker's context-directed
+// literal-width propagation narrows a tuple/struct/data-payload literal element
+// to its declared field type — so this is normally the identity. It exists so a
+// residual int-width mismatch is coerced (trunc/ext, widening signedness read
+// from the source expr's Lyra type) rather than letting llir panic inside
+// NewInsertValue (as `insertvalue elem type mismatch, expected i8, got i64`); a
+// non-int mismatch it can't reconcile is a loud error, never a panic.
+func (l *lowerer) coerceAggregateElem(block *ir.Block, v value.Value, dst lltypes.Type, src ast.Expression) (value.Value, error) {
+	if v.Type().Equal(dst) {
+		return v, nil
+	}
+	dstInt, dstOk := dst.(*lltypes.IntType)
+	srcInt, srcOk := v.Type().(*lltypes.IntType)
+	if dstOk && srcOk {
+		signed := false
+		if dstInt.BitSize > srcInt.BitSize {
+			// Only a widening ext depends on the source signedness; a narrowing
+			// trunc is width-only. Fall back to unsigned if the type is unknown.
+			if s, err := l.getIntSignedness(src); err == nil {
+				signed = s
+			}
+		}
+		return coerceIntWidth(block, v, signed, dstInt), nil
+	}
+	return nil, fmt.Errorf("llvm: aggregate element type mismatch: cannot store %s into %s", v.Type(), dst)
 }
 
 // coerceIntWidth adjusts v (an integer value) to dst's bit width: unchanged if

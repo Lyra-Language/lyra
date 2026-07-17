@@ -17,14 +17,20 @@ func TestTupleLiteral_ElementTypesInTypeTable(t *testing.T) {
 	if len(tup.Elements) != 2 {
 		t.Fatalf("expected 2 elements, got %d", len(tup.Elements))
 	}
+	// An unannotated untyped-literal element stays untyped in the TypeTable — the
+	// same "unannotated leaf stays untyped, the backend maps it to the i64
+	// default" rule scalars follow (TestLiteralWidth_Unannotated_StaysUntyped).
+	// This is what lets a *narrowing* context (a tuple annotation, a data-ctor or
+	// struct tuple field) later fix the element width via propagateLiteralType.
 	elem0, ok := res.typeTable.Get(tup.Elements[0])
 	if !ok {
 		t.Fatal("no TypeTable entry for first tuple element")
 	}
 	p0, ok := elem0.(types.PrimitiveType)
-	if !ok || p0.Name != types.Int64 {
-		t.Errorf("expected first element type i64, got %s", elem0)
+	if !ok || p0.Name != types.UntypedInt {
+		t.Errorf("expected first element type untyped_int, got %s", elem0)
 	}
+	// A non-numeric element already has a concrete type, unaffected by widening.
 	elem1, ok := res.typeTable.Get(tup.Elements[1])
 	if !ok {
 		t.Fatal("no TypeTable entry for second tuple element")
@@ -32,6 +38,19 @@ func TestTupleLiteral_ElementTypesInTypeTable(t *testing.T) {
 	p1, ok := elem1.(types.PrimitiveType)
 	if !ok || p1.Name != types.String {
 		t.Errorf("expected second element type string, got %s", elem1)
+	}
+	// The tuple *type* the backend reads still settles to its i64 default (the
+	// leaf's untyped-ness is an inference detail, not the tuple's element type).
+	tupType, ok := res.typeTable.Get(tup)
+	if !ok {
+		t.Fatal("no TypeTable entry for the tuple literal")
+	}
+	tt, ok := tupType.(types.TupleType)
+	if !ok || len(tt.Elements) != 2 {
+		t.Fatalf("expected a 2-element tuple type, got %s", tupType)
+	}
+	if p, ok := tt.Elements[0].(types.PrimitiveType); !ok || p.Name != types.Int64 {
+		t.Errorf("expected tuple type element 0 to be i64, got %s", tt.Elements[0])
 	}
 }
 

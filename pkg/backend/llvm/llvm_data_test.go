@@ -154,6 +154,23 @@ func TestExec_DataConstruction(t *testing.T) {
 	}
 }
 
+// TestExec_DataNarrowTuplePayload constructs a data value whose payload is a
+// *tuple* of narrow ints (`Wrapped((20, 22))` with `Wrapped((u8, u8))`), matches
+// on it, and sums the fields — exercising the full round-trip end-to-end. The
+// tuple literal's element leaves (`20`, `22`) must narrow to the declared u8
+// width (typechecker propagation now recurses into a tuple-literal payload), so
+// the payload store is `{ i8, i8 }`; before the fix the leaves stayed i64 and
+// the backend panicked building the payload (`insertvalue elem type mismatch,
+// expected i8, got i64`). Exit code 42 == 20 + 22.
+func TestExec_DataNarrowTuplePayload(t *testing.T) {
+	src := `data Wrap = Wrapped((u8, u8))
+	 let f = (w: Wrap) -> u8 => match w { Wrapped((a, b)) => a + b }
+	 let main = () -> u8 => f(Wrapped((20, 22)))`
+	if got := buildAndRun(t, src); got != 42 {
+		t.Errorf("narrow tuple payload: exited %d; want 42", got)
+	}
+}
+
 // TestEmit_DataConstructionIR pins the construction shape: alloca the union,
 // store the tag at field 0, and (payload variant) insertvalue the fields and
 // store the payload struct into field 1.
