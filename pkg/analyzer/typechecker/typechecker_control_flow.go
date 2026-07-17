@@ -737,9 +737,9 @@ func (tc *TypeChecker) checkNumericMatchArm(pattern ast.Pattern, scrutineeType t
 			} else {
 				// A float literal pattern tests exact equality (it lowers to an
 				// `fcmp oeq`) — the same precision hazard the `==`/`!=` operator
-				// warns about: a value off by an ULP silently won't match. A range
-				// pattern (`0.0..<1.0`) is the reliable alternative.
-				tc.addError(p.GetLocation(), SeverityWarning,
+				// warns about (shared lyra-W008): a value off by an ULP silently
+				// won't match. A range pattern (`0.0..<1.0`) is the reliable form.
+				tc.addErrorCode(p.GetLocation(), SeverityWarning, diag.CodeImpreciseFloatEquality,
 					"matching a float against the literal '%s' tests exact equality, which may be unreliable due to floating-point precision; use a range pattern instead", p.Value)
 			}
 		}

@@ -86,4 +86,10 @@ const (
 	// CodeNonOptionalCoalescing: the left operand of `??` is not a Maybe<T>, so
 	// it can never be null and the coalescing is pointless.
 	CodeNonOptionalCoalescing = "lyra-W007"
+
+	// CodeImpreciseFloatEquality: an exact floating-point equality test — the
+	// `==`/`!=` operator on floats, or a float literal `match` pattern (which
+	// lowers to `fcmp oeq`). A value off by an ULP silently compares unequal, so
+	// results may be surprising; a tolerance check or a range pattern is safer.
+	CodeImpreciseFloatEquality = "lyra-W008"
 )

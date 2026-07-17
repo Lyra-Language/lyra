@@ -1,6 +1,10 @@
 package typechecker_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
+)
 
 // A match arm's pattern variables are bound in the arm body, so a payload binding
 // can be used (and computed on) there. This previously failed with "undefined
@@ -106,4 +110,37 @@ let f = (x: f64) -> u8 => match x {
 }
 `, false)
 	assertNoErrors(t, res)
+}
+
+// The float literal *pattern* warning and the float `==`/`!=` *operator* warning
+// share diagnostic code lyra-W008 (imprecise float equality).
+func TestMatch_FloatEqualityWarningsShareCode(t *testing.T) {
+	patternRes := parseCollectAndCheck(t, `
+let f = (x: f64) -> u8 => match x {
+  1.5 => 1,
+  _ => 0,
+}
+`, false)
+	assertSingleWarningWithCode(t, patternRes, "lyra-W008")
+
+	operatorRes := parseCollectAndCheck(t, `
+let g = (a: f64, b: f64) -> bool => a == b
+`, false)
+	assertSingleWarningWithCode(t, operatorRes, "lyra-W008")
+}
+
+// assertSingleWarningWithCode asserts res holds exactly one diagnostic, a warning
+// carrying the given code.
+func assertSingleWarningWithCode(t *testing.T, res checkResult, code string) {
+	t.Helper()
+	if len(res.errors) != 1 {
+		t.Fatalf("expected exactly 1 diagnostic, got %d: %v", len(res.errors), res.errors)
+	}
+	e := res.errors[0]
+	if e.Severity != typechecker.SeverityWarning {
+		t.Errorf("expected a warning, got severity %v: %s", e.Severity, e.Message)
+	}
+	if e.Code != code {
+		t.Errorf("expected code %q, got %q (%s)", code, e.Code, e.Message)
+	}
 }

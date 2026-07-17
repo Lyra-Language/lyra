@@ -908,7 +908,7 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 		if !areEqualityCompatible(leftType, rightType) {
 			tc.addIncompatibleTypesError(expr, string(expr.Operator), leftType, rightType)
 		} else if isFloatType(leftType) || isFloatType(rightType) {
-			tc.addError(expr.GetLocation(), SeverityWarning,
+			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeImpreciseFloatEquality,
 				"operator %s: comparing float values with == or != may give unexpected results due to floating-point precision", expr.Operator)
 		} else {
 			tc.propagateComparisonWidth(expr, leftType, rightType)
