@@ -107,7 +107,7 @@ func TestEmit_DataMatchIR(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"switch",      // the tag dispatch
+		"switch",       // the tag dispatch
 		"extractvalue", // reading the bound payload field
 	} {
 		if !strings.Contains(got, want) {

@@ -184,11 +184,11 @@ func TestEmit_DataConstructionIR(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"alloca %Shape",   // materialize the union
-		"getelementptr",   // address the tag / payload fields
-		"store i8 1",      // Rect's tag (declaration index 1)
-		"insertvalue",     // build the payload struct
-		"load %Shape",     // read back the first-class value
+		"alloca %Shape", // materialize the union
+		"getelementptr", // address the tag / payload fields
+		"store i8 1",    // Rect's tag (declaration index 1)
+		"insertvalue",   // build the payload struct
+		"load %Shape",   // read back the first-class value
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("construction IR missing %q:\n%s", want, got)
