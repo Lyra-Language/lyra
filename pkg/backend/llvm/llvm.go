@@ -60,13 +60,15 @@
 //     `stack` values lower by value,
 //     `shared` values to a pointer to a ref-counted box — see ALLOCATION.md. The
 //     two docs compose: the sum-type layout is the payload; the flavor decides
-//     inline vs boxed. layout.go/runtime.go provide the building blocks —
-//     LLVMPrimitive, SharedBoxType, TagType, DataUnionType, SizeAndAlign, and
-//     declareRuntime (wired into Emit) — for lowerType to dispatch over.
-//  2. What's next in lowerExpr: string concatenation (`++`) and interpolation
-//     (both build a new string → need a heap allocator, `lyra_rc_alloc` + memcpy)
-//     and `print`. Already lowering: arithmetic and comparisons on ints and
-//     floats, string `==`/`!=`, `&&`/`||`, `if`/blocks, `let`/`var`, calls,
+//     inline vs boxed. layout.go provides the building blocks — LLVMPrimitive,
+//     SharedBoxType, TagType, DataUnionType, SizeAndAlign — for lowerType to
+//     dispatch over; runtime.go emits the ref-counted heap runtime (lyra_rc_*)
+//     as real function bodies, lazily, the first time a value hits the heap.
+//  2. What's next in lowerExpr: string interpolation (value→string formatting of
+//     its segments) and `print` (the output shim). Already lowering: arithmetic
+//     and comparisons on ints and floats, string `==`/`!=` and `++`
+//     (concatenation, heap-allocated via lyra_rc_alloc + memcpy), `&&`/`||`,
+//     `if`/blocks, `let`/`var`, calls,
 //     tuple/struct instances, `data` construction (alloca + typed payload store),
 //     strings (fat pointer, STRING_LAYOUT.md), and `match` over every scrutinee
 //     kind — `data` (tag switch), int/float/string scalar (comparison ladder),
@@ -85,8 +87,10 @@
 //     rather than hand-written phi nodes. Note lowerExpr returns the block control
 //     ends in, not just a value — threaded so a branching form (`if`) can move the
 //     insertion point; every non-branching case returns its own block unchanged.
-//  3. Runtime: a heap allocator (string `++`/interpolation, dynamic values) and
-//     `print` output; the overflow trap for todo #2 (via llvm.sadd.with.overflow)
+//  3. Runtime: the ref-counted heap allocator now exists (runtime.go —
+//     lyra_rc_alloc/retain/release on libc malloc/free); still to come are
+//     release-on-scope-exit (heap values leak today), `shared`-value lowering,
+//     `print` output, the overflow trap for todo #2 (via llvm.sadd.with.overflow),
 //     and the builtin overflow-arithmetic methods (typechecker/builtins.go →
 //     two's-complement +/-/* and llvm.{s,u}{add,sub}.sat).
 //
@@ -103,9 +107,10 @@
 //   - match.go — match dispatch, guards, and the scalar (int/float/string) if-else ladder
 //   - match_aggregate.go — struct/tuple/data pattern matching (aggPattern* + shared ladder + data payloads)
 //   - arithmetic.go — math ops, comparisons, &&/||, numeric conversions, width coercions
-//   - strings.go — string fat-pointer helpers (literals, equality via memcmp)
+//   - strings.go — string fat-pointer helpers (literals, equality via memcmp, ++ concatenation)
 //   - rounding.go — builtin method calls (x.floor()/.ceil()/.round()) via lazily-declared LLVM intrinsics
-//   - layout.go — llir type toolkit + SizeAndAlign; runtime.go — runtime shim declarations
+//   - layout.go — llir type toolkit + SizeAndAlign
+//   - runtime.go — the ref-counted heap runtime (lyra_rc_alloc/retain/release), emitted lazily
 package llvm
 
 import (
@@ -143,7 +148,6 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 		return nil, fmt.Errorf("llvm: nil program or entry point")
 	}
 	m := ir.NewModule()
-	declareRuntime(m)
 	l := &lowerer{
 		module:             m,
 		res:                res,
@@ -183,10 +187,20 @@ type lowerer struct {
 	structTypes map[string]*lltypes.StructType // name → its struct type (for named tuple and struct lowering)
 	strLitCount int                            // counter for unique string-literal global names
 	memcmp      *ir.Func                       // libc memcmp, declared lazily on first string comparison
+	memcpy      *ir.Func                       // libc memcpy, declared lazily on first string concatenation
 
 	// roundingIntrinsics caches lazily-declared llvm.{floor,ceil,round}.<width>
 	// intrinsics (rounding.go), keyed by full intrinsic name.
 	roundingIntrinsics map[string]*ir.Func
+
+	// The ref-counted heap runtime (runtime.go), emitted lazily into the module
+	// the first time a value needs the heap (today: string concatenation). nil
+	// until ensureRCRuntime runs; all five are populated together.
+	malloc    *ir.Func // libc malloc
+	free      *ir.Func // libc free
+	rcAlloc   *ir.Func // lyra_rc_alloc: malloc a box, rc = 1
+	rcRetain  *ir.Func // lyra_rc_retain: rc += 1 (pinned no-op)
+	rcRelease *ir.Func // lyra_rc_release: rc -= 1, drop + free at 0 (pinned no-op)
 
 	// Per-function state, reset by beginFunction at the start of each function
 	// body (main and every user function get their own).
@@ -222,9 +236,12 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 	case *ast.StringLiteralExpr:
 		return l.lowerStringConstant(block, e.Value), block, nil
 	case *ast.StringConcatExpr:
-		return nil, nil, fmt.Errorf("llvm: string concatenation (`++`) not implemented yet (needs heap allocation)")
+		return l.lowerStringConcat(block, e)
 	case *ast.InterpolatedStringExpr:
-		return nil, nil, fmt.Errorf("llvm: string interpolation not implemented yet (needs heap allocation)")
+		// The heap allocator now exists; what interpolation still needs is
+		// value→string formatting for its non-string segments (int/float/… → text),
+		// a separate feature from concatenation.
+		return nil, nil, fmt.Errorf("llvm: string interpolation not implemented yet (needs value→string formatting of interpolated segments)")
 	case *ast.BooleanLiteralExpr:
 		bit := int64(0)
 		if e.Value {

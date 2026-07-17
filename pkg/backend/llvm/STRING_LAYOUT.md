@@ -54,12 +54,27 @@ This is the Go `string` / Rust `&str` / Swift contiguous-UTF-8 representation.
 - **Params / returns / `let`** — by-value aggregate, works via `lowerType` and the
   aggregate path in `emitReturn`.
 
+## What lowers now (heap-allocating)
+
+- **Concatenation `++`** (`lowerStringConcat`) — a concatenated string is the
+  first value this backend puts on the heap: its bytes don't exist until run
+  time, so it can't point into a constant global. It allocates a ref-counted box
+  (`rcAllocPayload` → `lyra_rc_alloc`, ALLOCATION.md), `memcpy`s both operands'
+  bytes into the payload, and returns a fat pointer `{ box+header, la+lb }`. The
+  operands are ordinary fat pointers wherever their bytes live (literal global,
+  another heap box, a parameter), so a chain `a ++ b ++ c` composes left-to-right,
+  each step a fresh box; `memcpy` of length 0 is a valid no-op, so an empty
+  operand needs no special case. **Ownership:** the box is *not* freed yet — a
+  heap string leaks (no double-free / use-after-free, just unreclaimed memory).
+  Release-on-scope-exit via `lyra_rc_release` is the deferred ownership story; the
+  box header is already in place for it.
+
 ## Deferred
 
-- **Concatenation `++` and interpolation** — produce a *new* string, which needs a
-  heap allocation (`lyra_rc_alloc` from ALLOCATION.md + `memcpy`) and the
-  ownership/free story. This is the natural next task; it's where the runtime
-  allocator first gets exercised for strings. Both error loudly today.
+- **Interpolation** — no longer blocked on the allocator (it exists); what it
+  still needs is **value→string formatting** for its non-string segments
+  (`"n=${n}"` with `n` an int → text), a separate feature from concatenation.
+  Errors loudly today.
 - **`print` / `println` of a string** — needs the output shim (`write(1, data,
   len)`); observable via stdout rather than the exit code.
 - **Escaped string patterns** (`"a\tb" =>`) — the pattern text is raw-quoted and
@@ -67,5 +82,7 @@ This is the Go `string` / Rust `&str` / Swift contiguous-UTF-8 representation.
   literal bytes; deferred with a loud error rather than risking a silent mismatch.
 - **Regex patterns** in a string `match` (`r/…/`) — the engine exists
   (`pkg/regex`) but isn't wired into codegen.
-- **Ownership / freeing** — a literal points to static memory (never freed); once
-  heap strings exist, release/retain follows the ALLOCATION.md `shared` box rules.
+- **Ownership / freeing** — a literal points to static memory (never freed); a
+  heap string (from `++`) now allocates a ref-counted box but is not yet released,
+  so it leaks. Release/retain following the ALLOCATION.md `shared` box rules
+  (driven by `own`/`ref`/`mut` and scope exit) is the deferred ownership work.

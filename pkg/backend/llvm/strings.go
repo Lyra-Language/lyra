@@ -44,6 +44,60 @@ func (l *lowerer) memcmpFunc() *ir.Func {
 	return l.memcmp
 }
 
+// memcpyFunc lazily declares libc's `i8* @memcpy(i8*, i8*, i64)` (clang links
+// libc), caching it so every concatenation shares one declaration.
+func (l *lowerer) memcpyFunc() *ir.Func {
+	if l.memcpy == nil {
+		i8ptr := lltypes.NewPointer(lltypes.I8)
+		l.memcpy = l.module.NewFunc("memcpy", i8ptr,
+			ir.NewParam("", i8ptr), ir.NewParam("", i8ptr), ir.NewParam("", lltypes.I64))
+	}
+	return l.memcpy
+}
+
+// lowerStringConcat lowers `a ++ b`. A concatenated string is the first value
+// this backend puts on the heap: it can't point into a constant global the way a
+// literal does (its bytes don't exist until run time), so it allocates a
+// ref-counted box (rcAllocPayload → lyra_rc_alloc), memcpy's both operands'
+// bytes in, and returns a fat pointer { data, la+lb } into the box's payload.
+//
+// The two operands are ordinary fat pointers regardless of where *their* bytes
+// live (literal global, another heap box, a parameter), so this composes: a
+// chain `a ++ b ++ c` just concatenates left-to-right, each step allocating a
+// fresh box. memcpy over a zero length is a valid no-op, so an empty operand
+// needs no special case.
+//
+// Ownership: the box is never freed in this slice — a heap string leaks (no
+// double-free or use-after-free, just unreclaimed memory). Release-on-scope-exit
+// via lyra_rc_release is the deferred ownership story (ALLOCATION.md); the box
+// header is already in place for it.
+func (l *lowerer) lowerStringConcat(block *ir.Block, e *ast.StringConcatExpr) (value.Value, *ir.Block, error) {
+	left, block, err := l.lowerExpr(block, e.Left)
+	if err != nil {
+		return nil, nil, err
+	}
+	right, block, err := l.lowerExpr(block, e.Right)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	dataA := block.NewExtractValue(left, 0)
+	lenA := block.NewExtractValue(left, 1)
+	dataB := block.NewExtractValue(right, 0)
+	lenB := block.NewExtractValue(right, 1)
+	total := block.NewAdd(lenA, lenB)
+
+	_, dst := l.rcAllocPayload(block, total)
+	memcpy := l.memcpyFunc()
+	block.NewCall(memcpy, dst, dataA, lenA)          // dst[0 .. lenA)  = a
+	tail := block.NewGetElementPtr(lltypes.I8, dst, lenA)
+	block.NewCall(memcpy, tail, dataB, lenB)         // dst[lenA .. total) = b
+
+	strTy := StringLLVMType()
+	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dst, 0)
+	return block.NewInsertValue(withPtr, total, 1), block, nil
+}
+
 // lowerStringEquality builds the i1 "are these two strings equal?" test,
 // branchlessly: strings are equal iff their byte lengths match AND the first
 // min(la, lb) bytes compare equal. memcmp over min(la, lb) never reads past

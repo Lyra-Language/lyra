@@ -133,6 +133,123 @@ func TestExec_StringMatch(t *testing.T) {
 	}
 }
 
+// Concatenation heap-allocates a new string (lyra_rc_alloc + memcpy) and returns
+// a fat pointer into the box's payload — observed here by comparing the result to
+// a literal via ==, and by matching on it. Covers empty operands (memcpy n=0), a
+// concat-of-concats chain, and concatenation of runtime (parameter) strings whose
+// bytes don't live in a constant global.
+func TestExec_StringConcat(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			"two literals",
+			`let main = () -> u8 => {
+			   let s: string = "foo" ++ "bar"
+			   if s == "foobar" { 1 } else { 0 }
+			 }`,
+			1,
+		},
+		{
+			"empty left operand",
+			`let main = () -> u8 => {
+			   let s: string = "" ++ "x"
+			   if s == "x" { 1 } else { 0 }
+			 }`,
+			1,
+		},
+		{
+			"empty right operand",
+			`let main = () -> u8 => {
+			   let s: string = "x" ++ ""
+			   if s == "x" { 1 } else { 0 }
+			 }`,
+			1,
+		},
+		{
+			"both empty",
+			`let main = () -> u8 => {
+			   let s: string = "" ++ ""
+			   if s == "" { 1 } else { 0 }
+			 }`,
+			1,
+		},
+		{
+			"chain of concats (left-associated)",
+			`let main = () -> u8 => {
+			   let s: string = "a" ++ "b" ++ "c" ++ "d"
+			   if s == "abcd" { 1 } else { 0 }
+			 }`,
+			1,
+		},
+		{
+			"concat of runtime (parameter) strings",
+			`let join = (a: string, b: string) -> string => a ++ b
+			 let main = () -> u8 => if join("hel", "lo") == "hello" { 1 } else { 0 }`,
+			1,
+		},
+		{
+			"a heap string matches",
+			`let main = () -> u8 => {
+			   let s: string = "yes" ++ "!"
+			   match s {
+			     "yes!" => 7,
+			     _      => 0,
+			   }
+			 }`,
+			7,
+		},
+		{
+			"length of the concatenated string is the sum",
+			`let main = () -> u8 => {
+			   let s: string = "abc" ++ "de"
+			   if s == "abcde" && s != "abcd" { 1 } else { 0 }
+			 }`,
+			1,
+		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestEmit_StringConcatIR pins the lowering: a call to the emitted allocator and
+// two memcpys building the result, plus the runtime being defined (not just
+// declared) inside the module.
+func TestEmit_StringConcatIR(t *testing.T) {
+	got, err := emitSource(t, `let main = () -> u8 => {
+	   let s: string = "foo" ++ "bar"
+	   if s == "foobar" { 1 } else { 0 }
+	 }`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"define i8* @lyra_rc_alloc(", // runtime is defined in-module, not an extern
+		"call i8* @lyra_rc_alloc(",   // concatenation allocates
+		"@memcpy",                    // and copies both halves
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("concat IR missing %q:\n%s", want, got)
+		}
+	}
+}
+
+// A program that never allocates carries no runtime — it's emitted lazily.
+func TestEmit_NoRuntimeWhenUnused(t *testing.T) {
+	got, err := emitSource(t, "let main = () -> u8 => 42\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "lyra_rc_alloc") {
+		t.Errorf("a non-allocating program should not emit the RC runtime:\n%s", got)
+	}
+}
+
 // TestEmit_StringIR pins the representation: a private constant for the bytes,
 // the { i8*, i64 } fat pointer, and a memcmp call for equality.
 func TestEmit_StringIR(t *testing.T) {
@@ -148,22 +265,15 @@ func TestEmit_StringIR(t *testing.T) {
 	}
 }
 
-// Concatenation, interpolation, and escaped string patterns are deferred (they
-// need a heap allocator / Lyra-specific unescaping) and must error loudly.
+// Interpolation and escaped string patterns are deferred (they need value→string
+// formatting / Lyra-specific unescaping) and must error loudly. Concatenation is
+// no longer here — it lowers now (TestExec_StringConcat).
 func TestEmit_StringDeferred(t *testing.T) {
 	cases := []struct {
 		name    string
 		src     string
 		wantErr string
 	}{
-		{
-			"concatenation",
-			`let main = () -> u8 => {
-			   let s: string = "a" ++ "b"
-			   if s == "ab" { 1 } else { 0 }
-			 }`,
-			"concatenation",
-		},
 		{
 			"interpolation",
 			`let main = () -> u8 => {

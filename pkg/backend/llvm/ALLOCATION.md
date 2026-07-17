@@ -61,20 +61,45 @@ skipping per-value refcount traffic (the reason arenas exist):
 This is the runtime side of the effect checker's arena discharge (a `shared`
 construction lexically inside a `with` block doesn't count as an escaping alloc).
 
-## Runtime shims (emit calls to these; link a tiny runtime)
+## Runtime shims
 
 ```
-lyra_rc_alloc(i64 size)            -> ptr    ; malloc + rc = 1
+lyra_rc_alloc(i64 size)            -> ptr    ; malloc(size) + rc = 1
 lyra_rc_retain(ptr)                          ; rc += 1  (no-op if pinned)
 lyra_rc_release(ptr, ptr drop_fn)            ; if --rc == 0: drop_fn(payload); free  (no-op if pinned)
 lyra_arena_alloc(ptr arena, i64 size) -> ptr ; bump; rc = pinned
 ```
 
-Start with `malloc`/`free`; a real bump/pool allocator comes later. `drop_fn` can
-be a per-type generated function, or release can be inlined per call site.
+**Implemented (`runtime.go`, `ensureRCRuntime`):** `lyra_rc_alloc`,
+`lyra_rc_retain`, and `lyra_rc_release` are emitted as **real function
+definitions into the module itself**, built on libc `malloc`/`free` (declared as
+externs, exactly like `memcmp`/`memcpy`). There is no separate runtime object to
+link — `lyrac build`'s single `clang out.ll` stays self-contained. The box header
+is a single `i64` refcount (`rcHeaderSize = 8`); the payload starts at
+`box + 8` (Lyra's max alignment is 8, so no extra padding). `PinnedRC` is the
+all-ones sentinel (`-1` as i64); retain/release compare against it and no-op.
+`drop_fn` is called on the payload (`box + 8`) before `free` when the count hits
+zero, and skipped when null. The runtime is emitted **lazily** — a program that
+never heaps carries none of it.
+
+**First consumer:** string concatenation (`++`, `lowerStringConcat`) allocates a
+box via `rcAllocPayload` and `memcpy`s into it (STRING_LAYOUT.md). It does not yet
+*release* — heap values currently leak (below). `lyra_arena_alloc` is still just a
+reserved name (the `with`-block work). A real bump/pool allocator replaces
+`malloc`/`free` later; `drop_fn` may become a per-type generated function.
 
 ## Deferred / out of scope for this decision
 
+- **Emitting retain/release at Lyra call/scope sites** — the shims exist and are
+  correct, but nothing wires an owning copy to a `retain` or a scope exit to a
+  `release` yet (the backend doesn't read `own`/`ref`/`mut` param modes, and
+  there's no scope-liveness tracking). So heap values (today: `++` strings)
+  allocate and **leak**. This is the next allocation slice; it needs the
+  ownership-modifier plumbing plus per-scope release insertion.
+- **`shared`-value lowering** — `lowerType` still resolves a `shared T` to its
+  by-value struct rather than a `ptr`-to-box; constructing a `shared` value
+  (`let n: shared Node = …`) isn't lowered. The box runtime it will use now
+  exists.
 - **Atomic refcounts** — *not* needed while refcount mutations happen only through
   owning bindings in sequential code and auto-parallelized `pure`/`det` functions
   take **borrows** (`ref`), which touch no refcount. Revisit only when the job
