@@ -48,9 +48,9 @@ func (l *lowerer) loopTarget(label string) (loopCtx, error) {
 //
 // It also manages the ownership bookkeeping for the scope: it pushes a managed
 // frame on entry (holding the scope's managed bindings) and, on the fall-through
-// exit, releases that frame before popping it. Last-use slot actions flush after
-// every statement (so a transferred/dropped binding is sentinelled before the
-// frame release). Managed temporaries flush at each statement boundary too —
+// exit, releases that frame before popping it. After each statement it runs
+// dropLastUsesInStmt (drop fusion — free this scope's bindings whose last use was
+// in that statement). Managed temporaries flush at each statement boundary too —
 // except, when flushTail is false (a value block), the *last* statement's
 // temporaries are held so they propagate to the enclosing statement: the block's
 // value may itself be such a temporary, and releasing it here would free it before
@@ -93,12 +93,13 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail 
 			return nil, nil, err
 		}
 		if block.Term == nil {
-			// Last-use slot actions run after every statement — including the tail —
-			// so a transferred/dropped binding is sentinelled before the block-exit
-			// frame release (otherwise the frame would free a value that was moved out
-			// as the block's result). Temporaries are held for the tail of a value
-			// block (flushTail false) since the tail may be the escaping block value.
-			l.flushSlotActions(block)
+			// Drop fusion: release-and-retire this scope's bindings whose last use is
+			// a borrow within the statement just lowered (in `block`, which post-
+			// dominates the statement). A statement that sealed (an early return) is
+			// skipped — the seal's frame release frees its bindings on that path.
+			l.dropLastUsesInStmt(block, stmt)
+			// Temporaries are held for the tail of a value block (flushTail false)
+			// since the tail may itself be the escaping block value.
 			if i != last || flushTail {
 				l.flushTemps()
 			}
@@ -140,7 +141,7 @@ func (l *lowerer) lowerForEffect(block *ir.Block, expr ast.Expression) (*ir.Bloc
 		return nil, err
 	}
 	if end.Term == nil {
-		l.flushCleanup(end)
+		l.flushTemps()
 	}
 	return end, nil
 }
@@ -158,7 +159,7 @@ func (l *lowerer) lowerBreak(block *ir.Block, s *ast.BreakStmt) error {
 	// Before the jump seals the block: release this iteration's pending temporaries
 	// and the managed bindings the loop body introduced (the frames from the loop's
 	// entry depth up), so break no longer leaks them.
-	l.flushCleanup(block)
+	l.flushTemps()
 	l.releaseManagedFramesFrom(block, ctx.frameDepth)
 	block.NewBr(ctx.breakTarget)
 	return nil
@@ -171,7 +172,7 @@ func (l *lowerer) lowerContinue(block *ir.Block, s *ast.ContinueStmt) error {
 	}
 	// Same as break: the current iteration's managed bindings are released before
 	// looping back (they're rebuilt next iteration).
-	l.flushCleanup(block)
+	l.flushTemps()
 	l.releaseManagedFramesFrom(block, ctx.frameDepth)
 	block.NewBr(ctx.continueTarget)
 	return nil

@@ -112,6 +112,41 @@ var ownershipCases = []struct {
 		9,
 	},
 	{
+		// A binding whose *last* use is inside a branch: drop fusion frees it after
+		// the enclosing statement (post-dominating the branch), on every path.
+		"conditional last use",
+		`let use = (s: string) -> u8 => if s == "hit" { 1 } else { 0 }
+		 let main = () -> u8 => {
+		   let s: string = "hi" ++ "t"
+		   let r: u8 = if s == "hit" { use(s) } else { 9 }
+		   r
+		 }`,
+		1,
+	},
+	{
+		// The last use sits in a statement that also early-returns on another path
+		// (a nested seal): the return path frees via the frame, the fall-through at
+		// last use — the drop must not be "stolen" from the fall-through.
+		"nested return in the last-use statement",
+		`let pick = (s: string, c: bool) -> u8 => if c { 3 } else { if s == "yo" { 7 } else { 0 } }
+		 let main = () -> u8 => {
+		   let s: string = "y" ++ "o"
+		   pick(s, false)
+		 }`,
+		7,
+	},
+	{
+		// The last use is inside a nested block, but the binding is declared in the
+		// outer block — it's dropped by the outer block after that statement.
+		"last use in a nested block",
+		`let main = () -> u8 => {
+		   let s: string = "ab" ++ "cd"
+		   let r: u8 = { if s == "abcd" { 4 } else { 0 } }
+		   r
+		 }`,
+		4,
+	},
+	{
 		// A conditional early return before a binding's last use: the return path
 		// frees via the frame, the fall-through frees at last use — exactly once each.
 		"early return before last use",
@@ -195,10 +230,9 @@ func TestEmit_OwnershipIR(t *testing.T) {
 		return strings.Count(got, needle)
 	}
 
-	// A single owned binding, used then dead: no retain (nothing is copied), and it
-	// is released (a missing release would leak). Under last-use it's dropped at its
-	// final use; the scope-exit frame release then no-ops on the sentinel, so the
-	// exact release count isn't pinned — only that a release exists.
+	// A single owned binding, used then dead: no retain (nothing is copied), and
+	// drop fusion frees it at its last use with exactly one release (no scope-exit
+	// no-op backstop).
 	single := `let main = () -> u8 => {
 	   let a: string = "x" ++ "y"
 	   if a == "xy" { 1 } else { 0 }
@@ -206,8 +240,8 @@ func TestEmit_OwnershipIR(t *testing.T) {
 	if n := count(single, "call void @lyra_rc_retain"); n != 0 {
 		t.Errorf("single binding: want 0 retains, got %d", n)
 	}
-	if n := count(single, "call void @lyra_rc_release"); n < 1 {
-		t.Errorf("single binding: want ≥1 release, got %d", n)
+	if n := count(single, "call void @lyra_rc_release"); n != 1 {
+		t.Errorf("single binding: want exactly 1 release (drop fusion), got %d", n)
 	}
 
 	// A copy is a *transfer* under Perceus last-use — no dup. Before last-use this
@@ -224,20 +258,38 @@ func TestEmit_OwnershipIR(t *testing.T) {
 		t.Errorf("copy (transfer): want ≥1 release, got %d", n)
 	}
 
-	// Stage-2 transfer fusion: a chain a→b→c retires the transferred bindings from
-	// their frame at the move, so only the final binding's drop (+ its sentinel
-	// no-op backstop) remains — 2 releases total, not one per binding.
+	// Stage-2 fusion end to end: a chain a→b→c transfers a and b at the moves
+	// (retired from the frame, no release) and drop-fuses c at its last use — so the
+	// whole chain, which allocates one box, emits exactly one release and no retains.
 	chain := `let main = () -> u8 => {
 	   let a: string = "hi" ++ "!"
 	   let b: string = a
 	   let c: string = b
 	   if c == "hi!" { 1 } else { 0 }
 	 }`
-	if n := count(chain, "call void @lyra_rc_release"); n != 2 {
-		t.Errorf("transfer chain: want 2 releases (only c's drop + backstop), got %d", n)
+	if n := count(chain, "call void @lyra_rc_release"); n != 1 {
+		t.Errorf("transfer chain: want exactly 1 release (a,b fused-transferred, c drop-fused), got %d", n)
 	}
 	if n := count(chain, "call void @lyra_rc_retain"); n != 0 {
 		t.Errorf("transfer chain: want 0 retains, got %d", n)
+	}
+
+	// Conservation for straight-line code: every heap allocation is released
+	// exactly once — releases == allocs. Fewer would leak, more would double-free
+	// (and macOS ASan can't see leaks, so this pins it statically). Two heap
+	// strings, each dropped at its last use.
+	src := `let main = () -> u8 => {
+	   let a: string = "x" ++ "y"
+	   let b: string = "p" ++ "q"
+	   if a == "xy" && b == "pq" { 1 } else { 0 }
+	 }`
+	allocs := count(src, "call i8* @lyra_rc_alloc")
+	rels := count(src, "call void @lyra_rc_release")
+	if allocs != 2 {
+		t.Errorf("conservation: expected 2 allocations, got %d", allocs)
+	}
+	if rels != allocs {
+		t.Errorf("conservation: %d releases != %d allocations (leak or double free)", rels, allocs)
 	}
 }
 

@@ -1,8 +1,12 @@
 package llvm
 
 import (
+	"slices"
+
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/value"
+
+	"github.com/Lyra-Language/lyra/pkg/ast"
 )
 
 // This file lowers the ownership model's scope-exit releases. The per-expression
@@ -60,6 +64,47 @@ func (l *lowerer) retireManagedSlot(slot value.Value) {
 func isManagedSlot(slot value.Value) bool {
 	a, ok := slot.(*ir.InstAlloca)
 	return ok && isStringLLVMType(a.ElemType)
+}
+
+// slotInTopFrame reports whether slot belongs to the current (innermost) scope's
+// managed frame — i.e. the binding was declared in the block being lowered.
+func (l *lowerer) slotInTopFrame(slot value.Value) bool {
+	return slices.Contains(l.managedFrames[len(l.managedFrames)-1], slot)
+}
+
+// dropLastUsesInStmt is the Perceus **drop fusion** (stage 2): after a statement
+// is lowered, release-and-retire every current-scope binding whose *last use* is a
+// borrow within that statement. It emits into `block` — the statement's end block,
+// which post-dominates the statement's internal branches — so the drop runs on
+// every path through the statement (a conditional last use is handled correctly),
+// and retiring the slot means the scope-exit frame release skips it: no sentinel,
+// no residual no-op. Bindings from enclosing scopes are left to their own block
+// (the top-frame restriction); a statement that itself sealed (an early return) is
+// skipped by the caller, so its bindings are freed by the seal's frame release on
+// that path instead.
+func (l *lowerer) dropLastUsesInStmt(block *ir.Block, stmt ast.Statement) {
+	if len(l.managedFrames[len(l.managedFrames)-1]) == 0 {
+		return // no bindings declared in this scope — nothing here can be dropped
+	}
+	seen := map[value.Value]bool{}
+	ast.WalkStmt(stmt, nil, func(e ast.Expression) bool {
+		id, ok := e.(*ast.IdentifierExpr)
+		if !ok {
+			return true
+		}
+		if transfer, isLast := l.res.Ownership.LastUse(e); !isLast || transfer {
+			return true // not a last use, or a transfer (retired at the move)
+		}
+		slot, found := l.locals[id.Name]
+		if !found || seen[slot] || !l.slotInTopFrame(slot) {
+			return true
+		}
+		seen[slot] = true
+		a := slot.(*ir.InstAlloca)
+		l.lowerStringRelease(block, block.NewLoad(a.ElemType, slot))
+		l.retireManagedSlot(slot)
+		return true
+	})
 }
 
 // releaseSlots emits a release for each recorded binding: load the current value

@@ -135,26 +135,32 @@ keeps scope-exit release). At a last use it emits:
 - **drop** (borrowing last use) — the binding is released at that statement
   rather than at scope exit.
 
-The backend retires the binding's slot with a **pinned sentinel** so the
-scope-exit frame release stays a correct, leak-safe backstop (a still-live box is
-freed; an already-handled slot no-ops). This keeps every path safe regardless of
-branches and early returns — verified under AddressSanitizer. The break/continue
-leak is also closed (the loop's managed frames are released on those edges).
+The break/continue leak is also closed (the loop's managed frames are released on
+those edges).
 
-**[IN PROGRESS] Stage 2 — dup/drop fusion.** A last-use **transfer** moves the
-reference at the use, so its scope-exit release is a pure no-op — the backend
-now retires the binding from its frame *immediately at the move*
-(`retireManagedSlot`) instead of sentinelling it, eliminating the no-op release
-entirely (a chain `a → b → c` emits no per-transfer release). Safe because a
-transfer is unconditional and the removal is compile-after any earlier seal (which
-still saw the binding in-frame). **Not yet fused:** a last-use **drop** still
-sentinels + keeps the frame backstop (its release must follow the borrow, so it's
-deferred, which entangles with the seal/pending timing) — one residual no-op per
-dropped binding remains.
+**[DONE] Stage 2 — dup/drop fusion.** Both a last-use transfer and a last-use drop
+are now *fused* (no scope-exit release, no sentinel, no residual no-op):
 
-**Still open:** the drop-fusion above; managed values inside aggregates (still
-leak — see below); the drop of a value whose *last* use is inside a branch is left
-to the frame (only unconditional transfers/drops are hoisted to last-use). Stages
+- A **transfer** moves the reference at the use, so the backend retires the
+  binding from its frame *immediately at the move* (`retireManagedSlot`).
+- A **drop** is emitted by `dropLastUsesInStmt`: after each statement,
+  `lowerBlockStmts` walks it for last-use-borrow nodes and, for each binding
+  declared in the current scope, releases it and retires the slot — in the
+  statement's end block, which **post-dominates** the statement's internal
+  branches, so a *conditional* last use is freed correctly on every path. Placing
+  drops at statement boundaries (not via a cross-statement pending list) is what
+  avoids the "steal" hazard where an early return in the same statement would grab
+  a drop belonging to the fall-through: a sealed statement is skipped, so its
+  bindings are freed by the seal's frame release on that path, and the
+  fall-through frees at the statement boundary — exactly once each.
+
+A copy chain `a → b → c` now emits **one** allocation and **one** release, no
+retains. The frame is still the leak-safe backstop for anything not fused
+(ineligible/loop-referenced bindings, or a statement that sealed). Verified
+memory-safe under AddressSanitizer, with static release==allocation conservation
+checks (macOS ASan can't see leaks).
+
+**Still open:** managed values inside aggregates (still leak — see below). Stages
 3–4 (FBIP reuse) need `shared`-value lowering first. See `todo.md` Backend
 `[DECIDED 07/17]`.
 
