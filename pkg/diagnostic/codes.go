@@ -92,4 +92,10 @@ const (
 	// lowers to `fcmp oeq`). A value off by an ULP silently compares unequal, so
 	// results may be surprising; a tolerance check or a range pattern is safer.
 	CodeImpreciseFloatEquality = "lyra-W008"
+
+	// CodeScreamingCaseTypeName: a type declared with an all-uppercase
+	// (SCREAMING_CASE) name. Such a name lexes as a `const_identifier`, not a
+	// `user_defined_type_name`, so a struct literal `NAME { … }` won't parse — the
+	// type can be referenced but never constructed. Give it a PascalCase name.
+	CodeScreamingCaseTypeName = "lyra-W009"
 )
