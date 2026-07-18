@@ -196,21 +196,21 @@ func TestEmit_DataConstructionIR(t *testing.T) {
 	}
 }
 
-// TestEmit_DataSharedPayloadConstruction_Deferred: constructing a variant with a
-// `shared` payload field (a recursive `Cons`) needs ref-counted-box allocation,
-// which isn't lowered yet, so it errors loudly.
-func TestEmit_DataSharedPayloadConstruction_Deferred(t *testing.T) {
-	src := `data List = Nil | Cons(i64, shared List)
+// TestEmit_DataSharedPayloadConstruction: constructing a variant with a `shared`
+// payload field (a recursive `Cons`) heap-allocates the nested value in a
+// ref-counted box (the `shared List` field is a pointer to that box).
+func TestEmit_DataSharedPayloadConstruction(t *testing.T) {
+	got, err := emitSource(t, `data List = Nil | Cons(i64, shared List)
 	 let main = () -> u8 => {
 	   let c = Cons(1, Nil)
 	   0
-	 }`
-	_, err := emitSource(t, src)
-	if err == nil {
-		t.Fatal("expected an error: `shared` payload construction is not implemented yet")
+	 }`)
+	if err != nil {
+		t.Fatalf("shared payload construction should lower now: %v", err)
 	}
-	if !strings.Contains(err.Error(), "shared") {
-		t.Errorf("expected a `shared` payload error, got: %v", err)
+	// The nested Nil is boxed for the `shared List` field.
+	if !strings.Contains(got, "call i8* @lyra_rc_alloc") {
+		t.Errorf("expected a box allocation for the shared payload:\n%s", got)
 	}
 }
 

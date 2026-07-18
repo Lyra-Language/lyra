@@ -160,21 +160,47 @@ retains. The frame is still the leak-safe backstop for anything not fused
 memory-safe under AddressSanitizer, with static release==allocation conservation
 checks (macOS ASan can't see leaks).
 
-**Still open:** managed values inside aggregates (still leak — see below). Stages
-3–4 (FBIP reuse) need `shared`-value lowering first. See `todo.md` Backend
-`[DECIDED 07/17]`.
+**Still open:** managed values inside aggregates (still leak — see below).
+
+## `shared`-value lowering (implemented)
+
+A `shared T` lowers to a **pointer to `SharedBox(T) = { i64 rc, T }`** (`lowerType`;
+`shared.go`), so it slots into the same runtime + ownership machinery as strings:
+
+- **Construction** (`lowerStructInstanceExpr`, `lowerDataConstruction`): a
+  `shared`-flavored construction builds the inline payload, then `lowerBoxShared`
+  allocates `header + sizeof(payload)` via `lyra_rc_alloc` (rc = 1) and stores the
+  payload; the value is the box pointer. The flavor is read from the construction's
+  recorded type, which the typechecker stamps `Shared` for the initializer of a
+  `shared`-annotated binding (and, transitively, for a `shared` payload argument —
+  so a recursive `Cons(1, Nil)` boxes the nested `Nil`).
+- **Field access** (`lowerMemberExpr`): a `shared` object is a box pointer, so a
+  field is read by `getelementptr` through the box (`box → payload → field`) + load,
+  rather than `extractvalue` on an inline value.
+- **`shared` fields** lower to pointers automatically (`lowerType`), which is also
+  what makes a recursive `shared` field pointer-sized and finite (matching
+  `SizeAndAlign` and the E014 check).
+- **Ownership**: `IsManaged` now covers `shared` (`AllocationOf == Shared`), so a
+  `shared` binding gets the full retain / release / last-use / transfer / drop
+  treatment. Retain/release dispatch on the value's representation
+  (`lowerManagedRetain`/`Release`): a string recovers its box via `stringBox`; a
+  `shared` value *is* the box pointer. Verified memory-safe under AddressSanitizer
+  with release==allocation conservation.
+
+Not yet done: `shared` arrays; `shared` construction in a bare argument/return
+position (the flavor isn't stamped on the node there — only annotated bindings and
+`shared` payload args get it); recursive **release** of a `shared`/string value
+stored in an aggregate field (release passes a null `drop_fn`, so those leak — the
+same aggregate-drop deferral below). `match` on a `shared data` value (destructuring
+through the box) is also not wired yet.
 
 ## Deferred / out of scope for this decision
 
-- **Managed values inside aggregates** — a string stored in a struct/tuple/`data`
-  field is conservatively *transferred* into the aggregate and then **leaks**
-  (per-type aggregate drop isn't implemented). Safe (never a double free), but not
-  yet reclaimed. break/continue paths also leak the current iteration's bindings.
-- **`shared`-value lowering** — `lowerType` still resolves a `shared T` to its
-  by-value struct rather than a `ptr`-to-box; constructing a `shared` value
-  (`let n: shared Node = …`) isn't lowered. The box runtime and the ownership
-  pass it will reuse now exist (the pass's "managed" set just needs to grow from
-  strings to `shared`).
+- **Managed values inside aggregates** — a string or `shared` value stored in a
+  struct/tuple/`data` field is conservatively *transferred* into the aggregate and
+  then **leaks** (per-type aggregate drop isn't implemented — release uses a null
+  `drop_fn`). Safe (never a double free), but not yet reclaimed. break/continue
+  paths also leak the current iteration's bindings.
 - **Atomic refcounts** — *not* needed while refcount mutations happen only through
   owning bindings in sequential code and auto-parallelized `pure`/`det` functions
   take **borrows** (`ref`), which touch no refcount. Revisit only when the job

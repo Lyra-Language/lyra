@@ -96,10 +96,11 @@ func (t *Table) LastUse(e ast.Expression) (transfer, ok bool) {
 }
 
 // IsManaged reports whether values of type t are reference-counted (freed via
-// retain/release). Today: strings. This is the single definition of "managed",
-// shared by the pass and the backend.
+// retain/release): a string, or a `shared`-flavored value (heap-allocated in a
+// ref-counted box). This is the single definition of "managed", shared by the
+// pass and the backend.
 func IsManaged(t types.Type) bool {
-	return types.IsString(t)
+	return types.IsString(t) || types.AllocationOf(t) == types.Shared
 }
 
 // Analyze walks the typed program and returns the retain/release-temp Table.

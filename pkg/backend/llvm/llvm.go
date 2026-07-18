@@ -110,7 +110,8 @@
 //   - match.go — match dispatch, guards, and the scalar (int/float/string) if-else ladder
 //   - match_aggregate.go — struct/tuple/data pattern matching (aggPattern* + shared ladder + data payloads)
 //   - arithmetic.go — math ops, comparisons, &&/||, numeric conversions, width coercions
-//   - strings.go — string fat-pointer helpers (literals as pinned boxes, equality via memcmp, ++ concatenation, retain/release)
+//   - strings.go — string fat-pointer helpers (literals as pinned boxes, equality via memcmp, ++ concatenation)
+//   - shared.go — `shared` value boxing + the type-dispatching managed retain/release
 //   - ownership_lower.go — scope-exit release of managed bindings (the managed-frame stack)
 //   - rounding.go — builtin method calls (x.floor()/.ceil()/.round()) via lazily-declared LLVM intrinsics
 //   - layout.go — llir type toolkit + SizeAndAlign
@@ -264,9 +265,9 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 	if err != nil {
 		return nil, nil, err
 	}
-	if v != nil && isStringLLVMType(v.Type()) {
+	if v != nil && isManagedLLVMType(v.Type()) {
 		if l.res.Ownership.ShouldRetain(expr) {
-			l.lowerStringRetain(end, v)
+			l.lowerManagedRetain(end, v)
 		}
 		if l.res.Ownership.ShouldReleaseTemp(expr) {
 			l.pendingReleases = append(l.pendingReleases, pendingTemp{v, end})
@@ -291,7 +292,7 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 // branches), then clears the pending list.
 func (l *lowerer) flushTemps() {
 	for _, p := range l.pendingReleases {
-		l.lowerStringRelease(p.block, p.val)
+		l.lowerManagedRelease(p.block, p.val)
 	}
 	l.pendingReleases = nil
 }

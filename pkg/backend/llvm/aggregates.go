@@ -97,7 +97,10 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: struct instance lowering not implemented for %s", recorded)
 	}
-	llType, err := l.lowerType(structType)
+	// Build the inline struct payload first (stripping any `shared` flavor, which
+	// would otherwise lower to a box pointer); it's boxed at the end if shared.
+	stackStructType := types.WithAllocation(structType, types.Stack).(types.NamedStructType)
+	llType, err := l.lowerType(stackStructType)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -129,6 +132,15 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 			return nil, nil, err
 		}
 		agg = block.NewInsertValue(agg, v, uint64(i))
+	}
+	// A `shared`-flavored construction is heap-allocated in a ref-counted box; the
+	// value is the box pointer. The flavor is recorded on this node only when it's
+	// the direct initializer of a `shared`-annotated binding (checkVarDecl).
+	if types.AllocationOf(recorded) == types.Shared {
+		// Stack strips the Shared flavor so the payload sizes as its inline struct,
+		// not pointer-sized (WithAllocation treats Unspecified as "no change").
+		boxed, err := l.lowerBoxShared(block, agg, types.WithAllocation(structType, types.Stack))
+		return boxed, block, err
 	}
 	return agg, block, nil
 }
@@ -163,6 +175,22 @@ func (l *lowerer) lowerMemberExpr(block *ir.Block, e *ast.MemberExpr) (value.Val
 	obj, block, err := l.lowerExpr(block, e.Object)
 	if err != nil {
 		return nil, nil, err
+	}
+	// A `shared` object is a pointer to its box `{ i64 rc, payload }`; read the field
+	// through the box (getelementptr box → payload → field, then load) rather than
+	// extractvalue on an inline struct.
+	if ptr, ok := obj.Type().(*lltypes.PointerType); ok {
+		boxTy, ok := ptr.ElemType.(*lltypes.StructType)
+		if !ok || len(boxTy.Fields) != 2 {
+			return nil, nil, fmt.Errorf("llvm: member access on non-box pointer %s", obj.Type())
+		}
+		payloadTy, ok := boxTy.Fields[1].(*lltypes.StructType)
+		if !ok || idx >= len(payloadTy.Fields) {
+			return nil, nil, fmt.Errorf("llvm: `shared` field access on non-struct payload %s", boxTy.Fields[1])
+		}
+		fieldPtr := block.NewGetElementPtr(boxTy, obj,
+			constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1), constant.NewInt(lltypes.I32, int64(idx)))
+		return block.NewLoad(payloadTy.Fields[idx], fieldPtr), block, nil
 	}
 	if _, ok := obj.Type().(*lltypes.StructType); !ok {
 		return nil, nil, fmt.Errorf("llvm: member access on non-struct value of type %s", obj.Type())
@@ -237,7 +265,10 @@ func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctor
 		return nil, nil, fmt.Errorf("llvm: constructor %q expects %d argument(s), got %d", ctorName, len(fields), len(args))
 	}
 
-	llType, err := l.lowerType(dt)
+	// Build the inline tagged-union value first (stripping any `shared` flavor,
+	// which would lower to a box pointer); it's boxed at the end if shared.
+	stackDt := types.WithAllocation(dt, types.Stack).(types.DataType)
+	llType, err := l.lowerType(stackDt)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -283,19 +314,25 @@ func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctor
 		block.NewStore(payload, typedPtr)
 	}
 
-	return block.NewLoad(unionTy, slot), block, nil
+	union := block.NewLoad(unionTy, slot)
+	// A `shared` data value is heap-allocated in a ref-counted box; the value is the
+	// box pointer. (This is how a recursive `shared` payload field — a `Cons`'s
+	// `shared List` — is filled: the nested constructor is boxed here.)
+	if types.AllocationOf(dt) == types.Shared {
+		boxed, err := l.lowerBoxShared(block, union, stackDt)
+		return boxed, block, err
+	}
+	return union, block, nil
 }
 
 // dataPayloadStructType is the LLVM struct of a variant's payload fields, in
 // order — what gets stored into (and later read from) the union's payload blob.
-// A `shared` field is deferred (it needs ref-counted-box allocation).
+// A `shared` field lowers to a pointer (lowerType), which is also what makes a
+// recursive `shared` reference finite.
 func (l *lowerer) dataPayloadStructType(ctor types.DataTypeConstructor) (*lltypes.StructType, error) {
 	fieldTypes := ctor.FieldTypes()
 	fields := make([]lltypes.Type, len(fieldTypes))
 	for i, p := range fieldTypes {
-		if types.AllocationOf(p) == types.Shared {
-			return nil, fmt.Errorf("llvm: `shared` payload field in constructor %q not implemented yet (needs ref-counted allocation)", ctor.Name)
-		}
 		ft, err := l.lowerType(p)
 		if err != nil {
 			return nil, err

@@ -179,6 +179,20 @@ func (l *lowerer) lowerStructDef(t types.NamedStructType) error {
 }
 
 func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
+	// A `shared` value is a pointer to a ref-counted box `{ i64 rc, payload }`
+	// (ALLOCATION.md) — regardless of what the payload is. Strip the flavor to get
+	// the by-value payload type, lower that, and wrap it in the box pointer. This is
+	// also how a `shared` struct/data field or a recursive `shared` reference
+	// becomes pointer-sized (finite), matching SizeAndAlign.
+	if types.AllocationOf(lyraType) == types.Shared {
+		// Strip to Stack (an explicit flavor — WithAllocation treats Unspecified as
+		// "no change", which would loop) to get the by-value payload type.
+		payload, err := l.lowerType(types.WithAllocation(lyraType, types.Stack))
+		if err != nil {
+			return nil, err
+		}
+		return lltypes.NewPointer(SharedBoxType(payload)), nil
+	}
 	switch t := lyraType.(type) {
 	case types.PrimitiveType:
 		irType, ok := LLVMPrimitive(t.Name)

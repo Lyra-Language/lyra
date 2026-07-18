@@ -59,11 +59,12 @@ func (l *lowerer) retireManagedSlot(slot value.Value) {
 	}
 }
 
-// isManagedSlot reports whether an alloca holds a managed (string) value — the
-// signal that its binding participates in refcounting.
+// isManagedSlot reports whether an alloca holds a managed (ref-counted) value — a
+// string or a `shared` box — the signal that its binding participates in
+// refcounting.
 func isManagedSlot(slot value.Value) bool {
 	a, ok := slot.(*ir.InstAlloca)
-	return ok && isStringLLVMType(a.ElemType)
+	return ok && isManagedLLVMType(a.ElemType)
 }
 
 // slotInTopFrame reports whether slot belongs to the current (innermost) scope's
@@ -101,7 +102,7 @@ func (l *lowerer) dropLastUsesInStmt(block *ir.Block, stmt ast.Statement) {
 		}
 		seen[slot] = true
 		a := slot.(*ir.InstAlloca)
-		l.lowerStringRelease(block, block.NewLoad(a.ElemType, slot))
+		l.lowerManagedRelease(block, block.NewLoad(a.ElemType, slot))
 		l.retireManagedSlot(slot)
 		return true
 	})
@@ -113,7 +114,7 @@ func (l *lowerer) releaseSlots(block *ir.Block, slots []value.Value) {
 	for _, slot := range slots {
 		a := slot.(*ir.InstAlloca)
 		v := block.NewLoad(a.ElemType, slot)
-		l.lowerStringRelease(block, v)
+		l.lowerManagedRelease(block, v)
 	}
 }
 

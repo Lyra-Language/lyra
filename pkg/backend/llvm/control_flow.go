@@ -304,7 +304,7 @@ func (l *lowerer) lowerVarReassignment(block *ir.Block, vrs *ast.VarReassignment
 	if isManagedSlot(slot) {
 		a := slot.(*ir.InstAlloca)
 		old := block.NewLoad(a.ElemType, slot)
-		l.lowerStringRelease(block, old)
+		l.lowerManagedRelease(block, old)
 	}
 	// Store into the existing alloca; the locals entry stays the alloca slot
 	// (a pointer), NOT the stored value — a later read loads from it. Overwriting

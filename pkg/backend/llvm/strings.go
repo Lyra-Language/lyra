@@ -53,21 +53,9 @@ func (l *lowerer) stringBox(block *ir.Block, str value.Value) value.Value {
 	return block.NewGetElementPtr(lltypes.I8, data, constant.NewInt(lltypes.I64, -rcHeaderSize))
 }
 
-// lowerStringRetain / lowerStringRelease emit a refcount bump / drop on a string
-// value's box. Both are safe on any string: a literal's box is pinned (PinnedRC),
-// so the runtime no-ops; only a heap string's count actually moves, and release
-// frees it at zero. release passes a null drop_fn — a string's payload is plain
-// bytes with no nested owned resources.
-func (l *lowerer) lowerStringRetain(block *ir.Block, str value.Value) {
-	l.ensureRCRuntime()
-	block.NewCall(l.rcRetain, l.stringBox(block, str))
-}
-
-func (l *lowerer) lowerStringRelease(block *ir.Block, str value.Value) {
-	l.ensureRCRuntime()
-	null := constant.NewNull(lltypes.NewPointer(lltypes.I8))
-	block.NewCall(l.rcRelease, l.stringBox(block, str), null)
-}
+// (Refcount bump/drop on a string's box are handled by the type-dispatching
+// lowerManagedRetain / lowerManagedRelease in shared.go, which recover the box via
+// stringBox above. A literal's box is pinned, so the runtime no-ops on it.)
 
 
 // memcmpFunc lazily declares libc's `i32 @memcmp(i8*, i8*, i64)` (clang links
