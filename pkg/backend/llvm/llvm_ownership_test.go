@@ -223,6 +223,22 @@ func TestEmit_OwnershipIR(t *testing.T) {
 	if n := count(cp, "call void @lyra_rc_release"); n < 1 {
 		t.Errorf("copy (transfer): want ≥1 release, got %d", n)
 	}
+
+	// Stage-2 transfer fusion: a chain a→b→c retires the transferred bindings from
+	// their frame at the move, so only the final binding's drop (+ its sentinel
+	// no-op backstop) remains — 2 releases total, not one per binding.
+	chain := `let main = () -> u8 => {
+	   let a: string = "hi" ++ "!"
+	   let b: string = a
+	   let c: string = b
+	   if c == "hi!" { 1 } else { 0 }
+	 }`
+	if n := count(chain, "call void @lyra_rc_release"); n != 2 {
+		t.Errorf("transfer chain: want 2 releases (only c's drop + backstop), got %d", n)
+	}
+	if n := count(chain, "call void @lyra_rc_retain"); n != 0 {
+		t.Errorf("transfer chain: want 0 retains, got %d", n)
+	}
 }
 
 // buildAndRunASan emits IR for src, compiles it with -fsanitize=address, runs the

@@ -36,6 +36,25 @@ func (l *lowerer) addManagedBinding(slot value.Value) {
 	l.managedFrames[top] = append(l.managedFrames[top], slot)
 }
 
+// retireManagedSlot removes a binding's alloca from whichever frame holds it, so
+// no later frame release touches it — the Perceus **transfer fusion** (stage 2):
+// a last-use transfer moves the reference to the consumer, so the binding's
+// scope-exit release would be a pure no-op, and dropping it from the frame here
+// removes it entirely (no sentinel, no no-op release). Safe because a transfer is
+// unconditional (the ownership pass only marks a non-branch use) and this runs at
+// the use, compile-after any earlier seal — so an earlier return still saw the
+// binding in-frame and released it on its own path.
+func (l *lowerer) retireManagedSlot(slot value.Value) {
+	for i := range l.managedFrames {
+		for j, s := range l.managedFrames[i] {
+			if s == slot {
+				l.managedFrames[i] = append(l.managedFrames[i][:j], l.managedFrames[i][j+1:]...)
+				return
+			}
+		}
+	}
+}
+
 // isManagedSlot reports whether an alloca holds a managed (string) value — the
 // signal that its binding participates in refcounting.
 func isManagedSlot(slot value.Value) bool {

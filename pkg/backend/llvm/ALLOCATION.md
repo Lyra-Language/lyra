@@ -138,16 +138,25 @@ keeps scope-exit release). At a last use it emits:
 The backend retires the binding's slot with a **pinned sentinel** so the
 scope-exit frame release stays a correct, leak-safe backstop (a still-live box is
 freed; an already-handled slot no-ops). This keeps every path safe regardless of
-branches and early returns — verified under AddressSanitizer — at the cost of a
-residual no-op release per handled binding (drop specialization / dup-drop fusion,
-stage 2, removes those). The break/continue leak is also closed (the loop's
-managed frames are released on those edges).
+branches and early returns — verified under AddressSanitizer. The break/continue
+leak is also closed (the loop's managed frames are released on those edges).
 
-**Still stage-1 open:** managed values inside aggregates (still leak — see
-below); the drop of a value whose *last* use is inside a branch is left to the
-frame (only unconditional transfers/drops are hoisted to last-use). Stages 2–4
-(fusion, FBIP reuse) follow, and 3–4 need `shared`-value lowering first. See
-`todo.md` Backend `[DECIDED 07/17]`.
+**[IN PROGRESS] Stage 2 — dup/drop fusion.** A last-use **transfer** moves the
+reference at the use, so its scope-exit release is a pure no-op — the backend
+now retires the binding from its frame *immediately at the move*
+(`retireManagedSlot`) instead of sentinelling it, eliminating the no-op release
+entirely (a chain `a → b → c` emits no per-transfer release). Safe because a
+transfer is unconditional and the removal is compile-after any earlier seal (which
+still saw the binding in-frame). **Not yet fused:** a last-use **drop** still
+sentinels + keeps the frame backstop (its release must follow the borrow, so it's
+deferred, which entangles with the seal/pending timing) — one residual no-op per
+dropped binding remains.
+
+**Still open:** the drop-fusion above; managed values inside aggregates (still
+leak — see below); the drop of a value whose *last* use is inside a branch is left
+to the frame (only unconditional transfers/drops are hoisted to last-use). Stages
+3–4 (FBIP reuse) need `shared`-value lowering first. See `todo.md` Backend
+`[DECIDED 07/17]`.
 
 ## Deferred / out of scope for this decision
 

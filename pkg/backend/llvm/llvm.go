@@ -285,14 +285,20 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		if l.res.Ownership.ShouldReleaseTemp(expr) {
 			l.pendingReleases = append(l.pendingReleases, pendingTemp{v, end})
 		}
-		// A last use of a managed binding: retire its slot at the end of this
-		// statement — dropping it (borrowing last use) or just sentinelling it
-		// (owning last use, its reference already transferred). Keyed on the binding's
-		// identifier so the backend finds its alloca.
+		// A last use of a managed binding. An owning last use *transfers* the
+		// reference, so retire the slot from its frame right here (stage-2 fusion —
+		// no scope-exit release at all). A borrowing last use *drops* the value: that
+		// release must follow the borrow, so it's deferred to the end of this
+		// statement and the slot is sentinelled (the frame release stays a leak-safe
+		// backstop). Keyed on the binding's identifier so the backend finds its alloca.
 		if id, ok := expr.(*ast.IdentifierExpr); ok {
 			if transfer, isLast := l.res.Ownership.LastUse(expr); isLast {
 				if slot, found := l.locals[id.Name]; found {
-					l.pendingSlotActions = append(l.pendingSlotActions, slotAction{slot: slot, drop: !transfer})
+					if transfer {
+						l.retireManagedSlot(slot)
+					} else {
+						l.pendingSlotActions = append(l.pendingSlotActions, slotAction{slot: slot, drop: true})
+					}
 				}
 			}
 		}
