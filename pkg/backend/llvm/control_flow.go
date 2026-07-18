@@ -17,6 +17,7 @@ type loopCtx struct {
 	breakTarget    *ir.Block // where `break` transfers control (the loop's exit block)
 	continueTarget *ir.Block // where `continue` transfers control (the loop's post block)
 	label          string    // the loop's label, "" if unlabeled
+	frameDepth     int       // len(managedFrames) at loop entry; break/continue release frames from here up
 }
 
 // loopTarget returns the loop a break/continue refers to: the innermost loop for
@@ -45,14 +46,15 @@ func (l *lowerer) loopTarget(label string) (loopCtx, error) {
 // mid-stream, so iteration stops once the block has a terminator rather than
 // lowering into a sealed block (invalid IR).
 //
-// It also manages the ownership bookkeeping
-// for the scope: it pushes a managed frame on entry (holding the scope's managed
-// bindings) and, on the fall-through exit, releases that frame before popping it.
-// Managed temporaries are released at each statement boundary via flushTempReleases
-// — except, when flushTail is false (a value block), the *last* statement's
-// temporaries are left pending so they propagate to the enclosing statement: the
-// block's value may itself be such a temporary, and releasing it here would free
-// it before the outer expression consumes it. An effect block (flushTail true, a
+// It also manages the ownership bookkeeping for the scope: it pushes a managed
+// frame on entry (holding the scope's managed bindings) and, on the fall-through
+// exit, releases that frame before popping it. Last-use slot actions flush after
+// every statement (so a transferred/dropped binding is sentinelled before the
+// frame release). Managed temporaries flush at each statement boundary too —
+// except, when flushTail is false (a value block), the *last* statement's
+// temporaries are held so they propagate to the enclosing statement: the block's
+// value may itself be such a temporary, and releasing it here would free it before
+// the outer expression consumes it. An effect block (flushTail true, a
 // loop/one-armed-if body) discards its tail, so its temporaries are released here
 // — they must be, since their SSA values live in per-iteration blocks.
 func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail bool) (value.Value, *ir.Block, error) {
@@ -90,11 +92,16 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail 
 		if err != nil {
 			return nil, nil, err
 		}
-		// Release this statement's managed temporaries — but hold the tail
-		// statement's when the block is a value (flushTail false), so they reach
-		// the enclosing statement (the tail may be the escaping block value).
-		if block.Term == nil && (i != last || flushTail) {
-			l.flushTempReleases(block)
+		if block.Term == nil {
+			// Last-use slot actions run after every statement — including the tail —
+			// so a transferred/dropped binding is sentinelled before the block-exit
+			// frame release (otherwise the frame would free a value that was moved out
+			// as the block's result). Temporaries are held for the tail of a value
+			// block (flushTail false) since the tail may be the escaping block value.
+			l.flushSlotActions(block)
+			if i != last || flushTail {
+				l.flushTemps()
+			}
 		}
 	}
 	if block.Term == nil {
@@ -133,7 +140,7 @@ func (l *lowerer) lowerForEffect(block *ir.Block, expr ast.Expression) (*ir.Bloc
 		return nil, err
 	}
 	if end.Term == nil {
-		l.flushTempReleases(end)
+		l.flushCleanup(end)
 	}
 	return end, nil
 }
@@ -148,10 +155,11 @@ func (l *lowerer) lowerBreak(block *ir.Block, s *ast.BreakStmt) error {
 	if err != nil {
 		return err
 	}
-	// Release temporaries pending in this iteration before the jump seals the
-	// block. Managed *bindings* in the loop body are conservatively left to leak on
-	// the break path (never a double free) — refining that is future work.
-	l.flushTempReleases(block)
+	// Before the jump seals the block: release this iteration's pending temporaries
+	// and the managed bindings the loop body introduced (the frames from the loop's
+	// entry depth up), so break no longer leaks them.
+	l.flushCleanup(block)
+	l.releaseManagedFramesFrom(block, ctx.frameDepth)
 	block.NewBr(ctx.breakTarget)
 	return nil
 }
@@ -161,7 +169,10 @@ func (l *lowerer) lowerContinue(block *ir.Block, s *ast.ContinueStmt) error {
 	if err != nil {
 		return err
 	}
-	l.flushTempReleases(block)
+	// Same as break: the current iteration's managed bindings are released before
+	// looping back (they're rebuilt next iteration).
+	l.flushCleanup(block)
+	l.releaseManagedFramesFrom(block, ctx.frameDepth)
 	block.NewBr(ctx.continueTarget)
 	return nil
 }
@@ -230,7 +241,11 @@ func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value
 	}
 
 	// Body, lowered for effect with this loop pushed so break/continue resolve.
-	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: postBlock, label: e.Label})
+	// frameDepth is the managed-frame stack height here (before the body pushes its
+	// own frame), so a break/continue releases exactly the frames the loop body (and
+	// any nested block) introduced — the current iteration's managed bindings —
+	// without touching the loop variable or enclosing scopes.
+	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: postBlock, label: e.Label, frameDepth: len(l.managedFrames)})
 	bodyEnd, err := l.lowerForEffect(bodyBlock, &e.Body)
 	l.loops = l.loops[:len(l.loops)-1]
 	if err != nil {

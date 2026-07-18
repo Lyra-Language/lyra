@@ -24,6 +24,7 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retSigned, entryABI bool) 
 	l.entryABI = entryABI
 	l.managedFrames = [][]value.Value{nil}
 	l.pendingReleases = nil
+	l.pendingSlotActions = nil
 }
 
 // emitReturn lowers a `ret` for the current function, coercing val to the
@@ -31,13 +32,15 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retSigned, entryABI bool) 
 // through the C ABI's i32 slot (coerce to u8, then zero-extend). A nil val is a
 // bare `return` (or a void function) → `ret void`.
 //
-// A return leaves every enclosing scope at once, so it first releases all live
-// managed bindings (and any pending managed temporaries). This runs before the
-// coercion/`ret`: `val` is a snapshot of the returned value, and a value that
-// escapes via the return was retained by the ownership pass, so dropping the
-// local references here can't free the box out from under the caller.
+// A return leaves every enclosing scope at once, so it first applies this
+// statement's cleanup (temporaries + last-use slot actions — the latter sentinels
+// a transferred/returned binding's slot) and then releases all live managed
+// bindings. Order matters: the slot actions run before the frame release, so a
+// value moved out via the return isn't freed by the frame; and a value that
+// escapes was retained/transferred by the ownership pass, so dropping the local
+// references here can't free the box out from under the caller.
 func (l *lowerer) emitReturn(block *ir.Block, val value.Value) error {
-	l.flushTempReleases(block)
+	l.flushCleanup(block)
 	l.releaseAllManagedFrames(block)
 	if l.entryABI {
 		if val == nil {

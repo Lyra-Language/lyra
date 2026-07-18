@@ -69,6 +69,15 @@ func (l *lowerer) lowerStringRelease(block *ir.Block, str value.Value) {
 	block.NewCall(l.rcRelease, l.stringBox(block, str), null)
 }
 
+// stringSentinel returns an empty string value — a pinned static box, so
+// releasing it is a no-op. The ownership lowering writes it into a binding's slot
+// after a last-use drop/transfer, so the scope-exit frame release of that slot
+// harmlessly releases the sentinel instead of double-freeing (or reading) the
+// already-retired box.
+func (l *lowerer) stringSentinel(block *ir.Block) value.Value {
+	return l.lowerStringConstant(block, "")
+}
+
 // memcmpFunc lazily declares libc's `i32 @memcmp(i8*, i8*, i64)` (clang links
 // libc), caching it so string comparisons share one declaration.
 func (l *lowerer) memcmpFunc() *ir.Func {

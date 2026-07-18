@@ -225,8 +225,14 @@ type lowerer struct {
 	//     there (dominating its uses) even when the statement spans branches — a
 	//     temp built in an `&&` right-hand block, say, is freed in that block, not
 	//     in the merge block it doesn't dominate.
-	managedFrames   [][]value.Value
-	pendingReleases []pendingTemp
+	//   - pendingSlotActions are last-use actions on a managed binding's slot,
+	//     applied at the end of the current statement: a drop (release the value)
+	//     for a borrowing last use, and — for both drop and transfer — storing a
+	//     pinned sentinel into the slot so the scope-exit frame release becomes a
+	//     safe no-op (the binding was already handled here).
+	managedFrames      [][]value.Value
+	pendingReleases    []pendingTemp
+	pendingSlotActions []slotAction
 }
 
 // pendingTemp is a managed temporary awaiting release, tagged with the block it
@@ -234,6 +240,14 @@ type lowerer struct {
 type pendingTemp struct {
 	val   value.Value
 	block *ir.Block
+}
+
+// slotAction is a last-use action on a managed binding's alloca: drop=true
+// releases the current value first (a borrowing last use); both cases then write
+// a pinned sentinel so a later frame release no-ops.
+type slotAction struct {
+	slot value.Value
+	drop bool
 }
 
 // lowerExpr lowers a Lyra expression to an LLVM value, appending any
@@ -271,20 +285,56 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		if l.res.Ownership.ShouldReleaseTemp(expr) {
 			l.pendingReleases = append(l.pendingReleases, pendingTemp{v, end})
 		}
+		// A last use of a managed binding: retire its slot at the end of this
+		// statement — dropping it (borrowing last use) or just sentinelling it
+		// (owning last use, its reference already transferred). Keyed on the binding's
+		// identifier so the backend finds its alloca.
+		if id, ok := expr.(*ast.IdentifierExpr); ok {
+			if transfer, isLast := l.res.Ownership.LastUse(expr); isLast {
+				if slot, found := l.locals[id.Name]; found {
+					l.pendingSlotActions = append(l.pendingSlotActions, slotAction{slot: slot, drop: !transfer})
+				}
+			}
+		}
 	}
 	return v, end, nil
 }
 
-// flushTempReleases releases every managed temporary awaiting release, each in
-// the block it was produced in (so the release dominates the value's uses even
-// across branches), then clears the pending list. Called after each statement
-// (and before a return/break/continue seals a block). The `block` argument is
-// unused for placement — each temp carries its own — but marks the flush point.
-func (l *lowerer) flushTempReleases(_ *ir.Block) {
+// flushTemps releases every managed temporary awaiting release, each in the block
+// it was produced in (so the release dominates the value's uses even across
+// branches), then clears the pending list.
+func (l *lowerer) flushTemps() {
 	for _, p := range l.pendingReleases {
 		l.lowerStringRelease(p.block, p.val)
 	}
 	l.pendingReleases = nil
+}
+
+// flushSlotActions applies the current statement's last-use actions on managed
+// bindings, in `block` (the statement's end block, which post-dominates the
+// statement's branches): a drop releases the binding's current value; both drop
+// and transfer then store a pinned sentinel so the scope-exit frame release
+// no-ops (the binding was already handled). Loading/storing the alloca from
+// `block` is always dominated (an alloca isn't SSA), and the sentinel keeps the
+// frame a correct leak-safe backstop on every path, so this is safe regardless of
+// intervening branches. Must run before any frame release (block exit / return /
+// break / continue) so a transferred binding isn't freed by the frame.
+func (l *lowerer) flushSlotActions(block *ir.Block) {
+	for _, sa := range l.pendingSlotActions {
+		a := sa.slot.(*ir.InstAlloca)
+		if sa.drop {
+			l.lowerStringRelease(block, block.NewLoad(a.ElemType, sa.slot))
+		}
+		block.NewStore(l.stringSentinel(block), sa.slot)
+	}
+	l.pendingSlotActions = nil
+}
+
+// flushCleanup applies both deferred temporaries and last-use slot actions —
+// used where control leaves a scope (return/break/continue and effect blocks).
+func (l *lowerer) flushCleanup(block *ir.Block) {
+	l.flushTemps()
+	l.flushSlotActions(block)
 }
 
 func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {

@@ -65,7 +65,15 @@ func (l *lowerer) releaseTopManagedFrame(block *ir.Block) {
 // sealed by the return, skips re-releasing), so each binding is released exactly
 // once per control-flow path.
 func (l *lowerer) releaseAllManagedFrames(block *ir.Block) {
-	for i := len(l.managedFrames) - 1; i >= 0; i-- {
+	l.releaseManagedFramesFrom(block, 0)
+}
+
+// releaseManagedFramesFrom releases the managed bindings in every frame from
+// index `depth` up (innermost first), without popping — the cleanup a `break`/
+// `continue` runs for the loop-body scopes it exits. A slot already handled by a
+// last-use drop/transfer holds a pinned sentinel, so its release is a safe no-op.
+func (l *lowerer) releaseManagedFramesFrom(block *ir.Block, depth int) {
+	for i := len(l.managedFrames) - 1; i >= depth; i-- {
 		l.releaseSlots(block, l.managedFrames[i])
 	}
 }

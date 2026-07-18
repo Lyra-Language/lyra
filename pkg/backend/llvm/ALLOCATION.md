@@ -114,16 +114,40 @@ release total — a literal's box is pinned, a `++` box is heap; STRING_LAYOUT.m
 Verified memory-safe under AddressSanitizer.
 
 **[DECIDED 07/17] Direction: Perceus** (PLDI 2021 "Perceus: Garbage Free
-Reference Counting with Reuse" — the Koka/Lean technique). The placement above
-is scope-exit; it evolves to **last-use** dup/drop insertion (garbage-free — a
-value is released at its last use, not its lexical scope end; also the natural
-fix for the pass's conservative leaks below), then drop specialization +
-dup/drop fusion, then reuse analysis (in-place update of unique `shared` values
-— FBIP; `is-unique` is `rc == 1`, which a `PinnedRC` arena box correctly
-fails), then reuse specialization. Last-use timing means no user-observable
-finalizers unless separately decided. `own`/`ref`/`mut` are exactly Perceus's
-owned/borrowed calling conventions, already honored above. See `todo.md`
-Backend `[DECIDED 07/17]`.
+Reference Counting with Reuse" — the Koka/Lean technique), evolving from
+scope-exit toward last-use dup/drop, then drop specialization + dup/drop fusion,
+then reuse analysis (in-place update of unique `shared` values — FBIP;
+`is-unique` is `rc == 1`, which a `PinnedRC` arena box correctly fails), then
+reuse specialization. `own`/`ref`/`mut` are exactly Perceus's owned/borrowed
+calling conventions.
+
+**[IN PROGRESS] Stage 1 — last-use precision (scalars).** The pass
+(`pkg/analyzer/ownership`) now computes the *last use* of each eligible managed
+binding (final textual reference; sound over-approximation — a binding that is
+shadowed, a parameter, reassigned, or referenced inside a loop is ineligible and
+keeps scope-exit release). At a last use it emits:
+
+- **transfer** (owning position, e.g. `let b = a`, `return a`, an `own` arg) —
+  the reference *moves* to the consumer, so **no dup** (the garbage-free win over
+  the old always-dup-then-scope-drop). Only applied to an *unconditional* use
+  (not inside an `if`/`match` branch), since a conditional transfer would leak on
+  the path that skips it;
+- **drop** (borrowing last use) — the binding is released at that statement
+  rather than at scope exit.
+
+The backend retires the binding's slot with a **pinned sentinel** so the
+scope-exit frame release stays a correct, leak-safe backstop (a still-live box is
+freed; an already-handled slot no-ops). This keeps every path safe regardless of
+branches and early returns — verified under AddressSanitizer — at the cost of a
+residual no-op release per handled binding (drop specialization / dup-drop fusion,
+stage 2, removes those). The break/continue leak is also closed (the loop's
+managed frames are released on those edges).
+
+**Still stage-1 open:** managed values inside aggregates (still leak — see
+below); the drop of a value whose *last* use is inside a branch is left to the
+frame (only unconditional transfers/drops are hoisted to last-use). Stages 2–4
+(fusion, FBIP reuse) follow, and 3–4 need `shared`-value lowering first. See
+`todo.md` Backend `[DECIDED 07/17]`.
 
 ## Deferred / out of scope for this decision
 

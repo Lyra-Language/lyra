@@ -57,6 +57,15 @@ type Table struct {
 	// ReleaseTemp[e]: e is an owned managed temporary consumed in a borrowing
 	// position; release it after the enclosing statement.
 	ReleaseTemp map[ast.Expression]bool
+	// LastUseTransfer[e]: e is the final use of an owned binding in an *owning*
+	// position — its reference is moved to the consumer, so no dup is needed and
+	// the binding's slot is retired (Perceus transfer). Only set for a use that is
+	// unconditional (not inside a branch), so the transfer happens on every path.
+	LastUseTransfer map[ast.Expression]bool
+	// LastUseDrop[e]: e is the final use of an owned binding in a *borrowing*
+	// position — the binding is dead after this statement, so it is released here
+	// (last-use precision) rather than at scope exit.
+	LastUseDrop map[ast.Expression]bool
 }
 
 // ShouldRetain reports whether e's value must be retained when produced.
@@ -68,6 +77,22 @@ func (t *Table) ShouldRetain(e ast.Expression) bool {
 // enclosing statement.
 func (t *Table) ShouldReleaseTemp(e ast.Expression) bool {
 	return t != nil && t.ReleaseTemp[e]
+}
+
+// LastUse reports whether e is the last use of an owned binding and, if so,
+// whether that use transfers the reference (owning position — no drop) or drops
+// it (borrowing position — release here). ok is false when e is not a last use.
+func (t *Table) LastUse(e ast.Expression) (transfer, ok bool) {
+	if t == nil {
+		return false, false
+	}
+	if t.LastUseTransfer[e] {
+		return true, true
+	}
+	if t.LastUseDrop[e] {
+		return false, true
+	}
+	return false, false
 }
 
 // IsManaged reports whether values of type t are reference-counted (freed via
@@ -83,8 +108,10 @@ func Analyze(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.
 		symTable: symTable,
 		tt:       tt,
 		table: &Table{
-			Retain:      map[ast.Expression]bool{},
-			ReleaseTemp: map[ast.Expression]bool{},
+			Retain:          map[ast.Expression]bool{},
+			ReleaseTemp:     map[ast.Expression]bool{},
+			LastUseTransfer: map[ast.Expression]bool{},
+			LastUseDrop:     map[ast.Expression]bool{},
 		},
 	}
 	for _, stmt := range program.Statements {
@@ -104,12 +131,21 @@ type analyzer struct {
 	tt             *typetable.TypeTable
 	table          *Table
 	curReturnOwned bool // does the enclosing function return an owned value?
+	conditional    bool // are we inside a branch body (if/match arm)? gates transfers
+	// lastUse holds the final-textual-reference node of each managed binding that is
+	// eligible for last-use precision, in the function currently being analyzed.
+	lastUse map[ast.Expression]bool
 }
 
 // lambda analyzes one function/lambda body under its own return-ownership.
 func (a *analyzer) lambda(lam *ast.LambdaExpr) {
 	saved := a.curReturnOwned
+	savedCond := a.conditional
+	savedLast := a.lastUse
 	a.curReturnOwned = isOwnedReturn(lam.ReturnType.TypeModifier)
+	a.conditional = false
+	a.lastUse = a.computeLastUse(lam)
+	defer func() { a.conditional = savedCond; a.lastUse = savedLast }()
 	// The body is the function's return value: pass the return's ownership need
 	// down unconditionally. Whether it actually causes a retain is decided at the
 	// managed leaves (a non-managed return simply has none) — we don't gate on the
@@ -126,6 +162,84 @@ func (a *analyzer) lambda(lam *ast.LambdaExpr) {
 		}
 	}
 	a.curReturnOwned = saved
+}
+
+// computeLastUse finds, for each managed binding eligible for last-use precision,
+// the node of its *final textual reference* (pre-order = program order). A binding
+// is eligible only when it's simple enough that "the last textual reference" is
+// soundly its last dynamic use on every path:
+//
+//   - a managed `let`/`var` binding declared exactly once (no shadowing),
+//   - whose name isn't a parameter,
+//   - that is never reassigned (a `var s = …; s = …` has several live values),
+//   - and isn't referenced inside a loop body (a back-edge re-runs earlier uses).
+//
+// Anything ineligible simply isn't given a last-use annotation and falls back to
+// the scope-exit frame release (still correct — a missed last-use only defers the
+// free, never double-frees). Over-approximating "used later" this way is the
+// sound direction.
+func (a *analyzer) computeLastUse(lam *ast.LambdaExpr) map[ast.Expression]bool {
+	declCount := map[string]int{}   // managed let/var declarations per name
+	reassigned := map[string]bool{} // names that are reassignment targets
+	params := map[string]bool{}
+	for _, p := range lam.Parameters {
+		if ip, ok := p.Pattern.(*ast.IdentifierPattern); ok {
+			params[ip.Name] = true
+		}
+	}
+	onStmt := func(s ast.Statement) bool {
+		switch s := s.(type) {
+		case *ast.VarDeclStmt:
+			if a.bindingIsManaged(s) {
+				declCount[s.Name]++
+			}
+		case *ast.VarReassignmentStmt:
+			reassigned[s.Name] = true
+		}
+		return true
+	}
+
+	// Names referenced anywhere inside a loop body are ineligible.
+	loopUsed := map[string]bool{}
+	ast.WalkExpr(lam.Body, onStmt, func(e ast.Expression) bool {
+		switch le := e.(type) {
+		case *ast.ForLoopExpr:
+			collectNames(&le.Body, loopUsed)
+		case *ast.ForInLoopExpr:
+			collectNames(&le.Body, loopUsed)
+		}
+		return true
+	})
+
+	eligible := func(name string) bool {
+		return declCount[name] == 1 && !params[name] && !reassigned[name] && !loopUsed[name]
+	}
+
+	// Pre-order walk records references in program order; the final one per eligible
+	// name is its last use.
+	lastRef := map[string]ast.Expression{}
+	ast.WalkExpr(lam.Body, nil, func(e ast.Expression) bool {
+		if id, ok := e.(*ast.IdentifierExpr); ok && eligible(id.Name) {
+			lastRef[id.Name] = id
+		}
+		return true
+	})
+
+	out := make(map[ast.Expression]bool, len(lastRef))
+	for _, node := range lastRef {
+		out[node] = true
+	}
+	return out
+}
+
+// collectNames records every identifier name referenced within a block.
+func collectNames(block *ast.BlockExpr, into map[string]bool) {
+	ast.WalkExpr(block, nil, func(e ast.Expression) bool {
+		if id, ok := e.(*ast.IdentifierExpr); ok {
+			into[id.Name] = true
+		}
+		return true
+	})
 }
 
 // isManaged reports whether e's recorded type is a managed (ref-counted) type.
@@ -201,9 +315,24 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		}
 
 	case *ast.IdentifierExpr:
-		// A read of an existing binding is a borrow; into an owning slot it needs a
-		// retain to become a fresh +1.
-		if needOwned && a.isManaged(e) {
+		// A read of an existing binding is a borrow. What happens depends on whether
+		// this is the binding's last use (Perceus precision):
+		//   - last use, owning position: transfer the reference (no dup), unless the
+		//     use is conditional (inside a branch) — then a path that skips it would
+		//     leak, so fall back to a dup.
+		//   - last use, borrowing position: the binding is dead after this statement,
+		//     so drop it here rather than at scope exit.
+		//   - not the last use, owning position: dup (retain) to mint a fresh +1.
+		if !a.isManaged(e) {
+			return
+		}
+		last := a.lastUse[e]
+		switch {
+		case last && needOwned && !a.conditional:
+			a.table.LastUseTransfer[e] = true
+		case last && !needOwned:
+			a.table.LastUseDrop[e] = true
+		case needOwned:
 			a.table.Retain[e] = true
 		}
 
@@ -228,20 +357,28 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// phi still refers to. So the branches are owning positions (true), and the
 		// merged value itself is the temporary released when the consumer borrows it.
 		a.expr(e.Condition, false)
+		// Branch bodies are conditional: a last-use transfer inside one wouldn't run
+		// on the other path, so transfers are suppressed there (see IdentifierExpr).
+		savedCond := a.conditional
+		a.conditional = true
 		a.expr(e.Then, true)
 		a.expr(e.Else, true)
+		a.conditional = savedCond
 		if !needOwned {
 			a.markMergeTemp(e)
 		}
 
 	case *ast.MatchExpr:
 		a.expr(e.Scrutinee, false) // scrutinee is borrowed
+		savedCond := a.conditional
+		a.conditional = true
 		for i := range e.MatchArms {
 			a.expr(e.MatchArms[i].Body, true) // arms coerced to owned; merged value owns
 			if g := e.MatchArms[i].Guard; g != nil {
 				a.expr(g.Condition, false)
 			}
 		}
+		a.conditional = savedCond
 		if !needOwned {
 			a.markMergeTemp(e)
 		}

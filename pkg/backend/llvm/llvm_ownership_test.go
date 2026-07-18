@@ -100,6 +100,42 @@ var ownershipCases = []struct {
 		1,
 	},
 	{
+		// A binding used only as borrows is dropped at its final borrow (last-use
+		// precision), then referenced no more — must still compute correctly.
+		"last-use drop after final borrow",
+		`let eq = (a: string, b: string) -> u8 => if a == b { 1 } else { 0 }
+		 let main = () -> u8 => {
+		   let s: string = "ab" ++ "cd"
+		   let hit: u8 = eq(s, "abcd")
+		   if hit == 1 && s == "abcd" { 9 } else { 0 }
+		 }`,
+		9,
+	},
+	{
+		// A conditional early return before a binding's last use: the return path
+		// frees via the frame, the fall-through frees at last use — exactly once each.
+		"early return before last use",
+		`let main = () -> u8 => {
+		   let s: string = "x" ++ "y"
+		   let flag: string = "go" ++ "!"
+		   if flag == "stop" { return 3 }
+		   if s == "xy" { 7 } else { 0 }
+		 }`,
+		7,
+	},
+	{
+		// A chain of copies: each `let` is the previous binding's last use, so each
+		// transfers (no dups); only the final binding is live at the comparison.
+		"chain of transferring copies",
+		`let main = () -> u8 => {
+		   let a: string = "hi" ++ "!"
+		   let b: string = a
+		   let c: string = b
+		   if c == "hi!" { 5 } else { 0 }
+		 }`,
+		5,
+	},
+	{
 		// A fresh concat temporary each call (built, borrowed by ==, released) — the
 		// loop must not accumulate or double-free across iterations.
 		"concat temporary called in a loop",
@@ -159,30 +195,33 @@ func TestEmit_OwnershipIR(t *testing.T) {
 		return strings.Count(got, needle)
 	}
 
-	// A single owned binding, compared then dropped: one alloc, one release, no
-	// retain (no copy). If the release were missing this string would leak.
+	// A single owned binding, used then dead: no retain (nothing is copied), and it
+	// is released (a missing release would leak). Under last-use it's dropped at its
+	// final use; the scope-exit frame release then no-ops on the sentinel, so the
+	// exact release count isn't pinned — only that a release exists.
 	single := `let main = () -> u8 => {
 	   let a: string = "x" ++ "y"
 	   if a == "xy" { 1 } else { 0 }
 	 }`
-	if n := count(single, "call void @lyra_rc_release"); n != 1 {
-		t.Errorf("single binding: want 1 release, got %d", n)
-	}
 	if n := count(single, "call void @lyra_rc_retain"); n != 0 {
 		t.Errorf("single binding: want 0 retains, got %d", n)
 	}
+	if n := count(single, "call void @lyra_rc_release"); n < 1 {
+		t.Errorf("single binding: want ≥1 release, got %d", n)
+	}
 
-	// A copy retains once, and both bindings are released (two releases).
-	copy := `let main = () -> u8 => {
+	// A copy is a *transfer* under Perceus last-use — no dup. Before last-use this
+	// emitted one retain; now it emits none (the reference moves into b).
+	cp := `let main = () -> u8 => {
 	   let a: string = "x" ++ "y"
 	   let b: string = a
 	   if b == "xy" { 1 } else { 0 }
 	 }`
-	if n := count(copy, "call void @lyra_rc_retain"); n != 1 {
-		t.Errorf("copy: want 1 retain, got %d", n)
+	if n := count(cp, "call void @lyra_rc_retain"); n != 0 {
+		t.Errorf("copy (transfer): want 0 retains, got %d", n)
 	}
-	if n := count(copy, "call void @lyra_rc_release"); n != 2 {
-		t.Errorf("copy: want 2 releases, got %d", n)
+	if n := count(cp, "call void @lyra_rc_release"); n < 1 {
+		t.Errorf("copy (transfer): want ≥1 release, got %d", n)
 	}
 }
 
