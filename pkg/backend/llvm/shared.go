@@ -54,6 +54,29 @@ func (l *lowerer) lowerManagedRelease(block *ir.Block, v value.Value) {
 	block.NewCall(l.rcRelease, l.managedBox(block, v), null)
 }
 
+// unboxSharedData loads the inline aggregate value out of a `shared` box pointer
+// so a `match` can destructure it. A `shared` aggregate scrutinee (a `data`,
+// struct, or tuple value) lowers to a `ptr` to `{ i64 rc, payload }`
+// (ALLOCATION.md), whereas the pattern-matching machinery (lowerDataMatch /
+// aggPattern*) works on the first-class payload value — so this reads field 1 out
+// of the box and returns it. A non-pointer (inline `stack`) scrutinee is returned
+// unchanged, so callers can unbox unconditionally. The box's own last-use release
+// is handled by the ownership pass as for any managed binding — unboxing only
+// reads through it, it does not consume a reference.
+func (l *lowerer) unboxSharedData(block *ir.Block, scrut value.Value) (value.Value, error) {
+	ptr, ok := scrut.Type().(*lltypes.PointerType)
+	if !ok {
+		return scrut, nil // inline value — nothing to unbox
+	}
+	boxTy, ok := ptr.ElemType.(*lltypes.StructType)
+	if !ok || len(boxTy.Fields) != 2 {
+		return nil, fmt.Errorf("llvm: match scrutinee is a pointer to a non-box type (%s)", scrut.Type())
+	}
+	payloadPtr := block.NewGetElementPtr(boxTy, scrut,
+		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+	return block.NewLoad(boxTy.Fields[1], payloadPtr), nil
+}
+
 // lowerBoxShared heap-allocates a ref-counted box for a `shared` value: it allocs
 // `header + sizeof(payload)` bytes (lyra_rc_alloc sets rc = 1), stores the built
 // payload into the box's payload field, and returns the typed box pointer — the

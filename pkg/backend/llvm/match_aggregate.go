@@ -19,15 +19,18 @@ import (
 // → unconditional), while a literal field sub-pattern (`{ x: 0, y }`) makes it
 // conditional on that field.
 func (l *lowerer) lowerStructMatch(block *ir.Block, e *ast.MatchExpr, st types.NamedStructType) (value.Value, *ir.Block, error) {
-	scrut, block, err := l.lowerExpr(block, e.Scrutinee)
+	whole, block, err := l.lowerExpr(block, e.Scrutinee)
 	if err != nil {
 		return nil, nil, err
 	}
-	structTy, ok := scrut.Type().(*lltypes.StructType)
-	if !ok {
+	scrut, err := l.unboxSharedData(block, whole) // a `shared` struct is a box pointer
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, ok := scrut.Type().(*lltypes.StructType); !ok {
 		return nil, nil, fmt.Errorf("llvm: struct match scrutinee did not lower to a struct (%s)", scrut.Type())
 	}
-	return l.lowerAggregateMatch(block, e, scrut, structTy,
+	return l.lowerAggregateMatch(block, e, whole,
 		func(b *ir.Block, pat ast.Pattern) (value.Value, error) {
 			return l.aggPatternTest(b, scrut, pat, st)
 		},
@@ -49,8 +52,14 @@ func (l *lowerer) lowerStructMatch(block *ir.Block, e *ast.MatchExpr, st types.N
 // binding — when it fails, control falls through to the next arm, so a guarded
 // arm never seals the ladder (lowerGuardedArmBody). Arms feed a merge phi, so the
 // match is a value like `if`; the unmatched fall-through is `unreachable`.
+//
+// `whole` is the value an identifier catch-all binds to (the whole scrutinee) —
+// the inline aggregate for a `stack` value, but the *box pointer* for a `shared`
+// scrutinee, whose bound name has the box-pointer type, not the unboxed union. The
+// per-arm pattern shape (which references the unboxed value) lives in the `test`
+// and `bind` closures, so this driver only needs `whole`.
 func (l *lowerer) lowerAggregateMatch(
-	block *ir.Block, e *ast.MatchExpr, scrut value.Value, aggTy *lltypes.StructType,
+	block *ir.Block, e *ast.MatchExpr, whole value.Value,
 	test func(b *ir.Block, pat ast.Pattern) (value.Value, error),
 	bind func(b *ir.Block, pat ast.Pattern) error,
 ) (value.Value, *ir.Block, error) {
@@ -79,8 +88,8 @@ func (l *lowerer) lowerAggregateMatch(
 	for _, arm := range e.MatchArms {
 		if ip, isCatchAll := matchCatchAll(arm.Pattern); isCatchAll {
 			if ip != nil { // an identifier catch-all binds the whole aggregate value
-				slot := fn.Blocks[0].NewAlloca(aggTy)
-				current.NewStore(scrut, slot)
+				slot := fn.Blocks[0].NewAlloca(whole.Type())
+				current.NewStore(whole, slot)
 				l.locals[ip.Name] = slot
 			}
 			if arm.Guard == nil {
@@ -390,15 +399,18 @@ func isBindingLeaf(pat ast.Pattern) bool {
 // `(a, b)` binds elements by position, and a literal element (`(0, b)`) makes the
 // arm conditional on that position.
 func (l *lowerer) lowerTupleMatch(block *ir.Block, e *ast.MatchExpr, tt types.TupleType) (value.Value, *ir.Block, error) {
-	scrut, block, err := l.lowerExpr(block, e.Scrutinee)
+	whole, block, err := l.lowerExpr(block, e.Scrutinee)
 	if err != nil {
 		return nil, nil, err
 	}
-	structTy, ok := scrut.Type().(*lltypes.StructType)
-	if !ok {
+	scrut, err := l.unboxSharedData(block, whole) // a `shared` tuple is a box pointer
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, ok := scrut.Type().(*lltypes.StructType); !ok {
 		return nil, nil, fmt.Errorf("llvm: tuple match scrutinee did not lower to a struct (%s)", scrut.Type())
 	}
-	return l.lowerAggregateMatch(block, e, scrut, structTy,
+	return l.lowerAggregateMatch(block, e, whole,
 		func(b *ir.Block, pat ast.Pattern) (value.Value, error) {
 			return l.aggPatternTest(b, scrut, pat, tt)
 		},
@@ -442,7 +454,16 @@ func dataMatchHasPayloadTest(e *ast.MatchExpr, dt types.DataType) bool {
 // exhaustiveness (lyra-E009), so a match with no catch-all gets an `unreachable`
 // default.
 func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.DataType) (value.Value, *ir.Block, error) {
-	scrut, block, err := l.lowerExpr(block, e.Scrutinee)
+	whole, block, err := l.lowerExpr(block, e.Scrutinee)
+	if err != nil {
+		return nil, nil, err
+	}
+	// A `shared` data value is a pointer to its ref-counted box; load the inline
+	// union out of it so the tag/payload logic below (and aggPattern*) sees a
+	// first-class struct. `whole` stays the box pointer — the value an identifier
+	// catch-all binds — while `scrut` is the unboxed union. (For an inline value
+	// unboxSharedData is the identity, so whole == scrut.)
+	scrut, err := l.unboxSharedData(block, whole)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -459,7 +480,7 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 	// the tag check ANDed with its payload tests (aggPatternTest) and then its
 	// guard, first-match-wins preserved.
 	if dataMatchHasPayloadTest(e, dt) || matchHasGuard(e) {
-		return l.lowerAggregateMatch(block, e, scrut, unionTy,
+		return l.lowerAggregateMatch(block, e, whole,
 			func(b *ir.Block, pat ast.Pattern) (value.Value, error) {
 				return l.aggPatternTest(b, scrut, pat, dt)
 			},
@@ -475,6 +496,14 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 	// blob (the mirror of construction), and load its tag.
 	slot := fn.Blocks[0].NewAlloca(unionTy)
 	block.NewStore(scrut, slot)
+	// The slot an identifier catch-all binds: the union slot for an inline value,
+	// but a box-pointer slot for a `shared` scrutinee (so the bound name keeps the
+	// box-pointer type). Built lazily only when an arm actually binds the whole value.
+	wholeSlot := slot
+	if whole != scrut && matchBindsWhole(e) {
+		wholeSlot = fn.Blocks[0].NewAlloca(whole.Type())
+		block.NewStore(whole, wholeSlot)
+	}
 	tagTy := unionTy.Fields[0].(*lltypes.IntType)
 	tagPtr := block.NewGetElementPtr(unionTy, slot, constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 0))
 	tag := block.NewLoad(tagTy, tagPtr)
@@ -510,8 +539,8 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 			defaultBlock = armBlock
 		case *ast.IdentifierPattern:
 			if p.Name != "_" {
-				// Bind the whole scrutinee value; slot already holds it.
-				l.locals[p.Name] = slot
+				// Bind the whole scrutinee value (the box pointer for a `shared` value).
+				l.locals[p.Name] = wholeSlot
 			}
 			defaultBlock = armBlock
 		default:

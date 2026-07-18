@@ -187,12 +187,23 @@ A `shared T` lowers to a **pointer to `SharedBox(T) = { i64 rc, T }`** (`lowerTy
   `shared` value *is* the box pointer. Verified memory-safe under AddressSanitizer
   with release==allocation conservation.
 
+**`match` on a `shared` aggregate** is wired (`unboxSharedData`, `shared.go`): a
+`shared` data/struct/tuple scrutinee is a box pointer, so the match loads the
+inline payload out of the box (`box → field 1`) and the existing tag/pattern
+machinery runs on that first-class value; an identifier catch-all still binds the
+*box pointer* (its declared type), so the union and the whole value are threaded
+separately (`lowerAggregateMatch`'s `whole` param). The box's own last-use release
+is the ordinary managed-binding drop — reading through it consumes no reference.
+This is the prerequisite for Perceus reuse/FBIP on `shared` values (you can't
+reuse a box you can't destructure). A **nested** `shared data` sub-pattern
+(destructuring a tail through *its* box, not just the top-level scrutinee) is not
+handled and errors loudly.
+
 Not yet done: `shared` arrays; `shared` construction in a bare argument/return
 position (the flavor isn't stamped on the node there — only annotated bindings and
 `shared` payload args get it); recursive **release** of a `shared`/string value
 stored in an aggregate field (release passes a null `drop_fn`, so those leak — the
-same aggregate-drop deferral below). `match` on a `shared data` value (destructuring
-through the box) is also not wired yet.
+same aggregate-drop deferral below).
 
 ## Deferred / out of scope for this decision
 

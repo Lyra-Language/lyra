@@ -53,6 +53,18 @@ func (l *lowerer) lowerMatch(block *ir.Block, e *ast.MatchExpr) (value.Value, *i
 	return nil, nil, fmt.Errorf("llvm: match on %s not implemented yet (only data types, structs, tuples, and integer/bool/float/string scalars)", scrutType)
 }
 
+// matchBindsWhole reports whether any arm binds the whole scrutinee to a name (an
+// identifier catch-all other than `_`). For a `shared` scrutinee that means the
+// box pointer must be kept available for the binding, not only the unboxed union.
+func matchBindsWhole(e *ast.MatchExpr) bool {
+	for _, arm := range e.MatchArms {
+		if ip, ok := arm.Pattern.(*ast.IdentifierPattern); ok && ip.Name != "_" {
+			return true
+		}
+	}
+	return false
+}
+
 // matchHasGuard reports whether any arm carries an `if` guard.
 func matchHasGuard(e *ast.MatchExpr) bool {
 	for _, arm := range e.MatchArms {
