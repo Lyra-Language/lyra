@@ -108,6 +108,10 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 					// The declared return type is the body's context: push its width
 					// onto untyped literal leaves so `() -> u8 => 5 + 3` lowers at u8.
 					tc.propagateLiteralType(lambda.Body, declaredReturn)
+					// A `shared` return type is the context for the value the body
+					// builds, so stamp construction leaves (incl. inside match arms)
+					// `shared` — `(xs) -> shared List => match xs { … => Cons(…) }`.
+					tc.propagateAllocation(lambda.Body, types.AllocationOf(declaredReturn))
 					if ownedReturn {
 						tc.checkAllocationCompat(bodyType, declaredReturn, lambda.Body.GetLocation(), funcName)
 					}
@@ -183,6 +187,7 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 						funcName, declaredReturn, retType)
 				} else if declaredReturn != nil && retType != nil {
 					tc.propagateLiteralType(s.Value, declaredReturn)
+					tc.propagateAllocation(s.Value, types.AllocationOf(declaredReturn))
 					if ownedReturn {
 						tc.checkAllocationCompat(retType, declaredReturn, s.GetLocation(), funcName)
 					}
@@ -201,6 +206,7 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 						// The declared return type is the context for the block's
 						// value; push its width onto untyped literal leaves.
 						tc.propagateLiteralType(s.Expression, declaredReturn)
+						tc.propagateAllocation(s.Expression, types.AllocationOf(declaredReturn))
 						if ownedReturn {
 							tc.checkAllocationCompat(exprType, declaredReturn, s.GetLocation(), funcName)
 						}

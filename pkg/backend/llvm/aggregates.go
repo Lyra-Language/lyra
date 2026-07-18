@@ -28,7 +28,7 @@ func (l *lowerer) lowerTupleLiteralExpr(block *ir.Block, e *ast.TupleLiteralExpr
 		return nil, nil, fmt.Errorf("llvm: no type recorded for tuple literal")
 	}
 	if dt, ok := recorded.(types.DataType); ok {
-		return l.lowerDataConstruction(block, dt, e.Name, e.Elements)
+		return l.lowerDataConstruction(block, dt, e.Name, e.Elements, e)
 	}
 	tupleType, ok := recorded.(types.TupleType)
 	if !ok {
@@ -232,7 +232,7 @@ func (l *lowerer) lowerDataConstructorExpr(block *ir.Block, e *ast.DataConstruct
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: data constructor %q did not record a data type (got %s)", e.Constructor, recorded)
 	}
-	return l.lowerDataConstruction(block, dt, e.Constructor, nil)
+	return l.lowerDataConstruction(block, dt, e.Constructor, nil, e)
 }
 
 // lowerDataConstruction materializes a `data` value of type dt for the variant
@@ -248,7 +248,7 @@ func (l *lowerer) lowerDataConstructorExpr(block *ir.Block, e *ast.DataConstruct
 // needs ref-counted-box allocation (ALLOCATION.md), which isn't lowered yet, so
 // it errors loudly. Inline-record variants (`Node { … }`) route through
 // lowerStructInstanceExpr and are deferred there.
-func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctorName string, args []ast.Expression) (value.Value, *ir.Block, error) {
+func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctorName string, args []ast.Expression, srcExpr ast.Expression) (value.Value, *ir.Block, error) {
 	tag := -1
 	var ctor types.DataTypeConstructor
 	for i, c := range dt.Constructors {
@@ -319,6 +319,15 @@ func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctor
 	// box pointer. (This is how a recursive `shared` payload field — a `Cons`'s
 	// `shared List` — is filled: the nested constructor is boxed here.)
 	if types.AllocationOf(dt) == types.Shared {
+		// Perceus reuse: if this construction is the reuse target of an enclosing
+		// reuse-match and that match's token is still live, write into the reclaimed
+		// box instead of allocating. Consuming the token clears it so a later
+		// construction (or the arm's fall-through free) doesn't touch it again.
+		if l.reuseToken != nil && l.res.Ownership.IsReuseTarget(srcExpr) {
+			token := l.reuseToken
+			l.reuseToken = nil
+			return l.lowerBoxSharedReuse(block, union, stackDt, token)
+		}
 		boxed, err := l.lowerBoxShared(block, union, stackDt)
 		return boxed, block, err
 	}

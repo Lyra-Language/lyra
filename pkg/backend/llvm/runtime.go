@@ -23,6 +23,12 @@ const (
 	ShimRCRetain = "lyra_rc_retain"
 	// ShimRCRelease(box ptr, drop_fn ptr) : if --rc == 0 { drop_fn(payload); free } (no-op when pinned).
 	ShimRCRelease = "lyra_rc_release"
+	// ShimRCDropReuse(box ptr) -> ptr : the Perceus drop-reuse. If the box is
+	// unique (rc == 1) return it *without freeing* — a reuse token the caller writes
+	// a new value into (rc stays 1); if shared (rc > 1) decrement and return null; if
+	// pinned (arena) leave it and return null. An unconsumed non-null token is freed
+	// by the caller (`free(NULL)` is a valid no-op, so the caller frees unconditionally).
+	ShimRCDropReuse = "lyra_rc_drop_reuse"
 	// ShimArenaAlloc(arena ptr, size i64) -> ptr : bump-allocate a box in the
 	// arena with rc = PinnedRC, so retain/release no-op and the arena bulk-frees.
 	// (Arenas are not emitted yet — reserved name for the `with`-block work.)
@@ -123,6 +129,38 @@ func (l *lowerer) ensureRCRuntime() {
 
 		done.NewRet(nil)
 		l.rcRelease = fn
+	}
+
+	// i8* @lyra_rc_drop_reuse(i8* %box): the Perceus drop-reuse.
+	//   pinned  → ret null      (arena-owned; never reclaimed here)
+	//   rc == 1 → ret box       (unique; reclaim the shell, leave rc = 1, don't free)
+	//   else    → rc -= 1; ret null   (shared; decrement, can't reuse)
+	// It does NOT drop the box's payload fields (matching lyra_rc_release's null
+	// drop_fn today — managed fields inside an aggregate leak conservatively); the
+	// caller reads everything it needs out of the box before drop-reuse (the match
+	// already copied the union out via unboxSharedData), then overwrites the reused
+	// box's payload.
+	{
+		box := ir.NewParam("box", i8ptr)
+		fn := l.module.NewFunc(ShimRCDropReuse, i8ptr, box)
+		entry := fn.NewBlock("entry")
+		notPinned := fn.NewBlock("not_pinned")
+		shared := fn.NewBlock("shared")
+		retBox := fn.NewBlock("ret_box")
+		retNull := fn.NewBlock("ret_null")
+
+		rcPtr := entry.NewBitCast(box, i64ptr)
+		rc := entry.NewLoad(lltypes.I64, rcPtr)
+		entry.NewCondBr(entry.NewICmp(enum.IPredEQ, rc, pinned), retNull, notPinned)
+
+		notPinned.NewCondBr(notPinned.NewICmp(enum.IPredEQ, rc, one), retBox, shared)
+
+		shared.NewStore(shared.NewSub(rc, one), rcPtr)
+		shared.NewBr(retNull)
+
+		retBox.NewRet(box)
+		retNull.NewRet(constant.NewNull(i8ptr))
+		l.rcDropReuse = fn
 	}
 }
 

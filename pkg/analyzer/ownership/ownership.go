@@ -39,6 +39,8 @@
 package ownership
 
 import (
+	"slices"
+
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -66,6 +68,18 @@ type Table struct {
 	// position — the binding is dead after this statement, so it is released here
 	// (last-use precision) rather than at scope exit.
 	LastUseDrop map[ast.Expression]bool
+	// ReuseMatch[m]: m's scrutinee is an owned `shared data` binding at its last
+	// use, so its ref-counted box may be *reclaimed* rather than freed (Perceus
+	// reuse / FBIP). The value is the scrutinee binding's name — the box the backend
+	// hands to a reuse-target construction in an arm (via a runtime `drop-reuse`
+	// token: the box when unique, else null). The scrutinee's ordinary last-use drop
+	// is suppressed (not marked here) because the token subsumes it: an arm that
+	// reuses writes into the box, an arm that doesn't frees it.
+	ReuseMatch map[*ast.MatchExpr]string
+	// ReuseTarget[c]: c is a construction (a `data` value of the reuse-match's own
+	// type) that consumes its enclosing reuse-match's token — it writes the new value
+	// into the reclaimed box instead of allocating, when the token is non-null.
+	ReuseTarget map[ast.Expression]bool
 }
 
 // ShouldRetain reports whether e's value must be retained when produced.
@@ -95,6 +109,22 @@ func (t *Table) LastUse(e ast.Expression) (transfer, ok bool) {
 	return false, false
 }
 
+// ReuseScrutinee reports whether m is a reuse-match and, if so, the name of the
+// scrutinee binding whose box the arms may reclaim.
+func (t *Table) ReuseScrutinee(m *ast.MatchExpr) (string, bool) {
+	if t == nil {
+		return "", false
+	}
+	name, ok := t.ReuseMatch[m]
+	return name, ok
+}
+
+// IsReuseTarget reports whether e is a construction that consumes its enclosing
+// reuse-match's token (writes into the reclaimed box instead of allocating).
+func (t *Table) IsReuseTarget(e ast.Expression) bool {
+	return t != nil && t.ReuseTarget[e]
+}
+
 // IsManaged reports whether values of type t are reference-counted (freed via
 // retain/release): a string, or a `shared`-flavored value (heap-allocated in a
 // ref-counted box). This is the single definition of "managed", shared by the
@@ -113,6 +143,8 @@ func Analyze(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.
 			ReleaseTemp:     map[ast.Expression]bool{},
 			LastUseTransfer: map[ast.Expression]bool{},
 			LastUseDrop:     map[ast.Expression]bool{},
+			ReuseMatch:      map[*ast.MatchExpr]string{},
+			ReuseTarget:     map[ast.Expression]bool{},
 		},
 	}
 	for _, stmt := range program.Statements {
@@ -136,6 +168,19 @@ type analyzer struct {
 	// lastUse holds the final-textual-reference node of each managed binding that is
 	// eligible for last-use precision, in the function currently being analyzed.
 	lastUse map[ast.Expression]bool
+	// reuseLastRef maps each owned managed binding (an eligible `let`/`var`, or an
+	// `own` param) to the node of its final textual reference — used to decide
+	// whether a `match` scrutinee is that binding's last use (a reuse source). Unlike
+	// lastUse it includes `own` params (Perceus reuse reclaims a consumed argument's
+	// cells), which is why it's computed separately.
+	reuseLastRef map[string]ast.Expression
+	// armTransfer holds match-arm-binding reference nodes that *transfer* (move, no
+	// dup) when consumed in an owning position. Set only for a binding used exactly
+	// once in an arm of a *consuming* match (one whose scrutinee is an owned binding
+	// at its last use, so the box abandons its fields — null drop_fn / reuse). Moving
+	// such a field out is what turns the otherwise-leaked field into a proper owned
+	// value, and — crucially — keeps its refcount at 1 so a recursive reuse can fire.
+	armTransfer map[ast.Expression]bool
 }
 
 // lambda analyzes one function/lambda body under its own return-ownership.
@@ -143,10 +188,19 @@ func (a *analyzer) lambda(lam *ast.LambdaExpr) {
 	saved := a.curReturnOwned
 	savedCond := a.conditional
 	savedLast := a.lastUse
+	savedReuse := a.reuseLastRef
 	a.curReturnOwned = isOwnedReturn(lam.ReturnType.TypeModifier)
 	a.conditional = false
+	savedArm := a.armTransfer
 	a.lastUse = a.computeLastUse(lam)
-	defer func() { a.conditional = savedCond; a.lastUse = savedLast }()
+	a.reuseLastRef = a.computeOwnedLastRef(lam)
+	a.armTransfer = map[ast.Expression]bool{}
+	defer func() {
+		a.conditional = savedCond
+		a.lastUse = savedLast
+		a.reuseLastRef = savedReuse
+		a.armTransfer = savedArm
+	}()
 	// The body is the function's return value: pass the return's ownership need
 	// down unconditionally. Whether it actually causes a retain is decided at the
 	// managed leaves (a non-managed return simply has none) — we don't gate on the
@@ -231,6 +285,267 @@ func (a *analyzer) computeLastUse(lam *ast.LambdaExpr) map[ast.Expression]bool {
 		out[node] = true
 	}
 	return out
+}
+
+// computeOwnedLastRef maps each *owned* managed binding to the node of its final
+// textual reference. An owned binding is an `own` managed parameter, or an eligible
+// managed `let`/`var` (declared once, not a plain parameter, not reassigned) — the
+// same eligibility as computeLastUse but *including* `own` params, since Perceus
+// reuse reclaims the cells of a consumed argument. A name referenced inside a loop
+// is excluded (a back-edge re-runs the reference, so "the last textual reference"
+// isn't soundly its dynamic last use). The result decides whether a `match`
+// scrutinee is a binding's last use — a precondition for reclaiming its box.
+func (a *analyzer) computeOwnedLastRef(lam *ast.LambdaExpr) map[string]ast.Expression {
+	declCount := map[string]int{}
+	reassigned := map[string]bool{}
+	params := map[string]bool{}
+	ownParams := map[string]bool{}
+	for _, p := range lam.Parameters {
+		if ip, ok := p.Pattern.(*ast.IdentifierPattern); ok {
+			params[ip.Name] = true
+			if p.TypeModifier == types.Own {
+				ownParams[ip.Name] = true
+			}
+		}
+	}
+	onStmt := func(s ast.Statement) bool {
+		switch s := s.(type) {
+		case *ast.VarDeclStmt:
+			if a.bindingIsManaged(s) {
+				declCount[s.Name]++
+			}
+		case *ast.VarReassignmentStmt:
+			reassigned[s.Name] = true
+		}
+		return true
+	}
+	loopUsed := map[string]bool{}
+	ast.WalkExpr(lam.Body, onStmt, func(e ast.Expression) bool {
+		switch le := e.(type) {
+		case *ast.ForLoopExpr:
+			collectNames(&le.Body, loopUsed)
+		case *ast.ForInLoopExpr:
+			collectNames(&le.Body, loopUsed)
+		}
+		return true
+	})
+
+	owned := func(name string) bool {
+		if loopUsed[name] {
+			return false
+		}
+		if ownParams[name] {
+			return true
+		}
+		return declCount[name] == 1 && !params[name] && !reassigned[name]
+	}
+
+	lastRef := map[string]ast.Expression{}
+	ast.WalkExpr(lam.Body, nil, func(e ast.Expression) bool {
+		if id, ok := e.(*ast.IdentifierExpr); ok && owned(id.Name) {
+			lastRef[id.Name] = id
+		}
+		return true
+	})
+	return lastRef
+}
+
+// reuseSource reports whether match m may reclaim its scrutinee's box (Perceus
+// reuse) and, if so, the scrutinee binding's name. Requirements (all conservative,
+// biased toward *not* reusing — a miss only forgoes an optimization):
+//   - the scrutinee is a bare identifier naming an owned managed binding whose
+//     *last use* is this scrutinee (computeOwnedLastRef), so the box is dead after;
+//   - its type is a `shared data` value (reuse reclaims a heap box; strings and
+//     stack values don't qualify);
+//   - the arms are a plain tag switch — no guards, no value-testing payload
+//     sub-patterns — matching exactly the backend path that wires reuse; and
+//   - at least one arm constructs a value of the *same* `data` type (so the
+//     reclaimed box, sized for that type, fits) — otherwise there's nothing to
+//     reuse it for.
+func (a *analyzer) reuseSource(m *ast.MatchExpr) (string, bool) {
+	id, ok := m.Scrutinee.(*ast.IdentifierExpr)
+	if !ok || a.reuseLastRef[id.Name] != ast.Expression(id) {
+		return "", false
+	}
+	dtName, ok := a.sharedDataName(m.Scrutinee)
+	if !ok || !plainTagSwitch(m) || !a.anyArmConstructs(m, dtName) {
+		return "", false
+	}
+	return id.Name, true
+}
+
+// sharedDataName returns the name of e's `data` type when e is a `shared`-flavored
+// data value, resolving an UnresolvedType through the symbol table.
+func (a *analyzer) sharedDataName(e ast.Expression) (string, bool) {
+	t, ok := a.tt.Get(e)
+	if !ok || types.AllocationOf(t) != types.Shared {
+		return "", false
+	}
+	switch v := t.(type) {
+	case types.DataType:
+		return v.Name, true
+	case types.UnresolvedType:
+		if a.symTable != nil {
+			if decl, ok := a.symTable.Types[v.Name]; ok {
+				if dt, ok := decl.Type.(types.DataType); ok {
+					return dt.Name, true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+// plainTagSwitch reports whether every arm of m is a plain tag-switch arm: a
+// wildcard/identifier catch-all, or a data pattern whose payload sub-patterns only
+// bind (no literal/range/nested-data value test), and no arm carries a guard. This
+// mirrors the backend's switch-vs-ladder condition, so reuse is only claimed for a
+// match the reuse-wired switch path will actually lower.
+func plainTagSwitch(m *ast.MatchExpr) bool {
+	for _, arm := range m.MatchArms {
+		if arm.Guard != nil {
+			return false
+		}
+		switch p := arm.Pattern.(type) {
+		case *ast.WildcardPattern, *ast.IdentifierPattern:
+		case *ast.DataPattern:
+			if !dataPatternBindsOnly(p) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// dataPatternBindsOnly reports whether a data pattern's payload only binds/ignores
+// — no literal, range, or nested value-testing sub-pattern that would force the
+// backend's if-else ladder instead of the tag switch.
+func dataPatternBindsOnly(p *ast.DataPattern) bool {
+	return !patternHasValueTest(p.Pattern)
+}
+
+// patternHasValueTest reports whether a pattern imposes any runtime value test
+// beyond binding (a literal/range, a nested data tag, or an aggregate containing
+// one). Mirrors the backend's patternHasTest so the analysis and lowering agree.
+func patternHasValueTest(pat ast.Pattern) bool {
+	switch p := pat.(type) {
+	case *ast.LiteralPattern, *ast.RangePattern, *ast.DataPattern:
+		return true
+	case *ast.StructPattern:
+		return slices.ContainsFunc(p.Fields, func(f ast.StructPatternField) bool {
+			return patternHasValueTest(f.Pattern)
+		})
+	case *ast.TuplePattern:
+		return slices.ContainsFunc(p.Elements, patternHasValueTest)
+	}
+	return false
+}
+
+// anyArmConstructs reports whether any arm's tail expression constructs a value of
+// the `shared data` type named dtName (a candidate to consume the reuse token).
+func (a *analyzer) anyArmConstructs(m *ast.MatchExpr, dtName string) bool {
+	for i := range m.MatchArms {
+		if tc := tailConstruction(m.MatchArms[i].Body); tc != nil && a.constructsSharedData(tc, dtName) {
+			return true
+		}
+	}
+	return false
+}
+
+// constructsSharedData reports whether tc constructs a `shared`-flavored value of
+// the `data` type named dtName.
+func (a *analyzer) constructsSharedData(tc ast.Expression, dtName string) bool {
+	name, ok := a.sharedDataName(tc)
+	return ok && name == dtName
+}
+
+// tailConstruction returns the construction expression that is e's value — e itself
+// when it's a `data` construction (a positional `TupleLiteralExpr` or a nullary
+// `DataConstructorExpr`), or the tail of a block. It deliberately does NOT look
+// inside an `if`/`match` tail: a construction reached only on one branch isn't
+// guaranteed to consume the reuse token on every path through the arm, so it's not
+// a safe unconditional reuse target. Returns nil when there's no such tail.
+func tailConstruction(e ast.Expression) ast.Expression {
+	switch v := e.(type) {
+	case *ast.TupleLiteralExpr, *ast.DataConstructorExpr:
+		return e
+	case *ast.BlockExpr:
+		if n := len(v.Statements); n > 0 {
+			if es, ok := v.Statements[n-1].(*ast.ExpressionStmt); ok {
+				return tailConstruction(es.Expression) // the block's value is its tail expression
+			}
+		}
+	}
+	return nil
+}
+
+// scrutineeConsumed reports whether m's scrutinee is an owned binding at its last
+// use — a `let`/`var` or `own` param whose box this function releases (or reuses)
+// after the match. In that case the box abandons its payload fields (release uses a
+// null drop_fn, and drop-reuse doesn't drop them either), so an arm may *move* a
+// field out instead of duplicating it. A borrowed scrutinee is NOT consumed (the
+// caller still owns the structure), so its fields must be duplicated, never moved.
+func (a *analyzer) scrutineeConsumed(m *ast.MatchExpr) bool {
+	id, ok := m.Scrutinee.(*ast.IdentifierExpr)
+	return ok && a.reuseLastRef[id.Name] == ast.Expression(id)
+}
+
+// markArmTransfers records, for a consuming match, each arm-binding reference that
+// may transfer instead of duplicate. Conservative and simple: a binding transfers
+// only when it is referenced *exactly once* in its arm body — then that reference
+// is trivially its last use, so moving it can never strand a later use, on any path
+// (a single use inside a nested branch at worst leaks the field on the untaken
+// path, which is safe). A binding used more than once keeps duplicating.
+func (a *analyzer) markArmTransfers(m *ast.MatchExpr) {
+	for i := range m.MatchArms {
+		names := map[string]bool{}
+		patternBoundNames(m.MatchArms[i].Pattern, names)
+		if len(names) == 0 {
+			continue
+		}
+		count := map[string]int{}
+		ref := map[string]*ast.IdentifierExpr{}
+		ast.WalkExpr(m.MatchArms[i].Body, nil, func(e ast.Expression) bool {
+			if id, ok := e.(*ast.IdentifierExpr); ok && names[id.Name] {
+				count[id.Name]++
+				ref[id.Name] = id
+			}
+			return true
+		})
+		for name, n := range count {
+			if n == 1 {
+				a.armTransfer[ref[name]] = true
+			}
+		}
+	}
+}
+
+// patternBoundNames collects every identifier a pattern binds (recursing into
+// data/struct/tuple payload sub-patterns), so markArmTransfers knows which names in
+// an arm body are arm-local field bindings.
+func patternBoundNames(pat ast.Pattern, into map[string]bool) {
+	switch p := pat.(type) {
+	case *ast.IdentifierPattern:
+		if p.Name != "_" {
+			into[p.Name] = true
+		}
+	case *ast.DataPattern:
+		patternBoundNames(p.Pattern, into)
+	case *ast.StructPattern:
+		for _, f := range p.Fields {
+			if f.Pattern == nil {
+				into[f.Name] = true // shorthand `{ x }` binds x
+			} else {
+				patternBoundNames(f.Pattern, into)
+			}
+		}
+	case *ast.TuplePattern:
+		for _, el := range p.Elements {
+			patternBoundNames(el, into)
+		}
+	}
 }
 
 // collectNames records every identifier name referenced within a block.
@@ -327,6 +642,14 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		if !a.isManaged(e) {
 			return
 		}
+		// A match-arm field binding used exactly once in a consuming match moves
+		// (no dup) when consumed in an owning position — the box abandoned the field,
+		// so this reference *is* its owning reference. This is what keeps a reused
+		// value unique so a recursive reuse fires (and reclaims the field, not leaks).
+		if a.armTransfer[e] && needOwned {
+			a.table.LastUseTransfer[e] = true
+			return
+		}
 		last := a.lastUse[e]
 		switch {
 		case last && needOwned && !a.conditional:
@@ -371,6 +694,26 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 
 	case *ast.MatchExpr:
 		a.expr(e.Scrutinee, false) // scrutinee is borrowed
+		if a.scrutineeConsumed(e) {
+			// The scrutinee's box is released/reused after the match, abandoning its
+			// fields, so an arm may move (not dup) a field it uses exactly once.
+			a.markArmTransfers(e)
+		}
+		if name, ok := a.reuseSource(e); ok {
+			// The scrutinee's box is reclaimed via the runtime reuse token. We still
+			// mark the scrutinee's ordinary drop above (robust if the backend doesn't
+			// fire reuse), but when it does, the backend retires the scrutinee's slot at
+			// the drop-reuse point, which suppresses that drop — the token subsumes it
+			// (an arm reuses the box, or frees it). Mark the match and each arm's target.
+			a.table.ReuseMatch[e] = name
+			if dtName, ok := a.sharedDataName(e.Scrutinee); ok {
+				for i := range e.MatchArms {
+					if tc := tailConstruction(e.MatchArms[i].Body); tc != nil && a.constructsSharedData(tc, dtName) {
+						a.table.ReuseTarget[tc] = true
+					}
+				}
+			}
+		}
 		savedCond := a.conditional
 		a.conditional = true
 		for i := range e.MatchArms {

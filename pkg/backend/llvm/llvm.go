@@ -203,9 +203,10 @@ type lowerer struct {
 	// until ensureRCRuntime runs; all five are populated together.
 	malloc    *ir.Func // libc malloc
 	free      *ir.Func // libc free
-	rcAlloc   *ir.Func // lyra_rc_alloc: malloc a box, rc = 1
-	rcRetain  *ir.Func // lyra_rc_retain: rc += 1 (pinned no-op)
-	rcRelease *ir.Func // lyra_rc_release: rc -= 1, drop + free at 0 (pinned no-op)
+	rcAlloc     *ir.Func // lyra_rc_alloc: malloc a box, rc = 1
+	rcRetain    *ir.Func // lyra_rc_retain: rc += 1 (pinned no-op)
+	rcRelease   *ir.Func // lyra_rc_release: rc -= 1, drop + free at 0 (pinned no-op)
+	rcDropReuse *ir.Func // lyra_rc_drop_reuse: unique → return box (reclaim), else decref/null (Perceus reuse)
 
 	// Per-function state, reset by beginFunction at the start of each function
 	// body (main and every user function get their own).
@@ -228,6 +229,13 @@ type lowerer struct {
 	//     in the merge block it doesn't dominate.
 	managedFrames   [][]value.Value
 	pendingReleases []pendingTemp
+
+	// reuseToken is the Perceus reuse token (an i8* box-or-null from
+	// lyra_rc_drop_reuse) of the reuse-`match` currently being lowered, live only
+	// across its arms. A reuse-target construction in an arm consumes it (writes into
+	// the reclaimed box when non-null) and clears it; an arm that doesn't consume it
+	// frees it. nil when no reuse match is in flight.
+	reuseToken value.Value
 }
 
 // pendingTemp is a managed temporary awaiting release, tagged with the block it

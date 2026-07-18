@@ -24,6 +24,7 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retSigned, entryABI bool) 
 	l.entryABI = entryABI
 	l.managedFrames = [][]value.Value{nil}
 	l.pendingReleases = nil
+	l.reuseToken = nil
 }
 
 // emitReturn lowers a `ret` for the current function, coercing val to the
@@ -59,6 +60,12 @@ func (l *lowerer) emitReturn(block *ir.Block, val value.Value) error {
 	if _, ok := l.retType.(*lltypes.StructType); ok {
 		// An aggregate return (a string fat pointer, or a tuple/struct) is returned
 		// by value; the typechecker already guaranteed the body matches the type.
+		block.NewRet(val)
+		return nil
+	}
+	if _, ok := l.retType.(*lltypes.PointerType); ok {
+		// A `shared` value is returned as its box pointer (an owned return transfers
+		// the reference; the ownership pass retired it from the frame at the move).
 		block.NewRet(val)
 		return nil
 	}

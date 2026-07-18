@@ -160,7 +160,52 @@ retains. The frame is still the leak-safe backstop for anything not fused
 memory-safe under AddressSanitizer, with static release==allocation conservation
 checks (macOS ASan can't see leaks).
 
-**Still open:** managed values inside aggregates (still leak — see below).
+**[DONE] Stage 3 — reuse analysis / FBIP (`shared` values).** When a `match`
+destructures an owned `shared data` value at its last use, its box is *reclaimed*
+instead of freed, and a same-type construction in an arm writes the new value into
+it **in place** — Functional But In Place. This is the true (dynamic) Perceus
+mechanism: uniqueness is a runtime test, so aliased graphs stay correct.
+
+- **`lyra_rc_drop_reuse(box) -> ptr`** (runtime.go): unique (`rc == 1`) → returns
+  the box (a *reuse token*), rc left at 1, **not** freed; shared (`rc > 1`) →
+  decrements and returns null; pinned (arena) → returns null untouched. It does not
+  drop the box's payload fields (matching `release`'s null `drop_fn`) — the match
+  already copied the union out (`unboxSharedData`), and an arm that keeps a field
+  *moves* it (below).
+- **Reuse-aware construction** (`lowerBoxSharedReuse`, shared.go): a runtime branch
+  on the token — non-null → write the new payload into the reclaimed box (rc = 1),
+  null → a fresh `lyra_rc_alloc`. A phi of the two box pointers.
+- **The pass** (`pkg/analyzer/ownership`): `ReuseMatch` marks a match whose
+  scrutinee is an owned binding (`let`/`var` or `own` param) at its last use, whose
+  type is a `shared data`, whose arms are a plain tag switch (no guards / value-test
+  payloads — the reuse-wired backend path), and where ≥1 arm constructs the same
+  type. `ReuseTarget` marks each such arm-tail construction. The backend
+  (`lowerDataMatch`) drop-reuses the box once after unboxing, retires the
+  scrutinee's slot (suppressing its ordinary drop), and hands the token to the arms:
+  a target consumes it (in-place write), a non-constructing arm frees it
+  (`free(NULL)` is a no-op, so freeing is unconditional).
+- **Arm-binding transfer** — the piece that makes recursion actually reclaim: a
+  field binding used *exactly once* in a *consuming* match (owned scrutinee at last
+  use) **moves** (no dup) into an owning position (`LastUseTransfer`). Without it a
+  recursive `map`'s tail would be dup'd (rc → 2) and every level would miss the
+  unique fast path — and the field would leak. With it, `map`/`filter`/tree
+  rebuilds run with **zero** allocation per cell, and no field leak.
+- **Return of a `shared` value** (`emitReturn` pointer case) and the typechecker's
+  **`propagateAllocation`** (a `shared` return type / annotation stamps the
+  construction leaves inside `match`/`if` arms `shared`, so the arm's value is
+  heap-boxed) are the two supporting pieces this needed.
+
+Verified memory-safe under AddressSanitizer across the linear in-place update, the
+recursive FBIP map, the token-free path (a non-constructing arm), and the safety
+boundary — a **borrowed** scrutinee is never reused (the caller still owns the
+structure), pinned by both a no-`drop_reuse` IR check and an ASan run.
+
+**Still open:** reuse specialization (stage 4 — skip stores for fields the reused
+constructor shares with the matched one, and a static uniqueness fast path to drop
+the runtime branch); reuse through the ladder-fallback path (guards / value-test
+payloads); struct/tuple (non-`data`) reuse; and managed values inside aggregates
+still leak on a plain drop (below) — arm-binding transfer reclaims a field only
+when the arm moves it.
 
 ## `shared`-value lowering (implemented)
 

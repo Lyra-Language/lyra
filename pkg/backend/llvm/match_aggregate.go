@@ -508,6 +508,21 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 	tagPtr := block.NewGetElementPtr(unionTy, slot, constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 0))
 	tag := block.NewLoad(tagTy, tagPtr)
 
+	// Perceus reuse (FBIP): if the scrutinee is an owned `shared data` binding at its
+	// last use (the ownership pass decided), reclaim its box via `lyra_rc_drop_reuse`
+	// — the box when unique, else null — and hand that token to the arms. A reuse
+	// target arm writes the new value into the reclaimed box (no allocation); any
+	// other arm frees the token. Retiring the scrutinee's slot suppresses its ordinary
+	// last-use drop / frame release, since the token now owns the box's disposal.
+	var reuseToken value.Value
+	if reuseName, ok := l.res.Ownership.ReuseScrutinee(e); ok {
+		l.ensureRCRuntime()
+		reuseToken = block.NewCall(l.rcDropReuse, block.NewBitCast(whole, lltypes.NewPointer(lltypes.I8)))
+		if slot, found := l.locals[reuseName]; found {
+			l.retireManagedSlot(slot)
+		}
+	}
+
 	mergeBlock := fn.NewBlock("")
 	type incoming struct {
 		val value.Value
@@ -547,10 +562,21 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 			return nil, nil, fmt.Errorf("llvm: match pattern %T not implemented for a data scrutinee", arm.Pattern)
 		}
 
+		// Make the reuse token available to this arm's reuse-target construction (if
+		// any). Reset per arm — arms are alternative paths, so each independently
+		// consumes the token (a construction writes into the reclaimed box) or, failing
+		// to consume it, frees it below.
+		l.reuseToken = reuseToken
 		val, end, err := l.lowerExpr(armBlock, arm.Body)
 		if err != nil {
 			return nil, nil, err
 		}
+		if reuseToken != nil && l.reuseToken != nil && end.Term == nil {
+			// This arm didn't reuse the reclaimed box → free it (`free(NULL)` is a valid
+			// no-op, so this is safe whether the token is a box or null).
+			end.NewCall(l.free, reuseToken)
+		}
+		l.reuseToken = nil
 		if end.Term == nil {
 			end.NewBr(mergeBlock)
 			incomings = append(incomings, incoming{val, end})

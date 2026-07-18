@@ -120,3 +120,83 @@ func TestOwnership_LastUseDropAfterFinalBorrow(t *testing.T) {
 			c.drops, c.retains, c.transfers)
 	}
 }
+
+// reuseInfo pulls the reuse-analysis results out of the ownership table for a
+// program (Perceus stage 3): how many matches reclaim their scrutinee's box, how
+// many constructions consume a reuse token, and how many arm-binding references
+// transfer (move, no dup).
+func reuseInfo(t *testing.T, src string) (matches, targets, transfers int) {
+	t.Helper()
+	res := driver.Analyze([]byte(src))
+	if res.HasErrors() {
+		t.Fatalf("unexpected analysis errors: %v", res.Diagnostics)
+	}
+	o := res.Ownership
+	return len(o.ReuseMatch), len(o.ReuseTarget), len(o.LastUseTransfer)
+}
+
+// A recursive map over a `shared` list: each `own`-param match is a reuse source,
+// both its arms construct the same type (two reuse targets), and the tail binding
+// `t` transfers into the recursive call (keeping the reused cell unique).
+func TestReuse_RecursiveMapFires(t *testing.T) {
+	matches, targets, transfers := reuseInfo(t, `data List = Nil | Cons(i64, shared List)
+	 let inc = (xs: own shared List) -> shared List => match xs {
+	   Nil => Nil,
+	   Cons(h, t) => Cons(h + 1, inc(t))
+	 }
+	 let main = () -> u8 => {
+	   let xs: shared List = Cons(1, Nil)
+	   let ys: shared List = inc(xs)
+	   0
+	 }`)
+	if matches != 1 {
+		t.Errorf("want 1 reuse match (inc's match), got %d", matches)
+	}
+	if targets != 2 {
+		t.Errorf("want 2 reuse targets (Nil and Cons arms), got %d", targets)
+	}
+	// The tail `t` transfers into inc(t); `xs` transfers into the inc(xs) call site.
+	if transfers < 1 {
+		t.Errorf("want the arm binding `t` to transfer (>=1), got %d", transfers)
+	}
+}
+
+// A borrowed scrutinee (a bare `shared` param) is NOT consumed, so its box must
+// not be reclaimed — no reuse match, no arm-binding transfer.
+func TestReuse_BorrowedScrutineeNotReused(t *testing.T) {
+	matches, targets, _ := reuseInfo(t, `data List = Nil | Cons(i64, shared List)
+	 let rebuild = (xs: shared List) -> shared List => match xs {
+	   Nil => Nil,
+	   Cons(h, t) => Cons(h, t)
+	 }
+	 let main = () -> u8 => {
+	   let xs: shared List = Cons(1, Nil)
+	   let ys: shared List = rebuild(xs)
+	   0
+	 }`)
+	if matches != 0 {
+		t.Errorf("borrowed scrutinee: want 0 reuse matches, got %d", matches)
+	}
+	if targets != 0 {
+		t.Errorf("borrowed scrutinee: want 0 reuse targets, got %d", targets)
+	}
+}
+
+// A guarded match can't lower via the reuse-wired tag switch, so reuse must not be
+// claimed for it (else the suppressed scrutinee drop would leak on the ladder path).
+func TestReuse_GuardedMatchNotReused(t *testing.T) {
+	matches, _, _ := reuseInfo(t, `data Box = Empty | Full(i64)
+	 let f = (b: own shared Box) -> shared Box => match b {
+	   Full(n) if n > 0 => Full(n),
+	   Full(n) => Empty,
+	   Empty => Empty
+	 }
+	 let main = () -> u8 => {
+	   let b: shared Box = Full(1)
+	   let c: shared Box = f(b)
+	   0
+	 }`)
+	if matches != 0 {
+		t.Errorf("guarded match: want 0 reuse matches, got %d", matches)
+	}
+}

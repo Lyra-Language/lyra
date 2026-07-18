@@ -264,6 +264,10 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// Push the annotation width down onto untyped literal leaves too, so the
 	// backend lowers `let x: u8 = 5 + 3` with u8 leaves, not i64 ones.
 	tc.propagateLiteralType(decl.Value, resolvedDeclType)
+	// Push the annotation's `shared` flavor down onto construction leaves (incl.
+	// inside `match`/`if` arms), so `let n: shared Node = match … { … => Node{…} }`
+	// heap-boxes the value the arm builds.
+	tc.propagateAllocation(decl.Value, types.AllocationOf(resolvedDeclType))
 }
 
 // checkDestructuringDecl type-checks a destructuring declaration. It infers
@@ -1473,6 +1477,48 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 		}
 		if tc.currentTypeIsUntyped(e) {
 			tc.typeTable.Set(e, cp)
+		}
+	}
+}
+
+// propagateAllocation pushes a context allocation flavor (today only `shared`)
+// down onto the *construction* leaves that produce the value — a data
+// constructor, struct instance, or named-tuple literal — recursing through the
+// arm/branch/tail structure of a match/if/block the same way propagateLiteralType
+// pushes a width. It's how a `shared`-annotated binding or a `shared` return type
+// stamps the value actually built inside a `match` arm (`match xs { … => Cons(…) }`)
+// as `shared`, so the backend heap-boxes it (and the ownership pass sees it as a
+// managed / reuse-eligible value). Allocation is a use-site flavor, so only a
+// construction — whose flavor is context-determined — is stamped; an identifier or
+// call already carries its own definite flavor and is left alone. Stamping the
+// recorded type via WithAllocation is safe: assignability/allocation-compat already
+// passed against the annotated/declared type, and Unspecified (the default) is a
+// no-op, so a non-shared context changes nothing.
+func (tc *TypeChecker) propagateAllocation(expr ast.Expression, mod types.AllocationModifier) {
+	if mod != types.Shared {
+		return // only `shared` needs pushing; stack/unspecified is the inline default
+	}
+	switch e := expr.(type) {
+	case *ast.TupleLiteralExpr, *ast.DataConstructorExpr, *ast.StructInstanceExpr:
+		if t, ok := tc.typeTable.Get(expr); ok {
+			tc.typeTable.Set(expr, types.WithAllocation(t, mod))
+		}
+	case *ast.MatchExpr:
+		for _, arm := range e.MatchArms {
+			tc.propagateAllocation(arm.Body, mod)
+		}
+	case *ast.IfExpr:
+		if e.Then != nil {
+			tc.propagateAllocation(e.Then, mod)
+		}
+		if e.Else != nil {
+			tc.propagateAllocation(e.Else, mod)
+		}
+	case *ast.BlockExpr:
+		if n := len(e.Statements); n > 0 {
+			if es, ok := e.Statements[n-1].(*ast.ExpressionStmt); ok {
+				tc.propagateAllocation(es.Expression, mod)
+			}
 		}
 	}
 }

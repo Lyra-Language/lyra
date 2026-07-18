@@ -5,6 +5,7 @@ import (
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
+	"github.com/llir/llvm/ir/enum"
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
@@ -96,4 +97,47 @@ func (l *lowerer) lowerBoxShared(block *ir.Block, payload value.Value, payloadTy
 		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
 	block.NewStore(payload, payloadPtr)
 	return box, nil
+}
+
+// lowerBoxSharedReuse boxes a `shared` value with a Perceus **reuse token**: when
+// the token (an i8* from lyra_rc_drop_reuse) is non-null the value's box was
+// reclaimed from a matched-and-dead unique value, so we write the new payload into
+// it in place (no allocation); when null we fall back to a fresh lyra_rc_alloc box.
+// The choice is a runtime branch (uniqueness isn't statically known — the true
+// Perceus mechanism), producing a phi of the two box pointers. payloadType sizes
+// the fresh allocation; the reused box is the same `data` type (the analysis only
+// pairs same-type constructions), so its layout matches.
+func (l *lowerer) lowerBoxSharedReuse(block *ir.Block, payload value.Value, payloadType types.Type, token value.Value) (value.Value, *ir.Block, error) {
+	l.ensureRCRuntime()
+	boxTy := SharedBoxType(payload.Type()) // { i64, payloadLLVM }
+	boxPtrTy := lltypes.NewPointer(boxTy)
+	fn := block.Parent
+
+	reuseBlock := fn.NewBlock("")
+	allocBlock := fn.NewBlock("")
+	merge := fn.NewBlock("")
+	isNull := block.NewICmp(enum.IPredEQ, token, constant.NewNull(lltypes.NewPointer(lltypes.I8)))
+	block.NewCondBr(isNull, allocBlock, reuseBlock)
+
+	// Reuse: write the new value into the reclaimed box. rc is already 1 (drop-reuse
+	// returns a unique box), but set it explicitly so the box is a well-formed fresh
+	// value regardless of how it was reclaimed.
+	reuseBox := reuseBlock.NewBitCast(token, boxPtrTy)
+	rcPtr := reuseBlock.NewGetElementPtr(boxTy, reuseBox,
+		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 0))
+	reuseBlock.NewStore(constant.NewInt(lltypes.I64, 1), rcPtr)
+	reusePayloadPtr := reuseBlock.NewGetElementPtr(boxTy, reuseBox,
+		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+	reuseBlock.NewStore(payload, reusePayloadPtr)
+	reuseBlock.NewBr(merge)
+
+	// Alloc: no reclaimable box — allocate a fresh one.
+	freshBox, err := l.lowerBoxShared(allocBlock, payload, payloadType)
+	if err != nil {
+		return nil, nil, err
+	}
+	allocBlock.NewBr(merge)
+
+	phi := merge.NewPhi(ir.NewIncoming(reuseBox, reuseBlock), ir.NewIncoming(freshBox, allocBlock))
+	return phi, merge, nil
 }
