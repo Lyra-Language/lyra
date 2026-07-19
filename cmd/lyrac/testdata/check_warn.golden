@@ -1,0 +1,1 @@
+testdata/warn.lyra:2:3: warning [lyra-W003]: variable "unused" is declared but never used

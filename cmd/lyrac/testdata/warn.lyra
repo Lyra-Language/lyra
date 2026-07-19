@@ -1,0 +1,4 @@
+let main = () => {
+  let unused = 5
+  0
+}
