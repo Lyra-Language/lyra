@@ -87,7 +87,10 @@ func buildAndRun(t *testing.T, src string) int {
 	if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(clang, llPath, "-o", binPath).CombinedOutput(); err != nil {
+	// -lm links libm: the float backend lowers floor/ceil/round to llvm.*
+	// intrinsics and truncated/floored float remainder to fmod, which the
+	// linker resolves against the math library.
+	if out, err := exec.Command(clang, llPath, "-lm", "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("clang rejected the IR: %v\n%s\n--- IR ---\n%s", err, out, ir)
 	}
 

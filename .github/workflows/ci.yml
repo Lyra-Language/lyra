@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: build & test
+    runs-on: ubuntu-latest
+    env:
+      # Use the SDK that setup-go installs (read from go.mod) directly, rather
+      # than letting `go` fetch a separate module toolchain — the module
+      # toolchain ships without the `covdata` tool that -coverpkg needs to
+      # write coverage for packages that have no in-package tests.
+      GOTOOLCHAIN: local
+      # Statement-coverage floor for the merged, cross-package profile
+      # (see the "Enforce coverage floor" step). Raise this as coverage
+      # improves; never lower it to make a red build pass.
+      COVERAGE_FLOOR: "80.0"
+    steps:
+      # The main module. Kept in a subdirectory so the tree-sitter grammar
+      # can sit next to it as a sibling, matching the `replace` directive in
+      # go.mod (`=> ../tree-sitter-lyra`).
+      - name: Checkout lyra
+        uses: actions/checkout@v4
+        with:
+          path: lyra
+
+      # The tree-sitter grammar is a local `replace` dependency. Its
+      # src/parser.c is stored via Git LFS, so lfs must be enabled or the
+      # cgo build sees an LFS pointer file instead of the generated parser.
+      - name: Checkout tree-sitter-lyra grammar
+        uses: actions/checkout@v4
+        with:
+          repository: Lyra-Language/tree-sitter-lyra
+          path: tree-sitter-lyra
+          lfs: true
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: lyra/go.mod
+          cache-dependency-path: lyra/go.sum
+
+      # The LLVM backend's behavioral tests compile emitted IR with clang and
+      # run it (they self-skip when clang is absent). Installing clang here
+      # keeps that coverage live in CI. libm (-lm), which the float tests
+      # link against, ships with the runner's libc dev package.
+      - name: Install clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang
+
+      - name: Build
+        working-directory: lyra
+        run: go build ./...
+
+      - name: Vet
+        working-directory: lyra
+        run: go vet ./...
+
+      # -coverpkg=./... instruments every package so tests that live in a
+      # separate `…/tests` subpackage (collector, typechecker) are credited
+      # against the code they exercise. Without it those packages read as
+      # near-zero.
+      - name: Test with coverage
+        working-directory: lyra
+        run: go test -coverpkg=./... -coverprofile=cover.out ./...
+
+      - name: Enforce coverage floor
+        working-directory: lyra
+        run: |
+          total=$(go tool cover -func=cover.out | awk '/^total:/ {print $NF}' | tr -d '%')
+          echo "Total statement coverage: ${total}%"
+          awk -v c="$total" -v t="$COVERAGE_FLOOR" 'BEGIN {
+            if (c + 0 < t + 0) {
+              printf "::error::coverage %.1f%% is below the floor of %.1f%%\n", c, t
+              exit 1
+            }
+            printf "coverage %.1f%% meets the floor of %.1f%%\n", c, t
+          }'
+
+      - name: Upload coverage profile
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-profile
+          path: lyra/cover.out
+          if-no-files-found: ignore

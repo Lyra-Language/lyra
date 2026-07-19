@@ -30,7 +30,7 @@ func runModule(t *testing.T, m *ir.Module) int {
 	if err := os.WriteFile(llPath, []byte(m.String()), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(clang, llPath, "-o", binPath).CombinedOutput(); err != nil {
+	if out, err := exec.Command(clang, llPath, "-lm", "-o", binPath).CombinedOutput(); err != nil {
 		t.Fatalf("clang rejected the IR: %v\n%s\n--- IR ---\n%s", err, out, m.String())
 	}
 	runErr := exec.Command(binPath).Run()
