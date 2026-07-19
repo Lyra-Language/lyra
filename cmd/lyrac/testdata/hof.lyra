@@ -1,2 +1,0 @@
-let apply = (f: (u8) -> u8, x: u8) => f(x)
-let main = () => apply((n: u8) => n, 0)
