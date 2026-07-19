@@ -7,7 +7,9 @@ import (
 	"log"
 	"os"
 	"runtime/debug"
+	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/owenrumney/go-lsp/lsp"
 	"github.com/owenrumney/go-lsp/server"
@@ -191,29 +193,57 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 }
 
 // applyEdit applies a single incremental LSP text change to src and returns
-// the updated document. LSP positions are 0-based line/character pairs where
-// "character" counts UTF-16 code units; for ASCII Lyra source this equals the
-// byte offset within the line, which is what we use here.
+// the updated document. An LSP Range is a pair of 0-based (line, character)
+// positions; posToOffset resolves each to a byte offset so the edit is a plain
+// string splice.
 func applyEdit(src string, r lsp.Range, newText string) string {
 	start := posToOffset(src, r.Start.Line, r.Start.Character)
 	end := posToOffset(src, r.End.Line, r.End.Character)
+	if end < start {
+		// A malformed range (end before start) would panic the slice; treat it
+		// as an empty range at start rather than crashing the server.
+		end = start
+	}
 	return src[:start] + newText + src[end:]
 }
 
 // posToOffset converts a 0-based LSP (line, character) position to a byte
-// offset within text. It walks the string once, counting newlines to reach the
-// target line and then advancing 'char' bytes within that line.
+// offset within text.
+//
+// LSP measures "character" in UTF-16 code units, not bytes: a BMP rune (é, 世)
+// is one code unit but two or three UTF-8 bytes, and an astral rune (most
+// emoji) is a surrogate pair — two code units — and four bytes. Advancing by
+// bytes therefore corrupts any edit on a line containing non-ASCII text, so we
+// walk runes and count UTF-16 units. A character past its line's end clamps to
+// the line end (the LSP-documented behavior), and a line past the end of the
+// text clamps to len(text).
 func posToOffset(text string, line, char int) int {
-	curLine := 0
-	for i := 0; i < len(text); i++ {
-		if curLine == line {
-			return min(i+char, len(text))
+	// Walk to the first byte of the target line.
+	offset := 0
+	for l := 0; l < line; l++ {
+		nl := strings.IndexByte(text[offset:], '\n')
+		if nl < 0 {
+			return len(text) // fewer lines than requested
 		}
-		if text[i] == '\n' {
-			curLine++
-		}
+		offset += nl + 1
 	}
-	return len(text)
+	// Consume `char` UTF-16 code units within the line, stopping at its end.
+	for units := 0; units < char && offset < len(text) && text[offset] != '\n'; {
+		r, size := utf8.DecodeRuneInString(text[offset:])
+		units += utf16Len(r)
+		offset += size
+	}
+	return offset
+}
+
+// utf16Len reports how many UTF-16 code units encode r: two for an astral-plane
+// rune (a surrogate pair), one otherwise. The invalid-encoding rune (size 1) is
+// treated as a single unit so a malformed byte still makes forward progress.
+func utf16Len(r rune) int {
+	if r > 0xFFFF {
+		return 2
+	}
+	return 1
 }
 
 // lspPos converts a 1-based ast.Location line/column to a 0-based LSP position,
