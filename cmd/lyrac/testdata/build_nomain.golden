@@ -1,0 +1,1 @@
+testdata/nomain.lyra: error: no entry point: define a top-level `let main = () -> u8` (or `-> void`)

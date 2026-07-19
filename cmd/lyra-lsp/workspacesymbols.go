@@ -24,8 +24,10 @@ func (h *Handler) WorkspaceSymbol(_ context.Context, params *lsp.WorkspaceSymbol
 
 	h.mu.Lock()
 	snapshot := make(map[string]*docAnalysis, len(h.analysisStore))
+	sources := make(map[string]string, len(h.analysisStore))
 	for uri, a := range h.analysisStore {
 		snapshot[uri] = a
+		sources[uri] = h.docStore[uri]
 	}
 	h.mu.Unlock()
 
@@ -33,7 +35,7 @@ func (h *Handler) WorkspaceSymbol(_ context.Context, params *lsp.WorkspaceSymbol
 	var out []lsp.SymbolInformation
 	for uri, analysis := range snapshot {
 		for _, node := range analysis.program.Statements {
-			info := stmtToSymbolInfo(uri, node)
+			info := stmtToSymbolInfo(uri, sources[uri], node)
 			if info == nil {
 				continue
 			}
@@ -47,7 +49,7 @@ func (h *Handler) WorkspaceSymbol(_ context.Context, params *lsp.WorkspaceSymbol
 
 // stmtToSymbolInfo converts a top-level statement to a SymbolInformation, or
 // returns nil for statements that don't contribute to the symbol index.
-func stmtToSymbolInfo(uri string, node ast.AstNode) *lsp.SymbolInformation {
+func stmtToSymbolInfo(uri string, source string, node ast.AstNode) *lsp.SymbolInformation {
 	switch s := node.(type) {
 	case *ast.TypeDeclStmt:
 		if s.Name == "" {
@@ -56,7 +58,7 @@ func stmtToSymbolInfo(uri string, node ast.AstNode) *lsp.SymbolInformation {
 		return &lsp.SymbolInformation{
 			Name:     s.Name,
 			Kind:     typeDeclKind(s.Type),
-			Location: astLocToLSPLocation(uri, s.GetLocation()),
+			Location: astLocToLSPLocation(uri, source, s.GetLocation()),
 		}
 
 	case *ast.TraitDeclStmt:
@@ -66,7 +68,7 @@ func stmtToSymbolInfo(uri string, node ast.AstNode) *lsp.SymbolInformation {
 		return &lsp.SymbolInformation{
 			Name:     s.Name,
 			Kind:     lsp.SymbolKindInterface,
-			Location: astLocToLSPLocation(uri, s.GetLocation()),
+			Location: astLocToLSPLocation(uri, source, s.GetLocation()),
 		}
 
 	case *ast.VarDeclStmt:
@@ -81,7 +83,7 @@ func stmtToSymbolInfo(uri string, node ast.AstNode) *lsp.SymbolInformation {
 		return &lsp.SymbolInformation{
 			Name:     s.Name,
 			Kind:     kind,
-			Location: astLocToLSPLocation(uri, s.GetLocation()),
+			Location: astLocToLSPLocation(uri, source, s.GetLocation()),
 		}
 	}
 	return nil

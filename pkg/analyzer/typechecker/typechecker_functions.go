@@ -66,17 +66,19 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 	// that has no declaration. This must happen even when there is no return
 	// type to check.
 	tc.withParamScope(lambda, func() {
-		if declaredReturn == nil {
-			return // param annotations validated; nothing else to check
-		}
-
 		// Resolve the declared return type so that user-defined names (structs,
 		// data types, constrained types) compare equal to the resolved parameter
 		// types produced by withParamScope. Without this, `(v: Vec2) -> Vec2 => v`
 		// would compare NamedStructType("Vec2") against UnresolvedType("Vec2").
 		// Use resolveTypeIfKnown (not resolveType) to avoid emitting a duplicate
 		// "unknown type" diagnostic when the return annotation names an unknown type.
-		declaredReturn = tc.resolveTypeIfKnown(declaredReturn)
+		//
+		// declaredReturn is nil for an inferred-return function (`() => body`
+		// with no `-> T`). The body is still walked below so body-level
+		// diagnostics surface; only the return-type comparison is skipped.
+		if declaredReturn != nil {
+			declaredReturn = tc.resolveTypeIfKnown(declaredReturn)
+		}
 
 		// An owned return (bare or `own`) transfers the value to the caller, so its
 		// allocation flavor must match the declared return type; a `ref`/`mut`
@@ -89,17 +91,20 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 				if isVoid {
 					tc.checkBlockVoidReturn(funcName, block)
 				} else {
+					// declaredReturn may be nil (inferred return); checkBlockReturn
+					// still walks every statement, skipping only the return-type
+					// comparison.
 					tc.checkBlockReturn(funcName, block, declaredReturn, ownedReturn)
 				}
 			} else if !isVoid {
 				// Single-expression body: the expression value is the return value.
 				// (For void functions the value is simply discarded — no error.)
 				bodyType := tc.inferExprType(lambda.Body)
-				if bodyType != nil && !isAssignable(bodyType, declaredReturn) {
+				if declaredReturn != nil && bodyType != nil && !isAssignable(bodyType, declaredReturn) {
 					tc.addError(lambda.Body.GetLocation(), SeverityError,
 						"%s: return type mismatch: expected %s, got %s",
 						funcName, declaredReturn, bodyType)
-				} else if bodyType != nil {
+				} else if declaredReturn != nil && bodyType != nil {
 					// The declared return type is the body's context: push its width
 					// onto untyped literal leaves so `() -> u8 => 5 + 3` lowers at u8.
 					tc.propagateLiteralType(lambda.Body, declaredReturn)
@@ -115,11 +120,11 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 		if !isVoid {
 			for _, clause := range lambda.LambdaClauses {
 				clauseType := tc.inferExprType(clause.Body)
-				if clauseType != nil && !isAssignable(clauseType, declaredReturn) {
+				if declaredReturn != nil && clauseType != nil && !isAssignable(clauseType, declaredReturn) {
 					tc.addError(clause.Body.GetLocation(), SeverityError,
 						"%s: return type mismatch: expected %s, got %s",
 						funcName, declaredReturn, clauseType)
-				} else if clauseType != nil && ownedReturn {
+				} else if declaredReturn != nil && clauseType != nil && ownedReturn {
 					tc.checkAllocationCompat(clauseType, declaredReturn, clause.Body.GetLocation(), funcName)
 				}
 			}
@@ -154,6 +159,12 @@ func (tc *TypeChecker) checkBlockVoidReturn(funcName string, block *ast.BlockExp
 //   - Every explicit ReturnStmt against declaredReturn.
 //   - The last statement, when it is an ExpressionStmt, as an implicit return value.
 //
+// declaredReturn may be nil for an inferred-return function (`() => body` with
+// no `-> T`). In that case the return-type comparison is skipped, but every
+// statement is still walked so body-level diagnostics (const reassignment,
+// interior mutation, must-use, …) surface just as they do for an annotated
+// function.
+//
 // The block's own scope is entered for the duration so that variables declared
 // inside the body (e.g. `let local: i32 = 5`) are visible to inferExprType.
 func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, declaredReturn types.Type, ownedReturn bool) {
@@ -166,11 +177,11 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 					continue // bare return – void compatibility is not checked yet
 				}
 				retType := tc.inferExprType(s.Value)
-				if retType != nil && !isAssignable(retType, declaredReturn) {
+				if declaredReturn != nil && retType != nil && !isAssignable(retType, declaredReturn) {
 					tc.addError(s.GetLocation(), SeverityError,
 						"%s: return type mismatch: expected %s, got %s",
 						funcName, declaredReturn, retType)
-				} else if retType != nil {
+				} else if declaredReturn != nil && retType != nil {
 					tc.propagateLiteralType(s.Value, declaredReturn)
 					if ownedReturn {
 						tc.checkAllocationCompat(retType, declaredReturn, s.GetLocation(), funcName)
@@ -182,11 +193,11 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 					// so it is being used (returned), not dropped — check only that
 					// its type matches the declared return type.
 					exprType := tc.inferExprType(s.Expression)
-					if exprType != nil && !isAssignable(exprType, declaredReturn) {
+					if declaredReturn != nil && exprType != nil && !isAssignable(exprType, declaredReturn) {
 						tc.addError(s.GetLocation(), SeverityError,
 							"%s: return type mismatch: expected %s, got %s",
 							funcName, declaredReturn, exprType)
-					} else if exprType != nil {
+					} else if declaredReturn != nil && exprType != nil {
 						// The declared return type is the context for the block's
 						// value; push its width onto untyped literal leaves.
 						tc.propagateLiteralType(s.Expression, declaredReturn)

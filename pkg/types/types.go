@@ -178,10 +178,17 @@ type ReturnType struct {
 }
 
 func (r ReturnType) GetName() string {
-	if r.TypeModifier != "" {
-		return fmt.Sprintf("%s %s", r.TypeModifier, r.Type.GetName())
+	// A nil Type is an un-inferred return (e.g. an unannotated lambda literal
+	// `(n: u8) => n`). Render it as "?" so a type String() — often used to build
+	// error messages — never panics on the nil dereference.
+	typeName := "?"
+	if r.Type != nil {
+		typeName = r.Type.GetName()
 	}
-	return r.Type.GetName()
+	if r.TypeModifier != "" {
+		return fmt.Sprintf("%s %s", r.TypeModifier, typeName)
+	}
+	return typeName
 }
 func (r ReturnType) String() string {
 	return r.GetName()

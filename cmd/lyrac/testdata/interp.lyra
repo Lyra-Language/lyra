@@ -1,0 +1,4 @@
+let main = () -> u8 => {
+  let s = "value: ${1}"
+  0
+}

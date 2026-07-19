@@ -42,9 +42,9 @@ func (h *Handler) Completion(_ context.Context, params *lsp.CompletionParams) (r
 		return nil, nil
 	}
 
-	// LSP positions are 0-based; ast.Location is 1-based.
+	// LSP positions are 0-based UTF-16; ast.Location is 1-based bytes.
 	line := params.Position.Line + 1
-	col := params.Position.Character + 1
+	col := byteColumn(source, params.Position.Line, params.Position.Character)
 
 	// Text on the cursor's line up to the caret, used to detect a `receiver.`
 	// member-access prefix the broken/partial parse can't be relied upon for.

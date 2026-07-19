@@ -66,7 +66,7 @@ func (h *Handler) CodeAction(_ context.Context, params *lsp.CodeActionParams) (r
 		}
 	}
 
-	actions = append(actions, insertTypeAnnotationActions(analysis, uri, params.Range)...)
+	actions = append(actions, insertTypeAnnotationActions(analysis, source, uri, params.Range)...)
 
 	return actions, nil
 }
@@ -87,7 +87,7 @@ func diagCode(d lsp.Diagnostic) string {
 // matchArmsAction builds an "Add missing match arms" quick fix for the match
 // expression the lyra-E009 diagnostic points at.
 func matchArmsAction(analysis *docAnalysis, source string, uri lsp.DocumentURI, d lsp.Diagnostic) *lsp.CodeAction {
-	line, col := diagStart(d)
+	line, col := diagStart(source, d)
 	m := findMatchAt(analysis.program, line, col)
 	if m == nil {
 		return nil
@@ -128,7 +128,7 @@ func matchArmsAction(analysis *docAnalysis, source string, uri lsp.DocumentURI, 
 		b.WriteString(" => todo(),")
 	}
 
-	edit := lsp.TextEdit{Range: beforeClosingBrace(loc), NewText: b.String()}
+	edit := lsp.TextEdit{Range: beforeClosingBrace(source, loc), NewText: b.String()}
 	return quickFix(fmt.Sprintf("Add missing match arms: %s", strings.Join(missing, ", ")), uri, edit, d)
 }
 
@@ -136,7 +136,7 @@ func matchArmsAction(analysis *docAnalysis, source string, uri lsp.DocumentURI, 
 // struct literal the lyra-E013 diagnostic points at. Multiple per-field
 // diagnostics on the same literal collapse into one action via done.
 func structFieldsAction(analysis *docAnalysis, source string, uri lsp.DocumentURI, d lsp.Diagnostic, done map[ast.Location]bool) *lsp.CodeAction {
-	line, col := diagStart(d)
+	line, col := diagStart(source, d)
 	s := findStructAt(analysis.program, line, col)
 	if s == nil || done[s.GetLocation()] {
 		return nil
@@ -184,14 +184,14 @@ func structFieldsAction(analysis *docAnalysis, source string, uri lsp.DocumentUR
 		text = " " + text
 	}
 
-	edit := lsp.TextEdit{Range: beforeClosingBrace(loc), NewText: text}
+	edit := lsp.TextEdit{Range: beforeClosingBrace(source, loc), NewText: text}
 	return quickFix(fmt.Sprintf("Add missing fields: %s", strings.Join(missing, ", ")), uri, edit, d)
 }
 
 // removeUnusedVariableAction deletes the whole declaration statement the
 // lyra-W003 diagnostic points at.
 func removeUnusedVariableAction(analysis *docAnalysis, source string, uri lsp.DocumentURI, d lsp.Diagnostic) *lsp.CodeAction {
-	line, col := diagStart(d)
+	line, col := diagStart(source, d)
 	decl := findVarDeclAt(analysis.program, line, col)
 	if decl == nil {
 		return nil
@@ -205,7 +205,7 @@ func removeUnusedVariableAction(analysis *docAnalysis, source string, uri lsp.Do
 // import whose single member is the unused one. Multi-member imports are left
 // alone (removing one member needs comma surgery we don't attempt).
 func removeUnusedImportAction(analysis *docAnalysis, source string, uri lsp.DocumentURI, d lsp.Diagnostic) *lsp.CodeAction {
-	line, col := diagStart(d)
+	line, col := diagStart(source, d)
 	imp := findImportContaining(analysis.program, line, col)
 	if imp == nil || len(imp.Members) > 1 {
 		return nil
@@ -217,7 +217,7 @@ func removeUnusedImportAction(analysis *docAnalysis, source string, uri lsp.Docu
 // insertTypeAnnotationActions offers "Insert inferred type annotation" for each
 // unannotated `let`/`var` binding whose declaration falls in the request range
 // and whose value type has been inferred.
-func insertTypeAnnotationActions(analysis *docAnalysis, uri lsp.DocumentURI, r lsp.Range) []lsp.CodeAction {
+func insertTypeAnnotationActions(analysis *docAnalysis, source string, uri lsp.DocumentURI, r lsp.Range) []lsp.CodeAction {
 	var out []lsp.CodeAction
 	for _, decl := range collectVarDecls(analysis.program) {
 		if decl.Type != nil || !inRange(decl.GetLocation(), r) {
@@ -228,12 +228,16 @@ func insertTypeAnnotationActions(analysis *docAnalysis, uri lsp.DocumentURI, r l
 			continue
 		}
 		loc := decl.GetLocation()
-		// Column just after the binding name: keyword (+ " mut") + space + name.
-		col := lspPos(loc.StartCol) + len(decl.BindingKind.String()) + 1 + len(decl.Name)
+		// Byte column just after the binding name: keyword (+ " mut") + space +
+		// name; converted to a UTF-16 column for the edit position.
+		byteCol := lspPos(loc.StartCol) + len(decl.BindingKind.String()) + 1 + len(decl.Name)
 		if decl.IsMut && decl.BindingKind == ast.BindingLet {
-			col += len(" mut")
+			byteCol += len(" mut")
 		}
-		pos := lsp.Position{Line: lspPos(loc.StartLine), Character: col}
+		pos := lsp.Position{
+			Line:      lspPos(loc.StartLine),
+			Character: utf16Column(source, lspPos(loc.StartLine), byteCol),
+		}
 		edit := lsp.TextEdit{
 			Range:   lsp.Range{Start: pos, End: pos},
 			NewText: fmt.Sprintf(": %s", typ),
@@ -260,20 +264,26 @@ func quickFix(title string, uri lsp.DocumentURI, edit lsp.TextEdit, d lsp.Diagno
 	}
 }
 
-// diagStart returns the 1-based line/col of a diagnostic's start, matching the
-// 1-based ast.Location coordinates used throughout the analyzer.
-func diagStart(d lsp.Diagnostic) (int, int) {
-	return d.Range.Start.Line + 1, d.Range.Start.Character + 1
+// diagStart returns the 1-based line and 1-based byte column of a diagnostic's
+// start, matching the byte-based ast.Location coordinates used throughout the
+// analyzer. The diagnostic's Character is a 0-based UTF-16 unit, converted to a
+// byte column via source.
+func diagStart(source string, d lsp.Diagnostic) (int, int) {
+	return d.Range.Start.Line + 1, byteColumn(source, d.Range.Start.Line, d.Range.Start.Character)
 }
 
 // beforeClosingBrace returns a zero-width range at the position immediately
 // before the closing `}` of a brace-delimited node. ast.Location end columns are
 // exclusive (one past the last char), so the brace sits at EndCol-1 (1-based),
-// i.e. character EndCol-2 (0-based).
-func beforeClosingBrace(loc ast.Location) lsp.Range {
-	pos := lsp.Position{Line: lspPos(loc.EndLine), Character: loc.EndCol - 2}
-	if pos.Character < 0 {
-		pos.Character = 0
+// i.e. byte column EndCol-2 (0-based), which source converts to UTF-16.
+func beforeClosingBrace(source string, loc ast.Location) lsp.Range {
+	byteCol := loc.EndCol - 2
+	if byteCol < 0 {
+		byteCol = 0
+	}
+	pos := lsp.Position{
+		Line:      lspPos(loc.EndLine),
+		Character: utf16Column(source, lspPos(loc.EndLine), byteCol),
 	}
 	return lsp.Range{Start: pos, End: pos}
 }
@@ -283,7 +293,7 @@ func beforeClosingBrace(loc ast.Location) lsp.Range {
 // content. It scans back over whitespace from the brace: a separator is needed
 // unless the last meaningful char is already a `,` or the opening `{`.
 func needsSeparatorComma(source string, loc ast.Location) bool {
-	off := posToOffset(source, lspPos(loc.EndLine), loc.EndCol-2)
+	off := byteOffsetAt(source, lspPos(loc.EndLine), loc.EndCol-2)
 	for i := off - 1; i >= 0; i-- {
 		c := source[i]
 		if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
@@ -302,8 +312,11 @@ func deleteLinesRange(source string, loc ast.Location) lsp.Range {
 	end := lsp.Position{Line: lspPos(loc.EndLine) + 1, Character: 0}
 	// If the last line has no trailing newline (EOF), clamp to end-of-line so we
 	// don't reference a non-existent line.
-	if posToOffset(source, end.Line, 0) >= len(source) {
-		end = lsp.Position{Line: lspPos(loc.EndLine), Character: loc.EndCol}
+	if byteOffsetAt(source, end.Line, 0) >= len(source) {
+		end = lsp.Position{
+			Line:      lspPos(loc.EndLine),
+			Character: utf16Column(source, lspPos(loc.EndLine), lspPos(loc.EndCol)),
+		}
 	}
 	return lsp.Range{Start: start, End: end}
 }

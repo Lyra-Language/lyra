@@ -1,0 +1,1 @@
+testdata/typeerr.lyra:1:1: error [lyra-E001]: x: cannot assign string to i32
