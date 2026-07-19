@@ -67,12 +67,13 @@ func (h *Handler) SemanticTokensFull(_ context.Context, params *lsp.SemanticToke
 	uri := string(params.TextDocument.URI)
 	h.mu.Lock()
 	analysis, ok := h.analysisStore[uri]
+	source := h.docStore[uri]
 	h.mu.Unlock()
 	if !ok {
 		return nil, nil
 	}
 
-	tokens := collectSemanticTokens(analysis)
+	tokens := collectSemanticTokens(source, analysis)
 	log.Printf("semanticTokens: %s → %d tokens", uri, len(tokens))
 	return &lsp.SemanticTokens{Data: encodeSemanticTokens(tokens)}, nil
 }
@@ -80,7 +81,7 @@ func (h *Handler) SemanticTokensFull(_ context.Context, params *lsp.SemanticToke
 // collectSemanticTokens walks the program and classifies each highlightable
 // span. Spans are deduplicated by start location so a position is never emitted
 // twice (overlapping tokens are invalid in the LSP encoding).
-func collectSemanticTokens(analysis *docAnalysis) []semToken {
+func collectSemanticTokens(source string, analysis *docAnalysis) []semToken {
 	var tokens []semToken
 	seen := map[ast.Location]bool{}
 
@@ -89,10 +90,12 @@ func collectSemanticTokens(analysis *docAnalysis) []semToken {
 			return
 		}
 		seen[loc] = true
+		// LSP semantic tokens encode both the start character and the length in
+		// UTF-16 code units.
 		tokens = append(tokens, semToken{
 			line:      lspPos(loc.StartLine),
-			startChar: lspPos(loc.StartCol),
-			length:    len(name),
+			startChar: utf16Column(source, lspPos(loc.StartLine), lspPos(loc.StartCol)),
+			length:    utf16Len16(name),
 			tokenType: tokenType,
 			modifiers: modifiers,
 		})

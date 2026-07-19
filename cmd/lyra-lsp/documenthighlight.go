@@ -25,13 +25,14 @@ func (h *Handler) DocumentHighlight(_ context.Context, params *lsp.DocumentHighl
 	uri := string(params.TextDocument.URI)
 	h.mu.Lock()
 	analysis, ok := h.analysisStore[uri]
+	source := h.docStore[uri]
 	h.mu.Unlock()
 	if !ok {
 		return nil, nil
 	}
 
 	line := params.Position.Line + 1
-	col := params.Position.Character + 1
+	col := byteColumn(source, params.Position.Line, params.Position.Character)
 
 	ident, ok := findExprAtPos(analysis.program, line, col).(*ast.IdentifierExpr)
 	if !ok {
@@ -51,11 +52,8 @@ func (h *Handler) DocumentHighlight(_ context.Context, params *lsp.DocumentHighl
 		}
 		seen[loc] = true
 		result = append(result, lsp.DocumentHighlight{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
-			Kind: &kindText,
+			Range: locToRange(source, loc),
+			Kind:  &kindText,
 		})
 	}
 

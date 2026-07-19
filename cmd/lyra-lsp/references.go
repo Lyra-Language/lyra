@@ -28,14 +28,15 @@ func (h *Handler) References(_ context.Context, params *lsp.ReferenceParams) (re
 	uri := string(params.TextDocument.URI)
 	h.mu.Lock()
 	analysis, ok := h.analysisStore[uri]
+	source := h.docStore[uri]
 	h.mu.Unlock()
 	if !ok {
 		return nil, nil
 	}
 
-	// LSP positions are 0-based; ast.Location is 1-based.
+	// LSP positions are 0-based UTF-16; ast.Location is 1-based bytes.
 	line := params.Position.Line + 1
-	col := params.Position.Character + 1
+	col := byteColumn(source, params.Position.Line, params.Position.Character)
 
 	ident, ok := findExprAtPos(analysis.program, line, col).(*ast.IdentifierExpr)
 	if !ok {
@@ -58,7 +59,7 @@ func (h *Handler) References(_ context.Context, params *lsp.ReferenceParams) (re
 			return
 		}
 		seen[loc] = true
-		out = append(out, astLocToLSPLocation(uri, loc))
+		out = append(out, astLocToLSPLocation(uri, source, loc))
 	}
 
 	walkExprs(analysis.program, func(e ast.Expression) {

@@ -36,9 +36,9 @@ func (h *Handler) SignatureHelp(_ context.Context, params *lsp.SignatureHelpPara
 		return nil, nil
 	}
 
-	// LSP positions are 0-based; ast.Location is 1-based.
+	// LSP positions are 0-based UTF-16; ast.Location is 1-based bytes.
 	line := params.Position.Line + 1
-	col := params.Position.Character + 1
+	col := byteColumn(source, params.Position.Line, params.Position.Character)
 
 	// Scan the source prefix up to the cursor to find the enclosing call site.
 	prefix := source[:posToOffset(source, params.Position.Line, params.Position.Character)]

@@ -190,13 +190,14 @@ func (h *Handler) Rename(_ context.Context, params *lsp.RenameParams) (result *l
 	uri := string(params.TextDocument.URI)
 	h.mu.Lock()
 	analysis, ok := h.analysisStore[uri]
+	source := h.docStore[uri]
 	h.mu.Unlock()
 	if !ok {
 		return nil, nil
 	}
 
 	line := params.Position.Line + 1
-	col := params.Position.Character + 1
+	col := byteColumn(source, params.Position.Line, params.Position.Character)
 
 	anchor, ok := resolveRenameAnchor(line, col, analysis)
 	if !ok {
@@ -213,10 +214,7 @@ func (h *Handler) Rename(_ context.Context, params *lsp.RenameParams) (result *l
 		}
 		seen[loc] = true
 		edits = append(edits, lsp.TextEdit{
-			Range: lsp.Range{
-				Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-				End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-			},
+			Range:   locToRange(source, loc),
 			NewText: newName,
 		})
 	}
@@ -258,13 +256,14 @@ func (h *Handler) PrepareRename(_ context.Context, params *lsp.PrepareRenamePara
 	uri := string(params.TextDocument.URI)
 	h.mu.Lock()
 	analysis, ok := h.analysisStore[uri]
+	source := h.docStore[uri]
 	h.mu.Unlock()
 	if !ok {
 		return nil, nil
 	}
 
 	line := params.Position.Line + 1
-	col := params.Position.Character + 1
+	col := byteColumn(source, params.Position.Line, params.Position.Character)
 
 	anchor, ok := resolveRenameAnchor(line, col, analysis)
 	if !ok {
@@ -272,10 +271,7 @@ func (h *Handler) PrepareRename(_ context.Context, params *lsp.PrepareRenamePara
 	}
 
 	return &lsp.PrepareRenameResult{
-		Range: lsp.Range{
-			Start: lsp.Position{Line: lspPos(anchor.nameLoc.StartLine), Character: lspPos(anchor.nameLoc.StartCol)},
-			End:   lsp.Position{Line: lspPos(anchor.nameLoc.EndLine), Character: lspPos(anchor.nameLoc.EndCol)},
-		},
+		Range:       locToRange(source, anchor.nameLoc),
 		Placeholder: anchor.name,
 	}, nil
 }

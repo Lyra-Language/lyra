@@ -169,7 +169,7 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 
 	diags := make([]lsp.Diagnostic, 0, len(res.Diagnostics))
 	for i := range res.Diagnostics {
-		diags = append(diags, diagToLSP(uri, res.Diagnostics[i]))
+		diags = append(diags, diagToLSP(uri, source, res.Diagnostics[i]))
 	}
 
 	// Persist the analysis for hover/definition/etc. Program is nil only on a
@@ -256,7 +256,8 @@ func lspPos(oneBased int) int {
 }
 
 // diagToLSP converts a diag.Diagnostic to an lsp.Diagnostic for publishing.
-func diagToLSP(uri lsp.DocumentURI, d diag.Diagnostic) lsp.Diagnostic {
+// source is the document text, needed to convert byte columns to UTF-16.
+func diagToLSP(uri lsp.DocumentURI, source string, d diag.Diagnostic) lsp.Diagnostic {
 	sev := lsp.DiagnosticSeverity(0)
 	switch d.Severity {
 	case diag.SeverityWarning:
@@ -266,18 +267,14 @@ func diagToLSP(uri lsp.DocumentURI, d diag.Diagnostic) lsp.Diagnostic {
 	default:
 		sev = lsp.SeverityError
 	}
-	loc := d.Location
 	return lsp.Diagnostic{
-		Range: lsp.Range{
-			Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-			End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-		},
+		Range:              locToRange(source, d.Location),
 		Severity:           &sev,
 		Code:               codeToLSP(d.Code),
 		Source:             "lyra",
 		Message:            d.Message,
 		Tags:               tagsToLSP(d.Tags),
-		RelatedInformation: toLSPRelatedInfo(uri, d.RelatedInformation),
+		RelatedInformation: toLSPRelatedInfo(uri, source, d.RelatedInformation),
 	}
 }
 
@@ -300,7 +297,7 @@ func tagsToLSP(tags []diag.Tag) []lsp.DiagnosticTag {
 	return out
 }
 
-func toLSPRelatedInfo(uri lsp.DocumentURI, related []diag.RelatedInformation) []lsp.DiagnosticRelatedInformation {
+func toLSPRelatedInfo(uri lsp.DocumentURI, source string, related []diag.RelatedInformation) []lsp.DiagnosticRelatedInformation {
 	if len(related) == 0 {
 		return nil
 	}
@@ -311,11 +308,8 @@ func toLSPRelatedInfo(uri lsp.DocumentURI, related []diag.RelatedInformation) []
 		}
 		out = append(out, lsp.DiagnosticRelatedInformation{
 			Location: lsp.Location{
-				URI: uri,
-				Range: lsp.Range{
-					Start: lsp.Position{Line: lspPos(r.Location.StartLine), Character: lspPos(r.Location.StartCol)},
-					End:   lsp.Position{Line: lspPos(r.Location.EndLine), Character: lspPos(r.Location.EndCol)},
-				},
+				URI:   uri,
+				Range: locToRange(source, r.Location),
 			},
 			Message: r.Message,
 		})
@@ -340,14 +334,15 @@ func (h *Handler) Hover(_ context.Context, params *lsp.HoverParams) (result *lsp
 	uri := string(params.TextDocument.URI)
 	h.mu.Lock()
 	analysis, ok := h.analysisStore[uri]
+	source := h.docStore[uri]
 	h.mu.Unlock()
 	if !ok {
 		return nil, nil
 	}
 
-	// LSP positions are 0-based; ast.Location is 1-based.
+	// LSP positions are 0-based UTF-16; ast.Location is 1-based bytes.
 	line := params.Position.Line + 1
-	col := params.Position.Character + 1
+	col := byteColumn(source, params.Position.Line, params.Position.Character)
 
 	expr := findExprAtPos(analysis.program, line, col)
 	if expr == nil {

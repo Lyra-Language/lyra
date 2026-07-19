@@ -24,6 +24,7 @@ func (h *Handler) DocumentSymbol(_ context.Context, params *lsp.DocumentSymbolPa
 	uri := string(params.TextDocument.URI)
 	h.mu.Lock()
 	analysis, ok := h.analysisStore[uri]
+	source := h.docStore[uri]
 	h.mu.Unlock()
 	if !ok {
 		return nil, nil
@@ -31,7 +32,7 @@ func (h *Handler) DocumentSymbol(_ context.Context, params *lsp.DocumentSymbolPa
 
 	var syms []lsp.DocumentSymbol
 	for _, node := range analysis.program.Statements {
-		if sym := stmtToSymbol(node); sym != nil {
+		if sym := stmtToSymbol(source, node); sym != nil {
 			syms = append(syms, *sym)
 		}
 	}
@@ -42,7 +43,7 @@ func (h *Handler) DocumentSymbol(_ context.Context, params *lsp.DocumentSymbolPa
 // returns nil for statements that don't contribute to the outline. A
 // half-typed declaration (e.g. a lone `let`) collects with an empty Name;
 // LSP forbids a falsy symbol name, so such nodes are skipped.
-func stmtToSymbol(node ast.AstNode) *lsp.DocumentSymbol {
+func stmtToSymbol(source string, node ast.AstNode) *lsp.DocumentSymbol {
 	switch s := node.(type) {
 	case *ast.TypeDeclStmt:
 		if s.Name == "" {
@@ -50,12 +51,11 @@ func stmtToSymbol(node ast.AstNode) *lsp.DocumentSymbol {
 		}
 		kind := typeDeclKind(s.Type)
 		loc := s.GetLocation()
-		r := astLocToRange(loc)
 		return &lsp.DocumentSymbol{
 			Name:           s.Name,
 			Kind:           kind,
-			Range:          r,
-			SelectionRange: nameRange(loc, s.Name),
+			Range:          locToRange(source, loc),
+			SelectionRange: nameRange(source, loc, s.Name),
 		}
 
 	case *ast.TraitDeclStmt:
@@ -63,12 +63,11 @@ func stmtToSymbol(node ast.AstNode) *lsp.DocumentSymbol {
 			return nil
 		}
 		loc := s.GetLocation()
-		r := astLocToRange(loc)
 		return &lsp.DocumentSymbol{
 			Name:           s.Name,
 			Kind:           lsp.SymbolKindInterface,
-			Range:          r,
-			SelectionRange: nameRange(loc, s.Name),
+			Range:          locToRange(source, loc),
+			SelectionRange: nameRange(source, loc, s.Name),
 		}
 
 	case *ast.VarDeclStmt:
@@ -77,12 +76,11 @@ func stmtToSymbol(node ast.AstNode) *lsp.DocumentSymbol {
 		}
 		kind := varDeclSymbolKind(s)
 		loc := s.GetLocation()
-		r := astLocToRange(loc)
 		return &lsp.DocumentSymbol{
 			Name:           s.Name,
 			Kind:           kind,
-			Range:          r,
-			SelectionRange: nameRange(loc, s.Name),
+			Range:          locToRange(source, loc),
+			SelectionRange: nameRange(source, loc, s.Name),
 		}
 	}
 	return nil
@@ -112,19 +110,14 @@ func varDeclSymbolKind(s *ast.VarDeclStmt) lsp.SymbolKind {
 	return lsp.SymbolKindVariable
 }
 
-// astLocToRange converts a 1-based ast.Location to a 0-based lsp.Range.
-func astLocToRange(loc ast.Location) lsp.Range {
-	return lsp.Range{
-		Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-		End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-	}
-}
-
 // nameRange returns a single-line range covering just the symbol name, starting
 // at the declaration's StartLine/StartCol. SelectionRange should highlight only
-// the name token, not the whole declaration.
-func nameRange(loc ast.Location, name string) lsp.Range {
-	start := lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)}
-	end := lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol) + len(name)}
-	return lsp.Range{Start: start, End: end}
+// the name token, not the whole declaration. The name span is measured in bytes
+// (len(name)) then converted to UTF-16 columns via source.
+func nameRange(source string, loc ast.Location, name string) lsp.Range {
+	startByteCol := lspPos(loc.StartCol)
+	return lsp.Range{
+		Start: lsp.Position{Line: lspPos(loc.StartLine), Character: utf16Column(source, lspPos(loc.StartLine), startByteCol)},
+		End:   lsp.Position{Line: lspPos(loc.StartLine), Character: utf16Column(source, lspPos(loc.StartLine), startByteCol+len(name))},
+	}
 }

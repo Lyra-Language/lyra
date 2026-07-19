@@ -24,14 +24,15 @@ func (h *Handler) Definition(_ context.Context, params *lsp.DefinitionParams) (r
 	uri := string(params.TextDocument.URI)
 	h.mu.Lock()
 	analysis, ok := h.analysisStore[uri]
+	source := h.docStore[uri]
 	h.mu.Unlock()
 	if !ok {
 		return nil, nil
 	}
 
-	// LSP positions are 0-based; ast.Location is 1-based.
+	// LSP positions are 0-based UTF-16; ast.Location is 1-based bytes.
 	line := params.Position.Line + 1
-	col := params.Position.Character + 1
+	col := byteColumn(source, params.Position.Line, params.Position.Character)
 
 	log.Printf("definition: request at %s line=%d col=%d", uri, line, col)
 
@@ -43,7 +44,7 @@ func (h *Handler) Definition(_ context.Context, params *lsp.DefinitionParams) (r
 	}
 
 	log.Printf("definition: found at %s", loc.Pretty())
-	return []lsp.Location{astLocToLSPLocation(uri, *loc)}, nil
+	return []lsp.Location{astLocToLSPLocation(uri, source, *loc)}, nil
 }
 
 // resolveDefinition maps the expression at the cursor to its definition location.
@@ -155,13 +156,11 @@ func nodeToExpr(node ast.AstNode) ast.Expression {
 	return nil
 }
 
-// astLocToLSPLocation converts a 1-based ast.Location to an lsp.Location.
-func astLocToLSPLocation(uri string, loc ast.Location) lsp.Location {
+// astLocToLSPLocation converts a 1-based, byte-based ast.Location to an
+// lsp.Location, using source to translate byte columns to UTF-16.
+func astLocToLSPLocation(uri string, source string, loc ast.Location) lsp.Location {
 	return lsp.Location{
-		URI: lsp.DocumentURI(uri),
-		Range: lsp.Range{
-			Start: lsp.Position{Line: lspPos(loc.StartLine), Character: lspPos(loc.StartCol)},
-			End:   lsp.Position{Line: lspPos(loc.EndLine), Character: lspPos(loc.EndCol)},
-		},
+		URI:   lsp.DocumentURI(uri),
+		Range: locToRange(source, loc),
 	}
 }
