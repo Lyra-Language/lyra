@@ -8,6 +8,7 @@ import (
 	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // loopCtx records the blocks a break/continue in the current loop jumps to. It's
@@ -97,16 +98,22 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail 
 			// a borrow within the statement just lowered (in `block`, which post-
 			// dominates the statement). A statement that sealed (an early return) is
 			// skipped — the seal's frame release frees its bindings on that path.
-			l.dropLastUsesInStmt(block, stmt)
+			if err := l.dropLastUsesInStmt(block, stmt); err != nil {
+				return nil, nil, err
+			}
 			// Temporaries are held for the tail of a value block (flushTail false)
 			// since the tail may itself be the escaping block value.
 			if i != last || flushTail {
-				l.flushTemps()
+				if err := l.flushTemps(); err != nil {
+					return nil, nil, err
+				}
 			}
 		}
 	}
 	if block.Term == nil {
-		l.releaseTopManagedFrame(block) // fall-through scope exit
+		if err := l.releaseTopManagedFrame(block); err != nil { // fall-through scope exit
+			return nil, nil, err
+		}
 	}
 	return v, block, nil
 }
@@ -141,7 +148,9 @@ func (l *lowerer) lowerForEffect(block *ir.Block, expr ast.Expression) (*ir.Bloc
 		return nil, err
 	}
 	if end.Term == nil {
-		l.flushTemps()
+		if err := l.flushTemps(); err != nil {
+			return nil, err
+		}
 	}
 	return end, nil
 }
@@ -159,8 +168,12 @@ func (l *lowerer) lowerBreak(block *ir.Block, s *ast.BreakStmt) error {
 	// Before the jump seals the block: release this iteration's pending temporaries
 	// and the managed bindings the loop body introduced (the frames from the loop's
 	// entry depth up), so break no longer leaks them.
-	l.flushTemps()
-	l.releaseManagedFramesFrom(block, ctx.frameDepth)
+	if err := l.flushTemps(); err != nil {
+		return err
+	}
+	if err := l.releaseManagedFramesFrom(block, ctx.frameDepth); err != nil {
+		return err
+	}
 	block.NewBr(ctx.breakTarget)
 	return nil
 }
@@ -172,8 +185,12 @@ func (l *lowerer) lowerContinue(block *ir.Block, s *ast.ContinueStmt) error {
 	}
 	// Same as break: the current iteration's managed bindings are released before
 	// looping back (they're rebuilt next iteration).
-	l.flushTemps()
-	l.releaseManagedFramesFrom(block, ctx.frameDepth)
+	if err := l.flushTemps(); err != nil {
+		return err
+	}
+	if err := l.releaseManagedFramesFrom(block, ctx.frameDepth); err != nil {
+		return err
+	}
 	block.NewBr(ctx.continueTarget)
 	return nil
 }
@@ -284,11 +301,22 @@ func (l *lowerer) lowerVarDecl(block *ir.Block, vds *ast.VarDeclStmt) (*ir.Block
 	l.locals[vds.Name] = slot // later re-declaration of the same name just overwrites
 	// A managed binding owns a reference-counted value (its initializer was
 	// coerced to +1 by the ownership pass); record it so this scope's exit
-	// releases it.
+	// releases it, along with the Lyra type that says what its payload owns.
 	if isManagedSlot(slot) {
-		l.addManagedBinding(slot)
+		l.addManagedBinding(slot, l.bindingType(vds))
 	}
 	return block, nil
+}
+
+// bindingType is the Lyra type a `let`/`var` binding holds: its annotation when
+// there is one (most reliable), else the type recorded for its initializer. It
+// feeds the drop glue selection at the binding's release.
+func (l *lowerer) bindingType(vds *ast.VarDeclStmt) types.Type {
+	if vds.Type != nil {
+		return vds.Type
+	}
+	t, _ := l.res.TypeTable.Get(vds.Value)
+	return t
 }
 
 func (l *lowerer) lowerVarReassignment(block *ir.Block, vrs *ast.VarReassignmentStmt) (*ir.Block, error) {
@@ -304,7 +332,12 @@ func (l *lowerer) lowerVarReassignment(block *ir.Block, vrs *ast.VarReassignment
 	if isManagedSlot(slot) {
 		a := slot.(*ir.InstAlloca)
 		old := block.NewLoad(a.ElemType, slot)
-		l.lowerManagedRelease(block, old)
+		// The old and new values have the same type, so the RHS's recorded type
+		// selects the right drop glue for the value being dropped.
+		oldTy, _ := l.res.TypeTable.Get(vrs.Value)
+		if err := l.lowerManagedRelease(block, old, oldTy); err != nil {
+			return nil, err
+		}
 	}
 	// Store into the existing alloca; the locals entry stays the alloca slot
 	// (a pointer), NOT the stored value — a later read loads from it. Overwriting

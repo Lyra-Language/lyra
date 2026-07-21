@@ -83,10 +83,11 @@ zero, and skipped when null. The runtime is emitted **lazily** — a program tha
 never heaps carries none of it.
 
 **First consumer:** string concatenation (`++`, `lowerStringConcat`) allocates a
-box via `rcAllocPayload` and `memcpy`s into it (STRING_LAYOUT.md). It does not yet
-*release* — heap values currently leak (below). `lyra_arena_alloc` is still just a
-reserved name (the `with`-block work). A real bump/pool allocator replaces
-`malloc`/`free` later; `drop_fn` may become a per-type generated function.
+box via `rcAllocPayload` and `memcpy`s into it (STRING_LAYOUT.md). `drop_fn` *is*
+now a per-type generated function — the recursive drop glue (`drop.go`, below) that
+frees what a dying box's payload owns. `lyra_arena_alloc` is still just a reserved
+name (the `with`-block work); a real bump/pool allocator replaces `malloc`/`free`
+later.
 
 ## Ownership: emitting retain/release (implemented for strings)
 
@@ -168,10 +169,13 @@ mechanism: uniqueness is a runtime test, so aliased graphs stay correct.
 
 - **`lyra_rc_drop_reuse(box) -> ptr`** (runtime.go): unique (`rc == 1`) → returns
   the box (a *reuse token*), rc left at 1, **not** freed; shared (`rc > 1`) →
-  decrements and returns null; pinned (arena) → returns null untouched. It does not
-  drop the box's payload fields (matching `release`'s null `drop_fn`) — the match
-  already copied the union out (`unboxSharedData`), and an arm that keeps a field
-  *moves* it (below).
+  decrements and returns null; pinned (arena) → returns null untouched. It
+  deliberately does *not* drop the box's payload fields, even when unique: an arm
+  binds a field by reading it straight out of the box, taking no reference of its
+  own, so dropping here would free a field the arm is about to use. The caller drops
+  instead, at the merge past every arm — `dropReclaimedPayload` (match_aggregate.go),
+  guarded on the token being non-null, reading the old field values from the union
+  `unboxSharedData` copied out before the shell could be overwritten.
 - **Reuse-aware construction** (`lowerBoxSharedReuse`, shared.go): a runtime branch
   on the token — non-null → write the new payload into the reclaimed box (rc = 1),
   null → a fresh `lyra_rc_alloc`. A phi of the two box pointers.
@@ -184,12 +188,15 @@ mechanism: uniqueness is a runtime test, so aliased graphs stay correct.
   scrutinee's slot (suppressing its ordinary drop), and hands the token to the arms:
   a target consumes it (in-place write), a non-constructing arm frees it
   (`free(NULL)` is a no-op, so freeing is unconditional).
-- **Arm-binding transfer** — the piece that makes recursion actually reclaim: a
-  field binding used *exactly once* in a *consuming* match (owned scrutinee at last
-  use) **moves** (no dup) into an owning position (`LastUseTransfer`). Without it a
-  recursive `map`'s tail would be dup'd (rc → 2) and every level would miss the
-  unique fast path — and the field would leak. With it, `map`/`filter`/tree
-  rebuilds run with **zero** allocation per cell, and no field leak.
+- **Arm bindings duplicate, they do not move.** An earlier revision moved a field
+  bound exactly once out of a consuming match (no dup), which was sound only because
+  the box then abandoned its fields (null `drop_fn`). Now that a box really drops
+  what it owns, a moved field would be freed twice — most sharply when the box is
+  *shared* (`rc > 1`), where drop-reuse decrements and the box survives still owning
+  the field. So a bound field is dup'd and the box's drop releases its own reference.
+  This costs refcount traffic, **not allocations**: reuse still reclaims the shell,
+  so `map`/`filter`/tree rebuilds remain zero-allocation-per-cell. Eliding the
+  dup/drop pair when the box is known unique is stage 4 (below).
 - **Return of a `shared` value** (`emitReturn` pointer case) and the typechecker's
   **`propagateAllocation`** (a `shared` return type / annotation stamps the
   construction leaves inside `match`/`if` arms `shared`, so the arm's value is
@@ -201,11 +208,11 @@ boundary — a **borrowed** scrutinee is never reused (the caller still owns the
 structure), pinned by both a no-`drop_reuse` IR check and an ASan run.
 
 **Still open:** reuse specialization (stage 4 — skip stores for fields the reused
-constructor shares with the matched one, and a static uniqueness fast path to drop
-the runtime branch); reuse through the ladder-fallback path (guards / value-test
-payloads); struct/tuple (non-`data`) reuse; and managed values inside aggregates
-still leak on a plain drop (below) — arm-binding transfer reclaims a field only
-when the arm moves it.
+constructor shares with the matched one, a static uniqueness fast path to drop the
+runtime branch, and the token-conditional dup that restores arm-binding *moves*:
+dup a bound field only on the null-token path, where the box survived); reuse
+through the ladder-fallback path (guards / value-test payloads); and struct/tuple
+(non-`data`) reuse.
 
 ## `shared`-value lowering (implemented)
 
@@ -246,17 +253,55 @@ handled and errors loudly.
 
 Not yet done: `shared` arrays; `shared` construction in a bare argument/return
 position (the flavor isn't stamped on the node there — only annotated bindings and
-`shared` payload args get it); recursive **release** of a `shared`/string value
-stored in an aggregate field (release passes a null `drop_fn`, so those leak — the
-same aggregate-drop deferral below).
+`shared` payload args get it).
+
+## Aggregate-field drop: the per-type drop glue (implemented)
+
+A managed value stored *inside* a box — a `string` field, a nested `shared` value,
+the tail of a recursive list — is owned by that box and must be released when it
+dies. `drop.go` generates, once per payload type and cached,
+
+```
+void @lyra_drop_T(i8* payload)
+```
+
+which releases every managed reference reachable **by value** from `T`, and
+`lowerManagedRelease` passes it as the box's `drop_fn`. So freeing a list frees the
+whole spine, one box at a time, instead of freeing the head cell and leaking the
+tail.
+
+- **"By value" is the stopping rule.** A managed field is released with a single
+  `lyra_rc_release` and never walked into — that box runs its *own* `drop_fn` if and
+  when its count reaches zero. The walk therefore only descends through inline
+  `stack` aggregates, and a recursive type's cycle must pass through a `shared`
+  field (lyra-E014), which is exactly where it stops. Generation is finite for the
+  same reason `resolveForLayout` is, and the function is cached *before* its body is
+  built so a self-referential type emits one function that calls itself.
+- **`data` payloads switch on the tag** (`emitDropData`): only the live variant's
+  fields are dropped, so a nullary variant's undefined payload blob is never read.
+  A struct/tuple is a single shape, so its fields are read with `extractvalue`, no
+  branch.
+- **Pay for what you use:** a payload owning nothing generates no glue and keeps a
+  null `drop_fn`.
+- **The retain side was already right:** the ownership pass has always treated an
+  aggregate field as an *owning* position, so a value flowing into one transfers its
+  +1 to the aggregate. This closes the other half — releasing it.
+
+Verified under AddressSanitizer, plus a static allocations-vs-releases conservation
+check (macOS ASan can't see leaks) — `llvm_aggregate_drop_test.go`.
 
 ## Deferred / out of scope for this decision
 
-- **Managed values inside aggregates** — a string or `shared` value stored in a
-  struct/tuple/`data` field is conservatively *transferred* into the aggregate and
-  then **leaks** (per-type aggregate drop isn't implemented — release uses a null
-  `drop_fn`). Safe (never a double free), but not yet reclaimed. break/continue
-  paths also leak the current iteration's bindings.
+- **Managed values inside a *stack* aggregate** still leak. The drop glue above
+  covers a `shared` (boxed) aggregate, whose death is a refcount reaching zero. A
+  stack aggregate is a *value*: `let q = p` copies it and duplicates its field
+  references with no retain, so dropping both copies would double-free. Making it
+  sound needs deep-retain-on-aggregate-copy in the ownership pass first — then a
+  stack aggregate binding can run the same glue at scope exit. Safe today (a leak,
+  never a double free).
+- **Fields an arm neither binds nor the box drops** — none today: the box drops
+  everything it still owns. Precision loss is only the extra dup/drop traffic noted
+  under stage 4.
 - **Atomic refcounts** — *not* needed while refcount mutations happen only through
   owning bindings in sequential code and auto-parallelized `pure`/`det` functions
   take **borrows** (`ref`), which touch no refcount. Revisit only when the job

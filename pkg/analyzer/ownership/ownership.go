@@ -32,10 +32,28 @@
 // A missed release leaks (unreclaimed memory) but is memory-safe; a spurious
 // release double-frees or dangles. So every uncertain case is biased toward
 // *transfer* (leak), never toward release: an unresolvable callee's arguments are
-// treated as owned (transferred, not released here), its result as borrowed
-// (never released); and a managed value flowing into an aggregate (struct/tuple/
-// data field) is transferred (the aggregate conceptually owns it) and leaks,
-// since per-type aggregate drop isn't implemented yet.
+// treated as owned (transferred, not released here), and its result as borrowed
+// (never released).
+//
+// # Aggregates
+//
+// An aggregate field is an *owning* position: a managed value flowing into a
+// struct/tuple/data field transfers its +1 to the aggregate, which owns it from
+// then on. That reference is released by the backend's per-type **drop glue**
+// (pkg/backend/llvm/drop.go), run as the box's drop_fn when a `shared` value's
+// refcount reaches zero — so a string in a struct, or the `shared` tail of a
+// `Cons` cell, is freed with the value that owns it.
+//
+// Symmetrically, a field a `match` arm binds out of a scrutinee is *duplicated*,
+// never moved: the scrutinee's box drops its own fields when it dies, so a moved
+// field would be freed twice. Eliding that dup/drop pair when the box is known
+// unique is Perceus stage 4 (reuse specialization) — it costs refcount traffic
+// today, but not allocations: reuse/FBIP reclaims the box shell either way.
+//
+// Still leaked conservatively: a managed value inside a plain **stack** aggregate.
+// A stack aggregate is a value, so `let q = p` copies it and duplicates its field
+// references with no retain; dropping both copies would double-free. Making that
+// sound needs deep-retain-on-copy here first.
 package ownership
 
 import (
@@ -174,13 +192,6 @@ type analyzer struct {
 	// lastUse it includes `own` params (Perceus reuse reclaims a consumed argument's
 	// cells), which is why it's computed separately.
 	reuseLastRef map[string]ast.Expression
-	// armTransfer holds match-arm-binding reference nodes that *transfer* (move, no
-	// dup) when consumed in an owning position. Set only for a binding used exactly
-	// once in an arm of a *consuming* match (one whose scrutinee is an owned binding
-	// at its last use, so the box abandons its fields — null drop_fn / reuse). Moving
-	// such a field out is what turns the otherwise-leaked field into a proper owned
-	// value, and — crucially — keeps its refcount at 1 so a recursive reuse can fire.
-	armTransfer map[ast.Expression]bool
 }
 
 // lambda analyzes one function/lambda body under its own return-ownership.
@@ -191,15 +202,12 @@ func (a *analyzer) lambda(lam *ast.LambdaExpr) {
 	savedReuse := a.reuseLastRef
 	a.curReturnOwned = isOwnedReturn(lam.ReturnType.TypeModifier)
 	a.conditional = false
-	savedArm := a.armTransfer
 	a.lastUse = a.computeLastUse(lam)
 	a.reuseLastRef = a.computeOwnedLastRef(lam)
-	a.armTransfer = map[ast.Expression]bool{}
 	defer func() {
 		a.conditional = savedCond
 		a.lastUse = savedLast
 		a.reuseLastRef = savedReuse
-		a.armTransfer = savedArm
 	}()
 	// The body is the function's return value: pass the return's ownership need
 	// down unconditionally. Whether it actually causes a retain is decided at the
@@ -481,73 +489,6 @@ func tailConstruction(e ast.Expression) ast.Expression {
 	return nil
 }
 
-// scrutineeConsumed reports whether m's scrutinee is an owned binding at its last
-// use — a `let`/`var` or `own` param whose box this function releases (or reuses)
-// after the match. In that case the box abandons its payload fields (release uses a
-// null drop_fn, and drop-reuse doesn't drop them either), so an arm may *move* a
-// field out instead of duplicating it. A borrowed scrutinee is NOT consumed (the
-// caller still owns the structure), so its fields must be duplicated, never moved.
-func (a *analyzer) scrutineeConsumed(m *ast.MatchExpr) bool {
-	id, ok := m.Scrutinee.(*ast.IdentifierExpr)
-	return ok && a.reuseLastRef[id.Name] == ast.Expression(id)
-}
-
-// markArmTransfers records, for a consuming match, each arm-binding reference that
-// may transfer instead of duplicate. Conservative and simple: a binding transfers
-// only when it is referenced *exactly once* in its arm body — then that reference
-// is trivially its last use, so moving it can never strand a later use, on any path
-// (a single use inside a nested branch at worst leaks the field on the untaken
-// path, which is safe). A binding used more than once keeps duplicating.
-func (a *analyzer) markArmTransfers(m *ast.MatchExpr) {
-	for i := range m.MatchArms {
-		names := map[string]bool{}
-		patternBoundNames(m.MatchArms[i].Pattern, names)
-		if len(names) == 0 {
-			continue
-		}
-		count := map[string]int{}
-		ref := map[string]*ast.IdentifierExpr{}
-		ast.WalkExpr(m.MatchArms[i].Body, nil, func(e ast.Expression) bool {
-			if id, ok := e.(*ast.IdentifierExpr); ok && names[id.Name] {
-				count[id.Name]++
-				ref[id.Name] = id
-			}
-			return true
-		})
-		for name, n := range count {
-			if n == 1 {
-				a.armTransfer[ref[name]] = true
-			}
-		}
-	}
-}
-
-// patternBoundNames collects every identifier a pattern binds (recursing into
-// data/struct/tuple payload sub-patterns), so markArmTransfers knows which names in
-// an arm body are arm-local field bindings.
-func patternBoundNames(pat ast.Pattern, into map[string]bool) {
-	switch p := pat.(type) {
-	case *ast.IdentifierPattern:
-		if p.Name != "_" {
-			into[p.Name] = true
-		}
-	case *ast.DataPattern:
-		patternBoundNames(p.Pattern, into)
-	case *ast.StructPattern:
-		for _, f := range p.Fields {
-			if f.Pattern == nil {
-				into[f.Name] = true // shorthand `{ x }` binds x
-			} else {
-				patternBoundNames(f.Pattern, into)
-			}
-		}
-	case *ast.TuplePattern:
-		for _, el := range p.Elements {
-			patternBoundNames(el, into)
-		}
-	}
-}
-
 // collectNames records every identifier name referenced within a block.
 func collectNames(block *ast.BlockExpr, into map[string]bool) {
 	ast.WalkExpr(block, nil, func(e ast.Expression) bool {
@@ -642,14 +583,6 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		if !a.isManaged(e) {
 			return
 		}
-		// A match-arm field binding used exactly once in a consuming match moves
-		// (no dup) when consumed in an owning position — the box abandoned the field,
-		// so this reference *is* its owning reference. This is what keeps a reused
-		// value unique so a recursive reuse fires (and reclaims the field, not leaks).
-		if a.armTransfer[e] && needOwned {
-			a.table.LastUseTransfer[e] = true
-			return
-		}
 		last := a.lastUse[e]
 		switch {
 		case last && needOwned && !a.conditional:
@@ -694,11 +627,12 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 
 	case *ast.MatchExpr:
 		a.expr(e.Scrutinee, false) // scrutinee is borrowed
-		if a.scrutineeConsumed(e) {
-			// The scrutinee's box is released/reused after the match, abandoning its
-			// fields, so an arm may move (not dup) a field it uses exactly once.
-			a.markArmTransfers(e)
-		}
+		// A field an arm binds out of the scrutinee is *duplicated*, never moved: the
+		// scrutinee's box drops its own fields when it dies (a real drop_fn on release,
+		// and in drop-reuse's unique branch), so a moved field would be freed twice.
+		// Moving it again — eliding the dup/drop pair when the box is statically or
+		// dynamically known unique — is Perceus stage 4 reuse specialization; see the
+		// package doc.
 		if name, ok := a.reuseSource(e); ok {
 			// The scrutinee's box is reclaimed via the runtime reuse token. We still
 			// mark the scrutinee's ordinary drop above (robust if the backend doesn't

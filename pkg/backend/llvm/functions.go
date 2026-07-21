@@ -22,7 +22,7 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retSigned, entryABI bool) 
 	l.retType = retType
 	l.retSigned = retSigned
 	l.entryABI = entryABI
-	l.managedFrames = [][]value.Value{nil}
+	l.managedFrames = [][]managedSlot{nil}
 	l.pendingReleases = nil
 	l.reuseToken = nil
 }
@@ -38,8 +38,12 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retSigned, entryABI bool) 
 // move), so it is no longer in any frame — dropping the remaining local references
 // here can't free the returned box out from under the caller.
 func (l *lowerer) emitReturn(block *ir.Block, val value.Value) error {
-	l.flushTemps()
-	l.releaseAllManagedFrames(block)
+	if err := l.flushTemps(); err != nil {
+		return err
+	}
+	if err := l.releaseAllManagedFrames(block); err != nil {
+		return err
+	}
 	if l.entryABI {
 		if val == nil {
 			block.NewRet(constant.NewInt(lltypes.I32, 0))
@@ -192,7 +196,7 @@ func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) erro
 		// bare/`ref`/`mut` managed param is a borrow — the caller still owns it, so
 		// it is not recorded here.
 		if param.TypeModifier == types.Own && isManagedSlot(slot) {
-			l.addManagedBinding(slot)
+			l.addManagedBinding(slot, param.Type)
 		}
 	}
 

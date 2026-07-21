@@ -7,6 +7,7 @@ import (
 	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // This file lowers the ownership model's scope-exit releases. The per-expression
@@ -34,10 +35,12 @@ func (l *lowerer) popManagedFrame() {
 }
 
 // addManagedBinding records a managed binding's alloca in the current top frame,
-// so its scope exit releases it. slot must be a string alloca.
-func (l *lowerer) addManagedBinding(slot value.Value) {
+// so its scope exit releases it. slot must be a managed (string or `shared` box)
+// alloca; lyraType is what it holds, carried so the release can select the value's
+// drop glue.
+func (l *lowerer) addManagedBinding(slot value.Value, lyraType types.Type) {
 	top := len(l.managedFrames) - 1
-	l.managedFrames[top] = append(l.managedFrames[top], slot)
+	l.managedFrames[top] = append(l.managedFrames[top], managedSlot{slot, lyraType})
 }
 
 // retireManagedSlot removes a binding's alloca from whichever frame holds it, so
@@ -51,7 +54,7 @@ func (l *lowerer) addManagedBinding(slot value.Value) {
 func (l *lowerer) retireManagedSlot(slot value.Value) {
 	for i := range l.managedFrames {
 		for j, s := range l.managedFrames[i] {
-			if s == slot {
+			if s.slot == slot {
 				l.managedFrames[i] = append(l.managedFrames[i][:j], l.managedFrames[i][j+1:]...)
 				return
 			}
@@ -67,10 +70,16 @@ func isManagedSlot(slot value.Value) bool {
 	return ok && isManagedLLVMType(a.ElemType)
 }
 
-// slotInTopFrame reports whether slot belongs to the current (innermost) scope's
-// managed frame — i.e. the binding was declared in the block being lowered.
-func (l *lowerer) slotInTopFrame(slot value.Value) bool {
-	return slices.Contains(l.managedFrames[len(l.managedFrames)-1], slot)
+// topFrameSlot returns the current (innermost) scope's managed entry for slot —
+// i.e. the binding was declared in the block being lowered — and whether it's
+// there at all.
+func (l *lowerer) topFrameSlot(slot value.Value) (managedSlot, bool) {
+	top := l.managedFrames[len(l.managedFrames)-1]
+	i := slices.IndexFunc(top, func(m managedSlot) bool { return m.slot == slot })
+	if i < 0 {
+		return managedSlot{}, false
+	}
+	return top[i], true
 }
 
 // dropLastUsesInStmt is the Perceus **drop fusion** (stage 2): after a statement
@@ -83,11 +92,12 @@ func (l *lowerer) slotInTopFrame(slot value.Value) bool {
 // (the top-frame restriction); a statement that itself sealed (an early return) is
 // skipped by the caller, so its bindings are freed by the seal's frame release on
 // that path instead.
-func (l *lowerer) dropLastUsesInStmt(block *ir.Block, stmt ast.Statement) {
+func (l *lowerer) dropLastUsesInStmt(block *ir.Block, stmt ast.Statement) error {
 	if len(l.managedFrames[len(l.managedFrames)-1]) == 0 {
-		return // no bindings declared in this scope — nothing here can be dropped
+		return nil // no bindings declared in this scope — nothing here can be dropped
 	}
 	seen := map[value.Value]bool{}
+	var walkErr error
 	ast.WalkStmt(stmt, nil, func(e ast.Expression) bool {
 		id, ok := e.(*ast.IdentifierExpr)
 		if !ok {
@@ -97,31 +107,43 @@ func (l *lowerer) dropLastUsesInStmt(block *ir.Block, stmt ast.Statement) {
 			return true // not a last use, or a transfer (retired at the move)
 		}
 		slot, found := l.locals[id.Name]
-		if !found || seen[slot] || !l.slotInTopFrame(slot) {
+		if !found || seen[slot] {
+			return true
+		}
+		m, inTop := l.topFrameSlot(slot)
+		if !inTop {
 			return true
 		}
 		seen[slot] = true
 		a := slot.(*ir.InstAlloca)
-		l.lowerManagedRelease(block, block.NewLoad(a.ElemType, slot))
+		if err := l.lowerManagedRelease(block, block.NewLoad(a.ElemType, slot), m.ty); err != nil {
+			walkErr = err
+			return false
+		}
 		l.retireManagedSlot(slot)
 		return true
 	})
+	return walkErr
 }
 
 // releaseSlots emits a release for each recorded binding: load the current value
-// from its alloca and drop its box's refcount.
-func (l *lowerer) releaseSlots(block *ir.Block, slots []value.Value) {
-	for _, slot := range slots {
-		a := slot.(*ir.InstAlloca)
-		v := block.NewLoad(a.ElemType, slot)
-		l.lowerManagedRelease(block, v)
+// from its alloca and drop its box's refcount (running the value's drop glue when
+// that frees the box).
+func (l *lowerer) releaseSlots(block *ir.Block, slots []managedSlot) error {
+	for _, m := range slots {
+		a := m.slot.(*ir.InstAlloca)
+		v := block.NewLoad(a.ElemType, m.slot)
+		if err := l.lowerManagedRelease(block, v, m.ty); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 // releaseTopManagedFrame releases the current scope's managed bindings — a
 // block's fall-through exit.
-func (l *lowerer) releaseTopManagedFrame(block *ir.Block) {
-	l.releaseSlots(block, l.managedFrames[len(l.managedFrames)-1])
+func (l *lowerer) releaseTopManagedFrame(block *ir.Block) error {
+	return l.releaseSlots(block, l.managedFrames[len(l.managedFrames)-1])
 }
 
 // releaseAllManagedFrames releases every live managed binding, innermost scope
@@ -129,16 +151,19 @@ func (l *lowerer) releaseTopManagedFrame(block *ir.Block) {
 // not popped: the block lowering that owns each frame still pops it (and, being
 // sealed by the return, skips re-releasing), so each binding is released exactly
 // once per control-flow path.
-func (l *lowerer) releaseAllManagedFrames(block *ir.Block) {
-	l.releaseManagedFramesFrom(block, 0)
+func (l *lowerer) releaseAllManagedFrames(block *ir.Block) error {
+	return l.releaseManagedFramesFrom(block, 0)
 }
 
 // releaseManagedFramesFrom releases the managed bindings in every frame from
 // index `depth` up (innermost first), without popping — the cleanup a `break`/
 // `continue` runs for the loop-body scopes it exits. A slot already handled by a
-// last-use drop/transfer holds a pinned sentinel, so its release is a safe no-op.
-func (l *lowerer) releaseManagedFramesFrom(block *ir.Block, depth int) {
+// last-use drop/transfer was retired from its frame, so it isn't released twice.
+func (l *lowerer) releaseManagedFramesFrom(block *ir.Block, depth int) error {
 	for i := len(l.managedFrames) - 1; i >= depth; i-- {
-		l.releaseSlots(block, l.managedFrames[i])
+		if err := l.releaseSlots(block, l.managedFrames[i]); err != nil {
+			return err
+		}
 	}
+	return nil
 }

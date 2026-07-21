@@ -40,19 +40,26 @@ func (l *lowerer) managedBox(block *ir.Block, v value.Value) value.Value {
 }
 
 // lowerManagedRetain / lowerManagedRelease bump / drop the refcount of any managed
-// value (string or `shared`), dispatching on its representation. release passes a
-// null drop_fn: a value's nested managed fields (a `shared` field, a string in a
-// struct) are not recursively released yet — recursive drop is the aggregate-drop
-// follow-on, so those leak conservatively (never a double free).
+// value (string or `shared`), dispatching on its representation.
+//
+// release passes the value's **drop glue** (drop.go) as lyra_rc_release's drop_fn,
+// so when the box's count reaches zero whatever its payload owns — a string field,
+// a `shared` tail — is released too, one box at a time down the structure. lyraType
+// is the value's Lyra type, needed to know what the payload owns; a nil/unknown type
+// yields a null drop_fn, which only leaks (memory-safe).
 func (l *lowerer) lowerManagedRetain(block *ir.Block, v value.Value) {
 	l.ensureRCRuntime()
 	block.NewCall(l.rcRetain, l.managedBox(block, v))
 }
 
-func (l *lowerer) lowerManagedRelease(block *ir.Block, v value.Value) {
+func (l *lowerer) lowerManagedRelease(block *ir.Block, v value.Value, lyraType types.Type) error {
 	l.ensureRCRuntime()
-	null := constant.NewNull(lltypes.NewPointer(lltypes.I8))
-	block.NewCall(l.rcRelease, l.managedBox(block, v), null)
+	drop, err := l.boxDropFn(lyraType)
+	if err != nil {
+		return err
+	}
+	block.NewCall(l.rcRelease, l.managedBox(block, v), drop)
+	return nil
 }
 
 // unboxSharedData loads the inline aggregate value out of a `shared` box pointer

@@ -597,7 +597,49 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 	for i, in := range incomings {
 		incs[i] = ir.NewIncoming(in.val, in.end)
 	}
-	return mergeBlock.NewPhi(incs...), mergeBlock, nil
+	phi := mergeBlock.NewPhi(incs...)
+	end, err := l.dropReclaimedPayload(mergeBlock, reuseToken, scrut, dt)
+	if err != nil {
+		return nil, nil, err
+	}
+	return phi, end, nil
+}
+
+// dropReclaimedPayload releases what a drop-reused value's *old* payload owned —
+// its string fields, its `shared` tail — after the arms have run.
+//
+// lyra_rc_drop_reuse deliberately leaves the payload alone: an arm binds a field by
+// reading it straight out of the box, taking no reference of its own, so dropping
+// at reclaim time would free a field the arm is about to use (an arm duplicates
+// only when it actually consumes the binding, which happens later, while lowering
+// the body). Emitting the drop here — at the merge, past every arm — puts it after
+// all of those duplications.
+//
+// It runs only when the token came back non-null, i.e. the box was *unique* and its
+// shell was reclaimed (whether an arm then rewrote it or freed it). A null token
+// means shared-and-decremented, or pinned: the box is still alive and still owns its
+// fields, so touching them would be a double free. The old field values are read
+// from `scrut`, the union unboxed *before* the shell could be overwritten.
+//
+// Returns the block control ends in — no-op (the same block) when there's no reuse
+// token or the payload owns nothing.
+func (l *lowerer) dropReclaimedPayload(block *ir.Block, token value.Value, scrut value.Value, dt types.DataType) (*ir.Block, error) {
+	payloadType := types.WithAllocation(dt, types.Stack)
+	if token == nil || !l.needsDrop(payloadType) {
+		return block, nil
+	}
+	fn := block.Parent
+	dropBlock := fn.NewBlock("")
+	after := fn.NewBlock("")
+	reclaimed := block.NewICmp(enum.IPredNE, token, constant.NewNull(lltypes.NewPointer(lltypes.I8)))
+	block.NewCondBr(reclaimed, dropBlock, after)
+
+	end, err := l.emitDropValue(dropBlock, scrut, payloadType)
+	if err != nil {
+		return nil, err
+	}
+	end.NewBr(after)
+	return after, nil
 }
 
 // bindDataPayload binds a data pattern's payload sub-patterns into l.locals for

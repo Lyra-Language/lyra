@@ -129,6 +129,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/backend"
 	"github.com/Lyra-Language/lyra/pkg/driver"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // Backend is the LLVM IR code generator.
@@ -160,6 +161,7 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 		funcs:              map[string]*ir.Func{},
 		structTypes:        map[string]*lltypes.StructType{},
 		roundingIntrinsics: map[string]*ir.Func{},
+		dropFns:            map[string]*ir.Func{},
 	}
 	// Lower type declarations
 	if err := l.lowerTypeDeclarations(res.Program); err != nil {
@@ -227,8 +229,14 @@ type lowerer struct {
 	//     there (dominating its uses) even when the statement spans branches — a
 	//     temp built in an `&&` right-hand block, say, is freed in that block, not
 	//     in the merge block it doesn't dominate.
-	managedFrames   [][]value.Value
+	managedFrames   [][]managedSlot
 	pendingReleases []pendingTemp
+
+	// dropFns caches the per-type recursive drop glue (drop.go), keyed by the
+	// payload type's String(). Module-level, not per-function: one @lyra_drop_T
+	// serves every release of a T. dropFnCount only keeps the symbol names unique.
+	dropFns     map[string]*ir.Func
+	dropFnCount int
 
 	// reuseToken is the Perceus reuse token (an i8* box-or-null from
 	// lyra_rc_drop_reuse) of the reuse-`match` currently being lowered, live only
@@ -239,10 +247,21 @@ type lowerer struct {
 }
 
 // pendingTemp is a managed temporary awaiting release, tagged with the block it
-// was produced in (where its release must go to stay dominated).
+// was produced in (where its release must go to stay dominated) and its Lyra type
+// (which selects the drop glue for whatever its payload owns).
 type pendingTemp struct {
 	val   value.Value
 	block *ir.Block
+	ty    types.Type
+}
+
+// managedSlot is a managed binding's alloca paired with the Lyra type it holds.
+// The type is carried because the release site needs it to pick the value's drop
+// glue (drop.go) — the LLVM type alone can't say which fields of a `data` payload
+// blob are managed.
+type managedSlot struct {
+	slot value.Value
+	ty   types.Type
 }
 
 // lowerExpr lowers a Lyra expression to an LLVM value, appending any
@@ -278,7 +297,10 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 			l.lowerManagedRetain(end, v)
 		}
 		if l.res.Ownership.ShouldReleaseTemp(expr) {
-			l.pendingReleases = append(l.pendingReleases, pendingTemp{v, end})
+			// Record the temporary's Lyra type alongside it: releasing it may free its
+			// box, and freeing runs the drop glue for whatever the payload owns.
+			ty, _ := l.res.TypeTable.Get(expr)
+			l.pendingReleases = append(l.pendingReleases, pendingTemp{v, end, ty})
 		}
 		// An owning last use *transfers* the reference, so retire the slot from its
 		// frame right at the move (stage-2 fusion — no scope-exit release). A
@@ -298,11 +320,14 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 // flushTemps releases every managed temporary awaiting release, each in the block
 // it was produced in (so the release dominates the value's uses even across
 // branches), then clears the pending list.
-func (l *lowerer) flushTemps() {
+func (l *lowerer) flushTemps() error {
 	for _, p := range l.pendingReleases {
-		l.lowerManagedRelease(p.block, p.val)
+		if err := l.lowerManagedRelease(p.block, p.val, p.ty); err != nil {
+			return err
+		}
 	}
 	l.pendingReleases = nil
+	return nil
 }
 
 func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {

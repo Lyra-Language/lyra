@@ -135,11 +135,14 @@ func (l *lowerer) ensureRCRuntime() {
 	//   pinned  → ret null      (arena-owned; never reclaimed here)
 	//   rc == 1 → ret box       (unique; reclaim the shell, leave rc = 1, don't free)
 	//   else    → rc -= 1; ret null   (shared; decrement, can't reuse)
-	// It does NOT drop the box's payload fields (matching lyra_rc_release's null
-	// drop_fn today — managed fields inside an aggregate leak conservatively); the
-	// caller reads everything it needs out of the box before drop-reuse (the match
-	// already copied the union out via unboxSharedData), then overwrites the reused
-	// box's payload.
+	//
+	// It deliberately does NOT drop the box's payload fields, even in the unique
+	// branch — the caller must, and only *after* the match arms have duplicated the
+	// fields they bind (a bind reads a field out of the box without a reference of its
+	// own, so dropping here would free it under the arm). lowerDataMatch does exactly
+	// that: it re-checks the token at the merge and drops the old payload there
+	// (dropReclaimedPayload). The caller has already copied the union out via
+	// unboxSharedData, so the old field values survive the shell being overwritten.
 	{
 		box := ir.NewParam("box", i8ptr)
 		fn := l.module.NewFunc(ShimRCDropReuse, i8ptr, box)
