@@ -2039,6 +2039,17 @@ func (tc *TypeChecker) inferLambdaExprType(lambda *ast.LambdaExpr) types.Type {
 			DefaultValue: p.DefaultValue,
 		})
 	}
+	// Infer the return type from the body when the lambda carries no return
+	// annotation (`(n: u8) => n`). Without this an unannotated lambda literal
+	// has a nil (un-inferred) return type, so passing it where a concrete
+	// function type is expected — e.g. `apply((n: u8) => n, 0)` against a
+	// `(u8) -> u8` parameter — fails as `(u8) -> ?` vs `(u8) -> u8`. Multi-clause
+	// lambdas (no single Body) are left un-inferred for now.
+	if t.ReturnType.Type == nil && lambda.Body != nil {
+		tc.withParamScope(lambda, func() {
+			t.ReturnType.Type = tc.inferExprType(lambda.Body)
+		})
+	}
 	tc.typeTable.Set(lambda, t)
 	return t
 }
