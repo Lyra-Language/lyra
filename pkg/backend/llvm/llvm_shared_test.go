@@ -47,6 +47,20 @@ var sharedCases = []struct {
 		200,
 	},
 	{
+		// A by-value field naming another declared type is recorded as an
+		// UnresolvedType, which SizeAndAlign can't size on its own — the payload has to
+		// go through resolveForLayout first, or boxing fails with "cannot size a
+		// `shared Outer` payload yet".
+		"by-value nested struct payload",
+		`struct Inner { v: i64, }
+		 struct Outer { inner: Inner, }
+		 let main = () -> u8 => {
+		   let o: shared Outer = Outer { inner: Inner { v: 42 } }
+		   u8(o.inner.v)
+		 }`,
+		42,
+	},
+	{
 		// A recursive `data` whose recursive field is `shared` (a pointer): the
 		// nested constructor is heap-boxed and stored into the field.
 		"recursive shared data construction",

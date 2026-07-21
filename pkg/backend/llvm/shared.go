@@ -89,10 +89,13 @@ func (l *lowerer) unboxSharedData(block *ir.Block, scrut value.Value) (value.Val
 // `header + sizeof(payload)` bytes (lyra_rc_alloc sets rc = 1), stores the built
 // payload into the box's payload field, and returns the typed box pointer — the
 // `shared` value's representation. payloadType is the payload's Lyra type, used to
-// size the allocation.
+// size the allocation — it is run through resolveForLayout first, since a field
+// naming another declared type (`struct Outer { inner: Inner }`) is recorded as a
+// bare UnresolvedType that SizeAndAlign can't size on its own (the same treatment
+// lowerDataDef gives a variant payload).
 func (l *lowerer) lowerBoxShared(block *ir.Block, payload value.Value, payloadType types.Type) (value.Value, error) {
 	l.ensureRCRuntime()
-	payloadSize, _, ok := SizeAndAlign(payloadType)
+	payloadSize, _, ok := SizeAndAlign(l.resolveForLayout(payloadType))
 	if !ok {
 		return nil, fmt.Errorf("llvm: cannot size a `shared %s` payload yet", payloadType)
 	}

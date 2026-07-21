@@ -90,6 +90,20 @@ var aggregateDropCases = []struct {
 		42,
 	},
 	{
+		// A string reached through a by-value nested struct: sizing the box payload
+		// needs the UnresolvedType field resolved (resolveForLayout), and the glue then
+		// has to descend *into* the inline struct to find the string — one box, but two
+		// levels of aggregate between it and the managed value.
+		"string inside a by-value nested struct",
+		`struct Inner { name: string, }
+		 struct Outer { inner: Inner, }
+		 let main = () -> u8 => {
+		   let o: shared Outer = Outer { inner: Inner { name: "d" ++ "eep" } }
+		   if o.inner.name == "deep" { 42 } else { 0 }
+		 }`,
+		42,
+	},
+	{
 		// The headline case: a recursive list of strings. One self-referential glue
 		// function frees the whole spine — each cell's release drops its string and
 		// its tail, and the tail's release re-enters the same glue.
