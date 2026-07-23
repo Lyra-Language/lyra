@@ -107,4 +107,14 @@ const (
 	// `user_defined_type_name`, so a struct literal `NAME { … }` won't parse — the
 	// type can be referenced but never constructed. Give it a PascalCase name.
 	CodeScreamingCaseTypeName = "lyra-W009"
+
+	// CodeInertBorrowModifier: an `own`/`ref`/`mut` modifier on a parameter whose
+	// type is a copied scalar primitive (a numeric type, `bool`, or `rune`). These
+	// modifiers are calling conventions over a *reference* — `own` transfers
+	// ownership, `ref`/`mut` borrow — but a scalar is passed by value with no
+	// interior to borrow or transfer, so the modifier is equivalent to a plain
+	// parameter and only misleads a reader into expecting move/borrow semantics.
+	// `string` (a managed fat pointer) and generic type parameters are NOT scalars
+	// and are never flagged. A warning, since the code is correct as written.
+	CodeInertBorrowModifier = "lyra-W010"
 )
