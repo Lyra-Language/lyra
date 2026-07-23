@@ -586,6 +586,17 @@ func (c *Collector) CollectPattern(patternNode *sitter.Node) ast.Pattern {
 			Name:        c.ctx.NodeText(patternNode),
 		}
 	case "literal_pattern":
+		// A char-literal pattern ('a') stores its decoded code point, reusing the
+		// expression collector so escape handling (\n, \x41, \U…) stays in one
+		// place; every other literal keeps its raw source text.
+		if child := patternNode.Child(0); child != nil && child.Kind() == "char_literal" {
+			if ch, ok := c.CollectExpr(child).(*ast.CharacterLiteralExpr); ok {
+				return &ast.LiteralPattern{
+					PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
+					Value:       ast.RunePatternValue(ch.Value),
+				}
+			}
+		}
 		return &ast.LiteralPattern{
 			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
 			Value:       c.ctx.NodeText(patternNode),

@@ -224,6 +224,10 @@ func (l *lowerer) scalarMatchTest(block *ir.Block, scrut value.Value, pattern as
 	intTy := scrut.Type().(*lltypes.IntType)
 	switch p := pattern.(type) {
 	case *ast.LiteralPattern:
+		// A rune pattern ('a') is pre-decoded to its code point; compare directly.
+		if rv, ok := p.Value.(ast.RunePatternValue); ok {
+			return block.NewICmp(enum.IPredEQ, scrut, constant.NewInt(intTy, int64(rv))), nil
+		}
 		s, ok := p.Value.(string)
 		if !ok {
 			return nil, fmt.Errorf("llvm: unexpected literal pattern value %T", p.Value)

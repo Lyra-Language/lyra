@@ -2,6 +2,7 @@ package ast
 
 import (
 	"fmt"
+	"strconv"
 )
 
 // Pattern is the interface for all pattern AST nodes
@@ -28,7 +29,18 @@ type IdentifierPattern struct {
 func (p *IdentifierPattern) patternNode()    {}
 func (p *IdentifierPattern) GetName() string { return p.Name }
 
-// LiteralPattern represents a literal pattern (matches a value)
+// RunePatternValue is the decoded code point of a character-literal match
+// pattern (`'a' => …`). It is stored in LiteralPattern.Value so a rune pattern is
+// distinguishable from the raw source text a numeric/string/bool literal pattern
+// stores (those keep a string), while its Stringer renders it back as a quoted
+// character in diagnostics (so `%s`/`%v` on LiteralPattern.Value stay readable).
+type RunePatternValue rune
+
+func (r RunePatternValue) String() string { return strconv.QuoteRune(rune(r)) }
+
+// LiteralPattern represents a literal pattern (matches a value). Value holds the
+// raw source text (a string) for a numeric/string/bool literal, or a
+// RunePatternValue for a character literal.
 type LiteralPattern struct {
 	PatternBase
 	Value any

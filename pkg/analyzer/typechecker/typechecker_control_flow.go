@@ -170,6 +170,14 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.addError(expr.GetLocation(), SeverityWarning,
 				"match on string type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
+	} else if isRuneType(scrutineeType) {
+		for _, arm := range expr.MatchArms {
+			tc.checkRuneMatchArm(arm.Pattern)
+		}
+		if !hasUnguardedCatchAll(expr.MatchArms) {
+			tc.addError(expr.GetLocation(), SeverityWarning,
+				"match on rune type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
+		}
 	} else if types.IsArray(scrutineeType) {
 		for _, arm := range expr.MatchArms {
 			tc.checkArrayMatchArm(arm.Pattern, scrutineeType)
@@ -570,6 +578,40 @@ func stringMatchIsExhaustive(arms []ast.MatchArm) bool {
 	return hasUnguardedCatchAll(arms)
 }
 
+// isRuneType reports whether t is the `rune` primitive. A rune is a code point
+// (i32) but is deliberately excluded from IsNumeric — arithmetic on code points
+// is meaningless — so match dispatch handles it on its own scalar path.
+func isRuneType(t types.Type) bool {
+	p, ok := t.(types.PrimitiveType)
+	return ok && p.Name == types.Rune
+}
+
+// checkRuneMatchArm validates one arm's pattern against a `rune` scrutinee.
+// Allowed patterns: a character literal ('a'), an identifier (binding), or a
+// wildcard. A number/string/bool literal, a range, or a regex is a type error.
+func (tc *TypeChecker) checkRuneMatchArm(pattern ast.Pattern) {
+	switch p := pattern.(type) {
+	case *ast.WildcardPattern, *ast.IdentifierPattern:
+		return
+	case *ast.BindingPattern:
+		tc.checkRuneMatchArm(p.Pattern)
+	case *ast.LiteralPattern:
+		if literalPatternKind(p.Value) != types.Rune {
+			tc.addError(p.GetLocation(), SeverityError,
+				"literal pattern %s is not a rune (character) value", p.Value)
+		}
+	case *ast.RangePattern:
+		tc.addError(p.GetLocation(), SeverityError,
+			"range patterns are not allowed on a rune scrutinee")
+	case *ast.RegexPattern:
+		tc.addError(p.GetLocation(), SeverityError,
+			"regex patterns are not allowed on a rune scrutinee")
+	default:
+		tc.addError(pattern.GetLocation(), SeverityError,
+			"this pattern is not allowed on a rune scrutinee")
+	}
+}
+
 // isNumericMatchExhaustive reports whether the arms of a numeric match
 // expression cover all possible values of scrutineeType.
 //
@@ -954,9 +996,13 @@ func (tc *TypeChecker) checkDuplicateMatchArms(arms []ast.MatchArm) {
 	}
 }
 
-// literalPatternKind classifies a literal pattern's raw source text as
-// UntypedInt, UntypedFloat, Boolean, or String.
+// literalPatternKind classifies a literal pattern as UntypedInt, UntypedFloat,
+// Boolean, String, or Rune. A character literal is stored pre-decoded as an
+// ast.RunePatternValue; every other kind is classified from its raw source text.
 func literalPatternKind(value any) types.PrimitiveTypeName {
+	if _, ok := value.(ast.RunePatternValue); ok {
+		return types.Rune
+	}
 	s, ok := value.(string)
 	if !ok {
 		return ""

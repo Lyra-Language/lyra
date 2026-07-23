@@ -336,6 +336,9 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		return constant.NewInt(l.literalIntType(e), e.Value), block, nil
 	case *ast.FloatLiteralExpr:
 		return constant.NewFloat(l.literalFloatType(e), e.Value), block, nil
+	case *ast.CharacterLiteralExpr:
+		// A rune is a Unicode code point, represented as i32.
+		return constant.NewInt(lltypes.I32, int64(e.Value)), block, nil
 	case *ast.StringLiteralExpr:
 		return l.lowerStringConstant(block, e.Value), block, nil
 	case *ast.StringConcatExpr:
