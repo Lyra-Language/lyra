@@ -136,6 +136,11 @@ func Analyze(source []byte) *Result {
 		res.err(e.Location, e.Code, e.Message)
 	}
 
+	// Use-after-move also runs after typechecking: it needs the TypeTable to tell
+	// which values are managed (only those are actually consumed by an `own`
+	// parameter).
+	res.Diagnostics = append(res.Diagnostics, checker.CheckUseAfterMove(program, symTable, tt)...)
+
 	// Ownership analysis (retain/release-temp decisions for managed values) runs
 	// after typechecking — it reads the TypeTable to identify managed types. It
 	// produces no diagnostics; the backend consumes the table.

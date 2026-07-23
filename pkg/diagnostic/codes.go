@@ -76,6 +76,15 @@ const (
 	// parameters are allocation-polymorphic and are not subject to this check.
 	CodeAllocationMismatch = "lyra-E018"
 
+	// CodeUseAfterMove: a binding is read after its value was moved into an `own`
+	// parameter. `own` means the callee takes ownership — it may release the value
+	// or, under Perceus reuse, overwrite its box in place — so the caller must
+	// treat the binding as consumed. Flow-sensitive and conservative at joins: a
+	// move in either branch of an `if`/`match` counts as moved afterwards, and a
+	// move anywhere in a loop body counts as moved on the next iteration.
+	// Reassigning the binding gives it a fresh value and clears the move.
+	CodeUseAfterMove = "lyra-E019"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"
