@@ -15,7 +15,7 @@ func TestLLVMPrimitive(t *testing.T) {
 		types.Int8: "i8", types.UInt8: "i8",
 		types.Int64: "i64", types.UInt64: "i64",
 		types.Float16: "half", types.Float32: "float", types.Float64: "double",
-		types.Boolean: "i1", types.Char: "i32",
+		types.Boolean: "i1", types.Rune: "i32",
 	}
 	for name, want := range cases {
 		got, ok := LLVMPrimitive(name)
@@ -41,7 +41,7 @@ func TestIsSignedInt(t *testing.T) {
 	}
 	unsigned := []types.PrimitiveTypeName{
 		types.UInt8, types.UInt16, types.UInt32, types.UInt64,
-		types.Float32, types.Float64, types.Boolean, types.Char, types.String,
+		types.Float32, types.Float64, types.Boolean, types.Rune, types.String,
 	}
 	for _, n := range unsigned {
 		if IsSignedInt(n) {
@@ -57,7 +57,7 @@ func TestSizeAndAlign_Primitives(t *testing.T) {
 	}{
 		{types.Int8, 1, 1}, {types.Boolean, 1, 1},
 		{types.Int16, 2, 2}, {types.Float16, 2, 2},
-		{types.Int32, 4, 4}, {types.Char, 4, 4},
+		{types.Int32, 4, 4}, {types.Rune, 4, 4},
 		{types.Int64, 8, 8}, {types.Float64, 8, 8},
 	}
 	for _, c := range cases {

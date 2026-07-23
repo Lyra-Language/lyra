@@ -1832,7 +1832,7 @@ func (tc *TypeChecker) inferIndexExpr(expr *ast.IndexExpr) types.Type {
 		return t.ElementType
 	case types.PrimitiveType:
 		if t.Name == types.String {
-			return types.PrimitiveType{Name: types.Char}
+			return types.PrimitiveType{Name: types.Rune}
 		}
 		tc.addError(expr.GetLocation(), SeverityError,
 			"cannot index into type %s", objectType)

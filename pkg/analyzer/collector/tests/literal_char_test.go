@@ -29,3 +29,11 @@ func TestCollectCharLiteralExprLargeUnicodeEscape(t *testing.T) {
 	// \U0001F600 == grinning face emoji
 	runGoldenTest(t, `let emoji = '\U0001F600'`, "char_literal_expr_large_unicode_escape")
 }
+
+// A `rune` type annotation collects as a PrimitiveType, not a generic type
+// variable — regression test for the collector once treating this type (then named
+// `char`) as a GenericType (it had no primitive-type grammar rule, so it fell
+// through to the bare-lowercase-identifier path).
+func TestCollectRuneTypeAnnotation(t *testing.T) {
+	runGoldenTest(t, `let f = (c: rune) -> rune => c`, "rune_type_annotation")
+}

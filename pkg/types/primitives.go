@@ -19,7 +19,7 @@ const (
 	UntypedFloat     PrimitiveTypeName = "untyped_float"
 	Boolean          PrimitiveTypeName = "boolean"
 	String           PrimitiveTypeName = "string"
-	Char             PrimitiveTypeName = "char"
+	Rune             PrimitiveTypeName = "rune"
 	Regex            PrimitiveTypeName = "regex"
 )
 

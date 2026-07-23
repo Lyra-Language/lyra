@@ -1,0 +1,40 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(f) {
+			BindingKind: let
+			Name: f
+			Value: {
+				LambdaExpr {
+					Body: {
+						IdentifierExpr(c) {
+							Name: c
+						}
+					}
+					Parameters: {
+						Parameter {
+							Pattern: {
+								IdentifierPattern(c) {
+									Name: c
+								}
+							}
+							Type: {
+								PrimitiveType(rune) {
+									Name: rune
+								}
+							}
+						}
+					}
+					ReturnType: {
+						ReturnType(rune) {
+							Type: {
+								PrimitiveType(rune) {
+									Name: rune
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+}

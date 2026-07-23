@@ -40,7 +40,7 @@ func LLVMPrimitive(name types.PrimitiveTypeName) (lltypes.Type, bool) {
 		return lltypes.Double, true
 	case types.Boolean:
 		return lltypes.I1, true
-	case types.Char:
+	case types.Rune:
 		return lltypes.I32, true
 	case types.String:
 		return StringLLVMType(), true
@@ -188,7 +188,7 @@ func primitiveSizeAndAlign(name types.PrimitiveTypeName) (int, int, bool) {
 		return 1, 1, true
 	case types.Int16, types.UInt16, types.Float16:
 		return 2, 2, true
-	case types.Int32, types.UInt32, types.Float32, types.Char:
+	case types.Int32, types.UInt32, types.Float32, types.Rune:
 		return 4, 4, true
 	case types.Int64, types.UInt64, types.Float64,
 		types.UntypedInt, types.UntypedSignedInt, types.UntypedFloat:

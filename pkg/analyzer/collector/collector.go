@@ -375,6 +375,8 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 		return types.PrimitiveType{Name: types.String}
 	case "boolean_type":
 		return types.PrimitiveType{Name: types.Boolean}
+	case "rune_type":
+		return types.PrimitiveType{Name: types.Rune}
 	case "user_defined_type_name":
 		return types.UnresolvedType{Name: c.ctx.NodeText(node)}
 	case "generic_type":

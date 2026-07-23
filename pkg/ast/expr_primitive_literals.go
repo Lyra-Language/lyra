@@ -102,7 +102,7 @@ type CharacterLiteralExpr struct {
 func (c *CharacterLiteralExpr) primitiveLiteralValueNode() {}
 func (c *CharacterLiteralExpr) LiteralText() string        { return fmt.Sprintf("%q", c.Value) }
 
-func (c *CharacterLiteralExpr) GetType() types.Type { return types.PrimitiveType{Name: types.Char} }
+func (c *CharacterLiteralExpr) GetType() types.Type { return types.PrimitiveType{Name: types.Rune} }
 func (c *CharacterLiteralExpr) GetName() string {
 	return fmt.Sprintf("CharacterLiteralExpr(%c)", c.Value)
 }
