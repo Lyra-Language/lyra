@@ -45,6 +45,13 @@ jobs:
           go-version-file: lyra/go.mod
           cache-dependency-path: lyra/go.sum
 
+       # Regenerate tree-sitter parser bindings to ensure they're in sync with grammar
+      - name: Regenerate tree-sitter bindings
+        working-directory: tree-sitter-lyra
+        run: |
+          npm install
+          npm run build
+
       # The LLVM backend's behavioral tests compile emitted IR with clang and
       # run it (they self-skip when clang is absent). Installing clang here
       # keeps that coverage live in CI. libm (-lm), which the float tests
