@@ -1332,6 +1332,17 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 	// Non-constant int narrowing is deferred to a future value-range pass, the
 	// same scope limit checkIntegerLiteralRange already has.
 	if toP, ok := targetType.(types.PrimitiveType); ok && isAnyConcreteInt(toP.Name) && isIntType(argType) {
+		// A large-unsigned literal (Unsigned) fits only u64: its true magnitude
+		// exceeds int64, so extractIntLiteralValue's int64 bit pattern (negative)
+		// would otherwise be read as fitting a signed target. Check it against the
+		// magnitude and report that magnitude.
+		if lit, ok := call.Arguments[0].(*ast.IntegerLiteralExpr); ok && lit.Unsigned {
+			if toP.Name != types.UInt64 {
+				tc.addError(call.GetLocation(), SeverityError,
+					"cannot convert %d to %s: literal value is out of range", lit.UnsignedValue(), ident.Name)
+			}
+			return targetType
+		}
 		if value, isConst := extractIntLiteralValue(call.Arguments[0]); isConst && !integerFitsInType(value, toP.Name) {
 			tc.addError(call.GetLocation(), SeverityError,
 				"cannot convert %d to %s: literal value is out of range", value, ident.Name)

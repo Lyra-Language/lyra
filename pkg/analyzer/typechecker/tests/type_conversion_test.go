@@ -203,3 +203,23 @@ func TestTypeCheck_TypeConversion_AnnotationMismatch(t *testing.T) {
 	`, false)
 	assertErrorsAre(t, res, "y: cannot assign i32 to string")
 }
+
+// --- large-unsigned literal narrowing conversions ---
+
+// A large-u64 literal converted to a narrower/signed target is out of range: the
+// check uses the literal's true magnitude, not its int64 bit pattern.
+func TestTypeCheck_Conversion_LargeU64ToI8_OutOfRange(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = i8(18446744073709551615)`, false)
+	assertErrorsAre(t, res, "cannot convert 18446744073709551615 to i8: literal value is out of range")
+}
+
+func TestTypeCheck_Conversion_LargeU64ToU32_OutOfRange(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = u32(18446744073709551615)`, false)
+	assertErrorsAre(t, res, "cannot convert 18446744073709551615 to u32: literal value is out of range")
+}
+
+// Converting a large-u64 literal to u64 is fine — it fits.
+func TestTypeCheck_Conversion_LargeU64ToU64_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = u64(18446744073709551615)`, false)
+	assertNoErrors(t, res)
+}
