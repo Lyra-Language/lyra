@@ -41,17 +41,23 @@ func collectIntegerLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc as
 	}
 	value, err = strconv.ParseInt(valueStringToParse, int(base), 64)
 	if err != nil {
-		// Emit a clear diagnostic and fall back to a placeholder literal (Value 0),
-		// never nil: a nil child would enter the AST as a typed-nil expression and
-		// crash a later pass (e.g. propagateLiteralType) that dereferences it. The
-		// error keeps the program from compiling, so the placeholder value is inert.
-		if _, uerr := strconv.ParseUint(valueStringToParse, int(base), 64); uerr == nil {
-			// A valid unsigned 64-bit value that overflows int64. IntegerLiteralExpr.Value
-			// is an int64, so a large u64 literal isn't representable yet.
-			ctx.AddError(node, diag.SeverityError,
-				"integer literal %s exceeds the range of i64; unsigned literals above 9223372036854775807 are not yet supported",
-				valueStringWithoutUnderscores)
-		} else if errors.Is(err, strconv.ErrRange) {
+		// A value that overflows int64 but fits u64 is a valid large-unsigned
+		// literal: store its bit pattern and mark it Unsigned so the typechecker
+		// infers it as u64 (its only valid type).
+		if uv, uerr := strconv.ParseUint(valueStringToParse, int(base), 64); uerr == nil {
+			return &ast.IntegerLiteralExpr{
+				ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+				Value:    int64(uv),
+				Base:     base,
+				Unsigned: true,
+			}
+		}
+		// Beyond u64 (or otherwise unparseable): emit a clear diagnostic and fall
+		// back to a placeholder literal (Value 0), never nil — a nil child would
+		// enter the AST as a typed-nil expression and crash a later pass (e.g.
+		// propagateLiteralType) that dereferences it. The error keeps the program
+		// from compiling, so the placeholder value is inert.
+		if errors.Is(err, strconv.ErrRange) {
 			ctx.AddError(node, diag.SeverityError,
 				"integer literal %s is too large to represent (exceeds the 64-bit range)", valueStringWithoutUnderscores)
 		} else {

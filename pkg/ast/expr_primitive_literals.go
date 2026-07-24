@@ -15,19 +15,43 @@ type IntegerLiteralExpr struct {
 	ExprBase
 	Value int64
 	Base  IntegerBase
+	// Unsigned marks a literal whose magnitude exceeds int64's range but fits u64
+	// (e.g. 18446744073709551615). Value then holds the *bit pattern*
+	// (int64(uint64value), so it reads as negative), and GetType reports a concrete
+	// u64 — the literal's only valid type, so it isn't adaptable like an ordinary
+	// untyped literal. The backend lowers Value directly (constant.NewInt gives the
+	// right bits). Use UnsignedValue for the true magnitude.
+	Unsigned bool
 }
 
 func (i *IntegerLiteralExpr) primitiveLiteralValueNode() {}
-func (i *IntegerLiteralExpr) LiteralText() string        { return fmt.Sprintf("%d", i.Value) }
+func (i *IntegerLiteralExpr) LiteralText() string        { return i.decimalString() }
 
-func (i *IntegerLiteralExpr) GetName() string {
-	return fmt.Sprintf("IntegerLiteralExpr(%d, Base: %d)", i.Value, i.Base)
+// UnsignedValue returns the literal's magnitude reinterpreted as unsigned — the
+// true value of an Unsigned (large-u64) literal, or just uint64(Value) otherwise.
+func (i *IntegerLiteralExpr) UnsignedValue() uint64 { return uint64(i.Value) }
+
+// decimalString renders the literal's value, honoring the unsigned bit pattern.
+func (i *IntegerLiteralExpr) decimalString() string {
+	if i.Unsigned {
+		return fmt.Sprintf("%d", i.UnsignedValue())
+	}
+	return fmt.Sprintf("%d", i.Value)
 }
 
-func (i *IntegerLiteralExpr) GetType() types.Type      { return types.PrimitiveType{Name: types.UntypedInt} }
+func (i *IntegerLiteralExpr) GetName() string {
+	return fmt.Sprintf("IntegerLiteralExpr(%s, Base: %d)", i.decimalString(), i.Base)
+}
+
+func (i *IntegerLiteralExpr) GetType() types.Type {
+	if i.Unsigned {
+		return types.PrimitiveType{Name: types.UInt64}
+	}
+	return types.PrimitiveType{Name: types.UntypedInt}
+}
 func (i *IntegerLiteralExpr) Int64() (int64, bool)     { return i.Value, true }
 func (i *IntegerLiteralExpr) Float64() (float64, bool) { return 0, false }
-func (i *IntegerLiteralExpr) ConstraintString() string { return fmt.Sprintf("%d", i.Value) }
+func (i *IntegerLiteralExpr) ConstraintString() string { return i.decimalString() }
 
 type IntegerBase int // 10, 8, 16, 2
 

@@ -53,7 +53,7 @@ Concrete types:
 | Type | Notes |
 |---|---|
 | `PrimitiveType` | `i8`–`i64`, `u8`–`u64`, `f16`/`f32`/`f64`, `bool`, `string`, `rune` (a Unicode code point, i32, Go/Odin naming — renamed from `char` 07/21) (no platform-dependent `int`/`uint`; no bare `float` — untyped literals default to `i64`/`f64`) |
-| `PrimitiveType` (internal) | `untyped_int`, `untyped_signed_int`, `untyped_float` — for numeric literal inference |
+| `PrimitiveType` (internal) | `untyped_int`, `untyped_signed_int`, `untyped_float` — for numeric literal inference (exception: a literal in `(int64max, u64max]` is inferred as **concrete `u64`**, its only valid type — `IntegerLiteralExpr.Unsigned`, `Value` holds the int64 bit pattern) |
 | `StructType` | named struct with fields |
 | `DataType` | sum type; each `DataTypeConstructor` has `Params`, but the collector wraps a positional variant's fields in a **single anonymous `TupleType`** (`Rect(i64, i64)` → `Params [TupleType{i64,i64}]`) — use `DataTypeConstructor.FieldTypes()` for the flat field list that matches a construction's positional args |
 | `LambdaType` | function type with param types and return type |

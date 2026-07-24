@@ -69,22 +69,29 @@ func hasMessageContaining(res *Result, substrs ...string) bool {
 	return false
 }
 
-// TestAnalyze_OutOfRangeIntLiteral_NoPanic: a numeric literal that overflows
-// int64 must produce a clean diagnostic and never crash a later pass.
-// Regression — the collector returned a nil node for such a literal, which
-// entered the AST as a typed-nil expression and panicked propagateLiteralType in
-// the typechecker (nil dereference).
-func TestAnalyze_OutOfRangeIntLiteral_NoPanic(t *testing.T) {
-	// A valid u64 value that overflows int64 (the original crash reproducer,
-	// exercised through a call argument so propagateLiteralType runs on it).
+// TestAnalyze_LargeU64Literal_TypeChecks: a literal that overflows int64 but
+// fits u64 (18446744073709551615) is a valid u64 value — it type-checks in a
+// u64 context. This is also the original crash reproducer (a nil literal node
+// once panicked propagateLiteralType); it must analyze without panic or error.
+func TestAnalyze_LargeU64Literal_TypeChecks(t *testing.T) {
 	src := "let big = (n: u64) -> u64 => n\n" +
 		"let main = () -> u8 => {\n  let x = big(18446744073709551615)\n  0\n}\n"
 	res := Analyze([]byte(src)) // must not panic
-	if !res.HasErrors() {
-		t.Fatal("expected an out-of-range diagnostic")
+	if res.HasErrors() {
+		t.Fatalf("expected a large u64 literal to type-check, got: %v", res.Diagnostics)
 	}
-	if !hasMessageContaining(res, "exceeds the range of i64") {
-		t.Fatalf("expected an i64-range message, got: %v", res.Diagnostics)
+}
+
+// TestAnalyze_LargeU64Literal_RejectsSignedTarget: the same literal is NOT
+// silently accepted as a signed value — assigning it to i64 is a clean error,
+// never a wrong (negative) value.
+func TestAnalyze_LargeU64Literal_RejectsSignedTarget(t *testing.T) {
+	res := Analyze([]byte("let main = () -> u8 => {\n  let x: i64 = 18446744073709551615\n  0\n}\n"))
+	if !res.HasErrors() {
+		t.Fatal("expected a type error assigning a large u64 literal to i64")
+	}
+	if !hasMessageContaining(res, "cannot assign u64 to i64") {
+		t.Fatalf("expected a u64-to-i64 assignability error, got: %v", res.Diagnostics)
 	}
 }
 
