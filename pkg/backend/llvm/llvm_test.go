@@ -261,12 +261,14 @@ func TestExec_IntWidthConversions(t *testing.T) {
 		// differs, even though both are 8 bits).
 		{"let main() -> u8 => u8(200) + u8(50)\n", 250},
 		{"let main() -> u8 => u8(i8(100) + i8(20))\n", 120},
-		// Narrowing WITH overflow — the width-proving cases. If the add
-		// silently stayed at i64 width (i.e. the conversion were a no-op
-		// instead of a real trunc), these would give the un-wrapped sums
-		// (300, 200) instead.
-		{"let main() -> u8 => u8(200) + u8(100)\n", 44},      // 300 wraps mod 256 = 44
-		{"let main() -> u8 => u8(i8(100) + i8(100))\n", 200}, // 200 (=100+100) doesn't fit signed i8 (-128..127); wraps to the bit pattern for -56, which as an exit code (mod 256, i.e. 256-56) reads back as 200
+		// Narrowing WITH overflow — the width-proving cases. Checked arithmetic
+		// (Pit-of-Success #2) traps on overflow instead of wrapping, and the trap
+		// itself proves the narrow width: the `+` happens at u8/i8 width (300 and
+		// 200 overflow there), so it traps (exit 101) — whereas if the conversion
+		// were a no-op and the add stayed at i64 width, neither sum would overflow
+		// and it would exit with the un-wrapped value.
+		{"let main() -> u8 => u8(200) + u8(100)\n", overflowTrapExitCode},     // 300 overflows u8 → trap
+		{"let main() -> u8 => u8(i8(100) + i8(100))\n", overflowTrapExitCode}, // 200 overflows signed i8 (max 127) → trap
 		// Widening: zext (unsigned source) vs sext (signed source) must pick
 		// correctly, not just "a wide value of the right magnitude" — sign-
 		// extending vs zero-extending a negative i8 differ by exactly 256,
@@ -587,12 +589,16 @@ let main() -> u8 => add(40, 2)
 			42,
 		},
 		{
-			"narrow-arg literal wraps at u8",
+			// The literal args narrow to u8, so `a + b` happens at u8 width where
+			// 200 + 100 = 300 overflows — checked arithmetic traps (exit 101)
+			// rather than wrapping. (A wide-width add wouldn't overflow, so the
+			// trap also proves the args narrowed.)
+			"narrow-arg overflow traps at u8",
 			`
 let add = (a: u8, b: u8) -> u8 => a + b
 let main() -> u8 => add(200, 100)
 `,
-			44,
+			overflowTrapExitCode,
 		},
 		{
 			"early return",
@@ -688,12 +694,17 @@ let main() -> u8 => {
   u8(x + 3)
 }
 `, 8},
+		// `x * 20` happens at u8 width (x is u8), where 20 * 20 = 400 overflows —
+		// checked arithmetic traps rather than wrapping (400 mod 256 = 144, then
+		// /7 = 20 under the old silent-wrap semantics).
 		{`
 let main() -> u8 => {
   let x: u8 = 20
   (x * 20) / 7
 }
-`, 20},
+`, overflowTrapExitCode},
+		// `y + x` at u8 width overflows (100 + 200 = 300) — traps rather than
+		// wrapping to 44.
 		{`
 let main() -> u8 => {
   let x: u8 = 200
@@ -701,7 +712,7 @@ let main() -> u8 => {
   y = y + x
   u8(y)
 }
-`, 44},
+`, overflowTrapExitCode},
 	}
 	for _, c := range cases {
 		if got := buildAndRun(t, c.src); got != c.want {

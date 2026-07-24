@@ -65,8 +65,8 @@
 //     dispatch over; runtime.go emits the ref-counted heap runtime (lyra_rc_*)
 //     as real function bodies, lazily, the first time a value hits the heap.
 //  2. What's next in lowerExpr: string interpolation (value→string formatting of
-//     its segments) and `print` (the output shim). Already lowering: arithmetic
-//     and comparisons on ints and floats, string `==`/`!=` and `++`
+//     its segments). Already lowering: `print`/`println` (per-type output, print.go),
+//     arithmetic and comparisons on ints and floats, string `==`/`!=` and `++`
 //     (concatenation, heap-allocated via lyra_rc_alloc + memcpy), `&&`/`||`,
 //     `if`/blocks, `let`/`var`, calls,
 //     tuple/struct instances, `data` construction (alloca + typed payload store),
@@ -91,11 +91,13 @@
 //     lyra_rc_alloc/retain/release on libc malloc/free), and the ownership model
 //     (pkg/analyzer/ownership + ownership_lower.go) frees managed strings —
 //     retain on copy, transfer on return/own-arg, release at scope exit, with the
-//     placement dominating its uses. Still to come: strings-in-aggregates and
-//     break/continue paths (leak conservatively today), `shared`-value lowering,
-//     `print` output, the overflow trap for todo #2 (via llvm.sadd.with.overflow),
-//     and the builtin overflow-arithmetic methods (typechecker/builtins.go →
-//     two's-complement +/-/* and llvm.{s,u}{add,sub}.sat).
+//     placement dominating its uses. Integer `+`/`-`/`*` are overflow-checked
+//     (llvm.{s,u}{add,sub,mul}.with.overflow → a trap that reports and exit(101)s,
+//     trap.go — Pit-of-Success #2). Still to come: strings-in-aggregates and
+//     break/continue paths (leak conservatively today), and the builtin
+//     overflow-arithmetic *escape hatches* (typechecker/builtins.go's
+//     `wrapping_*`/`saturating_*` → two's-complement +/-/* and llvm.{s,u}{add,sub}.sat),
+//     which currently type-check but aren't lowered.
 //
 // # File organization
 //
@@ -161,6 +163,7 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 		funcs:              map[string]*ir.Func{},
 		structTypes:        map[string]*lltypes.StructType{},
 		roundingIntrinsics: map[string]*ir.Func{},
+		overflowIntrinsics: map[string]*ir.Func{},
 		dropFns:            map[string]*ir.Func{},
 		cStrings:           map[string]*ir.Global{},
 	}
@@ -206,11 +209,18 @@ type lowerer struct {
 	// intrinsics (rounding.go), keyed by full intrinsic name.
 	roundingIntrinsics map[string]*ir.Func
 
+	// Checked-arithmetic overflow trap (trap.go): overflowIntrinsics caches the
+	// lazily-declared llvm.{s,u}{add,sub,mul}.with.overflow.iN intrinsics by full
+	// name; panicOverflow is the noreturn trap called on overflow; exit is libc's.
+	overflowIntrinsics map[string]*ir.Func
+	panicOverflow      *ir.Func
+	exit               *ir.Func
+
 	// The ref-counted heap runtime (runtime.go), emitted lazily into the module
 	// the first time a value needs the heap (today: string concatenation). nil
 	// until ensureRCRuntime runs; all five are populated together.
-	malloc    *ir.Func // libc malloc
-	free      *ir.Func // libc free
+	malloc      *ir.Func // libc malloc
+	free        *ir.Func // libc free
 	rcAlloc     *ir.Func // lyra_rc_alloc: malloc a box, rc = 1
 	rcRetain    *ir.Func // lyra_rc_retain: rc += 1 (pinned no-op)
 	rcRelease   *ir.Func // lyra_rc_release: rc -= 1, drop + free at 0 (pinned no-op)

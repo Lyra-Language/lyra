@@ -228,8 +228,7 @@ func (l *lowerer) lowerMathBinaryOpExpr(block *ir.Block, e *ast.MathBinaryOpExpr
 	if err != nil {
 		return nil, nil, err
 	}
-	v, err := l.applyIntMathOp(block, e.Operator, left, right, signed)
-	return v, block, err
+	return l.applyIntMathOp(block, e.Operator, left, right, signed)
 }
 
 // applyFloatMathOp emits a binary floating-point arithmetic op on two
@@ -277,28 +276,37 @@ func (l *lowerer) lowerFlooredFRem(block *ir.Block, left, right value.Value) val
 // applyIntMathOp emits the instruction(s) for a binary integer arithmetic op on
 // two already-lowered same-width values. Shared by lowerMathBinaryOpExpr and
 // lowerMathAssignOp (`i += x` is `i = i <op> x`). signed selects sdiv/srem vs
-// udiv/urem and the floored-remainder fixup; add/sub/mul are signedness-agnostic.
-func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value, signed bool) (value.Value, error) {
+// udiv/urem and the floored-remainder fixup; add/sub/mul are signedness-agnostic
+// *in their bit pattern* but not in their overflow condition.
+//
+// `+`/`-`/`*` are **checked** (Pit-of-Success #2): each lowers to the matching
+// `llvm.{s,u}{add,sub,mul}.with.overflow` intrinsic and traps on overflow
+// (trap.go). Because the check splits the block, this returns the block control
+// ends up in — a plain op returns the same block, a checked op returns the
+// fall-through (no-overflow) block. Division/remainder are not checked here (div
+// overflow `INT_MIN / -1` and div-by-zero are a separate slice — see todo #2's
+// range-analysis item), so they return `block` unchanged.
+func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value, signed bool) (value.Value, *ir.Block, error) {
 	switch op {
 	case ast.MathBinaryOpAdd:
-		return block.NewAdd(left, right), nil
+		return l.emitCheckedIntOp(block, "add", left, right, signed)
 	case ast.MathBinaryOpSub:
-		return block.NewSub(left, right), nil
+		return l.emitCheckedIntOp(block, "sub", left, right, signed)
 	case ast.MathBinaryOpMul:
-		return block.NewMul(left, right), nil
+		return l.emitCheckedIntOp(block, "mul", left, right, signed)
 	case ast.MathBinaryOpDiv:
 		if signed {
-			return block.NewSDiv(left, right), nil
+			return block.NewSDiv(left, right), block, nil
 		}
-		return block.NewUDiv(left, right), nil
+		return block.NewUDiv(left, right), block, nil
 	case ast.MathBinaryOpMod:
 		// Mod (%): Odin's "modulo (truncated)" — sign follows the
 		// dividend, exactly what LLVM's srem/urem give natively.
 		// 11 % -3 = 2.
 		if signed {
-			return block.NewSRem(left, right), nil
+			return block.NewSRem(left, right), block, nil
 		}
-		return block.NewURem(left, right), nil
+		return block.NewURem(left, right), block, nil
 	case ast.MathBinaryOpRemainder:
 		// Remainder (%%): Odin's "remainder (floored)" — sign follows the
 		// divisor, distinct from Mod above. 11 %% -3 = -1 (vs Mod's 2).
@@ -306,11 +314,11 @@ func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, rig
 		// value is non-negative, so there's nothing to floor), hence
 		// urem directly; the signed case needs lowerFlooredSRem's fixup.
 		if signed {
-			return l.lowerFlooredSRem(block, left, right), nil
+			return l.lowerFlooredSRem(block, left, right), block, nil
 		}
-		return block.NewURem(left, right), nil
+		return block.NewURem(left, right), block, nil
 	default:
-		return nil, fmt.Errorf("llvm: math binary op lowering not implemented for %v", op)
+		return nil, nil, fmt.Errorf("llvm: math binary op lowering not implemented for %v", op)
 	}
 }
 
@@ -352,7 +360,9 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 	} else {
 		var signed bool
 		if signed, err = l.getIntSignedness(e.Right); err == nil {
-			result, err = l.applyIntMathOp(block, binOp, cur, rhs, signed)
+			// The checked int op may split the block (overflow trap); keep lowering
+			// (the store) into the block it returns.
+			result, block, err = l.applyIntMathOp(block, binOp, cur, rhs, signed)
 		}
 	}
 	if err != nil {
