@@ -140,6 +140,9 @@ func TestExec_PrintFormatting(t *testing.T) {
 		{"unsigned wraps high", `let f = (n: u8) -> u8 => n
 			 let main = () -> void => println(f(200))`, "200\n"},
 		{"u64 max literal", `let main = () -> void => println(18446744073709551615)`, "18446744073709551615\n"},
+		{"u64 max hex", `let main = () -> void => println(0xFFFFFFFFFFFFFFFF)`, "18446744073709551615\n"},
+		{"u64 max binary", `let main = () -> void => println(0b1111111111111111111111111111111111111111111111111111111111111111)`, "18446744073709551615\n"},
+		{"hex mid-range", `let main = () -> void => println(0xDEADBEEFCAFEBABE)`, "16045690984503098046\n"},
 		{"bool true", `let main = () -> void => println(true)`, "true\n"},
 		{"bool false", `let main = () -> void => println(false)`, "false\n"},
 		{"rune ascii", `let main = () -> void => println('A')`, "A\n"},
