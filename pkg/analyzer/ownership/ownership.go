@@ -705,11 +705,19 @@ func (a *analyzer) block(e *ast.BlockExpr, needOwned bool) {
 // mode, and the call result under needOwned.
 func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	lam := a.resolveCallee(e)
+	// print/println are compiler-provided builtins whose string parameter is a
+	// borrow, so an owned temporary argument (`print("a" ++ b)`) is released after
+	// the call rather than conservatively transferred (leaked). Only when no user
+	// function shadows the name (lam == nil) — matching the typechecker/backend
+	// resolution order.
+	builtinBorrows := lam == nil && calleeIsBorrowingBuiltin(e)
 
 	for i, arg := range e.Arguments {
 		argOwns := true // conservative default: transfer (leak-safe) for an unknown callee
 		if lam != nil {
 			argOwns = i < len(lam.Parameters) && paramOwnsArgument(lam.Parameters[i].TypeModifier)
+		} else if builtinBorrows {
+			argOwns = false
 		}
 		a.expr(arg, argOwns)
 	}
@@ -739,6 +747,23 @@ func (a *analyzer) resolveCallee(e *ast.FunctionCallExpr) *ast.LambdaExpr {
 		return nil
 	}
 	return a.symTable.Functions[id.Name]
+}
+
+// calleeIsBorrowingBuiltin reports whether e is a direct call to a
+// compiler-provided builtin whose parameters are borrows (bare), so an owned
+// temporary argument must be released after the call rather than conservatively
+// transferred (leaked). print/println borrow their `string` argument. Callers
+// gate this on the name not being shadowed by a user function.
+func calleeIsBorrowingBuiltin(e *ast.FunctionCallExpr) bool {
+	id, ok := e.Function.(*ast.IdentifierExpr)
+	if !ok {
+		return false
+	}
+	switch id.Name {
+	case "print", "println":
+		return true
+	}
+	return false
 }
 
 // paramOwnsArgument / isOwnedReturn mirror the typechecker's ownership predicates

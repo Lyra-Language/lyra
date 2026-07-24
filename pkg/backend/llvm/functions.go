@@ -53,6 +53,12 @@ func (l *lowerer) emitReturn(block *ir.Block, val value.Value) error {
 		block.NewRet(block.NewZExt(u8, lltypes.I32))
 		return nil
 	}
+	if _, ok := l.retType.(*lltypes.VoidType); ok {
+		// A void function: the body may still produce a value (a `print` call, a
+		// block's last expression) — it is discarded, and control returns void.
+		block.NewRet(nil)
+		return nil
+	}
 	if val == nil {
 		block.NewRet(nil) // ret void
 		return nil
@@ -112,8 +118,25 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 				return err
 			}
 		}
-	default: // EntryReturnVoid — nothing observable to run yet; exit 0.
-		block.NewRet(constant.NewInt(lltypes.I32, 0))
+	default: // EntryReturnVoid — run the body for its side effects, then exit 0.
+		if entry.Lambda.Body != nil {
+			// lowerForEffect (not lowerExpr): a void body needs no value, and may be
+			// an empty block or one ending in a non-expression statement.
+			var err error
+			block, err = l.lowerForEffect(block, entry.Lambda.Body)
+			if err != nil {
+				return err
+			}
+			if block.Term != nil {
+				return nil // the body sealed the block (e.g. an early return)
+			}
+		}
+		// Route through emitReturn (val == nil): it flushes owned temporaries and
+		// releases managed frames before emitting the entryABI `ret i32 0`, so a
+		// heap temp built in the body (`println("a" ++ b)`) is freed, not leaked.
+		if err := l.emitReturn(block, nil); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -144,9 +167,6 @@ func (l *lowerer) forEachUserFunction(program *ast.Program, entry *ast.LambdaExp
 func (l *lowerer) declareFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) error {
 	if len(fn.LambdaClauses) > 0 {
 		return fmt.Errorf("llvm: multi-clause functions are not implemented yet (%q)", decl.Name)
-	}
-	if _, isVoid := fn.ReturnType.Type.(types.VoidType); isVoid {
-		return fmt.Errorf("llvm: void-returning functions are not implemented yet (%q)", decl.Name)
 	}
 	if fn.ReturnType.Type == nil {
 		return fmt.Errorf("llvm: function %q needs a return type annotation", decl.Name)
@@ -200,6 +220,21 @@ func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) erro
 		}
 	}
 
+	if _, isVoid := fn.ReturnType.Type.(types.VoidType); isVoid {
+		// A void function: lower the body for effect (it may be empty or end in a
+		// non-expression statement) and return void.
+		end, err := l.lowerForEffect(entry, fn.Body)
+		if err != nil {
+			return err
+		}
+		if end.Term == nil {
+			if err := l.emitReturn(end, nil); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	v, end, err := l.lowerExpr(entry, fn.Body)
 	if err != nil {
 		return err
@@ -246,6 +281,15 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	}
 	fn, ok := l.funcs[ident.Name]
 	if !ok {
+		// A compiler-provided free function (print/println) — checked only after
+		// user functions, so a user binding of the same name shadows the builtin,
+		// matching the typechecker's resolution order.
+		switch ident.Name {
+		case "print":
+			return l.lowerPrintCall(block, e, false)
+		case "println":
+			return l.lowerPrintCall(block, e, true)
+		}
 		return nil, nil, fmt.Errorf("llvm: call to unknown function %q", ident.Name)
 	}
 	// Arguments match the parameters positionally. The typechecker validated

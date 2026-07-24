@@ -200,6 +200,10 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 			return nil, fmt.Errorf("unknown primitive type: %s", t.Name)
 		}
 		return irType, nil
+	case types.VoidType:
+		// Only a function return type is void (the typechecker rejects a void
+		// value elsewhere); a void function lowers to an LLVM `void` return.
+		return lltypes.Void, nil
 	case types.TupleType:
 		// A named tuple resolves to the struct type registered in the declaration
 		// pass (key by t.Name, not GetName() which renders the full shape — see

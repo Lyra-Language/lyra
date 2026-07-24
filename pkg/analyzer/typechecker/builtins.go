@@ -79,3 +79,26 @@ func builtinMethodSignature(recv types.Type, name string) (*types.LambdaType, bo
 	}
 	return nil, false
 }
+
+// builtinFunctionSignature returns the LambdaType of a compiler-provided *free*
+// function (not a method) named name, or ok=false when none applies. Like the
+// builtin methods above, these are consulted only after normal name resolution
+// misses (inferIdentifierCall's scope.Lookup), so a user binding of the same
+// name always shadows the builtin.
+//
+// `print`/`println` write a string to stdout and return void (`(string) ->
+// void`); the backend lowers each to a libc `write(1, …)` (STRING_LAYOUT.md).
+// Their effect classification lives separately in checker/effects.go's
+// builtinEffects (EffectOutput) — allowed in `det`, forbidden in `pure`. Only
+// `string` is accepted for now: formatting a non-string value (int/float/bool/
+// rune → text) needs the value→string machinery interpolation also waits on.
+func builtinFunctionSignature(name string) (*types.LambdaType, bool) {
+	switch name {
+	case "print", "println":
+		return &types.LambdaType{
+			Parameters: []types.ParameterType{{Type: types.PrimitiveType{Name: types.String}}},
+			ReturnType: types.ReturnType{Type: types.VoidType{}},
+		}, true
+	}
+	return nil, false
+}

@@ -98,7 +98,6 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 				}
 			} else if !isVoid {
 				// Single-expression body: the expression value is the return value.
-				// (For void functions the value is simply discarded — no error.)
 				bodyType := tc.inferExprType(lambda.Body)
 				if declaredReturn != nil && bodyType != nil && !isAssignable(bodyType, declaredReturn) {
 					tc.addError(lambda.Body.GetLocation(), SeverityError,
@@ -116,6 +115,11 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 						tc.checkAllocationCompat(bodyType, declaredReturn, lambda.Body.GetLocation(), funcName)
 					}
 				}
+			} else {
+				// Single-expression body of a void function: the value is discarded,
+				// but still infer it so an effectful call (`() -> void => print("x")`)
+				// is validated and its argument types are recorded for the backend.
+				tc.inferExprType(lambda.Body)
 			}
 		}
 
@@ -406,6 +410,11 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 
 	sym, ok := tc.scope.Lookup(ident.Name)
 	if !ok {
+		// A compiler-provided free function (print/println) — consulted only after
+		// scope resolution misses, so a user binding of the same name shadows it.
+		if sig, ok := builtinFunctionSignature(ident.Name); ok {
+			return tc.inferLambdaCallFromType(ident.Name, sig, call)
+		}
 		tc.addError(call.GetLocation(), SeverityError, "undefined function %q", ident.Name)
 		return nil
 	}

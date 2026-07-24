@@ -195,6 +195,8 @@ type lowerer struct {
 	strLitCount int                            // counter for unique string-literal global names
 	memcmp      *ir.Func                       // libc memcmp, declared lazily on first string comparison
 	memcpy      *ir.Func                       // libc memcpy, declared lazily on first string concatenation
+	write       *ir.Func                       // libc write, declared lazily on first print/println
+	newlineByte *ir.Global                     // interned "\n" byte, for println's trailing newline
 
 	// roundingIntrinsics caches lazily-declared llvm.{floor,ceil,round}.<width>
 	// intrinsics (rounding.go), keyed by full intrinsic name.
