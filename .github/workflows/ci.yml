@@ -52,6 +52,18 @@ jobs:
           npm install
           npm run build
 
+      # The CGO binding pulls the grammar in with `#include "../../src/parser.c"`
+      # (tree-sitter-lyra/bindings/go/binding.go). Go's build cache hashes the .go
+      # files and tracked cgo sources but NOT files brought in via #include, so a
+      # regenerated parser.c does not invalidate the cache that setup-go restored —
+      # the previously-compiled (stale) grammar is reused and tests silently run
+      # against the old grammar. Wipe the build cache so the parser recompiles from
+      # the freshly generated parser.c. (This mirrors the local `go clean -cache`
+      # step in the workspace CLAUDE.md "Critical Cross-Project Dependency".)
+      - name: Invalidate cached compiled parser
+        working-directory: lyra
+        run: go clean -cache
+
       # The LLVM backend's behavioral tests compile emitted IR with clang and
       # run it (they self-skip when clang is absent). Installing clang here
       # keeps that coverage live in CI. libm (-lm), which the float tests
