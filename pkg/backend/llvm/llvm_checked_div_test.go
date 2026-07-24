@@ -1,0 +1,155 @@
+package llvm
+
+import (
+	"strings"
+	"testing"
+)
+
+// Checked division and negation (Pit-of-Success #2, the second slice after
+// +/-/*): the runtime-error cases LLVM's div/rem and negate leave as undefined
+// behavior are trapped instead — divide-by-zero, signed division overflow
+// (INT_MIN / -1), and negation overflow (-INT_MIN) — all exiting with the trap
+// code (101). INT_MIN cases use i64-min (-9223372036854775808), which the front
+// end represents correctly; the narrow signed-min literal (i8 -128) has a
+// separate width bug, tracked apart from this.
+
+var checkedDivCases = []struct {
+	name string
+	src  string
+}{
+	{"divide by zero (/)", `let main = () -> u8 => {
+	  let a: u8 = 84
+	  let b: u8 = 0
+	  a / b
+	}`},
+	{"divide by zero (%)", `let main = () -> u8 => {
+	  let a: u8 = 84
+	  let b: u8 = 0
+	  a % b
+	}`},
+	{"divide by zero (%%)", `let main = () -> u8 => {
+	  let a: u8 = 84
+	  let b: u8 = 0
+	  a %% b
+	}`},
+	{"signed divide by zero", `let main = () -> u8 => {
+	  let a: i32 = 84
+	  let b: i32 = 0
+	  u8(a / b)
+	}`},
+	{"INT_MIN / -1 overflow", `let main = () -> u8 => {
+	  let a: i64 = -9223372036854775808
+	  let b: i64 = -1
+	  u8(a / b)
+	}`},
+	{"INT_MIN % -1 overflow", `let main = () -> u8 => {
+	  let a: i64 = -9223372036854775808
+	  let b: i64 = -1
+	  u8(a % b)
+	}`},
+	{"negate INT_MIN overflow", `let main = () -> u8 => {
+	  let x: i64 = -9223372036854775808
+	  u8(-x)
+	}`},
+}
+
+func TestExec_CheckedDivision_Traps(t *testing.T) {
+	for _, c := range checkedDivCases {
+		if got := buildAndRun(t, c.src); got != trapExitCode {
+			t.Errorf("%s: exited %d; want %d (trap)", c.name, got, trapExitCode)
+		}
+	}
+}
+
+// Non-trapping division and negation stay transparent.
+var checkedDivOkCases = []struct {
+	name string
+	src  string
+	want int
+}{
+	{"unsigned division", `let main = () -> u8 => {
+	  let a: u8 = 84
+	  let b: u8 = 2
+	  a / b
+	}`, 42},
+	{"signed division (both negative)", `let main = () -> u8 => {
+	  let a: i8 = -84
+	  let b: i8 = -2
+	  u8(a / b)
+	}`, 42},
+	{"modulo", `let main = () -> u8 => {
+	  let a: u8 = 44
+	  let b: u8 = 100
+	  a % b
+	}`, 44},
+	{"negation of a non-min value", `let main = () -> u8 => {
+	  let x: i8 = -42
+	  u8(-x)
+	}`, 42},
+	{"INT_MIN / 1 does not overflow", `let main = () -> u8 => {
+	  let a: i64 = -9223372036854775808
+	  let b: i64 = 1
+	  u8(a / b)
+	}`, 0}, // = INT_MIN, whose low 8 bits are 0
+}
+
+func TestExec_CheckedDivision_NoTrap(t *testing.T) {
+	for _, c := range checkedDivOkCases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}
+
+// TestEmit_CheckedDivisionIR pins the checks: `/` guards the divisor against zero
+// (both signednesses) and, when signed, against the INT_MIN/-1 overflow; unsigned
+// `/` gets only the zero check; negation guards against INT_MIN.
+func TestEmit_CheckedDivisionIR(t *testing.T) {
+	emit := func(src string) string {
+		out, err := emitSource(t, src)
+		if err != nil {
+			t.Fatalf("emit: %v", err)
+		}
+		return out
+	}
+
+	udiv := emit(`let main = () -> u8 => {
+	  let a: u8 = 1
+	  let b: u8 = 2
+	  a / b
+	}`)
+	if !strings.Contains(udiv, "@lyra_panic_divide_by_zero") {
+		t.Error("unsigned division should guard against divide-by-zero")
+	}
+	if strings.Contains(udiv, "@lyra_panic_overflow") {
+		t.Error("unsigned division cannot overflow — no overflow trap expected")
+	}
+
+	sdiv := emit(`let main = () -> u8 => {
+	  let a: i32 = 1
+	  let b: i32 = 2
+	  u8(a / b)
+	}`)
+	if !strings.Contains(sdiv, "@lyra_panic_divide_by_zero") || !strings.Contains(sdiv, "@lyra_panic_overflow") {
+		t.Error("signed division should guard both divide-by-zero and INT_MIN/-1 overflow")
+	}
+
+	neg := emit(`let main = () -> u8 => {
+	  let x: i8 = -42
+	  u8(-x)
+	}`)
+	if !strings.Contains(neg, "@lyra_panic_overflow") {
+		t.Error("negation should guard against -INT_MIN overflow")
+	}
+
+	// The divide-by-zero trap function is defined once, shared across sites.
+	twoDivs := emit(`let main = () -> u8 => {
+	  let a: u8 = 8
+	  let b: u8 = 2
+	  let c: u8 = 4
+	  (a / b) + (c / b)
+	}`)
+	if n := strings.Count(twoDivs, "define void @lyra_panic_divide_by_zero"); n != 1 {
+		t.Errorf("want one divide-by-zero trap definition, got %d", n)
+	}
+}

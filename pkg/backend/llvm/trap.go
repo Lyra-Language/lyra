@@ -11,24 +11,31 @@ import (
 )
 
 // Checked arithmetic — the trap side (Pit-of-Success #2, "checked arithmetic by
-// default; wraparound explicit"). Plain `+`/`-`/`*` on integers lower to LLVM's
-// overflow-checking intrinsics; on overflow, control branches to a trap that
-// reports and aborts. The explicit escape hatches are `wrapping_*`/`saturating_*`
-// (the builtin-method registry), which lower to the raw ops instead.
+// default; wraparound explicit"). Integer arithmetic that could go wrong at run
+// time — `+`/`-`/`*` overflow, `-INT_MIN`, division overflow (`INT_MIN / -1`), and
+// divide-by-zero — lowers to a check that, on the bad case, branches to a trap
+// that reports and aborts. The explicit escape hatches for the overflow cases are
+// `wrapping_*`/`saturating_*` (the builtin-method registry, wrapping.go).
 //
-// This file provides the runtime trap; arithmetic.go emits the check around each
-// op. The trap is a single per-module noreturn function (not inlined at each
-// site), so N overflow sites cost one `call`+`unreachable` each rather than N
-// copies of the message-write + exit.
+// This file provides the runtime traps + the check-and-branch helper; arithmetic.go
+// emits the specific conditions. Each trap is a single per-module noreturn function
+// (not inlined at each site), so N sites cost one `call`+`unreachable` each rather
+// than N copies of the message-write + exit.
 
-// overflowTrapExitCode is the process exit status on an arithmetic-overflow trap.
-// 101 follows Rust's panic convention — a distinctive, non-zero, deterministic
-// code (nothing else in a Lyra program exits with it), so a test can assert the
-// trap fired rather than merely that the process failed.
-const overflowTrapExitCode = 101
+// trapExitCode is the process exit status on any arithmetic trap. 101 follows
+// Rust's panic convention — a distinctive, non-zero, deterministic code (nothing
+// else in a Lyra program exits with it), so a test can assert the trap fired
+// rather than merely that the process failed.
+const trapExitCode = 101
 
-// overflowTrapMessage is written to stderr (fd 2) before the process exits.
-const overflowTrapMessage = "lyra: arithmetic overflow\n"
+// Trap messages, written to stderr (fd 2) before the process exits.
+const (
+	overflowTrapMessage     = "lyra: arithmetic overflow\n"
+	divideByZeroTrapMessage = "lyra: divide by zero\n"
+)
+
+// overflowTrapExitCode is retained as the name existing tests use; it is trapExitCode.
+const overflowTrapExitCode = trapExitCode
 
 // exitFunc lazily declares libc's `void @exit(i32)` (noreturn).
 func (l *lowerer) exitFunc() *ir.Func {
@@ -39,26 +46,47 @@ func (l *lowerer) exitFunc() *ir.Func {
 	return l.exit
 }
 
-// panicOverflowFunc lazily emits `void @lyra_panic_overflow()` (noreturn) into
-// the module: write the overflow message to stderr, then exit(101). Defined as a
-// real body (like the rc runtime), so `lyrac build`'s single `clang out.ll` stays
-// self-contained. Cached, so every overflow site shares the one function.
-func (l *lowerer) panicOverflowFunc() *ir.Func {
-	if l.panicOverflow != nil {
-		return l.panicOverflow
+// panicFunc lazily emits a noreturn `void @name()` into the module: write msg to
+// stderr, then exit(trapExitCode). Defined as a real body (like the rc runtime),
+// so `lyrac build`'s single `clang out.ll` stays self-contained. Cached by name,
+// so every trap site of a given kind shares the one function.
+func (l *lowerer) panicFunc(name, msg string) *ir.Func {
+	if fn, ok := l.panics[name]; ok {
+		return fn
 	}
-	fn := l.module.NewFunc("lyra_panic_overflow", lltypes.Void)
+	fn := l.module.NewFunc(name, lltypes.Void)
 	fn.FuncAttrs = append(fn.FuncAttrs, enum.FuncAttrNoReturn)
 	b := fn.NewBlock("entry")
-	msg := l.cString(overflowTrapMessage)
 	b.NewCall(l.writeFunc(),
 		constant.NewInt(lltypes.I32, 2), // stderr
-		msg,
-		constant.NewInt(lltypes.I64, int64(len(overflowTrapMessage))))
-	b.NewCall(l.exitFunc(), constant.NewInt(lltypes.I32, overflowTrapExitCode))
+		l.cString(msg),
+		constant.NewInt(lltypes.I64, int64(len(msg))))
+	b.NewCall(l.exitFunc(), constant.NewInt(lltypes.I32, trapExitCode))
 	b.NewUnreachable()
-	l.panicOverflow = fn
-	return l.panicOverflow
+	l.panics[name] = fn
+	return fn
+}
+
+func (l *lowerer) panicOverflowFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_overflow", overflowTrapMessage)
+}
+
+func (l *lowerer) panicDivideByZeroFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_divide_by_zero", divideByZeroTrapMessage)
+}
+
+// emitTrapIf branches to a trap when cond is true and continues otherwise: it
+// creates a trap block (call trapFn; unreachable) and a continuation block, cond-
+// brs `block` between them, and returns the continuation — the caller keeps
+// lowering into that. The shared shape behind every arithmetic check.
+func (l *lowerer) emitTrapIf(block *ir.Block, cond value.Value, trapFn *ir.Func) *ir.Block {
+	fn := block.Parent
+	trap := fn.NewBlock("")
+	cont := fn.NewBlock("")
+	block.NewCondBr(cond, trap, cont)
+	trap.NewCall(trapFn)
+	trap.NewUnreachable()
+	return cont
 }
 
 // overflowIntrinsic lazily declares the LLVM checked-arithmetic intrinsic for
@@ -97,14 +125,6 @@ func (l *lowerer) emitCheckedIntOp(block *ir.Block, op string, left, right value
 	agg := block.NewCall(intrinsic, left, right)
 	result := block.NewExtractValue(agg, 0)
 	overflowed := block.NewExtractValue(agg, 1)
-
-	fn := block.Parent
-	trap := fn.NewBlock("")
-	cont := fn.NewBlock("")
-	block.NewCondBr(overflowed, trap, cont)
-
-	trap.NewCall(l.panicOverflowFunc())
-	trap.NewUnreachable()
-
+	cont := l.emitTrapIf(block, overflowed, l.panicOverflowFunc())
 	return result, cont, nil
 }

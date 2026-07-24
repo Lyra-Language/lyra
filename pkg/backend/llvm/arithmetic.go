@@ -294,6 +294,40 @@ func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, rig
 		return l.emitCheckedIntOp(block, "sub", left, right, signed)
 	case ast.MathBinaryOpMul:
 		return l.emitCheckedIntOp(block, "mul", left, right, signed)
+	case ast.MathBinaryOpDiv, ast.MathBinaryOpMod, ast.MathBinaryOpRemainder:
+		return l.emitCheckedDivOp(block, op, left, right, signed)
+	default:
+		return nil, nil, fmt.Errorf("llvm: math binary op lowering not implemented for %v", op)
+	}
+}
+
+// emitCheckedDivOp lowers a checked division-family op (`/`, `%`, `%%`). LLVM's
+// div/rem are *undefined behavior* on the two bad inputs, so both are trapped
+// before the op runs:
+//
+//   - divisor == 0 → divide-by-zero trap (any signedness);
+//   - signed only: dividend == INT_MIN && divisor == -1 → overflow trap (the one
+//     signed division that overflows — the true quotient INT_MAX+1 doesn't fit;
+//     `srem` is UB on the same inputs even though the math remainder is 0).
+//
+// Unsigned division never overflows, so it gets only the zero check. Each check
+// splits the block, so this returns the continuation block the actual op runs in.
+func (l *lowerer) emitCheckedDivOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value, signed bool) (value.Value, *ir.Block, error) {
+	intTy, ok := right.Type().(*lltypes.IntType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: checked division on a non-integer operand (%s)", right.Type())
+	}
+	isZero := block.NewICmp(enum.IPredEQ, right, constant.NewInt(intTy, 0))
+	block = l.emitTrapIf(block, isZero, l.panicDivideByZeroFunc())
+
+	if signed {
+		isMin := block.NewICmp(enum.IPredEQ, left, constant.NewInt(intTy, -(1<<(intTy.BitSize-1))))
+		isNegOne := block.NewICmp(enum.IPredEQ, right, constant.NewInt(intTy, -1))
+		overflow := block.NewAnd(isMin, isNegOne)
+		block = l.emitTrapIf(block, overflow, l.panicOverflowFunc())
+	}
+
+	switch op {
 	case ast.MathBinaryOpDiv:
 		if signed {
 			return block.NewSDiv(left, right), block, nil
@@ -307,7 +341,7 @@ func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, rig
 			return block.NewSRem(left, right), block, nil
 		}
 		return block.NewURem(left, right), block, nil
-	case ast.MathBinaryOpRemainder:
+	default: // ast.MathBinaryOpRemainder
 		// Remainder (%%): Odin's "remainder (floored)" — sign follows the
 		// divisor, distinct from Mod above. 11 %% -3 = -1 (vs Mod's 2).
 		// Unsigned floored remainder is identical to truncated (every
@@ -317,8 +351,6 @@ func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, rig
 			return l.lowerFlooredSRem(block, left, right), block, nil
 		}
 		return block.NewURem(left, right), block, nil
-	default:
-		return nil, nil, fmt.Errorf("llvm: math binary op lowering not implemented for %v", op)
 	}
 }
 
@@ -385,12 +417,21 @@ func (l *lowerer) lowerNegationExpr(block *ir.Block, e *ast.NegationExpr) (value
 	// or a float.
 	switch t := operand.Type().(type) {
 	case *lltypes.IntType:
-		// LLVM IR has no dedicated integer negate; `sub 0, x` is the
-		// standard idiom (what clang emits for unary minus on an int).
-		// Deliberately plain `sub`, not `sub nsw`: an nsw flag tells the
-		// optimizer overflow is undefined behavior, which conflicts with
-		// Lyra's "checked arithmetic by default" goal (todo #2) — revisit
-		// once overflow trapping exists.
+		// Negation overflows for exactly one value: `-INT_MIN` has no positive
+		// counterpart in a signed type (the operand is always signed — the
+		// typechecker rejects negating an unsigned value). Trap on it at run time,
+		// matching checked arithmetic (todo #2) — but only for a *non-literal*
+		// operand. A negated literal is already range-checked by the typechecker
+		// (`inferNegationExpr`/`checkIntegerLiteralRange`), and the canonical way to
+		// *write* INT_MIN is exactly `-<2^(w-1)>` (e.g. `-9223372036854775808`),
+		// which lowers to `sub 0, INT_MIN_bits` == INT_MIN and must not trap.
+		if _, isLiteral := e.Operand.(*ast.IntegerLiteralExpr); !isLiteral {
+			isMin := block.NewICmp(enum.IPredEQ, operand, constant.NewInt(t, -(1<<(t.BitSize-1))))
+			block = l.emitTrapIf(block, isMin, l.panicOverflowFunc())
+		}
+		// LLVM IR has no dedicated integer negate; `sub 0, x` is the standard
+		// idiom (what clang emits for unary minus on an int). Deliberately plain
+		// `sub`, not `sub nsw`: the overflow case is handled by the check above.
 		return block.NewSub(constant.NewInt(t, 0), operand), block, nil
 	case *lltypes.FloatType:
 		return block.NewFNeg(operand), block, nil

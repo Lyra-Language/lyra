@@ -91,9 +91,10 @@
 //     lyra_rc_alloc/retain/release on libc malloc/free), and the ownership model
 //     (pkg/analyzer/ownership + ownership_lower.go) frees managed strings —
 //     retain on copy, transfer on return/own-arg, release at scope exit, with the
-//     placement dominating its uses. Integer `+`/`-`/`*` are overflow-checked
-//     (llvm.{s,u}{add,sub,mul}.with.overflow → a trap that reports and exit(101)s,
-//     trap.go — Pit-of-Success #2); the explicit escape hatches
+//     placement dominating its uses. Integer arithmetic is fully checked
+//     (trap.go, Pit-of-Success #2): `+`/`-`/`*` via llvm.*.with.overflow,
+//     `/`/`%`/`%%` against divide-by-zero and INT_MIN/-1, and `-INT_MIN` — each a
+//     branch to a trap that reports and exit(101)s. The explicit escape hatches
 //     `x.wrapping_{add,sub,mul}(y)` / `x.saturating_{add,sub,mul}(y)` lower too
 //     (wrapping.go: wrapping = raw two's-complement, saturating add/sub =
 //     llvm.{s,u}{add,sub}.sat, saturating mul = with.overflow + a select to the
@@ -165,6 +166,7 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 		structTypes:        map[string]*lltypes.StructType{},
 		roundingIntrinsics: map[string]*ir.Func{},
 		overflowIntrinsics: map[string]*ir.Func{},
+		panics:             map[string]*ir.Func{},
 		dropFns:            map[string]*ir.Func{},
 		cStrings:           map[string]*ir.Global{},
 	}
@@ -210,11 +212,12 @@ type lowerer struct {
 	// intrinsics (rounding.go), keyed by full intrinsic name.
 	roundingIntrinsics map[string]*ir.Func
 
-	// Checked-arithmetic overflow trap (trap.go): overflowIntrinsics caches the
-	// lazily-declared llvm.{s,u}{add,sub,mul}.with.overflow.iN intrinsics by full
-	// name; panicOverflow is the noreturn trap called on overflow; exit is libc's.
+	// Checked-arithmetic traps (trap.go): overflowIntrinsics caches the lazily-
+	// declared llvm.{s,u}{add,sub,mul}.with.overflow.iN and .sat.iN intrinsics by
+	// full name; panics caches the noreturn trap functions by name (overflow,
+	// divide-by-zero); exit is libc's.
 	overflowIntrinsics map[string]*ir.Func
-	panicOverflow      *ir.Func
+	panics             map[string]*ir.Func
 	exit               *ir.Func
 
 	// The ref-counted heap runtime (runtime.go), emitted lazily into the module
