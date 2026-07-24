@@ -80,25 +80,21 @@ func builtinMethodSignature(recv types.Type, name string) (*types.LambdaType, bo
 	return nil, false
 }
 
-// builtinFunctionSignature returns the LambdaType of a compiler-provided *free*
-// function (not a method) named name, or ok=false when none applies. Like the
-// builtin methods above, these are consulted only after normal name resolution
-// misses (inferIdentifierCall's scope.Lookup), so a user binding of the same
-// name always shadows the builtin.
-//
-// `print`/`println` write a string to stdout and return void (`(string) ->
-// void`); the backend lowers each to a libc `write(1, …)` (STRING_LAYOUT.md).
-// Their effect classification lives separately in checker/effects.go's
-// builtinEffects (EffectOutput) — allowed in `det`, forbidden in `pure`. Only
-// `string` is accepted for now: formatting a non-string value (int/float/bool/
-// rune → text) needs the value→string machinery interpolation also waits on.
-func builtinFunctionSignature(name string) (*types.LambdaType, bool) {
-	switch name {
-	case "print", "println":
-		return &types.LambdaType{
-			Parameters: []types.ParameterType{{Type: types.PrimitiveType{Name: types.String}}},
-			ReturnType: types.ReturnType{Type: types.VoidType{}},
-		}, true
-	}
-	return nil, false
+// isBuiltinPrintFn reports whether name is one of the compiler-provided output
+// builtins (print/println). They are free functions, not methods, resolved by
+// name in inferIdentifierCall only after scope resolution misses — so a user
+// binding of the same name always shadows the builtin. Their effect
+// classification lives separately in checker/effects.go's builtinEffects
+// (EffectOutput) — allowed in `det`, forbidden in `pure`.
+func isBuiltinPrintFn(name string) bool {
+	return name == "print" || name == "println"
+}
+
+// isPrintableType reports whether print/println can format a value of type t:
+// a string, any integer or float, a bool, or a rune. Each has a backend
+// formatting path (write for strings, snprintf for numbers, "true"/"false" for
+// bools, UTF-8 encoding for runes). Aggregates and functions are not printable
+// (no Show/Display trait yet).
+func isPrintableType(t types.Type) bool {
+	return types.IsString(t) || types.IsNumeric(t) || types.IsBoolean(t) || isRuneType(t)
 }

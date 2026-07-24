@@ -34,14 +34,31 @@ func TestTypeCheck_Print_ConcatArg_Ok(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-func TestTypeCheck_Print_NonStringArg_Error(t *testing.T) {
+func TestTypeCheck_Print_ScalarArgs_Ok(t *testing.T) {
+	// print/println are polymorphic over the printable scalar types: string, any
+	// integer or float, bool, and rune.
 	res := parseCollectAndCheck(t, `
   let main = () -> u8 => {
     print(5)
+    print(3.14)
+    print(true)
+    print('a')
     0
   }
 	`, false)
-	assertErrorsAre(t, res, "print: argument 1: cannot assign integer literal to string")
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_Print_AggregateArg_Error(t *testing.T) {
+	// An aggregate isn't printable (no Show/Display trait yet).
+	res := parseCollectAndCheck(t, `
+  let main = () -> u8 => {
+    print((1, 2))
+    0
+  }
+	`, false)
+	assertErrorsAre(t, res,
+		"print: cannot print a value of type AnonymousTuple(integer literal, integer literal) (expected a string, an integer, a float, bool, or rune)")
 }
 
 func TestTypeCheck_Print_WrongArity_Error(t *testing.T) {

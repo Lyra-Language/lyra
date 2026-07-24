@@ -124,6 +124,59 @@ func TestExec_Print(t *testing.T) {
 	}
 }
 
+// Non-string print formatting: integers (snprintf %lld/%llu by signedness),
+// floats (%g), bool ("true"/"false"), and runes (UTF-8 encoded). Numeric
+// formatting goes through snprintf-into-memory + write, so it stays in program
+// order with the raw writes that string/bool/rune print use.
+func TestExec_PrintFormatting(t *testing.T) {
+	cases := []struct {
+		name    string
+		src     string
+		wantOut string
+	}{
+		{"int", `let main = () -> void => println(42)`, "42\n"},
+		{"negative int", `let f = (n: i32) -> i32 => n
+			 let main = () -> void => println(f(0 - 5))`, "-5\n"},
+		{"unsigned wraps high", `let f = (n: u8) -> u8 => n
+			 let main = () -> void => println(f(200))`, "200\n"},
+		{"bool true", `let main = () -> void => println(true)`, "true\n"},
+		{"bool false", `let main = () -> void => println(false)`, "false\n"},
+		{"rune ascii", `let main = () -> void => println('A')`, "A\n"},
+		{"rune 3-byte utf8", `let main = () -> void => println('世')`, "世\n"},
+		{"rune 4-byte utf8", `let main = () -> void => println('😀')`, "😀\n"},
+		{"float", `let main = () -> void => println(3.14)`, "3.14\n"},
+		{"mixed string and int order", `let main = () -> void => {
+			   print("count: ")
+			   println(7)
+			 }`, "count: 7\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			out, code := buildAndRunCapture(t, c.src)
+			if out != c.wantOut {
+				t.Errorf("stdout = %q; want %q", out, c.wantOut)
+			}
+			if code != 0 {
+				t.Errorf("exit = %d; want 0", code)
+			}
+		})
+	}
+}
+
+// An integer print goes through libc snprintf into a stack buffer (not stdio),
+// then write — so ordering with raw string writes is preserved.
+func TestEmit_PrintIntUsesSnprintf(t *testing.T) {
+	got, err := emitSource(t, `let main = () -> void => println(42)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"@snprintf", "@write"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected IR to contain %q; got:\n%s", want, got)
+		}
+	}
+}
+
 // print/println lower to a libc write(1, ...); a println emits two writes (the
 // string then the newline byte). The IR pins that shape.
 func TestEmit_PrintIR(t *testing.T) {

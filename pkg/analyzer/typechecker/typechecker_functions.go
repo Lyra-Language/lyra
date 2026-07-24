@@ -412,8 +412,8 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 	if !ok {
 		// A compiler-provided free function (print/println) — consulted only after
 		// scope resolution misses, so a user binding of the same name shadows it.
-		if sig, ok := builtinFunctionSignature(ident.Name); ok {
-			return tc.inferLambdaCallFromType(ident.Name, sig, call)
+		if isBuiltinPrintFn(ident.Name) {
+			return tc.inferPrintCall(ident.Name, call)
 		}
 		tc.addError(call.GetLocation(), SeverityError, "undefined function %q", ident.Name)
 		return nil
@@ -436,6 +436,38 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 	}
 	tc.addError(call.GetLocation(), SeverityError, "cannot resolve function %q", ident.Name)
 	return nil
+}
+
+// inferPrintCall type-checks a print/println call: exactly one argument of a
+// printable type (string, an integer, a float, bool, or rune), result void. An
+// untyped numeric literal argument (`print(5)`) is settled to its default width
+// (i64/f64) so the backend has a concrete type to format. Unlike an ordinary
+// function, print is polymorphic over the printable types — the backend picks
+// the formatting per the argument's type — so it isn't expressed as a single
+// LambdaType signature.
+func (tc *TypeChecker) inferPrintCall(name string, call *ast.FunctionCallExpr) types.Type {
+	if len(call.Arguments) != 1 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"%s: expected 1 argument(s), got %d", name, len(call.Arguments))
+		return types.VoidType{}
+	}
+	arg := call.Arguments[0]
+	argType := tc.inferExprType(arg)
+	if argType == nil {
+		return types.VoidType{}
+	}
+	if !isPrintableType(argType) {
+		tc.addError(arg.GetLocation(), SeverityError,
+			"%s: cannot print a value of type %s (expected a string, an integer, a float, bool, or rune)",
+			name, argType)
+		return types.VoidType{}
+	}
+	// Settle an untyped numeric literal to its default width so the backend reads a
+	// concrete type (a non-literal or already-concrete arg is left unchanged).
+	if types.IsNumeric(argType) {
+		tc.propagateLiteralType(arg, promoteToDefault(argType))
+	}
+	return types.VoidType{}
 }
 
 // inferDirectLambdaCall type-checks a call where the callee is a bare lambda

@@ -162,6 +162,7 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 		structTypes:        map[string]*lltypes.StructType{},
 		roundingIntrinsics: map[string]*ir.Func{},
 		dropFns:            map[string]*ir.Func{},
+		cStrings:           map[string]*ir.Global{},
 	}
 	// Lower type declarations
 	if err := l.lowerTypeDeclarations(res.Program); err != nil {
@@ -196,7 +197,10 @@ type lowerer struct {
 	memcmp      *ir.Func                       // libc memcmp, declared lazily on first string comparison
 	memcpy      *ir.Func                       // libc memcpy, declared lazily on first string concatenation
 	write       *ir.Func                       // libc write, declared lazily on first print/println
+	snprintf    *ir.Func                       // libc snprintf, declared lazily on first numeric print
+	fmtRune     *ir.Func                       // lyra_rune_to_utf8, defined lazily on first rune print
 	newlineByte *ir.Global                     // interned "\n" byte, for println's trailing newline
+	cStrings    map[string]*ir.Global          // interned NUL-terminated C strings (snprintf formats, bool text)
 
 	// roundingIntrinsics caches lazily-declared llvm.{floor,ceil,round}.<width>
 	// intrinsics (rounding.go), keyed by full intrinsic name.
