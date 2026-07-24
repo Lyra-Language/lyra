@@ -137,6 +137,8 @@ func TestExec_PrintFormatting(t *testing.T) {
 		{"int", `let main = () -> void => println(42)`, "42\n"},
 		{"negative int", `let f = (n: i32) -> i32 => n
 			 let main = () -> void => println(f(0 - 5))`, "-5\n"},
+		{"i64 min literal", `let id = (n: i64) -> i64 => n
+			 let main = () -> void => println(id(-9223372036854775808))`, "-9223372036854775808\n"},
 		{"unsigned wraps high", `let f = (n: u8) -> u8 => n
 			 let main = () -> void => println(f(200))`, "200\n"},
 		{"u64 max literal", `let main = () -> void => println(18446744073709551615)`, "18446744073709551615\n"},

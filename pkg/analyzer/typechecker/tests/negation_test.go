@@ -116,3 +116,34 @@ func TestTypeCheck_Negation_NonNumeric_Error(t *testing.T) {
 	`, false)
 	assertErrorsAre(t, res, "cannot negate non-numeric type boolean")
 }
+
+// --- i64 min literal ---
+
+// -9223372036854775808 is the minimum i64. Its magnitude (2^63) overflows int64
+// as a positive literal (so the collector marks it Unsigned/u64), but negated it
+// is a valid i64 — special-cased in inferNegationExpr.
+func TestTypeCheck_Negation_I64Min_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: i64 = -9223372036854775808`, false)
+	assertNoErrors(t, res)
+}
+
+// The same value doesn't fit a narrower signed type.
+func TestTypeCheck_Negation_I64Min_TooNarrow_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: i32 = -9223372036854775808`, false)
+	assertErrorsAre(t, res, "x: literal value -9223372036854775808 overflows i32")
+}
+
+// A magnitude larger than 2^63 negated is below i64 min — out of range for any
+// signed integer.
+func TestTypeCheck_Negation_BelowI64Min_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: i64 = -18446744073709551615`, false)
+	assertErrorsAre(t, res,
+		"negated literal -18446744073709551615 is out of range for a signed integer (below the minimum i64, -9223372036854775808)")
+}
+
+// -(int64max) is unchanged: its magnitude fits int64, so it's an ordinary
+// negated literal.
+func TestTypeCheck_Negation_MaxNegated_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: i64 = -9223372036854775807`, false)
+	assertNoErrors(t, res)
+}

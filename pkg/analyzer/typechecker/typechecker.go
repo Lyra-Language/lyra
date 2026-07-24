@@ -1615,6 +1615,23 @@ func (tc *TypeChecker) inferStringConcatExpr(expr *ast.StringConcatExpr) types.T
 }
 
 func (tc *TypeChecker) inferNegationExpr(expr *ast.NegationExpr) types.Type {
+	// -9223372036854775808 is the minimum i64. Its magnitude (2^63) overflows
+	// int64 as a *positive* literal, so the collector records it as an Unsigned
+	// (u64) literal — but negated it is exactly i64 min, a valid signed value.
+	// Recognize it before the generic "cannot negate unsigned" rejection below.
+	// The literal's bit pattern already equals i64 min and `0 - i64min == i64min`
+	// in two's complement, so the backend's `sub 0, x` emits the right bits; a
+	// narrower signed target is still caught by checkIntegerLiteralRange.
+	if lit, ok := expr.Operand.(*ast.IntegerLiteralExpr); ok && lit.Unsigned {
+		if lit.UnsignedValue() == uint64(1)<<63 {
+			return types.PrimitiveType{Name: types.UntypedSignedInt}
+		}
+		tc.addError(expr.GetLocation(), SeverityError,
+			"negated literal -%d is out of range for a signed integer (below the minimum i64, -9223372036854775808)",
+			lit.UnsignedValue())
+		return nil
+	}
+
 	operandType := tc.inferExprType(expr.Operand)
 	if operandType == nil {
 		return nil
