@@ -93,11 +93,12 @@
 //     retain on copy, transfer on return/own-arg, release at scope exit, with the
 //     placement dominating its uses. Integer `+`/`-`/`*` are overflow-checked
 //     (llvm.{s,u}{add,sub,mul}.with.overflow → a trap that reports and exit(101)s,
-//     trap.go — Pit-of-Success #2). Still to come: strings-in-aggregates and
-//     break/continue paths (leak conservatively today), and the builtin
-//     overflow-arithmetic *escape hatches* (typechecker/builtins.go's
-//     `wrapping_*`/`saturating_*` → two's-complement +/-/* and llvm.{s,u}{add,sub}.sat),
-//     which currently type-check but aren't lowered.
+//     trap.go — Pit-of-Success #2); the explicit escape hatches
+//     `x.wrapping_{add,sub,mul}(y)` / `x.saturating_{add,sub,mul}(y)` lower too
+//     (wrapping.go: wrapping = raw two's-complement, saturating add/sub =
+//     llvm.{s,u}{add,sub}.sat, saturating mul = with.overflow + a select to the
+//     bound). Still to come: strings-in-aggregates and break/continue paths (leak
+//     conservatively today).
 //
 // # File organization
 //

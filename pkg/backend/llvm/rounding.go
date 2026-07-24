@@ -23,9 +23,13 @@ var roundingIntrinsicOps = map[string]string{
 
 // lowerBuiltinMethodCall lowers a call whose callee is a MemberExpr resolved
 // by the typechecker to a builtin method (builtins.go) rather than a struct
-// field, trait method, or user function — currently just the float rounding
-// builtins (`x.floor()`/`.ceil()`/`.round()`).
+// field, trait method, or user function: the float rounding builtins
+// (`x.floor()`/`.ceil()`/`.round()`) and the integer wrapping/saturating
+// overflow-arithmetic builtins (`x.wrapping_add(y)` etc., wrapping.go).
 func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	if m, ok := intOverflowMethods[member.Property.Name]; ok {
+		return l.lowerIntOverflowMethod(block, call, member, m)
+	}
 	op, ok := roundingIntrinsicOps[member.Property.Name]
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: unsupported method call %q", member.Property.Name)
