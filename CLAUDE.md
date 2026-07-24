@@ -87,6 +87,8 @@ Converts a tree-sitter CST into `*ast.Program` and `*symbols.SymbolTable`.
 
 **Nil-node hazard:** `node.ChildByFieldName(...)` returns a genuine Go `nil` `*sitter.Node` for an absent *optional* grammar field (e.g. a zero-parameter `lambda_type`'s `parameter_types`). Calling any accessor (`ChildCount`, `Child`, `Kind`, …) on that nil node **hangs inside the go-tree-sitter CGO binding instead of panicking** — found via a real bug (`parseParameterTypes`, fixed 06/24/26) where this silently froze the whole collector. Always nil-check before touching the result of an optional field lookup, the same way `parseType`/`CollectExpression` already do.
 
+**Never return a nil expression node into the AST:** an expression collector that hits an unrecoverable value error (e.g. a numeric literal that overflows `int64`) must emit a diagnostic **and return a placeholder node** (a zero-valued `IntegerLiteralExpr`/`FloatLiteralExpr`), never `nil`. A `nil` returned up as an `ast.Expression` becomes a *typed-nil* interface (`(*T)(nil)`, non-nil interface with a nil pointer) that slips past `expr == nil` checks and crashes a later pass on the first field access — this is exactly how an out-of-range literal panicked `propagateLiteralType` (fixed 07/24/26, `numeric_literals.go`). The error diagnostic keeps the program from compiling, so the placeholder value is inert.
+
 **Subpackages** (all pass `*collector_ctx.Ctx` as their first argument):
 
 | Subpackage | Files handle |
