@@ -167,6 +167,11 @@ func collectByValueNames(t types.Type, decls map[string]*ast.TypeDeclStmt, seen 
 			collectByValueNames(e, decls, seen, deps)
 		}
 
+	case types.WeakType:
+		// A `weak` field is a non-owning pointer (pointer-sized), so it breaks a
+		// recursive size cycle exactly like a `shared` field — its referent is not
+		// contained by value. Deliberately do NOT recurse into the inner type.
+
 		// Primitives, generics, lambdas, pointers, void, fixed-point, constrained,
 		// range, parameterized — either not nominal types or bounded by construction.
 	}

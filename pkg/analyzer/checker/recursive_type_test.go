@@ -113,6 +113,39 @@ func TestRecursiveType_SharedParamAnnotation_Ok(t *testing.T) {
 	`)
 }
 
+// --- Weak field breaks the cycle too ---
+//
+// A `weak` reference is a non-owning pointer (pointer-sized), so it breaks a
+// recursive size cycle exactly like `shared` — `weak` is the intended answer to
+// reference-cycle *leaks* among shared values (it also happens to break the size
+// cycle).
+
+func TestRecursiveType_WeakFieldAnnotation_Ok(t *testing.T) {
+	assertNoRecursiveTypeErrors(t, `
+		struct Node {
+			value: i64,
+			parent: weak Node,
+		}
+	`)
+}
+
+func TestRecursiveType_WeakParamAnnotation_Ok(t *testing.T) {
+	assertNoRecursiveTypeErrors(t, `
+		data List = Nil | Cons(i64, weak List)
+	`)
+}
+
+func TestRecursiveType_MutualRecursion_OneWeak_Ok(t *testing.T) {
+	assertNoRecursiveTypeErrors(t, `
+		struct Foo {
+			bar: weak Bar,
+		}
+		struct Bar {
+			foo: Foo,
+		}
+	`)
+}
+
 // --- Mutual recursion ---
 
 func TestRecursiveType_MutualRecursion_Error(t *testing.T) {

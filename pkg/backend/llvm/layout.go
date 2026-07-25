@@ -161,6 +161,9 @@ func SizeAndAlign(t types.Type) (size, align int, ok bool) {
 	if types.AllocationOf(t) == types.Shared {
 		return pointerSize, pointerSize, true
 	}
+	if _, ok := t.(types.WeakType); ok {
+		return pointerSize, pointerSize, true // a weak reference is a non-owning pointer
+	}
 	switch v := t.(type) {
 	case types.PrimitiveType:
 		return primitiveSizeAndAlign(v.Name)

@@ -389,6 +389,8 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 		return c.parseConstrainedType(node)
 	case "allocated_type":
 		return c.parseAllocatedType(node)
+	case "weak_type":
+		return c.parseWeakType(node)
 	case "anonymous_tuple_type":
 		return c.parseAnonymousTupleType(node)
 	case "anonymous_struct_type":
@@ -552,6 +554,20 @@ func (c *Collector) parseFixedPointType(node *sitter.Node) types.Type {
 		idx++
 	}
 	return types.FixedPointType{IntegerBits: intBits, FractionalBits: fracBits}
+}
+
+// parseWeakType collects a `weak T` node into a types.WeakType wrapping the
+// inner type (the `inner_type` grammar field, a `_non_allocated_type`). weak is a
+// non-owning reference used to break `shared` reference cycles; the inner is
+// parsed normally (a named type stays an UnresolvedType for the typechecker to
+// resolve).
+func (c *Collector) parseWeakType(node *sitter.Node) types.Type {
+	innerNode := node.ChildByFieldName("inner_type")
+	if innerNode == nil {
+		c.addError(node, CollectorErrorSeverityError, "parseWeakType: missing inner type")
+		return nil
+	}
+	return types.WeakType{Inner: c.parseType(innerNode)}
 }
 
 func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {

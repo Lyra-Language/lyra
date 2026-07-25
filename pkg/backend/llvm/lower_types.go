@@ -194,6 +194,13 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		return lltypes.NewPointer(SharedBoxType(payload)), nil
 	}
 	switch t := lyraType.(type) {
+	case types.WeakType:
+		// A weak reference is a non-owning pointer (pointer-sized), so it lowers to
+		// an opaque `i8*` — enough to lay out a `weak` field and break a recursive
+		// cycle. The non-owning runtime semantics (a weak count, upgrade-to-strong)
+		// are deferred, and there is no way to construct a weak value yet, so the
+		// concrete pointee representation is intentionally left unspecified.
+		return lltypes.NewPointer(lltypes.I8), nil
 	case types.PrimitiveType:
 		irType, ok := LLVMPrimitive(t.Name)
 		if !ok {

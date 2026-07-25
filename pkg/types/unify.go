@@ -154,6 +154,9 @@ func TypesEqual(a, b Type) bool {
 	case RawPointerType:
 		bt, ok := b.(RawPointerType)
 		return ok && at.IsMut == bt.IsMut && TypesEqual(at.Pointee, bt.Pointee)
+	case WeakType:
+		bt, ok := b.(WeakType)
+		return ok && TypesEqual(at.Inner, bt.Inner)
 	case SelfType:
 		// SelfType is equal to any other SelfType regardless of generic params;
 		// the params are resolved during trait/impl checking, not here.

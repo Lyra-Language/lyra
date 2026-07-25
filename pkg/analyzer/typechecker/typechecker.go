@@ -1032,6 +1032,13 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 			tt.Elements = elems
 		}
 		return tt
+	case types.WeakType:
+		// Resolve the referent (`weak Node` → the named type) so it isn't left an
+		// UnresolvedType; the weak wrapper itself is preserved.
+		if tt.Inner != nil {
+			tt.Inner = tc.resolveType(tt.Inner, loc)
+		}
+		return tt
 	default:
 		return t
 	}
@@ -1070,6 +1077,11 @@ func (tc *TypeChecker) resolveTypeIfKnown(t types.Type) types.Type {
 				elems[i] = tc.resolveTypeIfKnown(e)
 			}
 			tt.Elements = elems
+		}
+		return tt
+	case types.WeakType:
+		if tt.Inner != nil {
+			tt.Inner = tc.resolveTypeIfKnown(tt.Inner)
 		}
 		return tt
 	default:

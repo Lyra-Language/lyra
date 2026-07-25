@@ -118,3 +118,17 @@ func TestAnalyze_OutOfRangeFloatLiteral_NoPanic(t *testing.T) {
 		t.Fatalf("expected a float-range message, got: %v", res.Diagnostics)
 	}
 }
+
+// TestAnalyze_WeakType_TypeChecks: `weak T` used to hard-error in the collector
+// ("unknown type node kind: weak_type"), making it unusable. A recursive type
+// whose back-edge is a `weak` field now analyzes cleanly through the whole
+// pipeline — weak breaks the size cycle like `shared` (lyra-E014).
+func TestAnalyze_WeakType_TypeChecks(t *testing.T) {
+	src := "struct Node {\n  value: i64,\n  parent: weak Node,\n}\n" +
+		"data List = Nil | Cons(i64, weak List)\n" +
+		"let main = () -> u8 => 0\n"
+	res := Analyze([]byte(src))
+	if res.HasErrors() {
+		t.Fatalf("expected a weak-broken recursive type to analyze cleanly, got: %v", res.Diagnostics)
+	}
+}
