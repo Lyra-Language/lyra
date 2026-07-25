@@ -141,6 +141,11 @@ func Analyze(source []byte) *Result {
 	// parameter).
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUseAfterMove(program, symTable, tt)...)
 
+	// Value-range analysis (integer overflow / constant comparisons) also runs
+	// after typechecking — it reads the TypeTable for each expression's width and
+	// signedness.
+	res.Diagnostics = append(res.Diagnostics, checker.CheckIntegerRanges(program, tt)...)
+
 	// Ownership analysis (retain/release-temp decisions for managed values) runs
 	// after typechecking — it reads the TypeTable to identify managed types. It
 	// produces no diagnostics; the backend consumes the table.

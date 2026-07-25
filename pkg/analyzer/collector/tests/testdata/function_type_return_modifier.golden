@@ -8,7 +8,6 @@ Program(1 statements) {
 					Body: {
 						BlockExpr {
 							Statements: {
-								nil
 								ReturnStmt {
 									Value: {
 										IdentifierExpr(file) {

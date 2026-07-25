@@ -85,6 +85,15 @@ const (
 	// Reassigning the binding gives it a fresh value and clears the move.
 	CodeUseAfterMove = "lyra-E019"
 
+	// CodeIntegerOverflow: an integer `+`/`-`/`*`/unary-`-` whose operand ranges
+	// (tracked by the value-range analysis) prove the result cannot fit its type on
+	// any path — a guaranteed runtime overflow trap, caught at compile time. Unlike
+	// the literal range check (lyra-E001) this fires on *non-constant* variables
+	// whose range is known from a branch refinement (`if x > 100 { x + 100 }` on an
+	// i8). Only definite overflow is reported; a merely *possible* overflow is left
+	// to the runtime trap.
+	CodeIntegerOverflow = "lyra-E020"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"
@@ -117,4 +126,11 @@ const (
 	// `string` (a managed fat pointer) and generic type parameters are NOT scalars
 	// and are never flagged. A warning, since the code is correct as written.
 	CodeInertBorrowModifier = "lyra-W010"
+
+	// CodeConstantComparison: an integer comparison whose operand ranges (tracked by
+	// the value-range analysis) prove it always evaluates to the same result — e.g.
+	// `x < 0` on a `u8` (always false), or a comparison made trivial by a branch
+	// refinement. The branch it guards is dead code or a likely bug; a warning since
+	// the code still compiles and runs.
+	CodeConstantComparison = "lyra-W011"
 )

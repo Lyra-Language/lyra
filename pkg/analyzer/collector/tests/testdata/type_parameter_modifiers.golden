@@ -5,13 +5,6 @@ Program(1 statements) {
 			Name: render
 			Value: {
 				LambdaExpr {
-					Body: {
-						BlockExpr {
-							Statements: {
-								nil
-							}
-						}
-					}
 					Parameters: {
 						Parameter {
 							Pattern: {

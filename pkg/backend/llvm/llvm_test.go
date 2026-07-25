@@ -696,22 +696,20 @@ let main() -> u8 => {
 `, 8},
 		// `x * 20` happens at u8 width (x is u8), where 20 * 20 = 400 overflows —
 		// checked arithmetic traps rather than wrapping (400 mod 256 = 144, then
-		// /7 = 20 under the old silent-wrap semantics).
+		// /7 = 20 under the old silent-wrap semantics). x is a parameter so the
+		// overflow is opaque to the value-range analysis (this tests the runtime
+		// trap, not the compile-time overflow error).
 		{`
-let main() -> u8 => {
-  let x: u8 = 20
-  (x * 20) / 7
-}
+let f = (x: u8) -> u8 => (x * 20) / 7
+let main() -> u8 => f(20)
 `, overflowTrapExitCode},
 		// `y + x` at u8 width overflows (100 + 200 = 300) — traps rather than
-		// wrapping to 44.
+		// wrapping to 44. Operands via parameters (opaque to lyra-E020).
 		{`
-let main() -> u8 => {
-  let x: u8 = 200
-  var y: u8 = 100
-  y = y + x
-  u8(y)
-}
+let f = (x: u8, y: u8) -> u8 => { var v = y
+  v = v + x
+  u8(v) }
+let main() -> u8 => f(200, 100)
 `, overflowTrapExitCode},
 	}
 	for _, c := range cases {
