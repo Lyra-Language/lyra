@@ -147,3 +147,66 @@ func TestTypeCheck_Negation_MaxNegated_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: i64 = -9223372036854775807`, false)
 	assertNoErrors(t, res)
 }
+
+// --- narrow signed min literals (i8/i16/i32) ---
+
+// A narrow signed type's minimum written as a negated literal must narrow the
+// literal *operand* leaf to that type. Its positive magnitude (2^(bits-1))
+// overflows the type as a positive value, so the naive fits-check leaves it
+// untyped → i64; the backend then reads that i64 width off the leaf and lowers
+// an i64 value into a narrow slot. The narrow-width analogue of the i64-min case
+// above. assertNegatedOperandType checks the recorded leaf width.
+func assertNegatedOperandType(t *testing.T, src, want string) {
+	t.Helper()
+	res := parseCollectAndCheck(t, src, false)
+	assertNoErrors(t, res)
+	decl := res.program.Statements[0].(*ast.VarDeclStmt)
+	neg, ok := decl.Value.(*ast.NegationExpr)
+	if !ok {
+		t.Fatalf("expected NegationExpr initializer, got %T", decl.Value)
+	}
+	typ, ok := res.typeTable.Get(neg.Operand)
+	if !ok {
+		t.Fatal("expected type table entry for negated operand leaf")
+	}
+	if got := typ.String(); got != want {
+		t.Errorf("operand leaf: expected %s, got %s", want, got)
+	}
+}
+
+func TestTypeCheck_Negation_I8Min_Ok(t *testing.T) {
+	assertNegatedOperandType(t, `let x: i8 = -128`, "i8")
+}
+
+func TestTypeCheck_Negation_I16Min_Ok(t *testing.T) {
+	assertNegatedOperandType(t, `let x: i16 = -32768`, "i16")
+}
+
+func TestTypeCheck_Negation_I32Min_Ok(t *testing.T) {
+	assertNegatedOperandType(t, `let x: i32 = -2147483648`, "i32")
+}
+
+// One past the narrow min (magnitude 2^(bits-1)+1) is out of range — a clean
+// range error, not silently narrowed.
+func TestTypeCheck_Negation_I8_BelowMin_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: i8 = -129`, false)
+	assertErrorsAre(t, res, "x: literal value -129 overflows i8")
+}
+
+func TestTypeCheck_Negation_I8_FarBelowMin_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: i8 = -200`, false)
+	assertErrorsAre(t, res, "x: literal value -200 overflows i8")
+}
+
+// The same magnitude as a *positive* literal (i8 128) is still out of range —
+// only the negated form denotes the minimum.
+func TestTypeCheck_Negation_I8_PositiveMinMagnitude_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x: i8 = 128`, false)
+	assertErrorsAre(t, res, "x: literal value 128 overflows i8")
+}
+
+// The narrow min magnitude does not spuriously narrow against a wider target:
+// -128 as an i16 is an ordinary in-range negated literal recorded at i16.
+func TestTypeCheck_Negation_I8Min_InWiderContext_Ok(t *testing.T) {
+	assertNegatedOperandType(t, `let x: i16 = -128`, "i16")
+}

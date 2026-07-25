@@ -116,6 +116,26 @@ func integerFitsInType(value int64, name types.PrimitiveTypeName) bool {
 	return true
 }
 
+// signedTypeMinMagnitude returns the positive magnitude of a bounded signed
+// integer type's minimum value — 2^(bits-1), e.g. 128 for i8 (min -128), 32768
+// for i16, 2147483648 for i32 — and true when name is one of i8/i16/i32. This
+// is the magnitude a *negated* literal must have to denote that type's minimum
+// (`-128` → i8 min): it overflows the type as a positive literal but is exactly
+// representable once negated. i64 is excluded — its min magnitude (2^63)
+// overflows int64, and that case is handled separately in inferNegationExpr via
+// the collector's Unsigned literal path.
+func signedTypeMinMagnitude(name types.PrimitiveTypeName) (int64, bool) {
+	switch name {
+	case types.Int8:
+		return -int64(math.MinInt8), true // 128
+	case types.Int16:
+		return -int64(math.MinInt16), true // 32768
+	case types.Int32:
+		return -int64(math.MinInt32), true // 2147483648
+	}
+	return 0, false
+}
+
 // checkIntegerLiteralRange emits an error when expr is a compile-time integer
 // constant that does not fit in the concrete integer type targetType. It is a
 // no-op when expr is not a literal constant or targetType is not a concrete

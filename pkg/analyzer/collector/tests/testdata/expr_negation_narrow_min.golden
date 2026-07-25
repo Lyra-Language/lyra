@@ -1,0 +1,23 @@
+Program(1 statements) {
+	Statements: {
+		VarDeclStmt(x) {
+			BindingKind: let
+			Name: x
+			Type: {
+				PrimitiveType(i8) {
+					Name: i8
+				}
+			}
+			Value: {
+				NegationExpr {
+					Operand: {
+						IntegerLiteralExpr {
+							Base: 10
+							Value: 128
+						}
+					}
+				}
+			}
+		}
+	}
+}

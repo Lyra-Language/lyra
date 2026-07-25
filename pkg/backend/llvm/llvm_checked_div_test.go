@@ -9,9 +9,9 @@ import (
 // +/-/*): the runtime-error cases LLVM's div/rem and negate leave as undefined
 // behavior are trapped instead — divide-by-zero, signed division overflow
 // (INT_MIN / -1), and negation overflow (-INT_MIN) — all exiting with the trap
-// code (101). INT_MIN cases use i64-min (-9223372036854775808), which the front
-// end represents correctly; the narrow signed-min literal (i8 -128) has a
-// separate width bug, tracked apart from this.
+// code (101). INT_MIN cases use i64-min (-9223372036854775808); the narrow
+// signed-min literals (i8 -128, etc.) now lower at their own width too — see
+// llvm_narrow_min_test.go for that coverage.
 
 var checkedDivCases = []struct {
 	name string

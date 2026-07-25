@@ -1457,6 +1457,22 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 		tc.propagateLiteralType(e.Left, concrete)
 		tc.propagateLiteralType(e.Right, concrete)
 	case *ast.NegationExpr:
+		// A negated integer literal whose *negation* is exactly the signed
+		// target's minimum (i8 -128, i16 -32768, i32 -2147483648) must narrow to
+		// that target — the narrow-width analogue of the i64-min literal handled
+		// in inferNegationExpr. Its positive magnitude (2^(bits-1)) doesn't fit
+		// the type as a positive value, so the generic recursion below would fail
+		// the fits-check and leave the operand untyped (→ i64), lowering an i64
+		// value into a narrow slot and emitting invalid IR the moment it meets a
+		// proper-width operand in arithmetic. Narrow the operand leaf directly:
+		// the backend's `sub 0, 2^(bits-1)` yields the min bit pattern at that
+		// width, and checkIntegerLiteralRange has already accepted the value.
+		if lit, ok := e.Operand.(*ast.IntegerLiteralExpr); ok && !lit.Unsigned && tc.currentTypeIsUntyped(lit) {
+			if mag, isMin := signedTypeMinMagnitude(cp.Name); isMin && lit.Value == mag {
+				tc.typeTable.Set(lit, cp)
+				return
+			}
+		}
 		tc.propagateLiteralType(e.Operand, concrete)
 	case *ast.MatchExpr:
 		// A match/if is a value made of its arm/branch bodies, so a context width
