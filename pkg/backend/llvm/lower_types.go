@@ -194,6 +194,14 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		return lltypes.NewPointer(SharedBoxType(payload)), nil
 	}
 	switch t := lyraType.(type) {
+	case types.StaticArrayType:
+		// A fixed-size array `[N]T` lowers to the LLVM aggregate `[N x <T>]` — a
+		// first-class value that round-trips through alloca/store/load like a tuple.
+		elem, err := l.lowerType(t.ElementType)
+		if err != nil {
+			return nil, err
+		}
+		return lltypes.NewArray(uint64(t.Size), elem), nil
 	case types.WeakType:
 		// A weak reference is a non-owning pointer (pointer-sized), so it lowers to
 		// an opaque `i8*` — enough to lay out a `weak` field and break a recursive

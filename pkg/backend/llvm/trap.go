@@ -32,6 +32,7 @@ const trapExitCode = 101
 const (
 	overflowTrapMessage     = "lyra: arithmetic overflow\n"
 	divideByZeroTrapMessage = "lyra: divide by zero\n"
+	indexOOBTrapMessage     = "lyra: array index out of bounds\n"
 )
 
 // overflowTrapExitCode is retained as the name existing tests use; it is trapExitCode.
@@ -73,6 +74,10 @@ func (l *lowerer) panicOverflowFunc() *ir.Func {
 
 func (l *lowerer) panicDivideByZeroFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_divide_by_zero", divideByZeroTrapMessage)
+}
+
+func (l *lowerer) panicIndexOOBFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_index_out_of_bounds", indexOOBTrapMessage)
 }
 
 // emitTrapIf branches to a trap when cond is true and continues otherwise: it

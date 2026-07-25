@@ -52,12 +52,31 @@ func TestIndexExpr_StaticArray_LiteralInBounds_Ok(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
+// A negative index counts from the end, so `[-size, -1]` is in range.
+func TestIndexExpr_StaticArray_NegativeInBounds_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let xs: [3]i64 = [1, 2, 3]
+		let a = xs[-1]
+		let b = xs[-3]
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// A constant index below -size is still out of range (the negation folds).
+func TestIndexExpr_StaticArray_NegativeOutOfBounds_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let xs: [3]i64 = [1, 2, 3]
+		let y = xs[-4]
+	`, false)
+	assertErrorsAre(t, res, "index -4 out of range for array of size 3 (valid indices are -3 to 2)")
+}
+
 func TestIndexExpr_StaticArray_LiteralOutOfBounds_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let xs: [3]i64 = [1, 2, 3]
 		let y = xs[3]
 	`, false)
-	assertErrorsAre(t, res, "index 3 out of range for array of size 3")
+	assertErrorsAre(t, res, "index 3 out of range for array of size 3 (valid indices are -3 to 2)")
 }
 
 func TestIndexExpr_StaticArray_ElementType_Ok(t *testing.T) {
@@ -92,7 +111,7 @@ func TestIndexExpr_StaticArray_ConstLetIndex_OutOfBounds_Error(t *testing.T) {
 		let i: i64 = 10
 		let y = xs[i]
 	`, false)
-	assertErrorsAre(t, res, "index 10 out of range for array of size 3")
+	assertErrorsAre(t, res, "index 10 out of range for array of size 3 (valid indices are -3 to 2)")
 }
 
 func TestIndexExpr_StaticArray_ConstLetIndex_InBounds_Ok(t *testing.T) {

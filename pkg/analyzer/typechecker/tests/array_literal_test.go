@@ -95,6 +95,35 @@ func TestArrayLiteral_NoAnnotation_SingleElement(t *testing.T) {
 	}
 }
 
+// ── element-width narrowing against the annotation (backend needs a concrete width) ──
+
+// An annotated element width is pushed onto the literal's elements, and the
+// literal is re-recorded with that concrete element type — so the backend builds
+// `[N x u8]`, not `[N x i64]`. Without this an annotated narrow array lowered at
+// i64 element width (a residual coerce saved a `let`, but a function return —
+// which fixes the type from the signature — miscompiled).
+func TestArrayLiteral_AnnotatedElementWidth_Narrows(t *testing.T) {
+	typ := arrayLiteralType(t, `let xs: [3]u8 = [10, 20, 30]`)
+	sa, ok := typ.(types.StaticArrayType)
+	if !ok {
+		t.Fatalf("expected StaticArrayType, got %T (%s)", typ, typ)
+	}
+	if p, ok := sa.ElementType.(types.PrimitiveType); !ok || p.Name != types.UInt8 {
+		t.Errorf("expected element type u8, got %s", sa.ElementType)
+	}
+}
+
+// A dynamic annotation must NOT be re-recorded as static: `dyn` is used as a
+// dynamic array, and overwriting it with a static type would mask a later
+// dynamic→static assignment error (regression guard for the static-only
+// re-record).
+func TestArrayLiteral_DynamicAnnotation_StaysDynamic(t *testing.T) {
+	typ := arrayLiteralType(t, `let dyn: []i64 = [1, 2, 3]`)
+	if _, ok := typ.(types.DynamicArrayType); !ok {
+		t.Errorf("expected the value recorded as DynamicArrayType, got %T (%s)", typ, typ)
+	}
+}
+
 // ── static array annotation: exact-match and size errors ─────────────────────
 
 func TestArrayLiteral_StaticAnnotation_MatchingSize_Ok(t *testing.T) {

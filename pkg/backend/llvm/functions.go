@@ -73,6 +73,11 @@ func (l *lowerer) emitReturn(block *ir.Block, val value.Value) error {
 		block.NewRet(val)
 		return nil
 	}
+	if _, ok := l.retType.(*lltypes.ArrayType); ok {
+		// A fixed-size array is likewise returned by value (a first-class `[N x T]`).
+		block.NewRet(val)
+		return nil
+	}
 	if _, ok := l.retType.(*lltypes.PointerType); ok {
 		// A `shared` value is returned as its box pointer (an owned return transfers
 		// the reference; the ownership pass retired it from the frame at the move).

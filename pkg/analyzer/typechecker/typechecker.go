@@ -1438,6 +1438,43 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 		return
 	}
 
+	// Aggregate context: an array literal narrows each element against the context
+	// array's element type (`[20, 22]` against `[2]u8` → each leaf u8). Like the
+	// tuple case, this is needed because inferArrayLiteralType leaves the elements
+	// untyped so a surrounding annotation / return type can fix their width. It also
+	// re-records the literal with the concrete element type: an annotated `let` sets
+	// the array node's type itself (checkVarDecl), but a function return only calls
+	// this — without the re-record the array would lower at its inferred i64 element
+	// width and mismatch a narrower return type (`() -> [3]u8 => [4, 5, 6]`).
+	if al, ok := expr.(*ast.ArrayLiteralExpr); ok {
+		var ctxElem types.Type
+		switch at := concrete.(type) {
+		case types.StaticArrayType:
+			ctxElem = at.ElementType
+		case types.DynamicArrayType:
+			ctxElem = at.ElementType
+		default:
+			return
+		}
+		if ctxElem == nil {
+			return
+		}
+		resolved := tc.resolveType(ctxElem, expr.GetLocation())
+		for _, elem := range al.Elements {
+			tc.propagateLiteralType(elem, resolved)
+		}
+		// Re-record with the concrete element type so the backend builds
+		// `[N x <resolved>]` — but ONLY against a static context. A dynamic
+		// annotation (`let dyn: []i64 = [1, 2, 3]`) must keep the DynamicArrayType
+		// checkVarDecl recorded (the value is *used* as a dynamic array); overwriting
+		// it with a static type would make `dyn` look statically sized and mask a
+		// later dynamic→static assignment error.
+		if _, static := concrete.(types.StaticArrayType); static {
+			tc.typeTable.Set(al, types.StaticArrayType{ElementType: resolved, Size: len(al.Elements)})
+		}
+		return
+	}
+
 	cp, ok := concrete.(types.PrimitiveType)
 	if !ok {
 		return
@@ -1874,6 +1911,13 @@ func (tc *TypeChecker) resolveConstantInt(expr ast.Expression) (int64, bool) {
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
 		return e.Value, true
+	case *ast.NegationExpr:
+		// So a constant negative index (`arr[-1]`) folds too — the array bounds
+		// check needs it to validate the `[-size, size)` range at compile time.
+		if v, ok := tc.resolveConstantInt(e.Operand); ok {
+			return -v, true
+		}
+		return 0, false
 	case *ast.IdentifierExpr:
 		sym, ok := tc.scope.Lookup(e.Name)
 		if !ok {
@@ -1904,10 +1948,14 @@ func (tc *TypeChecker) inferIndexExpr(expr *ast.IndexExpr) types.Type {
 
 	switch t := objectType.(type) {
 	case types.StaticArrayType:
+		// A negative index counts from the end (`arr[-1]` is the last element), so
+		// the valid range is [-size, size). A constant index outside it is a
+		// compile-time error; a runtime index is bounds-checked in the backend.
 		if idx, ok := tc.resolveConstantInt(expr.Index); ok {
-			if idx < 0 || int(idx) >= t.Size {
+			if idx < -int64(t.Size) || idx >= int64(t.Size) {
 				tc.addError(expr.GetLocation(), SeverityError,
-					"index %d out of range for array of size %d", idx, t.Size)
+					"index %d out of range for array of size %d (valid indices are %d to %d)",
+					idx, t.Size, -t.Size, t.Size-1)
 				return nil
 			}
 		}

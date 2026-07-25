@@ -398,6 +398,10 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		return l.lowerTupleLiteralExpr(block, e)
 	case *ast.TupleIndexExpr:
 		return l.lowerTupleIndexExpr(block, e)
+	case *ast.ArrayLiteralExpr:
+		return l.lowerArrayLiteralExpr(block, e)
+	case *ast.IndexExpr:
+		return l.lowerIndexExpr(block, e)
 	case *ast.StructInstanceExpr:
 		return l.lowerStructInstanceExpr(block, e)
 	case *ast.MemberExpr:
