@@ -49,6 +49,11 @@ Program(1 statements) {
 												}
 											}
 											Operator: ++
+											Right: {
+												StringLiteralExpr {
+													Value:  
+												}
+											}
 										}
 									}
 									Operator: ++

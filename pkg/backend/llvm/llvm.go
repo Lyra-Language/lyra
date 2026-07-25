@@ -364,10 +364,7 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 	case *ast.StringConcatExpr:
 		return l.lowerStringConcat(block, e)
 	case *ast.InterpolatedStringExpr:
-		// The heap allocator now exists; what interpolation still needs is
-		// value→string formatting for its non-string segments (int/float/… → text),
-		// a separate feature from concatenation.
-		return nil, nil, fmt.Errorf("llvm: string interpolation not implemented yet (needs value→string formatting of interpolated segments)")
+		return l.lowerInterpolatedString(block, e)
 	case *ast.BooleanLiteralExpr:
 		bit := int64(0)
 		if e.Value {

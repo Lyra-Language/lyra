@@ -123,6 +123,60 @@ func (l *lowerer) lowerStringConcat(block *ir.Block, e *ast.StringConcatExpr) (v
 	return block.NewInsertValue(withPtr, total, 1), block, nil
 }
 
+// lowerInterpolatedString lowers a `"… ${expr} …"` to a heap string. It's the
+// N-segment generalization of lowerStringConcat where each segment is first
+// *formatted* to bytes: a literal chunk is already a string, an interpolated
+// expression is rendered per its type by formatForPrint (the same int/float/
+// bool/rune/string → (data, length) machinery print uses). Each formatted
+// segment is a (data, length) pair; the segments are then concatenated into one
+// fresh ref-counted box, so the result is an owned heap string exactly like `++`
+// (the ownership pass already treats it as an owned producer whose segments are
+// borrowed).
+//
+// The formatted-bytes pointers are read-then-copied: formatForPrint hands back
+// pointers into per-segment stack buffers (numeric/rune) or interned globals
+// (bool/literal), which don't alias across segments — each numeric format is its
+// own entry-block alloca — so holding every pair through the length sum before
+// the single memcpy pass is safe.
+func (l *lowerer) lowerInterpolatedString(block *ir.Block, e *ast.InterpolatedStringExpr) (value.Value, *ir.Block, error) {
+	type segment struct {
+		data, length value.Value
+	}
+	var segs []segment
+	total := value.Value(constant.NewInt(lltypes.I64, 0))
+
+	for _, seg := range e.Segments {
+		val, blk, err := l.lowerExpr(block, seg)
+		if err != nil {
+			return nil, nil, err
+		}
+		block = blk // a segment expression (e.g. an `if`) may move the insertion block
+		segType, ok := l.res.TypeTable.Get(seg)
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: no type recorded for interpolation segment")
+		}
+		data, length, err := l.formatForPrint(block, val, segType)
+		if err != nil {
+			return nil, nil, err
+		}
+		segs = append(segs, segment{data: data, length: length})
+		total = block.NewAdd(total, length)
+	}
+
+	_, dst := l.rcAllocPayload(block, total)
+	memcpy := l.memcpyFunc()
+	offset := value.Value(constant.NewInt(lltypes.I64, 0))
+	for _, s := range segs {
+		target := block.NewGetElementPtr(lltypes.I8, dst, offset)
+		block.NewCall(memcpy, target, s.data, s.length)
+		offset = block.NewAdd(offset, s.length)
+	}
+
+	strTy := StringLLVMType()
+	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dst, 0)
+	return block.NewInsertValue(withPtr, total, 1), block, nil
+}
+
 // lowerStringEquality builds the i1 "are these two strings equal?" test,
 // branchlessly: strings are equal iff their byte lengths match AND the first
 // min(la, lb) bytes compare equal. memcmp over min(la, lb) never reads past

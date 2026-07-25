@@ -284,24 +284,15 @@ func TestEmit_StringIR(t *testing.T) {
 	}
 }
 
-// Interpolation and escaped string patterns are deferred (they need value→string
-// formatting / Lyra-specific unescaping) and must error loudly. Concatenation is
-// no longer here — it lowers now (TestExec_StringConcat).
+// Escaped string patterns are deferred (they need Lyra-specific unescaping) and
+// must error loudly. Concatenation and interpolation are no longer here — they
+// lower now (TestExec_StringConcat, TestExec_StringInterpolation).
 func TestEmit_StringDeferred(t *testing.T) {
 	cases := []struct {
 		name    string
 		src     string
 		wantErr string
 	}{
-		{
-			"interpolation",
-			`let main = () -> u8 => {
-			   let n: u8 = 1
-			   let s: string = "n=${n}"
-			   if s == "x" { 1 } else { 0 }
-			 }`,
-			"interpolation",
-		},
 		{
 			"escaped pattern",
 			`let f = (s: string) -> u8 => match s {

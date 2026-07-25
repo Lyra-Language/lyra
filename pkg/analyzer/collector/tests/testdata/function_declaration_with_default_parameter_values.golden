@@ -11,6 +11,9 @@ Program(1 statements) {
 								IdentifierExpr(prefix) {
 									Name: prefix
 								}
+								StringLiteralExpr {
+									Value:  
+								}
 								IdentifierExpr(name) {
 									Name: name
 								}

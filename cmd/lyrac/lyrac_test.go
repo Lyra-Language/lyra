@@ -129,14 +129,14 @@ func TestBuild_MissingMain(t *testing.T) {
 }
 
 func TestBuild_BackendError(t *testing.T) {
-	// interp.lyra type-checks and has a valid entry point but uses string
-	// interpolation, which the early LLVM backend cannot lower yet, so
-	// lowerAndEmit reports a backend error and no .ll is written. The assertion
-	// is deliberately loose (exit code + "llvm backend:" prefix) so it survives
-	// changes to the exact message — or a future backend that learns to lower
-	// this, at which point it fails loudly and should be repointed at a
-	// still-unsupported form.
-	_, stderr, code := captureRun(t, "build", fixture("interp.lyra"))
+	// unsupported.lyra type-checks and has a valid entry point but uses an array
+	// literal, which the early LLVM backend cannot lower yet, so lowerAndEmit
+	// reports a backend error and no .ll is written. The assertion is deliberately
+	// loose (exit code + "llvm backend:" prefix) so it survives changes to the
+	// exact message — or a future backend that learns to lower this, at which
+	// point it fails loudly and should be repointed at a still-unsupported form.
+	// (Interpolation used to be that form; it lowers now.)
+	_, stderr, code := captureRun(t, "build", fixture("unsupported.lyra"))
 	if code != 1 {
 		t.Errorf("exit code = %d, want 1", code)
 	}

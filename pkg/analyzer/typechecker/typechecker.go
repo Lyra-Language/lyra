@@ -1175,7 +1175,7 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		}
 		return types.PrimitiveType{Name: types.Regex}
 	case *ast.InterpolatedStringExpr:
-		return types.PrimitiveType{Name: types.String}
+		return tc.inferInterpolatedStringExpr(e)
 	case *ast.DataConstructorExpr:
 		// Resolve the data type that owns this constructor so that the type of
 		// a data-constructor expression (e.g. `Some 42`) is the enclosing
@@ -1628,6 +1628,34 @@ func (tc *TypeChecker) inferStringConcatExpr(expr *ast.StringConcatExpr) types.T
 	}
 
 	return types.PrimitiveType{Name: types.String}
+}
+
+// inferInterpolatedStringExpr type-checks a `"… ${expr} …"`. Each segment is
+// either a literal text chunk (already a `string`) or an interpolated
+// expression, which must be a **printable** scalar — exactly the set
+// `print`/`println` accept (string, any integer/float, bool, rune) — because the
+// backend formats it to text with the same `formatForPrint` machinery. An
+// untyped numeric-literal segment is settled to its default width (mirroring
+// `inferPrintCall`) so the backend reads a concrete type off it. The whole
+// expression is always a `string`.
+func (tc *TypeChecker) inferInterpolatedStringExpr(e *ast.InterpolatedStringExpr) types.Type {
+	str := types.PrimitiveType{Name: types.String}
+	for _, seg := range e.Segments {
+		segType := tc.inferExprType(seg)
+		if segType == nil {
+			continue // a failure already reported in the segment; check the rest
+		}
+		if !isPrintableType(segType) {
+			tc.addError(seg.GetLocation(), SeverityError,
+				"cannot interpolate a value of type %s (expected a string, an integer, a float, bool, or rune)",
+				segType)
+			continue
+		}
+		if types.IsNumeric(segType) {
+			tc.propagateLiteralType(seg, promoteToDefault(segType))
+		}
+	}
+	return str
 }
 
 func (tc *TypeChecker) inferNegationExpr(expr *ast.NegationExpr) types.Type {

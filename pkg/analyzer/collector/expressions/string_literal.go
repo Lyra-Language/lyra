@@ -14,65 +14,78 @@ import (
 )
 
 func collectStringLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
-	// string_literal has named children that are either `string_content` or
-	// `string_interpolation`. When no interpolation segments are present we
-	// return a plain StringLiteralExpr; otherwise an InterpolatedStringExpr
-	// whose segments alternate between literal text chunks and the expressions
-	// embedded inside `${ ... }`.
-	childCount := node.NamedChildCount()
+	// A string_literal spans `"…"` and has named children that are either
+	// `string_content` (literal text chunks) or `string_interpolation` (`${expr}`).
+	// We reconstruct the literal text from the *raw source between* the
+	// interpolations rather than from the `string_content` node text: tree-sitter,
+	// with `/\s/` in `extras`, strips a content chunk's leading whitespace as token
+	// padding, so a `string_content` node that begins with a space (a plain `"  x"`,
+	// or the text right after a `${…}`) loses it. Slicing the source directly — the
+	// interpolation nodes' byte ranges are exact and whitespace-safe (they start at
+	// `$`) — recovers every byte. When there are no interpolations we return a plain
+	// StringLiteralExpr; otherwise an InterpolatedStringExpr whose segments
+	// alternate literal chunks and the embedded expressions.
+	innerStart := node.StartByte() + 1 // just past the opening quote
+	innerEnd := node.EndByte() - 1     // just before the closing quote
 
-	newLiteral := func(l ast.Location, value string) *ast.StringLiteralExpr {
+	newLiteralChunk := func(start, end uint) (*ast.StringLiteralExpr, bool) {
+		content, err := unescapeStringContent(string(ctx.Source[start:end]))
+		if err != nil {
+			ctx.AddError(node, diag.SeverityError, "invalid string literal: %v", err)
+			return nil, false
+		}
 		return &ast.StringLiteralExpr{
-			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: l}},
-			Value:    value,
+			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+			Value:    content,
+		}, true
+	}
+
+	// Gather the interpolation children in source order.
+	var interps []*sitter.Node
+	for i := range node.NamedChildCount() {
+		if child := node.NamedChild(i); child.Kind() == "string_interpolation" {
+			interps = append(interps, child)
 		}
 	}
 
-	hasInterpolation := false
-	for i := uint(0); i < childCount; i++ {
-		if node.NamedChild(i).Kind() == "string_interpolation" {
-			hasInterpolation = true
-			break
+	if len(interps) == 0 {
+		lit, ok := newLiteralChunk(innerStart, innerEnd)
+		if !ok {
+			return nil
 		}
-	}
-
-	if !hasInterpolation {
-		var sb strings.Builder
-		for i := uint(0); i < childCount; i++ {
-			child := node.NamedChild(i)
-			content, err := unescapeStringContent(ctx.NodeText(child))
-			if err != nil {
-				ctx.AddError(child, diag.SeverityError, "invalid string literal: %v", err)
-				return nil
-			}
-			sb.WriteString(content)
-		}
-		return newLiteral(loc, sb.String())
+		return lit
 	}
 
 	segments := []ast.Expression{}
-	for i := uint(0); i < childCount; i++ {
-		child := node.NamedChild(i)
-		switch child.Kind() {
-		case "string_content":
-			content, err := unescapeStringContent(ctx.NodeText(child))
-			if err != nil {
-				ctx.AddError(child, diag.SeverityError, "invalid string literal: %v", err)
+	cursor := innerStart
+	for _, interp := range interps {
+		// The literal chunk is the raw source from the cursor up to this `${`.
+		if start := interp.StartByte(); start > cursor {
+			lit, ok := newLiteralChunk(cursor, start)
+			if !ok {
 				return nil
 			}
-			segments = append(segments, newLiteral(ctx.NodeLocation(child), content))
-		case "string_interpolation":
-			exprNode := child.NamedChild(0)
-			if exprNode == nil {
-				ctx.AddError(child, diag.SeverityError, "empty string interpolation")
-				return nil
-			}
-			expr := CollectExpression(exprNode, ctx)
-			if expr == nil {
-				return nil
-			}
-			segments = append(segments, expr)
+			segments = append(segments, lit)
 		}
+		exprNode := interp.NamedChild(0)
+		if exprNode == nil {
+			ctx.AddError(interp, diag.SeverityError, "empty string interpolation")
+			return nil
+		}
+		expr := CollectExpression(exprNode, ctx)
+		if expr == nil {
+			return nil
+		}
+		segments = append(segments, expr)
+		cursor = interp.EndByte() // resume just past the closing `}`
+	}
+	// Trailing literal chunk after the last interpolation.
+	if innerEnd > cursor {
+		lit, ok := newLiteralChunk(cursor, innerEnd)
+		if !ok {
+			return nil
+		}
+		segments = append(segments, lit)
 	}
 
 	return &ast.InterpolatedStringExpr{

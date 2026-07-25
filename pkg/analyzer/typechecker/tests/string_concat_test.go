@@ -20,17 +20,26 @@ func TestStringConcat_StringAnnotation(t *testing.T) {
 }
 
 func TestStringConcat_InterpolatedLeft(t *testing.T) {
-	res := parseCollectAndCheck(t, `let s = "hello ${name}" ++ " world"`, false)
+	// Interpolation segments are now type-checked, so the interpolated name must
+	// be a declared, printable binding.
+	res := parseCollectAndCheck(t, `
+		let name: string = "Ada"
+		let s = "hello ${name}" ++ " world"`, false)
 	assertNoErrors(t, res)
 }
 
 func TestStringConcat_InterpolatedRight(t *testing.T) {
-	res := parseCollectAndCheck(t, `let s = "hello " ++ " ${name}"`, false)
+	res := parseCollectAndCheck(t, `
+		let name: string = "Ada"
+		let s = "hello " ++ " ${name}"`, false)
 	assertNoErrors(t, res)
 }
 
 func TestStringConcat_BothInterpolated(t *testing.T) {
-	res := parseCollectAndCheck(t, `let s = "hello ${first}" ++ " ${last}"`, false)
+	res := parseCollectAndCheck(t, `
+		let first: string = "Ada"
+		let last: string = "Lovelace"
+		let s = "hello ${first}" ++ " ${last}"`, false)
 	assertNoErrors(t, res)
 }
 
