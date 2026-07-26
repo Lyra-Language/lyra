@@ -119,6 +119,21 @@ func TestAnalyze_OutOfRangeFloatLiteral_NoPanic(t *testing.T) {
 	}
 }
 
+// TestAnalyze_RangeAnalysis_DefiniteOverflow: the value-range pass is wired into
+// the pipeline, so a provable overflow (via a branch refinement — beyond what the
+// literal range check catches) surfaces as an error through Analyze.
+func TestAnalyze_RangeAnalysis_DefiniteOverflow(t *testing.T) {
+	src := "let f = (x: i8) -> i8 => if x > 100 { x + 100 } else { 0 }\n" +
+		"let main = () -> u8 => 0\n"
+	res := Analyze([]byte(src))
+	if !res.HasErrors() {
+		t.Fatal("expected a definite-overflow error")
+	}
+	if !hasMessageContaining(res, "always overflows i8") {
+		t.Fatalf("expected an overflow message, got: %v", res.Diagnostics)
+	}
+}
+
 // TestAnalyze_WeakType_TypeChecks: `weak T` used to hard-error in the collector
 // ("unknown type node kind: weak_type"), making it unusable. A recursive type
 // whose back-edge is a `weak` field now analyzes cleanly through the whole

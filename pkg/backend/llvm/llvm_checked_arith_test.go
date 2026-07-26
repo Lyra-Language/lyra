@@ -17,36 +17,25 @@ var overflowingCases = []struct {
 	name string
 	src  string
 }{
-	{"u8 add wraps past 255", `let main = () -> u8 => {
-	  let x: u8 = 200
-	  let y: u8 = 100
-	  x + y
-	}`},
-	{"u8 sub below 0", `let main = () -> u8 => {
-	  let x: u8 = 10
-	  let y: u8 = 20
-	  x - y
-	}`},
-	{"i8 mul past 127", `let main = () -> u8 => {
-	  let x: i8 = 100
-	  let y: i8 = 2
-	  u8(x * y)
-	}`},
-	{"i32 signed mul overflow", `let main = () -> u8 => {
-	  let x: i32 = 100000
-	  let y: i32 = 100000
-	  u8(x * y)
-	}`},
-	{"i64 add overflow", `let main = () -> u8 => {
-	  let x: i64 = 9223372036854775807
-	  let y: i64 = 1
-	  u8(x + y)
-	}`},
-	{"compound += overflow", `let main = () -> u8 => {
-	  var x: u8 = 250
-	  x += 10
-	  x
-	}`},
+	// Operands are passed through function parameters so they're opaque to the
+	// value-range analysis (lyra-E020) — these exercise the *runtime* trap on
+	// values it can't prove overflowing statically, not the compile-time error.
+	{"u8 add wraps past 255", `let add = (x: u8, y: u8) -> u8 => x + y
+	let main = () -> u8 => add(200, 100)`},
+	{"u8 sub below 0", `let sub = (x: u8, y: u8) -> u8 => x - y
+	let main = () -> u8 => sub(10, 20)`},
+	{"i8 mul past 127", `let mul = (x: i8, y: i8) -> u8 => u8(x * y)
+	let main = () -> u8 => mul(100, 2)`},
+	{"i32 signed mul overflow", `let mul = (x: i32, y: i32) -> u8 => u8(x * y)
+	let main = () -> u8 => mul(100000, 100000)`},
+	{"i64 add overflow", `let add = (x: i64, y: i64) -> u8 => u8(x + y)
+	let main = () -> u8 => add(9223372036854775807, 1)`},
+	{"compound += overflow", `let bump = (x: u8) -> u8 => {
+	  var v = x
+	  v += 10
+	  v
+	}
+	let main = () -> u8 => bump(250)`},
 }
 
 // TestExec_CheckedArithmetic_Traps runs each overflowing program and asserts it
@@ -113,11 +102,11 @@ func TestEmit_CheckedArithmeticIR(t *testing.T) {
 		return out
 	}
 
-	add := emit(`let main = () -> u8 => {
-	  let x: u8 = 1
-	  let y: u8 = 2
-	  x + y
-	}`)
+	// Operands via parameters (full-range → the value-range analysis can't prove
+	// no-overflow), so the checked-op IR shape is actually emitted rather than
+	// elided as it would be for provable constants (see TestEmit_OverflowElision).
+	add := emit(`let add = (x: u8, y: u8) -> u8 => x + y
+	let main = () -> u8 => add(1, 2)`)
 	for _, needle := range []string{
 		"llvm.uadd.with.overflow.i8",
 		"call void @lyra_panic_overflow()",
@@ -132,12 +121,9 @@ func TestEmit_CheckedArithmeticIR(t *testing.T) {
 		t.Errorf("want exactly one trap function definition, got %d", n)
 	}
 
-	// Signedness picks the s/u intrinsic.
-	sadd := emit(`let main = () -> u8 => {
-	  let x: i16 = 1
-	  let y: i16 = 2
-	  u8(x + y)
-	}`)
+	// Signedness picks the s/u intrinsic (operands via parameters, as above).
+	sadd := emit(`let f = (x: i16, y: i16) -> u8 => u8(x + y)
+	let main = () -> u8 => f(1, 2)`)
 	if !strings.Contains(sadd, "llvm.sadd.with.overflow.i16") {
 		t.Error("signed add should use llvm.sadd.with.overflow")
 	}

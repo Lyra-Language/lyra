@@ -3,17 +3,6 @@ Program(1 statements) {
 		VarDeclStmt(foo) {
 			BindingKind: let
 			Name: foo
-			Value: {
-				LambdaExpr {
-					Body: {
-						BlockExpr {
-							Statements: {
-								nil
-							}
-						}
-					}
-				}
-			}
 		}
 	}
 }

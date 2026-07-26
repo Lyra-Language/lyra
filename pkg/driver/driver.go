@@ -36,6 +36,7 @@ type Result struct {
 	TypeTable   *typetable.TypeTable
 	MethodTable *typetable.MethodTable
 	Ownership   *ownership.Table
+	RangeSafety *checker.SafetyTable // overflow ops the backend may leave unchecked
 	Diagnostics []diag.Diagnostic
 }
 
@@ -140,6 +141,14 @@ func Analyze(source []byte) *Result {
 	// which values are managed (only those are actually consumed by an `own`
 	// parameter).
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUseAfterMove(program, symTable, tt)...)
+
+	// Value-range analysis (integer overflow / constant comparisons) also runs
+	// after typechecking — it reads the TypeTable for each expression's width and
+	// signedness. It also returns the safety table the backend uses to elide
+	// provably-unnecessary overflow traps.
+	rangeDiags, rangeSafety := checker.CheckIntegerRanges(program, tt)
+	res.Diagnostics = append(res.Diagnostics, rangeDiags...)
+	res.RangeSafety = rangeSafety
 
 	// Ownership analysis (retain/release-temp decisions for managed values) runs
 	// after typechecking — it reads the TypeTable to identify managed types. It

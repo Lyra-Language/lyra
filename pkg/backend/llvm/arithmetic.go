@@ -228,7 +228,7 @@ func (l *lowerer) lowerMathBinaryOpExpr(block *ir.Block, e *ast.MathBinaryOpExpr
 	if err != nil {
 		return nil, nil, err
 	}
-	return l.applyIntMathOp(block, e.Operator, left, right, signed)
+	return l.applyIntMathOp(block, e.Operator, left, right, signed, l.res.RangeSafety.NoOverflow(e))
 }
 
 // applyFloatMathOp emits a binary floating-point arithmetic op on two
@@ -286,13 +286,27 @@ func (l *lowerer) lowerFlooredFRem(block *ir.Block, left, right value.Value) val
 // fall-through (no-overflow) block. Division/remainder are not checked here (div
 // overflow `INT_MIN / -1` and div-by-zero are a separate slice — see todo #2's
 // range-analysis item), so they return `block` unchanged.
-func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value, signed bool) (value.Value, *ir.Block, error) {
+// noOverflow, when true, means the value-range analysis proved this op cannot
+// overflow (SafetyTable) — the checked `+`/`-`/`*` is replaced by the plain
+// instruction (no `with.overflow`+trap), which is identical to the checked op on
+// its no-overflow path. Division/remainder aren't elided here (that's a separate
+// slice — the divisor-nonzero / not-INT_MIN facts).
+func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value, signed, noOverflow bool) (value.Value, *ir.Block, error) {
 	switch op {
 	case ast.MathBinaryOpAdd:
+		if noOverflow {
+			return l.emitWrappingOp(block, "add", left, right)
+		}
 		return l.emitCheckedIntOp(block, "add", left, right, signed)
 	case ast.MathBinaryOpSub:
+		if noOverflow {
+			return l.emitWrappingOp(block, "sub", left, right)
+		}
 		return l.emitCheckedIntOp(block, "sub", left, right, signed)
 	case ast.MathBinaryOpMul:
+		if noOverflow {
+			return l.emitWrappingOp(block, "mul", left, right)
+		}
 		return l.emitCheckedIntOp(block, "mul", left, right, signed)
 	case ast.MathBinaryOpDiv, ast.MathBinaryOpMod, ast.MathBinaryOpRemainder:
 		return l.emitCheckedDivOp(block, op, left, right, signed)
@@ -394,7 +408,7 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 		if signed, err = l.getIntSignedness(e.Right); err == nil {
 			// The checked int op may split the block (overflow trap); keep lowering
 			// (the store) into the block it returns.
-			result, block, err = l.applyIntMathOp(block, binOp, cur, rhs, signed)
+			result, block, err = l.applyIntMathOp(block, binOp, cur, rhs, signed, l.res.RangeSafety.NoOverflow(e))
 		}
 	}
 	if err != nil {

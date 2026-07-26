@@ -90,11 +90,10 @@ func TestExec_WrappingSaturating(t *testing.T) {
 // operation that would trap under checked `+` returns a wrapped/clamped value
 // instead of exiting 101.
 func TestExec_WrappingIsNotChecked(t *testing.T) {
-	trapping := `let main = () -> u8 => {
-	  let x: u8 = 200
-	  let y: u8 = 100
-	  x + y
-	}`
+	// Operands via a parameter so the overflow is opaque to lyra-E020 (this checks
+	// the runtime trap, not the compile-time overflow error).
+	trapping := `let add = (x: u8, y: u8) -> u8 => x + y
+	let main = () -> u8 => add(200, 100)`
 	if got := buildAndRun(t, trapping); got != overflowTrapExitCode {
 		t.Fatalf("sanity: plain + should trap, got %d", got)
 	}
