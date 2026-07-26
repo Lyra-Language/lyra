@@ -7,6 +7,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
+	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
@@ -31,7 +32,8 @@ func checkRanges(t *testing.T, source string) []diag.Diagnostic {
 		// the recorded types unreliable.
 		t.Fatalf("unexpected type errors: %v", errs)
 	}
-	return checker.CheckIntegerRanges(program, tt)
+	diags, _ := checker.CheckIntegerRanges(program, tt)
+	return diags
 }
 
 func onlyDiag(t *testing.T, source, wantCode string, wantSubstr ...string) {
@@ -213,4 +215,55 @@ func TestRange_NoComparison_LoopCondition(t *testing.T) {
 		}
 		let main = () -> u8 => 0
 	`)
+}
+
+// ── safety table (trap elision) ──────────────────────────────────────────────
+
+// firstAddIsSafe runs the pass ONCE and reports whether the first `+` expression
+// in the (single) collected program is in the safety table. Both the table and
+// the node come from the same AST, so the pointer-keyed lookup matches.
+func firstAddIsSafe(t *testing.T, source string) bool {
+	t.Helper()
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	program, symTable, scopeTable, _ := collector.NewCollector([]byte(source)).Collect(tree.RootNode())
+	tt := typetable.New()
+	typechecker.New(symTable, scopeTable, tt).Check(program)
+	_, safety := checker.CheckIntegerRanges(program, tt)
+
+	var add ast.Expression
+	for _, s := range program.Statements {
+		ast.WalkStmt(s.(ast.Statement), func(ast.Statement) bool { return true }, func(e ast.Expression) bool {
+			if bin, ok := e.(*ast.MathBinaryOpExpr); ok && bin.Operator == ast.MathBinaryOpAdd && add == nil {
+				add = bin
+			}
+			return true
+		})
+	}
+	if add == nil {
+		t.Fatal("no `+` expression found")
+	}
+	return safety.NoOverflow(add)
+}
+
+func TestRange_Safety_ProvableAddIsMarked(t *testing.T) {
+	src := `let f = () -> u8 => {
+		let a: u8 = 5
+		let b: u8 = 3
+		a + b
+	}
+	let main = () -> u8 => 0`
+	if !firstAddIsSafe(t, src) {
+		t.Error("a provably-non-overflowing add should be in the safety table")
+	}
+}
+
+func TestRange_Safety_UnprovableAddNotMarked(t *testing.T) {
+	src := `let f = (a: u8, b: u8) -> u8 => a + b
+	let main = () -> u8 => 0`
+	if firstAddIsSafe(t, src) {
+		t.Error("a possibly-overflowing add must NOT be in the safety table")
+	}
 }

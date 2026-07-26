@@ -102,11 +102,11 @@ func TestEmit_CheckedArithmeticIR(t *testing.T) {
 		return out
 	}
 
-	add := emit(`let main = () -> u8 => {
-	  let x: u8 = 1
-	  let y: u8 = 2
-	  x + y
-	}`)
+	// Operands via parameters (full-range → the value-range analysis can't prove
+	// no-overflow), so the checked-op IR shape is actually emitted rather than
+	// elided as it would be for provable constants (see TestEmit_OverflowElision).
+	add := emit(`let add = (x: u8, y: u8) -> u8 => x + y
+	let main = () -> u8 => add(1, 2)`)
 	for _, needle := range []string{
 		"llvm.uadd.with.overflow.i8",
 		"call void @lyra_panic_overflow()",
@@ -121,12 +121,9 @@ func TestEmit_CheckedArithmeticIR(t *testing.T) {
 		t.Errorf("want exactly one trap function definition, got %d", n)
 	}
 
-	// Signedness picks the s/u intrinsic.
-	sadd := emit(`let main = () -> u8 => {
-	  let x: i16 = 1
-	  let y: i16 = 2
-	  u8(x + y)
-	}`)
+	// Signedness picks the s/u intrinsic (operands via parameters, as above).
+	sadd := emit(`let f = (x: i16, y: i16) -> u8 => u8(x + y)
+	let main = () -> u8 => f(1, 2)`)
 	if !strings.Contains(sadd, "llvm.sadd.with.overflow.i16") {
 		t.Error("signed add should use llvm.sadd.with.overflow")
 	}

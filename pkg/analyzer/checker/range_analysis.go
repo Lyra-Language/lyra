@@ -47,17 +47,41 @@ import (
 //
 // The pass runs after typechecking (it needs the TypeTable for each expression's
 // width and signedness).
-func CheckIntegerRanges(program *ast.Program, tt *typetable.TypeTable) []diag.Diagnostic {
-	c := &rangeChecker{tt: tt}
+func CheckIntegerRanges(program *ast.Program, tt *typetable.TypeTable) ([]diag.Diagnostic, *SafetyTable) {
+	c := &rangeChecker{tt: tt, safe: &SafetyTable{ops: map[ast.Expression]bool{}}}
 	for _, stmt := range program.Statements {
 		c.topLevel(stmt)
 	}
-	return c.diagnostics
+	return c.diagnostics, c.safe
+}
+
+// SafetyTable records the integer arithmetic operations (`+`/`-`/`*`, and their
+// `+=`-style compound forms) that the range analysis proved cannot overflow their
+// type on any path — the operand ranges keep the result within the type. The
+// backend consults it to **elide** the overflow check for those ops (emit the
+// plain instruction, no `with.overflow`+trap). It's keyed by the AST expression
+// node, which is the same object the backend lowers (both passes walk the one
+// *ast.Program), so the lookup is a pointer match. Membership is conservative:
+// only a *proven*-safe op is present; anything uncertain is absent and keeps its
+// runtime trap, so a wrong entry — the only thing that could turn a real overflow
+// into a silent miscompile — never occurs.
+type SafetyTable struct {
+	ops map[ast.Expression]bool
+}
+
+// NoOverflow reports whether e is a proven-non-overflowing arithmetic op. A nil
+// table (no analysis ran) is safe-by-absence: reports false, so the trap stays.
+func (t *SafetyTable) NoOverflow(e ast.Expression) bool {
+	if t == nil {
+		return false
+	}
+	return t.ops[e]
 }
 
 type rangeChecker struct {
 	tt          *typetable.TypeTable
 	diagnostics []diag.Diagnostic
+	safe        *SafetyTable
 }
 
 // topLevel analyzes each function body from a fresh environment. Every function
@@ -622,6 +646,14 @@ func (c *rangeChecker) checkArith(reportAt, typeExpr ast.Expression, m interval)
 				c.typeName(typeExpr), m.lo, m.hi, tmin, tmax))
 		return interval{tmin, tmax}, true
 	}
+	if m.lo >= tmin && m.hi <= tmax {
+		// The whole (over-approximated) result range fits the type, so the op can't
+		// overflow on any path — record it so the backend can drop the trap.
+		c.safe.ops[reportAt] = true
+		return m, true
+	}
+	// A possible overflow: keep the runtime trap. Clamp downstream to the type range
+	// (a non-trapping execution stays in range).
 	return interval{maxI(m.lo, tmin), minI(m.hi, tmax)}, true
 }
 
