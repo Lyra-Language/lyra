@@ -46,6 +46,16 @@ func TestEmit_OverflowElision(t *testing.T) {
 		// Refinement proves the range: x ∈ [0,99] here, so x + 1 ∈ [1,100] ⊆ u8.
 		{"refined add", `let f = (x: u8) -> u8 => if x < 100 { x + 1 } else { 0 }
 		let main = () -> u8 => f(1)`},
+		// Loop widening tracks the counter precisely (i ∈ [0,2]), so both the body's
+		// `i + 1` and the post's `i += 1` are provably safe — the whole loop is
+		// trap-free. (Havoc'd, i would be ⊤ and neither would elide.)
+		{"loop counter arithmetic", `let main = () -> u8 => {
+		  var r: u8 = 0
+		  for var i: u8 = 0; i < 3; i += 1 {
+		    r = i + 1
+		  }
+		  r
+		}`},
 	}
 	for _, c := range elided {
 		if hasCheck(emit(c.src)) {
@@ -83,6 +93,15 @@ func TestExec_ElisionPreservesResults(t *testing.T) {
 		  a += 2
 		  a
 		}`, 42},
+		// A loop whose counter arithmetic is elided still computes correctly:
+		// r ends at i+1 for the last iteration i=2 → 3.
+		{`let main = () -> u8 => {
+		  var r: u8 = 0
+		  for var i: u8 = 0; i < 3; i += 1 {
+		    r = i + 1
+		  }
+		  r
+		}`, 3},
 	}
 	for _, c := range cases {
 		if got := buildAndRun(t, c.src); got != c.want {

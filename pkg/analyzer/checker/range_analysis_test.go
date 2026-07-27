@@ -267,3 +267,98 @@ func TestRange_Safety_UnprovableAddNotMarked(t *testing.T) {
 		t.Error("a possibly-overflowing add must NOT be in the safety table")
 	}
 }
+
+// ── precise loop widening ────────────────────────────────────────────────────
+
+// The killer case: a widening/narrowing fixpoint tracks the counter precisely
+// (both sides — init gives the lower bound, the guard the upper), so an overflow
+// definite only across the counter's real range is caught. Havoc could not: with
+// i ∈ [0,255] the sum would merely straddle.
+func TestRange_Loop_CounterOverflow(t *testing.T) {
+	onlyDiag(t, `
+		let f = () -> u8 => {
+			var last: u8 = 0
+			for var i: u8 = 200; i < 250; i += 1 {
+				last = i + 100
+			}
+			last
+		}
+		let main = () -> u8 => 0
+	`, diag.CodeIntegerOverflow, "always overflows u8", "[300, 349]")
+}
+
+// The precise upper bound makes a comparison in the body constant.
+func TestRange_Loop_CounterComparison_UpperBound(t *testing.T) {
+	onlyDiag(t, `
+		let f = () -> u8 => {
+			var r: u8 = 0
+			for var i: u8 = 0; i < 3; i += 1 {
+				if i < 10 { r = 1 } else { r = 2 }
+			}
+			r
+		}
+		let main = () -> u8 => 0
+	`, diag.CodeConstantComparison, "always true")
+}
+
+// A downward counter is tracked too (narrowing recovers the lower bound from the
+// `i > 0` guard, the init gives the upper): i ∈ [1,10], so `i > 50` is constant.
+func TestRange_Loop_DownwardCounter(t *testing.T) {
+	onlyDiag(t, `
+		let f = () -> u8 => {
+			var r: u8 = 0
+			for var i: u8 = 10; i > 0; i -= 1 {
+				if i > 50 { r = 1 } else { r = 2 }
+			}
+			r
+		}
+		let main = () -> u8 => 0
+	`, diag.CodeConstantComparison, "always false")
+}
+
+// An accumulator (no bounding guard) still widens to ⊤ — no false overflow on a
+// loop that in fact never overflows but whose bound the analysis can't know.
+func TestRange_Loop_AccumulatorNoFalsePositive(t *testing.T) {
+	noDiag(t, `
+		let f = () -> u8 => {
+			var sum: u8 = 0
+			for var i: u8 = 0; i < 3; i += 1 {
+				sum += i
+			}
+			sum
+		}
+		let main = () -> u8 => 0
+	`)
+}
+
+// A large iteration bound must not blow up analysis time — widening reaches a
+// fixpoint in a handful of steps, not a million. (A hang would fail the suite.)
+func TestRange_Loop_LargeBoundTerminates(t *testing.T) {
+	noDiag(t, `
+		let f = () -> i32 => {
+			var acc: i32 = 0
+			for var i: i32 = 0; i < 1000000; i += 1 {
+				acc = i
+			}
+			acc
+		}
+		let main = () -> u8 => 0
+	`)
+}
+
+// Nested loops analyze without crashing and stay sound (each level runs its own
+// fixpoint; the inner counter is precise inside the outer).
+func TestRange_Loop_Nested(t *testing.T) {
+	noDiag(t, `
+		let f = () -> u8 => {
+			var r: u8 = 0
+			for var i: u8 = 0; i < 3; i += 1 {
+				for var j: u8 = 0; j < 3; j += 1 {
+					r = i
+				}
+			}
+			r
+		}
+		let main = () -> u8 => 0
+	`)
+}
