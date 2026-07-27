@@ -268,6 +268,117 @@ func TestRange_Safety_UnprovableAddNotMarked(t *testing.T) {
 	}
 }
 
+// analyzeForSafety runs the front-end + range pass and returns the program (to find
+// nodes in) and the SafetyTable (both from the one AST, so pointer lookups match).
+func analyzeForSafety(t *testing.T, source string) (*ast.Program, *checker.SafetyTable) {
+	t.Helper()
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	program, symTable, scopeTable, _ := collector.NewCollector([]byte(source)).Collect(tree.RootNode())
+	tt := typetable.New()
+	typechecker.New(symTable, scopeTable, tt).Check(program)
+	_, safety := checker.CheckIntegerRanges(program, tt)
+	return program, safety
+}
+
+// firstExpr returns the first expression matching pred, in walk order.
+func firstExpr(t *testing.T, program *ast.Program, pred func(ast.Expression) bool) ast.Expression {
+	t.Helper()
+	var found ast.Expression
+	for _, s := range program.Statements {
+		ast.WalkStmt(s.(ast.Statement), func(ast.Statement) bool { return true }, func(e ast.Expression) bool {
+			if found == nil && pred(e) {
+				found = e
+			}
+			return true
+		})
+	}
+	if found == nil {
+		t.Fatal("no matching expression found")
+	}
+	return found
+}
+
+func isDivExpr(e ast.Expression) bool {
+	b, ok := e.(*ast.MathBinaryOpExpr)
+	return ok && (b.Operator == ast.MathBinaryOpDiv || b.Operator == ast.MathBinaryOpMod || b.Operator == ast.MathBinaryOpRemainder)
+}
+
+func isIndexExpr(e ast.Expression) bool { _, ok := e.(*ast.IndexExpr); return ok }
+
+func TestRange_Safety_ProvableDivIsMarked(t *testing.T) {
+	// A literal divisor is provably nonzero; an unsigned op can't be signed INT_MIN/-1.
+	program, safety := analyzeForSafety(t, `
+		let f = (a: u8) -> u8 => a / 2
+		let main = () -> u8 => 0
+	`)
+	div := firstExpr(t, program, isDivExpr)
+	if !safety.NoDivZero(div) {
+		t.Error("division by a nonzero constant should be marked NoDivZero")
+	}
+	if !safety.NoDivOverflow(div) {
+		t.Error("unsigned division can't overflow — should be marked NoDivOverflow")
+	}
+}
+
+func TestRange_Safety_UnprovableDivNotMarked(t *testing.T) {
+	// A parameter divisor spans the whole type (includes 0), and the signed dividend
+	// spans INT_MIN with a possibly-(-1) divisor: neither fact is provable.
+	program, safety := analyzeForSafety(t, `
+		let f = (a: i32, b: i32) -> i32 => a / b
+		let main = () -> u8 => 0
+	`)
+	div := firstExpr(t, program, isDivExpr)
+	if safety.NoDivZero(div) {
+		t.Error("division by a full-range parameter must NOT be marked NoDivZero")
+	}
+	if safety.NoDivOverflow(div) {
+		t.Error("a full-range signed division must NOT be marked NoDivOverflow")
+	}
+}
+
+func TestRange_Safety_ProvableIndexIsMarked(t *testing.T) {
+	// Branch refinement proves i ∈ [0,9] in the then-branch, within a size-10 array.
+	program, safety := analyzeForSafety(t, `
+		let get = (xs: [10]u8, i: u8) -> u8 => if i < 10 { xs[i] } else { 0 }
+		let main = () -> u8 => 0
+	`)
+	idx := firstExpr(t, program, isIndexExpr)
+	if !safety.IndexInBounds(idx) {
+		t.Error("a refined index i ∈ [0,9] into a size-10 array should be marked in-bounds")
+	}
+}
+
+func TestRange_Safety_ProvableLoopIndexIsMarked(t *testing.T) {
+	// The loop-widening fixpoint tracks the counter i ∈ [0,2], within a size-3 array.
+	program, safety := analyzeForSafety(t, `let main = () -> u8 => {
+		let xs: [3]u8 = [10, 20, 30]
+		var sum: u8 = 0
+		for var i = 0; i < 3; i += 1 {
+			sum += xs[i]
+		}
+		sum
+	}`)
+	idx := firstExpr(t, program, isIndexExpr)
+	if !safety.IndexInBounds(idx) {
+		t.Error("a loop counter i ∈ [0,2] indexing a size-3 array should be marked in-bounds")
+	}
+}
+
+func TestRange_Safety_UnprovableIndexNotMarked(t *testing.T) {
+	// A parameter index spans the whole u8 range (0..255), well past size 3.
+	program, safety := analyzeForSafety(t, `
+		let get = (xs: [3]u8, i: u8) -> u8 => xs[i]
+		let main = () -> u8 => 0
+	`)
+	idx := firstExpr(t, program, isIndexExpr)
+	if safety.IndexInBounds(idx) {
+		t.Error("a full-range u8 index into a size-3 array must NOT be marked in-bounds")
+	}
+}
+
 // ── precise loop widening ────────────────────────────────────────────────────
 
 // The killer case: a widening/narrowing fixpoint tracks the counter precisely

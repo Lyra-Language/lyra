@@ -120,3 +120,118 @@ func TestExec_ElisionKeepsRealTrap(t *testing.T) {
 		t.Errorf("a real (unprovable) overflow must still trap: exited %d, want %d", got, trapExitCode)
 	}
 }
+
+// Divide-by-zero elision: a provably-nonzero divisor drops the check; a full-range
+// (parameter) divisor keeps it. The module under test has exactly one division, so
+// the presence/absence of the trap string is decisive.
+func TestEmit_DivisionElision(t *testing.T) {
+	emit := func(src string) string {
+		out, err := emitSource(t, src)
+		if err != nil {
+			t.Fatalf("emit: %v", err)
+		}
+		return out
+	}
+
+	// Constant nonzero divisor → the divide-by-zero (and, being unsigned, the
+	// overflow) check are both elided → neither trap is emitted.
+	elided := emit(`let main = () -> u8 => {
+	  let a: u8 = 84
+	  a / 2
+	}`)
+	if strings.Contains(elided, "lyra_panic_divide_by_zero") {
+		t.Error("a provably-nonzero divisor should elide the divide-by-zero check")
+	}
+	if strings.Contains(elided, "lyra_panic_overflow") {
+		t.Error("an unsigned division can't overflow — no overflow check expected")
+	}
+
+	// A parameter divisor spans 0 → the divide-by-zero check stays.
+	kept := emit(`let d = (a: u8, b: u8) -> u8 => a / b
+	let main = () -> u8 => d(84, 2)`)
+	if !strings.Contains(kept, "lyra_panic_divide_by_zero") {
+		t.Error("a full-range divisor must keep the divide-by-zero check")
+	}
+}
+
+// Array-bounds elision: an index the range analysis proves is within [0, size)
+// drops the bounds check; a full-range (parameter) index keeps it.
+func TestEmit_BoundsElision(t *testing.T) {
+	emit := func(src string) string {
+		out, err := emitSource(t, src)
+		if err != nil {
+			t.Fatalf("emit: %v", err)
+		}
+		return out
+	}
+
+	// The loop counter i ∈ [0,2] (widening fixpoint) indexes a size-3 array → the
+	// bounds check is elided (and no negative-index adjustment is emitted).
+	elided := emit(`let main = () -> u8 => {
+	  let xs: [3]u8 = [10, 20, 12]
+	  var sum: u8 = 0
+	  for var i: u8 = 0; i < 3; i += 1 {
+	    sum += xs[i]
+	  }
+	  sum
+	}`)
+	if strings.Contains(elided, "lyra_panic_index_out_of_bounds") {
+		t.Error("a loop counter provably in [0,size) should elide the bounds check")
+	}
+
+	// A parameter index spans the whole type → the bounds check stays.
+	kept := emit(`let get = (xs: [3]u8, i: u8) -> u8 => xs[i]
+	let main = () -> u8 => {
+	  let arr: [3]u8 = [1, 2, 3]
+	  get(arr, 0)
+	}`)
+	if !strings.Contains(kept, "lyra_panic_index_out_of_bounds") {
+		t.Error("a full-range index must keep the bounds check")
+	}
+}
+
+// Elision changes IR but never semantics — an elided div / index reads the same
+// value the checked form would.
+func TestExec_DivBoundsElisionPreservesResults(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		{`let main = () -> u8 => {
+		  let a: u8 = 84
+		  a / 2
+		}`, 42},
+		{`let main = () -> u8 => {
+		  let xs: [3]u8 = [10, 20, 12]
+		  var sum: u8 = 0
+		  for var i: u8 = 0; i < 3; i += 1 {
+		    sum += xs[i]
+		  }
+		  sum
+		}`, 42},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%q exited %d, want %d", c.src, got, c.want)
+		}
+	}
+}
+
+// Soundness: a divide-by-zero / out-of-bounds the analysis can't rule out still
+// traps at runtime — the operand comes through a parameter, so the check stays.
+func TestExec_ElisionKeepsRealDivBoundsTrap(t *testing.T) {
+	divzero := `let d = (a: u8, b: u8) -> u8 => a / b
+	let main = () -> u8 => d(84, 0)`
+	if got := buildAndRun(t, divzero); got != trapExitCode {
+		t.Errorf("a real divide-by-zero must still trap: exited %d, want %d", got, trapExitCode)
+	}
+
+	oob := `let get = (xs: [3]u8, i: u8) -> u8 => xs[i]
+	let main = () -> u8 => {
+	  let arr: [3]u8 = [1, 2, 3]
+	  get(arr, 5)
+	}`
+	if got := buildAndRun(t, oob); got != trapExitCode {
+		t.Errorf("a real out-of-bounds index must still trap: exited %d, want %d", got, trapExitCode)
+	}
+}

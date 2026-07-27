@@ -50,34 +50,70 @@ import (
 // The pass runs after typechecking (it needs the TypeTable for each expression's
 // width and signedness).
 func CheckIntegerRanges(program *ast.Program, tt *typetable.TypeTable) ([]diag.Diagnostic, *SafetyTable) {
-	c := &rangeChecker{tt: tt, safe: &SafetyTable{ops: map[ast.Expression]bool{}}}
+	c := &rangeChecker{tt: tt, safe: newSafetyTable()}
 	for _, stmt := range program.Statements {
 		c.topLevel(stmt)
 	}
 	return c.diagnostics, c.safe
 }
 
-// SafetyTable records the integer arithmetic operations (`+`/`-`/`*`, and their
-// `+=`-style compound forms) that the range analysis proved cannot overflow their
-// type on any path — the operand ranges keep the result within the type. The
-// backend consults it to **elide** the overflow check for those ops (emit the
-// plain instruction, no `with.overflow`+trap). It's keyed by the AST expression
+// SafetyTable records the integer operations the range analysis proved cannot hit
+// a particular runtime trap on any path, so the backend can **elide** that trap
+// (emit the plain instruction / a bare load). It is keyed by the AST expression
 // node, which is the same object the backend lowers (both passes walk the one
-// *ast.Program), so the lookup is a pointer match. Membership is conservative:
-// only a *proven*-safe op is present; anything uncertain is absent and keeps its
-// runtime trap, so a wrong entry — the only thing that could turn a real overflow
-// into a silent miscompile — never occurs.
+// *ast.Program), so the lookup is a pointer match. Membership is conservative in
+// every dimension: only a *proven*-safe op is present; anything uncertain is
+// absent and keeps its runtime trap, so a wrong entry — the only thing that could
+// turn a real fault into a silent miscompile — never occurs. A nil table (no
+// analysis ran) reports false for everything, so the trap stays.
+//
+// The tracked facts:
+//
+//   - noOverflow — `+`/`-`/`*` (and `+=`-style) whose operand ranges keep the
+//     result within the type (drops the `with.overflow`+trap; see checkArith).
+//   - noDivZero — `/`/`%`/`%%` (and their compound forms) whose divisor is provably
+//     ≠ 0 (drops the divide-by-zero check).
+//   - noDivOverflow — signed division that can't be INT_MIN/-1, plus every unsigned
+//     division (drops the signed-division overflow check).
+//   - inBounds — `xs[i]` whose index is provably within [0, size) (drops the array
+//     bounds check and the negative-index adjustment).
 type SafetyTable struct {
-	ops map[ast.Expression]bool
+	noOverflow    map[ast.Expression]bool
+	noDivZero     map[ast.Expression]bool
+	noDivOverflow map[ast.Expression]bool
+	inBounds      map[ast.Expression]bool
 }
 
-// NoOverflow reports whether e is a proven-non-overflowing arithmetic op. A nil
-// table (no analysis ran) is safe-by-absence: reports false, so the trap stays.
-func (t *SafetyTable) NoOverflow(e ast.Expression) bool {
-	if t == nil {
+func newSafetyTable() *SafetyTable {
+	return &SafetyTable{
+		noOverflow:    map[ast.Expression]bool{},
+		noDivZero:     map[ast.Expression]bool{},
+		noDivOverflow: map[ast.Expression]bool{},
+		inBounds:      map[ast.Expression]bool{},
+	}
+}
+
+// NoOverflow reports whether e is a proven-non-overflowing `+`/`-`/`*`. A nil table
+// (no analysis ran) is safe-by-absence: reports false, so the trap stays. Every
+// accessor below follows the same nil-safe contract.
+func (t *SafetyTable) NoOverflow(e ast.Expression) bool { return t.has(t.noOverflow, e) }
+
+// NoDivZero reports whether e is a division-family op with a provably-nonzero divisor.
+func (t *SafetyTable) NoDivZero(e ast.Expression) bool { return t.has(t.noDivZero, e) }
+
+// NoDivOverflow reports whether e is a division-family op that can't overflow (never
+// signed INT_MIN/-1, or any unsigned division).
+func (t *SafetyTable) NoDivOverflow(e ast.Expression) bool { return t.has(t.noDivOverflow, e) }
+
+// IndexInBounds reports whether e is an index whose value is provably within
+// [0, size) — so both the bounds trap and the negative-index adjustment drop.
+func (t *SafetyTable) IndexInBounds(e ast.Expression) bool { return t.has(t.inBounds, e) }
+
+func (t *SafetyTable) has(m map[ast.Expression]bool, e ast.Expression) bool {
+	if t == nil || m == nil {
 		return false
 	}
-	return t.ops[e]
+	return m[e]
 }
 
 type rangeChecker struct {
@@ -270,6 +306,15 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 		lv, lt, st1 := c.eval(st, v.Left)
 		rv, rt, st2 := c.eval(st1, v.Right)
 		st = st2
+		switch v.Operator {
+		case ast.MathBinaryOpDiv, ast.MathBinaryOpMod, ast.MathBinaryOpRemainder:
+			// Division / remainder can't grow magnitude, so there's no E020 to report
+			// (its precise result range isn't tracked — it widens to the type range).
+			// Instead prove the two runtime traps LLVM's div carries (divisor≠0, and
+			// the signed INT_MIN/-1 overflow) so the backend can elide them.
+			c.markDivSafety(e, e, lv, lt, rv, rt)
+			return c.typeIntervalIn(e, st)
+		}
 		if !lt || !rt {
 			return c.typeIntervalIn(e, st)
 		}
@@ -282,11 +327,6 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 			r, ok = subI(lv, rv)
 		case ast.MathBinaryOpMul:
 			r, ok = mulI(lv, rv)
-		default:
-			// Division / remainder can't grow magnitude and can't overflow the way
-			// +/-/* do (the one signed div overflow, INT_MIN/-1, is left to the
-			// runtime trap); its precise result range isn't tracked here.
-			return c.typeIntervalIn(e, st)
 		}
 		if !ok {
 			return c.typeIntervalIn(e, st)
@@ -300,6 +340,15 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 		lv, lt, _ := c.eval(st, &v.Left)
 		rv, rt, after := c.eval(st, v.Right)
 		st = after
+		switch v.Operator {
+		case ast.MathAssignOpDiv, ast.MathAssignOpMod, ast.MathAssignOpRemainder:
+			// The compound-assign result is typed void and the target identifier isn't
+			// recorded, so v.Right (which carries the target's propagated width) supplies
+			// the operation's integer type. The new value of x isn't tracked → ⊤.
+			c.markDivSafety(e, v.Right, lv, lt, rv, rt)
+			delete(st.vars, v.Left.Name)
+			return interval{}, false, st
+		}
 		if lt && rt {
 			var r interval
 			var ok bool
@@ -354,6 +403,9 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 
 	case *ast.ForInLoopExpr:
 		return interval{}, false, c.evalForIn(st, v)
+
+	case *ast.IndexExpr:
+		return c.evalIndex(st, v)
 
 	case *ast.LambdaExpr:
 		c.analyzeLambda(v) // nested lambda: its own scope, outer state doesn't flow in
@@ -774,13 +826,82 @@ func (c *rangeChecker) checkArith(reportAt, typeExpr ast.Expression, m interval)
 		// The whole (over-approximated) result range fits the type, so the op can't
 		// overflow on any path — record it so the backend can drop the trap.
 		if !c.silent {
-			c.safe.ops[reportAt] = true
+			c.safe.noOverflow[reportAt] = true
 		}
 		return m, true
 	}
 	// A possible overflow: keep the runtime trap. Clamp downstream to the type range
 	// (a non-trapping execution stays in range).
 	return interval{maxI(m.lo, tmin), minI(m.hi, tmax)}, true
+}
+
+// ── divide / bounds elision (the checkArith analogue for the other traps) ─────
+
+// markDivSafety records whether the two runtime traps a division-family op (`/`,
+// `%`, `%%`) carries can be elided by the backend, from the operand ranges:
+//
+//   - divisor ≠ 0  → the divide-by-zero check is unnecessary (noDivZero);
+//   - not INT_MIN/-1 → the one signed division that overflows can't happen, so its
+//     check is unnecessary (noDivOverflow). Provable when the dividend is never the
+//     type minimum OR the divisor is never -1; unsigned division never overflows.
+//
+// typeExpr supplies the operation's integer type (its INT_MIN): the op node itself
+// for a binary `/`, or the RHS for a compound `/=` (whose void result type isn't
+// the integer width). Nothing is marked while silent (a loop's fixpoint) or when
+// the relevant operand isn't a tracked integer — absence keeps the runtime trap,
+// so an imprecise analysis is always safe.
+func (c *rangeChecker) markDivSafety(e, typeExpr ast.Expression, dividend interval, dividendTracked bool, divisor interval, divisorTracked bool) {
+	if c.silent {
+		return
+	}
+	if divisorTracked && (divisor.lo > 0 || divisor.hi < 0) {
+		c.safe.noDivZero[e] = true
+	}
+	tmin, _, ok := c.intBoundsOf(typeExpr)
+	if !ok {
+		return
+	}
+	if tmin >= 0 { // unsigned type: division never overflows
+		c.safe.noDivOverflow[e] = true
+		return
+	}
+	dividendNeverMin := dividendTracked && dividend.lo > tmin
+	divisorNeverNegOne := divisorTracked && (divisor.lo > -1 || divisor.hi < -1)
+	if dividendNeverMin || divisorNeverNegOne {
+		c.safe.noDivOverflow[e] = true
+	}
+}
+
+// evalIndex analyzes an array index `xs[i]` and records whether the backend can
+// elide its bounds check: an index provably within [0, size) is in range (and
+// non-negative, so the from-the-end adjustment is unnecessary too). A negative-
+// but-valid index ([-size,-1]) is left to the runtime check — only the common
+// non-negative case is elided. Nothing is marked while silent or when the index
+// isn't a tracked integer; absence keeps the runtime trap, so an imprecise
+// analysis is always safe. The value of `xs[i]` isn't tracked (⊤ / its element
+// type range), like any other read.
+func (c *rangeChecker) evalIndex(st rangeEnv, v *ast.IndexExpr) (interval, bool, rangeEnv) {
+	_, _, st = c.eval(st, v.Object) // an array, not an int — threads state + diagnostics
+	idx, idxTracked, st2 := c.eval(st, v.Index)
+	st = st2
+	if idxTracked && !c.silent {
+		if size, ok := c.arraySize(v.Object); ok && idx.lo >= 0 && idx.hi < size {
+			c.safe.inBounds[v] = true
+		}
+	}
+	return c.typeIntervalIn(v, st)
+}
+
+// arraySize returns the element count of obj's type when it's a fixed-size array.
+func (c *rangeChecker) arraySize(obj ast.Expression) (int64, bool) {
+	t, ok := c.tt.Get(obj)
+	if !ok {
+		return 0, false
+	}
+	if at, ok := t.(types.StaticArrayType); ok {
+		return int64(at.Size), true
+	}
+	return 0, false
 }
 
 // ── type lookups ─────────────────────────────────────────────────────────────

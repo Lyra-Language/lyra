@@ -228,7 +228,7 @@ func (l *lowerer) lowerMathBinaryOpExpr(block *ir.Block, e *ast.MathBinaryOpExpr
 	if err != nil {
 		return nil, nil, err
 	}
-	return l.applyIntMathOp(block, e.Operator, left, right, signed, l.res.RangeSafety.NoOverflow(e))
+	return l.applyIntMathOp(block, e.Operator, left, right, signed, e)
 }
 
 // applyFloatMathOp emits a binary floating-point arithmetic op on two
@@ -283,33 +283,34 @@ func (l *lowerer) lowerFlooredFRem(block *ir.Block, left, right value.Value) val
 // `llvm.{s,u}{add,sub,mul}.with.overflow` intrinsic and traps on overflow
 // (trap.go). Because the check splits the block, this returns the block control
 // ends up in — a plain op returns the same block, a checked op returns the
-// fall-through (no-overflow) block. Division/remainder are not checked here (div
-// overflow `INT_MIN / -1` and div-by-zero are a separate slice — see todo #2's
-// range-analysis item), so they return `block` unchanged.
-// noOverflow, when true, means the value-range analysis proved this op cannot
-// overflow (SafetyTable) — the checked `+`/`-`/`*` is replaced by the plain
-// instruction (no `with.overflow`+trap), which is identical to the checked op on
-// its no-overflow path. Division/remainder aren't elided here (that's a separate
-// slice — the divisor-nonzero / not-INT_MIN facts).
-func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value, signed, noOverflow bool) (value.Value, *ir.Block, error) {
+// fall-through (no-overflow) block.
+//
+// e is the arithmetic expression node, used to consult the value-range analysis's
+// SafetyTable (res.RangeSafety): a proven-safe op has its runtime check **elided**
+// — `+`/`-`/`*` whose result fits the type become the plain instruction (no
+// `with.overflow`+trap, via emitWrappingOp), and a `/`/`%`/`%%` with a proven-
+// nonzero divisor / no INT_MIN-÷-1 drops the corresponding trap (emitCheckedDivOp).
+// An absent entry (or a nil table) keeps every check, so elision only ever removes
+// a provably-dead trap.
+func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value, signed bool, e ast.Expression) (value.Value, *ir.Block, error) {
 	switch op {
 	case ast.MathBinaryOpAdd:
-		if noOverflow {
+		if l.res.RangeSafety.NoOverflow(e) {
 			return l.emitWrappingOp(block, "add", left, right)
 		}
 		return l.emitCheckedIntOp(block, "add", left, right, signed)
 	case ast.MathBinaryOpSub:
-		if noOverflow {
+		if l.res.RangeSafety.NoOverflow(e) {
 			return l.emitWrappingOp(block, "sub", left, right)
 		}
 		return l.emitCheckedIntOp(block, "sub", left, right, signed)
 	case ast.MathBinaryOpMul:
-		if noOverflow {
+		if l.res.RangeSafety.NoOverflow(e) {
 			return l.emitWrappingOp(block, "mul", left, right)
 		}
 		return l.emitCheckedIntOp(block, "mul", left, right, signed)
 	case ast.MathBinaryOpDiv, ast.MathBinaryOpMod, ast.MathBinaryOpRemainder:
-		return l.emitCheckedDivOp(block, op, left, right, signed)
+		return l.emitCheckedDivOp(block, op, left, right, signed, e)
 	default:
 		return nil, nil, fmt.Errorf("llvm: math binary op lowering not implemented for %v", op)
 	}
@@ -326,15 +327,22 @@ func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, rig
 //
 // Unsigned division never overflows, so it gets only the zero check. Each check
 // splits the block, so this returns the continuation block the actual op runs in.
-func (l *lowerer) emitCheckedDivOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value, signed bool) (value.Value, *ir.Block, error) {
+//
+// Either check is **elided** when the value-range analysis proved it unnecessary
+// (res.RangeSafety, keyed by e): a provably-nonzero divisor drops the zero check,
+// and a divisor/dividend that can't be -1/INT_MIN drops the signed-overflow check.
+// An absent entry keeps the check, so a real fault always still traps.
+func (l *lowerer) emitCheckedDivOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value, signed bool, e ast.Expression) (value.Value, *ir.Block, error) {
 	intTy, ok := right.Type().(*lltypes.IntType)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: checked division on a non-integer operand (%s)", right.Type())
 	}
-	isZero := block.NewICmp(enum.IPredEQ, right, constant.NewInt(intTy, 0))
-	block = l.emitTrapIf(block, isZero, l.panicDivideByZeroFunc())
+	if !l.res.RangeSafety.NoDivZero(e) {
+		isZero := block.NewICmp(enum.IPredEQ, right, constant.NewInt(intTy, 0))
+		block = l.emitTrapIf(block, isZero, l.panicDivideByZeroFunc())
+	}
 
-	if signed {
+	if signed && !l.res.RangeSafety.NoDivOverflow(e) {
 		isMin := block.NewICmp(enum.IPredEQ, left, constant.NewInt(intTy, -(1<<(intTy.BitSize-1))))
 		isNegOne := block.NewICmp(enum.IPredEQ, right, constant.NewInt(intTy, -1))
 		overflow := block.NewAnd(isMin, isNegOne)
@@ -406,9 +414,9 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 	} else {
 		var signed bool
 		if signed, err = l.getIntSignedness(e.Right); err == nil {
-			// The checked int op may split the block (overflow trap); keep lowering
-			// (the store) into the block it returns.
-			result, block, err = l.applyIntMathOp(block, binOp, cur, rhs, signed, l.res.RangeSafety.NoOverflow(e))
+			// The checked int op may split the block (overflow/divide trap); keep
+			// lowering (the store) into the block it returns.
+			result, block, err = l.applyIntMathOp(block, binOp, cur, rhs, signed, e)
 		}
 	}
 	if err != nil {

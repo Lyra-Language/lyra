@@ -107,15 +107,21 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	idx64 := coerceIntWidth(block, idx, signed, lltypes.I64)
 	size := constant.NewInt(lltypes.I64, int64(arrType.Size))
 
-	// A negative index counts from the end (Python-style): `i < 0` becomes
+	// The value-range analysis may have proved 0 <= i < size (res.RangeSafety): then
+	// the index is non-negative *and* in range, so both the from-the-end adjustment
+	// and the bounds trap are dead — emit the bare gep+load. Otherwise:
+	// a negative index counts from the end (Python-style): `i < 0` becomes
 	// `i + size`, so -1 is the last element and -size is the first. After this
 	// adjustment a valid index is in [0, size); an out-of-range one (i < -size, or
 	// i >= size) leaves `adjusted` negative or >= size, and the single *unsigned*
 	// `>= size` compare catches both (a negative sign-extends to a large unsigned).
-	neg := block.NewICmp(enum.IPredSLT, idx64, constant.NewInt(lltypes.I64, 0))
-	adjusted := block.NewSelect(neg, block.NewAdd(idx64, size), idx64)
-	oob := block.NewICmp(enum.IPredUGE, adjusted, size)
-	block = l.emitTrapIf(block, oob, l.panicIndexOOBFunc())
+	var adjusted value.Value = idx64
+	if !l.res.RangeSafety.IndexInBounds(e) {
+		neg := block.NewICmp(enum.IPredSLT, idx64, constant.NewInt(lltypes.I64, 0))
+		adjusted = block.NewSelect(neg, block.NewAdd(idx64, size), idx64)
+		oob := block.NewICmp(enum.IPredUGE, adjusted, size)
+		block = l.emitTrapIf(block, oob, l.panicIndexOOBFunc())
+	}
 
 	// getelementptr [N x T], [N x T]* arrPtr, i64 0, i64 adjusted  →  T*
 	elemPtr := block.NewGetElementPtr(arrayTy, arrPtr, constant.NewInt(lltypes.I64, 0), adjusted)
