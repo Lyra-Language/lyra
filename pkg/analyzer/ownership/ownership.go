@@ -678,6 +678,15 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 			a.expr(e.Fields[i].Value, true)
 		}
 
+	case *ast.ArrayLiteralExpr:
+		// The array takes ownership of managed elements — transfer, like a tuple/
+		// struct. A `shared` array's box drops its elements via the per-type drop glue
+		// (drop.go); a stack array's managed elements leak conservatively (aggregate
+		// drop on copy isn't implemented — see the package doc), never double-free.
+		for _, el := range e.Elements {
+			a.expr(el, true)
+		}
+
 	// Numeric / control forms with no managed sub-values in a string program are
 	// intentionally not recursed into: not recording anything is always safe
 	// (a missed release only leaks). String-reachable positions are all handled

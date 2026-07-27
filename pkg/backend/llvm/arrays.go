@@ -21,8 +21,11 @@ import (
 // widths against the annotation — but a residual int-width mismatch is fixed
 // rather than panicking llir).
 //
-// Only a StaticArrayType lowers here; a dynamic array `[]T` (no size) needs a
-// heap-backed representation and is deferred with a loud error.
+// A `shared`-flavored array literal (`let xs: shared [3]T = [...]`) is heap-boxed
+// like any other `shared` aggregate: the inline `[N x T]` is built first, then
+// wrapped in a ref-counted box (the value becomes the box pointer). Only a
+// StaticArrayType lowers here; a dynamic array `[]T` (no size) needs a heap-backed
+// representation and is deferred with a loud error.
 func (l *lowerer) lowerArrayLiteralExpr(block *ir.Block, e *ast.ArrayLiteralExpr) (value.Value, *ir.Block, error) {
 	recorded, ok := l.res.TypeTable.Get(e)
 	if !ok {
@@ -32,7 +35,10 @@ func (l *lowerer) lowerArrayLiteralExpr(block *ir.Block, e *ast.ArrayLiteralExpr
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: array literal lowering not implemented for %s (only fixed-size arrays)", recorded)
 	}
-	llType, err := l.lowerType(arrType)
+	// Lower the element aggregate against the by-value array type (strip any `shared`
+	// flavor, or lowerType would hand back the box pointer type instead of `[N x T]`).
+	stackArrType := types.WithAllocation(arrType, types.Stack).(types.StaticArrayType)
+	llType, err := l.lowerType(stackArrType)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -53,6 +59,12 @@ func (l *lowerer) lowerArrayLiteralExpr(block *ir.Block, e *ast.ArrayLiteralExpr
 			return nil, nil, err
 		}
 		agg = block.NewInsertValue(agg, elemVal, uint64(i))
+	}
+	// A `shared` array is heap-allocated in a ref-counted box; the value is the box
+	// pointer. Mirrors the struct/data construction path (lowerStructInstanceExpr).
+	if types.AllocationOf(recorded) == types.Shared {
+		boxed, err := l.lowerBoxShared(block, agg, stackArrType)
+		return boxed, block, err
 	}
 	return agg, block, nil
 }
@@ -80,19 +92,40 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 		return nil, nil, fmt.Errorf("llvm: indexing into %s not implemented yet (only fixed-size arrays)", objType)
 	}
 
+	isShared := types.AllocationOf(objType) == types.Shared
+
 	// A constant literal index: the typechecker rejected an out-of-range one, so
-	// read it directly off the array value with extractvalue (no bounds check, no
-	// memory). A large-unsigned literal used as an index is nonsensical — fall to
-	// the runtime path, which bounds-checks it.
+	// read it directly with no bounds check. An inline array uses extractvalue (no
+	// memory); a `shared` array is a box pointer, so gep+load through the payload. A
+	// large-unsigned literal used as an index is nonsensical — fall to the runtime
+	// path, which bounds-checks it.
 	if lit, ok := e.Index.(*ast.IntegerLiteralExpr); ok && !lit.Unsigned {
-		arr, block, err := l.lowerExpr(block, e.Object)
+		if !isShared {
+			arr, block, err := l.lowerExpr(block, e.Object)
+			if err != nil {
+				return nil, nil, err
+			}
+			return block.NewExtractValue(arr, uint64(lit.Value)), block, nil
+		}
+		payloadPtr, arrayTy, block, err := l.sharedArrayPayloadPtr(block, e.Object)
 		if err != nil {
 			return nil, nil, err
 		}
-		return block.NewExtractValue(arr, uint64(lit.Value)), block, nil
+		elemPtr := block.NewGetElementPtr(arrayTy, payloadPtr,
+			constant.NewInt(lltypes.I64, 0), constant.NewInt(lltypes.I64, lit.Value))
+		return block.NewLoad(arrayTy.ElemType, elemPtr), block, nil
 	}
 
-	arrPtr, arrayTy, block, err := l.arrayLValue(block, e.Object)
+	// Runtime (or negative-constant) index: get an addressable `[N x T]*` — an inline
+	// array through its own alloca, a `shared` array through its box's payload.
+	var arrPtr value.Value
+	var arrayTy *lltypes.ArrayType
+	var err error
+	if isShared {
+		arrPtr, arrayTy, block, err = l.sharedArrayPayloadPtr(block, e.Object)
+	} else {
+		arrPtr, arrayTy, block, err = l.arrayLValue(block, e.Object)
+	}
 	if err != nil {
 		return nil, nil, err
 	}
@@ -156,4 +189,32 @@ func (l *lowerer) arrayLValue(block *ir.Block, obj ast.Expression) (value.Value,
 	slot := entry.NewAlloca(at)
 	block.NewStore(arr, slot)
 	return slot, at, block, nil
+}
+
+// sharedArrayPayloadPtr lowers a `shared [N]T` object to its box pointer and geps
+// to the inline `[N x T]` payload (box → field 1), returning an addressable pointer
+// so an index can `getelementptr`+`load` through the box in place — the array
+// analogue of unboxSharedData (which loads a whole aggregate out for a `match`).
+// Reading through the box *borrows* it (no reference consumed), so the binding's
+// own release still fires at its last use / scope exit.
+func (l *lowerer) sharedArrayPayloadPtr(block *ir.Block, obj ast.Expression) (value.Value, *lltypes.ArrayType, *ir.Block, error) {
+	boxVal, block, err := l.lowerExpr(block, obj)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	ptr, ok := boxVal.Type().(*lltypes.PointerType)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("llvm: shared array object is not a box pointer (%s)", boxVal.Type())
+	}
+	boxTy, ok := ptr.ElemType.(*lltypes.StructType)
+	if !ok || len(boxTy.Fields) != 2 {
+		return nil, nil, nil, fmt.Errorf("llvm: shared array box is not { rc, payload } (%s)", boxVal.Type())
+	}
+	arrayTy, ok := boxTy.Fields[1].(*lltypes.ArrayType)
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("llvm: shared array payload is not an array (%s)", boxTy.Fields[1])
+	}
+	payloadPtr := block.NewGetElementPtr(boxTy, boxVal,
+		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+	return payloadPtr, arrayTy, block, nil
 }

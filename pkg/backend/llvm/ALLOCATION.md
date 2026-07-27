@@ -251,9 +251,27 @@ reuse a box you can't destructure). A **nested** `shared data` sub-pattern
 (destructuring a tail through *its* box, not just the top-level scrutinee) is not
 handled and errors loudly.
 
-Not yet done: `shared` arrays; `shared` construction in a bare argument/return
-position (the flavor isn't stamped on the node there — only annotated bindings and
-`shared` payload args get it).
+**`shared` arrays** are wired: a `shared [N]T` lowers to a `ptr` to
+`{ i64 rc, [N x T] }` (the ordinary `shared`-flavored `lowerType` path), so it
+reuses the whole shared-box runtime. `lowerArrayLiteralExpr` builds the inline
+`[N x T]` and boxes it (`lowerBoxShared`) when the recorded type is `shared` — the
+typechecker's `propagateAllocation` stamps the flavor onto the array-literal node
+(same as struct/data construction). `lowerIndexExpr` geps through the box's payload
+(`sharedArrayPayloadPtr` — box → field 1 → element), for both a constant and a
+bounds-checked runtime index, borrowing the box (no reference consumed). The
+per-type drop glue gained an array case (`emitDropArray`), so a `shared [N]String`
+frees each element when the box dies (`needsDrop`/`emitDropValue` recurse into the
+element type; N is constant, so the element drops are unrolled). The ownership pass
+treats an array literal's elements as owning positions (`ArrayLiteralExpr` case,
+mirroring tuples/structs), so a managed element transfers its reference into the box
+rather than being double-freed by both its binding and the box's drop. Verified
+under AddressSanitizer with a static allocations==releases conservation check
+(`llvm_shared_array_test.go`).
+
+Not yet done: dynamic arrays (`[]T`); `shared` construction in a bare argument/
+return position (the flavor isn't stamped on the node there — only annotated
+bindings and `shared` payload args get it); `match` on a `shared` array (the array
+type reaches the match-unbox path but the element-wise array pattern isn't lowered).
 
 ## Aggregate-field drop: the per-type drop glue (implemented)
 

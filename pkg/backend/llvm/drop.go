@@ -78,6 +78,9 @@ func (l *lowerer) needsDrop(t types.Type) bool {
 				}
 			}
 		}
+	case types.StaticArrayType:
+		// A `shared [N]T` box owns its elements; it needs a drop iff T does.
+		return l.needsDrop(v.ElementType)
 	}
 	return false
 }
@@ -189,6 +192,25 @@ func (l *lowerer) emitDropValue(block *ir.Block, v value.Value, t types.Type) (*
 		return l.emitDropFields(block, v, rt.Elements)
 	case types.DataType:
 		return l.emitDropData(block, v, rt)
+	case types.StaticArrayType:
+		return l.emitDropArray(block, v, rt)
+	}
+	return block, nil
+}
+
+// emitDropArray drops each element a `shared [N]T` box owns. N is a compile-time
+// constant, so the element drops are unrolled (extractvalue per index — no branch,
+// an array has one shape), the same straight-line shape as a struct/tuple's fields.
+func (l *lowerer) emitDropArray(block *ir.Block, v value.Value, at types.StaticArrayType) (*ir.Block, error) {
+	if !l.needsDrop(at.ElementType) {
+		return block, nil
+	}
+	var err error
+	for i := 0; i < at.Size; i++ {
+		block, err = l.emitDropValue(block, block.NewExtractValue(v, uint64(i)), at.ElementType)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return block, nil
 }

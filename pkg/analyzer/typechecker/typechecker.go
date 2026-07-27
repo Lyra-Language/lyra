@@ -1584,7 +1584,11 @@ func (tc *TypeChecker) propagateAllocation(expr ast.Expression, mod types.Alloca
 		return // only `shared` needs pushing; stack/unspecified is the inline default
 	}
 	switch e := expr.(type) {
-	case *ast.TupleLiteralExpr, *ast.DataConstructorExpr, *ast.StructInstanceExpr:
+	case *ast.TupleLiteralExpr, *ast.DataConstructorExpr, *ast.StructInstanceExpr, *ast.ArrayLiteralExpr:
+		// A construction leaf: stamp the flavor onto its recorded type so the backend
+		// heap-boxes it. An array literal is stamped here too (`let xs: shared [3]T =
+		// [...]`), and this must run *after* propagateLiteralType, which re-records the
+		// literal as a flavorless StaticArrayType — checkVarDecl orders it that way.
 		if t, ok := tc.typeTable.Get(expr); ok {
 			tc.typeTable.Set(expr, types.WithAllocation(t, mod))
 		}
