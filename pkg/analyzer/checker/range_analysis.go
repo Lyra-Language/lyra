@@ -38,10 +38,12 @@ import (
 //   - A branch refines a variable only against a comparison with a *pure* constant
 //     side (literal / negated literal / another tracked variable); anything else
 //     leaves the branch un-refined.
-//   - A loop **havocs** every variable it assigns (⊤ for the body and after) — a
-//     variable modified across 0..N iterations can hold any value in its type, so
-//     a single iteration's interval would be unsound. Precise loop widening is a
-//     later refinement.
+//   - A C-style `for` loop is analyzed with a **widening/narrowing fixpoint**
+//     (evalForLoop), so its counter is tracked precisely inside the body
+//     (`for var i: u8 = 0; i < 3; i += 1` → the body sees i ∈ [0,2]); an
+//     accumulator with no bounding guard still widens to ⊤. The *after*-loop state
+//     havocs the loop-assigned variables (sound under `break`). A `for … in` loop
+//     (no counter/guard to narrow) still havocs its variables.
 //   - A `match` gets no per-arm scrutinee refinement yet (each arm from the
 //     pre-match state), and its arm values merge by union.
 //
@@ -82,6 +84,10 @@ type rangeChecker struct {
 	tt          *typetable.TypeTable
 	diagnostics []diag.Diagnostic
 	safe        *SafetyTable
+	// silent suppresses diagnostics and safe-marking during a loop's widening /
+	// narrowing fixpoint (the body is analyzed many times to find its invariant,
+	// then once loudly with that invariant); side-effect-free otherwise-identical.
+	silent bool
 }
 
 // topLevel analyzes each function body from a fresh environment. Every function
@@ -457,10 +463,26 @@ func (c *rangeChecker) evalMatch(st rangeEnv, v *ast.MatchExpr) (interval, bool,
 	return val, true, mergeEnv(result, st)
 }
 
+// maxFixpointIters bounds the widening and narrowing phases. Widening guarantees
+// convergence in a handful of steps (each unstable bound jumps to ±∞ once), and
+// narrowing only replaces ∞ bounds with finite ones (monotone), so the cap is a
+// safety net, never the normal exit.
+const maxFixpointIters = 32
+
+// evalForLoop analyzes a C-style `for` with a **widening/narrowing fixpoint**, so
+// a loop counter is tracked precisely (`for var i: u8 = 0; i < 3; i += 1` → the
+// body sees i ∈ [0,2]) instead of havoc'd. The body is analyzed *silently* to find
+// the loop-head invariant H — a sound over-approximation of every state the loop
+// head can be in — then **once loudly** with H, so diagnostics fire once and
+// elision keys off the precise ranges. Because H over-approximates, both the
+// overflow error and elision stay sound (a wider interval only makes them fire
+// less often, never wrongly).
+//
+// The after-loop state havocs the loop-assigned variables, which is sound in the
+// presence of `break` (a mid-body break carries a state H — the loop *head*
+// invariant — need not cover); the precision that matters is inside the body.
 func (c *rangeChecker) evalForLoop(st rangeEnv, v *ast.ForLoopExpr) (interval, bool, rangeEnv) {
-	// The init runs once in the outer state (so `var i: i8 = <overflow>` is still
-	// caught), then every variable the loop assigns is havoc'd for the body and
-	// after — across 0..N iterations it can hold any value in its type.
+	// The init runs once, loudly (so `var i: i8 = <overflow>` is still caught).
 	if v.Init != nil {
 		st = c.evalStmt(st, v.Init)
 	}
@@ -473,15 +495,117 @@ func (c *rangeChecker) evalForLoop(st rangeEnv, v *ast.ForLoopExpr) (interval, b
 			assigned[n] = true
 		}
 	}
-	body := havoc(st.clone(), assigned)
-	if v.Condition != nil {
-		_, _, body = c.eval(body, *v.Condition)
+
+	// Compute the loop-head invariant H silently: widen to a fixpoint (fast), then
+	// narrow to recover the bounds the loop guard implies.
+	saved := c.silent
+	c.silent = true
+	H := st.clone()
+	for i := range maxFixpointIters { // widening
+		joined := mergeEnv(H, c.stepLoopBody(H, v))
+		next := joined
+		if i > 0 {
+			next = widenEnv(H, joined)
+		}
+		if envEqual(next, H) {
+			break
+		}
+		H = next
 	}
-	_, _, body = c.eval(body, &v.Body)
-	if v.Post != nil {
-		_, _, _ = c.eval(body, *v.Post)
+	for range maxFixpointIters { // narrowing
+		next := narrowEnv(H, mergeEnv(st, c.stepLoopBody(H, v)))
+		if envEqual(next, H) {
+			break
+		}
+		H = next
 	}
+	c.silent = saved
+
+	// One loud pass over the body with the invariant: emits diagnostics + marks
+	// provably-safe ops with the precise counter ranges.
+	c.stepLoopBody(H, v)
+
 	return interval{}, false, havoc(st, assigned)
+}
+
+// stepLoopBody runs one iteration's worth of the loop from a loop-head state:
+// evaluate the condition, refine to the guard-true branch, then the body and the
+// post step. Returns the state at the *next* loop head (before its guard).
+func (c *rangeChecker) stepLoopBody(H rangeEnv, v *ast.ForLoopExpr) rangeEnv {
+	entry := H.clone()
+	if v.Condition != nil {
+		_, _, entry = c.eval(entry, *v.Condition)
+		entry, _ = c.refine(entry, *v.Condition) // guard held to enter the body
+	}
+	_, _, exit := c.eval(entry, &v.Body)
+	if v.Post != nil {
+		_, _, exit = c.eval(exit, *v.Post)
+	}
+	return exit
+}
+
+// widenInterval accelerates convergence: a bound that grew (lower decreasing /
+// upper increasing) jumps to ±∞ (int64 min/max), so an unbounded counter reaches
+// a fixpoint in one step instead of iterating N times. A stable bound is kept.
+func widenInterval(old, next interval) interval {
+	lo, hi := old.lo, old.hi
+	if next.lo < old.lo {
+		lo = math.MinInt64
+	}
+	if next.hi > old.hi {
+		hi = math.MaxInt64
+	}
+	return interval{lo, hi}
+}
+
+// narrowInterval tightens a widened bound back down: an ∞ bound is replaced by the
+// recomputed finite value (which the loop guard now implies), a finite bound is
+// kept. It only ever replaces ∞→finite, so it's monotone and terminates.
+func narrowInterval(old, next interval) interval {
+	lo, hi := old.lo, old.hi
+	if old.lo == math.MinInt64 {
+		lo = next.lo
+	}
+	if old.hi == math.MaxInt64 {
+		hi = next.hi
+	}
+	return interval{lo, hi}
+}
+
+func widenEnv(old, joined rangeEnv) rangeEnv {
+	out := rangeEnv{vars: make(map[string]interval, len(joined.vars)), reachable: joined.reachable}
+	for name, jv := range joined.vars {
+		if ov, ok := old.vars[name]; ok {
+			out.vars[name] = widenInterval(ov, jv)
+		} else {
+			out.vars[name] = jv
+		}
+	}
+	return out
+}
+
+func narrowEnv(old, recomputed rangeEnv) rangeEnv {
+	out := rangeEnv{vars: make(map[string]interval, len(old.vars)), reachable: recomputed.reachable}
+	for name, ov := range old.vars {
+		if rv, ok := recomputed.vars[name]; ok {
+			out.vars[name] = narrowInterval(ov, rv)
+		} else {
+			out.vars[name] = ov
+		}
+	}
+	return out
+}
+
+func envEqual(a, b rangeEnv) bool {
+	if a.reachable != b.reachable || len(a.vars) != len(b.vars) {
+		return false
+	}
+	for name, av := range a.vars {
+		if bv, ok := b.vars[name]; !ok || av != bv {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *rangeChecker) evalForIn(st rangeEnv, v *ast.ForInLoopExpr) rangeEnv {
@@ -649,7 +773,9 @@ func (c *rangeChecker) checkArith(reportAt, typeExpr ast.Expression, m interval)
 	if m.lo >= tmin && m.hi <= tmax {
 		// The whole (over-approximated) result range fits the type, so the op can't
 		// overflow on any path — record it so the backend can drop the trap.
-		c.safe.ops[reportAt] = true
+		if !c.silent {
+			c.safe.ops[reportAt] = true
+		}
 		return m, true
 	}
 	// A possible overflow: keep the runtime trap. Clamp downstream to the type range
@@ -688,6 +814,9 @@ func (c *rangeChecker) typeName(e ast.Expression) string {
 }
 
 func (c *rangeChecker) report(e ast.Expression, sev diag.Severity, code, msg string) {
+	if c.silent {
+		return
+	}
 	c.diagnostics = append(c.diagnostics, diag.Diagnostic{
 		Location: e.GetLocation(),
 		Severity: sev,
