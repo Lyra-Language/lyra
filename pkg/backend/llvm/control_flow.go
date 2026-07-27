@@ -5,6 +5,9 @@ import (
 	"slices"
 
 	"github.com/llir/llvm/ir"
+	"github.com/llir/llvm/ir/constant"
+	"github.com/llir/llvm/ir/enum"
+	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -285,6 +288,109 @@ func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value
 	} else {
 		postBlock.NewBr(condBlock)
 	}
+
+	return nil, exitBlock, nil
+}
+
+// lowerForInLoop lowers `for x in <array>` as an index-counter loop over the
+// array's elements: `i = 0; while i < len { x = arr[i]; <body>; i++ }`. It handles
+// a fixed-size array (`[N]T`, stack or `shared`) and a dynamic array (`[]T`); the
+// length is the compile-time size or the box's runtime `len` accordingly.
+//
+// The loop variable is a **borrow** of the element — the array still owns it — so it
+// is bound into l.locals but *not* framed for release (reading an element consumes
+// no reference; for a managed element type the array frees it when the array itself
+// dies). Managed values *declared inside* the body are framed/released per iteration
+// by the ordinary block machinery, exactly as in the C-style loop.
+//
+// Deferred, loud errors: the two-variable index form (`for i, x in xs`), and any
+// non-array iterable (a range or a string).
+func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
+	if e.Value != "" {
+		return nil, nil, fmt.Errorf("llvm: for-in with an index variable (`for i, x in …`) not implemented yet")
+	}
+	iterType, ok := l.res.TypeTable.Get(e.Iterable)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no type recorded for for-in iterable")
+	}
+
+	// Materialize the element source and length *once*, before the loop; arrGep(i)
+	// returns a `T*` to the i-th element for a runtime index i (valid in the body
+	// because `block` dominates it).
+	var length value.Value
+	var elemLL lltypes.Type
+	var arrGep func(b *ir.Block, i value.Value) value.Value
+
+	switch it := iterType.(type) {
+	case types.StaticArrayType:
+		var arrPtr value.Value
+		var arrayTy *lltypes.ArrayType
+		var err error
+		if types.AllocationOf(iterType) == types.Shared {
+			arrPtr, arrayTy, block, err = l.sharedArrayPayloadPtr(block, e.Iterable)
+		} else {
+			arrPtr, arrayTy, block, err = l.arrayLValue(block, e.Iterable)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		length = constant.NewInt(lltypes.I64, int64(it.Size))
+		elemLL = arrayTy.ElemType
+		arrGep = func(b *ir.Block, i value.Value) value.Value {
+			return b.NewGetElementPtr(arrayTy, arrPtr, constant.NewInt(lltypes.I64, 0), i)
+		}
+	case types.DynamicArrayType:
+		elem, err := l.lowerType(it.ElementType)
+		if err != nil {
+			return nil, nil, err
+		}
+		boxTy := DynArrayBoxType(elem)
+		var box value.Value
+		box, block, err = l.lowerExpr(block, e.Iterable)
+		if err != nil {
+			return nil, nil, err
+		}
+		length = block.NewLoad(lltypes.I64, block.NewGetElementPtr(boxTy, box, i32c(0), i32c(1)))
+		elemLL = elem
+		arrGep = func(b *ir.Block, i value.Value) value.Value {
+			return b.NewGetElementPtr(boxTy, box, i32c(0), i32c(2), i)
+		}
+	default:
+		return nil, nil, fmt.Errorf("llvm: for-in over %s not implemented yet (arrays only)", iterType)
+	}
+
+	fn := block.Parent
+	entry := fn.Blocks[0]
+	iSlot := entry.NewAlloca(lltypes.I64)
+	xSlot := entry.NewAlloca(elemLL)
+	block.NewStore(constant.NewInt(lltypes.I64, 0), iSlot)
+	l.locals[e.Key] = xSlot // borrow of the element — bound, not framed
+
+	condBlock := fn.NewBlock("")
+	bodyBlock := fn.NewBlock("")
+	incBlock := fn.NewBlock("") // continue target: advance the counter
+	exitBlock := fn.NewBlock("") // break target
+	block.NewBr(condBlock)
+
+	i := condBlock.NewLoad(lltypes.I64, iSlot)
+	condBlock.NewCondBr(condBlock.NewICmp(enum.IPredSLT, i, length), bodyBlock, exitBlock)
+
+	// Bind the loop variable to arr[i], then lower the body for effect.
+	ib := bodyBlock.NewLoad(lltypes.I64, iSlot)
+	bodyBlock.NewStore(bodyBlock.NewLoad(elemLL, arrGep(bodyBlock, ib)), xSlot)
+	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames)})
+	bodyEnd, err := l.lowerForEffect(bodyBlock, &e.Body)
+	l.loops = l.loops[:len(l.loops)-1]
+	if err != nil {
+		return nil, nil, err
+	}
+	if bodyEnd.Term == nil {
+		bodyEnd.NewBr(incBlock)
+	}
+
+	ic := incBlock.NewLoad(lltypes.I64, iSlot)
+	incBlock.NewStore(incBlock.NewAdd(ic, constant.NewInt(lltypes.I64, 1)), iSlot)
+	incBlock.NewBr(condBlock)
 
 	return nil, exitBlock, nil
 }

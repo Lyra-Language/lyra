@@ -395,6 +395,8 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		return l.lowerIf(block, e)
 	case *ast.ForLoopExpr:
 		return l.lowerForLoop(block, e)
+	case *ast.ForInLoopExpr:
+		return l.lowerForInLoop(block, e)
 	case *ast.TupleLiteralExpr:
 		return l.lowerTupleLiteralExpr(block, e)
 	case *ast.TupleIndexExpr:

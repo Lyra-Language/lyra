@@ -1092,9 +1092,88 @@ func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 			"cannot iterate over %s: expected an array, string, or range", iterType)
 	}
 	tc.enterScope(expr, func() {
+		// Type the loop variable(s) from the iterable so the body resolves them —
+		// otherwise a use of the loop variable has no recorded type (the backend then
+		// can't lower it). The collector registered each as an untyped VarDeclStmt
+		// placeholder in this scope; fill in its Type.
+		if iterType != nil {
+			tc.bindForInLoopVars(expr, iterType)
+		}
 		tc.inferBlockType(&expr.Body)
 	})
 	return nil
+}
+
+// bindForInLoopVars records the loop variable types for a for-in loop. The grammar
+// exposes two names: Key (the first) and Value (the second, empty for a single
+// variable). For a single variable (`for x in xs`) the name holds the element; for
+// two (`for i, x in xs`) the first is the index (i64) and the second the element —
+// the array convention (there is no map type yet).
+func (tc *TypeChecker) bindForInLoopVars(expr *ast.ForInLoopExpr, iterType types.Type) {
+	elemType := iterableElementType(iterType)
+	if expr.Value == "" {
+		tc.setLoopVarType(expr.Key, elemType)
+		return
+	}
+	tc.setLoopVarType(expr.Key, types.PrimitiveType{Name: types.Int64})
+	tc.setLoopVarType(expr.Value, elemType)
+}
+
+// setLoopVarType fills in the recorded type of a loop-variable placeholder in the
+// current scope, so body references to it resolve.
+func (tc *TypeChecker) setLoopVarType(name string, t types.Type) {
+	if name == "" || t == nil {
+		return
+	}
+	if sym, ok := tc.scope.Lookup(name); ok {
+		if vd, ok := sym.(*ast.VarDeclStmt); ok {
+			vd.Type = t
+		}
+	}
+}
+
+// iterableElementType returns the element type a for-in loop binds per iteration:
+// an array's element, a string's `rune`, or a range's numeric type (a range over
+// two untyped literals defaults to i64, matching an untyped literal binding).
+func iterableElementType(t types.Type) types.Type {
+	switch it := t.(type) {
+	case types.StaticArrayType:
+		return it.ElementType
+	case types.DynamicArrayType:
+		return it.ElementType
+	case types.RangeType:
+		// Prefer a concrete bound. If both bounds are untyped literals, keep the loop
+		// variable *untyped* (assignable to any integer width, like an untyped literal)
+		// rather than eagerly defaulting to i64 — so `for i in 0..<3 { t = i }` binds i
+		// to whatever width t needs.
+		if it.Start != nil && !isUntypedNumeric(it.Start) {
+			return it.Start
+		}
+		if it.End != nil && !isUntypedNumeric(it.End) {
+			return it.End
+		}
+		if it.Start != nil {
+			return it.Start
+		}
+		if it.End != nil {
+			return it.End
+		}
+		return types.PrimitiveType{Name: types.Int64}
+	}
+	if types.IsString(t) {
+		return types.PrimitiveType{Name: types.Rune}
+	}
+	return nil
+}
+
+// isUntypedNumeric reports whether t is one of the internal untyped literal types,
+// so iterableElementType prefers a concrete range bound over an untyped one.
+func isUntypedNumeric(t types.Type) bool {
+	p, ok := t.(types.PrimitiveType)
+	if !ok {
+		return false
+	}
+	return p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt || p.Name == types.UntypedFloat
 }
 
 // checkForLoopExpr type-checks a C-style for loop.
