@@ -297,17 +297,23 @@ func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value
 // a fixed-size array (`[N]T`, stack or `shared`) and a dynamic array (`[]T`); the
 // length is the compile-time size or the box's runtime `len` accordingly.
 //
-// The loop variable is a **borrow** of the element — the array still owns it — so it
-// is bound into l.locals but *not* framed for release (reading an element consumes
+// The element variable is a **borrow** of the element — the array still owns it — so
+// it is bound into l.locals but *not* framed for release (reading an element consumes
 // no reference; for a managed element type the array frees it when the array itself
 // dies). Managed values *declared inside* the body are framed/released per iteration
 // by the ordinary block machinery, exactly as in the C-style loop.
 //
-// Deferred, loud errors: the two-variable index form (`for i, x in xs`), and any
-// non-array iterable (a range or a string).
+// The two-variable form `for i, x in xs` binds the loop counter as the index `i`
+// (i64) in addition to the element `x`; the collector puts the first name in Key
+// (the index) and the second in Value (the element), and the single-variable form
+// leaves Value empty (Key is then the element).
+//
+// Deferred, loud error: any non-array iterable (a range or a string).
 func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
+	// Resolve the element/index variable names from the one/two-variable form.
+	elemVar, indexVar := e.Key, ""
 	if e.Value != "" {
-		return nil, nil, fmt.Errorf("llvm: for-in with an index variable (`for i, x in …`) not implemented yet")
+		indexVar, elemVar = e.Key, e.Value
 	}
 	iterType, ok := l.res.TypeTable.Get(e.Iterable)
 	if !ok {
@@ -364,7 +370,12 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 	iSlot := entry.NewAlloca(lltypes.I64)
 	xSlot := entry.NewAlloca(elemLL)
 	block.NewStore(constant.NewInt(lltypes.I64, 0), iSlot)
-	l.locals[e.Key] = xSlot // borrow of the element — bound, not framed
+	l.locals[elemVar] = xSlot // borrow of the element — bound, not framed
+	var idxSlot value.Value
+	if indexVar != "" {
+		idxSlot = entry.NewAlloca(lltypes.I64) // the index `i` (a copy of the counter)
+		l.locals[indexVar] = idxSlot
+	}
 
 	condBlock := fn.NewBlock("")
 	bodyBlock := fn.NewBlock("")
@@ -375,9 +386,13 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 	i := condBlock.NewLoad(lltypes.I64, iSlot)
 	condBlock.NewCondBr(condBlock.NewICmp(enum.IPredSLT, i, length), bodyBlock, exitBlock)
 
-	// Bind the loop variable to arr[i], then lower the body for effect.
+	// Bind the element (and, for the two-variable form, the index) to this
+	// iteration's values, then lower the body for effect.
 	ib := bodyBlock.NewLoad(lltypes.I64, iSlot)
 	bodyBlock.NewStore(bodyBlock.NewLoad(elemLL, arrGep(bodyBlock, ib)), xSlot)
+	if idxSlot != nil {
+		bodyBlock.NewStore(ib, idxSlot)
+	}
 	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames)})
 	bodyEnd, err := l.lowerForEffect(bodyBlock, &e.Body)
 	l.loops = l.loops[:len(l.loops)-1]

@@ -100,6 +100,63 @@ func TestExec_ForIn(t *testing.T) {
 	}
 }
 
+// The two-variable form `for i, x in xs` binds the index i (i64) alongside the
+// element x.
+func TestExec_ForIn_TwoVar(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			// Uses both the index and the element: sum of i*x.
+			"index times element (dynamic)",
+			`let main = () -> u8 => {
+  var acc: u8 = 0
+  let xs: []u8 = [10, 20, 30]
+  for i, x in xs {
+    acc += u8(i) * x
+  }
+  acc
+}`,
+			80, // 0*10 + 1*20 + 2*30
+		},
+		{
+			// Uses both over a fixed-size array: sum of i + x.
+			"index plus element (fixed)",
+			`let main = () -> u8 => {
+  var acc: u8 = 0
+  let xs: [3]u8 = [1, 2, 3]
+  for i, x in xs {
+    acc += u8(i) + x
+  }
+  acc
+}`,
+			9, // (0+1)+(1+2)+(2+3)
+		},
+		{
+			// The index advances 0,1,2 — the last value seen is 2.
+			"index reaches the last position",
+			`let main = () -> u8 => {
+  var last: u8 = 0
+  let xs: []u8 = [5, 6, 7]
+  for i, x in xs {
+    last = u8(i)
+  }
+  last
+}`,
+			2,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("expected exit %d, got %d", c.want, got)
+			}
+		})
+	}
+}
+
 // Iterating produces each element in order — observable via println.
 func TestExec_ForIn_PrintsEachElement(t *testing.T) {
 	src := `let main = () -> void => {
@@ -142,21 +199,13 @@ let main = () -> u8 => {
 	}
 }
 
-// A two-variable index form and a non-array iterable are deferred with loud errors.
+// A non-array for-in iterable (a range or string) is deferred with a loud error.
 func TestEmit_ForIn_Deferred(t *testing.T) {
-	for _, src := range []string{
-		`let main = () -> void => {
-  let xs: [3]u8 = [1, 2, 3]
-  for i, x in xs { println(x) }
-}
-`,
-		`let main = () -> void => {
+	src := `let main = () -> void => {
   for i in 0..<3 { println(i) }
 }
-`,
-	} {
-		if _, err := emitSource(t, src); err == nil {
-			t.Errorf("expected a loud error for a deferred for-in form:\n%s", src)
-		}
+`
+	if _, err := emitSource(t, src); err == nil {
+		t.Errorf("expected a loud error for a for-in over a range (deferred):\n%s", src)
 	}
 }
