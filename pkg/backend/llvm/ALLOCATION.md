@@ -284,10 +284,18 @@ every `[]T` is a uniform managed box (no null case); `lowerDynArrayIndex` loads 
 runtime length, bounds-checks the (negative-from-end) index against it, and
 GEP+loads the element (always checked — the value-range pass doesn't track dynamic
 lengths). By-value flow through `let`/params/returns is the ordinary pointer path.
-Verified under AddressSanitizer (construction, indexing, aliased copy rc 1→2→1→0,
-scope-exit free) with alloc+retains==releases conservation (`llvm_dynarray_test.go`).
-**Deferred, loud errors:** a *managed* element type (the box's drop glue must loop
-over `len` to release each element — errored at construction), iteration
+**Managed element types** (`[]string`, `[][]T`) are freed by a per-element-type drop
+glue (`dynArrayDropFn`) — the dynamic-length counterpart to a fixed `shared [N]T`'s
+*unrolled* `emitDropArray`: it receives the box payload (`{ i64 len, [0 x T] }`),
+loads `len`, and loops releasing each element (`emitDropValue`), routed via
+`boxDropFn`'s `DynamicArrayType` case. The elements transfer their reference into the
+box at construction (the ownership pass's `ArrayLiteralExpr` case), so the box owns
+them and the loop frees them exactly once. Verified under AddressSanitizer
+(construction, indexing, aliased copy rc 1→2→1→0, scope-exit free, `[]string` +
+`[][]i64` element drops). **Note:** the looped drop means a static release-*site*
+count no longer stands in for conservation (one call site runs `len` times), so the
+managed-element leak-side check is structural (drop glue generated + non-null
+`drop_fn`) plus ASan for double-free/UAF. **Deferred, loud errors:** iteration
 (`for x in xs`), `match` on `[]T`, `.len()`, and growth (no grow operation exists in
 the language yet).
 

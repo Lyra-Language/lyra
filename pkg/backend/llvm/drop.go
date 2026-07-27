@@ -117,7 +117,15 @@ func nullDropFn() value.Value {
 //   - anything else (including an unknown/nil type): null, the conservative answer
 //     — a missing drop leaks, which is memory-safe.
 func (l *lowerer) boxDropFn(t types.Type) (value.Value, error) {
-	if t == nil || types.IsString(t) || types.AllocationOf(t) != types.Shared {
+	if t == nil || types.IsString(t) {
+		return nullDropFn(), nil
+	}
+	// A dynamic array `[]T` owns its elements: its drop_fn loops over the runtime
+	// length releasing each (null when T owns nothing managed).
+	if dyn, ok := t.(types.DynamicArrayType); ok {
+		return l.dynArrayDropFn(dyn)
+	}
+	if types.AllocationOf(t) != types.Shared {
 		return nullDropFn(), nil
 	}
 	// Strip to Stack (an explicit flavor — WithAllocation treats Unspecified as "no

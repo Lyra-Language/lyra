@@ -9,7 +9,6 @@ import (
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
-	"github.com/Lyra-Language/lyra/pkg/analyzer/ownership"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -24,12 +23,13 @@ import (
 // storage is sized at allocation from the element count. Every `[]T` — even empty —
 // is a real box, so retain/release stay uniform (no null special case).
 //
-// This first slice covers construction from a literal, indexing (bounds-checked
-// against the runtime len, negative-from-end), and by-value flow through
-// let/params/returns. Deferred, loud errors: a *managed* element type (the box's
-// drop glue would have to loop over len to release each element — errored at
-// construction), iteration (`for x in xs`), `match` on `[]T`, `.len()`, and growth
-// (no grow operation exists in the language yet).
+// Covers construction from a literal, indexing (bounds-checked against the runtime
+// len, negative-from-end), by-value flow through let/params/returns, and — via
+// dynArrayDropFn — *managed* element types (`[]string`, `[][]T`): the box's drop
+// glue loops over the runtime len and releases each element (the elements transfer
+// their reference into the box at construction, like a tuple/struct's fields).
+// Deferred, loud errors: iteration (`for x in xs`), `match` on `[]T`, `.len()`, and
+// growth (no grow operation exists in the language yet).
 
 // i32c / i64c are small constant helpers for the many GEP indices below.
 func i32c(n int64) *constant.Int { return constant.NewInt(lltypes.I32, n) }
@@ -43,9 +43,6 @@ func (l *lowerer) lowerDynArrayConstruction(block *ir.Block, e *ast.ArrayLiteral
 	elemLyra := dynType.ElementType
 	if elemLyra == nil {
 		return nil, nil, fmt.Errorf("llvm: dynamic array literal has no element type")
-	}
-	if ownership.IsManaged(elemLyra) {
-		return nil, nil, fmt.Errorf("llvm: dynamic array of managed element type %s not implemented yet (element drop glue deferred)", elemLyra)
 	}
 	elemLL, err := l.lowerType(elemLyra)
 	if err != nil {
@@ -118,4 +115,57 @@ func (l *lowerer) lowerDynArrayIndex(block *ir.Block, e *ast.IndexExpr, dynType 
 
 	elemPtr := block.NewGetElementPtr(boxTy, box, i32c(0), i32c(2), adjusted)
 	return block.NewLoad(elemLL, elemPtr), block, nil
+}
+
+// dynArrayDropFn returns the drop_fn to pass when releasing a `[]T` box: null when
+// T owns nothing managed (the box just frees), else a generated function that loops
+// over the runtime length and releases each element. It is the dynamic-length
+// counterpart to the unrolled emitDropArray a fixed-size `shared [N]T` uses.
+//
+// The function receives the box *payload* — `box + rcHeaderSize`, i.e. the
+// `{ i64 len, [0 x T] }` past the refcount — as an i8*, per lyra_rc_release's drop_fn
+// contract; it loads len (payload field 0) and drops each element of the flexible
+// tail (field 1). Generated once per element type and cached in l.dropFns (before
+// the body, so a `[]` whose element type reaches itself terminates).
+func (l *lowerer) dynArrayDropFn(dyn types.DynamicArrayType) (value.Value, error) {
+	elemLyra := dyn.ElementType
+	if !l.needsDrop(elemLyra) {
+		return nullDropFn(), nil
+	}
+	key := dyn.String()
+	if fn, ok := l.dropFns[key]; ok {
+		return constant.NewBitCast(fn, lltypes.NewPointer(lltypes.I8)), nil
+	}
+	elemLL, err := l.lowerType(elemLyra)
+	if err != nil {
+		return nil, err
+	}
+	payloadTy := lltypes.NewStruct(lltypes.I64, lltypes.NewArray(0, elemLL)) // { len, [0 x T] }
+	fn := l.module.NewFunc(l.dropFnName(key), lltypes.Void, ir.NewParam("payload", lltypes.NewPointer(lltypes.I8)))
+	l.dropFns[key] = fn // cache before building the body
+
+	entry := fn.NewBlock("entry")
+	p := entry.NewBitCast(fn.Params[0], lltypes.NewPointer(payloadTy))
+	length := entry.NewLoad(lltypes.I64, entry.NewGetElementPtr(payloadTy, p, i32c(0), i32c(0)))
+	iSlot := entry.NewAlloca(lltypes.I64)
+	entry.NewStore(i64c(0), iSlot)
+
+	cond := fn.NewBlock("loopcond")
+	body := fn.NewBlock("loopbody")
+	exit := fn.NewBlock("exit")
+	entry.NewBr(cond)
+
+	cond.NewCondBr(cond.NewICmp(enum.IPredSLT, cond.NewLoad(lltypes.I64, iSlot), length), body, exit)
+
+	i := body.NewLoad(lltypes.I64, iSlot)
+	elem := body.NewLoad(elemLL, body.NewGetElementPtr(payloadTy, p, i32c(0), i32c(1), i))
+	end, err := l.emitDropValue(body, elem, elemLyra) // may branch (a `data` element)
+	if err != nil {
+		return nil, err
+	}
+	end.NewStore(end.NewAdd(i, i64c(1)), iSlot)
+	end.NewBr(cond)
+
+	exit.NewRet(nil)
+	return constant.NewBitCast(fn, lltypes.NewPointer(lltypes.I8)), nil
 }

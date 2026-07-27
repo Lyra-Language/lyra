@@ -122,16 +122,104 @@ func TestEmit_DynArray_IR(t *testing.T) {
 	}
 }
 
-// A managed element type is deferred with a loud error (the box's per-element drop
-// glue isn't implemented yet).
-func TestEmit_DynArray_ManagedElementDeferred(t *testing.T) {
+// A dynamic array of a *managed* element type works: elements are indexable, and
+// the box's drop glue releases each one over the runtime length.
+func TestExec_DynArray_ManagedElements(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			// []string: index a string element and compare it.
+			"index a string element",
+			`let main = () -> u8 => {
+  let xs: []string = ["ab", "cd"]
+  if xs[1] == "cd" { 7 } else { 0 }
+}`,
+			7,
+		},
+		{
+			// [][]i64: a dynamic array of dynamic arrays, indexed twice.
+			"nested dynamic arrays",
+			`let main = () -> u8 => {
+  let xs: [][]i64 = [[1, 2], [3, 4]]
+  u8(xs[0][1] + xs[1][0])
+}`,
+			5,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("expected exit %d, got %d", c.want, got)
+			}
+		})
+	}
+}
+
+// A `[]string` of *heap* strings frees each element when the box dies: the drop
+// glue loops over len releasing each. Verified under AddressSanitizer (no double
+// free / use-after-free). Unlike a fixed-size array's *unrolled* drop, the dynamic
+// drop is a loop, so a static release-site count can't stand in for conservation
+// (one call site runs len times) — instead we assert the drop glue is generated and
+// its loop body releases an element, and that the box release passes it as drop_fn.
+func TestExec_DynArray_ManagedElementsASan(t *testing.T) {
+	clang, err := exec.LookPath("clang")
+	if err != nil {
+		t.Skip("clang not found on PATH; skipping ASan test")
+	}
+	if !asanAvailable(t, clang) {
+		t.Skip("ASan runtime not available; skipping")
+	}
+	for _, src := range []string{
+		// []string with heap-string elements (transferred into the box, freed by the loop).
+		`let main = () -> u8 => {
+  let a: string = "x" ++ "y"
+  let b: string = "p" ++ "q"
+  let xs: []string = [a, b]
+  0
+}
+`,
+		// [][]i64: the outer drop glue releases each inner box.
+		`let main = () -> u8 => {
+  let xs: [][]i64 = [[1, 2], [3, 4]]
+  u8(xs[0][0])
+}
+`,
+	} {
+		if code := buildAndRunASan(t, clang, src); code != 0 && code != 1 {
+			t.Errorf("ASan run: unexpected exit %d for %q", code, src)
+		}
+	}
+}
+
+// The dynamic-array drop glue is generated for a managed element type and structured
+// as a loop that releases each element; the box's own release passes it as drop_fn
+// (a non-null bitcast), so freeing the box frees the elements. This is the leak-side
+// check the looped drop makes a static release *count* unable to express.
+func TestEmit_DynArray_ManagedElementDropGlue(t *testing.T) {
 	src := `let main = () -> u8 => {
-  let xs: []string = ["a", "b"]
+  let a: string = "x" ++ "y"
+  let xs: []string = [a]
   0
 }
 `
-	if _, err := emitSource(t, src); err == nil {
-		t.Fatal("expected a loud error for a dynamic array of a managed element type, got none")
+	ir, err := emitSource(t, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A generated drop function that loops and releases an element.
+	if !strings.Contains(ir, "@lyra_drop") {
+		t.Errorf("expected a generated element drop function:\n%s", ir)
+	}
+	if !strings.Contains(ir, "loopbody") || !strings.Contains(ir, "loopcond") {
+		t.Errorf("expected the drop glue to loop over the length:\n%s", ir)
+	}
+	// The box release must pass the drop glue (a bitcast to i8*), not a null drop_fn,
+	// so releasing the box runs the element drops.
+	if !strings.Contains(ir, "bitcast (void (i8*)* @lyra_drop") {
+		t.Errorf("expected the box release to pass the drop glue as drop_fn:\n%s", ir)
 	}
 }
 
