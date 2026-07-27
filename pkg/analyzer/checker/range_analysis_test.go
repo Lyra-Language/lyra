@@ -319,6 +319,77 @@ func TestRange_NoComparison_LoopCondition(t *testing.T) {
 	`)
 }
 
+// ── u64 tracking ─────────────────────────────────────────────────────────────
+//
+// u64's true max (2^64-1) doesn't fit int64, so its interval upper is the +∞
+// sentinel. The lower bound (0) is exact and load-bearing; every u64 diagnostic
+// keys off it (or an "entirely outside" test), never off the fake upper.
+
+// u64 >= 0 is always true — the lower bound of 0 is exact.
+func TestRange_U64_GteZero_AlwaysTrue(t *testing.T) {
+	onlyDiag(t, `
+		let f = (x: u64) -> u64 => if x >= 0 { 1 } else { 0 }
+		let main = () -> u8 => 0
+	`, diag.CodeConstantComparison, "always true")
+}
+
+// u64 < 0 is always false.
+func TestRange_U64_LtZero_AlwaysFalse(t *testing.T) {
+	onlyDiag(t, `
+		let f = (x: u64) -> u64 => if x < 0 { 1 } else { 0 }
+		let main = () -> u8 => 0
+	`, diag.CodeConstantComparison, "always false")
+}
+
+// A u64 index refined past the end is a definite out-of-bounds (E022), shown with
+// the +∞ upper rather than the misleading sentinel value.
+func TestRange_U64_RefinedIndex_OutOfBounds(t *testing.T) {
+	onlyDiag(t, `
+		let f = (xs: [3]u64, i: u64) -> u64 => if i >= 3 { xs[i] } else { 0 }
+		let main = () -> u8 => 0
+	`, diag.CodeIndexOutOfBounds, "always out of bounds", "+∞")
+}
+
+// A u64 subtraction proven to go below zero is a definite underflow (E020) — the
+// lower bound drives it, so the +∞ upper is irrelevant.
+func TestRange_U64_Underflow(t *testing.T) {
+	onlyDiag(t, `
+		let f = (a: u64) -> u64 => if a < 5 { a - 10 } else { 0 }
+		let main = () -> u8 => 0
+	`, diag.CodeIntegerOverflow, "always overflows u64")
+}
+
+// ── u64 soundness: the +∞ upper must never manufacture a diagnostic ──────────
+
+// The crux: `x > MaxInt64` is genuinely satisfiable for a u64 (its true max is far
+// larger), so it must NOT fold to always-false — the compareConst sentinel guard.
+func TestRange_U64_GtMaxInt64_NotConstant(t *testing.T) {
+	noDiag(t, `
+		let f = (x: u64) -> u64 => if x > 9223372036854775807 { 1 } else { 0 }
+		let main = () -> u8 => 0
+	`)
+}
+
+// Two full-range u64s can overflow on add but need not — a merely *possible*
+// overflow is left to the runtime trap, never flagged.
+func TestRange_U64_FullRangeAdd_NoDiag(t *testing.T) {
+	noDiag(t, `
+		let f = (a: u64, b: u64) -> u64 => a + b
+		let main = () -> u8 => 0
+	`)
+}
+
+// A u64 variable bound to 0 and used as a divisor is a definite divide-by-zero.
+func TestRange_U64_DivByZero(t *testing.T) {
+	onlyDiag(t, `
+		let f = (a: u64) -> u64 => {
+			let b: u64 = 0
+			a / b
+		}
+		let main = () -> u8 => 0
+	`, diag.CodeDivideByZero, "b is always 0")
+}
+
 // ── safety table (trap elision) ──────────────────────────────────────────────
 
 // firstAddIsSafe runs the pass ONCE and reports whether the first `+` expression

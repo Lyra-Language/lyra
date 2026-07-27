@@ -235,3 +235,27 @@ func TestExec_ElisionKeepsRealDivBoundsTrap(t *testing.T) {
 		t.Errorf("a real out-of-bounds index must still trap: exited %d, want %d", got, trapExitCode)
 	}
 }
+
+// u64 tracking soundness: the range analysis models a u64's upper bound as +∞ (its
+// true max doesn't fit int64). These behavioral tests guard that the fake upper
+// never causes a wrong elision — a real u64 overflow still traps, and a provably-
+// safe u64 op that IS elided still computes the right value.
+func TestExec_U64_ElisionSoundness(t *testing.T) {
+	// A full-range u64 subtraction can underflow; passed 5 - 10 it must still trap
+	// (the params are opaque, so the analysis can't — and must not — elide the check).
+	underflow := `let sub = (a: u64, b: u64) -> u64 => a - b
+	let main = () -> u8 => u8(sub(5, 10))`
+	if got := buildAndRun(t, underflow); got != trapExitCode {
+		t.Errorf("a real u64 underflow must still trap: exited %d, want %d", got, trapExitCode)
+	}
+
+	// A u64 subtraction proven safe (a >= b) is elided and computes the same value.
+	safe := `let main = () -> u8 => {
+	  let a: u64 = 100
+	  let b: u64 = 58
+	  u8(a - b)
+	}`
+	if got := buildAndRun(t, safe); got != 42 {
+		t.Errorf("a provably-safe u64 subtraction should compute 42, got %d", got)
+	}
+}

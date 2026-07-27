@@ -46,7 +46,11 @@ import (
 //   - A variable absent from the environment is ⊤ (its type's full range).
 //   - Interval arithmetic that would overflow int64 falls back to ⊤ (so the
 //     narrow types i8..u32 — where the math fits int64 — are precise, while i64
-//     arithmetic is mostly ⊤). u64 is never tracked (2^64-1 doesn't fit int64).
+//     arithmetic is mostly ⊤). u64 is tracked with a +∞ upper sentinel (its true
+//     max 2^64-1 doesn't fit int64): the exact lower bound of 0 is load-bearing
+//     (`x < 0` is always false, a refined `x >= size` index is a definite OOB),
+//     while the +∞ upper only ever causes conservative untracking — see intBounds
+//     and compareConst's sentinel guards.
 //   - A branch refines a variable only against a comparison with a *pure* constant
 //     side (literal / negated literal / another tracked variable); anything else
 //     leaves the branch un-refined.
@@ -831,8 +835,8 @@ func (c *rangeChecker) checkArith(reportAt, typeExpr ast.Expression, m interval)
 	}
 	if m.lo > tmax || m.hi < tmin { // the whole result range is outside the type
 		c.report(reportAt, diag.SeverityError, diag.CodeIntegerOverflow,
-			fmt.Sprintf("this operation always overflows %s: its result is always in [%d, %d], outside the valid range [%d, %d]",
-				c.typeName(typeExpr), m.lo, m.hi, tmin, tmax))
+			fmt.Sprintf("this operation always overflows %s: its result is always in [%s, %s], outside the valid range [%s, %s]",
+				c.typeName(typeExpr), fmtBound(m.lo), fmtBound(m.hi), fmtBound(tmin), fmtBound(tmax)))
 		return interval{tmin, tmax}, true
 	}
 	if m.lo >= tmin && m.hi <= tmax {
@@ -931,8 +935,8 @@ func (c *rangeChecker) evalIndex(st rangeEnv, v *ast.IndexExpr) (interval, bool,
 				c.safe.inBounds[v] = true
 			case idx.lo < idx.hi && (idx.lo >= size || idx.hi < -size):
 				c.report(v, diag.SeverityError, diag.CodeIndexOutOfBounds,
-					fmt.Sprintf("this index is always out of bounds: it is always in [%d, %d], outside the valid range [-%d, %d) for a size-%d array",
-						idx.lo, idx.hi, size, size, size))
+					fmt.Sprintf("this index is always out of bounds: it is always in [%s, %s], outside the valid range [-%d, %d) for a size-%d array",
+						fmtBound(idx.lo), fmtBound(idx.hi), size, size, size))
 			}
 		}
 	}
@@ -1049,55 +1053,81 @@ func involvesVariable(a, b ast.Expression) bool {
 // compareConst reports whether `a op b` is constant over the intervals, and its
 // value. The always-true / always-false conditions per operator.
 func compareConst(op ast.BooleanBinaryOp, a, b interval) (result, constant bool) {
+	// A fold must not treat a ±∞ sentinel bound as a finite value: a u64's upper is
+	// +∞ (its true max is unrepresentable), so e.g. `x > MaxInt64` is satisfiable and
+	// must NOT fold to always-false. Each conclusion is therefore guarded so it fires
+	// only when the bounds it treats as finite really are finite. `upperFin(iv)` =
+	// "iv's upper is a real bound (not +∞)", `lowerFin(iv)` = "iv's lower is real (not
+	// -∞)". These change nothing for i8..u32 (their bounds are never the sentinels);
+	// they only suppress folds keyed off a u64's +∞ upper or an i64 extreme.
+	upperFin := func(iv interval) bool { return iv.hi != posInf }
+	lowerFin := func(iv interval) bool { return iv.lo != negInf }
 	switch op {
-	case ast.BooleanBinaryOpLT:
-		if a.hi < b.lo {
+	case ast.BooleanBinaryOpLT: // a < b
+		if upperFin(a) && lowerFin(b) && a.hi < b.lo {
 			return true, true
 		}
-		if a.lo >= b.hi {
+		if lowerFin(a) && upperFin(b) && a.lo >= b.hi {
 			return false, true
 		}
 	case ast.BooleanBinaryOpLTE:
-		if a.hi <= b.lo {
+		if upperFin(a) && lowerFin(b) && a.hi <= b.lo {
 			return true, true
 		}
-		if a.lo > b.hi {
+		if lowerFin(a) && upperFin(b) && a.lo > b.hi {
 			return false, true
 		}
-	case ast.BooleanBinaryOpGT:
-		if a.lo > b.hi {
+	case ast.BooleanBinaryOpGT: // a > b
+		if lowerFin(a) && upperFin(b) && a.lo > b.hi {
 			return true, true
 		}
-		if a.hi <= b.lo {
+		if upperFin(a) && lowerFin(b) && a.hi <= b.lo {
 			return false, true
 		}
 	case ast.BooleanBinaryOpGTE:
-		if a.lo >= b.hi {
+		if lowerFin(a) && upperFin(b) && a.lo >= b.hi {
 			return true, true
 		}
-		if a.hi < b.lo {
+		if upperFin(a) && lowerFin(b) && a.hi < b.lo {
 			return false, true
 		}
 	case ast.BooleanBinaryOpEq:
-		if av, aok := a.single(); aok {
-			if bv, bok := b.single(); bok && av == bv {
+		if av, ok := finiteSingle(a); ok {
+			if bv, bok := finiteSingle(b); bok && av == bv {
 				return true, true
 			}
 		}
-		if a.hi < b.lo || b.hi < a.lo {
+		if disjoint(a, b) {
 			return false, true
 		}
 	case ast.BooleanBinaryOpNEq:
-		if a.hi < b.lo || b.hi < a.lo {
+		if disjoint(a, b) {
 			return true, true
 		}
-		if av, aok := a.single(); aok {
-			if bv, bok := b.single(); bok && av == bv {
+		if av, ok := finiteSingle(a); ok {
+			if bv, bok := finiteSingle(b); bok && av == bv {
 				return false, true
 			}
 		}
 	}
 	return false, false
+}
+
+// finiteSingle reports iv's value when it is a single *finite* point (not a ±∞
+// sentinel, which represents an unbounded — hence not truly single — end).
+func finiteSingle(iv interval) (int64, bool) {
+	v, ok := iv.single()
+	if !ok || v == posInf || v == negInf {
+		return 0, false
+	}
+	return v, true
+}
+
+// disjoint reports whether a and b provably share no value — the two ordered gaps,
+// each guarded so a ±∞ end (which is not a finite separator) can't manufacture it.
+func disjoint(a, b interval) bool {
+	return (a.hi != posInf && b.lo != negInf && a.hi < b.lo) ||
+		(b.hi != posInf && a.lo != negInf && b.hi < a.lo)
 }
 
 // negateOp returns the operator of the negated comparison (the else-branch).
@@ -1208,8 +1238,40 @@ func mulChecked(a, b int64) (int64, bool) {
 	return p, true
 }
 
-// intBounds is the inclusive [min, max] of a concrete integer type. u64 (max
-// 2^64-1 overflows int64), untyped, and non-integer types return ok=false.
+// posInf / negInf are the interval-domain sentinels for an unbounded end (±∞).
+// They reuse the extreme int64 values, so an interval bound at ±∞ is a sound
+// over-approximation (nothing lies beyond it). Two consequences: `u64`'s upper is
+// +∞ (its true max 2^64-1 doesn't fit int64 — see intBounds), and a *real* i64
+// value of exactly MaxInt64/MinInt64 is modelled as ±∞ (a harmless conservatism —
+// it only ever *widens*). compareConst is written to never fold a comparison based
+// on treating a sentinel bound as a finite value (which would be unsound for u64,
+// where `x > MaxInt64` is genuinely satisfiable).
+const (
+	posInf int64 = math.MaxInt64
+	negInf int64 = math.MinInt64
+)
+
+// fmtBound renders an interval bound for a diagnostic, showing a ±∞ sentinel as
+// such rather than as its raw int64 value — so a u64's unbounded-above upper reads
+// as `+∞`, not the misleading `9223372036854775807`.
+func fmtBound(v int64) string {
+	switch v {
+	case posInf:
+		return "+∞"
+	case negInf:
+		return "-∞"
+	default:
+		return fmt.Sprintf("%d", v)
+	}
+}
+
+// intBounds is the inclusive [min, max] of a concrete integer type. `u64`'s true
+// max (2^64-1) overflows int64, so its upper is the +∞ sentinel: the lower bound
+// (0) is exact and load-bearing (every diagnostic/elision that fires for a u64
+// keys off it or off an "entirely outside" test, never off the fake upper), while
+// the +∞ upper only ever causes conservative untracking via the int64-overflow
+// guards in the interval arithmetic — never a wrong result. Untyped and
+// non-integer types return ok=false.
 func intBounds(name types.PrimitiveTypeName) (min, max int64, ok bool) {
 	switch name {
 	case types.Int8:
@@ -1226,6 +1288,8 @@ func intBounds(name types.PrimitiveTypeName) (min, max int64, ok bool) {
 		return 0, math.MaxUint32, true
 	case types.Int64:
 		return math.MinInt64, math.MaxInt64, true
+	case types.UInt64:
+		return 0, posInf, true // [0, +∞): true max 2^64-1 is unrepresentable
 	}
 	return 0, 0, false
 }
