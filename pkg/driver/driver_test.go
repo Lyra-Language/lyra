@@ -184,6 +184,18 @@ func TestAnalyze_ConstantOutOfBounds_NoDuplicate(t *testing.T) {
 	}
 }
 
+// TestAnalyze_RangeConstraint_Violation: a constant outside a range-constrained
+// newtype's declared range surfaces as lyra-E023 through the full pipeline.
+func TestAnalyze_RangeConstraint_Violation(t *testing.T) {
+	src := "newtype Percent = u8 where range(0..=100)\n" +
+		"let p: Percent = 150\n" +
+		"let main = () -> u8 => 0\n"
+	res := Analyze([]byte(src))
+	if !hasCode(res, diag.CodeRangeConstraintViolation) {
+		t.Fatalf("expected a range-constraint violation (%s), got: %v", diag.CodeRangeConstraintViolation, res.Diagnostics)
+	}
+}
+
 // TestAnalyze_WeakType_TypeChecks: `weak T` used to hard-error in the collector
 // ("unknown type node kind: weak_type"), making it unusable. A recursive type
 // whose back-edge is a `weak` field now analyzes cleanly through the whole

@@ -258,6 +258,9 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// Validate string literals against any pattern constraints on the declared type.
 	tc.checkPatternConstraints(decl.Name, decl.Value, resolvedDeclType)
 
+	// Validate numeric constants against any range constraints on the declared type.
+	tc.checkRangeConstraints(decl.Name, decl.Value, resolvedDeclType)
+
 	// Store the annotation type — this is the effective type the expression is used as.
 	// e.g. literal 42 annotated as i32 should be recorded as i32, not the untyped int.
 	tc.typeTable.Set(decl.Value, resolvedDeclType)
@@ -712,6 +715,8 @@ func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {
 	}
 	// Check that the literal value fits within the variable's integer type's range.
 	tc.checkIntegerLiteralRange(stmt.Name, stmt.Value, effective)
+	// Enforce any range constraint on the target's newtype.
+	tc.checkRangeConstraints(stmt.Name, stmt.Value, effective)
 	// Record the variable's width on untyped literal leaves of the RHS (`x = x + 1`
 	// where x: i8 lowers `1` as i8), matching an annotated let binding.
 	tc.propagateLiteralType(stmt.Value, effective)
@@ -776,6 +781,7 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 		return
 	}
 	tc.checkIntegerLiteralRange(stmt.Target.GetName(), stmt.Value, targetType)
+	tc.checkRangeConstraints(stmt.Target.GetName(), stmt.Value, targetType)
 }
 
 // rootIdentifier walks a member/index path back to the identifier it is rooted

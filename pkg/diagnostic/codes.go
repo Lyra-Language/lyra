@@ -117,6 +117,15 @@ const (
 	// *definite* OOB is reported; a merely *possible* one is left to the runtime trap.
 	CodeIndexOutOfBounds = "lyra-E022"
 
+	// CodeRangeConstraintViolation: a compile-time numeric constant assigned to a
+	// range-constrained newtype (`newtype Percent = u8 where range(0..=100)`) falls
+	// outside the declared range (`let p: Percent = 150`). The numeric analogue of
+	// the string PatternConstraint check; checked for a foldable constant value (int
+	// or float literal) against foldable literal bounds. A non-constant value is left
+	// to the value-range analysis / runtime (not yet wired), so this is a
+	// definite-only, compile-time check like the literal integer range check.
+	CodeRangeConstraintViolation = "lyra-E023"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"
