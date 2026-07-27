@@ -32,6 +32,8 @@ func LLVMPrimitive(name types.PrimitiveTypeName) (lltypes.Type, bool) {
 		return lltypes.I32, true
 	case types.Int64, types.UInt64, types.UntypedInt, types.UntypedSignedInt:
 		return lltypes.I64, true
+	case types.Int128, types.UInt128:
+		return lltypes.I128, true
 	case types.Float16:
 		return lltypes.Half, true
 	case types.Float32:
@@ -65,8 +67,8 @@ func StringLLVMType() *lltypes.StructType {
 // an LLVM type for other purposes).
 func IsNumericConversionTarget(name types.PrimitiveTypeName) bool {
 	switch name {
-	case types.Int8, types.Int16, types.Int32, types.Int64,
-		types.UInt8, types.UInt16, types.UInt32, types.UInt64,
+	case types.Int8, types.Int16, types.Int32, types.Int64, types.Int128,
+		types.UInt8, types.UInt16, types.UInt32, types.UInt64, types.UInt128,
 		types.Float16, types.Float32, types.Float64:
 		return true
 	default:
@@ -93,7 +95,7 @@ func IsNumericConversionTarget(name types.PrimitiveTypeName) bool {
 // check).
 func IsSignedInt(name types.PrimitiveTypeName) bool {
 	switch name {
-	case types.Int8, types.Int16, types.Int32, types.Int64,
+	case types.Int8, types.Int16, types.Int32, types.Int64, types.Int128,
 		types.UntypedInt, types.UntypedSignedInt:
 		return true
 	default:
@@ -196,6 +198,8 @@ func primitiveSizeAndAlign(name types.PrimitiveTypeName) (int, int, bool) {
 	case types.Int64, types.UInt64, types.Float64,
 		types.UntypedInt, types.UntypedSignedInt, types.UntypedFloat:
 		return 8, 8, true
+	case types.Int128, types.UInt128:
+		return 16, 16, true // i128 is 16/16 on the mainstream 64-bit ABI
 	case types.String:
 		// Fat pointer { i8*, i64 }: two pointer-sized words. See StringLLVMType.
 		return pointerSize * 2, pointerSize, true

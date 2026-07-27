@@ -205,6 +205,7 @@ type lowerer struct {
 	write       *ir.Func                       // libc write, declared lazily on first print/println
 	snprintf    *ir.Func                       // libc snprintf, declared lazily on first numeric print
 	fmtRune     *ir.Func                       // lyra_rune_to_utf8, defined lazily on first rune print
+	fmtI128     *ir.Func                       // lyra_i128_to_str, defined lazily on first i128/u128 print
 	newlineByte *ir.Global                     // interned "\n" byte, for println's trailing newline
 	cStrings    map[string]*ir.Global          // interned NUL-terminated C strings (snprintf formats, bool text)
 

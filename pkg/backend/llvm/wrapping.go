@@ -141,8 +141,6 @@ func (l *lowerer) emitSaturatingMul(block *ir.Block, left, right value.Value, si
 	aNeg := block.NewICmp(enum.IPredSLT, left, zero)
 	bNeg := block.NewICmp(enum.IPredSLT, right, zero)
 	productNeg := block.NewXor(aNeg, bNeg)
-	intMax := constant.NewInt(intTy, (1<<(intTy.BitSize-1))-1)
-	intMin := constant.NewInt(intTy, -(1 << (intTy.BitSize - 1)))
-	bound := block.NewSelect(productNeg, intMin, intMax)
+	bound := block.NewSelect(productNeg, intMinConst(intTy), intMaxConst(intTy))
 	return block.NewSelect(overflowed, bound, product), block, nil
 }

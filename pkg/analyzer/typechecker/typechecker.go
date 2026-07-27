@@ -1355,7 +1355,10 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 		// would otherwise be read as fitting a signed target. Check it against the
 		// magnitude and report that magnitude.
 		if lit, ok := call.Arguments[0].(*ast.IntegerLiteralExpr); ok && lit.Unsigned {
-			if toP.Name != types.UInt64 {
+			// A large-unsigned literal (magnitude in (int64max, u64max]) fits u64
+			// and — being non-negative and wider — u128 too. Every other integer
+			// target is out of range for it.
+			if toP.Name != types.UInt64 && toP.Name != types.UInt128 {
 				tc.addError(call.GetLocation(), SeverityError,
 					"cannot convert %d to %s: literal value is out of range", lit.UnsignedValue(), ident.Name)
 			}

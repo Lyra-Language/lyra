@@ -134,6 +134,92 @@ func (l *lowerer) runeToUTF8Func() *ir.Func {
 	return fn
 }
 
+// i128ToStrFunc lazily defines
+// `i64 @lyra_i128_to_str(i128 val, i8* out, i1 isSigned)`, which writes the
+// base-10 text of val into out (which must have room for ≥ 40 bytes: an optional
+// '-' plus up to 39 digits) and returns the byte count. There is no printf length
+// modifier for 128-bit integers, so this is the hand-written formatter the i128/
+// u128 print path needs (todo.md's i128 change set, step 5).
+//
+// The algorithm is the textbook repeated-divmod-by-10: produce the digits of the
+// magnitude least-significant first into a scratch buffer, then copy them out in
+// reverse (most-significant first) behind an optional sign. The magnitude is taken
+// as the *unsigned* bit pattern `select(isNeg, 0-val, val)`, which is correct even
+// for INT_MIN — `0 - INT_MIN` wraps to INT_MIN's bit pattern, whose unsigned value
+// is exactly 2^127, the true magnitude — so `udiv`/`urem` by 10 (128-bit division
+// via compiler-rt, linked by clang) yield the right digits without an overflowing
+// negation. Both signed (isSigned=1) and unsigned (isSigned=0) callers share it.
+func (l *lowerer) i128ToStrFunc() *ir.Func {
+	if l.fmtI128 != nil {
+		return l.fmtI128
+	}
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	val := ir.NewParam("val", lltypes.I128)
+	out := ir.NewParam("out", i8ptr)
+	isSigned := ir.NewParam("isSigned", lltypes.I1)
+	fn := l.module.NewFunc("lyra_i128_to_str", lltypes.I64, val, out, isSigned)
+
+	entry := fn.NewBlock("entry")
+	loop := fn.NewBlock("loop")
+	reverse := fn.NewBlock("reverse")
+	writeMinus := fn.NewBlock("writeMinus")
+	revloop := fn.NewBlock("revloop")
+	done := fn.NewBlock("done")
+
+	i64 := func(n int64) *constant.Int { return constant.NewInt(lltypes.I64, n) }
+	i128 := func(n int64) *constant.Int { return constant.NewInt(lltypes.I128, n) }
+
+	// Entry: allocas + sign/magnitude setup.
+	scratch := entry.NewAlloca(lltypes.NewArray(40, lltypes.I8))
+	scratchPtr := entry.NewGetElementPtr(lltypes.NewArray(40, lltypes.I8), scratch, i64(0), i64(0))
+	magSlot := entry.NewAlloca(lltypes.I128)
+	countSlot := entry.NewAlloca(lltypes.I64)
+	srcSlot := entry.NewAlloca(lltypes.I64)
+	dstSlot := entry.NewAlloca(lltypes.I64)
+
+	isNeg := entry.NewAnd(isSigned, entry.NewICmp(enum.IPredSLT, val, i128(0)))
+	mag0 := entry.NewSelect(isNeg, entry.NewSub(i128(0), val), val)
+	entry.NewStore(mag0, magSlot)
+	entry.NewStore(i64(0), countSlot)
+	entry.NewBr(loop)
+
+	// Loop: emit one decimal digit per iteration (do-while, so 0 emits "0").
+	curMag := loop.NewLoad(lltypes.I128, magSlot)
+	count := loop.NewLoad(lltypes.I64, countSlot)
+	digit := loop.NewURem(curMag, i128(10))
+	digitChar := loop.NewAdd(loop.NewTrunc(digit, lltypes.I8), constant.NewInt(lltypes.I8, '0'))
+	loop.NewStore(digitChar, loop.NewGetElementPtr(lltypes.I8, scratchPtr, count))
+	nextMag := loop.NewUDiv(curMag, i128(10))
+	loop.NewStore(nextMag, magSlot)
+	loop.NewStore(loop.NewAdd(count, i64(1)), countSlot)
+	loop.NewCondBr(loop.NewICmp(enum.IPredNE, nextMag, i128(0)), loop, reverse)
+
+	// Reverse: set up the output cursor (past a '-' if negative) and the scratch
+	// read index (most-significant digit first), then write the sign.
+	nDigits := reverse.NewLoad(lltypes.I64, countSlot)
+	reverse.NewStore(reverse.NewSelect(isNeg, i64(1), i64(0)), dstSlot)
+	reverse.NewStore(reverse.NewSub(nDigits, i64(1)), srcSlot)
+	reverse.NewCondBr(isNeg, writeMinus, revloop)
+
+	minusPtr := writeMinus.NewGetElementPtr(lltypes.I8, out, i64(0))
+	writeMinus.NewStore(constant.NewInt(lltypes.I8, '-'), minusPtr)
+	writeMinus.NewBr(revloop)
+
+	// Revloop: copy scratch[src] → out[dst], walking src down to 0.
+	src := revloop.NewLoad(lltypes.I64, srcSlot)
+	dst := revloop.NewLoad(lltypes.I64, dstSlot)
+	ch := revloop.NewLoad(lltypes.I8, revloop.NewGetElementPtr(lltypes.I8, scratchPtr, src))
+	revloop.NewStore(ch, revloop.NewGetElementPtr(lltypes.I8, out, dst))
+	revloop.NewStore(revloop.NewSub(src, i64(1)), srcSlot)
+	revloop.NewStore(revloop.NewAdd(dst, i64(1)), dstSlot)
+	revloop.NewCondBr(revloop.NewICmp(enum.IPredNE, src, i64(0)), revloop, done)
+
+	done.NewRet(done.NewLoad(lltypes.I64, dstSlot))
+
+	l.fmtI128 = fn
+	return fn
+}
+
 // formatForPrint turns a lowered value of Lyra type argType into a
 // (i8* data, i64 length) pair ready for `write(1, data, length)`:
 //   - string: the fat pointer's own { data, len } fields (no copy).
@@ -176,6 +262,19 @@ func (l *lowerer) formatForPrint(block *ir.Block, val value.Value, argType types
 		promoted := coerceFloatWidth(block, val, lltypes.Double) // varargs pass double
 		n := block.NewCall(l.snprintfFunc(), dataPtr, constant.NewInt(lltypes.I64, 32), l.cString("%g"), promoted)
 		return dataPtr, block.NewSExt(n, lltypes.I64), nil
+
+	case prim.Name == types.Int128 || prim.Name == types.UInt128:
+		// No printf length modifier reaches 128 bits, so a hand-written base-10
+		// formatter renders it (40 bytes covers an optional '-' + up to 39 digits).
+		buf := entry.NewAlloca(lltypes.NewArray(40, lltypes.I8))
+		dataPtr := block.NewGetElementPtr(lltypes.NewArray(40, lltypes.I8), buf,
+			constant.NewInt(lltypes.I64, 0), constant.NewInt(lltypes.I64, 0))
+		signedBit := int64(0)
+		if IsSignedInt(prim.Name) {
+			signedBit = 1
+		}
+		length := block.NewCall(l.i128ToStrFunc(), val, dataPtr, constant.NewInt(lltypes.I1, signedBit))
+		return dataPtr, length, nil
 
 	default: // an integer type
 		buf := entry.NewAlloca(lltypes.NewArray(24, lltypes.I8))

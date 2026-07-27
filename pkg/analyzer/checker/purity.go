@@ -1238,8 +1238,8 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 // they must not be treated as impure even though they have no lambda binding.
 func isTypeConversionCall(name string) bool {
 	switch name {
-	case "i8", "i16", "i32", "i64",
-		"u8", "u16", "u32", "u64",
+	case "i8", "i16", "i32", "i64", "i128",
+		"u8", "u16", "u32", "u64", "u128",
 		"f16", "f32", "f64":
 		return true
 	}

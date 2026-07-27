@@ -343,7 +343,7 @@ func (l *lowerer) emitCheckedDivOp(block *ir.Block, op ast.MathBinaryOp, left, r
 	}
 
 	if signed && !l.res.RangeSafety.NoDivOverflow(e) {
-		isMin := block.NewICmp(enum.IPredEQ, left, constant.NewInt(intTy, -(1<<(intTy.BitSize-1))))
+		isMin := block.NewICmp(enum.IPredEQ, left, intMinConst(intTy))
 		isNegOne := block.NewICmp(enum.IPredEQ, right, constant.NewInt(intTy, -1))
 		overflow := block.NewAnd(isMin, isNegOne)
 		block = l.emitTrapIf(block, overflow, l.panicOverflowFunc())
@@ -448,7 +448,7 @@ func (l *lowerer) lowerNegationExpr(block *ir.Block, e *ast.NegationExpr) (value
 		// *write* INT_MIN is exactly `-<2^(w-1)>` (e.g. `-9223372036854775808`),
 		// which lowers to `sub 0, INT_MIN_bits` == INT_MIN and must not trap.
 		if _, isLiteral := e.Operand.(*ast.IntegerLiteralExpr); !isLiteral {
-			isMin := block.NewICmp(enum.IPredEQ, operand, constant.NewInt(t, -(1<<(t.BitSize-1))))
+			isMin := block.NewICmp(enum.IPredEQ, operand, intMinConst(t))
 			block = l.emitTrapIf(block, isMin, l.panicOverflowFunc())
 		}
 		// LLVM IR has no dedicated integer negate; `sub 0, x` is the standard
