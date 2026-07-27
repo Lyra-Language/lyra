@@ -268,10 +268,33 @@ rather than being double-freed by both its binding and the box's drop. Verified
 under AddressSanitizer with a static allocations==releases conservation check
 (`llvm_shared_array_test.go`).
 
-Not yet done: dynamic arrays (`[]T`); `shared` construction in a bare argument/
-return position (the flavor isn't stamped on the node there — only annotated
-bindings and `shared` payload args get it); `match` on a `shared` array (the array
-type reaches the match-unbox path but the element-wise array pattern isn't lowered).
+**Dynamic arrays** (`[]T`) are a heap-boxed, ref-counted value too, but with a
+distinct shape from a `shared` value: a `[]T` is a `ptr` to
+`{ i64 rc, i64 len, [0 x T] }` (`DynArrayBoxType` — the refcount, the element count,
+then a flexible array of elements). Modelling it as a single **box pointer** (not a
+`{ data, len }` fat pointer like a string) is deliberate: the value is a pointer, so
+it reuses the shared-value managed machinery *unchanged* — `IsManaged` covers `[]T`,
+`managedBox` bitcasts the pointer, and retain/release/last-use/drop act on it exactly
+like a `shared` value (`lowerType` maps `[]T` → the box pointer before the
+`shared`-stripping, since a dynamic array is inherently heap-boxed regardless of
+flavor). `dynarray.go`: `lowerDynArrayConstruction` allocates a box sized to the
+literal's elements (`rcHeaderSize + 8 + N*stride`), stores the length and each
+element, and yields the box pointer — an empty `[]` still allocates a len-0 box, so
+every `[]T` is a uniform managed box (no null case); `lowerDynArrayIndex` loads the
+runtime length, bounds-checks the (negative-from-end) index against it, and
+GEP+loads the element (always checked — the value-range pass doesn't track dynamic
+lengths). By-value flow through `let`/params/returns is the ordinary pointer path.
+Verified under AddressSanitizer (construction, indexing, aliased copy rc 1→2→1→0,
+scope-exit free) with alloc+retains==releases conservation (`llvm_dynarray_test.go`).
+**Deferred, loud errors:** a *managed* element type (the box's drop glue must loop
+over `len` to release each element — errored at construction), iteration
+(`for x in xs`), `match` on `[]T`, `.len()`, and growth (no grow operation exists in
+the language yet).
+
+Not yet done: `shared` construction in a bare argument/return position (the flavor
+isn't stamped on the node there — only annotated bindings and `shared` payload args
+get it); `match` on a `shared` array (the array type reaches the match-unbox path
+but the element-wise array pattern isn't lowered).
 
 ## Aggregate-field drop: the per-type drop glue (implemented)
 

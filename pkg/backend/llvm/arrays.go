@@ -31,6 +31,9 @@ func (l *lowerer) lowerArrayLiteralExpr(block *ir.Block, e *ast.ArrayLiteralExpr
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for array literal")
 	}
+	if dynType, ok := recorded.(types.DynamicArrayType); ok {
+		return l.lowerDynArrayConstruction(block, e, dynType)
+	}
 	arrType, ok := recorded.(types.StaticArrayType)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: array literal lowering not implemented for %s (only fixed-size arrays)", recorded)
@@ -86,6 +89,9 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	objType, ok := l.res.TypeTable.Get(e.Object)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for index object")
+	}
+	if dynType, ok := objType.(types.DynamicArrayType); ok {
+		return l.lowerDynArrayIndex(block, e, dynType)
 	}
 	arrType, ok := objType.(types.StaticArrayType)
 	if !ok {

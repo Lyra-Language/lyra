@@ -148,7 +148,9 @@ func (t *Table) IsReuseTarget(e ast.Expression) bool {
 // ref-counted box). This is the single definition of "managed", shared by the
 // pass and the backend.
 func IsManaged(t types.Type) bool {
-	return types.IsString(t) || types.AllocationOf(t) == types.Shared
+	// A dynamic array `[]T` is always a heap-boxed, ref-counted value (dynarray.go),
+	// so it is managed regardless of flavor — like a string.
+	return types.IsString(t) || types.IsDynamicArray(t) || types.AllocationOf(t) == types.Shared
 }
 
 // Analyze walks the typed program and returns the retain/release-temp Table.

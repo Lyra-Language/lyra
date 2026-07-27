@@ -1472,14 +1472,19 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 		for _, elem := range al.Elements {
 			tc.propagateLiteralType(elem, resolved)
 		}
-		// Re-record with the concrete element type so the backend builds
-		// `[N x <resolved>]` — but ONLY against a static context. A dynamic
-		// annotation (`let dyn: []i64 = [1, 2, 3]`) must keep the DynamicArrayType
-		// checkVarDecl recorded (the value is *used* as a dynamic array); overwriting
-		// it with a static type would make `dyn` look statically sized and mask a
-		// later dynamic→static assignment error.
-		if _, static := concrete.(types.StaticArrayType); static {
+		// Re-record with the concrete element type so the backend builds the right
+		// shape. A *static* context records `[N x <resolved>]`; a *dynamic* context
+		// records a `DynamicArrayType` (kept dynamic, never rewritten to static — the
+		// value is *used* as a dynamic array, and a static rewrite would make it look
+		// statically sized and mask a later dynamic→static assignment error). The
+		// dynamic re-record matters where nothing else records the type onto the
+		// literal node — a return body (`() -> []i64 => [1,2,3]`) or an argument
+		// position — since only an annotated `let` sets it via checkVarDecl.
+		switch concrete.(type) {
+		case types.StaticArrayType:
 			tc.typeTable.Set(al, types.StaticArrayType{ElementType: resolved, Size: len(al.Elements)})
+		case types.DynamicArrayType:
+			tc.typeTable.Set(al, types.DynamicArrayType{ElementType: resolved})
 		}
 		return
 	}

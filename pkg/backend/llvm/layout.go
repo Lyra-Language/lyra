@@ -123,6 +123,21 @@ func SharedBoxType(payload lltypes.Type) *lltypes.StructType {
 	return lltypes.NewStruct(lltypes.I64, payload)
 }
 
+// dynArrayHeaderSize is the byte offset of a dynamic array box's first element:
+// the i64 refcount plus the i64 length. Elements start here (16-byte offset is
+// aligned for any element alignment ≤ 16).
+const dynArrayHeaderSize = rcHeaderSize + 8
+
+// DynArrayBoxType returns the box layout of a dynamic array `[]T`:
+// `{ i64 rc, i64 len, [0 x T] }` — the refcount, the element count, then a flexible
+// array of elements (the `[0 x T]` tail is GEP'd past its declared length; the real
+// element storage is sized at allocation from the count). A `[]T` value is a `ptr`
+// to this box, so it reuses the shared-value refcount machinery: retain/release act
+// on the pointer directly (rc is field 0, at offset 0). See dynarray.go.
+func DynArrayBoxType(elem lltypes.Type) *lltypes.StructType {
+	return lltypes.NewStruct(lltypes.I64, lltypes.I64, lltypes.NewArray(0, elem))
+}
+
 // TagType returns the smallest unsigned integer type that holds numVariants
 // distinct tags.
 func TagType(numVariants int) *lltypes.IntType {
@@ -165,6 +180,9 @@ func SizeAndAlign(t types.Type) (size, align int, ok bool) {
 	}
 	if _, ok := t.(types.WeakType); ok {
 		return pointerSize, pointerSize, true // a weak reference is a non-owning pointer
+	}
+	if _, ok := t.(types.DynamicArrayType); ok {
+		return pointerSize, pointerSize, true // a `[]T` value is a box pointer (dynarray.go)
 	}
 	switch v := t.(type) {
 	case types.PrimitiveType:

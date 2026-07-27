@@ -179,6 +179,16 @@ func (l *lowerer) lowerStructDef(t types.NamedStructType) error {
 }
 
 func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
+	// A dynamic array `[]T` is always a heap-boxed, ref-counted value regardless of
+	// any flavor (it is variable-length), so it lowers to a `ptr` to its box before
+	// the `shared`-stripping below — otherwise `shared []T` would double-box.
+	if dyn, ok := lyraType.(types.DynamicArrayType); ok {
+		elem, err := l.lowerType(dyn.ElementType)
+		if err != nil {
+			return nil, err
+		}
+		return lltypes.NewPointer(DynArrayBoxType(elem)), nil
+	}
 	// A `shared` value is a pointer to a ref-counted box `{ i64 rc, payload }`
 	// (ALLOCATION.md) — regardless of what the payload is. Strip the flavor to get
 	// the by-value payload type, lower that, and wrap it in the box pointer. This is
