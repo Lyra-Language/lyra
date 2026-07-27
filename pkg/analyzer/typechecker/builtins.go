@@ -53,6 +53,14 @@ var floatRoundingOps = map[string]bool{
 // An untyped-literal receiver is promoted to its default (e.g. `5.wrapping_add`
 // treats 5 as i64), mirroring how an unannotated literal binding is typed.
 func builtinMethodSignature(recv types.Type, name string) (*types.LambdaType, bool) {
+	// Array length: `xs.len()` on a fixed-size or dynamic array → i64 element count,
+	// no arguments. (i64, not u64, so it composes with signed index arithmetic — a
+	// negative index counts from the end.)
+	if name == "len" && types.IsArray(recv) {
+		return &types.LambdaType{
+			ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.Int64}},
+		}, true
+	}
 	recv = promoteToDefault(recv)
 	p, ok := recv.(types.PrimitiveType)
 	if !ok {

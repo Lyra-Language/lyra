@@ -117,6 +117,43 @@ func (l *lowerer) lowerDynArrayIndex(block *ir.Block, e *ast.IndexExpr, dynType 
 	return block.NewLoad(elemLL, elemPtr), block, nil
 }
 
+// lowerArrayLen lowers `xs.len()`: a fixed-size array's length is its compile-time
+// size (a constant), a dynamic array's is the runtime `len` field of its box. The
+// return type is i64 (builtins.go). Reading the length borrows the array (no
+// reference consumed), so there is no ownership action on the receiver.
+func (l *lowerer) lowerArrayLen(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 0 {
+		return nil, nil, fmt.Errorf("llvm: len() expects 0 arguments, got %d", len(call.Arguments))
+	}
+	recvT, ok := l.res.TypeTable.Get(member.Object)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no type recorded for len() receiver")
+	}
+	switch it := recvT.(type) {
+	case types.StaticArrayType:
+		// Constant length, but the receiver may still have an effect (e.g.
+		// `makeArray().len()`), so lower it for effect and discard the value.
+		_, block, err := l.lowerExpr(block, member.Object)
+		if err != nil {
+			return nil, nil, err
+		}
+		return i64c(int64(it.Size)), block, nil
+	case types.DynamicArrayType:
+		elem, err := l.lowerType(it.ElementType)
+		if err != nil {
+			return nil, nil, err
+		}
+		boxTy := DynArrayBoxType(elem)
+		box, block, err := l.lowerExpr(block, member.Object)
+		if err != nil {
+			return nil, nil, err
+		}
+		length := block.NewLoad(lltypes.I64, block.NewGetElementPtr(boxTy, box, i32c(0), i32c(1)))
+		return length, block, nil
+	}
+	return nil, nil, fmt.Errorf("llvm: len() on non-array receiver %s not implemented", recvT)
+}
+
 // dynArrayDropFn returns the drop_fn to pass when releasing a `[]T` box: null when
 // T owns nothing managed (the box just frees), else a generated function that loops
 // over the runtime length and releases each element. It is the dynamic-length

@@ -30,6 +30,9 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	if m, ok := intOverflowMethods[member.Property.Name]; ok {
 		return l.lowerIntOverflowMethod(block, call, member, m)
 	}
+	if member.Property.Name == "len" {
+		return l.lowerArrayLen(block, call, member)
+	}
 	op, ok := roundingIntrinsicOps[member.Property.Name]
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: unsupported method call %q", member.Property.Name)
