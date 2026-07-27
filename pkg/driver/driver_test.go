@@ -228,6 +228,36 @@ func TestAnalyze_RangeConstraint_LiteralSingleReport(t *testing.T) {
 	}
 }
 
+// TestAnalyze_ForInRange_OutOfBounds: a for-in over a provably-non-empty numeric
+// range bounds the loop counter, so an index past the end is a definite E022.
+func TestAnalyze_ForInRange_OutOfBounds(t *testing.T) {
+	src := "let f = (xs: [3]u8) -> u8 => {\n" +
+		"  var s: u8 = 0\n" +
+		"  for i in 5..<10 { s += xs[i] }\n" +
+		"  s\n" +
+		"}\n" +
+		"let main = () -> u8 => 0\n"
+	res := Analyze([]byte(src))
+	if !hasCode(res, diag.CodeIndexOutOfBounds) {
+		t.Fatalf("expected a for-in out-of-bounds (%s), got: %v", diag.CodeIndexOutOfBounds, res.Diagnostics)
+	}
+}
+
+// TestAnalyze_ForInLoopVariableResolves: the for-in loop variable now resolves in
+// the body (it used to be an "undefined identifier" — no non-empty body was tested).
+func TestAnalyze_ForInLoopVariableResolves(t *testing.T) {
+	src := "let f = () -> u8 => {\n" +
+		"  var t: u8 = 0\n" +
+		"  for i in 0..<3 { t = i }\n" +
+		"  t\n" +
+		"}\n" +
+		"let main = () -> u8 => 0\n"
+	res := Analyze([]byte(src))
+	if res.HasErrors() {
+		t.Fatalf("the for-in loop variable should resolve in the body, got: %v", res.Diagnostics)
+	}
+}
+
 // TestAnalyze_WeakType_TypeChecks: `weak T` used to hard-error in the collector
 // ("unknown type node kind: weak_type"), making it unusable. A recursive type
 // whose back-edge is a `weak` field now analyzes cleanly through the whole

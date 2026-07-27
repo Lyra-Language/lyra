@@ -796,3 +796,84 @@ func TestRange_Loop_Nested(t *testing.T) {
 		let main = () -> u8 => 0
 	`)
 }
+
+// ── for…in range widening ────────────────────────────────────────────────────
+//
+// A numeric-range iterable bounds the loop variable precisely (the for-in analogue
+// of the C-style loop counter), when the range is provably non-empty.
+
+// A range that indexes past the end is a definite out-of-bounds — the loop
+// definitely runs (5 < 10), so `xs[i]` at i = 5 traps.
+func TestRange_ForIn_IndexPastEnd(t *testing.T) {
+	onlyDiag(t, `
+		let f = (xs: [3]u8) -> u8 => {
+			var s: u8 = 0
+			for i in 5..<10 {
+				s += xs[i]
+			}
+			s
+		}
+		let main = () -> u8 => 0
+	`, diag.CodeIndexOutOfBounds, "always out of bounds", "[5, 9]")
+}
+
+// A range counter that stays in bounds is fine (and its check is elided).
+func TestRange_ForIn_IndexInBounds_NoDiag(t *testing.T) {
+	noDiag(t, `
+		let f = (xs: [3]u8) -> u8 => {
+			var s: u8 = 0
+			for i in 0..<3 {
+				s += xs[i]
+			}
+			s
+		}
+		let main = () -> u8 => 0
+	`)
+}
+
+// An inclusive range `0..=2` bounds the counter to [0,2] — in bounds for size 3.
+func TestRange_ForIn_InclusiveRange_NoDiag(t *testing.T) {
+	noDiag(t, `
+		let f = (xs: [3]u8) -> u8 => {
+			var s: u8 = 0
+			for i in 0..=2 {
+				s += xs[i]
+			}
+			s
+		}
+		let main = () -> u8 => 0
+	`)
+}
+
+// A variable-length range isn't provably non-empty (it might not run), so the loop
+// variable is left havoc'd — no false positive.
+func TestRange_ForIn_VariableLength_NoDiag(t *testing.T) {
+	noDiag(t, `
+		let f = (xs: [3]u8, n: u8) -> u8 => {
+			var s: u8 = 0
+			for i in 0..<n {
+				s += xs[i]
+			}
+			s
+		}
+		let main = () -> u8 => 0
+	`)
+}
+
+// The elision counterpart: a for-in range counter proven in bounds elides its check.
+func TestRange_Safety_ForInRangeIndexInBounds(t *testing.T) {
+	program, safety := analyzeForSafety(t, `
+		let f = (xs: [3]u8) -> u8 => {
+			var s: u8 = 0
+			for i in 0..<3 {
+				s += xs[i]
+			}
+			s
+		}
+		let main = () -> u8 => 0
+	`)
+	idx := firstExpr(t, program, isIndexExpr)
+	if !safety.IndexInBounds(idx) {
+		t.Error("a for-in range counter i ∈ [0,2] indexing a size-3 array should be marked in-bounds")
+	}
+}

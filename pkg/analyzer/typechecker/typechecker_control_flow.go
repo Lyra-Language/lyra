@@ -1077,13 +1077,23 @@ func (tc *TypeChecker) inferRangeExpr(expr *ast.RangeExpr) types.Type {
 
 // checkForInLoopExpr validates that the iterable expression is actually iterable
 // (array, string, or range), then type-checks the loop body.
+//
+// The body is checked inside the loop's own scope (registered on the loop node by
+// the collector, RecordScope(loop, loopScope)), which holds the loop variable(s) —
+// so `for i in 0..<n { … i … }` resolves `i`. Without entering it the body was
+// checked in the enclosing scope and every use of the loop variable was an
+// "undefined identifier" (no existing test exercised a non-empty body, so the gap
+// went unnoticed). Body-local declarations still don't resolve — the same
+// value-copy `Body` limitation as the C-style loop (see checkForLoopExpr).
 func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 	iterType := tc.inferExprType(expr.Iterable)
 	if iterType != nil && !isIterableType(iterType) {
 		tc.addError(expr.Iterable.GetLocation(), SeverityError,
 			"cannot iterate over %s: expected an array, string, or range", iterType)
 	}
-	tc.inferBlockType(&expr.Body)
+	tc.enterScope(expr, func() {
+		tc.inferBlockType(&expr.Body)
+	})
 	return nil
 }
 

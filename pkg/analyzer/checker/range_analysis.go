@@ -773,9 +773,51 @@ func (c *rangeChecker) evalForIn(st rangeEnv, v *ast.ForInLoopExpr) rangeEnv {
 	if v.Value != "" {
 		assigned[v.Value] = true
 	}
+	// A numeric-range iterable bounds the loop variable precisely (`for i in 0..<n`
+	// → i ∈ [start, end)), the for-in analogue of the C-style loop's counter — so the
+	// body sees a tracked counter (elision + diagnostics) instead of ⊤. Other
+	// iterables (an array/string, whose element/index we don't track here) keep the
+	// variable havoc'd.
 	body := havoc(st.clone(), assigned)
+	if kv, ok := c.forInRangeKey(st, v); ok {
+		body.vars[v.Key] = kv
+	}
 	_, _, _ = c.eval(body, &v.Body)
 	return havoc(st, assigned)
+}
+
+// forInRangeKey returns the interval the loop's single variable takes over a
+// numeric-range iterable, when the range is **provably non-empty** — so the loop
+// definitely runs, and a body diagnostic keyed off the variable is genuinely
+// definite (it holds at the first iteration, `i = start`) rather than a maybe-empty
+// false positive. Only a single-variable, step-less range binds here; a two-variable
+// form, a stepped range (direction/values unclear), a range with a non-foldable
+// bound, or a maybe-empty one leaves the variable havoc'd (sound).
+func (c *rangeChecker) forInRangeKey(st rangeEnv, v *ast.ForInLoopExpr) (interval, bool) {
+	r, ok := v.Iterable.(*ast.RangeExpr)
+	if !ok || v.Value != "" || r.Step != nil {
+		return interval{}, false
+	}
+	start, sok := c.pureInterval(st, r.Start)
+	end, eok := c.pureInterval(st, r.End)
+	if !sok || !eok {
+		return interval{}, false
+	}
+	hi := end.hi
+	var nonEmpty bool
+	if r.EndOperator == "<" { // exclusive: i ∈ [start, end); non-empty iff start < end
+		if hi != posInf {
+			hi = dec(hi)
+		}
+		nonEmpty = start.hi < end.lo
+	} else { // inclusive: i ∈ [start, end]; non-empty iff start <= end
+		nonEmpty = start.hi <= end.lo
+	}
+	kv := interval{start.lo, hi}
+	if !nonEmpty || kv.empty() {
+		return interval{}, false
+	}
+	return kv, true
 }
 
 // ── branch refinement (pure — emits no diagnostics) ──────────────────────────
