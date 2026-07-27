@@ -390,6 +390,83 @@ func TestRange_U64_DivByZero(t *testing.T) {
 	`, diag.CodeDivideByZero, "b is always 0")
 }
 
+// ── per-match-arm scrutinee refinement ──────────────────────────────────────
+//
+// A match arm refines the scrutinee variable to the values its pattern matches, so
+// a definite fault inside the arm is caught — the `match` analogue of `if`-branch
+// refinement.
+
+// A range pattern refines the scrutinee so an overflow inside the arm is definite.
+func TestRange_Match_ArmRange_Overflow(t *testing.T) {
+	onlyDiag(t, `
+		let f = (x: i8) -> i8 => match x {
+			100..=127 => x + 100,
+			_ => 0,
+		}
+		let main = () -> u8 => 0
+	`, diag.CodeIntegerOverflow, "always overflows i8", "[200, 227]")
+}
+
+// A literal arm refines the scrutinee to a single value — here the scrutinee is
+// itself the divisor, so the arm is a definite divide-by-zero.
+func TestRange_Match_ArmLiteral_DivByZero(t *testing.T) {
+	onlyDiag(t, `
+		let f = (a: i64, x: i64) -> i64 => match x {
+			0 => a / x,
+			_ => 1,
+		}
+		let main = () -> u8 => 0
+	`, diag.CodeDivideByZero, "x is always 0")
+}
+
+// A range pattern refines an index past the end → definite out-of-bounds.
+func TestRange_Match_ArmRange_OutOfBounds(t *testing.T) {
+	onlyDiag(t, `
+		let f = (xs: [3]i64, i: i64) -> i64 => match i {
+			5..=10 => xs[i],
+			_ => 0,
+		}
+		let main = () -> u8 => 0
+	`, diag.CodeIndexOutOfBounds, "always out of bounds", "[5, 10]")
+}
+
+// An exclusive-end range `..<` refines to [start, end-1]: 3..<6 on a size-3 array
+// is [3,5], entirely out of bounds.
+func TestRange_Match_ArmExclusiveRange_OutOfBounds(t *testing.T) {
+	onlyDiag(t, `
+		let f = (xs: [3]i64, i: i64) -> i64 => match i {
+			3..<6 => xs[i],
+			_ => 0,
+		}
+		let main = () -> u8 => 0
+	`, diag.CodeIndexOutOfBounds, "[3, 5]")
+}
+
+// ── no false positives from refinement ───────────────────────────────────────
+
+// An in-range arm is safe — the refinement keeps the result within the type.
+func TestRange_Match_ArmInRange_NoDiag(t *testing.T) {
+	noDiag(t, `
+		let f = (x: i8) -> i8 => match x {
+			0..=10 => x + 100,
+			_ => 0,
+		}
+		let main = () -> u8 => 0
+	`)
+}
+
+// A catch-all / identifier arm refines nothing — the scrutinee keeps its full
+// range, so no spurious fault is reported.
+func TestRange_Match_CatchAll_NoDiag(t *testing.T) {
+	noDiag(t, `
+		let f = (x: i8) -> i8 => match x {
+			0 => 0,
+			n => n + 1,
+		}
+		let main = () -> u8 => 0
+	`)
+}
+
 // ── safety table (trap elision) ──────────────────────────────────────────────
 
 // firstAddIsSafe runs the pass ONCE and reports whether the first `+` expression
@@ -549,6 +626,22 @@ func TestRange_Safety_UnprovableIndexNotMarked(t *testing.T) {
 	idx := firstExpr(t, program, isIndexExpr)
 	if safety.IndexInBounds(idx) {
 		t.Error("a full-range u8 index into a size-3 array must NOT be marked in-bounds")
+	}
+}
+
+func TestRange_Safety_MatchRefinedIndexInBounds(t *testing.T) {
+	// A match arm refines i to [0,2], so the size-3 index is provably in bounds and
+	// its bounds check is elided — the elision counterpart to match-arm refinement.
+	program, safety := analyzeForSafety(t, `
+		let get = (xs: [3]u8, i: u8) -> u8 => match i {
+			0..=2 => xs[i],
+			_ => 0,
+		}
+		let main = () -> u8 => 0
+	`)
+	idx := firstExpr(t, program, isIndexExpr)
+	if !safety.IndexInBounds(idx) {
+		t.Error("a match arm refining the index to [0,2] should mark the size-3 index in-bounds")
 	}
 }
 

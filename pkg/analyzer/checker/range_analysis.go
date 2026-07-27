@@ -3,6 +3,7 @@ package checker
 import (
 	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -60,8 +61,10 @@ import (
 //     accumulator with no bounding guard still widens to ⊤. The *after*-loop state
 //     havocs the loop-assigned variables (sound under `break`). A `for … in` loop
 //     (no counter/guard to narrow) still havocs its variables.
-//   - A `match` gets no per-arm scrutinee refinement yet (each arm from the
-//     pre-match state), and its arm values merge by union.
+//   - A `match` on an integer *variable* refines the scrutinee per arm to the
+//     values its pattern matches (a literal or numeric range), the analogue of
+//     branch refinement; an arm whose pattern can't overlap the scrutinee's range
+//     is unreachable and skipped. Arm values merge by union.
 //
 // The pass runs after typechecking (it needs the TypeTable for each expression's
 // width and signedness).
@@ -504,8 +507,17 @@ func (c *rangeChecker) evalBlock(st rangeEnv, v *ast.BlockExpr) (interval, bool,
 
 func (c *rangeChecker) evalMatch(st rangeEnv, v *ast.MatchExpr) (interval, bool, rangeEnv) {
 	_, _, st = c.eval(st, v.Scrutinee)
-	// Each arm from the post-scrutinee state (no per-arm scrutinee refinement yet);
-	// the result env is the union of the arms', the value the union of arm values.
+	// When the scrutinee is a tracked integer *variable*, each arm refines it to the
+	// values its pattern matches — a literal (`0 => …`, refine to [0,0]) or a numeric
+	// range (`1..=10 => …`). So a definite overflow / OOB / divide-by-zero inside an
+	// arm whose pattern constrains the scrutinee is caught (`match x { 100..=127 =>
+	// x + 100 }` on an i8 overflows), and an in-range arm elides its checks — the
+	// analogue of branch refinement for `match`. A non-identifier / non-integer
+	// scrutinee, or a non-numeric pattern (a wildcard/identifier catch-all, a
+	// data/tuple/struct pattern), refines nothing (that arm sees the scrutinee's full
+	// range). A pattern that can't overlap the scrutinee's range makes the arm
+	// unreachable and it's skipped (contributing no value, env, or diagnostics).
+	scrutID, _ := v.Scrutinee.(*ast.IdentifierExpr)
 	result := rangeEnv{reachable: false}
 	var val interval
 	allTracked := true
@@ -513,6 +525,14 @@ func (c *rangeChecker) evalMatch(st rangeEnv, v *ast.MatchExpr) (interval, bool,
 	for i := range v.MatchArms {
 		arm := v.MatchArms[i]
 		armEnv := st.clone()
+		if scrutID != nil {
+			if lo, hi, ok := patternInterval(arm.Pattern); ok {
+				c.refineScrutinee(&armEnv, scrutID, lo, hi)
+			}
+		}
+		if !armEnv.reachable {
+			continue // the arm's pattern can't match the scrutinee's value range
+		}
 		if arm.Guard != nil {
 			_, _, armEnv = c.eval(armEnv, arm.Guard.Condition)
 		}
@@ -530,6 +550,72 @@ func (c *rangeChecker) evalMatch(st rangeEnv, v *ast.MatchExpr) (interval, bool,
 		return interval{}, false, mergeEnv(result, st)
 	}
 	return val, true, mergeEnv(result, st)
+}
+
+// refineScrutinee narrows the match scrutinee id to the intersection of its current
+// range and [lo, hi] (the values an arm's pattern matches) within that arm's env.
+// An empty intersection means the pattern can't match → the arm is unreachable.
+func (c *rangeChecker) refineScrutinee(env *rangeEnv, id *ast.IdentifierExpr, lo, hi int64) {
+	cur, ok := c.curInterval(*env, id)
+	if !ok {
+		return // scrutinee isn't a tracked integer — nothing to refine
+	}
+	n := interval{maxI(cur.lo, lo), minI(cur.hi, hi)}
+	if n.empty() {
+		env.reachable = false
+		return
+	}
+	env.vars[id.Name] = n
+}
+
+// patternInterval returns the inclusive [lo, hi] integer interval a match pattern
+// matches, for the numeric literal / range patterns (`0`, `1..=10`, `0..<3`). Any
+// other pattern — a wildcard/identifier catch-all, a rune/string literal, a
+// data/tuple/struct pattern, or a bound that isn't a compile-time integer — returns
+// ok=false (no refinement). Mirrors the typechecker's exhaustiveness reader so the
+// two agree on what a pattern covers; guards are irrelevant here (the pattern still
+// constrains the scrutinee whether or not a guard also holds).
+func patternInterval(p ast.Pattern) (lo, hi int64, ok bool) {
+	switch pat := p.(type) {
+	case *ast.LiteralPattern:
+		s, isStr := pat.Value.(string) // a rune pattern stores a RunePatternValue
+		if !isStr {
+			return 0, 0, false
+		}
+		n, err := strconv.ParseInt(s, 0, 64)
+		if err != nil {
+			return 0, 0, false // out of int64 range or non-integer → don't refine
+		}
+		return n, n, true
+	case *ast.RangePattern:
+		start, sok := patternBound(pat.Start)
+		end, eok := patternBound(pat.End)
+		if !sok || !eok {
+			return 0, 0, false
+		}
+		if pat.EndOperator == "<" { // exclusive end (..<)
+			if end == math.MinInt64 {
+				return 0, 0, false
+			}
+			end--
+		}
+		return start, end, true
+	}
+	return 0, 0, false
+}
+
+// patternBound extracts a compile-time int64 from a range-pattern bound (an integer
+// literal, or a negated one for a negative bound like -128).
+func patternBound(e ast.Expression) (int64, bool) {
+	switch v := e.(type) {
+	case *ast.IntegerLiteralExpr:
+		return v.Value, true
+	case *ast.NegationExpr:
+		if inner, ok := v.Operand.(*ast.IntegerLiteralExpr); ok {
+			return -inner.Value, true
+		}
+	}
+	return 0, false
 }
 
 // maxFixpointIters bounds the widening and narrowing phases. Widening guarantees
