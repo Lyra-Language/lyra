@@ -225,6 +225,44 @@ func TestRange_NoDivByZero_RefinedNonzero(t *testing.T) {
 	`)
 }
 
+// ── definite out-of-bounds index (lyra-E022) ────────────────────────────────
+
+// The flagship flow-sensitive case: a refinement proves the index is past the end.
+func TestRange_IndexOOB_Refinement(t *testing.T) {
+	onlyDiag(t, `
+		let f = (xs: [3]u8, i: u8) -> u8 => if i >= 3 { xs[i] } else { 0 }
+		let main = () -> u8 => 0
+	`, diag.CodeIndexOutOfBounds, "always out of bounds", "size-3")
+}
+
+// A negative index counts from the end, so a refinement below -size is also a
+// definite out-of-bounds.
+func TestRange_IndexOOB_NegativeRefinement(t *testing.T) {
+	onlyDiag(t, `
+		let f = (xs: [3]u8, i: i64) -> u8 => if i < -3 { xs[i] } else { 0 }
+		let main = () -> u8 => 0
+	`, diag.CodeIndexOutOfBounds)
+}
+
+// ── no false out-of-bounds ───────────────────────────────────────────────────
+
+// A full-range index *can* be out of bounds but need not be — a merely *possible*
+// OOB is left to the runtime trap, never flagged.
+func TestRange_NoIndexOOB_Possible(t *testing.T) {
+	noDiag(t, `
+		let f = (xs: [3]u8, i: u8) -> u8 => xs[i]
+		let main = () -> u8 => 0
+	`)
+}
+
+// An index refined into range is fine (and gets its bounds check elided, separately).
+func TestRange_NoIndexOOB_RefinedInBounds(t *testing.T) {
+	noDiag(t, `
+		let f = (xs: [3]u8, i: u8) -> u8 => if i < 3 { xs[i] } else { 0 }
+		let main = () -> u8 => 0
+	`)
+}
+
 // ── constant comparison (lyra-W011) ──────────────────────────────────────────
 
 func TestRange_Comparison_U8_LessThanZero_AlwaysFalse(t *testing.T) {

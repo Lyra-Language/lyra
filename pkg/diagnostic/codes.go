@@ -104,6 +104,19 @@ const (
 	// range includes 0 but also nonzero values) is left to the runtime trap.
 	CodeDivideByZero = "lyra-E021"
 
+	// CodeIndexOutOfBounds: an array index `xs[i]` whose value range (tracked by the
+	// value-range analysis) proves it is *always* out of bounds on a reachable path
+	// — a guaranteed runtime bounds-trap, caught at compile time. The error-reporting
+	// twin of the bounds-trap *elision* (which fires when the index is provably in
+	// bounds); symmetric with lyra-E020/E021 and flow-sensitive the same way
+	// (`if i >= size { xs[i] }` catches the refined index). Reported only for a
+	// *non-singleton* index range entirely outside `[-size, size)` (a negative index
+	// counts from the end): a single constant index is already the typechecker's own
+	// range check (inferIndexExpr / resolveConstantInt), and a non-singleton range
+	// guarantees that check didn't fire, so there is no double report. Only a
+	// *definite* OOB is reported; a merely *possible* one is left to the runtime trap.
+	CodeIndexOutOfBounds = "lyra-E022"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

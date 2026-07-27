@@ -158,6 +158,32 @@ func TestAnalyze_LiteralDivideByZero_NoDuplicate(t *testing.T) {
 	}
 }
 
+// TestAnalyze_RangeAnalysis_DefiniteOutOfBounds: the range pass surfaces a
+// definite out-of-bounds (lyra-E022) on an index proven past the end by flow —
+// beyond the typechecker's constant-index range check.
+func TestAnalyze_RangeAnalysis_DefiniteOutOfBounds(t *testing.T) {
+	src := "let at = (xs: [3]u8, i: u8) -> u8 => if i >= 3 { xs[i] } else { 0 }\n" +
+		"let main = () -> u8 => 0\n"
+	res := Analyze([]byte(src))
+	if !hasCode(res, diag.CodeIndexOutOfBounds) {
+		t.Fatalf("expected a definite out-of-bounds (%s), got: %v", diag.CodeIndexOutOfBounds, res.Diagnostics)
+	}
+}
+
+// A constant index stays the typechecker's own range check; the range pass (whose
+// OOB diagnostic requires a non-singleton range) does not also emit E022, so the
+// bug is reported exactly once.
+func TestAnalyze_ConstantOutOfBounds_NoDuplicate(t *testing.T) {
+	src := "let main = () -> u8 => {\n  let xs: [3]u8 = [1, 2, 3]\n  xs[5]\n}\n"
+	res := Analyze([]byte(src))
+	if hasCode(res, diag.CodeIndexOutOfBounds) {
+		t.Fatalf("a constant xs[5] should be the typechecker's error only, not a duplicate E022: %v", res.Diagnostics)
+	}
+	if !hasMessageContaining(res, "out of range for array") {
+		t.Fatalf("expected the typechecker's out-of-range error, got: %v", res.Diagnostics)
+	}
+}
+
 // TestAnalyze_WeakType_TypeChecks: `weak T` used to hard-error in the collector
 // ("unknown type node kind: weak_type"), making it unusable. A recursive type
 // whose back-edge is a `weak` field now analyzes cleanly through the whole

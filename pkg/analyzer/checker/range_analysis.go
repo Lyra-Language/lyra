@@ -12,7 +12,7 @@ import (
 
 // CheckIntegerRanges is a flow-sensitive value-range (interval) analysis over
 // each function body. For every integer variable it tracks the interval [lo, hi]
-// of values it can hold at each program point, and reports three things the
+// of values it can hold at each program point, and reports four things the
 // literal-only checks can't:
 //
 //   - **lyra-E020 (error): a definite integer overflow.** An `+`/`-`/`*`/unary-`-`
@@ -27,6 +27,12 @@ import (
 //     constant zero (`5 / 0`) stays the typechecker's constant-fold check, so this
 //     adds only the non-constant, flow-proven case (the twin of the divide-by-zero
 //     trap elision). Same definite-only bias as E020.
+//   - **lyra-E022 (error): a definite out-of-bounds index.** An `xs[i]` whose index
+//     range is *non-singleton* and entirely outside `[-size, size)` (`if i >= size
+//     { xs[i] }`) — a guaranteed runtime bounds trap. A single constant index stays
+//     the typechecker's own range check; the non-singleton requirement means that
+//     check didn't fire (it resolves only a single constant), so no double report.
+//     The twin of the bounds-trap elision; same definite-only bias.
 //   - **lyra-W011 (warning): a constant comparison.** An integer comparison whose
 //     ranges prove it always yields the same result (`x < 0` on a `u8`, or a
 //     comparison made trivial by a branch refinement) — dead code or a likely bug.
@@ -893,21 +899,41 @@ func (c *rangeChecker) checkDivision(e, typeExpr, divisorExpr ast.Expression, di
 	}
 }
 
-// evalIndex analyzes an array index `xs[i]` and records whether the backend can
-// elide its bounds check: an index provably within [0, size) is in range (and
-// non-negative, so the from-the-end adjustment is unnecessary too). A negative-
-// but-valid index ([-size,-1]) is left to the runtime check — only the common
-// non-negative case is elided. Nothing is marked while silent or when the index
-// isn't a tracked integer; absence keeps the runtime trap, so an imprecise
-// analysis is always safe. The value of `xs[i]` isn't tracked (⊤ / its element
-// type range), like any other read.
+// evalIndex analyzes an array index `xs[i]` two ways from the index range (a
+// negative index counts from the end, so the valid range is `[-size, size)`):
+//
+//   - **Elision.** An index provably within `[0, size)` is in range *and*
+//     non-negative, so both the bounds trap and the from-the-end adjustment are
+//     unnecessary — marked `inBounds`. A negative-but-valid index (`[-size,-1]`) is
+//     left to the runtime check; only the common non-negative case is elided.
+//   - **Diagnostic (lyra-E022).** A *non-singleton* index range entirely outside
+//     `[-size, size)` is a definite out-of-bounds — a guaranteed runtime trap,
+//     reported at compile time (the error-reporting twin of the elision). The
+//     non-singleton requirement is what keeps it from double-reporting the
+//     typechecker's own constant-index check (`inferIndexExpr`/`resolveConstantInt`):
+//     that check only resolves a *single* constant index, so whenever it would fire
+//     the range pass sees a singleton `[k,k]` — hence a non-singleton range means
+//     the typechecker didn't report it. A single constant OOB stays the
+//     typechecker's; the range pass adds the flow-proven range case
+//     (`if i >= size { xs[i] }`).
+//
+// Nothing fires while silent or when the index isn't a tracked integer; absence
+// keeps the runtime trap and reports nothing, so an imprecise analysis is always
+// safe. The value of `xs[i]` isn't tracked (⊤ / its element type range).
 func (c *rangeChecker) evalIndex(st rangeEnv, v *ast.IndexExpr) (interval, bool, rangeEnv) {
 	_, _, st = c.eval(st, v.Object) // an array, not an int — threads state + diagnostics
 	idx, idxTracked, st2 := c.eval(st, v.Index)
 	st = st2
 	if idxTracked && !c.silent {
-		if size, ok := c.arraySize(v.Object); ok && idx.lo >= 0 && idx.hi < size {
-			c.safe.inBounds[v] = true
+		if size, ok := c.arraySize(v.Object); ok {
+			switch {
+			case idx.lo >= 0 && idx.hi < size:
+				c.safe.inBounds[v] = true
+			case idx.lo < idx.hi && (idx.lo >= size || idx.hi < -size):
+				c.report(v, diag.SeverityError, diag.CodeIndexOutOfBounds,
+					fmt.Sprintf("this index is always out of bounds: it is always in [%d, %d], outside the valid range [-%d, %d) for a size-%d array",
+						idx.lo, idx.hi, size, size, size))
+			}
 		}
 	}
 	return c.typeIntervalIn(v, st)
