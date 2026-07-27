@@ -34,6 +34,9 @@ func (l *lowerer) lowerMatch(block *ir.Block, e *ast.MatchExpr) (value.Value, *i
 	if tt, ok := l.resolveTupleType(scrutType); ok {
 		return l.lowerTupleMatch(block, e, tt)
 	}
+	if dyn, ok := scrutType.(types.DynamicArrayType); ok {
+		return l.lowerArrayMatch(block, e, dyn)
+	}
 	// A scalar scrutinee (bool, a concrete integer, a float, or a string) lowers to
 	// an if-else ladder of comparisons. Detected by whether the scrutinee's
 	// primitive maps to an LLVM integer (i1 for bool, iN for ints), float, or the
