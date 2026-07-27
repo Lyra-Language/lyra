@@ -134,6 +134,30 @@ func TestAnalyze_RangeAnalysis_DefiniteOverflow(t *testing.T) {
 	}
 }
 
+// TestAnalyze_RangeAnalysis_DefiniteDivideByZero: the range pass surfaces a
+// definite divide-by-zero (lyra-E021) on a *variable* divisor proven zero by flow
+// — beyond the typechecker's literal/folded-constant check.
+func TestAnalyze_RangeAnalysis_DefiniteDivideByZero(t *testing.T) {
+	src := "let f = (a: u8, b: u8) -> u8 => if b == 0 { a / b } else { a }\n" +
+		"let main = () -> u8 => 0\n"
+	res := Analyze([]byte(src))
+	if !hasCode(res, diag.CodeDivideByZero) {
+		t.Fatalf("expected a definite divide-by-zero (%s), got: %v", diag.CodeDivideByZero, res.Diagnostics)
+	}
+}
+
+// A literal-zero divisor stays the typechecker's constant-fold check; the range
+// pass deliberately does not also emit E021, so the bug is reported exactly once.
+func TestAnalyze_LiteralDivideByZero_NoDuplicate(t *testing.T) {
+	res := Analyze([]byte("let main = () -> u8 => 5 / 0\n"))
+	if hasCode(res, diag.CodeDivideByZero) {
+		t.Fatalf("a literal 5/0 should be the typechecker's error only, not a duplicate E021: %v", res.Diagnostics)
+	}
+	if !hasMessageContaining(res, "division by zero") {
+		t.Fatalf("expected the typechecker's division-by-zero error, got: %v", res.Diagnostics)
+	}
+}
+
 // TestAnalyze_WeakType_TypeChecks: `weak T` used to hard-error in the collector
 // ("unknown type node kind: weak_type"), making it unusable. A recursive type
 // whose back-edge is a `weak` field now analyzes cleanly through the whole

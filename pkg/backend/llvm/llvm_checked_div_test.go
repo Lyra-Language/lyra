@@ -12,31 +12,33 @@ import (
 // code (101). INT_MIN cases use i64-min (-9223372036854775808); the narrow
 // signed-min literals (i8 -128, etc.) now lower at their own width too — see
 // llvm_narrow_min_test.go for that coverage.
+//
+// The zero divisor comes through a function parameter, not a `let b = 0` binding:
+// a constant-zero divisor is now a compile-time error (lyra-E021, the range
+// analysis's definite-divide-by-zero diagnostic), so to still exercise the
+// *runtime* trap the divisor must be runtime-opaque (the analysis widens a param
+// to its full range, keeping the check).
 
 var checkedDivCases = []struct {
 	name string
 	src  string
 }{
-	{"divide by zero (/)", `let main = () -> u8 => {
-	  let a: u8 = 84
-	  let b: u8 = 0
-	  a / b
-	}`},
-	{"divide by zero (%)", `let main = () -> u8 => {
-	  let a: u8 = 84
-	  let b: u8 = 0
-	  a % b
-	}`},
-	{"divide by zero (%%)", `let main = () -> u8 => {
-	  let a: u8 = 84
-	  let b: u8 = 0
-	  a %% b
-	}`},
-	{"signed divide by zero", `let main = () -> u8 => {
-	  let a: i32 = 84
-	  let b: i32 = 0
-	  u8(a / b)
-	}`},
+	{"divide by zero (/)", `
+		let d = (a: u8, b: u8) -> u8 => a / b
+		let main = () -> u8 => d(84, 0)
+	`},
+	{"divide by zero (%)", `
+		let d = (a: u8, b: u8) -> u8 => a % b
+		let main = () -> u8 => d(84, 0)
+	`},
+	{"divide by zero (%%)", `
+		let d = (a: u8, b: u8) -> u8 => a %% b
+		let main = () -> u8 => d(84, 0)
+	`},
+	{"signed divide by zero", `
+		let d = (a: i32, b: i32) -> i32 => a / b
+		let main = () -> u8 => u8(d(84, 0))
+	`},
 	{"INT_MIN / -1 overflow", `let main = () -> u8 => {
 	  let a: i64 = -9223372036854775808
 	  let b: i64 = -1

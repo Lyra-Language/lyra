@@ -12,7 +12,7 @@ import (
 
 // CheckIntegerRanges is a flow-sensitive value-range (interval) analysis over
 // each function body. For every integer variable it tracks the interval [lo, hi]
-// of values it can hold at each program point, and reports two things the
+// of values it can hold at each program point, and reports three things the
 // literal-only checks can't:
 //
 //   - **lyra-E020 (error): a definite integer overflow.** An `+`/`-`/`*`/unary-`-`
@@ -21,6 +21,12 @@ import (
 //     *definite* overflow is reported; a merely *possible* one (`a + b` on two
 //     full-range i8s) is left to the runtime trap, so a correct program is never
 //     flagged.
+//   - **lyra-E021 (error): a definite divide-by-zero.** A `/`/`%`/`%%` whose
+//     *identifier* divisor is proven `[0,0]` on a reachable path (`let b = 0; a / b`,
+//     or `if b == 0 { a / b }`) — a guaranteed runtime trap. A literal / folded-
+//     constant zero (`5 / 0`) stays the typechecker's constant-fold check, so this
+//     adds only the non-constant, flow-proven case (the twin of the divide-by-zero
+//     trap elision). Same definite-only bias as E020.
 //   - **lyra-W011 (warning): a constant comparison.** An integer comparison whose
 //     ranges prove it always yields the same result (`x < 0` on a `u8`, or a
 //     comparison made trivial by a branch refinement) — dead code or a likely bug.
@@ -310,9 +316,9 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 		case ast.MathBinaryOpDiv, ast.MathBinaryOpMod, ast.MathBinaryOpRemainder:
 			// Division / remainder can't grow magnitude, so there's no E020 to report
 			// (its precise result range isn't tracked — it widens to the type range).
-			// Instead prove the two runtime traps LLVM's div carries (divisor≠0, and
-			// the signed INT_MIN/-1 overflow) so the backend can elide them.
-			c.markDivSafety(e, e, lv, lt, rv, rt)
+			// Instead report a definite divide-by-zero (E021) and prove the two runtime
+			// traps LLVM's div carries (divisor≠0, signed INT_MIN/-1) for elision.
+			c.checkDivision(e, e, v.Right, lv, lt, rv, rt)
 			return c.typeIntervalIn(e, st)
 		}
 		if !lt || !rt {
@@ -344,8 +350,9 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 		case ast.MathAssignOpDiv, ast.MathAssignOpMod, ast.MathAssignOpRemainder:
 			// The compound-assign result is typed void and the target identifier isn't
 			// recorded, so v.Right (which carries the target's propagated width) supplies
-			// the operation's integer type. The new value of x isn't tracked → ⊤.
-			c.markDivSafety(e, v.Right, lv, lt, rv, rt)
+			// the operation's integer type and is the divisor. The new value of x isn't
+			// tracked → ⊤.
+			c.checkDivision(e, v.Right, v.Right, lv, lt, rv, rt)
 			delete(st.vars, v.Left.Name)
 			return interval{}, false, st
 		}
@@ -835,24 +842,38 @@ func (c *rangeChecker) checkArith(reportAt, typeExpr ast.Expression, m interval)
 	return interval{maxI(m.lo, tmin), minI(m.hi, tmax)}, true
 }
 
-// ── divide / bounds elision (the checkArith analogue for the other traps) ─────
+// ── divide analysis: diagnostic (E021) + trap elision ────────────────────────
 
-// markDivSafety records whether the two runtime traps a division-family op (`/`,
-// `%`, `%%`) carries can be elided by the backend, from the operand ranges:
+// checkDivision handles a division-family op (`/`, `%`, `%%`, and their compound
+// forms) two ways from the operand ranges:
 //
-//   - divisor ≠ 0  → the divide-by-zero check is unnecessary (noDivZero);
-//   - not INT_MIN/-1 → the one signed division that overflows can't happen, so its
-//     check is unnecessary (noDivOverflow). Provable when the dividend is never the
-//     type minimum OR the divisor is never -1; unsigned division never overflows.
+//   - **Diagnostic (lyra-E021).** A definite divide-by-zero — the divisor is
+//     *always* 0 on this (reachable) path — is a guaranteed runtime trap, so it's
+//     reported at compile time, the error-reporting twin of the elision below and
+//     symmetric with E020. Scoped to an *identifier* divisor proven `[0,0]`: a
+//     literal / constant-folded zero (`5 / 0`, `10 / (5-5)`) is already the
+//     typechecker's constant-fold check, so restricting to a variable both avoids
+//     double-reporting and captures exactly this pass's value-add — a *non-constant*
+//     divisor proven zero by flow (`let b = 0; a / b`, or `if b == 0 { a / b }`).
+//
+//   - **Elision (SafetyTable).** Whether the two runtime traps the op carries can
+//     be dropped by the backend: divisor ≠ 0 → `noDivZero`; not INT_MIN/-1 →
+//     `noDivOverflow` (provable when the dividend is never the type minimum OR the
+//     divisor is never -1; unsigned division never overflows).
 //
 // typeExpr supplies the operation's integer type (its INT_MIN): the op node itself
 // for a binary `/`, or the RHS for a compound `/=` (whose void result type isn't
-// the integer width). Nothing is marked while silent (a loop's fixpoint) or when
-// the relevant operand isn't a tracked integer — absence keeps the runtime trap,
-// so an imprecise analysis is always safe.
-func (c *rangeChecker) markDivSafety(e, typeExpr ast.Expression, dividend interval, dividendTracked bool, divisor interval, divisorTracked bool) {
+// the integer width). Nothing fires while silent (a loop's fixpoint) or when the
+// relevant operand isn't a tracked integer — absence keeps the runtime trap and
+// reports nothing, so an imprecise analysis is always safe.
+func (c *rangeChecker) checkDivision(e, typeExpr, divisorExpr ast.Expression, dividend interval, dividendTracked bool, divisor interval, divisorTracked bool) {
 	if c.silent {
 		return
+	}
+	// Diagnostic: an identifier divisor whose tracked range is exactly {0}.
+	if id, ok := divisorExpr.(*ast.IdentifierExpr); ok && divisorTracked && divisor.lo == 0 && divisor.hi == 0 {
+		c.report(e, diag.SeverityError, diag.CodeDivideByZero,
+			fmt.Sprintf("this operation always divides by zero: %s is always 0 here", id.Name))
 	}
 	if divisorTracked && (divisor.lo > 0 || divisor.hi < 0) {
 		c.safe.noDivZero[e] = true

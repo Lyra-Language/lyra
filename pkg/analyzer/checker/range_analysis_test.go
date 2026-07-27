@@ -161,6 +161,70 @@ func TestRange_NoOverflow_LoopCounter(t *testing.T) {
 	`)
 }
 
+// ── definite divide-by-zero (lyra-E021) ─────────────────────────────────────
+
+// A variable bound to a constant zero and used as a divisor — the typechecker's
+// constant-fold check doesn't propagate the binding, so this is the range pass's
+// to catch.
+func TestRange_DivByZero_ConstantAssignedVar(t *testing.T) {
+	onlyDiag(t, `
+		let f = (a: u8) -> u8 => {
+			let b: u8 = 0
+			a / b
+		}
+		let main = () -> u8 => 0
+	`, diag.CodeDivideByZero, "always divides by zero", "b is always 0")
+}
+
+// The flagship flow-sensitive case: a branch refinement proves the divisor is 0.
+func TestRange_DivByZero_Refinement(t *testing.T) {
+	onlyDiag(t, `
+		let f = (a: u8, b: u8) -> u8 => if b == 0 { a / b } else { a }
+		let main = () -> u8 => 0
+	`, diag.CodeDivideByZero, "b is always 0")
+}
+
+// %% (floored remainder) traps on a zero divisor too, so it's caught the same way.
+func TestRange_DivByZero_Remainder(t *testing.T) {
+	onlyDiag(t, `
+		let f = (a: u8) -> u8 => {
+			let b: u8 = 0
+			a %% b
+		}
+		let main = () -> u8 => 0
+	`, diag.CodeDivideByZero)
+}
+
+// ── no false divide-by-zero ──────────────────────────────────────────────────
+
+// A full-range divisor *can* be zero but need not be — a merely *possible*
+// divide-by-zero is left to the runtime trap, never flagged.
+func TestRange_NoDivByZero_PossibleZero(t *testing.T) {
+	noDiag(t, `
+		let f = (a: u8, b: u8) -> u8 => a / b
+		let main = () -> u8 => 0
+	`)
+}
+
+// A provably-nonzero divisor is fine (and gets its trap elided, separately).
+func TestRange_NoDivByZero_NonzeroConstant(t *testing.T) {
+	noDiag(t, `
+		let f = (a: u8) -> u8 => {
+			let b: u8 = 2
+			a / b
+		}
+		let main = () -> u8 => 0
+	`)
+}
+
+// A divisor refined to nonzero on the reached path is not flagged.
+func TestRange_NoDivByZero_RefinedNonzero(t *testing.T) {
+	noDiag(t, `
+		let f = (a: u8, b: u8) -> u8 => if b != 0 { a / b } else { a }
+		let main = () -> u8 => 0
+	`)
+}
+
 // ── constant comparison (lyra-W011) ──────────────────────────────────────────
 
 func TestRange_Comparison_U8_LessThanZero_AlwaysFalse(t *testing.T) {

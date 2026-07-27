@@ -94,6 +94,16 @@ const (
 	// to the runtime trap.
 	CodeIntegerOverflow = "lyra-E020"
 
+	// CodeDivideByZero: an integer `/`/`%`/`%%` whose divisor's value range (tracked
+	// by the value-range analysis) proves it is *always* zero on a reachable path —
+	// a guaranteed runtime divide-by-zero trap, caught at compile time. The
+	// error-reporting twin of the divide-by-zero trap *elision* (which fires when the
+	// divisor is provably *non*-zero); symmetric with lyra-E020, and flow-sensitive
+	// the same way (`if b == 0 { a / b }` catches the refined divisor). Only a
+	// *definite* divide-by-zero is reported; a merely *possible* one (the divisor
+	// range includes 0 but also nonzero values) is left to the runtime trap.
+	CodeDivideByZero = "lyra-E021"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"
