@@ -196,6 +196,38 @@ func TestAnalyze_RangeConstraint_Violation(t *testing.T) {
 	}
 }
 
+// TestAnalyze_RangeConstraint_FlowSensitive: a *non-constant* value proven (by the
+// value-range analysis) entirely outside a range-constrained newtype's range is
+// E023 — beyond the typechecker's constant-only check.
+func TestAnalyze_RangeConstraint_FlowSensitive(t *testing.T) {
+	src := "newtype Percent = u8 where range(0..=100)\n" +
+		"let f = (x: u8) -> u8 => if x > 100 { let p: Percent = x\n0 } else { 0 }\n" +
+		"let main = () -> u8 => 0\n"
+	res := Analyze([]byte(src))
+	if !hasCode(res, diag.CodeRangeConstraintViolation) {
+		t.Fatalf("expected a flow-sensitive range violation (%s), got: %v", diag.CodeRangeConstraintViolation, res.Diagnostics)
+	}
+}
+
+// A literal violation is reported exactly once — the typechecker's constant check
+// owns it, and the flow-sensitive pass (scoped to identifier values) does not also
+// fire, so there's no duplicate.
+func TestAnalyze_RangeConstraint_LiteralSingleReport(t *testing.T) {
+	src := "newtype Percent = u8 where range(0..=100)\n" +
+		"let p: Percent = 150\n" +
+		"let main = () -> u8 => 0\n"
+	res := Analyze([]byte(src))
+	n := 0
+	for _, d := range res.Diagnostics {
+		if d.Code == diag.CodeRangeConstraintViolation {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("expected exactly one E023 for a literal violation, got %d: %v", n, res.Diagnostics)
+	}
+}
+
 // TestAnalyze_WeakType_TypeChecks: `weak T` used to hard-error in the collector
 // ("unknown type node kind: weak_type"), making it unusable. A recursive type
 // whose back-edge is a `weak` field now analyzes cleanly through the whole

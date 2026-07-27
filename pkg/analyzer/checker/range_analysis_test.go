@@ -467,6 +467,63 @@ func TestRange_Match_CatchAll_NoDiag(t *testing.T) {
 	`)
 }
 
+// ── flow-sensitive range-constraint enforcement (lyra-E023) ──────────────────
+//
+// The flow-sensitive twin of the typechecker's constant-value RangeConstraint
+// check: a non-constant value proven entirely outside a range-constrained
+// newtype's range is an error.
+
+// A variable refined past the constraint's range is a definite violation.
+func TestRange_Constraint_RefinedVar(t *testing.T) {
+	onlyDiag(t, `
+		newtype Percent = u8 where range(0..=100)
+		let f = (x: u8) -> u8 => if x > 100 { let p: Percent = x
+			0
+		} else { 0 }
+		let main = () -> u8 => 0
+	`, diag.CodeRangeConstraintViolation, "always outside the range 0..=100 of Percent", "[101, 255]")
+}
+
+// A binding whose constant value propagates — the typechecker can't fold the
+// identifier `y`, so this is the range pass's to catch.
+func TestRange_Constraint_ConstPropagatedBinding(t *testing.T) {
+	onlyDiag(t, `
+		newtype Percent = u8 where range(0..=100)
+		let f = () -> u8 => {
+			let y: u8 = 150
+			let p: Percent = y
+			0
+		}
+		let main = () -> u8 => 0
+	`, diag.CodeRangeConstraintViolation, "[150, 150]")
+}
+
+// ── no false range-constraint violations ─────────────────────────────────────
+
+// A variable refined into range is fine.
+func TestRange_Constraint_RefinedInRange_NoDiag(t *testing.T) {
+	noDiag(t, `
+		newtype Percent = u8 where range(0..=100)
+		let f = (x: u8) -> u8 => if x < 50 { let p: Percent = x
+			0
+		} else { 0 }
+		let main = () -> u8 => 0
+	`)
+}
+
+// A value that merely *might* be out of range (full-range param) is left to the
+// runtime — a possible, not definite, violation.
+func TestRange_Constraint_PossibleNotDefinite_NoDiag(t *testing.T) {
+	noDiag(t, `
+		newtype Percent = u8 where range(0..=100)
+		let f = (x: u8) -> u8 => {
+			let p: Percent = x
+			0
+		}
+		let main = () -> u8 => 0
+	`)
+}
+
 // ── safety table (trap elision) ──────────────────────────────────────────────
 
 // firstAddIsSafe runs the pass ONCE and reports whether the first `+` expression

@@ -241,6 +241,7 @@ func (c *rangeChecker) evalStmt(st rangeEnv, s ast.Statement) rangeEnv {
 		iv, tracked, after := c.eval(st, v.Value)
 		st = after
 		if tracked {
+			c.checkConstraintViolation(v.Value, iv)
 			// Clamp the initializer's interval to the declared type — a well-typed
 			// value can't exceed its type's range.
 			if lo, hi, ok := c.intBoundsOf(v.Value); ok {
@@ -936,6 +937,101 @@ func (c *rangeChecker) checkArith(reportAt, typeExpr ast.Expression, m interval)
 	// A possible overflow: keep the runtime trap. Clamp downstream to the type range
 	// (a non-trapping execution stays in range).
 	return interval{maxI(m.lo, tmin), minI(m.hi, tmax)}, true
+}
+
+// ── range-constraint enforcement (lyra-E023, flow-sensitive) ─────────────────
+
+// checkConstraintViolation reports E023 when valueExpr's tracked interval is
+// entirely outside the range constraint of the range-constrained newtype it is
+// assigned to — the flow-sensitive twin of the typechecker's constant-value
+// RangeConstraint check (`typechecker/range_constraint.go`). The target's
+// constraint comes from the type recorded for valueExpr: an annotated `let p:
+// Percent = x` has the typechecker stamp `Percent` onto `x` (`checkVarDecl`), which
+// is the site this runs from. (A plain reassignment isn't stamped, so its
+// non-constant case isn't covered here — only its constant case, by the typechecker.)
+//
+// Scoped to an *identifier* value: a literal / folded constant is the typechecker's
+// own check (which folds exactly those), and an identifier is what it can't fold,
+// so restricting to a variable both avoids a double report and captures this pass's
+// value-add — a variable refined by flow (`if x > 100 { let p: Percent = x }`) or
+// bound to a constant (`let y = 150; let p: Percent = y`). Definite-only, like every
+// other range-analysis diagnostic: a value that merely *might* be out of range is
+// left to the runtime.
+func (c *rangeChecker) checkConstraintViolation(valueExpr ast.Expression, iv interval) {
+	if c.silent {
+		return
+	}
+	if _, isID := valueExpr.(*ast.IdentifierExpr); !isID {
+		return
+	}
+	t, ok := c.tt.Get(valueExpr)
+	if !ok {
+		return
+	}
+	ct, ok := t.(*types.ConstrainedType)
+	if !ok {
+		return
+	}
+	for _, con := range ct.Constraints {
+		rc, ok := con.(*types.RangeConstraint)
+		if !ok {
+			continue
+		}
+		lo, hi, hasLo, hasHi := foldConstraintRange(rc)
+		if (hasLo && iv.hi < lo) || (hasHi && iv.lo > hi) {
+			c.report(valueExpr, diag.SeverityError, diag.CodeRangeConstraintViolation,
+				fmt.Sprintf("value in [%s, %s] is always outside the range %s of %s",
+					fmtBound(iv.lo), fmtBound(iv.hi), rangeConstraintString(rc), ct.Name))
+			return
+		}
+	}
+}
+
+// foldConstraintRange folds a RangeConstraint's bounds to an inclusive [lo, hi]
+// integer interval, with hasLo/hasHi marking which ends are present (a range may be
+// open-ended). An `..<` exclusive end is decremented to inclusive. An unfoldable
+// bound (an identifier / compound expression) leaves that end absent — conservative.
+func foldConstraintRange(rc *types.RangeConstraint) (lo, hi int64, hasLo, hasHi bool) {
+	if rc.Start != nil {
+		if v, ok := foldConstraintBound(rc.Start); ok {
+			lo, hasLo = v, true
+		}
+	}
+	if rc.End != nil {
+		if v, ok := foldConstraintBound(rc.End); ok {
+			if rc.Comparator == "<" {
+				v-- // exclusive end (..<)
+			}
+			hi, hasHi = v, true
+		}
+	}
+	return
+}
+
+func foldConstraintBound(m types.MathConstraintExpr) (int64, bool) {
+	switch e := m.(type) {
+	case *types.MathConstraintLiteralExpr:
+		return e.Value.Int64()
+	case *types.MathConstraintNegationExpr:
+		if v, ok := foldConstraintBound(e.Operand); ok {
+			return -v, true
+		}
+	}
+	return 0, false
+}
+
+// rangeConstraintString renders a RangeConstraint back to its source form for a
+// diagnostic (`0..=100`, `0..<360`, `..=100`, `0..`).
+func rangeConstraintString(rc *types.RangeConstraint) string {
+	start := ""
+	if rc.Start != nil {
+		start = rc.Start.GetName()
+	}
+	end := ""
+	if rc.End != nil {
+		end = rc.Comparator + rc.End.GetName()
+	}
+	return fmt.Sprintf("%s..%s", start, end)
 }
 
 // ── divide analysis: diagnostic (E021) + trap elision ────────────────────────
