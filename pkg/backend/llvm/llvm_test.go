@@ -243,6 +243,39 @@ func TestExec_If(t *testing.T) {
 	}
 }
 
+// TestExec_IfDivergingBranch is the regression guard for the two-armed-`if` panic:
+// a branch ending in return/break/continue seals its own block, so it must NOT get
+// an edge to the merge nor a phi incoming. The previous lowerIf unconditionally
+// branched both ends to merge (clobbering the seal's terminator) and fed a nil
+// value into NewPhi → a compiler nil-pointer panic on entirely idiomatic control
+// flow. Each case here used to crash `lyrac`; now it compiles to valid IR and runs.
+func TestExec_IfDivergingBranch(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		// then-branch returns, else yields the value (value position, 1 phi incoming).
+		{"let f = (x: u8) -> u8 => if x > 1 { return 1 } else { x }\nlet main() -> u8 => f(5)\n", 1},
+		{"let f = (x: u8) -> u8 => if x > 1 { return 1 } else { x }\nlet main() -> u8 => f(0)\n", 0},
+		// else-branch returns, then yields the value (the mirror).
+		{"let f = (x: u8) -> u8 => if x > 1 { x } else { return 9 }\nlet main() -> u8 => f(3)\n", 3},
+		// both branches return (statement position, 0 phi incomings — the merge is
+		// unreachable and downstream lowering terminates it).
+		{"let g = (x: u8) -> u8 => {\n  if x > 1 { return 7 } else { return 2 }\n  0\n}\nlet main() -> u8 => g(5)\n", 7},
+		{"let g = (x: u8) -> u8 => {\n  if x > 1 { return 7 } else { return 2 }\n  0\n}\nlet main() -> u8 => g(0)\n", 2},
+		// both branches break inside a loop (both seal; the loop back-edge terminates
+		// the orphan merge).
+		{"let main() -> u8 => {\n  var i: u8 = 0\n  for { if i > 3 { break } else { break } }\n  i\n}\n", 0},
+		// a diverging branch in a value-position `let` binding.
+		{"let main() -> u8 => {\n  let y: u8 = if false { return 9 } else { 5 }\n  y\n}\n", 5},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+		}
+	}
+}
+
 // TestExec_IntWidthConversions checks Lyra's one conversion syntax (`i8(x)`,
 // `u32(x)`, …, Pit-of-Success #5) narrows/widens to the actual bit width, not
 // just the right value in the common case. A signed result (from `i8(...)`

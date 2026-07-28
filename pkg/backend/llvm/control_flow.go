@@ -714,25 +714,41 @@ func (l *lowerer) lowerIf(block *ir.Block, e *ast.IfExpr) (value.Value, *ir.Bloc
 	mergeBlock := fn.NewBlock("")
 	block.NewCondBr(cond, thenBlock, elseBlock)
 
+	// A branch that ends in `return`/`break`/`continue` seals its own block: it
+	// reaches neither the merge nor the phi. Only a branch that falls through
+	// (Term == nil) gets the edge to merge and contributes a phi incoming — the
+	// same discipline the one-armed path above and every `match` lowerer use.
+	// The previous code unconditionally did `end.NewBr(merge)`, which on a sealed
+	// block both clobbered its real terminator (a `ret`/`br`) *and* fed a nil
+	// value into `NewPhi` → a nil-pointer panic. A two-armed `if` with a diverging
+	// branch (`if c { return x } else { y }`) is idiomatic and previously crashed
+	// the backend.
 	thenVal, thenEnd, err := l.lowerExpr(thenBlock, e.Then)
 	if err != nil {
 		return nil, nil, err
 	}
-	thenEnd.NewBr(mergeBlock)
+	var incomings []*ir.Incoming
+	if thenEnd.Term == nil {
+		thenEnd.NewBr(mergeBlock)
+		incomings = append(incomings, ir.NewIncoming(thenVal, thenEnd))
+	}
 
 	elseVal, elseEnd, err := l.lowerExpr(elseBlock, e.Else)
 	if err != nil {
 		return nil, nil, err
 	}
-	elseEnd.NewBr(mergeBlock)
+	if elseEnd.Term == nil {
+		elseEnd.NewBr(mergeBlock)
+		incomings = append(incomings, ir.NewIncoming(elseVal, elseEnd))
+	}
 
-	// Both incoming values must share an LLVM type for a well-formed phi. The
-	// typechecker's branchCommonType guarantees the branches are type-
-	// compatible; a genuine width mismatch that slipped through would produce
-	// invalid IR that clang rejects (loud), not silently-wrong code.
-	phi := mergeBlock.NewPhi(
-		ir.NewIncoming(thenVal, thenEnd),
-		ir.NewIncoming(elseVal, elseEnd),
-	)
-	return phi, mergeBlock, nil
+	// Neither branch reaches the merge (both diverged): the `if` yields no value and
+	// the merge is unreachable — downstream lowering terminates the orphan block.
+	if len(incomings) == 0 {
+		return nil, mergeBlock, nil
+	}
+	// The incoming values (when both reach) share an LLVM type — the typechecker's
+	// branchCommonType guarantees the branches are type-compatible; a width mismatch
+	// that slipped through yields invalid IR clang rejects (loud), not wrong code.
+	return mergeBlock.NewPhi(incomings...), mergeBlock, nil
 }
