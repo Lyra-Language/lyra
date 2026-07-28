@@ -686,6 +686,47 @@ func TestRange_Safety_UnprovableIndexNotMarked(t *testing.T) {
 	}
 }
 
+// Regression: a variable havoc'd inside a *nested* block/branch must not revert to
+// its stale pre-block interval when the block exits. Here a loop inside the `if`
+// havocs x (x can reach 107); after the `if`, x must be ⊤, so xs[x] into a size-10
+// array is NOT provably in bounds — its bounds trap must be kept, not elided.
+// Before the evalBlock fix, the inner block reverted x to [5,5] and the index was
+// wrongly marked in-bounds → the backend dropped the trap → an unchecked OOB read.
+func TestRange_Safety_HavocInNestedBlockNotElided(t *testing.T) {
+	program, safety := analyzeForSafety(t, `
+		let f = (xs: [10]u8, c: bool) -> u8 => {
+			var x: u8 = 5
+			if c {
+				for var i: u8 = 0; i < 8; i += 1 { x = i + 100 }
+			}
+			xs[x]
+		}
+		let main = () -> u8 => 0
+	`)
+	idx := firstExpr(t, program, isIndexExpr)
+	if safety.IndexInBounds(idx) {
+		t.Error("x is havoc'd inside the nested if-block (can reach 107); xs[x] must NOT be marked in-bounds")
+	}
+}
+
+// Regression (the false-positive twin of the above): reverting a nested-block havoc
+// also invented a spurious diagnostic. The loop havocs x, so after the `if` x is ⊤
+// and `x + 100` is only a *possible* overflow — no diagnostic. Before the fix, x
+// reverted to [250,250] and `x + 100` = [350,350] was flagged as a definite E020,
+// breaking the zero-false-positive bar.
+func TestRange_NoOverflow_HavocInNestedBlock(t *testing.T) {
+	noDiag(t, `
+		let f = (c: bool) -> u8 => {
+			var x: u8 = 250
+			if c {
+				for var i: u8 = 0; i < 3; i += 1 { x = i }
+			}
+			x + 100
+		}
+		let main = () -> u8 => 0
+	`)
+}
+
 func TestRange_Safety_MatchRefinedIndexInBounds(t *testing.T) {
 	// A match arm refines i to [0,2], so the size-3 index is provably in bounds and
 	// its bounds check is elided — the elision counterpart to match-arm refinement.

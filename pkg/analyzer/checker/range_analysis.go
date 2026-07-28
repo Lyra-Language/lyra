@@ -495,12 +495,23 @@ func (c *rangeChecker) evalBlock(st rangeEnv, v *ast.BlockExpr) (interval, bool,
 		}
 	}
 	// Restore block scoping: block-local declarations (incl. ones shadowing an
-	// outer name) don't leak out; reassignments to pre-existing outer variables do.
-	out := saved
+	// outer name) don't leak out; everything the block did to a pre-existing outer
+	// variable does — including a *havoc* (a variable deleted from the env by a
+	// loop, an untrackable reassignment, etc.; an absent variable is ⊤). We build
+	// the result from `inner` (which already reflects every reassignment and
+	// deletion) and only undo the block-local declarations, restoring a shadowed
+	// name to its pre-block value. Starting from `saved` and copying-forward-only
+	// (the previous approach) silently reverted a havoc: a deleted outer variable
+	// is absent from `inner`, so it kept its stale pre-block interval — which then
+	// wrongly elided a downstream runtime safety check (a miscompile). See
+	// TestRange_Safety_HavocInNestedBlockNotElided in range_analysis_test.go.
+	out := inner.clone()
 	out.reachable = inner.reachable
-	for name, iv := range inner.vars {
-		if !declared[name] {
-			out.vars[name] = iv
+	for name := range declared {
+		if savedIV, ok := saved.vars[name]; ok {
+			out.vars[name] = savedIV // shadowed an outer binding → restore it
+		} else {
+			delete(out.vars, name) // purely block-local → drop it
 		}
 	}
 	return lastVal, lastTracked, out
