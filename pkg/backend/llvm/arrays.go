@@ -93,9 +93,12 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	if dynType, ok := objType.(types.DynamicArrayType); ok {
 		return l.lowerDynArrayIndex(block, e, dynType)
 	}
+	if types.IsString(objType) {
+		return l.lowerStringIndex(block, e)
+	}
 	arrType, ok := objType.(types.StaticArrayType)
 	if !ok {
-		return nil, nil, fmt.Errorf("llvm: indexing into %s not implemented yet (only fixed-size arrays)", objType)
+		return nil, nil, fmt.Errorf("llvm: indexing into %s not implemented yet (only fixed-size arrays and strings)", objType)
 	}
 
 	isShared := types.AllocationOf(objType) == types.Shared

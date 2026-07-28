@@ -57,6 +57,68 @@ func (l *lowerer) stringBox(block *ir.Block, str value.Value) value.Value {
 // lowerManagedRetain / lowerManagedRelease in shared.go, which recover the box via
 // stringBox above. A literal's box is pinned, so the runtime no-ops on it.)
 
+// lowerStringIndex lowers `s[i]` on a string → the i-th **rune** (code point).
+// Because a string is UTF-8, runes aren't randomly addressable: this walks from the
+// front, decoding one rune per step, until it has skipped `i` of them, then yields
+// that rune. It is therefore O(i) — for a full traversal, prefer `for c in s`. The
+// index is a rune index, not a byte offset; running off the end before reaching `i`
+// (which includes any negative index, since the rune counter only ever grows) traps
+// out-of-bounds, the same trap an array index uses. There is no from-the-end
+// (negative) form for a string — that would require a full rune count first.
+func (l *lowerer) lowerStringIndex(block *ir.Block, e *ast.IndexExpr) (value.Value, *ir.Block, error) {
+	str, block, err := l.lowerExpr(block, e.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !isStringLLVMType(str.Type()) {
+		return nil, nil, fmt.Errorf("llvm: string index object did not lower to a string (%s)", str.Type())
+	}
+	data := block.NewExtractValue(str, 0)
+	length := block.NewExtractValue(str, 1) // byte length
+	idx, block, err := l.lowerExpr(block, e.Index)
+	if err != nil {
+		return nil, nil, err
+	}
+	signed, _ := l.getIntSignedness(e.Index)
+	target := coerceIntWidth(block, idx, signed, lltypes.I64) // the wanted rune index
+	decode := l.utf8DecodeFunc()
+
+	fn := block.Parent
+	entry := fn.Blocks[0]
+	biSlot := entry.NewAlloca(lltypes.I64)  // byte index
+	riSlot := entry.NewAlloca(lltypes.I64)  // rune index
+	cpSlot := entry.NewAlloca(lltypes.I32)  // decode out-param
+	block.NewStore(constant.NewInt(lltypes.I64, 0), biSlot)
+	block.NewStore(constant.NewInt(lltypes.I64, 0), riSlot)
+
+	condBlock := fn.NewBlock("")
+	bodyBlock := fn.NewBlock("")
+	advBlock := fn.NewBlock("")
+	foundBlock := fn.NewBlock("")
+	trapBlock := fn.NewBlock("")
+	block.NewBr(condBlock)
+
+	// Ran out of bytes before reaching rune `i` → out of bounds.
+	bi := condBlock.NewLoad(lltypes.I64, biSlot)
+	condBlock.NewCondBr(condBlock.NewICmp(enum.IPredULT, bi, length), bodyBlock, trapBlock)
+
+	trapBlock.NewCall(l.panicIndexOOBFunc())
+	trapBlock.NewUnreachable()
+
+	// Decode the rune at the current byte index; if its rune index is the target,
+	// we're done — otherwise advance.
+	biB := bodyBlock.NewLoad(lltypes.I64, biSlot)
+	ri := bodyBlock.NewLoad(lltypes.I64, riSlot)
+	n := bodyBlock.NewCall(decode, data, biB, cpSlot)
+	bodyBlock.NewCondBr(bodyBlock.NewICmp(enum.IPredEQ, ri, target), foundBlock, advBlock)
+
+	advBlock.NewStore(advBlock.NewAdd(ri, constant.NewInt(lltypes.I64, 1)), riSlot)
+	advBlock.NewStore(advBlock.NewAdd(biB, n), biSlot)
+	advBlock.NewBr(condBlock)
+
+	return foundBlock.NewLoad(lltypes.I32, cpSlot), foundBlock, nil
+}
+
 // utf8DecodeFunc lazily defines
 // `i64 @lyra_utf8_decode(i8* data, i64 pos, i32* cpOut)`, which decodes the UTF-8
 // sequence starting at data[pos], writes the code point to *cpOut, and returns the
