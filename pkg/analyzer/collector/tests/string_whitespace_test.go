@@ -89,3 +89,78 @@ func TestCollect_Interpolation_NoEmptyChunks(t *testing.T) {
 		}
 	}
 }
+
+// ── comment delimiters are string content ─────────────────────────────────────
+//
+// The external scanner used to attempt a block-comment scan at every string
+// content-chunk boundary (it ran before the in-string branch, and skipped
+// leading whitespace as padding on the way). A string whose content began with
+// `/*` therefore lexed as a *comment* running to the next `*/` anywhere later in
+// the file — swallowing following declarations whole, with no diagnostic from
+// any pass. Scanning is now gated on not being inside a string.
+
+func TestCollect_String_BlockCommentOpenerIsContent(t *testing.T) {
+	if got := plainStringValue(t, `let x = "/*"`); got != "/*" {
+		t.Errorf("string value = %q, want %q", got, "/*")
+	}
+}
+
+func TestCollect_String_BlockCommentCloserIsContent(t *testing.T) {
+	if got := plainStringValue(t, `let x = "*/"`); got != "*/" {
+		t.Errorf("string value = %q, want %q", got, "*/")
+	}
+}
+
+// The whitespace-skipping path: a leading space then a comment opener. Both the
+// space and the delimiters must survive.
+func TestCollect_String_LeadingSpaceThenBlockComment(t *testing.T) {
+	if got := plainStringValue(t, `let x = " /* note */ price"`); got != " /* note */ price" {
+		t.Errorf("string value = %q, want %q", got, " /* note */ price")
+	}
+}
+
+func TestCollect_String_LineCommentOpenerIsContent(t *testing.T) {
+	if got := plainStringValue(t, `let x = "// not a comment"`); got != "// not a comment" {
+		t.Errorf("string value = %q, want %q", got, "// not a comment")
+	}
+}
+
+// A `/*` mid-content never started a chunk, so it always worked — pinned so the
+// common shape (a glob, a path) can't regress either.
+func TestCollect_String_CommentDelimitersMidContent(t *testing.T) {
+	if got := plainStringValue(t, `let x = "path/*.txt"`); got != "path/*.txt" {
+		t.Errorf("string value = %q, want %q", got, "path/*.txt")
+	}
+}
+
+// The chunk right after an interpolation is the other boundary the scan fired at.
+func TestCollect_Interpolation_CommentOpenersAreContent(t *testing.T) {
+	got := interpSegmentValues(t, `let x = "${a} /* hi */ y"`)
+	want := []string{"id:a", "lit: /* hi */ y"}
+	if len(got) != len(want) {
+		t.Fatalf("segments = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("segment[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// The declaration *after* a string containing `/*` must still exist: the sharpest
+// form of the bug swallowed it (and everything up to the next `*/`) as a comment.
+func TestCollect_String_CommentOpenerDoesNotSwallowFollowingCode(t *testing.T) {
+	program, _, _, _ := parseAndCollect(t, "let open = \"/*\"\nlet close = \"*/\"\nlet after = 1")
+	if len(program.Statements) != 3 {
+		t.Fatalf("expected 3 declarations, got %d (a string's `/*` swallowed following code)", len(program.Statements))
+	}
+	for i, want := range []string{"open", "close", "after"} {
+		decl, ok := program.Statements[i].(*ast.VarDeclStmt)
+		if !ok {
+			t.Fatalf("statement %d: expected VarDeclStmt, got %T", i, program.Statements[i])
+		}
+		if decl.Name != want {
+			t.Errorf("statement %d name = %q, want %q", i, decl.Name, want)
+		}
+	}
+}

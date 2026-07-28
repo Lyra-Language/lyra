@@ -149,3 +149,20 @@ let x: HexLower = "123"
 		t.Fatalf("expected a pattern mismatch error, got none")
 	}
 }
+
+// A regex literal is bounded to a single line. `r` is a valid identifier and the
+// regex token outranks it, so `r/2` (a variable divided by 2, no spaces) starts
+// something shaped like a regex; before the newline bound the token ran on to the
+// next `/` anywhere later in the file — swallowing the code between into one
+// literal with no diagnostic. Here that means two ordinary division expressions,
+// which type-check cleanly.
+func TestTypeCheck_RegexLiteral_DoesNotSpanNewline(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let r = 10
+let a = 8
+let b = 2
+let ratio = r/2
+let speed = a/b
+`, false)
+	assertNoErrors(t, res)
+}
