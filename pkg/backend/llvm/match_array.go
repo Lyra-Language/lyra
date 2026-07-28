@@ -108,7 +108,7 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, arrType typ
 		}
 	}
 	if !sealed {
-		current.NewUnreachable()
+		l.sealMatchFallthrough(current)
 	}
 
 	if len(incomings) == 0 {

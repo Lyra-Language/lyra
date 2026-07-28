@@ -33,6 +33,7 @@ const (
 	overflowTrapMessage     = "lyra: arithmetic overflow\n"
 	divideByZeroTrapMessage = "lyra: divide by zero\n"
 	indexOOBTrapMessage     = "lyra: array index out of bounds\n"
+	matchFailedTrapMessage  = "lyra: match not exhaustive\n"
 )
 
 // overflowTrapExitCode is retained as the name existing tests use; it is trapExitCode.
@@ -78,6 +79,29 @@ func (l *lowerer) panicDivideByZeroFunc() *ir.Func {
 
 func (l *lowerer) panicIndexOOBFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_index_out_of_bounds", indexOOBTrapMessage)
+}
+
+func (l *lowerer) panicMatchFailedFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_match_failed", matchFailedTrapMessage)
+}
+
+// sealMatchFallthrough terminates a match ladder's (or tag switch's) unmatched
+// fall-through edge with the standard trap instead of a bare `unreachable`.
+//
+// Exhaustiveness is a hard error only for `bool` and `data` scrutinees; for
+// int/string/rune/float/array/tuple/struct it is a *warning*, and warnings never
+// gate a build — so a non-exhaustive match reaches this edge with a value no arm
+// covers. `unreachable` made that undefined behavior (SIGTRAP at -O0, arbitrary
+// under optimization); a guarded-only match reached it deterministically. Trapping
+// keeps the failure inside the language's own discipline: a message on stderr and
+// exit 101, exactly like a failed bounds check or a divide by zero.
+//
+// Used on the edges the compiler cannot prove dead. Where exhaustiveness *is*
+// enforced (a bool ladder, a `data` tag switch) this is defense in depth: the call
+// is unreachable in a well-typed program and costs one basic block.
+func (l *lowerer) sealMatchFallthrough(block *ir.Block) {
+	block.NewCall(l.panicMatchFailedFunc())
+	block.NewUnreachable()
 }
 
 // emitTrapIf branches to a trap when cond is true and continues otherwise: it

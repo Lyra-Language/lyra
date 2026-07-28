@@ -27,6 +27,61 @@ func hasUnguardedCatchAll(arms []ast.MatchArm) bool {
 	return false
 }
 
+// patternIsIrrefutable reports whether a pattern matches every value of its
+// type — it binds and destructures but never tests. A tuple/struct is a
+// *single-shape* aggregate (no tag to discriminate), so a pattern over one is
+// irrefutable exactly when every sub-pattern is: `(a, b)` and `Pt { x, y }`
+// always match, while `(0, b)` / `{ x: 0 }` can fail on the literal.
+//
+// This is the exhaustiveness counterpart of the backend's aggPatternTest, which
+// returns a nil condition for precisely these patterns — keeping "no runtime test
+// emitted" and "counts as exhaustive" the same judgment. Without it an irrefutable
+// arm still drew a "not exhaustive" warning demanding an unreachable wildcard,
+// which is both wrong and corrosive: it trains users to ignore the warning class
+// that also covers genuinely non-exhaustive matches.
+//
+// A struct pattern may list a subset of fields (unlisted ones aren't tested), and
+// the typechecker has already verified a named pattern's type against the
+// scrutinee, so field coverage doesn't affect refutability. Deliberately not
+// irrefutable: literal/range (test a value), data (tests a tag), array (tests a
+// length), regex, and a `name @ inner` binding whose inner pattern is refutable.
+func patternIsIrrefutable(pat ast.Pattern) bool {
+	switch p := pat.(type) {
+	case nil, *ast.WildcardPattern, *ast.IdentifierPattern:
+		// nil is a struct shorthand field (`{ x }`) — a binding leaf.
+		return true
+	case *ast.TuplePattern:
+		for _, elem := range p.Elements {
+			if !patternIsIrrefutable(elem) {
+				return false
+			}
+		}
+		return true
+	case *ast.StructPattern:
+		for _, f := range p.Fields {
+			if !patternIsIrrefutable(f.Pattern) {
+				return false
+			}
+		}
+		return true
+	case *ast.BindingPattern:
+		return patternIsIrrefutable(p.Pattern)
+	}
+	return false
+}
+
+// aggregateMatchIsExhaustive reports whether a match over a tuple or struct
+// scrutinee covers every value: an unguarded catch-all, or any unguarded
+// irrefutable destructuring arm. A guarded arm never counts (its guard may fail).
+func aggregateMatchIsExhaustive(arms []ast.MatchArm) bool {
+	for _, arm := range arms {
+		if arm.Guard == nil && patternIsIrrefutable(arm.Pattern) {
+			return true
+		}
+	}
+	return false
+}
+
 // inferBlockType returns the type of a block expression — the type of its last
 // expression statement. Returns nil for an empty block or one whose last
 // statement is not an ExpressionStmt (e.g. a declaration or return).
@@ -159,7 +214,7 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.checkNumericMatchArm(arm.Pattern, scrutineeType)
 		}
 		if !tc.isNumericMatchExhaustive(expr.MatchArms, scrutineeType) {
-			tc.addError(expr.GetLocation(), SeverityWarning,
+			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
 				"match on numeric type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
 	} else if types.IsString(scrutineeType) {
@@ -167,7 +222,7 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.checkStringMatchArm(arm.Pattern)
 		}
 		if !stringMatchIsExhaustive(expr.MatchArms) {
-			tc.addError(expr.GetLocation(), SeverityWarning,
+			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
 				"match on string type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
 	} else if isRuneType(scrutineeType) {
@@ -175,7 +230,7 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.checkRuneMatchArm(arm.Pattern)
 		}
 		if !hasUnguardedCatchAll(expr.MatchArms) {
-			tc.addError(expr.GetLocation(), SeverityWarning,
+			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
 				"match on rune type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
 	} else if types.IsArray(scrutineeType) {
@@ -183,7 +238,7 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.checkArrayMatchArm(arm.Pattern, scrutineeType)
 		}
 		if !arrayMatchIsExhaustive(expr.MatchArms, scrutineeType) {
-			tc.addError(expr.GetLocation(), SeverityWarning,
+			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
 				"match on array type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
 	} else if dt, ok := tc.resolveToDataType(scrutineeType); ok {
@@ -199,16 +254,16 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 		for _, arm := range expr.MatchArms {
 			tc.checkTupleMatchArm(arm.Pattern, tt)
 		}
-		if !hasUnguardedCatchAll(expr.MatchArms) {
-			tc.addError(expr.GetLocation(), SeverityWarning,
+		if !aggregateMatchIsExhaustive(expr.MatchArms) {
+			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
 				"match on tuple type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
 	} else if st, ok := tc.resolveToNamedStructType(scrutineeType); ok {
 		for _, arm := range expr.MatchArms {
 			tc.checkStructMatchArm(arm.Pattern, st)
 		}
-		if !hasUnguardedCatchAll(expr.MatchArms) {
-			tc.addError(expr.GetLocation(), SeverityWarning,
+		if !aggregateMatchIsExhaustive(expr.MatchArms) {
+			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
 				"match on struct type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
 	}

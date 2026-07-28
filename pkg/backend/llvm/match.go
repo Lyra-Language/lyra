@@ -198,7 +198,7 @@ func (l *lowerer) lowerScalarMatch(block *ir.Block, e *ast.MatchExpr, scrutPrim 
 		}
 	}
 	if !sealed {
-		current.NewUnreachable()
+		l.sealMatchFallthrough(current)
 	}
 
 	if len(incomings) == 0 {

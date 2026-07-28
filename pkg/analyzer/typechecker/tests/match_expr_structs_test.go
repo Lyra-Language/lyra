@@ -71,11 +71,25 @@ func TestTypeCheck_StructMatch_NonStructPattern_Error(t *testing.T) {
 
 // ── exhaustiveness ────────────────────────────────────────────────────────────
 
-func TestTypeCheck_StructMatch_NoWildcard_Warning(t *testing.T) {
+// An irrefutable destructuring arm covers every value of a struct type (a struct
+// is single-shape), so it *is* exhaustive — including a shorthand field list that
+// names only some fields, since unlisted fields are never tested. This previously
+// warned and demanded an unreachable wildcard.
+func TestTypeCheck_StructMatch_IrrefutablePattern_Exhaustive(t *testing.T) {
 	res := parseCollectAndCheck(t, personDecl+`
   let p = Person { name: "Alice", age: 30 }
   match p {
     { name } => "ok",
+  }`, false)
+	assertWarningsAre(t, res) // no errors and no warnings
+}
+
+// A literal field sub-pattern is refutable, so this stays non-exhaustive.
+func TestTypeCheck_StructMatch_LiteralField_Warning(t *testing.T) {
+	res := parseCollectAndCheck(t, personDecl+`
+  let p = Person { name: "Alice", age: 30 }
+  match p {
+    { age: 30 } => "thirty",
   }`, false)
 	assertWarningsAre(t, res,
 		"match on struct type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")

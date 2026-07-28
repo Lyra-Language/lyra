@@ -143,7 +143,7 @@ func (l *lowerer) lowerAggregateMatch(
 		current = nextBlock
 	}
 	if !sealed {
-		current.NewUnreachable()
+		l.sealMatchFallthrough(current)
 	}
 
 	if len(incomings) == 0 {
@@ -584,9 +584,12 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 	}
 
 	if defaultBlock == nil {
-		// Exhaustive over the constructors, so the default is unreachable.
+		// Exhaustive over the constructors (lyra-E009 is a hard error for `data`), so
+		// this default is unreachable in a well-typed program — trap rather than
+		// `unreachable` anyway, so a gap in that enforcement aborts cleanly instead of
+		// running off into undefined behavior.
 		defaultBlock = fn.NewBlock("")
-		defaultBlock.NewUnreachable()
+		l.sealMatchFallthrough(defaultBlock)
 	}
 	block.NewSwitch(tag, defaultBlock, cases...)
 
