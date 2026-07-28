@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -22,9 +23,9 @@ import (
 // binding is mutable (a `var`, a `let mut`, or a `mut`/`own` parameter), that the
 // value's type matches the target, and that no `readonly` field is written.
 //
-// A **managed** target (a `string`/`[]T` element or field) owns whatever it holds,
-// so overwriting it must release the old reference or that reference leaks — but
-// only when the slot is *unaliased*, which is what loc.viaBox decides. See
+// A **managed** target (a `string`/`[]T` element or field) owns whatever it holds, so
+// overwriting it must release the old reference or that reference leaks — but only
+// when the slot genuinely owns it rather than sharing a caller's. See
 // releaseOldTarget.
 //
 // Deferred, loud error: an optional member target (`p?.x = v`).
@@ -52,7 +53,7 @@ func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignm
 	}
 	// The new value is computed *before* the release below, so `xs[i] = xs[i] ++ y`
 	// — which reads the old element — is safe.
-	if l.releaseOldTarget(loc) {
+	if l.releaseOldTarget(loc, stmt.Target) {
 		old := block.NewLoad(targetLL, loc.ptr)
 		if err := l.lowerManagedRelease(block, old, loc.ty); err != nil {
 			return nil, err
@@ -88,14 +89,60 @@ func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignm
 // duplicate the box pointer but all name the same element storage, so the element
 // release is safe even though `p` itself is an inline aggregate.
 //
-// The cost of saying no is a leak — the overwritten value is abandoned — which is
-// the pass's standing safety bias (a missed release leaks; a spurious one dangles).
-// It matches the rest of the stack-aggregate story: a managed value inside an inline
-// aggregate is never freed today. Removing this restriction means deep-retain-on-copy
-// in the ownership pass, which frees those values everywhere rather than here alone;
-// see ALLOCATION.md.
-func (l *lowerer) releaseOldTarget(loc lvalueLoc) bool {
-	return loc.viaBox && ownership.IsManaged(loc.ty)
+// An **owning root** is the second way to say yes, and the one deep-retain-on-copy
+// bought. When the path is rooted at a binding the backend framed — a local
+// `let`/`var`, or an `own` parameter — that binding holds a +1 on everything it owns,
+// so the old field value is genuinely its reference to drop. Copies of the aggregate
+// now carry their own +1 (ownership.OwnsManaged makes a stack-aggregate copy an
+// owning position and the retain glue dups each managed field), so releasing through
+// the original can no longer dangle them. Before that, this case *was* the
+// use-after-free above and the release had to be suppressed entirely.
+//
+// The remaining no is a **borrowed root** — a `mut`/`ref` parameter, which the
+// typechecker permits as an assignment root. A by-value parameter copy shares the
+// *caller's* reference (a borrow is not retained, and the callee's copy is not
+// framed), so releasing through it frees a value the caller still owns. That is the
+// third shape of the original bug, and the nastiest, because the aliasing copy is the
+// parameter passing itself and so invisible in the source. It leaks the overwritten
+// value instead — the standing safety bias, and no loss in practice since a by-value
+// `mut` parameter's interior mutation never reaches the caller anyway.
+func (l *lowerer) releaseOldTarget(loc lvalueLoc, target ast.Expression) bool {
+	if !ownership.IsManaged(loc.ty) {
+		return false
+	}
+	return loc.viaBox || l.lvalueRootIsOwning(target)
+}
+
+// lvalueRootIsOwning reports whether the binding an lvalue path is rooted at is an
+// owning slot — one the backend framed, so it holds a +1 on what it owns and will
+// deep-release it at scope exit.
+//
+// Framing is the exact signal to test, because it is the same condition under which
+// the ownership pass grants that +1: lowerVarDecl and defineFunction frame precisely
+// the bindings whose initializer or argument was coerced to owned.
+func (l *lowerer) lvalueRootIsOwning(e ast.Expression) bool {
+	for {
+		switch t := e.(type) {
+		case *ast.IdentifierExpr:
+			slot, ok := l.locals[t.Name]
+			return ok && l.slotIsFramed(slot)
+		case *ast.MemberExpr:
+			e = t.Object
+		case *ast.IndexExpr:
+			e = t.Object
+		default:
+			return false // unrecognized root: assume borrowed, i.e. leak rather than dangle
+		}
+	}
+}
+
+// slotIsFramed reports whether an alloca is recorded in any live scope frame — the
+// backend's record that the binding owns a reference and will release it at its
+// scope exit.
+func (l *lowerer) slotIsFramed(slot value.Value) bool {
+	return slices.ContainsFunc(l.managedFrames, func(frame []managedSlot) bool {
+		return slices.ContainsFunc(frame, func(m managedSlot) bool { return m.slot == slot })
+	})
 }
 
 // lvalueLoc is an assignable location: its address, the Lyra type stored there, and

@@ -169,6 +169,7 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 		overflowIntrinsics: map[string]*ir.Func{},
 		panics:             map[string]*ir.Func{},
 		dropFns:            map[string]*ir.Func{},
+		retainFns:          map[string]*ir.Func{},
 		cStrings:           map[string]*ir.Global{},
 	}
 	// Record top-level `const` declarations so a reference to one inlines its
@@ -276,6 +277,13 @@ type lowerer struct {
 	dropFns     map[string]*ir.Func
 	dropFnCount int
 
+	// retainFns caches the per-type recursive *retain* glue (retain.go) the same
+	// way — the mirror of dropFns, and what makes a copy of a stack aggregate a real
+	// +1 on each managed field it duplicates (deep-retain-on-copy). The two caches
+	// are separate but their generated bodies must cover the same fields.
+	retainFns     map[string]*ir.Func
+	retainFnCount int
+
 	// reuseToken is the Perceus reuse token (an i8* box-or-null from
 	// lyra_rc_drop_reuse) of the reuse-`match` currently being lowered, live only
 	// across its arms. A reuse-target construction in an arm consumes it (writes into
@@ -330,14 +338,23 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 	if err != nil {
 		return nil, nil, err
 	}
-	if v != nil && isManagedLLVMType(v.Type()) {
+	// The gate is the *Lyra* type, not the LLVM one, and it is the deep question
+	// ("does this value own any refcounted reference?") rather than "is this value
+	// itself a box". A stack aggregate lowers to a plain struct/array with no pointer
+	// of its own, yet copying one duplicates every managed field inside it — gating on
+	// the LLVM type skipped exactly those copies, which is what left them unretained.
+	ty, _ := l.res.TypeTable.Get(expr)
+	if v != nil && l.needsDrop(ty) {
 		if l.res.Ownership.ShouldRetain(expr) {
-			l.lowerManagedRetain(end, v)
+			// Deep: retain every managed reference reachable by value from v, which for
+			// a managed value is just itself and for an aggregate is each managed field.
+			if err := l.deepRetain(end, v, ty); err != nil {
+				return nil, nil, err
+			}
 		}
 		if l.res.Ownership.ShouldReleaseTemp(expr) {
 			// Record the temporary's Lyra type alongside it: releasing it may free its
 			// box, and freeing runs the drop glue for whatever the payload owns.
-			ty, _ := l.res.TypeTable.Get(expr)
 			l.pendingReleases = append(l.pendingReleases, pendingTemp{v, end, ty})
 		}
 		// An owning last use *transfers* the reference, so retire the slot from its
@@ -379,7 +396,7 @@ func (l *lowerer) flushStmtTemps(start, end *ir.Block) error {
 		if p.block == start {
 			blk = end
 		}
-		if err := l.lowerManagedRelease(blk, p.val, p.ty); err != nil {
+		if err := l.deepRelease(blk, p.val, p.ty); err != nil {
 			return err
 		}
 	}

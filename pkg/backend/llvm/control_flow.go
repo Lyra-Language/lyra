@@ -627,11 +627,15 @@ func (l *lowerer) lowerVarDecl(block *ir.Block, vds *ast.VarDeclStmt) (*ir.Block
 	slot := entry.NewAlloca(init.Type())
 	block.NewStore(init, slot)
 	l.locals[vds.Name] = slot // later re-declaration of the same name just overwrites
-	// A managed binding owns a reference-counted value (its initializer was
-	// coerced to +1 by the ownership pass); record it so this scope's exit
-	// releases it, along with the Lyra type that says what its payload owns.
-	if isManagedSlot(slot) {
-		l.addManagedBinding(slot, l.bindingType(vds))
+	// An *owning* binding holds a +1 on everything it owns — its initializer was
+	// coerced to +1 by the ownership pass (bindingOwnsManaged makes the initializer an
+	// owning position, so a copy there was deep-retained). Record it so this scope's
+	// exit deep-releases it, along with the Lyra type saying what that is. This covers
+	// a plain stack aggregate with a managed field, not just a managed value: the two
+	// must be framed on the same condition the pass grants the +1 on, or they'd
+	// disagree.
+	if ty := l.bindingType(vds); l.needsDrop(ty) {
+		l.addManagedBinding(slot, ty)
 	}
 	return block, nil
 }
@@ -653,17 +657,19 @@ func (l *lowerer) lowerVarReassignment(block *ir.Block, vrs *ast.VarReassignment
 		return nil, err
 	}
 	slot := l.locals[vrs.Name]
-	// Reassigning a managed binding drops the old value's reference before the new
-	// one overwrites it. The new value was coerced to +1 by the ownership pass, and
-	// it's computed *before* this release (so `s = s ++ x`, which reads the old s,
-	// is safe: the concat has already happened).
-	if isManagedSlot(slot) {
+	// Reassigning an owning binding drops what the old value owned before the new one
+	// overwrites it. The new value was coerced to +1 by the ownership pass, and it's
+	// computed *before* this release (so `s = s ++ x`, which reads the old s, is safe:
+	// the concat has already happened). Deep, and on the same condition lowerVarDecl
+	// framed the binding — a stack aggregate holding a string releases that string
+	// here, which is sound now that every copy of the aggregate carries its own +1.
+	oldTy, _ := l.res.TypeTable.Get(vrs.Value)
+	if l.needsDrop(oldTy) {
 		a := slot.(*ir.InstAlloca)
-		old := block.NewLoad(a.ElemType, slot)
 		// The old and new values have the same type, so the RHS's recorded type
-		// selects the right drop glue for the value being dropped.
-		oldTy, _ := l.res.TypeTable.Get(vrs.Value)
-		if err := l.lowerManagedRelease(block, old, oldTy); err != nil {
+		// selects the right glue for the value being dropped.
+		old := block.NewLoad(a.ElemType, slot)
+		if err := l.deepRelease(block, old, oldTy); err != nil {
 			return nil, err
 		}
 	}

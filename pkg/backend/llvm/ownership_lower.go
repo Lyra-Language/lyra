@@ -62,14 +62,6 @@ func (l *lowerer) retireManagedSlot(slot value.Value) {
 	}
 }
 
-// isManagedSlot reports whether an alloca holds a managed (ref-counted) value — a
-// string or a `shared` box — the signal that its binding participates in
-// refcounting.
-func isManagedSlot(slot value.Value) bool {
-	a, ok := slot.(*ir.InstAlloca)
-	return ok && isManagedLLVMType(a.ElemType)
-}
-
 // topFrameSlot returns the current (innermost) scope's managed entry for slot —
 // i.e. the binding was declared in the block being lowered — and whether it's
 // there at all.
@@ -116,7 +108,7 @@ func (l *lowerer) dropLastUsesInStmt(block *ir.Block, stmt ast.Statement) error 
 		}
 		seen[slot] = true
 		a := slot.(*ir.InstAlloca)
-		if err := l.lowerManagedRelease(block, block.NewLoad(a.ElemType, slot), m.ty); err != nil {
+		if err := l.deepRelease(block, block.NewLoad(a.ElemType, slot), m.ty); err != nil {
 			walkErr = err
 			return false
 		}
@@ -127,13 +119,15 @@ func (l *lowerer) dropLastUsesInStmt(block *ir.Block, stmt ast.Statement) error 
 }
 
 // releaseSlots emits a release for each recorded binding: load the current value
-// from its alloca and drop its box's refcount (running the value's drop glue when
-// that frees the box).
+// from its alloca and drop a reference from everything it owns — its own box's
+// refcount for a managed value, or each managed field for a stack aggregate (which
+// goes through the per-type glue, so this stays straight-line and the frame release
+// never has to split the caller's block).
 func (l *lowerer) releaseSlots(block *ir.Block, slots []managedSlot) error {
 	for _, m := range slots {
 		a := m.slot.(*ir.InstAlloca)
 		v := block.NewLoad(a.ElemType, m.slot)
-		if err := l.lowerManagedRelease(block, v, m.ty); err != nil {
+		if err := l.deepRelease(block, v, m.ty); err != nil {
 			return err
 		}
 	}

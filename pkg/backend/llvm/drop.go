@@ -40,59 +40,29 @@ import (
 // function that calls itself through the tail's release rather than recursing
 // forever during generation.
 //
-// Scope: this covers managed values inside a *boxed* (`shared`) aggregate, whose
-// death is a refcount reaching zero. A managed value inside a plain **stack**
-// aggregate is still leaked — a stack aggregate is a value, so `let q = p` copies it
-// and duplicates its field references with no retain, and dropping both copies would
-// double-free. Making that sound needs deep-retain-on-copy in the ownership pass
-// first; see ALLOCATION.md.
+// Scope: this runs wherever a value that owns managed references dies — as a box's
+// drop_fn when a `shared` value's refcount reaches zero, and (since deep-retain-on-
+// copy) as the scope-exit release of a plain **stack** aggregate binding, called
+// directly on the value via deepRelease (retain.go).
 //
-// That unretained copy is **not purely a leak**, and this file is one of the two
-// places it bites. Reading a stack aggregate *by value out of a box* — `let q = ps[0]`
-// on a `[]Person` — duplicates the aggregate's managed fields without a retain, so
-// when the box dies the glue below frees them while `q` still points at them: a real
-// use-after-free, ASan-confirmed. It is unfixed here on purpose (not emitting the glue
-// would reintroduce the leak it exists to close — freeing a list would leak the
-// spine); only deep-retain-on-copy closes it. The other place is interior assignment,
-// which *is* handled: lowerLValueAssignment releases the overwritten value only for a
-// box-interior target (see releaseOldTarget, lvalue.go).
+// This glue has an exact counterpart in retain.go, and the two must stay in step.
+// Whatever a *copy* of a type retains, the copy's death has to release: a retain
+// without a matching drop leaks, and a drop without a matching retain is a
+// use-after-free. That symmetry is the whole ownership invariant for aggregates, and
+// TestEmit_RetainGlueMirrorsDropGlue checks the generated pair covers the same
+// fields rather than leaving it to inspection.
 
 // needsDrop reports whether a value of Lyra type t owns any reference-counted
-// reference that must be released when the value dies. A managed type *is* such a
-// reference; an inline aggregate needs a drop when any field does.
+// reference that must be released when the value dies — and, symmetrically, retained
+// when it is copied. A managed type *is* such a reference; an inline aggregate needs
+// a drop when any field does.
+//
+// It delegates to ownership.OwnsManaged so the backend and the ownership pass share
+// **one** definition. They must agree exactly: the pass decides where a +1 is minted
+// and this side decides where one is released, so any divergence between them is
+// either a leak or a double free.
 func (l *lowerer) needsDrop(t types.Type) bool {
-	if t == nil {
-		return false
-	}
-	if ownership.IsManaged(t) {
-		return true // a string, or a `shared` box pointer — a reference in its own right
-	}
-	switch v := l.resolveNamedType(t).(type) {
-	case types.NamedStructType:
-		for _, f := range v.Fields {
-			if l.needsDrop(f.Type) {
-				return true
-			}
-		}
-	case types.TupleType:
-		for _, e := range v.Elements {
-			if l.needsDrop(e) {
-				return true
-			}
-		}
-	case types.DataType:
-		for _, c := range v.Constructors {
-			for _, f := range c.FieldTypes() {
-				if l.needsDrop(f) {
-					return true
-				}
-			}
-		}
-	case types.StaticArrayType:
-		// A `shared [N]T` box owns its elements; it needs a drop iff T does.
-		return l.needsDrop(v.ElementType)
-	}
-	return false
+	return ownership.OwnsManaged(t, l.res.SymbolTable)
 }
 
 // resolveNamedType resolves an UnresolvedType (how a reference to another declared
@@ -144,15 +114,31 @@ func (l *lowerer) boxDropFn(t types.Type) (value.Value, error) {
 }
 
 // dropFnFor returns an i8* to the drop function for a payload of Lyra type t, or a
-// null i8* when t owns nothing managed. The function is generated once per type
-// and cached; the returned pointer is a constant expression, so it needs no block.
+// null i8* when t owns nothing managed — the form lyra_rc_release wants for a box's
+// drop_fn argument. The returned pointer is a constant expression, so it needs no
+// block. Use dropFuncFor when you need to *call* the glue rather than pass it.
 func (l *lowerer) dropFnFor(t types.Type) (value.Value, error) {
-	if !l.needsDrop(t) {
+	fn, err := l.dropFuncFor(t)
+	if err != nil {
+		return nil, err
+	}
+	if fn == nil {
 		return nullDropFn(), nil
+	}
+	return constant.NewBitCast(fn, lltypes.NewPointer(lltypes.I8)), nil
+}
+
+// dropFuncFor returns the drop glue for a payload of Lyra type t, or nil when t owns
+// nothing managed. Generated once per type and cached. This is the callable form —
+// retain.go's deepRelease calls it directly on an aggregate value, while dropFnFor
+// wraps it as the i8* a box's drop_fn slot takes.
+func (l *lowerer) dropFuncFor(t types.Type) (*ir.Func, error) {
+	if !l.needsDrop(t) {
+		return nil, nil
 	}
 	key := t.String()
 	if fn, ok := l.dropFns[key]; ok {
-		return constant.NewBitCast(fn, lltypes.NewPointer(lltypes.I8)), nil
+		return fn, nil
 	}
 
 	payloadTy, err := l.lowerType(t)
@@ -171,14 +157,20 @@ func (l *lowerer) dropFnFor(t types.Type) (value.Value, error) {
 		return nil, err
 	}
 	end.NewRet(nil)
-	return constant.NewBitCast(fn, lltypes.NewPointer(lltypes.I8)), nil
+	return fn, nil
 }
 
-// dropFnName builds a unique, readable LLVM symbol for a type's drop glue. The
-// type key is mangled to identifier characters for readability; a counter
+// dropFnName builds a unique, readable LLVM symbol for a type's drop glue. A counter
 // guarantees uniqueness even if two distinct keys mangle alike.
 func (l *lowerer) dropFnName(key string) string {
-	mangled := strings.Map(func(r rune) rune {
+	l.dropFnCount++
+	return fmt.Sprintf("lyra_drop_%d_%s", l.dropFnCount, mangleTypeKey(key))
+}
+
+// mangleTypeKey reduces a type key to identifier characters so it can appear in an
+// LLVM symbol name. Readability only — uniqueness comes from the caller's counter.
+func mangleTypeKey(key string) string {
+	return strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
 			return r
@@ -186,8 +178,6 @@ func (l *lowerer) dropFnName(key string) string {
 			return '_'
 		}
 	}, key)
-	l.dropFnCount++
-	return fmt.Sprintf("lyra_drop_%d_%s", l.dropFnCount, mangled)
 }
 
 // emitDropValue releases everything the first-class value v (of Lyra type t) owns.

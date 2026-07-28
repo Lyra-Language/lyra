@@ -163,99 +163,138 @@ let main = () -> u8 => {
 }
 
 // TestEmit_ManagedAssignmentReleaseIR pins *where* the release-old is emitted, which
-// is the whole safety argument: a target reached through a ref-counted box has no
-// unretained alias (copying a `shared` value or a `[]T` copies the box pointer, which
-// is itself managed and so retained), while a target in inline aggregate storage may
-// have many. A behavioral test can only show the absence of a crash; this shows the
-// release is present exactly where it is safe and absent exactly where it is not.
+// is the whole safety argument. A managed target must release the value it is
+// overwriting or that value leaks — but only when the slot genuinely owns it. Two
+// ways for that to hold (releaseOldTarget): the slot lives inside a ref-counted box,
+// or the path is rooted at an owning binding. The one case that must still refuse is
+// a *borrowed* root, where the slot shares the caller's reference.
+//
+// A behavioral test can only show the absence of a crash; this shows the release is
+// present exactly where it is owed and absent exactly where it would steal.
 func TestEmit_ManagedAssignmentReleaseIR(t *testing.T) {
-	// releasesInMain counts the release calls in @main only, so drop glue and the
-	// runtime's own definitions don't perturb the count.
-	releasesInMain := func(src string) int {
+	// releasesIn counts @lyra_rc_release calls in one function body. That is a direct
+	// release of a *managed* value; a stack aggregate's deep release is a call to its
+	// drop glue instead, so it is deliberately not counted here — this test is about
+	// the release-old decision, not total traffic (TestEmit_DeepRetainConservation
+	// covers totals).
+	releasesIn := func(fn, src string) int {
 		t.Helper()
 		ir, err := emitSource(t, src)
 		if err != nil {
 			t.Fatalf("emit: %v", err)
 		}
-		start := strings.Index(ir, "define i32 @main")
-		if start < 0 {
-			t.Fatalf("no @main in emitted IR:\n%s", ir)
-		}
-		body := ir[start:]
-		if end := strings.Index(body, "\n}\n"); end >= 0 {
-			body = body[:end]
+		body, ok := llFuncBodies(ir)[fn]
+		if !ok {
+			t.Fatalf("no @%s in emitted IR:\n%s", fn, ir)
 		}
 		return strings.Count(body, "@lyra_rc_release")
 	}
 
-	// Box-interior targets: the element/field lives in the box, so the overwritten
-	// value is released (1) and the binding's own box is released at scope exit (1).
-	for _, c := range []struct{ name, src string }{
-		{"dynamic array element", `let main = () -> u8 => {
+	for _, c := range []struct {
+		name, fn, src string
+		want          int
+		why           string
+	}{
+		{
+			name: "dynamic array element", fn: "main", want: 2,
+			why: "release-old, plus the array box at scope exit",
+			src: `let main = () -> u8 => {
   var xs: []string = ["a" ++ "1"]
   xs[0] = "b" ++ "2"
   0
-}`},
-		{"shared struct field", `struct Person { name: string }
+}`,
+		},
+		{
+			name: "shared struct field", fn: "main", want: 2,
+			why: "release-old through the box, plus the box at scope exit",
+			src: `struct Person { name: string }
 let main = () -> u8 => {
   var p: shared Person = Person { name: "a" ++ "b" }
   p.name = "x" ++ "y"
   0
-}`},
-	} {
-		if n := releasesInMain(c.src); n != 2 {
-			t.Errorf("%s: want 2 releases in @main (overwritten value + scope exit), got %d", c.name, n)
-		}
-	}
-
-	// Inline (stack) aggregate targets: the slot may be aliased by an unretained
-	// copy, so the release-old is suppressed — the overwritten value leaks, which is
-	// the standing stack-aggregate behavior and the safe direction. Each want below
-	// counts only the releases the program has *anyway*; one more than that is the
-	// release-old, i.e. the use-after-free.
-	for _, c := range []struct {
-		name, src string
-		want      int
-	}{
-		{"stack struct field", `struct Person { name: string }
+}`,
+		},
+		{
+			// Inline storage, but rooted at an owning `var`: the binding holds the +1 on
+			// the old field value, so it is its reference to drop. This is what
+			// deep-retain-on-copy re-enabled — it was suppressed (and leaked) before,
+			// because a copy of the struct had no +1 of its own.
+			name: "stack struct field, owning root", fn: "main", want: 1,
+			why: "release-old; the binding's own deep release is a drop-glue call, not counted here",
+			src: `struct Person { name: string }
 let main = () -> u8 => {
   var p: Person = Person { name: "a" ++ "b" }
   p.name = "x" ++ "y"
   0
-}`, 0}, // a stack binding is not managed, so it is never framed
-		{"stack array element", `let main = () -> u8 => {
+}`,
+		},
+		{
+			name: "stack array element, owning root", fn: "main", want: 1,
+			why: "release-old; the array's deep release is a drop-glue call",
+			src: `let main = () -> u8 => {
   var xs: [2]string = ["a" ++ "b", "c" ++ "d"]
   xs[0] = "x" ++ "y"
   0
-}`, 0},
-		// The root here *is* a box, but the final hop lands in the `Person` inlined
-		// inside it — which a by-value read of `w.p` would duplicate unretained. The
-		// one release is `w`'s own scope exit (running the Wrapper drop glue), not the
-		// release-old.
-		{"stack struct nested in a shared struct", `struct Person { name: string }
+}`,
+		},
+		{
+			name: "stack struct nested in a shared struct", fn: "main", want: 2,
+			why: "release-old, plus the shared box at scope exit",
+			src: `struct Person { name: string }
 struct Wrapper { p: Person }
 let main = () -> u8 => {
   var w: shared Wrapper = Wrapper { p: Person { name: "a" ++ "b" } }
   w.p.name = "x" ++ "y"
   0
-}`, 1},
-	} {
-		if n := releasesInMain(c.src); n != c.want {
-			t.Errorf("%s: want %d releases in @main (no release-old — the target may be aliased by an unretained copy), got %d", c.name, c.want, n)
-		}
-	}
-
-	// The final hop is what decides, not the root: a `[]string` field reached through
-	// a *stack* struct is still box-interior, so its element release must survive.
-	// Copies of the struct duplicate the box pointer, and all of them name the same
-	// element storage — ordinary aliasing, not a dangling duplicate.
-	mixed := `struct Holder { items: []string }
+}`,
+		},
+		{
+			// The final hop is what decides the box case, not the root: a `[]string`
+			// field reached through a stack struct is still box-interior.
+			name: "[]string field of a stack struct", fn: "main", want: 1,
+			why: "release-old for the element; the struct's deep release is a drop-glue call",
+			src: `struct Holder { items: []string }
 let main = () -> u8 => {
   var h: Holder = Holder { items: ["a" ++ "1"] }
   h.items[0] = "b" ++ "2"
   0
-}`
-	if n := releasesInMain(mixed); n != 1 {
-		t.Errorf("[]string field of a stack struct: want 1 release (the overwritten element), got %d", n)
+}`,
+		},
+		{
+			// The case that must still refuse. A `mut` parameter is a borrow: the callee's
+			// by-value copy shares the caller's reference, so releasing through it would
+			// free a value the caller still owns. Counted in the *callee*.
+			name: "borrowed mut parameter root", fn: "rename", want: 0,
+			why: "a borrowed root owns nothing to release; suppressing it leaks instead of dangling",
+			src: `struct Person { name: string }
+let rename = (p: mut Person) -> void => {
+  p.name = "x" ++ "y"
+}
+let main = () -> u8 => {
+  var p: Person = Person { name: "a" ++ "b" }
+  rename(p)
+  0
+}`,
+		},
+		{
+			// The same shape with `own`: the caller transferred, so the callee *does* own
+			// the field and must release it. The contrast with the case above is the
+			// whole point of keying on the parameter's mode.
+			name: "owned parameter root", fn: "rename", want: 1,
+			why: "an `own` parameter is framed, so the old field value is the callee's to drop",
+			src: `struct Person { name: string }
+let rename = (p: own Person) -> void => {
+  p.name = "x" ++ "y"
+}
+let main = () -> u8 => {
+  let p: Person = Person { name: "a" ++ "b" }
+  rename(p)
+  0
+}`,
+		},
+	} {
+		if n := releasesIn(c.fn, c.src); n != c.want {
+			t.Errorf("%s: want %d releases in @%s (%s), got %d", c.name, c.want, c.fn, c.why, n)
+		}
 	}
 }

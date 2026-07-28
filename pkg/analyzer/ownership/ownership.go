@@ -50,19 +50,29 @@
 // unique is Perceus stage 4 (reuse specialization) — it costs refcount traffic
 // today, but not allocations: reuse/FBIP reclaims the box shell either way.
 //
-// Still leaked: a managed value inside a plain **stack** aggregate. A stack
-// aggregate is a value, so `let q = p` copies it and duplicates its field references
-// with no retain; dropping both copies would double-free. Making that sound needs
-// deep-retain-on-copy here first.
+// # Deep ownership (deep-retain-on-copy)
 //
-// That missing retain is **not purely a leak** — it leaves aliases the refcount
-// doesn't know about, so freeing the value through one of them dangles the others.
-// The backend guards the case it can: interior assignment (`p.name = v`) releases the
-// overwritten value only when the target sits inside a ref-counted box, never inside
-// inline storage (`releaseOldTarget`, backend/llvm/lvalue.go). One case remains open —
-// reading an aggregate by value out of a box (`let q = ps[0]` on a `[]Person`) copies
-// its managed fields unretained, and the box's drop glue then frees them out from
-// under the copy. See ALLOCATION.md; deep-retain-on-copy is the real fix for both.
+// Ownership is **deep**: the question at every owning position is not "is this value
+// itself refcounted?" but "does it transitively own anything refcounted?"
+// (OwnsManaged). A `struct Person { name: string }` is not itself managed, yet a stack
+// aggregate is a *value* — `let q = p` copies it, and the copy points at the same
+// string box. Treating that as uninteresting (the old IsManaged test) left the copy
+// holding a reference nobody had counted.
+//
+// That was **not merely a leak**. An uncounted alias is freed out from under whoever
+// still holds it as soon as the counted owner dies, which was two ASan-confirmed
+// use-after-frees: interior assignment through one copy (`let q = p; p.name = …;
+// q.name`), and reading an aggregate by value out of a box whose drop glue then frees
+// its fields (`let q = ps[0]` on a `[]Person`, then let the array die).
+//
+// So a copy of an aggregate is an owning position like any other: it retains each
+// managed value the aggregate reaches (the backend's per-type retain glue,
+// backend/llvm/retain.go), and the copy's death releases them again (the mirroring
+// drop glue). Stack-aggregate bindings are framed and deep-released at scope exit,
+// exactly like managed ones. The backend's needsDrop delegates to OwnsManaged so the
+// two sides cannot drift apart — this pass decides where a +1 is minted and the
+// backend decides where one is released, so any disagreement is a leak or a double
+// free.
 package ownership
 
 import (
@@ -160,6 +170,71 @@ func IsManaged(t types.Type) bool {
 	// A dynamic array `[]T` is always a heap-boxed, ref-counted value (dynarray.go),
 	// so it is managed regardless of flavor — like a string.
 	return types.IsString(t) || types.IsDynamicArray(t) || types.AllocationOf(t) == types.Shared
+}
+
+// OwnsManaged reports whether a value of Lyra type t transitively owns any
+// reference-counted reference — so copying it duplicates a reference that must be
+// retained, and its death must release one. This is what makes ownership *deep*: a
+// `struct Person { name: string }` is not itself managed, but a copy of one is a
+// second reference to the same string box.
+//
+// A managed type *is* such a reference and the walk stops there (its own box owns
+// whatever it holds); an inline aggregate owns one when any field, element, or
+// `data` variant field does. That "by value" stopping rule is also the termination
+// argument: a recursive type's cycle must pass through a `shared` field (lyra-E014),
+// which is managed, so the recursion returns before re-entering the cycle.
+//
+// symTable resolves an UnresolvedType — how a reference to another declared type is
+// recorded in a field — to that declaration, carrying the reference's own allocation
+// flavor across. A nil table (or an unknown name) leaves it unresolved and reports
+// false, the leak-safe answer.
+//
+// This is the **single definition** used by both the ownership pass and the backend
+// (whose needsDrop delegates here). They must agree exactly: the pass decides where a
+// +1 is minted and the backend decides where one is released, so any divergence is
+// either a leak or a double free.
+func OwnsManaged(t types.Type, symTable *symbols.SymbolTable) bool {
+	if t == nil {
+		return false
+	}
+	if IsManaged(t) {
+		return true
+	}
+	switch v := resolveNamedType(t, symTable).(type) {
+	case types.NamedStructType:
+		return slices.ContainsFunc(v.Fields, func(f types.StructField) bool {
+			return OwnsManaged(f.Type, symTable)
+		})
+	case types.TupleType:
+		return slices.ContainsFunc(v.Elements, func(e types.Type) bool {
+			return OwnsManaged(e, symTable)
+		})
+	case types.DataType:
+		return slices.ContainsFunc(v.Constructors, func(c types.DataTypeConstructor) bool {
+			return slices.ContainsFunc(c.FieldTypes(), func(f types.Type) bool {
+				return OwnsManaged(f, symTable)
+			})
+		})
+	case types.StaticArrayType:
+		// A `[N]T` owns whatever T owns, once per element.
+		return OwnsManaged(v.ElementType, symTable)
+	}
+	return false
+}
+
+// resolveNamedType resolves an UnresolvedType to the declaration's actual type,
+// carrying the reference's own allocation flavor across; any other type is returned
+// unchanged. Shallow by design — OwnsManaged recurses field by field anyway.
+func resolveNamedType(t types.Type, symTable *symbols.SymbolTable) types.Type {
+	u, ok := t.(types.UnresolvedType)
+	if !ok || symTable == nil {
+		return t
+	}
+	decl, ok := symTable.Types[u.Name]
+	if !ok {
+		return t
+	}
+	return types.WithAllocation(decl.Type, u.Allocation)
 }
 
 // Analyze walks the typed program and returns the retain/release-temp Table.
@@ -264,7 +339,7 @@ func (a *analyzer) computeLastUse(lam *ast.LambdaExpr) map[ast.Expression]bool {
 	onStmt := func(s ast.Statement) bool {
 		switch s := s.(type) {
 		case *ast.VarDeclStmt:
-			if a.bindingIsManaged(s) {
+			if a.bindingOwnsManaged(s) {
 				declCount[s.Name]++
 			}
 		case *ast.VarReassignmentStmt:
@@ -330,7 +405,7 @@ func (a *analyzer) computeOwnedLastRef(lam *ast.LambdaExpr) map[string]ast.Expre
 	onStmt := func(s ast.Statement) bool {
 		switch s := s.(type) {
 		case *ast.VarDeclStmt:
-			if a.bindingIsManaged(s) {
+			if a.bindingOwnsManaged(s) {
 				declCount[s.Name]++
 			}
 		case *ast.VarReassignmentStmt:
@@ -510,10 +585,17 @@ func collectNames(block *ast.BlockExpr, into map[string]bool) {
 	})
 }
 
-// isManaged reports whether e's recorded type is a managed (ref-counted) type.
-func (a *analyzer) isManaged(e ast.Expression) bool {
+// ownsManaged reports whether e's recorded type transitively owns a managed value —
+// the test that governs every *owning position* decision in this pass.
+//
+// This is deliberately the *deep* test rather than IsManaged: a `Person` struct with
+// a `string` field is not itself managed, but copying one duplicates a reference to
+// that string's box, so the copy owes a retain exactly as a bare string copy would.
+// Using IsManaged here is what left stack-aggregate copies unretained, which was a
+// use-after-free and not merely a leak (see the package doc).
+func (a *analyzer) ownsManaged(e ast.Expression) bool {
 	t, ok := a.tt.Get(e)
-	return ok && IsManaged(t)
+	return ok && OwnsManaged(t, a.symTable)
 }
 
 // markMergeTemp marks an if/match expression as an owned temporary to release
@@ -524,14 +606,15 @@ func (a *analyzer) markMergeTemp(e ast.Expression) {
 	a.table.ReleaseTemp[e] = true
 }
 
-// bindingIsManaged reports whether a `let`/`var` binding owns a managed value:
-// its declared type when annotated (reliable), else the initializer's recorded
-// type.
-func (a *analyzer) bindingIsManaged(vds *ast.VarDeclStmt) bool {
+// bindingOwnsManaged reports whether a `let`/`var` binding owns (transitively) a
+// managed value: its declared type when annotated (reliable), else the initializer's
+// recorded type. A binding that does is an *owning* position — its initializer is
+// coerced to +1 — and the backend frames it so its scope exit releases what it owns.
+func (a *analyzer) bindingOwnsManaged(vds *ast.VarDeclStmt) bool {
 	if vds.Type != nil {
-		return IsManaged(vds.Type)
+		return OwnsManaged(vds.Type, a.symTable)
 	}
-	return a.isManaged(vds.Value)
+	return a.ownsManaged(vds.Value)
 }
 
 func (a *analyzer) stmt(s ast.AstNode) {
@@ -540,14 +623,14 @@ func (a *analyzer) stmt(s ast.AstNode) {
 		a.expr(s.Expression, false) // value discarded → borrowing position
 	case *ast.VarDeclStmt:
 		// A managed binding owns its initializer (+1); a non-managed one borrows.
-		a.expr(s.Value, a.bindingIsManaged(s))
+		a.expr(s.Value, a.bindingOwnsManaged(s))
 	case *ast.VarReassignmentStmt:
-		a.expr(s.Value, a.isManaged(s.Value))
+		a.expr(s.Value, a.ownsManaged(s.Value))
 	case *ast.LValueAssignmentStmt:
 		// Interior assignment (`xs[i] = v`, `p.name = v`): the slot takes ownership of
 		// the new value (+1) — the backend releases whatever the slot held before. A
 		// non-managed target borrows (nothing to own).
-		a.expr(s.Value, a.isManaged(s.Value))
+		a.expr(s.Value, a.ownsManaged(s.Value))
 	case *ast.ReturnStmt:
 		if s.Value != nil {
 			// Pass the return's ownership need down; managed leaves decide the retain.
@@ -596,7 +679,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		//   - last use, borrowing position: the binding is dead after this statement,
 		//     so drop it here rather than at scope exit.
 		//   - not the last use, owning position: dup (retain) to mint a fresh +1.
-		if !a.isManaged(e) {
+		if !a.ownsManaged(e) {
 			return
 		}
 		last := a.lastUse[e]
@@ -612,7 +695,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 	case *ast.MemberExpr:
 		// Field access borrows out of the aggregate; borrowing the object.
 		a.expr(e.Object, false)
-		if needOwned && a.isManaged(e) {
+		if needOwned && a.ownsManaged(e) {
 			a.table.Retain[e] = true
 		}
 
@@ -625,7 +708,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// IndexExpr hit `default` and recorded nothing, so the retain was missing.
 		a.expr(e.Object, false)
 		a.expr(e.Index, false)
-		if needOwned && a.isManaged(e) {
+		if needOwned && a.ownsManaged(e) {
 			a.table.Retain[e] = true
 		}
 
@@ -633,7 +716,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// Positional tuple access (`pair.0`) — same rule as MemberExpr / IndexExpr: a
 		// managed element read into an owning position is duplicated, not moved.
 		a.expr(e.Object, false)
-		if needOwned && a.isManaged(e) {
+		if needOwned && a.ownsManaged(e) {
 			a.table.Retain[e] = true
 		}
 
@@ -806,7 +889,7 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 		a.expr(arg, argOwns)
 	}
 
-	if !a.isManaged(e) {
+	if !a.ownsManaged(e) {
 		return
 	}
 	// The result's ownership: an owned return is a fresh +1; anything else (a

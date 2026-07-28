@@ -224,11 +224,12 @@ func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) erro
 		slot := entry.NewAlloca(p.Type())
 		entry.NewStore(p, slot)
 		l.locals[ident.Name] = slot
-		// An `own` managed parameter is consumed by the callee: the caller
-		// transferred its +1, so the callee releases it at function exit. A
-		// bare/`ref`/`mut` managed param is a borrow — the caller still owns it, so
-		// it is not recorded here.
-		if param.TypeModifier == types.Own && isManagedSlot(slot) {
+		// An `own` parameter is consumed by the callee: the caller transferred its +1,
+		// so the callee releases it at function exit. A bare/`ref`/`mut` param is a
+		// borrow — the caller still owns it and did not retain, so it is not recorded
+		// here. Deep, matching the pass: an `own Person` carries a +1 on its string
+		// field, so the callee owes that release too.
+		if param.TypeModifier == types.Own && l.needsDrop(param.Type) {
 			l.addManagedBinding(slot, param.Type)
 		}
 	}
