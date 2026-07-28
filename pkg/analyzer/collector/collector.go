@@ -665,14 +665,11 @@ func (c *Collector) collectTuplePattern(patternNode *sitter.Node) ast.Pattern {
 
 func (c *Collector) collectArrayPattern(patternNode *sitter.Node) ast.Pattern {
 	loc := c.ctx.NodeLocation(patternNode)
-	elements := c.collectPatternElements(patternNode)
-	if len(elements) == 0 {
-		c.addError(patternNode, CollectorErrorSeverityError, "collectArrayPattern: no elements in array pattern")
-		return nil
-	}
+	// An empty `[]` pattern (no elements) is valid — the base case of a list match
+	// (`match xs { [] => …, [a, ...rest] => … }`).
 	return &ast.ArrayPattern{
 		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}},
-		Elements:    elements,
+		Elements:    c.collectPatternElements(patternNode),
 	}
 }
 

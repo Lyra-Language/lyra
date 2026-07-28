@@ -127,3 +127,34 @@ let main = () -> u8 => {
 		t.Fatal("expected a loud error for a `[head, ...tail]` tail-binding pattern, got none")
 	}
 }
+
+// An `[]` empty array pattern (now that it parses) matches a zero-length array — the
+// base case of a list match. Verifies the grammar change end to end.
+func TestExec_ArrayMatch_EmptyPattern(t *testing.T) {
+	prog := func(literal string) string {
+		return `let classify = (xs: []i64) -> u8 => match xs {
+  [] => 0,
+  [a] => u8(a),
+  _ => 99
+}
+let main = () -> u8 => {
+  let xs: []i64 = ` + literal + `
+  classify(xs)
+}`
+	}
+	cases := []struct {
+		literal string
+		want    int
+	}{
+		{"[]", 0},   // empty matches []
+		{"[5]", 5},  // one element
+		{"[1, 2]", 99}, // longer → catch-all
+	}
+	for _, c := range cases {
+		t.Run(c.literal, func(t *testing.T) {
+			if got := buildAndRun(t, prog(c.literal)); got != c.want {
+				t.Errorf("expected exit %d, got %d", c.want, got)
+			}
+		})
+	}
+}
