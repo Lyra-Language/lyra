@@ -278,6 +278,9 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 			// width, not the i64 default. Applies to every assignable arg, not just
 			// `own` ones (width is orthogonal to ownership).
 			tc.propagateLiteralType(arg, resolvedParamType)
+			if param.TypeModifier == types.Mut {
+				tc.checkMutArgument(calleeName, i+1, paramName, arg, resolvedParamType)
+			}
 			if paramOwnsArgument(param.TypeModifier) {
 				// An `own` parameter adopts the argument into its own storage, so
 				// the flavors must match; a borrowed parameter is allocation-
@@ -560,4 +563,41 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		}
 	}
 	return nil
+}
+
+// checkMutArgument verifies that an argument passed to a `mut` parameter can
+// actually be mutated by the callee.
+//
+// A `mut` parameter is a *mutable borrow* — the callee writes through to the
+// caller's own storage (the backend passes it by reference) — so the argument must
+// be two things:
+//
+//   - an **lvalue**: a binding, or a field/element path rooted at one. A temporary
+//     (`f(Point { x: 1 })`, `f(make())`, a literal) has no storage the caller can
+//     observe afterwards, so mutating it is meaningless; before this check such a
+//     call compiled and silently discarded the writes.
+//   - rooted at a **mutable** binding, by the same rule that governs writing to it
+//     directly (rootBindingIsMutable). Passing a deeply-immutable `let` to a `mut`
+//     parameter was accepted and then mutated it, which is the mutability system
+//     being bypassed by a function call.
+//
+// A copied scalar is exempt: `mut` there is inert (lyra-W010 says so, and the
+// backend keeps it by value via types.IsCopiedScalar), so nothing is written
+// through and an ordinary value argument is fine.
+func (tc *TypeChecker) checkMutArgument(calleeName string, position int, paramName string, arg ast.Expression, paramType types.Type) {
+	if types.IsCopiedScalar(paramType) {
+		return
+	}
+	root := rootIdentifier(arg)
+	if root == nil {
+		tc.addError(arg.GetLocation(), SeverityError,
+			"%s: argument %d (%s): a `mut` parameter mutates the caller's value, so the argument must be a variable or a field/element of one, not a temporary",
+			calleeName, position, paramName)
+		return
+	}
+	if !tc.rootBindingIsMutable(root) {
+		tc.addError(arg.GetLocation(), SeverityError,
+			"%s: argument %d (%s): cannot pass immutable binding %q to a `mut` parameter (declare it `var`, or take the parameter by value)",
+			calleeName, position, paramName, root.Name)
+	}
 }

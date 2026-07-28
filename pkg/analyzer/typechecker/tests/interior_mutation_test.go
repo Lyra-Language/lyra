@@ -274,3 +274,89 @@ func TestTypeCheck_ParamAssign_Own_Ok(t *testing.T) {
 	`, false)
 	assertNoErrors(t, res)
 }
+
+// ── `mut` arguments at the call site ──────────────────────────────────────────
+//
+// A `mut` parameter mutates the caller's value (the backend passes it by
+// reference), so the argument must be an lvalue rooted at a mutable binding —
+// the same rule that governs writing through the path directly. Neither was
+// checked before: passing a temporary silently discarded the writes, and passing
+// a deeply-immutable `let` mutated it anyway, bypassing the mutability system
+// through a function call.
+
+func TestTypeCheck_MutArgument_VarBinding_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let poke = (p: mut Point) -> void => { p.x = 5 }
+		let run = () -> void => {
+			var q = Point { x: 1, y: 2 }
+			poke(q)
+		}
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_MutArgument_ImmutableBinding_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let poke = (p: mut Point) -> void => { p.x = 5 }
+		let run = () -> void => {
+			let q = Point { x: 1, y: 2 }
+			poke(q)
+		}
+	`, false)
+	assertErrorsAre(t, res,
+		`poke: argument 1 (p): cannot pass immutable binding "q" to a `+"`mut`"+` parameter (declare it `+"`var`"+`, or take the parameter by value)`)
+}
+
+func TestTypeCheck_MutArgument_Temporary_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let poke = (p: mut Point) -> void => { p.x = 5 }
+		let run = () -> void => {
+			poke(Point { x: 1, y: 2 })
+		}
+	`, false)
+	assertErrorsAre(t, res,
+		"poke: argument 1 (p): a `mut` parameter mutates the caller's value, so the argument must be a variable or a field/element of one, not a temporary")
+}
+
+// An lvalue *path* (not just a bare binding) is fine — the call site takes the
+// element's address the same way an assignment target would.
+func TestTypeCheck_MutArgument_ElementPath_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let poke = (p: mut Point) -> void => { p.x = 5 }
+		let run = () -> void => {
+			var ps: [2]Point = [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }]
+			poke(ps[0])
+		}
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// Forwarding a `mut` parameter onward is allowed: it is already a mutable borrow.
+func TestTypeCheck_MutArgument_ForwardedMutParam_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let inner = (p: mut Point) -> void => { p.x = 5 }
+		let outer = (p: mut Point) -> void => { inner(p) }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// A `ref` parameter is an immutable borrow, so forwarding it to a `mut`
+// parameter must be rejected — otherwise `mut` would launder away the `ref`.
+func TestTypeCheck_MutArgument_ForwardedRefParam_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let inner = (p: mut Point) -> void => { p.x = 5 }
+		let outer = (p: ref Point) -> void => { inner(p) }
+	`, false)
+	assertErrorsAre(t, res,
+		`inner: argument 1 (p): cannot pass immutable binding "p" to a `+"`mut`"+` parameter (declare it `+"`var`"+`, or take the parameter by value)`)
+}
+
+// A copied scalar is exempt: `mut` is inert there (lyra-W010), nothing is written
+// through, so an ordinary value argument — even a literal — is accepted.
+func TestTypeCheck_MutArgument_ScalarLiteral_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let twice = (n: mut i64) -> i64 => n + n
+		let run = () -> i64 => twice(21)
+	`, false)
+	assertNoErrors(t, res)
+}

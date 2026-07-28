@@ -33,6 +33,24 @@ func IsString(t Type) bool {
 	return primitive.Name == String
 }
 
+// IsCopiedScalar reports whether t is a scalar passed by value with no interior:
+// a numeric primitive, `bool`, or `rune`. `string` is excluded — it is a
+// PrimitiveType in the grammar but a managed fat pointer — as is everything
+// non-primitive (aggregates, arrays, generic parameters).
+//
+// This is the "a borrow/ownership modifier does nothing here" predicate. Two
+// places must agree on it or they drift into a silent bug, so both read it here:
+// the `lyra-W010` inert-modifier warning (checker/inert_borrow_modifier.go) and
+// the backend's by-reference `mut` parameter lowering (backend/llvm, paramIsByRef)
+// — a `mut` that W010 calls inert must not be lowered as a reference, and one it
+// stays silent about must be.
+func IsCopiedScalar(t Type) bool {
+	if _, ok := t.(PrimitiveType); !ok {
+		return false
+	}
+	return !IsString(t)
+}
+
 func IsStaticArray(t Type) bool {
 	_, ok := t.(StaticArrayType)
 	return ok

@@ -100,9 +100,14 @@ func TestExec_ManagedAssignment_ASan(t *testing.T) {
 //
 // Each program below copies the aggregate, assigns through one copy, then reads the
 // managed value out of the *other* — a heap-use-after-free before the release was
-// restricted to box-interior targets (releaseOldTarget / lvalueLoc.viaBox). All three
+// restricted to box-interior targets (releaseOldTarget / lvalueLoc.viaBox). Both
 // exit 0 only if the original string is still intact, so they fail on a plain run as
 // well as aborting under ASan.
+//
+// A `mut` parameter used to be the third case here — the by-value parameter copy was
+// itself the invisible alias. It is no longer an alias at all: `mut` is passed by
+// reference, so the callee writes through to the caller's own storage. That case now
+// lives in TestExec_MutParameter_WritesReachCaller, which asserts the write *lands*.
 func TestExec_ManagedAssignment_AliasedStackAggregate(t *testing.T) {
 	cases := []struct {
 		name string
@@ -127,21 +132,6 @@ let main = () -> u8 => {
   let ys = xs
   xs[0] = "x" ++ "y"
   if ys[0] == "ab" { 0 } else { 1 }
-}`,
-		},
-		{
-			// The worst shape: no copy is visible in the source at all. A by-value `mut`
-			// parameter *is* the copy, so assigning through it inside the callee would
-			// release a string the caller still owns.
-			"mut parameter callee",
-			`struct Person { name: string }
-let rename = (p: mut Person) -> void => {
-  p.name = "x" ++ "y"
-}
-let main = () -> u8 => {
-  var p: Person = Person { name: "a" ++ "b" }
-  rename(p)
-  if p.name == "ab" { 0 } else { 1 }
 }`,
 		},
 	}
@@ -261,11 +251,13 @@ let main = () -> u8 => {
 }`,
 		},
 		{
-			// The case that must still refuse. A `mut` parameter is a borrow: the callee's
-			// by-value copy shares the caller's reference, so releasing through it would
-			// free a value the caller still owns. Counted in the *callee*.
-			name: "borrowed mut parameter root", fn: "rename", want: 0,
-			why: "a borrowed root owns nothing to release; suppressing it leaks instead of dangling",
+			// A `mut` parameter is passed **by reference**, so its slot is the caller's own
+			// storage — the overwritten string is a genuine reference to drop, not a
+			// duplicate to dangle. While `mut` was passed by value this case had to be
+			// refused (the parameter copy shared the caller's reference), which leaked;
+			// by-reference passing is what closes that leak. Counted in the *callee*.
+			name: "by-reference mut parameter root", fn: "rename", want: 1,
+			why: "a by-ref `mut` param names the caller's slot, so the old value must be released or it leaks",
 			src: `struct Person { name: string }
 let rename = (p: mut Person) -> void => {
   p.name = "x" ++ "y"

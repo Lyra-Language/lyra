@@ -107,8 +107,12 @@ func (l *lowerer) dropLastUsesInStmt(block *ir.Block, stmt ast.Statement) error 
 			return true
 		}
 		seen[slot] = true
-		a := slot.(*ir.InstAlloca)
-		if err := l.deepRelease(block, block.NewLoad(a.ElemType, slot), m.ty); err != nil {
+		elem, err := slotElemType(slot)
+		if err != nil {
+			walkErr = err
+			return false
+		}
+		if err := l.deepRelease(block, block.NewLoad(elem, slot), m.ty); err != nil {
 			walkErr = err
 			return false
 		}
@@ -125,8 +129,11 @@ func (l *lowerer) dropLastUsesInStmt(block *ir.Block, stmt ast.Statement) error 
 // never has to split the caller's block).
 func (l *lowerer) releaseSlots(block *ir.Block, slots []managedSlot) error {
 	for _, m := range slots {
-		a := m.slot.(*ir.InstAlloca)
-		v := block.NewLoad(a.ElemType, m.slot)
+		elem, err := slotElemType(m.slot)
+		if err != nil {
+			return err
+		}
+		v := block.NewLoad(elem, m.slot)
 		if err := l.deepRelease(block, v, m.ty); err != nil {
 			return err
 		}

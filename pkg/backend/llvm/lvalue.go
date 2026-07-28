@@ -98,14 +98,16 @@ func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignm
 // the original can no longer dangle them. Before that, this case *was* the
 // use-after-free above and the release had to be suppressed entirely.
 //
-// The remaining no is a **borrowed root** — a `mut`/`ref` parameter, which the
-// typechecker permits as an assignment root. A by-value parameter copy shares the
-// *caller's* reference (a borrow is not retained, and the callee's copy is not
-// framed), so releasing through it frees a value the caller still owns. That is the
-// third shape of the original bug, and the nastiest, because the aliasing copy is the
-// parameter passing itself and so invisible in the source. It leaks the overwritten
-// value instead — the standing safety bias, and no loss in practice since a by-value
-// `mut` parameter's interior mutation never reaches the caller anyway.
+// A **by-reference `mut` parameter** root is the third yes, and the one that
+// by-reference parameter passing bought. Its slot *is* the caller's storage, so the
+// managed value being overwritten is the caller's own reference — which must be
+// released here or it leaks, and which is safe to release precisely because the
+// callee holds the caller's address rather than an unretained duplicate of it. While
+// `mut` was passed by value, this case had to be refused: the parameter copy shared
+// the caller's reference, so releasing through it freed a value the caller still
+// owned (the third and nastiest shape of the original use-after-free, since the
+// aliasing copy was the parameter passing itself and so invisible in the source).
+// That refusal leaked instead, which is the leak this closes.
 func (l *lowerer) releaseOldTarget(loc lvalueLoc, target ast.Expression) bool {
 	if !ownership.IsManaged(loc.ty) {
 		return false
@@ -125,7 +127,13 @@ func (l *lowerer) lvalueRootIsOwning(e ast.Expression) bool {
 		switch t := e.(type) {
 		case *ast.IdentifierExpr:
 			slot, ok := l.locals[t.Name]
-			return ok && l.slotIsFramed(slot)
+			if !ok {
+				return false
+			}
+			// A by-reference `mut` parameter names the caller's storage, which the
+			// caller framed and holds the +1 for — so the old value there is a
+			// genuine reference to drop, not a duplicate to dangle.
+			return l.byRefParams[slot] || l.slotIsFramed(slot)
 		case *ast.MemberExpr:
 			e = t.Object
 		case *ast.IndexExpr:
@@ -172,7 +180,10 @@ func (l *lowerer) lvalueAddress(block *ir.Block, e ast.Expression) (lvalueLoc, *
 		if !ok {
 			return lvalueLoc{}, nil, fmt.Errorf("llvm: assignment to unbound identifier %q", t.Name)
 		}
-		if _, ok := slot.(*ir.InstAlloca); !ok {
+		// A slot is addressable whether it is an entry-block alloca or a by-reference
+		// `mut` parameter (whose slot is the caller's storage — writing through it is
+		// the whole point of the modifier).
+		if _, err := slotElemType(slot); err != nil {
 			return lvalueLoc{}, nil, fmt.Errorf("llvm: identifier %q is not addressable", t.Name)
 		}
 		lyraType, _ := l.res.TypeTable.Get(t)

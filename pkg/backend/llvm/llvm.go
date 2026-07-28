@@ -163,6 +163,8 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 		res:                res,
 		locals:             map[string]value.Value{},
 		funcs:              map[string]*ir.Func{},
+		funcParams:         map[string][]ast.Parameter{},
+		byRefParams:        map[value.Value]bool{},
 		consts:             map[string]*ast.VarDeclStmt{},
 		structTypes:        map[string]*lltypes.StructType{},
 		roundingIntrinsics: map[string]*ir.Func{},
@@ -207,6 +209,7 @@ type lowerer struct {
 	module      *ir.Module
 	res         *driver.Result                 // gives you TypeTable, SymbolTable, MethodTable, …
 	funcs       map[string]*ir.Func            // name → its function IR (all declared before any body)
+	funcParams  map[string][]ast.Parameter     // name → its declared parameters (call sites need the `mut` by-ref modes)
 	consts      map[string]*ast.VarDeclStmt    // top-level `const` name → its declaration (its value is inlined at each use)
 	structTypes map[string]*lltypes.StructType // name → its struct type (for named tuple and struct lowering)
 	strLitCount int                            // counter for unique string-literal global names
@@ -270,6 +273,15 @@ type lowerer struct {
 	// use-after-free. Each statement-sequence scope raises the base to the current
 	// length on entry and restores it on exit; a flush only ever touches [base:].
 	pendingBase int
+
+	// byRefParams holds the slots of this function's by-reference `mut` parameters
+	// (functions.go, paramIsByRef). Such a slot is the *caller's* storage, handed in
+	// as a pointer parameter rather than an entry-block alloca, which two things
+	// need to know: releaseOldTarget (writing a managed field through it releases the
+	// caller's reference, which is correct precisely because it is not a duplicate),
+	// and any code that would otherwise assume every slot is an *ir.InstAlloca.
+	// Reset by beginFunction.
+	byRefParams map[value.Value]bool
 
 	// dropFns caches the per-type recursive drop glue (drop.go), keyed by the
 	// payload type's String(). Module-level, not per-function: one @lyra_drop_T
@@ -442,8 +454,11 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		return constant.NewInt(lltypes.I1, bit), block, nil
 	case *ast.IdentifierExpr:
 		if slot, ok := l.locals[e.Name]; ok {
-			ptr := slot.(*ir.InstAlloca)
-			return block.NewLoad(ptr.ElemType, slot), block, nil
+			elem, err := slotElemType(slot)
+			if err != nil {
+				return nil, nil, err
+			}
+			return block.NewLoad(elem, slot), block, nil
 		}
 		// A reference to a top-level `const`: inline its value expression (a const is
 		// a compile-time constant, immutable, with no storage of its own). The value
@@ -489,4 +504,19 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		return l.lowerMatch(block, e)
 	}
 	return nil, nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
+}
+
+// slotElemType returns the type of the value a local's slot holds.
+//
+// A slot is always a pointer, but not always an *ir.InstAlloca: a by-reference
+// `mut` parameter's slot is the incoming pointer parameter itself — the caller's
+// storage (functions.go, paramIsByRef). Both spellings carry the pointee in their
+// LLVM type, so read it from there rather than asserting the alloca, which would
+// panic on a by-ref parameter.
+func slotElemType(slot value.Value) (lltypes.Type, error) {
+	pt, ok := slot.Type().(*lltypes.PointerType)
+	if !ok {
+		return nil, fmt.Errorf("llvm: local slot is not a pointer (%s)", slot.Type())
+	}
+	return pt.ElemType, nil
 }

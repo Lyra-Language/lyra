@@ -420,8 +420,11 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: compound assignment %q not implemented", e.Operator)
 	}
-	ptr := slot.(*ir.InstAlloca)
-	cur := block.NewLoad(ptr.ElemType, slot)
+	elem, err := slotElemType(slot)
+	if err != nil {
+		return nil, nil, err
+	}
+	cur := block.NewLoad(elem, slot)
 	rhs, block, err := l.lowerExpr(block, e.Right)
 	if err != nil {
 		return nil, nil, err

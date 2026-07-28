@@ -665,17 +665,21 @@ func (l *lowerer) lowerVarReassignment(block *ir.Block, vrs *ast.VarReassignment
 	// here, which is sound now that every copy of the aggregate carries its own +1.
 	oldTy, _ := l.res.TypeTable.Get(vrs.Value)
 	if l.needsDrop(oldTy) {
-		a := slot.(*ir.InstAlloca)
+		elem, err := slotElemType(slot)
+		if err != nil {
+			return nil, err
+		}
 		// The old and new values have the same type, so the RHS's recorded type
 		// selects the right glue for the value being dropped.
-		old := block.NewLoad(a.ElemType, slot)
+		old := block.NewLoad(elem, slot)
 		if err := l.deepRelease(block, old, oldTy); err != nil {
 			return nil, err
 		}
 	}
-	// Store into the existing alloca; the locals entry stays the alloca slot
-	// (a pointer), NOT the stored value — a later read loads from it. Overwriting
-	// it with rhsVal would break the next IdentifierExpr load (slot.(*InstAlloca)).
+	// Store into the existing slot (a pointer), NOT the stored value — a later read
+	// loads from it. For a by-reference `mut` parameter the slot is the caller's
+	// storage, so this store is exactly how a whole-binding reassignment reaches
+	// the caller.
 	block.NewStore(rhsVal, slot)
 	return block, nil
 }

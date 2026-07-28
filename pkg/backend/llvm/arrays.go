@@ -177,11 +177,15 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 // materialized into a fresh entry-block alloca and stored, since a first-class
 // aggregate value can't be indexed by a runtime value.
 func (l *lowerer) arrayLValue(block *ir.Block, obj ast.Expression) (value.Value, *lltypes.ArrayType, *ir.Block, error) {
+	// A local's slot is addressed in place — including a by-reference `mut`
+	// parameter's, whose slot is the caller's own array storage. Falling through to
+	// the materializing path below would copy that array into a fresh alloca and
+	// mutate the copy, which is precisely how a `mut [N]T` used to lose its writes.
 	if id, ok := obj.(*ast.IdentifierExpr); ok {
 		if slot, found := l.locals[id.Name]; found {
-			if alloca, ok := slot.(*ir.InstAlloca); ok {
-				if at, ok := alloca.ElemType.(*lltypes.ArrayType); ok {
-					return alloca, at, block, nil
+			if elem, err := slotElemType(slot); err == nil {
+				if at, ok := elem.(*lltypes.ArrayType); ok {
+					return slot, at, block, nil
 				}
 			}
 		}

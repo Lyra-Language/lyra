@@ -65,10 +65,10 @@ func inertModifierDiagnostic(p *ast.Parameter) *diag.Diagnostic {
 	if p.TypeModifier == "" {
 		return nil // a bare parameter — nothing declared to be inert
 	}
-	prim, ok := p.Type.(types.PrimitiveType)
-	if !ok || types.IsString(p.Type) {
+	if !types.IsCopiedScalar(p.Type) {
 		return nil // not a scalar (or the managed `string`) — the modifier may be meaningful
 	}
+	prim := p.Type.(types.PrimitiveType)
 	name := "the parameter"
 	if ip, ok := p.Pattern.(*ast.IdentifierPattern); ok {
 		name = fmt.Sprintf("parameter %q", ip.Name)

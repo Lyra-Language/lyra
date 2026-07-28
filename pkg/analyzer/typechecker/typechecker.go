@@ -2410,3 +2410,25 @@ func (tc *TypeChecker) checkAllocationCompat(from, to types.Type, loc ast.Locati
 		prefix, fromA, toA)
 	return false
 }
+
+// rootBindingIsMutable reports whether the binding an lvalue path is rooted at
+// permits interior mutation — the predicate behind checkLValueAssignment's
+// diagnostics, factored out so the `mut`-argument check (checkMutArgument) applies
+// exactly the same rule: passing to a `mut` parameter is a write, so it must be
+// governed by the same mutability as writing through the path directly.
+func (tc *TypeChecker) rootBindingIsMutable(root *ast.IdentifierExpr) bool {
+	if root.IsConst {
+		return false
+	}
+	// A parameter shadows any outer binding of the same name, so it is consulted
+	// first (mirroring IdentifierExpr resolution).
+	if mod, ok := tc.paramMods[root.Name]; ok {
+		return paramAllowsInteriorMutation(mod)
+	}
+	if sym, ok := tc.scope.Lookup(root.Name); ok {
+		if decl, ok := sym.(*ast.VarDeclStmt); ok {
+			return decl.CanMutateInterior()
+		}
+	}
+	return true // unknown binding — another diagnostic already covers it
+}

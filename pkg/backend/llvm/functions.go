@@ -26,6 +26,37 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retSigned, entryABI bool) 
 	l.pendingReleases = nil
 	l.pendingBase = 0
 	l.reuseToken = nil
+	l.byRefParams = map[value.Value]bool{}
+}
+
+// paramIsByRef reports whether a parameter is passed as a **pointer to the caller's
+// storage** rather than by value: exactly the `mut` ones.
+//
+// `mut` is a *mutable borrow* — the typechecker's own diagnostic tells users it
+// mutates "the caller's value" — so the callee must be able to write through to the
+// caller. Passing it by value made the parameter a private copy whose interior
+// mutation was silently discarded, and (worse) that loss depended on the type: a
+// `mut []T` or `mut shared T` propagated because it is *already* a pointer, while a
+// `mut` struct, tuple, or `[N]T` dropped every write with no diagnostic. Passing
+// every `mut` by reference is the only rule with no such split.
+//
+// `own` stays by value: it *transfers* the value into the callee's own storage, so a
+// copy is the point. `ref` stays by value too — an immutable borrow cannot write, so
+// by-reference would be unobservable here (it is a future codegen optimization for
+// large aggregates, not a semantic fix). The ownership pass is untouched: `mut` is
+// still a borrow, retained and released by nobody in the callee.
+//
+// A `mut` on a **copied scalar** is excluded, and that is not a silent split: it is
+// exactly the case `lyra-W010` already warns is inert, reading the same shared
+// predicate (types.IsCopiedScalar) so the two cannot drift. A scalar has no interior
+// to write through, and the one construct that could observe a by-reference scalar —
+// reassigning the whole parameter (`n = n + 1`) — does not lower for integers at all
+// (a pre-existing backend gap, unrelated to this convention). Passing those by
+// reference would change their ABI and reject `f(5)` at call sites for no observable
+// gain. If whole-parameter reassignment ever lowers, `mut` on a scalar becomes
+// meaningful and both this predicate and W010 should be revisited together.
+func paramIsByRef(param ast.Parameter) bool {
+	return param.TypeModifier == types.Mut && !types.IsCopiedScalar(param.Type)
 }
 
 // emitReturn lowers a `ret` for the current function, coercing val to the
@@ -200,6 +231,7 @@ func (l *lowerer) declareFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) err
 		irParams = append(irParams, irParam)
 	}
 	l.funcs[decl.Name] = l.module.NewFunc(decl.Name, retType, irParams...)
+	l.funcParams[decl.Name] = fn.Parameters
 	return nil
 }
 
@@ -221,6 +253,16 @@ func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) erro
 			return fmt.Errorf("llvm: destructuring parameters are not implemented yet (%q)", decl.Name)
 		}
 		p := irFn.Params[i]
+		if paramIsByRef(param) {
+			// A by-reference `mut` parameter: the incoming pointer *is* the caller's
+			// storage, so bind it directly as the binding's slot. alloca+store would
+			// make the private copy this fix exists to remove. Deliberately not framed
+			// — `mut` is a borrow, so the callee releases nothing; the caller still
+			// owns the value and holds its +1.
+			l.locals[ident.Name] = p
+			l.byRefParams[p] = true
+			continue
+		}
 		slot := entry.NewAlloca(p.Type())
 		entry.NewStore(p, slot)
 		l.locals[ident.Name] = slot
@@ -276,6 +318,9 @@ func (l *lowerer) lowerParameter(param ast.Parameter) (*ir.Param, error) {
 	if err != nil {
 		return nil, err
 	}
+	if paramIsByRef(param) {
+		irType = lltypes.NewPointer(irType)
+	}
 	return ir.NewParam(param.GetName(), irType), nil
 }
 
@@ -313,12 +358,30 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	// arity and assignability, and propagated each parameter's width onto its
 	// argument (inferLambdaCall), so a literal arg already lowers at the param's
 	// width — no coercion needed here.
+	params := l.funcParams[ident.Name]
 	args := make([]value.Value, 0, len(e.Arguments))
-	for _, argExpr := range e.Arguments {
+	for i, argExpr := range e.Arguments {
 		var (
 			v   value.Value
 			err error
 		)
+		// A `mut` parameter is by reference (paramIsByRef), so pass the argument's
+		// *address* — the caller's own storage — rather than a copy of its value.
+		// lvalueAddress walks the same identifier/field/index path an assignment
+		// target does, so `f(p)`, `f(grid[i])`, and `f(p.inner)` all forward the
+		// right slot; forwarding a by-ref parameter onward (`g(p)` inside the
+		// callee) resolves to the incoming pointer, which is already the caller's
+		// address. The typechecker has verified the argument is an lvalue rooted at
+		// a mutable binding, so a temporary can't reach here.
+		if i < len(params) && paramIsByRef(params[i]) {
+			var loc lvalueLoc
+			loc, block, err = l.lvalueAddress(block, argExpr)
+			if err != nil {
+				return nil, nil, err
+			}
+			args = append(args, loc.ptr)
+			continue
+		}
 		v, block, err = l.lowerExpr(block, argExpr)
 		if err != nil {
 			return nil, nil, err
