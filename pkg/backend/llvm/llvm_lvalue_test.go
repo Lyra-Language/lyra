@@ -105,27 +105,16 @@ let main = () -> u8 => {
 	}
 }
 
-// A managed element type and a member target are deferred with loud errors.
+// A managed array-element type is deferred with a loud error (struct-field
+// assignment now lowers — see llvm_member_assign_test.go).
 func TestEmit_ArrayElementAssignment_Deferred(t *testing.T) {
-	for _, src := range []string{
-		// managed element type
-		`let main = () -> u8 => {
+	src := `let main = () -> u8 => {
   var xs: []string = ["a", "b"]
   xs[0] = "c"
   0
 }
-`,
-		// member target (struct-field assignment)
-		`struct Point { x: u8, y: u8 }
-let main = () -> u8 => {
-  var p: Point = Point { x: 1, y: 2 }
-  p.x = 5
-  0
-}
-`,
-	} {
-		if _, err := emitSource(t, src); err == nil {
-			t.Errorf("expected a loud error for a deferred lvalue assignment:\n%s", src)
-		}
+`
+	if _, err := emitSource(t, src); err == nil {
+		t.Errorf("expected a loud error for a managed array-element assignment:\n%s", src)
 	}
 }

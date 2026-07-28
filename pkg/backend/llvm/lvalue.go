@@ -26,10 +26,18 @@ import (
 // nested path (`grid[i].y = v`), and a *managed* element type (`[]string`) — the
 // last needs to release the overwritten value and take ownership of the new one.
 func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignmentStmt) (*ir.Block, error) {
-	idxExpr, ok := stmt.Target.(*ast.IndexExpr)
-	if !ok {
-		return nil, fmt.Errorf("llvm: interior assignment to a %T target is not implemented yet (only array index `xs[i] = v`)", stmt.Target)
+	switch target := stmt.Target.(type) {
+	case *ast.IndexExpr:
+		return l.lowerIndexAssignment(block, stmt, target)
+	case *ast.MemberExpr:
+		return l.lowerMemberAssignment(block, stmt, target)
+	default:
+		return nil, fmt.Errorf("llvm: interior assignment to a %T target is not implemented yet", stmt.Target)
 	}
+}
+
+// lowerIndexAssignment lowers `xs[i] = v` (an array-index target).
+func (l *lowerer) lowerIndexAssignment(block *ir.Block, stmt *ast.LValueAssignmentStmt, idxExpr *ast.IndexExpr) (*ir.Block, error) {
 	objType, ok := l.res.TypeTable.Get(idxExpr.Object)
 	if !ok {
 		return nil, fmt.Errorf("llvm: no type recorded for index-assignment object")
@@ -46,18 +54,98 @@ func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignm
 	if err != nil {
 		return nil, err
 	}
-	v, block, err := l.lowerExpr(block, stmt.Value)
+	return l.storeLValue(block, elemPtr, elemLL, stmt.Value)
+}
+
+// lowerMemberAssignment lowers `p.x = v` (and nested member chains `p.a.b = v`)
+// through a stack struct: it computes the field's address (gep into the struct's
+// storage) and stores the value. A `shared` struct in the path, an array index in
+// the path (`grid[i].y = v`), and a managed field type are deferred loud errors.
+func (l *lowerer) lowerMemberAssignment(block *ir.Block, stmt *ast.LValueAssignmentStmt, target *ast.MemberExpr) (*ir.Block, error) {
+	fieldPtr, fieldType, block, err := l.lvalueAddress(block, target)
 	if err != nil {
 		return nil, err
 	}
-	// The typechecker already narrowed the value to the element type; coerce
-	// defensively so a residual int-width mismatch fixes rather than emitting bad IR.
-	v, err = l.coerceAggregateElem(block, v, elemLL, stmt.Value)
+	if ownership.IsManaged(fieldType) {
+		return nil, fmt.Errorf("llvm: assigning to a managed struct field (%s) is not implemented yet (needs release-old + retain-new)", fieldType)
+	}
+	fieldLL, err := l.lowerType(fieldType)
 	if err != nil {
 		return nil, err
 	}
-	block.NewStore(v, elemPtr)
+	return l.storeLValue(block, fieldPtr, fieldLL, stmt.Value)
+}
+
+// storeLValue lowers the assigned value, coerces it to the target's LLVM type
+// (defensively — the typechecker already narrowed literal widths), and stores it.
+func (l *lowerer) storeLValue(block *ir.Block, ptr value.Value, targetLL lltypes.Type, valueExpr ast.Expression) (*ir.Block, error) {
+	v, block, err := l.lowerExpr(block, valueExpr)
+	if err != nil {
+		return nil, err
+	}
+	v, err = l.coerceAggregateElem(block, v, targetLL, valueExpr)
+	if err != nil {
+		return nil, err
+	}
+	block.NewStore(v, ptr)
 	return block, nil
+}
+
+// lvalueAddress returns the address of an assignable path made of an identifier root
+// and `.field` hops through stack structs (`p`, `p.x`, `p.a.b`). It is the shared
+// address computation for member assignment. An array index in the path or a
+// `shared` struct is a deferred loud error.
+func (l *lowerer) lvalueAddress(block *ir.Block, e ast.Expression) (value.Value, types.Type, *ir.Block, error) {
+	switch t := e.(type) {
+	case *ast.IdentifierExpr:
+		slot, ok := l.locals[t.Name]
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("llvm: assignment to unbound identifier %q", t.Name)
+		}
+		if _, ok := slot.(*ir.InstAlloca); !ok {
+			return nil, nil, nil, fmt.Errorf("llvm: identifier %q is not addressable", t.Name)
+		}
+		lyraType, _ := l.res.TypeTable.Get(t)
+		return slot, lyraType, block, nil
+	case *ast.MemberExpr:
+		if t.Optional {
+			return nil, nil, nil, fmt.Errorf("llvm: optional member assignment (?.) not implemented")
+		}
+		objType, ok := l.res.TypeTable.Get(t.Object)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("llvm: no type recorded for member-assignment object")
+		}
+		if types.AllocationOf(objType) == types.Shared {
+			return nil, nil, nil, fmt.Errorf("llvm: assigning through a `shared` struct field is not implemented yet")
+		}
+		fields, ok := l.namedStructFields(objType)
+		if !ok {
+			return nil, nil, nil, fmt.Errorf("llvm: field assignment on non-struct type %s is not implemented", objType)
+		}
+		idx := -1
+		var fieldType types.Type
+		for i, f := range fields {
+			if f.Name == t.Property.Name {
+				idx, fieldType = i, f.Type
+				break
+			}
+		}
+		if idx < 0 {
+			return nil, nil, nil, fmt.Errorf("llvm: struct has no field %q", t.Property.Name)
+		}
+		objPtr, _, block, err := l.lvalueAddress(block, t.Object)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		structTy, err := l.lowerType(objType)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		fieldPtr := block.NewGetElementPtr(structTy, objPtr,
+			constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, int64(idx)))
+		return fieldPtr, fieldType, block, nil
+	}
+	return nil, nil, nil, fmt.Errorf("llvm: unsupported assignment target path element %T (only identifiers and `.field` chains)", e)
 }
 
 // arrayElementLyraType returns the element type of an array (fixed-size or dynamic),
