@@ -57,6 +57,84 @@ func (l *lowerer) stringBox(block *ir.Block, str value.Value) value.Value {
 // lowerManagedRetain / lowerManagedRelease in shared.go, which recover the box via
 // stringBox above. A literal's box is pinned, so the runtime no-ops on it.)
 
+// utf8DecodeFunc lazily defines
+// `i64 @lyra_utf8_decode(i8* data, i64 pos, i32* cpOut)`, which decodes the UTF-8
+// sequence starting at data[pos], writes the code point to *cpOut, and returns the
+// number of bytes it consumed (1–4). It is the inverse of lyra_rune_to_utf8 (print.go)
+// and drives `for c in <string>` (each iteration decodes one rune and advances by the
+// returned byte count). Like the encoder it is unvalidated — it reads the lead byte's
+// length class and the continuation bytes without checking them (matching rune's
+// unvalidated-code-point contract); well-formed UTF-8 (the only kind Lyra can build,
+// from literals/concatenation) never straddles the byte length, so the continuation
+// reads stay in bounds.
+func (l *lowerer) utf8DecodeFunc() *ir.Func {
+	if l.utf8Decode != nil {
+		return l.utf8Decode
+	}
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	data := ir.NewParam("data", i8ptr)
+	pos := ir.NewParam("pos", lltypes.I64)
+	cpOut := ir.NewParam("cpOut", lltypes.NewPointer(lltypes.I32))
+	fn := l.module.NewFunc("lyra_utf8_decode", lltypes.I64, data, pos, cpOut)
+
+	entry := fn.NewBlock("entry")
+	one := fn.NewBlock("one")       // b0 < 0x80
+	twoPlus := fn.NewBlock("twoP")  // else
+	two := fn.NewBlock("two")       // (b0 & 0xE0) == 0xC0
+	threePlus := fn.NewBlock("triP")
+	three := fn.NewBlock("three") // (b0 & 0xF0) == 0xE0
+	four := fn.NewBlock("four")   // else
+
+	// byteAt loads data[pos+off] and zero-extends it to i32.
+	byteAt := func(b *ir.Block, off int64) value.Value {
+		idx := value.Value(pos)
+		if off != 0 {
+			idx = b.NewAdd(pos, constant.NewInt(lltypes.I64, off))
+		}
+		return b.NewZExt(b.NewLoad(lltypes.I8, b.NewGetElementPtr(lltypes.I8, data, idx)), lltypes.I32)
+	}
+	c := func(n int64) *constant.Int { return constant.NewInt(lltypes.I32, n) }
+	ret := func(b *ir.Block, cp value.Value, n int64) {
+		b.NewStore(cp, cpOut)
+		b.NewRet(constant.NewInt(lltypes.I64, n))
+	}
+
+	b0 := byteAt(entry, 0)
+	entry.NewCondBr(entry.NewICmp(enum.IPredULT, b0, c(0x80)), one, twoPlus)
+
+	ret(one, b0, 1) // ASCII: the byte is the code point
+
+	twoPlus.NewCondBr(twoPlus.NewICmp(enum.IPredEQ, twoPlus.NewAnd(b0, c(0xE0)), c(0xC0)), two, threePlus)
+	{
+		b1 := byteAt(two, 1)
+		cp := two.NewOr(two.NewShl(two.NewAnd(b0, c(0x1F)), c(6)), two.NewAnd(b1, c(0x3F)))
+		ret(two, cp, 2)
+	}
+
+	threePlus.NewCondBr(threePlus.NewICmp(enum.IPredEQ, threePlus.NewAnd(b0, c(0xF0)), c(0xE0)), three, four)
+	{
+		b1, b2 := byteAt(three, 1), byteAt(three, 2)
+		cp := three.NewOr(three.NewOr(
+			three.NewShl(three.NewAnd(b0, c(0x0F)), c(12)),
+			three.NewShl(three.NewAnd(b1, c(0x3F)), c(6))),
+			three.NewAnd(b2, c(0x3F)))
+		ret(three, cp, 3)
+	}
+
+	{
+		b1, b2, b3 := byteAt(four, 1), byteAt(four, 2), byteAt(four, 3)
+		cp := four.NewOr(four.NewOr(four.NewOr(
+			four.NewShl(four.NewAnd(b0, c(0x07)), c(18)),
+			four.NewShl(four.NewAnd(b1, c(0x3F)), c(12))),
+			four.NewShl(four.NewAnd(b2, c(0x3F)), c(6))),
+			four.NewAnd(b3, c(0x3F)))
+		ret(four, cp, 4)
+	}
+
+	l.utf8Decode = fn
+	return fn
+}
+
 
 // memcmpFunc lazily declares libc's `i32 @memcmp(i8*, i8*, i64)` (clang links
 // libc), caching it so string comparisons share one declaration.

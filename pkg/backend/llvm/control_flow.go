@@ -309,7 +309,7 @@ func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value
 // leaves Value empty (Key is then the element).
 //
 // A numeric range iterable (`for i in 0..<n`) is delegated to lowerForInRange (a
-// counter loop). Deferred, loud error: a string iterable.
+// counter loop) and a string iterable to lowerForInString (yields runes).
 func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
 	iterType, ok := l.res.TypeTable.Get(e.Iterable)
 	if !ok {
@@ -318,6 +318,10 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 	// A numeric range (`for i in 0..<n`) is a counter loop, not an element walk.
 	if _, ok := iterType.(types.RangeType); ok {
 		return l.lowerForInRange(block, e)
+	}
+	// A string yields its runes (UTF-8 decoded), not array elements.
+	if types.IsString(iterType) {
+		return l.lowerForInString(block, e)
 	}
 
 	// Resolve the element/index variable names from the one/two-variable form.
@@ -534,6 +538,69 @@ func (l *lowerer) rangeIntType(rng *ast.RangeExpr) (*lltypes.IntType, bool) {
 		}
 	}
 	return lltypes.I64, true
+}
+
+// lowerForInString lowers `for c in <string>` as a rune walk over the string's UTF-8
+// bytes: `bi = 0; while bi < byteLen { c = decode(data, bi); <body>; bi += n }`,
+// where each iteration decodes one rune (lyra_utf8_decode → the code point + the
+// byte count n) and advances the byte index by that count. The loop variable is the
+// rune (an i32 value, not a borrow — nothing to free). `n` is computed at the top of
+// the body block, which dominates the continue/increment block, so advancing by it
+// is valid on both the fall-through and `continue` paths.
+//
+// Deferred, loud error: a two-variable form over a string (`for i, c in s` — the
+// index/rune pairing isn't defined yet).
+func (l *lowerer) lowerForInString(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
+	if e.Value != "" {
+		return nil, nil, fmt.Errorf("llvm: `for i, c in <string>` (an index/rune pair over a string) is not implemented yet")
+	}
+	str, block, err := l.lowerExpr(block, e.Iterable)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !isStringLLVMType(str.Type()) {
+		return nil, nil, fmt.Errorf("llvm: string for-in iterable did not lower to a string (%s)", str.Type())
+	}
+	data := block.NewExtractValue(str, 0)
+	length := block.NewExtractValue(str, 1) // byte length
+	decode := l.utf8DecodeFunc()
+
+	fn := block.Parent
+	entry := fn.Blocks[0]
+	biSlot := entry.NewAlloca(lltypes.I64)  // byte index
+	cSlot := entry.NewAlloca(lltypes.I32)   // the rune loop variable
+	cpSlot := entry.NewAlloca(lltypes.I32)  // decode out-param
+	block.NewStore(constant.NewInt(lltypes.I64, 0), biSlot)
+	l.locals[e.Key] = cSlot // the rune value (immutable, non-managed — no ownership)
+
+	condBlock := fn.NewBlock("")
+	bodyBlock := fn.NewBlock("")
+	incBlock := fn.NewBlock("")  // continue target
+	exitBlock := fn.NewBlock("") // break target
+	block.NewBr(condBlock)
+
+	bi := condBlock.NewLoad(lltypes.I64, biSlot)
+	condBlock.NewCondBr(condBlock.NewICmp(enum.IPredULT, bi, length), bodyBlock, exitBlock)
+
+	// Decode the rune at the current byte index, bind it, keep the byte advance `n`.
+	biB := bodyBlock.NewLoad(lltypes.I64, biSlot)
+	n := bodyBlock.NewCall(decode, data, biB, cpSlot)
+	bodyBlock.NewStore(bodyBlock.NewLoad(lltypes.I32, cpSlot), cSlot)
+	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames)})
+	bodyEnd, err := l.lowerForEffect(bodyBlock, &e.Body)
+	l.loops = l.loops[:len(l.loops)-1]
+	if err != nil {
+		return nil, nil, err
+	}
+	if bodyEnd.Term == nil {
+		bodyEnd.NewBr(incBlock)
+	}
+
+	biI := incBlock.NewLoad(lltypes.I64, biSlot)
+	incBlock.NewStore(incBlock.NewAdd(biI, n), biSlot) // advance by the decoded byte count
+	incBlock.NewBr(condBlock)
+
+	return nil, exitBlock, nil
 }
 
 func (l *lowerer) lowerVarDecl(block *ir.Block, vds *ast.VarDeclStmt) (*ir.Block, error) {

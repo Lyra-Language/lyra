@@ -199,13 +199,14 @@ let main = () -> u8 => {
 	}
 }
 
-// A string for-in iterable is deferred with a loud error (arrays and ranges lower).
+// The two-variable form over a string (`for i, c in s`) is deferred — the
+// index/rune pairing isn't defined. (Arrays, ranges, and single-var string all lower.)
 func TestEmit_ForIn_Deferred(t *testing.T) {
 	src := `let main = () -> void => {
-  for c in "hello" { println(c) }
+  for i, c in "hello" { println(c) }
 }
 `
 	if _, err := emitSource(t, src); err == nil {
-		t.Errorf("expected a loud error for a for-in over a string (deferred):\n%s", src)
+		t.Errorf("expected a loud error for a two-variable for-in over a string (deferred):\n%s", src)
 	}
 }
