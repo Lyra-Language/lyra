@@ -253,6 +253,13 @@ type lowerer struct {
 	//     in the merge block it doesn't dominate.
 	managedFrames   [][]managedSlot
 	pendingReleases []pendingTemp
+	// pendingBase is the index into pendingReleases below which temporaries belong
+	// to an *enclosing* statement still being lowered. A nested block/branch lowered
+	// mid-expression (a call argument, an `if`/`match` operand) must not flush those
+	// — freeing an outer temp before the enclosing expression consumes it is a
+	// use-after-free. Each statement-sequence scope raises the base to the current
+	// length on entry and restores it on exit; a flush only ever touches [base:].
+	pendingBase int
 
 	// dropFns caches the per-type recursive drop glue (drop.go), keyed by the
 	// payload type's String(). Module-level, not per-function: one @lyra_drop_T
@@ -339,18 +346,42 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 	return v, end, nil
 }
 
-// flushTemps releases every managed temporary awaiting release, each in the block
-// it was produced in (so the release dominates the value's uses even across
-// branches), then clears the pending list.
-func (l *lowerer) flushTemps() error {
-	for _, p := range l.pendingReleases {
-		if err := l.lowerManagedRelease(p.block, p.val, p.ty); err != nil {
+// flushStmtTemps releases this statement scope's managed temporaries (those at or
+// above pendingBase), then truncates the pending list back to pendingBase. The
+// release block is chosen so it always follows every use of the temporary:
+//   - a temp produced in the statement's *start* block (start) is released at `end`
+//     (the block control ends in after the whole statement). The start block
+//     dominates end, so the value is live there — this is what lets a temp used as
+//     an *earlier* call argument survive until the call, even when a *later*
+//     argument contains a branch that moves control into a different (merge) block
+//     before the call. Releasing it in the start block (the old behavior) freed it
+//     before the call → a use-after-free.
+//   - a temp produced anywhere else — inside a branch of the expression (an
+//     `&&`/`||` right operand, a match-arm body) — is released in its own block,
+//     the only block guaranteed to have produced it and where it is consumed;
+//     releasing it in `end` would touch an undefined value on the path the branch
+//     didn't take.
+// start/end nil (the flushTemps wrapper, used by early exits) releases everything at
+// its production block — no temp's block equals nil, so the first case never fires.
+func (l *lowerer) flushStmtTemps(start, end *ir.Block) error {
+	for i := l.pendingBase; i < len(l.pendingReleases); i++ {
+		p := l.pendingReleases[i]
+		blk := p.block
+		if p.block == start {
+			blk = end
+		}
+		if err := l.lowerManagedRelease(blk, p.val, p.ty); err != nil {
 			return err
 		}
 	}
-	l.pendingReleases = nil
+	l.pendingReleases = l.pendingReleases[:l.pendingBase]
 	return nil
 }
+
+// flushTemps releases this scope's pending temporaries at their production blocks —
+// used at an early exit (break/continue/return), which has no single statement-end
+// block to move them to.
+func (l *lowerer) flushTemps() error { return l.flushStmtTemps(nil, nil) }
 
 func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {
 	switch e := expr.(type) {

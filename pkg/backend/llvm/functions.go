@@ -24,6 +24,7 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retSigned, entryABI bool) 
 	l.entryABI = entryABI
 	l.managedFrames = [][]managedSlot{nil}
 	l.pendingReleases = nil
+	l.pendingBase = 0
 	l.reuseToken = nil
 }
 
@@ -37,8 +38,12 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retSigned, entryABI bool) 
 // via the return was transferred by the ownership pass (its slot retired at the
 // move), so it is no longer in any frame — dropping the remaining local references
 // here can't free the returned box out from under the caller.
-func (l *lowerer) emitReturn(block *ir.Block, val value.Value) error {
-	if err := l.flushTemps(); err != nil {
+// start is the block the returned expression began evaluating in (the function
+// entry for a tail return, the `return` statement's block for an explicit one); it
+// lets flushStmtTemps release a temp used before a branch at `block` (after the
+// whole expression) instead of prematurely in its production block.
+func (l *lowerer) emitReturn(start, block *ir.Block, val value.Value) error {
+	if err := l.flushStmtTemps(start, block); err != nil {
 		return err
 	}
 	if err := l.releaseAllManagedFrames(block); err != nil {
@@ -119,7 +124,9 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 		// emitted in the right place. Guard on Term: the body may now end in an
 		// explicit `return` (which already emitted the ret and sealed the block).
 		if block.Term == nil {
-			if err := l.emitReturn(block, v); err != nil {
+			// fn.Blocks[0] is the body's start (a bare-expression body evaluates from
+			// the entry block); it lets a temp used before a branch survive to `block`.
+			if err := l.emitReturn(fn.Blocks[0], block, v); err != nil {
 				return err
 			}
 		}
@@ -139,7 +146,8 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 		// Route through emitReturn (val == nil): it flushes owned temporaries and
 		// releases managed frames before emitting the entryABI `ret i32 0`, so a
 		// heap temp built in the body (`println("a" ++ b)`) is freed, not leaked.
-		if err := l.emitReturn(block, nil); err != nil {
+		// The body already flushed via lowerForEffect, so start/end coincide here.
+		if err := l.emitReturn(block, block, nil); err != nil {
 			return err
 		}
 	}
@@ -233,7 +241,8 @@ func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) erro
 			return err
 		}
 		if end.Term == nil {
-			if err := l.emitReturn(end, nil); err != nil {
+			// The void body already flushed via lowerForEffect, so start/end coincide.
+			if err := l.emitReturn(end, end, nil); err != nil {
 				return err
 			}
 		}
@@ -245,7 +254,9 @@ func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) erro
 		return err
 	}
 	if end.Term == nil {
-		if err := l.emitReturn(end, v); err != nil {
+		// `entry` is the body's start block; a temp used before a branch is released
+		// at `end` (after the whole body) rather than in its production block.
+		if err := l.emitReturn(entry, end, v); err != nil {
 			return err
 		}
 	}

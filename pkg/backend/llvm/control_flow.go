@@ -64,6 +64,12 @@ func (l *lowerer) loopTarget(label string) (loopCtx, error) {
 func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail bool) (value.Value, *ir.Block, error) {
 	l.pushManagedFrame()
 	defer l.popManagedFrame()
+	// Protect any temporaries of an enclosing statement still in flight (this block
+	// may be a call argument / `if`-`match` operand): a flush here only touches the
+	// temporaries produced at or after this point. Restored on exit.
+	savedBase := l.pendingBase
+	l.pendingBase = len(l.pendingReleases)
+	defer func() { l.pendingBase = savedBase }()
 
 	var v value.Value
 	last := len(be.Statements) - 1
@@ -71,6 +77,7 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail 
 		if block.Term != nil {
 			break // a prior break/continue/return sealed this block; the rest is unreachable
 		}
+		stmtStart := block // the block this statement begins in (before any branch it contains)
 		var err error
 		switch s := stmt.(type) {
 		case *ast.ExpressionStmt:
@@ -105,9 +112,11 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail 
 				return nil, nil, err
 			}
 			// Temporaries are held for the tail of a value block (flushTail false)
-			// since the tail may itself be the escaping block value.
+			// since the tail may itself be the escaping block value. A temp produced on
+			// this statement's start block is released at `block` (where the statement
+			// ends) so it outlives a later use across a branch; see flushStmtTemps.
 			if i != last || flushTail {
-				if err := l.flushTemps(); err != nil {
+				if err := l.flushStmtTemps(stmtStart, block); err != nil {
 					return nil, nil, err
 				}
 			}
@@ -146,12 +155,13 @@ func (l *lowerer) lowerForEffect(block *ir.Block, expr ast.Expression) (*ir.Bloc
 		_, end, err := l.lowerBlockStmts(block, be, true)
 		return end, err
 	}
+	start := block
 	_, end, err := l.lowerExpr(block, expr)
 	if err != nil {
 		return nil, err
 	}
 	if end.Term == nil {
-		if err := l.flushTemps(); err != nil {
+		if err := l.flushStmtTemps(start, end); err != nil {
 			return nil, err
 		}
 	}
@@ -204,14 +214,15 @@ func (l *lowerer) lowerContinue(block *ir.Block, s *ast.ContinueStmt) error {
 // containing an `if` moves control onward before the `ret` — so lowerBlockStmts
 // sees a sealed block and stops.
 func (l *lowerer) lowerReturn(block *ir.Block, s *ast.ReturnStmt) (*ir.Block, error) {
+	start := block // where the returned expression begins (before any branch it contains)
 	if s.Value == nil {
-		return block, l.emitReturn(block, nil)
+		return block, l.emitReturn(start, block, nil)
 	}
 	v, block, err := l.lowerExpr(block, s.Value)
 	if err != nil {
 		return nil, err
 	}
-	return block, l.emitReturn(block, v)
+	return block, l.emitReturn(start, block, v)
 }
 
 // lowerForLoop lowers a C-style `for` loop to the standard cond/body/post/exit

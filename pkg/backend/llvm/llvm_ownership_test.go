@@ -213,6 +213,38 @@ var ownershipCases = []struct {
 		 }`,
 		1,
 	},
+	{
+		// Regression: a heap temp used as an *earlier* call argument must survive
+		// until the call, even when a *later* argument contains a branch (or block)
+		// that moves control into a different block before the call happens. The temp
+		// was released in its production block — before the call — a use-after-free.
+		// Fixed by releasing a start-block temp at the statement-end block instead.
+		"temp arg outlives a branch in a later arg (block body)",
+		`let f = (a: string, b: string) -> u8 => if a == "xy" { 3 } else { 4 }
+		 let g = () -> u8 => 0
+		 let main = () -> u8 => {
+		   let r = f("x" ++ "y", if 1 < 2 { let z = g()  "p" } else { "q" })
+		   r
+		 }`,
+		3,
+	},
+	{
+		// The same hazard when the function body is a bare expression (flushed at the
+		// tail return, not a block boundary) and the later argument is a `match`.
+		"temp arg outlives a match in a later arg (expression body)",
+		`let f = (a: string, b: string) -> u8 => if a == "xy" { 3 } else { 4 }
+		 let main = () -> u8 => f("x" ++ "y", match 1 { 1 => "p", _ => "q" })`,
+		3,
+	},
+	{
+		// Two heap temps straddling a branch-valued middle argument: both must outlive
+		// the call. A `&&` in the callee also exercises a conditional temp on the
+		// borrowing side (which must still release in its own block).
+		"two temp args straddle a branch middle arg",
+		`let f = (a: string, b: string, c: string) -> u8 => if a == "xy" && c == "mn" { 7 } else { 4 }
+		 let main = () -> u8 => f("x" ++ "y", if 1 < 2 { "p" } else { "q" }, "m" ++ "n")`,
+		7,
+	},
 }
 
 // TestExec_Ownership runs each ownership program and checks its result. A wrong
