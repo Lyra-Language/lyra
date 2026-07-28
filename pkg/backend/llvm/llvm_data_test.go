@@ -229,3 +229,37 @@ func TestEmit_DataByValueNamedPayload(t *testing.T) {
 		t.Errorf("by-value named payload should size to [1 x i64]:\n%s", got)
 	}
 }
+
+// TestExec_ScreamingCaseConstructors: an all-caps / single-capital data
+// constructor works end to end in expression position — the collector
+// reclassifies the const_identifier form into the same nodes a PascalCase
+// constructor produces, so construction, match, and applied payloads all lower.
+func TestExec_ScreamingCaseConstructors(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			// Nullary enum: construct N, match it back.
+			"nullary enum",
+			`data Dir = N | S | E | W
+			 let toNum = (d: Dir) -> u8 => match d { N => 0, S => 1, E => 2, W => 3 }
+			 let main = () -> u8 => toNum(E)`,
+			2,
+		},
+		{
+			// Applied constructor: FOO(7), then match the payload out.
+			"applied constructor",
+			`data Wrap = FOO(i64)
+			 let unwrap = (w: Wrap) -> i64 => match w { FOO(n) => n }
+			 let main = () -> u8 => u8(unwrap(FOO(7)))`,
+			7,
+		},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}

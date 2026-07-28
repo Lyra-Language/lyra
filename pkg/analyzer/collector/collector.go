@@ -59,6 +59,7 @@ func (c *Collector) Collect(root *sitter.Node) (*ast.Program, *symbols.SymbolTab
 	c.walkProgram(root)
 	c.registerTopLevelFunctions()
 	c.reclassifyStructPatterns()
+	c.reclassifyConstructorExprs()
 	c.resolveCanonicalTypes()
 	return c.ast, c.table, c.scopeTable, c.errors
 }

@@ -295,3 +295,33 @@ func TestAnalyze_MalformedMemberCall_NoPanic(t *testing.T) {
 		}
 	}
 }
+
+// TestAnalyze_ScreamingCaseConstructors: an all-caps / single-capital data
+// constructor or named-tuple name lexes as a const_identifier, so its use in
+// expression position collected to an IdentifierExpr / FunctionCallExpr and
+// failed with a misleading "undefined identifier". The collector now reclassifies
+// those into the DataConstructorExpr / named TupleLiteralExpr a PascalCase
+// constructor produces, so the natural enum compiles; a same-named const shadows.
+func TestAnalyze_ScreamingCaseConstructors(t *testing.T) {
+	clean := func(name, src string) {
+		if res := Analyze([]byte(src)); res.HasErrors() {
+			t.Errorf("%s: expected no errors, got: %v", name, res.Diagnostics)
+		}
+	}
+	// Nullary enum in expression + pattern position.
+	clean("nullary enum", `data Dir = N | S | E | W
+	 let toNum = (d: Dir) -> u8 => match d { N => 0, S => 1, E => 2, W => 3 }
+	 let d: Dir = N`)
+	// Applied constructor and named tuple.
+	clean("applied + named tuple", `data Wrap = FOO(i64)
+	 tuple POINT(i32, i32)
+	 let w: Wrap = FOO(7)
+	 let p: POINT = POINT(3, 4)`)
+	// A const of the same name shadows the constructor (resolves to the i64 const).
+	clean("const shadows constructor", `const RED = 5
+	 data Color = RED | GREEN
+	 let x: i64 = RED`)
+	// With no shadowing const, the same name is the constructor.
+	clean("constructor when unshadowed", `data Color = RED | GREEN
+	 let c: Color = RED`)
+}
