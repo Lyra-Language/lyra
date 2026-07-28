@@ -3,6 +3,7 @@ package driver
 import (
 	"strings"
 	"testing"
+	"time"
 
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
@@ -324,4 +325,26 @@ func TestAnalyze_ScreamingCaseConstructors(t *testing.T) {
 	// With no shadowing const, the same name is the constructor.
 	clean("constructor when unshadowed", `data Color = RED | GREEN
 	 let c: Color = RED`)
+}
+
+// TestAnalyze_DeepExpressionIsLinear is a coarse guard against the quadratic
+// propagateLiteralType behavior fixed in typechecker.go: it re-descended a
+// left-nested arithmetic chain at every level, so a chain of n operators cost
+// O(n²). A 50k-operator chain (a stand-in for long flat `a + b + … + z`
+// expressions or generated code) took >25s before the fix and ~0.3s after. The
+// bound is deliberately generous — this asserts "not quadratic", not a precise
+// time — so it stays robust on a loaded machine while still catching a
+// reintroduced O(n²).
+func TestAnalyze_DeepExpressionIsLinear(t *testing.T) {
+	const n = 50000
+	src := "let main = () -> i64 => 1" + strings.Repeat("+1", n)
+	start := time.Now()
+	res := Analyze([]byte(src))
+	elapsed := time.Since(start)
+	if res.HasErrors() {
+		t.Fatalf("deep chain should type-check cleanly, got: %v", res.Diagnostics)
+	}
+	if elapsed > 5*time.Second {
+		t.Fatalf("analyzing a %d-operator chain took %v (>5s) — propagateLiteralType may be quadratic again", n, elapsed)
+	}
 }

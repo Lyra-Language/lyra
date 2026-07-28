@@ -1406,10 +1406,30 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 	// concrete numeric type (e.g. one operand was `i8`, the other an untyped
 	// literal), push that width down into any untyped literal leaves so the
 	// backend can lower them at the right width instead of the i64 default.
-	tc.propagateLiteralType(expr.Left, result)
-	tc.propagateLiteralType(expr.Right, result)
+	tc.propagateOperandType(expr.Left, result)
+	tc.propagateOperandType(expr.Right, result)
 
 	return result
+}
+
+// propagateOperandType pushes a binary op's result type down onto an operand's
+// untyped literal leaves — but skips an operand that already *is* that type. Such
+// an operand is a nested arithmetic node whose own (bottom-up) inference already
+// propagated the same width through its subtree, so re-descending it repeats that
+// walk at every level of a chain — quadratic in the chain's length (the measured
+// hot spot on long flat `a + b + … + z` expressions). A leaf or a not-yet-typed
+// operand is narrowed as before. This guard is deliberately here and not in
+// propagateLiteralType itself: the annotation sites (`checkVarDecl` et al.) set the
+// value node's type to the annotation *before* narrowing, so they must re-descend.
+func (tc *TypeChecker) propagateOperandType(operand ast.Expression, result types.Type) {
+	if cur, ok := tc.typeTable.Get(operand); ok {
+		if cp, ok := cur.(types.PrimitiveType); ok {
+			if rp, ok := result.(types.PrimitiveType); ok && cp.Name == rp.Name {
+				return
+			}
+		}
+	}
+	tc.propagateLiteralType(operand, result)
 }
 
 // propagateLiteralType pushes a concrete numeric context type down onto the
