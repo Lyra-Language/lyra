@@ -696,6 +696,22 @@ func (tc *TypeChecker) checkPatternConstraints(name string, value ast.Expression
 // follow-up checks (e.g. an integer-literal range check). loc anchors the
 // mutability and assignability errors.
 func (tc *TypeChecker) checkAssignToBinding(name string, value ast.Expression, loc ast.Location) types.Type {
+	// A parameter is not a VarDeclStmt in scope — it lives in paramTypes — and it
+	// shadows any outer binding of the same name, so it is resolved first (mirroring
+	// IdentifierExpr resolution and checkLValueAssignment's ordering). Without this
+	// the whole function bailed early on `n = …` for a parameter n, which meant the
+	// assignment was **never type-checked at all**: no assignability check, no
+	// literal-range check, and — because the RHS was never inferred — no diagnostic
+	// even for an undefined identifier in it, plus no recorded types for the
+	// backend. `n = "s"` on an `i64` parameter then panicked the backend on a
+	// mismatched store, and `n = n + 1` failed it with "type not found".
+	//
+	// Reassigning a parameter binding is allowed for every mode: for a by-value
+	// parameter it rebinds the callee's own copy, and for a by-reference `mut` one
+	// it writes through to the caller — which is exactly what that modifier means.
+	if paramType, ok := tc.paramTypes[name]; ok {
+		return tc.checkAssignedValue(name, value, paramType, loc)
+	}
 	sym, ok := tc.scope.Lookup(name)
 	if !ok {
 		return nil
@@ -712,19 +728,28 @@ func (tc *TypeChecker) checkAssignToBinding(name string, value ast.Expression, l
 	if effective == nil {
 		return nil
 	}
+	return tc.checkAssignedValue(name, value, effective, loc)
+}
+
+// checkAssignedValue infers value and verifies it can be stored in a binding of
+// type target, reporting an assignability or allocation-flavor mismatch. Returns
+// target on success and nil on any failure. Shared by the variable and parameter
+// paths of checkAssignToBinding so both apply exactly the same rules — inferring
+// the RHS here is also what records its subexpression types for the backend.
+func (tc *TypeChecker) checkAssignedValue(name string, value ast.Expression, target types.Type, loc ast.Location) types.Type {
 	rhsType := tc.inferExprType(value)
 	if rhsType == nil {
 		return nil
 	}
-	if !isAssignable(rhsType, effective) {
+	if !isAssignable(rhsType, target) {
 		tc.addError(loc, SeverityError,
-			"%s: cannot assign %s to %s", name, rhsType, effective)
+			"%s: cannot assign %s to %s", name, rhsType, target)
 		return nil
 	}
-	if !tc.checkAllocationCompat(rhsType, effective, loc, name) {
+	if !tc.checkAllocationCompat(rhsType, target, loc, name) {
 		return nil
 	}
-	return effective
+	return target
 }
 
 func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {

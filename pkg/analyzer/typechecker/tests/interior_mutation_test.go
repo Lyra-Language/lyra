@@ -360,3 +360,59 @@ func TestTypeCheck_MutArgument_ScalarLiteral_Ok(t *testing.T) {
 	`, false)
 	assertNoErrors(t, res)
 }
+
+// ── reassigning a parameter binding ───────────────────────────────────────────
+//
+// A parameter is not a VarDeclStmt in scope (it lives in paramTypes), so
+// checkAssignToBinding used to bail before inferring the RHS — leaving `n = …`
+// on a parameter **entirely unchecked**: no assignability check, no literal-range
+// check, and not even an undefined-identifier report, plus no recorded types for
+// the backend (which then failed loudly on integer arithmetic and *panicked* on a
+// mismatched store).
+
+func TestTypeCheck_ParamReassign_TypeMismatch_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = (n: i64) -> i64 => { n = "hello"  n }
+	`, false)
+	assertErrorsAre(t, res, "n: cannot assign string to i64")
+}
+
+func TestTypeCheck_ParamReassign_BoolToInt_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = (n: i64) -> i64 => { n = true  n }
+	`, false)
+	assertErrorsAre(t, res, "n: cannot assign boolean to i64")
+}
+
+// The literal-range check now runs on a parameter target too.
+func TestTypeCheck_ParamReassign_LiteralOverflow_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = (n: i8) -> i8 => { n = 9999  n }
+	`, false)
+	assertErrorsAre(t, res, "n: literal value 9999 overflows i8")
+}
+
+// The RHS is inferred, so ordinary diagnostics inside it surface — this one went
+// completely unreported before.
+func TestTypeCheck_ParamReassign_UndefinedInRHS_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = (n: i64) -> i64 => { n = undefinedVar  n }
+	`, false)
+	assertErrorsAre(t, res, `undefined identifier "undefinedVar"`)
+}
+
+// A well-typed reassignment is accepted for every parameter mode: by value it
+// rebinds the callee's own copy, and through a by-reference `mut` it writes to
+// the caller.
+func TestTypeCheck_ParamReassign_WellTyped_Ok(t *testing.T) {
+	for _, src := range []string{
+		`let f = (n: i64) -> i64 => { n = n + 1  n }`,
+		`let f = (n: i64, k: i64) -> i64 => { k = n * 2  k }`,
+		`let f = (n: own i64) -> i64 => { n = 5  n }`,
+		`let f = (n: mut i64) -> i64 => { n = 5  n }`,
+		`let f = (x: f64) -> f64 => { x = x + 1.5  x }`,
+	} {
+		res := parseCollectAndCheck(t, src, false)
+		assertNoErrors(t, res)
+	}
+}
