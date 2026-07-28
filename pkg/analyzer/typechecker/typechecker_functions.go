@@ -340,6 +340,13 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 // expressions, member-expression callees (method calls), and fully-qualified
 // trait-method-path callees (TraitName::method(...)).
 func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.Type {
+	// Defensive: a malformed callee (e.g. `f.()` — a member expression with no
+	// property) can collect to a nil expression on some paths; the collector emits
+	// its own diagnostic, so return without dereferencing it (calling GetName on a
+	// nil callee in the default arm below crashed lyrac check).
+	if call.Function == nil {
+		return nil
+	}
 	switch callee := call.Function.(type) {
 	case *ast.IdentifierExpr:
 		return tc.inferIdentifierCall(callee, call)

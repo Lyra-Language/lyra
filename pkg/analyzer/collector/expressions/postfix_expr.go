@@ -47,30 +47,55 @@ func collectArgumentList(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Expres
 }
 
 func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location, optional bool) ast.Expression {
+	object := CollectExpression(node.ChildByFieldName("object"), ctx)
+	// A member expression with no property (`f.`, a natural mid-edit state, or the
+	// callee of `f.()`) must still yield an inert placeholder node, never a nil: a
+	// nil `ast.Expression` slips past `== nil` checks and crashes a later pass — e.g.
+	// inferFunctionCallExpr calling `.GetName()` on the nil callee of `f.()`. The
+	// emitted error keeps the program from compiling. (See collector.go's "Never
+	// return a nil expression node into the AST".)
+	placeholder := func() ast.Expression {
+		return &ast.MemberExpr{
+			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+			Object:   object,
+			Property: ast.IdentifierExpr{ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}}},
+			Optional: optional,
+		}
+	}
 	propertyNode := node.ChildByFieldName("property")
-	isConst := propertyNode != nil && propertyNode.Kind() == "const_identifier"
 	if propertyNode == nil {
 		ctx.AddError(node, diag.SeverityError, "member expression missing property")
-		return nil
+		return placeholder()
 	}
+	isConst := propertyNode.Kind() == "const_identifier"
 	property := CollectIdentifierExpr(propertyNode, isConst, ctx.NodeLocation(propertyNode), ctx)
 	if property == nil {
 		ctx.AddError(node, diag.SeverityError, "could not parse member expression property")
-		return nil
+		return placeholder()
 	}
 	return &ast.MemberExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		Object:   CollectExpression(node.ChildByFieldName("object"), ctx),
+		Object:   object,
 		Property: *property,
 		Optional: optional,
 	}
 }
 
 func collectTupleIndexExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
+	object := CollectExpression(node.ChildByFieldName("object"), ctx)
+	// An inert placeholder (index 0), never a nil node — same typed-nil hazard as
+	// collectMemberExpr; the emitted error keeps the program from compiling.
+	placeholder := func() ast.Expression {
+		return &ast.TupleIndexExpr{
+			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+			Object:   object,
+			Index:    0,
+		}
+	}
 	indexNode := node.ChildByFieldName("index")
 	if indexNode == nil {
 		ctx.AddError(node, diag.SeverityError, "tuple index expression missing index")
-		return nil
+		return placeholder()
 	}
 	// The index is a decimal_int token (`[0-9][0-9_]*`), so strip any digit
 	// separators before parsing. A value too large to be a Go int is not a
@@ -79,11 +104,11 @@ func collectTupleIndexExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Lo
 	index, err := strconv.Atoi(indexText)
 	if err != nil {
 		ctx.AddError(indexNode, diag.SeverityError, "invalid tuple index %q", ctx.NodeText(indexNode))
-		return nil
+		return placeholder()
 	}
 	return &ast.TupleIndexExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		Object:   CollectExpression(node.ChildByFieldName("object"), ctx),
+		Object:   object,
 		Index:    index,
 	}
 }
@@ -93,7 +118,12 @@ func collectTraitMethodPathExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc a
 	methodNode := node.ChildByFieldName("method")
 	if traitNameNode == nil || methodNode == nil {
 		ctx.AddError(node, diag.SeverityError, "trait method path missing trait name or method")
-		return nil
+		// An inert placeholder, never a nil node (typed-nil hazard); the error keeps
+		// the program from compiling.
+		return &ast.TraitMethodPathExpr{
+			ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+			Method:   ast.IdentifierExpr{ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}}},
+		}
 	}
 	return &ast.TraitMethodPathExpr{
 		ExprBase:  ast.ExprBase{AstBase: ast.AstBase{Location: loc}},

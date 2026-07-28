@@ -271,3 +271,27 @@ func TestAnalyze_WeakType_TypeChecks(t *testing.T) {
 		t.Fatalf("expected a weak-broken recursive type to analyze cleanly, got: %v", res.Diagnostics)
 	}
 }
+
+// TestAnalyze_MalformedMemberCall_NoPanic guards a front-end crash: a call whose
+// callee is a member/tuple-index expression with a missing property (`f.()`, a
+// natural mid-edit state, and the shapes it error-recovers to) collected to a nil
+// expression node, and inferFunctionCallExpr then dereferenced it (`.GetName()` on
+// the nil callee) — panicking `lyrac check` instead of reporting a diagnostic. The
+// collectors now return an inert placeholder and the typechecker guards a nil
+// callee. Each input must Analyze to a normal (errored) result, never panic.
+func TestAnalyze_MalformedMemberCall_NoPanic(t *testing.T) {
+	for _, src := range []string{
+		"let x = f.()\n",
+		"let x = a.b.()\n",
+		"let x = a.0.()\n",
+		"let x = f[].()\n",
+	} {
+		res := Analyze([]byte(src)) // a panic here fails the test
+		if res == nil || res.Program == nil {
+			t.Errorf("%q: expected a (partial) program, got nil", src)
+		}
+		if !res.HasErrors() {
+			t.Errorf("%q: expected an error diagnostic for the malformed call", src)
+		}
+	}
+}
