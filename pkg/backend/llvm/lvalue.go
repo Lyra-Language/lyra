@@ -68,8 +68,8 @@ func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignm
 // geps to the array element (bounds-checked, negative-from-end). Because it recurses
 // on the object, arbitrary mixes nest — `grid[i].y`, `p.arr[i]`, `m[i][j]`,
 // `line.start.x`. A fixed-size array is addressed through its storage; a `shared` or
-// dynamic array through its box (loaded from the object's location). A `shared`
-// struct in the path is a deferred loud error.
+// dynamic array — and a `shared` struct — through its box (loaded from the object's
+// location).
 func (l *lowerer) lvalueAddress(block *ir.Block, e ast.Expression) (value.Value, types.Type, *ir.Block, error) {
 	switch t := e.(type) {
 	case *ast.IdentifierExpr:
@@ -102,9 +102,6 @@ func (l *lowerer) memberFieldAddress(block *ir.Block, e *ast.MemberExpr) (value.
 	if !ok {
 		return nil, nil, nil, fmt.Errorf("llvm: no type recorded for member-assignment object")
 	}
-	if types.AllocationOf(objType) == types.Shared {
-		return nil, nil, nil, fmt.Errorf("llvm: assigning through a `shared` struct field is not implemented yet")
-	}
 	fields, ok := l.namedStructFields(objType)
 	if !ok {
 		return nil, nil, nil, fmt.Errorf("llvm: field assignment on non-struct type %s is not implemented", objType)
@@ -120,6 +117,25 @@ func (l *lowerer) memberFieldAddress(block *ir.Block, e *ast.MemberExpr) (value.
 	if idx < 0 {
 		return nil, nil, nil, fmt.Errorf("llvm: struct has no field %q", e.Property.Name)
 	}
+
+	// A `shared` struct is a pointer to its box `{ i64 rc, payload }`, so the field
+	// is addressed through the box (loaded from the object's slot): box → payload
+	// (field 1) → field idx — the write counterpart to lowerMemberExpr's read.
+	if types.AllocationOf(objType) == types.Shared {
+		box, block, err := l.lvalueBoxPtr(block, e.Object, objType)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		payloadTy, err := l.lowerType(types.WithAllocation(objType, types.Stack))
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		fieldPtr := block.NewGetElementPtr(SharedBoxType(payloadTy), box,
+			constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1), constant.NewInt(lltypes.I32, int64(idx)))
+		return fieldPtr, fieldType, block, nil
+	}
+
+	// A stack struct: the object's address *is* the struct storage; gep into it.
 	objPtr, _, block, err := l.lvalueAddress(block, e.Object)
 	if err != nil {
 		return nil, nil, nil, err

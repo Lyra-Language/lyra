@@ -62,17 +62,3 @@ let main = () -> u8 => {
 	}
 }
 
-// A `shared` struct in the assignment path is a deferred loud error (a managed field
-// type now works — see llvm_managed_assign_test.go).
-func TestEmit_MemberAssignment_Deferred(t *testing.T) {
-	src := `struct Point { x: u8, y: u8 }
-let main = () -> u8 => {
-  var p: shared Point = Point { x: 1, y: 2 }
-  p.x = 9
-  0
-}
-`
-	if _, err := emitSource(t, src); err == nil {
-		t.Errorf("expected a loud error for assigning through a `shared` struct:\n%s", src)
-	}
-}
