@@ -199,13 +199,13 @@ let main = () -> u8 => {
 	}
 }
 
-// A non-array for-in iterable (a range or string) is deferred with a loud error.
+// A string for-in iterable is deferred with a loud error (arrays and ranges lower).
 func TestEmit_ForIn_Deferred(t *testing.T) {
 	src := `let main = () -> void => {
-  for i in 0..<3 { println(i) }
+  for c in "hello" { println(c) }
 }
 `
 	if _, err := emitSource(t, src); err == nil {
-		t.Errorf("expected a loud error for a for-in over a range (deferred):\n%s", src)
+		t.Errorf("expected a loud error for a for-in over a string (deferred):\n%s", src)
 	}
 }

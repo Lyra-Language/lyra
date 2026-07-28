@@ -308,16 +308,22 @@ func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value
 // (the index) and the second in Value (the element), and the single-variable form
 // leaves Value empty (Key is then the element).
 //
-// Deferred, loud error: any non-array iterable (a range or a string).
+// A numeric range iterable (`for i in 0..<n`) is delegated to lowerForInRange (a
+// counter loop). Deferred, loud error: a string iterable.
 func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
+	iterType, ok := l.res.TypeTable.Get(e.Iterable)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no type recorded for for-in iterable")
+	}
+	// A numeric range (`for i in 0..<n`) is a counter loop, not an element walk.
+	if _, ok := iterType.(types.RangeType); ok {
+		return l.lowerForInRange(block, e)
+	}
+
 	// Resolve the element/index variable names from the one/two-variable form.
 	elemVar, indexVar := e.Key, ""
 	if e.Value != "" {
 		indexVar, elemVar = e.Key, e.Value
-	}
-	iterType, ok := l.res.TypeTable.Get(e.Iterable)
-	if !ok {
-		return nil, nil, fmt.Errorf("llvm: no type recorded for for-in iterable")
 	}
 
 	// Materialize the element source and length *once*, before the loop; arrGep(i)
@@ -408,6 +414,126 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 	incBlock.NewBr(condBlock)
 
 	return nil, exitBlock, nil
+}
+
+// lowerForInRange lowers `for i in START..<END` (and `..=`, with an optional
+// `step`) as a counter loop: `i = START; while i </<= END { <body>; i += step }`.
+// The counter is the loop variable (a plain integer value, not a borrow). `..<` is
+// an exclusive end (`i < END`), `..=` inclusive (`i <= END`).
+//
+// The counter width is the first concrete-integer bound's type (else i64), matching
+// the typechecker's iterableElementType; the bounds and step are coerced to it. The
+// increment is a plain (wrapping) add — a range whose end is the counter type's max
+// with an inclusive `..=` therefore loops forever (the increment wraps past it), the
+// one edge to keep in mind. There is no two-variable form over a range.
+func (l *lowerer) lowerForInRange(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
+	if e.Value != "" {
+		return nil, nil, fmt.Errorf("llvm: a range has no index/value pair — `for i, x in <range>` is not valid")
+	}
+	rng, ok := e.Iterable.(*ast.RangeExpr)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: for-in range iterable is not a range expression (%T)", e.Iterable)
+	}
+	iType, signed := l.rangeIntType(rng)
+
+	// Lower each bound / the step and width-normalize it to the counter type.
+	coerce := func(b *ir.Block, ex ast.Expression) (value.Value, *ir.Block, error) {
+		v, b, err := l.lowerExpr(b, ex)
+		if err != nil {
+			return nil, nil, err
+		}
+		vi, ok := v.Type().(*lltypes.IntType)
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: range bound is not an integer (%s)", v.Type())
+		}
+		if vi.BitSize != iType.BitSize {
+			vs, _ := l.getIntSignedness(ex)
+			v = coerceIntWidth(b, v, vs, iType)
+		}
+		return v, b, nil
+	}
+	start, block, err := coerce(block, rng.Start)
+	if err != nil {
+		return nil, nil, err
+	}
+	end, block, err := coerce(block, rng.End)
+	if err != nil {
+		return nil, nil, err
+	}
+	var step value.Value = constant.NewInt(iType, 1)
+	if rng.Step != nil {
+		if step, block, err = coerce(block, rng.Step); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	fn := block.Parent
+	entry := fn.Blocks[0]
+	iSlot := entry.NewAlloca(iType)
+	block.NewStore(start, iSlot)
+	l.locals[e.Key] = iSlot // the counter *is* the loop variable (immutable, so never re-stored by the body)
+
+	condBlock := fn.NewBlock("")
+	bodyBlock := fn.NewBlock("")
+	incBlock := fn.NewBlock("")  // continue target
+	exitBlock := fn.NewBlock("") // break target
+	block.NewBr(condBlock)
+
+	iv := condBlock.NewLoad(iType, iSlot)
+	var pred enum.IPred
+	switch {
+	case rng.EndOperator == "<" && signed:
+		pred = enum.IPredSLT
+	case rng.EndOperator == "<":
+		pred = enum.IPredULT
+	case signed:
+		pred = enum.IPredSLE
+	default:
+		pred = enum.IPredULE
+	}
+	condBlock.NewCondBr(condBlock.NewICmp(pred, iv, end), bodyBlock, exitBlock)
+
+	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames)})
+	bodyEnd, err := l.lowerForEffect(bodyBlock, &e.Body)
+	l.loops = l.loops[:len(l.loops)-1]
+	if err != nil {
+		return nil, nil, err
+	}
+	if bodyEnd.Term == nil {
+		bodyEnd.NewBr(incBlock)
+	}
+
+	iv2 := incBlock.NewLoad(iType, iSlot)
+	incBlock.NewStore(incBlock.NewAdd(iv2, step), iSlot) // plain (wrapping) increment
+	incBlock.NewBr(condBlock)
+
+	return nil, exitBlock, nil
+}
+
+// rangeIntType returns the LLVM integer type and signedness a range for-in's
+// counter uses: the first concrete-integer bound's type (End, then Start, then
+// Step), or i64/signed when every bound is an untyped literal — mirroring the
+// typechecker's iterableElementType so the counter matches the loop variable's type.
+func (l *lowerer) rangeIntType(rng *ast.RangeExpr) (*lltypes.IntType, bool) {
+	for _, ex := range []ast.Expression{rng.End, rng.Start, rng.Step} {
+		if ex == nil {
+			continue
+		}
+		t, ok := l.res.TypeTable.Get(ex)
+		if !ok {
+			continue
+		}
+		p, ok := t.(types.PrimitiveType)
+		if !ok || p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt {
+			continue
+		}
+		if ll, ok := LLVMPrimitive(p.Name); ok {
+			if it, ok := ll.(*lltypes.IntType); ok {
+				return it, IsSignedInt(p.Name)
+			}
+		}
+	}
+	return lltypes.I64, true
 }
 
 func (l *lowerer) lowerVarDecl(block *ir.Block, vds *ast.VarDeclStmt) (*ir.Block, error) {
