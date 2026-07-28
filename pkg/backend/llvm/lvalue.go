@@ -33,9 +33,6 @@ func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignm
 	if targetType == nil {
 		return nil, fmt.Errorf("llvm: no type recorded for assignment target")
 	}
-	if ownership.IsManaged(targetType) {
-		return nil, fmt.Errorf("llvm: assigning to a managed location (%s) is not implemented yet (needs release-old + retain-new)", targetType)
-	}
 	targetLL, err := l.lowerType(targetType)
 	if err != nil {
 		return nil, err
@@ -49,6 +46,17 @@ func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignm
 	v, err = l.coerceAggregateElem(block, v, targetLL, stmt.Value)
 	if err != nil {
 		return nil, err
+	}
+	// A managed target owns whatever it currently holds; release that reference
+	// before the new (+1) value overwrites it, so the slot's refcount stays balanced
+	// (mirrors managed `var` reassignment). The new value is computed *before* this
+	// release, so `xs[i] = xs[i] ++ y` — which reads the old element — is safe. The
+	// ownership pass gave the RHS its +1 (its LValueAssignmentStmt case).
+	if ownership.IsManaged(targetType) {
+		old := block.NewLoad(targetLL, ptr)
+		if err := l.lowerManagedRelease(block, old, targetType); err != nil {
+			return nil, err
+		}
 	}
 	block.NewStore(v, ptr)
 	return block, nil

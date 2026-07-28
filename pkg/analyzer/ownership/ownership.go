@@ -534,6 +534,11 @@ func (a *analyzer) stmt(s ast.AstNode) {
 		a.expr(s.Value, a.bindingIsManaged(s))
 	case *ast.VarReassignmentStmt:
 		a.expr(s.Value, a.isManaged(s.Value))
+	case *ast.LValueAssignmentStmt:
+		// Interior assignment (`xs[i] = v`, `p.name = v`): the slot takes ownership of
+		// the new value (+1) — the backend releases whatever the slot held before. A
+		// non-managed target borrows (nothing to own).
+		a.expr(s.Value, a.isManaged(s.Value))
 	case *ast.ReturnStmt:
 		if s.Value != nil {
 			// Pass the return's ownership need down; managed leaves decide the retain.

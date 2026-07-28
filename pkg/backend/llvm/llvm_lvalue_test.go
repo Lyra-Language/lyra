@@ -104,17 +104,3 @@ let main = () -> u8 => {
 		t.Errorf("expected an out-of-bounds trap (exit 101), got %d", got)
 	}
 }
-
-// A managed array-element type is deferred with a loud error (struct-field
-// assignment now lowers — see llvm_member_assign_test.go).
-func TestEmit_ArrayElementAssignment_Deferred(t *testing.T) {
-	src := `let main = () -> u8 => {
-  var xs: []string = ["a", "b"]
-  xs[0] = "c"
-  0
-}
-`
-	if _, err := emitSource(t, src); err == nil {
-		t.Errorf("expected a loud error for a managed array-element assignment:\n%s", src)
-	}
-}
