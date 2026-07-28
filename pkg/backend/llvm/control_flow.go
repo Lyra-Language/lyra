@@ -88,6 +88,9 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail 
 		case *ast.VarReassignmentStmt:
 			block, err = l.lowerVarReassignment(block, s)
 			v = nil
+		case *ast.LValueAssignmentStmt:
+			block, err = l.lowerLValueAssignment(block, s)
+			v = nil
 		case *ast.BreakStmt:
 			err = l.lowerBreak(block, s)
 			v = nil
