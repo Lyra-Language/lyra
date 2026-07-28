@@ -341,13 +341,32 @@ check (macOS ASan can't see leaks) — `llvm_aggregate_drop_test.go`.
 
 ## Deferred / out of scope for this decision
 
-- **Managed values inside a *stack* aggregate** still leak. The drop glue above
+- **Managed values inside a *stack* aggregate** still leak, and the missing
+  deep-retain is **not purely a leak** — see the hazard below. The drop glue above
   covers a `shared` (boxed) aggregate, whose death is a refcount reaching zero. A
   stack aggregate is a *value*: `let q = p` copies it and duplicates its field
   references with no retain, so dropping both copies would double-free. Making it
   sound needs deep-retain-on-aggregate-copy in the ownership pass first — then a
-  stack aggregate binding can run the same glue at scope exit. Safe today (a leak,
-  never a double free).
+  stack aggregate binding can run the same glue at scope exit.
+
+  **The aliasing hazard (corrects an earlier "a leak, never a double free" claim).**
+  Because the copy is unretained, a managed value in inline storage can be aliased
+  by any number of duplicates the refcount does not know about. Freeing it through
+  *one* of them dangles the rest. Two consequences, one handled and one open:
+
+  - **Interior assignment — handled.** `p.name = v` must release the value the slot
+    held or it leaks, but doing so on a stack aggregate frees a box that every copy
+    of `p` still points at (ASan-confirmed: `let q = p; p.name = …; q.name`). The
+    backend therefore emits the release-old only when the target is reached through
+    a ref-counted box (`releaseOldTarget` / `lvalueLoc.viaBox`, `lvalue.go`), where
+    copies share the box pointer instead of duplicating the slot. Inline targets
+    leak the overwritten value, as they always have.
+  - **Reading an aggregate out of a box — open, and a real use-after-free.**
+    `let q = ps[0]` on a `[]Person` copies the `Person` out of the box by value,
+    duplicating its `name` with no retain; when the box dies, the drop glue above
+    frees `name` and `q` dangles. This one is *not* fixed — suppressing the glue
+    would reintroduce the leak it exists to close (freeing a list would leak the
+    spine). Only deep-retain-on-copy closes it.
 - **Fields an arm neither binds nor the box drops** — none today: the box drops
   everything it still owns. Precision loss is only the extra dup/drop traffic noted
   under stage 4.

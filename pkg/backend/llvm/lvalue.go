@@ -22,18 +22,21 @@ import (
 // binding is mutable (a `var`, a `let mut`, or a `mut`/`own` parameter), that the
 // value's type matches the target, and that no `readonly` field is written.
 //
-// Deferred, loud errors: a `shared` struct/array in the path, and a *managed* target
-// type (`[]string`, a `string` field) — the latter needs to release the overwritten
-// value and take ownership of the new one.
+// A **managed** target (a `string`/`[]T` element or field) owns whatever it holds,
+// so overwriting it must release the old reference or that reference leaks — but
+// only when the slot is *unaliased*, which is what loc.viaBox decides. See
+// releaseOldTarget.
+//
+// Deferred, loud error: an optional member target (`p?.x = v`).
 func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignmentStmt) (*ir.Block, error) {
-	ptr, targetType, block, err := l.lvalueAddress(block, stmt.Target)
+	loc, block, err := l.lvalueAddress(block, stmt.Target)
 	if err != nil {
 		return nil, err
 	}
-	if targetType == nil {
+	if loc.ty == nil {
 		return nil, fmt.Errorf("llvm: no type recorded for assignment target")
 	}
-	targetLL, err := l.lowerType(targetType)
+	targetLL, err := l.lowerType(loc.ty)
 	if err != nil {
 		return nil, err
 	}
@@ -47,19 +50,64 @@ func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignm
 	if err != nil {
 		return nil, err
 	}
-	// A managed target owns whatever it currently holds; release that reference
-	// before the new (+1) value overwrites it, so the slot's refcount stays balanced
-	// (mirrors managed `var` reassignment). The new value is computed *before* this
-	// release, so `xs[i] = xs[i] ++ y` — which reads the old element — is safe. The
-	// ownership pass gave the RHS its +1 (its LValueAssignmentStmt case).
-	if ownership.IsManaged(targetType) {
-		old := block.NewLoad(targetLL, ptr)
-		if err := l.lowerManagedRelease(block, old, targetType); err != nil {
+	// The new value is computed *before* the release below, so `xs[i] = xs[i] ++ y`
+	// — which reads the old element — is safe.
+	if l.releaseOldTarget(loc) {
+		old := block.NewLoad(targetLL, loc.ptr)
+		if err := l.lowerManagedRelease(block, old, loc.ty); err != nil {
 			return nil, err
 		}
 	}
-	block.NewStore(v, ptr)
+	block.NewStore(v, loc.ptr)
 	return block, nil
+}
+
+// releaseOldTarget reports whether the assignment may release the managed value the
+// target slot currently holds. It may only do so when the slot's storage is *not
+// reachable through an unretained duplicate*, and the deciding fact is whether the
+// final hop went through a ref-counted box (loc.viaBox).
+//
+// Why the box matters. Every way of *reading a managed value* out of a container —
+// `let s = p.name`, `let e = xs[i]`, `let q = p` on a managed binding — goes through
+// the ownership pass's retain, so it yields its own +1. The one copy that does not
+// is a whole **inline (stack) aggregate**: `let q = p` on a struct/tuple/`[N]T` copies
+// the aggregate *by value*, duplicating the fat pointers of its managed fields with
+// no retain, and so does passing or returning one. So a managed slot sitting inside
+// inline storage may be aliased by an arbitrary number of unretained copies, and
+// releasing it here would dangle every one of them (an ASan-confirmed
+// use-after-free: `let q = p; p.name = …; q.name` freed the box `q.name` still
+// pointed at).
+//
+// A slot reached *through a box* has no such alias: copying a `shared` value or a
+// `[]T` copies the box **pointer** — which is managed, hence retained — so every
+// copy observes the same slot rather than a private duplicate of it. Overwriting it
+// is then ordinary aliasing, and releasing the old value is correct.
+//
+// Only the *final* hop is consulted, because crossing into a box re-establishes that
+// invariant: in `p.arr[i] = v` (a stack struct holding a `[]string`), copies of `p`
+// duplicate the box pointer but all name the same element storage, so the element
+// release is safe even though `p` itself is an inline aggregate.
+//
+// The cost of saying no is a leak — the overwritten value is abandoned — which is
+// the pass's standing safety bias (a missed release leaks; a spurious one dangles).
+// It matches the rest of the stack-aggregate story: a managed value inside an inline
+// aggregate is never freed today. Removing this restriction means deep-retain-on-copy
+// in the ownership pass, which frees those values everywhere rather than here alone;
+// see ALLOCATION.md.
+func (l *lowerer) releaseOldTarget(loc lvalueLoc) bool {
+	return loc.viaBox && ownership.IsManaged(loc.ty)
+}
+
+// lvalueLoc is an assignable location: its address, the Lyra type stored there, and
+// whether the hop that reached it went *through a ref-counted box* (a `shared`
+// struct/array or a dynamic array) rather than through inline aggregate storage.
+// viaBox is the aliasing fact releaseOldTarget needs, and it describes the **final**
+// hop only — each hop overwrites it, since crossing into a box makes everything
+// below that point unaliased again.
+type lvalueLoc struct {
+	ptr    value.Value
+	ty     types.Type
+	viaBox bool
 }
 
 // lvalueAddress returns the address (and Lyra type) of an assignable location,
@@ -70,18 +118,21 @@ func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignm
 // `line.start.x`. A fixed-size array is addressed through its storage; a `shared` or
 // dynamic array — and a `shared` struct — through its box (loaded from the object's
 // location).
-func (l *lowerer) lvalueAddress(block *ir.Block, e ast.Expression) (value.Value, types.Type, *ir.Block, error) {
+func (l *lowerer) lvalueAddress(block *ir.Block, e ast.Expression) (lvalueLoc, *ir.Block, error) {
 	switch t := e.(type) {
 	case *ast.IdentifierExpr:
 		slot, ok := l.locals[t.Name]
 		if !ok {
-			return nil, nil, nil, fmt.Errorf("llvm: assignment to unbound identifier %q", t.Name)
+			return lvalueLoc{}, nil, fmt.Errorf("llvm: assignment to unbound identifier %q", t.Name)
 		}
 		if _, ok := slot.(*ir.InstAlloca); !ok {
-			return nil, nil, nil, fmt.Errorf("llvm: identifier %q is not addressable", t.Name)
+			return lvalueLoc{}, nil, fmt.Errorf("llvm: identifier %q is not addressable", t.Name)
 		}
 		lyraType, _ := l.res.TypeTable.Get(t)
-		return slot, lyraType, block, nil
+		// A bare identifier is only ever the *root* of a path here — the collector
+		// routes a whole-binding assignment to VarReassignmentStmt — so viaBox is
+		// never read for this case; false is the conservative answer regardless.
+		return lvalueLoc{ptr: slot, ty: lyraType}, block, nil
 
 	case *ast.MemberExpr:
 		return l.memberFieldAddress(block, t)
@@ -89,22 +140,22 @@ func (l *lowerer) lvalueAddress(block *ir.Block, e ast.Expression) (value.Value,
 	case *ast.IndexExpr:
 		return l.indexElemAddress(block, t)
 	}
-	return nil, nil, nil, fmt.Errorf("llvm: unsupported assignment target path element %T", e)
+	return lvalueLoc{}, nil, fmt.Errorf("llvm: unsupported assignment target path element %T", e)
 }
 
 // memberFieldAddress computes the address of `obj.field` by taking the object's
 // address and gep-ing to the named field of its (stack) struct type.
-func (l *lowerer) memberFieldAddress(block *ir.Block, e *ast.MemberExpr) (value.Value, types.Type, *ir.Block, error) {
+func (l *lowerer) memberFieldAddress(block *ir.Block, e *ast.MemberExpr) (lvalueLoc, *ir.Block, error) {
 	if e.Optional {
-		return nil, nil, nil, fmt.Errorf("llvm: optional member assignment (?.) not implemented")
+		return lvalueLoc{}, nil, fmt.Errorf("llvm: optional member assignment (?.) not implemented")
 	}
 	objType, ok := l.res.TypeTable.Get(e.Object)
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("llvm: no type recorded for member-assignment object")
+		return lvalueLoc{}, nil, fmt.Errorf("llvm: no type recorded for member-assignment object")
 	}
 	fields, ok := l.namedStructFields(objType)
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("llvm: field assignment on non-struct type %s is not implemented", objType)
+		return lvalueLoc{}, nil, fmt.Errorf("llvm: field assignment on non-struct type %s is not implemented", objType)
 	}
 	idx := -1
 	var fieldType types.Type
@@ -115,7 +166,7 @@ func (l *lowerer) memberFieldAddress(block *ir.Block, e *ast.MemberExpr) (value.
 		}
 	}
 	if idx < 0 {
-		return nil, nil, nil, fmt.Errorf("llvm: struct has no field %q", e.Property.Name)
+		return lvalueLoc{}, nil, fmt.Errorf("llvm: struct has no field %q", e.Property.Name)
 	}
 
 	// A `shared` struct is a pointer to its box `{ i64 rc, payload }`, so the field
@@ -124,92 +175,97 @@ func (l *lowerer) memberFieldAddress(block *ir.Block, e *ast.MemberExpr) (value.
 	if types.AllocationOf(objType) == types.Shared {
 		box, block, err := l.lvalueBoxPtr(block, e.Object, objType)
 		if err != nil {
-			return nil, nil, nil, err
+			return lvalueLoc{}, nil, err
 		}
 		payloadTy, err := l.lowerType(types.WithAllocation(objType, types.Stack))
 		if err != nil {
-			return nil, nil, nil, err
+			return lvalueLoc{}, nil, err
 		}
 		fieldPtr := block.NewGetElementPtr(SharedBoxType(payloadTy), box,
 			constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1), constant.NewInt(lltypes.I32, int64(idx)))
-		return fieldPtr, fieldType, block, nil
+		return lvalueLoc{ptr: fieldPtr, ty: fieldType, viaBox: true}, block, nil
 	}
 
-	// A stack struct: the object's address *is* the struct storage; gep into it.
-	objPtr, _, block, err := l.lvalueAddress(block, e.Object)
+	// A stack struct: the object's address *is* the struct storage; gep into it. The
+	// field therefore lives in an inline aggregate that a by-value copy of the object
+	// duplicates without retaining — viaBox stays false (see releaseOldTarget).
+	obj, block, err := l.lvalueAddress(block, e.Object)
 	if err != nil {
-		return nil, nil, nil, err
+		return lvalueLoc{}, nil, err
 	}
 	structTy, err := l.lowerType(objType)
 	if err != nil {
-		return nil, nil, nil, err
+		return lvalueLoc{}, nil, err
 	}
-	fieldPtr := block.NewGetElementPtr(structTy, objPtr,
+	fieldPtr := block.NewGetElementPtr(structTy, obj.ptr,
 		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, int64(idx)))
-	return fieldPtr, fieldType, block, nil
+	return lvalueLoc{ptr: fieldPtr, ty: fieldType}, block, nil
 }
 
 // indexElemAddress computes the address of `obj[i]`. A fixed-size array is addressed
 // through the object's own storage (its alloca / field slot); a `shared` or dynamic
 // array through its box, loaded from that storage. The index is bounds-checked
 // against the compile-time size or the runtime length.
-func (l *lowerer) indexElemAddress(block *ir.Block, e *ast.IndexExpr) (value.Value, types.Type, *ir.Block, error) {
+func (l *lowerer) indexElemAddress(block *ir.Block, e *ast.IndexExpr) (lvalueLoc, *ir.Block, error) {
 	objType, ok := l.res.TypeTable.Get(e.Object)
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("llvm: no type recorded for index-assignment object")
+		return lvalueLoc{}, nil, fmt.Errorf("llvm: no type recorded for index-assignment object")
 	}
 	switch at := objType.(type) {
 	case types.StaticArrayType:
 		elemLL, err := l.lowerType(at.ElementType)
 		if err != nil {
-			return nil, nil, nil, err
+			return lvalueLoc{}, nil, err
 		}
 		arrayTy := lltypes.NewArray(uint64(at.Size), elemLL)
 		size := constant.NewInt(lltypes.I64, int64(at.Size))
 		if types.AllocationOf(objType) == types.Shared {
 			box, block, err := l.lvalueBoxPtr(block, e.Object, objType)
 			if err != nil {
-				return nil, nil, nil, err
+				return lvalueLoc{}, nil, err
 			}
 			adjusted, block, err := l.boundsCheckedIndex(block, e, size)
 			if err != nil {
-				return nil, nil, nil, err
+				return lvalueLoc{}, nil, err
 			}
 			// box → SharedBox { i64 rc, [N x T] } field 1 → element.
 			elemPtr := block.NewGetElementPtr(SharedBoxType(arrayTy), box,
 				constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1), adjusted)
-			return elemPtr, at.ElementType, block, nil
+			return lvalueLoc{ptr: elemPtr, ty: at.ElementType, viaBox: true}, block, nil
 		}
-		objPtr, _, block, err := l.lvalueAddress(block, e.Object) // pointer to [N x T]
+		// A stack `[N]T`: addressed through the object's own storage, so the element
+		// lives in an inline aggregate a by-value copy duplicates without retaining —
+		// viaBox stays false (see releaseOldTarget).
+		obj, block, err := l.lvalueAddress(block, e.Object) // pointer to [N x T]
 		if err != nil {
-			return nil, nil, nil, err
+			return lvalueLoc{}, nil, err
 		}
 		adjusted, block, err := l.boundsCheckedIndex(block, e, size)
 		if err != nil {
-			return nil, nil, nil, err
+			return lvalueLoc{}, nil, err
 		}
-		elemPtr := block.NewGetElementPtr(arrayTy, objPtr, constant.NewInt(lltypes.I64, 0), adjusted)
-		return elemPtr, at.ElementType, block, nil
+		elemPtr := block.NewGetElementPtr(arrayTy, obj.ptr, constant.NewInt(lltypes.I64, 0), adjusted)
+		return lvalueLoc{ptr: elemPtr, ty: at.ElementType}, block, nil
 
 	case types.DynamicArrayType:
 		elemLL, err := l.lowerType(at.ElementType)
 		if err != nil {
-			return nil, nil, nil, err
+			return lvalueLoc{}, nil, err
 		}
 		boxTy := DynArrayBoxType(elemLL)
 		box, block, err := l.lvalueBoxPtr(block, e.Object, objType)
 		if err != nil {
-			return nil, nil, nil, err
+			return lvalueLoc{}, nil, err
 		}
 		length := block.NewLoad(lltypes.I64, block.NewGetElementPtr(boxTy, box, i32c(0), i32c(1)))
 		adjusted, block, err := l.boundsCheckedIndex(block, e, length)
 		if err != nil {
-			return nil, nil, nil, err
+			return lvalueLoc{}, nil, err
 		}
 		elemPtr := block.NewGetElementPtr(boxTy, box, i32c(0), i32c(2), adjusted)
-		return elemPtr, at.ElementType, block, nil
+		return lvalueLoc{ptr: elemPtr, ty: at.ElementType, viaBox: true}, block, nil
 	}
-	return nil, nil, nil, fmt.Errorf("llvm: index assignment into %s is not implemented", objType)
+	return lvalueLoc{}, nil, fmt.Errorf("llvm: index assignment into %s is not implemented", objType)
 }
 
 // lvalueBoxPtr loads the box pointer a `shared`/dynamic-array location holds: the
@@ -218,7 +274,7 @@ func (l *lowerer) indexElemAddress(block *ir.Block, e *ast.IndexExpr) (value.Val
 // object out of the ownership retain/release hooks — the assignment only mutates the
 // box in place, it doesn't take a reference.
 func (l *lowerer) lvalueBoxPtr(block *ir.Block, objExpr ast.Expression, objType types.Type) (value.Value, *ir.Block, error) {
-	addr, _, block, err := l.lvalueAddress(block, objExpr)
+	loc, block, err := l.lvalueAddress(block, objExpr)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -226,7 +282,7 @@ func (l *lowerer) lvalueBoxPtr(block *ir.Block, objExpr ast.Expression, objType 
 	if err != nil {
 		return nil, nil, err
 	}
-	return block.NewLoad(boxPtrTy, addr), block, nil
+	return block.NewLoad(boxPtrTy, loc.ptr), block, nil
 }
 
 // boundsCheckedIndex lowers the index of `e` and returns the from-the-end-adjusted,

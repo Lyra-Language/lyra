@@ -42,10 +42,20 @@ import (
 //
 // Scope: this covers managed values inside a *boxed* (`shared`) aggregate, whose
 // death is a refcount reaching zero. A managed value inside a plain **stack**
-// aggregate is still leaked conservatively — a stack aggregate is a value, so
-// `let q = p` copies it and duplicates its field references with no retain, and
-// dropping both copies would double-free. Making that sound needs deep-retain-on-
-// copy in the ownership pass first; see ALLOCATION.md.
+// aggregate is still leaked — a stack aggregate is a value, so `let q = p` copies it
+// and duplicates its field references with no retain, and dropping both copies would
+// double-free. Making that sound needs deep-retain-on-copy in the ownership pass
+// first; see ALLOCATION.md.
+//
+// That unretained copy is **not purely a leak**, and this file is one of the two
+// places it bites. Reading a stack aggregate *by value out of a box* — `let q = ps[0]`
+// on a `[]Person` — duplicates the aggregate's managed fields without a retain, so
+// when the box dies the glue below frees them while `q` still points at them: a real
+// use-after-free, ASan-confirmed. It is unfixed here on purpose (not emitting the glue
+// would reintroduce the leak it exists to close — freeing a list would leak the
+// spine); only deep-retain-on-copy closes it. The other place is interior assignment,
+// which *is* handled: lowerLValueAssignment releases the overwritten value only for a
+// box-interior target (see releaseOldTarget, lvalue.go).
 
 // needsDrop reports whether a value of Lyra type t owns any reference-counted
 // reference that must be released when the value dies. A managed type *is* such a

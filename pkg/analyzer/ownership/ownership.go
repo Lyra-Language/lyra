@@ -50,10 +50,19 @@
 // unique is Perceus stage 4 (reuse specialization) — it costs refcount traffic
 // today, but not allocations: reuse/FBIP reclaims the box shell either way.
 //
-// Still leaked conservatively: a managed value inside a plain **stack** aggregate.
-// A stack aggregate is a value, so `let q = p` copies it and duplicates its field
-// references with no retain; dropping both copies would double-free. Making that
-// sound needs deep-retain-on-copy here first.
+// Still leaked: a managed value inside a plain **stack** aggregate. A stack
+// aggregate is a value, so `let q = p` copies it and duplicates its field references
+// with no retain; dropping both copies would double-free. Making that sound needs
+// deep-retain-on-copy here first.
+//
+// That missing retain is **not purely a leak** — it leaves aliases the refcount
+// doesn't know about, so freeing the value through one of them dangles the others.
+// The backend guards the case it can: interior assignment (`p.name = v`) releases the
+// overwritten value only when the target sits inside a ref-counted box, never inside
+// inline storage (`releaseOldTarget`, backend/llvm/lvalue.go). One case remains open —
+// reading an aggregate by value out of a box (`let q = ps[0]` on a `[]Person`) copies
+// its managed fields unretained, and the box's drop glue then frees them out from
+// under the copy. See ALLOCATION.md; deep-retain-on-copy is the real fix for both.
 package ownership
 
 import (
@@ -695,8 +704,10 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		a.expr(e.Right, false)
 
 	case *ast.TupleLiteralExpr:
-		// The aggregate takes ownership of managed elements; transfer (they then
-		// leak, since aggregate drop isn't implemented — see the package doc).
+		// The aggregate takes ownership of managed elements — transfer. A `shared`
+		// tuple's box drops them via the per-type drop glue (drop.go); a stack tuple's
+		// leak, since a stack aggregate has no death to hang a drop on (see the
+		// package doc).
 		for _, el := range e.Elements {
 			a.expr(el, true)
 		}
@@ -709,8 +720,9 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 	case *ast.ArrayLiteralExpr:
 		// The array takes ownership of managed elements — transfer, like a tuple/
 		// struct. A `shared` array's box drops its elements via the per-type drop glue
-		// (drop.go); a stack array's managed elements leak conservatively (aggregate
-		// drop on copy isn't implemented — see the package doc), never double-free.
+		// (drop.go); a stack array's managed elements leak, since a stack aggregate has
+		// no death to hang a drop on (see the package doc for why that leak is not the
+		// whole story).
 		for _, el := range e.Elements {
 			a.expr(el, true)
 		}
