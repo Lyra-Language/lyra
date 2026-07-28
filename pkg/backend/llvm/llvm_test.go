@@ -804,3 +804,25 @@ func TestBackend_Name(t *testing.T) {
 		t.Fatalf("Name() = %q, want %q", got, "llvm")
 	}
 }
+
+// TestExec_ConstValues: top-level `const` declarations lower — a reference inlines
+// the const's compile-time value. Previously the backend errored "unbound
+// identifier" (consts type-checked but never lowered).
+func TestExec_ConstValues(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"scalar const", "const MAX = 100\nlet main() -> u8 => u8(MAX)\n", 100},
+		{"const arithmetic", "const AREA = 10 * 20\nlet main() -> u8 => u8(AREA - 44)\n", 156},
+		{"annotated const used directly", "const N: u8 = 42\nlet main() -> u8 => N\n", 42},
+		{"const in an expression", "const BASE = 10\nlet main() -> u8 => u8(BASE + 5)\n", 15},
+		{"const referencing a const", "const A = 5\nconst B = A + 1\nlet main() -> u8 => u8(B)\n", 6},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+		}
+	}
+}

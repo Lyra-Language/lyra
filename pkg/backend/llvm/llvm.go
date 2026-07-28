@@ -163,12 +163,20 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 		res:                res,
 		locals:             map[string]value.Value{},
 		funcs:              map[string]*ir.Func{},
+		consts:             map[string]*ast.VarDeclStmt{},
 		structTypes:        map[string]*lltypes.StructType{},
 		roundingIntrinsics: map[string]*ir.Func{},
 		overflowIntrinsics: map[string]*ir.Func{},
 		panics:             map[string]*ir.Func{},
 		dropFns:            map[string]*ir.Func{},
 		cStrings:           map[string]*ir.Global{},
+	}
+	// Record top-level `const` declarations so a reference to one inlines its
+	// compile-time value (they aren't functions, so forEachUserFunction skips them).
+	for _, stmt := range res.Program.Statements {
+		if vd, ok := stmt.(*ast.VarDeclStmt); ok && vd.BindingKind == ast.BindingConst {
+			l.consts[vd.Name] = vd
+		}
 	}
 	// Lower type declarations
 	if err := l.lowerTypeDeclarations(res.Program); err != nil {
@@ -198,6 +206,7 @@ type lowerer struct {
 	module      *ir.Module
 	res         *driver.Result                 // gives you TypeTable, SymbolTable, MethodTable, …
 	funcs       map[string]*ir.Func            // name → its function IR (all declared before any body)
+	consts      map[string]*ast.VarDeclStmt    // top-level `const` name → its declaration (its value is inlined at each use)
 	structTypes map[string]*lltypes.StructType // name → its struct type (for named tuple and struct lowering)
 	strLitCount int                            // counter for unique string-literal global names
 	memcmp      *ir.Func                       // libc memcmp, declared lazily on first string comparison
@@ -405,12 +414,18 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		}
 		return constant.NewInt(lltypes.I1, bit), block, nil
 	case *ast.IdentifierExpr:
-		slot, ok := l.locals[e.Name]
-		if !ok {
-			return nil, nil, fmt.Errorf("llvm: unbound identifier %q", e.Name)
+		if slot, ok := l.locals[e.Name]; ok {
+			ptr := slot.(*ir.InstAlloca)
+			return block.NewLoad(ptr.ElemType, slot), block, nil
 		}
-		ptr := slot.(*ir.InstAlloca)
-		return block.NewLoad(ptr.ElemType, slot), block, nil
+		// A reference to a top-level `const`: inline its value expression (a const is
+		// a compile-time constant, immutable, with no storage of its own). The value
+		// node carries the width the typechecker recorded for it, matching this use's
+		// type. The optimizer folds any repeated constant computation.
+		if cd, ok := l.consts[e.Name]; ok && cd.Value != nil {
+			return l.lowerExpr(block, cd.Value)
+		}
+		return nil, nil, fmt.Errorf("llvm: unbound identifier %q", e.Name)
 	case *ast.BooleanBinaryOpExpr:
 		return l.lowerBooleanBinaryOpExpr(block, e)
 	case *ast.MathBinaryOpExpr:
