@@ -2379,13 +2379,3 @@ func (tc *TypeChecker) checkAllocationCompat(from, to types.Type, loc ast.Locati
 		prefix, fromA, toA)
 	return false
 }
-
-func (tc *TypeChecker) addErrorRelated(loc ast.Location, sev Severity, related []diag.RelatedInformation, format string, args ...any) {
-	tc.errors = append(tc.errors, TypeError{
-		Location:           loc,
-		Severity:           sev,
-		Code:               diag.CodeTypeError,
-		Message:            fmt.Sprintf(format, args...),
-		RelatedInformation: related,
-	})
-}
