@@ -602,6 +602,27 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 			a.table.Retain[e] = true
 		}
 
+	case *ast.IndexExpr:
+		// Indexing borrows out of the container (array / dynamic array), exactly like
+		// a field read out of an aggregate. A managed *element* read into an owning
+		// position must be duplicated: the container still owns the element and frees
+		// it (its per-type drop glue on release), so a bare bind would free it twice —
+		// a double-free / use-after-free. Mirrors the MemberExpr case. Previously an
+		// IndexExpr hit `default` and recorded nothing, so the retain was missing.
+		a.expr(e.Object, false)
+		a.expr(e.Index, false)
+		if needOwned && a.isManaged(e) {
+			a.table.Retain[e] = true
+		}
+
+	case *ast.TupleIndexExpr:
+		// Positional tuple access (`pair.0`) — same rule as MemberExpr / IndexExpr: a
+		// managed element read into an owning position is duplicated, not moved.
+		a.expr(e.Object, false)
+		if needOwned && a.isManaged(e) {
+			a.table.Retain[e] = true
+		}
+
 	case *ast.FunctionCallExpr:
 		a.call(e, needOwned)
 
@@ -688,6 +709,41 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		for _, el := range e.Elements {
 			a.expr(el, true)
 		}
+
+	case *ast.ForLoopExpr:
+		// A loop's value is discarded (it's a statement). Walk its parts so managed
+		// reads inside record their retains. Previously the loop hit `default` and its
+		// body was never analyzed, so a borrowed managed value bound into an owning
+		// `let` inside the body (`for … { let y = s }`, s an `own` string) was released
+		// by the backend's per-iteration frame with *no balancing retain* → a double-
+		// free / use-after-free. A binding referenced in the body is excluded from
+		// last-use precision (computeLastUse's `loopUsed`), so an owning read there is a
+		// retain (a dup), never a transfer/drop that the back-edge would re-run on an
+		// already-freed value; `conditional` guards against a stray transfer besides.
+		savedCond := a.conditional
+		a.conditional = true
+		if e.Init != nil {
+			a.stmt(e.Init)
+		}
+		if e.Condition != nil {
+			a.expr(*e.Condition, false)
+		}
+		a.block(&e.Body, false)
+		if e.Post != nil {
+			a.expr(*e.Post, false)
+		}
+		a.conditional = savedCond
+
+	case *ast.ForInLoopExpr:
+		// Same as the C-style loop: the iterable is borrowed (the loop reads elements
+		// out of it and the loop variable borrows each), and the body is analyzed under
+		// `conditional` so an owning read of a (loop-referenced, hence last-use-excluded)
+		// binding or of the borrowed loop variable records a retain, not a transfer.
+		a.expr(e.Iterable, false)
+		savedCond := a.conditional
+		a.conditional = true
+		a.block(&e.Body, false)
+		a.conditional = savedCond
 
 	// Numeric / control forms with no managed sub-values in a string program are
 	// intentionally not recursed into: not recording anything is always safe

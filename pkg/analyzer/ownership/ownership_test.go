@@ -200,3 +200,38 @@ func TestReuse_GuardedMatchNotReused(t *testing.T) {
 		t.Errorf("guarded match: want 0 reuse matches, got %d", matches)
 	}
 }
+
+// Regression: a borrowed managed value bound into an owning `let` inside a loop
+// body is duplicated (a retain) — the backend releases that binding via its per-
+// iteration frame, so without the retain the source is freed with no balancing dup
+// (a use-after-free). The pass previously never walked loop bodies (no ForLoopExpr
+// case → `default`), recording nothing.
+func TestOwnership_RetainInLoopBody(t *testing.T) {
+	c := analyze(t, `let f = (s: own string) -> u8 => {
+	   for var i = 0; i < 2; i += 1 {
+	     let y: string = s
+	   }
+	   if s == "ab" { 3 } else { 4 }
+	 }
+	 let main = () -> u8 => f("a" ++ "b")`)
+	if c.retains != 1 {
+		t.Errorf("loop-body owning read: want 1 retain (dup of s), got %d", c.retains)
+	}
+	if c.transfers != 0 {
+		t.Errorf("loop-body read must not transfer (the back-edge re-reads s), got %d transfers", c.transfers)
+	}
+}
+
+// Regression: a managed element read out of a container into an owning binding
+// (`let y = xs[0]`) is duplicated — the container still owns and drops the element,
+// so a bare bind double-frees it. IndexExpr previously hit `default` (no retain).
+func TestOwnership_RetainIndexIntoBinding(t *testing.T) {
+	c := analyze(t, `let main = () -> u8 => {
+	   let xs: []string = ["a" ++ "b"]
+	   let y: string = xs[0]
+	   if y == "ab" { 1 } else { 0 }
+	 }`)
+	if c.retains != 1 {
+		t.Errorf("index into owning binding: want 1 retain (dup of the element), got %d", c.retains)
+	}
+}

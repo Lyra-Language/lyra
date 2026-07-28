@@ -184,6 +184,35 @@ var ownershipCases = []struct {
 		 }`,
 		5,
 	},
+	{
+		// Regression: a borrowed managed value bound into an owning `let` *inside a
+		// loop body* needs a retain each iteration to balance the per-iteration frame
+		// release. The ownership pass previously never walked loop bodies, so the
+		// retain was missing and `s` was released with no dup → heap-use-after-free
+		// when read after the loop (ASan-confirmed pre-fix).
+		"own string bound inside a loop body",
+		`let f = (s: own string) -> u8 => {
+		   for var i = 0; i < 2; i += 1 {
+		     let y: string = s
+		   }
+		   if s == "ab" { 3 } else { 4 }
+		 }
+		 let main = () -> u8 => f("a" ++ "b")`,
+		3,
+	},
+	{
+		// Regression: a managed element read out of a container into an owning binding
+		// (`let y = xs[0]`, xs a `[]string`) must be duplicated — the container still
+		// owns and drops the element, so a bare bind double-frees it. IndexExpr used to
+		// hit `default` and record no retain.
+		"managed element read into an owning binding",
+		`let main = () -> u8 => {
+		   let xs: []string = ["a" ++ "b"]
+		   let y: string = xs[0]
+		   if y == "ab" { 1 } else { 0 }
+		 }`,
+		1,
+	},
 }
 
 // TestExec_Ownership runs each ownership program and checks its result. A wrong
