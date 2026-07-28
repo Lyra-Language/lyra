@@ -725,36 +725,45 @@ func (l *lowerer) lowerIf(block *ir.Block, e *ast.IfExpr) (value.Value, *ir.Bloc
 	mergeBlock := fn.NewBlock("")
 	block.NewCondBr(cond, thenBlock, elseBlock)
 
-	// A branch that ends in `return`/`break`/`continue` seals its own block: it
-	// reaches neither the merge nor the phi. Only a branch that falls through
-	// (Term == nil) gets the edge to merge and contributes a phi incoming — the
-	// same discipline the one-armed path above and every `match` lowerer use.
-	// The previous code unconditionally did `end.NewBr(merge)`, which on a sealed
-	// block both clobbered its real terminator (a `ret`/`br`) *and* fed a nil
-	// value into `NewPhi` → a nil-pointer panic. A two-armed `if` with a diverging
-	// branch (`if c { return x } else { y }`) is idiomatic and previously crashed
-	// the backend.
-	thenVal, thenEnd, err := l.lowerExpr(thenBlock, e.Then)
+	// Each branch is lowered value-optionally (lowerBranchValue): a branch that ends
+	// in `return`/`break`/`continue` seals its own block and reaches neither the
+	// merge nor the phi; a *void* branch — both branches side-effecting, `if c { a() }
+	// else { b() }` used as a statement — reaches the merge but yields no value.
+	// Guarding `NewBr` on `Term == nil` is what keeps a sealed block's real
+	// terminator from being clobbered and a nil from being fed into `NewPhi` (which
+	// panicked on a diverging branch like `if c { return x } else { y }`).
+	thenVal, thenEnd, err := l.lowerBranchValue(thenBlock, e.Then)
 	if err != nil {
 		return nil, nil, err
+	}
+	elseVal, elseEnd, err := l.lowerBranchValue(elseBlock, e.Else)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	thenReaches := thenEnd.Term == nil
+	if thenReaches {
+		thenEnd.NewBr(mergeBlock)
+	}
+	elseReaches := elseEnd.Term == nil
+	if elseReaches {
+		elseEnd.NewBr(mergeBlock)
+	}
+
+	// No value when a reaching branch is void (the `if` is a statement), or when
+	// neither branch reaches (both diverged — the merge is unreachable, terminated by
+	// downstream lowering). In value position the typechecker guarantees both
+	// branches produce a compatible value, so only the phi cases below remain.
+	if (thenReaches && thenVal == nil) || (elseReaches && elseVal == nil) {
+		return nil, mergeBlock, nil
 	}
 	var incomings []*ir.Incoming
-	if thenEnd.Term == nil {
-		thenEnd.NewBr(mergeBlock)
+	if thenReaches {
 		incomings = append(incomings, ir.NewIncoming(thenVal, thenEnd))
 	}
-
-	elseVal, elseEnd, err := l.lowerExpr(elseBlock, e.Else)
-	if err != nil {
-		return nil, nil, err
-	}
-	if elseEnd.Term == nil {
-		elseEnd.NewBr(mergeBlock)
+	if elseReaches {
 		incomings = append(incomings, ir.NewIncoming(elseVal, elseEnd))
 	}
-
-	// Neither branch reaches the merge (both diverged): the `if` yields no value and
-	// the merge is unreachable — downstream lowering terminates the orphan block.
 	if len(incomings) == 0 {
 		return nil, mergeBlock, nil
 	}
@@ -762,4 +771,18 @@ func (l *lowerer) lowerIf(block *ir.Block, e *ast.IfExpr) (value.Value, *ir.Bloc
 	// branchCommonType guarantees the branches are type-compatible; a width mismatch
 	// that slipped through yields invalid IR clang rejects (loud), not wrong code.
 	return mergeBlock.NewPhi(incomings...), mergeBlock, nil
+}
+
+// lowerBranchValue lowers a two-armed `if` branch, tolerating a *void* branch (a
+// block whose last statement produces no value — both branches side-effecting, the
+// `if` used as a statement) by returning a nil value instead of erroring. A block
+// goes through lowerBlockStmts with flushTail false, exactly like a value block: a
+// value branch's tail escapes to the phi, and a void branch's tail temporaries are
+// released by the enclosing statement's flush in their (conditional) production
+// block. A non-block branch goes through lowerExpr.
+func (l *lowerer) lowerBranchValue(block *ir.Block, branch ast.Expression) (value.Value, *ir.Block, error) {
+	if be, ok := branch.(*ast.BlockExpr); ok {
+		return l.lowerBlockStmts(block, be, false)
+	}
+	return l.lowerExpr(block, branch)
 }

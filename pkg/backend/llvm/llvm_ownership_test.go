@@ -245,6 +245,19 @@ var ownershipCases = []struct {
 		 let main = () -> u8 => f("x" ++ "y", if 1 < 2 { "p" } else { "q" }, "m" ++ "n")`,
 		7,
 	},
+	{
+		// A heap temp built inside a *void* branch of a statement-position `if` must be
+		// freed on the branch's own (conditional) path — not leaked, not double-freed
+		// on the path the branch didn't take. Exercises the void-branch `if` lowering
+		// with the conditional-temp flush.
+		"heap temp inside a void if-branch",
+		`let main = () -> u8 => {
+		   var i: u8 = 5
+		   if i > 3 { println("a" ++ "b") } else { println("c" ++ "d") }
+		   i
+		 }`,
+		5,
+	},
 }
 
 // TestExec_Ownership runs each ownership program and checks its result. A wrong

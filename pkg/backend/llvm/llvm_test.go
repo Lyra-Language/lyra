@@ -276,6 +276,29 @@ func TestExec_IfDivergingBranch(t *testing.T) {
 	}
 }
 
+// TestExec_IfVoidBranches: a two-armed `if` used as a *statement* with void
+// branches (both side-effecting) is legal, but previously funneled through the
+// value path and errored "block has no value". It now lowers for effect (no phi).
+func TestExec_IfVoidBranches(t *testing.T) {
+	cases := []struct {
+		src  string
+		want int
+	}{
+		// else-branch runs (i=0, not > 3): i += 1 → 1.
+		{"let main() -> u8 => {\n  var i: u8 = 0\n  if i > 3 { i += 2 } else { i += 1 }\n  i\n}\n", 1},
+		// then-branch runs (i=5 > 3): i += 2 → 7.
+		{"let main() -> u8 => {\n  var i: u8 = 5\n  if i > 3 { i += 2 } else { i += 1 }\n  i\n}\n", 7},
+		// void branches with a heap-string side effect (temps freed in-branch — ASan
+		// coverage is in the ownership suite; here we just confirm it runs).
+		{"let main() -> u8 => {\n  var i: u8 = 2\n  if i > 3 { println(\"a\" ++ \"b\") } else { println(\"c\" ++ \"d\") }\n  i\n}\n", 2},
+	}
+	for _, c := range cases {
+		if got := buildAndRun(t, c.src); got != c.want {
+			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+		}
+	}
+}
+
 // TestExec_IntWidthConversions checks Lyra's one conversion syntax (`i8(x)`,
 // `u32(x)`, …, Pit-of-Success #5) narrows/widens to the actual bit width, not
 // just the right value in the common case. A signed result (from `i8(...)`
