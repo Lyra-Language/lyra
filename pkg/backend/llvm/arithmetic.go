@@ -49,6 +49,24 @@ func (l *lowerer) literalFloatType(e ast.Expression) *lltypes.FloatType {
 	return lltypes.Double
 }
 
+// literalRecordedFloatType reports the float type the typechecker recorded for
+// an expression, if it recorded one — how an integer literal that adapted to a
+// float context (`let x: f64 = 5`) is recognized at lowering time. Unlike
+// literalFloatType there is no default: an int literal with no float context
+// lowers as an integer.
+func (l *lowerer) literalRecordedFloatType(e ast.Expression) (*lltypes.FloatType, bool) {
+	if t, ok := l.res.TypeTable.Get(e); ok {
+		if p, ok := t.(types.PrimitiveType); ok {
+			if ll, ok := LLVMPrimitive(p.Name); ok {
+				if ft, ok := ll.(*lltypes.FloatType); ok {
+					return ft, true
+				}
+			}
+		}
+	}
+	return nil, false
+}
+
 func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinaryOpExpr) (value.Value, *ir.Block, error) {
 	left, block, err := l.lowerExpr(block, e.Left)
 	if err != nil {

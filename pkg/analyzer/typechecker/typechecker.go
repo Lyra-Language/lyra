@@ -1534,8 +1534,20 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 	}
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
+		if isAnyConcreteFloat(cp.Name) {
+			// An int literal adapting to a float context (`let x: f64 = 5`, a call
+			// argument against a float param, a float field/payload/return).
+			// Assignability admits it, but only this re-record makes the backend
+			// lower a float constant — an untyped leaf falls back to i64, putting
+			// an integer value in a float slot (garbage print output, invalid IR
+			// the moment it meets a real float in arithmetic).
+			if tc.currentTypeIsUntyped(e) {
+				tc.typeTable.Set(e, cp)
+			}
+			return
+		}
 		if !isAnyConcreteInt(cp.Name) {
-			return // e.g. an int literal in a float context is handled by assignability, not here
+			return
 		}
 		if !tc.currentTypeIsUntyped(e) {
 			return

@@ -301,6 +301,14 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 		if v.Unsigned {
 			return interval{}, false, st // large-u64 bit pattern, not tracked
 		}
+		if literalAdaptedToFloat(c.tt, v) {
+			// An int literal adapted to a float context (`let a: f64 = 5` records
+			// the literal as f64) is a float value. This is an integer analysis:
+			// tracking it would seed float-typed variables with intervals built
+			// from the source text, which can diverge from the runtime value
+			// (f32 rounds 16777217 to 16777216) — wrong, not just imprecise.
+			return interval{}, false, st
+		}
 		return interval{v.Value, v.Value}, true, st
 
 	case *ast.IdentifierExpr:
@@ -1555,4 +1563,24 @@ func maxI(a, b int64) int64 {
 		return a
 	}
 	return b
+}
+
+// literalAdaptedToFloat reports whether an integer literal was adapted to a
+// float context — the typechecker records such a literal at the float type
+// (`let a: f64 = 5`), and its runtime value is a float, outside this integer
+// analysis's domain.
+func literalAdaptedToFloat(tt *typetable.TypeTable, e ast.Expression) bool {
+	t, ok := tt.Get(e)
+	if !ok {
+		return false
+	}
+	p, ok := t.(types.PrimitiveType)
+	if !ok {
+		return false
+	}
+	switch p.Name {
+	case types.Float16, types.Float32, types.Float64:
+		return true
+	}
+	return false
 }

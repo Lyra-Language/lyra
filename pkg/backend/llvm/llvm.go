@@ -412,6 +412,16 @@ func (l *lowerer) flushTemps() error { return l.flushStmtTemps(nil, nil) }
 func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
+		// An int literal the typechecker adapted to a float context (`let x: f64
+		// = 5` — propagateLiteralType, or the annotation record in checkVarDecl)
+		// is a float constant, not an i64 one.
+		if ft, ok := l.literalRecordedFloatType(e); ok {
+			v := float64(e.Value)
+			if e.Unsigned {
+				v = float64(uint64(e.Value))
+			}
+			return constant.NewFloat(ft, v), block, nil
+		}
 		return constant.NewInt(l.literalIntType(e), e.Value), block, nil
 	case *ast.FloatLiteralExpr:
 		return constant.NewFloat(l.literalFloatType(e), e.Value), block, nil
