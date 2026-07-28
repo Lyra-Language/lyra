@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
@@ -346,5 +347,35 @@ func TestAnalyze_DeepExpressionIsLinear(t *testing.T) {
 	}
 	if elapsed > 5*time.Second {
 		t.Fatalf("analyzing a %d-operator chain took %v (>5s) — propagateLiteralType may be quadratic again", n, elapsed)
+	}
+}
+
+// TestAnalyze_ForwardReferencedConst_IsTyped: a function body may reference a
+// top-level `const` declared *later* (consts are order-independent, checked before
+// bodies). The use must carry a recorded type — a plain "no errors" held even
+// before the fix, but the use was left untyped, so a backend op needing its type
+// (a conversion) errored "type not found". This asserts the type is recorded.
+func TestAnalyze_ForwardReferencedConst_IsTyped(t *testing.T) {
+	src := "let f = () -> u8 => u8(LIMIT)\nconst LIMIT = 77\nlet main = () -> u8 => f()\n"
+	res := Analyze([]byte(src))
+	if res.HasErrors() {
+		t.Fatalf("a forward-referenced const should type-check, got: %v", res.Diagnostics)
+	}
+	var use ast.Expression
+	for _, s := range res.Program.Statements {
+		if st, ok := s.(ast.Statement); ok {
+			ast.WalkStmt(st, nil, func(e ast.Expression) bool {
+				if id, ok := e.(*ast.IdentifierExpr); ok && id.Name == "LIMIT" && use == nil {
+					use = e
+				}
+				return true
+			})
+		}
+	}
+	if use == nil {
+		t.Fatal("did not find the LIMIT identifier use")
+	}
+	if ty, ok := res.TypeTable.Get(use); !ok || ty == nil {
+		t.Fatal("the forward-referenced const use has no recorded type (the pre-fix bug)")
 	}
 }

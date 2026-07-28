@@ -819,6 +819,9 @@ func TestExec_ConstValues(t *testing.T) {
 		{"annotated const used directly", "const N: u8 = 42\nlet main() -> u8 => N\n", 42},
 		{"const in an expression", "const BASE = 10\nlet main() -> u8 => u8(BASE + 5)\n", 15},
 		{"const referencing a const", "const A = 5\nconst B = A + 1\nlet main() -> u8 => u8(B)\n", 6},
+		// Forward reference: a function body may use a const declared later (top-level
+		// consts are order-independent — the typechecker checks them before bodies).
+		{"forward-referenced const", "let main() -> u8 => u8(LIMIT)\nconst LIMIT = 77\n", 77},
 	}
 	for _, c := range cases {
 		if got := buildAndRun(t, c.src); got != c.want {

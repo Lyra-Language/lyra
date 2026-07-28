@@ -70,10 +70,29 @@ func (tc *TypeChecker) Check(program *ast.Program) []TypeError {
 			tc.traitImpls = append(tc.traitImpls, impl)
 		}
 	}
+	// Check top-level `const`s first, in declaration order, so a later statement —
+	// a function body, or a subsequent const — that references one sees its resolved
+	// type. Lyra has no declare-before-use requirement at the top level (the same
+	// reason type/trait/impl blocks are collected up front above), and a const has
+	// no storage, so its value must be typed before a use can read the width the
+	// backend inlines. Each const is skipped in the main pass so it's checked once.
 	for _, stmt := range program.Statements {
-		tc.checkNode(stmt)
+		if isTopLevelConst(stmt) {
+			tc.checkNode(stmt)
+		}
+	}
+	for _, stmt := range program.Statements {
+		if !isTopLevelConst(stmt) {
+			tc.checkNode(stmt)
+		}
 	}
 	return tc.errors
+}
+
+// isTopLevelConst reports whether a top-level statement is a `const` declaration.
+func isTopLevelConst(node ast.AstNode) bool {
+	vd, ok := node.(*ast.VarDeclStmt)
+	return ok && vd.BindingKind == ast.BindingConst
 }
 
 func (tc *TypeChecker) checkNode(node ast.AstNode) {
