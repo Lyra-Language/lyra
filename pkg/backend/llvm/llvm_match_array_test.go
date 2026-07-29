@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -250,5 +251,83 @@ let main = () -> u8 => {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}
 		})
+	}
+}
+
+// A guard is tested *after* the pattern's bindings exist, so a `[h, ...t]` arm has
+// already allocated its tail by the time the guard runs. A failing guard falls
+// through to the next arm, skipping the body — so the guard's false edge gets its
+// own block that releases the arm frame first, or every failed guard leaks a box.
+// (The pattern's own failure edges need no such treatment: the length and element
+// tests all branch before anything is allocated.)
+func TestExec_ArrayMatch_TailBinding_GuardFailReleases(t *testing.T) {
+	t.Parallel()
+	// Each call drives a different number of failed guards: 0, 1, then 2 — and the
+	// managed elements mean a missed release would be a leaked box per failure,
+	// while an over-release would be a double free ASan catches.
+	src := `let pick = (xs: []string) -> i64 => match xs {
+  [h, ...t] if h == "yes" => 10 + t.len(),
+  [h, ...t] if h == "no" => 20 + t.len(),
+  [...rest] => 30 + rest.len(),
+}
+let main = () -> u8 => {
+  var total = 0
+  for var i = 0; i < 50; i += 1 {
+    total = total + pick(["yes" ++ "", "a" ++ "1"])
+    total = total + pick(["no" ++ "", "b" ++ "2"])
+    total = total + pick(["other" ++ "", "c" ++ "3"])
+  }
+  u8(total % 251)
+}`
+	// 50 * (11 + 21 + 32) = 3200; 3200 % 251 = 188.
+	if got := buildAndRun(t, src); got != 188 {
+		t.Fatalf("exited %d; want 188", got)
+	}
+	clang, err := exec.LookPath("clang")
+	if err != nil || !asanAvailable(t, clang) {
+		t.Skip("ASan runtime not available; ran without it")
+	}
+	if got := buildAndRunASan(t, clang, src); got != 188 {
+		t.Errorf("under ASan: exited %d; want 188 (a double release on the guard edge)", got)
+	}
+}
+
+// The IR shape behind that: one allocation, released on *both* edges out of the
+// guard — the body path and the guard-fail path.
+func TestEmit_ArrayMatch_TailBinding_GuardFailHasRelease(t *testing.T) {
+	t.Parallel()
+	out, err := emitSource(t, `let f = (xs: []i64) -> i64 => match xs {
+  [h, ...t] if h > 100 => t.len(),
+  [...rest] => 7,
+}
+let main = () -> u8 => u8(f([1, 2, 3]))`)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	body := fnBody(out, "f")
+	if allocs := strings.Count(body, "@lyra_rc_alloc"); allocs != 1 {
+		t.Errorf("expected 1 tail allocation in @f, got %d:\n%s", allocs, body)
+	}
+	// Two: the arm body's release, and the guard-fail edge's.
+	if rel := strings.Count(body, "@lyra_rc_release"); rel != 2 {
+		t.Errorf("expected 2 releases in @f (body + guard-fail edge), got %d:\n%s", rel, body)
+	}
+}
+
+// An *unguarded* tail arm must not gain a spurious extra release — the guard-fail
+// block is only created when there is a guard.
+func TestEmit_ArrayMatch_TailBinding_UnguardedHasOneRelease(t *testing.T) {
+	t.Parallel()
+	out, err := emitSource(t, `let f = (xs: []i64) -> i64 => match xs {
+  [h, ...t] => t.len(),
+  [...rest] => 7,
+}
+let main = () -> u8 => u8(f([1, 2, 3]))`)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	body := fnBody(out, "f")
+	if rel := strings.Count(body, "@lyra_rc_release"); rel != 1 {
+		t.Errorf("expected exactly 1 release in @f, got %d:\n%s", rel, body)
 	}
 }

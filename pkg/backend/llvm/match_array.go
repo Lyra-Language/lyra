@@ -122,7 +122,23 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, arrType typ
 				}
 				return nil
 			}
-			err = l.lowerGuardedArmBody(matched, arm.Guard, arm.Body, next, armBody)
+			// A guard is tested *after* the pattern's bindings exist, so a `[h, ...t]`
+			// arm has already allocated its tail by the time the guard runs — and a
+			// failing guard falls through to the next arm, skipping the body's release.
+			// Give the guard its own false-edge block that releases the arm frame first.
+			// (The *pattern*'s own failure edges need no such treatment: the length and
+			// element tests all branch before bindTailSubArray allocates anything.)
+			armNext := next
+			if arm.Guard != nil && len(l.managedFrames[len(l.managedFrames)-1]) > 0 {
+				guardFail := fn.NewBlock("")
+				if err := l.releaseTopManagedFrame(guardFail); err != nil {
+					l.popManagedFrame()
+					return nil, nil, err
+				}
+				guardFail.NewBr(next)
+				armNext = guardFail
+			}
+			err = l.lowerGuardedArmBody(matched, arm.Guard, arm.Body, armNext, armBody)
 			l.popManagedFrame()
 			if err != nil {
 				return nil, nil, err
