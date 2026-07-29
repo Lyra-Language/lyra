@@ -154,6 +154,19 @@ func (*Backend) Name() string { return "llvm" }
 // Replace lowerEntry's body with real lowering; grow the type/expression/
 // statement lowering alongside it.
 func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, error) {
+	m, err := b.emitModule(res, entry)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(m.String()), nil
+}
+
+// emitModule is Emit before serialization: it returns the built *ir.Module rather
+// than its text. Emit is the Backend-interface entry point; this exists so callers
+// that want to *analyze* the result (the conservation check in the tests, which
+// walks the CFG looking for allocations that can reach a return unreleased) get the
+// real structure instead of re-parsing the printed form.
+func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.Module, error) {
 	if res == nil || res.Program == nil || entry == nil {
 		return nil, fmt.Errorf("llvm: nil program or entry point")
 	}
@@ -202,7 +215,7 @@ func (b *Backend) Emit(res *driver.Result, entry *driver.EntryPoint) ([]byte, er
 	if err := l.forEachUserFunction(res.Program, entry.Lambda, l.defineFunction); err != nil {
 		return nil, err
 	}
-	return []byte(m.String()), nil
+	return m, nil
 }
 
 type lowerer struct {
