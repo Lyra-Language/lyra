@@ -234,7 +234,7 @@ func (c *useAfterMove) expr(st moveState, e ast.Expression) moveState {
 		if v.Condition != nil {
 			st = c.expr(st, *v.Condition)
 		}
-		st = c.loopBody(st, &v.Body)
+		st = c.loopBody(st, v.Body)
 		if v.Post != nil {
 			st = c.expr(st, *v.Post)
 		}
@@ -242,7 +242,7 @@ func (c *useAfterMove) expr(st moveState, e ast.Expression) moveState {
 
 	case *ast.ForInLoopExpr:
 		st = c.expr(st, v.Iterable)
-		return c.loopBody(st, &v.Body)
+		return c.loopBody(st, v.Body)
 	}
 
 	// Straight-line expression: no joins, so just visit the children in order,

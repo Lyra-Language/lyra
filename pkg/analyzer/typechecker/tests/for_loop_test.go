@@ -74,3 +74,93 @@ func TestTypeCheck_ForLoop_OrWithStringOperand_Error(t *testing.T) {
 	`, false)
 	assertErrorsAre(t, res, "operator ||: operands must both be boolean, got boolean and string")
 }
+
+// ── loop-body locals ─────────────────────────────────────────────────────────
+//
+// A `let`/`var` declared inside a loop body is visible there. It was not: the
+// collector puts body-locals in a child block scope keyed on the body block, and
+// both loop nodes held that block *by value*, so the copy had a different address
+// than the scope was keyed on. enterScope missed — silently, since a miss just
+// runs in the enclosing scope — and the body was checked in the loop scope, where
+// those names were never defined.
+
+func TestTypeCheck_ForLoop_BodyLocalResolves(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+		let main = () -> u8 => {
+		  var total = 0
+		  for var i = 0; i < 3; i += 1 {
+		    let doubled = i * 2
+		    total = total + doubled
+		  }
+		  u8(total)
+		}
+	`, false))
+}
+
+func TestTypeCheck_ForInLoop_BodyLocalResolves(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+		let main = () -> u8 => {
+		  var total = 0
+		  for x in [1, 2, 3] {
+		    let doubled = x * 2
+		    total = total + doubled
+		  }
+		  u8(total)
+		}
+	`, false))
+}
+
+// The body's scope chains outward, so a body-local can read an enclosing binding.
+func TestTypeCheck_ForLoop_BodyLocalReadsOuterBinding(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+		let main = () -> u8 => {
+		  let base = 10
+		  var total = 0
+		  for var i = 0; i < 3; i += 1 {
+		    let scaled = base + i
+		    total = total + scaled
+		  }
+		  u8(total)
+		}
+	`, false))
+}
+
+// A body-local stays inside the body: reading one after the loop is still an error.
+func TestTypeCheck_ForLoop_BodyLocalDoesNotEscape(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let main = () -> u8 => {
+		  for var i = 0; i < 3; i += 1 {
+		    let doubled = i * 2
+		  }
+		  u8(doubled)
+		}
+	`, false)
+	assertErrorsAre(t, res, `undefined identifier "doubled"`)
+}
+
+// A loop body has no value, so its last statement is not in value position — a
+// one-armed `if` there is a conditional side effect, not a valueless expression.
+func TestTypeCheck_ForLoop_OneArmedIfAsLastStatement(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+		let main = () -> u8 => {
+		  var n = 0
+		  for var i = 0; i < 3; i += 1 {
+		    if i > 1 { n = n + 1 }
+		  }
+		  u8(n)
+		}
+	`, false))
+}
+
+// The same for a for-in body.
+func TestTypeCheck_ForInLoop_OneArmedIfAsLastStatement(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+		let main = () -> u8 => {
+		  var n = 0
+		  for x in [1, 2, 3] {
+		    if x > 1 { n = n + 1 }
+		  }
+		  u8(n)
+		}
+	`, false))
+}

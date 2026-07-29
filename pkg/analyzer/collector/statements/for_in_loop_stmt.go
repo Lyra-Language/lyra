@@ -50,7 +50,7 @@ func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInL
 		Key:      key,
 		Value:    value,
 		Iterable: iterable,
-		Body:     *body,
+		Body:     body,
 	}
 	ctx.RecordScope(loop, loopScope)
 	return loop

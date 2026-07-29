@@ -369,9 +369,9 @@ func (a *analyzer) computeLastUse(lam *ast.LambdaExpr) map[ast.Expression]bool {
 	ast.WalkExpr(lam.Body, onStmt, func(e ast.Expression) bool {
 		switch le := e.(type) {
 		case *ast.ForLoopExpr:
-			collectNames(&le.Body, loopUsed)
+			collectNames(le.Body, loopUsed)
 		case *ast.ForInLoopExpr:
-			collectNames(&le.Body, loopUsed)
+			collectNames(le.Body, loopUsed)
 		}
 		return true
 	})
@@ -433,9 +433,9 @@ func (a *analyzer) computeOwnedLastRef(lam *ast.LambdaExpr) map[string]ast.Expre
 	ast.WalkExpr(lam.Body, onStmt, func(e ast.Expression) bool {
 		switch le := e.(type) {
 		case *ast.ForLoopExpr:
-			collectNames(&le.Body, loopUsed)
+			collectNames(le.Body, loopUsed)
 		case *ast.ForInLoopExpr:
-			collectNames(&le.Body, loopUsed)
+			collectNames(le.Body, loopUsed)
 		}
 		return true
 	})
@@ -884,7 +884,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		if e.Condition != nil {
 			a.expr(*e.Condition, false)
 		}
-		a.block(&e.Body, false)
+		a.block(e.Body, false)
 		if e.Post != nil {
 			a.expr(*e.Post, false)
 		}
@@ -898,7 +898,7 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		a.expr(e.Iterable, false)
 		savedCond := a.conditional
 		a.conditional = true
-		a.block(&e.Body, false)
+		a.block(e.Body, false)
 		a.conditional = savedCond
 
 	// Anything not listed above records nothing. That is only sound for forms with

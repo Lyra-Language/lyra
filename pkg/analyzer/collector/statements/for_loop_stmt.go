@@ -64,7 +64,7 @@ func CollectForLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopE
 		Init:      initExpr,
 		Condition: conditionExpr,
 		Post:      postExpr,
-		Body:      *bodyBlockPtr,
+		Body:      bodyBlockPtr,
 	}
 	ctx.RecordScope(loop, loopScope)
 	return loop

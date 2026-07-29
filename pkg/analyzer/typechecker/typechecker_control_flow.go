@@ -87,6 +87,30 @@ func aggregateMatchIsExhaustive(arms []ast.MatchArm) bool {
 // statement is not an ExpressionStmt (e.g. a declaration or return).
 func (tc *TypeChecker) inferBlockType(block *ast.BlockExpr) types.Type {
 	var result types.Type
+	tc.checkBlock(block, func(last *ast.ExpressionStmt) {
+		result = tc.inferExprType(last.Expression)
+	})
+	return result
+}
+
+// checkBlockForEffect type-checks a block whose value is discarded — a loop body.
+//
+// It is the same walk minus the trailing "and the last statement is the block's
+// value" step, which is not merely unnecessary for a loop body but *wrong*: it
+// puts the final statement in value position, so a one-armed `if` as the last
+// thing in a loop body was rejected with "`if` used as a value must have an
+// `else` branch". Every statement is still checked (and its types recorded) by
+// the per-statement pass, so nothing downstream loses information.
+func (tc *TypeChecker) checkBlockForEffect(block *ast.BlockExpr) {
+	tc.checkBlock(block, nil)
+}
+
+// checkBlock is the shared body of the two: enter the block's scope, check every
+// statement, then optionally treat the last one as the block's value.
+func (tc *TypeChecker) checkBlock(block *ast.BlockExpr, onValue func(*ast.ExpressionStmt)) {
+	if block == nil {
+		return
+	}
 	tc.enterScope(block, func() {
 		if len(block.Statements) == 0 {
 			return
@@ -94,12 +118,13 @@ func (tc *TypeChecker) inferBlockType(block *ast.BlockExpr) types.Type {
 		for _, stmt := range block.Statements {
 			tc.checkNode(stmt) // type-check every statement, not just the last
 		}
-		last := block.Statements[len(block.Statements)-1]
-		if exprStmt, ok := last.(*ast.ExpressionStmt); ok {
-			result = tc.inferExprType(exprStmt.Expression)
+		if onValue == nil {
+			return
+		}
+		if exprStmt, ok := block.Statements[len(block.Statements)-1].(*ast.ExpressionStmt); ok {
+			onValue(exprStmt)
 		}
 	})
-	return result
 }
 
 // checkIfExpr type-checks an if(/else) expression and returns its inferred
@@ -1190,8 +1215,9 @@ func (tc *TypeChecker) inferRangeExpr(expr *ast.RangeExpr) types.Type {
 // so `for i in 0..<n { … i … }` resolves `i`. Without entering it the body was
 // checked in the enclosing scope and every use of the loop variable was an
 // "undefined identifier" (no existing test exercised a non-empty body, so the gap
-// went unnoticed). Body-local declarations still don't resolve — the same
-// value-copy `Body` limitation as the C-style loop (see checkForLoopExpr).
+// went unnoticed). Body-local declarations resolve too, since `Body` became a
+// pointer (see checkForLoopExpr), and the body is checked *for effect* — a loop
+// body has no value, so its last statement must not be put in value position.
 func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 	iterType := tc.inferExprType(expr.Iterable)
 	if iterType != nil && !isIterableType(iterType) {
@@ -1206,7 +1232,7 @@ func (tc *TypeChecker) checkForInLoopExpr(expr *ast.ForInLoopExpr) types.Type {
 		if iterType != nil {
 			tc.bindForInLoopVars(expr, iterType)
 		}
-		tc.inferBlockType(&expr.Body)
+		tc.checkBlockForEffect(expr.Body)
 	})
 	return nil
 }
@@ -1292,12 +1318,13 @@ func isUntypedNumeric(t types.Type) bool {
 // 1` form type-checks. The init clause is checked first so its variable's type is
 // recorded before those uses.
 //
-// Known limitation: a `let`/`var` declared *inside* the body still doesn't
-// resolve there. The collector puts body-locals in a child block scope keyed to
-// the original body pointer, but ForLoopExpr.Body is a value copy, so
-// inferBlockType's enterScope can't find that scope and the body is checked in
-// loopScope directly. The loop variable lives in loopScope so it resolves; a
-// body-local does not (see lyra/todo.md — fixing it means making Body a pointer).
+// A `let`/`var` declared *inside* the body resolves there because `Body` is a
+// **pointer** (ast/stmt_for_loop.go): the collector puts body-locals in a child
+// block scope keyed on the body block, and a value field copied that block, so
+// enterScope missed the scope and — silently, since a miss just runs in the
+// enclosing scope — checked the body in loopScope, where those names were never
+// defined. The body is checked *for effect*: a loop body has no value, so its
+// last statement must not be put in value position (checkBlockForEffect).
 func (tc *TypeChecker) checkForLoopExpr(expr *ast.ForLoopExpr) {
 	tc.enterScope(expr, func() {
 		if expr.Init != nil {
@@ -1317,7 +1344,7 @@ func (tc *TypeChecker) checkForLoopExpr(expr *ast.ForLoopExpr) {
 		if expr.Post != nil {
 			tc.inferExprType(*expr.Post)
 		}
-		tc.inferBlockType(&expr.Body)
+		tc.checkBlockForEffect(expr.Body)
 	})
 }
 

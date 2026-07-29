@@ -661,7 +661,7 @@ func (c *rangeChecker) evalForLoop(st rangeEnv, v *ast.ForLoopExpr) (interval, b
 	if v.Init != nil {
 		st = c.evalStmt(st, v.Init)
 	}
-	assigned := assignedNames(&v.Body)
+	assigned := assignedNames(v.Body)
 	if v.Init != nil {
 		assigned[v.Init.Name] = true
 	}
@@ -712,7 +712,7 @@ func (c *rangeChecker) stepLoopBody(H rangeEnv, v *ast.ForLoopExpr) rangeEnv {
 		_, _, entry = c.eval(entry, *v.Condition)
 		entry, _ = c.refine(entry, *v.Condition) // guard held to enter the body
 	}
-	_, _, exit := c.eval(entry, &v.Body)
+	_, _, exit := c.eval(entry, v.Body)
 	if v.Post != nil {
 		_, _, exit = c.eval(exit, *v.Post)
 	}
@@ -785,7 +785,7 @@ func envEqual(a, b rangeEnv) bool {
 
 func (c *rangeChecker) evalForIn(st rangeEnv, v *ast.ForInLoopExpr) rangeEnv {
 	_, _, st = c.eval(st, v.Iterable)
-	assigned := assignedNames(&v.Body)
+	assigned := assignedNames(v.Body)
 	if v.Key != "" {
 		assigned[v.Key] = true
 	}
@@ -801,7 +801,7 @@ func (c *rangeChecker) evalForIn(st rangeEnv, v *ast.ForInLoopExpr) rangeEnv {
 	if kv, ok := c.forInRangeKey(st, v); ok {
 		body.vars[v.Key] = kv
 	}
-	_, _, _ = c.eval(body, &v.Body)
+	_, _, _ = c.eval(body, v.Body)
 	return havoc(st, assigned)
 }
 
@@ -1252,7 +1252,15 @@ func havoc(env rangeEnv, names map[string]bool) rangeEnv {
 
 // assignedNames collects every variable a subtree declares or reassigns (a
 // `let`/`var`, a plain reassignment, or a `+=`-style compound assignment).
-func assignedNames(node any) map[string]bool {
+//
+// It takes ast.AstNode rather than `any` on purpose: with `any`, a node that
+// matches neither case below silently yields the empty set, and an empty set
+// here means a loop havocs *nothing* — a stale interval survives the loop and a
+// downstream safety check gets elided on it. That is exactly what happened when
+// the loop bodies became pointers and these call sites kept passing `&v.Body`
+// (a **BlockExpr, which matches nothing): it compiled, and two range tests
+// caught the silent miscompile. A typed parameter makes that a build error.
+func assignedNames(node ast.AstNode) map[string]bool {
 	out := map[string]bool{}
 	onStmt := func(s ast.Statement) bool {
 		switch v := s.(type) {

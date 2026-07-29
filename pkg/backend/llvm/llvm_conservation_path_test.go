@@ -125,13 +125,14 @@ let main = () -> u8 => u8(pick(true))`,
 		},
 		{
 			// A loop allocating each iteration — the release must be inside the loop,
-			// or the box leaks once per turn. (The allocation lives in a helper because
-			// a `let` declared in a loop body is not visible there — a known open bug.)
-			"allocation in a loop", `let mk = () -> bool => { let s = "a" ++ "b"  s == "ab" }
-let main = () -> u8 => {
+			// or the box leaks once per turn. The allocation is now written directly in
+			// the body; it lived in a helper while a `let` declared in a loop body was
+			// invisible there (fixed by making the loop bodies pointers).
+			"allocation in a loop", `let main = () -> u8 => {
   var n = 0
   for var i = 0; i < 5; i += 1 {
-    if mk() { n = n + 1 } else { n = n + 2 }
+    let s = "a" ++ "b"
+    if s == "ab" { n = n + 1 } else { n = n + 2 }
   }
   u8(n)
 }`,

@@ -281,7 +281,7 @@ func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value
 	// any nested block) introduced — the current iteration's managed bindings —
 	// without touching the loop variable or enclosing scopes.
 	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: postBlock, label: e.Label, frameDepth: len(l.managedFrames)})
-	bodyEnd, err := l.lowerForEffect(bodyBlock, &e.Body)
+	bodyEnd, err := l.lowerForEffect(bodyBlock, e.Body)
 	l.loops = l.loops[:len(l.loops)-1]
 	if err != nil {
 		return nil, nil, err
@@ -418,7 +418,7 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 		bodyBlock.NewStore(ib, idxSlot)
 	}
 	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames)})
-	bodyEnd, err := l.lowerForEffect(bodyBlock, &e.Body)
+	bodyEnd, err := l.lowerForEffect(bodyBlock, e.Body)
 	l.loops = l.loops[:len(l.loops)-1]
 	if err != nil {
 		return nil, nil, err
@@ -512,7 +512,7 @@ func (l *lowerer) lowerForInRange(block *ir.Block, e *ast.ForInLoopExpr) (value.
 	condBlock.NewCondBr(condBlock.NewICmp(pred, iv, end), bodyBlock, exitBlock)
 
 	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames)})
-	bodyEnd, err := l.lowerForEffect(bodyBlock, &e.Body)
+	bodyEnd, err := l.lowerForEffect(bodyBlock, e.Body)
 	l.loops = l.loops[:len(l.loops)-1]
 	if err != nil {
 		return nil, nil, err
@@ -601,7 +601,7 @@ func (l *lowerer) lowerForInString(block *ir.Block, e *ast.ForInLoopExpr) (value
 	n := bodyBlock.NewCall(decode, data, biB, cpSlot)
 	bodyBlock.NewStore(bodyBlock.NewLoad(lltypes.I32, cpSlot), cSlot)
 	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames)})
-	bodyEnd, err := l.lowerForEffect(bodyBlock, &e.Body)
+	bodyEnd, err := l.lowerForEffect(bodyBlock, e.Body)
 	l.loops = l.loops[:len(l.loops)-1]
 	if err != nil {
 		return nil, nil, err

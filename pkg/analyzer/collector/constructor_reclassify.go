@@ -143,10 +143,10 @@ func (c *Collector) rewriteCtorChildren(expr ast.Expression) {
 		if e.Post != nil {
 			*e.Post = c.rewriteCtorExpr(*e.Post)
 		}
-		c.rewriteCtorBlock(&e.Body)
+		c.rewriteCtorBlock(e.Body)
 	case *ast.ForInLoopExpr:
 		e.Iterable = c.rewriteCtorExpr(e.Iterable)
-		c.rewriteCtorBlock(&e.Body)
+		c.rewriteCtorBlock(e.Body)
 	case *ast.FunctionCallExpr:
 		e.Function = c.rewriteCtorExpr(e.Function)
 		for i := range e.Arguments {
