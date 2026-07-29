@@ -40,11 +40,17 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retSigned, entryABI bool) 
 // `mut` struct, tuple, or `[N]T` dropped every write with no diagnostic. Passing
 // every `mut` by reference is the only rule with no such split.
 //
+// `ref` is by reference for the same reason at one remove: it is *also* a borrow, so
+// copying the value to lend it out is pure waste — a `ref [8]i64` was passed as a
+// 64-byte first-class aggregate at every call. It cannot write, so the callee's view
+// is read-only either way; what by-reference does change is that the callee now sees
+// the caller's *live* value rather than a snapshot, which is observable only when the
+// same binding is also passed to a `mut` parameter of that call. That aliasing is
+// rejected up front (checkExclusiveMutableBorrow), so the two readings can't diverge.
+//
 // `own` stays by value: it *transfers* the value into the callee's own storage, so a
-// copy is the point. `ref` stays by value too — an immutable borrow cannot write, so
-// by-reference would be unobservable here (it is a future codegen optimization for
-// large aggregates, not a semantic fix). The ownership pass is untouched: `mut` is
-// still a borrow, retained and released by nobody in the callee.
+// copy is the point. The ownership pass is untouched — `mut` and `ref` are both still
+// borrows, retained and released by nobody in the callee.
 //
 // A `mut` on a **copied scalar** is excluded, and that is not a silent split: it is
 // exactly the case `lyra-W010` already warns is inert, reading the same shared
@@ -56,7 +62,10 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retSigned, entryABI bool) 
 // gain. If whole-parameter reassignment ever lowers, `mut` on a scalar becomes
 // meaningful and both this predicate and W010 should be revisited together.
 func paramIsByRef(param ast.Parameter) bool {
-	return param.TypeModifier == types.Mut && !types.IsCopiedScalar(param.Type)
+	if param.TypeModifier != types.Mut && param.TypeModifier != types.Ref {
+		return false
+	}
+	return !types.IsCopiedScalar(param.Type)
 }
 
 // emitReturn lowers a `ret` for the current function, coercing val to the
@@ -365,21 +374,27 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 			v   value.Value
 			err error
 		)
-		// A `mut` parameter is by reference (paramIsByRef), so pass the argument's
-		// *address* — the caller's own storage — rather than a copy of its value.
-		// lvalueAddress walks the same identifier/field/index path an assignment
-		// target does, so `f(p)`, `f(grid[i])`, and `f(p.inner)` all forward the
-		// right slot; forwarding a by-ref parameter onward (`g(p)` inside the
-		// callee) resolves to the incoming pointer, which is already the caller's
-		// address. The typechecker has verified the argument is an lvalue rooted at
-		// a mutable binding, so a temporary can't reach here.
+		// A `mut`/`ref` parameter is by reference (paramIsByRef), so pass the
+		// argument's *address* rather than a copy of its value. lvalueAddress walks
+		// the same identifier/field/index path an assignment target does, so `f(p)`,
+		// `f(grid[i])`, and `f(p.inner)` all forward the right slot; forwarding a
+		// by-ref parameter onward (`g(p)` inside the callee) resolves to the incoming
+		// pointer, which is already the caller's address.
+		//
+		// A **temporary** has no such address, and unlike `mut` (where the typechecker
+		// requires a mutable lvalue) it is perfectly legitimate to lend one out:
+		// `f(Pt { x: 1 })`, `f(make())`, `f("a" ++ "b")`. Materialize it into an
+		// entry-block alloca and pass that — the same shape arrayLValue uses for a
+		// non-addressable array. The callee only reads during the call, so the slot's
+		// function-long lifetime is more than enough, and an owned temporary is still
+		// released after the statement by the ordinary pending-temp machinery.
 		if i < len(params) && paramIsByRef(params[i]) {
-			var loc lvalueLoc
-			loc, block, err = l.lvalueAddress(block, argExpr)
+			var ptr value.Value
+			ptr, block, err = l.argumentAddress(block, argExpr)
 			if err != nil {
 				return nil, nil, err
 			}
-			args = append(args, loc.ptr)
+			args = append(args, ptr)
 			continue
 		}
 		v, block, err = l.lowerExpr(block, argExpr)
@@ -389,4 +404,51 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 		args = append(args, v)
 	}
 	return block.NewCall(fn, args...), block, nil
+}
+
+// argumentAddress yields the address to pass for a by-reference parameter
+// (paramIsByRef).
+//
+// An **lvalue path** — a binding, or a field/element of one — forwards the
+// caller's own storage via lvalueAddress, which is what makes a `mut` write reach
+// the caller and lets a `ref` observe the live value. Anything else is a
+// **temporary** (a constructor result, a call result, a concatenation): it has no
+// storage of its own, so it is materialized into an entry-block alloca and that
+// address is passed. Only `ref` reaches the temporary case in a well-typed program
+// — checkMutArgument requires a `mut` argument to be an lvalue rooted at a mutable
+// binding, since writing to a temporary would be meaningless.
+func (l *lowerer) argumentAddress(block *ir.Block, arg ast.Expression) (value.Value, *ir.Block, error) {
+	if isLValuePath(arg) {
+		loc, block, err := l.lvalueAddress(block, arg)
+		if err != nil {
+			return nil, nil, err
+		}
+		return loc.ptr, block, nil
+	}
+	v, block, err := l.lowerExpr(block, arg)
+	if err != nil {
+		return nil, nil, err
+	}
+	entry := block.Parent.Blocks[0]
+	slot := entry.NewAlloca(v.Type())
+	block.NewStore(v, slot)
+	return slot, block, nil
+}
+
+// isLValuePath reports whether e names storage — an identifier, or a field/element
+// path rooted at one — as opposed to a temporary. The backend counterpart of the
+// typechecker's rootIdentifier walk.
+func isLValuePath(e ast.Expression) bool {
+	for {
+		switch t := e.(type) {
+		case *ast.IdentifierExpr:
+			return true
+		case *ast.MemberExpr:
+			e = t.Object
+		case *ast.IndexExpr:
+			e = t.Object
+		default:
+			return false
+		}
+	}
 }

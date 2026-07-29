@@ -416,3 +416,72 @@ func TestTypeCheck_ParamReassign_WellTyped_Ok(t *testing.T) {
 		assertNoErrors(t, res)
 	}
 }
+
+// ── exclusive mutable borrow ──────────────────────────────────────────────────
+//
+// `mut` and `ref` arguments are pointers to the caller's storage, so two of them
+// naming one binding are two views of the same memory. If either is `mut`, what
+// the other observes depends on statement order inside the callee — so a `mut`
+// borrow is exclusive, as in Rust. Both shapes below compiled silently before.
+
+func TestTypeCheck_ExclusiveMut_RefAndMutSameBinding_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let both = (a: ref Point, b: mut Point) -> i64 => { b.x = 99  a.x }
+		let run = () -> i64 => {
+			var p = Point { x: 1, y: 2 }
+			both(p, p)
+		}
+	`, false)
+	assertErrorsAre(t, res,
+		"both: \"p\" is passed to argument 2 as `mut` and also to argument 1 — a `mut` borrow is exclusive, so no other argument of the same call may name it")
+}
+
+func TestTypeCheck_ExclusiveMut_TwoMutSameBinding_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let two = (a: mut Point, b: mut Point) -> i64 => { a.x = 10  b.x = 20  a.x }
+		let run = () -> i64 => {
+			var p = Point { x: 1, y: 2 }
+			two(p, p)
+		}
+	`, false)
+	assertErrorsAre(t, res,
+		"two: \"p\" is passed to argument 1 as `mut` and also to argument 2 — a `mut` borrow is exclusive, so no other argument of the same call may name it")
+}
+
+// Two `ref` arguments may name one binding — neither can write, so there is
+// nothing to observe.
+func TestTypeCheck_ExclusiveMut_TwoRefSameBinding_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let both = (a: ref Point, b: ref Point) -> i64 => a.x + b.y
+		let run = () -> i64 => {
+			let p = Point { x: 1, y: 2 }
+			both(p, p)
+		}
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// Distinct bindings are unaffected.
+func TestTypeCheck_ExclusiveMut_DistinctBindings_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, pointStruct+`
+		let both = (a: ref Point, b: mut Point) -> i64 => { b.x = 9  a.x }
+		let run = () -> i64 => {
+			let p = Point { x: 1, y: 2 }
+			var q = Point { x: 3, y: 4 }
+			both(p, q)
+		}
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// Scalars are exempt: they are passed by value, so there is no shared storage.
+func TestTypeCheck_ExclusiveMut_ScalarSameBinding_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let both = (a: ref i64, b: mut i64) -> i64 => a + b
+		let run = () -> i64 => {
+			var n = 5
+			both(n, n)
+		}
+	`, false)
+	assertNoErrors(t, res)
+}

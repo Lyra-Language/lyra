@@ -215,3 +215,81 @@ func fnBody(ir, name string) string {
 	}
 	return rest
 }
+
+// A `ref` parameter is a borrow too, so it is also passed by reference — copying
+// a value to lend it out read-only is pure waste (a `ref [8]i64` used to be a
+// 64-byte first-class aggregate at every call). It cannot write, so the only
+// observable difference is that the callee sees the caller's live value rather
+// than a snapshot, and the aliasing that could expose is rejected at the call
+// site (checkExclusiveMutableBorrow).
+func TestExec_RefParameter_ByReference(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			"struct binding", `struct Pt { x: i64, y: i64 }
+let read = (p: ref Pt) -> i64 => p.x + p.y
+let main = () -> u8 => {
+  let p = Pt { x: 3, y: 4 }
+  u8(read(p))
+}`, 7,
+		},
+		{
+			// A temporary has no storage to point at, and unlike `mut` it is
+			// perfectly legitimate to lend one out — the call site materializes it.
+			"temporary argument", `struct Pt { x: i64, y: i64 }
+let read = (p: ref Pt) -> i64 => p.x + p.y
+let main = () -> u8 => u8(read(Pt { x: 1, y: 1 }))`, 2,
+		},
+		{
+			"fixed-size array", `let read = (xs: ref [4]i64) -> i64 => xs[0] + xs[3]
+let main = () -> u8 => {
+  let a: [4]i64 = [10, 20, 30, 40]
+  u8(read(a))
+}`, 50,
+		},
+		{
+			// Forwarding a by-ref parameter to another one passes the pointer along.
+			"forwarded to another ref", `struct Pt { x: i64, y: i64 }
+let read = (p: ref Pt) -> i64 => p.x + p.y
+let outer = (p: ref Pt) -> i64 => read(p)
+let main = () -> u8 => {
+  let p = Pt { x: 2, y: 5 }
+  u8(outer(p))
+}`, 7,
+		},
+		{
+			// A managed temporary lent through `ref`: materialized, read, then
+			// released after the statement by the ordinary temp machinery.
+			"managed temporary", `let same = (s: ref string) -> bool => s == "hi"
+let main = () -> u8 => { if same("h" ++ "i") { 0 } else { 1 } }`, 0,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("exited %d; want %d", got, c.want)
+			}
+		})
+	}
+}
+
+// The ABI: a `ref` aggregate is a pointer, not a copy. A `ref` on a copied scalar
+// stays by value for the same reason `mut` does — nothing to point at, and
+// lyra-W010 already calls the modifier inert there.
+func TestEmit_RefParameter_IsPointer(t *testing.T) {
+	out, err := emitSource(t, `let sum = (xs: ref [8]i64) -> i64 => xs[0] + xs[7]
+let scale = (n: ref i64) -> i64 => n + 1
+let main = () -> u8 => 0`)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if !strings.Contains(out, "define i64 @sum([8 x i64]* ") {
+		t.Errorf("expected @sum to take a [8 x i64]* parameter, got:\n%s", out)
+	}
+	if !strings.Contains(out, "define i64 @scale(i64 ") {
+		t.Errorf("expected @scale to keep its by-value i64 parameter, got:\n%s", out)
+	}
+}

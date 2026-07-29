@@ -291,6 +291,11 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 		}
 	}
 
+	// `mut`/`ref` arguments are pointers to the caller's storage, so two of them
+	// naming one binding alias — checked once for the whole call, since the rule is
+	// about the argument list as a whole rather than any single argument.
+	tc.checkExclusiveMutableBorrow(calleeName, lambda, call)
+
 	return lambda.ReturnType.Type
 }
 
@@ -599,5 +604,68 @@ func (tc *TypeChecker) checkMutArgument(calleeName string, position int, paramNa
 		tc.addError(arg.GetLocation(), SeverityError,
 			"%s: argument %d (%s): cannot pass immutable binding %q to a `mut` parameter (declare it `var`, or take the parameter by value)",
 			calleeName, position, paramName, root.Name)
+	}
+}
+
+// checkExclusiveMutableBorrow rejects passing the same binding to a `mut`
+// parameter and to any other parameter of the same call.
+//
+// `mut` and `ref` are both lowered as pointers to the caller's storage, so two
+// arguments naming one binding are two views of the same memory. If either is
+// `mut`, the callee's writes are visible through the other view mid-call, and
+// which value it observes depends on statement order inside a function the caller
+// can't see. `both(p, p)` with `(a: ref Pt, b: mut Pt)` reads 1 or 99 purely by
+// where `a.x` sits relative to `b.x = 99`, and `two(p, p)` with two `mut`
+// parameters lets each write clobber the other's.
+//
+// The rule is Rust's: a mutable borrow is *exclusive*. Enforcing it here is what
+// keeps by-reference lowering from being observable — a `ref` may see the caller's
+// live value rather than a snapshot only when nothing can mutate it during the
+// call. Lyra has no general borrow checker, so this is deliberately narrow: it
+// compares argument *roots* within one call, which is exactly the aliasing that
+// by-reference parameter passing introduces. Two `ref` arguments naming one
+// binding are fine — neither can write.
+//
+// Scalars are exempt for the same reason they are passed by value
+// (types.IsCopiedScalar): there is no shared storage to alias.
+func (tc *TypeChecker) checkExclusiveMutableBorrow(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr) {
+	type argRoot struct {
+		name     string
+		position int
+		isMut    bool
+	}
+	var roots []argRoot
+	for i, arg := range call.Arguments {
+		if i >= len(lambda.Parameters) {
+			break
+		}
+		param := lambda.Parameters[i]
+		if param.Type == nil || types.IsCopiedScalar(tc.resolveType(param.Type, param.GetLocation())) {
+			continue
+		}
+		mode := param.TypeModifier
+		if mode != types.Mut && mode != types.Ref {
+			continue // `own` transfers a copy; a bare parameter is a value
+		}
+		root := rootIdentifier(arg)
+		if root == nil {
+			continue // a temporary has no storage to alias
+		}
+		roots = append(roots, argRoot{name: root.Name, position: i + 1, isMut: mode == types.Mut})
+	}
+	for i, a := range roots {
+		for _, b := range roots[i+1:] {
+			if a.name != b.name || (!a.isMut && !b.isMut) {
+				continue
+			}
+			mutPos, otherPos := a.position, b.position
+			if !a.isMut {
+				mutPos, otherPos = b.position, a.position
+			}
+			tc.addError(call.GetLocation(), SeverityError,
+				"%s: %q is passed to argument %d as `mut` and also to argument %d — a `mut` borrow is exclusive, so no other argument of the same call may name it",
+				calleeName, a.name, mutPos, otherPos)
+			return
+		}
 	}
 }
