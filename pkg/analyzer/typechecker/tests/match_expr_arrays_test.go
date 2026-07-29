@@ -273,3 +273,82 @@ func TestTypeCheck_ArrayMatchExpr_BindingAroundSpecificPattern_NotExhaustive_War
 	assertWarningsAre(t, res,
 		"match on array type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 }
+
+// ── length-union exhaustiveness ───────────────────────────────────────────────
+//
+// An array match is over *lengths*, so a union of arms can cover everything even
+// when no single arm does: `[e1..en]` covers exactly n, `[e1..en, ...rest]` covers
+// every length ≥ n. The recursive list idiom relies on this, and used to draw a
+// spurious "not exhaustive" warning demanding an unreachable wildcard — the same
+// corrosive false warning the tuple/struct case had.
+
+func TestTypeCheck_ArrayMatch_EmptyPlusHeadTail_Exhaustive(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let sum = (xs: []i64) -> i64 => match xs {
+			[] => 0,
+			[h, ...t] => h,
+		}
+	`, false)
+	assertWarningsAre(t, res) // no errors and no warnings
+}
+
+// Every length below the open-ended arm's minimum must be covered.
+func TestTypeCheck_ArrayMatch_AllLengthsBelowRest_Exhaustive(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = (xs: []i64) -> i64 => match xs {
+			[] => 0,
+			[x] => x,
+			[p, q, ...r] => p,
+		}
+	`, false)
+	assertWarningsAre(t, res)
+}
+
+// A gap below the open-ended arm leaves lengths unmatched — here the empty array.
+func TestTypeCheck_ArrayMatch_GapBelowRest_Warning(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = (xs: []i64) -> i64 => match xs {
+			[x] => x,
+			[p, q, ...r] => p,
+		}
+	`, false)
+	assertWarningsAre(t, res,
+		"match on array type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
+}
+
+// A literal element test proves nothing about length coverage: `[1, ...r]` matches
+// only arrays starting with 1, so it cannot stand in for the open-ended arm.
+func TestTypeCheck_ArrayMatch_LiteralElementDoesNotCover_Warning(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = (xs: []i64) -> i64 => match xs {
+			[1, ...r] => 1,
+			[] => 0,
+		}
+	`, false)
+	assertWarningsAre(t, res,
+		"match on array type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
+}
+
+// Without any open-ended arm, infinitely many lengths are unmatched.
+func TestTypeCheck_ArrayMatch_NoRestArm_Warning(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = (xs: []i64) -> i64 => match xs {
+			[] => 0,
+			[x] => x,
+		}
+	`, false)
+	assertWarningsAre(t, res,
+		"match on array type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
+}
+
+// A guarded arm may fail, so it contributes no coverage.
+func TestTypeCheck_ArrayMatch_GuardedArmDoesNotCover_Warning(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = (xs: []i64) -> i64 => match xs {
+			[] => 0,
+			[h, ...t] if h > 0 => h,
+		}
+	`, false)
+	assertWarningsAre(t, res,
+		"match on array type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
+}

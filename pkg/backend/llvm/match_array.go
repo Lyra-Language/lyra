@@ -92,11 +92,39 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, arrType typ
 			}
 		case *ast.ArrayPattern:
 			next := fn.NewBlock("")
-			matched, err := l.lowerArrayPatternMatch(current, next, p, box, length, elemAt, elemLL, isBool, signed)
+			// An arm-scoped frame: a `[head, ...tail]` pattern *allocates* its tail, so
+			// unlike every other array binding it owns a reference that must be released
+			// when the arm's body finishes. It cannot go in the enclosing frame, whose
+			// releases run on every path — an arm that didn't match never allocated, and
+			// releasing its uninitialized slot faults. Scoping the frame to the arm puts
+			// the release exactly on the path that did the allocation. Arms that bind no
+			// tail simply push and pop an empty frame.
+			l.pushManagedFrame()
+			matched, err := l.lowerArrayPatternMatch(current, next, p, box, length, elemAt, elemLL, arrType.ElementType, isBool, signed)
 			if err != nil {
+				l.popManagedFrame()
 				return nil, nil, err
 			}
-			if err := l.lowerGuardedArmBody(matched, arm.Guard, arm.Body, next, lowerBody); err != nil {
+			armBody := func(b *ir.Block, body ast.Expression) error {
+				val, end, err := l.lowerExpr(b, body)
+				if err != nil {
+					return err
+				}
+				if end.Term == nil {
+					// Release before merging. A body whose value *is* the tail is safe: the
+					// ownership pass records a Retain on that read (a pattern binding is
+					// never last-use-eligible), so the escaping value carries its own +1.
+					if err := l.releaseTopManagedFrame(end); err != nil {
+						return err
+					}
+					end.NewBr(merge)
+					incomings = append(incomings, incoming{val, end})
+				}
+				return nil
+			}
+			err = l.lowerGuardedArmBody(matched, arm.Guard, arm.Body, next, armBody)
+			l.popManagedFrame()
+			if err != nil {
 				return nil, nil, err
 			}
 			current = next
@@ -126,7 +154,7 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, arrType typ
 // (from which the caller lowers the body). A failed length or element test branches
 // to `next` (the following arm). The length is tested first, so element accesses in
 // the test/bind stage are always in bounds.
-func (l *lowerer) lowerArrayPatternMatch(current, next *ir.Block, p *ast.ArrayPattern, box, length value.Value, elemAt func(*ir.Block, int64) value.Value, elemLL lltypes.Type, isBool, signed bool) (*ir.Block, error) {
+func (l *lowerer) lowerArrayPatternMatch(current, next *ir.Block, p *ast.ArrayPattern, box, length value.Value, elemAt func(*ir.Block, int64) value.Value, elemLL lltypes.Type, elemLyra types.Type, isBool, signed bool) (*ir.Block, error) {
 	fn := current.Parent
 
 	// Split off a trailing `...rest`.
@@ -146,15 +174,16 @@ func (l *lowerer) lowerArrayPatternMatch(current, next *ir.Block, p *ast.ArrayPa
 		}
 	}
 	fixedCount := int64(len(elems))
-	if hasRest && fixedCount > 0 {
-		return nil, fmt.Errorf("llvm: `[head, ...tail]` array patterns (binding a tail sub-array) not implemented yet")
-	}
 
-	// Length test: an exact arity for a fixed pattern; `[...rest]` matches any length.
+	// Length test: an exact arity for a fixed pattern; a bare `[...rest]` matches any
+	// length; `[h, ...t]` needs at least the fixed elements it names.
 	afterLen := fn.NewBlock("")
-	if hasRest {
+	switch {
+	case hasRest && fixedCount == 0:
 		current.NewBr(afterLen)
-	} else {
+	case hasRest:
+		current.NewCondBr(current.NewICmp(enum.IPredSGE, length, i64c(fixedCount)), afterLen, next)
+	default:
 		current.NewCondBr(current.NewICmp(enum.IPredEQ, length, i64c(fixedCount)), afterLen, next)
 	}
 
@@ -211,9 +240,95 @@ func (l *lowerer) lowerArrayPatternMatch(current, next *ir.Block, p *ast.ArrayPa
 		}
 	}
 	if hasRest && restName != "" && restName != "_" {
-		slot := fn.Blocks[0].NewAlloca(box.Type())
-		matched.NewStore(box, slot)
-		l.locals[restName] = slot
+		if fixedCount == 0 {
+			// A whole-array `[...rest]` aliases the scrutinee — a borrow, so it is bound
+			// without framing (the scrutinee's own binding still owns the box).
+			slot := fn.Blocks[0].NewAlloca(box.Type())
+			matched.NewStore(box, slot)
+			l.locals[restName] = slot
+			return matched, nil
+		}
+		var err error
+		matched, err = l.bindTailSubArray(matched, restName, box, length, fixedCount, elemLyra)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return matched, nil
+}
+
+// bindTailSubArray builds the `tail` of a `[head, ...tail]` pattern: a **fresh**
+// `[]T` box holding the elements from fixedCount onward, bound under restName.
+//
+// Unlike every other array-pattern binding this is not a borrow — a sub-array has
+// no existing storage to alias, since the elements it needs are a suffix of a box
+// whose header describes the *whole* array. So it allocates, copies, and is framed
+// like a local managed binding, released at the arm's scope exit.
+//
+// Disposal needs no ownership-pass change, which is what this was long filed as
+// blocked on. The pass keys managed-ness off the recorded type, so it already sees
+// `tail` as a managed value; and because a pattern binding is not a `VarDeclStmt`
+// it is never last-use-eligible, so every *owning* use inside the arm (returning
+// it, passing it to an `own` parameter) records a plain Retain rather than a
+// transfer. That +1 is exactly what the escape needs, and the frame release
+// balances the box's own reference. The cost is one retain/release pair versus a
+// transfer — refcount traffic, not a leak.
+//
+// A **managed element type** is retained per element: the new box's drop glue will
+// release each element when the tail dies, so without the dup the source array and
+// the tail would both free them.
+func (l *lowerer) bindTailSubArray(block *ir.Block, name string, box, length value.Value, fixedCount int64, elemLyra types.Type) (*ir.Block, error) {
+	if elemLyra == nil {
+		return nil, fmt.Errorf("llvm: `[head, ...%s]`: the array has no element type", name)
+	}
+	elemLL, err := l.lowerType(elemLyra)
+	if err != nil {
+		return nil, err
+	}
+	elemSize, elemAlign, ok := SizeAndAlign(l.resolveForLayout(elemLyra))
+	if !ok {
+		return nil, fmt.Errorf("llvm: cannot size `[head, ...%s]` element type %s", name, elemLyra)
+	}
+	stride := int64(alignUp(elemSize, elemAlign))
+	srcTy := DynArrayBoxType(elemLL)
+	fn := block.Parent
+
+	l.ensureRCRuntime()
+	// tailLen = length - fixedCount (>= 0: the length test above already passed).
+	tailLen := block.NewSub(length, i64c(fixedCount))
+	byteSize := block.NewAdd(i64c(int64(dynArrayHeaderSize)), block.NewMul(tailLen, i64c(stride)))
+	tailI8 := block.NewCall(l.rcAlloc, byteSize) // rc = 1
+	tail := block.NewBitCast(tailI8, lltypes.NewPointer(srcTy))
+	block.NewStore(tailLen, block.NewGetElementPtr(srcTy, tail, i32c(0), i32c(1)))
+
+	// Copy loop: tail[i] = src[fixedCount + i], for i in [0, tailLen).
+	idx := fn.Blocks[0].NewAlloca(lltypes.I64)
+	block.NewStore(i64c(0), idx)
+	head := fn.NewBlock("")
+	body := fn.NewBlock("")
+	done := fn.NewBlock("")
+	block.NewBr(head)
+	i := head.NewLoad(lltypes.I64, idx)
+	head.NewCondBr(head.NewICmp(enum.IPredSLT, i, tailLen), body, done)
+
+	bi := body.NewLoad(lltypes.I64, idx)
+	srcElem := body.NewLoad(elemLL, body.NewGetElementPtr(srcTy, box, i32c(0), i32c(2), body.NewAdd(bi, i64c(fixedCount))))
+	cur := body
+	if l.needsDrop(elemLyra) {
+		// The tail owns its copy of each managed element (its drop glue releases
+		// them), so the reference is duplicated rather than moved out of the source.
+		cur, err = l.emitRetainValue(cur, srcElem, elemLyra)
+		if err != nil {
+			return nil, err
+		}
+	}
+	cur.NewStore(srcElem, cur.NewGetElementPtr(srcTy, tail, i32c(0), i32c(2), bi))
+	cur.NewStore(cur.NewAdd(bi, i64c(1)), idx)
+	cur.NewBr(head)
+
+	slot := fn.Blocks[0].NewAlloca(tail.Type())
+	done.NewStore(tail, slot)
+	l.locals[name] = slot
+	l.addManagedBinding(slot, types.DynamicArrayType{ElementType: elemLyra})
+	return done, nil
 }

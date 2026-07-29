@@ -117,21 +117,106 @@ let main = () -> u8 => {
 	}
 }
 
-// A `[head, ...tail]` pattern that binds a tail sub-array is deferred with a loud
-// error (it needs an allocation + copy).
-func TestEmit_ArrayMatch_TailBindingDeferred(t *testing.T) {
+// A `[head, ...tail]` pattern binds a **fresh** `[]T` holding the suffix — the one
+// array binding that is not a borrow, since the elements it needs are a suffix of a
+// box whose header describes the whole array, so there is no existing storage to
+// alias. It allocates, copies, and is released at the arm's scope exit.
+//
+// This was deferred with a loud error for a long time, filed as blocked on an
+// ownership-pass change. It needed none: the pass keys managed-ness off the recorded
+// type, and a pattern binding is never last-use-eligible, so an owning use inside the
+// arm records a plain Retain — exactly the +1 an escape needs.
+func TestExec_ArrayMatch_TailBinding(t *testing.T) {
 	t.Parallel()
-	src := `let f = (xs: []i64) -> u8 => match xs {
-  [head, ...tail] => u8(head),
-  _ => 0
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			// The canonical recursive list idiom, now expressible end to end.
+			"recursive sum", `let sum = (xs: []i64) -> i64 => match xs {
+  [] => 0,
+  [h, ...t] => h + sum(t),
+}
+let main = () -> u8 => u8(sum([1, 2, 3, 4]))`, 10,
+		},
+		{
+			// More than one fixed element before the rest.
+			"two fixed elements", `let sumTwo = (xs: []i64) -> i64 => match xs {
+  [a, b, ...rest] => a + b + sumTwo(rest),
+  [a] => a,
+  [] => 0,
+}
+let main = () -> u8 => u8(sumTwo([1, 2, 3, 4, 5]))`, 15,
+		},
+		{
+			// A one-element array yields an *empty* tail (len 0), not a fault.
+			"empty tail", `let tailLen = (xs: []i64) -> i64 => match xs {
+  [h, ...t] => t.len(),
+  _ => 99,
+}
+let main = () -> u8 => u8(tailLen([7]))`, 0,
+		},
+		{
+			// A literal test in front of the rest: the length test is `>=` now, so the
+			// arm must still be selected by the element comparison.
+			"literal element then rest", `let f = (xs: []i64) -> i64 => match xs {
+  [1, ...rest] => 100 + rest.len(),
+  [...rest] => rest.len(),
+}
+let main = () -> u8 => u8(f([1, 2, 3]) + f([5, 6]))`, 104,
+		},
+		{
+			// The tail escapes the match as the arm's value — the Retain path.
+			"tail escapes the arm", `let tailOf = (xs: []i64) -> []i64 => match xs {
+  [h, ...t] => t,
+  _ => xs,
+}
+let main = () -> u8 => u8(tailOf([9, 8, 7]).len())`, 2,
+		},
+		{
+			// Managed elements: the tail owns its own references, so each copied
+			// element is retained — otherwise the source and the tail both free them.
+			"managed elements", `let count = (xs: []string) -> i64 => match xs {
+  [] => 0,
+  [h, ...t] => 1 + count(t),
+}
+let main = () -> u8 => u8(count(["a" ++ "1", "b" ++ "2", "c" ++ "3"]))`, 3,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("exited %d; want %d", got, c.want)
+			}
+		})
+	}
+}
+
+// The memory contract, where a missing retain or a misplaced release shows up: a
+// `[]string` tail outlives the match, and the source array must still be intact.
+func TestExec_ArrayMatch_TailBinding_ManagedIsSafe(t *testing.T) {
+	t.Parallel()
+	src := `let rest2 = (xs: []string) -> []string => match xs {
+  [h, ...t] => t,
+  _ => xs,
 }
 let main = () -> u8 => {
-  let xs: []i64 = [1, 2, 3]
-  f(xs)
-}
-`
-	if _, err := emitSource(t, src); err == nil {
-		t.Fatal("expected a loud error for a `[head, ...tail]` tail-binding pattern, got none")
+  let src: []string = ["a" ++ "1", "b" ++ "2", "c" ++ "3"]
+  let t = rest2(src)
+  if t[0] == "b2" && src[0] == "a1" && t.len() == 2 { 0 } else { 1 }
+}`
+	if got := buildAndRun(t, src); got != 0 {
+		t.Fatalf("exited %d; want 0", got)
+	}
+	clang, err := exec.LookPath("clang")
+	if err != nil || !asanAvailable(t, clang) {
+		t.Skip("ASan runtime not available; ran without it")
+	}
+	if got := buildAndRunASan(t, clang, src); got != 0 {
+		t.Errorf("under ASan: exited %d; want 0", got)
 	}
 }
 

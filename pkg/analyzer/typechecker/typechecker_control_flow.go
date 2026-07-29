@@ -409,7 +409,59 @@ func arrayMatchIsExhaustive(arms []ast.MatchArm, _ types.Type) bool {
 			}
 		}
 	}
-	return false
+	// No single arm covers everything — but a *union* of arms can, which is exactly
+	// how the recursive list idiom is written: `[] => …, [h, ...t] => …` covers
+	// length 0 and every length ≥ 1. An array match is over lengths, so collect what
+	// each arm covers: `[e1..en]` covers exactly n, `[e1..en, ...rest]` covers every
+	// length ≥ n. Only arms whose element sub-patterns are all *irrefutable* count —
+	// `[1, ...rest]` matches just the arrays starting with 1, so it proves nothing
+	// about length coverage.
+	exact := map[int]bool{}
+	minOpen := -1 // smallest n covered by some `…, ...rest` arm; -1 = none seen
+	for _, arm := range arms {
+		if arm.Guard != nil {
+			continue // a guard may fail, so the arm covers nothing
+		}
+		p, ok := arm.Pattern.(*ast.ArrayPattern)
+		if !ok {
+			continue
+		}
+		elems := p.Elements
+		hasRest := false
+		if n := len(elems); n > 0 {
+			if _, isRest := elems[n-1].(*ast.RestPattern); isRest {
+				hasRest = true
+				elems = elems[:n-1]
+			}
+		}
+		allBind := true
+		for _, el := range elems {
+			if !patternIsIrrefutable(el) {
+				allBind = false
+				break
+			}
+		}
+		if !allBind {
+			continue
+		}
+		if hasRest {
+			if minOpen == -1 || len(elems) < minOpen {
+				minOpen = len(elems)
+			}
+			continue
+		}
+		exact[len(elems)] = true
+	}
+	// Without an open-ended arm, infinitely many lengths are unmatched.
+	if minOpen == -1 {
+		return false
+	}
+	for n := 0; n < minOpen; n++ {
+		if !exact[n] {
+			return false
+		}
+	}
+	return true
 }
 
 // findDataTypeByConstructor searches the registered type declarations for the
