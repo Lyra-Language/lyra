@@ -100,7 +100,14 @@ func (tc *TypeChecker) inferBlockType(block *ast.BlockExpr) types.Type {
 // puts the final statement in value position, so a one-armed `if` as the last
 // thing in a loop body was rejected with "`if` used as a value must have an
 // `else` branch". Every statement is still checked (and its types recorded) by
-// the per-statement pass, so nothing downstream loses information.
+// the per-statement pass, so nothing downstream loses information — which needed
+// checkExpressionStmt to grow a `default: inferExprType` arm, since an expression
+// kind it did not name went completely unchecked in statement position (a bare `a`
+// naming nothing reported no error). That hole was invisible while every block's
+// trailing value inference happened to check the final statement too.
+//
+// Also used for both branches of an `if let` and the diverging branch of a
+// `let … else`, which are statements for the same reason.
 func (tc *TypeChecker) checkBlockForEffect(block *ast.BlockExpr) {
 	tc.checkBlock(block, nil)
 }

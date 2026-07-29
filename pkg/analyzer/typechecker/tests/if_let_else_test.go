@@ -130,3 +130,55 @@ let f = (pair: (i64, i64)) -> i64 => {
 		"tuple pattern has 3 element(s) but tuple has 2",
 		`undefined identifier "a"`)
 }
+
+// An if-let is a *statement*, so neither branch is in value position: an ordinary
+// one-armed `if` as the last thing in a branch is a conditional side effect, not a
+// valueless expression. It was rejected until both branches started being checked
+// for effect (the same fix a loop body needed).
+func TestIfLet_OneArmedIfAsLastStatementInBranch(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+data Maybe = Some(i64) | None
+let main = () -> u8 => {
+  let m = Some(5)
+  var out = 0
+  if let Some(v) = m {
+    if v > 1 { out = v }
+  } else {
+    if out == 0 { out = 1 }
+  }
+  u8(out)
+}
+`, false))
+}
+
+// The same for a `let … else` branch.
+func TestLetElse_OneArmedIfAsLastStatementInBranch(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+data Maybe = Some(i64) | None
+let f = (m: Maybe, flag: bool) -> i64 => {
+  let Some(v) = m else {
+    if flag { return 0 }
+    return 1
+  }
+  v
+}
+`, false))
+}
+
+// Checking a branch for effect must not lose diagnostics: an expression statement
+// the statement-position switch doesn't name is still inferred, so a bare
+// undefined identifier is reported. That hole was masked in a *value* block, whose
+// trailing value inference checked the final statement as a side effect.
+func TestIfLet_UndefinedIdentifierInBranchIsReported(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Maybe = Some(i64) | None
+let main = () -> u8 => {
+  let m = Some(5)
+  if let Some(v) = m {
+    undefinedThing
+  }
+  0
+}
+`, false)
+	assertErrorsAre(t, res, `undefined identifier "undefinedThing"`)
+}

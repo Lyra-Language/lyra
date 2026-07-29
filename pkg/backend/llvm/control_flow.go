@@ -92,6 +92,15 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail 
 		case *ast.LValueAssignmentStmt:
 			block, err = l.lowerLValueAssignment(block, s)
 			v = nil
+		case *ast.DestructuringDeclStmt:
+			block, err = l.lowerDestructuringDecl(block, s)
+			v = nil
+		case *ast.IfDestructuringStmt:
+			block, err = l.lowerIfDestructuring(block, s)
+			v = nil
+		case *ast.ElseDestructuringStmt:
+			block, err = l.lowerElseDestructuring(block, s)
+			v = nil
 		case *ast.BreakStmt:
 			err = l.lowerBreak(block, s)
 			v = nil

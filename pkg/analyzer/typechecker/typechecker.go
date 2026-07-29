@@ -204,6 +204,15 @@ func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
 		tc.checkForLoopExpr(e)
 	case *ast.RangeExpr:
 		tc.inferRangeExpr(e)
+	default:
+		// Any other expression in statement position is still inferred, so its own
+		// errors surface. Without this, an expression kind not named above went
+		// completely unchecked as a statement — a bare `a` naming nothing reported
+		// no undefined-identifier error. It was masked in a *value* block, whose
+		// trailing inferExprType checked the final statement as a side effect of
+		// computing the block's type, and so showed up only once a block was checked
+		// purely for effect (a loop body, an `if let` branch).
+		tc.inferExprType(e)
 	}
 }
 
@@ -371,9 +380,13 @@ func (tc *TypeChecker) checkIfDestructuringStmt(stmt *ast.IfDestructuringStmt) {
 	tc.enterScope(stmt, func() {
 		tc.checkDestructuringDecl(&stmt.DestructuringStatement)
 	})
-	tc.inferBlockType(stmt.Then)
+	// Both branches are checked *for effect*: an `if let` is a statement, so neither
+	// branch is in value position and its last statement must not be treated as one
+	// (which rejected an ordinary one-armed `if` at the end of a branch). Same
+	// reasoning as a loop body — see checkBlockForEffect.
+	tc.checkBlockForEffect(stmt.Then)
 	if stmt.Else != nil {
-		tc.inferBlockType(stmt.Else)
+		tc.checkBlockForEffect(stmt.Else)
 	}
 }
 
@@ -387,7 +400,7 @@ func (tc *TypeChecker) checkIfDestructuringStmt(stmt *ast.IfDestructuringStmt) {
 // here since Else type-checks in its own nested scope regardless, but mirrors
 // the collector for readability.
 func (tc *TypeChecker) checkElseDestructuringStmt(stmt *ast.ElseDestructuringStmt) {
-	tc.inferBlockType(stmt.Else)
+	tc.checkBlockForEffect(stmt.Else) // a diverging branch, never a value
 	tc.checkDestructuringDecl(&stmt.DestructuringStatement)
 }
 
