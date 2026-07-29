@@ -786,6 +786,29 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		a.expr(e.Left, false)
 		a.expr(e.Right, false)
 
+	case *ast.MathBinaryOpExpr:
+		// Arithmetic borrows its operands — they are numbers, so the operation never
+		// owns a managed value itself. Recursing is still required, because a managed
+		// value can sit *inside* an operand: `consume(p.name) + 1` passes a managed
+		// field to an `own` parameter, which is an owning position needing a retain.
+		//
+		// These forms used to fall through to the default (record nothing), justified
+		// as safe because "a missed release only leaks". That premise is wrong in the
+		// same way the stack-aggregate use-after-free was: a missed *retain* at an
+		// owning position is not a leak but a dangling reference — the callee released
+		// a reference the caller never granted, so the struct's own drop then freed an
+		// already-freed box (ASan-confirmed heap-use-after-free).
+		a.expr(e.Left, false)
+		a.expr(e.Right, false)
+
+	case *ast.MathAssignOpExpr:
+		// `total += consume(s)` — the target is a numeric slot; the RHS may contain
+		// managed values in owning positions, exactly as above.
+		a.expr(e.Right, false)
+
+	case *ast.NegationExpr:
+		a.expr(e.Operand, false)
+
 	case *ast.TupleLiteralExpr:
 		// The aggregate takes ownership of managed elements — transfer. A `shared`
 		// tuple's box drops them via the per-type drop glue (drop.go); a stack tuple's
@@ -845,10 +868,14 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		a.block(&e.Body, false)
 		a.conditional = savedCond
 
-	// Numeric / control forms with no managed sub-values in a string program are
-	// intentionally not recursed into: not recording anything is always safe
-	// (a missed release only leaks). String-reachable positions are all handled
-	// above.
+	// Anything not listed above records nothing. That is only sound for forms with
+	// no managed value *anywhere beneath them* — note this is a stronger condition
+	// than "this form's own value isn't managed", which is what the arithmetic cases
+	// above got wrong: they carried owning positions inside their operands. Skipping
+	// a node is emphatically **not** the safe default it was once documented to be
+	// ("a missed release only leaks"), because a missed retain at an owning position
+	// dangles rather than leaks. When adding an expression kind, recurse into every
+	// sub-expression that can hold a value.
 	default:
 	}
 }
