@@ -335,6 +335,15 @@ func (l *lowerer) lowerParameter(param ast.Parameter) (*ir.Param, error) {
 
 func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr) (value.Value, *ir.Block, error) {
 	if member, ok := e.Function.(*ast.MemberExpr); ok {
+		// A struct field that *holds* a function is an indirect call through that
+		// value, not a method dispatch: `h.run(5)` where `run: (i64) -> i64`. The
+		// two are told apart by looking the field up on the receiver's struct —
+		// *not* by the member node's recorded type, which is a LambdaType for a
+		// builtin method too (that is the builtin's own signature, and lowering
+		// `x.floor` as a value would try to read a field out of an f64).
+		if l.memberIsFunctionField(member) {
+			return l.lowerCallThroughValue(block, e)
+		}
 		// A MemberExpr callee the typechecker resolved to a builtin method
 		// (`x.floor()`, builtins.go) rather than a struct field, trait method,
 		// or user function — those aren't lowered yet (see lowerBuiltinMethodCall).
@@ -342,9 +351,16 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	}
 	ident, ok := e.Function.(*ast.IdentifierExpr)
 	if !ok {
-		// Higher-order calls (calling a lambda value / a function-typed local)
-		// aren't lowered yet — only direct calls by name.
-		return nil, nil, fmt.Errorf("llvm: only direct calls by function name are implemented, got %T callee", e.Function)
+		// Not a name: the callee is an expression producing a function value (an
+		// immediately-applied lambda, a call returning a closure). Its static
+		// LambdaType is the signature to call through.
+		return l.lowerCallThroughValue(block, e)
+	}
+	// A local binding or parameter holding a function value shadows any top-level
+	// function of the same name, exactly as it does for a non-function binding —
+	// and it is the only way `let add5 = makeAdder(5)` can be called at all.
+	if _, isLocal := l.locals[ident.Name]; isLocal {
+		return l.lowerCallThroughValue(block, e)
 	}
 	// A type-name callee is a numeric conversion (`i32(x)`), not a function call.
 	if targetName := types.PrimitiveTypeName(ident.Name); IsNumericConversionTarget(targetName) {

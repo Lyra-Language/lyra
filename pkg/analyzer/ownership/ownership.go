@@ -170,6 +170,14 @@ func IsManaged(t types.Type) bool {
 	// A newtype is nominal only — `newtype Email = string` is represented exactly
 	// as a string — so managed-ness is a property of the base (types.StripNewtype).
 	t = types.StripNewtype(t)
+	// A function value is a boxed closure: a code pointer paired with a
+	// ref-counted environment (closures.go), so it is managed like a string —
+	// copying one shares an environment, and the last reference frees it. A
+	// captureless closure shares a *pinned* environment, on which retain and
+	// release are no-ops, so this needs no special case for it.
+	if _, ok := t.(*types.LambdaType); ok {
+		return true
+	}
 	// A dynamic array `[]T` is always a heap-boxed, ref-counted value (dynarray.go),
 	// so it is managed regardless of flavor — like a string.
 	return types.IsString(t) || types.IsDynamicArray(t) || types.AllocationOf(t) == types.Shared
@@ -668,6 +676,23 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 			a.table.ReleaseTemp[e] = true
 		}
 
+	case *ast.LambdaExpr:
+		// Creating a closure is an owned producer: it allocates an environment box
+		// (rc = 1), or shares the pinned empty one when it captures nothing — on
+		// which release is a no-op, so treating both alike costs nothing.
+		//
+		// Its **captures are not analyzed here**. A capture is a copy taken at
+		// creation, not a move out of the enclosing binding, and the backend mints
+		// the environment's own +1 on each managed one (buildEnv) — recording a
+		// retain here as well would double it. The body is a function in its own
+		// right, so it is analyzed as one: its own last-use map, its own frames.
+		// Without this the body got no annotations at all and every managed value
+		// created inside a closure leaked.
+		a.lambda(e)
+		if !needOwned {
+			a.table.ReleaseTemp[e] = true
+		}
+
 	case *ast.InterpolatedStringExpr:
 		// Owned producer once it lowers (deferred in the backend today). Segments
 		// are borrowed.
@@ -907,6 +932,13 @@ func (a *analyzer) block(e *ast.BlockExpr, needOwned bool) {
 // mode, and the call result under needOwned.
 func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	lam := a.resolveCallee(e)
+	// An **indirect** call — through a closure value, a function-typed parameter,
+	// a field holding one — has no LambdaExpr to resolve, but its callee's static
+	// LambdaType carries the same conventions the backend lowers against, so it is
+	// not the "unknown callee" the conservative defaults below exist for. Reading
+	// it matters most for the *result*: a closure returning a managed value
+	// transfers a fresh reference, and treating that as borrowed leaks it.
+	calleeType := a.calleeLambdaType(e)
 	// print/println are compiler-provided builtins whose string parameter is a
 	// borrow, so an owned temporary argument (`print("a" ++ b)`) is released after
 	// the call rather than conservatively transferred (leaked). Only when no user
@@ -916,9 +948,15 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 
 	for i, arg := range e.Arguments {
 		argOwns := true // conservative default: transfer (leak-safe) for an unknown callee
-		if lam != nil {
+		switch {
+		case lam != nil:
 			argOwns = i < len(lam.Parameters) && paramOwnsArgument(lam.Parameters[i].TypeModifier)
-		} else if builtinBorrows {
+		case calleeType != nil:
+			// A function *type* cannot express `own` (the collector populates no mode
+			// for a lambda-type parameter), so every parameter of one is a borrow —
+			// which is exactly what the lifted closure body does with it.
+			argOwns = false
+		case builtinBorrows:
 			argOwns = false
 		}
 		a.expr(arg, argOwns)
@@ -930,6 +968,9 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	// The result's ownership: an owned return is a fresh +1; anything else (a
 	// borrowed return, or an unresolved callee) is treated as borrowed.
 	resultOwned := lam != nil && isOwnedReturn(lam.ReturnType.TypeModifier)
+	if lam == nil && calleeType != nil {
+		resultOwned = isOwnedReturn(calleeType.ReturnType.TypeModifier)
+	}
 	if resultOwned {
 		if !needOwned {
 			a.table.ReleaseTemp[e] = true
@@ -937,6 +978,22 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	} else if needOwned {
 		a.table.Retain[e] = true
 	}
+}
+
+// calleeLambdaType returns the callee's static function type when the call goes
+// through a function *value*, and nil otherwise (a direct call by name, a method
+// call, a type conversion). It is what tells an indirect call apart from a
+// genuinely unresolvable one.
+func (a *analyzer) calleeLambdaType(e *ast.FunctionCallExpr) *types.LambdaType {
+	if a.tt == nil || e.Function == nil {
+		return nil
+	}
+	t, ok := a.tt.Get(e.Function)
+	if !ok {
+		return nil
+	}
+	lt, _ := types.StripNewtype(t).(*types.LambdaType)
+	return lt
 }
 
 // resolveCallee returns the LambdaExpr for a direct call to a top-level named

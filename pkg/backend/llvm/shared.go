@@ -36,6 +36,12 @@ func (l *lowerer) managedBox(block *ir.Block, v value.Value) value.Value {
 	if isStringLLVMType(v.Type()) {
 		return l.stringBox(block, v)
 	}
+	// A closure's environment pointer sits rcHeaderSize past its box, exactly as a
+	// string's data pointer does — that deliberate symmetry is what lets retain and
+	// release treat a function value like any other managed value.
+	if isClosureLLVMType(v.Type()) {
+		return l.closureEnvBox(block, v)
+	}
 	return block.NewBitCast(v, lltypes.NewPointer(lltypes.I8))
 }
 

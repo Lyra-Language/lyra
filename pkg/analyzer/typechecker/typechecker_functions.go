@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"maps"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -24,8 +25,16 @@ import (
 // unknown names emit an "unknown type" diagnostic.
 func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 	oldTypes, oldMods := tc.paramTypes, tc.paramMods
-	tc.paramTypes = make(map[string]types.Type, len(lambda.Parameters))
-	tc.paramMods = make(map[string]types.TypeModifier, len(lambda.Parameters))
+	// A nested lambda is lexically inside the enclosing one, so it sees that
+	// lambda's parameters too — start from them and let this lambda's own
+	// parameters shadow. Replacing the map outright made an enclosing parameter
+	// invisible in a nested body (`(n) -> … => (x) -> … => x + n` reported `n`
+	// undefined), which stayed hidden while an annotated nested lambda's body was
+	// never checked at all.
+	tc.paramTypes = make(map[string]types.Type, len(oldTypes)+len(lambda.Parameters))
+	tc.paramMods = make(map[string]types.TypeModifier, len(oldMods)+len(lambda.Parameters))
+	maps.Copy(tc.paramTypes, oldTypes)
+	maps.Copy(tc.paramMods, oldMods)
 	for _, p := range lambda.Parameters {
 		if ip, ok := p.Pattern.(*ast.IdentifierPattern); ok {
 			// Record the modifier even when the parameter has no type annotation,
@@ -370,6 +379,15 @@ func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.T
 	case *ast.TraitMethodPathExpr:
 		return tc.inferTraitMethodPathCall(callee, call)
 	default:
+		// Any other expression is callable when it *evaluates to* a function —
+		// `fs[1](5)` on an array of closures, or a call returning one. The value's
+		// LambdaType carries the full signature, so the call is checked against it
+		// exactly as a call through a function-typed parameter is.
+		if calleeType := tc.inferExprType(call.Function); calleeType != nil {
+			if lt, ok := calleeType.(*types.LambdaType); ok {
+				return tc.inferLambdaCallFromType(call.Function.GetName(), lt, call)
+			}
+		}
 		tc.addError(call.GetLocation(), SeverityError,
 			"cannot call %s expression", call.Function.GetName())
 		return nil
@@ -420,6 +438,11 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 	if tc.paramTypes != nil {
 		if pt, ok := tc.paramTypes[ident.Name]; ok {
 			if lt, ok := pt.(*types.LambdaType); ok {
+				// Record the callee's own type: a call through a function *value* is
+				// lowered as an indirect call, and the signature to call through comes
+				// from this node's recorded type. Nothing else infers a callee
+				// identifier — the resolution above is structural, not by inference.
+				tc.typeTable.Set(ident, lt)
 				return tc.inferLambdaCallFromType(ident.Name, lt, call)
 			}
 			tc.addError(call.GetLocation(), SeverityError,
@@ -444,10 +467,24 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 	if decl, ok := sym.(*ast.VarDeclStmt); ok {
 		lambda, ok := decl.Value.(*ast.LambdaExpr)
 		if !ok {
+			// Not a literal lambda, but the binding may still hold one: `let add5 =
+			// makeAdder(5)` binds a closure returned by a call. Its declared type is
+			// then a LambdaType, which carries everything a call site needs, so check
+			// against the signature rather than a body that isn't here.
 			declValType := tc.inferExprType(decl.Value)
+			if lt, ok := declValType.(*types.LambdaType); ok {
+				tc.typeTable.Set(ident, lt) // the indirect call's signature (see above)
+				return tc.inferLambdaCallFromType(ident.Name, lt, call)
+			}
 			tc.addError(call.GetLocation(), SeverityError, "identifier %q is not callable (type %s)", ident.Name, declValType)
 			return nil
 		}
+		// Record the callee's signature: a *local* binding of a lambda is a closure
+		// value, and calling it lowers as an indirect call through this node's type.
+		// The signature is built from the declaration alone (lambdaSignature), never
+		// by inferring the lambda as an expression — that would re-check a body
+		// checkVarDecl has already checked.
+		tc.typeTable.Set(ident, tc.lambdaSignature(lambda))
 		return tc.inferLambdaCall(ident.Name, lambda, call)
 	}
 	// sym is some other Named (e.g. Parameter) — fall through to lambda call

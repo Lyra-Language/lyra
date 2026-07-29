@@ -106,6 +106,13 @@ func (l *lowerer) boxDropFn(t types.Type) (value.Value, error) {
 	if t == nil || types.IsString(t) {
 		return nullDropFn(), nil
 	}
+	// A closure's environment owns whatever it captured, but *which* captures those
+	// are is a property of the lambda, not of the function type this release site
+	// knows. So every closure release passes one trampoline that reads the real
+	// glue out of the environment (closures.go).
+	if _, ok := t.(*types.LambdaType); ok {
+		return l.closureEnvDropFn(), nil
+	}
 	// A dynamic array `[]T` owns its elements: its drop_fn loops over the runtime
 	// length releasing each (null when T owns nothing managed).
 	if dyn, ok := t.(types.DynamicArrayType); ok {

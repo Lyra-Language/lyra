@@ -285,6 +285,12 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 			return nil, err
 		}
 		return lltypes.NewArray(uint64(t.Size), elem), nil
+	case *types.LambdaType:
+		// A function value is a boxed closure `{ i8* fn, i8* env }` (closures.go) —
+		// one representation for every function type, which is what lets a
+		// `(i64) -> i64` parameter accept a named function, a captureless lambda, and
+		// a capturing closure without specializing the call site.
+		return ClosureLLVMType(), nil
 	case types.WeakType:
 		// A weak reference is a non-owning pointer (pointer-sized), so it lowers to
 		// an opaque `i8*` — enough to lay out a `weak` field and break a recursive

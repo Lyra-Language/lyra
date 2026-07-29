@@ -1,5 +1,7 @@
-let apply = (f: (i64) -> i64, x: i64) -> i64 => f(x)
+struct Pt { x: i64, y: i64 }
 
-let double = (x: i64) -> i64 => x * 2
-
-let main = () -> u8 => u8(apply(double, 3))
+let main = () -> u8 => {
+    let base = Pt { x: 1, y: 2 }
+    let moved = Pt { base | x: 5 }
+    u8(moved.x)
+}

@@ -126,6 +126,15 @@ const (
 	// definite-only, compile-time check like the literal integer range check.
 	CodeRangeConstraintViolation = "lyra-E023"
 
+	// CodeCapturedAssignment: a lambda assigns to a binding it captured from an
+	// enclosing scope. A closure captures **by value** — the copy is taken when the
+	// closure is created, so it can outlive the frame the original lives in — which
+	// means the write can only reach the closure's own copy, never the enclosing
+	// binding. Silently doing nothing is the same class of bug as a lost write
+	// through a by-value `mut` parameter, so it is rejected instead: return the new
+	// value, or move the state into a value the closure is handed.
+	CodeCapturedAssignment = "lyra-E024"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

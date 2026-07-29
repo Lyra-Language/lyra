@@ -13,6 +13,7 @@ package driver
 import (
 	"fmt"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/ownership"
@@ -36,6 +37,7 @@ type Result struct {
 	TypeTable   *typetable.TypeTable
 	MethodTable *typetable.MethodTable
 	Ownership   *ownership.Table
+	Captures    *captures.Table      // each lambda's free variables (its closure environment)
 	RangeSafety *checker.SafetyTable // overflow ops the backend may leave unchecked
 	Diagnostics []diag.Diagnostic
 }
@@ -154,6 +156,15 @@ func Analyze(source []byte) *Result {
 	// after typechecking — it reads the TypeTable to identify managed types. It
 	// produces no diagnostics; the backend consumes the table.
 	res.Ownership = ownership.Analyze(program, symTable, tt)
+
+	// Capture analysis: each lambda's free variables, which the backend copies
+	// into a closure environment. It reads the TypeTable for each captured
+	// binding's type, so it too runs after typechecking.
+	res.Captures = captures.Analyze(program, symTable, tt)
+
+	// Writing to a captured binding cannot reach the enclosing one (captures are
+	// by value), so it is rejected rather than silently dropped.
+	res.Diagnostics = append(res.Diagnostics, checker.CheckCapturedAssignment(program, res.Captures)...)
 
 	// Post-typecheck checker passes that already return diag.Diagnostic (they
 	// carry their own severity and Unnecessary/Deprecated tags).

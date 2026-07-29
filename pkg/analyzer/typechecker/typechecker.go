@@ -229,6 +229,11 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// annotation check is skipped for them.
 	if lambda, ok := decl.Value.(*ast.LambdaExpr); ok {
 		tc.checkLambdaBody(decl.Name, lambda)
+		// Record the binding's type. A local `let f = <lambda>` is a closure *value*
+		// — the backend has to know it is one to frame it for release — and the
+		// signature is what an indirect call through `f` is checked and lowered
+		// against. Built from the declaration alone, since the body was just checked.
+		tc.typeTable.Set(decl.Value, tc.lambdaSignature(lambda))
 		return
 	}
 
@@ -2338,9 +2343,14 @@ func (tc *TypeChecker) convertAnonymousStructFieldsToTypeFields(fields []ast.Str
 // inferLambdaExprType returns a LambdaType for a bare lambda expression,
 // recording it in the type table so subsequent uses of the same AST node
 // are handled via the cache (first line of inferExprType).
-func (tc *TypeChecker) inferLambdaExprType(lambda *ast.LambdaExpr) types.Type {
+// lambdaSignature builds a lambda's type from its declaration alone — parameter
+// types and the declared return type — without checking its body. Call sites that
+// only need the *signature* (an indirect call through a binding that holds a
+// lambda) use this, so recording the callee's type cannot double-check a body the
+// declaration path already checked.
+func (tc *TypeChecker) lambdaSignature(lambda *ast.LambdaExpr) *types.LambdaType {
 	t := &types.LambdaType{
-		ReturnType: types.ReturnType{Type: lambda.ReturnType.Type},
+		ReturnType: types.ReturnType{Type: tc.resolveTypeIfKnown(lambda.ReturnType.Type)},
 	}
 	for _, p := range lambda.Parameters {
 		t.Parameters = append(t.Parameters, types.ParameterType{
@@ -2348,6 +2358,11 @@ func (tc *TypeChecker) inferLambdaExprType(lambda *ast.LambdaExpr) types.Type {
 			DefaultValue: p.DefaultValue,
 		})
 	}
+	return t
+}
+
+func (tc *TypeChecker) inferLambdaExprType(lambda *ast.LambdaExpr) types.Type {
+	t := tc.lambdaSignature(lambda)
 	// Infer the return type from the body when the lambda carries no return
 	// annotation (`(n: u8) => n`). Without this an unannotated lambda literal
 	// has a nil (un-inferred) return type, so passing it where a concrete
@@ -2358,6 +2373,15 @@ func (tc *TypeChecker) inferLambdaExprType(lambda *ast.LambdaExpr) types.Type {
 		tc.withParamScope(lambda, func() {
 			t.ReturnType.Type = tc.inferExprType(lambda.Body)
 		})
+	} else if lambda.Body != nil {
+		// An *annotated* lambda in value position — `twice((y: i64) -> i64 => y + n, 1)`
+		// — still needs its body checked: without it the body's expressions get no
+		// recorded types at all, so nothing downstream can read them (the capture
+		// analysis cannot type a captured binding, and the backend cannot lower the
+		// body). The declaration path reaches checkLambdaBody through checkVarDecl,
+		// which returns before ever inferring the lambda as an expression, so the two
+		// paths are disjoint and this cannot double-report.
+		tc.checkLambdaBody("lambda", lambda)
 	}
 	tc.typeTable.Set(lambda, t)
 	return t

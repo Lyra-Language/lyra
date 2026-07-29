@@ -186,6 +186,9 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		dropFns:            map[string]*ir.Func{},
 		retainFns:          map[string]*ir.Func{},
 		cStrings:           map[string]*ir.Global{},
+		closures:           map[*ast.LambdaExpr]*ir.Func{},
+		closureThunks:      map[string]*ir.Func{},
+		envDropFns:         map[string]*ir.Func{},
 	}
 	// Record top-level `const` declarations so a reference to one inlines its
 	// compile-time value (they aren't functions, so forEachUserFunction skips them).
@@ -209,11 +212,27 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 	if err := l.forEachUserFunction(res.Program, entry.Lambda, l.declareFunction); err != nil {
 		return nil, err
 	}
+	// Every *nested* lambda is lifted to a function of its own (closures.go), and
+	// like the named ones they are all declared before any body so a creation site
+	// can reference one. Their bodies are lowered last, after every enclosing
+	// function — never re-entrantly at the creation site, which would mean saving
+	// and restoring the whole per-function lowering state mid-expression.
+	nested := collectNestedLambdas(res.Program, entry.Lambda)
+	for _, fn := range nested {
+		if err := l.declareClosure(fn); err != nil {
+			return nil, err
+		}
+	}
 	if err := l.lowerEntry(entry); err != nil {
 		return nil, err
 	}
 	if err := l.forEachUserFunction(res.Program, entry.Lambda, l.defineFunction); err != nil {
 		return nil, err
+	}
+	for _, fn := range nested {
+		if err := l.defineClosure(fn); err != nil {
+			return nil, err
+		}
 	}
 	return m, nil
 }
@@ -295,6 +314,24 @@ type lowerer struct {
 	// and any code that would otherwise assume every slot is an *ir.InstAlloca.
 	// Reset by beginFunction.
 	byRefParams map[value.Value]bool
+
+	// Closures (closures.go). A function value is `{ i8* fn, i8* env }`, so every
+	// lambda used as one is lifted to a top-level function taking its environment
+	// as a leading parameter.
+	//   - closures maps each nested lambda to its lifted function; all are declared
+	//     before any body, like named functions, so a creation site resolves.
+	//   - closureThunks caches the per-function adapter that lets a *named* function
+	//     be used as a value without giving every direct call an env parameter.
+	//   - emptyEnvPtr is the one pinned static environment every captureless
+	//     function value shares; envDropFns caches the per-capture-set drop glue,
+	//     reached at release time through the closureEnvDrop trampoline.
+	closures       map[*ast.LambdaExpr]*ir.Func
+	closureThunks  map[string]*ir.Func
+	envDropFns     map[string]*ir.Func
+	closureEnvDrop *ir.Func
+	emptyEnvPtr    value.Value
+	closureCount   int
+	envDropCount   int
 
 	// dropFns caches the per-type recursive drop glue (drop.go), keyed by the
 	// payload type's String(). Module-level, not per-function: one @lyra_drop_T
@@ -480,6 +517,13 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		if cd, ok := l.consts[e.Name]; ok && cd.Value != nil {
 			return l.lowerExpr(block, cd.Value)
 		}
+		// A top-level function named in value position (`apply(double, 3)`): build a
+		// closure value over it. Its environment is the shared pinned empty one — a
+		// named function captures nothing — so this costs no allocation.
+		if _, ok := l.funcs[e.Name]; ok {
+			v, err := l.namedFunctionValue(block, e.Name)
+			return v, block, err
+		}
 		return nil, nil, fmt.Errorf("llvm: unbound identifier %q", e.Name)
 	case *ast.BooleanBinaryOpExpr:
 		return l.lowerBooleanBinaryOpExpr(block, e)
@@ -515,6 +559,8 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		return l.lowerDataConstructorExpr(block, e)
 	case *ast.MatchExpr:
 		return l.lowerMatch(block, e)
+	case *ast.LambdaExpr:
+		return l.lowerLambdaExpr(block, e)
 	}
 	return nil, nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
 }

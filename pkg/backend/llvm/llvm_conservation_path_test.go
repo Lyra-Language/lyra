@@ -186,6 +186,34 @@ let main = () -> u8 => u8(f(5))`,
 }`,
 		},
 		{
+			// A closure environment is an allocation like any other, and a branch is
+			// where one can be dropped: whichever closure is built, its environment
+			// must be released on the way out.
+			//
+			// The closures are deliberately never *called* — an indirect call hands
+			// the environment to a call instruction, which the escape rule stops
+			// reasoning about (correctly, since a callee may take ownership), leaving
+			// no path claim to check. What is pinned here is creation and release,
+			// which is exactly the half a branch can get wrong.
+			"closure environment in a branch", `let main = () -> u8 => {
+  let n = 5
+  let f = if n > 3 { (x: i64) -> i64 => x + n } else { (x: i64) -> i64 => x - n }
+  0
+}`,
+		},
+		{
+			// A capturing closure created once per iteration: the environment must be
+			// released inside the loop, or it leaks once per turn.
+			"closure created in a loop", `let main = () -> u8 => {
+  var total = 0
+  for var i = 0; i < 3; i += 1 {
+    let f = (x: i64) -> i64 => x + i
+    total = total + 1
+  }
+  u8(total)
+}`,
+		},
+		{
 			// A newtype over a managed base, branched on. The wrapper is nominal only,
 			// so the box behind it must be released on both edges exactly as a bare
 			// string's is — a name is not a place to lose a reference.
