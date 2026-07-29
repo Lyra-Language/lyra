@@ -12,6 +12,7 @@ import (
 // bindings, function params/args, and returns as by-value aggregates.
 
 func TestExec_StaticArray(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -54,9 +55,12 @@ func TestExec_StaticArray(t *testing.T) {
 		 }`, 1},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d, want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d, want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -68,6 +72,7 @@ func TestExec_StaticArray(t *testing.T) {
 // same unsigned `>= size` check (`i` is out of range only past *both* ends —
 // `i >= size` or `i < -size`, since a negative index counts from the end).
 func TestExec_ArrayBoundsCheck(t *testing.T) {
+	t.Parallel()
 	trap := []struct {
 		name string
 		src  string
@@ -78,9 +83,12 @@ func TestExec_ArrayBoundsCheck(t *testing.T) {
 		 let main = () -> u8 => at([10, 20, 30], -4)`},
 	}
 	for _, c := range trap {
-		if got := buildAndRun(t, c.src); got != trapExitCode {
-			t.Errorf("%s: exited %d, want %d (trap)", c.name, got, trapExitCode)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != trapExitCode {
+				t.Errorf("%s: exited %d, want %d (trap)", c.name, got, trapExitCode)
+			}
+		})
 	}
 
 	// The in-bounds boundaries (last positive index and -size) do not trap.
@@ -104,6 +112,7 @@ func TestExec_ArrayBoundsCheck(t *testing.T) {
 // (through a param) and a constant one (a `-1` literal is a NegationExpr, so it
 // takes the runtime path — the typechecker range-checks a constant negative).
 func TestExec_NegativeArrayIndex(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -121,9 +130,12 @@ func TestExec_NegativeArrayIndex(t *testing.T) {
 		 }`, 30},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d, want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d, want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -131,6 +143,7 @@ func TestExec_NegativeArrayIndex(t *testing.T) {
 // [N x T]; a constant index is a bare extractvalue with no bounds trap; a runtime
 // index is a bounds compare + trap + getelementptr; the OOB trap is defined once.
 func TestEmit_ArrayIR(t *testing.T) {
+	t.Parallel()
 	emit := func(src string) string {
 		out, err := emitSource(t, src)
 		if err != nil {

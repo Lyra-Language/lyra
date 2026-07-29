@@ -25,6 +25,7 @@ import (
 //   - shared (rc > 1): returns null and decrements the count;
 //   - pinned (arena): returns null and leaves the count untouched.
 func TestExec_RCDropReuse(t *testing.T) {
+	t.Parallel()
 	m := ir.NewModule()
 	l := &lowerer{module: m}
 	l.ensureRCRuntime()
@@ -38,7 +39,9 @@ func TestExec_RCDropReuse(t *testing.T) {
 	b := main.NewBlock("entry")
 	loadRC := func(box value.Value) value.Value { return b.NewLoad(lltypes.I64, b.NewBitCast(box, i64ptr)) }
 	eqPtr := func(x, y value.Value) value.Value { return b.NewICmp(enum.IPredEQ, x, y) }
-	eqI := func(v value.Value, n int64) value.Value { return b.NewICmp(enum.IPredEQ, v, constant.NewInt(lltypes.I64, n)) }
+	eqI := func(v value.Value, n int64) value.Value {
+		return b.NewICmp(enum.IPredEQ, v, constant.NewInt(lltypes.I64, n))
+	}
 
 	// Unique → returns the same box, rc still 1, not freed.
 	box := b.NewCall(l.rcAlloc, constant.NewInt(lltypes.I64, 24))
@@ -167,10 +170,14 @@ var reuseCases = []struct {
 
 // TestExec_Reuse runs each reuse program and checks the result.
 func TestExec_Reuse(t *testing.T) {
+	t.Parallel()
 	for _, c := range reuseCases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -178,6 +185,7 @@ func TestExec_Reuse(t *testing.T) {
 // box that is still live (a borrowed scrutinee, or a non-unique value) would be a
 // use-after-free or double-free, which aborts here.
 func TestExec_ReuseASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH")
@@ -186,9 +194,12 @@ func TestExec_ReuseASan(t *testing.T) {
 		t.Skip("AddressSanitizer not available in this toolchain")
 	}
 	for _, c := range reuseCases {
-		if got := buildAndRunASan(t, clang, c.src); got != c.want {
-			t.Errorf("%s (asan): exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRunASan(t, clang, c.src); got != c.want {
+				t.Errorf("%s (asan): exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -197,6 +208,7 @@ func TestExec_ReuseASan(t *testing.T) {
 // the token (a reclaim path that stores into the box, and an alloc fallback). A
 // borrowed scrutinee's match, by contrast, must emit no drop-reuse.
 func TestEmit_ReuseIR(t *testing.T) {
+	t.Parallel()
 	srcByName := func(name string) string {
 		for _, c := range reuseCases {
 			if c.name == name {

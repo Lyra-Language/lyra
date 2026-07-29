@@ -15,6 +15,7 @@ func hasCheck(ir string) bool {
 }
 
 func TestEmit_OverflowElision(t *testing.T) {
+	t.Parallel()
 	emit := func(src string) string {
 		out, err := emitSource(t, src)
 		if err != nil {
@@ -74,6 +75,7 @@ func TestEmit_OverflowElision(t *testing.T) {
 // Elision changes IR but never semantics: a provably-safe op computes the same
 // value as the checked form would.
 func TestExec_ElisionPreservesResults(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		src  string
 		want int
@@ -104,9 +106,12 @@ func TestExec_ElisionPreservesResults(t *testing.T) {
 		}`, 3},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%q exited %d, want %d", c.src, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d, want %d", c.src, got, c.want)
+			}
+		})
 	}
 }
 
@@ -114,6 +119,7 @@ func TestExec_ElisionPreservesResults(t *testing.T) {
 // overflows — elision never hides a real overflow. (The value comes through a
 // parameter, so the analysis widens to the full range and keeps the check.)
 func TestExec_ElisionKeepsRealTrap(t *testing.T) {
+	t.Parallel()
 	src := `let add = (a: u8, b: u8) -> u8 => a + b
 	let main = () -> u8 => add(200, 100)`
 	if got := buildAndRun(t, src); got != trapExitCode {
@@ -125,6 +131,7 @@ func TestExec_ElisionKeepsRealTrap(t *testing.T) {
 // (parameter) divisor keeps it. The module under test has exactly one division, so
 // the presence/absence of the trap string is decisive.
 func TestEmit_DivisionElision(t *testing.T) {
+	t.Parallel()
 	emit := func(src string) string {
 		out, err := emitSource(t, src)
 		if err != nil {
@@ -157,6 +164,7 @@ func TestEmit_DivisionElision(t *testing.T) {
 // Array-bounds elision: an index the range analysis proves is within [0, size)
 // drops the bounds check; a full-range (parameter) index keeps it.
 func TestEmit_BoundsElision(t *testing.T) {
+	t.Parallel()
 	emit := func(src string) string {
 		out, err := emitSource(t, src)
 		if err != nil {
@@ -193,6 +201,7 @@ func TestEmit_BoundsElision(t *testing.T) {
 // Elision changes IR but never semantics — an elided div / index reads the same
 // value the checked form would.
 func TestExec_DivBoundsElisionPreservesResults(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		src  string
 		want int
@@ -211,15 +220,19 @@ func TestExec_DivBoundsElisionPreservesResults(t *testing.T) {
 		}`, 42},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%q exited %d, want %d", c.src, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d, want %d", c.src, got, c.want)
+			}
+		})
 	}
 }
 
 // Soundness: a divide-by-zero / out-of-bounds the analysis can't rule out still
 // traps at runtime — the operand comes through a parameter, so the check stays.
 func TestExec_ElisionKeepsRealDivBoundsTrap(t *testing.T) {
+	t.Parallel()
 	divzero := `let d = (a: u8, b: u8) -> u8 => a / b
 	let main = () -> u8 => d(84, 0)`
 	if got := buildAndRun(t, divzero); got != trapExitCode {
@@ -241,6 +254,7 @@ func TestExec_ElisionKeepsRealDivBoundsTrap(t *testing.T) {
 // never causes a wrong elision — a real u64 overflow still traps, and a provably-
 // safe u64 op that IS elided still computes the right value.
 func TestExec_U64_ElisionSoundness(t *testing.T) {
+	t.Parallel()
 	// A full-range u64 subtraction can underflow; passed 5 - 10 it must still trap
 	// (the params are opaque, so the analysis can't — and must not — elide the check).
 	underflow := `let sub = (a: u64, b: u64) -> u64 => a - b
@@ -264,6 +278,7 @@ func TestExec_U64_ElisionSoundness(t *testing.T) {
 // pattern that bounds the index into range elides its bounds check, and this must
 // preserve semantics. Here `2` matches the `0..=2` arm and reads xs[2] == 30.
 func TestExec_MatchRefinementElisionPreservesResults(t *testing.T) {
+	t.Parallel()
 	src := `let at = (xs: [3]u8, i: u8) -> u8 => match i {
 	  0..=2 => xs[i],
 	  _ => 0,

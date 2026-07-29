@@ -12,6 +12,7 @@ import (
 // clang-validity check that the module is well-formed.
 
 func TestEmit_DataTypeLayout(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -73,6 +74,7 @@ func TestEmit_DataTypeLayout(t *testing.T) {
 // malformed type is rejected at compile). The data type is unused by main today
 // (no construction yet), so main just returns its value.
 func TestExec_DataModuleIsValid(t *testing.T) {
+	t.Parallel()
 	src := "data Shape = Circle(i64) | Rect(i64, i64)\ndata Color = Red | Green | Blue\nlet main = () -> u8 => 42\n"
 	if got := buildAndRun(t, src); got != 42 {
 		t.Errorf("module with data decls exited %d; want 42", got)
@@ -85,6 +87,7 @@ func TestExec_DataModuleIsValid(t *testing.T) {
 // module is valid IR that runs (buildAndRun) with the construction present, and
 // pin the construction instruction shape (TestEmit_DataConstructionIR).
 func TestExec_DataConstruction(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -148,9 +151,12 @@ func TestExec_DataConstruction(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -163,6 +169,7 @@ func TestExec_DataConstruction(t *testing.T) {
 // the backend panicked building the payload (`insertvalue elem type mismatch,
 // expected i8, got i64`). Exit code 42 == 20 + 22.
 func TestExec_DataNarrowTuplePayload(t *testing.T) {
+	t.Parallel()
 	src := `data Wrap = Wrapped((u8, u8))
 	 let f = (w: Wrap) -> u8 => match w { Wrapped((a, b)) => a + b }
 	 let main = () -> u8 => f(Wrapped((20, 22)))`
@@ -175,6 +182,7 @@ func TestExec_DataNarrowTuplePayload(t *testing.T) {
 // store the tag at field 0, and (payload variant) insertvalue the fields and
 // store the payload struct into field 1.
 func TestEmit_DataConstructionIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `data Shape = Circle(i64) | Rect(i64, i64)
 	 let main = () -> u8 => {
 	   let s = Rect(3, 4)
@@ -200,6 +208,7 @@ func TestEmit_DataConstructionIR(t *testing.T) {
 // payload field (a recursive `Cons`) heap-allocates the nested value in a
 // ref-counted box (the `shared List` field is a pointer to that box).
 func TestEmit_DataSharedPayloadConstruction(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `data List = Nil | Cons(i64, shared List)
 	 let main = () -> u8 => {
 	   let c = Cons(1, Nil)
@@ -220,6 +229,7 @@ func TestEmit_DataSharedPayloadConstruction(t *testing.T) {
 // blob [1 x i64]. (A recursive reference must instead be `shared` per lyra-E014,
 // which is pointer-sized — see the "recursive shared" case above.)
 func TestEmit_DataByValueNamedPayload(t *testing.T) {
+	t.Parallel()
 	src := "struct P {\n  x: i64,\n}\ndata W = Empty | Wrap(P)\nlet main = () -> u8 => 0\n"
 	got, err := emitSource(t, src)
 	if err != nil {
@@ -235,6 +245,7 @@ func TestEmit_DataByValueNamedPayload(t *testing.T) {
 // reclassifies the const_identifier form into the same nodes a PascalCase
 // constructor produces, so construction, match, and applied payloads all lower.
 func TestExec_ScreamingCaseConstructors(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -258,8 +269,11 @@ func TestExec_ScreamingCaseConstructors(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }

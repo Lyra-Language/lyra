@@ -12,6 +12,7 @@ import (
 // interpolated string and check the exact stdout — the observable result.
 
 func TestExec_StringInterpolation(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		src     string
@@ -87,13 +88,16 @@ func TestExec_StringInterpolation(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		out, code := buildAndRunCapture(t, c.src)
-		if code != 0 {
-			t.Errorf("%s: exited %d, want 0", c.name, code)
-		}
-		if out != c.wantOut {
-			t.Errorf("%s: stdout = %q, want %q", c.name, out, c.wantOut)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			out, code := buildAndRunCapture(t, c.src)
+			if code != 0 {
+				t.Errorf("%s: exited %d, want 0", c.name, code)
+			}
+			if out != c.wantOut {
+				t.Errorf("%s: stdout = %q, want %q", c.name, out, c.wantOut)
+			}
+		})
 	}
 }
 
@@ -101,6 +105,7 @@ func TestExec_StringInterpolation(t *testing.T) {
 // (one ref-counted box) and that the ownership pass frees it — a leak would show
 // a missing release, a double free a second one.
 func TestEmit_InterpolationIR(t *testing.T) {
+	t.Parallel()
 	// The interpolated string is built (one alloc), printed (borrowed), then dead:
 	// the ownership pass releases it once.
 	src := `let main = () -> void => {
@@ -122,6 +127,7 @@ func TestEmit_InterpolationIR(t *testing.T) {
 // TestExec_InterpolationASan compiles interpolation programs with AddressSanitizer
 // to prove the heap result is memory-safe (a double free / use-after-free aborts).
 func TestExec_InterpolationASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH")
@@ -144,8 +150,11 @@ func TestExec_InterpolationASan(t *testing.T) {
 		 }`,
 	}
 	for i, src := range cases {
-		if got := buildAndRunASan(t, clang, src); got != 0 {
-			t.Errorf("case %d (asan): exited %d, want 0", i, got)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRunASan(t, clang, src); got != 0 {
+				t.Errorf("case %d (asan): exited %d, want 0", i, got)
+			}
+		})
 	}
 }

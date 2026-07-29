@@ -12,6 +12,7 @@ import (
 // constructed data value observable end to end — construct, match, extract a
 // field, return it — so these are all buildAndRun.
 func TestExec_DataMatch(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -88,15 +89,19 @@ func TestExec_DataMatch(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
 // TestEmit_DataMatchIR pins the match shape: a switch on the loaded tag, and an
 // extractvalue reading a bound payload field.
 func TestEmit_DataMatchIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `data Maybe = None | Some(u8)
 	 let f = (m: Maybe) -> u8 => match m {
 	   None => 0,
@@ -122,6 +127,7 @@ func TestEmit_DataMatchIR(t *testing.T) {
 // ladder — data, scalar, struct, and tuple — running the program so a mis-wired
 // fall-through shows up as the wrong exit code.
 func TestExec_MatchGuards(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -198,9 +204,12 @@ func TestExec_MatchGuards(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -208,6 +217,7 @@ func TestExec_MatchGuards(t *testing.T) {
 // ladder (no `switch`), and the guard adds its own `icmp`/`br i1` after the tag
 // test.
 func TestEmit_MatchGuardIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `data Maybe = None | Some(u8)
 	 let f = (m: Maybe) -> u8 => match m {
 	   Some(x) if x > 3 => x,
@@ -233,6 +243,7 @@ func TestEmit_MatchGuardIR(t *testing.T) {
 // to one block, such a match lowers to the if-else ladder instead: each arm's
 // condition is the tag check ANDed with its payload test, first-match-wins.
 func TestExec_DataLiteralPayload(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -300,9 +311,12 @@ func TestExec_DataLiteralPayload(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -310,6 +324,7 @@ func TestExec_DataLiteralPayload(t *testing.T) {
 // match: no `switch` (the tag `switch` can't test payloads), an `icmp eq` for both
 // the tag check and the payload literal, and a `br i1` cond-branch per arm.
 func TestEmit_DataLiteralPayloadIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `data Maybe = None | Some(u8)
 	 let f = (m: Maybe) -> u8 => match m {
 	   Some(0) => 1,
@@ -334,6 +349,7 @@ func TestEmit_DataLiteralPayloadIR(t *testing.T) {
 // comparisons feeding a merge phi. These run the compiled program so a wrong
 // predicate or arm selection shows up as the wrong exit code.
 func TestExec_ScalarMatch(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -403,9 +419,12 @@ func TestExec_ScalarMatch(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -413,6 +432,7 @@ func TestExec_ScalarMatch(t *testing.T) {
 // a cond-br to the arm body or the next test (no `switch` — the ladder is used
 // uniformly so a range arm fits).
 func TestEmit_ScalarMatchIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `let f = (n: u8) -> u8 => match n {
 	   0 => 10,
 	   1 => 20,
@@ -434,6 +454,7 @@ func TestEmit_ScalarMatchIR(t *testing.T) {
 // fields (extractvalue), while a literal field sub-pattern (`{ x: 0, y }`) makes
 // the arm conditional on that field. These run the compiled program.
 func TestExec_StructMatch(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -523,15 +544,19 @@ func TestExec_StructMatch(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
 // TestEmit_StructMatchIR pins the shape: fields read via extractvalue (no tag
 // switch, since a struct has a single shape).
 func TestEmit_StructMatchIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `struct Pt {
 	   x: u8,
 	   y: u8,
@@ -552,6 +577,7 @@ func TestEmit_StructMatchIR(t *testing.T) {
 // positional: a tuple pattern `(a, b)` binds elements by index (extractvalue),
 // and a literal element (`(0, b)`) makes the arm conditional on that position.
 func TestExec_TupleMatch(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -616,9 +642,12 @@ func TestExec_TupleMatch(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -626,6 +655,7 @@ func TestExec_TupleMatch(t *testing.T) {
 // (no tag/branch needed on a single-shape aggregate): a struct/tuple sub-pattern
 // binds and tests its own elements, to arbitrary depth.
 func TestExec_NestedAggregatePatterns(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -700,9 +730,12 @@ func TestExec_NestedAggregatePatterns(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -711,6 +744,7 @@ func TestExec_NestedAggregatePatterns(t *testing.T) {
 // nested inside an aggregate (the data value's tag becomes a comparison in the
 // aggregate ladder, then its payload is bound on the taken path).
 func TestExec_NestedDataPatterns(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -810,9 +844,12 @@ func TestExec_NestedDataPatterns(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -822,6 +859,7 @@ func TestExec_NestedDataPatterns(t *testing.T) {
 // fallback to the tuple reading (grammar fix in tree-sitter-lyra). These construct
 // such a tuple and match it, exercising the parse end to end.
 func TestExec_LeadingNameTupleMatch(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -855,8 +893,11 @@ func TestExec_LeadingNameTupleMatch(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }

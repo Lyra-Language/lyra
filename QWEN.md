@@ -232,6 +232,28 @@ assertErrorsAre(t, res, "expected error message 1", "expected error message 2")
 
 `res` exposes `res.program`, `res.symTable`, `res.typeTable`, and `res.errors`.
 
+### Backend behavioral tests (`pkg/backend/llvm/`)
+
+The `buildAndRun*` helpers compile emitted IR with clang and run the binary. Two
+pieces of infrastructure keep this package fast — it dominates the suite's wall
+time, and both exist because macOS security-assesses every *newly created*
+executable on its first exec (syspolicyd/XProtect), serialized system-wide at
+~200ms per binary (compilation parallelizes fine; re-exec of an already-assessed
+file is ~1ms):
+
+- **Everything is parallel** — every test function calls `t.Parallel()`, and
+  table-driven cases run as parallel subtests (`t.Run` + `t.Parallel`). New
+  tests should follow suit. ASan binary *executions* are capped by a small
+  semaphore (`asanRunSlots`) — many simultaneous ASan startups can sporadically
+  fail their shadow-memory mapping.
+- **Compiled binaries are cached** (`exec_cache_test.go`): `compileCached` keys
+  the binary on SHA-256(clang version | GOOS/GOARCH | flags | IR bytes) in
+  `~/Library/Caches/lyra-llvm-tests` (`os.UserCacheDir()`). A warm run of the
+  package takes ~2s; a cold run (or one after backend changes that alter most
+  programs' IR) pays the serialized assessment (~2min for the full set). Only
+  tests whose emitted IR changed recompile. Entries untouched for 30 days are
+  pruned at init; deleting the directory just forces a full recompile.
+
 ### Running all tests
 
 ```bash

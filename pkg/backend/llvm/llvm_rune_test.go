@@ -11,6 +11,7 @@ import (
 // identifier/wildcard arm is the catch-all. These compile and run end to end,
 // observable through the u8 exit code.
 func TestExec_RuneMatch(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -70,15 +71,19 @@ func TestExec_RuneMatch(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
 // A rune match lowers to the scalar ladder: an i32 comparison against the
 // code point, not a data-tag switch.
 func TestEmit_RuneMatchIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `let f = (r: rune) -> u8 => match r {
 	   'a' => 1,
 	   _ => 0,

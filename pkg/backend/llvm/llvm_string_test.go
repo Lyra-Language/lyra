@@ -11,6 +11,7 @@ import (
 // compiles with clang and runs, so a wrong length/memcmp shows up as the wrong
 // exit code.
 func TestExec_StringEquality(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -69,15 +70,19 @@ func TestExec_StringEquality(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
 // A string parameter and a string return value both lower (the fat pointer is
 // passed/returned by value), so a string helper composes.
 func TestExec_StringFunction(t *testing.T) {
+	t.Parallel()
 	src := `let greet = () -> string => "hello"
 	 let main = () -> u8 => if greet() == "hello" { 11 } else { 0 }`
 	if got := buildAndRun(t, src); got != 11 {
@@ -88,6 +93,7 @@ func TestExec_StringFunction(t *testing.T) {
 // A string scrutinee matches via the shared scalar ladder, each literal arm a
 // byte-equality test; an identifier catch-all binds the whole string.
 func TestExec_StringMatch(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -127,9 +133,12 @@ func TestExec_StringMatch(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -139,6 +148,7 @@ func TestExec_StringMatch(t *testing.T) {
 // concat-of-concats chain, and concatenation of runtime (parameter) strings whose
 // bytes don't live in a constant global.
 func TestExec_StringConcat(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -211,9 +221,12 @@ func TestExec_StringConcat(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -221,6 +234,7 @@ func TestExec_StringConcat(t *testing.T) {
 // two memcpys building the result, plus the runtime being defined (not just
 // declared) inside the module.
 func TestEmit_StringConcatIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `let main = () -> u8 => {
 	   let s: string = "foo" ++ "bar"
 	   if s == "foobar" { 1 } else { 0 }
@@ -241,6 +255,7 @@ func TestEmit_StringConcatIR(t *testing.T) {
 
 // A program that never allocates carries no runtime — it's emitted lazily.
 func TestEmit_NoRuntimeWhenUnused(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, "let main = () -> u8 => 42\n")
 	if err != nil {
 		t.Fatal(err)
@@ -255,6 +270,7 @@ func TestEmit_NoRuntimeWhenUnused(t *testing.T) {
 // it and the ownership model can treat every string value uniformly. `data`
 // points past the header (index 0,1,0 → box+8), no runtime allocation.
 func TestEmit_StringLiteralIsPinnedBox(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `let main = () -> u8 => if "hi" == "hi" { 1 } else { 0 }`)
 	if err != nil {
 		t.Fatal(err)
@@ -272,6 +288,7 @@ func TestEmit_StringLiteralIsPinnedBox(t *testing.T) {
 // TestEmit_StringIR pins the representation: a private constant for the bytes,
 // the { i8*, i64 } fat pointer, and a memcmp call for equality.
 func TestEmit_StringIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `let eq = (a: string, b: string) -> bool => a == b
 	 let main = () -> u8 => if eq("hi", "hi") { 1 } else { 0 }`)
 	if err != nil {
@@ -288,6 +305,7 @@ func TestEmit_StringIR(t *testing.T) {
 // must error loudly. Concatenation and interpolation are no longer here — they
 // lower now (TestExec_StringConcat, TestExec_StringInterpolation).
 func TestEmit_StringDeferred(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		src     string

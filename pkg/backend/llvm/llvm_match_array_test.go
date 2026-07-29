@@ -10,6 +10,7 @@ import (
 // whole-array `[...rest]` borrowing (first match wins).
 
 func TestExec_ArrayMatch(t *testing.T) {
+	t.Parallel()
 	// One classifier reused with different-length inputs. (An `[]` empty pattern is a
 	// grammar gap — it doesn't parse — so empty falls to the catch-all here.)
 	classify := func(literal string) string {
@@ -35,6 +36,7 @@ let main = () -> u8 => {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, classify(c.literal)); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}
@@ -45,6 +47,7 @@ let main = () -> u8 => {
 // Literal element patterns: an arm matches only when the length AND every literal
 // element agree (a length match with a mismatched element falls through).
 func TestExec_ArrayMatch_LiteralElements(t *testing.T) {
+	t.Parallel()
 	prog := func(literal string) string {
 		return `let f = (xs: []i64) -> u8 => match xs {
   [1, 2] => 1,
@@ -67,6 +70,7 @@ let main = () -> u8 => {
 	}
 	for _, c := range cases {
 		t.Run(c.literal, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, prog(c.literal)); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}
@@ -76,6 +80,7 @@ let main = () -> u8 => {
 
 // `[...rest]` binds the whole array (a borrow) and is exhaustive on its own.
 func TestExec_ArrayMatch_RestBindsWhole(t *testing.T) {
+	t.Parallel()
 	src := `let f = (xs: []i64) -> u8 => match xs {
   [...rest] => u8(rest[0] + rest[1])
 }
@@ -90,6 +95,7 @@ let main = () -> u8 => {
 
 // Matching a `[]string` reads elements as borrows — memory-safe under ASan.
 func TestExec_ArrayMatch_StringElementsASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH; skipping ASan test")
@@ -114,6 +120,7 @@ let main = () -> u8 => {
 // A `[head, ...tail]` pattern that binds a tail sub-array is deferred with a loud
 // error (it needs an allocation + copy).
 func TestEmit_ArrayMatch_TailBindingDeferred(t *testing.T) {
+	t.Parallel()
 	src := `let f = (xs: []i64) -> u8 => match xs {
   [head, ...tail] => u8(head),
   _ => 0
@@ -131,6 +138,7 @@ let main = () -> u8 => {
 // An `[]` empty array pattern (now that it parses) matches a zero-length array — the
 // base case of a list match. Verifies the grammar change end to end.
 func TestExec_ArrayMatch_EmptyPattern(t *testing.T) {
+	t.Parallel()
 	prog := func(literal string) string {
 		return `let classify = (xs: []i64) -> u8 => match xs {
   [] => 0,
@@ -146,12 +154,13 @@ let main = () -> u8 => {
 		literal string
 		want    int
 	}{
-		{"[]", 0},   // empty matches []
-		{"[5]", 5},  // one element
+		{"[]", 0},      // empty matches []
+		{"[5]", 5},     // one element
 		{"[1, 2]", 99}, // longer → catch-all
 	}
 	for _, c := range cases {
 		t.Run(c.literal, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, prog(c.literal)); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}

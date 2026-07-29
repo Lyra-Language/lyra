@@ -19,6 +19,7 @@ import (
 // i16/i32 since it's above the signed max; clang accepts it and the exec test
 // below compiles, so the assertion checks the width, not the constant spelling.)
 func TestEmit_NarrowSignedMin_Width(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name   string
 		src    string
@@ -58,6 +59,7 @@ func TestEmit_NarrowSignedMin_Width(t *testing.T) {
 // TestExec_NarrowSignedMin runs the case that used to emit invalid IR: the min
 // value used in typed arithmetic against a same-width operand. -128 / -2 = 64.
 func TestExec_NarrowSignedMin(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -80,8 +82,11 @@ func TestExec_NarrowSignedMin(t *testing.T) {
 		}`, 128},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }

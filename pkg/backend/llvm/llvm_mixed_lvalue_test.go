@@ -6,6 +6,7 @@ import "testing"
 // `m[i][j] = v` — lower via the recursive lvalueAddress, which nests an `[i]` hop
 // and a `.field` hop in either order.
 func TestExec_MixedLValueAssignment(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -57,6 +58,7 @@ let main = () -> u8 => {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}

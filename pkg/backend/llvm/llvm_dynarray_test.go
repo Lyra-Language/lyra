@@ -13,6 +13,7 @@ import (
 // through let/params/returns. See dynarray.go.
 
 func TestExec_DynArray(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -76,6 +77,7 @@ let main = () -> u8 => {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}
@@ -85,6 +87,7 @@ let main = () -> u8 => {
 
 // A runtime index out of the runtime length traps (exit 101).
 func TestExec_DynArray_BoundsTrap(t *testing.T) {
+	t.Parallel()
 	src := `let at = (xs: []u8, i: i64) -> u8 => xs[i]
 let main = () -> u8 => {
   let a: []u8 = [1, 2, 3]
@@ -98,6 +101,7 @@ let main = () -> u8 => {
 // The box is heap-allocated and freed exactly once: the IR shows lyra_rc_alloc for
 // the array box and allocations balance releases (no leak / double free).
 func TestEmit_DynArray_IR(t *testing.T) {
+	t.Parallel()
 	src := `let main = () -> u8 => {
   let xs: []u8 = [10, 20, 30]
   xs[1]
@@ -125,6 +129,7 @@ func TestEmit_DynArray_IR(t *testing.T) {
 // A dynamic array of a *managed* element type works: elements are indexable, and
 // the box's drop glue releases each one over the runtime length.
 func TestExec_DynArray_ManagedElements(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -151,6 +156,7 @@ func TestExec_DynArray_ManagedElements(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}
@@ -165,6 +171,7 @@ func TestExec_DynArray_ManagedElements(t *testing.T) {
 // (one call site runs len times) — instead we assert the drop glue is generated and
 // its loop body releases an element, and that the box release passes it as drop_fn.
 func TestExec_DynArray_ManagedElementsASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH; skipping ASan test")
@@ -199,6 +206,7 @@ func TestExec_DynArray_ManagedElementsASan(t *testing.T) {
 // (a non-null bitcast), so freeing the box frees the elements. This is the leak-side
 // check the looped drop makes a static release *count* unable to express.
 func TestEmit_DynArray_ManagedElementDropGlue(t *testing.T) {
+	t.Parallel()
 	src := `let main = () -> u8 => {
   let a: string = "x" ++ "y"
   let xs: []string = [a]
@@ -227,6 +235,7 @@ func TestEmit_DynArray_ManagedElementDropGlue(t *testing.T) {
 // with a static allocations==releases conservation check (macOS ASan can't see
 // leaks).
 func TestExec_DynArray_ASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH; skipping ASan test")
@@ -257,6 +266,7 @@ let main = () -> u8 => {
 // bindings can be released (2→1→0, freed once). ASan proves no double free; the
 // static conservation invariant here is allocations + retains == releases.
 func TestExec_DynArray_AliasRetainASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH; skipping ASan test")

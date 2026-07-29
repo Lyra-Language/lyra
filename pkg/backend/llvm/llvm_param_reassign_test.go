@@ -13,6 +13,7 @@ import (
 // path doesn't consult signedness — which is why it hid for so long.
 
 func TestExec_ParamReassignment(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -66,6 +67,7 @@ let main = () -> u8 => {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("exited %d; want %d", got, c.want)
 			}
@@ -79,6 +81,7 @@ let main = () -> u8 => {
 // slot, written through twice here so a missed release would show as a leak and a
 // double release as a use-after-free).
 func TestExec_ParamReassignment_ManagedIsLeakFree(t *testing.T) {
+	t.Parallel()
 	src := `let setStr = (s: mut string) -> void => { s = "n" ++ "1" }
 let localStr = (s: string) -> string => { s = "l" ++ "1"  s }
 let main = () -> u8 => {

@@ -124,10 +124,14 @@ var sharedMatchCases = []struct {
 // wrong answer means the box was mis-unboxed, a payload mis-read, or an arm
 // mis-selected.
 func TestExec_SharedMatch(t *testing.T) {
+	t.Parallel()
 	for _, c := range sharedMatchCases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -136,6 +140,7 @@ func TestExec_SharedMatch(t *testing.T) {
 // own last-use release must fire exactly once — a double free or use-after-free
 // from a mis-placed drop aborts here.
 func TestExec_SharedMatchASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH")
@@ -144,9 +149,12 @@ func TestExec_SharedMatchASan(t *testing.T) {
 		t.Skip("AddressSanitizer not available in this toolchain")
 	}
 	for _, c := range sharedMatchCases {
-		if got := buildAndRunASan(t, clang, c.src); got != c.want {
-			t.Errorf("%s (asan): exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRunASan(t, clang, c.src); got != c.want {
+				t.Errorf("%s (asan): exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -154,6 +162,7 @@ func TestExec_SharedMatchASan(t *testing.T) {
 // the box's payload struct) and, since the match is the binding's last use, the
 // box is allocated once and released once — no leak, no double free.
 func TestEmit_SharedMatchIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `data Box = Empty | Full(i64)
 	 let main = () -> u8 => {
 	   let b: shared Box = Full(42)
@@ -183,6 +192,7 @@ func TestEmit_SharedMatchIR(t *testing.T) {
 // just the top-level scrutinee) is not handled and must error loudly rather than
 // miscompile.
 func TestEmit_NestedSharedDataPatternDeferred(t *testing.T) {
+	t.Parallel()
 	_, err := emitSource(t, `data List = Nil | Cons(i64, shared List)
 	 let main = () -> u8 => {
 	   let xs: shared List = Cons(1, Cons(2, Nil))

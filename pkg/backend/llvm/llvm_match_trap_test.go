@@ -15,6 +15,7 @@ import (
 // TestExec_MatchFallthrough_Traps covers the scalar ladder: a matched value still
 // returns normally, an unmatched one traps.
 func TestExec_MatchFallthrough_Traps(t *testing.T) {
+	t.Parallel()
 	src := `let classify = (x: i64) -> i64 => match x { 1 => 10, 2 => 20 }
 	let main = () -> u8 => {
 	  print(classify(1))
@@ -35,6 +36,7 @@ func TestExec_MatchFallthrough_Traps(t *testing.T) {
 // A fully-guarded match has no unguarded arm to seal the ladder, so the
 // fall-through is reached whenever every guard fails — the deterministic case.
 func TestExec_MatchFallthrough_AllGuardsFail_Traps(t *testing.T) {
+	t.Parallel()
 	src := `let main = () -> u8 => {
 	  let g = match 5 { x if x > 100 => 1, y if y > 200 => 2 }
 	  print(g)
@@ -49,6 +51,7 @@ func TestExec_MatchFallthrough_AllGuardsFail_Traps(t *testing.T) {
 // have their own (match_array.go), and tuples/structs a third
 // (lowerAggregateMatch). Each must seal its fall-through with the same trap.
 func TestExec_MatchFallthrough_Traps_AllScrutineeKinds(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -69,6 +72,7 @@ func TestExec_MatchFallthrough_Traps_AllScrutineeKinds(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			out, code := buildAndRunCapture(t, c.src)
 			if code != trapExitCode {
 				t.Errorf("exited %d; want %d (the match trap)\noutput:\n%s", code, trapExitCode, out)
@@ -79,6 +83,7 @@ func TestExec_MatchFallthrough_Traps_AllScrutineeKinds(t *testing.T) {
 
 // An exhaustive match must not pay for the trap: no panic function, no call.
 func TestEmit_ExhaustiveMatch_NoTrap(t *testing.T) {
+	t.Parallel()
 	src := `let main = () -> u8 => {
 	  let v = match 3 { 1 => 10, _ => 20 }
 	  u8(v)
@@ -97,6 +102,7 @@ func TestEmit_ExhaustiveMatch_NoTrap(t *testing.T) {
 // which is what makes it noreturn — so assert on the call, not the absence of
 // the keyword.)
 func TestEmit_NonExhaustiveMatch_EmitsTrapCall(t *testing.T) {
+	t.Parallel()
 	src := `let main = () -> u8 => {
 	  let v = match 3 { 1 => 10, 2 => 20 }
 	  u8(v)
@@ -120,6 +126,7 @@ func TestEmit_NonExhaustiveMatch_EmitsTrapCall(t *testing.T) {
 // typechecker no longer warns on these either — see the tuple/struct
 // exhaustiveness tests.)
 func TestExec_IrrefutableAggregateMatch_NoTrap(t *testing.T) {
+	t.Parallel()
 	src := `struct Pt { x: i64, y: i64 }
 	let main = () -> u8 => {
 	  let s = match (3, 4) { (a, b) => a + b }

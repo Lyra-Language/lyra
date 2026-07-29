@@ -18,6 +18,7 @@ import (
 // silently lost their writes, alongside the two that always worked, so a
 // regression in either direction shows up here.
 func TestExec_MutParameter_WritesReachCaller(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -112,6 +113,7 @@ let main = () -> u8 => {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("exited %d; want %d (the `mut` write did not reach the caller)", got, c.want)
 			}
@@ -125,6 +127,7 @@ let main = () -> u8 => {
 // Together with the write landing, this is the leak that by-reference passing
 // closes: the release used to be suppressed entirely for a borrowed root.
 func TestExec_MutParameter_ManagedFieldIsLeakFree(t *testing.T) {
+	t.Parallel()
 	src := `struct Person { name: string }
 let rename = (p: mut Person) -> void => {
   p.name = "x" ++ "y"
@@ -150,6 +153,7 @@ let main = () -> u8 => {
 // directly as the binding's slot, with no entry-block copy. An `own` parameter of
 // the same type stays by value — the contrast is the convention.
 func TestEmit_MutParameter_IsPointerNoCopy(t *testing.T) {
+	t.Parallel()
 	byRef, err := emitSource(t, `struct Pt { x: i64 }
 let poke = (p: mut Pt) -> void => { p.x = 9 }
 let main = () -> u8 => {
@@ -188,6 +192,7 @@ let main = () -> u8 => {
 // interior to write through, and passing by reference would change the ABI and
 // reject a literal argument for no observable gain.
 func TestEmit_MutScalarParameter_StaysByValue(t *testing.T) {
+	t.Parallel()
 	out, err := emitSource(t, `let twice = (n: mut i64) -> i64 => n + n
 let main = () -> u8 => u8(twice(21))`)
 	if err != nil {
@@ -223,6 +228,7 @@ func fnBody(ir, name string) string {
 // than a snapshot, and the aliasing that could expose is rejected at the call
 // site (checkExclusiveMutableBorrow).
 func TestExec_RefParameter_ByReference(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -269,6 +275,7 @@ let main = () -> u8 => { if same("h" ++ "i") { 0 } else { 1 } }`, 0,
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("exited %d; want %d", got, c.want)
 			}
@@ -280,6 +287,7 @@ let main = () -> u8 => { if same("h" ++ "i") { 0 } else { 1 } }`, 0,
 // stays by value for the same reason `mut` does — nothing to point at, and
 // lyra-W010 already calls the modifier inert there.
 func TestEmit_RefParameter_IsPointer(t *testing.T) {
+	t.Parallel()
 	out, err := emitSource(t, `let sum = (xs: ref [8]i64) -> i64 => xs[0] + xs[7]
 let scale = (n: ref i64) -> i64 => n + 1
 let main = () -> u8 => 0`)

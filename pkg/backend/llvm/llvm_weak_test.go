@@ -12,6 +12,7 @@ import (
 // these cover only the layout: the declaration lowers and compiles.
 
 func TestEmit_WeakField_LowersToPointer(t *testing.T) {
+	t.Parallel()
 	src := `struct Node { value: i64, parent: weak Node }
 let main = () -> u8 => 0`
 	ir, err := emitSource(t, src)
@@ -27,6 +28,7 @@ let main = () -> u8 => 0`
 // A program declaring a weak-broken recursive type compiles and runs (the weak
 // field never crashes layout the way it used to crash parseType).
 func TestExec_WeakRecursiveTypeBuilds(t *testing.T) {
+	t.Parallel()
 	src := `struct Node { value: i64, parent: weak Node }
 data List = Nil | Cons(i64, weak List)
 let main = () -> u8 => 7`

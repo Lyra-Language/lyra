@@ -6,6 +6,7 @@ import "testing"
 // found by walking runes from the front. A multibyte string proves it's rune-indexed
 // (byte-indexing would land mid-sequence). Running past the end traps.
 func TestExec_StringIndex(t *testing.T) {
+	t.Parallel()
 	// Each program returns 1 when the indexed rune matches the expected char literal.
 	cases := []struct {
 		name string
@@ -52,6 +53,7 @@ func TestExec_StringIndex(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != 1 {
 				t.Errorf("expected 1 (rune matched), got %d", got)
 			}
@@ -61,6 +63,7 @@ func TestExec_StringIndex(t *testing.T) {
 
 // Indexing past the last rune traps out-of-bounds (exit 101).
 func TestExec_StringIndex_BoundsTrap(t *testing.T) {
+	t.Parallel()
 	src := `let at = (s: string, i: i64) -> u8 => if s[i] == 'a' { 1 } else { 0 }
 let main = () -> u8 => {
   let s: string = "abc"

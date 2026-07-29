@@ -15,6 +15,7 @@ import (
 // positions, and arithmetic on the extracted elements (so the element is a real
 // value feeding a computation, not just returned verbatim).
 func TestExec_TupleInstances(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -52,9 +53,12 @@ func TestExec_TupleInstances(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -62,6 +66,7 @@ func TestExec_TupleInstances(t *testing.T) {
 // construction builds its declared struct type via insertvalue, and indexing
 // reads it back via extractvalue.
 func TestEmit_TupleInstanceIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, "tuple Point(u8, u8)\nlet main = () -> u8 => {\n  let p = Point(3, 4)\n  p.0\n}\n")
 	if err != nil {
 		t.Fatal(err)

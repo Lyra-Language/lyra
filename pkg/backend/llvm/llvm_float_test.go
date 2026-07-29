@@ -12,6 +12,7 @@ import (
 // float instruction or a wrong predicate shows up as a rejected build or the wrong
 // exit code.
 func TestExec_FloatArithmetic(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -103,9 +104,12 @@ func TestExec_FloatArithmetic(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -115,6 +119,7 @@ func TestExec_FloatArithmetic(t *testing.T) {
 // escape hatch is the `.floor()`/`.ceil()`/`.round()` builtin methods
 // (TestExec_FloatRounding), a different call shape entirely.
 func TestExec_FloatConversions(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -152,9 +157,12 @@ func TestExec_FloatConversions(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -163,6 +171,7 @@ func TestExec_FloatConversions(t *testing.T) {
 // llvm.<op>.<width> intrinsic, then fptosi to the builtin's fixed i64 return
 // type — the escape hatch the numeric-conversion typecheck error points to.
 func TestExec_FloatRounding(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -204,15 +213,19 @@ func TestExec_FloatRounding(t *testing.T) {
 			 }`, 200},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
 // A float parameter and a float return value both lower, so a float helper
 // function composes: dbl(2.5) == 5.0.
 func TestExec_FloatFunction(t *testing.T) {
+	t.Parallel()
 	src := `let dbl = (x: f64) -> f64 => x * 2.0
 	 let main = () -> u8 => {
 	   let y: f64 = dbl(2.5)
@@ -228,6 +241,7 @@ func TestExec_FloatFunction(t *testing.T) {
 // ordered range check for a range arm. A float match always needs a wildcard (the
 // reals can't be enumerated); an identifier catch-all binds the float value.
 func TestExec_FloatMatch(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -298,15 +312,19 @@ func TestExec_FloatMatch(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
 // TestEmit_FloatMatchIR pins the float-match ladder: `fcmp` tests and a `br i1`
 // per arm, no `switch` (a float match has no switch form).
 func TestEmit_FloatMatchIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `let f = (x: f64) -> u8 => match x {
 	   1.5 => 1,
 	   _ => 0,
@@ -328,6 +346,7 @@ func TestEmit_FloatMatchIR(t *testing.T) {
 // TestEmit_FloatIR pins the float instruction selection: a `double` literal, an
 // `fadd`, and an `fcmp` (not their integer counterparts).
 func TestEmit_FloatIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `let main = () -> u8 => {
 	   let x: f64 = 1.5 + 1.5
 	   if x > 2.9 { 1 } else { 0 }
@@ -346,6 +365,7 @@ func TestEmit_FloatIR(t *testing.T) {
 // builtin: a call to the matched llvm.<op>.<width> intrinsic followed by an
 // fptosi to the fixed i64 return type — not, say, a manual truncation.
 func TestEmit_FloatRoundingIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `let main = () -> u8 => {
 	   let x: f64 = 3.7
 	   u8(x.floor())

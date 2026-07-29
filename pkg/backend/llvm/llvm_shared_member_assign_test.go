@@ -8,6 +8,7 @@ import (
 // Assigning a field of a `shared` struct addresses it through the box
 // (box → payload → field), the write counterpart to reading a shared field.
 func TestExec_SharedMemberAssignment(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -50,6 +51,7 @@ let main = () -> u8 => {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}
@@ -61,6 +63,7 @@ let main = () -> u8 => {
 // overwritten string, and the box's drop glue frees the final field. Verified under
 // AddressSanitizer.
 func TestExec_SharedMemberAssignment_ASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH; skipping ASan test")

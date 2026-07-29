@@ -7,6 +7,7 @@ import "testing"
 // index counts from the end), and the root binding must be mutable (a `var`, `let
 // mut`, or `mut`/`own` parameter) — the typechecker enforces that.
 func TestExec_ArrayElementAssignment(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -83,6 +84,7 @@ let main = () -> u8 => {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}
@@ -92,6 +94,7 @@ let main = () -> u8 => {
 
 // An out-of-range index in an assignment traps, exactly like a read.
 func TestExec_ArrayElementAssignment_BoundsTrap(t *testing.T) {
+	t.Parallel()
 	src := `let set = (xs: mut []u8, i: i64) -> void => {
   xs[i] = 1
 }

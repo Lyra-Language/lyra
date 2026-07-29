@@ -11,6 +11,7 @@ import (
 // stack and `shared`) and dynamic (`[]T`) arrays, with break/continue.
 
 func TestExec_ForIn(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -93,6 +94,7 @@ func TestExec_ForIn(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}
@@ -103,6 +105,7 @@ func TestExec_ForIn(t *testing.T) {
 // The two-variable form `for i, x in xs` binds the index i (i64) alongside the
 // element x.
 func TestExec_ForIn_TwoVar(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -150,6 +153,7 @@ func TestExec_ForIn_TwoVar(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}
@@ -159,6 +163,7 @@ func TestExec_ForIn_TwoVar(t *testing.T) {
 
 // Iterating produces each element in order — observable via println.
 func TestExec_ForIn_PrintsEachElement(t *testing.T) {
+	t.Parallel()
 	src := `let main = () -> void => {
   let xs: []i64 = [1, 2, 3]
   for x in xs {
@@ -177,6 +182,7 @@ func TestExec_ForIn_PrintsEachElement(t *testing.T) {
 // Iterating a `[]string` binds each element as a *borrow* (the array still owns it),
 // so reading elements in the body never double-frees. Verified under AddressSanitizer.
 func TestExec_ForIn_StringElementsASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH; skipping ASan test")
@@ -202,6 +208,7 @@ let main = () -> u8 => {
 // The two-variable form over a string (`for i, c in s`) is deferred — the
 // index/rune pairing isn't defined. (Arrays, ranges, and single-var string all lower.)
 func TestEmit_ForIn_Deferred(t *testing.T) {
+	t.Parallel()
 	src := `let main = () -> void => {
   for i, c in "hello" { println(c) }
 }

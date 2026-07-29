@@ -14,6 +14,7 @@ import (
 // managed). See ALLOCATION.md.
 
 func TestExec_SharedArray(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -70,6 +71,7 @@ let main = () -> u8 => {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}
@@ -80,6 +82,7 @@ let main = () -> u8 => {
 // A runtime index out of range traps (exit 101), through the box just like an
 // inline array.
 func TestExec_SharedArray_BoundsTrap(t *testing.T) {
+	t.Parallel()
 	src := `let at = (xs: shared [3]u8, i: i64) -> u8 => xs[i]
 let main = () -> u8 => {
   let a: shared [3]u8 = [1, 2, 3]
@@ -94,6 +97,7 @@ let main = () -> u8 => {
 // box, the box type is `{ i64, [N x T] }`, and allocations balance releases (no leak
 // or double free).
 func TestEmit_SharedArray_IR(t *testing.T) {
+	t.Parallel()
 	src := `let main = () -> u8 => {
   let xs: shared [3]u8 = [10, 20, 30]
   xs[1]
@@ -124,6 +128,7 @@ func TestEmit_SharedArray_IR(t *testing.T) {
 // leaks). Two heap-string elements + the array box = 3 allocations; the box's
 // release and the drop glue's two element releases = 3 releases.
 func TestExec_SharedArray_ManagedElementsASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH; skipping ASan test")

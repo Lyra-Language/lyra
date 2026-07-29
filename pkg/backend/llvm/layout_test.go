@@ -11,6 +11,7 @@ import (
 func prim(n types.PrimitiveTypeName) types.PrimitiveType { return types.PrimitiveType{Name: n} }
 
 func TestLLVMPrimitive(t *testing.T) {
+	t.Parallel()
 	cases := map[types.PrimitiveTypeName]string{
 		types.Int8: "i8", types.UInt8: "i8",
 		types.Int64: "i64", types.UInt64: "i64",
@@ -30,6 +31,7 @@ func TestLLVMPrimitive(t *testing.T) {
 }
 
 func TestIsSignedInt(t *testing.T) {
+	t.Parallel()
 	signed := []types.PrimitiveTypeName{
 		types.Int8, types.Int16, types.Int32, types.Int64,
 		types.UntypedInt, types.UntypedSignedInt,
@@ -51,6 +53,7 @@ func TestIsSignedInt(t *testing.T) {
 }
 
 func TestSizeAndAlign_Primitives(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name       types.PrimitiveTypeName
 		size, algn int
@@ -69,6 +72,7 @@ func TestSizeAndAlign_Primitives(t *testing.T) {
 }
 
 func TestSizeAndAlign_StructPadding(t *testing.T) {
+	t.Parallel()
 	// { i8, i64 } → i8 at 0, pad to 8, i64 at 8..16 ⇒ size 16, align 8.
 	st := types.NamedStructType{Fields: []types.StructField{
 		{Name: "a", Type: prim(types.Int8)},
@@ -81,6 +85,7 @@ func TestSizeAndAlign_StructPadding(t *testing.T) {
 }
 
 func TestSizeAndAlign_SharedIsPointer(t *testing.T) {
+	t.Parallel()
 	// A shared struct is a pointer regardless of its (huge) payload.
 	st := types.NamedStructType{
 		Allocation: types.Shared,
@@ -97,6 +102,7 @@ func TestSizeAndAlign_SharedIsPointer(t *testing.T) {
 }
 
 func TestSizeAndAlign_StaticArray(t *testing.T) {
+	t.Parallel()
 	// [3]i32 ⇒ 12, align 4.
 	arr := types.StaticArrayType{ElementType: prim(types.Int32), Size: 3}
 	s, a, ok := SizeAndAlign(arr)
@@ -106,6 +112,7 @@ func TestSizeAndAlign_StaticArray(t *testing.T) {
 }
 
 func TestSizeAndAlign_String(t *testing.T) {
+	t.Parallel()
 	// A string is a fat pointer { i8*, i64 }: two pointer-sized words.
 	if s, a, ok := SizeAndAlign(prim(types.String)); !ok || s != 16 || a != 8 {
 		t.Errorf("SizeAndAlign(string) = %d,%d,%v; want 16,8,true", s, a, ok)
@@ -113,6 +120,7 @@ func TestSizeAndAlign_String(t *testing.T) {
 }
 
 func TestTagType(t *testing.T) {
+	t.Parallel()
 	cases := map[int]string{1: "i8", 256: "i8", 257: "i16", 70000: "i32"}
 	for n, want := range cases {
 		if got := TagType(n).String(); got != want {
@@ -122,6 +130,7 @@ func TestTagType(t *testing.T) {
 }
 
 func TestSharedBoxType(t *testing.T) {
+	t.Parallel()
 	node := lltypes.NewStruct()
 	node.TypeName = "Node"
 	if got := SharedBoxType(node).String(); got != "{ i64, %Node }" {
@@ -130,6 +139,7 @@ func TestSharedBoxType(t *testing.T) {
 }
 
 func TestDataUnionType_MaybeLike(t *testing.T) {
+	t.Parallel()
 	// data M = None | Some(i64) → tag i8 + one i64 payload.
 	// Payload align 8, size 8 ⇒ [1 x i64]; tag i8 padded by LLVM. Type: { i8, [1 x i64] }.
 	dt := types.DataType{Name: "M", Constructors: []types.DataTypeConstructor{
@@ -148,6 +158,7 @@ func TestDataUnionType_MaybeLike(t *testing.T) {
 }
 
 func TestDataUnionType_Enum(t *testing.T) {
+	t.Parallel()
 	// All-nullary → just the tag, no payload blob.
 	dt := types.DataType{Name: "Color", Constructors: []types.DataTypeConstructor{
 		{Name: "Red"}, {Name: "Green"}, {Name: "Blue"},
@@ -159,6 +170,7 @@ func TestDataUnionType_Enum(t *testing.T) {
 }
 
 func TestDataUnionType_MixedWidths(t *testing.T) {
+	t.Parallel()
 	// data V = A(i8) | B(i32, i8) → largest payload is B's struct {i32,i8}=size 8, align 4.
 	// Blob element = i32 (align 4), count = ceil(8/4) = 2 ⇒ [2 x i32].
 	dt := types.DataType{Name: "V", Constructors: []types.DataTypeConstructor{
@@ -172,6 +184,7 @@ func TestDataUnionType_MixedWidths(t *testing.T) {
 }
 
 func TestSizeAndAlign_RecursiveSharedIsFinite(t *testing.T) {
+	t.Parallel()
 	// shared data List = Nil | Cons(i64, List): the recursive List field is
 	// shared ⇒ a ptr, so Cons payload = {i64, ptr} = 16, and the whole thing is
 	// itself a ptr (shared) ⇒ 8. Just assert it sizes (doesn't blow the stack).

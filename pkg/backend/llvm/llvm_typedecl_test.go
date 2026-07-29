@@ -17,6 +17,7 @@ import (
 // types, named after the tuple (not TupleType.GetName()'s full "Point(i32, i32)"
 // rendering — the key is the bare declared name).
 func TestEmit_TupleTypeDecl(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, "tuple Point(i32, i32)\nlet main = () -> u8 => 0\n")
 	if err != nil {
 		t.Fatal(err)
@@ -30,6 +31,7 @@ func TestEmit_TupleTypeDecl(t *testing.T) {
 // in declaration order. Covers the scalar lowerType cases beyond plain ints —
 // bool → i1 and f64 → double — so a wrong primitive mapping shows up here.
 func TestEmit_StructTypeDecl(t *testing.T) {
+	t.Parallel()
 	src := `
 struct Node {
   value: i64,
@@ -50,6 +52,7 @@ let main = () -> u8 => 0
 // TestEmit_MultipleTypeDecls: every top-level type decl is emitted, tuples and
 // structs alike, each keyed by its own name.
 func TestEmit_MultipleTypeDecls(t *testing.T) {
+	t.Parallel()
 	src := `
 tuple Pair(u8, bool)
 struct S {
@@ -78,6 +81,7 @@ let main = () -> u8 => 0
 // placeholder) before defining any body — the field's UnresolvedType resolves
 // against structTypes during the definition pass.
 func TestEmit_ComposedTypeDecl(t *testing.T) {
+	t.Parallel()
 	src := `
 tuple Point(i32, i32)
 struct Line {
@@ -101,6 +105,7 @@ let main = () -> u8 => 0
 // order irrelevant — declaring by name comes first, so Point exists by the time
 // Line's fields are lowered.
 func TestEmit_ForwardReferencedTypeDecl(t *testing.T) {
+	t.Parallel()
 	src := `
 struct Line {
   a: Point,
@@ -128,6 +133,7 @@ let main = () -> u8 => 0
 // skipped — the whole build errors so no half-lowered module escapes. (tuple,
 // struct, and data decls now lower; newtype is what's left.)
 func TestEmit_UnsupportedTypeDecl_Error(t *testing.T) {
+	t.Parallel()
 	_, err := emitSource(t, "newtype Meters = i32\nlet main = () -> u8 => 0\n")
 	if err == nil {
 		t.Fatal("expected an error for an unsupported (newtype) type declaration")
@@ -144,6 +150,7 @@ func TestEmit_UnsupportedTypeDecl_Error(t *testing.T) {
 // field access aren't lowered yet — so this pins "the type defs don't break the
 // module" while main still returns its value.
 func TestExec_TypeDeclModuleIsValid(t *testing.T) {
+	t.Parallel()
 	src := `
 tuple Point(i32, i32)
 struct Node {

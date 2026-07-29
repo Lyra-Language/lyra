@@ -7,6 +7,7 @@ import "testing"
 // that nil — the function returned garbage. Regression guard: the block value is
 // the real final expression, comment or not.
 func TestExec_TrailingCommentOnBlockValue(t *testing.T) {
+	t.Parallel()
 	withComment := `let f = () -> u8 => {
 	  let a: u8 = 40
 	  let b: u8 = 2

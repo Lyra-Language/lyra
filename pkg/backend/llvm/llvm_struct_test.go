@@ -12,6 +12,7 @@ import (
 // clang rejecting the IR).
 
 func TestExec_StructInstances(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -92,15 +93,19 @@ func TestExec_StructInstances(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
 // TestEmit_StructInstanceIR pins the emitted shape: construction builds the
 // declared struct type via insertvalue and field access reads it via extractvalue.
 func TestEmit_StructInstanceIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `
 	struct Node {
 		value: u8,
@@ -127,6 +132,7 @@ func TestEmit_StructInstanceIR(t *testing.T) {
 // TestEmit_StructRecordUpdate_Deferred: record-update syntax isn't lowered yet,
 // so it errors loudly rather than silently ignoring the base.
 func TestEmit_StructRecordUpdate_Deferred(t *testing.T) {
+	t.Parallel()
 	src := `
 	struct Node {
 		value: u8,

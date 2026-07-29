@@ -1,9 +1,7 @@
 package llvm
 
 import (
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -13,24 +11,12 @@ import (
 // what it writes to stdout, so these tests capture it.
 func buildAndRunCapture(t *testing.T, src string) (string, int) {
 	t.Helper()
-	clang, err := exec.LookPath("clang")
-	if err != nil {
-		t.Skip("clang not found on PATH; skipping behavioral test")
-	}
+	clang := lookClang(t)
 	ir, err := emitSource(t, src)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	dir := t.TempDir()
-	llPath := filepath.Join(dir, "prog.ll")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command(clang, llPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("clang rejected the IR: %v\n%s\n--- IR ---\n%s", err, out, ir)
-	}
-	out, err := exec.Command(binPath).Output()
+	out, err := exec.Command(compileCached(t, clang, ir)).Output()
 	code := 0
 	if err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
@@ -47,6 +33,7 @@ func buildAndRunCapture(t *testing.T, src string) (string, int) {
 // user-defined void function, and preserve program order across calls (each is
 // its own write syscall).
 func TestExec_Print(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		src     string
@@ -113,6 +100,7 @@ func TestExec_Print(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			out, code := buildAndRunCapture(t, c.src)
 			if out != c.wantOut {
 				t.Errorf("stdout = %q; want %q", out, c.wantOut)
@@ -129,6 +117,7 @@ func TestExec_Print(t *testing.T) {
 // formatting goes through snprintf-into-memory + write, so it stays in program
 // order with the raw writes that string/bool/rune print use.
 func TestExec_PrintFormatting(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name    string
 		src     string
@@ -158,6 +147,7 @@ func TestExec_PrintFormatting(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			out, code := buildAndRunCapture(t, c.src)
 			if out != c.wantOut {
 				t.Errorf("stdout = %q; want %q", out, c.wantOut)
@@ -172,6 +162,7 @@ func TestExec_PrintFormatting(t *testing.T) {
 // An integer print goes through libc snprintf into a stack buffer (not stdio),
 // then write — so ordering with raw string writes is preserved.
 func TestEmit_PrintIntUsesSnprintf(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `let main = () -> void => println(42)`)
 	if err != nil {
 		t.Fatal(err)
@@ -186,6 +177,7 @@ func TestEmit_PrintIntUsesSnprintf(t *testing.T) {
 // print/println lower to a libc write(1, ...); a println emits two writes (the
 // string then the newline byte). The IR pins that shape.
 func TestEmit_PrintIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `let main = () -> void => println("hi")`)
 	if err != nil {
 		t.Fatal(err)
@@ -207,6 +199,7 @@ func TestEmit_PrintIR(t *testing.T) {
 // after the call, not leaked — the ownership pass treats print/println as
 // borrowing their argument. Verified as alloc/release balance in the IR.
 func TestEmit_PrintReleasesConcatTemp(t *testing.T) {
+	t.Parallel()
 	for _, src := range []string{
 		`let main = () -> void => println("Hi, " ++ "x")`,
 		`let main = () -> u8 => { println("Hi, " ++ "x")

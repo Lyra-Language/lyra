@@ -180,10 +180,14 @@ var aggregateDropCases = []struct {
 // TestExec_AggregateDrop runs each case and checks its result. A field freed while
 // still reachable corrupts the comparison; a double free crashes.
 func TestExec_AggregateDrop(t *testing.T) {
+	t.Parallel()
 	for _, c := range aggregateDropCases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -192,6 +196,7 @@ func TestExec_AggregateDrop(t *testing.T) {
 // reachable from both the dying box and whatever bound it), and ASan aborts on
 // either. Skips if the toolchain can't build an ASan binary.
 func TestExec_AggregateDropASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH")
@@ -200,9 +205,12 @@ func TestExec_AggregateDropASan(t *testing.T) {
 		t.Skip("AddressSanitizer not available in this toolchain")
 	}
 	for _, c := range aggregateDropCases {
-		if got := buildAndRunASan(t, clang, c.src); got != c.want {
-			t.Errorf("%s (asan): exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRunASan(t, clang, c.src); got != c.want {
+				t.Errorf("%s (asan): exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -212,6 +220,7 @@ func TestExec_AggregateDropASan(t *testing.T) {
 // ASan can't see leaks, so this static conservation check is what proves the field
 // is actually freed rather than merely not double-freed.
 func TestEmit_AggregateDropIR(t *testing.T) {
+	t.Parallel()
 	emit := func(src string) string {
 		got, err := emitSource(t, src)
 		if err != nil {

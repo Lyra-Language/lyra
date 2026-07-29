@@ -6,6 +6,7 @@ import "testing"
 // its compile-time size (a constant), a dynamic array's is the runtime `len` field
 // of its box. It returns i64.
 func TestExec_ArrayLen(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -59,6 +60,7 @@ func TestExec_ArrayLen(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}

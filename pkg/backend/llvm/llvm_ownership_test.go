@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -264,10 +265,14 @@ var ownershipCases = []struct {
 // answer means a managed value was freed while still in use (or never built);
 // the program crashing means a double free.
 func TestExec_Ownership(t *testing.T) {
+	t.Parallel()
 	for _, c := range ownershipCases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -278,6 +283,7 @@ func TestExec_Ownership(t *testing.T) {
 // deliberate leaks — aggregates, break paths.) Skips if the toolchain can't build
 // an ASan binary.
 func TestExec_OwnershipASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH")
@@ -286,9 +292,12 @@ func TestExec_OwnershipASan(t *testing.T) {
 		t.Skip("AddressSanitizer not available in this toolchain")
 	}
 	for _, c := range ownershipCases {
-		if got := buildAndRunASan(t, clang, c.src); got != c.want {
-			t.Errorf("%s (asan): exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRunASan(t, clang, c.src); got != c.want {
+				t.Errorf("%s (asan): exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -296,6 +305,7 @@ func TestExec_OwnershipASan(t *testing.T) {
 // shapes, proving strings are actually freed (a leak would show a missing
 // release) and copies retained.
 func TestEmit_OwnershipIR(t *testing.T) {
+	t.Parallel()
 	count := func(src, needle string) int {
 		got, err := emitSource(t, src)
 		if err != nil {
@@ -367,6 +377,13 @@ func TestEmit_OwnershipIR(t *testing.T) {
 	}
 }
 
+// asanRunSlots caps how many ASan binaries execute at once. Each ASan process
+// reserves a huge shadow-memory address mapping at startup, and launching many
+// simultaneously (parallel subtests, warm binary cache) can make that mapping
+// sporadically fail on macOS — a transient exit that reads as a test failure.
+// The binaries themselves run in milliseconds, so a small cap costs nothing.
+var asanRunSlots = make(chan struct{}, 4)
+
 // buildAndRunASan emits IR for src, compiles it with -fsanitize=address, runs the
 // binary, and returns its exit code. detect_leaks is off (macOS has no LSan, and
 // deliberate leaks remain), so this checks only memory-safety violations.
@@ -376,17 +393,10 @@ func buildAndRunASan(t *testing.T, clang, src string) int {
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	dir := t.TempDir()
-	llPath := filepath.Join(dir, "prog.ll")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if out, err := exec.Command(clang, "-fsanitize=address", llPath, "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("clang -fsanitize=address rejected the IR: %v\n%s", err, out)
-	}
-	cmd := exec.Command(binPath)
+	cmd := exec.Command(compileCached(t, clang, ir, "-fsanitize=address"))
 	cmd.Env = append(os.Environ(), "ASAN_OPTIONS=detect_leaks=0")
+	asanRunSlots <- struct{}{}
+	defer func() { <-asanRunSlots }()
 	if err := cmd.Run(); err != nil {
 		if ee, ok := err.(*exec.ExitError); ok {
 			return ee.ExitCode()
@@ -397,19 +407,33 @@ func buildAndRunASan(t *testing.T, clang, src string) int {
 }
 
 // asanAvailable reports whether the toolchain can build and run an ASan binary
-// (some CI images lack the runtime).
+// (some CI images lack the runtime). The probe compiles a C program, so the
+// result is computed once per test process and shared — the answer can't
+// differ between tests, and re-probing cost a clang invocation per caller.
+var asanProbe struct {
+	once sync.Once
+	ok   bool
+}
+
 func asanAvailable(t *testing.T, clang string) bool {
 	t.Helper()
-	dir := t.TempDir()
-	src := filepath.Join(dir, "probe.c")
-	bin := filepath.Join(dir, "probe")
-	if err := os.WriteFile(src, []byte("int main(void){return 0;}"), 0o644); err != nil {
-		return false
-	}
-	if err := exec.Command(clang, "-fsanitize=address", src, "-o", bin).Run(); err != nil {
-		return false
-	}
-	cmd := exec.Command(bin)
-	cmd.Env = append(os.Environ(), "ASAN_OPTIONS=detect_leaks=0")
-	return cmd.Run() == nil
+	asanProbe.once.Do(func() {
+		dir, err := os.MkdirTemp("", "lyra-asan-probe")
+		if err != nil {
+			return
+		}
+		defer os.RemoveAll(dir)
+		src := filepath.Join(dir, "probe.c")
+		bin := filepath.Join(dir, "probe")
+		if err := os.WriteFile(src, []byte("int main(void){return 0;}"), 0o644); err != nil {
+			return
+		}
+		if err := exec.Command(clang, "-fsanitize=address", src, "-o", bin).Run(); err != nil {
+			return
+		}
+		cmd := exec.Command(bin)
+		cmd.Env = append(os.Environ(), "ASAN_OPTIONS=detect_leaks=0")
+		asanProbe.ok = cmd.Run() == nil
+	})
+	return asanProbe.ok
 }

@@ -2,9 +2,7 @@ package llvm
 
 import (
 	"errors"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -34,6 +32,7 @@ func emitSource(t *testing.T, src string) (string, error) {
 // an i8 constant and is zero-extended into the i32 slot — no i64→i8 trunc, since
 // the literal was never i64 in the first place.
 func TestEmit_IntegerLiteralBody(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, "let main = () -> u8 => 42\n")
 	if err != nil {
 		t.Fatal(err)
@@ -51,6 +50,7 @@ func TestEmit_IntegerLiteralBody(t *testing.T) {
 // TestEmit_VoidEntry: a void entry exits 0 (as i32, `@main`'s actual C ABI
 // return type regardless of Lyra's own void/u8 entry-point convention).
 func TestEmit_VoidEntry(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, "let main = () -> void => {}\n")
 	if err != nil {
 		t.Fatal(err)
@@ -65,36 +65,22 @@ func TestEmit_VoidEntry(t *testing.T) {
 // the program *does*, not what the IR text looks like — so it survives IR
 // spelling changes (add nsw, optimizations) and, unlike a string match, actually
 // catches invalid IR (clang rejects it). Skips when clang isn't on PATH so the
-// suite still passes in environments without a toolchain.
+// suite still passes in environments without a toolchain. The compile goes
+// through compileCached (exec_cache_test.go), so an unchanged program reuses
+// its binary across runs.
 //
 // Note: a process exit code is only 8 bits on Unix (0–255), so keep expected
 // values small.
 func buildAndRun(t *testing.T, src string) int {
 	t.Helper()
-	clang, err := exec.LookPath("clang")
-	if err != nil {
-		t.Skip("clang not found on PATH; skipping behavioral test")
-	}
+	clang := lookClang(t)
 
 	ir, err := emitSource(t, src)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
 
-	dir := t.TempDir() // auto-removed when the test finishes
-	llPath := filepath.Join(dir, "prog.ll")
-	binPath := filepath.Join(dir, "prog")
-	if err := os.WriteFile(llPath, []byte(ir), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	// -lm links libm: the float backend lowers floor/ceil/round to llvm.*
-	// intrinsics and truncated/floored float remainder to fmod, which the
-	// linker resolves against the math library.
-	if out, err := exec.Command(clang, llPath, "-lm", "-o", binPath).CombinedOutput(); err != nil {
-		t.Fatalf("clang rejected the IR: %v\n%s\n--- IR ---\n%s", err, out, ir)
-	}
-
-	runErr := exec.Command(binPath).Run()
+	runErr := exec.Command(compileCached(t, clang, ir)).Run()
 	if runErr == nil {
 		return 0
 	}
@@ -110,6 +96,7 @@ func buildAndRun(t *testing.T, src string) int {
 // running the compiled program, not by inspecting the IR (LLVM emits an `add`,
 // not a folded `3` — folding is an optimizer pass).
 func TestExec_Arithmetic(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		src  string
 		want int
@@ -122,9 +109,12 @@ func TestExec_Arithmetic(t *testing.T) {
 		{"let main() -> u8 => 10 % 3\n", 1},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+			}
+		})
 	}
 }
 
@@ -143,6 +133,7 @@ func TestExec_Arithmetic(t *testing.T) {
 // unsigned), so an explicit conversion is required regardless of main's
 // return type.
 func TestExec_SignedArithmetic(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		src  string
 		want int
@@ -164,9 +155,12 @@ func TestExec_SignedArithmetic(t *testing.T) {
 		{"let main() -> u8 => u8(-7 % -2)\n", 255},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+			}
+		})
 	}
 }
 
@@ -185,6 +179,7 @@ func TestExec_SignedArithmetic(t *testing.T) {
 // TestExec_SignedArithmetic: negating a literal produces UntypedSignedInt,
 // which isAssignable correctly refuses to assign directly to unsigned u8.
 func TestExec_FlooredRemainder(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		src  string
 		want int
@@ -205,9 +200,12 @@ func TestExec_FlooredRemainder(t *testing.T) {
 		{"let main() -> u8 => u8(-7 %% -2)\n", 255},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+			}
+		})
 	}
 }
 
@@ -218,6 +216,7 @@ func TestExec_FlooredRemainder(t *testing.T) {
 // condition isn't expressible; -O0 doesn't fold the branch, so the cond-br is
 // still exercised at runtime.
 func TestExec_If(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		src  string
 		want int
@@ -237,9 +236,12 @@ func TestExec_If(t *testing.T) {
 		{"let main() -> u8 => if false { 10 } else { if true { 40 } else { 50 } }\n", 40},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+			}
+		})
 	}
 }
 
@@ -250,6 +252,7 @@ func TestExec_If(t *testing.T) {
 // value into NewPhi → a compiler nil-pointer panic on entirely idiomatic control
 // flow. Each case here used to crash `lyrac`; now it compiles to valid IR and runs.
 func TestExec_IfDivergingBranch(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		src  string
 		want int
@@ -270,9 +273,12 @@ func TestExec_IfDivergingBranch(t *testing.T) {
 		{"let main() -> u8 => {\n  let y: u8 = if false { return 9 } else { 5 }\n  y\n}\n", 5},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+			}
+		})
 	}
 }
 
@@ -280,6 +286,7 @@ func TestExec_IfDivergingBranch(t *testing.T) {
 // branches (both side-effecting) is legal, but previously funneled through the
 // value path and errored "block has no value". It now lowers for effect (no phi).
 func TestExec_IfVoidBranches(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		src  string
 		want int
@@ -293,9 +300,12 @@ func TestExec_IfVoidBranches(t *testing.T) {
 		{"let main() -> u8 => {\n  var i: u8 = 2\n  if i > 3 { println(\"a\" ++ \"b\") } else { println(\"c\" ++ \"d\") }\n  i\n}\n", 2},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+			}
+		})
 	}
 }
 
@@ -307,6 +317,7 @@ func TestExec_IfVoidBranches(t *testing.T) {
 // between two concrete, differently-signed types — a conversion call is the
 // only vehicle for a width or signedness change like this.
 func TestExec_IntWidthConversions(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		src  string
 		want int
@@ -336,13 +347,17 @@ func TestExec_IntWidthConversions(t *testing.T) {
 		{"let main = () -> u8 => u8(i64(i8(-1)) / 2)\n", 0},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+			}
+		})
 	}
 }
 
 func TestEmit_BoolBinaryOp(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		src  string
 		want int
@@ -363,9 +378,12 @@ func TestEmit_BoolBinaryOp(t *testing.T) {
 		{"let main() -> u8 => if 2 >= 2 { 1 } else { 0 }\n", 1},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+			}
+		})
 	}
 }
 
@@ -378,6 +396,7 @@ func TestEmit_BoolBinaryOp(t *testing.T) {
 // faulting right operand to prove it observably isn't expressible yet (no
 // runtime-conditional faulting expression), so this pins the values.
 func TestExec_BoolShortCircuit(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		src  string
 		want int
@@ -398,13 +417,17 @@ func TestExec_BoolShortCircuit(t *testing.T) {
 		{"let main() -> u8 => if 2 > 3 || 5 > 4 { 1 } else { 0 }\n", 1},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+			}
+		})
 	}
 }
 
 func TestExec_VarDecl(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		src  string
 		want int
@@ -441,9 +464,12 @@ let main() -> u8 => {
 `, 42},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+			}
+		})
 	}
 }
 
@@ -460,6 +486,7 @@ let main() -> u8 => {
 //   - nested + labeled break: `break outer` from the inner loop exits both;
 //     control reaches it after exactly two inner increments, so 2.
 func TestExec_ForLoop(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -533,9 +560,12 @@ let main() -> u8 => {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -551,6 +581,7 @@ let main() -> u8 => {
 //   - a narrow `u8` counter: the `+=` RHS literal takes the counter's width
 //     (checkMathAssignOp propagation), so it lowers at u8 instead of mismatching.
 func TestExec_ForLoopThreeClause(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -610,9 +641,12 @@ let main() -> u8 => {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -631,6 +665,7 @@ let main() -> u8 => {
 //     two functions.
 //   - call in a loop: inc(i) is called each iteration; 1+2+3+4+5 = 15.
 func TestExec_Functions(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -709,9 +744,12 @@ let main() -> u8 => {
 		},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -721,6 +759,7 @@ let main() -> u8 => {
 // lowers to a single i8 `icmp` and runs: 5 < 3 is false, so the else branch
 // (0) is taken.
 func TestExec_MixedWidthComparison(t *testing.T) {
+	t.Parallel()
 	if got := buildAndRun(t, "let main() -> u8 => if i8(5) < 3 { 1 } else { 0 }\n"); got != 0 {
 		t.Errorf("i8(5) < 3 exited %d; want 0 (false → else)", got)
 	}
@@ -740,6 +779,7 @@ func TestExec_MixedWidthComparison(t *testing.T) {
 //   - `var y: u8`, `y = y + x`: reassignment RHS literals/width flow through the
 //     alloca; 100+200 wraps to 44 at u8.
 func TestExec_LiteralWidthArithmetic(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		src  string
 		want int
@@ -769,9 +809,12 @@ let main() -> u8 => f(200, 100)
 `, overflowTrapExitCode},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%q exited %d; want %d", c.src, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+			}
+		})
 	}
 }
 
@@ -782,6 +825,7 @@ let main() -> u8 => f(200, 100)
 // guard then fires — a loud error, not miscompiled code. (A nicer typechecker
 // diagnostic for this is a possible follow-up; today it's caught at lowering.)
 func TestEmit_LiteralExceedsContextWidth_Error(t *testing.T) {
+	t.Parallel()
 	_, err := emitSource(t, "let main() -> u8 => if i8(5) < 300 { 1 } else { 0 }\n")
 	if err == nil {
 		t.Fatal("expected an error: 300 does not fit i8, leaving a mismatched-width comparison")
@@ -792,6 +836,7 @@ func TestEmit_LiteralExceedsContextWidth_Error(t *testing.T) {
 }
 
 func TestEmit_NilArgs(t *testing.T) {
+	t.Parallel()
 	if _, err := New().Emit(nil, nil); err == nil {
 		t.Fatal("expected an error for nil program/entry point")
 	}
@@ -800,6 +845,7 @@ func TestEmit_NilArgs(t *testing.T) {
 // TestBackend_SatisfiesContract is a compile-time-ish check that New() is usable
 // as the backend.Backend the compiler expects.
 func TestBackend_Name(t *testing.T) {
+	t.Parallel()
 	if got := New().Name(); got != "llvm" {
 		t.Fatalf("Name() = %q, want %q", got, "llvm")
 	}
@@ -809,6 +855,7 @@ func TestBackend_Name(t *testing.T) {
 // the const's compile-time value. Previously the backend errored "unbound
 // identifier" (consts type-checked but never lowered).
 func TestExec_ConstValues(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -824,8 +871,11 @@ func TestExec_ConstValues(t *testing.T) {
 		{"forward-referenced const", "let main() -> u8 => u8(LIMIT)\nconst LIMIT = 77\n", 77},
 	}
 	for _, c := range cases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }

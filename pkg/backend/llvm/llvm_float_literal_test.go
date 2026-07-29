@@ -15,6 +15,7 @@ import (
 // allocas at the float width and arithmetic is float arithmetic, with no
 // overflow intrinsic (float ops don't trap).
 func TestEmit_IntLiteralInFloatSlot_Width(t *testing.T) {
+	t.Parallel()
 	src := `let main = () -> u8 => {
 	  let x: f64 = 5
 	  let y = x + 0.5
@@ -42,6 +43,7 @@ func TestEmit_IntLiteralInFloatSlot_Width(t *testing.T) {
 // negative float-adapted literal (used to print 18446744073709551611), plus
 // the literal flowing through a call argument, arithmetic, and a comparison.
 func TestExec_IntLiteralInFloatSlot(t *testing.T) {
+	t.Parallel()
 	src := `let half = (x: f64) -> f64 => x / 2
 	let main = () -> u8 => {
 	  let x: f64 = -5
@@ -69,6 +71,7 @@ func TestExec_IntLiteralInFloatSlot(t *testing.T) {
 // TestExec_IntLiteralInFloatAggregates covers the field/payload/return/match
 // positions: every context that accepts an untyped int against a float type.
 func TestExec_IntLiteralInFloatAggregates(t *testing.T) {
+	t.Parallel()
 	src := `struct Pt { v: f64 }
 	data Boxed = Wrap(f64)
 	let pick = (flag: bool) -> f64 => { if flag { 3 } else { 4 } }

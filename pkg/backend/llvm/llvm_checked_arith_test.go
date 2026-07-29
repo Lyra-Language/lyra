@@ -41,10 +41,14 @@ var overflowingCases = []struct {
 // TestExec_CheckedArithmetic_Traps runs each overflowing program and asserts it
 // traps (exit 101) rather than wrapping to a value.
 func TestExec_CheckedArithmetic_Traps(t *testing.T) {
+	t.Parallel()
 	for _, c := range overflowingCases {
-		if got := buildAndRun(t, c.src); got != overflowTrapExitCode {
-			t.Errorf("%s: exited %d; want %d (overflow trap)", c.name, got, overflowTrapExitCode)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != overflowTrapExitCode {
+				t.Errorf("%s: exited %d; want %d (overflow trap)", c.name, got, overflowTrapExitCode)
+			}
+		})
 	}
 }
 
@@ -83,10 +87,14 @@ var nonOverflowingCases = []struct {
 }
 
 func TestExec_CheckedArithmetic_NoOverflow(t *testing.T) {
+	t.Parallel()
 	for _, c := range nonOverflowingCases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -94,6 +102,7 @@ func TestExec_CheckedArithmetic_NoOverflow(t *testing.T) {
 // with-overflow intrinsic and a trap, while `/` and `%` do not (division overflow
 // / div-by-zero are a separate slice).
 func TestEmit_CheckedArithmeticIR(t *testing.T) {
+	t.Parallel()
 	emit := func(src string) string {
 		out, err := emitSource(t, src)
 		if err != nil {

@@ -79,10 +79,14 @@ var wrappingCases = []struct {
 }
 
 func TestExec_WrappingSaturating(t *testing.T) {
+	t.Parallel()
 	for _, c := range wrappingCases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -90,6 +94,7 @@ func TestExec_WrappingSaturating(t *testing.T) {
 // operation that would trap under checked `+` returns a wrapped/clamped value
 // instead of exiting 101.
 func TestExec_WrappingIsNotChecked(t *testing.T) {
+	t.Parallel()
 	// Operands via a parameter so the overflow is opaque to lyra-E020 (this checks
 	// the runtime trap, not the compile-time overflow error).
 	trapping := `let add = (x: u8, y: u8) -> u8 => x + y
@@ -114,6 +119,7 @@ func TestExec_WrappingIsNotChecked(t *testing.T) {
 // TestEmit_WrappingSaturatingIR pins the lowering: wrapping is a raw op (no
 // with.overflow, no trap), saturating add/sub uses the .sat intrinsic.
 func TestEmit_WrappingSaturatingIR(t *testing.T) {
+	t.Parallel()
 	emit := func(src string) string {
 		out, err := emitSource(t, src)
 		if err != nil {

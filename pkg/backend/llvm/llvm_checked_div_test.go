@@ -56,10 +56,14 @@ var checkedDivCases = []struct {
 }
 
 func TestExec_CheckedDivision_Traps(t *testing.T) {
+	t.Parallel()
 	for _, c := range checkedDivCases {
-		if got := buildAndRun(t, c.src); got != trapExitCode {
-			t.Errorf("%s: exited %d; want %d (trap)", c.name, got, trapExitCode)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != trapExitCode {
+				t.Errorf("%s: exited %d; want %d (trap)", c.name, got, trapExitCode)
+			}
+		})
 	}
 }
 
@@ -96,10 +100,14 @@ var checkedDivOkCases = []struct {
 }
 
 func TestExec_CheckedDivision_NoTrap(t *testing.T) {
+	t.Parallel()
 	for _, c := range checkedDivOkCases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -110,6 +118,7 @@ func TestExec_CheckedDivision_NoTrap(t *testing.T) {
 // (a constant divisor is elided — see TestEmit_DivisionElision); the params keep
 // the divisor at its full type range, so the checks stay.
 func TestEmit_CheckedDivisionIR(t *testing.T) {
+	t.Parallel()
 	emit := func(src string) string {
 		out, err := emitSource(t, src)
 		if err != nil {

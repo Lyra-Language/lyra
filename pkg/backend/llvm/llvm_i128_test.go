@@ -15,6 +15,7 @@ import (
 // explicit narrowing conversion (i128 → u8), proving both the arithmetic and the
 // down-conversion lower.
 func TestExec_I128_ExitCode(t *testing.T) {
+	t.Parallel()
 	src := `let main = () -> u8 => {
   let a: i128 = 200
   let b: i128 = 55
@@ -30,6 +31,7 @@ func TestExec_I128_ExitCode(t *testing.T) {
 // real 128-bit path from an i64 one: a product that exceeds i64/u64, a large
 // negative value, zero, and a value near u64 max.
 func TestExec_I128_Print(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -91,6 +93,7 @@ func TestExec_I128_Print(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			out, code := buildAndRunCapture(t, c.src)
 			if code != 0 {
 				t.Fatalf("expected exit 0, got %d (out=%q)", code, out)
@@ -105,6 +108,7 @@ func TestExec_I128_Print(t *testing.T) {
 // TestEmit_I128_IR pins the lowering shape: an i128 type, the checked-multiply
 // intrinsic at .i128 width, and the formatter (which divides by 10 at i128 width).
 func TestEmit_I128_IR(t *testing.T) {
+	t.Parallel()
 	src := `let main = () -> void => {
   let a: i128 = 5
   println(a * a)

@@ -6,6 +6,7 @@ import "testing"
 // chains (`l.start.x = v`) gep down the path. The root binding must permit interior
 // mutation (a `var` or `let mut`), which the typechecker enforces.
 func TestExec_MemberAssignment(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -55,10 +56,10 @@ let main = () -> u8 => {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}
 		})
 	}
 }
-

@@ -76,16 +76,21 @@ var sharedCases = []struct {
 // TestExec_Shared runs each shared program and checks its result — a wrong answer
 // means the box was mis-read or freed while live.
 func TestExec_Shared(t *testing.T) {
+	t.Parallel()
 	for _, c := range sharedCases {
-		if got := buildAndRun(t, c.src); got != c.want {
-			t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
 // TestExec_SharedASan runs each shared program under AddressSanitizer — a
 // double-free or use-after-free from a mis-placed release aborts.
 func TestExec_SharedASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH")
@@ -94,9 +99,12 @@ func TestExec_SharedASan(t *testing.T) {
 		t.Skip("AddressSanitizer not available in this toolchain")
 	}
 	for _, c := range sharedCases {
-		if got := buildAndRunASan(t, clang, c.src); got != c.want {
-			t.Errorf("%s (asan): exited %d; want %d", c.name, got, c.want)
-		}
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRunASan(t, clang, c.src); got != c.want {
+				t.Errorf("%s (asan): exited %d; want %d", c.name, got, c.want)
+			}
+		})
 	}
 }
 
@@ -104,6 +112,7 @@ func TestExec_SharedASan(t *testing.T) {
 // a pointer to a `{ i64, payload }` box (lyra_rc_alloc), and the constructed value
 // is released exactly once (allocations == releases — no leak, no double free).
 func TestEmit_SharedIR(t *testing.T) {
+	t.Parallel()
 	got, err := emitSource(t, `struct Box { v: u8, }
 	 let main = () -> u8 => {
 	   let b: shared Box = Box { v: 42 }

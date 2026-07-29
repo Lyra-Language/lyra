@@ -18,6 +18,7 @@ import (
 // string is still intact — so it fails on a plain run (wrong exit code) as well as
 // aborting under ASan on a use-after-free or double free.
 func TestExec_DeepRetainOnCopy(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -258,6 +259,7 @@ let main = () -> u8 => {
 	clang, clangErr := exec.LookPath("clang")
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != 0 {
 				t.Errorf("expected exit 0 (managed field intact), got %d", got)
 			}
@@ -283,6 +285,7 @@ let main = () -> u8 => {
 // intended ownership decisions and not merely their sum — a compensating pair of
 // errors would still show up as the wrong retain or release count.
 func TestEmit_DeepRetainConservation(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name                      string
 		src                       string
@@ -435,6 +438,7 @@ func llFuncBodies(ir string) map[string]string {
 // checks the generated pair for the same program covers the same number of managed
 // fields.
 func TestEmit_RetainGlueMirrorsDropGlue(t *testing.T) {
+	t.Parallel()
 	for _, src := range []string{
 		`struct Person { name: string }
 struct Team { lead: Person, tag: string }
@@ -480,6 +484,7 @@ let main = () -> u8 => {
 // A type owning nothing managed must generate no glue and pay no refcount traffic —
 // deep ownership stays pay-for-what-you-use, exactly like the drop side.
 func TestEmit_NoGlueForUnmanagedAggregate(t *testing.T) {
+	t.Parallel()
 	ir, err := emitSource(t, `struct Point { x: i64, y: i64 }
 let main = () -> u8 => {
   let p: Point = Point { x: 1, y: 2 }
@@ -503,6 +508,7 @@ let main = () -> u8 => {
 // OwnsManaged rather than reimplementing it. This pins the delegation with a shape
 // that only the deep answer gets right.
 func TestOwnsManaged_MatchesNeedsDrop(t *testing.T) {
+	t.Parallel()
 	src := `struct Person { name: string }
 struct Team { lead: Person }
 struct Point { x: u8 }

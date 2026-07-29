@@ -11,6 +11,7 @@ import (
 // refcount stays balanced. These verify the value is updated and (under ASan) that
 // no double-free or use-after-free occurs.
 func TestExec_ManagedAssignment(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -50,6 +51,7 @@ let main = () -> u8 => {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != c.want {
 				t.Errorf("expected exit %d, got %d", c.want, got)
 			}
@@ -62,6 +64,7 @@ let main = () -> u8 => {
 // final elements — no double free (the old element is no longer in the array when
 // the box dies). Verified under AddressSanitizer.
 func TestExec_ManagedAssignment_ASan(t *testing.T) {
+	t.Parallel()
 	clang, err := exec.LookPath("clang")
 	if err != nil {
 		t.Skip("clang not found on PATH; skipping ASan test")
@@ -109,6 +112,7 @@ func TestExec_ManagedAssignment_ASan(t *testing.T) {
 // reference, so the callee writes through to the caller's own storage. That case now
 // lives in TestExec_MutParameter_WritesReachCaller, which asserts the write *lands*.
 func TestExec_ManagedAssignment_AliasedStackAggregate(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
@@ -139,6 +143,7 @@ let main = () -> u8 => {
 	clang, clangErr := exec.LookPath("clang")
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
 			if got := buildAndRun(t, c.src); got != 0 {
 				t.Errorf("expected exit 0 (original string intact), got %d", got)
 			}
@@ -162,6 +167,7 @@ let main = () -> u8 => {
 // A behavioral test can only show the absence of a crash; this shows the release is
 // present exactly where it is owed and absent exactly where it would steal.
 func TestEmit_ManagedAssignmentReleaseIR(t *testing.T) {
+	t.Parallel()
 	// releasesIn counts @lyra_rc_release calls in one function body. That is a direct
 	// release of a *managed* value; a stack aggregate's deep release is a call to its
 	// drop glue instead, so it is deliberately not counted here — this test is about
