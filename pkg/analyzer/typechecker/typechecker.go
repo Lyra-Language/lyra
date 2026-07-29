@@ -159,11 +159,11 @@ func (tc *TypeChecker) checkConstrainedTypeDecl(decl *ast.TypeDeclStmt) {
 	}
 }
 
-// regexPatternBody strips the r/…/ delimiters from a PatternConstraint.Pattern
-// value.  The grammar stores the full regex-literal text (e.g. r/[0-9]+/);
+// regexPatternBody strips the r"…" delimiters from a PatternConstraint.Pattern
+// value.  The grammar stores the full regex-literal text (e.g. r"[0-9]+");
 // regex.Compile expects just the inner body ([0-9]+).
 func regexPatternBody(p string) string {
-	if len(p) >= 3 && p[:2] == "r/" && p[len(p)-1] == '/' {
+	if len(p) >= 3 && p[:2] == `r"` && p[len(p)-1] == '"' {
 		return p[2 : len(p)-1]
 	}
 	return p // already stripped or bare pattern string
@@ -682,7 +682,7 @@ func (tc *TypeChecker) checkPatternConstraints(name string, value ast.Expression
 		}
 		if !matched {
 			tc.addError(value.GetLocation(), SeverityError,
-				"%s: value %q does not satisfy pattern constraint r/%s/",
+				"%s: value %q does not satisfy pattern constraint r\"%s\"",
 				name, strLit.Value, pc.Pattern)
 		}
 	}
@@ -1233,7 +1233,7 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		// is the built-in `regex` type.
 		if _, err := regex.Compile(e.Pattern); err != nil {
 			tc.addError(e.GetLocation(), SeverityError,
-				"invalid regex literal r/%s/: %s", e.Pattern, err)
+				`invalid regex literal r"%s": %s`, e.Pattern, err)
 		}
 		return types.PrimitiveType{Name: types.Regex}
 	case *ast.InterpolatedStringExpr:

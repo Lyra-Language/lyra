@@ -8,8 +8,8 @@ import (
 )
 
 func collectRegexLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.RegexLiteralExpr {
-	raw := ctx.NodeText(node) // e.g. r/[0-9]+/
-	if len(raw) < 3 || raw[:2] != "r/" || raw[len(raw)-1] != '/' {
+	raw := ctx.NodeText(node) // e.g. r"[0-9]+"
+	if len(raw) < 3 || raw[:2] != `r"` || raw[len(raw)-1] != '"' {
 		ctx.AddError(node, diag.SeverityError, "collectRegexLiteralExpr: malformed regex literal %q", raw)
 		return nil
 	}

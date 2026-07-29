@@ -6,7 +6,7 @@ Program(1 statements) {
 				ConstrainedType(HexStr) {
 					Constraints: {
 						PatternConstraint {
-							Pattern: r/^#(?:[0-9a-fA-F]{3}){1,2}$/
+							Pattern: r"^#(?:[0-9a-fA-F]{3}){1,2}$"
 						}
 					}
 					Name: HexStr

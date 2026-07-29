@@ -1,11 +1,11 @@
 Program(1 statements) {
 	Statements: {
-		VarDeclStmt(quoted) {
+		VarDeclStmt(path) {
 			BindingKind: let
-			Name: quoted
+			Name: path
 			Value: {
 				RegexLiteralExpr {
-					Pattern: \"[a-z]+\"
+					Pattern: /usr/local/bin
 				}
 			}
 		}

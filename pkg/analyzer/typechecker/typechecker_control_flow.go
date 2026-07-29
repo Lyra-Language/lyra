@@ -605,7 +605,7 @@ func (tc *TypeChecker) checkStringMatchArm(pattern ast.Pattern) {
 		// syntax errors at type-check time rather than at runtime.
 		if _, err := regex.Compile(p.Pattern); err != nil {
 			tc.addError(p.GetLocation(), SeverityError,
-				"invalid regex pattern r/%s/: %s", p.Pattern, err.Error())
+				`invalid regex pattern r"%s": %s`, p.Pattern, err.Error())
 		}
 	case *ast.BindingPattern:
 		tc.checkStringMatchArm(p.Pattern)

@@ -7,15 +7,15 @@ import "testing"
 // declaration time rather than first use.
 
 func TestConstrainedType_ValidPattern(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype HexStr = string where pattern(r/^#[0-9a-fA-F]{6}$/)`, false)
+	res := parseCollectAndCheck(t, `newtype HexStr = string where pattern(r"^#[0-9a-fA-F]{6}$")`, false)
 	assertNoErrors(t, res)
 }
 
 func TestConstrainedType_InvalidPatternReported(t *testing.T) {
 	// `[` opens a character class that is never closed — an invalid regex.
-	res := parseCollectAndCheck(t, `newtype Bad = string where pattern(r/[/)`, false)
+	res := parseCollectAndCheck(t, `newtype Bad = string where pattern(r"[")`, false)
 	assertErrorsAre(t, res,
-		"type Bad: invalid pattern constraint r/[/: regex parse error at offset 0: unterminated character class")
+		`type Bad: invalid pattern constraint r"[": regex parse error at offset 0: unterminated character class`)
 }
 
 // The non-pattern constraint kinds (range/values/step/precision) carry no

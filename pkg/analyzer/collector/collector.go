@@ -641,11 +641,11 @@ func (c *Collector) CollectPattern(patternNode *sitter.Node) ast.Pattern {
 
 // collectRegexPattern lowers a `regex_pattern` grammar node into a
 // RegexPattern AST node. The grammar wraps a regex_literal, so we read the
-// raw text and strip the surrounding `r/.../` delimiters — mirroring how
+// raw text and strip the surrounding `r"..."` delimiters — mirroring how
 // regex_literal expressions are collected.
 func (c *Collector) collectRegexPattern(patternNode *sitter.Node, loc ast.Location) ast.Pattern {
-	raw := c.ctx.NodeText(patternNode) // e.g. r/[0-9]+/
-	if len(raw) < 3 || raw[:2] != "r/" || raw[len(raw)-1] != '/' {
+	raw := c.ctx.NodeText(patternNode) // e.g. r"[0-9]+"
+	if len(raw) < 3 || raw[:2] != `r"` || raw[len(raw)-1] != '"' {
 		c.addError(patternNode, CollectorErrorSeverityError, "collectRegexPattern: malformed regex literal %q", raw)
 		return nil
 	}

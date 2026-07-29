@@ -141,7 +141,7 @@ func TestTypeCheck_DataMatchExpr_RegexPattern_Error(t *testing.T) {
   data Maybe = None | Some i32
   let foo = Some(42)
   match foo {
-    r/[0-9]+/ => "ok",
+    r"[0-9]+" => "ok",
     _ => "ok",
   }
 	`, false)

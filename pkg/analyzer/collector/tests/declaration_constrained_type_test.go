@@ -43,7 +43,7 @@ func TestCollector_StepConstrainedType(t *testing.T) {
 }
 
 func TestCollector_PatternConstrainedType(t *testing.T) {
-	runGoldenTest(t, `newtype HexStr = string where pattern(r/^#(?:[0-9a-fA-F]{3}){1,2}$/)`, "pattern_constrained_type")
+	runGoldenTest(t, `newtype HexStr = string where pattern(r"^#(?:[0-9a-fA-F]{3}){1,2}$")`, "pattern_constrained_type")
 }
 
 func TestCollector_ParameterizedConstrainedType(t *testing.T) {

@@ -114,8 +114,8 @@ func TestTypeCheck_StringMatchExpr_RegexPattern_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let foo = "abc123"
   match foo {
-    r/[0-9]+/ => "ok",
-    r/[a-z]+/ => "ok",
+    r"[0-9]+" => "ok",
+    r"[a-z]+" => "ok",
     _ => "ok",
   }
 	`, false)
@@ -128,8 +128,8 @@ func TestTypeCheck_StringMatchExpr_RegexOnlyNoWildcard_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let foo = "abc"
   match foo {
-    r/[0-9]+/ => "ok",
-    r/[a-z]+/ => "ok",
+    r"[0-9]+" => "ok",
+    r"[a-z]+" => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -141,7 +141,7 @@ func TestTypeCheck_StringMatchExpr_MixedLiteralAndRegex_Ok(t *testing.T) {
   let foo = "hello"
   match foo {
     "exact" => "ok",
-    r/[A-Z][a-z]+/ => "ok",
+    r"[A-Z][a-z]+" => "ok",
     _ => "ok",
   }
 	`, false)
@@ -154,7 +154,7 @@ func TestTypeCheck_StringMatchExpr_InvalidRegex_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let foo = "hello"
   match foo {
-    r/a*?b/ => "ok",
+    r"a*?b" => "ok",
     _ => "ok",
   }
 	`, false)
@@ -197,7 +197,7 @@ func TestTypeCheck_StringMatchExpr_RegexOnNonString_NoStringCheck(t *testing.T) 
 	res := parseCollectAndCheck(t, `
   let foo = 42
   match foo {
-    r/[0-9]+/ => "ok",
+    r"[0-9]+" => "ok",
     _ => "ok",
   }
 	`, false)
