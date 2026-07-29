@@ -128,18 +128,22 @@ let main = () -> u8 => 0
 	}
 }
 
-// TestEmit_UnsupportedTypeDecl_Error: a type-decl kind the backend doesn't lower
-// yet (here a `newtype`/constrained type) fails loudly rather than being silently
-// skipped — the whole build errors so no half-lowered module escapes. (tuple,
-// struct, and data decls now lower; newtype is what's left.)
-func TestEmit_UnsupportedTypeDecl_Error(t *testing.T) {
+// TestEmit_NewtypeDecl_NoLLVMType: a `newtype` declaration lowers by emitting
+// *nothing* — it is nominal to the typechecker and is its base at run time, so
+// registering a named LLVM type for it would only force every arithmetic and
+// coercion site to reconcile two llir types for one machine value. What proves it
+// is the absence of a `%Meters = type` definition plus a body that still lowers.
+func TestEmit_NewtypeDecl_NoLLVMType(t *testing.T) {
 	t.Parallel()
-	_, err := emitSource(t, "newtype Meters = i32\nlet main = () -> u8 => 0\n")
-	if err == nil {
-		t.Fatal("expected an error for an unsupported (newtype) type declaration")
+	got, err := emitSource(t, "newtype Meters = i32\nlet main = () -> u8 => 0\n")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "unsupported type") {
-		t.Errorf("expected an 'unsupported type' error, got: %v", err)
+	if strings.Contains(got, "%Meters") {
+		t.Errorf("a newtype should register no LLVM type of its own:\n%s", got)
+	}
+	if !strings.Contains(got, "define i32 @main()") {
+		t.Errorf("missing @main definition:\n%s", got)
 	}
 }
 

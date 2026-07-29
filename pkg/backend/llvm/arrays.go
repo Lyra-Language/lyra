@@ -27,7 +27,7 @@ import (
 // StaticArrayType lowers here; a dynamic array `[]T` (no size) needs a heap-backed
 // representation and is deferred with a loud error.
 func (l *lowerer) lowerArrayLiteralExpr(block *ir.Block, e *ast.ArrayLiteralExpr) (value.Value, *ir.Block, error) {
-	recorded, ok := l.res.TypeTable.Get(e)
+	recorded, ok := l.recordedType(e)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for array literal")
 	}
@@ -86,7 +86,7 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	if e.Optional {
 		return nil, nil, fmt.Errorf("llvm: optional index (?[]) not implemented yet")
 	}
-	objType, ok := l.res.TypeTable.Get(e.Object)
+	objType, ok := l.recordedType(e.Object)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for index object")
 	}

@@ -291,7 +291,7 @@ func (l *lowerer) lowerInterpolatedString(block *ir.Block, e *ast.InterpolatedSt
 			return nil, nil, err
 		}
 		block = blk // a segment expression (e.g. an `if`) may move the insertion block
-		segType, ok := l.res.TypeTable.Get(seg)
+		segType, ok := l.recordedType(seg)
 		if !ok {
 			return nil, nil, fmt.Errorf("llvm: no type recorded for interpolation segment")
 		}

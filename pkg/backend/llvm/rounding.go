@@ -40,7 +40,7 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	if len(call.Arguments) != 0 {
 		return nil, nil, fmt.Errorf("llvm: %s() expects 0 arguments, got %d", member.Property.Name, len(call.Arguments))
 	}
-	recvT, ok := l.res.TypeTable.Get(member.Object)
+	recvT, ok := l.recordedType(member.Object)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for %s receiver", member.Property.Name)
 	}

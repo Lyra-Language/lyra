@@ -32,6 +32,15 @@ func (l *lowerer) lowerTypeDecl(typeDeclStmt *ast.TypeDeclStmt) error {
 		// declared name ("Point"). A `data` type registers the same way — its
 		// definition is the tagged union `{ tag, payload-blob }`.
 		return l.declareNamedStruct(typeDeclStmt.Name)
+	case *types.ConstrainedType:
+		// A `newtype` declares no representation of its own — it is nominal to
+		// the typechecker and *is* its base at run time (types.StripNewtype), so
+		// there is nothing to register. Deliberately not an LLVM type alias: a
+		// distinct named type for `newtype Meters = i64` would make every
+		// arithmetic, comparison, and coercion site reconcile two llir types for
+		// one machine value, for no gain — nominal identity has already done its
+		// work by the time codegen runs.
+		return nil
 	default:
 		return fmt.Errorf("llvm: unsupported type %s", t)
 	}
@@ -74,6 +83,8 @@ func (l *lowerer) lowerTypeDef(typeDeclStmt *ast.TypeDeclStmt) error {
 		return l.lowerStructDef(t)
 	case types.DataType:
 		return l.lowerDataDef(t)
+	case *types.ConstrainedType:
+		return nil // nothing to define — see lowerTypeDecl
 	default:
 		return fmt.Errorf("llvm: unsupported type %s", t)
 	}
@@ -112,6 +123,11 @@ func (l *lowerer) lowerDataDef(t types.DataType) error {
 // acyclic and terminates.
 func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 	switch v := t.(type) {
+	case *types.ConstrainedType:
+		// A newtype is laid out as its base (a `struct S { d: Meters }` field is
+		// just an i64). Reached either directly or via the UnresolvedType branch
+		// below, which is how a field naming one is recorded.
+		return l.resolveForLayout(v.Type)
 	case types.UnresolvedType:
 		if v.Allocation == types.Shared {
 			return t // a pointer; don't chase the referent (it may be recursive)
@@ -178,7 +194,59 @@ func (l *lowerer) lowerStructDef(t types.NamedStructType) error {
 	return nil
 }
 
+// recordedType returns the Lyra type the typechecker recorded for expr, with any
+// newtype wrapper stripped. Every lowering decision reads types through this one
+// accessor rather than the TypeTable directly, because a newtype is nominal only:
+// a `newtype Percent = u8` value *is* a u8 at run time, and a representation
+// decision made against the wrapper (which LLVM type, is it managed, how does
+// print format it) would fall through to the "unsupported type" arm or, worse,
+// silently pick the i64 default.
+func (l *lowerer) recordedType(expr ast.Expression) (types.Type, bool) {
+	t, ok := l.res.TypeTable.Get(expr)
+	if !ok {
+		return t, false
+	}
+	return l.stripNewtype(t), true
+}
+
+// stripNewtype removes newtype wrappers from t, resolving a type written as a
+// *name* through the symbol table — a struct field or array element declared as
+// `Meters` is recorded as an UnresolvedType, so that lookup is the only way to
+// find the newtype at all.
+//
+// It resolves a name only far enough to answer "is this a newtype?": anything
+// else is returned untouched, since UnresolvedType is load-bearing downstream
+// (lookupNamedType, namedStructFields, resolveDataType all key off the name).
+// The depth cap is a backstop against a cyclic declaration (`newtype A = B`,
+// `newtype B = A`), which the recursive-type check rejects before codegen.
+func (l *lowerer) stripNewtype(t types.Type) types.Type {
+	for range 64 {
+		if ct, ok := t.(*types.ConstrainedType); ok {
+			t = ct.Type
+			continue
+		}
+		u, ok := t.(types.UnresolvedType)
+		if !ok || l.res.SymbolTable == nil {
+			return t
+		}
+		decl, ok := l.res.SymbolTable.Types[u.Name]
+		if !ok {
+			return t
+		}
+		ct, ok := decl.Type.(*types.ConstrainedType)
+		if !ok {
+			return t
+		}
+		t = types.WithAllocation(ct.Type, u.Allocation)
+	}
+	return t
+}
+
 func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
+	// A newtype lowers as its base — it declares no LLVM type of its own, so a
+	// parameter, return, field, or element written as `Percent` must resolve past
+	// the name (which lookupNamedType would otherwise fail on) to the u8 it is.
+	lyraType = l.stripNewtype(lyraType)
 	// A dynamic array `[]T` is always a heap-boxed, ref-counted value regardless of
 	// any flavor (it is variable-length), so it lowers to a `ptr` to its box before
 	// the `shared`-stripping below — otherwise `shared []T` would double-box.
@@ -204,6 +272,11 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		return lltypes.NewPointer(SharedBoxType(payload)), nil
 	}
 	switch t := lyraType.(type) {
+	case *types.ConstrainedType:
+		// A newtype has no representation of its own — it lowers as its base
+		// (`newtype Percent = u8` → i8). This is the annotation-side counterpart
+		// of recordedType, which does the same for a type read off the TypeTable.
+		return l.lowerType(t.Type)
 	case types.StaticArrayType:
 		// A fixed-size array `[N]T` lowers to the LLVM aggregate `[N x <T>]` — a
 		// first-class value that round-trips through alloca/store/load like a tuple.

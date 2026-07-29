@@ -21,6 +21,28 @@ func (c *ConstrainedType) typeNode()       {}
 func (c *ConstrainedType) GetName() string { return c.Name }
 func (c *ConstrainedType) String() string  { return c.GetName() }
 
+// StripNewtype returns t with any newtype wrapper removed. A newtype is
+// *nominal only*: `newtype Percent = u8` is a distinct type to the typechecker
+// (that isolation is the whole point — see isAssignable), but a Percent value
+// **is** a u8 at run time, with no wrapper of its own. So every decision about
+// representation — the LLVM type, whether the value is refcount-managed, an
+// untyped literal's width, how print formats it — must key off the base, and
+// this is how those consumers get there.
+//
+// Chained newtypes unwrap transitively. A base written as a *name* is stored as
+// an UnresolvedType, so resolving that far needs the symbol table; consumers
+// that have one resolve first and strip after (the backend's recordedType, the
+// ownership pass's OwnsManaged).
+func StripNewtype(t Type) Type {
+	for {
+		ct, ok := t.(*ConstrainedType)
+		if !ok {
+			return t
+		}
+		t = ct.Type
+	}
+}
+
 type Constraint interface {
 	constraintNode()
 }

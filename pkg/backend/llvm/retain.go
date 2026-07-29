@@ -57,6 +57,7 @@ func (l *lowerer) deepRetain(block *ir.Block, v value.Value, t types.Type) error
 	if !l.needsDrop(t) {
 		return nil
 	}
+	t = l.stripNewtype(t) // a newtype is its base at run time
 	if ownership.IsManaged(t) {
 		l.lowerManagedRetain(block, v)
 		return nil
@@ -79,6 +80,7 @@ func (l *lowerer) deepRelease(block *ir.Block, v value.Value, t types.Type) erro
 	if !l.needsDrop(t) {
 		return nil
 	}
+	t = l.stripNewtype(t) // mirrors deepRetain
 	if ownership.IsManaged(t) {
 		return l.lowerManagedRelease(block, v, t)
 	}
@@ -110,6 +112,7 @@ func (l *lowerer) retainFuncFor(t types.Type) (*ir.Func, error) {
 	if !l.needsDrop(t) {
 		return nil, nil
 	}
+	t = l.stripNewtype(t) // one glue per base, as in dropFuncFor
 	key := t.String()
 	if fn, ok := l.retainFns[key]; ok {
 		return fn, nil
@@ -144,14 +147,17 @@ func (l *lowerer) emitRetainValue(block *ir.Block, v value.Value, t types.Type) 
 	if !l.needsDrop(t) {
 		return block, nil
 	}
+	// Resolved once up front (mirroring emitDropValue), which also strips any
+	// newtype wrapper so the managed check sees the base.
+	resolved := l.resolveNamedType(t)
 	// A managed value is retained as a unit; whatever *it* owns is already accounted
 	// for by its own box. This is where the walk stops.
-	if ownership.IsManaged(t) {
+	if ownership.IsManaged(resolved) {
 		l.lowerManagedRetain(block, v)
 		return block, nil
 	}
 
-	switch rt := l.resolveNamedType(t).(type) {
+	switch rt := resolved.(type) {
 	case types.NamedStructType:
 		return l.emitRetainFields(block, v, fieldTypesOf(rt))
 	case types.TupleType:

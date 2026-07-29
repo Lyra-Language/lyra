@@ -71,6 +71,11 @@ func (l *lowerer) needsDrop(t types.Type) bool {
 // unchanged. Unlike resolveForLayout this is shallow — one level is all the drop
 // walk needs, since it recurses field by field anyway.
 func (l *lowerer) resolveNamedType(t types.Type) types.Type {
+	// Strip newtype wrappers first: a field declared `Email` is recorded as an
+	// UnresolvedType naming a newtype over string, and the walk must see the
+	// string it *is* — reading the wrapper matches no case below, so its box
+	// would never be released.
+	t = l.stripNewtype(t)
 	u, ok := t.(types.UnresolvedType)
 	if !ok {
 		return t
@@ -79,7 +84,7 @@ func (l *lowerer) resolveNamedType(t types.Type) types.Type {
 	if !ok {
 		return t
 	}
-	return types.WithAllocation(decl.Type, u.Allocation)
+	return l.stripNewtype(types.WithAllocation(decl.Type, u.Allocation))
 }
 
 // nullDropFn is the "nothing to drop" drop_fn argument: a null i8*, which
@@ -97,6 +102,7 @@ func nullDropFn() value.Value {
 //   - anything else (including an unknown/nil type): null, the conservative answer
 //     — a missing drop leaks, which is memory-safe.
 func (l *lowerer) boxDropFn(t types.Type) (value.Value, error) {
+	t = l.stripNewtype(t) // a newtype's box is its base's box
 	if t == nil || types.IsString(t) {
 		return nullDropFn(), nil
 	}
@@ -136,6 +142,9 @@ func (l *lowerer) dropFuncFor(t types.Type) (*ir.Func, error) {
 	if !l.needsDrop(t) {
 		return nil, nil
 	}
+	// Key on the base, so a newtype and its base share one glue rather than
+	// generating two identical copies under different names.
+	t = l.stripNewtype(t)
 	key := t.String()
 	if fn, ok := l.dropFns[key]; ok {
 		return fn, nil
@@ -187,13 +196,16 @@ func (l *lowerer) emitDropValue(block *ir.Block, v value.Value, t types.Type) (*
 	if !l.needsDrop(t) {
 		return block, nil
 	}
+	// Resolve once, up front: this strips any newtype wrapper, so the managed
+	// check below sees the base a `newtype Email = string` actually is.
+	resolved := l.resolveNamedType(t)
 	// A managed value is released as a unit; its box's own drop_fn handles whatever
 	// *it* owns, when its count reaches zero. This is where the walk stops.
-	if ownership.IsManaged(t) {
-		return block, l.lowerManagedRelease(block, v, t)
+	if ownership.IsManaged(resolved) {
+		return block, l.lowerManagedRelease(block, v, resolved)
 	}
 
-	switch rt := l.resolveNamedType(t).(type) {
+	switch rt := resolved.(type) {
 	case types.NamedStructType:
 		return l.emitDropFields(block, v, fieldTypesOf(rt))
 	case types.TupleType:

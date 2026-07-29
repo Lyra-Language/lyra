@@ -44,6 +44,19 @@ func (tc *TypeChecker) checkRangeConstraints(name string, value ast.Expression, 
 	}
 }
 
+// hasRangeConstraint reports whether a newtype declares any range(...) constraint.
+// checkIntegerLiteralRange uses it to decide who reports an out-of-range constant:
+// with a range constraint this function's caller owns it (lyra-E023), without one
+// the base type's own bounds are the only check there is.
+func hasRangeConstraint(ct *types.ConstrainedType) bool {
+	for _, c := range ct.Constraints {
+		if _, ok := c.(*types.RangeConstraint); ok {
+			return true
+		}
+	}
+	return false
+}
+
 func (tc *TypeChecker) checkIntRange(name, typeName string, value ast.Expression, rc *types.RangeConstraint) {
 	v, ok := extractIntLiteralValue(value)
 	if !ok {

@@ -368,7 +368,7 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 	// itself a box". A stack aggregate lowers to a plain struct/array with no pointer
 	// of its own, yet copying one duplicates every managed field inside it — gating on
 	// the LLVM type skipped exactly those copies, which is what left them unretained.
-	ty, _ := l.res.TypeTable.Get(expr)
+	ty, _ := l.recordedType(expr)
 	if v != nil && l.needsDrop(ty) {
 		if l.res.Ownership.ShouldRetain(expr) {
 			// Deep: retain every managed reference reachable by value from v, which for

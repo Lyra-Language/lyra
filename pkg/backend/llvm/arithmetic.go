@@ -19,7 +19,7 @@ import (
 // unannotated binding, or a literal whose value didn't fit the context width so
 // the typechecker deliberately left it untyped — see propagateLiteralType).
 func (l *lowerer) literalIntType(e ast.Expression) *lltypes.IntType {
-	if t, ok := l.res.TypeTable.Get(e); ok {
+	if t, ok := l.recordedType(e); ok {
 		if p, ok := t.(types.PrimitiveType); ok {
 			if ll, ok := LLVMPrimitive(p.Name); ok {
 				if it, ok := ll.(*lltypes.IntType); ok {
@@ -37,7 +37,7 @@ func (l *lowerer) literalIntType(e ast.Expression) *lltypes.IntType {
 // context — matching the language's untyped-float default. The integer analogue
 // is literalIntType.
 func (l *lowerer) literalFloatType(e ast.Expression) *lltypes.FloatType {
-	if t, ok := l.res.TypeTable.Get(e); ok {
+	if t, ok := l.recordedType(e); ok {
 		if p, ok := t.(types.PrimitiveType); ok {
 			if ll, ok := LLVMPrimitive(p.Name); ok {
 				if ft, ok := ll.(*lltypes.FloatType); ok {
@@ -55,7 +55,7 @@ func (l *lowerer) literalFloatType(e ast.Expression) *lltypes.FloatType {
 // literalFloatType there is no default: an int literal with no float context
 // lowers as an integer.
 func (l *lowerer) literalRecordedFloatType(e ast.Expression) (*lltypes.FloatType, bool) {
-	if t, ok := l.res.TypeTable.Get(e); ok {
+	if t, ok := l.recordedType(e); ok {
 		if p, ok := t.(types.PrimitiveType); ok {
 			if ll, ok := LLVMPrimitive(p.Name); ok {
 				if ft, ok := ll.(*lltypes.FloatType); ok {
@@ -503,7 +503,7 @@ func (l *lowerer) lowerNumericConversion(block *ir.Block, call *ast.FunctionCall
 	if err != nil {
 		return nil, nil, err
 	}
-	srcT, ok := l.res.TypeTable.Get(call.Arguments[0])
+	srcT, ok := l.recordedType(call.Arguments[0])
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: type not found for %T", call.Arguments[0])
 	}
@@ -621,7 +621,7 @@ func (l *lowerer) lowerFlooredSRem(block *ir.Block, left, right value.Value) val
 }
 
 func (l *lowerer) getIntSignedness(e ast.Expression) (bool, error) {
-	t, ok := l.res.TypeTable.Get(e)
+	t, ok := l.recordedType(e)
 	if !ok {
 		return false, fmt.Errorf("llvm: type not found for %T", e)
 	}

@@ -325,7 +325,7 @@ func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value
 // A numeric range iterable (`for i in 0..<n`) is delegated to lowerForInRange (a
 // counter loop) and a string iterable to lowerForInString (yields runes).
 func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
-	iterType, ok := l.res.TypeTable.Get(e.Iterable)
+	iterType, ok := l.recordedType(e.Iterable)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for for-in iterable")
 	}
@@ -537,7 +537,7 @@ func (l *lowerer) rangeIntType(rng *ast.RangeExpr) (*lltypes.IntType, bool) {
 		if ex == nil {
 			continue
 		}
-		t, ok := l.res.TypeTable.Get(ex)
+		t, ok := l.recordedType(ex)
 		if !ok {
 			continue
 		}
@@ -647,7 +647,7 @@ func (l *lowerer) bindingType(vds *ast.VarDeclStmt) types.Type {
 	if vds.Type != nil {
 		return vds.Type
 	}
-	t, _ := l.res.TypeTable.Get(vds.Value)
+	t, _ := l.recordedType(vds.Value)
 	return t
 }
 
@@ -663,7 +663,7 @@ func (l *lowerer) lowerVarReassignment(block *ir.Block, vrs *ast.VarReassignment
 	// the concat has already happened). Deep, and on the same condition lowerVarDecl
 	// framed the binding — a stack aggregate holding a string releases that string
 	// here, which is sound now that every copy of the aggregate carries its own +1.
-	oldTy, _ := l.res.TypeTable.Get(vrs.Value)
+	oldTy, _ := l.recordedType(vrs.Value)
 	if l.needsDrop(oldTy) {
 		elem, err := slotElemType(slot)
 		if err != nil {

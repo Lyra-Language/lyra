@@ -253,7 +253,7 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 				"%s: expected %d to %d argument(s), got %d",
 				calleeName, required, total, got)
 		}
-		return lambda.ReturnType.Type
+		return tc.resolveTypeIfKnown(lambda.ReturnType.Type)
 	}
 
 	// Check each argument's inferred type against the parameter's declared type.
@@ -296,7 +296,12 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 	// about the argument list as a whole rather than any single argument.
 	tc.checkExclusiveMutableBorrow(calleeName, lambda, call)
 
-	return lambda.ReturnType.Type
+	// The declared return type is resolved (as the parameter types above already
+	// are): a return type naming a declared type is stored as an UnresolvedType,
+	// so an unresolved result compared unequal to the same type resolved from an
+	// annotation — `let p: Point = mk()` reported "cannot assign Point to Point",
+	// and the newtype analogue made a newtype unusable across any call boundary.
+	return tc.resolveTypeIfKnown(lambda.ReturnType.Type)
 }
 
 // inferLambdaCallFromType validates a call against a LambdaType (used for
@@ -320,7 +325,7 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 				"%s: expected %d to %d argument(s), got %d",
 				calleeName, required, total, got)
 		}
-		return lambdaType.ReturnType.Type
+		return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type)
 	}
 
 	for i, arg := range call.Arguments {
@@ -339,7 +344,7 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 		}
 	}
 
-	return lambdaType.ReturnType.Type
+	return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type)
 }
 
 // inferFunctionCallExpr checks argument count and types at a call site and

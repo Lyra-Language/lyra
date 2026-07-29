@@ -125,7 +125,7 @@ func (l *lowerer) lowerArrayLen(block *ir.Block, call *ast.FunctionCallExpr, mem
 	if len(call.Arguments) != 0 {
 		return nil, nil, fmt.Errorf("llvm: len() expects 0 arguments, got %d", len(call.Arguments))
 	}
-	recvT, ok := l.res.TypeTable.Get(member.Object)
+	recvT, ok := l.recordedType(member.Object)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for len() receiver")
 	}

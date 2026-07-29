@@ -235,3 +235,42 @@ func TestOwnership_RetainIndexIntoBinding(t *testing.T) {
 		t.Errorf("index into owning binding: want 1 retain (dup of the element), got %d", c.retains)
 	}
 }
+
+// A newtype over a managed base is managed. `newtype Email = string` is a string
+// box wearing a name, so the pass must record the same retains, transfers, and
+// drops it would for a bare string — the wrapper is the typechecker's business,
+// not the reference count's. Treating it as unmanaged would leak every heap
+// string that passed through one.
+func TestOwnership_NewtypeOverStringIsManaged(t *testing.T) {
+	newtyped := analyze(t, `newtype Email = string
+	 let main = () -> u8 => {
+	   let a: Email = "x" ++ "y"
+	   let b: Email = a
+	   let s: string = b
+	   if s == "xy" { 1 } else { 0 }
+	 }`)
+	if newtyped.transfers == 0 {
+		t.Error("newtype over string: want the copy to transfer, got none")
+	}
+	if newtyped.drops == 0 {
+		t.Error("newtype over string: want a last-use drop, got none")
+	}
+}
+
+// The deep half: a struct field declared as a newtype over string still makes
+// the struct own a reference, so copying it retains. The field type arrives as an
+// UnresolvedType naming the newtype, which is the case a direct wrapper strip
+// would miss.
+func TestOwnership_NewtypeStringFieldOwnsManaged(t *testing.T) {
+	c := analyze(t, `newtype Email = string
+	 struct User { name: Email, age: u8 }
+	 let main = () -> u8 => {
+	   let n: Email = "a" ++ "b"
+	   let u = User { name: n, age: 7 }
+	   let copy = u
+	   if copy.name == "ab" { 1 } else { 0 }
+	 }`)
+	if c.retains == 0 && c.transfers == 0 {
+		t.Error("newtype field: the struct copy recorded no ownership action at all")
+	}
+}

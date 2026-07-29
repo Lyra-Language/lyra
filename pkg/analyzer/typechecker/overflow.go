@@ -141,6 +141,16 @@ func signedTypeMinMagnitude(name types.PrimitiveTypeName) (int64, bool) {
 // no-op when expr is not a literal constant or targetType is not a concrete
 // integer. The variable name is used in the error message.
 func (tc *TypeChecker) checkIntegerLiteralRange(varName string, expr ast.Expression, targetType types.Type) {
+	// A newtype is checked against its base — a Percent value is a u8 and cannot
+	// hold 300 either. Skipped when the newtype carries a range constraint, since
+	// that constraint is a subset of the base and checkRangeConstraints already
+	// reports the violation (reporting both would double up on one mistake).
+	if ct, ok := targetType.(*types.ConstrainedType); ok {
+		if hasRangeConstraint(ct) {
+			return
+		}
+		targetType = tc.resolveTypeIfKnown(ct.Type)
+	}
 	toP, ok := targetType.(types.PrimitiveType)
 	if !ok || !isAnyConcreteInt(toP.Name) {
 		return

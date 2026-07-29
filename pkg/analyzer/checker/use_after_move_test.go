@@ -306,3 +306,23 @@ impl Doer for Person {
 }
 let main = () -> u8 => 0`, 0)
 }
+
+// A newtype over a managed base is managed, so moving one into an `own`
+// parameter consumes the binding exactly as moving the bare base would. The
+// wrapper is nominal — it changes what the typechecker will accept, never what
+// the reference count does — and reading managed-ness off the wrapper instead of
+// the base would silently drop this diagnostic.
+func TestMove_NewtypeOverStringIsManaged(t *testing.T) {
+	got := assertMoveErrors(t, `
+newtype Email = string
+let consume = (e: own Email) -> u8 => 1
+let main = () -> u8 => {
+  let e: Email = "a" ++ "b"
+  let a = consume(e)
+  let b = consume(e)
+  a
+}`, 1)
+	if !strings.Contains(got[0].Message, `"e" is used after it was moved`) {
+		t.Errorf("message should name the binding: %q", got[0].Message)
+	}
+}

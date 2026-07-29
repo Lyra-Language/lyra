@@ -21,7 +21,7 @@ import (
 // scalar (comparison ladder). String, float, and array scrutinees are deferred
 // with a loud error (those types don't lower at all).
 func (l *lowerer) lowerMatch(block *ir.Block, e *ast.MatchExpr) (value.Value, *ir.Block, error) {
-	scrutType, ok := l.res.TypeTable.Get(e.Scrutinee)
+	scrutType, ok := l.recordedType(e.Scrutinee)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for match scrutinee")
 	}

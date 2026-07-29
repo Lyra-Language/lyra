@@ -187,3 +187,94 @@ let x = takesFeet(m)
 `, false)
 	assertErrorsAre(t, res, "takesFeet: argument 1 (f): cannot assign Meters to Feet")
 }
+
+// ── crossing a function or field boundary ────────────────────────────────────
+//
+// A declared return type or field type that *names* a type is stored as an
+// UnresolvedType, and an unresolved name compared unequal to the same type
+// resolved from an annotation — so a newtype (and, identically, a struct)
+// couldn't survive a round trip through a function or a field read. The reported
+// error was the tell: "cannot assign Meters to Meters".
+
+func TestNewtype_ThroughCallReturn_Ok(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Meters = i64
+let mk = () -> Meters => 5
+let m: Meters = mk()
+let raw: i64 = m
+`, false))
+}
+
+// The same gap hit every named type, not just newtypes.
+func TestStruct_ThroughCallReturn_Ok(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+struct Point { x: i64 }
+let mk = () -> Point => Point { x: 1 }
+let p: Point = mk()
+let v: i64 = p.x
+`, false))
+}
+
+func TestNewtype_ReadFromStructField_Ok(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Meters = i64
+struct Trip { dist: Meters }
+let t = Trip { dist: 5 }
+let d: i64 = t.dist
+`, false))
+}
+
+// Resolving those types must not weaken distinctness: a Meters-returning call is
+// still not a Feet.
+func TestNewtype_DistinctThroughCallReturn_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Meters = i64
+newtype Feet = i64
+let mk = () -> Meters => 5
+let f: Feet = mk()
+`, false)
+	assertErrorsAre(t, res, "f: cannot assign Meters to Feet")
+}
+
+// ── the base type's own range still applies ──────────────────────────────────
+//
+// A newtype narrows its base; it never widens it. With no range constraint of
+// its own there was no check at all, so an out-of-range constant sailed through
+// the front end and reached codegen — where it would be silently truncated into
+// the base's width.
+
+func TestNewtype_LiteralOverflowsBase_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Small = u8
+let s: Small = 300
+`, false)
+	assertErrorsAre(t, res, "s: literal value 300 overflows u8")
+}
+
+// A folded constant expression is checked the same way.
+func TestNewtype_FoldedConstantOverflowsBase_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Small = u8
+let s: Small = 200 + 100
+`, false)
+	assertErrorsAre(t, res, "s: literal value 300 overflows u8")
+}
+
+// A value inside the base's range is fine.
+func TestNewtype_LiteralWithinBase_Ok(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Small = u8
+let s: Small = 200
+`, false))
+}
+
+// When the newtype *does* declare a range, that constraint owns the report — the
+// two checks must not both fire on one mistake (the constraint is a subset of
+// the base, so a violation of it subsumes any base overflow).
+func TestNewtype_RangeConstraintOwnsTheReport(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Percent = u8 where range(0..=100)
+let p: Percent = 300
+`, false)
+	assertErrorsAre(t, res, "p: value 300 is outside the range 0..=100 of Percent")
+}

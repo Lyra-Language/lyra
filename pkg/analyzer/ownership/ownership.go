@@ -167,6 +167,9 @@ func (t *Table) IsReuseTarget(e ast.Expression) bool {
 // ref-counted box). This is the single definition of "managed", shared by the
 // pass and the backend.
 func IsManaged(t types.Type) bool {
+	// A newtype is nominal only — `newtype Email = string` is represented exactly
+	// as a string — so managed-ness is a property of the base (types.StripNewtype).
+	t = types.StripNewtype(t)
 	// A dynamic array `[]T` is always a heap-boxed, ref-counted value (dynarray.go),
 	// so it is managed regardless of flavor — like a string.
 	return types.IsString(t) || types.IsDynamicArray(t) || types.AllocationOf(t) == types.Shared
@@ -201,6 +204,11 @@ func OwnsManaged(t types.Type, symTable *symbols.SymbolTable) bool {
 		return true
 	}
 	switch v := resolveNamedType(t, symTable).(type) {
+	case *types.ConstrainedType:
+		// A newtype owns exactly what its base owns. IsManaged above already
+		// stripped a *direct* wrapper; this case catches the one that arrives as
+		// an UnresolvedType — how a field or element typed `Email` is recorded.
+		return OwnsManaged(v.Type, symTable)
 	case types.NamedStructType:
 		return slices.ContainsFunc(v.Fields, func(f types.StructField) bool {
 			return OwnsManaged(f.Type, symTable)

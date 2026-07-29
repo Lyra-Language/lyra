@@ -1518,6 +1518,17 @@ func (tc *TypeChecker) propagateOperandType(operand ast.Expression, result types
 // resolved concrete numeric primitive; a nil or non-primitive concrete is a
 // no-op, as is a leaf that is already concretely typed.
 func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.Type) {
+	// A newtype context propagates its *base*: `newtype Percent = u8` is nominal
+	// only, so `let p: Percent = 40 + 2` must narrow its leaves to u8 exactly as an
+	// annotated u8 would. Without this the leaves stay untyped and the backend
+	// lowers the arithmetic at the i64 default, then truncates on the way out —
+	// `let s: Small = 200 + 100` would silently produce 44 where the same
+	// expression against a bare u8 traps.
+	if ct, ok := concrete.(*types.ConstrainedType); ok {
+		tc.propagateLiteralType(expr, tc.resolveTypeIfKnown(ct.Type))
+		return
+	}
+
 	// Aggregate context: a tuple literal narrows element-wise against a tuple
 	// context type, so `(20, 22)` against `(u8, u8)` pushes each declared element
 	// width onto the matching literal leaf (recursing into a nested tuple). This
@@ -2371,8 +2382,14 @@ func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 	fieldName := m.Property.Name
 
 	if f, ok := structFieldByName(objType, fieldName); ok {
-		tc.typeTable.Set(m, f.Type)
-		return f.Type
+		// Resolve the field's own declared type: a field naming another declared
+		// type is stored as an UnresolvedType, so reading it out unresolved meant
+		// the *read* had a different type from the annotation it is assigned to
+		// ("cannot assign Meters to i64" for a `dist: Meters` field, since one
+		// side was the name and the other the resolved newtype).
+		ft := tc.resolveTypeIfKnown(f.Type)
+		tc.typeTable.Set(m, ft)
+		return ft
 	}
 
 	switch t := objType.(type) {

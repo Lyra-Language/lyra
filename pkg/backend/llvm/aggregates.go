@@ -23,7 +23,7 @@ import (
 // not a TupleType — that's a positional variant, routed to lowerDataConstruction
 // (the tagged union, DATA_LAYOUT.md).
 func (l *lowerer) lowerTupleLiteralExpr(block *ir.Block, e *ast.TupleLiteralExpr) (value.Value, *ir.Block, error) {
-	recorded, ok := l.res.TypeTable.Get(e)
+	recorded, ok := l.recordedType(e)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for tuple literal")
 	}
@@ -89,7 +89,7 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 	if e.BaseStruct != nil {
 		return nil, nil, fmt.Errorf("llvm: struct record-update syntax not implemented yet (%q)", e.Name)
 	}
-	recorded, ok := l.res.TypeTable.Get(e)
+	recorded, ok := l.recordedType(e)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for struct instance %q", e.Name)
 	}
@@ -154,7 +154,7 @@ func (l *lowerer) lowerMemberExpr(block *ir.Block, e *ast.MemberExpr) (value.Val
 	if e.Optional {
 		return nil, nil, fmt.Errorf("llvm: optional member access (?.) not implemented yet")
 	}
-	objType, ok := l.res.TypeTable.Get(e.Object)
+	objType, ok := l.recordedType(e.Object)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for member-access object")
 	}
@@ -224,7 +224,7 @@ func (l *lowerer) lowerDataConstructorExpr(block *ir.Block, e *ast.DataConstruct
 	if e.Value != nil {
 		return nil, nil, fmt.Errorf("llvm: non-nullary DataConstructorExpr %q not expected here", e.Constructor)
 	}
-	recorded, ok := l.res.TypeTable.Get(e)
+	recorded, ok := l.recordedType(e)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for data constructor %q", e.Constructor)
 	}

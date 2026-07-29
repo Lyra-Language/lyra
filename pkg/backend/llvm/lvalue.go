@@ -174,6 +174,19 @@ type lvalueLoc struct {
 // dynamic array — and a `shared` struct — through its box (loaded from the object's
 // location).
 func (l *lowerer) lvalueAddress(block *ir.Block, e ast.Expression) (lvalueLoc, *ir.Block, error) {
+	loc, end, err := l.lvalueAddressRaw(block, e)
+	// Normalize the location's type once, here, rather than at each hop: a field
+	// or element declared as a newtype arrives as that name, and every consumer of
+	// `ty` asks a *representation* question (which LLVM type, is it managed, which
+	// release shape). Answering those against the wrapper silently skipped the
+	// release of an overwritten `newtype Email = string` field — and, had only the
+	// managed test been fixed, would have released a string fat pointer as if it
+	// were a bare box pointer. One place, so the two can't disagree.
+	loc.ty = l.stripNewtype(loc.ty)
+	return loc, end, err
+}
+
+func (l *lowerer) lvalueAddressRaw(block *ir.Block, e ast.Expression) (lvalueLoc, *ir.Block, error) {
 	switch t := e.(type) {
 	case *ast.IdentifierExpr:
 		slot, ok := l.locals[t.Name]
@@ -186,7 +199,7 @@ func (l *lowerer) lvalueAddress(block *ir.Block, e ast.Expression) (lvalueLoc, *
 		if _, err := slotElemType(slot); err != nil {
 			return lvalueLoc{}, nil, fmt.Errorf("llvm: identifier %q is not addressable", t.Name)
 		}
-		lyraType, _ := l.res.TypeTable.Get(t)
+		lyraType, _ := l.recordedType(t)
 		// A bare identifier is only ever the *root* of a path here — the collector
 		// routes a whole-binding assignment to VarReassignmentStmt — so viaBox is
 		// never read for this case; false is the conservative answer regardless.
@@ -207,7 +220,7 @@ func (l *lowerer) memberFieldAddress(block *ir.Block, e *ast.MemberExpr) (lvalue
 	if e.Optional {
 		return lvalueLoc{}, nil, fmt.Errorf("llvm: optional member assignment (?.) not implemented")
 	}
-	objType, ok := l.res.TypeTable.Get(e.Object)
+	objType, ok := l.recordedType(e.Object)
 	if !ok {
 		return lvalueLoc{}, nil, fmt.Errorf("llvm: no type recorded for member-assignment object")
 	}
@@ -265,7 +278,7 @@ func (l *lowerer) memberFieldAddress(block *ir.Block, e *ast.MemberExpr) (lvalue
 // array through its box, loaded from that storage. The index is bounds-checked
 // against the compile-time size or the runtime length.
 func (l *lowerer) indexElemAddress(block *ir.Block, e *ast.IndexExpr) (lvalueLoc, *ir.Block, error) {
-	objType, ok := l.res.TypeTable.Get(e.Object)
+	objType, ok := l.recordedType(e.Object)
 	if !ok {
 		return lvalueLoc{}, nil, fmt.Errorf("llvm: no type recorded for index-assignment object")
 	}

@@ -300,7 +300,7 @@ func (l *lowerer) formatForPrint(block *ir.Block, val value.Value, argType types
 // stdio, so it doesn't buffer ahead of a raw write).
 func (l *lowerer) lowerPrintCall(block *ir.Block, e *ast.FunctionCallExpr, newline bool) (value.Value, *ir.Block, error) {
 	arg := e.Arguments[0]
-	argType, ok := l.res.TypeTable.Get(arg)
+	argType, ok := l.recordedType(arg)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for print argument")
 	}

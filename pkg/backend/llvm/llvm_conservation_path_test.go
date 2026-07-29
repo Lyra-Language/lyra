@@ -185,6 +185,17 @@ let main = () -> u8 => u8(f(5))`,
   }
 }`,
 		},
+		{
+			// A newtype over a managed base, branched on. The wrapper is nominal only,
+			// so the box behind it must be released on both edges exactly as a bare
+			// string's is — a name is not a place to lose a reference.
+			"newtype over string in a branch", `newtype Email = string
+let main = () -> u8 => {
+  let e: Email = "a" ++ "b"
+  let s: string = e
+  if s == "ab" { 0 } else { 1 }
+}`,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
