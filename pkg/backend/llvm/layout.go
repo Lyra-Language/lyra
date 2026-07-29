@@ -69,7 +69,12 @@ func IsNumericConversionTarget(name types.PrimitiveTypeName) bool {
 	switch name {
 	case types.Int8, types.Int16, types.Int32, types.Int64, types.Int128,
 		types.UInt8, types.UInt16, types.UInt32, types.UInt64, types.UInt128,
-		types.Float16, types.Float32, types.Float64:
+		types.Float16, types.Float32, types.Float64,
+		// `rune` converts to and from the integer types (it lowers as an i32 code
+		// point), so `rune(n)` dispatches here rather than being read as a call to
+		// an undefined function. The typechecker has already restricted the pairing
+		// to rune↔integer.
+		types.Rune:
 		return true
 	default:
 		return false
@@ -96,7 +101,12 @@ func IsNumericConversionTarget(name types.PrimitiveTypeName) bool {
 func IsSignedInt(name types.PrimitiveTypeName) bool {
 	switch name {
 	case types.Int8, types.Int16, types.Int32, types.Int64, types.Int128,
-		types.UntypedInt, types.UntypedSignedInt:
+		types.UntypedInt, types.UntypedSignedInt,
+		// A `rune` lowers as a signed i32 code point (Go's rune is int32), so a
+		// widening conversion sign-extends and an ordering comparison uses the
+		// signed predicate. Code points are non-negative in practice, making the
+		// choice unobservable in range — but it must match the i32 representation.
+		types.Rune:
 		return true
 	default:
 		return false

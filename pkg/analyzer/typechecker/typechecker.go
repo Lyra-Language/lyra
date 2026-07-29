@@ -968,6 +968,15 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 			tc.propagateComparisonWidth(expr, leftType, rightType)
 		}
 	case ast.BooleanBinaryOpLT, ast.BooleanBinaryOpLTE, ast.BooleanBinaryOpGT, ast.BooleanBinaryOpGTE:
+		// Two runes are ordered by code point, which is what makes classification
+		// expressible (`c >= 'a' && c <= 'z'`). `rune` stays *non-numeric* — it has
+		// no arithmetic — so this is a comparison rule, not a numeric one, and a
+		// rune only ever orders against another rune: mixing it with an integer
+		// needs an explicit `i32(c)`, keeping the code-point/number boundary
+		// written down.
+		if isRuneType(leftType) && isRuneType(rightType) {
+			return
+		}
 		if !types.IsNumeric(leftType) || !types.IsNumeric(rightType) {
 			tc.addError(expr.GetLocation(), SeverityError,
 				"operator %s: operands must be numeric, got %s and %s", expr.Operator, leftType, rightType)
@@ -1368,6 +1377,23 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 	}
 	argType := tc.inferExprType(call.Arguments[0])
 	if argType == nil {
+		return targetType
+	}
+	// `rune` converts to and from the *integer* types, and only those: a code point
+	// is an i32 index into Unicode, so widening/narrowing it against an integer is
+	// meaningful, while a float code point is not. This is the escape hatch that
+	// makes classification arithmetic expressible (`i32(c) - i32('0')`) without
+	// making `rune` itself numeric — it has no arithmetic of its own, so the
+	// conversion is where the intent is written down (the same split Rust draws for
+	// `char`).
+	if isRuneType(argType) || isRuneType(targetType) {
+		bothRunes := isRuneType(argType) && isRuneType(targetType)
+		toInt := isRuneType(argType) && isIntType(targetType)
+		fromInt := isIntType(argType) && isRuneType(targetType)
+		if !bothRunes && !toInt && !fromInt {
+			tc.addError(call.GetLocation(), SeverityError,
+				"cannot convert %s to %s: `rune` converts only to and from the integer types", argType, ident.Name)
+		}
 		return targetType
 	}
 	if !types.IsNumeric(argType) {

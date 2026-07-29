@@ -129,3 +129,61 @@ let f = () -> u8 => {
 }`, false)
 	assertErrorsAre(t, res, "p: value 200 is outside the range 0..=100 of Percent")
 }
+
+// ── nominal isolation ─────────────────────────────────────────────────────────
+//
+// Two newtypes over the same base are distinct types. Each single-step rule is
+// right on its own — a base value is assignable *to* a newtype (construction),
+// and a newtype value is assignable to its base (there is no field accessor, so
+// that is the only way to read it) — but chaining them made every newtype over a
+// common base mutually assignable, which is exactly the mixup a newtype exists to
+// prevent.
+
+func TestNewtype_DistinctNewtypesDoNotInterconvert(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Meters = i64
+newtype Feet = i64
+let convert = (m: Meters) -> Feet => m
+`, false)
+	assertErrorsAre(t, res, "convert: return type mismatch: expected Feet, got Meters")
+}
+
+// Construction from the base still works — otherwise a newtype would be
+// unbuildable.
+func TestNewtype_ConstructionFromBase_Ok(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Meters = i64
+let m: Meters = 5
+`, false))
+}
+
+// Reading the value back out still works — there is no `.0` accessor, so
+// blocking this would make a newtype write-only.
+func TestNewtype_ToBase_Ok(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Meters = i64
+let m: Meters = 5
+let raw: i64 = m
+`, false))
+}
+
+// The same newtype is of course assignable to itself.
+func TestNewtype_SameType_Ok(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Meters = i64
+let a: Meters = 5
+let b: Meters = a
+`, false))
+}
+
+// Distinctness holds through a call argument too, not just an annotation.
+func TestNewtype_DistinctAtCallSite_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Meters = i64
+newtype Feet = i64
+let takesFeet = (f: Feet) -> i64 => 0
+let m: Meters = 5
+let x = takesFeet(m)
+`, false)
+	assertErrorsAre(t, res, "takesFeet: argument 1 (f): cannot assign Meters to Feet")
+}

@@ -101,3 +101,70 @@ func TestEmit_RuneMatchIR(t *testing.T) {
 		}
 	}
 }
+
+// Rune ordering and conversions lower: comparisons are i32 icmp on the code
+// point, `i32(c)`/`i64(c)` widen (sign-extending, since a rune is a signed i32
+// like Go's), and `rune(n)` narrows back. Together these make classification
+// logic expressible, which is what the gap blocked.
+func TestExec_RuneOrderingAndConversions(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			"is-digit true", `let isDigit = (c: rune) -> bool => c >= '0' && c <= '9'
+let main = () -> u8 => { if isDigit('7') { 1 } else { 0 } }`, 1,
+		},
+		{
+			"is-digit false", `let isDigit = (c: rune) -> bool => c >= '0' && c <= '9'
+let main = () -> u8 => { if isDigit('q') { 1 } else { 0 } }`, 0,
+		},
+		{
+			"is-alpha across both ranges", `let isAlpha = (c: rune) -> bool =>
+  (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+let main = () -> u8 => { if isAlpha('Q') { 1 } else { 0 } }`, 1,
+		},
+		{
+			// The idiom the conversions exist for: arithmetic on code points.
+			"digit value via conversion", `let digitValue = (c: rune) -> i32 => i32(c) - i32('0')
+let main = () -> u8 => u8(digitValue('7'))`, 7,
+		},
+		{
+			"round trip through rune(n)", `let upper = (c: rune) -> rune => rune(i32(c) - 32)
+let main = () -> u8 => { if upper('a') == 'A' { 0 } else { 1 } }`, 0,
+		},
+		{
+			// A multibyte code point orders and widens correctly (é is U+00E9).
+			"multibyte code point", `let big = (c: rune) -> bool => c > '~'
+let main = () -> u8 => { if big('é') { u8(i64('é')) } else { 0 } }`, 0xE9,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("exited %d; want %d", got, c.want)
+			}
+		})
+	}
+}
+
+// A rune comparison is an i32 icmp on the code point, and a widening conversion
+// sign-extends — the signed predicate/extension matching its i32 representation.
+func TestEmit_RuneComparisonIsI32(t *testing.T) {
+	t.Parallel()
+	out, err := emitSource(t, `let f = (c: rune) -> bool => c < 'z'
+let w = (c: rune) -> i64 => i64(c)
+let main = () -> u8 => 0`)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	if !strings.Contains(out, "icmp slt i32") {
+		t.Errorf("expected a signed i32 comparison, got:\n%s", out)
+	}
+	if !strings.Contains(out, "sext i32") {
+		t.Errorf("expected a sign-extending widening conversion, got:\n%s", out)
+	}
+}

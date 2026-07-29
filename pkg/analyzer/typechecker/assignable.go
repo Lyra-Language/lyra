@@ -20,17 +20,30 @@ func isAssignable(from, to types.Type) bool {
 	if nominalDataMatch(from, to) {
 		return true
 	}
+	// Two *different* newtypes never interconvert, even over the same base. Each
+	// rule below is individually right — a value satisfying the base is assignable
+	// *to* a newtype (construction), and a newtype value is assignable to its base
+	// (there is no field accessor, so this is the only way to read it) — but
+	// chaining them made every newtype over a common base mutually assignable:
+	// `Meters` → `i64` → `Feet` type-checked silently, which is precisely the
+	// mixup a newtype exists to prevent. Rejecting the pair here keeps both
+	// single-step rules intact.
+	fromCT, fromIsCT := from.(*types.ConstrainedType)
+	toCT, toIsCT := to.(*types.ConstrainedType)
+	if fromIsCT && toIsCT && fromCT.Name != toCT.Name {
+		return false
+	}
 	// Constrained types are nominally distinct from their base types at the
 	// type-equality level, but a value is always assignable to a constrained
 	// type when it satisfies the base type (the constraint check itself is
 	// handled separately by checkPatternConstraints etc.).
-	if ct, ok := to.(*types.ConstrainedType); ok {
-		return isAssignable(from, ct.Type)
+	if toIsCT {
+		return isAssignable(from, toCT.Type)
 	}
 	// A constrained type value is assignable to its base type (e.g.
 	// `let s: string = someEmail` where Email = string @pattern(...)).
-	if ct, ok := from.(*types.ConstrainedType); ok {
-		return isAssignable(ct.Type, to)
+	if fromIsCT {
+		return isAssignable(fromCT.Type, to)
 	}
 	// A static array literal is assignable to a dynamic array with a compatible
 	// element type. This mirrors how `let xs: []int = [1, 2, 3]` should work:
@@ -278,7 +291,12 @@ func numericPrimitiveByName(name string) (types.Type, bool) {
 	switch types.PrimitiveTypeName(name) {
 	case types.Int8, types.Int16, types.Int32, types.Int64, types.Int128,
 		types.UInt8, types.UInt16, types.UInt32, types.UInt64, types.UInt128,
-		types.Float16, types.Float32, types.Float64:
+		types.Float16, types.Float32, types.Float64,
+		// `rune` is not numeric (it is excluded from types.IsNumeric, so it has no
+		// arithmetic), but it *is* a conversion target: `rune(n)` is the explicit
+		// way to build a code point from an integer, the inverse of `i32(c)`.
+		// inferTypeConversion restricts which source types it will accept.
+		types.Rune:
 		return types.PrimitiveType{Name: types.PrimitiveTypeName(name)}, true
 	}
 	return nil, false

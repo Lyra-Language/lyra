@@ -35,6 +35,15 @@ func TestIsSignedInt(t *testing.T) {
 	signed := []types.PrimitiveTypeName{
 		types.Int8, types.Int16, types.Int32, types.Int64,
 		types.UntypedInt, types.UntypedSignedInt,
+		// A `rune` lowers as a signed i32 code point (Go's rune *is* int32). This
+		// used to be listed as unsigned, which was unobservable while nothing
+		// consulted it for a rune; now that runes convert (`i64(c)` → sext) and
+		// order (`c < 'z'` → the signed predicate), it has to match the i32
+		// representation. Valid code points are non-negative, so the two readings
+		// agree in range — they diverge only for a value built by `rune(n)` from a
+		// negative integer, where sign-extension preserves the bit pattern's
+		// meaning exactly as Go's int32 conversion does.
+		types.Rune,
 	}
 	for _, n := range signed {
 		if !IsSignedInt(n) {
@@ -43,7 +52,7 @@ func TestIsSignedInt(t *testing.T) {
 	}
 	unsigned := []types.PrimitiveTypeName{
 		types.UInt8, types.UInt16, types.UInt32, types.UInt64,
-		types.Float32, types.Float64, types.Boolean, types.Rune, types.String,
+		types.Float32, types.Float64, types.Boolean, types.String,
 	}
 	for _, n := range unsigned {
 		if IsSignedInt(n) {
