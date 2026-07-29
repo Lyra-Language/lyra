@@ -62,6 +62,7 @@ func (l *lowerer) loopTarget(label string) (loopCtx, error) {
 // loop/one-armed-if body) discards its tail, so its temporaries are released here
 // — they must be, since their SSA values live in per-iteration blocks.
 func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail bool) (value.Value, *ir.Block, error) {
+	defer l.pushLocalScope()()
 	l.pushManagedFrame()
 	defer l.popManagedFrame()
 	// Protect any temporaries of an enclosing statement still in flight (this block
@@ -249,6 +250,10 @@ func (l *lowerer) lowerReturn(block *ir.Block, s *ast.ReturnStmt) (*ir.Block, er
 // three-clause `for var i = 0; i < n; i += 1` (Init via lowerVarDecl, Post a
 // MathAssignOpExpr via lowerMathAssignOp).
 func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value, *ir.Block, error) {
+	// The loop variable (and a C-style init's counter) belongs to the loop, not to
+	// whatever follows it: scope its binding here so it cannot outlive the loop or
+	// permanently shadow an outer binding of the same name.
+	defer l.pushLocalScope()()
 	if e.Init != nil {
 		var err error
 		if block, err = l.lowerVarDecl(block, e.Init); err != nil {
@@ -325,6 +330,10 @@ func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value
 // A numeric range iterable (`for i in 0..<n`) is delegated to lowerForInRange (a
 // counter loop) and a string iterable to lowerForInString (yields runes).
 func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
+	// The loop variable (and a C-style init's counter) belongs to the loop, not to
+	// whatever follows it: scope its binding here so it cannot outlive the loop or
+	// permanently shadow an outer binding of the same name.
+	defer l.pushLocalScope()()
 	iterType, ok := l.recordedType(e.Iterable)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for for-in iterable")
@@ -445,6 +454,10 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 // with an inclusive `..=` therefore loops forever (the increment wraps past it), the
 // one edge to keep in mind. There is no two-variable form over a range.
 func (l *lowerer) lowerForInRange(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
+	// The loop variable (and a C-style init's counter) belongs to the loop, not to
+	// whatever follows it: scope its binding here so it cannot outlive the loop or
+	// permanently shadow an outer binding of the same name.
+	defer l.pushLocalScope()()
 	if e.Value != "" {
 		return nil, nil, fmt.Errorf("llvm: a range has no index/value pair — `for i, x in <range>` is not valid")
 	}
@@ -565,6 +578,10 @@ func (l *lowerer) rangeIntType(rng *ast.RangeExpr) (*lltypes.IntType, bool) {
 // Deferred, loud error: a two-variable form over a string (`for i, c in s` — the
 // index/rune pairing isn't defined yet).
 func (l *lowerer) lowerForInString(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
+	// The loop variable (and a C-style init's counter) belongs to the loop, not to
+	// whatever follows it: scope its binding here so it cannot outlive the loop or
+	// permanently shadow an outer binding of the same name.
+	defer l.pushLocalScope()()
 	if e.Value != "" {
 		return nil, nil, fmt.Errorf("llvm: `for i, c in <string>` (an index/rune pair over a string) is not implemented yet")
 	}

@@ -159,7 +159,12 @@ func (l *lowerer) lowerScalarMatch(block *ir.Block, e *ast.MatchExpr, scrutPrim 
 
 	current := block
 	sealed := false // an unguarded catch-all consumed the fall-through
+	// Each arm's pattern bindings are scoped to that arm: reset to the bindings
+	// visible outside the match before every arm, and restore them after it.
+	armScope := l.pushLocalScope()
+	defer armScope()
 	for _, arm := range e.MatchArms {
+		armScope()
 		switch p := arm.Pattern.(type) {
 		case *ast.WildcardPattern, *ast.IdentifierPattern:
 			if ip, ok := p.(*ast.IdentifierPattern); ok && ip.Name != "_" {

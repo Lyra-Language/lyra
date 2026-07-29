@@ -1,6 +1,7 @@
 package llvm
 
 import (
+	"maps"
 	"slices"
 
 	"github.com/llir/llvm/ir"
@@ -24,6 +25,31 @@ import (
 // escapes via the return was retained by the ownership pass, so releasing the
 // local reference is safe). break/continue conservatively leak the current
 // iteration's bindings (safe — never a double free); refining that is future work.
+
+// pushLocalScope brackets a lexical scope for the *name → slot* bindings, and is
+// the ownership frame's counterpart for visibility rather than lifetime: it
+// snapshots the bindings visible at this point and returns the function that
+// restores them, so a binding made inside the scope disappears at its end and any
+// binding it shadowed comes back.
+//
+// Without it `l.locals` was a single flat map for a whole function, so a shadowing
+// binding permanently clobbered the outer one it shadowed — `let n = 100; { let n
+// = 5 }; n` read 5 — and every construct that binds a name for the duration of a
+// sub-tree (a block's `let`, a loop variable, a match arm's pattern) leaked that
+// binding into whatever followed. Silently, and with a wrong value rather than an
+// error, since the typechecker resolves those names correctly and only codegen
+// disagreed.
+//
+// Used as `defer l.pushLocalScope()()` — the outer call snapshots now, the
+// deferred inner call restores at scope exit. The restore may also be called
+// repeatedly, which is how a match gives each arm a fresh view of the enclosing
+// bindings (an arm's pattern bindings must not be visible to the next arm); each
+// call installs its own copy, so a later arm's writes cannot reach back into the
+// snapshot.
+func (l *lowerer) pushLocalScope() func() {
+	saved := maps.Clone(l.locals)
+	return func() { l.locals = maps.Clone(saved) }
+}
 
 // pushManagedFrame / popManagedFrame bracket a lexical scope.
 func (l *lowerer) pushManagedFrame() {

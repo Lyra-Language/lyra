@@ -70,7 +70,11 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, arrType typ
 
 	current := block
 	sealed := false
+	// Per-arm binding scope — see lowerScalarMatch.
+	armScope := l.pushLocalScope()
+	defer armScope()
 	for _, arm := range e.MatchArms {
+		armScope()
 		switch p := arm.Pattern.(type) {
 		case *ast.WildcardPattern, *ast.IdentifierPattern:
 			if ip, ok := p.(*ast.IdentifierPattern); ok && ip.Name != "_" {

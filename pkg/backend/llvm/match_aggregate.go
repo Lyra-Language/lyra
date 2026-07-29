@@ -85,7 +85,11 @@ func (l *lowerer) lowerAggregateMatch(
 
 	current := block
 	sealed := false
+	// Per-arm binding scope — see lowerScalarMatch.
+	armScope := l.pushLocalScope()
+	defer armScope()
 	for _, arm := range e.MatchArms {
+		armScope()
 		if ip, isCatchAll := matchCatchAll(arm.Pattern); isCatchAll {
 			if ip != nil { // an identifier catch-all binds the whole aggregate value
 				slot := fn.Blocks[0].NewAlloca(whole.Type())
@@ -532,7 +536,11 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 	var cases []*ir.Case
 	var defaultBlock *ir.Block
 
+	// Per-arm binding scope — see lowerScalarMatch.
+	armScope := l.pushLocalScope()
+	defer armScope()
 	for _, arm := range e.MatchArms {
+		armScope()
 		armBlock := fn.NewBlock("")
 		switch p := arm.Pattern.(type) {
 		case *ast.DataPattern:
