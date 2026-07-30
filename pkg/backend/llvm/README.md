@@ -14,8 +14,8 @@ not opaque `ptr`). `llvm.New()` returns a `*Backend` whose `Emit` builds an `ir.
 defines `@main` — always `i32` at the LLVM/ABI level (the actual C runtime-expected signature,
 verified against real clang output) regardless of Lyra's own `u8`/`void` entry-point convention,
 with the `u8` body value coerced (`coerceIntWidth`: identity/`trunc`/`sext`/`zext`) and
-zero-extended into that `i32` slot. `lowerExpr` (called via `lowerEntry`) covers integer + float
-+ character literals (a `rune` is an i32 code point), arithmetic (`+ - * / % %% -(unary)` on
+zero-extended into that `i32` slot. `lowerExpr` (called via `lowerEntry`) covers integer +
+float + character literals (a `rune` is an i32 code point), arithmetic (`+ - * / % %% -(unary)` on
 ints and floats, incl. Odin-style floored `%%` vs truncated `%`; integer arithmetic is **fully
 checked** — Pit-of-Success #2, `trap.go`: `+`/`-`/`*` lower to
 `llvm.{s,u}{add,sub,mul}.with.overflow`, `/`/`%`/`%%` guard the divisor against zero and

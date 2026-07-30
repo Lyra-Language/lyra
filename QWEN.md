@@ -165,8 +165,8 @@ pretty-prints a raw tree-sitter CST node (useful for debugging).
 LSP server. Uses `github.com/owenrumney/go-lsp` over stdio. On every `textDocument/didOpen` or
 `textDocument/didChange`:
 1. Applies incremental edits to an in-memory doc store
-2. Calls `driver.Analyze` (the shared pipeline) and persists the returned `docAnalysis` (program
-   + tables) for hover/definition/etc.
+2. Calls `driver.Analyze` (the shared pipeline) and persists the returned `docAnalysis`
+   (program + tables) for hover/definition/etc.
 3. Maps the returned `[]diagnostic.Diagnostic` to LSP via `diagToLSP` and publishes them
 
 The `analyze` method is now a thin wrapper over `driver.Analyze` — it no longer re-implements
