@@ -226,30 +226,42 @@ func (l *lowerer) forEachUserFunction(program *ast.Program, entry *ast.LambdaExp
 // records it in l.funcs, so calls can resolve it before its body is lowered.
 // Several forms are deferred with a loud error rather than mis-lowered.
 func (l *lowerer) declareFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) error {
+	declared, err := l.declareFunctionAs(decl.Name, fn)
+	if err != nil {
+		return err
+	}
+	l.funcs[decl.Name] = declared
+	l.funcParams[decl.Name] = fn.Parameters
+	return nil
+}
+
+// declareFunctionAs declares a function under an explicit symbol and returns it,
+// without registering it in l.funcs — the by-name table is for functions a *source*
+// name can reach, which an emitted trait method is not (its symbol is mangled, and it
+// is only ever reached through dispatch).
+func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, error) {
 	if len(fn.LambdaClauses) > 0 {
-		return fmt.Errorf("llvm: multi-clause functions are not implemented yet (%q)", decl.Name)
+		return nil, fmt.Errorf("llvm: multi-clause functions are not implemented yet (%q)", name)
 	}
 	if fn.ReturnType.Type == nil {
-		return fmt.Errorf("llvm: function %q needs a return type annotation", decl.Name)
+		return nil, fmt.Errorf("llvm: function %q needs a return type annotation", name)
 	}
 	retType, err := l.lowerType(fn.ReturnType.Type)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	irParams := make([]*ir.Param, 0, len(fn.Parameters))
 	for _, param := range fn.Parameters {
 		if param.DefaultValue != nil {
-			return fmt.Errorf("llvm: default parameter values are not implemented yet (%q)", decl.Name)
+			return nil, fmt.Errorf("llvm: default parameter values are not implemented yet (%q)", name)
 		}
 		irParam, err := l.lowerParameter(param)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		irParams = append(irParams, irParam)
 	}
-	l.funcs[decl.Name] = l.module.NewFunc(decl.Name, retType, irParams...)
-	l.funcParams[decl.Name] = fn.Parameters
-	return nil
+	return l.module.NewFunc(name, retType, irParams...), nil
 }
 
 // defineFunction lowers a declared function's body: bind each parameter into a

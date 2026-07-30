@@ -4,8 +4,8 @@ import (
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
-	"github.com/Lyra-Language/lyra/pkg/typetable"
 	"github.com/Lyra-Language/lyra/pkg/types"
+	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
 // resolvedTraitMethod pairs a matched trait-impl method with the trait's own
@@ -314,7 +314,13 @@ func traitNamesOf(matches []resolvedTraitMethod) string {
 // ordinary call.Arguments[0] and the whole parameter list lines up directly.
 func (tc *TypeChecker) inferResolvedTraitMethodCall(calleeName string, match resolvedTraitMethod, call *ast.FunctionCallExpr, receiver ast.Expression) types.Type {
 	tc.checkImplConstraints(match, call.GetLocation())
-	tc.methodTable.Set(call, match.Method)
+	// The full resolution, not just the method: the backend needs the impl it came
+	// from and the receiver-substituted signature to emit the call.
+	tc.methodTable.SetResolution(call, typetable.Resolution{
+		Impl:      match.Impl,
+		Method:    match.Method,
+		Signature: match.Signature,
+	})
 	if match.Signature == nil {
 		// No declared signature to check args against (shouldn't normally
 		// happen — resolveTraitMethod only matches methods the trait declares

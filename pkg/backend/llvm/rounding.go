@@ -33,6 +33,14 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	if fn, ok := l.namespaceCallee(member); ok {
 		return l.lowerNamespaceCall(block, call, member, fn)
 	}
+	// A resolved trait-impl method. Checked before the builtins so a user's own impl
+	// wins over a compiler-provided method of the same name — matching the
+	// typechecker's resolution order, which consults builtins last.
+	if fn, isTraitCall, err := l.traitMethodCallee(call); err != nil {
+		return nil, nil, err
+	} else if isTraitCall {
+		return l.lowerTraitMethodCall(block, call, member, fn)
+	}
 	if m, ok := intOverflowMethods[member.Property.Name]; ok {
 		return l.lowerIntOverflowMethod(block, call, member, m)
 	}

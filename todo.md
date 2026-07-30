@@ -63,6 +63,9 @@
 
 **Sequencing:** (1) + (2b) + (4) + (5) is a complete, testable slice (types, arithmetic with traps, division via compiler-rt, printable) with only the >64-bit-literal gap open; (2a) + (3) close that gap when a large constant is first needed.
 
+### Traits
+- **[DONE 07/30] Trait-method lowering.** An impl method lowers to a function taking the receiver first; a method call is a direct call. Static dispatch, no vtables. Emitted **lazily at the first call**, which is what makes a **generic impl** work with no extra machinery — dispatch has already substituted `Self` with the concrete receiver, and `typetable.Resolution` now hands the backend the impl and that signature so Self substitution is never re-derived. The synthesized function is a real `*ast.LambdaExpr` lowered through the shared `defineFunctionInto`. Symbols name type + trait + method (neither pair is unique). Bodies are queued rather than lowered re-entrantly, so a method calling another — or itself — works. Covers data and struct receivers, arguments, managed receivers and returns, and two traits on one type. **Open:** trait signatures carry no borrow modifier, so every parameter including the receiver is by value.
+
 ## Known Bugs (open)
 ------------------
 

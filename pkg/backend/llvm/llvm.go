@@ -181,6 +181,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		byRefParams:        map[value.Value]bool{},
 		consts:             map[string]*ast.VarDeclStmt{},
 		structTypes:        map[string]*lltypes.StructType{},
+		traitMethods:       map[string]*ir.Func{},
 		roundingIntrinsics: map[string]*ir.Func{},
 		overflowIntrinsics: map[string]*ir.Func{},
 		panics:             map[string]*ir.Func{},
@@ -245,27 +246,35 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 	if err := l.defineSpecializations(); err != nil {
 		return nil, err
 	}
+	// Last, because everything above can queue one: a trait method is emitted on first
+	// call, and a specialization or closure body may contain that first call. The loop
+	// inside also handles a method whose own body calls another method.
+	if err := l.definePendingTraitMethods(); err != nil {
+		return nil, err
+	}
 	return m, nil
 }
 
 type lowerer struct {
-	module          *ir.Module
-	res             *driver.Result                 // gives you TypeTable, SymbolTable, MethodTable, …
-	funcs           map[string]*ir.Func            // name → its function IR (all declared before any body)
-	funcParams      map[string][]ast.Parameter     // name → its declared parameters (call sites need the `mut` by-ref modes)
-	consts          map[string]*ast.VarDeclStmt    // top-level `const` name → its declaration (its value is inlined at each use)
-	structTypes     map[string]*lltypes.StructType // name → its struct type (for named tuple and struct lowering)
-	strLitCount     int                            // counter for unique string-literal global names
-	memcmp          *ir.Func                       // libc memcmp, declared lazily on first string comparison
-	memcpy          *ir.Func                       // libc memcpy, declared lazily on first string concatenation
-	write           *ir.Func                       // libc write, declared lazily on first print/println
-	snprintf        *ir.Func                       // libc snprintf, declared lazily on first numeric print
-	fmtRune         *ir.Func                       // lyra_rune_to_utf8, defined lazily on first rune print
-	utf8Decode      *ir.Func                       // lyra_utf8_decode, defined lazily on first string for-in
-	fmtI128         *ir.Func                       // lyra_i128_to_str, defined lazily on first i128/u128 print
-	mulOverflowI128 *ir.Func                       // lyra_i128_mul_overflow, defined lazily (compiler-rt's __muloti4 is not linkable on Linux)
-	newlineByte     *ir.Global                     // interned "\n" byte, for println's trailing newline
-	cStrings        map[string]*ir.Global          // interned NUL-terminated C strings (snprintf formats, bool text)
+	module              *ir.Module
+	res                 *driver.Result                 // gives you TypeTable, SymbolTable, MethodTable, …
+	funcs               map[string]*ir.Func            // name → its function IR (all declared before any body)
+	funcParams          map[string][]ast.Parameter     // name → its declared parameters (call sites need the `mut` by-ref modes)
+	consts              map[string]*ast.VarDeclStmt    // top-level `const` name → its declaration (its value is inlined at each use)
+	traitMethods        map[string]*ir.Func            // emitted trait-impl methods, keyed by mangled symbol
+	pendingTraitMethods []pendingTraitMethod           // declared, body not yet lowered (see traits.go)
+	structTypes         map[string]*lltypes.StructType // name → its struct type (for named tuple and struct lowering)
+	strLitCount         int                            // counter for unique string-literal global names
+	memcmp              *ir.Func                       // libc memcmp, declared lazily on first string comparison
+	memcpy              *ir.Func                       // libc memcpy, declared lazily on first string concatenation
+	write               *ir.Func                       // libc write, declared lazily on first print/println
+	snprintf            *ir.Func                       // libc snprintf, declared lazily on first numeric print
+	fmtRune             *ir.Func                       // lyra_rune_to_utf8, defined lazily on first rune print
+	utf8Decode          *ir.Func                       // lyra_utf8_decode, defined lazily on first string for-in
+	fmtI128             *ir.Func                       // lyra_i128_to_str, defined lazily on first i128/u128 print
+	mulOverflowI128     *ir.Func                       // lyra_i128_mul_overflow, defined lazily (compiler-rt's __muloti4 is not linkable on Linux)
+	newlineByte         *ir.Global                     // interned "\n" byte, for println's trailing newline
+	cStrings            map[string]*ir.Global          // interned NUL-terminated C strings (snprintf formats, bool text)
 
 	// roundingIntrinsics caches lazily-declared llvm.{floor,ceil,round}.<width>
 	// intrinsics (rounding.go), keyed by full intrinsic name.

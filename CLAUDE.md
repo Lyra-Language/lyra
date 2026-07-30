@@ -241,6 +241,15 @@ The seam between the front-end and code generation. `backend.Backend` is the int
 ### `pkg/printer`
 Reflection-based AST printer used only in tests. `printer.PrintAST(program)` walks exported struct fields; zero/nil/empty values are omitted. `printer.NewPrinter().Print(node)` pretty-prints a raw tree-sitter CST node (useful for debugging).
 
+### Trait-method lowering (`backend/llvm/traits.go`)
+A trait-impl method lowers to an **ordinary function taking the receiver first**, and a method call to a direct call. Dispatch is entirely **static** — the typechecker already chose the impl — so there are no vtables and nothing is resolved at run time. Until 07/30 an impl type-checked and then failed the build with `unsupported method call`, which is why the standard library's combinators had to be free functions.
+
+Methods are emitted **lazily, at the first call**, like generic types and for the same two reasons: an uncalled method costs nothing, and the *call site* is where the receiver-substituted signature exists (`impl Show<t> for Box<t>` has no single type until a receiver picks one). That is why a **generic impl needs no extra machinery** — dispatch has already substituted `Self` with the concrete receiver, and `typetable.Resolution` now carries the impl and that signature alongside the method, so the backend never re-derives Self substitution. Duplicating it would be a second implementation of "what is this method's type", free to disagree with the one that type-checked the call.
+
+The synthesized function is built as a real `*ast.LambdaExpr` (trait signature for the types, impl clause for the parameter names and body) and lowered through `defineFunctionInto` — the same path a plain function and a generic specialization take, so parameter binding, `own`-param framing, and the void/typed return split cannot drift between them. The **emitted symbol names type, trait and method**: neither pair alone is unique, since one type may implement two traits declaring `show` and one trait may be implemented by many types. Bodies are deferred to a queue rather than lowered re-entrantly (a method calling another queues a second emission mid-lowering, and the lowerer's per-function state — locals, loops, managed frames — would be corrupted), and the declare-before-define split lets a self-recursive method terminate. `self` has no run-time status: it is the receiver purely because dispatch put its type in the signature's first position, which is where the call site passes it.
+
+**Open:** a trait signature carries no borrow modifier (the grammar has nowhere to write one), so every parameter including the receiver is by value; if that changes, `traitMethodLambda` is the line that must carry it or the call site and body would disagree about who owns the receiver.
+
 ### `cmd/lyra-lsp`
 LSP server. Uses `github.com/owenrumney/go-lsp` over stdio. On every `textDocument/didOpen` or `textDocument/didChange`:
 1. Applies incremental edits to an in-memory doc store
