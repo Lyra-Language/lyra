@@ -21,6 +21,7 @@ type TypeChecker struct {
 	errors         []TypeError
 	paramTypes     map[string]types.Type         // non-nil only while checking a function body
 	paramMods      map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
+	patternBound   map[string]bool               // names in paramTypes that came from a *pattern* (match arm, if-let), not a parameter
 	resolvedTypes  map[string]types.Type         // cache for resolveType to avoid duplicate "unknown type" errors
 	enclosingRet   *types.ReturnType             // declared return type of the lambda body currently being checked; nil at top level
 	traitImpls     []*ast.TraitImplStmt          // every impl block in the program, collected up front by Check; see resolveTraitMethod
@@ -780,11 +781,40 @@ func (tc *TypeChecker) checkAssignToBinding(name string, value ast.Expression, l
 	// backend. `n = "s"` on an `i64` parameter then panicked the backend on a
 	// mismatched store, and `n = n + 1` failed it with "type not found".
 	//
-	// Reassigning a parameter binding is allowed for every mode: for a by-value
-	// parameter it rebinds the callee's own copy, and for a by-reference `mut` one
-	// it writes through to the caller — which is exactly what that modifier means.
+	// Reassigning a parameter is allowed only where the write *means* something:
+	// `own` (the value was transferred to the callee, so the copy is its own) and
+	// `mut` (a reference to the caller's storage, which is the point of the
+	// modifier). A **borrowed** parameter — no modifier, or `ref` — is a view of a
+	// value the caller still owns, so rebinding it can only touch the callee's copy
+	// and the caller sees nothing; that is rejected (lyra-E025) rather than compiled
+	// into a write that vanishes, the same call the captured-assignment check makes.
+	//
+	// It also restores consistency with the binding model: `let x = 5; x = 6` is an
+	// error, and without this a bare parameter was effectively a `var` — the most
+	// permissive rung — with no way to spell the immutable one. Shadowing is the
+	// replacement (`let s = s ++ "!"`), which is why parameter shadowing had to work
+	// first (see checkStatementsInScope).
 	if paramType, ok := tc.paramTypes[name]; ok {
-		return tc.checkAssignedValue(name, value, paramType, loc)
+		switch tc.paramMods[name] {
+		case types.Own, types.Mut:
+			return tc.checkAssignedValue(name, value, paramType, loc)
+		}
+		if tc.patternBound[name] {
+			// Same rule, different thing: a match-arm / if-let binding borrows out of
+			// the value being matched, which the scrutinee still owns. Saying
+			// "parameter" here would name something the source does not contain.
+			tc.addErrorCode(loc, SeverityError, diag.CodeBorrowedParamReassignment,
+				"%s: cannot reassign a pattern binding — it borrows from the value being matched, so the write would only affect this local copy. Shadow it instead (`let %s = …`)",
+				name, name)
+		} else {
+			tc.addErrorCode(loc, SeverityError, diag.CodeBorrowedParamReassignment,
+				"%s: cannot reassign a borrowed parameter — the caller still owns the value, so the write would only affect this function's copy. Shadow it instead (`let %s = …`), or take it as `own %s` to rebind your own copy, or as `mut %s` to write through to the caller",
+				name, name, name, name)
+		}
+		// Still check the value: a rejected assignment should not also swallow the
+		// errors in its right-hand side, and the backend reads the recorded types.
+		tc.checkAssignedValue(name, value, paramType, loc)
+		return nil
 	}
 	sym, ok := tc.scope.Lookup(name)
 	if !ok {

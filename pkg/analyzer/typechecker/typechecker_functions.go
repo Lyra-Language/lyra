@@ -24,7 +24,7 @@ import (
 // user-defined names (constrained types, structs, etc.) are expanded and
 // unknown names emit an "unknown type" diagnostic.
 func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
-	oldTypes, oldMods := tc.paramTypes, tc.paramMods
+	oldTypes, oldMods, oldBound := tc.paramTypes, tc.paramMods, tc.patternBound
 	// A nested lambda is lexically inside the enclosing one, so it sees that
 	// lambda's parameters too — start from them and let this lambda's own
 	// parameters shadow. Replacing the map outright made an enclosing parameter
@@ -33,13 +33,19 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 	// never checked at all.
 	tc.paramTypes = make(map[string]types.Type, len(oldTypes)+len(lambda.Parameters))
 	tc.paramMods = make(map[string]types.TypeModifier, len(oldMods)+len(lambda.Parameters))
+	// patternBound is copied and restored with them: it is a tag *on* these names, so
+	// deleting a shadowed entry in place would erase an enclosing match arm's tag for
+	// good rather than only for this body.
+	tc.patternBound = make(map[string]bool, len(oldBound))
 	maps.Copy(tc.paramTypes, oldTypes)
 	maps.Copy(tc.paramMods, oldMods)
+	maps.Copy(tc.patternBound, oldBound)
 	for _, p := range lambda.Parameters {
 		if ip, ok := p.Pattern.(*ast.IdentifierPattern); ok {
 			// Record the modifier even when the parameter has no type annotation,
 			// so the interior-mutation check can attribute mutability to the param.
 			tc.paramMods[ip.Name] = p.TypeModifier
+			delete(tc.patternBound, ip.Name) // a parameter shadowing a pattern binding is a parameter
 			if p.Type != nil {
 				tc.paramTypes[ip.Name] = tc.resolveType(p.Type, p.GetLocation())
 			}
@@ -53,7 +59,7 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 		}
 	}
 	tc.enterScope(lambda, fn)
-	tc.paramTypes, tc.paramMods = oldTypes, oldMods
+	tc.paramTypes, tc.paramMods, tc.patternBound = oldTypes, oldMods, oldBound
 }
 
 // checkLambdaBody verifies that the lambda's body is consistent with the

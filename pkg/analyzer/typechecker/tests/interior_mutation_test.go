@@ -372,14 +372,14 @@ func TestTypeCheck_MutArgument_ScalarLiteral_Ok(t *testing.T) {
 
 func TestTypeCheck_ParamReassign_TypeMismatch_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let f = (n: i64) -> i64 => { n = "hello"  n }
+		let f = (n: own i64) -> i64 => { n = "hello"  n }
 	`, false)
 	assertErrorsAre(t, res, "n: cannot assign string to i64")
 }
 
 func TestTypeCheck_ParamReassign_BoolToInt_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let f = (n: i64) -> i64 => { n = true  n }
+		let f = (n: own i64) -> i64 => { n = true  n }
 	`, false)
 	assertErrorsAre(t, res, "n: cannot assign boolean to i64")
 }
@@ -387,7 +387,7 @@ func TestTypeCheck_ParamReassign_BoolToInt_Error(t *testing.T) {
 // The literal-range check now runs on a parameter target too.
 func TestTypeCheck_ParamReassign_LiteralOverflow_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let f = (n: i8) -> i8 => { n = 9999  n }
+		let f = (n: own i8) -> i8 => { n = 9999  n }
 	`, false)
 	assertErrorsAre(t, res, "n: literal value 9999 overflows i8")
 }
@@ -396,21 +396,55 @@ func TestTypeCheck_ParamReassign_LiteralOverflow_Error(t *testing.T) {
 // completely unreported before.
 func TestTypeCheck_ParamReassign_UndefinedInRHS_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let f = (n: i64) -> i64 => { n = undefinedVar  n }
+		let f = (n: own i64) -> i64 => { n = undefinedVar  n }
 	`, false)
 	assertErrorsAre(t, res, `undefined identifier "undefinedVar"`)
 }
 
-// A well-typed reassignment is accepted for every parameter mode: by value it
-// rebinds the callee's own copy, and through a by-reference `mut` it writes to
-// the caller.
+// A well-typed reassignment is accepted for the modes where the write means
+// something: `own` (the value was transferred, so the copy is the callee's) and `mut`
+// (a reference to the caller's storage).
 func TestTypeCheck_ParamReassign_WellTyped_Ok(t *testing.T) {
 	for _, src := range []string{
-		`let f = (n: i64) -> i64 => { n = n + 1  n }`,
-		`let f = (n: i64, k: i64) -> i64 => { k = n * 2  k }`,
+		`let f = (n: own i64) -> i64 => { n = n + 1  n }`,
+		`let f = (n: i64, k: own i64) -> i64 => { k = n * 2  k }`,
 		`let f = (n: own i64) -> i64 => { n = 5  n }`,
 		`let f = (n: mut i64) -> i64 => { n = 5  n }`,
-		`let f = (x: f64) -> f64 => { x = x + 1.5  x }`,
+		`let f = (x: own f64) -> f64 => { x = x + 1.5  x }`,
+	} {
+		res := parseCollectAndCheck(t, src, false)
+		assertNoErrors(t, res)
+	}
+}
+
+// Reassigning a *borrowed* parameter — no modifier, or `ref` — is rejected
+// (lyra-E025). The caller still owns the value, so the write could only reach the
+// callee's own copy: the same lost-write class as assigning to a captured binding
+// (E024) and the by-value `mut` parameter that silently dropped its writes.
+//
+// It also restores consistency with the binding model. `let x = 5; x = 6` is an
+// error, yet a bare parameter used to accept exactly that — making a parameter the
+// most permissive rung, with no syntax for the immutable one.
+func TestTypeCheck_ParamReassign_Borrowed_Error(t *testing.T) {
+	for _, src := range []string{
+		`let f = (n: i64) -> i64 => { n = 5  n }`,
+		`let f = (n: ref i64) -> i64 => { n = 5  n }`,
+		`let f = (s: string) -> string => { s = "a"  s }`,
+		`let f = (n: i64, k: i64) -> i64 => { k = n * 2  k }`,
+	} {
+		res := parseCollectAndCheck(t, src, false)
+		assertErrorContainsGeneric(t, res, "cannot reassign a borrowed parameter")
+	}
+}
+
+// Shadowing is the replacement, including the form that derives from the parameter —
+// which required teaching the use-before-declaration checker that a parameter is in
+// scope for the whole body.
+func TestTypeCheck_ParamShadowing_Ok(t *testing.T) {
+	for _, src := range []string{
+		`let f = (s: string) -> string => { let s = s ++ "!"  s }`,
+		`let f = (n: i64) -> i64 => { let n = n + 1  n }`,
+		`let f = (n: i64) -> i64 => { let n = 5  n }`,
 	} {
 		res := parseCollectAndCheck(t, src, false)
 		assertNoErrors(t, res)

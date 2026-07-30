@@ -5,7 +5,10 @@ import (
 	"testing"
 )
 
-// Reassigning a parameter binding (`n = n + 1`) lowers. It used to fail the build
+// Reassigning a parameter binding (`n = n + 1`) lowers. Only `own` and `mut`
+// parameters may be reassigned at all — a borrowed one is lyra-E025, since the write
+// could never reach the caller (see TestTypeCheck_ParamReassign_Borrowed_Error) — so
+// these cases use `own`, whose by-value copy is the callee's to rebind. It used to fail the build
 // with "type not found for *ast.IdentifierExpr": the typechecker skipped the whole
 // statement when the target was a parameter, so the RHS was never inferred and its
 // subexpressions had no recorded types for getIntSignedness to read. Only integer
@@ -20,21 +23,21 @@ func TestExec_ParamReassignment(t *testing.T) {
 		want int
 	}{
 		{
-			"self-referential arithmetic", `let inc = (n: i64) -> i64 => { n = n + 1  n }
+			"self-referential arithmetic", `let inc = (n: own i64) -> i64 => { n = n + 1  n }
 let main = () -> u8 => u8(inc(41))`, 42,
 		},
 		{
-			"reads another parameter", `let acc = (n: i64, k: i64) -> i64 => { k = n * 2  k = k + 1  k }
+			"reads another parameter", `let acc = (n: i64, k: own i64) -> i64 => { k = n * 2  k = k + 1  k }
 let main = () -> u8 => u8(acc(10, 0))`, 21,
 		},
 		{
-			"narrow width", `let inc = (n: u8) -> u8 => { n = n + 1  n }
+			"narrow width", `let inc = (n: own u8) -> u8 => { n = n + 1  n }
 let main = () -> u8 => inc(7)`, 8,
 		},
 		{
 			// The float path always worked (no signedness lookup); pinned so the
 			// shared fix doesn't regress it.
-			"float", `let f = (x: f64) -> f64 => { x = x + 1.5  x }
+			"float", `let f = (x: own f64) -> f64 => { x = x + 1.5  x }
 let main = () -> u8 => u8(f(1.5).floor())`, 3,
 		},
 		{
@@ -43,10 +46,11 @@ let main = () -> u8 => u8(f(1.5).floor())`, 3,
 let main = () -> u8 => u8(f(40))`, 42,
 		},
 		{
-			// A by-value parameter rebinds only the callee's copy — the caller is
-			// unaffected. (A `mut` scalar stays by value; lyra-W010 warns that the
-			// modifier is inert there, so the split is diagnosed rather than silent.)
-			"by-value rebind does not reach the caller", `let bump = (n: i64) -> void => { n = 99 }
+			// An `own` parameter is passed by value, so rebinding it cannot reach the
+			// caller — which is exactly why `own` may be reassigned and a borrow may
+			// not: the caller gave the value away, so it has nothing left to be
+			// surprised about.
+			"own rebind does not reach the caller", `let bump = (n: own i64) -> void => { n = 99 }
 let main = () -> u8 => {
   var k = 5
   bump(k)
@@ -76,14 +80,14 @@ let main = () -> u8 => {
 }
 
 // Reassigning a *managed* parameter releases the value being overwritten and takes
-// a reference to the new one, on both sides of the convention: a by-value `string`
-// parameter (the callee's own copy) and a by-reference `mut string` (the caller's
+// a reference to the new one, on both sides of the convention: an `own string`
+// parameter (the callee's own copy, transferred to it) and a by-reference `mut string` (the caller's
 // slot, written through twice here so a missed release would show as a leak and a
 // double release as a use-after-free).
 func TestExec_ParamReassignment_ManagedIsLeakFree(t *testing.T) {
 	t.Parallel()
 	src := `let setStr = (s: mut string) -> void => { s = "n" ++ "1" }
-let localStr = (s: string) -> string => { s = "l" ++ "1"  s }
+let localStr = (s: own string) -> string => { s = "l" ++ "1"  s }
 let main = () -> u8 => {
   var t = "a" ++ "b"
   setStr(t)
@@ -104,20 +108,17 @@ let main = () -> u8 => {
 	}
 }
 
-// Reassigning a *borrowed* parameter must not release the value it held.
+// `own` and `mut` are the two modes a parameter may be reassigned in, and they release
+// the overwritten value for different reasons: an `own` parameter owns its copy
+// outright, while a `mut` parameter's slot *is* the caller's storage.
 //
-// A by-value `string` parameter is a borrow: the callee's copy shares the caller's
-// reference, and the caller is still the owner. Releasing through it therefore frees a
-// value the caller will release again — a heap-use-after-free, not a leak. This was
-// live until 07/30 (`lowerVarReassignment` released whenever the type needed a drop,
-// without asking whether the binding owned it), and the reason it survived is that the
-// ASan suite was not instrumenting memory accesses at all; the moment it was, this
-// aborted. See slotIsOwning.
-//
-// The contrast case is in the same program: `mut` is by reference, so its slot *is* the
-// caller's owning storage and writing through it *should* release. Both conventions in
-// one test, because the bug was picking the wrong rule for one of them.
-func TestExec_BorrowedParamReassignment_NoUseAfterFree(t *testing.T) {
+// Until 07/30 the release happened for a *borrowed* parameter too, whose copy shares
+// the caller's reference — freeing a value the caller would release again
+// (ASan-confirmed heap-use-after-free). That is now unreachable from source, because
+// reassigning a borrow is lyra-E025; the backend keeps the `slotIsOwning` guard as
+// defense in depth, on the standing rule that it errors or does nothing rather than
+// emitting a wrong release.
+func TestExec_OwningParamReassignment_ReleasesExactlyOnce(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
@@ -125,35 +126,35 @@ func TestExec_BorrowedParamReassignment_NoUseAfterFree(t *testing.T) {
 		want int
 	}{
 		{
-			// The minimal fault: the argument is an owned temporary the caller
-			// releases after the call, and the callee overwrote (and freed) it first.
-			"by-value string parameter reassigned",
-			`let localStr = (s: string) -> string => { s = "l" ++ "1"  s }
+			// The shape that was the use-after-free, now with the mode that makes it
+			// legal: the caller transferred the value, so the callee may free it.
+			"own string parameter reassigned",
+			`let localStr = (s: own string) -> string => { s = "l" ++ "1"  s }
 			 let main = () -> u8 => if localStr("z" ++ "z") == "l1" { 0 } else { 1 }`,
-			0,
-		},
-		{
-			// The caller's binding outlives the call and is read afterwards, so a
-			// premature free shows up as a corrupted read rather than only under ASan.
-			"borrowed reassignment leaves the caller's value intact",
-			`let shadow = (s: string) -> i64 => { s = "x" ++ "y"  0 }
-			 let main = () -> u8 => {
-			   let keep = "a" ++ "b"
-			   let ignored = shadow(keep)
-			   if keep == "ab" { 0 } else { 1 }
-			 }`,
 			0,
 		},
 		{
 			// `mut` is by reference: the write must reach the caller, and the
 			// overwritten value must genuinely be released (twice over, here).
-			"mut string parameter still writes through and releases",
+			"mut string parameter writes through and releases",
 			`let setStr = (s: mut string) -> void => { s = "n" ++ "1" }
 			 let main = () -> u8 => {
 			   var t = "a" ++ "b"
 			   setStr(t)
 			   setStr(t)
 			   if t == "n1" { 0 } else { 1 }
+			 }`,
+			0,
+		},
+		{
+			// A borrowed parameter is untouched by the callee, so the caller's value
+			// survives the call intact.
+			"a borrow leaves the caller's value intact",
+			`let peek = (s: string) -> i64 => if s == "ab" { 1 } else { 0 }
+			 let main = () -> u8 => {
+			   let keep = "a" ++ "b"
+			   let seen = peek(keep)
+			   if keep == "ab" { 0 } else { 1 }
 			 }`,
 			0,
 		},

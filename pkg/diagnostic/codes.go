@@ -135,6 +135,24 @@ const (
 	// value, or move the state into a value the closure is handed.
 	CodeCapturedAssignment = "lyra-E024"
 
+	// CodeBorrowedParamReassignment: a function reassigns a *borrowed* parameter —
+	// one with no modifier, or `ref`. A borrow is a view of a value someone else
+	// owns, so rebinding the name can only affect the callee's own copy: the caller
+	// sees nothing, exactly like the captured-assignment case above (E024) and the
+	// by-value `mut` parameter that silently lost its writes.
+	//
+	// It is also inconsistent with the binding model. `let x = 5; x = 6` is an error
+	// ("use 'var'"), yet a bare parameter accepted the same write, making a parameter
+	// the most permissive rung with no syntax for the immutable one. `own` and `mut`
+	// stay legal because for them the write means something: `own` transfers the value
+	// to the callee, and `mut` is a reference to the caller's storage. Swift removed
+	// `var` parameters for this same confusion (SE-0003); Rust requires opt-in and
+	// keeps it local.
+	//
+	// The replacement is shadowing — `let s = s ++ "!"` — which says plainly that a
+	// new local value is being made rather than the caller's being changed.
+	CodeBorrowedParamReassignment = "lyra-E025"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

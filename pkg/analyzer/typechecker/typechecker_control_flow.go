@@ -218,6 +218,13 @@ func (tc *TypeChecker) withPatternBindings(pattern ast.Pattern, scrutineeType ty
 	merged := make(map[string]types.Type, len(old)+2)
 	maps.Copy(merged, old)
 	tc.paramTypes = merged
+	// Pattern bindings share paramTypes with parameters (they are looked up the same
+	// way), so they are tagged here to keep them tellable apart where the difference
+	// is user-visible — the reassignment diagnostic names one or the other.
+	oldBound := tc.patternBound
+	bound := make(map[string]bool, len(oldBound)+2)
+	maps.Copy(bound, oldBound)
+	tc.patternBound = bound
 	// walkDestructuredPattern validates as it binds, but the arm-pattern check
 	// (checkDataMatchArm/checkStructMatchArm/…) already reported any mismatch, so
 	// discard errors from this pass to avoid duplicates — it's used here only for
@@ -225,10 +232,12 @@ func (tc *TypeChecker) withPatternBindings(pattern ast.Pattern, scrutineeType ty
 	errCount := len(tc.errors)
 	tc.walkDestructuredPattern(pattern, scrutineeType, func(name string, typ types.Type) {
 		tc.paramTypes[name] = typ
+		tc.patternBound[name] = true
 	})
 	tc.errors = tc.errors[:errCount]
 	fn()
 	tc.paramTypes = old
+	tc.patternBound = oldBound
 }
 
 func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
