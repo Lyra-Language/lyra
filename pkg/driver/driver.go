@@ -36,10 +36,13 @@ type Result struct {
 	ScopeTable  *symbols.ScopeTable
 	TypeTable   *typetable.TypeTable
 	MethodTable *typetable.MethodTable
-	Ownership   *ownership.Table
-	Captures    *captures.Table      // each lambda's free variables (its closure environment)
-	RangeSafety *checker.SafetyTable // overflow ops the backend may leave unchecked
-	Diagnostics []diag.Diagnostic
+	// Instantiations are the generic specializations the program uses (each call
+	// site's solved type variables); the backend emits one function per distinct set.
+	Instantiations *typetable.InstantiationTable
+	Ownership      *ownership.Table
+	Captures       *captures.Table      // each lambda's free variables (its closure environment)
+	RangeSafety    *checker.SafetyTable // overflow ops the backend may leave unchecked
+	Diagnostics    []diag.Diagnostic
 }
 
 // HasErrors reports whether any diagnostic is error-severity. A compiler should
@@ -133,6 +136,7 @@ func Analyze(source []byte) *Result {
 	typeErrors := tc.Check(program)
 	res.TypeTable = tt
 	res.MethodTable = tc.MethodTable()
+	res.Instantiations = tc.Instantiations()
 
 	// Purity must run after typechecking — it consumes the resolved MethodTable.
 	for _, e := range checker.CheckPurity(program, scopeTable, tt, tc.MethodTable()) {

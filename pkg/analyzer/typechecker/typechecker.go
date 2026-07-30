@@ -26,16 +26,18 @@ type TypeChecker struct {
 	traitImpls     []*ast.TraitImplStmt          // every impl block in the program, collected up front by Check; see resolveTraitMethod
 	genericBounds  map[string][]string           // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
 	currentVarDecl *ast.VarDeclStmt              // the var decl whose initializer is currently being inferred; lets a self-reference in a rebind's initializer resolve to VarDeclStmt.Shadows (the prior binding) instead of itself
+	instantiations *typetable.InstantiationTable // generic call site -> the specialization it resolves to (instantiate.go); the backend monomorphizes from it
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
 	return &TypeChecker{
-		symTable:      symTable,
-		scopeTable:    scopeTable,
-		typeTable:     typeTable,
-		methodTable:   typetable.NewMethodTable(),
-		scope:         symTable.GlobalScope,
-		resolvedTypes: make(map[string]types.Type),
+		symTable:       symTable,
+		scopeTable:     scopeTable,
+		typeTable:      typeTable,
+		methodTable:    typetable.NewMethodTable(),
+		instantiations: typetable.NewInstantiationTable(),
+		scope:          symTable.GlobalScope,
+		resolvedTypes:  make(map[string]types.Type),
 	}
 }
 
@@ -44,6 +46,12 @@ func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTabl
 // checker) and need to know which method body a given call dispatches to.
 func (tc *TypeChecker) MethodTable() *typetable.MethodTable {
 	return tc.methodTable
+}
+
+// Instantiations returns the generic specializations the program uses — each call
+// site's solved type-variable bindings. The backend monomorphizes from it.
+func (tc *TypeChecker) Instantiations() *typetable.InstantiationTable {
+	return tc.instantiations
 }
 
 // enterScope temporarily sets tc.scope to the scope recorded for node,

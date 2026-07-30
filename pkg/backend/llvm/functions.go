@@ -207,6 +207,14 @@ func (l *lowerer) forEachUserFunction(program *ast.Program, entry *ast.LambdaExp
 		if !ok || lambda == entry {
 			continue
 		}
+		// A *generic* function has no non-generic form to emit: a type variable has no
+		// representation, so there is nothing to declare or define under the bare name.
+		// Its specializations are emitted instead, one per instantiation
+		// (monomorphize.go). Skipping it here is also what makes an unused generic
+		// function cost nothing.
+		if isGenericLambda(lambda) {
+			continue
+		}
 		if err := fn(decl, lambda); err != nil {
 			return err
 		}
@@ -248,7 +256,17 @@ func (l *lowerer) declareFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) err
 // fresh alloca (so the body reads it like any local), lower the body, and emit
 // the implicit tail return (unless the body already ended in an explicit one).
 func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) error {
-	irFn := l.funcs[decl.Name]
+	return l.defineFunctionInto(l.funcs[decl.Name], fn, decl.Name)
+}
+
+// defineFunctionInto is defineFunction's body, parameterized by the ir.Func to fill
+// in. A *specialization* of a generic function lowers the same lambda into a
+// different ir.Func (one per instantiation, monomorphize.go), so the two share this
+// rather than the specialization path re-deriving parameter binding, `own`-param
+// framing, and the void/typed return split — three things that must not drift
+// between a generic function and a plain one.
+func (l *lowerer) defineFunctionInto(irFn *ir.Func, fn *ast.LambdaExpr, name string) error {
+	decl := &ast.VarDeclStmt{Name: name}
 	retType, err := l.lowerType(fn.ReturnType.Type)
 	if err != nil {
 		return err
@@ -366,6 +384,13 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	if targetName := types.PrimitiveTypeName(ident.Name); IsNumericConversionTarget(targetName) {
 		return l.lowerNumericConversion(block, e, targetName)
 	}
+	// A call to a *generic* function resolves to the specialization the typechecker
+	// solved for this call site, not to the generic name (which has no emitted body —
+	// a type variable has no representation). Checked before l.funcs so the two can
+	// never be confused.
+	if fn, params, ok := l.specializedFuncFor(e); ok {
+		return l.lowerDirectCall(block, e, fn, params)
+	}
 	fn, ok := l.funcs[ident.Name]
 	if !ok {
 		// A compiler-provided free function (print/println) — checked only after
@@ -383,7 +408,13 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	// arity and assignability, and propagated each parameter's width onto its
 	// argument (inferLambdaCall), so a literal arg already lowers at the param's
 	// width — no coercion needed here.
-	params := l.funcParams[ident.Name]
+	return l.lowerDirectCall(block, e, fn, l.funcParams[ident.Name])
+}
+
+// lowerDirectCall lowers the arguments of a call to a known function and emits it.
+// Shared by an ordinary call by name and a call to a generic *specialization*, so
+// the by-reference `mut`/`ref` argument handling below has one definition.
+func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *ir.Func, params []ast.Parameter) (value.Value, *ir.Block, error) {
 	args := make([]value.Value, 0, len(e.Arguments))
 	for i, argExpr := range e.Arguments {
 		var (
@@ -467,4 +498,36 @@ func isLValuePath(e ast.Expression) bool {
 			return false
 		}
 	}
+}
+
+// isGenericLambda reports whether a function's signature mentions a type variable,
+// in which case only its specializations can be emitted.
+func isGenericLambda(fn *ast.LambdaExpr) bool {
+	for _, p := range fn.Parameters {
+		if mentionsTypeVar(p.Type) {
+			return true
+		}
+	}
+	return mentionsTypeVar(fn.ReturnType.Type)
+}
+
+// mentionsTypeVar reports whether a type contains a GenericType leaf.
+func mentionsTypeVar(t types.Type) bool {
+	switch tt := t.(type) {
+	case types.GenericType:
+		return true
+	case types.StaticArrayType:
+		return mentionsTypeVar(tt.ElementType)
+	case types.DynamicArrayType:
+		return mentionsTypeVar(tt.ElementType)
+	case types.TupleType:
+		for _, e := range tt.Elements {
+			if mentionsTypeVar(e) {
+				return true
+			}
+		}
+	case types.WeakType:
+		return mentionsTypeVar(tt.Inner)
+	}
+	return false
 }

@@ -206,7 +206,10 @@ func (l *lowerer) recordedType(expr ast.Expression) (types.Type, bool) {
 	if !ok {
 		return t, false
 	}
-	return l.stripNewtype(t), true
+	// While a generic specialization is being lowered, a type read out of the shared
+	// body still mentions the function's type variables — substitute them for this
+	// instantiation's bindings (monomorphize.go).
+	return l.stripNewtype(l.applyTypeSubst(t)), true
 }
 
 // stripNewtype removes newtype wrappers from t, resolving a type written as a
@@ -243,6 +246,10 @@ func (l *lowerer) stripNewtype(t types.Type) types.Type {
 }
 
 func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
+	// A type variable has no representation of its own: inside a specialization it
+	// stands for that instantiation's binding (monomorphize.go). Substituted first,
+	// so every case below sees a concrete type.
+	lyraType = l.applyTypeSubst(lyraType)
 	// A newtype lowers as its base — it declares no LLVM type of its own, so a
 	// parameter, return, field, or element written as `Percent` must resolve past
 	// the name (which lookupNamedType would otherwise fail on) to the u8 it is.

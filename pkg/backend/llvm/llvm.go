@@ -186,6 +186,8 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		dropFns:            map[string]*ir.Func{},
 		retainFns:          map[string]*ir.Func{},
 		cStrings:           map[string]*ir.Global{},
+		specialized:        map[string]*ir.Func{},
+		specializedParams:  map[string][]ast.Parameter{},
 		closures:           map[*ast.LambdaExpr]*ir.Func{},
 		closureThunks:      map[string]*ir.Func{},
 		envDropFns:         map[string]*ir.Func{},
@@ -223,6 +225,11 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 			return nil, err
 		}
 	}
+	// One function per distinct instantiation of a generic one (monomorphize.go),
+	// declared alongside the rest so a call resolves before any body exists.
+	if err := l.declareSpecializations(); err != nil {
+		return nil, err
+	}
 	if err := l.lowerEntry(entry); err != nil {
 		return nil, err
 	}
@@ -233,6 +240,9 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		if err := l.defineClosure(fn); err != nil {
 			return nil, err
 		}
+	}
+	if err := l.defineSpecializations(); err != nil {
+		return nil, err
 	}
 	return m, nil
 }
@@ -331,6 +341,15 @@ type lowerer struct {
 	//   - emptyEnvPtr is the one pinned static environment every captureless
 	//     function value shares; envDropFns caches the per-capture-set drop glue,
 	//     reached at release time through the closureEnvDrop trampoline.
+	// Monomorphization (monomorphize.go): one emitted function per distinct
+	// instantiation of a generic one, keyed by the instantiation's stable Key().
+	// typeSubst is the substitution installed while a specialization is being
+	// lowered — the two type accessors (lowerType, recordedType) consult it, which
+	// is what makes the shared body concrete without cloning any node.
+	specialized       map[string]*ir.Func
+	specializedParams map[string][]ast.Parameter
+	typeSubst         map[string]types.Type
+
 	closures       map[*ast.LambdaExpr]*ir.Func
 	closureThunks  map[string]*ir.Func
 	envDropFns     map[string]*ir.Func

@@ -243,6 +243,13 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 // inferLambdaCall validates a call against a LambdaExpr (from a VarDeclStmt or
 // direct lambda callee). calleeName is used in error messages.
 func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr) types.Type {
+	// A *generic* callee's signature mentions type variables, which have to be
+	// solved from this call's argument types before anything can be checked against
+	// them — a declared `t` is assignable from nothing until it is bound. Solving
+	// also produces the specialization the backend will emit, recorded per call site.
+	if vars := lambdaTypeVars(lambda); len(vars) > 0 {
+		return tc.inferGenericCall(calleeName, lambda, call, vars)
+	}
 	// Count required parameters (those without a default value).
 	required := 0
 	for _, p := range lambda.Parameters {
