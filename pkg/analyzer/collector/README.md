@@ -1,0 +1,96 @@
+# `pkg/analyzer/collector` — CST → AST
+
+Converts a tree-sitter CST into `*ast.Program` and `*symbols.SymbolTable`.
+
+**Entry point:** `collector.NewCollector(source []byte)` → `c.Collect(rootNode) (program, table,
+errors)`
+
+**Dispatch:** `collector.go` owns `CollectStatement` and `CollectExpr` (switch on
+`node.Kind()`), and `ParseType`. Subpackages call back into the root collector via the
+`Collector` interface to avoid circular imports.
+
+**Canonical-type resolution (`canonical.go`):** `Collect` finishes with `resolveCanonicalTypes`,
+which stamps `TypeDeclStmt.CanonicalKind` ("Result"/"Maybe"/"") — the single source of truth for
+whether a type is the compiler-known Result/Maybe that `?`, must-use, `??`, and the try-context
+check key off. Identity is conferred by a `@builtin(Result)`/`@builtin(Maybe)` attribute
+(collected onto `TypeDeclStmt.Builtin` via `collectBuiltin`, reusing the `@derive` attribute
+grammar — no grammar change), which is *name-independent* (a type named `Either` can be the
+canonical Result) but shape-validated; with no marker, an unmarked type literally named
+"Result"/"Maybe" with the canonical constructor shape is stamped as a fallback (the only path
+today — there is no prelude). A malformed marker (wrong shape, unknown kind, duplicate claim) is
+`lyra-E017`. Recognition sites read the stamp via the symbol table and keep a name+arity
+fallback only for a truly undeclared ambient annotation.
+
+**Struct-pattern reclassification (`reclassifyStructPatterns`, `collector.go`):** after
+`walkProgram`, `Collect` walks every pattern site (match arms, destructuring `let`s, `if
+let`/`else`, lambda params/clauses — via `ast.WalkStmt`/`WalkExpr` to reach the containers) and
+rewrites a `DataPattern` whose name is a declared **struct** type into a named `StructPattern`
+(`reclassifyPattern`, recursing into sub-patterns). Needed because `Pt { x, y }` (a struct
+pattern) and `Node { l, r }` (a data-constructor inline-record pattern) are syntactically
+identical — both parse to a `DataPattern` with an inner `StructPattern` payload — so the split
+is *semantic* and can only run once the symbol table is complete (a forward-referenced struct
+still resolves). A name that is a data constructor (or unknown) stays a `DataPattern`.
+Downstream (typechecker, backend) therefore sees `StructPattern` for structs and `DataPattern`
+for data variants, no per-site "is this name a struct?" branching.
+
+**Constructor-expression reclassification (`reclassifyConstructorExprs`,
+`constructor_reclassify.go`):** the same post-pass idea for *expression* position. An all-caps /
+single-capital constructor or named-tuple name (`data Dir = N | S | E | W`, `tuple POINT(…)`)
+lexes as a `const_identifier` (the token reserved for constants, `/[A-Z][A-Z0-9_]*/`;
+`user_defined_type_name` needs a lowercase letter to be unambiguous), so a bare use collects to
+an `IdentifierExpr` and an applied use `FOO(3)` to a `FunctionCallExpr` — not the
+`DataConstructorExpr` / named `TupleLiteralExpr` a PascalCase constructor yields, and the
+typechecker then reported a misleading "undefined identifier". This pass (run after the symbol
+table is complete, so a forward-referenced constructor resolves) rewrites a bare
+nullary-constructor name into a `DataConstructorExpr` and an applied constructor/named-tuple
+call into a named `TupleLiteralExpr` — the exact nodes PascalCase produces — so all downstream
+passes handle them identically with no special-casing. It reassigns each expression slot in
+place (mirroring `ast.walkExprChildren`, since a visitor can't). A value binding of the same
+name (a `const N`, checked against the global scope) shadows the constructor and skips the
+rewrite, so existing constant code is untouched. Pattern position already resolved these
+constructors, so only expressions needed it.
+
+**Nil-node hazard:** `node.ChildByFieldName(...)` returns a genuine Go `nil` `*sitter.Node` for
+an absent *optional* grammar field (e.g. a zero-parameter `lambda_type`'s `parameter_types`).
+Calling any accessor (`ChildCount`, `Child`, `Kind`, …) on that nil node **hangs inside the
+go-tree-sitter CGO binding instead of panicking** — found via a real bug (`parseParameterTypes`,
+fixed 06/24/26) where this silently froze the whole collector. Always nil-check before touching
+the result of an optional field lookup, the same way `parseType`/`CollectExpression` already do.
+
+**Never return a nil expression node into the AST:** an expression collector that hits an
+unrecoverable value error (e.g. a numeric literal that overflows `int64`) must emit a diagnostic
+**and return a placeholder node** (a zero-valued `IntegerLiteralExpr`/`FloatLiteralExpr`), never
+`nil`. A `nil` returned up as an `ast.Expression` becomes a *typed-nil* interface (`(*T)(nil)`,
+non-nil interface with a nil pointer) that slips past `expr == nil` checks and crashes a later
+pass on the first field access — this is exactly how an out-of-range literal panicked
+`propagateLiteralType` (fixed 07/24/26, `numeric_literals.go`). The error diagnostic keeps the
+program from compiling, so the placeholder value is inert. **The statement analogue (block
+bodies):** `CollectBlockExpr` skips a child that collects to nil (`isNilStmt` — untyped and
+typed nils) rather than appending it, because a block's *value is its final statement* — a
+trailing `comment` (a named CST child that collects to nil) would otherwise become the block's
+value and miscompile (the backend returned garbage for `a + b // c`; fixed 07/25/26). A
+comment-only body collects to an empty block.
+
+**Subpackages** (all pass `*collector_ctx.Ctx` as their first argument):
+
+| Subpackage | Files handle |
+|---|---|
+| `declarations/` | `let`/`var`/`const` decls, destructuring decls, `if let`, trait decls, trait impls, module decls |
+| `typedecls/` | `struct`, `data`, named tuples, `newtype`, constrained types, attributes |
+| `expressions/` | all expression kinds (one file per kind) |
+| `statements/` | `for`, `for-in`, `return`, `break`, `continue`, `with`, var reassignment, deref assignment |
+
+**`collector_ctx.Ctx`** — shared state passed to every subpackage function:
+- `ctx.Source []byte` — raw source bytes
+- `ctx.NodeText(node)` — extract text from a node
+- `ctx.NodeLocation(node)` — convert to 1-based `ast.Location`
+- `ctx.AddError(node, severity, format, args...)` — append a `CollectorError`
+- `ctx.MustField(node, fieldName)` — get a required child field, emitting an error if missing
+- `ctx.Collector` — embedded interface for recursive dispatch back to the root
+
+**Tree-sitter traversal conventions:**
+- `node.ChildCount()` / `node.Child(i)` — all children including anonymous keyword tokens; use
+  with `switch child.Kind()`
+- `node.ChildByFieldName("field")` — first child with that field name
+- `node.FieldNameForChild(uint32(i))` — field name at index `i`; use when a rule repeats the
+  same field name (e.g. multiple `value:` fields in `commaSep1`)
