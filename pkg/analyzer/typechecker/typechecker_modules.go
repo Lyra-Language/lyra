@@ -44,11 +44,13 @@ func (tc *TypeChecker) moduleMemberType(m *ast.MemberExpr) (typ types.Type, hand
 	}
 
 	name := m.Property.Name
-	// Membership is checked, not assumed. Names are program-wide unique today
-	// (a cross-module duplicate is rejected), so a bare lookup would *find*
-	// `other.thing` through `math.thing` — resolving a reference the source never
-	// made, and silently.
-	if tc.symTable.DeclaringModule(name) != imp.Path {
+	// Membership is checked, not assumed: a bare lookup would *find* `other.thing`
+	// through `math.thing` — resolving a reference the source never made, and silently.
+	//
+	// Asked of the module's own scope rather than of DeclaringModule, which is
+	// last-writer-wins and so forgets a module ever declared a name another module (or
+	// the prelude) also declares.
+	if !tc.symTable.ModuleDeclares(imp.Path, name) {
 		tc.addError(m.GetLocation(), SeverityError,
 			"module %q has no member %q", imp.Path, name)
 		return nil, true
@@ -58,7 +60,7 @@ func (tc *TypeChecker) moduleMemberType(m *ast.MemberExpr) (typ types.Type, hand
 	if !tc.checkVisible(tc.visibilityOf(name), m.GetLocation()) {
 		return nil, true
 	}
-	if fn, ok := tc.symTable.LookupFunction(name); ok {
+	if fn, ok := tc.symTable.LookupFunctionIn(imp.Path, name); ok {
 		t := tc.lambdaSignature(fn)
 		tc.typeTable.Set(m, t)
 		return t, true

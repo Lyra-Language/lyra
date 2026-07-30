@@ -9,13 +9,9 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/modules"
 )
 
-// Each module's top-level declarations land in its own ScopeModule.
-//
-// The scopes are populated but inert: lookups still start from GlobalScope and every
-// declaration is still registered there too, so this changes no behaviour. It is the
-// structure per-module resolution needs, put in place separately so that the change to
-// name *binding* — which has no safe half-applied state, since a reference resolving to
-// the wrong declaration compiles clean and runs wrong — can be reviewed on its own.
+// Each module's top-level declarations land in its own ScopeModule, and only a `pub`
+// one also lands in the shared global scope — which is what makes a private name
+// invisible outside its module while a cross-module reference still resolves.
 func TestModuleScopes_PopulatedPerModule(t *testing.T) {
 	root := buildTree(t, map[string]string{
 		"app.lyra":       "import util.math\nlet appOnly = () -> i64 => 1\nlet main = () -> u8 => u8(math.double(1))",
@@ -31,12 +27,12 @@ func TestModuleScopes_PopulatedPerModule(t *testing.T) {
 	if !ok {
 		t.Fatal(`no scope for "util.math"`)
 	}
-	// The entry file declares no module, and its scope *is* the global one: a program
-	// root has nothing to be private from, and giving it a child scope would push every
-	// single-file program's declarations out of sight of anything starting from global.
-	appScope := st.ModuleScopeFor("")
-	if appScope != st.GlobalScope {
-		t.Fatal("the entry module's scope should be the global scope")
+	// The entry file declares no module, but it gets a scope of its own like any other:
+	// sharing the global scope put its declarations in the scope every other module
+	// falls through to, so an entry-file name replaced a prelude one program-wide.
+	appScope := st.EntryScope()
+	if appScope == st.GlobalScope {
+		t.Fatal("the entry module should have a scope of its own")
 	}
 
 	for _, c := range []struct {
@@ -49,7 +45,7 @@ func TestModuleScopes_PopulatedPerModule(t *testing.T) {
 		{mathScope, "mathOnly", true, "private, but still its module's own"},
 		{mathScope, "appOnly", false, "belongs to the entry module"},
 		{appScope, "appOnly", true, "declared in the entry file"},
-		{appScope, "double", true, "util.math exports it, so it is globally visible"},
+		{appScope, "double", false, "exported, so it lives in the global scope, not here"},
 		{appScope, "mathOnly", false, "private to util.math — the point of the split"},
 	} {
 		if _, found := c.scope.LookupLocal(c.name); found != c.want {
@@ -57,9 +53,23 @@ func TestModuleScopes_PopulatedPerModule(t *testing.T) {
 		}
 	}
 
-	// Siblings under the global scope, not nested: modules do not contain one another.
-	if mathScope.Parent != st.GlobalScope {
-		t.Error("a named module's scope should be a child of the global scope")
+	// An export is still reachable from another module — through the chain, not by
+	// sitting in that module's own scope.
+	if _, found := appScope.Lookup("double"); !found {
+		t.Error("util.math exports double, so the entry module should resolve it")
+	}
+	if _, found := appScope.Lookup("mathOnly"); found {
+		t.Error("a private name must not be reachable from another module")
+	}
+
+	// Siblings, not nested: modules do not contain one another. They hang off the
+	// prelude scope, which is what puts the prelude's names between a module's own
+	// declarations and the global ones.
+	if mathScope.Parent != st.PreludeScope || appScope.Parent != st.PreludeScope {
+		t.Error("a module's scope should be a child of the prelude scope")
+	}
+	if st.PreludeScope.Parent != st.GlobalScope {
+		t.Error("the prelude scope should sit under the global scope")
 	}
 	if mathScope.Kind != symbols.ScopeModule {
 		t.Errorf("expected ScopeModule, got %v", mathScope.Kind)

@@ -24,4 +24,6 @@ module std.prelude
 //
 // A name declared here can be shadowed by user code: that warns (lyra-W012) and the
 // user's declaration wins, so adding a name here cannot break a program that never
-// mentioned it.
+// mentioned it. The shadow is confined to the module that declared it — another module
+// still gets the version below — except for a type or trait, whose namespace is
+// program-wide, where the user's declaration replaces this one everywhere.

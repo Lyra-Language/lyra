@@ -37,8 +37,11 @@ func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTabl
 		typeTable:      typeTable,
 		methodTable:    typetable.NewMethodTable(),
 		instantiations: typetable.NewInstantiationTable(),
-		scope:          symTable.GlobalScope,
-		resolvedTypes:  make(map[string]types.Type),
+		// The entry module's scope, not the global one: top-level declarations live in
+		// their module's scope now, and checkInModule swaps in the right one per
+		// statement — this is only the starting point.
+		scope:         symTable.EntryScope(),
+		resolvedTypes: make(map[string]types.Type),
 	}
 }
 

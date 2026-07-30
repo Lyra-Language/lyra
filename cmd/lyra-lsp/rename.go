@@ -29,7 +29,7 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 
 	// Fast path: cursor is on an expression-position identifier (a usage).
 	if ident, ok := findExprAtPos(analysis.program, line, col).(*ast.IdentifierExpr); ok {
-		scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.GlobalScope, line, col)
+		scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.EntryScope(), line, col)
 		if n, ok := scope.Lookup(ident.Name); ok {
 			name = ident.Name
 			named = n
@@ -61,7 +61,7 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 					return true
 				}
 				// Resolve the binding from the scope at the name's position.
-				scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.GlobalScope, sNameLoc.StartLine, sNameLoc.StartCol)
+				scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.EntryScope(), sNameLoc.StartLine, sNameLoc.StartCol)
 				if n, ok2 := scope.Lookup(sName); ok2 {
 					name = sName
 					named = n
@@ -151,7 +151,7 @@ func paramBodyScope(lambda *ast.LambdaExpr, analysis *docAnalysis) *symbols.Scop
 			return sc
 		}
 	}
-	return analysis.symTable.GlobalScope
+	return analysis.symTable.EntryScope()
 }
 
 // locationContains reports whether loc spans the 1-based (line, col) position.

@@ -22,6 +22,7 @@ const (
 	ScopeFunction
 	ScopeBlock
 	ScopeLoop
+	ScopePrelude
 )
 
 func NewScope(parent *Scope, kind ScopeKind) *Scope {
@@ -71,6 +72,19 @@ type SymbolTable struct {
 	GlobalScope  *Scope
 	CurrentScope *Scope
 
+	// PreludeScope holds the prelude's exported bindings, and sits **between** every
+	// module scope and the global one: a lookup runs module → prelude → global.
+	//
+	// That middle position is the whole point. The prelude is ambient, so it has to be
+	// reachable from every module; a module's own declaration has to beat it; and — the
+	// case a single namespace got wrong — one module taking a prelude name must not
+	// change what the name means anywhere else. Putting the prelude *under* the global
+	// scope would do exactly that, since the global scope holds every module's exports
+	// and is on every module's chain, so the first module to declare `Maybe` would hand
+	// its own to everyone. Above the module scopes and below the global one, a shadow
+	// reaches precisely as far as the scope that declares it.
+	PreludeScope *Scope
+
 	// Quick lookup tables - these point to AST nodes directly
 	Types     map[string]*ast.TypeDeclStmt
 	Functions map[string]*ast.LambdaExpr
@@ -115,8 +129,10 @@ type SymbolTable struct {
 }
 
 func NewSymbolTable() *SymbolTable {
+	global := NewScope(nil, ScopeGlobal)
 	st := &SymbolTable{
-		GlobalScope:  NewScope(nil, ScopeGlobal),
+		GlobalScope:  global,
+		PreludeScope: NewScope(global, ScopePrelude),
 		Types:        make(map[string]*ast.TypeDeclStmt),
 		Functions:    make(map[string]*ast.LambdaExpr),
 		Traits:       make(map[string]*ast.TraitDeclStmt),
@@ -127,7 +143,7 @@ func NewSymbolTable() *SymbolTable {
 		ModuleScopes: make(map[string]*Scope),
 		PreludeNames: make(map[string]bool),
 	}
-	st.CurrentScope = st.GlobalScope
+	st.CurrentScope = st.ModuleScopeFor("")
 	return st
 }
 
@@ -167,15 +183,58 @@ func (st *SymbolTable) LookupFunction(name string) (*ast.LambdaExpr, bool) {
 	return fn, ok
 }
 
+// LookupFunctionFrom resolves a function name as the file at loc sees it: the asking
+// module's own declaration when it has one, otherwise the program-wide entry.
+//
+// A bare LookupFunction cannot answer this. Functions is keyed by FunctionKey, so a
+// module's private declaration — and a declaration that took a prelude name — lives
+// under a module-qualified key; asking for the bare name from inside that module
+// returns *another* module's function, silently. That is the wrong answer for the two
+// passes that resolve a callee to read its parameter modes (ownership and the
+// use-after-move check), where reading the wrong signature is a memory-safety decision
+// made against the wrong function.
+func (st *SymbolTable) LookupFunctionFrom(name string, loc ast.Location) (*ast.LambdaExpr, bool) {
+	if st == nil {
+		return nil, false
+	}
+	fn, ok := st.Functions[st.functionKey(name, loc)]
+	return fn, ok
+}
+
+// LookupFunctionIn resolves a function name as a member of a named module — the
+// namespace form, `math.double`. Membership is the caller's job to establish
+// (ModuleDeclares); this only picks the right entry once it has.
+func (st *SymbolTable) LookupFunctionIn(module, name string) (*ast.LambdaExpr, bool) {
+	if st == nil {
+		return nil, false
+	}
+	if fn, ok := st.Functions[qualifiedName(module, name)]; ok {
+		return fn, true
+	}
+	fn, ok := st.Functions[name]
+	return fn, ok
+}
+
 func (st *SymbolTable) PushScope(kind ScopeKind) *Scope {
 	st.CurrentScope = NewScope(st.CurrentScope, kind)
 	return st.CurrentScope
 }
 
+// PopScope returns to the enclosing scope, stopping at a module (or the global) scope.
+//
+// The guard matters now that a module scope has parents of its own: an unbalanced pop
+// used to be harmless because the global scope was the root, and would otherwise start
+// walking out into the prelude and global scopes, where a later declaration would land
+// in a scope no file owns.
 func (st *SymbolTable) PopScope() {
-	if st.CurrentScope.Parent != nil {
-		st.CurrentScope = st.CurrentScope.Parent
+	if st.CurrentScope == nil || st.CurrentScope.Parent == nil {
+		return
 	}
+	switch st.CurrentScope.Kind {
+	case ScopeGlobal, ScopeModule, ScopePrelude:
+		return
+	}
+	st.CurrentScope = st.CurrentScope.Parent
 }
 
 // RegisterType adds a type declaration to the symbol table
@@ -245,18 +304,43 @@ func (st *SymbolTable) functionKey(name string, loc ast.Location) string {
 		return name
 	}
 	module := st.ModuleOfFile[loc.File]
+	// A declaration that took a prelude name is qualified whatever its visibility and
+	// whichever module made it — including the entry module, which otherwise keeps the
+	// bare key. The prelude keeps the bare key, so every module that did *not* shadow
+	// the name still finds the prelude's function under it.
+	if st.shadowsPrelude(module, name) {
+		return qualifiedName(module, name)
+	}
 	if module == "" {
 		return name
 	}
 	// Exported names live under the bare key so a cross-module reference finds them.
-	if decl, ok := st.ModuleScopes[module]; ok && decl != nil {
+	if decl := st.moduleScope(module); decl != nil {
 		if sym, found := decl.LookupLocal(name); found {
 			if vd, isVar := sym.(*ast.VarDeclStmt); isVar && !vd.IsPublic {
-				return module + "::" + name
+				return qualifiedName(module, name)
 			}
 		}
 	}
 	return name
+}
+
+// qualifiedName is the key a declaration gets when the bare name is not its alone.
+func qualifiedName(module, name string) string {
+	return module + "::" + name
+}
+
+// shadowsPrelude reports whether module declares its own `name` over one the prelude
+// exports — the case a warning is issued for, and the reason the declaration needs a
+// key of its own.
+//
+// It asks the module's *scope*, not ModuleOf: that map is last-writer-wins, so it
+// forgets the prelude ever had the name the moment a user module takes it.
+func (st *SymbolTable) shadowsPrelude(module, name string) bool {
+	if st == nil || st.PreludeModule == "" || module == st.PreludeModule {
+		return false
+	}
+	return st.PreludeNames[name] && st.ModuleDeclares(module, name)
 }
 
 // describeLocation renders a location for an "already defined" message, naming the file
@@ -414,11 +498,11 @@ type ShadowedName struct {
 // name to the prelude later would break programs that never mentioned it. The user's
 // declaration wins and a warning is recorded.
 //
-// Known limitation of the current single namespace: the user's declaration replaces the
-// prelude's *program-wide*, not just in its own module, so a second module that wanted
-// the prelude's version gets the first module's. Correcting that needs per-module name
-// resolution; until then this is the strictly better failure — user code keeps working,
-// loudly.
+// The shadow is confined to the declaring module (07/30): the prelude's bindings live
+// in PreludeScope, which sits under every module scope, so a module's own declaration
+// wins there while every other module still reaches the prelude's. What remains
+// program-wide is a shadowed **type** or **trait** — see noteShadowed.
+//
 // The declaring module is recovered from the declaration's own file rather than from a
 // "module being collected" cursor. Functions are registered in Finish, after every file
 // has been walked, so such a cursor is stale by then — it pointed at the last file, and
@@ -433,14 +517,27 @@ func (st *SymbolTable) takesPreludeName(name string, loc ast.Location) bool {
 	return st.PreludeNames[name]
 }
 
-// noteShadowed records the warning and withdraws the *prelude's* entries for the name,
-// clearing the way for the declaration taking it over.
+// noteShadowed records the warning, and withdraws the prelude's entry for the name only
+// where the namespace it lives in is genuinely program-wide.
+//
+// A **binding** is not withdrawn any more. The prelude's bindings live in PreludeScope
+// and a shadowing declaration lives in its own module's scope under its own
+// FunctionKey, so the two coexist and each module reaches the one it should. Deleting
+// the prelude's was what made a shadow program-wide: one module's private `unwrapOr`
+// left every other module with none at all, and one module's public one handed its own
+// to everybody.
+//
+// A **type** or **trait** still is. Their namespace is program-wide by construction —
+// SymbolTable.Types is keyed by bare name, and so is the backend's registry of emitted
+// LLVM struct types, which resolves a type reference with no location to say who is
+// asking. A program therefore has exactly one `Maybe`, and the shadowing declaration is
+// it. Confining a type shadow means giving types per-module identity end to end, which
+// is its own piece of work (see todo.md).
 //
 // Each removal is guarded on the entry actually belonging to the prelude. Deleting by
 // name alone is wrong at the point functions are registered: that happens in Finish,
-// after every file has been walked, so the user's own binding is already in the global
-// scope — and blindly removing it left the program reporting its own function as
-// undefined.
+// after every file has been walked, so the user's own declaration is already in place —
+// and blindly removing it left the program reporting its own declaration as undefined.
 func (st *SymbolTable) noteShadowed(name string, loc ast.Location) {
 	st.ShadowedPrelude = append(st.ShadowedPrelude, ShadowedName{Name: name, Loc: loc})
 	if sym, ok := st.GlobalScope.Symbols[name]; ok && st.declaredInPrelude(sym.GetLocation()) {
@@ -452,10 +549,6 @@ func (st *SymbolTable) noteShadowed(name string, loc ast.Location) {
 	if decl, ok := st.Traits[name]; ok && st.declaredInPrelude(decl.GetLocation()) {
 		delete(st.Traits, name)
 	}
-	if fn, ok := st.Functions[name]; ok && st.declaredInPrelude(fn.GetLocation()) {
-		delete(st.Functions, name)
-		delete(st.PureFuncs, name)
-	}
 }
 
 // declaredInPrelude reports whether a declaration at loc came from the prelude.
@@ -464,42 +557,65 @@ func (st *SymbolTable) declaredInPrelude(loc ast.Location) bool {
 }
 
 // ModuleScopeFor returns the scope holding a module's top-level declarations,
-// creating it as a child of GlobalScope on first use.
+// creating it as a child of PreludeScope on first use.
 //
-// This is the structure per-module name resolution needs, put in place ahead of the
-// resolution change itself. Today every top-level declaration is *also* registered
-// globally and every lookup still starts from GlobalScope, so these scopes change no
-// behaviour — they are populated and inert.
+// This is where per-module name resolution lives: a declaration always lands in its
+// own module's scope and only a `pub` one *also* lands in the global scope, so a
+// private name is invisible outside its module and never competes for the global one.
 //
-// That is deliberate. Two modules cannot currently each declare a private `helper`,
-// because registration rejects a duplicate top-level name program-wide; fixing that
-// means switching lookups to start from the asking module's scope and dropping the
-// global registration. Doing both at once would be a change to name *binding* with no
-// intermediate state anyone could check — and a reference that quietly resolves to the
-// wrong declaration compiles clean and runs wrong. Splitting it leaves this half
-// verifiable on its own: the scopes either contain the right declarations or they do
-// not, and nothing yet depends on the answer.
+// The scopes are siblings rather than nested, because modules do not contain one
+// another — `util.math` is a name, not a position in a tree, and treating the dots as
+// nesting would make `util` a scope that `util.math` could see into.
 //
-// The scopes are siblings under GlobalScope rather than nested, because modules do not
-// contain one another — `util.math` is a name, not a position in a tree, and treating
-// the dots as nesting would make `util` a scope that `util.math` could see into.
+// **The entry module gets one too**, even though it declares no module path. It used to
+// share the global scope on the grounds that a program root has nothing to be private
+// from, and that is still true of privacy — but it also put the entry file's
+// declarations in the scope every *other* module falls through to, so an entry-file
+// `let unwrapOr` replaced the prelude's for the whole program. Its own scope is what
+// confines that, at the cost of one thing to remember: anything walking scopes for a
+// single file starts from EntryScope, not GlobalScope (the LSP's completion,
+// go-to-definition and highlight walks all did the latter, which is why sharing the
+// global scope looked like the simpler choice).
 func (st *SymbolTable) ModuleScopeFor(module string) *Scope {
 	if st == nil {
 		return nil
 	}
-	// The entry file declares no module, and its scope *is* the global one. A program
-	// root has nothing to be private from — and making it a child instead would push
-	// every single-file program's declarations one level down, out of sight of
-	// everything that reasonably starts from the global scope (the LSP's completion,
-	// go-to-definition and highlight walks all do). Named modules are what need their
-	// own scope; the root does not.
-	if module == "" {
-		return st.GlobalScope
-	}
 	if scope, ok := st.ModuleScopes[module]; ok {
 		return scope
 	}
-	scope := NewScope(st.GlobalScope, ScopeModule)
+	scope := NewScope(st.PreludeScope, ScopeModule)
 	st.ModuleScopes[module] = scope
 	return scope
+}
+
+// EntryScope is the scope of the file a compile started from — the module with no
+// declared path. It is the scope a single-file program's declarations live in, and so
+// the one any per-file scope walk should start from.
+func (st *SymbolTable) EntryScope() *Scope {
+	return st.ModuleScopeFor("")
+}
+
+// moduleScope returns a module's scope without creating one, so a question *about* a
+// module ("does it declare this name?") cannot conjure an empty scope for a module that
+// does not exist.
+func (st *SymbolTable) moduleScope(module string) *Scope {
+	if st == nil {
+		return nil
+	}
+	return st.ModuleScopes[module]
+}
+
+// ModuleDeclares reports whether module declares name at its top level.
+//
+// This is the precise form of the question `ModuleOf` answers approximately: that map
+// is last-writer-wins, so once two modules (or a module and the prelude) declare one
+// name it remembers only the last. A module's own scope holds every top-level
+// declaration it made, and nobody else's.
+func (st *SymbolTable) ModuleDeclares(module, name string) bool {
+	scope := st.moduleScope(module)
+	if scope == nil {
+		return false
+	}
+	_, ok := scope.LookupLocal(name)
+	return ok
 }

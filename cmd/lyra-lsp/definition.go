@@ -55,7 +55,7 @@ func resolveDefinition(expr ast.Expression, line, col int, analysis *docAnalysis
 	}
 	switch e := expr.(type) {
 	case *ast.IdentifierExpr:
-		scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.GlobalScope, line, col)
+		scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.EntryScope(), line, col)
 		named, ok := scope.Lookup(e.Name)
 		if !ok {
 			return nil
@@ -91,14 +91,19 @@ func cursorOnName(loc ast.Location, name string, line, col int) bool {
 }
 
 // findScopeAtPos returns the innermost scope whose block contains (line, col).
-// Falls back to globalScope when no nested block matches.
-func findScopeAtPos(program *ast.Program, scopeTable *symbols.ScopeTable, globalScope *symbols.Scope, line, col int) *symbols.Scope {
+//
+// Falls back to fileScope when no nested block matches — a top-level position. That is
+// the scope of the module the document belongs to (SymbolTable.EntryScope for the
+// single file the LSP analyzes), *not* the global scope: a file's own top-level
+// declarations live in its module scope, and the chain out from there reaches the
+// prelude's names and other modules' exports in the order the language resolves them.
+func findScopeAtPos(program *ast.Program, scopeTable *symbols.ScopeTable, fileScope *symbols.Scope, line, col int) *symbols.Scope {
 	for _, node := range program.Statements {
 		if s := scopeInNode(node, scopeTable, line, col); s != nil {
 			return s
 		}
 	}
-	return globalScope
+	return fileScope
 }
 
 // scopeInNode descends into an AST node looking for the innermost BlockExpr

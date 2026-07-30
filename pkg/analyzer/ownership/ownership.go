@@ -1178,7 +1178,11 @@ func (a *analyzer) resolveCallee(e *ast.FunctionCallExpr) *ast.LambdaExpr {
 	if !ok || a.symTable == nil {
 		return nil
 	}
-	fn, _ := a.symTable.LookupFunction(id.Name)
+	// Resolved as the *calling* file sees the name: a module's private function, and a
+	// declaration that took a prelude name, are keyed by module, so a bare lookup would
+	// hand back another module's function — and this pass reads the callee's parameter
+	// modes to decide where a reference is retained.
+	fn, _ := a.symTable.LookupFunctionFrom(id.Name, e.GetLocation())
 	return fn
 }
 

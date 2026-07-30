@@ -370,7 +370,10 @@ func (c *useAfterMove) resolveCallee(e *ast.FunctionCallExpr) *ast.LambdaExpr {
 	if !ok || c.symTable == nil {
 		return nil
 	}
-	fn, _ := c.symTable.LookupFunction(id.Name)
+	// From the calling file, for the reason the ownership pass gives: a private or
+	// prelude-shadowing declaration is keyed by module, and this must see the same
+	// function the retain decision is made against.
+	fn, _ := c.symTable.LookupFunctionFrom(id.Name, e.GetLocation())
 	return fn
 }
 

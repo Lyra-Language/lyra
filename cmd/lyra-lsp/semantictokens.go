@@ -164,7 +164,7 @@ func collectSemanticTokens(source string, analysis *docAnalysis) []semToken {
 // modifiers via the lexical scope. It returns false when the name is unbound
 // (e.g. a builtin), leaving such spans to the TextMate grammar.
 func classifyIdentifier(ident *ast.IdentifierExpr, analysis *docAnalysis) (int, int, bool) {
-	scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.GlobalScope, ident.Location.StartLine, ident.Location.StartCol)
+	scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.EntryScope(), ident.Location.StartLine, ident.Location.StartCol)
 	named, ok := scope.Lookup(ident.Name)
 	if !ok {
 		if ident.IsConst {

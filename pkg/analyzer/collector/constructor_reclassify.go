@@ -44,12 +44,12 @@ func (c *Collector) rewriteCtorExpr(e ast.Expression) ast.Expression {
 		// A bare uppercase name that is a *nullary* constructor and not shadowed by a
 		// value binding denotes that constructor (an applied-only constructor needs
 		// call syntax, so a bare use of it is left to surface as undefined).
-		if n.IsConst && c.isNullaryConstructor(n.Name) && !c.shadowedByValue(n.Name) {
+		if n.IsConst && c.isNullaryConstructor(n.Name) && !c.shadowedByValue(n.Name, n.GetLocation()) {
 			return &ast.DataConstructorExpr{ExprBase: n.ExprBase, Constructor: n.Name}
 		}
 	case *ast.FunctionCallExpr:
 		if id, ok := n.Function.(*ast.IdentifierExpr); ok &&
-			id.IsConst && c.isConstructorOrNamedTuple(id.Name) && !c.shadowedByValue(id.Name) {
+			id.IsConst && c.isConstructorOrNamedTuple(id.Name) && !c.shadowedByValue(id.Name, id.GetLocation()) {
 			// `FOO(3)` / `POINT(1, 2)` — the applied-constructor form is a named tuple
 			// literal (the same node PascalCase `Some(42)` / `Point(3, 4)` produces).
 			return &ast.TupleLiteralExpr{
@@ -287,10 +287,18 @@ func (c *Collector) isConstructorOrNamedTuple(name string) bool {
 }
 
 // shadowedByValue reports whether name is declared as a value binding (a `const`,
-// the only binding form an uppercase name can take) in the global scope, in which
-// case that binding — not a same-named constructor — is what the name refers to.
-func (c *Collector) shadowedByValue(name string) bool {
-	if sym, ok := c.table.GlobalScope.Lookup(name); ok {
+// the only binding form an uppercase name can take) as the file at loc sees it, in
+// which case that binding — not a same-named constructor — is what the name refers to.
+//
+// The lookup starts from the referencing file's own module scope rather than from the
+// global one, because that is where a top-level declaration lands; the chain out to the
+// prelude and global scopes then covers a constant another module exported.
+func (c *Collector) shadowedByValue(name string, loc ast.Location) bool {
+	scope := c.table.ModuleScopeFor(c.table.ModuleOfFile[loc.File])
+	if scope == nil {
+		return false
+	}
+	if sym, ok := scope.Lookup(name); ok {
 		if _, isVar := sym.(*ast.VarDeclStmt); isVar {
 			return true
 		}

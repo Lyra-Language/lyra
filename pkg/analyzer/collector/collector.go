@@ -117,17 +117,31 @@ func (c *Collector) recordModuleBindings(modulePath string, stmts []ast.AstNode)
 	}
 }
 
-// exportToGlobal publishes a `pub` declaration into the global scope, so a reference
-// from another module resolves to it.
+// exportToGlobal publishes a `pub` declaration into the scope other modules fall
+// through to, so a reference from another module resolves to it.
 //
 // This is the half that makes privacy mean something: a declaration always lands in its
-// own module's scope, and only an exported one *also* lands globally. A private name is
+// own module's scope, and only an exported one *also* lands here. A private name is
 // therefore invisible outside its module — and, because it never competes for the
-// global name, two modules may each declare one.
+// shared name, two modules may each declare one.
 //
-// The entry module needs nothing: its scope already *is* the global scope.
+// The **prelude** exports into a scope of its own rather than the global one. Both are
+// on every module's chain, but the prelude's sits nearer, so a module's own declaration
+// of a prelude name shadows it *there* while every other module still reaches the
+// prelude's — which is the whole difference between an ambient name and a name burned
+// into the one global namespace. Exporting it globally instead put it in direct
+// competition with user declarations, and whichever won, won for the entire program.
+//
+// The entry module exports nothing: nothing can import it, so `pub` on its declarations
+// would name a boundary that does not exist.
 func (c *Collector) exportToGlobal(modulePath string, decl ast.Named, isPublic bool) {
 	if modulePath == "" || !isPublic {
+		return
+	}
+	if modulePath == c.table.PreludeModule {
+		// A duplicate here can only be the prelude declaring one name twice, which its
+		// own module scope has already reported.
+		_ = c.table.PreludeScope.Define(decl)
 		return
 	}
 	if err := c.table.GlobalScope.Define(decl); err != nil {

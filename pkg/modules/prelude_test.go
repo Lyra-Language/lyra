@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/driver"
 	"github.com/Lyra-Language/lyra/pkg/modules"
 )
@@ -81,6 +82,129 @@ func TestPrelude_UserDeclarationShadowsWithWarning(t *testing.T) {
 				t.Errorf("expected a shadowing warning; got %v", res.Diagnostics)
 			}
 		})
+	}
+}
+
+// A shadow reaches exactly as far as the module that declared it.
+//
+// This is the limitation the single namespace used to impose: taking a prelude name
+// withdrew the prelude's declaration *program-wide*, so a second module — one that
+// never mentioned the name and cannot even see the shadowing declaration — got whatever
+// the first module had bound, or, when the shadowing declaration was private, nothing at
+// all. Both halves are asserted per case: the shadowing module reaches its own
+// declaration, and the bystander module still reaches the prelude's.
+//
+// The entry file is the case worth reading twice. It has no module path, and used to
+// share the global scope on the grounds that a program root has nothing to be private
+// from — which also put its declarations in the scope every other module falls through
+// to, so `let unwrapOr` in app.lyra silently rebound the prelude's for the whole
+// program.
+func TestPrelude_ShadowIsConfinedToItsModule(t *testing.T) {
+	// Each case shadows the prelude's `unwrapOr` from a different place, and the shadow
+	// takes **two plain integers** where the prelude's takes a `Maybe`. That difference
+	// is the assertion: the shadowing module calls it with two integers and the
+	// bystander calls it with a `Maybe`, so *either* resolution going the wrong way is a
+	// type error rather than a silently different answer.
+	for _, c := range []struct{ name, app, shadower string }{
+		{
+			name: "entry file",
+			app: `import bystander
+let unwrapOr = (a: i64, b: i64) -> i64 => a + b
+let main = () -> u8 => u8(unwrapOr(1, 2) + fromBystander())`,
+		},
+		{
+			name: "another module, privately",
+			app: `import bystander
+import shadower
+let main = () -> u8 => u8(fromShadower() + fromBystander())`,
+			shadower: `module shadower
+let unwrapOr = (a: i64, b: i64) -> i64 => a + b
+pub let fromShadower = () -> i64 => unwrapOr(1, 2)`,
+		},
+		{
+			name: "another module, exported",
+			app: `import bystander
+import shadower
+let main = () -> u8 => u8(fromShadower() + fromBystander())`,
+			shadower: `module shadower
+pub let unwrapOr = (a: i64, b: i64) -> i64 => a + b
+pub let fromShadower = () -> i64 => unwrapOr(1, 2)`,
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			files := map[string]string{
+				"std/prelude.lyra": testPrelude,
+				"app.lyra":         c.app,
+				"bystander.lyra": `module bystander
+pub let fromBystander = () -> i64 => unwrapOr(Some(3), 0)`,
+			}
+			if c.shadower != "" {
+				files["shadower.lyra"] = c.shadower
+			}
+			root := buildTree(t, files)
+			res := analyzeWithPrelude(t, root)
+			if errs := res.Errors(); len(errs) != 0 {
+				t.Fatalf("a shadow in one module must not disturb another; got %v", errs)
+			}
+			if !warningsContaining(res, "shadows the prelude's") {
+				t.Errorf("expected a shadowing warning; got %v", res.Diagnostics)
+			}
+			// Both resolution paths, since they are separate mechanisms that must
+			// agree: the scope chain (what the typechecker walks) and the function key
+			// (what the backend and the ownership pass ask for).
+			assertResolvesTo(t, res, "bystander", "unwrapOr", modules.PreludeModule)
+		})
+	}
+}
+
+// A module that exported a prelude name is still reachable by namespace, and reaching it
+// that way gets *its* declaration rather than the prelude's.
+//
+// Membership used to be established from ModuleOf, which is last-writer-wins and so
+// forgets who declared a name once two modules do; the lookup behind it was by bare
+// name, which is the prelude's key. Both had to become module-aware together, or
+// `shadower.unwrapOr` would resolve to the prelude's signature.
+func TestPrelude_ShadowedNameIsStillReachableByNamespace(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"std/prelude.lyra": testPrelude,
+		"shadower.lyra": `module shadower
+pub let unwrapOr = (a: i64, b: i64) -> i64 => a + b`,
+		"app.lyra": `import shadower
+let main = () -> u8 => u8(shadower.unwrapOr(1, 2) + unwrapOr(Some(3), 0))`,
+	})
+	res := analyzeWithPrelude(t, root)
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Fatalf("both the namespaced and the ambient name should resolve; got %v", errs)
+	}
+}
+
+// assertResolvesTo checks that name, looked up from module, resolves to a declaration
+// in wantModule — through the scope chain and through SymbolTable.Functions alike.
+func assertResolvesTo(t *testing.T, res *driver.Result, module, name, wantModule string) {
+	t.Helper()
+	st := res.SymbolTable
+	moduleOf := func(loc ast.Location) string { return st.ModuleOfFile[loc.File] }
+
+	sym, ok := st.ModuleScopeFor(module).Lookup(name)
+	if !ok {
+		t.Fatalf("module %q cannot resolve %q at all", module, name)
+	}
+	if got := moduleOf(sym.GetLocation()); got != wantModule {
+		t.Errorf("scope lookup of %q from %q resolved to module %q, want %q", name, module, got, wantModule)
+	}
+
+	var file string
+	for f, m := range st.ModuleOfFile {
+		if m == module {
+			file = f
+		}
+	}
+	fn, ok := st.LookupFunctionFrom(name, ast.Location{File: file})
+	if !ok {
+		t.Fatalf("no function %q registered for module %q", name, module)
+	}
+	if got := moduleOf(fn.GetLocation()); got != wantModule {
+		t.Errorf("function key for %q from %q resolved to module %q, want %q", name, module, got, wantModule)
 	}
 }
 

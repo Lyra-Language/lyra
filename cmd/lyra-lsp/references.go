@@ -83,7 +83,7 @@ func (h *Handler) References(_ context.Context, params *lsp.ReferenceParams) (re
 // resolveDeclLocation returns the declaration location that name resolves to
 // from the scope enclosing (line, col). Returns false when the name is unbound.
 func resolveDeclLocation(name string, line, col int, analysis *docAnalysis) (ast.Location, bool) {
-	scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.GlobalScope, line, col)
+	scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.EntryScope(), line, col)
 	named, ok := scope.Lookup(name)
 	if !ok {
 		return ast.Location{}, false
