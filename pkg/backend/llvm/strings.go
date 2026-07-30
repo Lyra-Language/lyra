@@ -25,19 +25,15 @@ import (
 // insertvalues don't branch).
 func (l *lowerer) lowerStringConstant(block *ir.Block, content string) value.Value {
 	bytes := []byte(content)
-	arrTy := lltypes.NewArray(uint64(len(bytes)), lltypes.I8)
-	boxTy := lltypes.NewStruct(lltypes.I64, arrTy) // { rc, payload } — a pinned static box
-	pinned := constant.NewInt(lltypes.I64, -1)     // PinnedRC bit pattern: retain/release no-op
-	g := l.module.NewGlobalDef(fmt.Sprintf(".str.%d", l.strLitCount),
-		constant.NewStruct(boxTy, pinned, constant.NewCharArray(bytes)))
+	boxConst, boxTy := pinnedBoxConstant(constant.NewCharArray(bytes))
+	g := l.module.NewGlobalDef(fmt.Sprintf(".str.%d", l.strLitCount), boxConst)
 	g.Immutable = true
 	g.Linkage = enum.LinkagePrivate
 	l.strLitCount++
 
 	zero := constant.NewInt(lltypes.I32, 0)
-	one := constant.NewInt(lltypes.I32, 1)
 	// i8* to the first payload byte: &box.payload[0] == box + rcHeaderSize.
-	dataPtr := constant.NewGetElementPtr(boxTy, g, zero, one, zero)
+	dataPtr := constant.NewGetElementPtr(boxTy, g, zero, constant.NewInt(lltypes.I32, boxPayloadField), zero)
 	strTy := StringLLVMType()
 	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dataPtr, 0)
 	return block.NewInsertValue(withPtr, constant.NewInt(lltypes.I64, int64(len(bytes))), 1)

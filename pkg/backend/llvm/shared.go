@@ -53,19 +53,39 @@ func (l *lowerer) managedBox(block *ir.Block, v value.Value) value.Value {
 // a `shared` tail — is released too, one box at a time down the structure. lyraType
 // is the value's Lyra type, needed to know what the payload owns; a nil/unknown type
 // yields a null drop_fn, which only leaks (memory-safe).
-func (l *lowerer) lowerManagedRetain(block *ir.Block, v value.Value) {
+func (l *lowerer) lowerManagedRetain(block *ir.Block, v value.Value, lyraType types.Type) {
 	l.ensureRCRuntime()
+	if isWeakType(l.stripNewtype(lyraType)) {
+		// A copy of a weak reference takes another *weak* count: it must keep the
+		// box's memory alive without resurrecting the value.
+		block.NewCall(l.rcWeakRetain, l.managedBox(block, v))
+		return
+	}
 	block.NewCall(l.rcRetain, l.managedBox(block, v))
 }
 
 func (l *lowerer) lowerManagedRelease(block *ir.Block, v value.Value, lyraType types.Type) error {
 	l.ensureRCRuntime()
+	if isWeakType(l.stripNewtype(lyraType)) {
+		// No drop_fn: a weak reference never owned the payload, so there is nothing
+		// of the value's to drop — only the storage to give up. The payload's glue
+		// already ran when the strong count hit zero.
+		block.NewCall(l.rcWeakRelease, l.managedBox(block, v))
+		return nil
+	}
 	drop, err := l.boxDropFn(lyraType)
 	if err != nil {
 		return err
 	}
 	block.NewCall(l.rcRelease, l.managedBox(block, v), drop)
 	return nil
+}
+
+// isWeakType reports whether a Lyra type is a `weak` reference, which takes the
+// weak half of the refcount protocol rather than the strong half.
+func isWeakType(t types.Type) bool {
+	_, ok := t.(types.WeakType)
+	return ok
 }
 
 // unboxSharedData loads the inline aggregate value out of a `shared` box pointer
@@ -83,12 +103,11 @@ func (l *lowerer) unboxSharedData(block *ir.Block, scrut value.Value) (value.Val
 		return scrut, nil // inline value — nothing to unbox
 	}
 	boxTy, ok := ptr.ElemType.(*lltypes.StructType)
-	if !ok || len(boxTy.Fields) != 2 {
+	if !ok || len(boxTy.Fields) != boxPayloadField+1 {
 		return nil, fmt.Errorf("llvm: match scrutinee is a pointer to a non-box type (%s)", scrut.Type())
 	}
-	payloadPtr := block.NewGetElementPtr(boxTy, scrut,
-		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
-	return block.NewLoad(boxTy.Fields[1], payloadPtr), nil
+	payloadPtr := boxPayloadPtr(block, boxTy, scrut)
+	return block.NewLoad(boxTy.Fields[boxPayloadField], payloadPtr), nil
 }
 
 // lowerBoxShared heap-allocates a ref-counted box for a `shared` value: it allocs
@@ -109,8 +128,7 @@ func (l *lowerer) lowerBoxShared(block *ir.Block, payload value.Value, payloadTy
 	boxI8 := block.NewCall(l.rcAlloc, boxSize) // i8*, rc already 1
 	boxTy := SharedBoxType(payload.Type())     // { i64, payloadLLVM }
 	box := block.NewBitCast(boxI8, lltypes.NewPointer(boxTy))
-	payloadPtr := block.NewGetElementPtr(boxTy, box,
-		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+	payloadPtr := boxPayloadPtr(block, boxTy, box)
 	block.NewStore(payload, payloadPtr)
 	return box, nil
 }
@@ -140,10 +158,9 @@ func (l *lowerer) lowerBoxSharedReuse(block *ir.Block, payload value.Value, payl
 	// value regardless of how it was reclaimed.
 	reuseBox := reuseBlock.NewBitCast(token, boxPtrTy)
 	rcPtr := reuseBlock.NewGetElementPtr(boxTy, reuseBox,
-		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 0))
+		i32c(0), i32c(boxStrongField))
 	reuseBlock.NewStore(constant.NewInt(lltypes.I64, 1), rcPtr)
-	reusePayloadPtr := reuseBlock.NewGetElementPtr(boxTy, reuseBox,
-		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+	reusePayloadPtr := boxPayloadPtr(reuseBlock, boxTy, reuseBox)
 	reuseBlock.NewStore(payload, reusePayloadPtr)
 	reuseBlock.NewBr(merge)
 

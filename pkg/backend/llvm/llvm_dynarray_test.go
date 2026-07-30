@@ -7,7 +7,7 @@ import (
 )
 
 // A dynamic array `[]T` is a heap-boxed, ref-counted value — a `ptr` to
-// `{ i64 rc, i64 len, [0 x T] }` — reusing the shared-value ownership machinery.
+// `{ i64 strong, i64 weak, i64 len, [0 x T] }` — reusing the shared-value ownership machinery.
 // This first slice covers construction from a literal (incl. empty), indexing
 // (bounds-checked against the runtime len, negative-from-end), and by-value flow
 // through let/params/returns. See dynarray.go.
@@ -113,7 +113,7 @@ func TestEmit_DynArray_IR(t *testing.T) {
 	}
 	for _, want := range []string{
 		"call i8* @lyra_rc_alloc",
-		"{ i64, i64, [0 x i8] }",
+		"{ i64, i64, i64, [0 x i8] }",
 		"call void @lyra_rc_release",
 	} {
 		if !strings.Contains(got, want) {

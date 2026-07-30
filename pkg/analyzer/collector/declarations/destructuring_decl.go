@@ -3,6 +3,7 @@ package declarations
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -15,7 +16,29 @@ import (
 // them itself via registerDestructuredNames once it knows which scope applies.
 func CollectDestructuringDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.DestructuringDeclStmt {
 	keyword := ctx.NodeText(node.ChildByFieldName("keyword"))
-	pattern := ctx.ParseDestructuringPattern(node.ChildByFieldName("pattern"))
+	// A bare-name binding (`if let s = w`) takes the *identifier* branch of
+	// `declaration`, which has a `name` field and no `pattern` one — the branch that
+	// exists so a plain `let` isn't ambiguous with a function definition. Reading the
+	// absent pattern field panicked the collector on a perfectly parseable program
+	// (ChildByFieldName returns a nil node, and ParseDestructuringPattern indexed
+	// straight into it). Synthesize the equivalent identifier pattern instead: a
+	// name is a pattern that binds it, so every downstream pass sees one shape.
+	patternNode := node.ChildByFieldName("pattern")
+	var pattern ast.Pattern
+	switch {
+	case patternNode != nil:
+		pattern = ctx.ParseDestructuringPattern(patternNode)
+	default:
+		nameNode := node.ChildByFieldName("name")
+		if nameNode == nil {
+			ctx.AddError(node, diag.SeverityError, "expected a name or pattern to bind")
+			return nil
+		}
+		pattern = &ast.IdentifierPattern{
+			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: ctx.NodeLocation(nameNode)}},
+			Name:        ctx.NodeText(nameNode),
+		}
+	}
 	var typeAnnotation types.Type = nil
 	if typeAnnotationNode := node.ChildByFieldName("type_annotation"); typeAnnotationNode != nil {
 		typeAnnotation = ctx.ParseType(typeAnnotationNode.ChildByFieldName("type"))

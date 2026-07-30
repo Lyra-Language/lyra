@@ -276,6 +276,12 @@ type lowerer struct {
 	rcRetain    *ir.Func // lyra_rc_retain: rc += 1 (pinned no-op)
 	rcRelease   *ir.Func // lyra_rc_release: rc -= 1, drop + free at 0 (pinned no-op)
 	rcDropReuse *ir.Func // lyra_rc_drop_reuse: unique → return box (reclaim), else decref/null (Perceus reuse)
+	// The weak half of the protocol: a weak reference keeps a box's *memory* alive
+	// without keeping its value alive, so the counts are independent — the payload
+	// dies at strong 0, the memory is freed at weak 0.
+	rcWeakRetain  *ir.Func // lyra_rc_weak_retain: weak += 1
+	rcWeakRelease *ir.Func // lyra_rc_weak_release: weak -= 1, free when both counts are 0
+	rcUpgrade     *ir.Func // lyra_rc_upgrade: strong != 0 → strong += 1 and return the box, else null
 
 	// Per-function state, reset by beginFunction at the start of each function
 	// body (main and every user function get their own).

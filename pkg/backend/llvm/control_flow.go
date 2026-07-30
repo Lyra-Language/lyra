@@ -398,10 +398,10 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 		if err != nil {
 			return nil, nil, err
 		}
-		length = block.NewLoad(lltypes.I64, block.NewGetElementPtr(boxTy, box, i32c(0), i32c(1)))
+		length = block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
 		elemLL = elem
 		arrGep = func(b *ir.Block, i value.Value) value.Value {
-			return b.NewGetElementPtr(boxTy, box, i32c(0), i32c(2), i)
+			return dynArrayElemPtr(b, boxTy, box, i)
 		}
 	default:
 		return nil, nil, fmt.Errorf("llvm: for-in over %s not implemented yet (arrays only)", iterType)

@@ -109,7 +109,7 @@ func TestExec_SharedASan(t *testing.T) {
 }
 
 // TestEmit_SharedIR pins the representation and conservation: a `shared` value is
-// a pointer to a `{ i64, payload }` box (lyra_rc_alloc), and the constructed value
+// a pointer to a `{ i64 strong, i64 weak, payload }` box (lyra_rc_alloc), and the constructed value
 // is released exactly once (allocations == releases — no leak, no double free).
 func TestEmit_SharedIR(t *testing.T) {
 	t.Parallel()
@@ -121,7 +121,7 @@ func TestEmit_SharedIR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"call i8* @lyra_rc_alloc", "{ i64, %Box }"} {
+	for _, want := range []string{"call i8* @lyra_rc_alloc", "{ i64, i64, %Box }"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("shared IR missing %q:\n%s", want, got)
 		}

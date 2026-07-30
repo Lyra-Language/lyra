@@ -220,14 +220,13 @@ func (l *lowerer) sharedArrayPayloadPtr(block *ir.Block, obj ast.Expression) (va
 		return nil, nil, nil, fmt.Errorf("llvm: shared array object is not a box pointer (%s)", boxVal.Type())
 	}
 	boxTy, ok := ptr.ElemType.(*lltypes.StructType)
-	if !ok || len(boxTy.Fields) != 2 {
+	if !ok || len(boxTy.Fields) != boxPayloadField+1 {
 		return nil, nil, nil, fmt.Errorf("llvm: shared array box is not { rc, payload } (%s)", boxVal.Type())
 	}
-	arrayTy, ok := boxTy.Fields[1].(*lltypes.ArrayType)
+	arrayTy, ok := boxTy.Fields[boxPayloadField].(*lltypes.ArrayType)
 	if !ok {
-		return nil, nil, nil, fmt.Errorf("llvm: shared array payload is not an array (%s)", boxTy.Fields[1])
+		return nil, nil, nil, fmt.Errorf("llvm: shared array payload is not an array (%s)", boxTy.Fields[boxPayloadField])
 	}
-	payloadPtr := block.NewGetElementPtr(boxTy, boxVal,
-		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+	payloadPtr := boxPayloadPtr(block, boxTy, boxVal)
 	return payloadPtr, arrayTy, block, nil
 }

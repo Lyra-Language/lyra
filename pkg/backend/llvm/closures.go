@@ -446,16 +446,15 @@ func (l *lowerer) closureEnvBox(block *ir.Block, closure value.Value) value.Valu
 func (l *lowerer) emptyEnv() value.Value {
 	if l.emptyEnvPtr == nil {
 		payloadTy := lltypes.NewStruct(lltypes.NewPointer(lltypes.I8))
-		boxTy := lltypes.NewStruct(lltypes.I64, payloadTy)
-		g := l.module.NewGlobalDef(".closure.empty_env", constant.NewStruct(boxTy,
-			constant.NewInt(lltypes.I64, -1), // PinnedRC bit pattern
-			constant.NewStruct(payloadTy, constant.NewNull(lltypes.NewPointer(lltypes.I8)))))
+		boxConst, boxTy := pinnedBoxConstant(
+			constant.NewStruct(payloadTy, constant.NewNull(lltypes.NewPointer(lltypes.I8))))
+		g := l.module.NewGlobalDef(".closure.empty_env", boxConst)
 		g.Immutable = true
 		g.Linkage = enum.LinkagePrivate
-		zero := constant.NewInt(lltypes.I32, 0)
-		one := constant.NewInt(lltypes.I32, 1)
 		l.emptyEnvPtr = constant.NewBitCast(
-			constant.NewGetElementPtr(boxTy, g, zero, one), lltypes.NewPointer(lltypes.I8))
+			constant.NewGetElementPtr(boxTy, g,
+				constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, boxPayloadField)),
+			lltypes.NewPointer(lltypes.I8))
 	}
 	return l.emptyEnvPtr
 }

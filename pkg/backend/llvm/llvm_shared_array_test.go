@@ -7,7 +7,7 @@ import (
 )
 
 // A `shared [N]T` is a fixed-size array living in a ref-counted heap box (a `ptr`
-// to `{ i64 rc, [N x T] }`), reusing the same shared-box construction, ownership,
+// to `{ i64 strong, i64 weak, [N x T] }`), reusing the same shared-box construction, ownership,
 // and drop machinery as a `shared` struct/data value. Construction boxes the inline
 // array; indexing geps through the box's payload; the box is freed at the binding's
 // scope exit (running per-element drop glue when the elements are themselves
@@ -109,7 +109,7 @@ func TestEmit_SharedArray_IR(t *testing.T) {
 	}
 	for _, want := range []string{
 		"call i8* @lyra_rc_alloc",
-		"{ i64, [3 x i8] }",
+		"{ i64, i64, [3 x i8] }",
 		"call void @lyra_rc_release",
 	} {
 		if !strings.Contains(got, want) {

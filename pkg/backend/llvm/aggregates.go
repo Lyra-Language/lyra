@@ -176,20 +176,20 @@ func (l *lowerer) lowerMemberExpr(block *ir.Block, e *ast.MemberExpr) (value.Val
 	if err != nil {
 		return nil, nil, err
 	}
-	// A `shared` object is a pointer to its box `{ i64 rc, payload }`; read the field
-	// through the box (getelementptr box → payload → field, then load) rather than
-	// extractvalue on an inline struct.
+	// A `shared` object is a pointer to its box `{ strong, weak, payload }`; read the
+	// field through the box (getelementptr box → payload → field, then load) rather
+	// than extractvalue on an inline struct.
 	if ptr, ok := obj.Type().(*lltypes.PointerType); ok {
 		boxTy, ok := ptr.ElemType.(*lltypes.StructType)
-		if !ok || len(boxTy.Fields) != 2 {
+		if !ok || len(boxTy.Fields) != boxPayloadField+1 {
 			return nil, nil, fmt.Errorf("llvm: member access on non-box pointer %s", obj.Type())
 		}
-		payloadTy, ok := boxTy.Fields[1].(*lltypes.StructType)
+		payloadTy, ok := boxTy.Fields[boxPayloadField].(*lltypes.StructType)
 		if !ok || idx >= len(payloadTy.Fields) {
-			return nil, nil, fmt.Errorf("llvm: `shared` field access on non-struct payload %s", boxTy.Fields[1])
+			return nil, nil, fmt.Errorf("llvm: `shared` field access on non-struct payload %s", boxTy.Fields[boxPayloadField])
 		}
 		fieldPtr := block.NewGetElementPtr(boxTy, obj,
-			constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1), constant.NewInt(lltypes.I32, int64(idx)))
+			i32c(0), i32c(boxPayloadField), constant.NewInt(lltypes.I32, int64(idx)))
 		return block.NewLoad(payloadTy.Fields[idx], fieldPtr), block, nil
 	}
 	if _, ok := obj.Type().(*lltypes.StructType); !ok {

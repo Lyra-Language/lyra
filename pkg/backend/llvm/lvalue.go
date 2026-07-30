@@ -253,7 +253,7 @@ func (l *lowerer) memberFieldAddress(block *ir.Block, e *ast.MemberExpr) (lvalue
 			return lvalueLoc{}, nil, err
 		}
 		fieldPtr := block.NewGetElementPtr(SharedBoxType(payloadTy), box,
-			constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1), constant.NewInt(lltypes.I32, int64(idx)))
+			i32c(0), i32c(boxPayloadField), constant.NewInt(lltypes.I32, int64(idx)))
 		return lvalueLoc{ptr: fieldPtr, ty: fieldType, viaBox: true}, block, nil
 	}
 
@@ -301,7 +301,7 @@ func (l *lowerer) indexElemAddress(block *ir.Block, e *ast.IndexExpr) (lvalueLoc
 			}
 			// box → SharedBox { i64 rc, [N x T] } field 1 → element.
 			elemPtr := block.NewGetElementPtr(SharedBoxType(arrayTy), box,
-				constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1), adjusted)
+				i32c(0), i32c(boxPayloadField), adjusted)
 			return lvalueLoc{ptr: elemPtr, ty: at.ElementType, viaBox: true}, block, nil
 		}
 		// A stack `[N]T`: addressed through the object's own storage, so the element
@@ -328,12 +328,12 @@ func (l *lowerer) indexElemAddress(block *ir.Block, e *ast.IndexExpr) (lvalueLoc
 		if err != nil {
 			return lvalueLoc{}, nil, err
 		}
-		length := block.NewLoad(lltypes.I64, block.NewGetElementPtr(boxTy, box, i32c(0), i32c(1)))
+		length := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
 		adjusted, block, err := l.boundsCheckedIndex(block, e, length)
 		if err != nil {
 			return lvalueLoc{}, nil, err
 		}
-		elemPtr := block.NewGetElementPtr(boxTy, box, i32c(0), i32c(2), adjusted)
+		elemPtr := dynArrayElemPtr(block, boxTy, box, adjusted)
 		return lvalueLoc{ptr: elemPtr, ty: at.ElementType, viaBox: true}, block, nil
 	}
 	return lvalueLoc{}, nil, fmt.Errorf("llvm: index assignment into %s is not implemented", objType)

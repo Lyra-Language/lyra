@@ -118,6 +118,15 @@ func (l *lowerer) lowerDestructuringDecl(block *ir.Block, d *ast.DestructuringDe
 // occurs in odd code.
 func (l *lowerer) lowerIfDestructuring(block *ir.Block, s *ast.IfDestructuringStmt) (*ir.Block, error) {
 	d := &s.DestructuringStatement
+	// A `weak` scrutinee is not destructured but *upgraded*: the question is whether
+	// the referent is still alive, not whether it matches a shape. See weak.go.
+	if d.Value != nil {
+		if t, ok := l.recordedType(d.Value); ok {
+			if wt, isWeak := l.stripNewtype(t).(types.WeakType); isWeak {
+				return l.lowerWeakUpgrade(block, s, wt)
+			}
+		}
+	}
 	val, valType, block, err := l.destructuringValue(block, d)
 	if err != nil {
 		return nil, err

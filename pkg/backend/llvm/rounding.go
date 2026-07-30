@@ -33,6 +33,9 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	if member.Property.Name == "len" {
 		return l.lowerArrayLen(block, call, member)
 	}
+	if member.Property.Name == "weak" {
+		return l.lowerWeakDowngrade(block, call, member)
+	}
 	op, ok := roundingIntrinsicOps[member.Property.Name]
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: unsupported method call %q", member.Property.Name)

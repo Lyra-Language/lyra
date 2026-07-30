@@ -138,12 +138,24 @@ func TestTagType(t *testing.T) {
 	}
 }
 
+// A box header is two i64 counts — strong, then weak — before the payload. The
+// weak count is what lets a `weak` reference outlive the value: the payload dies
+// at strong 0, the memory is freed at weak 0.
 func TestSharedBoxType(t *testing.T) {
 	t.Parallel()
 	node := lltypes.NewStruct()
 	node.TypeName = "Node"
-	if got := SharedBoxType(node).String(); got != "{ i64, %Node }" {
+	if got := SharedBoxType(node).String(); got != "{ i64, i64, %Node }" {
 		t.Errorf("SharedBoxType = %q", got)
+	}
+	// The named field indices must agree with that shape, since every box access
+	// GEPs by them and nothing type-checks the correspondence.
+	if boxStrongField != 0 || boxWeakField != 1 || boxPayloadField != 2 {
+		t.Errorf("box field indices %d/%d/%d disagree with the header layout",
+			boxStrongField, boxWeakField, boxPayloadField)
+	}
+	if rcHeaderSize != 16 {
+		t.Errorf("rcHeaderSize = %d; want 16 (two i64 counts)", rcHeaderSize)
 	}
 }
 

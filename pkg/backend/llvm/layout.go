@@ -1,7 +1,10 @@
 package llvm
 
 import (
+	"github.com/llir/llvm/ir"
+	"github.com/llir/llvm/ir/constant"
 	lltypes "github.com/llir/llvm/ir/types"
+	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -126,26 +129,80 @@ func floatIntrinsicSuffix(name types.PrimitiveTypeName) (string, bool) {
 	return "", false
 }
 
+// Box field indices. Every ref-counted box begins with the same header
+// (runtime.go): the strong count, then the weak count, then its payload. These are
+// named because a GEP index is a bare integer — nothing type-checks that field 2
+// is the payload, so a layout change with the indices spelled inline would compile
+// silently and read the wrong memory. Every box access goes through the helpers
+// below, so the layout is stated once.
+const (
+	boxStrongField  = 0 // i64: owning references; the value dies at 0
+	boxWeakField    = 1 // i64: non-owning references; the memory is freed at 0
+	boxPayloadField = 2 // the value itself
+)
+
+// Dynamic-array box field indices, past the shared header: a `[]T` box is
+// `{ strong, weak, len, [0 x T] }`, so its payload (at boxPayloadField) is the
+// `{ len, [0 x T] }` pair the per-element drop glue receives.
+const (
+	dynArrayLenField   = boxPayloadField     // i64: the element count
+	dynArrayElemsField = boxPayloadField + 1 // [0 x T]: the flexible element tail
+)
+
 // SharedBoxType returns the llir type of a ref-counted box wrapping payload:
-// `{ i64, <payload> }` with the refcount first. A `shared` value is a pointer to
-// this box (ALLOCATION.md).
+// `{ i64 strong, i64 weak, <payload> }`. A `shared` value is a pointer to this box
+// (ALLOCATION.md).
 func SharedBoxType(payload lltypes.Type) *lltypes.StructType {
-	return lltypes.NewStruct(lltypes.I64, payload)
+	return lltypes.NewStruct(lltypes.I64, lltypes.I64, payload)
+}
+
+// pinnedBoxConstant builds a **pinned static box** around a constant payload: a
+// global with the layout a heap box has, but every count set to the pinned
+// sentinel so retain and release are no-ops on it (runtime.go, PinnedRC). That is
+// what lets a compile-time value — a string literal's bytes, the shared empty
+// closure environment — flow through the ownership model as an ordinary managed
+// value at no allocation cost, and it is why the counts are set here rather than
+// at each site: a site that spelled the header inline would silently be missing a
+// count word after a layout change.
+func pinnedBoxConstant(payload constant.Constant) (*constant.Struct, *lltypes.StructType) {
+	boxTy := SharedBoxType(payload.Type())
+	fields := make([]constant.Constant, 0, len(boxTy.Fields))
+	for range len(boxTy.Fields) - 1 { // every count word
+		fields = append(fields, constant.NewInt(lltypes.I64, -1)) // PinnedRC bit pattern
+	}
+	fields = append(fields, payload)
+	return constant.NewStruct(boxTy, fields...), boxTy
+}
+
+// boxPayloadPtr GEPs to a box's payload — the one place that knows where a
+// payload sits relative to the header.
+func boxPayloadPtr(block *ir.Block, boxTy *lltypes.StructType, box value.Value) value.Value {
+	return block.NewGetElementPtr(boxTy, box, i32c(0), i32c(boxPayloadField))
 }
 
 // dynArrayHeaderSize is the byte offset of a dynamic array box's first element:
-// the i64 refcount plus the i64 length. Elements start here (16-byte offset is
-// aligned for any element alignment ≤ 16).
+// the box header plus the i64 length. Elements start here, at an offset aligned
+// for any element alignment ≤ 8 (Lyra's maximum).
 const dynArrayHeaderSize = rcHeaderSize + 8
 
 // DynArrayBoxType returns the box layout of a dynamic array `[]T`:
-// `{ i64 rc, i64 len, [0 x T] }` — the refcount, the element count, then a flexible
-// array of elements (the `[0 x T]` tail is GEP'd past its declared length; the real
-// element storage is sized at allocation from the count). A `[]T` value is a `ptr`
-// to this box, so it reuses the shared-value refcount machinery: retain/release act
-// on the pointer directly (rc is field 0, at offset 0). See dynarray.go.
+// `{ i64 strong, i64 weak, i64 len, [0 x T] }` — the box header, the element count,
+// then a flexible array of elements (the `[0 x T]` tail is GEP'd past its declared
+// length; the real element storage is sized at allocation from the count). A `[]T`
+// value is a `ptr` to this box, so it reuses the shared-value refcount machinery
+// unchanged: the header is at the same offset for every box kind. See dynarray.go.
 func DynArrayBoxType(elem lltypes.Type) *lltypes.StructType {
-	return lltypes.NewStruct(lltypes.I64, lltypes.I64, lltypes.NewArray(0, elem))
+	return lltypes.NewStruct(lltypes.I64, lltypes.I64, lltypes.I64, lltypes.NewArray(0, elem))
+}
+
+// dynArrayLenPtr / dynArrayElemPtr GEP to a dynamic array box's length field and
+// to one of its elements.
+func dynArrayLenPtr(block *ir.Block, boxTy *lltypes.StructType, box value.Value) value.Value {
+	return block.NewGetElementPtr(boxTy, box, i32c(0), i32c(dynArrayLenField))
+}
+
+func dynArrayElemPtr(block *ir.Block, boxTy *lltypes.StructType, box, idx value.Value) value.Value {
+	return block.NewGetElementPtr(boxTy, box, i32c(0), i32c(dynArrayElemsField), idx)
 }
 
 // TagType returns the smallest unsigned integer type that holds numVariants

@@ -62,7 +62,7 @@ func (l *lowerer) lowerDynArrayConstruction(block *ir.Block, e *ast.ArrayLiteral
 	box := block.NewBitCast(boxI8, lltypes.NewPointer(boxTy))
 
 	// Store the length (field 1).
-	block.NewStore(i64c(int64(n)), block.NewGetElementPtr(boxTy, box, i32c(0), i32c(1)))
+	block.NewStore(i64c(int64(n)), dynArrayLenPtr(block, boxTy, box))
 
 	// Store each element into the flexible tail (field 2, index i).
 	for i, elemExpr := range e.Elements {
@@ -75,7 +75,7 @@ func (l *lowerer) lowerDynArrayConstruction(block *ir.Block, e *ast.ArrayLiteral
 		if err != nil {
 			return nil, nil, err
 		}
-		elemPtr := block.NewGetElementPtr(boxTy, box, i32c(0), i32c(2), i64c(int64(i)))
+		elemPtr := dynArrayElemPtr(block, boxTy, box, i64c(int64(i)))
 		block.NewStore(v, elemPtr)
 	}
 	return box, block, nil
@@ -97,7 +97,7 @@ func (l *lowerer) lowerDynArrayIndex(block *ir.Block, e *ast.IndexExpr, dynType 
 	if err != nil {
 		return nil, nil, err
 	}
-	length := block.NewLoad(lltypes.I64, block.NewGetElementPtr(boxTy, box, i32c(0), i32c(1)))
+	length := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
 
 	idx, block, err := l.lowerExpr(block, e.Index)
 	if err != nil {
@@ -113,7 +113,7 @@ func (l *lowerer) lowerDynArrayIndex(block *ir.Block, e *ast.IndexExpr, dynType 
 	oob := block.NewICmp(enum.IPredUGE, adjusted, length)
 	block = l.emitTrapIf(block, oob, l.panicIndexOOBFunc())
 
-	elemPtr := block.NewGetElementPtr(boxTy, box, i32c(0), i32c(2), adjusted)
+	elemPtr := dynArrayElemPtr(block, boxTy, box, adjusted)
 	return block.NewLoad(elemLL, elemPtr), block, nil
 }
 
@@ -148,7 +148,7 @@ func (l *lowerer) lowerArrayLen(block *ir.Block, call *ast.FunctionCallExpr, mem
 		if err != nil {
 			return nil, nil, err
 		}
-		length := block.NewLoad(lltypes.I64, block.NewGetElementPtr(boxTy, box, i32c(0), i32c(1)))
+		length := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
 		return length, block, nil
 	}
 	return nil, nil, fmt.Errorf("llvm: len() on non-array receiver %s not implemented", recvT)

@@ -59,7 +59,7 @@ func (l *lowerer) deepRetain(block *ir.Block, v value.Value, t types.Type) error
 	}
 	t = l.stripNewtype(t) // a newtype is its base at run time
 	if ownership.IsManaged(t) {
-		l.lowerManagedRetain(block, v)
+		l.lowerManagedRetain(block, v, t)
 		return nil
 	}
 	fn, err := l.retainFuncFor(t)
@@ -153,7 +153,7 @@ func (l *lowerer) emitRetainValue(block *ir.Block, v value.Value, t types.Type) 
 	// A managed value is retained as a unit; whatever *it* owns is already accounted
 	// for by its own box. This is where the walk stops.
 	if ownership.IsManaged(resolved) {
-		l.lowerManagedRetain(block, v)
+		l.lowerManagedRetain(block, v, resolved)
 		return block, nil
 	}
 

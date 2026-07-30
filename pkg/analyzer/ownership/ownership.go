@@ -170,6 +170,15 @@ func IsManaged(t types.Type) bool {
 	// A newtype is nominal only — `newtype Email = string` is represented exactly
 	// as a string — so managed-ness is a property of the base (types.StripNewtype).
 	t = types.StripNewtype(t)
+	// A `weak T` is a non-owning reference to a box, and it too has a lifecycle: it
+	// holds a *weak* count that keeps the box's memory alive, so a copy takes one and
+	// a death drops one. Without that the memory a dead-but-weakly-referenced box
+	// occupies is never freed. The backend releases it with the weak shim rather than
+	// the strong one (see deepRelease) — a weak reference never owns the value, only
+	// the storage.
+	if _, ok := t.(types.WeakType); ok {
+		return true
+	}
 	// A function value is a boxed closure: a code pointer paired with a
 	// ref-counted environment (closures.go), so it is managed like a string —
 	// copying one shares an environment, and the last reference frees it. A

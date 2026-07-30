@@ -61,6 +61,21 @@ func builtinMethodSignature(recv types.Type, name string) (*types.LambdaType, bo
 			ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.Int64}},
 		}, true
 	}
+	// `x.weak()` on a `shared T` → a non-owning `weak T`. A method rather than new
+	// syntax: `weak` is only a *type* in the grammar, and there was previously no
+	// expression that produced one at all, so a `weak` field could be declared but
+	// never constructed.
+	//
+	// The receiver must be `shared`: a weak reference is a reference to a
+	// ref-counted box, and that is what `shared` means. Downgrading a stack value
+	// would have nothing to point at, and downgrading a string or a `[]T` — also
+	// boxed — is deliberately not offered: those have no identity a user can observe,
+	// so a weak one would only be a way to write a dangling read.
+	if name == "weak" && types.AllocationOf(recv) == types.Shared {
+		return &types.LambdaType{
+			ReturnType: types.ReturnType{Type: types.WeakType{Inner: types.WithAllocation(recv, types.Stack)}},
+		}, true
+	}
 	recv = promoteToDefault(recv)
 	p, ok := recv.(types.PrimitiveType)
 	if !ok {

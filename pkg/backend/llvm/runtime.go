@@ -29,6 +29,18 @@ const (
 	// pinned (arena) leave it and return null. An unconsumed non-null token is freed
 	// by the caller (`free(NULL)` is a valid no-op, so the caller frees unconditionally).
 	ShimRCDropReuse = "lyra_rc_drop_reuse"
+	// ShimRCWeakRetain(box ptr) : weak += 1 (no-op when pinned). Taken when a
+	// `weak` reference is created — it keeps the box's *memory* alive without
+	// keeping the value alive.
+	ShimRCWeakRetain = "lyra_rc_weak_retain"
+	// ShimRCWeakRelease(box ptr) : weak -= 1; free the box when both counts are 0
+	// (no-op when pinned). The mirror of weak_retain, for a weak reference's death.
+	ShimRCWeakRelease = "lyra_rc_weak_release"
+	// ShimRCUpgrade(box ptr) -> ptr : the weak→strong upgrade. If the value is still
+	// alive (strong != 0) increment strong and return the box — a new owning
+	// reference; otherwise return null. This is the *only* way to read through a
+	// weak reference, which is what makes a dangling read unexpressible.
+	ShimRCUpgrade = "lyra_rc_upgrade"
 	// ShimArenaAlloc(arena ptr, size i64) -> ptr : bump-allocate a box in the
 	// arena with rc = PinnedRC, so retain/release no-op and the arena bulk-frees.
 	// (Arenas are not emitted yet — reserved name for the `with`-block work.)
@@ -42,12 +54,24 @@ const (
 // bit pattern); the compare is bitwise so signedness is irrelevant.
 const PinnedRC uint64 = 1<<64 - 1
 
-// rcHeaderSize is the box header size in bytes: a single i64 refcount preceding
-// the payload. Lyra's maximum scalar alignment is 8 (i64/f64/ptr) and aggregates
-// align to ≤ 8, so an 8-byte header places the payload at its natural alignment
-// with no extra padding — the payload always starts exactly rcHeaderSize bytes
-// into the box.
-const rcHeaderSize = 8
+// rcHeaderSize is the box header size in bytes: two i64 counts — strong, then
+// weak — preceding the payload. Lyra's maximum scalar alignment is 8 (i64/f64/ptr)
+// and aggregates align to ≤ 8, so a multiple-of-8 header places the payload at its
+// natural alignment with no padding; the payload always starts exactly
+// rcHeaderSize bytes into the box, whatever the box kind.
+//
+// **Why two counts, uniformly.** A `weak` reference must be able to ask "is the
+// referent still alive?" without dereferencing freed memory, so a box's *memory*
+// has to outlive its strong count: the value dies (drop glue runs) at strong 0,
+// and the memory is freed only once weak also reaches 0. Two rejected
+// alternatives, recorded because the choice costs 8 bytes per heap value:
+// giving only weakly-referenced types a wide header makes the header size
+// type-dependent — the same silent split-by-representation this backend has been
+// bitten by twice (by-value `mut` params, newtype managed-ness) — and packing two
+// 32-bit counts into one word puts mask/shift arithmetic in the hottest runtime
+// functions plus an unenforced overflow assumption. Uniform is boring and
+// obviously correct; revisit with measurements, not before.
+const rcHeaderSize = 16
 
 // ensureRCRuntime emits the ref-counted heap runtime into the module the first
 // time it's needed, caching the function handles on the lowerer (idempotent).
@@ -74,7 +98,9 @@ func (l *lowerer) ensureRCRuntime() {
 		fn := l.module.NewFunc(ShimRCAlloc, i8ptr, size)
 		b := fn.NewBlock("entry")
 		box := b.NewCall(l.malloc, size)
-		b.NewStore(one, b.NewBitCast(box, i64ptr))
+		counts := b.NewBitCast(box, i64ptr)
+		b.NewStore(one, counts)                     // strong = 1
+		b.NewStore(zero, weakCountPtr(b, box, i64ptr)) // weak = 0
 		b.NewRet(box)
 		l.rcAlloc = fn
 	}
@@ -124,8 +150,15 @@ func (l *lowerer) ensureRCRuntime() {
 		callDrop.NewCall(callDrop.NewBitCast(drop, dropTy), payload)
 		callDrop.NewBr(doFree)
 
-		doFree.NewCall(l.free, box)
-		doFree.NewBr(done)
+		// The value is dead, but its *memory* must survive while any weak reference
+		// can still ask whether it is: free only when the weak count is zero too.
+		// A box that never had a weak reference has weak == 0 from allocation, so
+		// this is the same single free it always was.
+		weak := doFree.NewLoad(lltypes.I64, weakCountPtr(doFree, box, i64ptr))
+		reallyFree := fn.NewBlock("really_free")
+		doFree.NewCondBr(doFree.NewICmp(enum.IPredEQ, weak, zero), reallyFree, done)
+		reallyFree.NewCall(l.free, box)
+		reallyFree.NewBr(done)
 
 		done.NewRet(nil)
 		l.rcRelease = fn
@@ -165,6 +198,73 @@ func (l *lowerer) ensureRCRuntime() {
 		retNull.NewRet(constant.NewNull(i8ptr))
 		l.rcDropReuse = fn
 	}
+
+	// void @lyra_rc_weak_retain(i8* %box): if not pinned, weak += 1.
+	{
+		box := ir.NewParam("box", i8ptr)
+		fn := l.module.NewFunc(ShimRCWeakRetain, lltypes.Void, box)
+		entry := fn.NewBlock("entry")
+		inc := fn.NewBlock("inc")
+		done := fn.NewBlock("done")
+		strong := entry.NewLoad(lltypes.I64, entry.NewBitCast(box, i64ptr))
+		entry.NewCondBr(entry.NewICmp(enum.IPredEQ, strong, pinned), done, inc)
+		wPtr := weakCountPtr(inc, box, i64ptr)
+		inc.NewStore(inc.NewAdd(inc.NewLoad(lltypes.I64, wPtr), one), wPtr)
+		inc.NewBr(done)
+		done.NewRet(nil)
+		l.rcWeakRetain = fn
+	}
+
+	// void @lyra_rc_weak_release(i8* %box): if not pinned, weak -= 1; when both
+	// counts are 0 the memory is unreachable from either kind of reference, so free
+	// it. The payload's drop glue already ran when strong hit 0 — a weak reference
+	// never owns the value, only the storage — so there is nothing to drop here.
+	{
+		box := ir.NewParam("box", i8ptr)
+		fn := l.module.NewFunc(ShimRCWeakRelease, lltypes.Void, box)
+		entry := fn.NewBlock("entry")
+		dec := fn.NewBlock("dec")
+		maybeFree := fn.NewBlock("maybe_free")
+		doFree := fn.NewBlock("free")
+		done := fn.NewBlock("done")
+		strongPtr := entry.NewBitCast(box, i64ptr)
+		strong := entry.NewLoad(lltypes.I64, strongPtr)
+		entry.NewCondBr(entry.NewICmp(enum.IPredEQ, strong, pinned), done, dec)
+		wPtr := weakCountPtr(dec, box, i64ptr)
+		w1 := dec.NewSub(dec.NewLoad(lltypes.I64, wPtr), one)
+		dec.NewStore(w1, wPtr)
+		dec.NewCondBr(dec.NewICmp(enum.IPredEQ, w1, zero), maybeFree, done)
+		liveStrong := maybeFree.NewLoad(lltypes.I64, strongPtr)
+		maybeFree.NewCondBr(maybeFree.NewICmp(enum.IPredEQ, liveStrong, zero), doFree, done)
+		doFree.NewCall(l.free, box)
+		doFree.NewBr(done)
+		done.NewRet(nil)
+		l.rcWeakRelease = fn
+	}
+
+	// i8* @lyra_rc_upgrade(i8* %box): the weak→strong upgrade.
+	//   strong == 0 → the value is gone; return null.
+	//   otherwise   → strong += 1 and return the box, a new owning reference.
+	// A pinned box is always alive (an arena frees it in bulk), so it upgrades
+	// without touching the count.
+	{
+		box := ir.NewParam("box", i8ptr)
+		fn := l.module.NewFunc(ShimRCUpgrade, i8ptr, box)
+		entry := fn.NewBlock("entry")
+		alive := fn.NewBlock("alive")
+		inc := fn.NewBlock("inc")
+		retBox := fn.NewBlock("ret_box")
+		retNull := fn.NewBlock("ret_null")
+		strongPtr := entry.NewBitCast(box, i64ptr)
+		strong := entry.NewLoad(lltypes.I64, strongPtr)
+		entry.NewCondBr(entry.NewICmp(enum.IPredEQ, strong, pinned), retBox, alive)
+		alive.NewCondBr(alive.NewICmp(enum.IPredEQ, strong, zero), retNull, inc)
+		inc.NewStore(inc.NewAdd(strong, one), strongPtr)
+		inc.NewBr(retBox)
+		retBox.NewRet(box)
+		retNull.NewRet(constant.NewNull(i8ptr))
+		l.rcUpgrade = fn
+	}
 }
 
 // rcAllocPayload emits an allocation of `payloadSize` heap bytes as a ref-counted
@@ -179,4 +279,12 @@ func (l *lowerer) rcAllocPayload(block *ir.Block, payloadSize value.Value) (box,
 	box = block.NewCall(l.rcAlloc, boxSize)
 	payload = block.NewGetElementPtr(lltypes.I8, box, constant.NewInt(lltypes.I64, rcHeaderSize))
 	return box, payload
+}
+
+// weakCountPtr GEPs to a box's weak count. Written in raw byte terms (the box
+// arrives as an i8* in the runtime shims, where the payload type is unknown) —
+// the count words are the first two i64s of every box, whatever it wraps.
+func weakCountPtr(b *ir.Block, box value.Value, i64ptr lltypes.Type) value.Value {
+	off := constant.NewInt(lltypes.I64, boxWeakField*8)
+	return b.NewBitCast(b.NewGetElementPtr(lltypes.I8, box, off), i64ptr)
 }

@@ -332,6 +332,29 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 	if inferredType == nil {
 		return
 	}
+	// Upgrading a `weak` reference: `if let strong = w` binds a **`shared T`**, not
+	// the `weak T` being tested. The whole point of the form is that the branch runs
+	// only when the referent is still alive, and there it holds a real owning
+	// reference — which is also why a weak reference has no other way to be read
+	// (weak.go). The pattern must be a plain name: a destructuring pattern would
+	// conflate "the referent is gone" with "it didn't match", two failures a reader
+	// needs to tell apart.
+	if wt, ok := types.StripNewtype(inferredType).(types.WeakType); ok {
+		ident, isIdent := decl.Pattern.(*ast.IdentifierPattern)
+		if !isIdent {
+			tc.addError(decl.GetLocation(), SeverityError,
+				"upgrading a `weak` reference binds a plain name (`if let s = w`), not a pattern")
+			return
+		}
+		if ident.Name != "_" {
+			tc.scope.Symbols[ident.Name] = &ast.VarDeclStmt{
+				AstBase: ast.AstBase{Location: decl.GetLocation()},
+				Name:    ident.Name,
+				Type:    types.WithAllocation(wt.Inner, types.Shared),
+			}
+		}
+		return
+	}
 
 	// If there's a whole-expression type annotation, verify assignability.
 	if decl.Type != nil {

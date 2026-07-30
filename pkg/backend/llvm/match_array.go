@@ -39,9 +39,9 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, arrType typ
 	if err != nil {
 		return nil, nil, err
 	}
-	length := block.NewLoad(lltypes.I64, block.NewGetElementPtr(boxTy, box, i32c(0), i32c(1)))
+	length := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
 	elemAt := func(b *ir.Block, i int64) value.Value {
-		return b.NewLoad(elemLL, b.NewGetElementPtr(boxTy, box, i32c(0), i32c(2), i64c(i)))
+		return b.NewLoad(elemLL, dynArrayElemPtr(b, boxTy, box, i64c(i)))
 	}
 	isBool, signed := false, false
 	if ep, ok := arrType.ElementType.(types.PrimitiveType); ok {
@@ -319,7 +319,7 @@ func (l *lowerer) bindTailSubArray(block *ir.Block, name string, box, length val
 	byteSize := block.NewAdd(i64c(int64(dynArrayHeaderSize)), block.NewMul(tailLen, i64c(stride)))
 	tailI8 := block.NewCall(l.rcAlloc, byteSize) // rc = 1
 	tail := block.NewBitCast(tailI8, lltypes.NewPointer(srcTy))
-	block.NewStore(tailLen, block.NewGetElementPtr(srcTy, tail, i32c(0), i32c(1)))
+	block.NewStore(tailLen, dynArrayLenPtr(block, srcTy, tail))
 
 	// Copy loop: tail[i] = src[fixedCount + i], for i in [0, tailLen).
 	idx := fn.Blocks[0].NewAlloca(lltypes.I64)
@@ -332,7 +332,7 @@ func (l *lowerer) bindTailSubArray(block *ir.Block, name string, box, length val
 	head.NewCondBr(head.NewICmp(enum.IPredSLT, i, tailLen), body, done)
 
 	bi := body.NewLoad(lltypes.I64, idx)
-	srcElem := body.NewLoad(elemLL, body.NewGetElementPtr(srcTy, box, i32c(0), i32c(2), body.NewAdd(bi, i64c(fixedCount))))
+	srcElem := body.NewLoad(elemLL, dynArrayElemPtr(body, srcTy, box, body.NewAdd(bi, i64c(fixedCount))))
 	cur := body
 	if l.needsDrop(elemLyra) {
 		// The tail owns its copy of each managed element (its drop glue releases
@@ -342,7 +342,7 @@ func (l *lowerer) bindTailSubArray(block *ir.Block, name string, box, length val
 			return nil, err
 		}
 	}
-	cur.NewStore(srcElem, cur.NewGetElementPtr(srcTy, tail, i32c(0), i32c(2), bi))
+	cur.NewStore(srcElem, dynArrayElemPtr(cur, srcTy, tail, bi))
 	cur.NewStore(cur.NewAdd(bi, i64c(1)), idx)
 	cur.NewBr(head)
 
