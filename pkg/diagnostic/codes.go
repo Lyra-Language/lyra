@@ -209,4 +209,11 @@ const (
 	// refinement. The branch it guards is dead code or a likely bug; a warning since
 	// the code still compiles and runs.
 	CodeConstantComparison = "lyra-W011"
+
+	// CodePreludeShadowed: a declaration takes a name the prelude exports. The
+	// declaration wins. A warning rather than an error because the prelude is
+	// implicitly in scope everywhere: rejecting the clash would make every name it
+	// exports permanently unusable, and adding a name to the prelude later would
+	// break programs that never mentioned it.
+	CodePreludeShadowed = "lyra-W012"
 )

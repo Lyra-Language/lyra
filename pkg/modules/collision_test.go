@@ -27,7 +27,7 @@ func buildTree(t *testing.T, files map[string]string) string {
 
 func analyze(t *testing.T, root string) *driver.Result {
 	t.Helper()
-	units, diags := modules.Resolve(filepath.Join(root, "app.lyra"), []string{root})
+	units, diags := modules.Resolve(filepath.Join(root, "app.lyra"), []string{root}, modules.Options{})
 	if len(diags) != 0 {
 		t.Fatalf("resolve failed: %v", diags)
 	}

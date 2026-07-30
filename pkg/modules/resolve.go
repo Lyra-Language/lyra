@@ -30,6 +30,12 @@ import (
 // Extension is the source-file suffix a module path maps onto.
 const Extension = ".lyra"
 
+// PreludeModule is the module implicitly available to every file. It is an ordinary
+// module — `pub` exports, resolved through the same roots — that the compiler happens
+// to import for you, rather than a set of names baked into the compiler. That is what
+// lets it be read, tested and replaced like any other code.
+const PreludeModule = "std.prelude"
+
 // Unit is one resolved source file: its module path (empty for the entry file when it
 // declares no module), where it came from, its bytes, and its parsed tree.
 type Unit struct {
@@ -52,7 +58,7 @@ type Unit struct {
 // An import that cannot be found, and an import cycle, are both reported as
 // diagnostics rather than returned as errors: they are the user's mistakes, and
 // reporting them alongside the rest means a compile shows all of them at once.
-func Resolve(entryFile string, roots []string) ([]Unit, []diag.Diagnostic) {
+func Resolve(entryFile string, roots []string, opts Options) ([]Unit, []diag.Diagnostic) {
 	r := &resolver{
 		roots:   roots,
 		byPath:  map[string]bool{},
@@ -62,8 +68,44 @@ func Resolve(entryFile string, roots []string) ([]Unit, []diag.Diagnostic) {
 	if !ok {
 		return nil, r.diags
 	}
+	r.includePrelude(opts, entry)
 	r.visit(entry)
 	return r.units, r.diags
+}
+
+// Options configures resolution. The zero value pulls in no prelude, which is what a
+// caller analyzing a single snippet wants.
+type Options struct {
+	// Prelude is the module implicitly available to every file, e.g. "std.prelude".
+	// Empty disables it.
+	Prelude string
+}
+
+// includePrelude resolves the prelude ahead of the entry file's own imports, so it is
+// collected first and its names are in place before anything can shadow them.
+//
+// A missing prelude is **not an error**. The standard library is found by searching the
+// roots, and a program that has none — a single file compiled straight out of a
+// directory, which is most of the test suite — must still build. Requiring it would
+// turn "no std/ on this machine" into a compile failure for every program.
+//
+// The prelude does not import itself: when the entry file *is* the prelude, this is
+// skipped, which is what lets the prelude be compiled and tested like any other module.
+func (r *resolver) includePrelude(opts Options, entry Unit) {
+	if opts.Prelude == "" || entry.Path == opts.Prelude {
+		return
+	}
+	rel := filepath.Join(strings.Split(opts.Prelude, ".")...) + Extension
+	for _, root := range r.roots {
+		candidate := filepath.Join(root, rel)
+		if _, err := os.Stat(candidate); err != nil {
+			continue
+		}
+		if unit, ok := r.load(candidate, opts.Prelude, ast.Location{}, entry.File); ok {
+			r.visit(unit)
+		}
+		return
+	}
 }
 
 type resolver struct {

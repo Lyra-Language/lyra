@@ -114,6 +114,10 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	}
 
 	c := collector.NewCollector(units[0].Source)
+	// Named before any file is walked: type registration happens *during* the walk, so
+	// a prelude module set later would leave every type registered before it unable to
+	// tell a prelude name from a user one.
+	c.SetPreludeModule(preludeOf(units))
 	for _, u := range units {
 		before := len(res.Diagnostics)
 		res.Diagnostics = append(res.Diagnostics, collectParseErrors(u.Root, u.Source)...)
@@ -122,6 +126,7 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	}
 	program, symTable, scopeTable, collectorErrors := c.Finish()
 	res.Program, res.SymbolTable, res.ScopeTable = program, symTable, scopeTable
+	res.Diagnostics = append(res.Diagnostics, preludeShadowWarnings(symTable)...)
 	for _, rawErr := range collectorErrors {
 		if ce, ok := rawErr.(diag.Diagnostic); ok {
 			res.Diagnostics = append(res.Diagnostics, ce)
@@ -331,4 +336,38 @@ func stampFile(diags []diag.Diagnostic, file string) {
 			diags[i].File = file
 		}
 	}
+}
+
+// preludeOf reports which unit, if any, is the prelude. The driver takes it from the
+// units it was handed rather than from a constant, so a caller that resolved without a
+// prelude gets no prelude behaviour — the two cannot disagree.
+func preludeOf(units []modules.Unit) string {
+	for _, u := range units {
+		if u.Path == modules.PreludeModule {
+			return u.Path
+		}
+	}
+	return ""
+}
+
+// preludeShadowWarnings turns each user declaration that took a prelude name into a
+// warning. A warning rather than an error: the prelude is implicitly in scope, so
+// rejecting a clash would make every name it exports permanently unusable, and adding
+// one later would break programs that never mentioned it.
+func preludeShadowWarnings(symTable *symbols.SymbolTable) []diag.Diagnostic {
+	if symTable == nil {
+		return nil
+	}
+	out := make([]diag.Diagnostic, 0, len(symTable.ShadowedPrelude))
+	for _, s := range symTable.ShadowedPrelude {
+		out = append(out, diag.Diagnostic{
+			Location: s.Loc,
+			Severity: diag.SeverityWarning,
+			Code:     diag.CodePreludeShadowed,
+			Message: fmt.Sprintf(
+				"%s shadows the prelude's %s — this declaration wins; rename it if that was not intended",
+				s.Name, s.Name),
+		})
+	}
+	return out
 }

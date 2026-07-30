@@ -39,7 +39,7 @@ func TestResolve_DependencyOrder(t *testing.T) {
 		"util/math.lyra": "module util.math\nimport util.core\npub let double = (n: i64) -> i64 => n * 2",
 		"util/core.lyra": "module util.core\npub let one = () -> i64 => 1",
 	})
-	units, diags := Resolve(filepath.Join(root, "app.lyra"), []string{root})
+	units, diags := Resolve(filepath.Join(root, "app.lyra"), []string{root}, Options{})
 	if len(diags) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -65,7 +65,7 @@ func TestResolve_SharedDependencyEmittedOnce(t *testing.T) {
 		"b.lyra":      "module b\nimport shared\npub let fb = () -> i64 => 2",
 		"shared.lyra": "module shared\npub let s = () -> i64 => 3",
 	})
-	units, diags := Resolve(filepath.Join(root, "app.lyra"), []string{root})
+	units, diags := Resolve(filepath.Join(root, "app.lyra"), []string{root}, Options{})
 	if len(diags) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}
@@ -88,7 +88,7 @@ func TestResolve_CycleReported(t *testing.T) {
 		"a.lyra":   "module a\nimport b\npub let fa = () -> i64 => 1",
 		"b.lyra":   "module b\nimport a\npub let fb = () -> i64 => 2",
 	})
-	_, diags := Resolve(filepath.Join(root, "app.lyra"), []string{root})
+	_, diags := Resolve(filepath.Join(root, "app.lyra"), []string{root}, Options{})
 	if len(diags) == 0 {
 		t.Fatal("expected a cycle diagnostic")
 	}
@@ -103,7 +103,7 @@ func TestResolve_MissingModuleListsCandidates(t *testing.T) {
 	root := write(t, map[string]string{
 		"app.lyra": "import util.nope\nlet main = () -> u8 => 0",
 	})
-	_, diags := Resolve(filepath.Join(root, "app.lyra"), []string{root})
+	_, diags := Resolve(filepath.Join(root, "app.lyra"), []string{root}, Options{})
 	if len(diags) == 0 {
 		t.Fatal("expected an unresolved-import diagnostic")
 	}
@@ -123,7 +123,7 @@ func TestResolve_RootOrder(t *testing.T) {
 	stdRoot := write(t, map[string]string{
 		"util.lyra": "module util\npub let fromStd = () -> i64 => 2",
 	})
-	units, diags := Resolve(filepath.Join(projectRoot, "app.lyra"), []string{projectRoot, stdRoot})
+	units, diags := Resolve(filepath.Join(projectRoot, "app.lyra"), []string{projectRoot, stdRoot}, Options{})
 	if len(diags) != 0 {
 		t.Fatalf("unexpected diagnostics: %v", diags)
 	}

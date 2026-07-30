@@ -95,12 +95,23 @@ func (c *Collector) recordModuleBindings(modulePath string, stmts []ast.AstNode)
 		case *ast.ImportStmt:
 			c.table.Imports[modulePath] = append(c.table.Imports[modulePath], importBinding(s))
 		case *ast.TypeDeclStmt:
-			c.table.ModuleOf[s.Name] = modulePath
+			c.noteDeclared(s.Name, modulePath)
 		case *ast.TraitDeclStmt:
-			c.table.ModuleOf[s.Name] = modulePath
+			c.noteDeclared(s.Name, modulePath)
 		case *ast.VarDeclStmt:
-			c.table.ModuleOf[s.Name] = modulePath
+			c.noteDeclared(s.Name, modulePath)
 		}
+	}
+}
+
+// noteDeclared records which module declared a name, and separately remembers the
+// prelude's names. The two are not the same map: ModuleOf is last-writer-wins, so a
+// user module declaring a prelude name overwrites it, while the prelude set must
+// survive that in order to recognise the shadow.
+func (c *Collector) noteDeclared(name, modulePath string) {
+	c.table.ModuleOf[name] = modulePath
+	if modulePath != "" && modulePath == c.table.PreludeModule {
+		c.table.PreludeNames[name] = true
 	}
 }
 
@@ -133,6 +144,13 @@ func joinModulePath(parts []ast.ModuleName) string {
 		names[i] = p.Name
 	}
 	return strings.Join(names, ".")
+}
+
+// SetPreludeModule names the implicitly-imported module, so registration can tell a
+// user declaration taking a prelude name (allowed, warned) from two user modules
+// clashing (an error).
+func (c *Collector) SetPreludeModule(path string) {
+	c.table.PreludeModule = path
 }
 
 // Finish runs the whole-program passes and returns the merged result.

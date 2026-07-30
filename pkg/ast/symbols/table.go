@@ -84,6 +84,19 @@ type SymbolTable struct {
 	ModuleOf     map[string]string
 	ModuleOfFile map[string]string
 
+	// PreludeModule is the implicitly-imported module's path, letting registration
+	// tell "this name is already taken by the prelude" (allowed, warned) apart from a
+	// genuine clash between two user modules (an error).
+	PreludeModule   string
+	ShadowedPrelude []ShadowedName
+
+	// PreludeNames is the set of names the prelude declares. Kept separately from
+	// ModuleOf, which is last-writer-wins: when a user module declares a name the
+	// prelude also declares, it overwrites ModuleOf's entry, so by the time functions
+	// are registered (in Finish, after every file) ModuleOf no longer remembers the
+	// prelude ever had it — and the shadow would be reported as a hard collision.
+	PreludeNames map[string]bool
+
 	// Imports maps a module path to the imports its files declare. A plain
 	// `import a.b` binds a *namespace* under the last segment (or its `as` alias);
 	// `.{ X, Y as Z }` binds the listed names directly.
@@ -107,6 +120,7 @@ func NewSymbolTable() *SymbolTable {
 		ModuleOf:     make(map[string]string),
 		ModuleOfFile: make(map[string]string),
 		Imports:      make(map[string][]Import),
+		PreludeNames: make(map[string]bool),
 	}
 	st.CurrentScope = st.GlobalScope
 	return st
@@ -161,6 +175,9 @@ func (st *SymbolTable) PopScope() {
 
 // RegisterType adds a type declaration to the symbol table
 func (st *SymbolTable) RegisterType(node *ast.TypeDeclStmt) error {
+	if st.takesPreludeName(node.Name, node.GetLocation()) {
+		st.noteShadowed(node.Name, node.GetLocation())
+	}
 	if err := st.GlobalScope.Define(node); err != nil {
 		return err
 	}
@@ -171,6 +188,9 @@ func (st *SymbolTable) RegisterType(node *ast.TypeDeclStmt) error {
 // RegisterTrait adds a trait declaration to the symbol table.
 // Returns an error if a trait with the same name is already registered.
 func (st *SymbolTable) RegisterTrait(node *ast.TraitDeclStmt) error {
+	if st.takesPreludeName(node.Name, node.GetLocation()) {
+		st.noteShadowed(node.Name, node.GetLocation())
+	}
 	if _, exists := st.Traits[node.Name]; exists {
 		return fmt.Errorf("trait %q already defined", node.Name)
 	}
@@ -188,6 +208,9 @@ func (st *SymbolTable) RegisterTrait(node *ast.TraitDeclStmt) error {
 // calling whichever happened to be registered last. A silently wrong program, chosen by
 // collection order.
 func (st *SymbolTable) RegisterFunction(name string, node *ast.LambdaExpr) error {
+	if st.takesPreludeName(name, node.GetLocation()) {
+		st.noteShadowed(name, node.GetLocation())
+	}
 	if existing, exists := st.Functions[name]; exists && existing != node {
 		return fmt.Errorf("function %q is already defined at %s", name, describeLocation(existing.GetLocation()))
 	}
@@ -326,4 +349,68 @@ func (st *SymbolTable) BindingOf(name string) (*ast.VarDeclStmt, bool) {
 	}
 	decl, ok := sym.(*ast.VarDeclStmt)
 	return decl, ok
+}
+
+// ShadowedName records a user declaration that took a name the prelude exports.
+type ShadowedName struct {
+	Name string
+	Loc  ast.Location
+}
+
+// takesPreludeName reports whether name is currently held by the prelude and the module
+// being collected is entitled to take it over.
+//
+// A prelude name must be shadowable. The prelude is implicitly in scope everywhere, so
+// treating a clash as an error the way two user modules' clash is treated would mean
+// every name the prelude exports is permanently unusable in user code — and adding a
+// name to the prelude later would break programs that never mentioned it. The user's
+// declaration wins and a warning is recorded.
+//
+// Known limitation of the current single namespace: the user's declaration replaces the
+// prelude's *program-wide*, not just in its own module, so a second module that wanted
+// the prelude's version gets the first module's. Correcting that needs per-module name
+// resolution; until then this is the strictly better failure — user code keeps working,
+// loudly.
+// The declaring module is recovered from the declaration's own file rather than from a
+// "module being collected" cursor. Functions are registered in Finish, after every file
+// has been walked, so such a cursor is stale by then — it pointed at the last file, and
+// the prelude's own declarations were read as shadowing the prelude, which deleted them.
+func (st *SymbolTable) takesPreludeName(name string, loc ast.Location) bool {
+	if st == nil || st.PreludeModule == "" {
+		return false
+	}
+	if st.ModuleOfFile[loc.File] == st.PreludeModule {
+		return false // the prelude does not shadow itself
+	}
+	return st.PreludeNames[name]
+}
+
+// noteShadowed records the warning and withdraws the *prelude's* entries for the name,
+// clearing the way for the declaration taking it over.
+//
+// Each removal is guarded on the entry actually belonging to the prelude. Deleting by
+// name alone is wrong at the point functions are registered: that happens in Finish,
+// after every file has been walked, so the user's own binding is already in the global
+// scope — and blindly removing it left the program reporting its own function as
+// undefined.
+func (st *SymbolTable) noteShadowed(name string, loc ast.Location) {
+	st.ShadowedPrelude = append(st.ShadowedPrelude, ShadowedName{Name: name, Loc: loc})
+	if sym, ok := st.GlobalScope.Symbols[name]; ok && st.declaredInPrelude(sym.GetLocation()) {
+		delete(st.GlobalScope.Symbols, name)
+	}
+	if decl, ok := st.Types[name]; ok && st.declaredInPrelude(decl.GetLocation()) {
+		delete(st.Types, name)
+	}
+	if decl, ok := st.Traits[name]; ok && st.declaredInPrelude(decl.GetLocation()) {
+		delete(st.Traits, name)
+	}
+	if fn, ok := st.Functions[name]; ok && st.declaredInPrelude(fn.GetLocation()) {
+		delete(st.Functions, name)
+		delete(st.PureFuncs, name)
+	}
+}
+
+// declaredInPrelude reports whether a declaration at loc came from the prelude.
+func (st *SymbolTable) declaredInPrelude(loc ast.Location) bool {
+	return st.PreludeModule != "" && st.ModuleOfFile[loc.File] == st.PreludeModule
 }

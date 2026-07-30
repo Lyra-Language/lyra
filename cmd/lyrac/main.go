@@ -97,7 +97,14 @@ func analyze(path string) (*driver.Result, bool) {
 	if std := stdRoot(); std != "" {
 		roots = append(roots, std)
 	}
-	units, diags := modules.Resolve(path, roots)
+	// LYRA_NO_PRELUDE exists for bootstrapping and for tests: the prelude is ordinary
+	// Lyra, so it has to be compilable by a compiler that is not yet handing it to
+	// everything else.
+	opts := modules.Options{Prelude: modules.PreludeModule}
+	if os.Getenv("LYRA_NO_PRELUDE") != "" {
+		opts.Prelude = ""
+	}
+	units, diags := modules.Resolve(path, roots, opts)
 	if len(units) == 0 {
 		for _, d := range diags {
 			fmt.Fprintf(os.Stderr, "lyrac: %s\n", d.Message)
