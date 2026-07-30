@@ -105,8 +105,16 @@ func TestExec_I128_Print(t *testing.T) {
 	}
 }
 
-// TestEmit_I128_IR pins the lowering shape: an i128 type, the checked-multiply
-// intrinsic at .i128 width, and the formatter (which divides by 10 at i128 width).
+// TestEmit_I128_IR pins the lowering shape: an i128 type, the checked multiply, and
+// the formatter (which divides by 10 at i128 width).
+//
+// The signed 128-bit multiply deliberately does **not** go through
+// `llvm.smul.with.overflow.i128`: LLVM expands that into a call to compiler-rt's
+// `__muloti4`, which Linux clang does not link (it defaults to libgcc, which has no
+// such symbol), so an i128 multiply failed to link there while the same IR was fine on
+// macOS. It calls the emitted `lyra_i128_mul_overflow` instead, keeping `clang out.ll`
+// self-contained on every platform. The intrinsic's *absence* is asserted too, since
+// its return would silently reintroduce the platform split.
 func TestEmit_I128_IR(t *testing.T) {
 	t.Parallel()
 	src := `let main = () -> void => {
@@ -120,7 +128,7 @@ func TestEmit_I128_IR(t *testing.T) {
 	}
 	for _, want := range []string{
 		"i128",
-		"llvm.smul.with.overflow.i128",
+		"lyra_i128_mul_overflow",
 		"lyra_i128_to_str",
 		"udiv i128",
 		"urem i128",
@@ -128,5 +136,9 @@ func TestEmit_I128_IR(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Errorf("emitted IR missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "llvm.smul.with.overflow.i128") {
+		t.Errorf("the signed 128-bit multiply is back on the intrinsic, which expands to "+
+			"compiler-rt's __muloti4 and does not link on Linux:\n%s", got)
 	}
 }

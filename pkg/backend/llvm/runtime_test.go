@@ -127,3 +127,78 @@ func TestExec_RCReleaseCallsDrop(t *testing.T) {
 		t.Errorf("drop_fn not invoked on release-to-zero: exit %d, want 7", got)
 	}
 }
+
+// TestExec_I128MulOverflowHelper drives the emitted signed-128-bit checked multiply
+// directly, because two of its cases cannot be written in Lyra at all: a 128-bit
+// literal is not representable yet (IntegerLiteralExpr.Value is an int64), so
+// INT128_MIN has no source spelling, and it is exactly the value the helper special-
+// cases.
+//
+// That special case is not decoration. The general test is `(a*b)/a != b`, but for
+// a == -1 and b == INT128_MIN the product wraps back to INT128_MIN and the division
+// would be `sdiv INT128_MIN, -1` — itself undefined in LLVM, so checking that case
+// through the division it exists to detect would reintroduce the fault.
+//
+// Returns 42 only if every case agrees.
+func TestExec_I128MulOverflowHelper(t *testing.T) {
+	t.Parallel()
+	m := ir.NewModule()
+	l := &lowerer{module: m}
+	helper := l.i128MulOverflow()
+
+	i128 := lltypes.I128
+	main := m.NewFunc("main", lltypes.I32)
+	entry := main.NewBlock("entry")
+	fail := main.NewBlock("fail")
+
+	min := intMinConst(i128)
+	max := intMaxConst(i128)
+	k := func(n int64) *constant.Int { return constant.NewInt(i128, n) }
+
+	cases := []struct {
+		name     string
+		a, b     value.Value
+		wantOv   bool
+		wantProd value.Value // nil to skip the product check
+	}{
+		// Zero short-circuits before any division.
+		{"0 * max", k(0), max, false, k(0)},
+		{"max * 0", max, k(0), false, k(0)},
+		// -1 is the special case: fine for anything but the minimum...
+		{"-1 * max", k(-1), max, false, nil},
+		// ...and an overflow for it, since -INT128_MIN is unrepresentable.
+		{"-1 * min", k(-1), min, true, nil},
+		{"min * -1", min, k(-1), true, nil},
+		// The ordinary paths, through the division check.
+		{"6 * 7", k(6), k(7), false, k(42)},
+		{"max * 2", max, k(2), true, nil},
+		{"min * 2", min, k(2), true, nil},
+		{"-6 * 7", k(-6), k(7), false, k(-42)},
+	}
+
+	block := entry
+	for _, c := range cases {
+		agg := block.NewCall(helper, c.a, c.b)
+		gotOv := block.NewExtractValue(agg, 1)
+		want := constant.False
+		if c.wantOv {
+			want = constant.True
+		}
+		next := main.NewBlock("")
+		block.NewCondBr(block.NewICmp(enum.IPredEQ, gotOv, want), next, fail)
+		block = next
+
+		if c.wantProd != nil {
+			gotProd := block.NewExtractValue(agg, 0)
+			next2 := main.NewBlock("")
+			block.NewCondBr(block.NewICmp(enum.IPredEQ, gotProd, c.wantProd), next2, fail)
+			block = next2
+		}
+	}
+	block.NewRet(constant.NewInt(lltypes.I32, 42))
+	fail.NewRet(constant.NewInt(lltypes.I32, 1))
+
+	if got := runModule(t, m); got != 42 {
+		t.Errorf("i128 checked-multiply helper disagreed with the expected results (exit %d; 42 means all cases passed)", got)
+	}
+}

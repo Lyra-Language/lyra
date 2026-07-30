@@ -249,22 +249,23 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 }
 
 type lowerer struct {
-	module      *ir.Module
-	res         *driver.Result                 // gives you TypeTable, SymbolTable, MethodTable, …
-	funcs       map[string]*ir.Func            // name → its function IR (all declared before any body)
-	funcParams  map[string][]ast.Parameter     // name → its declared parameters (call sites need the `mut` by-ref modes)
-	consts      map[string]*ast.VarDeclStmt    // top-level `const` name → its declaration (its value is inlined at each use)
-	structTypes map[string]*lltypes.StructType // name → its struct type (for named tuple and struct lowering)
-	strLitCount int                            // counter for unique string-literal global names
-	memcmp      *ir.Func                       // libc memcmp, declared lazily on first string comparison
-	memcpy      *ir.Func                       // libc memcpy, declared lazily on first string concatenation
-	write       *ir.Func                       // libc write, declared lazily on first print/println
-	snprintf    *ir.Func                       // libc snprintf, declared lazily on first numeric print
-	fmtRune     *ir.Func                       // lyra_rune_to_utf8, defined lazily on first rune print
-	utf8Decode  *ir.Func                       // lyra_utf8_decode, defined lazily on first string for-in
-	fmtI128     *ir.Func                       // lyra_i128_to_str, defined lazily on first i128/u128 print
-	newlineByte *ir.Global                     // interned "\n" byte, for println's trailing newline
-	cStrings    map[string]*ir.Global          // interned NUL-terminated C strings (snprintf formats, bool text)
+	module          *ir.Module
+	res             *driver.Result                 // gives you TypeTable, SymbolTable, MethodTable, …
+	funcs           map[string]*ir.Func            // name → its function IR (all declared before any body)
+	funcParams      map[string][]ast.Parameter     // name → its declared parameters (call sites need the `mut` by-ref modes)
+	consts          map[string]*ast.VarDeclStmt    // top-level `const` name → its declaration (its value is inlined at each use)
+	structTypes     map[string]*lltypes.StructType // name → its struct type (for named tuple and struct lowering)
+	strLitCount     int                            // counter for unique string-literal global names
+	memcmp          *ir.Func                       // libc memcmp, declared lazily on first string comparison
+	memcpy          *ir.Func                       // libc memcpy, declared lazily on first string concatenation
+	write           *ir.Func                       // libc write, declared lazily on first print/println
+	snprintf        *ir.Func                       // libc snprintf, declared lazily on first numeric print
+	fmtRune         *ir.Func                       // lyra_rune_to_utf8, defined lazily on first rune print
+	utf8Decode      *ir.Func                       // lyra_utf8_decode, defined lazily on first string for-in
+	fmtI128         *ir.Func                       // lyra_i128_to_str, defined lazily on first i128/u128 print
+	mulOverflowI128 *ir.Func                       // lyra_i128_mul_overflow, defined lazily (compiler-rt's __muloti4 is not linkable on Linux)
+	newlineByte     *ir.Global                     // interned "\n" byte, for println's trailing newline
+	cStrings        map[string]*ir.Global          // interned NUL-terminated C strings (snprintf formats, bool text)
 
 	// roundingIntrinsics caches lazily-declared llvm.{floor,ceil,round}.<width>
 	// intrinsics (rounding.go), keyed by full intrinsic name.
@@ -478,6 +479,7 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 //     the only block guaranteed to have produced it and where it is consumed;
 //     releasing it in `end` would touch an undefined value on the path the branch
 //     didn't take.
+//
 // start/end nil (the flushTemps wrapper, used by early exits) releases everything at
 // its production block — no temp's block equals nil, so the first case never fires.
 func (l *lowerer) flushStmtTemps(start, end *ir.Block) error {
