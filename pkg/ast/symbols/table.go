@@ -97,6 +97,10 @@ type SymbolTable struct {
 	// prelude ever had it — and the shadow would be reported as a hard collision.
 	PreludeNames map[string]bool
 
+	// ModuleScopes holds one ScopeModule per module, each a child of GlobalScope.
+	// See ModuleScopeFor for what it is for and what it is not yet.
+	ModuleScopes map[string]*Scope
+
 	// Imports maps a module path to the imports its files declare. A plain
 	// `import a.b` binds a *namespace* under the last segment (or its `as` alias);
 	// `.{ X, Y as Z }` binds the listed names directly.
@@ -120,6 +124,7 @@ func NewSymbolTable() *SymbolTable {
 		ModuleOf:     make(map[string]string),
 		ModuleOfFile: make(map[string]string),
 		Imports:      make(map[string][]Import),
+		ModuleScopes: make(map[string]*Scope),
 		PreludeNames: make(map[string]bool),
 	}
 	st.CurrentScope = st.GlobalScope
@@ -413,4 +418,36 @@ func (st *SymbolTable) noteShadowed(name string, loc ast.Location) {
 // declaredInPrelude reports whether a declaration at loc came from the prelude.
 func (st *SymbolTable) declaredInPrelude(loc ast.Location) bool {
 	return st.PreludeModule != "" && st.ModuleOfFile[loc.File] == st.PreludeModule
+}
+
+// ModuleScopeFor returns the scope holding a module's top-level declarations,
+// creating it as a child of GlobalScope on first use.
+//
+// This is the structure per-module name resolution needs, put in place ahead of the
+// resolution change itself. Today every top-level declaration is *also* registered
+// globally and every lookup still starts from GlobalScope, so these scopes change no
+// behaviour — they are populated and inert.
+//
+// That is deliberate. Two modules cannot currently each declare a private `helper`,
+// because registration rejects a duplicate top-level name program-wide; fixing that
+// means switching lookups to start from the asking module's scope and dropping the
+// global registration. Doing both at once would be a change to name *binding* with no
+// intermediate state anyone could check — and a reference that quietly resolves to the
+// wrong declaration compiles clean and runs wrong. Splitting it leaves this half
+// verifiable on its own: the scopes either contain the right declarations or they do
+// not, and nothing yet depends on the answer.
+//
+// The scopes are siblings under GlobalScope rather than nested, because modules do not
+// contain one another — `util.math` is a name, not a position in a tree, and treating
+// the dots as nesting would make `util` a scope that `util.math` could see into.
+func (st *SymbolTable) ModuleScopeFor(module string) *Scope {
+	if st == nil {
+		return nil
+	}
+	if scope, ok := st.ModuleScopes[module]; ok {
+		return scope
+	}
+	scope := NewScope(st.GlobalScope, ScopeModule)
+	st.ModuleScopes[module] = scope
+	return scope
 }

@@ -90,18 +90,34 @@ func (c *Collector) AddFile(root *sitter.Node, source []byte, file, modulePath s
 // this is the only point where "these statements came from that module" is known —
 // afterwards the statements are merged into one program.
 func (c *Collector) recordModuleBindings(modulePath string, stmts []ast.AstNode) {
+	moduleScope := c.table.ModuleScopeFor(modulePath)
 	for _, stmt := range stmts {
 		switch s := stmt.(type) {
 		case *ast.ImportStmt:
 			c.table.Imports[modulePath] = append(c.table.Imports[modulePath], importBinding(s))
 		case *ast.TypeDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
+			c.defineInModule(moduleScope, s)
 		case *ast.TraitDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
+			c.defineInModule(moduleScope, s)
 		case *ast.VarDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
+			c.defineInModule(moduleScope, s)
 		}
 	}
+}
+
+// defineInModule adds a top-level declaration to its module's own scope, alongside the
+// global registration that still drives lookup (see ModuleScopeFor).
+//
+// A duplicate here is not reported: it can only be a name the global registration has
+// already rejected, and reporting it twice would turn one mistake into two diagnostics.
+func (c *Collector) defineInModule(scope *symbols.Scope, decl ast.Named) {
+	if scope == nil {
+		return
+	}
+	_ = scope.Define(decl)
 }
 
 // noteDeclared records which module declared a name, and separately remembers the
