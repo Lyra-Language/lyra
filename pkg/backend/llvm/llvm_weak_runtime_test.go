@@ -3,6 +3,9 @@ package llvm
 import (
 	"strings"
 	"testing"
+
+	"github.com/llir/llvm/ir"
+	"github.com/llir/llvm/ir/value"
 )
 
 // `weak` gets runtime semantics: it can be created, it can be upgraded, and the
@@ -148,6 +151,122 @@ func TestEmit_WeakReferenceIsReleased(t *testing.T) {
 	if !strings.Contains(ir, "call i8* @lyra_rc_upgrade") {
 		t.Errorf("expected the upgrade to call lyra_rc_upgrade:\n%s", ir)
 	}
+}
+
+// An `if let s = w` binding exists only on the path where the upgrade succeeded, so
+// its slot is written only there — and its release has to sit on that same path. Put
+// it in the enclosing scope instead and the release lands in the *merge* block, which
+// the failure path also reaches, reading a slot that was never stored to.
+//
+// This is checked against the CFG rather than by running the program because running
+// it does not reliably fail: releasing an uninitialized alloca is undefined, and
+// macOS ASan let it pass locally while Linux CI caught it. The IR, in contrast, says
+// so unconditionally. It is the same shape as the `[head, ...tail]` guard bug, whose
+// lesson was that a conditional binding needs a branch-scoped frame.
+func TestEmit_WeakUpgradeBindingIsBranchScoped(t *testing.T) {
+	t.Parallel()
+	src := `struct Node { value: i64 }
+	 let makeDead = () -> weak Node => {
+	   let n: shared Node = Node { value: 7 }
+	   n.weak()
+	 }
+	 let main = () -> u8 => {
+	   let w = makeDead()
+	   var out = 0
+	   if let s = w { out = s.value } else { out = 42 }
+	   u8(out)
+	 }`
+	m := emitModuleForTest(t, src)
+	var fn *ir.Func
+	for _, f := range m.Funcs {
+		if f.GlobalIdent.Name() == "main" {
+			fn = f
+		}
+	}
+	if fn == nil {
+		t.Fatal("no @main in the emitted module")
+	}
+
+	// The block asking whether the referent is alive ends in the two-way branch this
+	// test is about: one edge has the strong reference, the other has nothing.
+	var head *ir.Block
+	var upgraded value.Value
+	for _, b := range fn.Blocks {
+		for _, inst := range b.Insts {
+			if c, ok := inst.(*ir.InstCall); ok && calleeName(c) == "lyra_rc_upgrade" {
+				head, upgraded = b, c
+			}
+		}
+	}
+	if head == nil {
+		t.Fatal("expected @main to call lyra_rc_upgrade")
+	}
+	cond, ok := head.Term.(*ir.TermCondBr)
+	if !ok {
+		t.Fatalf("expected the upgrade to be followed by a conditional branch, got %T", head.Term)
+	}
+	fail, _ := cond.TargetFalse.(*ir.Block)
+	if fail == nil {
+		t.Fatal("the upgrade's branch has no failure target")
+	}
+
+	// The slot the upgraded reference is stored into. Written only on the alive path,
+	// so it is exactly the slot the failure path must not touch.
+	slot := storeDestinationOf(fn, upgraded)
+	if slot == nil {
+		t.Skip("the upgraded reference is not stored to a slot — nothing to scope")
+	}
+
+	for _, b := range blocksReachableFrom(fail) {
+		for _, inst := range b.Insts {
+			ld, ok := inst.(*ir.InstLoad)
+			if ok && ld.Src == slot {
+				t.Fatalf("the upgraded binding's slot is read on the failed-upgrade path "+
+					"(block %q), where it was never stored — its release belongs in the "+
+					"then-branch, not the enclosing scope:\n%s", b.LocalIdent.Ident(), m.String())
+			}
+		}
+	}
+}
+
+// storeDestinationOf returns the slot that `v` (or a bitcast of it) is stored into,
+// or nil if it is never stored.
+func storeDestinationOf(fn *ir.Func, v value.Value) value.Value {
+	aliases := map[value.Value]bool{v: true}
+	for _, b := range fn.Blocks {
+		for _, inst := range b.Insts {
+			if bc, ok := inst.(*ir.InstBitCast); ok && aliases[bc.From] {
+				aliases[bc] = true
+			}
+		}
+	}
+	for _, b := range fn.Blocks {
+		for _, inst := range b.Insts {
+			if st, ok := inst.(*ir.InstStore); ok && aliases[st.Src] {
+				return st.Dst
+			}
+		}
+	}
+	return nil
+}
+
+// blocksReachableFrom returns every block reachable from `start`, inclusive.
+func blocksReachableFrom(start *ir.Block) []*ir.Block {
+	seen := map[*ir.Block]bool{start: true}
+	queue := []*ir.Block{start}
+	var out []*ir.Block
+	for len(queue) > 0 {
+		b := queue[0]
+		queue = queue[1:]
+		out = append(out, b)
+		for _, s := range successors(b) {
+			if !seen[s] {
+				seen[s] = true
+				queue = append(queue, s)
+			}
+		}
+	}
+	return out
 }
 
 // (The two refusals that keep an unsound read unexpressible — a weak reference has

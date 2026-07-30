@@ -98,9 +98,20 @@ func (l *lowerer) lowerWeakUpgrade(block *ir.Block, s *ast.IfDestructuringStmt, 
 	}
 	block.NewCondBr(alive, thenBlock, elseBlock)
 
-	// The strong reference lives only in the then-branch, so it is bound *and*
-	// framed there: the branch owns the +1 the upgrade minted and releases it on the
-	// way out, exactly as a `let` of a `shared` value would.
+	// The strong reference exists **only on the taken path**, so both its name and
+	// its release belong to the then-branch — hence a branch-scoped local scope and a
+	// branch-scoped managed frame, released at the end of the branch rather than at
+	// the enclosing scope's exit.
+	//
+	// Framing it in the enclosing scope instead is a real bug and was the first
+	// version of this: the release then lands in the *merge* block, which the else
+	// path also reaches — and on that path the upgrade returned null, so nothing was
+	// ever stored and the release reads an uninitialized alloca. It is the same shape
+	// as the `[head, ...tail]` guard leak (a binding framed where a path that never
+	// created it can still release it), and it slipped through locally because macOS
+	// ASan did not flag it; Linux CI did.
+	restoreLocals := l.pushLocalScope()
+	l.pushManagedFrame()
 	sharedTy := types.WithAllocation(weakType.Inner, types.Shared)
 	if ident.Name != "_" {
 		boxTy, err := l.lowerType(sharedTy)
@@ -116,6 +127,16 @@ func (l *lowerer) lowerWeakUpgrade(block *ir.Block, s *ast.IfDestructuringStmt, 
 	if err != nil {
 		return nil, err
 	}
+	if thenEnd.Term == nil {
+		// Release the upgraded reference on the path that took it. A branch that
+		// sealed (an early return) is skipped: emitReturn already released every live
+		// frame, this one included.
+		if err := l.releaseTopManagedFrame(thenEnd); err != nil {
+			return nil, err
+		}
+	}
+	l.popManagedFrame()
+	restoreLocals()
 	if thenEnd.Term == nil {
 		thenEnd.NewBr(merge)
 	}

@@ -22,6 +22,35 @@ func TestExec_DestructuringStatements(t *testing.T) {
 		want int
 	}{
 		{
+			// An `if let` pattern name is scoped to the then-branch, so it must not be
+			// left installed over an outer binding of the same name once the statement
+			// ends. Getting this wrong is a silent wrong *value* rather than an error —
+			// the collector scopes the name correctly and only codegen disagreed — so
+			// the outer read is the detector (this returned 99 before the fix).
+			"an if-let pattern name does not outlive its branch",
+			`data Maybe = None | Some(i64)
+			 let main = () -> u8 => {
+			   let x: i64 = 7
+			   let m = Some(99)
+			   if let Some(x) = m { print(x) }
+			   u8(x)
+			 }`,
+			7,
+		},
+		{
+			// The same, through the else branch: the name must not reach it either.
+			"an if-let pattern name does not reach the else branch",
+			`data Maybe = None | Some(i64)
+			 let main = () -> u8 => {
+			   let x: i64 = 5
+			   let m = None
+			   var out = 0
+			   if let Some(x) = m { out = 1 } else { out = x }
+			   u8(out)
+			 }`,
+			5,
+		},
+		{
 			// Irrefutable: a tuple pattern always matches its type.
 			"plain tuple destructuring",
 			`let main = () -> u8 => {

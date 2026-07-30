@@ -154,10 +154,20 @@ func (l *lowerer) lowerIfDestructuring(block *ir.Block, s *ast.IfDestructuringSt
 	}
 
 	// Bindings live in the then-branch: they are only valid where the match held.
+	// Hence the branch-scoped local scope — a pattern name must not outlive the
+	// branch, and `if let Some(x) = m { … }` where an outer `x` exists otherwise
+	// leaves the *pattern's* slot installed under that name for the code after the
+	// statement, which then reads the matched payload instead of its own binding.
+	// Silently, and with a wrong value rather than an error, since the collector
+	// scopes the name to `Then` and only codegen disagreed — the same shape as the
+	// match-arm shadowing bug (see pushLocalScope).
+	restoreLocals := l.pushLocalScope()
 	if err := bind(thenBlock, d.Pattern); err != nil {
+		restoreLocals()
 		return nil, err
 	}
 	thenEnd, err := l.lowerForEffect(thenBlock, s.Then)
+	restoreLocals()
 	if err != nil {
 		return nil, err
 	}
