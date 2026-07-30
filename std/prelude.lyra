@@ -1,0 +1,27 @@
+module std.prelude
+
+// The prelude: implicitly imported into every file, so everything declared here is
+// reachable unqualified and without an `import`.
+//
+// It is an ordinary module — the compiler resolves it through the same search roots as
+// any other, and it compiles standalone (it does not import itself). Nothing here is
+// special-cased in the compiler, which is what lets it be read, tested and replaced.
+//
+// Three constraints worth knowing before adding to it:
+//
+//   - **Exports need `pub`.** A declaration without it is private to this module, and
+//     a reference from elsewhere is lyra-E028.
+//
+//   - **`Maybe` and `Result` are shape-validated** when marked with the `@builtin`
+//     attribute that gives them their compiler-known identity: `Maybe` takes one
+//     generic parameter with `Some` (one payload) and `None` (none); `Result` takes two
+//     with `Ok` (one) and `Err` (one). The names are free — the marker confers the
+//     identity, not the spelling — but the arities are not.
+//
+//   - **Write free functions, not methods, for now.** A trait impl type-checks and then
+//     fails to lower ("unsupported method call"), so `unwrapOr(m, 0)` works and
+//     `m.unwrapOr(0)` does not yet.
+//
+// A name declared here can be shadowed by user code: that warns (lyra-W012) and the
+// user's declaration wins, so adding a name here cannot break a program that never
+// mentioned it.

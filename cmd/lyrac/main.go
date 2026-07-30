@@ -118,9 +118,13 @@ func analyze(path string) (*driver.Result, bool) {
 	return res, true
 }
 
-// stdRoot locates the standard library. LYRA_STD wins so a build can point at a
-// working copy; otherwise the `std` directory beside the compiler binary is used, and
-// an absent one is not an error — a program that imports nothing needs no library.
+// stdRoot locates the standard library: the directory that *contains* `std/`, since a
+// module path resolves beneath a root (`std.prelude` → `<root>/std/prelude.lyra`).
+//
+// LYRA_STD wins so a build can point at a working copy; otherwise the compiler's own
+// directory is used, which is where ./build.sh puts `std` beside the binary — the same
+// beside-the-executable convention Rust, Zig and Go use for a sysroot. An absent
+// standard library is not an error: a program that uses nothing from it still builds.
 func stdRoot() string {
 	if root := os.Getenv("LYRA_STD"); root != "" {
 		return root
@@ -129,9 +133,22 @@ func stdRoot() string {
 	if err != nil {
 		return ""
 	}
-	candidate := filepath.Join(filepath.Dir(exe), "std")
-	if info, err := os.Stat(candidate); err == nil && info.IsDir() {
-		return candidate
+	// Resolve symlinks before taking the directory. os.Executable does not do it
+	// consistently — on Linux it reads /proc/self/exe, which is already resolved, but on
+	// macOS it can hand back the symlink's own path. So a compiler symlinked onto PATH
+	// (`ln -s .../build/lyrac /usr/local/bin/lyrac`) would look for the standard library
+	// beside the *link* rather than beside the real binary, and find nothing — a
+	// platform split that shows up as "the prelude works on my machine".
+	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = resolved
+	}
+	// The *root* is the directory holding `std/`, not `std/` itself: a module path is
+	// resolved beneath a root, so `std.prelude` becomes `<root>/std/prelude.lyra`.
+	// Returning the `std` directory here instead looked for `std/std/prelude.lyra` and
+	// silently found no prelude.
+	root := filepath.Dir(exe)
+	if info, err := os.Stat(filepath.Join(root, "std")); err == nil && info.IsDir() {
+		return root
 	}
 	return ""
 }

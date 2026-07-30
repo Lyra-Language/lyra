@@ -254,6 +254,43 @@ Logs to `/tmp/lyra-lsp.log`. Build with `go build ./cmd/lyra-lsp`.
 ### `cmd/lyrac`
 Compiler CLI, built on `pkg/driver`. Two subcommands: `lyrac check <file.lyra>` (parse + typecheck, print diagnostics, exit 1 on any error) and `lyrac build <file.lyra>` (check, resolve the entry point via `driver.ResolveEntryPoint`, then hand the typed program to the backend). Diagnostics print as `path:line:col: severity[code]: message` (the `line:col` is omitted for a program-level error with no location, e.g. a missing `main`). `build` runs the `pkg/backend/llvm` backend via `lowerAndEmit`, writing `<name>.ll` next to the source and printing the `clang` command to compile it. Codegen is early (literals/arithmetic/int-width conversions — see that package's doc comment), so a non-trivial `main` may still hit a form `lowerExpr` errors on rather than lowering incorrectly. Build with `go build ./cmd/lyrac`.
 
+## Building
+
+```bash
+./build.sh          # build/{lyrac,lyra-lsp} with std -> ../std
+```
+
+The binaries go in `build/` with `std` beside them, because that is where `lyrac` looks
+for the standard library: the directory containing its own executable, or wherever
+`LYRA_STD` points. It is the beside-the-executable convention Rust, Zig and Go use for a
+sysroot, and building this way means the resolution path is exercised daily rather than
+only at release — a program can use the prelude with no environment set up at all.
+
+Two details that are easy to get wrong and were:
+
+- **The root is the directory *containing* `std/`, not `std/` itself.** A module path
+  resolves beneath a root, so `std.prelude` is `<root>/std/prelude.lyra`; returning the
+  `std` directory looked for `std/std/prelude.lyra` and silently found no prelude.
+- **`build/std` is a symlink, not a copy.** A copy drifts: you would edit
+  `std/prelude.lyra`, rebuild, and still get the old prelude. Every staleness failure
+  this project has hit — a cached parser object, a cached test binary, a leftover
+  compiler — presented as a *behaviour* difference rather than as staleness, which is
+  what makes them expensive to diagnose. A real install would copy; development must not.
+
+`stdRoot` resolves symlinks before taking the executable's directory, since
+`os.Executable` does not do so consistently (Linux reads the already-resolved
+`/proc/self/exe`; macOS can return the link's own path). Without it, a compiler
+symlinked onto `PATH` looks for the library beside the *link*.
+
+`build/` is gitignored as a directory rather than binary-by-binary, so a new command
+cannot land in the source tree unnoticed, and a stale compiler is one `rm -rf build`
+away. The VS Code extension's `lyra.languageServerPath` should point at
+`build/lyra-lsp`.
+
+The standard library's sources live in `std/` and are tracked; `std/prelude.lyra`
+documents the constraints on what may go in it (exports need `pub`, `Maybe`/`Result` are
+shape-validated, and methods do not lower yet so combinators are free functions).
+
 ## Testing
 
 ### Collector golden tests (`pkg/analyzer/collector/tests/`)
