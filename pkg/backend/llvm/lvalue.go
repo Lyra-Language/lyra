@@ -130,10 +130,7 @@ func (l *lowerer) lvalueRootIsOwning(e ast.Expression) bool {
 			if !ok {
 				return false
 			}
-			// A by-reference `mut` parameter names the caller's storage, which the
-			// caller framed and holds the +1 for — so the old value there is a
-			// genuine reference to drop, not a duplicate to dangle.
-			return l.byRefParams[slot] || l.slotIsFramed(slot)
+			return l.slotIsOwning(slot)
 		case *ast.MemberExpr:
 			e = t.Object
 		case *ast.IndexExpr:
@@ -147,6 +144,30 @@ func (l *lowerer) lvalueRootIsOwning(e ast.Expression) bool {
 // slotIsFramed reports whether an alloca is recorded in any live scope frame — the
 // backend's record that the binding owns a reference and will release it at its
 // scope exit.
+// slotIsOwning reports whether the binding held in slot owns the managed value it
+// currently holds — i.e. whether overwriting it drops a genuine reference rather than
+// a borrowed alias someone else is still counting.
+//
+// Two ways it holds. The slot is *framed*, meaning the backend recorded it for a
+// scope-exit release: a local `let`/`var`, or an `own` parameter (which the caller
+// transferred to). Or it is a by-reference `mut` parameter, whose slot *is* the
+// caller's storage — the caller framed it and holds the +1, so the old value there is
+// a real reference to drop, not a duplicate to dangle.
+//
+// Everything else is a borrow, most importantly a **by-value `string`/`ref`
+// parameter**: the callee's copy shares the caller's reference, so releasing through
+// it frees a value the caller still owns and will release again. That was an
+// ASan-confirmed heap-use-after-free (07/30) — `(s: string) => { s = "l" ++ "1"  s }`
+// freed the argument the caller was about to release — and it survived this long
+// because the ASan suite was not instrumenting memory accesses at all.
+//
+// Both the whole-binding reassignment path (lowerVarReassignment) and the interior
+// lvalue path (releaseOldTarget) ask this one question, because they are the same
+// question: the two disagreeing is precisely a leak or a double free.
+func (l *lowerer) slotIsOwning(slot value.Value) bool {
+	return l.byRefParams[slot] || l.slotIsFramed(slot)
+}
+
 func (l *lowerer) slotIsFramed(slot value.Value) bool {
 	return slices.ContainsFunc(l.managedFrames, func(frame []managedSlot) bool {
 		return slices.ContainsFunc(frame, func(m managedSlot) bool { return m.slot == slot })

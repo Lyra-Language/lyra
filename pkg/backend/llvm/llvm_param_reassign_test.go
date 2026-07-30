@@ -103,3 +103,71 @@ let main = () -> u8 => {
 		t.Errorf("under ASan: exited %d; want 0", got)
 	}
 }
+
+// Reassigning a *borrowed* parameter must not release the value it held.
+//
+// A by-value `string` parameter is a borrow: the callee's copy shares the caller's
+// reference, and the caller is still the owner. Releasing through it therefore frees a
+// value the caller will release again — a heap-use-after-free, not a leak. This was
+// live until 07/30 (`lowerVarReassignment` released whenever the type needed a drop,
+// without asking whether the binding owned it), and the reason it survived is that the
+// ASan suite was not instrumenting memory accesses at all; the moment it was, this
+// aborted. See slotIsOwning.
+//
+// The contrast case is in the same program: `mut` is by reference, so its slot *is* the
+// caller's owning storage and writing through it *should* release. Both conventions in
+// one test, because the bug was picking the wrong rule for one of them.
+func TestExec_BorrowedParamReassignment_NoUseAfterFree(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			// The minimal fault: the argument is an owned temporary the caller
+			// releases after the call, and the callee overwrote (and freed) it first.
+			"by-value string parameter reassigned",
+			`let localStr = (s: string) -> string => { s = "l" ++ "1"  s }
+			 let main = () -> u8 => if localStr("z" ++ "z") == "l1" { 0 } else { 1 }`,
+			0,
+		},
+		{
+			// The caller's binding outlives the call and is read afterwards, so a
+			// premature free shows up as a corrupted read rather than only under ASan.
+			"borrowed reassignment leaves the caller's value intact",
+			`let shadow = (s: string) -> i64 => { s = "x" ++ "y"  0 }
+			 let main = () -> u8 => {
+			   let keep = "a" ++ "b"
+			   let ignored = shadow(keep)
+			   if keep == "ab" { 0 } else { 1 }
+			 }`,
+			0,
+		},
+		{
+			// `mut` is by reference: the write must reach the caller, and the
+			// overwritten value must genuinely be released (twice over, here).
+			"mut string parameter still writes through and releases",
+			`let setStr = (s: mut string) -> void => { s = "n" ++ "1" }
+			 let main = () -> u8 => {
+			   var t = "a" ++ "b"
+			   setStr(t)
+			   setStr(t)
+			   if t == "n1" { 0 } else { 1 }
+			 }`,
+			0,
+		},
+	}
+	clang := lookClang(t)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("exited %d; want %d", got, c.want)
+			}
+			if got := buildAndRunASan(t, clang, c.src); got != c.want {
+				t.Errorf("under ASan: exited %d; want %d", got, c.want)
+			}
+		})
+	}
+}

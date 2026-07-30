@@ -683,14 +683,23 @@ func (l *lowerer) lowerVarReassignment(block *ir.Block, vrs *ast.VarReassignment
 		return nil, err
 	}
 	slot := l.locals[vrs.Name]
-	// Reassigning an owning binding drops what the old value owned before the new one
+	// Reassigning an *owning* binding drops what the old value owned before the new one
 	// overwrites it. The new value was coerced to +1 by the ownership pass, and it's
 	// computed *before* this release (so `s = s ++ x`, which reads the old s, is safe:
-	// the concat has already happened). Deep, and on the same condition lowerVarDecl
-	// framed the binding — a stack aggregate holding a string releases that string
-	// here, which is sound now that every copy of the aggregate carries its own +1.
+	// the concat has already happened). Deep — a stack aggregate holding a string
+	// releases that string here, sound now that every copy carries its own +1.
+	//
+	// The slotIsOwning guard is what makes "owning" real rather than assumed. This used
+	// to release whenever the type needed a drop, which is wrong for a **borrowed**
+	// binding: a by-value `string` parameter is a borrow whose copy shares the caller's
+	// reference, so `(s: string) => { s = "l" ++ "1"  s }` freed the argument while the
+	// caller still owned it and was about to release it again — an ASan-confirmed
+	// heap-use-after-free (07/30). The comment here already claimed the release happened
+	// "on the same condition lowerVarDecl framed the binding"; it simply wasn't checked.
+	// A by-reference `mut` parameter *is* owning (its slot is the caller's storage), so
+	// writing through one still releases, which is what makes that path balanced.
 	oldTy, _ := l.recordedType(vrs.Value)
-	if l.needsDrop(oldTy) {
+	if l.needsDrop(oldTy) && l.slotIsOwning(slot) {
 		elem, err := slotElemType(slot)
 		if err != nil {
 			return nil, err
