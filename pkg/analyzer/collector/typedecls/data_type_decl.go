@@ -15,7 +15,7 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	var constructors []types.DataTypeConstructor
 	var derives []string
 	var builtin string
-	isPublic := false
+	isPublic := node.ChildByFieldName("visibility") != nil
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
@@ -23,8 +23,6 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 		case "attribute_list":
 			derives = collectDerives(child, ctx)
 			builtin = collectBuiltin(child, ctx)
-		case "visibility":
-			isPublic = true
 		case "data_type_name":
 			name = ctx.NodeText(child)
 			nameLoc = ctx.NodeLocation(child)

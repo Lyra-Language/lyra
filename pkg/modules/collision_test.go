@@ -164,3 +164,98 @@ let main = () -> u8 => {
 		t.Errorf("a local value should shadow the namespace; got %v", errs)
 	}
 }
+
+// `pub` is what crosses a module boundary; within a module everything is visible.
+//
+// Both halves matter. Enforcing `pub` *inside* a module would make a private helper
+// unusable by the module that declared it, which is the opposite of the point — so
+// publicFn calling helperFn below must stay legal.
+func TestModules_PubGatesCrossModuleAccess(t *testing.T) {
+	lib := "module lib.api\n" +
+		"pub struct Config { level: i64 }\n" +
+		"struct Internal { seed: i64 }\n" +
+		"pub let publicFn = () -> i64 => helperFn()\n" +
+		"let helperFn = () -> i64 => 21\n"
+
+	cases := []struct {
+		name      string
+		app       string
+		wantError string // empty = must type-check
+	}{
+		{
+			"exported function through a namespace",
+			`import lib.api
+			 let main = () -> u8 => u8(api.publicFn())`,
+			"",
+		},
+		{
+			"private function through a namespace",
+			`import lib.api
+			 let main = () -> u8 => u8(api.helperFn())`,
+			`helperFn is private to module "lib.api"`,
+		},
+		{
+			// The hole a namespace-only check would leave: top-level names share one
+			// namespace, so a bare call reaches another module's function without ever
+			// naming the module. This is what makes a private function actually
+			// private rather than merely unreachable through a namespace.
+			"private function through a bare call",
+			`import lib.api
+			 let main = () -> u8 => u8(helperFn())`,
+			`helperFn is private to module "lib.api"`,
+		},
+		{
+			"exported type as an annotation",
+			`import lib.api
+			 let main = () -> u8 => {
+				let c: Config = Config { level: 3 }
+				u8(c.level)
+			}`,
+			"",
+		},
+		{
+			// Types are checked in resolveType, the one place every named type reaches
+			// its declaration.
+			"private type as an annotation",
+			`import lib.api
+			 let main = () -> u8 => {
+				let c: Internal = Internal { seed: 3 }
+				u8(c.seed)
+			}`,
+			`Internal is private to module "lib.api"`,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := buildTree(t, map[string]string{
+				"app.lyra":     c.app,
+				"lib/api.lyra": lib,
+			})
+			res := analyze(t, root)
+			if c.wantError == "" {
+				if errs := res.Errors(); len(errs) != 0 {
+					t.Errorf("expected this to be allowed; got %v", errs)
+				}
+				return
+			}
+			if !errorsContaining(res, c.wantError) {
+				t.Errorf("expected %q; got %v", c.wantError, res.Errors())
+			}
+		})
+	}
+}
+
+// A single-file program has no module, so every name is same-module and nothing is
+// gated — `pub` must not change the meaning of the programs that already exist.
+func TestModules_SingleFileIsUnaffectedByPub(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"app.lyra": `
+			let helper = () -> i64 => 21
+			let main = () -> u8 => u8(helper() * 2)`,
+	})
+	res := analyze(t, root)
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Errorf("a single-file program must be unaffected by pub; got %v", errs)
+	}
+}

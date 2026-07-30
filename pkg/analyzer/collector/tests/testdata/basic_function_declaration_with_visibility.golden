@@ -2,6 +2,7 @@ Program(1 statements) {
 	Statements: {
 		VarDeclStmt(foo) {
 			BindingKind: let
+			IsPublic: true
 			Name: foo
 		}
 	}

@@ -164,6 +164,12 @@ const (
 	// has no answer a user could predict.
 	CodeImportCycle = "lyra-E027"
 
+	// CodePrivateAccess: a reference to a name another module declared without `pub`.
+	// Within a module everything is visible; `pub` is what crosses the boundary. The
+	// message names the declaring module, since the fix is either to export the name
+	// there or to stop reaching for it.
+	CodePrivateAccess = "lyra-E028"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

@@ -1164,6 +1164,15 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 			return types.WithAllocation(cached, tt.Allocation)
 		}
 		decl, ok := tc.symTable.LookupType(tt.Name)
+		if ok {
+			// A type named from another module must be exported. Checked here rather
+			// than at each annotation site because every named type reaches its
+			// declaration through this one function. Deliberately *not* cached in
+			// resolvedTypes: visibility depends on where the reference is, and the
+			// cache is keyed only by name, so caching it would let the first
+			// module to mention a type decide the answer for every other one.
+			tc.checkVisible(tc.visibilityOf(tt.Name), loc)
+		}
 		if !ok {
 			tc.addError(loc, SeverityError, "unknown type %q", t)
 			tc.resolvedTypes[tt.Name] = t // cache unresolved itself so the error fires only once

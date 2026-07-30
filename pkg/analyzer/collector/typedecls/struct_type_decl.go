@@ -14,15 +14,13 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *as
 	var genericParams []ast.GenericParam
 	var fields []types.StructField
 	var derives []string
-	isPublic := false
+	isPublic := node.ChildByFieldName("visibility") != nil
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
 		case "attribute_list":
 			derives = collectDerives(child, ctx)
-		case "visibility":
-			isPublic = true
 		case "struct_name":
 			name = ctx.NodeText(child)
 			nameLoc = ctx.NodeLocation(child)

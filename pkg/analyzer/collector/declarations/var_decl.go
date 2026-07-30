@@ -41,6 +41,7 @@ func CollectVariableDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) ast.S
 
 func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *collector_ctx.Ctx) *ast.VarDeclStmt {
 	kind := bindingKind(ctx.NodeText(node.ChildByFieldName("keyword")), ctx)
+	isPublic := node.ChildByFieldName("visibility") != nil
 	isMut := node.ChildByFieldName("mutability") != nil
 	if isMut && kind == ast.BindingVar {
 		ctx.AddError(node, diag.SeverityWarning,
@@ -86,6 +87,7 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 	astNode := &ast.VarDeclStmt{
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
 		BindingKind:   kind,
+		IsPublic:      isPublic,
 		IsMut:         isMut,
 		Name:          name,
 		NameLocation:  ctx.NodeLocation(nameNode),

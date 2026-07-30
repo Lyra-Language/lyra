@@ -78,7 +78,11 @@ type VarDeclStmt struct {
 	// not be reassigned, but the value's interior may be mutated. It is only
 	// meaningful for BindingLet; a `var` is always interior-mutable and a
 	// `const` never is.
-	IsMut         bool
+	IsMut bool
+	// IsPublic is `pub`, which exports the binding from its module. The grammar
+	// has always allowed it on a declaration; it was simply never collected, so
+	// every top-level binding was implicitly public once modules arrived.
+	IsPublic      bool
 	Name          string
 	NameLocation  Location `print:"-"` // span of just the bound name (Location covers the whole decl)
 	GenericParams []GenericParam

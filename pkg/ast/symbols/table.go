@@ -311,3 +311,19 @@ func (st *SymbolTable) DeclaringModule(name string) string {
 	}
 	return st.ModuleOf[name]
 }
+
+// BindingOf returns the top-level `let`/`var` declaration that bound name.
+//
+// SymbolTable.Functions holds the *lambda*, but `pub` is a property of the binding
+// that names it, so exporting a function can only be answered from the declaration.
+func (st *SymbolTable) BindingOf(name string) (*ast.VarDeclStmt, bool) {
+	if st == nil {
+		return nil, false
+	}
+	sym, ok := st.GlobalScope.LookupLocal(name)
+	if !ok {
+		return nil, false
+	}
+	decl, ok := sym.(*ast.VarDeclStmt)
+	return decl, ok
+}
