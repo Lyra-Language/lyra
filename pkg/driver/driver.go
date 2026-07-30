@@ -21,6 +21,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
+	"github.com/Lyra-Language/lyra/pkg/modules"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -80,24 +81,46 @@ func (r *Result) Errors() []diag.Diagnostic {
 // (parse → collect → pre-typecheck checks → purity → post-typecheck checks →
 // type errors), so callers get a stable ordering.
 func Analyze(source []byte) *Result {
-	res := &Result{}
-
 	tree, err := parser.Parse(string(source))
 	if tree == nil && err == nil {
 		err = fmt.Errorf("parser returned nil tree")
 	}
 	if err != nil {
+		res := &Result{}
 		res.err(ast.Location{}, "", fmt.Sprintf("parse error: %v", err))
 		return res
 	}
-	root := tree.RootNode()
+	return AnalyzeUnits([]modules.Unit{{Source: source, Tree: tree, Root: tree.RootNode()}})
+}
 
-	// CST-level ERROR/MISSING nodes (tree-sitter embeds parse errors as nodes).
-	res.Diagnostics = append(res.Diagnostics, collectParseErrors(root, source)...)
+// AnalyzeUnits runs the pipeline over several already-resolved source units — the
+// multi-module entry point, with Analyze as the single-unit case.
+//
+// The units are collected into **one** program with one symbol table rather than
+// analyzed separately and linked. For a single-package, one-process build that is the
+// right shape: every pass after collection (typecheck, ownership, captures, the
+// checkers) reaches across the whole program and the backend emits one LLVM module, so
+// splitting the front end into independently-analyzed units would mean teaching all of
+// them to work across unit boundaries for no benefit yet. Separate compilation is a
+// later concern, and the one that would justify that cost.
+//
+// Each unit's diagnostics are stamped with its file, since a line and column alone
+// cannot say which file they came from once there is more than one.
+func AnalyzeUnits(units []modules.Unit) *Result {
+	res := &Result{}
+	if len(units) == 0 {
+		res.err(ast.Location{}, "", "no source units to analyze")
+		return res
+	}
 
-	// Collect: CST → AST + symbol/scope tables.
-	c := collector.NewCollector(source)
-	program, symTable, scopeTable, collectorErrors := c.Collect(root)
+	c := collector.NewCollector(units[0].Source)
+	for _, u := range units {
+		before := len(res.Diagnostics)
+		res.Diagnostics = append(res.Diagnostics, collectParseErrors(u.Root, u.Source)...)
+		stampFile(res.Diagnostics[before:], u.File)
+		c.AddFile(u.Root, u.Source, u.File)
+	}
+	program, symTable, scopeTable, collectorErrors := c.Finish()
 	res.Program, res.SymbolTable, res.ScopeTable = program, symTable, scopeTable
 	for _, rawErr := range collectorErrors {
 		if ce, ok := rawErr.(diag.Diagnostic); ok {
@@ -293,5 +316,19 @@ func nodeLocation(node *sitter.Node) ast.Location {
 		StartCol:  int(start.Column) + 1,
 		EndLine:   int(end.Row) + 1,
 		EndCol:    int(end.Column) + 1,
+	}
+}
+
+// stampFile records which file a batch of diagnostics came from. Only diagnostics
+// that do not already name one are stamped, so a resolver diagnostic (which knows its
+// own file, and may be about a *different* file than the one being analyzed) keeps it.
+func stampFile(diags []diag.Diagnostic, file string) {
+	if file == "" {
+		return
+	}
+	for i := range diags {
+		if diags[i].File == "" {
+			diags[i].File = file
+		}
 	}
 }

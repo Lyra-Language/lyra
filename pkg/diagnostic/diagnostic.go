@@ -28,6 +28,11 @@ type RelatedInformation struct {
 }
 
 type Diagnostic struct {
+	// File is the source file the diagnostic came from, empty for a single-file
+	// compile (where naming it would only be noise). With modules it is the only
+	// thing distinguishing two diagnostics at the same line and column in different
+	// files, so it is set per unit as each is analyzed.
+	File               string
 	Location           ast.Location
 	Severity           Severity
 	Code               string

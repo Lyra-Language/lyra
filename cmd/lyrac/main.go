@@ -11,11 +11,13 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/backend/llvm"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/driver"
+	"github.com/Lyra-Language/lyra/pkg/modules"
 )
 
 func main() {
@@ -87,12 +89,44 @@ func build(path string) int {
 // analyze reads path and runs the front-end pipeline. Returns ok=false (after
 // printing to stderr) when the file cannot be read.
 func analyze(path string) (*driver.Result, bool) {
-	source, err := os.ReadFile(path)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
+	// Resolve the import graph before analyzing: every unit is collected into one
+	// program, so they all have to be known up front (see driver.AnalyzeUnits).
+	// Roots are the entry file's own directory first — a program's modules sit
+	// alongside it — then the standard library.
+	roots := []string{filepath.Dir(path)}
+	if std := stdRoot(); std != "" {
+		roots = append(roots, std)
+	}
+	units, diags := modules.Resolve(path, roots)
+	if len(units) == 0 {
+		for _, d := range diags {
+			fmt.Fprintf(os.Stderr, "lyrac: %s\n", d.Message)
+		}
 		return nil, false
 	}
-	return driver.Analyze(source), true
+	res := driver.AnalyzeUnits(units)
+	// Resolver diagnostics come first: an unreadable import explains the errors that
+	// follow from the names it failed to provide.
+	res.Diagnostics = append(diags, res.Diagnostics...)
+	return res, true
+}
+
+// stdRoot locates the standard library. LYRA_STD wins so a build can point at a
+// working copy; otherwise the `std` directory beside the compiler binary is used, and
+// an absent one is not an error — a program that imports nothing needs no library.
+func stdRoot() string {
+	if root := os.Getenv("LYRA_STD"); root != "" {
+		return root
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	candidate := filepath.Join(filepath.Dir(exe), "std")
+	if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+		return candidate
+	}
+	return ""
 }
 
 // lowerAndEmit runs the backend over a fully-typed, error-free program and
@@ -132,9 +166,18 @@ func printDiagnostics(path string, diags []diag.Diagnostic) {
 		if d.Code != "" {
 			code = fmt.Sprintf(" [%s]", d.Code)
 		}
-		where := path
+		// A diagnostic from an imported module names its own file; one with no File
+		// set came from the entry unit (or is program-level) and uses the path given.
+		file := path
+		if d.Location.File != "" {
+			file = d.Location.File // set on every node, so it covers all analysis passes
+		}
+		if d.File != "" {
+			file = d.File // a resolver diagnostic names its own file explicitly
+		}
+		where := file
 		if loc.StartLine > 0 {
-			where = fmt.Sprintf("%s:%d:%d", path, loc.StartLine, loc.StartCol)
+			where = fmt.Sprintf("%s:%d:%d", file, loc.StartLine, loc.StartCol)
 		}
 		fmt.Fprintf(os.Stderr, "%s: %s%s: %s\n",
 			where, severityLabel(d.Severity), code, d.Message)

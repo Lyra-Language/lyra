@@ -153,6 +153,17 @@ const (
 	// new local value is being made rather than the caller's being changed.
 	CodeBorrowedParamReassignment = "lyra-E025"
 
+	// CodeUnresolvedImport: an `import a.b` names a module no search root contains.
+	// Module paths map to files by directory convention (`a.b` → `a/b.lyra`), so the
+	// message lists the paths that were tried rather than only the name that failed.
+	CodeUnresolvedImport = "lyra-E026"
+
+	// CodeImportCycle: modules that import each other, directly or transitively.
+	// Rejected rather than broken at an arbitrary edge: with no lazy or partial
+	// initialization semantics defined, "which half of the cycle observes the other"
+	// has no answer a user could predict.
+	CodeImportCycle = "lyra-E027"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

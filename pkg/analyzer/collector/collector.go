@@ -55,8 +55,33 @@ func NewCollector(source []byte) *Collector {
 }
 
 // Collect walks the entire tree and returns the AST, symbol table, scope table, and any errors.
+// It is AddFile + Finish for the single-file case.
 func (c *Collector) Collect(root *sitter.Node) (*ast.Program, *symbols.SymbolTable, *symbols.ScopeTable, []error) {
+	c.AddFile(root, c.source, "")
+	return c.Finish()
+}
+
+// AddFile walks one source file into the accumulating program, and may be called
+// repeatedly — once per module — before Finish.
+//
+// The split exists because only the *walk* is per-file: every pass in Finish reaches
+// across the whole program. reclassifyStructPatterns has to know every declared struct,
+// resolveCanonicalTypes every declared type, and registerTopLevelFunctions every
+// top-level binding — and with modules those can come from a file that has not been
+// walked yet. Running them per file would make the result depend on collection order.
+//
+// source is swapped in alongside the tree because every text and location read goes
+// through it (ctx.NodeText / ctx.NodeLocation); a stale source would slice the wrong
+// bytes for the file being walked.
+func (c *Collector) AddFile(root *sitter.Node, source []byte, file string) {
+	c.source = source
+	c.ctx.Source = source
+	c.ctx.File = file
 	c.walkProgram(root)
+}
+
+// Finish runs the whole-program passes and returns the merged result.
+func (c *Collector) Finish() (*ast.Program, *symbols.SymbolTable, *symbols.ScopeTable, []error) {
 	c.registerTopLevelFunctions()
 	c.reclassifyStructPatterns()
 	c.reclassifyConstructorExprs()

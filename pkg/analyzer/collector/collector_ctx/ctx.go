@@ -51,7 +51,13 @@ type Collector interface {
 // Ctx carries shared mutable state (source text, error sink) plus a [Collector]
 // for expression / statement / type / symbol-table dispatch.
 type Ctx struct {
-	Source     []byte
+	Source []byte
+	// File is the path Source was read from, stamped onto every location this Ctx
+	// produces. Empty for a single-file compile, where naming the file would be
+	// noise; with modules it is what tells two diagnostics at the same line and
+	// column apart. Setting it here — at the one place real source locations are
+	// built — is what gives every later pass's diagnostics the right file for free.
+	File       string
 	errors     *[]error
 	ScopeTable *symbols.ScopeTable
 	Collector
@@ -76,6 +82,7 @@ func (ctx *Ctx) NodeLocation(node *sitter.Node) ast.Location {
 	start := node.StartPosition()
 	end := node.EndPosition()
 	return ast.Location{
+		File:      ctx.File,
 		StartLine: int(start.Row) + 1,
 		StartCol:  int(start.Column) + 1,
 		EndLine:   int(end.Row) + 1,
