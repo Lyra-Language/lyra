@@ -94,3 +94,86 @@ func hasError(res checkResult, want string) bool {
 	}
 	return false
 }
+
+// The struct and named-tuple halves of the same rule: the payload is checked against the
+// context, and reported exactly once.
+//
+// Both used to produce *two* diagnostics for one mistake — the precise one from the
+// payload check plus a coarse "return type mismatch … got Tagged" from the caller, since
+// a bare aggregate is not assignable to its own instantiation. The propagation now tells
+// the caller it already reported.
+func TestGenericContext_AggregatePayloadCheckedOnce(t *testing.T) {
+	for _, c := range []struct{ name, src, want string }{
+		{
+			name: "struct field",
+			src: `struct Tagged<t, u> { value: t }
+let f = () -> Tagged<i64, bool> => Tagged { value: "x" }`,
+			want: "Tagged.value: cannot assign string to i64",
+		},
+		{
+			name: "named tuple element",
+			src: `tuple Pair<t, u>(t, t)
+let f = () -> Pair<i64, bool> => Pair(40, "x")`,
+			want: "Pair: cannot assign string to i64",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			res := parseCollectAndCheck(t, c.src, false)
+			if !hasError(res, c.want) {
+				t.Fatalf("expected %q; got %v", c.want, res.errors)
+			}
+			var errs int
+			for _, e := range res.errors {
+				if strings.Contains(e.Message, "cannot assign") || strings.Contains(e.Message, "mismatch") {
+					errs++
+				}
+			}
+			if errs != 1 {
+				t.Errorf("one mistake should give one diagnostic; got %d: %v", errs, res.errors)
+			}
+		})
+	}
+}
+
+// A genuinely wrong instantiation is still rejected — the context does not get to stamp
+// its way over a value that determined a different one for itself.
+func TestGenericContext_WrongAggregateInstantiationStillReported(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+struct Box<t> { value: t }
+let f = () -> Box<bool> => Box { value: 42 }
+`, false)
+	if !hasError(res, "expected Box<boolean>, got Box<i64>") {
+		t.Errorf("expected a return-type mismatch; got %v", res.errors)
+	}
+}
+
+// A fully solvable named tuple is still checked without any context at all: deferring to
+// the context applies only when the elements left a parameter unsolved.
+func TestGenericContext_FullySolvableTupleStillCheckedWithoutContext(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+tuple Trip<t>(t, t)
+let p = Trip(1, "x")
+`, false)
+	if !hasError(res, "Trip: element 2: cannot assign string to i64") {
+		t.Errorf("expected the element check to fire with no context; got %v", res.errors)
+	}
+}
+
+// A field whose declared type merely *mentions* a solved parameter is checked against the
+// substituted type, not skipped.
+//
+// The struct's field types were substituted by looking the field's type *name* up in the
+// solution, which only ever rewrote a field declared as a bare parameter. A field declared
+// `Opt<t>` kept its raw variable, so the "still generic, check leniently" guard swallowed
+// it and a wrong value went unreported — silently, since the surrounding instantiation was
+// solved by the other field and looked complete.
+func TestGenericContext_CompoundFieldIsCheckedAgainstTheSubstitution(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Opt<t> = Nil | Just(t)
+struct Holder<t> { tag: t, inner: Opt<t> }
+let w = Holder { tag: 1, inner: Just("x") }
+`, false)
+	if !hasError(res, "Holder.inner: cannot assign Opt<string> to Opt<i64>") {
+		t.Errorf("a compound field's mismatch must be reported; got %v", res.errors)
+	}
+}

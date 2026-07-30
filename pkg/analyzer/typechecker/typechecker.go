@@ -285,6 +285,10 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// so that assignability and constraint checks operate on the concrete type.
 	resolvedDeclType := tc.resolveType(decl.Type, decl.Location)
 
+	inferredType, reportedByContext := tc.contextualType(decl.Value, resolvedDeclType, inferredType)
+	if reportedByContext {
+		return // the propagation named the offending value
+	}
 	if !isAssignable(inferredType, resolvedDeclType) {
 		tc.typeTable.Set(decl.Value, inferredType)
 		tc.addError(decl.GetLocation(), SeverityError,
@@ -306,12 +310,6 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// Validate numeric constants against any range constraints on the declared type.
 	tc.checkRangeConstraints(decl.Name, decl.Value, resolvedDeclType)
 
-	// Push a generic instantiation down onto construction leaves *before* the
-	// wholesale overwrite below. That overwrite reaches only the top-level node, so
-	// it never helped a construction inside a `match`/`if` arm, and it stamps the
-	// annotation without checking the payload against it — which is why
-	// `let r: Result<i64, string> = Ok("x")` used to reach the backend.
-	tc.propagateInstantiation(decl.Value, resolvedDeclType)
 	// Store the annotation type — this is the effective type the expression is used as.
 	// e.g. literal 42 annotated as i32 should be recorded as i32, not the untyped int.
 	tc.typeTable.Set(decl.Value, resolvedDeclType)
@@ -2193,8 +2191,16 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 		}
 		expected := tc.resolveType(declaredElem, elemExpr.GetLocation())
 		if !isAssignable(actual, expected) {
-			tc.addError(elemExpr.GetLocation(), SeverityError,
-				"%s: element %d: cannot assign %s to %s", name, i+1, actual, expected)
+			// Deferred to the context when the elements alone did not pin every
+			// parameter down: the binding this element implies may be the *wrong*
+			// one (`Pair<t, u>(t, t)` built as `Pair(40, "x")` solves `t = i64` from
+			// the first element and then blames the second), and the annotation or
+			// return type is what decides. propagateInstantiation re-checks against
+			// it and reports there, so reporting here too would be one mistake twice.
+			if len(typeSubst) == len(decl.GenericParams) {
+				tc.addError(elemExpr.GetLocation(), SeverityError,
+					"%s: element %d: cannot assign %s to %s", name, i+1, actual, expected)
+			}
 			continue
 		}
 		// Assignable: push the declared width onto an untyped literal leaf
@@ -2360,12 +2366,12 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 	// Build a quick name->type lookup for the declared fields.
 	fieldTypes := make(map[string]types.Type, len(structType.Fields))
 	for _, f := range structType.Fields {
-		// Substitute generic type parameters if available, otherwise use the field's declared type.
-		if typeSub, ok := typeSubst[f.Type.GetName()]; ok {
-			fieldTypes[f.Name] = typeSub
-		} else {
-			fieldTypes[f.Name] = f.Type
-		}
+		// Substituted *structurally*, not by looking the field's type name up in the
+		// substitution: that only ever rewrote a field declared as a bare parameter, so
+		// a field declared `Maybe<t>` kept its raw type variable and this check compared
+		// against `Maybe<t>` — deferring to the context even where the fields had in
+		// fact pinned `t` down.
+		fieldTypes[f.Name] = substituteGenerics(f.Type, typeSubst)
 	}
 
 	// Check each field in the instance against the declared type and build a set of field names.
@@ -2381,10 +2387,12 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 			tc.addError(expr.GetLocation(), SeverityError, "%s: unknown field %q", expr.Name, name)
 			continue
 		}
-		// A field still typed as a generic parameter (one we could not infer)
-		// accepts any value: this checker does not fully reason about generics,
-		// so an un-inferred parameter must not produce a spurious mismatch.
-		if genericParamNames[expected.GetName()] {
+		// A field whose type still mentions a parameter we could not infer accepts
+		// any value: an un-inferred parameter must not produce a spurious mismatch,
+		// and the context may yet supply it (propagateInstantiation re-checks the
+		// field once it does). Asked of the whole type, not just its name, so a
+		// partly-substituted `Maybe<t>` is covered as well as a bare `t`.
+		if mentionsGenericParam(expected, genericParamNames) {
 			tc.inferExprType(f.Value) // still record the value's type
 			continue
 		}
@@ -2525,16 +2533,16 @@ func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, stru
 		if !ok {
 			continue
 		}
-		paramName := declared.GetName()
-		if !genericParamNames[paramName] {
-			continue // field is not declared with a bare type parameter
+		vt := tc.inferExprType(f.Value)
+		if vt == nil {
+			continue
 		}
-		if _, done := typeSubst[paramName]; done {
-			continue // already inferred from an earlier field
-		}
-		if vt := tc.inferExprType(f.Value); vt != nil {
-			typeSubst[paramName] = promoteToDefault(vt)
-		}
+		// Unified structurally, not just when the field is declared as a *bare*
+		// parameter. A field declared `Maybe<t>` or `[3]t` or `(t, i64)` pins `t` down
+		// just as surely as one declared `t` does, and this is the same unifier a data
+		// constructor and a generic call already use — so "what does this type variable
+		// match" keeps one definition.
+		unifyGenericTarget(declared, promoteToDefault(vt), genericParamNames, typeSubst)
 	}
 }
 

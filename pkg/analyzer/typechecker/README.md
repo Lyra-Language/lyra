@@ -146,8 +146,14 @@ node is left bare on a mismatch so a wrong payload can never lower as that insta
 Three guards decide whether the stamp applies: the node must currently be the bare
 declaration (an already-solved construction is the value's own answer and ordinary
 assignability checks it), it must be the same declaration the context names, and the
-arities must agree. Data constructors only; a generic struct or named tuple with a
-parameter no field pins down is still open.
+arities must agree. Covers data constructors, generic **structs** and named **tuples**. The aggregates needed a
+second pass because they fail differently: a bare `DataType` is assignable to any
+instantiation of itself (so a partly solved data construction reached the backend), while a
+bare `NamedStructType`/`TupleType` is not (so a partly solved one was rejected up front with
+"return type mismatch … got Tagged", a spurious error on correct code). That is why every
+context site goes through **`contextualType`**, which propagates *before* the assignability
+check, re-reads the record, and reports whether it already emitted a diagnostic so the
+caller suppresses its own coarser one.
 
 ### `checkNode(node)`
 
@@ -459,3 +465,20 @@ guarded arm never counts (the guard may fail). An **array** match is over *lengt
 idiom — is complete and no longer warns. Only arms whose element sub-patterns are all
 irrefutable contribute (a `[1, ...rest]` matches just the arrays starting with 1, so it proves
 nothing about coverage), and without an open-ended arm infinitely many lengths are unmatched.
+
+## Generic aggregate inference
+
+A generic struct's type arguments are solved from its field *values* by `unifyGenericTarget`
+— the same unifier data constructors and generic calls use — rather than by matching only
+fields declared as a *bare* parameter. A field declared `Maybe<t>`, `[3]t` or `(t, i64)`
+pins `t` down just as surely as one declared `t`, and matching only the bare form left
+`struct Wrapper<t> { inner: Maybe<t> }` unsolvable from its own fields.
+
+The declared field types are then substituted structurally too. Looking the field's type
+*name* up in the solution silently accepted a wrong value: `Holder { tag: 1, inner:
+Just("x") }` compared against the raw `Opt<t>`, which the "still generic, check leniently"
+guard swallowed, while the surrounding instantiation looked complete because the other
+field had solved `t`. That guard is `mentionsGenericParam`, which walks the type rather
+than testing its name, so a partly-substituted `Maybe<t>` counts as incomplete exactly as a
+bare `t` does — and what it defers, `propagateInstantiation` re-checks once the context
+arrives.

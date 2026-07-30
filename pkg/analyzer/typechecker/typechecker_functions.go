@@ -114,7 +114,11 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 			} else if !isVoid {
 				// Single-expression body: the expression value is the return value.
 				bodyType := tc.inferExprType(lambda.Body)
-				if declaredReturn != nil && bodyType != nil && !isAssignable(bodyType, declaredReturn) {
+				bodyType, reported := tc.contextualType(lambda.Body, declaredReturn, bodyType)
+				if reported {
+					// the propagation named the offending value; a coarser
+					// "return type mismatch" on top would be the same mistake twice
+				} else if declaredReturn != nil && bodyType != nil && !isAssignable(bodyType, declaredReturn) {
 					tc.addError(lambda.Body.GetLocation(), SeverityError,
 						"%s: return type mismatch: expected %s, got %s",
 						funcName, declaredReturn, bodyType)
@@ -126,7 +130,6 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 					// builds, so stamp construction leaves (incl. inside match arms)
 					// `shared` — `(xs) -> shared List => match xs { … => Cons(…) }`.
 					tc.propagateAllocation(lambda.Body, types.AllocationOf(declaredReturn))
-					tc.propagateInstantiation(lambda.Body, declaredReturn)
 					if ownedReturn {
 						tc.checkAllocationCompat(bodyType, declaredReturn, lambda.Body.GetLocation(), funcName)
 					}
@@ -201,14 +204,15 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 					continue // bare return – void compatibility is not checked yet
 				}
 				retType := tc.inferExprType(s.Value)
-				if declaredReturn != nil && retType != nil && !isAssignable(retType, declaredReturn) {
+				retType, reported := tc.contextualType(s.Value, declaredReturn, retType)
+				if reported {
+				} else if declaredReturn != nil && retType != nil && !isAssignable(retType, declaredReturn) {
 					tc.addError(s.GetLocation(), SeverityError,
 						"%s: return type mismatch: expected %s, got %s",
 						funcName, declaredReturn, retType)
 				} else if declaredReturn != nil && retType != nil {
 					tc.propagateLiteralType(s.Value, declaredReturn)
 					tc.propagateAllocation(s.Value, types.AllocationOf(declaredReturn))
-					tc.propagateInstantiation(s.Value, declaredReturn)
 					if ownedReturn {
 						tc.checkAllocationCompat(retType, declaredReturn, s.GetLocation(), funcName)
 					}
@@ -219,7 +223,9 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 					// so it is being used (returned), not dropped — check only that
 					// its type matches the declared return type.
 					exprType := tc.inferExprType(s.Expression)
-					if declaredReturn != nil && exprType != nil && !isAssignable(exprType, declaredReturn) {
+					exprType, reported := tc.contextualType(s.Expression, declaredReturn, exprType)
+					if reported {
+					} else if declaredReturn != nil && exprType != nil && !isAssignable(exprType, declaredReturn) {
 						tc.addError(s.GetLocation(), SeverityError,
 							"%s: return type mismatch: expected %s, got %s",
 							funcName, declaredReturn, exprType)
@@ -228,7 +234,6 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 						// value; push its width onto untyped literal leaves.
 						tc.propagateLiteralType(s.Expression, declaredReturn)
 						tc.propagateAllocation(s.Expression, types.AllocationOf(declaredReturn))
-						tc.propagateInstantiation(s.Expression, declaredReturn)
 						if ownedReturn {
 							tc.checkAllocationCompat(exprType, declaredReturn, s.GetLocation(), funcName)
 						}
@@ -293,6 +298,10 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 			continue // cannot infer argument type; skip silently
 		}
 		paramName := param.Pattern.GetName()
+		argType, reported := tc.contextualType(arg, resolvedParamType, argType)
+		if reported {
+			continue // already named the offending value
+		}
 		if !isAssignable(argType, resolvedParamType) {
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d (%s): cannot assign %s to %s",
@@ -303,7 +312,6 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 			// width, not the i64 default. Applies to every assignable arg, not just
 			// `own` ones (width is orthogonal to ownership).
 			tc.propagateLiteralType(arg, resolvedParamType)
-			tc.propagateInstantiation(arg, resolvedParamType)
 			if param.TypeModifier == types.Mut {
 				tc.checkMutArgument(calleeName, i+1, paramName, arg, resolvedParamType)
 			}

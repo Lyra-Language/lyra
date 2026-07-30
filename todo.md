@@ -87,12 +87,6 @@ enclosing return.
   declaration, not the prelude's canonical one; mark it `@builtin(Maybe)` or rename it".
   Note the fallback's own comment still reads "which is every program today (there is no
   prelude)"; that premise is what changed.
-- **[OPEN] Context-directed instantiation does not cover a generic struct or named
-  tuple.** `propagateInstantiation` (landed 07/30, see COMPLETED.md) handles data
-  constructors, which is what the prelude needs and where the gap bit. A generic struct
-  or named tuple with a parameter no field can pin down — a phantom parameter — has the
-  same problem and takes the same shape of fix.
-
 ### 2. Checked arithmetic by default; wraparound explicit
 
 Trap-on-overflow covers all integer arithmetic, `wrapping_*`/`saturating_*` are the lowered

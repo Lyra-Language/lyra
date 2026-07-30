@@ -154,6 +154,36 @@ purpose, and ambient-ness is a concept a prelude needs under any design.
   `TestExec_ContextSuppliesGenericInstantiation` (seven compile-and-run cases) and
   `TestGenericContext_*`, both mutation-verified.
 
+- **Context-directed instantiation extended to generic structs and named tuples, and struct
+  field inference made structural.** The data-constructor half (above) left aggregates open.
+  They fail differently, which is why they needed their own pass: a bare `DataType` is
+  assignable to any instantiation of itself, so a partly solved data construction reached the
+  backend and died there, while a bare `NamedStructType`/`TupleType` is *not*, so a partly
+  solved one was rejected by the front end with "return type mismatch: expected Tagged<i64,
+  boolean>, got Tagged" — a spurious error on correct code. That meant propagating **before**
+  the assignability check rather than after it, so every context site now goes through
+  `contextualType`, which propagates, re-reads the record, and reports whether it already
+  emitted a diagnostic (without that flag one mistake produced two errors: the precise
+  "Tagged.value: cannot assign string to i64" plus a coarse return mismatch). Two independent
+  causes were behind the aggregate failures. A **phantom** parameter appears in no field at all,
+  so only the context can supply it — that is what the propagation handles. A parameter
+  appearing only *inside* another type (`inner: Opt<t>`, `items: [2]t`, `pair: (t, t)`) was
+  unsolvable for a different reason: field inference matched only a field declared as a *bare*
+  parameter, so `struct Wrapper<t> { inner: Opt<t> }` could not be solved from its own fields.
+  It now unifies structurally with `unifyGenericTarget` — the same unifier data constructors and
+  generic calls use — and the field types are substituted structurally too, rather than by
+  looking the field's type *name* up in the solution. The latter caught a silently-accepted
+  error: `Holder { tag: 1, inner: Just("x") }` compared against the raw `Opt<t>`, which the
+  "still generic, check leniently" guard swallowed, so a wrong value went unreported while the
+  surrounding instantiation looked complete. That guard is now `mentionsGenericParam`, which
+  walks the type instead of testing its name. **Still open:** nothing known — the named-tuple
+  element check now also defers to the context when the elements alone leave a parameter
+  unsolved, so `Pair<t, u>(t, t)` built as `Pair(40, "x")` no longer blames the second element
+  for a binding the first one guessed. Tests: `TestExec_ContextSuppliesAggregateInstantiation`
+  (eight compile-and-run cases) and `TestGenericContext_*`, each mutation-verified against
+  reverting the propagation, the structural solve, the structural substitution, and the
+  duplicate suppression independently.
+
 **Bugs fixed.**
 
 - **`heap-use-after-free` when a *borrowed* `string` parameter is reassigned.** `let f = (s:

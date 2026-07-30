@@ -184,6 +184,10 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 		if argType == nil || params[i] == nil {
 			continue
 		}
+		argType, reported := tc.contextualType(arg, params[i], argType)
+		if reported {
+			continue // already named the offending value
+		}
 		if !isAssignable(argType, params[i]) {
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d: cannot assign %s to %s", calleeName, i+1, argType, params[i])
@@ -197,7 +201,6 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 		// is only `Maybe<i64>` once the *other* argument has solved `t`, so the
 		// concrete-callee propagation site never sees an instantiation to push.
 		tc.propagateLiteralType(arg, params[i])
-		tc.propagateInstantiation(arg, params[i])
 	}
 	tc.instantiations.Set(call, typetable.Instantiation{Name: calleeName, Func: lambda, Subst: subst})
 	return ret

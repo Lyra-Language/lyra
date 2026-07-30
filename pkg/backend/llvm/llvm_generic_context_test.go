@@ -94,3 +94,105 @@ let main = () -> u8 => match f() { Ok(v) => v, Err(e) => 1, }`,
 		})
 	}
 }
+
+// The same context-directed instantiation for a generic **struct** and **named tuple**.
+//
+// They fail differently from a data constructor, which is why they needed a second pass.
+// A bare `DataType` is assignable to any instantiation of itself, so a partly solved data
+// construction sailed through the front end and died in the backend; a bare
+// `NamedStructType`/`TupleType` is not, so a partly solved one was rejected outright with
+// "return type mismatch: expected Tagged<i64, boolean>, got Tagged" — a spurious error on
+// correct code. Fixing it meant propagating *before* the assignability check rather than
+// after it, which is why every context site now goes through `contextualType`.
+//
+// Two distinct causes are covered here. A **phantom** parameter appears in no field at
+// all, so nothing but the context can ever supply it. A parameter that appears only
+// *inside* another type (`inner: Opt<t>`, `items: [2]t`) used to be unsolvable for a
+// different reason — field inference matched only a field declared as a bare parameter —
+// and is now unified structurally, so those solve themselves and need no context.
+func TestExec_ContextSuppliesAggregateInstantiation(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			name: "struct with a phantom parameter",
+			src: `struct Tagged<t, u> { value: t }
+let f = () -> Tagged<i64, bool> => Tagged { value: 42 }
+let main = () -> u8 => u8(f().value)`,
+			want: 42,
+		},
+		{
+			name: "struct with a phantom parameter, annotated let",
+			src: `struct Tagged<t, u> { value: t }
+let main = () -> u8 => {
+  let x: Tagged<i64, bool> = Tagged { value: 42 }
+  u8(x.value)
+}`,
+			want: 42,
+		},
+		{
+			name: "struct with a phantom parameter, call argument",
+			src: `struct Tagged<t, u> { value: t }
+let take = (x: Tagged<i64, bool>) -> i64 => x.value
+let main = () -> u8 => u8(take(Tagged { value: 42 }))`,
+			want: 42,
+		},
+		{
+			name: "named tuple with a phantom parameter",
+			src: `tuple Pair<t, u>(t, t)
+let f = () -> Pair<i64, bool> => Pair(40, 2)
+let main = () -> u8 => u8(f().0 + f().1)`,
+			want: 42,
+		},
+		{
+			// Solved structurally now, so this needs no context at all — but it is
+			// the case a user actually writes, and it reported "cannot assign
+			// Opt<i64> to Opt<t>" until field inference started unifying.
+			name: "parameter only under a nested generic",
+			src: `data Opt<t> = Nil | Just(t)
+struct Wrapper<t> { inner: Opt<t> }
+let f = () -> Wrapper<i64> => Wrapper { inner: Just(42) }
+let main = () -> u8 => match f().inner { Just(v) => u8(v), Nil => 1, }`,
+			want: 42,
+		},
+		{
+			// No annotation anywhere: the fields alone must yield a *complete*
+			// instantiation, or `w.inner` reads back as the type variable. This is
+			// what structural field substitution buys over the old name lookup —
+			// with the context available the propagation would paper over it.
+			name: "nested generic, no context at all",
+			src: `data Opt<t> = Nil | Just(t)
+struct Wrapper<t> { inner: Opt<t> }
+let main = () -> u8 => {
+  let w = Wrapper { inner: Just(42) }
+  match w.inner { Just(v) => u8(v), Nil => 1, }
+}`,
+			want: 42,
+		},
+		{
+			name: "parameter only under an array field",
+			src: `struct Holder<t> { items: [2]t }
+let f = () -> Holder<i64> => Holder { items: [40, 2] }
+let main = () -> u8 => u8(f().items[0] + f().items[1])`,
+			want: 42,
+		},
+		{
+			name: "parameter only under a tuple field",
+			src: `struct Holder<t> { pair: (t, t) }
+let f = () -> Holder<i64> => Holder { pair: (40, 2) }
+let main = () -> u8 => u8(f().pair.0 + f().pair.1)`,
+			want: 42,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("exit = %d, want %d", got, c.want)
+			}
+		})
+	}
+}
