@@ -241,6 +241,13 @@ The seam between the front-end and code generation. `backend.Backend` is the int
 ### `pkg/printer`
 Reflection-based AST printer used only in tests. `printer.PrintAST(program)` walks exported struct fields; zero/nil/empty values are omitted. `printer.NewPrinter().Print(node)` pretty-prints a raw tree-sitter CST node (useful for debugging).
 
+### Emitted symbol names
+A top-level user function is emitted as **`lyra.<module>.<name>`** (`userSymbol`), and a generic specialization the same way (`lyra.identity$i64`). `main` keeps its own name — it is the C entry point the platform links against — and the runtime's own symbols keep their `lyra_` prefix, which the dot after `lyra` guarantees can never be spelled by a user symbol.
+
+The prefix fixes a **reachable bug**, not a stylistic one: emitted functions used to take their source name verbatim, so a program with a function called `malloc`, `write`, `memcmp` or `lyra_rc_alloc` produced a module clang rejected outright ("invalid redefinition") against libc or against Lyra's own emitted runtime — and those are names a program has every right to use. Carrying the module path also makes a symbol unique *across* modules, which is the property separate compilation and per-module private names will both rest on. Trait methods (`Box$Show$show`) and generic types (`Box$i64`) were already mangled for their own reasons.
+
+Note this does **not** yet let two modules each declare a private `helper`: the front end still rejects a duplicate top-level name program-wide, because names share one namespace. Mangling removes the *backend's* objection; the remaining one is per-module name resolution.
+
 ### Trait-method lowering (`backend/llvm/traits.go`)
 A trait-impl method lowers to an **ordinary function taking the receiver first**, and a method call to a direct call. Dispatch is entirely **static** — the typechecker already chose the impl — so there are no vtables and nothing is resolved at run time. Until 07/30 an impl type-checked and then failed the build with `unsupported method call`, which is why the standard library's combinators had to be free functions.
 

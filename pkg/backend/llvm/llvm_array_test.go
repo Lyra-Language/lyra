@@ -186,7 +186,7 @@ func TestEmit_ArrayIR(t *testing.T) {
 	// An array-returning function's signature and return match the array type.
 	arrayRet := emit(`let make = () -> [3]u8 => [4, 5, 6]
 	 let main = () -> u8 => make()[0]`)
-	if !strings.Contains(arrayRet, "define [3 x i8] @make()") {
+	if !strings.Contains(arrayRet, "define [3 x i8] @lyra.make()") {
 		t.Error("expected @make to return [3 x i8]")
 	}
 	if !strings.Contains(arrayRet, "ret [3 x i8]") {

@@ -392,7 +392,7 @@ func TestEmit_NewtypeIsTransparent(t *testing.T) {
 		t.Errorf("a newtype should register no LLVM type of its own:\n%s", got)
 	}
 	for _, want := range []string{
-		"define i8 @bump(i8 ", // the parameter and return are the bare base type
+		"define i8 @lyra.bump(i8 ", // the parameter and return are the bare base type
 		"store i8 42",         // the literal lowers at the base width
 	} {
 		if !strings.Contains(got, want) {

@@ -89,7 +89,7 @@ func TestEmit_TupleInstanceIR(t *testing.T) {
 // surrounding context can narrow them, and propagateLiteralType did narrow the leaves —
 // but it never re-recorded the type of the tuple **node**, which is what the backend
 // builds the aggregate from. So `f((10, 40))` against a `(u8, u8)` parameter emitted
-// `call i8 @f({ i64, i64 })` into a `{ i8, i8 }` parameter: invalid IR.
+// `call i8 @lyra.f({ i64, i64 })` into a `{ i8, i8 }` parameter: invalid IR.
 //
 // It went unnoticed because Apple clang cannot diagnose it — with opaque pointers the
 // two function types are indistinguishable, and arm64 passes small structs in registers
@@ -171,10 +171,10 @@ func TestEmit_TupleArgumentMatchesParameterType(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(ir, "define i8 @f({ i8, i8 }") {
+	if !strings.Contains(ir, "define i8 @lyra.f({ i8, i8 }") {
 		t.Fatalf("expected @f to take { i8, i8 }:\n%s", ir)
 	}
-	if !strings.Contains(ir, "call i8 @f({ i8, i8 }") {
+	if !strings.Contains(ir, "call i8 @lyra.f({ i8, i8 }") {
 		t.Errorf("the call site does not pass { i8, i8 } — the tuple literal was built at "+
 			"the wrong width, which is invalid IR that only an older (typed-pointer) clang "+
 			"rejects:\n%s", ir)

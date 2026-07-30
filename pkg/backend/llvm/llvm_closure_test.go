@@ -348,7 +348,7 @@ func TestEmit_ClosureRepresentation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(got, "define i64 @apply({ i8*, i8* } %f,") {
+		if !strings.Contains(got, "define i64 @lyra.apply({ i8*, i8* } %f,") {
 			t.Errorf("a function-typed parameter should be { i8*, i8* }; got:\n%s", got)
 		}
 	})
@@ -363,7 +363,7 @@ func TestEmit_ClosureRepresentation(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.Contains(got, "define i64 @double(i64 ") {
+		if !strings.Contains(got, "define i64 @lyra.double(i64 ") {
 			t.Errorf("a named function should keep its plain signature; got:\n%s", got)
 		}
 		if strings.Contains(got, "@double.closure") {

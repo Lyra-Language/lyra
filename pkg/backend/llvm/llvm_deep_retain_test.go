@@ -428,6 +428,11 @@ func llFuncBodies(ir string) map[string]string {
 			body = body[:end]
 		}
 		out[name] = body
+		// Also index under the source name: a user function is emitted as
+		// `lyra.<module>.<name>`, and tests ask for it by the name in the program.
+		if bare := name[strings.LastIndex(name, ".")+1:]; bare != name {
+			out[bare] = body
+		}
 	}
 	return out
 }

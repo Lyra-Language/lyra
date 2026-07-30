@@ -226,7 +226,7 @@ func (l *lowerer) forEachUserFunction(program *ast.Program, entry *ast.LambdaExp
 // records it in l.funcs, so calls can resolve it before its body is lowered.
 // Several forms are deferred with a loud error rather than mis-lowered.
 func (l *lowerer) declareFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) error {
-	declared, err := l.declareFunctionAs(decl.Name, fn)
+	declared, err := l.declareFunctionAs(l.userSymbol(decl), fn)
 	if err != nil {
 		return err
 	}
@@ -542,4 +542,31 @@ func mentionsTypeVar(t types.Type) bool {
 		return mentionsTypeVar(tt.Inner)
 	}
 	return false
+}
+
+// userSymbol is the emitted name for a top-level user function: its module path under a
+// `lyra.` prefix, so `double` in `util.math` becomes `@lyra.util.math.double`.
+//
+// The prefix is not decoration. Emitted user functions previously took their source name
+// verbatim, so a program with a function named `malloc`, `write` or `lyra_rc_alloc`
+// produced a module clang rejected outright — "invalid redefinition" against libc or
+// against Lyra's own emitted runtime. Reachable from ordinary source, and a name a
+// program has every right to use.
+//
+// The module path is what makes the symbol *cross-module* unique, which is what separate
+// compilation and per-module private names will both need. It cannot collide with the
+// runtime's own `lyra_`-prefixed symbols either: everything here has a dot after `lyra`,
+// and those have an underscore.
+//
+// `main` never reaches this — it is emitted by lowerEntry with the C ABI the platform
+// expects, and forEachUserFunction excludes it.
+func (l *lowerer) userSymbol(decl *ast.VarDeclStmt) string {
+	module := ""
+	if l.res != nil && l.res.SymbolTable != nil {
+		module = l.res.SymbolTable.ModuleOfFile[decl.GetLocation().File]
+	}
+	if module == "" {
+		return "lyra." + decl.Name
+	}
+	return "lyra." + module + "." + decl.Name
 }

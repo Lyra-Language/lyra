@@ -164,7 +164,7 @@ let main = () -> u8 => {
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	if !strings.Contains(byRef, "define void @poke(%Pt* ") {
+	if !strings.Contains(byRef, "define void @lyra.poke(%Pt* ") {
 		t.Errorf("expected @poke to take a %%Pt* parameter, got:\n%s", byRef)
 	}
 	// The callee must not copy the incoming value into its own alloca — that copy
@@ -182,7 +182,7 @@ let main = () -> u8 => {
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	if !strings.Contains(byVal, "define i64 @take(%Pt ") {
+	if !strings.Contains(byVal, "define i64 @lyra.take(%Pt ") {
 		t.Errorf("expected @take to take a by-value %%Pt parameter, got:\n%s", byVal)
 	}
 }
@@ -198,7 +198,7 @@ let main = () -> u8 => u8(twice(21))`)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	if !strings.Contains(out, "define i64 @twice(i64 ") {
+	if !strings.Contains(out, "define i64 @lyra.twice(i64 ") {
 		t.Errorf("expected @twice to take a by-value i64, got:\n%s", out)
 	}
 	if got := buildAndRun(t, `let twice = (n: mut i64) -> i64 => n + n
@@ -210,7 +210,13 @@ let main = () -> u8 => u8(twice(21))`); got != 42 {
 // fnBody returns the text of one `define`d function from an IR module, so a test
 // can assert on a single callee rather than the whole module.
 func fnBody(ir, name string) string {
-	start := strings.Index(ir, "@"+name+"(")
+	// A user function is emitted under its module-qualified symbol (`lyra.f`), so the
+	// source name is tried under that prefix first; the bare form still finds runtime
+	// and entry-point symbols, which are not prefixed.
+	start := strings.Index(ir, "@lyra."+name+"(")
+	if start < 0 {
+		start = strings.Index(ir, "@"+name+"(")
+	}
 	if start < 0 {
 		return ""
 	}
@@ -294,10 +300,10 @@ let main = () -> u8 => 0`)
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	if !strings.Contains(out, "define i64 @sum([8 x i64]* ") {
+	if !strings.Contains(out, "define i64 @lyra.sum([8 x i64]* ") {
 		t.Errorf("expected @sum to take a [8 x i64]* parameter, got:\n%s", out)
 	}
-	if !strings.Contains(out, "define i64 @scale(i64 ") {
+	if !strings.Contains(out, "define i64 @lyra.scale(i64 ") {
 		t.Errorf("expected @scale to keep its by-value i64 parameter, got:\n%s", out)
 	}
 }

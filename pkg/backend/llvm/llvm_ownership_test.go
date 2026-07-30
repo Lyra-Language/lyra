@@ -435,7 +435,7 @@ func buildAndRunASan(t *testing.T, clang, src string) int {
 func instrumentForASan(ir string) string {
 	lines := strings.Split(ir, "\n")
 	for i, line := range lines {
-		// `define <ret> @name(<params>) {` — attributes belong after the parameter
+		// `define <ret> @lyra.name(<params>) {` — attributes belong after the parameter
 		// list, immediately before the opening brace. `declare` lines have no body to
 		// instrument and must be left alone.
 		if strings.HasPrefix(line, "define ") && strings.HasSuffix(line, " {") {

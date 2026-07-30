@@ -87,7 +87,9 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 		}
 		irParams = append(irParams, irParam)
 	}
-	symbol := inst.Symbol()
+	// Prefixed like any other user function (userSymbol): a specialization is still
+	// user code, and its symbol has to be unique across modules and safe against libc.
+	symbol := "lyra." + inst.Symbol()
 	l.specialized[inst.Key()] = l.module.NewFunc(symbol, retType, irParams...)
 	l.specializedParams[inst.Key()] = inst.Func.Parameters
 	return nil

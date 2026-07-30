@@ -113,8 +113,8 @@ func TestEmit_GenericSpecializations(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"define i64 @identity$i64(i64 ",
-		"define i1 @identity$boolean(i1 ",
+		"define i64 @lyra.identity$i64(i64 ",
+		"define i1 @lyra.identity$boolean(i1 ",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("expected IR to contain %q; got:\n%s", want, got)
@@ -122,7 +122,7 @@ func TestEmit_GenericSpecializations(t *testing.T) {
 	}
 	// The generic name itself is never defined: a type variable has no width, so
 	// there is nothing to emit under it.
-	if strings.Contains(got, "define i64 @identity(") || strings.Contains(got, "@identity(") {
+	if strings.Contains(got, "define i64 @lyra.identity(") || strings.Contains(got, "@identity(") {
 		t.Errorf("the bare generic name should not be emitted:\n%s", got)
 	}
 	// Two call sites that solve to the same bindings share one specialization.
@@ -131,7 +131,7 @@ func TestEmit_GenericSpecializations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := strings.Count(same, "define i64 @identity$i64("); n != 1 {
+	if n := strings.Count(same, "define i64 @lyra.identity$i64("); n != 1 {
 		t.Errorf("expected 1 shared specialization, got %d:\n%s", n, same)
 	}
 }
@@ -240,7 +240,7 @@ func TestEmit_GenericScalarSpecializationHasNoRefcounting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := funcBody(got, "@identity$i64")
+	body := funcBody(got, "@lyra.identity$i64")
 	if body == "" {
 		t.Fatalf("expected an i64 specialization:\n%s", got)
 	}
