@@ -393,7 +393,7 @@ func TestEmit_NewtypeIsTransparent(t *testing.T) {
 	}
 	for _, want := range []string{
 		"define i8 @lyra.bump(i8 ", // the parameter and return are the bare base type
-		"store i8 42",         // the literal lowers at the base width
+		"store i8 42",              // the literal lowers at the base width
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("expected IR to contain %q; got:\n%s", want, got)
