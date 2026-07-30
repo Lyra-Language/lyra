@@ -393,7 +393,7 @@ func buildAndRunASan(t *testing.T, clang, src string) int {
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-	cmd := exec.Command(compileCached(t, clang, ir, "-fsanitize=address"))
+	cmd := exec.Command(compileCached(t, clang, instrumentForASan(ir), "-fsanitize=address"))
 	cmd.Env = append(os.Environ(), "ASAN_OPTIONS=detect_leaks=0")
 	asanRunSlots <- struct{}{}
 	defer func() { <-asanRunSlots }()
@@ -404,6 +404,45 @@ func buildAndRunASan(t *testing.T, clang, src string) int {
 		t.Fatalf("running the asan binary failed: %v", err)
 	}
 	return 0
+}
+
+// instrumentForASan adds the `sanitize_address` function attribute to every function
+// defined in the emitted module, which is what makes AddressSanitizer actually check
+// this code's memory accesses.
+//
+// Without it, `clang -fsanitize=address prog.ll` is close to useless here, and silently
+// so. ASan's instrumentation is an LLVM pass that only rewrites functions carrying the
+// attribute; clang attaches it when it compiles C/C++, but a generated .ll has no
+// function attributes at all, so the pass instruments *nothing*. The ASan runtime is
+// still linked, so its malloc/free interceptors catch an invalid or double `free()` —
+// which is why this suite did catch some faults — but **no load or store is checked**,
+// so a plain use-after-free read or write runs clean. Verified directly: a two-line IR
+// program that frees a pointer and then loads from it exits 0 with no report, and the
+// same program with this attribute added reports `heap-use-after-free` immediately.
+//
+// This mattered in practice. Three faults this suite was expected to catch went by:
+// a closure-capture double retain, a release of an uninitialized alloca on a weak
+// upgrade, and a refcount over-release at a managed generic type argument. The last of
+// those decrements a freed box's count to -1 — writing through freed memory but never
+// calling free() twice — so no interceptor fires and, before this, no platform reported
+// it. The faults that *were* caught were the ones that reached free() with a bad
+// pointer. That pattern was misread for a while as "macOS ASan is weak"; the actual
+// cause is missing instrumentation, and it applied equally on Linux.
+//
+// Done as a text rewrite of the emitted IR rather than in the backend on purpose: the
+// attribute is a property of how the *test* wants to build the module, not of the
+// program, and emitting it from lowerFunction would put it in every ordinary build.
+func instrumentForASan(ir string) string {
+	lines := strings.Split(ir, "\n")
+	for i, line := range lines {
+		// `define <ret> @name(<params>) {` — attributes belong after the parameter
+		// list, immediately before the opening brace. `declare` lines have no body to
+		// instrument and must be left alone.
+		if strings.HasPrefix(line, "define ") && strings.HasSuffix(line, " {") {
+			lines[i] = strings.TrimSuffix(line, " {") + " sanitize_address {"
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 // asanAvailable reports whether the toolchain can build and run an ASan binary

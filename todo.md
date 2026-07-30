@@ -63,6 +63,13 @@
 
 **Sequencing:** (1) + (2b) + (4) + (5) is a complete, testable slice (types, arithmetic with traps, division via compiler-rt, printable) with only the >64-bit-literal gap open; (2a) + (3) close that gap when a large constant is first needed.
 
+## Known Bugs (open)
+------------------
+
+- **[OPEN 07/29] `heap-use-after-free` in `lyra_rc_release` when a by-reference `mut string` parameter is reassigned twice.** `let setStr = (s: mut string) -> void => { s = "n" ++ "1" }` called twice on the same `var` frees the box and then releases it again (reading its refcount header out of freed memory). Surfaced by `TestExec_ParamReassignment_ManagedIsLeakFree` — the case that test was written to guard — as soon as ASan was actually instrumenting (see the `sanitize_address` note in `CLAUDE.md`'s backend-testing section). Likely the interaction of `mut`-by-reference (the parameter's slot *is* the caller's storage) with `releaseOldTarget`'s by-ref-root case: both the callee's reassignment and the caller's scope exit appear to release the same reference.
+- **[OPEN 07/29] An anonymous tuple argument is built at the default i64 width, not the parameter's.** `let f = (t: (u8, u8)) -> u8 => …` called as `f((10, 40))` emits `call i8 @f({ i64, i64 } …)` against a `{ i8, i8 }` parameter — invalid IR. Apple clang 21 accepts it (opaque pointers make the two function types indistinguishable, and arm64 passes small structs in registers so the low bytes happen to carry the right values); Debian clang 14, with typed pointers, rejects it. Found by `./asan.sh` (`TestExec_MatchGuards/#05`). `propagateLiteralType` narrows a tuple literal element-wise against a `TupleType` context, so the gap is the *call-argument* position for an anonymous tuple.
+- **[OPEN 07/29] `i128` overflow-checked multiply does not link on Linux.** `__muloti4` lives in compiler-rt, not libgcc, and Linux clang defaults to libgcc — so `lyrac build` of an i128 multiply fails at link time there (`TestExec_I128_Print`, three subtests). The i128 change-set note claiming "`clang out.ll` pulls compiler-rt by default" holds on macOS only. Fix is a link-line decision (`--rtlib=compiler-rt`, or link `libclang_rt.builtins`), not codegen.
+
 ## In Progress
 --------------
 
