@@ -1616,8 +1616,28 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 		if !ok || len(tt.Elements) != len(tl.Elements) {
 			return
 		}
+		resolved := make([]types.Type, len(tt.Elements))
 		for i, elem := range tl.Elements {
-			tc.propagateLiteralType(elem, tc.resolveType(tt.Elements[i], elem.GetLocation()))
+			resolved[i] = tc.resolveType(tt.Elements[i], elem.GetLocation())
+			tc.propagateLiteralType(elem, resolved[i])
+		}
+		// Re-record the literal itself at the context's element widths, exactly as the
+		// array case below does and for the same reason: narrowing the *leaves* is not
+		// enough, because the backend builds the aggregate from the type recorded for
+		// the tuple **node**. Left un-re-recorded, `f((10, 40))` against a `(u8, u8)`
+		// parameter narrowed both leaves to u8 and still emitted
+		// `call i8 @f({ i64, i64 })` into a `{ i8, i8 }` parameter — invalid IR, and a
+		// miscompile that Apple clang cannot even diagnose (opaque pointers make the two
+		// function types indistinguishable, and arm64 passes small structs in registers,
+		// so the low bytes happen to carry the right values). Debian's typed-pointer
+		// clang rejects it; found via ./asan.sh.
+		//
+		// Anonymous tuples only: those are the ones inferTupleLiteralExpr deliberately
+		// leaves untyped for a context to fix. A *named* tuple is nominal and already
+		// recorded against its declaration — possibly as a generic instantiation — so
+		// overwriting it with the bare context type would lose that.
+		if types.IsAnonymousTupleName(tl.Name) {
+			tc.typeTable.Set(tl, types.TupleType{Name: tt.Name, Elements: resolved})
 		}
 		return
 	}
