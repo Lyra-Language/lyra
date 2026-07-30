@@ -111,6 +111,43 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 	return subst, true
 }
 
+// solveDataTypeVars solves a generic `data` type's parameters from the arguments
+// supplied to one of its constructors — `Some(5)` on `data Maybe<t> = None | Some(t)`
+// binds t = i64 — by unifying each declared payload field type against the argument's
+// inferred type with the same unifier a generic call and trait dispatch use.
+//
+// An untyped literal settles to its default width before binding, for the reason it
+// does at a generic call: a type argument is a real type in the instantiation (it
+// decides the payload's width in the tagged-union layout), so leaving it untyped
+// would push an unresolved literal type into codegen. A narrower payload is reached
+// by saying so — `Some(u8(5))`, or an annotation the literal propagates through.
+//
+// Returns an empty (non-nil) substitution for a non-generic type, so the caller's
+// substitute-then-resolve path is uniform. Partial solutions are returned as-is:
+// the caller decides what an unsolved parameter means (parameterizedResult declines
+// to build an instantiation from one).
+func (tc *TypeChecker) solveDataTypeVars(decl *ast.TypeDeclStmt, declaredFields []types.Type, args []ast.Expression) map[string]types.Type {
+	subst := map[string]types.Type{}
+	if decl == nil || len(decl.GenericParams) == 0 {
+		return subst
+	}
+	vars := make(map[string]bool, len(decl.GenericParams))
+	for _, gp := range decl.GenericParams {
+		vars[gp.Name] = true
+	}
+	for i, arg := range args {
+		if i >= len(declaredFields) {
+			break
+		}
+		argType := tc.inferExprType(arg)
+		if argType == nil {
+			continue
+		}
+		unifyGenericTarget(declaredFields[i], promoteToDefault(argType), vars, subst)
+	}
+	return subst
+}
+
 // instantiateSignature substitutes a solved binding set through a function's
 // signature, giving the concrete parameter types and return type a call site is
 // checked against.

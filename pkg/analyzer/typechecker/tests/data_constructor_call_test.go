@@ -78,5 +78,5 @@ func TestDataConstructorCall_WrongDataTypeRejected(t *testing.T) {
   let bad = () -> Maybe<i64> => Red
 	`, false)
 	assertErrorsAre(t, res,
-		"bad: return type mismatch: expected Maybe, got Color")
+		"bad: return type mismatch: expected Maybe<i64>, got Color")
 }

@@ -644,15 +644,21 @@ func structFields(t types.Type) ([]types.StructField, bool) {
 	return nil, false
 }
 
-// resolveGenericStruct turns a ParameterizedType naming a generic struct into
-// that struct with its type arguments substituted into the field types — so
-// `Box<i64>` becomes a struct whose `value` field is `i64`, and `Box<t>` (the
-// Self type inside a generic impl body) keeps `value` as `t`. This is what lets
-// field and method access work on a generic struct instance. Any other type
-// (including a ParameterizedType whose head isn't a struct) is returned
-// unchanged, so callers can keep the original for trait dispatch, which needs
-// the type arguments the substituted struct no longer carries.
-func (tc *TypeChecker) resolveGenericStruct(t types.Type) types.Type {
+// resolveGenericAggregate turns a ParameterizedType into the declaration it names
+// with this instantiation's type arguments substituted in — so `Box<i64>` becomes a
+// struct whose `value` field is `i64`, `Pair<i64>` a tuple whose elements are `i64`,
+// and `Maybe<string>` a data type whose payload is `string`. `Box<t>` (the Self type
+// inside a generic impl body) keeps `value` as `t`, since `t` maps to itself there.
+//
+// This is what lets field access, tuple indexing, and method lookup work on a generic
+// instance. Any other type — including a ParameterizedType whose head names nothing
+// declared — is returned unchanged, so a caller can keep the original for trait
+// dispatch, which needs the type arguments the substituted form no longer carries.
+//
+// All three aggregate shapes go through one function rather than a resolver each: they
+// differ only in which member list gets substituted, and the alternative is three
+// copies that can disagree about what an instantiation means.
+func (tc *TypeChecker) resolveGenericAggregate(t types.Type) types.Type {
 	p, ok := t.(types.ParameterizedType)
 	if !ok {
 		return t
@@ -661,12 +667,8 @@ func (tc *TypeChecker) resolveGenericStruct(t types.Type) types.Type {
 	if !ok {
 		return t
 	}
-	st, ok := decl.Type.(types.NamedStructType)
-	if !ok {
-		return t
-	}
-	// The generic parameter names live on the declaration (the NamedStructType's
-	// own GenericParams field is not populated by the collector today); pair them
+	// The generic parameter names live on the declaration (the NamedStructType's own
+	// GenericParams field is not populated by the collector today); pair them
 	// positionally with the usage-site type arguments.
 	subst := make(map[string]types.Type, len(decl.GenericParams))
 	for i, gp := range decl.GenericParams {
@@ -674,17 +676,40 @@ func (tc *TypeChecker) resolveGenericStruct(t types.Type) types.Type {
 			subst[gp.Name] = p.TypeArguments[i]
 		}
 	}
-	fields := make([]types.StructField, len(st.Fields))
-	copy(fields, st.Fields)
-	for i := range fields {
-		fields[i].Type = substituteGenerics(fields[i].Type, subst)
+	switch d := decl.Type.(type) {
+	case types.NamedStructType:
+		fields := make([]types.StructField, len(d.Fields))
+		copy(fields, d.Fields)
+		for i := range fields {
+			fields[i].Type = substituteGenerics(fields[i].Type, subst)
+		}
+		return types.WithAllocation(types.NamedStructType{
+			Name:          d.Name,
+			Fields:        fields,
+			GenericParams: d.GenericParams,
+			Allocation:    d.Allocation,
+		}, p.Allocation)
+	case types.TupleType:
+		elems := make([]types.Type, len(d.Elements))
+		for i, el := range d.Elements {
+			elems[i] = substituteGenerics(el, subst)
+		}
+		d.Elements = elems
+		return types.WithAllocation(d, p.Allocation)
+	case types.DataType:
+		ctors := make([]types.DataTypeConstructor, len(d.Constructors))
+		copy(ctors, d.Constructors)
+		for i := range ctors {
+			params := make([]types.Type, len(ctors[i].Params))
+			for j, prm := range ctors[i].Params {
+				params[j] = substituteGenerics(prm, subst)
+			}
+			ctors[i].Params = params
+		}
+		d.Constructors = ctors
+		return types.WithAllocation(d, p.Allocation)
 	}
-	return types.NamedStructType{
-		Name:          st.Name,
-		Fields:        fields,
-		GenericParams: st.GenericParams,
-		Allocation:    st.Allocation,
-	}
+	return t
 }
 
 // structFieldTypes maps each field name of a named or anonymous struct type
@@ -1952,6 +1977,13 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 					break
 				}
 			}
+			// A *generic* data type's parameters are solved from the payload
+			// arguments, the constructor-call analogue of solving a generic
+			// function's variables from its call arguments — and the same unifier,
+			// so "what does this type variable match" keeps one definition.
+			// `Some(5)` binds t = i64 and the value is a `Maybe<i64>`.
+			decl := tc.symTable.Types[dt.Name]
+			subst := tc.solveDataTypeVars(decl, declaredFields, expr.Elements)
 			for i, elem := range expr.Elements {
 				// A data constructor resolves by name regardless of whether its
 				// payload type-checks (matching the previous data_constructor_expr
@@ -1961,12 +1993,20 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 					continue
 				}
 				if i < len(declaredFields) {
-					expected := tc.resolveType(declaredFields[i], elem.GetLocation())
+					// Substituted before resolving, so a payload declared with a type
+					// variable is recorded at the *concrete* type this instantiation
+					// binds it to. Recording the variable itself would put a type with
+					// no representation into the TypeTable, which the backend reads to
+					// lower the payload.
+					expected := tc.resolveType(substituteGenerics(declaredFields[i], subst), elem.GetLocation())
 					tc.propagateLiteralType(elem, expected)
 					tc.typeTable.Set(elem, expected)
 				} else {
 					tc.typeTable.Set(elem, promoteToDefault(t))
 				}
+			}
+			if inst, ok := parameterizedResult(dt, decl, subst); ok {
+				return inst
 			}
 			return dt
 		}
@@ -2017,12 +2057,10 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 	}
 
 	// Resolve the generic type parameters for this instantiation, mirroring
-	// inferStructInstanceExpr: explicit turbofish args substitute positionally;
-	// with none, a position whose declared type is a bare (still-unbound)
-	// generic parameter is simply left unconstrained below — unlike structs,
-	// this doesn't attempt to *infer* the parameter from the supplied values,
-	// since a tuple's positions carry no field names to key that inference on
-	// in a way that would clearly generalize; deferred rather than guessed.
+	// inferStructInstanceExpr: explicit turbofish args substitute positionally, and
+	// with none each parameter is solved from the supplied elements (see below). A
+	// parameter that nothing pins down is left unconstrained, and its elements are
+	// checked leniently.
 	genericParamNames := make(map[string]bool, len(decl.GenericParams))
 	for _, p := range decl.GenericParams {
 		genericParamNames[p.Name] = true
@@ -2034,7 +2072,15 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 			typeSubst[param.Name] = expr.GenericArguments[i]
 		}
 	case len(expr.GenericArguments) == 0:
-		// No turbofish — see the comment above.
+		// No turbofish: solve each parameter positionally from the supplied elements,
+		// the same unification a data constructor's payload drives. The positional
+		// analogue was previously deferred on the grounds that a tuple's positions
+		// carry no field names to key inference on — but a data constructor is
+		// positional too, so the rule is well defined and already in use: unify each
+		// declared element type against its argument's inferred type. Without it a
+		// generic named tuple was constructible but unusable, since `p.0` read back
+		// the type *variable*.
+		typeSubst = tc.solveDataTypeVars(decl, declType.Elements, expr.Elements)
 	default:
 		tc.addError(expr.GetLocation(), SeverityError,
 			"%s: expected %d generic argument(s), got %d", name, len(decl.GenericParams), len(expr.GenericArguments))
@@ -2080,6 +2126,9 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 		// inferred type.
 		tc.propagateLiteralType(elemExpr, expected)
 		tc.typeTable.Set(elemExpr, expected)
+	}
+	if inst, ok := parameterizedResult(declType, decl, typeSubst); ok {
+		return inst
 	}
 	return declType
 }
@@ -2280,6 +2329,19 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		}
 	}
 
+	// A generic type's construction evaluates to *that instantiation*, not to the
+	// bare declaration: `Box { value: 5 }` is a `Box<i64>`. The substitution was
+	// already solved above to check the fields, and discarding it is what made a
+	// generic type unusable — the raw NamedStructType keeps `value: t`, so a field
+	// read returned the type *variable* and an annotated binding compared the
+	// declaration against the annotation and reported the tell-tale "cannot assign
+	// Box to Box". Recording it as a ParameterizedType instead is what lets
+	// resolveGenericAggregate (already wired into member access) substitute the field
+	// types, and what gives the backend a distinct instantiation to lay out.
+	if inst, ok := parameterizedResult(resultType, decl, typeSubst); ok {
+		resultType = inst
+	}
+
 	if expr.BaseStruct != nil {
 		// Record update syntax: the base struct supplies any fields not listed in
 		// the update, so missing-field errors are suppressed for those.
@@ -2337,6 +2399,39 @@ func (tc *TypeChecker) findInlineRecordConstructor(ctorName string) (*ast.TypeDe
 // a turbofish (`Point2 { x: 1, y: 2 }`): the value for the first field declared
 // as `t` fixes `t`. Fields whose declared type is not a bare parameter, and
 // parameters never matched by a field, are left for the caller to handle.
+// parameterizedResult turns a generic declaration's construction result into the
+// `Name<args…>` instantiation the substitution describes, pairing the declaration's
+// parameters positionally with their solved types.
+//
+// It reports ok=false for a non-generic declaration (nothing to parameterize) and
+// for a *partly* solved one — a parameter no field could pin down, which the field
+// loop above already checks leniently. Fabricating an instantiation from a partial
+// substitution would be worse than keeping the declaration: it would claim a
+// precision the call site did not supply, and the missing argument is exactly what
+// a turbofish is for.
+func parameterizedResult(result types.Type, decl *ast.TypeDeclStmt, subst map[string]types.Type) (types.ParameterizedType, bool) {
+	if len(decl.GenericParams) == 0 {
+		return types.ParameterizedType{}, false
+	}
+	args := make([]types.Type, 0, len(decl.GenericParams))
+	for _, p := range decl.GenericParams {
+		arg, ok := subst[p.Name]
+		if !ok || arg == nil {
+			return types.ParameterizedType{}, false
+		}
+		args = append(args, arg)
+	}
+	return types.ParameterizedType{
+		// The *declaration's* name, not result.GetName(): a TupleType renders its
+		// full shape ("Pair(t, t)"), which would mangle into a nonsense instantiation
+		// name and match no declaration. decl.Name is the bare name every lookup keys
+		// on, and is correct for a struct, a named tuple, and a data type alike.
+		Name:          decl.Name,
+		TypeArguments: args,
+		Allocation:    types.AllocationOf(result),
+	}, true
+}
+
 func (tc *TypeChecker) inferStructGenericArgs(expr *ast.StructInstanceExpr, structType types.NamedStructType, genericParamNames map[string]bool, typeSubst map[string]types.Type) {
 	declaredByName := make(map[string]types.Type, len(structType.Fields))
 	for _, f := range structType.Fields {
@@ -2446,7 +2541,7 @@ func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 	// type arguments substituted so its fields are visible. A field read needs no
 	// trait dispatch, so resolving fully here (also improving the error message)
 	// is safe.
-	objType = tc.resolveGenericStruct(objType)
+	objType = tc.resolveGenericAggregate(objType)
 	fieldName := m.Property.Name
 
 	if f, ok := structFieldByName(objType, fieldName); ok {
@@ -2491,6 +2586,9 @@ func (tc *TypeChecker) inferTupleIndexExprType(t *ast.TupleIndexExpr) types.Type
 	// the name), so resolve through the symbol table first — same reason
 	// inferMemberExprType does before a struct-field lookup.
 	objType = tc.resolveType(objType, t.Object.GetLocation())
+	// A generic named tuple's instantiation carries the type arguments; resolve it so
+	// the indexed element is the argument's type rather than the type variable.
+	objType = tc.resolveGenericAggregate(objType)
 	tup, ok := objType.(types.TupleType)
 	if !ok {
 		// A nil object type already produced its own diagnostic (e.g. undefined

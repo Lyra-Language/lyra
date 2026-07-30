@@ -243,8 +243,49 @@ func OwnsManaged(t types.Type, symTable *symbols.SymbolTable) bool {
 	case types.StaticArrayType:
 		// A `[N]T` owns whatever T owns, once per element.
 		return OwnsManaged(v.ElementType, symTable)
+	case types.ParameterizedType:
+		// One instantiation of a generic type owns what its *substituted* contents
+		// own: `Box<string>` owns a string, `Box<i64>` owns nothing — so the question
+		// cannot be answered from the declaration alone, whose field type is the
+		// variable `t` and owns nothing at all.
+		//
+		// Missing this case was a real double free, not a leak. The two halves of the
+		// model read the type through different paths: this pass (which decides where
+		// a +1 is minted) saw the raw ParameterizedType and recorded no retain for a
+		// copy, while the backend (which decides where one is released) reads types
+		// through recordedType, which normalizes an instantiation to its substituted
+		// struct — so it framed and deep-released *both* bindings. Drop twice, dup
+		// never. That is precisely the drift this predicate exists to prevent, and it
+		// is the generic-function lesson again: a decision made against an
+		// un-substituted generic is wrong at a managed type argument.
+		return parameterizedOwnsManaged(v, symTable)
 	}
 	return false
+}
+
+// parameterizedOwnsManaged answers OwnsManaged for one instantiation by pairing the
+// declaration's parameters positionally with the instantiation's arguments and asking
+// the same question of the substituted declaration.
+//
+// Termination rests on the same invariant that makes the backend's layout resolution
+// finite: a recursive type must break its cycle with a `shared` (or `weak`) field
+// (lyra-E014), and both are managed outright — IsManaged answers them before this
+// recurses — so a cycle is always cut before it repeats.
+func parameterizedOwnsManaged(p types.ParameterizedType, symTable *symbols.SymbolTable) bool {
+	if symTable == nil {
+		return false
+	}
+	decl, ok := symTable.Types[p.Name]
+	if !ok {
+		return false
+	}
+	subst := make(map[string]types.Type, len(decl.GenericParams))
+	for i, gp := range decl.GenericParams {
+		if i < len(p.TypeArguments) {
+			subst[gp.Name] = p.TypeArguments[i]
+		}
+	}
+	return OwnsManaged(substituteTypeVars(decl.Type, subst), symTable)
 }
 
 // resolveNamedType resolves an UnresolvedType to the declaration's actual type,
@@ -698,6 +739,45 @@ func substituteTypeVars(t types.Type, subst map[string]types.Type) types.Type {
 		return tt
 	case types.WeakType:
 		tt.Inner = substituteTypeVars(tt.Inner, subst)
+		return tt
+	case types.ParameterizedType:
+		args := make([]types.Type, len(tt.TypeArguments))
+		for i, a := range tt.TypeArguments {
+			args[i] = substituteTypeVars(a, subst)
+		}
+		tt.TypeArguments = args
+		return tt
+	case types.NamedStructType:
+		// Substituting a *declaration's* contents is how an instantiation's ownership
+		// is decided (parameterizedOwnsManaged). Fields are copied, not written in
+		// place: the declaration is shared by every instantiation, so mutating it
+		// would let the first one analyzed decide the rest.
+		fields := make([]types.StructField, len(tt.Fields))
+		copy(fields, tt.Fields)
+		for i := range fields {
+			fields[i].Type = substituteTypeVars(fields[i].Type, subst)
+		}
+		tt.Fields = fields
+		return tt
+	case types.AnonymousStructType:
+		fields := make([]types.StructField, len(tt.Fields))
+		copy(fields, tt.Fields)
+		for i := range fields {
+			fields[i].Type = substituteTypeVars(fields[i].Type, subst)
+		}
+		tt.Fields = fields
+		return tt
+	case types.DataType:
+		ctors := make([]types.DataTypeConstructor, len(tt.Constructors))
+		copy(ctors, tt.Constructors)
+		for i := range ctors {
+			params := make([]types.Type, len(ctors[i].Params))
+			for j, p := range ctors[i].Params {
+				params[j] = substituteTypeVars(p, subst)
+			}
+			ctors[i].Params = params
+		}
+		tt.Constructors = ctors
 		return tt
 	}
 	return t

@@ -55,6 +55,26 @@ func (i Instantiation) Symbol() string {
 	return strings.Join(parts, "$")
 }
 
+// TypeSymbol is the emitted name for one instantiation of a generic *type*:
+// `Box<i64>` → `Box$i64`, `Pair<i64, string>` → `Pair$i64$string`.
+//
+// Positional, unlike Symbol: a type's parameters are ordered by their declaration,
+// whereas a generic function's substitution is solved by variable name and so has
+// to be sorted into a stable order. Both share mangleTypeName so one convention
+// covers every specialized symbol in the module.
+func TypeSymbol(name string, args []types.Type) string {
+	parts := make([]string, 0, len(args)+1)
+	parts = append(parts, name)
+	for _, a := range args {
+		if a == nil {
+			parts = append(parts, "_")
+			continue
+		}
+		parts = append(parts, mangleTypeName(a.String()))
+	}
+	return strings.Join(parts, "$")
+}
+
 // mangleTypeName reduces a type's rendering to symbol-safe characters.
 func mangleTypeName(s string) string {
 	return strings.Map(func(r rune) rune {

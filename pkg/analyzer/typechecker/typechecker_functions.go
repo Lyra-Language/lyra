@@ -560,7 +560,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// struct; trait dispatch below keeps the original objType, which for a
 	// generic receiver is the ParameterizedType still carrying the type
 	// arguments the unifier needs.
-	if f, ok := structFieldByName(tc.resolveGenericStruct(objType), methodName); ok {
+	if f, ok := structFieldByName(tc.resolveGenericAggregate(objType), methodName); ok {
 		tc.typeTable.Set(member, f.Type)
 		if lambdaType, ok := f.Type.(*types.LambdaType); ok {
 			return tc.inferLambdaCallFromType(methodName, lambdaType, call)

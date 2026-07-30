@@ -24,6 +24,16 @@ func (l *lowerer) lowerTypeDecl(typeDeclStmt *ast.TypeDeclStmt) error {
 	if typeDeclStmt.Name == "?" {
 		return nil
 	}
+	if len(typeDeclStmt.GenericParams) > 0 {
+		// A *generic* declaration has no single layout — `Box<t>` is a different
+		// struct at every binding of `t`, so there is nothing to register under the
+		// bare name. Its instantiations are materialized on demand instead
+		// (lowerParameterizedType, generic_types.go), and an uninstantiated generic
+		// type costs nothing, exactly as an uninstantiated generic function does.
+		// Registering it eagerly is what produced "unknown type: t": the definition
+		// pass tried to lower a field whose declared type is a type variable.
+		return nil
+	}
 	switch t := typeDeclStmt.Type.(type) {
 	case types.TupleType, types.NamedStructType, types.DataType:
 		// Key by the declaration's name (typeDeclStmt.Name), not t.GetName():
@@ -76,6 +86,9 @@ func (l *lowerer) lowerTypeDef(typeDeclStmt *ast.TypeDeclStmt) error {
 	if typeDeclStmt.Name == "?" {
 		return nil
 	}
+	if len(typeDeclStmt.GenericParams) > 0 {
+		return nil // see lowerTypeDecl — instantiations are materialized on demand
+	}
 	switch t := typeDeclStmt.Type.(type) {
 	case types.TupleType:
 		return l.lowerTupleDef(t)
@@ -104,7 +117,16 @@ func (l *lowerer) lowerTypeDef(typeDeclStmt *ast.TypeDeclStmt) error {
 // (A recursive reference must be `shared`, i.e. a pointer per lyra-E014, which is
 // pointer-sized and stops the resolution before it recurses.)
 func (l *lowerer) lowerDataDef(t types.DataType) error {
-	st := l.structTypes[t.Name]
+	return l.lowerDataDefInto(l.structTypes[t.Name], t)
+}
+
+// lowerDataDefInto is lowerDataDef against an explicit target, so a generic
+// instantiation can fill its *own* placeholder (generic_types.go) through the same
+// definition path a plain declaration uses — one layout rule for both.
+func (l *lowerer) lowerDataDefInto(st *lltypes.StructType, t types.DataType) error {
+	if st == nil {
+		return fmt.Errorf("llvm: no registered LLVM type for data type %q", t.Name)
+	}
 	resolved := l.resolveForLayout(t).(types.DataType)
 	union, ok := DataUnionType(resolved)
 	if !ok {
@@ -171,7 +193,13 @@ func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 }
 
 func (l *lowerer) lowerTupleDef(t types.TupleType) error {
-	st := l.structTypes[t.Name]
+	return l.lowerTupleDefInto(l.structTypes[t.Name], t)
+}
+
+func (l *lowerer) lowerTupleDefInto(st *lltypes.StructType, t types.TupleType) error {
+	if st == nil {
+		return fmt.Errorf("llvm: no registered LLVM type for tuple type %q", t.Name)
+	}
 	for _, element := range t.Elements {
 		elementType, err := l.lowerType(element)
 		if err != nil {
@@ -183,7 +211,13 @@ func (l *lowerer) lowerTupleDef(t types.TupleType) error {
 }
 
 func (l *lowerer) lowerStructDef(t types.NamedStructType) error {
-	st := l.structTypes[t.Name]
+	return l.lowerStructDefInto(l.structTypes[t.Name], t)
+}
+
+func (l *lowerer) lowerStructDefInto(st *lltypes.StructType, t types.NamedStructType) error {
+	if st == nil {
+		return fmt.Errorf("llvm: no registered LLVM type for struct type %q", t.Name)
+	}
 	for _, field := range t.Fields {
 		fieldType, err := l.lowerType(field.Type)
 		if err != nil {
@@ -209,7 +243,16 @@ func (l *lowerer) recordedType(expr ast.Expression) (types.Type, bool) {
 	// While a generic specialization is being lowered, a type read out of the shared
 	// body still mentions the function's type variables — substitute them for this
 	// instantiation's bindings (monomorphize.go).
-	return l.stripNewtype(l.applyTypeSubst(t)), true
+	t = l.stripNewtype(l.applyTypeSubst(t))
+	// A generic *type* normalizes to its instantiation's concrete named type, so the
+	// sites reading this switch on an aggregate they recognize (generic_types.go). A
+	// failure to instantiate is deliberately not reported here — recordedType has no
+	// error channel, and the raw ParameterizedType falls through to whichever
+	// lowering site needed it, which errors loudly there with its own context.
+	if inst, err := l.resolveInstantiation(t); err == nil {
+		t = inst
+	}
+	return t, true
 }
 
 // stripNewtype removes newtype wrappers from t, resolving a type written as a
@@ -329,6 +372,14 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 	case types.DataType:
 		// A `data` value resolves to its registered tagged-union struct.
 		return l.lookupNamedType(t.Name)
+	case types.ParameterizedType:
+		// One instantiation of a generic type, materialized on first use.
+		return l.lowerParameterizedType(t)
+	case types.GenericType:
+		// A type variable that survived substitution has no representation. It means
+		// a specialization was lowered without its bindings installed, which would
+		// otherwise fall through to the default arm's opaque "unknown type: t".
+		return nil, fmt.Errorf("llvm: type variable %q has no concrete type here — a generic must be instantiated before it is lowered", t.Name)
 	case types.UnresolvedType:
 		// A named type referenced from another type declaration's field/element
 		// (`struct Line { a: Point }`) stays an UnresolvedType — the typechecker

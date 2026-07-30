@@ -194,6 +194,50 @@ func substituteTypeVars(t types.Type, subst map[string]types.Type) types.Type {
 	case types.WeakType:
 		tt.Inner = substituteTypeVars(tt.Inner, subst)
 		return tt
+	case types.ParameterizedType:
+		// `Box<t>` inside a generic body, and the nested arguments of `Box<Box<i64>>`.
+		// Substituting these is what makes one instantiation's identity concrete —
+		// without it `Box<t>` at two different bindings mangles to the same name and
+		// the two would share a layout.
+		args := make([]types.Type, len(tt.TypeArguments))
+		for i, a := range tt.TypeArguments {
+			args[i] = substituteTypeVars(a, subst)
+		}
+		tt.TypeArguments = args
+		return tt
+	case types.NamedStructType:
+		// Substituting a *declaration's* contents is how an instantiation's layout is
+		// built (generic_types.go): `struct Box<t> { value: t }` at `t = i64` is a
+		// struct whose field is i64. Fields are copied rather than written in place —
+		// the declaration is shared by every instantiation, so mutating it would let
+		// the first one lowered decide the rest.
+		fields := make([]types.StructField, len(tt.Fields))
+		copy(fields, tt.Fields)
+		for i := range fields {
+			fields[i].Type = substituteTypeVars(fields[i].Type, subst)
+		}
+		tt.Fields = fields
+		return tt
+	case types.DataType:
+		ctors := make([]types.DataTypeConstructor, len(tt.Constructors))
+		copy(ctors, tt.Constructors)
+		for i := range ctors {
+			params := make([]types.Type, len(ctors[i].Params))
+			for j, p := range ctors[i].Params {
+				params[j] = substituteTypeVars(p, subst)
+			}
+			ctors[i].Params = params
+		}
+		tt.Constructors = ctors
+		return tt
+	case types.AnonymousStructType:
+		fields := make([]types.StructField, len(tt.Fields))
+		copy(fields, tt.Fields)
+		for i := range fields {
+			fields[i].Type = substituteTypeVars(fields[i].Type, subst)
+		}
+		tt.Fields = fields
+		return tt
 	}
 	return t
 }

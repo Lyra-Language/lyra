@@ -90,7 +90,7 @@ let f = (p: Pair<i64, string>) -> string => {
     Show::show(p)
 }`
 	res := parseCollectAndCheck(t, source, false)
-	assertErrorsAre(t, res, "no implementation of Show::show for Pair")
+	assertErrorsAre(t, res, "no implementation of Show::show for Pair<i64, string>")
 }
 
 // A generic impl only matches when the head names agree: an impl for `Box<t>`
@@ -109,7 +109,7 @@ let f = (c: Crate<i64>) -> string => {
     Show::show(c)
 }`
 	res := parseCollectAndCheck(t, source, false)
-	assertErrorsAre(t, res, "no implementation of Show::show for Crate")
+	assertErrorsAre(t, res, "no implementation of Show::show for Crate<i64>")
 }
 
 // The target may be an array: `impl Show<t> for []t` dispatches for `[]i64`.
