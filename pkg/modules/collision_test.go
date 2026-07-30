@@ -104,3 +104,63 @@ func TestModules_DiagnosticNamesTheDefiningFile(t *testing.T) {
 		t.Errorf("diagnostic should name the defining file; got %q", errs[0].Location.File)
 	}
 }
+
+// A plain `import util.math` binds a *namespace*, so the module's contents are reached
+// as `math.double(…)` — the semantics the grammar's `as` / `.{ }` split already implied.
+func TestModules_NamespaceQualifiedCall(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"app.lyra":       "import util.math\nlet main = () -> u8 => u8(math.double(21))",
+		"util/math.lyra": "module util.math\npub let double = (n: i64) -> i64 => n * 2",
+	})
+	res := analyze(t, root)
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Errorf("expected a namespaced call to type-check; got %v", errs)
+	}
+}
+
+// The membership check is not decoration. Top-level names are program-wide unique
+// today (a cross-module duplicate is rejected), so a bare lookup would happily resolve
+// `math.secret` to *another* module's `secret` — binding a reference the source never
+// made, and silently.
+func TestModules_NamespaceCannotReachAnotherModule(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"app.lyra":         "import util.math\nimport other.thing\nlet main = () -> u8 => u8(math.secret())",
+		"util/math.lyra":   "module util.math\npub let double = (n: i64) -> i64 => n * 2",
+		"other/thing.lyra": "module other.thing\npub let secret = () -> i64 => 9",
+	})
+	res := analyze(t, root)
+	if !errorsContaining(res, `module "util.math" has no member "secret"`) {
+		t.Errorf("expected the namespace to reject a member of another module; got %v", res.Errors())
+	}
+}
+
+// A member the module genuinely lacks is reported against the module, not as a stray
+// field read on an undefined value.
+func TestModules_UnknownNamespaceMember(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"app.lyra":       "import util.math\nlet main = () -> u8 => u8(math.nosuch(1))",
+		"util/math.lyra": "module util.math\npub let double = (n: i64) -> i64 => n * 2",
+	})
+	res := analyze(t, root)
+	if !errorsContaining(res, `has no member "nosuch"`) {
+		t.Errorf("expected an unknown-member error; got %v", res.Errors())
+	}
+}
+
+// A value in scope shadows a namespace of the same name, so `math.double` is an
+// ordinary field read — the namespace must not hijack it.
+func TestModules_LocalValueShadowsNamespace(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"app.lyra": `import util.math
+struct Holder { double: i64 }
+let main = () -> u8 => {
+  let math = Holder { double: 7 }
+  u8(math.double)
+}`,
+		"util/math.lyra": "module util.math\npub let double = (n: i64) -> i64 => n * 2",
+	})
+	res := analyze(t, root)
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Errorf("a local value should shadow the namespace; got %v", errs)
+	}
+}

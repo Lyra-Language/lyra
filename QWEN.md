@@ -207,6 +207,15 @@ Resolves a program's import graph: `Resolve(entryFile, roots) ([]Unit, []diag.Di
 
 **Deliberately out of scope**, none of it changing what a module's source looks like: package management, versioning, and separate/incremental compilation.
 
+### Modules and namespacing
+`import util.math` binds a **namespace** under the path's last segment (or its `as` alias), so the module's contents are reached as `math.double(…)`; `.{ X, Y as Z }` binds the listed names directly. Resolution lives in `typechecker/typechecker_modules.go` (`moduleMemberType`) and the backend's `namespaceCallee`, and both share three rules worth knowing:
+
+- **The namespace check runs before the object is inferred.** A namespace is not a value, so inferring `math` as an expression would report it as an undefined identifier and the real resolution would never be reached.
+- **Which module is asking comes from the node's `Location.File`.** That is what let namespacing land without threading a module context through every pass — the same field that gives diagnostics their file.
+- **Membership is checked, not assumed.** Top-level names are program-wide unique (a cross-module duplicate is rejected by `RegisterType`/`RegisterFunction`/`RegisterTrait`), so a bare lookup would happily resolve `math.secret` to *another* module's `secret` — binding a reference the source never made, silently. The backend repeats the check rather than trusting the front end, per its standing rule that it errors rather than guesses.
+
+A local binding **shadows** a namespace, so `math.double` is an ordinary field read when `math` names a value. Still open: `pub` is collected but not enforced across module boundaries, and the implicit prelude import.
+
 ### `pkg/driver`
 The single reusable entry point to the whole front-end. `driver.Analyze(source []byte) *Result` runs parse → collect → the standalone `checker.Check*` passes → `typechecker.Check` → `checker.CheckPurity` → `ownership.Analyze` → `captures.Analyze` (the last three after typecheck: purity needs the resolved `MethodTable`, ownership and captures the `TypeTable`) and returns a `Result{Program, SymbolTable, ScopeTable, TypeTable, MethodTable, Ownership, Captures, RangeSafety, Diagnostics}`. Every pass's errors are normalized to `[]diagnostic.Diagnostic` (CST parse errors converted from tree-sitter's 0-based positions to 1-based `ast.Location`). `Result.HasErrors()` / `Result.Errors()` filter by severity. This is where a backend (or any tool needing a typed program) starts, instead of re-implementing the pipeline. Both `cmd/lyrac` and `cmd/lyra-lsp` call it, so the pipeline is defined in exactly one place.
 

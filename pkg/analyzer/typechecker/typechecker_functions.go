@@ -555,6 +555,15 @@ func (tc *TypeChecker) inferDirectLambdaCall(lambda *ast.LambdaExpr, call *ast.F
 // error itself when the lookup misses, which would be wrong/duplicated for a
 // name that turns out to resolve via a trait instead.
 func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.FunctionCallExpr) types.Type {
+	// `math.double(21)` — a call through an imported namespace resolves to the
+	// module's function, then goes through the ordinary call path so arguments and
+	// generics are checked exactly as a direct call would be.
+	if t, handled := tc.moduleMemberType(member); handled {
+		if lt, ok := t.(*types.LambdaType); ok {
+			return tc.inferLambdaCallFromType(member.Property.Name, lt, call)
+		}
+		return nil
+	}
 	objType := tc.inferExprType(member.Object)
 	if objType == nil {
 		return nil

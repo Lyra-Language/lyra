@@ -118,7 +118,7 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 		before := len(res.Diagnostics)
 		res.Diagnostics = append(res.Diagnostics, collectParseErrors(u.Root, u.Source)...)
 		stampFile(res.Diagnostics[before:], u.File)
-		c.AddFile(u.Root, u.Source, u.File)
+		c.AddFile(u.Root, u.Source, u.File, u.Path)
 	}
 	program, symTable, scopeTable, collectorErrors := c.Finish()
 	res.Program, res.SymbolTable, res.ScopeTable = program, symTable, scopeTable

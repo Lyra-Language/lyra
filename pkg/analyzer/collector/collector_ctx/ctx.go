@@ -57,7 +57,10 @@ type Ctx struct {
 	// noise; with modules it is what tells two diagnostics at the same line and
 	// column apart. Setting it here — at the one place real source locations are
 	// built — is what gives every later pass's diagnostics the right file for free.
-	File       string
+	File string
+	// Module is the module path File belongs to, recorded alongside each top-level
+	// declaration so a later pass can tell which module owns a name.
+	Module     string
 	errors     *[]error
 	ScopeTable *symbols.ScopeTable
 	Collector

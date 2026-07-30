@@ -9,6 +9,7 @@ The AST nodes serve as the source of truth - the symbol table just indexes them.
 import (
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/declarations"
@@ -57,7 +58,7 @@ func NewCollector(source []byte) *Collector {
 // Collect walks the entire tree and returns the AST, symbol table, scope table, and any errors.
 // It is AddFile + Finish for the single-file case.
 func (c *Collector) Collect(root *sitter.Node) (*ast.Program, *symbols.SymbolTable, *symbols.ScopeTable, []error) {
-	c.AddFile(root, c.source, "")
+	c.AddFile(root, c.source, "", "")
 	return c.Finish()
 }
 
@@ -73,11 +74,65 @@ func (c *Collector) Collect(root *sitter.Node) (*ast.Program, *symbols.SymbolTab
 // source is swapped in alongside the tree because every text and location read goes
 // through it (ctx.NodeText / ctx.NodeLocation); a stale source would slice the wrong
 // bytes for the file being walked.
-func (c *Collector) AddFile(root *sitter.Node, source []byte, file string) {
+func (c *Collector) AddFile(root *sitter.Node, source []byte, file, modulePath string) {
 	c.source = source
 	c.ctx.Source = source
 	c.ctx.File = file
+	c.ctx.Module = modulePath
+	c.table.ModuleOfFile[file] = modulePath
+	before := len(c.ast.Statements)
 	c.walkProgram(root)
+	c.recordModuleBindings(modulePath, c.ast.Statements[before:])
+}
+
+// recordModuleBindings notes which module owns each top-level name this file declared,
+// and the imports it made. Both are recorded per file rather than derived later because
+// this is the only point where "these statements came from that module" is known —
+// afterwards the statements are merged into one program.
+func (c *Collector) recordModuleBindings(modulePath string, stmts []ast.AstNode) {
+	for _, stmt := range stmts {
+		switch s := stmt.(type) {
+		case *ast.ImportStmt:
+			c.table.Imports[modulePath] = append(c.table.Imports[modulePath], importBinding(s))
+		case *ast.TypeDeclStmt:
+			c.table.ModuleOf[s.Name] = modulePath
+		case *ast.TraitDeclStmt:
+			c.table.ModuleOf[s.Name] = modulePath
+		case *ast.VarDeclStmt:
+			c.table.ModuleOf[s.Name] = modulePath
+		}
+	}
+}
+
+// importBinding converts a collected import into the symbol table's form, applying the
+// binding rule: a plain `import a.b` (or `as x`) binds a namespace under the last
+// segment or the alias, while `.{ X, Y as Z }` binds the listed names directly.
+func importBinding(s *ast.ImportStmt) symbols.Import {
+	imp := symbols.Import{Path: joinModulePath(s.Path), Loc: s.GetLocation()}
+	if len(s.Members) > 0 {
+		imp.Members = make(map[string]string, len(s.Members))
+		for _, m := range s.Members {
+			local := m.Name
+			if m.Alias != "" {
+				local = m.Alias
+			}
+			imp.Members[local] = m.Name
+		}
+		return imp
+	}
+	imp.Alias = s.Alias
+	if imp.Alias == "" && len(s.Path) > 0 {
+		imp.Alias = s.Path[len(s.Path)-1].Name
+	}
+	return imp
+}
+
+func joinModulePath(parts []ast.ModuleName) string {
+	names := make([]string, len(parts))
+	for i, p := range parts {
+		names[i] = p.Name
+	}
+	return strings.Join(names, ".")
 }
 
 // Finish runs the whole-program passes and returns the merged result.

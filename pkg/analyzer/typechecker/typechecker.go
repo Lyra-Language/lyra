@@ -2580,6 +2580,12 @@ func (tc *TypeChecker) inferLambdaExprType(lambda *ast.LambdaExpr) types.Type {
 // on struct types. It checks that the object is a struct, the field exists,
 // and returns the field's type.
 func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
+	// `math.double` where `math` is an imported namespace, not a value. Checked first
+	// because inferring the object would report the namespace as an undefined
+	// identifier (see typechecker_modules.go).
+	if t, handled := tc.moduleMemberType(m); handled {
+		return t
+	}
 	objType := tc.inferExprType(m.Object)
 	// A field whose declared type is itself a named struct is stored as an
 	// UnresolvedType (just the name), so member access on it (`line.start.x`)

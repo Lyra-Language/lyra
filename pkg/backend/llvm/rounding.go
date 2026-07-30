@@ -27,6 +27,12 @@ var roundingIntrinsicOps = map[string]string{
 // (`x.floor()`/`.ceil()`/`.round()`) and the integer wrapping/saturating
 // overflow-arithmetic builtins (`x.wrapping_add(y)` etc., wrapping.go).
 func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	// `math.double(21)` is not a method call at all — the "receiver" is an imported
+	// module namespace. Checked first, because everything below assumes the object is
+	// a value and would try to lower a namespace as one.
+	if fn, ok := l.namespaceCallee(member); ok {
+		return l.lowerNamespaceCall(block, call, member, fn)
+	}
 	if m, ok := intOverflowMethods[member.Property.Name]; ok {
 		return l.lowerIntOverflowMethod(block, call, member, m)
 	}
@@ -81,4 +87,44 @@ func (l *lowerer) roundingIntrinsicFunc(op, suffix string, fT *lltypes.FloatType
 	fn := l.module.NewFunc(name, fT, ir.NewParam("", fT))
 	l.roundingIntrinsics[name] = fn
 	return fn
+}
+
+// namespaceCallee resolves `alias.name(…)` to the emitted function, when alias names an
+// imported module rather than a value.
+//
+// The membership check mirrors the typechecker's: names are program-wide unique today
+// (a cross-module duplicate is rejected), so a bare lookup would happily resolve
+// `math.thing` to some *other* module's `thing`. Rejecting here as well means the
+// backend cannot emit a call the front end did not sanction, which is the standing rule
+// that it errors rather than guessing.
+func (l *lowerer) namespaceCallee(member *ast.MemberExpr) (*ir.Func, bool) {
+	id, ok := member.Object.(*ast.IdentifierExpr)
+	if !ok {
+		return nil, false
+	}
+	if _, isLocal := l.locals[id.Name]; isLocal {
+		return nil, false // a value shadows the namespace
+	}
+	st := l.res.SymbolTable
+	imp, ok := st.NamespaceImport(member.GetLocation().File, id.Name)
+	if !ok {
+		return nil, false
+	}
+	name := member.Property.Name
+	if st.DeclaringModule(name) != imp.Path {
+		return nil, false
+	}
+	fn, ok := l.funcs[name]
+	return fn, ok
+}
+
+// lowerNamespaceCall emits the call once the callee is known. Split out so the
+// parameter list comes from the callee's own declaration, which is what the argument
+// coercion in lowerDirectCall reads.
+func (l *lowerer) lowerNamespaceCall(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, fn *ir.Func) (value.Value, *ir.Block, error) {
+	var params []ast.Parameter
+	if lam, ok := l.res.SymbolTable.LookupFunction(member.Property.Name); ok {
+		params = lam.Parameters
+	}
+	return l.lowerDirectCall(block, call, fn, params)
 }

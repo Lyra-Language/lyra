@@ -76,6 +76,19 @@ type SymbolTable struct {
 	Functions map[string]*ast.LambdaExpr
 	Traits    map[string]*ast.TraitDeclStmt
 
+	// ModuleOf records which module declared each top-level name, and ModuleOfFile
+	// which module each source file belongs to. Together they answer the two questions
+	// namespacing needs: "does `math.double` really name something in util.math?" and
+	// "which module is this reference being made from?" — the latter recovered from a
+	// node's Location.File, so no pass has to thread a module context through itself.
+	ModuleOf     map[string]string
+	ModuleOfFile map[string]string
+
+	// Imports maps a module path to the imports its files declare. A plain
+	// `import a.b` binds a *namespace* under the last segment (or its `as` alias);
+	// `.{ X, Y as Z }` binds the listed names directly.
+	Imports map[string][]Import
+
 	// PureFuncs maps the name of each function declared with the `pure`
 	// keyword to its lambda expression. Populated during collection; used
 	// by the purity checker to know which functions are explicitly pure
@@ -86,11 +99,14 @@ type SymbolTable struct {
 
 func NewSymbolTable() *SymbolTable {
 	st := &SymbolTable{
-		GlobalScope: NewScope(nil, ScopeGlobal),
-		Types:       make(map[string]*ast.TypeDeclStmt),
-		Functions:   make(map[string]*ast.LambdaExpr),
-		Traits:      make(map[string]*ast.TraitDeclStmt),
-		PureFuncs:   make(map[string]*ast.LambdaExpr),
+		GlobalScope:  NewScope(nil, ScopeGlobal),
+		Types:        make(map[string]*ast.TypeDeclStmt),
+		Functions:    make(map[string]*ast.LambdaExpr),
+		Traits:       make(map[string]*ast.TraitDeclStmt),
+		PureFuncs:    make(map[string]*ast.LambdaExpr),
+		ModuleOf:     make(map[string]string),
+		ModuleOfFile: make(map[string]string),
+		Imports:      make(map[string][]Import),
 	}
 	st.CurrentScope = st.GlobalScope
 	return st
@@ -251,4 +267,47 @@ func (st *ScopeTable) Set(node ast.AstNode, scope *Scope) {
 func (st *ScopeTable) Get(node ast.AstNode) (*Scope, bool) {
 	s, ok := st.entries[node]
 	return s, ok
+}
+
+// Import is one resolved import as seen from the module that declared it.
+//
+// Namespace and selective imports are the two shapes the grammar allows, and they bind
+// different things: a plain `import util.math` (or `... as m`) makes the module
+// reachable under a name, so uses read `math.double(…)`; `import util.math.{ double }`
+// puts the listed names in scope directly. Alias holds whichever name the reference
+// site will use.
+type Import struct {
+	Path    string            // the module being imported, e.g. "util.math"
+	Alias   string            // namespace name it binds; empty for a selective import
+	Members map[string]string // local name → name in the imported module
+	Loc     ast.Location
+}
+
+// IsNamespace reports whether this import binds a namespace rather than naming members.
+func (i Import) IsNamespace() bool { return i.Alias != "" }
+
+// ImportsFor returns the imports visible in the file at path.
+func (st *SymbolTable) ImportsFor(file string) []Import {
+	if st == nil {
+		return nil
+	}
+	return st.Imports[st.ModuleOfFile[file]]
+}
+
+// NamespaceImport returns the import a namespace name refers to, as seen from file.
+func (st *SymbolTable) NamespaceImport(file, name string) (Import, bool) {
+	for _, imp := range st.ImportsFor(file) {
+		if imp.IsNamespace() && imp.Alias == name {
+			return imp, true
+		}
+	}
+	return Import{}, false
+}
+
+// DeclaringModule reports which module declared a top-level name.
+func (st *SymbolTable) DeclaringModule(name string) string {
+	if st == nil {
+		return ""
+	}
+	return st.ModuleOf[name]
 }
