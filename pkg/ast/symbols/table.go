@@ -216,14 +216,47 @@ func (st *SymbolTable) RegisterFunction(name string, node *ast.LambdaExpr) error
 	if st.takesPreludeName(name, node.GetLocation()) {
 		st.noteShadowed(name, node.GetLocation())
 	}
-	if existing, exists := st.Functions[name]; exists && existing != node {
+	// A *private* function is keyed by module, so two modules may each declare one
+	// without competing. Only exported names share the bare key, where a clash is
+	// genuine: a bare reference to either would be ambiguous.
+	key := st.functionKey(name, node.GetLocation())
+	if existing, exists := st.Functions[key]; exists && existing != node {
 		return fmt.Errorf("function %q is already defined at %s", name, describeLocation(existing.GetLocation()))
 	}
-	st.Functions[name] = node
+	st.Functions[key] = node
 	if node.IsPure {
-		st.PureFuncs[name] = node
+		st.PureFuncs[key] = node
 	}
 	return nil
+}
+
+// FunctionKey is the key a function is stored under: its bare name when exported (or
+// declared in the entry module), and `<module>::<name>` when private.
+//
+// Qualifying only the private ones keeps every existing lookup working — an exported
+// name is still found by the name the source writes — while giving each module's
+// private names a space of their own.
+func (st *SymbolTable) FunctionKey(name string, loc ast.Location) string {
+	return st.functionKey(name, loc)
+}
+
+func (st *SymbolTable) functionKey(name string, loc ast.Location) string {
+	if st == nil {
+		return name
+	}
+	module := st.ModuleOfFile[loc.File]
+	if module == "" {
+		return name
+	}
+	// Exported names live under the bare key so a cross-module reference finds them.
+	if decl, ok := st.ModuleScopes[module]; ok && decl != nil {
+		if sym, found := decl.LookupLocal(name); found {
+			if vd, isVar := sym.(*ast.VarDeclStmt); isVar && !vd.IsPublic {
+				return module + "::" + name
+			}
+		}
+	}
+	return name
 }
 
 // describeLocation renders a location for an "already defined" message, naming the file

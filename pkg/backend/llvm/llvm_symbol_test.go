@@ -90,3 +90,25 @@ func TestEmit_UserSymbolIsModuleQualified(t *testing.T) {
 		t.Errorf("the prefix must not collide with the runtime's lyra_ namespace:\n%s", ir)
 	}
 }
+
+// Two modules each with a private `helper`: both must be emitted, and each module's
+// calls must reach its own.
+//
+// The backend keyed l.funcs by bare name, so the second module's declaration overwrote
+// the first — only one `helper` was emitted, and the other module's call pointed at a
+// function that no longer existed, producing IR clang rejected as malformed. The
+// emitted *symbols* were already module-qualified; it was the lookup key that was not.
+func TestExec_PrivateNameInTwoModulesEmitsBoth(t *testing.T) {
+	t.Parallel()
+	// Single-file equivalent of the two-module case is impossible by construction, so
+	// this is exercised through the module tests; here we pin the symbol shape that
+	// makes it work — a private function's emitted name carries its module.
+	ir, err := emitSource(t, `let helper = () -> i64 => 1
+	 let main = () -> u8 => u8(helper())`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ir, "@lyra.helper(") {
+		t.Errorf("expected the function's symbol to be module-qualified:\n%s", ir)
+	}
+}

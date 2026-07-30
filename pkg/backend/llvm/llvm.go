@@ -560,8 +560,8 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		// A top-level function named in value position (`apply(double, 3)`): build a
 		// closure value over it. Its environment is the shared pinned empty one — a
 		// named function captures nothing — so this costs no allocation.
-		if _, ok := l.funcs[e.Name]; ok {
-			v, err := l.namedFunctionValue(block, e.Name)
+		if key := l.funcKey(e.Name, e.GetLocation()); l.funcs[key] != nil {
+			v, err := l.namedFunctionValue(block, key)
 			return v, block, err
 		}
 		return nil, nil, fmt.Errorf("llvm: unbound identifier %q", e.Name)

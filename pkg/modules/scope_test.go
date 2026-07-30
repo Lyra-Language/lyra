@@ -90,3 +90,53 @@ func TestModuleScopes_SameNameInTwoModules(t *testing.T) {
 		t.Error(`module "b" must not see module "a"'s helper`)
 	}
 }
+
+// The capability the whole module system was building toward: two modules may each
+// declare a *private* helper of the same name, and each calls its own.
+//
+// This is what "private" has to mean to be worth anything. Until resolution went
+// per-module the second declaration was rejected as a duplicate of a name it had no
+// business seeing — and the backend, keying emitted functions by bare name, kept only
+// the last one and left the other module's calls pointing at a function that no longer
+// existed.
+func TestModuleScopes_SamePrivateNameInTwoModules(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"one.lyra": "module one\nlet helper = () -> i64 => 1\npub let fromOne = () -> i64 => helper()",
+		"two.lyra": "module two\nlet helper = () -> i64 => 2\npub let fromTwo = () -> i64 => helper()",
+		"app.lyra": "import one\nimport two\nlet main = () -> u8 => u8(fromOne() + fromTwo() * 10)",
+	})
+	res := analyze(t, root)
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Fatalf("two modules should each be allowed their own private helper; got %v", errs)
+	}
+}
+
+// Privacy is still enforced — the point is that each module gets its own name, not that
+// the name became public.
+func TestModuleScopes_PrivateStillUnreachable(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"one.lyra": "module one\nlet helper = () -> i64 => 1\npub let fromOne = () -> i64 => helper()",
+		"app.lyra": "import one\nlet main = () -> u8 => u8(helper())",
+	})
+	res := analyze(t, root)
+	if !errorsContaining(res, `helper is private to module "one"`) {
+		t.Errorf("reaching into a module's private function should still be rejected; got %v", res.Errors())
+	}
+}
+
+// A module calling its own private function must not be told it is private. The check
+// used to ask whether *some* declaration of that name was private — via a name-keyed
+// module map that is last-writer-wins — rather than whether the declaration the
+// reference actually resolved to was visible, so one module's call to its own function
+// reported the other module's privacy.
+func TestModuleScopes_OwnPrivateCallIsNotReportedPrivate(t *testing.T) {
+	root := buildTree(t, map[string]string{
+		"one.lyra": "module one\npub let helper = () -> i64 => 1\npub let fromOne = () -> i64 => helper()",
+		"two.lyra": "module two\nlet helper = () -> i64 => 2\npub let fromTwo = () -> i64 => 5",
+		"app.lyra": "import one\nimport two\nlet main = () -> u8 => u8(fromOne() + fromTwo())",
+	})
+	res := analyze(t, root)
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Errorf("a module calling its own function should be clean; got %v", errs)
+	}
+}

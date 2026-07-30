@@ -481,13 +481,16 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		tc.addError(call.GetLocation(), SeverityError, "undefined function %q", ident.Name)
 		return nil
 	}
-	// A *bare* call can still cross a module boundary, because top-level names share
-	// one namespace: `helper()` reaches another module's `helper` without naming it.
-	// Enforcing `pub` here is what makes a private function actually private, rather
-	// than merely unreachable through a namespace.
-	if !tc.checkVisible(tc.visibilityOf(ident.Name), call.GetLocation()) {
-		return nil
-	}
+	// No visibility check on a *successful* lookup: scoping now enforces it
+	// structurally. A private declaration lives only in its own module's scope, so a
+	// name that resolves is either this module's own or one the global scope holds —
+	// and the global scope holds only exports.
+	//
+	// Checking anyway was actively wrong, because it asked whether *some* declaration
+	// of that name is private (via a name-keyed module map that is last-writer-wins)
+	// rather than whether *the declaration this reference resolved to* is visible. Two
+	// modules each declaring `helper` made one module's call to its own function report
+	// the other module's privacy.
 	if lambda, ok := sym.(*ast.LambdaExpr); ok {
 		return tc.inferLambdaCall(ident.Name, lambda, call)
 	}

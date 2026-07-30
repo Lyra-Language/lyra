@@ -468,6 +468,8 @@ func (l *lowerer) emptyEnv() value.Value {
 // signature — both for the IR a reader sees and because every existing call site
 // and test pins that shape. The cost is one forwarding call, only for functions
 // actually used as values, and only under -O0 (the inliner removes it).
+// name is the *key* into l.funcs (module-qualified for a private function), not
+// necessarily the source name.
 func (l *lowerer) closureThunk(name string) (*ir.Func, error) {
 	if fn, ok := l.closureThunks[name]; ok {
 		return fn, nil

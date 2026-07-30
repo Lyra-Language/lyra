@@ -230,8 +230,9 @@ func (l *lowerer) declareFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) err
 	if err != nil {
 		return err
 	}
-	l.funcs[decl.Name] = declared
-	l.funcParams[decl.Name] = fn.Parameters
+	key := l.funcKey(decl.Name, decl.GetLocation())
+	l.funcs[key] = declared
+	l.funcParams[key] = fn.Parameters
 	return nil
 }
 
@@ -268,7 +269,7 @@ func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, 
 // fresh alloca (so the body reads it like any local), lower the body, and emit
 // the implicit tail return (unless the body already ended in an explicit one).
 func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) error {
-	return l.defineFunctionInto(l.funcs[decl.Name], fn, decl.Name)
+	return l.defineFunctionInto(l.funcs[l.funcKey(decl.Name, decl.GetLocation())], fn, decl.Name)
 }
 
 // defineFunctionInto is defineFunction's body, parameterized by the ir.Func to fill
@@ -403,7 +404,7 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	if fn, params, ok := l.specializedFuncFor(e); ok {
 		return l.lowerDirectCall(block, e, fn, params)
 	}
-	fn, ok := l.funcs[ident.Name]
+	fn, ok := l.funcs[l.funcKey(ident.Name, e.GetLocation())]
 	if !ok {
 		// A compiler-provided free function (print/println) — checked only after
 		// user functions, so a user binding of the same name shadows the builtin,
@@ -569,4 +570,23 @@ func (l *lowerer) userSymbol(decl *ast.VarDeclStmt) string {
 		return "lyra." + decl.Name
 	}
 	return "lyra." + module + "." + decl.Name
+}
+
+// funcKey is the key a function is stored and found under in l.funcs.
+//
+// A *private* function is keyed by its module, so two modules may each declare a
+// `helper` without one overwriting the other — which is exactly what happened before:
+// only the last module's was emitted, and the other module's calls pointed at a
+// function that no longer existed, producing malformed IR. Exported functions keep the
+// bare name, so a cross-module call finds them.
+//
+// The key is asked for from the *referencing* location, so a call inside a module finds
+// that module's private function while a call from elsewhere finds the exported one.
+// The symbol table decides, so the backend and the front end cannot disagree about
+// which declaration a name means.
+func (l *lowerer) funcKey(name string, loc ast.Location) string {
+	if l.res == nil || l.res.SymbolTable == nil {
+		return name
+	}
+	return l.res.SymbolTable.FunctionKey(name, loc)
 }
