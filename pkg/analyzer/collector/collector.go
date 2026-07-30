@@ -145,7 +145,7 @@ func (c *Collector) reclassifyPattern(pat ast.Pattern) ast.Pattern {
 	switch p := pat.(type) {
 	case *ast.DataPattern:
 		p.Pattern = c.reclassifyPattern(p.Pattern)
-		if decl, ok := c.table.Types[p.Name]; ok {
+		if decl, ok := c.table.LookupType(p.Name); ok {
 			if _, isStruct := decl.Type.(types.NamedStructType); isStruct {
 				if sp, ok := p.Pattern.(*ast.StructPattern); ok {
 					sp.Name = p.Name
@@ -189,7 +189,16 @@ func (c *Collector) registerTopLevelFunctions() {
 			continue
 		}
 		if lam, ok := vd.Value.(*ast.LambdaExpr); ok {
-			c.table.RegisterFunction(vd.Name, lam)
+			// The error is surfaced rather than dropped: with modules it is how two
+			// modules each defining `helper` are caught, instead of the program
+			// building against whichever was registered last.
+			if err := c.table.RegisterFunction(vd.Name, lam); err != nil {
+				c.errors = append(c.errors, diag.Diagnostic{
+					Location: vd.GetLocation(),
+					Severity: diag.SeverityError,
+					Message:  err.Error(),
+				})
+			}
 		}
 	}
 }

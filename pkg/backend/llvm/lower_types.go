@@ -154,7 +154,7 @@ func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 		if v.Allocation == types.Shared {
 			return t // a pointer; don't chase the referent (it may be recursive)
 		}
-		decl, ok := l.res.SymbolTable.Types[v.Name]
+		decl, ok := l.res.SymbolTable.LookupType(v.Name)
 		if !ok {
 			return t // unknown name; SizeAndAlign will fail loudly downstream
 		}
@@ -275,7 +275,7 @@ func (l *lowerer) stripNewtype(t types.Type) types.Type {
 		if !ok || l.res.SymbolTable == nil {
 			return t
 		}
-		decl, ok := l.res.SymbolTable.Types[u.Name]
+		decl, ok := l.res.SymbolTable.LookupType(u.Name)
 		if !ok {
 			return t
 		}
@@ -428,7 +428,7 @@ func (l *lowerer) resolveDataType(t types.Type) (types.DataType, bool) {
 	case types.DataType:
 		return v, true
 	case types.UnresolvedType:
-		if decl, ok := l.res.SymbolTable.Types[v.Name]; ok {
+		if decl, ok := l.res.SymbolTable.LookupType(v.Name); ok {
 			if dt, ok := decl.Type.(types.DataType); ok {
 				return dt, true
 			}
@@ -444,7 +444,7 @@ func (l *lowerer) resolveStructType(t types.Type) (types.NamedStructType, bool) 
 	case types.NamedStructType:
 		return v, true
 	case types.UnresolvedType:
-		if decl, ok := l.res.SymbolTable.Types[v.Name]; ok {
+		if decl, ok := l.res.SymbolTable.LookupType(v.Name); ok {
 			if st, ok := decl.Type.(types.NamedStructType); ok {
 				return st, true
 			}
@@ -460,7 +460,7 @@ func (l *lowerer) resolveTupleType(t types.Type) (types.TupleType, bool) {
 	case types.TupleType:
 		return v, true
 	case types.UnresolvedType:
-		if decl, ok := l.res.SymbolTable.Types[v.Name]; ok {
+		if decl, ok := l.res.SymbolTable.LookupType(v.Name); ok {
 			if tt, ok := decl.Type.(types.TupleType); ok {
 				return tt, true
 			}

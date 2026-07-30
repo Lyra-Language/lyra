@@ -53,7 +53,7 @@ func (tc *TypeChecker) resolveTraitMethod(receiverType types.Type, methodName st
 		if !ok {
 			continue
 		}
-		trait, ok := tc.symTable.Traits[impl.TraitName]
+		trait, ok := tc.symTable.LookupTrait(impl.TraitName)
 		if !ok {
 			continue
 		}
@@ -264,7 +264,7 @@ func (tc *TypeChecker) typeImplementsTrait(t types.Type, traitName string) bool 
 // already verified the bound holds), so nothing is written to the MethodTable.
 func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodName string, call *ast.FunctionCallExpr) (types.Type, bool) {
 	for _, traitName := range tc.genericBounds[recv.Name] {
-		trait, ok := tc.symTable.Traits[traitName]
+		trait, ok := tc.symTable.LookupTrait(traitName)
 		if !ok {
 			continue
 		}

@@ -56,7 +56,7 @@ func (l *lowerer) resolveInstantiation(t types.Type) (types.Type, error) {
 	if _, err := l.lowerParameterizedType(p); err != nil {
 		return t, err
 	}
-	decl, ok := l.res.SymbolTable.Types[p.Name]
+	decl, ok := l.res.SymbolTable.LookupType(p.Name)
 	if !ok {
 		return t, fmt.Errorf("llvm: undefined generic type %q", p.Name)
 	}
@@ -95,7 +95,7 @@ func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Typ
 	if l.res.SymbolTable == nil {
 		return nil, fmt.Errorf("llvm: cannot instantiate %s without a symbol table", p)
 	}
-	decl, ok := l.res.SymbolTable.Types[p.Name]
+	decl, ok := l.res.SymbolTable.LookupType(p.Name)
 	if !ok {
 		return nil, fmt.Errorf("llvm: undefined generic type %q", p.Name)
 	}

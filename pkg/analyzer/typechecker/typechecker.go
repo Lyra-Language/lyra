@@ -664,7 +664,7 @@ func (tc *TypeChecker) resolveGenericAggregate(t types.Type) types.Type {
 	if !ok {
 		return t
 	}
-	decl, ok := tc.symTable.Types[p.Name]
+	decl, ok := tc.symTable.LookupType(p.Name)
 	if !ok {
 		return t
 	}
@@ -1163,7 +1163,7 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 		if cached, ok := tc.resolvedTypes[tt.Name]; ok {
 			return types.WithAllocation(cached, tt.Allocation)
 		}
-		decl, ok := tc.symTable.Types[tt.Name]
+		decl, ok := tc.symTable.LookupType(tt.Name)
 		if !ok {
 			tc.addError(loc, SeverityError, "unknown type %q", t)
 			tc.resolvedTypes[tt.Name] = t // cache unresolved itself so the error fires only once
@@ -1219,7 +1219,7 @@ func (tc *TypeChecker) resolveTypeIfKnown(t types.Type) types.Type {
 		if cached, ok := tc.resolvedTypes[tt.Name]; ok {
 			return types.WithAllocation(cached, tt.Allocation)
 		}
-		if decl, ok := tc.symTable.Types[tt.Name]; ok {
+		if decl, ok := tc.symTable.LookupType(tt.Name); ok {
 			return types.WithAllocation(decl.Type, tt.Allocation)
 		}
 		return t
@@ -2032,7 +2032,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 			// function's variables from its call arguments — and the same unifier,
 			// so "what does this type variable match" keeps one definition.
 			// `Some(5)` binds t = i64 and the value is a `Maybe<i64>`.
-			decl := tc.symTable.Types[dt.Name]
+			decl, _ := tc.symTable.LookupType(dt.Name)
 			subst := tc.solveDataTypeVars(decl, declaredFields, expr.Elements)
 			for i, elem := range expr.Elements {
 				// A data constructor resolves by name regardless of whether its
@@ -2095,7 +2095,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 // TupleType would be unsound: two unrelated literals sharing a name could
 // compare equal despite different shapes.
 func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, name string) types.Type {
-	decl, ok := tc.symTable.Types[name]
+	decl, ok := tc.symTable.LookupType(name)
 	if !ok {
 		tc.addError(expr.GetLocation(), SeverityError, "undefined tuple type %q", name)
 		return nil
@@ -2278,7 +2278,7 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 	// struct, or the owning data type for an inline-record constructor.
 	var resultType types.Type
 
-	if d, ok := tc.symTable.Types[expr.Name]; ok {
+	if d, ok := tc.symTable.LookupType(expr.Name); ok {
 		st, ok := d.Type.(types.NamedStructType)
 		if !ok {
 			tc.addError(expr.GetLocation(), SeverityError, "%s: not a struct type", expr.Name)

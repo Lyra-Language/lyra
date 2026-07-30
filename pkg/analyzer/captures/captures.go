@@ -288,7 +288,11 @@ func globalNames(program *ast.Program, symTable *symbols.SymbolTable) map[string
 	if symTable != nil {
 		for name := range symTable.Types {
 			out[name] = true
-			if dt, ok := symTable.Types[name].Type.(types.DataType); ok {
+			decl, ok := symTable.LookupType(name)
+			if !ok || decl == nil {
+				continue
+			}
+			if dt, ok := decl.Type.(types.DataType); ok {
 				for _, ctor := range dt.Constructors {
 					out[ctor.Name] = true
 				}

@@ -106,7 +106,7 @@ func (c *tryChecker) canonicalKindOfType(t types.Type) string {
 // lives in the collector (resolveCanonicalTypes); this is the read side.
 func canonicalKindOfName(symTable *symbols.SymbolTable, name string) string {
 	if symTable != nil {
-		if decl, ok := symTable.Types[name]; ok {
+		if decl, ok := symTable.LookupType(name); ok {
 			return decl.CanonicalKind
 		}
 	}

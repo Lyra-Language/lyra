@@ -275,7 +275,7 @@ func parameterizedOwnsManaged(p types.ParameterizedType, symTable *symbols.Symbo
 	if symTable == nil {
 		return false
 	}
-	decl, ok := symTable.Types[p.Name]
+	decl, ok := symTable.LookupType(p.Name)
 	if !ok {
 		return false
 	}
@@ -296,7 +296,7 @@ func resolveNamedType(t types.Type, symTable *symbols.SymbolTable) types.Type {
 	if !ok || symTable == nil {
 		return t
 	}
-	decl, ok := symTable.Types[u.Name]
+	decl, ok := symTable.LookupType(u.Name)
 	if !ok {
 		return t
 	}
@@ -580,7 +580,7 @@ func (a *analyzer) sharedDataName(e ast.Expression) (string, bool) {
 		return v.Name, true
 	case types.UnresolvedType:
 		if a.symTable != nil {
-			if decl, ok := a.symTable.Types[v.Name]; ok {
+			if decl, ok := a.symTable.LookupType(v.Name); ok {
 				if dt, ok := decl.Type.(types.DataType); ok {
 					return dt.Name, true
 				}
@@ -1178,7 +1178,8 @@ func (a *analyzer) resolveCallee(e *ast.FunctionCallExpr) *ast.LambdaExpr {
 	if !ok || a.symTable == nil {
 		return nil
 	}
-	return a.symTable.Functions[id.Name]
+	fn, _ := a.symTable.LookupFunction(id.Name)
+	return fn
 }
 
 // calleeIsBorrowingBuiltin reports whether e is a direct call to a

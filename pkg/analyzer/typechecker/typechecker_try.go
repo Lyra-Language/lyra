@@ -93,7 +93,7 @@ func (tc *TypeChecker) resultOrMaybeKind(t types.Type) (kind string, payload, er
 // legacy behavior (a bare Result/Maybe annotation with no `data` declaration
 // anywhere), matching checker.canonicalKindOfName.
 func (tc *TypeChecker) canonicalKind(name string) string {
-	if decl, ok := tc.symTable.Types[name]; ok {
+	if decl, ok := tc.symTable.LookupType(name); ok {
 		return decl.CanonicalKind
 	}
 	if name == "Result" || name == "Maybe" {

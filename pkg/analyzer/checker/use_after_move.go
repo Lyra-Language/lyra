@@ -370,7 +370,8 @@ func (c *useAfterMove) resolveCallee(e *ast.FunctionCallExpr) *ast.LambdaExpr {
 	if !ok || c.symTable == nil {
 		return nil
 	}
-	return c.symTable.Functions[id.Name]
+	fn, _ := c.symTable.LookupFunction(id.Name)
+	return fn
 }
 
 // isManaged reports whether the argument's recorded type is reference-counted —

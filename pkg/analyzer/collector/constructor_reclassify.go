@@ -267,7 +267,7 @@ func (c *Collector) isNullaryConstructor(name string) bool {
 // isConstructorOrNamedTuple reports whether name is a data constructor (any arity)
 // or a declared named tuple — the applied form `name(args)` denotes either.
 func (c *Collector) isConstructorOrNamedTuple(name string) bool {
-	if decl, ok := c.table.Types[name]; ok {
+	if decl, ok := c.table.LookupType(name); ok {
 		if tt, ok := decl.Type.(types.TupleType); ok && tt.Name == name {
 			return true
 		}

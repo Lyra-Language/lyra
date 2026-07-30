@@ -413,7 +413,7 @@ func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.T
 // drives dispatch and the whole parameter list — including Self — lines up
 // directly against call.Arguments.
 func (tc *TypeChecker) inferTraitMethodPathCall(path *ast.TraitMethodPathExpr, call *ast.FunctionCallExpr) types.Type {
-	if _, ok := tc.symTable.Traits[path.TraitName]; !ok {
+	if _, ok := tc.symTable.LookupTrait(path.TraitName); !ok {
 		tc.addError(call.GetLocation(), SeverityError, "unknown trait %q", path.TraitName)
 		return nil
 	}

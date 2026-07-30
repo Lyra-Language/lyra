@@ -80,7 +80,7 @@ func (l *lowerer) resolveNamedType(t types.Type) types.Type {
 	if !ok {
 		return t
 	}
-	decl, ok := l.res.SymbolTable.Types[u.Name]
+	decl, ok := l.res.SymbolTable.LookupType(u.Name)
 	if !ok {
 		return t
 	}

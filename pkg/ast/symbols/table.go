@@ -42,7 +42,7 @@ func (s *Scope) Define(node ast.Named) error {
 	name := node.GetName()
 	if existing, exists := s.Symbols[name]; exists {
 		existingLoc := existing.GetLocation()
-		return fmt.Errorf("symbol %q already defined at %s", name, existingLoc.Pretty())
+		return fmt.Errorf("symbol %q already defined at %s", name, describeLocation(existingLoc))
 	}
 	s.Symbols[name] = node
 	return nil
@@ -96,6 +96,42 @@ func NewSymbolTable() *SymbolTable {
 	return st
 }
 
+// LookupType, LookupTrait and LookupFunction are the **only** ways a pass should
+// resolve a top-level name to its declaration.
+//
+// They exist as a choke point rather than as sugar over the maps. Those maps are keyed
+// by bare name and are read from seven packages; with modules, answering "which
+// declaration does this name mean" depends on *which module is asking*, and a lookup
+// scattered across dozens of call sites cannot be taught that. Routing every read
+// through here means module resolution is a change in one place — the same reason
+// recordedType, stripNewtype and slotIsOwning exist.
+//
+// All three are nil-receiver-safe, so a consumer without a symbol table sees "not
+// found" rather than crashing.
+func (st *SymbolTable) LookupType(name string) (*ast.TypeDeclStmt, bool) {
+	if st == nil {
+		return nil, false
+	}
+	decl, ok := st.Types[name]
+	return decl, ok
+}
+
+func (st *SymbolTable) LookupTrait(name string) (*ast.TraitDeclStmt, bool) {
+	if st == nil {
+		return nil, false
+	}
+	decl, ok := st.Traits[name]
+	return decl, ok
+}
+
+func (st *SymbolTable) LookupFunction(name string) (*ast.LambdaExpr, bool) {
+	if st == nil {
+		return nil, false
+	}
+	fn, ok := st.Functions[name]
+	return fn, ok
+}
+
 func (st *SymbolTable) PushScope(kind ScopeKind) *Scope {
 	st.CurrentScope = NewScope(st.CurrentScope, kind)
 	return st.CurrentScope
@@ -128,12 +164,33 @@ func (st *SymbolTable) RegisterTrait(node *ast.TraitDeclStmt) error {
 
 // RegisterFunction adds a function to the symbol table. If node is declared
 // `pure`, it is also recorded in PureFuncs (a subset of Functions).
+//
+// A duplicate is an error, as it already is for a type or a trait. It used to
+// overwrite silently, which was harmless while a program was a single file — a
+// redeclaration within one file is caught earlier, by the scope's own Define — but with
+// modules it meant two modules could each define `helper` and the program would build,
+// calling whichever happened to be registered last. A silently wrong program, chosen by
+// collection order.
 func (st *SymbolTable) RegisterFunction(name string, node *ast.LambdaExpr) error {
+	if existing, exists := st.Functions[name]; exists && existing != node {
+		return fmt.Errorf("function %q is already defined at %s", name, describeLocation(existing.GetLocation()))
+	}
 	st.Functions[name] = node
 	if node.IsPure {
 		st.PureFuncs[name] = node
 	}
 	return nil
+}
+
+// describeLocation renders a location for an "already defined" message, naming the file
+// when there is one. Without it, two colliding modules both report a bare line:col —
+// and the line:col of the *other* module's declaration is worse than useless, since it
+// reads as a position in the file being reported on.
+func describeLocation(loc ast.Location) string {
+	if loc.File != "" {
+		return fmt.Sprintf("%s:%s", loc.File, loc.Pretty())
+	}
+	return loc.Pretty()
 }
 
 // RegisterVariable adds a variable to the current scope

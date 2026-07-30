@@ -541,14 +541,14 @@ func (tc *TypeChecker) resolveToDataType(t types.Type) (types.DataType, bool) {
 		return dt, true
 	}
 	if u, ok := t.(types.UnresolvedType); ok {
-		if decl, exists := tc.symTable.Types[u.Name]; exists {
+		if decl, exists := tc.symTable.LookupType(u.Name); exists {
 			if dt, ok := decl.Type.(types.DataType); ok {
 				return dt, true
 			}
 		}
 	}
 	if p, ok := t.(types.ParameterizedType); ok {
-		decl, exists := tc.symTable.Types[p.Name]
+		decl, exists := tc.symTable.LookupType(p.Name)
 		if !exists {
 			return types.DataType{}, false
 		}
@@ -1040,7 +1040,7 @@ func (tc *TypeChecker) resolveToNamedStructType(t types.Type) (types.NamedStruct
 		return st, true
 	}
 	if u, ok := t.(types.UnresolvedType); ok {
-		if decl, exists := tc.symTable.Types[u.Name]; exists {
+		if decl, exists := tc.symTable.LookupType(u.Name); exists {
 			if st, ok := decl.Type.(types.NamedStructType); ok {
 				return st, true
 			}

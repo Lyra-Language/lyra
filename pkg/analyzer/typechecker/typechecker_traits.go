@@ -6,7 +6,7 @@ import (
 )
 
 func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
-	trait, ok := tc.symTable.Traits[impl.TraitName]
+	trait, ok := tc.symTable.LookupTrait(impl.TraitName)
 	if !ok {
 		tc.addError(impl.GetLocation(), SeverityError,
 			"impl: unknown trait %q", impl.TraitName)
