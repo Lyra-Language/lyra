@@ -191,8 +191,13 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 		}
 		// The solved parameter type is the argument's context, exactly as a concrete
 		// one is: narrow an untyped literal leaf to it so the specialization's body
-		// and its arguments agree on width.
+		// and its arguments agree on width, and hand a construction the type
+		// arguments it could not solve for itself. The latter is what makes
+		// `unwrap_or(None, 42)` lower — `None` fixes nothing, and the parameter type
+		// is only `Maybe<i64>` once the *other* argument has solved `t`, so the
+		// concrete-callee propagation site never sees an instantiation to push.
 		tc.propagateLiteralType(arg, params[i])
+		tc.propagateInstantiation(arg, params[i])
 	}
 	tc.instantiations.Set(call, typetable.Instantiation{Name: calleeName, Func: lambda, Subst: subst})
 	return ret

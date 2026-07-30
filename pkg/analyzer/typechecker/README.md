@@ -121,6 +121,34 @@ still isn't stamped.
   boundary. Distinctness is unaffected — resolving both sides is what lets `TypesEqual` compare
   them at all, so a `Meters`-returning call is still rejected against a `Feet` annotation.
 
+### `propagateInstantiation(expr, want)`
+
+The generic-type analogue of the two above: pushes a context's `ParameterizedType` down
+onto the construction leaves that produce the value, through the same match/if/block arm
+structure. It exists because a construction only evaluates to an instantiation when it
+solves **every** type parameter itself — `Some(v)` fixes `t`, but `None` fixes nothing
+and `Ok(v)` fixes `t` and not `e`, so both stay the bare declaration (deliberately:
+inventing an instantiation from a partial substitution would claim precision the
+construction did not supply). Before this they lowered only under an annotated `let`, the
+one site that stamped its type onto the value wholesale, so `-> Maybe<i64> => None`
+failed the build with `unknown named type "Maybe"` and the prelude's `Result` was
+unusable in a return position. Called from the annotated `let`, the three return-body
+sites, the concrete call-argument site, and the *generic* call's argument site
+(`instantiate.go`) — the last is what makes `unwrap_or(None, 42)` work, since the
+parameter is only `Maybe<i64>` once another argument has solved `t`.
+
+**It checks rather than assumes.** A partly solved construction's payload was not
+verified against the context at all, so `let r: Result<i64, string> = Ok("x")` passed the
+front end and was caught only by the backend refusing to store a string into an i64
+payload — a type error in the wrong layer, which survived only because the value could
+not lower. Each payload element is re-checked under the context's substitution, and the
+node is left bare on a mismatch so a wrong payload can never lower as that instantiation.
+Three guards decide whether the stamp applies: the node must currently be the bare
+declaration (an already-solved construction is the value's own answer and ordinary
+assignability checks it), it must be the same declaration the context names, and the
+arities must agree. Data constructors only; a generic struct or named tuple with a
+parameter no field pins down is still open.
+
 ### `checkNode(node)`
 
 / `checkVarDecl` / `checkVarReassignment` / `checkExpressionStmt` — statement-level checks.

@@ -306,6 +306,12 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// Validate numeric constants against any range constraints on the declared type.
 	tc.checkRangeConstraints(decl.Name, decl.Value, resolvedDeclType)
 
+	// Push a generic instantiation down onto construction leaves *before* the
+	// wholesale overwrite below. That overwrite reaches only the top-level node, so
+	// it never helped a construction inside a `match`/`if` arm, and it stamps the
+	// annotation without checking the payload against it — which is why
+	// `let r: Result<i64, string> = Ok("x")` used to reach the backend.
+	tc.propagateInstantiation(decl.Value, resolvedDeclType)
 	// Store the annotation type — this is the effective type the expression is used as.
 	// e.g. literal 42 annotated as i32 should be recorded as i32, not the untyped int.
 	tc.typeTable.Set(decl.Value, resolvedDeclType)
@@ -2046,6 +2052,14 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 			// `Some(5)` binds t = i64 and the value is a `Maybe<i64>`.
 			decl, _ := tc.symTable.LookupType(dt.Name)
 			subst := tc.solveDataTypeVars(decl, declaredFields, expr.Elements)
+			// Whether the payload alone pinned down every parameter. When it did
+			// not, the context will (propagateInstantiation), and recording a width
+			// derived from this partial solve would pre-empt it: solving promotes an
+			// untyped literal to its default to unify, so `Ok(42)` would fix the
+			// payload at i64 and then reject the `Result<u8, string>` it is being
+			// returned as. An untyped leaf is therefore left untyped here, exactly as
+			// an unannotated one is everywhere else, for the context to narrow.
+			complete := decl != nil && len(subst) == len(decl.GenericParams)
 			for i, elem := range expr.Elements {
 				// A data constructor resolves by name regardless of whether its
 				// payload type-checks (matching the previous data_constructor_expr
@@ -2060,6 +2074,9 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 					// binds it to. Recording the variable itself would put a type with
 					// no representation into the TypeTable, which the backend reads to
 					// lower the payload.
+					if !complete && tc.currentTypeIsUntyped(elem) {
+						continue // leave the width to the context (see `complete` above)
+					}
 					expected := tc.resolveType(substituteGenerics(declaredFields[i], subst), elem.GetLocation())
 					tc.propagateLiteralType(elem, expected)
 					tc.typeTable.Set(elem, expected)

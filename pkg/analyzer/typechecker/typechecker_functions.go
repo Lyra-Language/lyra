@@ -126,6 +126,7 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 					// builds, so stamp construction leaves (incl. inside match arms)
 					// `shared` — `(xs) -> shared List => match xs { … => Cons(…) }`.
 					tc.propagateAllocation(lambda.Body, types.AllocationOf(declaredReturn))
+					tc.propagateInstantiation(lambda.Body, declaredReturn)
 					if ownedReturn {
 						tc.checkAllocationCompat(bodyType, declaredReturn, lambda.Body.GetLocation(), funcName)
 					}
@@ -207,6 +208,7 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 				} else if declaredReturn != nil && retType != nil {
 					tc.propagateLiteralType(s.Value, declaredReturn)
 					tc.propagateAllocation(s.Value, types.AllocationOf(declaredReturn))
+					tc.propagateInstantiation(s.Value, declaredReturn)
 					if ownedReturn {
 						tc.checkAllocationCompat(retType, declaredReturn, s.GetLocation(), funcName)
 					}
@@ -226,6 +228,7 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 						// value; push its width onto untyped literal leaves.
 						tc.propagateLiteralType(s.Expression, declaredReturn)
 						tc.propagateAllocation(s.Expression, types.AllocationOf(declaredReturn))
+						tc.propagateInstantiation(s.Expression, declaredReturn)
 						if ownedReturn {
 							tc.checkAllocationCompat(exprType, declaredReturn, s.GetLocation(), funcName)
 						}
@@ -300,6 +303,7 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 			// width, not the i64 default. Applies to every assignable arg, not just
 			// `own` ones (width is orthogonal to ownership).
 			tc.propagateLiteralType(arg, resolvedParamType)
+			tc.propagateInstantiation(arg, resolvedParamType)
 			if param.TypeModifier == types.Mut {
 				tc.checkMutArgument(calleeName, i+1, paramName, arg, resolvedParamType)
 			}
