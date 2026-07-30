@@ -80,10 +80,16 @@ func matchesCanonicalShape(decl *ast.TypeDeclStmt, kind string) bool {
 //
 //   - Fallback (no marker for that kind anywhere): a declaration literally named
 //     "Result"/"Maybe" with the canonical shape is stamped. This preserves
-//     pre-marker behavior for programs that just declare `data Result`/`data
-//     Maybe` directly, which is every program today (there is no prelude). Once
-//     a kind is claimed by a marker, the bare name is no longer load-bearing —
-//     a same-named unmarked type is left an ordinary type.
+//     pre-marker behavior for a program that just declares `data Result`/`data
+//     Maybe` directly, with no prelude in the search roots. Once a kind is
+//     claimed by a marker, the bare name is no longer load-bearing — a
+//     same-named unmarked type is left an ordinary type.
+//
+// That last rule has a sharp edge now that `std/prelude.lyra` marks its own
+// types: a user declaration shadows a prelude type *program-wide*, so shadowing
+// `Maybe` yields a non-canonical type and `?` on it reports "operand must be a
+// Result or Maybe, got Maybe". The rule is right; the diagnostic is not. See
+// todo.md, Pit of Success #1.
 //
 // Truly ambient use (a Result/Maybe annotation with no declaration at all) has
 // no declaration to stamp; the recognition sites keep a name+arity fallback for

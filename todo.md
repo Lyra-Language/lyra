@@ -73,6 +73,34 @@ enclosing return.
 
 - **[OPEN]** From-style **declared error conversion**, once a conversion trait exists.
   Today `?` is assignability-only.
+- **[OPEN] `?` does not lower** — `expression lowering not implemented for *ast.TryExpr`.
+  It type-checks (including the enclosing-return check, `lyra-E008`) and then fails the
+  build, so no program can actually use it. Found by exercising the prelude, 07/30.
+- **[OPEN] Shadowing a marked canonical type gives a useless diagnostic.** Now that
+  `std/prelude.lyra` marks its types `@builtin(Maybe)`/`@builtin(Result)`, the marker
+  claims the kind and `resolveCanonicalTypes` leaves a same-named *unmarked* type "an
+  ordinary type" — correct in itself. But a user's `data Maybe` shadows the prelude's
+  **program-wide** (types share one namespace), so the reachable outcome is a program
+  whose `?` reports `` `?` operand must be a Result or Maybe, got Maybe ``. The rule is
+  right and the message is indefensible. Options: have a shadowing declaration inherit
+  the kind it shadows, or say what is actually wrong — "`Maybe` here is your own
+  declaration, not the prelude's canonical one; mark it `@builtin(Maybe)` or rename it".
+  Note the fallback's own comment still reads "which is every program today (there is no
+  prelude)"; that premise is what changed.
+- **[OPEN] A generic constructor lowers only when it solves every type parameter by
+  itself.** `Some(v)` fixes `t` and lowers anywhere; `None` fixes nothing and `Ok(v)`
+  fixes `t` but not `e`, so both lower **only** where an annotation supplies the
+  instantiation — an annotated `let` works, a return or argument position fails the build
+  with `unknown named type "Maybe"`/`"Result"`. That makes the prelude's `Result`
+  unusable (neither constructor determines both parameters) and `Maybe` half-usable:
+  `(n: i64) -> Maybe<i64> => None` does not compile. The front end is behaving as
+  designed — a partly-solved substitution deliberately does not become an instantiation —
+  so the gap is that nothing propagates the *context's* instantiation down to the
+  construction, the way `propagateLiteralType` and `propagateAllocation` already do at
+  exactly those sites (annotated `let`, return body, call argument). A `propagateInstantiation`
+  at the same choke points is the shape of the fix. Turbofish is not a workaround
+  (`None<i64>` parses as a comparison: "expected Maybe<i64>, got boolean"); binding
+  through an annotated `let` and returning that is.
 
 ### 2. Checked arithmetic by default; wraparound explicit
 

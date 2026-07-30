@@ -12,18 +12,37 @@ module std.prelude
 //   - **Exports need `pub`.** A declaration without it is private to this module, and
 //     a reference from elsewhere is lyra-E028.
 //
-//   - **`Maybe` and `Result` are shape-validated** when marked with the `@builtin`
-//     attribute that gives them their compiler-known identity: `Maybe` takes one
-//     generic parameter with `Some` (one payload) and `None` (none); `Result` takes two
-//     with `Ok` (one) and `Err` (one). The names are free — the marker confers the
-//     identity, not the spelling — but the arities are not.
+//   - **`Maybe` and `Result` are shape-validated** by the `@builtin(…)` attribute that
+//     gives them their compiler-known identity: `Maybe` takes one generic parameter with
+//     `Some` (one payload) and `None` (none); `Result` takes two with `Ok` (one) and
+//     `Err` (one). The names are free — the marker confers the identity, not the
+//     spelling — but the arities are not. **The argument is not optional:** a bare
+//     `@builtin` collects as no marker at all, and the type then gets its identity only
+//     from the fallback that reads the literal name `Maybe`/`Result`, which is precisely
+//     the coupling to spelling the marker exists to remove.
 //
 //   - **Write free functions, not methods, for now.** A trait impl type-checks and then
-//     fails to lower ("unsupported method call"), so `unwrapOr(m, 0)` works and
-//     `m.unwrapOr(0)` does not yet.
+//     fails to lower ("unsupported method call"), so `unwrap_or(m, 0)` works and
+//     `m.unwrap_or(0)` does not yet.
 //
 // A name declared here can be shadowed by user code: that warns (lyra-W012) and the
 // user's declaration wins, so adding a name here cannot break a program that never
 // mentioned it. The shadow is confined to the module that declared it — another module
 // still gets the version below — except for a type or trait, whose namespace is
 // program-wide, where the user's declaration replaces this one everywhere.
+//
+// One sharp edge in that last case, tracked in todo.md: because the markers below claim
+// the canonical kinds, a user type of the same name is *not* canonical — so shadowing
+// `Maybe` and then using `?` on it reports "`?` operand must be a Result or Maybe, got
+// Maybe". The rule is right; the diagnostic is not.
+
+@builtin(Maybe)
+pub data Maybe<t> = None | Some(t)
+
+@builtin(Result)
+pub data Result<t, e> = Ok(t) | Err(e)
+
+pub let unwrap_or<t> = (m: Maybe<t>, fallback: t) -> t => match m {
+  Some(v) => v,
+  None => fallback,
+}
