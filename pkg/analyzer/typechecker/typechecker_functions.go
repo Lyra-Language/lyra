@@ -471,6 +471,13 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		if isBuiltinPrintFn(ident.Name) {
 			return tc.inferPrintCall(ident.Name, call)
 		}
+		// A name that exists but belongs privately to another module gets the
+		// privacy diagnostic rather than "undefined": the distinction between "no
+		// such function" and "not yours to call" is the whole point of the rule.
+		if v := tc.visibilityOf(ident.Name); v.found && !v.isPublic {
+			tc.checkVisible(v, call.GetLocation())
+			return nil
+		}
 		tc.addError(call.GetLocation(), SeverityError, "undefined function %q", ident.Name)
 		return nil
 	}

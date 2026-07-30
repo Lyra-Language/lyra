@@ -80,8 +80,16 @@ func (c *Collector) AddFile(root *sitter.Node, source []byte, file, modulePath s
 	c.ctx.File = file
 	c.ctx.Module = modulePath
 	c.table.ModuleOfFile[file] = modulePath
+	// Walk the file inside its own module scope, so *every* scope the walk creates —
+	// a function's parameter scope, a block, a match arm — is parented under it. This
+	// is the keystone of per-module resolution: without it a module scope is a sibling
+	// nothing looks into, and a function body's chain runs straight to the global
+	// scope, so a module could not even see its own private declarations.
+	outer := c.table.CurrentScope
+	c.table.CurrentScope = c.table.ModuleScopeFor(modulePath)
 	before := len(c.ast.Statements)
 	c.walkProgram(root)
+	c.table.CurrentScope = outer
 	c.recordModuleBindings(modulePath, c.ast.Statements[before:])
 }
 
@@ -104,7 +112,32 @@ func (c *Collector) recordModuleBindings(modulePath string, stmts []ast.AstNode)
 		case *ast.VarDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
 			c.defineInModule(moduleScope, s)
+			c.exportToGlobal(modulePath, s, s.IsPublic)
 		}
+	}
+}
+
+// exportToGlobal publishes a `pub` declaration into the global scope, so a reference
+// from another module resolves to it.
+//
+// This is the half that makes privacy mean something: a declaration always lands in its
+// own module's scope, and only an exported one *also* lands globally. A private name is
+// therefore invisible outside its module — and, because it never competes for the
+// global name, two modules may each declare one.
+//
+// The entry module needs nothing: its scope already *is* the global scope.
+func (c *Collector) exportToGlobal(modulePath string, decl ast.Named, isPublic bool) {
+	if modulePath == "" || !isPublic {
+		return
+	}
+	if err := c.table.GlobalScope.Define(decl); err != nil {
+		// Two modules exporting the same name: a bare reference could mean either, so
+		// it is a genuine clash rather than something privacy can resolve.
+		c.errors = append(c.errors, diag.Diagnostic{
+			Location: decl.GetLocation(),
+			Severity: diag.SeverityError,
+			Message:  err.Error(),
+		})
 	}
 }
 

@@ -87,12 +87,12 @@ func (tc *TypeChecker) Check(program *ast.Program) []TypeError {
 	// backend inlines. Each const is skipped in the main pass so it's checked once.
 	for _, stmt := range program.Statements {
 		if isTopLevelConst(stmt) {
-			tc.checkNode(stmt)
+			tc.checkInModule(stmt)
 		}
 	}
 	for _, stmt := range program.Statements {
 		if !isTopLevelConst(stmt) {
-			tc.checkNode(stmt)
+			tc.checkInModule(stmt)
 		}
 	}
 	return tc.errors
@@ -2730,4 +2730,35 @@ func (tc *TypeChecker) rootBindingIsMutable(root *ast.IdentifierExpr) bool {
 		}
 	}
 	return true // unknown binding — another diagnostic already covers it
+}
+
+// checkInModule checks a top-level statement with the scope chain its own module sees:
+// the module's scope, whose parent is the global one.
+//
+// This is what lets a name mean different things in different modules. A module's
+// private declarations live only in its own scope, so a lookup from inside finds them
+// while one from elsewhere falls through to the global scope, which holds only what
+// modules export.
+//
+// The module comes from the statement's own file (ast.Location.File), so nothing needs
+// threading through — the same property that lets a diagnostic name its file.
+func (tc *TypeChecker) checkInModule(stmt ast.AstNode) {
+	scope := tc.moduleScopeOf(stmt)
+	if scope == nil {
+		tc.checkNode(stmt)
+		return
+	}
+	old := tc.scope
+	tc.scope = scope
+	tc.checkNode(stmt)
+	tc.scope = old
+}
+
+// moduleScopeOf returns the scope of the module a node belongs to, or nil when there is
+// no symbol table to ask.
+func (tc *TypeChecker) moduleScopeOf(node ast.AstNode) *symbols.Scope {
+	if tc.symTable == nil {
+		return nil
+	}
+	return tc.symTable.ModuleScopeFor(tc.symTable.ModuleOfFile[node.GetLocation().File])
 }

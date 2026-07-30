@@ -348,6 +348,16 @@ func (st *SymbolTable) BindingOf(name string) (*ast.VarDeclStmt, bool) {
 	if st == nil {
 		return nil, false
 	}
+	// The declaring module's own scope first: a private binding lives only there, and
+	// answering "is this exported" from the global scope alone would report it as not
+	// found — which reads as "no such name" rather than "not yours".
+	if scope, ok := st.ModuleScopes[st.ModuleOf[name]]; ok && scope != nil {
+		if sym, found := scope.LookupLocal(name); found {
+			if decl, isVar := sym.(*ast.VarDeclStmt); isVar {
+				return decl, true
+			}
+		}
+	}
 	sym, ok := st.GlobalScope.LookupLocal(name)
 	if !ok {
 		return nil, false
@@ -443,6 +453,15 @@ func (st *SymbolTable) declaredInPrelude(loc ast.Location) bool {
 func (st *SymbolTable) ModuleScopeFor(module string) *Scope {
 	if st == nil {
 		return nil
+	}
+	// The entry file declares no module, and its scope *is* the global one. A program
+	// root has nothing to be private from — and making it a child instead would push
+	// every single-file program's declarations one level down, out of sight of
+	// everything that reasonably starts from the global scope (the LSP's completion,
+	// go-to-definition and highlight walks all do). Named modules are what need their
+	// own scope; the root does not.
+	if module == "" {
+		return st.GlobalScope
 	}
 	if scope, ok := st.ModuleScopes[module]; ok {
 		return scope

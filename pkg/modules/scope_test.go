@@ -31,10 +31,12 @@ func TestModuleScopes_PopulatedPerModule(t *testing.T) {
 	if !ok {
 		t.Fatal(`no scope for "util.math"`)
 	}
-	// The entry file declares no module, so its scope is the empty-path one.
-	appScope, ok := st.ModuleScopes[""]
-	if !ok {
-		t.Fatal("no scope for the entry file's module")
+	// The entry file declares no module, and its scope *is* the global one: a program
+	// root has nothing to be private from, and giving it a child scope would push every
+	// single-file program's declarations out of sight of anything starting from global.
+	appScope := st.ModuleScopeFor("")
+	if appScope != st.GlobalScope {
+		t.Fatal("the entry module's scope should be the global scope")
 	}
 
 	for _, c := range []struct {
@@ -47,7 +49,8 @@ func TestModuleScopes_PopulatedPerModule(t *testing.T) {
 		{mathScope, "mathOnly", true, "private, but still its module's own"},
 		{mathScope, "appOnly", false, "belongs to the entry module"},
 		{appScope, "appOnly", true, "declared in the entry file"},
-		{appScope, "double", false, "belongs to util.math"},
+		{appScope, "double", true, "util.math exports it, so it is globally visible"},
+		{appScope, "mathOnly", false, "private to util.math — the point of the split"},
 	} {
 		if _, found := c.scope.LookupLocal(c.name); found != c.want {
 			t.Errorf("%s in scope: got %v, want %v (%s)", c.name, found, c.want, c.why)
@@ -55,8 +58,8 @@ func TestModuleScopes_PopulatedPerModule(t *testing.T) {
 	}
 
 	// Siblings under the global scope, not nested: modules do not contain one another.
-	if mathScope.Parent != st.GlobalScope || appScope.Parent != st.GlobalScope {
-		t.Error("module scopes should be children of the global scope")
+	if mathScope.Parent != st.GlobalScope {
+		t.Error("a named module's scope should be a child of the global scope")
 	}
 	if mathScope.Kind != symbols.ScopeModule {
 		t.Errorf("expected ScopeModule, got %v", mathScope.Kind)
