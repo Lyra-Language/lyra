@@ -150,25 +150,124 @@ func TestEmit_UnusedGenericEmitsNothing(t *testing.T) {
 	}
 }
 
-// A **managed** type argument is refused rather than miscompiled.
+// A **managed** type argument works, because the ownership pass runs once *per
+// instantiation* rather than once on the generic body.
 //
-// This is the substitution approach's real limit. The ownership pass analyzes the
-// generic body once, where a type variable is not managed, so it records no retain,
-// release, or drop anywhere in it — and at `t = string` those decisions are wrong.
-// Measured before the refusal went in: an ASan abort, with 2 allocations against 3
-// releases. Running the ownership pass per instantiation is the fix and the next
-// slice; until then the build fails loudly.
-func TestEmit_GenericAtManagedTypeRefused(t *testing.T) {
+// This is the case that miscompiled before: analyzed generically, a type variable
+// is not reference-counted, so the pass recorded no retain on a returned value and
+// no release for the caller's temporaries — correct at `t = i64`, a double free at
+// `t = string` (measured: an ASan abort, 2 allocations against 3 releases). Each
+// specialization now consults the table computed under its own bindings.
+func TestExec_GenericAtManagedType(t *testing.T) {
 	t.Parallel()
-	_, err := emitSource(t, `let pick = (a: t, b: t, useFirst: bool) -> t => if useFirst { a } else { b }
+	clang := lookClang(t)
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			// The shape that aborted: a generic returning one of two managed arguments,
+			// so the result needs a retain and both temporaries need releases.
+			"a generic returning one of two managed arguments",
+			`let pick = (a: t, b: t, useFirst: bool) -> t => if useFirst { a } else { b }
+			 let main = () -> u8 => {
+			   let s = pick("a" ++ "b", "c" ++ "d", true)
+			   if s == "ab" { 7 } else { 1 }
+			 }`,
+			7,
+		},
+		{
+			"identity at a string",
+			`let identity = (x: t) -> t => x
+			 let main = () -> u8 => {
+			   let s = identity("a" ++ "b")
+			   if s == "ab" { 7 } else { 1 }
+			 }`,
+			7,
+		},
+		{
+			// A managed *container* type argument: the element drops are the box's, and
+			// the specialization must not double them.
+			"identity at a dynamic array of strings",
+			`let identity = (x: t) -> t => x
+			 let main = () -> u8 => {
+			   let xs = identity(["a" ++ "1", "b" ++ "2"])
+			   let s = xs[1]
+			   if s == "b2" { 7 } else { 1 }
+			 }`,
+			7,
+		},
+		{
+			// One generic function instantiated at a managed type *and* a scalar in the
+			// same program: the two specializations get opposite ownership decisions
+			// from the same body, which is exactly what one shared table could not
+			// express.
+			"managed and scalar instantiations side by side",
+			`let identity = (x: t) -> t => x
+			 let main = () -> u8 => {
+			   let a = identity("x" ++ "y")
+			   let b = identity(7)
+			   if a == "xy" { u8(b) } else { 0 }
+			 }`,
+			7,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+			if got := buildAndRunASan(t, clang, c.src); got != c.want {
+				t.Errorf("%s: ASan run exited %d; want %d", c.name, got, c.want)
+			}
+		})
+	}
+}
+
+// The scalar instantiation must stay free of refcount traffic: its table was
+// computed at `t = i64`, where nothing is managed, so a retain appearing there
+// would mean the managed specialization's decisions had leaked across.
+func TestEmit_GenericScalarSpecializationHasNoRefcounting(t *testing.T) {
+	t.Parallel()
+	got, err := emitSource(t, `let identity = (x: t) -> t => x
 	 let main = () -> u8 => {
-	   let s = pick("a" ++ "b", "c" ++ "d", true)
-	   if s == "ab" { 7 } else { 1 }
+	   let a = identity("x" ++ "y")
+	   let b = identity(7)
+	   if a == "xy" { u8(b) } else { 0 }
 	 }`)
-	if err == nil {
-		t.Fatal("expected a generic instantiated at a managed type to be refused")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !strings.Contains(err.Error(), "reference-counted type") {
-		t.Errorf("expected the error to name the reason; got: %v", err)
+	body := funcBody(got, "@identity$i64")
+	if body == "" {
+		t.Fatalf("expected an i64 specialization:\n%s", got)
 	}
+	if strings.Contains(body, "lyra_rc_") {
+		t.Errorf("the i64 specialization should have no refcount traffic:\n%s", body)
+	}
+}
+
+// funcBody returns the text of one function definition, so an assertion can be
+// about a single specialization rather than the whole module.
+func funcBody(ir, name string) string {
+	start := strings.Index(ir, "define ")
+	for start >= 0 {
+		rest := ir[start:]
+		end := strings.Index(rest, "\n}")
+		if end < 0 {
+			return ""
+		}
+		body := rest[:end]
+		if strings.Contains(strings.SplitN(body, "(", 2)[0], name) {
+			return body
+		}
+		next := strings.Index(ir[start+1:], "\ndefine ")
+		if next < 0 {
+			return ""
+		}
+		start += next + 1
+	}
+	return ""
 }

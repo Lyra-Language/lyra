@@ -519,7 +519,7 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 	// other arm frees the token. Retiring the scrutinee's slot suppresses its ordinary
 	// last-use drop / frame release, since the token now owns the box's disposal.
 	var reuseToken value.Value
-	if reuseName, ok := l.res.Ownership.ReuseScrutinee(e); ok {
+	if reuseName, ok := l.ownership().ReuseScrutinee(e); ok {
 		l.ensureRCRuntime()
 		reuseToken = block.NewCall(l.rcDropReuse, block.NewBitCast(whole, lltypes.NewPointer(lltypes.I8)))
 		if slot, found := l.locals[reuseName]; found {

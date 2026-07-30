@@ -130,6 +130,7 @@ import (
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/ownership"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/backend"
 	"github.com/Lyra-Language/lyra/pkg/driver"
@@ -349,6 +350,9 @@ type lowerer struct {
 	specialized       map[string]*ir.Func
 	specializedParams map[string][]ast.Parameter
 	typeSubst         map[string]types.Type
+	// specOwnership is the ownership table computed for the instantiation currently
+	// being lowered — see the `ownership()` accessor, which every read goes through.
+	specOwnership *ownership.Table
 
 	closures       map[*ast.LambdaExpr]*ir.Func
 	closureThunks  map[string]*ir.Func
@@ -432,14 +436,14 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 	// the LLVM type skipped exactly those copies, which is what left them unretained.
 	ty, _ := l.recordedType(expr)
 	if v != nil && l.needsDrop(ty) {
-		if l.res.Ownership.ShouldRetain(expr) {
+		if l.ownership().ShouldRetain(expr) {
 			// Deep: retain every managed reference reachable by value from v, which for
 			// a managed value is just itself and for an aggregate is each managed field.
 			if err := l.deepRetain(end, v, ty); err != nil {
 				return nil, nil, err
 			}
 		}
-		if l.res.Ownership.ShouldReleaseTemp(expr) {
+		if l.ownership().ShouldReleaseTemp(expr) {
 			// Record the temporary's Lyra type alongside it: releasing it may free its
 			// box, and freeing runs the drop glue for whatever the payload owns.
 			l.pendingReleases = append(l.pendingReleases, pendingTemp{v, end, ty})
@@ -449,7 +453,7 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 		// *borrowing* last use is a drop, but its release must follow the borrow, so
 		// it isn't emitted here — dropLastUsesInStmt handles it after the statement.
 		if id, ok := expr.(*ast.IdentifierExpr); ok {
-			if transfer, isLast := l.res.Ownership.LastUse(expr); isLast && transfer {
+			if transfer, isLast := l.ownership().LastUse(expr); isLast && transfer {
 				if slot, found := l.locals[id.Name]; found {
 					l.retireManagedSlot(slot)
 				}

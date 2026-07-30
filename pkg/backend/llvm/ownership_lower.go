@@ -121,7 +121,7 @@ func (l *lowerer) dropLastUsesInStmt(block *ir.Block, stmt ast.Statement) error 
 		if !ok {
 			return true
 		}
-		if transfer, isLast := l.res.Ownership.LastUse(e); !isLast || transfer {
+		if transfer, isLast := l.ownership().LastUse(e); !isLast || transfer {
 			return true // not a last use, or a transfer (retired at the move)
 		}
 		slot, found := l.locals[id.Name]

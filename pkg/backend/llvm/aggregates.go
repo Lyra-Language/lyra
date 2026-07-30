@@ -323,7 +323,7 @@ func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctor
 		// reuse-match and that match's token is still live, write into the reclaimed
 		// box instead of allocating. Consuming the token clears it so a later
 		// construction (or the arm's fall-through free) doesn't touch it again.
-		if l.reuseToken != nil && l.res.Ownership.IsReuseTarget(srcExpr) {
+		if l.reuseToken != nil && l.ownership().IsReuseTarget(srcExpr) {
 			token := l.reuseToken
 			l.reuseToken = nil
 			return l.lowerBoxSharedReuse(block, union, stackDt, token)

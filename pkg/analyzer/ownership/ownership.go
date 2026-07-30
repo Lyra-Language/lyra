@@ -264,18 +264,7 @@ func resolveNamedType(t types.Type, symTable *symbols.SymbolTable) types.Type {
 
 // Analyze walks the typed program and returns the retain/release-temp Table.
 func Analyze(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.TypeTable) *Table {
-	a := &analyzer{
-		symTable: symTable,
-		tt:       tt,
-		table: &Table{
-			Retain:          map[ast.Expression]bool{},
-			ReleaseTemp:     map[ast.Expression]bool{},
-			LastUseTransfer: map[ast.Expression]bool{},
-			LastUseDrop:     map[ast.Expression]bool{},
-			ReuseMatch:      map[*ast.MatchExpr]string{},
-			ReuseTarget:     map[ast.Expression]bool{},
-		},
-	}
+	a := newAnalyzer(symTable, tt, nil)
 	for _, stmt := range program.Statements {
 		if vds, ok := stmt.(*ast.VarDeclStmt); ok {
 			if lam, ok := vds.Value.(*ast.LambdaExpr); ok {
@@ -288,9 +277,54 @@ func Analyze(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.
 	return a.table
 }
 
+// AnalyzeLambda analyzes one function body under a type-variable substitution,
+// producing a table for that **instantiation** alone.
+//
+// A generic body cannot be analyzed once and reused, because every decision this
+// pass makes turns on whether a value is reference-counted — and with a type
+// variable abstract, nothing is. Analyzed generically, `pick(a: t, b: t) -> t`
+// records no retain on its returned value and no release for the caller's
+// temporaries; at `t = string` that is a double free (measured: an ASan abort, 2
+// allocations against 3 releases), and at `t = i64` the very same absence is
+// correct. So the body is analyzed once per instantiation, and the backend consults
+// the table for the specialization it is lowering.
+//
+// The tables cannot be merged: they are keyed by AST node, and the *same* node
+// carries different annotations in different instantiations — which is precisely
+// the information that was missing before.
+func AnalyzeLambda(lam *ast.LambdaExpr, symTable *symbols.SymbolTable, tt *typetable.TypeTable, subst map[string]types.Type) *Table {
+	a := newAnalyzer(symTable, tt, subst)
+	a.lambda(lam)
+	return a.table
+}
+
+// newAnalyzer builds an analyzer with an empty table, optionally bound to an
+// instantiation's type arguments.
+func newAnalyzer(symTable *symbols.SymbolTable, tt *typetable.TypeTable, subst map[string]types.Type) *analyzer {
+	return &analyzer{
+		symTable: symTable,
+		tt:       tt,
+		subst:    subst,
+		table: &Table{
+			Retain:          map[ast.Expression]bool{},
+			ReleaseTemp:     map[ast.Expression]bool{},
+			LastUseTransfer: map[ast.Expression]bool{},
+			LastUseDrop:     map[ast.Expression]bool{},
+			ReuseMatch:      map[*ast.MatchExpr]string{},
+			ReuseTarget:     map[ast.Expression]bool{},
+		},
+	}
+}
+
 type analyzer struct {
-	symTable       *symbols.SymbolTable
-	tt             *typetable.TypeTable
+	symTable *symbols.SymbolTable
+	tt       *typetable.TypeTable
+	// subst binds a generic function's type variables for the instantiation being
+	// analyzed. A generic body is analyzed once *per instantiation* (AnalyzeLambda)
+	// because managed-ness is a property of the concrete type: with `t` abstract,
+	// IsManaged is false and the pass records no retain, release, or drop anywhere —
+	// decisions that are simply wrong at `t = string`. Nil for ordinary code.
+	subst          map[string]types.Type
 	table          *Table
 	curReturnOwned bool // does the enclosing function return an owned value?
 	conditional    bool // are we inside a branch body (if/match arm)? gates transfers
@@ -496,7 +530,7 @@ func (a *analyzer) reuseSource(m *ast.MatchExpr) (string, bool) {
 // sharedDataName returns the name of e's `data` type when e is a `shared`-flavored
 // data value, resolving an UnresolvedType through the symbol table.
 func (a *analyzer) sharedDataName(e ast.Expression) (string, bool) {
-	t, ok := a.tt.Get(e)
+	t, ok := a.typeOf(e)
 	if !ok || types.AllocationOf(t) != types.Shared {
 		return "", false
 	}
@@ -619,8 +653,54 @@ func collectNames(block *ast.BlockExpr, into map[string]bool) {
 // Using IsManaged here is what left stack-aggregate copies unretained, which was a
 // use-after-free and not merely a leak (see the package doc).
 func (a *analyzer) ownsManaged(e ast.Expression) bool {
-	t, ok := a.tt.Get(e)
+	t, ok := a.typeOf(e)
 	return ok && OwnsManaged(t, a.symTable)
+}
+
+// typeOf is the pass's single type lookup: the recorded type of an expression with
+// the current instantiation's type variables substituted. Everything the pass
+// decides — whether a value is managed, whether a scrutinee is a reusable `shared
+// data`, what convention an indirect callee uses — flows through it, which is what
+// lets one generic body yield different (correct) annotations per instantiation.
+func (a *analyzer) typeOf(e ast.Expression) (types.Type, bool) {
+	t, ok := a.tt.Get(e)
+	if !ok {
+		return nil, false
+	}
+	return substituteTypeVars(t, a.subst), true
+}
+
+// substituteTypeVars replaces type variables with their bindings for the
+// instantiation being analyzed, descending through the composite types a value can
+// have. A nil substitution is the identity, so ordinary code pays nothing.
+func substituteTypeVars(t types.Type, subst map[string]types.Type) types.Type {
+	if len(subst) == 0 || t == nil {
+		return t
+	}
+	switch tt := t.(type) {
+	case types.GenericType:
+		if concrete, ok := subst[tt.Name]; ok {
+			return concrete
+		}
+		return tt
+	case types.StaticArrayType:
+		tt.ElementType = substituteTypeVars(tt.ElementType, subst)
+		return tt
+	case types.DynamicArrayType:
+		tt.ElementType = substituteTypeVars(tt.ElementType, subst)
+		return tt
+	case types.TupleType:
+		elems := make([]types.Type, len(tt.Elements))
+		for i, e := range tt.Elements {
+			elems[i] = substituteTypeVars(e, subst)
+		}
+		tt.Elements = elems
+		return tt
+	case types.WeakType:
+		tt.Inner = substituteTypeVars(tt.Inner, subst)
+		return tt
+	}
+	return t
 }
 
 // markMergeTemp marks an if/match expression as an owned temporary to release
@@ -637,7 +717,11 @@ func (a *analyzer) markMergeTemp(e ast.Expression) {
 // coerced to +1 — and the backend frames it so its scope exit releases what it owns.
 func (a *analyzer) bindingOwnsManaged(vds *ast.VarDeclStmt) bool {
 	if vds.Type != nil {
-		return OwnsManaged(vds.Type, a.symTable)
+		// An annotated binding's type comes from the declaration, so it still mentions
+		// the enclosing function's type variables inside a generic body — substitute
+		// for the instantiation being analyzed (a `let copy: t = x` is managed exactly
+		// when this instantiation's `t` is).
+		return OwnsManaged(substituteTypeVars(vds.Type, a.subst), a.symTable)
 	}
 	return a.ownsManaged(vds.Value)
 }
@@ -997,7 +1081,7 @@ func (a *analyzer) calleeLambdaType(e *ast.FunctionCallExpr) *types.LambdaType {
 	if a.tt == nil || e.Function == nil {
 		return nil
 	}
-	t, ok := a.tt.Get(e.Function)
+	t, ok := a.typeOf(e.Function)
 	if !ok {
 		return nil
 	}

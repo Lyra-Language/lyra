@@ -62,29 +62,11 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 	if inst.Func.ReturnType.Type == nil {
 		return fmt.Errorf("llvm: generic function %q needs a return type annotation", inst.Name)
 	}
-	// A **managed** type argument is refused, and this is the substitution approach's
-	// real limit rather than an oversight.
-	//
-	// The ownership pass analyzes the generic body *once*, where every type variable
-	// is a `GenericType` — which is not managed, so no retain, release, or drop is
-	// recorded anywhere in it. At a managed instantiation those decisions are simply
-	// wrong: `pick(a: t, b: t) -> t` at `t = string` returns a reference nobody
-	// retained and leaves the caller's temporaries to be released twice (measured: an
-	// ASan abort, 2 allocations against 3 releases). Substituting types cannot fix
-	// that, because the ownership *decisions* were already made generically.
-	//
-	// The fix is to run the ownership pass per instantiation, which means teaching it
-	// to take a substitution and produce a table per specialization — a real change to
-	// its plumbing, and the natural next slice. Until then this is a loud error: a
-	// generic function over scalars is genuinely useful and completely sound, and
-	// silently miscompiling the managed case to reach it is not a trade worth making.
-	for name, arg := range inst.Subst {
-		if ownership.OwnsManaged(arg, l.res.SymbolTable) {
-			return fmt.Errorf("llvm: instantiating generic function %q at a reference-counted type "+
-				"(%s = %s) is not implemented yet — the ownership analysis runs on the generic body, "+
-				"so retains and releases for it were never computed", inst.Name, name, arg)
-		}
-	}
+	// A managed type argument works: the ownership pass was analyzed once *per
+	// instantiation* (driver.OwnershipBySpec), so this specialization's retains,
+	// releases, and drops were computed at the concrete type rather than at the type
+	// variable. Reading the program-wide table here instead is what made `t = string`
+	// a double free — see the `ownership()` accessor.
 	// The substitution is active while the signature is lowered, so a type variable
 	// in a parameter or return position becomes its concrete binding.
 	restore := l.pushTypeSubst(inst.Subst)
@@ -116,9 +98,11 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 // specialization may call anything.
 func (l *lowerer) defineSpecializations() error {
 	for _, inst := range l.specializations() {
-		restore := l.pushTypeSubst(inst.Subst)
+		restoreSubst := l.pushTypeSubst(inst.Subst)
+		restoreOwn := l.pushSpecOwnership(inst.Key())
 		err := l.defineSpecialization(inst)
-		restore()
+		restoreOwn()
+		restoreSubst()
 		if err != nil {
 			return err
 		}
@@ -134,6 +118,25 @@ func (l *lowerer) defineSpecialization(inst typetable.Instantiation) error {
 	return l.defineFunctionInto(irFn, inst.Func, inst.Name)
 }
 
+// ownership returns the ownership table for the code currently being lowered: the
+// program-wide one normally, and the *specialization's own* table inside a generic
+// body.
+//
+// They cannot be one table. Every decision the ownership pass makes turns on
+// whether a value is reference-counted, which is a property of the type argument —
+// so a generic body is analyzed once per instantiation, and the same AST node
+// carries different annotations in each. Reading the program-wide table inside a
+// specialization is exactly the bug this replaced: analyzed generically, a type
+// variable is not managed, so `pick(a: t, b: t) -> t` recorded no retain on its
+// result and no release for the caller's temporaries — correct at `t = i64`, a
+// double free at `t = string`.
+func (l *lowerer) ownership() *ownership.Table {
+	if l.specOwnership != nil {
+		return l.specOwnership
+	}
+	return l.res.Ownership
+}
+
 // pushTypeSubst installs a type-variable substitution for the duration of lowering
 // one specialization, returning the restore. Nested substitutions are not composed
 // — a specialization's body is lowered with exactly its own bindings — so a generic
@@ -143,6 +146,15 @@ func (l *lowerer) pushTypeSubst(subst map[string]types.Type) func() {
 	prev := l.typeSubst
 	l.typeSubst = subst
 	return func() { l.typeSubst = prev }
+}
+
+// pushSpecOwnership installs the ownership table computed for one instantiation,
+// alongside its type substitution — the two always travel together, since the table
+// was computed *under* that substitution.
+func (l *lowerer) pushSpecOwnership(key string) func() {
+	prev := l.specOwnership
+	l.specOwnership = l.res.OwnershipBySpec[key]
+	return func() { l.specOwnership = prev }
 }
 
 // applyTypeSubst replaces type variables in t with their concrete bindings. It is

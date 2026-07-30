@@ -40,9 +40,16 @@ type Result struct {
 	// site's solved type variables); the backend emits one function per distinct set.
 	Instantiations *typetable.InstantiationTable
 	Ownership      *ownership.Table
-	Captures       *captures.Table      // each lambda's free variables (its closure environment)
-	RangeSafety    *checker.SafetyTable // overflow ops the backend may leave unchecked
-	Diagnostics    []diag.Diagnostic
+	// OwnershipBySpec holds a *separate* ownership table per generic specialization,
+	// keyed by the instantiation's Key(). A generic body's decisions turn on whether
+	// its values are reference-counted, which is a property of the type *argument* —
+	// so it is analyzed once per instantiation, and the backend consults the table for
+	// the specialization it is lowering. The tables cannot be merged: they are keyed
+	// by AST node, and the same node carries different annotations per instantiation.
+	OwnershipBySpec map[string]*ownership.Table
+	Captures        *captures.Table      // each lambda's free variables (its closure environment)
+	RangeSafety     *checker.SafetyTable // overflow ops the backend may leave unchecked
+	Diagnostics     []diag.Diagnostic
 }
 
 // HasErrors reports whether any diagnostic is error-severity. A compiler should
@@ -160,6 +167,12 @@ func Analyze(source []byte) *Result {
 	// after typechecking — it reads the TypeTable to identify managed types. It
 	// produces no diagnostics; the backend consumes the table.
 	res.Ownership = ownership.Analyze(program, symTable, tt)
+	// …and once more per generic instantiation, with that instantiation's type
+	// arguments substituted (see OwnershipBySpec).
+	res.OwnershipBySpec = map[string]*ownership.Table{}
+	for _, inst := range res.Instantiations.All() {
+		res.OwnershipBySpec[inst.Key()] = ownership.AnalyzeLambda(inst.Func, symTable, tt, inst.Subst)
+	}
 
 	// Capture analysis: each lambda's free variables, which the backend copies
 	// into a closure environment. It reads the TypeTable for each captured
