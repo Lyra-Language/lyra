@@ -304,8 +304,8 @@ func resolveNamedType(t types.Type, symTable *symbols.SymbolTable) types.Type {
 }
 
 // Analyze walks the typed program and returns the retain/release-temp Table.
-func Analyze(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.TypeTable) *Table {
-	a := newAnalyzer(symTable, tt, nil)
+func Analyze(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.TypeTable, mt *typetable.MethodTable) *Table {
+	a := newAnalyzer(symTable, tt, nil, mt)
 	for _, stmt := range program.Statements {
 		if vds, ok := stmt.(*ast.VarDeclStmt); ok {
 			if lam, ok := vds.Value.(*ast.LambdaExpr); ok {
@@ -333,19 +333,20 @@ func Analyze(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.
 // The tables cannot be merged: they are keyed by AST node, and the *same* node
 // carries different annotations in different instantiations — which is precisely
 // the information that was missing before.
-func AnalyzeLambda(lam *ast.LambdaExpr, symTable *symbols.SymbolTable, tt *typetable.TypeTable, subst map[string]types.Type) *Table {
-	a := newAnalyzer(symTable, tt, subst)
+func AnalyzeLambda(lam *ast.LambdaExpr, symTable *symbols.SymbolTable, tt *typetable.TypeTable, subst map[string]types.Type, mt *typetable.MethodTable) *Table {
+	a := newAnalyzer(symTable, tt, subst, mt)
 	a.lambda(lam)
 	return a.table
 }
 
 // newAnalyzer builds an analyzer with an empty table, optionally bound to an
 // instantiation's type arguments.
-func newAnalyzer(symTable *symbols.SymbolTable, tt *typetable.TypeTable, subst map[string]types.Type) *analyzer {
+func newAnalyzer(symTable *symbols.SymbolTable, tt *typetable.TypeTable, subst map[string]types.Type, mt *typetable.MethodTable) *analyzer {
 	return &analyzer{
 		symTable: symTable,
 		tt:       tt,
 		subst:    subst,
+		mt:       mt,
 		table: &Table{
 			Retain:          map[ast.Expression]bool{},
 			ReleaseTemp:     map[ast.Expression]bool{},
@@ -360,6 +361,11 @@ func newAnalyzer(symTable *symbols.SymbolTable, tt *typetable.TypeTable, subst m
 type analyzer struct {
 	symTable *symbols.SymbolTable
 	tt       *typetable.TypeTable
+	// mt resolves a `.`-call to the trait method it dispatches to, which is the only way
+	// this pass can read a *method's* parameter modes: an impl binds patterns, so the
+	// `ref`/`mut`/`own` axis lives on the trait's declared signature. Nil-safe — without
+	// it every method argument falls back to the conservative transfer below.
+	mt *typetable.MethodTable
 	// subst binds a generic function's type variables for the instantiation being
 	// analyzed. A generic body is analyzed once *per instantiation* (AnalyzeLambda)
 	// because managed-ness is a property of the concrete type: with `t` abstract,
@@ -1118,17 +1124,25 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	// function shadows the name (lam == nil) — matching the typechecker/backend
 	// resolution order.
 	builtinBorrows := lam == nil && calleeIsBorrowingBuiltin(e)
+	// A `.`-call's modes live on the trait's declared signature — an impl binds patterns,
+	// not typed parameters — and the receiver is signature parameter 0 while the arguments
+	// start at 1. Getting that offset wrong would read each argument's mode from the
+	// parameter to its left, which for `own` is a double free or a leak rather than a type
+	// error, so it is spelled out here rather than folded into the loop index.
+	methodSig := a.methodSignature(e)
 
 	for i, arg := range e.Arguments {
 		argOwns := true // conservative default: transfer (leak-safe) for an unknown callee
 		switch {
 		case lam != nil:
 			argOwns = i < len(lam.Parameters) && paramOwnsArgument(lam.Parameters[i].TypeModifier)
+		case methodSig != nil:
+			argOwns = i+1 < len(methodSig.Parameters) && paramOwnsArgument(methodSig.Parameters[i+1].Borrow)
 		case calleeType != nil:
-			// A function *type* cannot express `own` (the collector populates no mode
-			// for a lambda-type parameter), so every parameter of one is a borrow —
-			// which is exactly what the lifted closure body does with it.
-			argOwns = false
+			// A function type *can* now express a mode (`(own i64) -> t`), so read it;
+			// an unwritten one is a borrow, which is what the lifted closure body does
+			// with it and what every function type meant before modes were collected.
+			argOwns = i < len(calleeType.Parameters) && paramOwnsArgument(calleeType.Parameters[i].Borrow)
 		case builtinBorrows:
 			argOwns = false
 		}
@@ -1151,6 +1165,20 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	} else if needOwned {
 		a.table.Retain[e] = true
 	}
+}
+
+// methodSignature returns the trait signature a `.`-call dispatches to, or nil when the
+// call is not a resolved trait-method call (or no MethodTable was supplied).
+//
+// It is what lets this pass read a *method's* parameter modes at all. Without it every
+// method argument fell to the conservative transfer below — leak-safe, and correct while
+// trait signatures could not express a mode, but wrong the moment one says `own`.
+func (a *analyzer) methodSignature(e *ast.FunctionCallExpr) *types.LambdaType {
+	res, ok := a.mt.GetResolution(e)
+	if !ok {
+		return nil
+	}
+	return res.Signature
 }
 
 // calleeLambdaType returns the callee's static function type when the call goes

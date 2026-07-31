@@ -182,6 +182,21 @@ const (
 	// order to write.
 	CodeMalformedModifiers = "lyra-E029"
 
+	// CodeUnsupportedTraitBorrow: `own` written on a trait method's parameter.
+	//
+	// `ref` and `mut` work: they are *borrows*, so nobody in the callee retains or
+	// releases them and the ownership pass needs to know nothing about the method.
+	// `own` transfers, which makes the callee's parameter an owning binding that must
+	// be dropped — or transferred onward — and the ownership pass does not analyze
+	// trait-method bodies at all, so nothing records that a returned `own` parameter
+	// was transferred rather than dropped. Measured before this rejection existed: a
+	// heap-use-after-free under ASan, from `take: (Self, own string) -> string`.
+	//
+	// The fix is to teach `pkg/analyzer/ownership` about method bodies, at which point
+	// this restriction lifts. Until then it is a loud error, because the alternative is
+	// a miscompile that type-checks.
+	CodeUnsupportedTraitBorrow = "lyra-E030"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

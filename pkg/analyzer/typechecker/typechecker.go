@@ -2582,6 +2582,7 @@ func (tc *TypeChecker) lambdaSignature(lambda *ast.LambdaExpr) *types.LambdaType
 		t.Parameters = append(t.Parameters, types.ParameterType{
 			Type:         tc.resolveType(p.Type, p.GetLocation()),
 			DefaultValue: p.DefaultValue,
+			Borrow:       p.TypeModifier,
 		})
 	}
 	return t

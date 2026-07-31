@@ -1,10 +1,12 @@
 package checker_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 )
 
@@ -72,4 +74,38 @@ func TestEffectBounds_TraitMethod_DetAlone_OK(t *testing.T) {
 	assertNoEffectBoundErrors(t, `impl Physics for World {
   tick = det (self) => { self }
 }`)
+}
+
+// `own` on a trait method parameter is rejected. `ref` and `mut` are borrows — retained and
+// released by nobody, so ownership analysis needs to know nothing about the method to stay
+// correct — but `own` transfers, making the callee's parameter an owning binding, and the
+// ownership pass does not analyze trait-method bodies at all. Before this rejection the
+// combination compiled to a heap-use-after-free, confirmed under ASan.
+func TestEffectBounds_OwnOnTraitParameterIsRejected(t *testing.T) {
+	errs := checkEffectBounds(t, `
+trait Consume { take: (Self, own string) -> string }`)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 diagnostic, got %v", errs)
+	}
+	if errs[0].Code != diag.CodeUnsupportedTraitBorrow {
+		t.Errorf("code = %s, want %s", errs[0].Code, diag.CodeUnsupportedTraitBorrow)
+	}
+	if !strings.Contains(errs[0].Message, "use `ref` or `mut`") {
+		t.Errorf("the message should say which modes work, got %q", errs[0].Message)
+	}
+}
+
+// The supported modes are not swept up with it — the rejection must be precise, or it would
+// take the working half of the feature with it.
+func TestEffectBounds_RefAndMutOnTraitParametersAreAccepted(t *testing.T) {
+	for _, src := range []string{
+		`trait Bump { bump: (mut Self) -> void }`,
+		`trait Peek { peek: (ref Self) -> i64 }`,
+		`trait Fill { fill: (Self, mut i64) -> void }`,
+		`trait Plain { plain: (Self) -> i64 }`,
+	} {
+		if errs := checkEffectBounds(t, src); len(errs) != 0 {
+			t.Errorf("%q should be accepted, got %v", src, errs)
+		}
+	}
 }

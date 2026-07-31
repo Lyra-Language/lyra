@@ -194,12 +194,12 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	// Ownership analysis (retain/release-temp decisions for managed values) runs
 	// after typechecking — it reads the TypeTable to identify managed types. It
 	// produces no diagnostics; the backend consumes the table.
-	res.Ownership = ownership.Analyze(program, symTable, tt)
+	res.Ownership = ownership.Analyze(program, symTable, tt, res.MethodTable)
 	// …and once more per generic instantiation, with that instantiation's type
 	// arguments substituted (see OwnershipBySpec).
 	res.OwnershipBySpec = map[string]*ownership.Table{}
 	for _, inst := range res.Instantiations.All() {
-		res.OwnershipBySpec[inst.Key()] = ownership.AnalyzeLambda(inst.Func, symTable, tt, inst.Subst)
+		res.OwnershipBySpec[inst.Key()] = ownership.AnalyzeLambda(inst.Func, symTable, tt, inst.Subst, res.MethodTable)
 	}
 
 	// Capture analysis: each lambda's free variables, which the backend copies

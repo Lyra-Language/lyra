@@ -80,15 +80,23 @@ func (t *LambdaType) String() string {
 }
 
 type ParameterType struct {
-	Modifier     AllocationModifier
+	Modifier AllocationModifier
+	// Borrow is the `ref`/`mut`/`own` axis, written on a parameter of a function *type*
+	// (`(mut Self, own i64) -> void`) — distinct from Modifier, which is the
+	// `stack`/`shared` allocation flavor. A function type is where a trait method's
+	// parameter modes live, since an impl binds patterns rather than typed parameters.
+	Borrow       TypeModifier
 	Type         Type
 	DefaultValue any
 }
 
 func (p ParameterType) GetName() string {
 	modifier := ""
+	if p.Borrow != TypeModifier("") {
+		modifier = string(p.Borrow) + " "
+	}
 	if p.Modifier != AllocationModifier("") {
-		modifier = string(p.Modifier) + " "
+		modifier += string(p.Modifier) + " "
 	}
 	if p.Type != nil {
 		return fmt.Sprintf("%s%s", modifier, p.Type.String())

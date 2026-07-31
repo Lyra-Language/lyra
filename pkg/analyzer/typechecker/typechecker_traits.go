@@ -179,7 +179,9 @@ func implLambdaSignature(lambda *ast.LambdaExpr) *types.LambdaType {
 		if p.Type == nil {
 			return nil
 		}
-		params[i] = types.ParameterType{Type: p.Type}
+		// Borrow travels with the parameter: a signature built from a lambda that drops
+		// it would let the call site and the body disagree about who owns the receiver.
+		params[i] = types.ParameterType{Type: p.Type, Borrow: p.TypeModifier}
 	}
 	return &types.LambdaType{
 		Parameters: params,
@@ -217,6 +219,7 @@ func substituteSelf(sig *types.LambdaType, concreteType types.Type) *types.Lambd
 			Type:         substituteTypeInSig(p.Type, concreteType),
 			DefaultValue: p.DefaultValue,
 			Modifier:     p.Modifier,
+			Borrow:       p.Borrow,
 		}
 	}
 	return &types.LambdaType{

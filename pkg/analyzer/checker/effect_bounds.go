@@ -5,6 +5,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // EffectBoundsError reports an invalid combination of effect-bound modifiers
@@ -49,6 +50,7 @@ func CheckEffectBounds(program *ast.Program) []EffectBoundsError {
 		if td, ok := node.(*ast.TraitDeclStmt); ok {
 			for i := range td.Methods {
 				c.check(td.Methods[i].IsPure, td.Methods[i].IsDet, td.GetLocation())
+				c.checkBorrowModes(&td.Methods[i], td.GetLocation())
 			}
 		}
 	}
@@ -69,6 +71,37 @@ func (c *effectBoundsChecker) exprVisitor() func(ast.Expression) bool {
 			c.check(e.IsPure, e.IsDet, e.GetLocation())
 		}
 		return true
+	}
+}
+
+// checkBorrowModes rejects `own` on a trait method's parameter.
+//
+// `ref` and `mut` are supported: a borrow is retained and released by nobody, so the
+// ownership pass needs to know nothing about the method to stay correct. `own` transfers,
+// making the callee's parameter an owning binding — and the ownership pass does not analyze
+// trait-method bodies, so nothing records that a returned `own` parameter was transferred
+// rather than dropped. That combination is a heap-use-after-free, confirmed under ASan, not
+// a diagnostic gap: the program type-checks and miscompiles.
+//
+// Rejecting is therefore the honest state until `pkg/analyzer/ownership` learns about method
+// bodies. The message says which modes do work, since the reader's next move is to pick one.
+func (c *effectBoundsChecker) checkBorrowModes(m *ast.TraitMethod, loc ast.Location) {
+	if m.Signature == nil {
+		return
+	}
+	for _, p := range m.Signature.Parameters {
+		if p.Borrow != types.Own {
+			continue
+		}
+		c.errors = append(c.errors, EffectBoundsError{
+			Code: diag.CodeUnsupportedTraitBorrow,
+			Message: "`own` on a trait method parameter is not supported yet: ownership analysis does " +
+				"not cover trait-method bodies, so a transferred value would be dropped by the callee " +
+				"and still used by the caller — use `ref` or `mut` (borrows), or take the value by " +
+				"default (also a borrow)",
+			Location: loc,
+		})
+		return
 	}
 }
 

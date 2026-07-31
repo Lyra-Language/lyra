@@ -121,15 +121,16 @@ func traitMethodLambda(res typetable.Resolution) (*ast.LambdaExpr, error) {
 	}
 	params := make([]ast.Parameter, len(clause.Patterns))
 	for i, pat := range clause.Patterns {
-		// A trait signature's parameters carry no borrow modifier — the grammar has
-		// nowhere to write one on a trait method — so every parameter, receiver
-		// included, is a plain by-value binding here. If trait signatures gain
-		// `own`/`ref`/`mut`, this is the line that must start carrying it, or the
-		// call site and the body would disagree about who owns the receiver.
+		// The signature's borrow modifier travels with the parameter. This is the line
+		// the old comment here warned about: carry it, or the call site and the body
+		// disagree about who owns the receiver. Everything downstream — paramIsByRef,
+		// the owning-binding frame in defineFunctionInto — reads ast.Parameter, so
+		// carrying it here is what makes a `ref Self` a pointer on both sides.
 		params[i] = ast.Parameter{
-			AstBase: ast.AstBase{Location: clause.GetLocation()},
-			Pattern: pat,
-			Type:    sig.Parameters[i].Type,
+			AstBase:      ast.AstBase{Location: clause.GetLocation()},
+			Pattern:      pat,
+			Type:         sig.Parameters[i].Type,
+			TypeModifier: sig.Parameters[i].Borrow,
 		}
 	}
 	return &ast.LambdaExpr{
@@ -146,13 +147,19 @@ func traitMethodLambda(res typetable.Resolution) (*ast.LambdaExpr, error) {
 // prepended here; a fully-qualified `Trait::method(x)` already has it in the argument
 // list and does not reach this path.
 func (l *lowerer) lowerTraitMethodCall(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, fn *ir.Func) (value.Value, *ir.Block, error) {
-	recv, block, err := l.lowerExpr(block, member.Object)
+	// The receiver is signature parameter 0 and each argument i is parameter i+1. Both go
+	// by pointer when their parameter is a `mut`/`ref` borrow — the same convention
+	// traitMethodLambda binds the body against, and the two must agree: a body expecting a
+	// pointer handed a value (or the reverse) is not a type error the front end can catch,
+	// it is a wild load.
+	params := l.methodParamModes(call)
+	recv, block, err := l.methodOperand(block, member.Object, params, 0)
 	if err != nil {
 		return nil, nil, err
 	}
 	args := []value.Value{recv}
-	for _, arg := range call.Arguments {
-		v, next, err := l.lowerExpr(block, arg)
+	for i, arg := range call.Arguments {
+		v, next, err := l.methodOperand(block, arg, params, i+1)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -164,4 +171,28 @@ func (l *lowerer) lowerTraitMethodCall(block *ir.Block, call *ast.FunctionCallEx
 			fn.GlobalIdent.Ident(), len(fn.Params), len(args))
 	}
 	return block.NewCall(fn, args...), block, nil
+}
+
+// methodParamModes returns the trait signature's parameters for a resolved `.`-call, or nil
+// when there is no resolution (a fully-qualified call, or an unresolved one) — in which case
+// every operand goes by value, which is what this path did before signatures carried modes.
+func (l *lowerer) methodParamModes(call *ast.FunctionCallExpr) []types.ParameterType {
+	res, ok := l.res.MethodTable.GetResolution(call)
+	if !ok || res.Signature == nil {
+		return nil
+	}
+	return res.Signature.Parameters
+}
+
+// methodOperand lowers the receiver or one argument of a method call, passing its *address*
+// when the matching parameter is a by-reference borrow.
+//
+// It mirrors lowerDirectCall's argument loop rather than sharing it, because that loop walks
+// call.Arguments and a method call's receiver is not in there — the offset this function
+// takes as `idx` is the whole difference.
+func (l *lowerer) methodOperand(block *ir.Block, operand ast.Expression, params []types.ParameterType, idx int) (value.Value, *ir.Block, error) {
+	if idx < len(params) && paramIsByRef(ast.Parameter{Type: params[idx].Type, TypeModifier: params[idx].Borrow}) {
+		return l.argumentAddress(block, operand)
+	}
+	return l.lowerExpr(block, operand)
 }

@@ -101,3 +101,25 @@ shell's *old* payload is dropped at the match's merge block, past every arm, gua
 token being non-null (dropping it at reclaim time would free a field an arm hasn't duplicated
 yet); the typechecker's `propagateAllocation` stamps `shared` onto construction leaves inside
 match arms so the arm's value is heap-boxed. See ALLOCATION.md.
+
+## Trait-method parameter modes
+
+A `.`-call's modes come from the **trait's declared signature**, resolved through the
+`MethodTable` (`methodSignature`) — an impl binds patterns, not typed parameters, so there is
+nowhere else they live. `resolveCallee` returns nil for a method call, so before this every
+method argument fell to the conservative transfer: leak-safe, and correct while a trait
+signature could not express a mode, but wrong the moment one says `own`.
+
+**The receiver is signature parameter 0 and the arguments start at 1.** Reading the modes at
+the wrong offset takes each argument's mode from the parameter to its left, which for `own`
+is a double free or a leak rather than a type error — so the offset is written out rather
+than folded into a loop index.
+
+**`own` on a trait parameter is rejected by the checker (`lyra-E030`)**, and this pass is
+why: it does not analyze trait-method *bodies*, so nothing records that a returned `own`
+parameter was transferred rather than dropped. Implemented without that, `take: (Self, own
+string) -> string` is a heap-use-after-free (measured under ASan, 07/31). `ref`/`mut` need
+nothing from this pass — a borrow is retained and released by nobody — which is exactly why
+they are supported and `own` is not. Supporting it means walking each `TraitMethodImpl` as a
+function here, with a per-method table for the backend, the way `OwnershipBySpec` works per
+instantiation.

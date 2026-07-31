@@ -646,9 +646,15 @@ func (c *Collector) parseParameterTypes(node *sitter.Node) []types.ParameterType
 }
 
 func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
-	return types.ParameterType{
-		Type: c.parseType(node.ChildByFieldName("type")),
+	pt := types.ParameterType{Type: c.parseType(node.ChildByFieldName("type"))}
+	// The `ref`/`mut`/`own` modifier on a parameter of a function type. The grammar has
+	// always accepted it here (`parameter_type` carries an optional `type_modifier`); it was
+	// simply never read, which is why a trait signature's borrow modes were silently by
+	// value however they were written.
+	if m := node.ChildByFieldName("modifier"); m != nil {
+		pt.Borrow = types.TypeModifier(c.ctx.NodeText(m))
 	}
+	return pt
 }
 
 func (c *Collector) parseSelfType(node *sitter.Node) types.Type {

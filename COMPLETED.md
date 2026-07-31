@@ -10,6 +10,49 @@ Newest first.
 ## Dated log
 
 ### 07/31/26
+**Borrow modifiers on trait signatures — `ref` and `mut`, with `own` rejected.**
+`bump: (mut Self) -> void` now writes through to the caller and `peek: (ref Self) -> i64`
+borrows without copying. The grammar was never the gap, contrary to the entry this replaces:
+`trait_method_signature` is an aliased `lambda_type` and its `parameter_type` has always
+carried an optional `type_modifier`, so `(mut Self, own i64) -> void` parsed all along.
+`Collector.parseParameterType` read only the `type` field, and `types.ParameterType` had no
+field to put a borrow in — `Modifier` there is the `stack`/`shared` allocation flavor, a
+different axis. It gained `Borrow`.
+
+Four passes had to agree, and the interesting part is that three of them are only correct
+*together*:
+
+- **collector** reads the modifier; **`traitMethodLambda`** carries it onto the synthesized
+  parameter, which is the line the old comment warned about ("or the call site and the body
+  will disagree about who owns the receiver");
+- **backend** passes the receiver and each argument by address when its parameter is a
+  by-reference borrow (`methodOperand`), mirroring `lowerDirectCall` — it cannot share that
+  loop, because a method call's receiver is not in `call.Arguments`, and that offset is the
+  whole difference;
+- **typechecker** applies the same `checkMutArgument`/allocation checks a free call gets, so
+  a `mut` argument must be a mutable lvalue rather than a temporary whose writes vanish;
+- **ownership** learned to read a method's modes at all — `resolveCallee` returns nil for a
+  `.`-call, so every method argument previously fell to the conservative transfer. It now
+  resolves the trait signature through the `MethodTable` (threaded into `Analyze`), again
+  with the receiver at index 0 and arguments from 1.
+
+**`own` is rejected (`lyra-E030`), and that is a measurement rather than caution.**
+Implemented alongside the rest, `take: (Self, own string) -> string` compiled to a
+heap-use-after-free — ASan report, read-after-free in the `print` of the returned value.
+The cause is that `pkg/analyzer/ownership` **does not analyze trait-method bodies at all**,
+so nothing records that a returned `own` parameter was transferred rather than dropped: the
+backend dutifully drops it at scope exit and the caller uses the corpse. `ref`/`mut` are
+immune by construction — a borrow is retained and released by nobody, so the pass needs to
+know nothing about the method. Lifting the restriction means teaching ownership about method
+bodies, which is its own slice; the diagnostic says so and names the modes that do work.
+
+One class of bug worth remembering from building it: **rebuilding a `types.ParameterType`
+field-by-field silently drops new fields.** Three sites did (`substituteSelf`, the
+lambda→signature conversion, and `lambdaSignature`), and the symptom was a `mut` receiver
+that parsed, type-checked, lowered, ran — and wrote to a copy. It was found by an exec test
+asserting the caller's value changed, not by anything that could have been caught earlier.
+
+### 07/31/26
 **Trait-impl methods are effect-polymorphic, and a trait signature can bound a callback.**
 The last conservative corner of the effect work: `methodEffects` charged a call through a
 method's own parameter the full `AllEffects` taint, so a trait method taking a callback was

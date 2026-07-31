@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -414,10 +415,29 @@ func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types
 		if argType == nil {
 			continue
 		}
-		if !isAssignable(argType, param.Type) {
+		// Resolve the declared parameter type before comparing, exactly as inferLambdaCall
+		// does. A trait signature stores a named type as an UnresolvedType (just the name),
+		// so comparing it raw made a struct-typed parameter reject its own type with
+		// "cannot assign Cell to Cell" — the same shape the free-function path fixed when
+		// declared return types started resolving.
+		paramType := tc.resolveType(param.Type, arg.GetLocation())
+		if !isAssignable(argType, paramType) {
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d: cannot assign %s to %s",
-				calleeName, i+1, argType, param.Type)
+				calleeName, i+1, argType, paramType)
+			continue
+		}
+		// The borrow modes a trait signature declares are checked exactly as a free
+		// function's are (inferLambdaCall): a `mut` argument must be a mutable lvalue,
+		// since the callee writes through to it, and an `own` one adopts the value into
+		// the callee's storage so the allocation flavors must match. Without these a
+		// `mut Self` method silently accepted a temporary and discarded every write.
+		if param.Borrow == types.Mut {
+			tc.checkMutArgument(calleeName, i+1, "", arg, paramType)
+		}
+		if paramOwnsArgument(param.Borrow) {
+			tc.checkAllocationCompat(argType, paramType, arg.GetLocation(),
+				fmt.Sprintf("%s: argument %d", calleeName, i+1))
 		}
 	}
 
