@@ -286,6 +286,11 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 		return tc.resolveTypeIfKnown(lambda.ReturnType.Type)
 	}
 
+	// A parameter's declared type is the argument's context, which for a lambda literal
+	// means its parameter and return annotations — filled in before the loop below infers
+	// anything, since inferring a lambda without them reports `undefined symbol` first.
+	tc.elaborateLambdaArgsFromParams(lambda.Parameters, call.Arguments)
+
 	// Check each argument's inferred type against the parameter's declared type.
 	for i, arg := range call.Arguments {
 		param := lambda.Parameters[i]

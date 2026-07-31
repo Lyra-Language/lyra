@@ -249,6 +249,13 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// Full lambda type inference is not yet implemented, so the regular
 	// annotation check is skipped for them.
 	if lambda, ok := decl.Value.(*ast.LambdaExpr); ok {
+		// An annotated binding is a context: `let g: (i64) -> i64 = (x) => x + 1` tells
+		// the lambda what its parameter and return types are. This has to happen before
+		// checkLambdaBody, which walks the body — after it, the body has already reported
+		// `undefined symbol "x"` and left the return width unset.
+		if decl.Type != nil {
+			tc.elaborateLambda(decl.Value, decl.Type)
+		}
 		tc.checkLambdaBody(decl.Name, lambda)
 		// Record the binding's type. A local `let f = <lambda>` is a closure *value*
 		// — the backend has to know it is one to frame it for release — and the

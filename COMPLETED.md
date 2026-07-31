@@ -10,6 +10,49 @@ Newest first.
 ## Dated log
 
 ### 07/31/26
+**A lambda literal now takes its missing annotations from context.** It used to take
+nothing: `(x) => x` reported `undefined symbol "x"` because an unannotated parameter never
+reached `tc.paramTypes`, and `() => 7` was rejected against `() -> i64` because the body's
+untyped leaf never learned the expected width. Only a fully annotated lambda worked, which
+meant every call site of every lazy combinator had to restate types the signature already
+gave — `maybe.map(m, (x) => x * 2)` was not writable.
+
+**The fix is elaboration, not a second inference mode.** When a lambda literal meets an
+expected function type, its blanks are filled *on the AST node* before its body is inferred,
+so everything downstream sees the lambda the user would otherwise have had to write by hand:
+`withParamScope` seeds the parameters because they now have types, `checkLambdaBody` checks
+and width-propagates the body because there is now a declared return, and the backend — which
+reads `ast.Parameter.Type` to lower a parameter — needed no change at all. One mechanism, both
+halves of the bug. It only ever fills what was left blank, so an explicit annotation still
+wins and can still be diagnosed as wrong.
+
+Wired at the three sites that know what they want: an annotated binding (which had to go in
+the *lambda-valued* branch of `checkVarDecl`, which returns before the general path), a
+direct call's arguments, and a generic call's.
+
+The generic case is the one with a real ordering problem, and it took three passes to get
+right:
+
+1. A bare lambda cannot be inferred until it knows what is expected, but `(t) -> u` is not
+   concrete until the *other* arguments solve `t` — so `solveTypeVars` defers incomplete
+   lambdas to a second pass. A **fully annotated** lambda is not deferred, since it can solve
+   variables itself (`or_else(Nil, () -> i64 => 0)` binds `t` from the callback's return) and
+   deferring it would lose that.
+2. A type still mentioning a variable must **not** be planted: in `map(m, (x) => x * 2)`,
+   `u` is solved from *this lambda's own body*, so writing `u` as the declared return leaves
+   it unsolved forever — the symptom was "cannot convert u to u8" at the use site.
+3. Which means the return type can only be filled *after* solving completes, in
+   `inferGenericCall`, or the lambda reaches the backend as a value with no return type.
+
+One existing diagnostic changed, deliberately. `apply((n: u8) => n, 0)` against
+`(u8) -> string` used to report "cannot assign (u8) -> u8 to (u8) -> string", from inferring
+the lambda in isolation and comparing signatures; it now reports "return type mismatch:
+expected string, got u8" against the body. Both are true and the second points at the
+expression that has to change — and it is the same mechanism that makes `apply(() => 7, 0)`
+work at all, since a context that can supply a return type has to supply it before the body
+is walked.
+
+### 07/31/26
 **Borrow modifiers on trait signatures — `ref` and `mut`, with `own` rejected.**
 `bump: (mut Self) -> void` now writes through to the caller and `peek: (ref Self) -> i64`
 borrows without copying. The grammar was never the gap, contrary to the entry this replaces:

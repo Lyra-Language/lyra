@@ -42,10 +42,16 @@ let use = () -> u8 => apply((n: u8) => n, 0)`, false)
 }
 
 func TestInferredLambda_ReturnTypeIsInferredForMismatch(t *testing.T) {
-	// The lambda's return type infers to u8 (its parameter n: u8), which does not
-	// match the expected (u8) -> string — the error names the inferred (u8) -> u8,
-	// not a nil/"?" return.
+	// The expected parameter type is the lambda's context, so its unwritten return type is
+	// elaborated to `string` before the body is checked — and the body, `n`, is a u8. The
+	// diagnostic therefore lands on the *body* rather than on the whole function type.
+	//
+	// It used to read "apply: argument 1 (f): cannot assign (u8) -> u8 to (u8) -> string",
+	// from inferring the lambda in isolation and comparing the two signatures. Both are
+	// true; this one points at the expression that has to change, and it is the same
+	// mechanism that makes `apply(() => 7, 0)` work at all — a context that can supply a
+	// return type has to supply it before the body is walked, not after.
 	res := parseCollectAndCheck(t, `let apply = (f: (u8) -> string, x: u8) -> string => f(x)
 let use = () -> string => apply((n: u8) => n, 0)`, false)
-	assertErrorsAre(t, res, "apply: argument 1 (f): cannot assign (u8) -> u8 to (u8) -> string")
+	assertErrorsAre(t, res, "lambda: return type mismatch: expected string, got u8")
 }

@@ -10,40 +10,11 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
-- **[OPEN] A lambda literal gets nothing from its context — neither parameter types nor a
-  return width.** Only a fully annotated lambda works; every contextually-typed form is
-  rejected, on correct code:
-  - `takes(() => 7)` against `(f: () -> i64)` → `cannot assign () -> integer literal to
-    () -> i64`. `propagateLiteralType` (`typechecker.go`) has no `*ast.LambdaExpr` case, so
-    the body's untyped leaf never gets the expected return width. `() -> i64 => 7` is clean.
-  - `let g: () -> i64 = () => 7` records `g` as `() -> ?`, so the annotation does not reach
-    the literal either — this is not specific to the argument site.
-  - An **unannotated parameter is dropped entirely**: `(x) => x` reports
-    `undefined symbol "x"`, and `(x) -> i64 => x` types as `() -> i64` (arity 0), which then
-    cascades into a second, unrelated-looking arity error at the call. The name is never
-    bound, so the body cannot type-check at all.
-  - Under a generic parameter the same failure surfaces as an inference error rather than an
-    assignability one: `unwrap_or_else(m, () => 0)` → `cannot infer type variable t from
-    these arguments`, while `unwrap_or_else(m, () -> i64 => 0)` checks.
+None open. The lambda-context bug closed 07/31 (a lambda literal now takes its missing
+parameter and return annotations from the context it appears in — see COMPLETED.md).
 
-  *Why it matters now:* every lazy prelude combinator (`unwrap_or_else`, `or_else`, and each
-  of `map`/`and_then`/`filter` when they land) is called with a lambda literal, so the
-  standard library's call sites are exactly the ones that fail. Worse, the arity case is
-  silently wrong before it is loud: a lambda whose parameters vanished has a *type* the
-  checker will happily compare against something else.
-
-  *The mechanism already exists at one site.* `checkTraitImplMethodBody`
-  (`typechecker_traits.go:121`) types an impl method's untyped parameter patterns from the
-  trait signature by seeding `tc.paramTypes`, then walks the body with `enclosingRet` set.
-  A contextually-typed lambda argument needs the same two things from the *expected*
-  `LambdaType`. So this is one mechanism generalized to the annotated-`let`, call-argument
-  and return-position sites, not new machinery — plus the missing `*ast.LambdaExpr` case in
-  `propagateLiteralType` for the return width. Note the ordering: the expected type must be
-  known *before* the lambda's body is inferred, which is the opposite of the bottom-up
-  default and the reason this was not free.
-
-The last three bugs closed 07/30 (borrowed-`string` use-after-free, anonymous-tuple
-literal width, `i128` multiply link failure on Linux) — see COMPLETED.md.
+Before that, three closed 07/30 (borrowed-`string` use-after-free, anonymous-tuple literal
+width, `i128` multiply link failure on Linux) — see COMPLETED.md.
 
 ## In progress
 

@@ -498,3 +498,32 @@ subtyping test: both sides are concrete apart from the variables being solved, s
 direction only decides which side a variable may be read from. The substitution returns a
 **copy**, since `LambdaType` is the one type here held by pointer and rewriting in place
 would mutate the declaration every other call site shares.
+
+## Contextual typing for lambda literals (`contextual_lambda.go`)
+
+A lambda literal takes its missing parameter and return annotations from the type its context
+expects — `elaborateLambda` fills the blanks **on the AST node**, before the body is inferred.
+Everything downstream then sees a fully annotated lambda: `withParamScope` seeds the
+parameters, `checkLambdaBody` checks and width-propagates the body, and the backend (which
+reads `ast.Parameter.Type`) needs nothing. Before this, `(x) => x` reported `undefined symbol
+"x"` and `() => 7` would not satisfy `() -> i64`, so every standard-library call site had to
+restate types the signature already gave.
+
+Two properties keep it honest: it only ever fills what was **left blank**, so an explicit
+annotation wins and is still diagnosed if wrong; and it runs **before** the body is inferred,
+which is the ordering bottom-up inference cannot give.
+
+Wired at the three sites that know what they want — an annotated binding (in the
+*lambda-valued* branch of `checkVarDecl`, which returns before the general path), a direct
+call's arguments, and a generic call's.
+
+**The generic path has an ordering constraint worth knowing before touching it.** A bare
+lambda cannot be inferred until it knows what is expected, but `(t) -> u` is not concrete
+until the other arguments solve `t` — so `solveTypeVars` defers *incomplete* lambdas to a
+second pass (`needsContextualTypes`). A fully annotated lambda is deliberately not deferred:
+it can solve variables from its own signature, and deferring it would lose that. A type still
+mentioning a variable is never planted (`isConcreteEnoughToElaborate`), because a variable
+solved by the lambda's **own body** — `u` in `map(m, (x) => x * 2)` — would otherwise be
+written as its declared return and never solved. The consequence is that a lambda's return
+type can only be filled once solving finishes, which is why `inferGenericCall` elaborates
+again after `instantiateSignature`.

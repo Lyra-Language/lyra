@@ -83,6 +83,16 @@ func collectTypeVars(t types.Type, vars map[string]bool) {
 // slot. Where a *narrower* width is wanted, the call site says so: `identity(u8(7))`.
 func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionCallExpr, vars map[string]bool) (map[string]types.Type, bool) {
 	subst := map[string]types.Type{}
+	// **Two passes, and the order is the point.** A lambda literal missing annotations
+	// cannot be inferred until it knows what is expected of it — but what is expected
+	// (`() -> t`) is not concrete until the *other* arguments have solved `t`. Unifying it
+	// in the first pass therefore failed the whole call: `unwrap_or_else(m, () => 0)`
+	// reported "cannot infer type variable t" even though `m` determines it.
+	//
+	// A *fully annotated* lambda is not deferred: it carries real types, so it can solve
+	// variables itself (`unwrap_or_else(None, () -> i64 => 0)` solves `t` from the
+	// callback's return), and deferring it would lose that.
+	var deferred []int
 	for i, arg := range call.Arguments {
 		if i >= len(lambda.Parameters) {
 			break
@@ -91,7 +101,24 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 		if declared == nil {
 			continue
 		}
+		if needsContextualTypes(arg) {
+			deferred = append(deferred, i)
+			continue
+		}
 		argType := tc.inferExprType(arg)
+		if argType == nil {
+			return nil, false
+		}
+		if !unifyGenericTarget(declared, promoteToDefault(argType), vars, subst) {
+			return nil, false
+		}
+	}
+	for _, i := range deferred {
+		declared := lambda.Parameters[i].Type
+		// Substitute what the other arguments settled, so `() -> t` becomes `() -> i64`
+		// and the lambda has something concrete to be elaborated against.
+		tc.elaborateLambda(call.Arguments[i], substituteGenerics(declared, subst))
+		argType := tc.inferExprType(call.Arguments[i])
 		if argType == nil {
 			return nil, false
 		}
@@ -180,6 +207,12 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 	}
 	params, ret := instantiateSignature(lambda, subst)
 	for i, arg := range call.Arguments {
+		// Now that every variable is solved, a lambda argument's remaining blanks are
+		// concrete: `(t) -> u` has become `(i64) -> i64`. The deferred pass above could
+		// only fill what was already known *before* this lambda's own body was inferred —
+		// its return type is precisely what the body solved, so it is filled here or not
+		// at all, and the backend needs it to lower the lambda as a value.
+		tc.elaborateLambda(arg, params[i])
 		argType := tc.inferExprType(arg)
 		if argType == nil || params[i] == nil {
 			continue
