@@ -10,7 +10,39 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
-None open. The last three closed 07/30 (borrowed-`string` use-after-free, anonymous-tuple
+- **[OPEN] A lambda literal gets nothing from its context — neither parameter types nor a
+  return width.** Only a fully annotated lambda works; every contextually-typed form is
+  rejected, on correct code:
+  - `takes(() => 7)` against `(f: () -> i64)` → `cannot assign () -> integer literal to
+    () -> i64`. `propagateLiteralType` (`typechecker.go`) has no `*ast.LambdaExpr` case, so
+    the body's untyped leaf never gets the expected return width. `() -> i64 => 7` is clean.
+  - `let g: () -> i64 = () => 7` records `g` as `() -> ?`, so the annotation does not reach
+    the literal either — this is not specific to the argument site.
+  - An **unannotated parameter is dropped entirely**: `(x) => x` reports
+    `undefined symbol "x"`, and `(x) -> i64 => x` types as `() -> i64` (arity 0), which then
+    cascades into a second, unrelated-looking arity error at the call. The name is never
+    bound, so the body cannot type-check at all.
+  - Under a generic parameter the same failure surfaces as an inference error rather than an
+    assignability one: `unwrap_or_else(m, () => 0)` → `cannot infer type variable t from
+    these arguments`, while `unwrap_or_else(m, () -> i64 => 0)` checks.
+
+  *Why it matters now:* every lazy prelude combinator (`unwrap_or_else`, `or_else`, and each
+  of `map`/`and_then`/`filter` when they land) is called with a lambda literal, so the
+  standard library's call sites are exactly the ones that fail. Worse, the arity case is
+  silently wrong before it is loud: a lambda whose parameters vanished has a *type* the
+  checker will happily compare against something else.
+
+  *The mechanism already exists at one site.* `checkTraitImplMethodBody`
+  (`typechecker_traits.go:121`) types an impl method's untyped parameter patterns from the
+  trait signature by seeding `tc.paramTypes`, then walks the body with `enclosingRet` set.
+  A contextually-typed lambda argument needs the same two things from the *expected*
+  `LambdaType`. So this is one mechanism generalized to the annotated-`let`, call-argument
+  and return-position sites, not new machinery — plus the missing `*ast.LambdaExpr` case in
+  `propagateLiteralType` for the return width. Note the ordering: the expected type must be
+  known *before* the lambda's body is inferred, which is the opposite of the bottom-up
+  default and the reason this was not free.
+
+The last three bugs closed 07/30 (borrowed-`string` use-after-free, anonymous-tuple
 literal width, `i128` multiply link failure on Linux) — see COMPLETED.md.
 
 ## In progress
@@ -46,6 +78,43 @@ lowers; `CLAUDE.md`'s `pkg/backend/llvm` section is the current inventory. Settl
   enforced at the instantiation. `Maybe<weak T>` does not parse (a grammar change). A
   trait-impl *method* on a generic receiver does not lower — though neither does one on a
   non-generic receiver, so that is a trait gap, not a generics one.
+- **[OPEN] A binding's generic parameter list is decorative — nothing reconciles it with
+  the signature, in either direction.** Type variables are *lexical* by design (a lowercase
+  type name is a variable, an Uppercase one is a concrete type — `tree-sitter-lyra`'s
+  `generic_type` comment), and the typechecker derives a call's variables from the signature
+  (`lambdaTypeVars`), never from the declared list. So both of these compile and run:
+
+  ```
+  let unbox = (b: Box<t>, fb: t) -> t => …    // no <t> at all — generic anyway
+  let mismatch<t> = (a: u) -> u => a          // declares t, is generic in u
+  ```
+
+  The list being *optional* follows from the lexical rule and is defensible on its own.
+  Being **unchecked when written** is the part that is not: a declared-but-unused variable
+  and a used-but-undeclared one are both silent.
+
+  *The hazard is a typo, and it is a Pit-of-Success inversion.* A misspelled lowercase type
+  name does not fail — it silently becomes a *new type variable*, and the function becomes
+  generic in something its author never meant. The signature still type-checks; what changes
+  is that callers must now solve a variable that should have been a fixed type, so the
+  diagnostic (if any) lands at the call site, or the error surfaces only in the backend. That
+  is how the prelude's `ok`/`err` shipped without their `<t, e>` and drew no diagnostic at
+  all. Uppercase names have no such hole — an unknown one is `UnresolvedType` and is reported.
+
+  *Options, roughly in order of cost:* (a) **warn** on either mismatch, keeping the list
+  optional — cheapest, and enough to catch the typo the moment a list is written; (b) make a
+  written list **authoritative** (a signature variable absent from it is an error), so `<t>`
+  becomes a real declaration and the typo has somewhere to be caught; (c) require the list
+  outright, which reads as the least ML-ish of the three and buys little over (b). Note the
+  list is also the only place a **bound** can be written (`<t: Show>`), so an unchecked list
+  means a bound can silently constrain nothing — that is what makes this worth settling
+  before bound enforcement, not after.
+
+  *One implementation note for whoever takes it:* `collectTypeVars`
+  (`typechecker/instantiate.go`) already walks a signature for exactly this set. It is the
+  twin of the backend's `mentionsTypeVar`, and the two drifted — the backend's was missing
+  the `ParameterizedType` case, which is the 07/30 build failure in COMPLETED.md. Whatever
+  check lands here should reuse the typechecker's walker rather than add a third copy.
 
 ### Modules
 
@@ -153,6 +222,40 @@ whole allocation-flavor axis — `stack`/`shared` compatibility (`lyra-E018`), r
 well-formedness (`lyra-E014`), `shared`/dynamic arrays, for-in across arrays/ranges/strings,
 interior assignment, and deep retain-on-copy.
 
+- **[OPEN] Effect polymorphism over function-typed parameters.** A higher-order function is
+  opaque to the effect system today, and the opacity is contagious. Purity is not part of a
+  function *type*: `lambda_type` (`tree-sitter-lyra/include/types/lambda_type.js`) admits only
+  `ref`/`mut`/`own`, and `types.LambdaType` is `{Parameters, ReturnType}` with no effect field,
+  so `f: pure () -> t` cannot be written. A call through a parameter therefore reaches
+  `isImpureCallee`'s unresolvable branch (`checker/purity.go:445`) — the one meant for imported
+  externals — and is assumed impure; the inference side is harsher still, ORing in **AllEffects**
+  rather than just `PurityEffects` (`purity.go:1112`), so `noalloc` and `det` are lost too.
+  Verified:
+
+  ```
+  let apply  = pure (f: () -> i64) -> i64 => f()          // lyra-E007 on f()
+  let applyU =      (f: () -> i64) -> i64 => f()          // inferred: all effects
+  let caller = pure () -> i64 => applyU(() -> i64 => 7)   // lyra-E007 on applyU
+  ```
+
+  Dropping the annotation does not help — it moves the error to every caller. The practical
+  consequence is that **no combinator taking a callback can be called from `pure` code**, which
+  is the whole prelude combinator layer — `std/prelude.lyra`'s `unwrap_or_else` must therefore
+  stay unannotated, where first-order `unwrap_or` is `pure noalloc`. Two designs, compatible:
+  - **Declared** — allow the modifiers in `lambda_type`, carry an effect on `LambdaType`, and
+    check it at assignability (a `pure` lambda fits an unannotated slot, never the reverse).
+    Precise, checkable at the definition, and it gives an API an enforceable contract — but on
+    its own it forces a `pure` and a non-`pure` copy of every combinator.
+  - **Inferred** — a higher-order function's effect is the join of its own body's and the
+    *actual arguments* at each call site, so `unwrap_or_else(m, () => 0)` is pure and
+    `unwrap_or_else(m, () => read())` is not. One copy of each combinator and no new syntax, at
+    the cost of a call-site-sensitive analysis (and a decision about what an escaping or
+    stored callback joins to).
+
+  The inferred half is what makes the standard library usable; the declared half is what lets a
+  signature *promise* purity. Sequencing: inferred first, declared later as an optional bound.
+  Whichever lands, `lyra-E007`'s message needs to stop saying "impure function" for a callee it
+  simply could not resolve.
 - **[OPEN] (#3) Purity inference phase 2 for trait-method clauses.** Lambdas and free functions
   read the collector's `ScopeTable`; method clauses still re-walk the AST, because
   `CollectLambdaClause` records no scope. Needs a collector change reconciled with
