@@ -90,9 +90,9 @@ Two consequences that are the point rather than side effects:
 
 - **An annotation constrains a function's own body.** `pure` on a higher-order function claims
   "contributes no effects of its own", not "no effect can occur through me" — the second is not
-  the function's to promise without constraining its callback, which needs the *declared* half
-  (`f: pure () -> t`) the grammar cannot spell yet. This is what lets the prelude annotate
-  `unwrap_or_else` `pure noalloc`; a caller passing an impure callback is still rejected, at the
+  the function's to promise without constraining its callback — that is what the declared half
+  below (`f: pure () -> t`) is for. This is what lets the prelude annotate
+  `unwrap_or_else` `pure noalloc` without constraining its callers; a caller passing an impure callback is still rejected, at the
   call site, with the diagnostic naming the **argument** rather than the innocent callee.
 - **A callback passed onward stays polymorphic**: `(f) => or_else(m, f)` is polymorphic in `f`
   too, so combinators built from combinators are not poisoned by the hand-off.
@@ -100,6 +100,37 @@ Two consequences that are the point rather than side effects:
 Deliberately still conservative: a callback reached through a struct field, a call result or an
 array element; multi-clause lambdas (per-clause patterns give no index to match an argument
 against); and trait-impl methods, which `methodEffects` treats as before.
+
+**The declared half: `f: pure () -> t`.** A parameter's *type* may carry the same
+`pure`/`det`/`noalloc` modifiers a lambda value does (`tree-sitter-lyra`'s `lambda_type`),
+collected onto `types.LambdaType`'s `IsPure`/`IsDet`/`IsNoAlloc`. A parameter carrying one is
+**not** effect-polymorphic: what calling it can do is known from the signature, so
+`declaredBound`/`boundEffect` charge exactly what the bound still permits and the enclosing
+function is pure *for every caller* rather than at the call sites that happen to pass a pure
+callback. That is the claim a signature could not make before, since purity was not part of a
+function type at all.
+
+`checkDeclaredCallbackBounds` enforces it at **every** call site, not only inside `pure`
+functions: the bound is a property of the callee's signature, so an impure program may not
+quietly hand an impure callback to a `pure`-declared slot. What it compares is the argument's
+**inferred** effect, not its annotation — requiring the word `pure` on every lambda literal a
+program writes would cost more than the bound is worth, and inference is precisely what this
+pass has and the typechecker does not. That is also why `isAssignable` deliberately lets two
+function types differing only in bounds through in either direction: a shape mismatch there
+would report "cannot assign `() -> i64` to `pure () -> i64`", which explains nothing, instead
+of "this argument mutates state outside itself". `TypesEqual` *does* distinguish them, so
+identity questions (trait-signature matching) still see two types.
+
+A bound composes through a forward — a constrained parameter satisfies a constrained slot from
+its own declared type, since a parameter has no body to inspect — and an **unconstrained one
+cannot**: it promises nothing, so `strict(g)` with `g: () -> i64` is rejected with a message
+saying to declare it. A bound the compiler cannot check is not a bound.
+
+Note what this does *not* change: an unbounded parameter keeps the inferred behaviour, so
+adding the declared half did not make every callback-taking function strict. The standard
+library deliberately leaves its combinators unbounded — `unwrap_or_else` with a `pure` bound
+would forbid a logging fallback, which is a legitimate use — and relies on the inferred half
+to keep pure callers pure.
 
 **A namespace-qualified callee resolves through its last segment** (`resolveCallee`). `maybe.map`
 had no resolution at all, so *every* cross-module call from a `pure` function was reported

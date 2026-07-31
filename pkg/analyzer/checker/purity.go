@@ -84,7 +84,7 @@ func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable
 		if stmt, ok := node.(ast.Statement); ok {
 			// Top level is an impure context: a nil scope means "not inside a pure
 			// function, don't check".
-			ast.WalkStmt(stmt, c.stmtVisitor(nil), c.exprVisitor(nil, base))
+			ast.WalkStmt(stmt, c.stmtVisitor(nil), c.exprVisitor(nil, base, nil))
 		}
 		if impl, ok := node.(*ast.TraitImplStmt); ok {
 			c.checkTraitMethodBounds(impl, base)
@@ -124,7 +124,7 @@ func (c *purityChecker) checkTraitMethodBounds(impl *ast.TraitImplStmt, base []s
 		// lambda's), so there is no mutBorrows set to populate here.
 		sc := &funcScope{locals: locals, mutBorrows: map[string]bool{}}
 		childCapture := pushScope(base, scope)
-		ast.WalkExpr(m.Clause.Body, c.stmtVisitor(sc), c.exprVisitor(sc, childCapture))
+		ast.WalkExpr(m.Clause.Body, c.stmtVisitor(sc), c.exprVisitor(sc, childCapture, nil))
 	}
 }
 
@@ -326,6 +326,42 @@ func callableParams(lam *ast.LambdaExpr) map[string]int {
 	return out
 }
 
+// declaredBound returns the effect bounds written on a parameter's *type*
+// (`f: pure () -> t`), or nil when it is not a function type or carries none.
+//
+// A parameter with a declared bound is **not** effect-polymorphic: its effects are known
+// from the signature, so calling it costs exactly what the bound permits and the enclosing
+// function's own purity does not depend on the caller. That is the difference the declared
+// half buys — `unwrap_or_else` with `f: pure () -> t` is pure *for every caller*, rather
+// than pure at the call sites that happen to pass a pure callback.
+func declaredBound(lam *ast.LambdaExpr, idx int) *types.LambdaType {
+	if lam == nil || idx < 0 || idx >= len(lam.Parameters) {
+		return nil
+	}
+	lt, ok := lam.Parameters[idx].Type.(*types.LambdaType)
+	if !ok || (!lt.IsPure && !lt.IsDet && !lt.IsNoAlloc) {
+		return nil
+	}
+	return lt
+}
+
+// boundEffect is the effect set a declared bound still permits: what a caller may not
+// assume is absent. `pure` permits nothing, `det` permits everything outside DetEffects,
+// `noalloc` constrains only allocation.
+func boundEffect(lt *types.LambdaType) Effect {
+	permitted := AllEffects
+	if lt.IsPure {
+		permitted &^= PurityEffects
+	}
+	if lt.IsDet {
+		permitted &^= DetEffects
+	}
+	if lt.IsNoAlloc {
+		permitted &^= EffectAlloc
+	}
+	return permitted
+}
+
 type purityChecker struct {
 	errors []PurityError
 	// impureLambdas holds the inferred effect set for each function literal,
@@ -415,7 +451,11 @@ func (c *purityChecker) checkInteriorMutation(sc *funcScope, target ast.Expressi
 	}
 }
 
-func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func(ast.Expression) bool {
+// enclosing is the lambda whose body is being walked (nil at the top level, and for a
+// trait-method body). It is needed to answer one question the capture stack cannot: when a
+// callback is handed straight on to a slot with a *declared* bound, whether the enclosing
+// function's own parameter declares one strong enough to satisfy it.
+func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, enclosing *ast.LambdaExpr) func(ast.Expression) bool {
 	return func(expr ast.Expression) bool {
 		switch e := expr.(type) {
 		case *ast.LambdaExpr:
@@ -424,7 +464,7 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 			c.checkBoundedEffects(e.IsDet, e.IsNoAlloc, c.impureLambdas[e], e.GetLocation())
 			// Default values execute at the call site, in the *enclosing* context.
 			for i := range e.Parameters {
-				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(sc), c.exprVisitor(sc, capture))
+				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(sc), c.exprVisitor(sc, capture, enclosing))
 			}
 			// The body runs in this lambda's own context: pure → build its scope;
 			// impure → nil (no checking). Either way it introduces a new lexical
@@ -444,7 +484,7 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 				child = &funcScope{locals: locals, mutBorrows: mutBorrowParams(e), callbacks: c.callbacks[e]}
 			}
 			childCapture := pushScope(capture, scope)
-			walkLambdaBodies(e, c.stmtVisitor(child), c.exprVisitor(child, childCapture))
+			walkLambdaBodies(e, c.stmtVisitor(child), c.exprVisitor(child, childCapture, e))
 			return false // recursed manually
 
 		case *ast.IdentifierExpr:
@@ -466,6 +506,13 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 			}
 
 		case *ast.FunctionCallExpr:
+			// A declared bound is a contract on the *callee's signature*, so it is checked
+			// at every call site regardless of whether the caller is itself pure — unlike
+			// the polymorphic case below, which only matters when the caller has something
+			// to protect.
+			if name := calleeName(e.Function); name != "" {
+				c.checkDeclaredCallbackBounds(capture, enclosing, e, name)
+			}
 			if sc != nil {
 				if method, ok := c.methodTable.Get(e); ok {
 					// Mask with PurityEffects: only correctness effects (mut/io)
@@ -483,7 +530,7 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 							"pure function calls non-pure trait method %q via a bound", ref.Method)
 					}
 				} else if name := calleeName(e.Function); name != "" {
-					c.checkCallPurity(sc, capture, e, name)
+					c.checkCallPurity(sc, capture, enclosing, e, name)
 				}
 			}
 
@@ -509,6 +556,100 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 //     aren't pure type-conversion calls — these are treated conservatively as
 //     impure (imported/external functions whose purity we can't verify)
 //
+// checkDeclaredCallbackBounds enforces the *declared* half of effect polymorphism: a
+// parameter typed `f: pure () -> t` constrains every function handed to it.
+//
+// Unlike the inferred half, this is a property of the callee's signature rather than of the
+// call, so it holds for every caller — an impure program may not quietly supply an impure
+// callback to a `pure`-declared slot just because it had nothing to protect itself.
+//
+// The argument's *inferred* effect is what is compared, not its annotation. Requiring the
+// word `pure` on every lambda literal a program writes would make the bound cost more than
+// it is worth, and inference is exactly what this pass has that the typechecker does not —
+// which is also why assignability deliberately lets the two types through (see
+// isAssignable) instead of reporting a shape mismatch that explains nothing.
+func (c *purityChecker) checkDeclaredCallbackBounds(capture []scopeBindings, enclosing *ast.LambdaExpr, call *ast.FunctionCallExpr, name string) {
+	callee, ok := resolveCallee(capture, name)
+	if !ok {
+		return
+	}
+	for i := range callee.Parameters {
+		bound := declaredBound(callee, i)
+		if bound == nil || i >= len(call.Arguments) {
+			continue
+		}
+		arg := call.Arguments[i]
+		actual, known := c.suppliedEffect(arg, capture, enclosing)
+		if !known {
+			c.report(arg.GetLocation(),
+				"%s: cannot verify that this argument satisfies the declared `%s` bound on %q; "+
+					"pass a function literal or a named function, or declare the parameter it comes from",
+				name, strings.TrimSpace(bound.EffectPrefix()), callee.Parameters[i].Pattern.GetName())
+			continue
+		}
+		if bad := actual &^ boundEffect(bound); bad != 0 {
+			c.report(arg.GetLocation(),
+				"%s: argument for %q must be `%s`, but it %s",
+				name, callee.Parameters[i].Pattern.GetName(),
+				strings.TrimSpace(bound.EffectPrefix()), effectDescription(bad))
+		}
+	}
+}
+
+// suppliedEffect is the effect of a value supplied for a *bounded* parameter. known is
+// false when this pass cannot see through to an answer, which is a rejection rather than a
+// pass: a bound the compiler cannot check is not a bound.
+//
+// The `enclosing` case is what lets a bound compose. A callback handed straight on carries
+// no body to inspect, so its own *declared* bound is the answer — which is why an
+// unconstrained parameter cannot be forwarded into a constrained slot, and the diagnostic
+// tells the caller to declare it.
+func (c *purityChecker) suppliedEffect(arg ast.Expression, capture []scopeBindings, enclosing *ast.LambdaExpr) (Effect, bool) {
+	switch a := arg.(type) {
+	case *ast.LambdaExpr:
+		if len(c.callbacks[a]) > 0 {
+			return 0, false // polymorphic itself; nothing here supplies its callbacks
+		}
+		return c.impureLambdas[a], true
+	case *ast.IdentifierExpr:
+		if lam, ok := resolveCallee(capture, a.Name); ok {
+			if len(c.callbacks[lam]) > 0 {
+				return 0, false
+			}
+			return c.impureLambdas[lam], true
+		}
+		if params := callableParams(enclosing); params != nil {
+			if idx, isParam := params[a.Name]; isParam {
+				if b := declaredBound(enclosing, idx); b != nil {
+					return boundEffect(b), true
+				}
+				return 0, false // an unconstrained parameter promises nothing
+			}
+		}
+	}
+	return 0, false
+}
+
+// effectDescription names the offending bits for a bound violation, in the order a reader
+// is most likely to care about them.
+func effectDescription(e Effect) string {
+	switch {
+	case e.Has(EffectMut):
+		return "mutates state outside itself"
+	case e.Has(EffectInput):
+		return "reads external input"
+	case e.Has(EffectOutput):
+		return "writes output"
+	case e.Has(EffectRand):
+		return "draws from a random source"
+	case e.Has(EffectTime):
+		return "reads the system clock"
+	case e.Has(EffectAlloc):
+		return "heap-allocates"
+	}
+	return "has an effect the bound forbids"
+}
+
 // checkCallPurity reports a call inside a `pure` function that is not pure *at this call
 // site* — which, for a higher-order callee, depends on the arguments and not on the callee
 // alone. See the effect-polymorphism note above lambdaEffects.
@@ -520,9 +661,26 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 //   - the callee's own base effect is impure: the old message, naming the callee.
 //   - the callee is pure but an argument is not: name the *argument*, since the callee is
 //     innocent and pointing at it would send the reader to the wrong file.
-func (c *purityChecker) checkCallPurity(sc *funcScope, capture []scopeBindings, call *ast.FunctionCallExpr, name string) {
+func (c *purityChecker) checkCallPurity(sc *funcScope, capture []scopeBindings, enclosing *ast.LambdaExpr, call *ast.FunctionCallExpr, name string) {
 	if sc.isCallback(name) {
 		return
+	}
+	// A call through a parameter carrying a *declared* bound costs exactly what the bound
+	// still permits — known from the signature, so there is nothing to charge the caller
+	// and nothing to report unless the bound itself allows an impurity. Without this the
+	// pure walk would flag `f()` inside `pure (…, f: pure () -> t) => … f() …`, which is
+	// precisely the function the declared half exists to make writable.
+	if params := callableParams(enclosing); params != nil {
+		if idx, isParam := params[name]; isParam {
+			if bound := declaredBound(enclosing, idx); bound != nil {
+				if boundEffect(bound)&PurityEffects != 0 {
+					c.report(call.GetLocation(),
+						"pure function calls %q, whose declared `%s` bound still permits an effect",
+						name, strings.TrimSpace(bound.EffectPrefix()))
+				}
+				return
+			}
+		}
 	}
 	callee, resolved := resolveCallee(capture, name)
 	if !resolved {
@@ -1224,10 +1382,11 @@ func boundCallEffect(ref typetable.BoundMethodRef, groups map[typetable.BoundMet
 // Two consequences worth stating, because they are what make the annotations usable:
 //   - An annotation constrains a function's **own body**. `pure` on a higher-order function
 //     says "contributes no effects of its own", not "no effect can ever occur through me" —
-//     that second claim is not the function's to make, and needs the *declared* half
-//     (`f: pure () -> t`) which the grammar cannot yet spell. So the prelude may finally
-//     annotate `unwrap_or_else` `pure noalloc`, and a caller passing an impure callback is
-//     still caught, at the call site where the impurity actually is.
+//     that second claim is not the function's to make while its callback is unconstrained,
+//     and is what the *declared* half is for (`f: pure () -> t`; see declaredBound). So the
+//     prelude can annotate `unwrap_or_else` `pure noalloc` without restricting its callers,
+//     and one passing an impure callback is still caught, at the call site where the
+//     impurity actually is.
 //   - A callback *passed onward* stays polymorphic: `(f) => unwrap_or_else(m, f)` is
 //     polymorphic in `f` too, rather than being charged AllEffects for handing it over.
 //     Without that, combinators built out of combinators would be exactly as poisoned as
@@ -1371,10 +1530,19 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 					// its callback parameters.
 					found |= callEffect(target, ex, bodyCapture, impureLambdas, callbacks, params, foundCallbacks)
 				} else if idx, isParam := params[name]; isParam {
-					// A call through one of our own function-typed parameters: this
-					// function is effect-polymorphic in it. The effect belongs to
-					// whoever supplies the callback and is charged at that call site.
-					foundCallbacks[name] = idx
+					if bound := declaredBound(lam, idx); bound != nil {
+						// The parameter's *type* constrains it (`f: pure () -> t`), so
+						// what calling it can do is known from the signature alone: charge
+						// exactly what the bound still permits. This function is therefore
+						// **not** polymorphic in it — it is pure (or det, or noalloc) for
+						// every caller, which is the whole point of writing the bound.
+						found |= boundEffect(bound)
+					} else {
+						// Unconstrained: this function is effect-polymorphic in the
+						// parameter. The effect belongs to whoever supplies the callback
+						// and is charged at that call site.
+						foundCallbacks[name] = idx
+					}
 				} else if e, ok := builtinEffects[name]; ok {
 					found |= e
 				} else if !isTypeConversionCall(name) {

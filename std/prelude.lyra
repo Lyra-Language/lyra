@@ -47,8 +47,13 @@ pub let unwrap_or<t> = pure noalloc (m: Maybe<t>, fallback: t) -> t => match m {
 // `pure noalloc` here constrains this function's *own* body. Effects arriving through
 // `f` belong to whoever supplies it and are charged at that call site, so
 // `unwrap_or_else(m, () -> i64 => 0)` is pure and passing an effectful callback is
-// rejected there rather than here. A declared bound (`f: pure () -> t`) would let the
-// signature promise more; the grammar cannot spell one yet.
+// rejected there rather than here.
+//
+// `f` is deliberately left *unbounded*. Writing `f: pure () -> t` is now possible and
+// would make this function pure for every caller — at the cost of forbidding a fallback
+// that logs, which is a legitimate thing to want from a lazy default. A general-purpose
+// combinator should not make that choice for its callers; the inferred half already keeps
+// pure callers pure.
 pub let unwrap_or_else<t> = pure noalloc (m: Maybe<t>, f: () -> t) -> t => match m {
   Some(v) => v,
   None => f(),

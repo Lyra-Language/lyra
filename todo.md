@@ -222,29 +222,32 @@ whole allocation-flavor axis — `stack`/`shared` compatibility (`lyra-E018`), r
 well-formedness (`lyra-E014`), `shared`/dynamic arrays, for-in across arrays/ranges/strings,
 interior assignment, and deep retain-on-copy.
 
-- **[PARTIAL] Effect polymorphism over function-typed parameters.** The **inferred** half
-  landed 07/31: a function's stored effect is its *base* plus its callback parameters, and a
-  call site pays base ∪ the effects of the arguments supplied for them. `unwrap_or_else`,
-  `ok_or_else` and all of `std.maybe` are now annotated `pure noalloc` and callable from
-  `pure` code, with an impure callback rejected at the call site. Details in
-  `checker/README.md`; reasoning in COMPLETED.md's 07/31 entry.
+- **[PARTIAL] Effect polymorphism over function-typed parameters.** Both halves landed
+  07/31; details in `checker/README.md`, reasoning in COMPLETED.md.
+  - The **inferred** half: a function's stored effect is its *base* plus its callback
+    parameters, and a call site pays base ∪ the effects of the arguments supplied for them.
+    `unwrap_or_else`, `ok_or_else` and all of `std.maybe` are annotated `pure noalloc` and
+    callable from `pure` code, with an impure callback rejected at the call site.
+  - The **declared** half: `lambda_type` takes the same `pure`/`det`/`noalloc` modifiers a
+    lambda value does (`f: pure () -> t`), carried on `types.LambdaType` and enforced by
+    `checkDeclaredCallbackBounds` at *every* call site. A bounded parameter is not
+    polymorphic, so its function is pure for every caller. The standard library
+    deliberately does not use it: a bound on `unwrap_or_else` would forbid a fallback that
+    logs, and the inferred half already keeps pure callers pure.
 
   What is left:
-  - **[OPEN] The declared half.** Purity is still not part of a function *type*: `lambda_type`
-    (`tree-sitter-lyra/include/types/lambda_type.js`) admits only `ref`/`mut`/`own`, and
-    `types.LambdaType` is `{Parameters, ReturnType}` with no effect field, so `f: pure () -> t`
-    cannot be written. Consequently a `pure` annotation on a higher-order function constrains
-    only its **own body** — it cannot *promise* that calling it is pure, because it cannot
-    constrain its callback. That is sound (the caller is checked at the call site) but it is a
-    weaker contract than an API author may want, and it is the piece that would let a signature
-    say so. Needs the grammar change (push `tree-sitter-lyra` first), an effect field on
-    `LambdaType`, and an assignability rule — a `pure` lambda fits an unannotated slot, never
-    the reverse.
   - **[OPEN] Callbacks reached through anything but a parameter or a binding** — a struct
     field, a call result, an array element — stay conservative (`AllEffects`). Also
     multi-clause lambdas, whose per-clause patterns give no index to match an argument
-    against, and **trait-impl methods**, which `methodEffects` still treats as before: a method
-    taking a callback is as poisoned as every function was before this landed.
+    against, and **trait-impl methods**, which `methodEffects` still treats as before: a
+    method taking a callback is as poisoned as every function was before this landed. A
+    trait *signature* also has nowhere to write a bound on a method's parameter, which is
+    the same grammar gap the borrow-modifier item below notes.
+  - **[OPEN] A declared bound is not inferred.** Passing an unconstrained parameter into a
+    bounded slot is rejected rather than propagating the requirement outward, so a wrapper
+    must declare its own bound by hand. Inferring it (a caller's parameter *becomes*
+    bounded because it is forwarded into a bounded slot) is the natural next step and is
+    what would make bounds composable without annotation churn.
 
 - **[OPEN] (#3) Purity inference phase 2 for trait-method clauses.** Lambdas and free functions
   read the collector's `ScopeTable`; method clauses still re-walk the AST, because

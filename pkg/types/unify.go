@@ -48,6 +48,13 @@ func TypesEqual(a, b Type) bool {
 				return false
 			}
 		}
+		// The declared effect bounds are part of identity. `pure () -> i64` and
+		// `() -> i64` describe different sets of functions, and treating them as equal
+		// would short-circuit isAssignable's very first check — the subtyping rule below
+		// it would then never run and the annotation would be decorative.
+		if at.IsPure != bt.IsPure || at.IsDet != bt.IsDet || at.IsNoAlloc != bt.IsNoAlloc {
+			return false
+		}
 		return TypesEqual(at.ReturnType.Type, bt.ReturnType.Type)
 	case NamedStructType:
 		bt, ok := b.(NamedStructType)

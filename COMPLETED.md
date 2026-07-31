@@ -10,6 +10,42 @@ Newest first.
 ## Dated log
 
 ### 07/31/26
+**Effect polymorphism — the declared half: `f: pure () -> t`.** The inferred half (below)
+decides a higher-order function's purity per call site from the argument, which is what makes
+a standard library usable but leaves a signature unable to *promise* anything: `pure` on a
+combinator claims only that its own body is clean. A parameter's **type** may now carry the
+same `pure`/`det`/`noalloc` modifiers a lambda value does, and a parameter carrying one is no
+longer polymorphic — what calling it can do is known from the signature, so the function is
+pure **for every caller**.
+
+- **Grammar** (`tree-sitter-lyra`): `lambda_type` takes the three modifiers as labelled
+  fields, matching `lambda_expr` so a type and the value inhabiting it are written the same
+  way. No new node kind — `pure_modifier` already existed — so no highlight query changed and
+  `lyra-zed-ext` needed nothing.
+- **Enforced at every call site**, not only inside `pure` functions
+  (`checkDeclaredCallbackBounds`): the bound is a property of the callee's signature, so an
+  impure program may not quietly hand an impure callback to a `pure`-declared slot.
+- **The argument's *inferred* effect is what is compared, not its annotation.** Requiring the
+  word `pure` on every lambda literal a program writes would cost more than the bound is
+  worth, and inference is exactly what this pass has and the typechecker does not. That is
+  also why `isAssignable` deliberately passes two function types differing only in bounds:
+  a shape mismatch there would report "cannot assign `() -> i64` to `pure () -> i64`", which
+  explains nothing, where the checker says "this argument mutates state outside itself".
+  `TypesEqual` *does* distinguish them, so identity questions still see two types — and it
+  has to, or `isAssignable`'s equality short-circuit would fire first and the annotation
+  would be decorative.
+- **Bounds compose one way.** A constrained parameter forwarded into a constrained slot is
+  verified from its own declared type (a parameter has no body to inspect); an unconstrained
+  one is *rejected*, since it promises nothing. A bound the compiler cannot check is not a
+  bound. Propagating the requirement outward instead — inferring that a wrapper's parameter
+  becomes bounded — is the obvious next step and is open in todo.md.
+
+**The standard library deliberately does not use it.** A `pure` bound on `unwrap_or_else`
+would forbid a fallback that logs, which is a legitimate thing to want from a lazy default,
+and the inferred half already keeps pure callers pure without taking that choice away from
+impure ones. The declared half is for APIs that genuinely require purity — something that
+memoizes, reorders, or parallelizes a callback — where the restriction is the feature.
+
 **Effect polymorphism over function-typed parameters — the inferred half.** A higher-order
 function's effects are not a property of the function alone: what `unwrap_or_else(m, f)`
 does depends entirely on `f`. The pass charged the *definition* for a call it could not

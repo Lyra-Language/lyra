@@ -617,6 +617,11 @@ func (c *Collector) parseLambdaType(node *sitter.Node) *types.LambdaType {
 	return &types.LambdaType{
 		Parameters: c.parseParameterTypes(node.ChildByFieldName("parameter_types")),
 		ReturnType: types.ReturnType{Type: c.parseType(node.ChildByFieldName("return_type"))},
+		// The declared effect bounds (`f: pure () -> t`). They are labelled fields on
+		// lambda_type, so presence alone is the answer — no text comparison.
+		IsPure:    node.ChildByFieldName("is_pure") != nil,
+		IsDet:     node.ChildByFieldName("is_det") != nil,
+		IsNoAlloc: node.ChildByFieldName("is_noalloc") != nil,
 	}
 }
 

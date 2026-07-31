@@ -22,6 +22,27 @@ func isAssignable(from, to types.Type) bool {
 	if _, ok := from.(types.NeverType); ok {
 		return true
 	}
+	// Two function types that differ *only* in their declared effect bounds are assignable
+	// here, in **either** direction: the shape is what this function decides, and whether
+	// the value actually satisfies `pure () -> t` is decided by the purity pass, which is
+	// the only pass that knows.
+	//
+	// Enforcing contravariance here instead would reject an ordinary `(x: i64) -> i64 => x * 2`
+	// for a `pure` slot, because a lambda literal carries no annotation — its purity is
+	// *inferred*, bottom-up, in a later pass. Requiring the word `pure` on every callback a
+	// program writes would make the feature cost more than it is worth; the checker's
+	// checkDeclaredCallbackBounds compares the *inferred* effect against the declared bound
+	// and reports a real reason ("mutates a captured binding") rather than a shape mismatch.
+	// TypesEqual still distinguishes them, so trait-signature matching and anything else
+	// asking about identity sees two different types.
+	if fromLam, ok := from.(*types.LambdaType); ok {
+		if toLam, ok := to.(*types.LambdaType); ok {
+			return types.TypesEqual(
+				&types.LambdaType{Parameters: fromLam.Parameters, ReturnType: fromLam.ReturnType},
+				&types.LambdaType{Parameters: toLam.Parameters, ReturnType: toLam.ReturnType},
+			)
+		}
+	}
 	// A data-type value is assignable to the same nominal type whether the slot
 	// is written as a bare name, with generic arguments (`Maybe<i64>`), or as
 	// another reference to the data type. The checker does not instantiate
