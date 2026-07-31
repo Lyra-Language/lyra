@@ -44,9 +44,12 @@ pub let unwrap_or<t> = pure noalloc (m: Maybe<t>, fallback: t) -> t => match m {
   None => fallback,
 }
 
-// `unwrap_or_else` will eventually take an annotated pure noalloc function f, once that function type
-// annotation is supported.
-pub let unwrap_or_else<t> = (m: Maybe<t>, f: () -> t) -> t => match m {
+// `pure noalloc` here constrains this function's *own* body. Effects arriving through
+// `f` belong to whoever supplies it and are charged at that call site, so
+// `unwrap_or_else(m, () -> i64 => 0)` is pure and passing an effectful callback is
+// rejected there rather than here. A declared bound (`f: pure () -> t`) would let the
+// signature promise more; the grammar cannot spell one yet.
+pub let unwrap_or_else<t> = pure noalloc (m: Maybe<t>, f: () -> t) -> t => match m {
   Some(v) => v,
   None => f(),
 }
@@ -66,7 +69,7 @@ pub let ok_or<t,e> = pure noalloc (m: Maybe<t>, err: e) -> Result<t,e> => match 
   None => Err(err),
 }
 
-pub let ok_or_else<t,e> = (m: Maybe<t>, f: () -> e) -> Result<t,e> => match m {
+pub let ok_or_else<t,e> = pure noalloc (m: Maybe<t>, f: () -> e) -> Result<t,e> => match m {
   Some(v) => Ok(v),
   None => Err(f()),
 }
