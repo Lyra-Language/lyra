@@ -46,3 +46,8 @@ pub let unwrap_or<t> = (m: Maybe<t>, fallback: t) -> t => match m {
   Some(v) => v,
   None => fallback,
 }
+
+pub let unwrap_or_else<t> = (m: Maybe<t>, f: () -> t) -> t => match m {
+  Some(v) => v,
+  None => f(),
+}
