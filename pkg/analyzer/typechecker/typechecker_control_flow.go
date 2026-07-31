@@ -608,6 +608,24 @@ func substituteGenerics(t types.Type, subst map[string]types.Type) types.Type {
 		}
 		tt.TypeArguments = args
 		return tt
+	case *types.LambdaType:
+		// A function type carries variables in its signature just as an aggregate
+		// carries them in its elements, and a higher-order generic is unusable
+		// without this: solving `t` from a `() -> i64` argument only helps if the
+		// declared `() -> t` parameter is then substituted to `() -> i64` for the
+		// assignability check. A *copy* is returned — LambdaType is the one type here
+		// held by pointer, so substituting in place would rewrite the declaration
+		// every other call site shares.
+		params := make([]types.ParameterType, len(tt.Parameters))
+		for i, p := range tt.Parameters {
+			params[i] = p
+			params[i].Type = substituteGenerics(p.Type, subst)
+		}
+		ret := tt.ReturnType
+		if ret.Type != nil {
+			ret.Type = substituteGenerics(ret.Type, subst)
+		}
+		return &types.LambdaType{Parameters: params, ReturnType: ret}
 	}
 	return t
 }

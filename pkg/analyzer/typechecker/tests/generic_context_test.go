@@ -177,3 +177,38 @@ let w = Holder { tag: 1, inner: Just("x") }
 		t.Errorf("a compound field's mismatch must be reported; got %v", res.errors)
 	}
 }
+
+// Unifying through a function type must still *reject*: binding `t` from a callback is
+// only sound if an inconsistent or ill-shaped one is refused.
+func TestGenericContext_FunctionArgumentUnificationStillRejects(t *testing.T) {
+	for _, c := range []struct{ name, src, want string }{
+		{
+			name: "two arguments imply different bindings",
+			src: `let apply = (f: (t) -> t, x: t) -> t => f(x)
+let dbl = (n: i64) -> i64 => n * 2
+let bad = apply(dbl, "x")`,
+			want: "cannot infer type variable t",
+		},
+		{
+			name: "callback has the wrong arity",
+			src: `let g = (h: () -> t) -> t => h()
+let two = (a: i64, b: i64) -> i64 => a
+let bad = g(two)`,
+			want: "cannot infer type variable t",
+		},
+		{
+			name: "the solved return type is enforced at the use site",
+			src: `let g = (h: () -> t) -> t => h()
+let mk = () -> i64 => 42
+let s: string = g(mk)`,
+			want: "cannot assign i64 to string",
+		},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			res := parseCollectAndCheck(t, c.src, false)
+			if !hasError(res, c.want) {
+				t.Errorf("expected %q; got %v", c.want, res.errors)
+			}
+		})
+	}
+}

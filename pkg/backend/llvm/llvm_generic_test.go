@@ -271,3 +271,54 @@ func funcBody(ir, name string) string {
 	}
 	return ""
 }
+
+// A generic function solves its type variables from a *function-typed* argument.
+//
+// `unifyGenericTarget` had no LambdaType case, so `() -> t` against a supplied
+// `() -> i64` bound nothing and the call reported "cannot infer type variable t from
+// these arguments"; `substituteGenerics` had the same omission, so even once `t` was
+// solved the declared parameter stayed `() -> t` and the argument was rejected as
+// "cannot assign () -> i64 to () -> t". Both halves are needed, and between them they
+// are what makes any callback-taking combinator — `unwrap_or_else`, `map`, `and_then` —
+// expressible at all.
+func TestExec_GenericSolvedFromFunctionArgument(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			name: "variable in the callback's return type",
+			src: `let g = (h: () -> t) -> t => h()
+let mk = () -> i64 => 42
+let main = () -> u8 => u8(g(mk))`,
+			want: 42,
+		},
+		{
+			name: "variable in the callback's parameter type",
+			src: `let apply = (f: (t) -> t, x: t) -> t => f(x)
+let dbl = (n: i64) -> i64 => n * 2
+let main = () -> u8 => u8(apply(dbl, 21))`,
+			want: 42,
+		},
+		{
+			// The shape the prelude's unwrap_or_else has: one aggregate argument and
+			// one callback, each carrying the same variable.
+			name: "aggregate and callback agree on the variable",
+			src: `data Opt<t> = Nil | Just(t)
+let or_else = (m: Opt<t>, f: () -> t) -> t => match m { Just(v) => v, Nil => f(), }
+let fortyTwo = () -> i64 => 42
+let main = () -> u8 => u8(or_else(Nil, fortyTwo))`,
+			want: 42,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("exit = %d, want %d", got, c.want)
+			}
+		})
+	}
+}

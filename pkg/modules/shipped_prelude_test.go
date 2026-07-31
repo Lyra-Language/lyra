@@ -83,6 +83,26 @@ let main = () -> u8 => {
 	}
 }
 
+// Its combinators are usable, including the higher-order one.
+//
+// `unwrap_or_else` takes a callback, so it needs the unifier to solve `t` through a
+// function type — an omission that made every callback-taking combinator uncallable and
+// went unnoticed because nothing exercised the shipped prelude's contents.
+func TestShippedPrelude_CombinatorsAreCallable(t *testing.T) {
+	repo, _ := shippedPreludePath(t)
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "app.lyra"), `let fortyTwo = () -> i64 => 42
+let main = () -> u8 => {
+  let n: Maybe<i64> = None
+  let m: Maybe<i64> = Some(0)
+  u8(unwrap_or(m, 1) + unwrap_or_else(n, fortyTwo))
+}`)
+	res := analyzeWith(t, filepath.Join(dir, "app.lyra"), dir, repo)
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Errorf("the prelude's combinators should be callable; got %v", errs)
+	}
+}
+
 // The `@builtin(…)` marker confers canonical identity **independently of the spelling** —
 // the entire reason it exists over the name+shape fallback.
 //

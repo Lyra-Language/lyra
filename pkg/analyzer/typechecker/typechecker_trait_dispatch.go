@@ -133,6 +133,13 @@ func collectGenericNames(t types.Type, set map[string]bool) {
 		for _, e := range v.Elements {
 			collectGenericNames(e, set)
 		}
+	case *types.LambdaType:
+		for _, p := range v.Parameters {
+			collectGenericNames(p.Type, set)
+		}
+		if v.ReturnType.Type != nil {
+			collectGenericNames(v.ReturnType.Type, set)
+		}
 	}
 }
 
@@ -169,6 +176,34 @@ func unifyGenericTarget(implType, receiverType types.Type, generics map[string]b
 			}
 		}
 		return true
+	case *types.LambdaType:
+		// A function type binds its variables through its own signature, so a
+		// higher-order generic can be solved from the function it is handed:
+		// `(m: Maybe<t>, f: () -> t) -> t` called with a `() -> i64` binds `t`.
+		// Without this the unifier fell through to TypesEqual, which is never true
+		// of `() -> t` against `() -> i64`, and the call reported "cannot infer type
+		// variable t from these arguments" — leaving every combinator that takes a
+		// callback (`unwrap_or_else`, `map`, `and_then`) unusable.
+		//
+		// Parameters are unified in the same direction as the return type. A
+		// function type is contravariant in its parameters, but this is unification
+		// against a *pattern*, not a subtyping test: both sides are concrete apart
+		// from the variables being solved, so direction only decides which side a
+		// variable may be read from, and reading it from either is correct here.
+		rt, ok := receiverType.(*types.LambdaType)
+		if !ok || len(it.Parameters) != len(rt.Parameters) {
+			return false
+		}
+		for i := range it.Parameters {
+			if !unifyGenericTarget(it.Parameters[i].Type, rt.Parameters[i].Type, generics, bindings) {
+				return false
+			}
+		}
+		if it.ReturnType.Type == nil || rt.ReturnType.Type == nil {
+			// An un-inferred return (an unannotated lambda literal) pins nothing.
+			return it.ReturnType.Type == rt.ReturnType.Type
+		}
+		return unifyGenericTarget(it.ReturnType.Type, rt.ReturnType.Type, generics, bindings)
 	}
 	implName, implArgs, implNominal := nominalHead(implType)
 	recvName, recvArgs, recvNominal := nominalHead(receiverType)

@@ -482,3 +482,19 @@ field had solved `t`. That guard is `mentionsGenericParam`, which walks the type
 than testing its name, so a partly-substituted `Maybe<t>` counts as incomplete exactly as a
 bare `t` does — and what it defers, `propagateInstantiation` re-checks once the context
 arrives.
+
+## Unifying through a function type
+
+`unifyGenericTarget` and `substituteGenerics` both handle `*types.LambdaType`, which is
+what lets a higher-order generic be solved: `(m: Maybe<t>, f: () -> t) -> t` called with a
+`() -> i64` binds `t` from the callback's signature, and the declared parameter is then
+substituted to `() -> i64` for the assignability check. Missing either half makes every
+callback-taking combinator uncallable — the first reports "cannot infer type variable t",
+the second "cannot assign () -> i64 to () -> t".
+
+Parameters unify in the same direction as the return type. A function type is
+contravariant in its parameters, but this is unification against a *pattern*, not a
+subtyping test: both sides are concrete apart from the variables being solved, so
+direction only decides which side a variable may be read from. The substitution returns a
+**copy**, since `LambdaType` is the one type here held by pointer and rewriting in place
+would mutate the declaration every other call site shares.

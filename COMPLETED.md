@@ -184,6 +184,26 @@ purpose, and ambient-ness is a concept a prelude needs under any design.
   reverting the propagation, the structural solve, the structural substitution, and the
   duplicate suppression independently.
 
+- **A generic function solves its type variables through a *function-typed* argument.**
+  `unifyGenericTarget` had no `LambdaType` case, so a declared `() -> t` matched against a
+  supplied `() -> i64` bound nothing and the call reported "cannot infer type variable t from
+  these arguments"; `substituteGenerics` had the same omission, so even once `t` was solved the
+  parameter stayed `() -> t` and the argument was rejected as "cannot assign () -> i64 to () ->
+  t". Both halves are required, and between them they are what makes any callback-taking
+  combinator expressible at all — `unwrap_or_else`, `map`, `and_then`. Parameters unify in the
+  same direction as the return type: a function type is contravariant in its parameters, but
+  this is unification against a *pattern* rather than a subtyping test, so direction only
+  decides which side a variable may be read from and either is correct. `collectGenericNames`
+  gained the matching case, so a variable appearing *only* inside a function type is still
+  recognised as one in play, and the substitution returns a **copy** — `LambdaType` is the one
+  type here held by pointer, so rewriting in place would mutate the declaration every other call
+  site shares. Found because the prelude gained `unwrap_or_else`, which type-checked standalone
+  and then could not be called: nothing had exercised a higher-order generic. Tests:
+  `TestExec_GenericSolvedFromFunctionArgument`,
+  `TestGenericContext_FunctionArgumentUnificationStillRejects` (inconsistent bindings, wrong
+  arity, and the solved return type enforced at the use site), and
+  `TestShippedPrelude_CombinatorsAreCallable`; both halves mutation-verified independently.
+
 **Bugs fixed.**
 
 - **`heap-use-after-free` when a *borrowed* `string` parameter is reassigned.** `let f = (s:
