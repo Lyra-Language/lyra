@@ -10,6 +10,47 @@ Newest first.
 ## Dated log
 
 ### 07/31/26
+**Effect polymorphism over function-typed parameters — the inferred half.** A higher-order
+function's effects are not a property of the function alone: what `unwrap_or_else(m, f)`
+does depends entirely on `f`. The pass charged the *definition* for a call it could not
+see — an unresolvable callee tainted `AllEffects` — so every combinator was maximally
+impure and the taint spread to its callers. **No callback-taking function was callable from
+`pure` code at all**, which is the entire std.maybe/std.result combinator layer, and
+dropping the annotation did not help: it moved the error to every caller.
+
+A function's stored effect is now its **base** (what its own body does) plus its **callback
+parameters**, the function-typed ones it calls. A call site pays base ∪ the effects of the
+arguments actually supplied for them, so one definition gives `unwrap_or_else(m, () -> i64
+=> 0)` pure and an effectful callback impure. The callback set is part of the same fixpoint
+as the effects, because finding a callback changes a caller's effect and finding an effect
+can reveal a callback a round later.
+
+Two consequences that are the point, not side effects:
+
+- **An annotation constrains a function's own body.** `pure` on a higher-order function
+  claims "contributes no effects of its own", not "no effect can occur through me" — the
+  second is not the function's to promise while it cannot constrain its callback, which
+  needs the declared half (`f: pure () -> t`) the grammar cannot spell. That is what finally
+  let the prelude annotate `unwrap_or_else` and `ok_or_else` `pure noalloc`, with all of
+  `std.maybe` alongside them; a caller passing an impure callback is still rejected, at the
+  call site, and the diagnostic names the **argument** rather than the innocent callee.
+- **A callback passed onward stays polymorphic.** `(f) => or_else(m, f)` is polymorphic in
+  `f` too. Without that, a combinator built from another combinator — which is most of a
+  standard library — would be exactly as poisoned as before.
+
+One thing had to be fixed for any of it to be observable: **a namespace-qualified callee had
+no resolution at all**, so *every* cross-module call from a `pure` function was reported
+impure, and `maybe.map(…)` — the whole point of the namespaced-module split — could not be
+called from pure code however pure it was. `resolveCallee` resolves the last segment against
+the merged program's top-level functions, and only when the object segment names no binding,
+mirroring the backend's `namespaceCallee`: with a local `math` in scope, `math.double` is a
+field read, and resolving it elsewhere would attribute another body's effects to it.
+
+Deliberately still conservative, all sound and all noted in todo.md: a callback reached
+through a struct field, a call result or an array element; multi-clause lambdas, whose
+per-clause patterns give no index to match an argument against; and trait-impl methods,
+where `methodEffects` is unchanged.
+
 **`never` and `panic(msg)`.** A program had no way to reach the trap machinery on purpose:
 the four traps (overflow, divide by zero, bounds, match fallthrough) are all emitted on
 conditions the compiler checks, and nothing in the builtin registry exposed one. So

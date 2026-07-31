@@ -2,6 +2,7 @@ package checker
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
@@ -68,10 +69,11 @@ func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
 	frames := newScopeFrames(program, scopeTable)
 	boundGroups := collectTraitMethodGroups(program)
-	impureLambdas, impureMethods := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, methodTable, boundGroups, buildAllocContext(program, typeTable), frames)
+	impureLambdas, impureMethods, callbacks := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, methodTable, boundGroups, buildAllocContext(program, typeTable), frames)
 	c := &purityChecker{
 		impureLambdas: impureLambdas,
 		impureMethods: impureMethods,
+		callbacks:     callbacks,
 		assignTargets: map[*ast.IdentifierExpr]bool{},
 		methodTable:   methodTable,
 		boundGroups:   boundGroups,
@@ -176,7 +178,10 @@ func InferredEffects(program *ast.Program, scopeTable *symbols.ScopeTable) map[s
 	frames := newScopeFrames(program, scopeTable)
 	// No TypeTable here (AST-only entry point), so alloc detection is disabled —
 	// consistent with this helper's documented limited analysis.
-	impure, _ := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, nil, collectTraitMethodGroups(program), buildAllocContext(program, nil), frames)
+	// The third result is the per-lambda callback set; this helper reports each
+	// function's *base* effect, which is what a caller asking "what does this function
+	// itself do" wants — the callback contribution is per call site by construction.
+	impure, _, _ := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, nil, collectTraitMethodGroups(program), buildAllocContext(program, nil), frames)
 	result := make(map[string]Effect, len(base[0].functions))
 	for name, lam := range base[0].functions {
 		result[name] = impure[lam]
@@ -222,6 +227,41 @@ func capturedMutable(capture []scopeBindings, name string) bool {
 	return false
 }
 
+// resolveCallee resolves a *callee* name to its function literal, including the
+// namespace-qualified form `maybe.map` that resolveFunction cannot see.
+//
+// A dotted callee had no resolution at all before, so it fell through to the
+// conservative "external, assume every effect" branch — which meant **any** cross-module
+// call from a `pure` function was reported impure, and a standard library reached through
+// its namespace (`maybe.map(…)`, the whole point of the std.maybe/std.result split) was
+// unusable from pure code no matter how pure it was.
+//
+// The last segment is what resolves, against the merged program's top-level functions:
+// module paths are collapsed into one program before this pass runs, and a `pub` name is
+// program-wide unique, so `maybe.map` and the top-level `map` are the same lambda. The
+// namespace fallback is taken **only when the object segment names no binding** — the
+// backend's namespaceCallee makes the same distinction, because `math.double` with a local
+// `math` in scope is an ordinary field read, not a module reference, and resolving it to
+// some other module's `double` would attribute the wrong body's effects to it.
+func resolveCallee(capture []scopeBindings, name string) (*ast.LambdaExpr, bool) {
+	if lam, ok := resolveFunction(capture, name); ok {
+		return lam, true
+	}
+	obj, member, isDotted := strings.Cut(name, ".")
+	if !isDotted || strings.Contains(member, ".") {
+		return nil, false
+	}
+	for i := len(capture) - 1; i >= 0; i-- {
+		if _, shadowed := capture[i].mutable[obj]; shadowed {
+			return nil, false
+		}
+		if _, shadowed := capture[i].functions[obj]; shadowed {
+			return nil, false
+		}
+	}
+	return resolveFunction(capture, member)
+}
+
 // resolveFunction resolves name to the function literal it is bound to,
 // searching the capture stack innermost-out. A name declared at some frame as
 // a non-function binding (present in .mutable but absent from .functions)
@@ -248,9 +288,43 @@ func resolveFunction(capture []scopeBindings, name string) (*ast.LambdaExpr, boo
 type funcScope struct {
 	locals     map[string]bool
 	mutBorrows map[string]bool
+	// callbacks are this function's *effect-polymorphic* parameters: the
+	// function-typed ones it calls. A call through one contributes no effect here —
+	// it belongs to whoever supplies the callback, and is charged at that call site.
+	// See callableParams and the effect-polymorphism note above lambdaEffects.
+	callbacks map[string]int
 }
 
 func (s *funcScope) isLocal(name string) bool { return s != nil && s.locals[name] }
+
+// isCallback reports whether name is one of this function's effect-polymorphic
+// parameters — a callback whose effects are the caller's, not this function's.
+func (s *funcScope) isCallback(name string) bool {
+	if s == nil {
+		return false
+	}
+	_, ok := s.callbacks[name]
+	return ok
+}
+
+// callableParams maps a lambda's parameter names to their positions, so a call to
+// one can be recognized inside the body and matched to an argument at a call site.
+//
+// A multi-clause lambda is deliberately excluded: its parameters are per-clause
+// patterns rather than one list, so there is no single index to match an argument
+// against. Those stay conservative (a call through one is an unresolvable callee).
+func callableParams(lam *ast.LambdaExpr) map[string]int {
+	if lam == nil || len(lam.LambdaClauses) > 0 {
+		return nil
+	}
+	out := make(map[string]int, len(lam.Parameters))
+	for i := range lam.Parameters {
+		if n := lam.Parameters[i].Pattern.GetName(); n != "" {
+			out[n] = i
+		}
+	}
+	return out
+}
 
 type purityChecker struct {
 	errors []PurityError
@@ -263,6 +337,10 @@ type purityChecker struct {
 	// impureMethods is impureLambdas' counterpart for trait-impl methods,
 	// populated by the same call to inferImpurity.
 	impureMethods map[*ast.TraitMethodImpl]Effect
+	// callbacks holds each lambda's effect-polymorphic parameters (name → position):
+	// the function-typed ones it calls, whose effects are charged at the call site
+	// rather than to the definition. See the note above lambdaEffects.
+	callbacks map[*ast.LambdaExpr]map[string]int
 	// assignTargets records IdentifierExpr nodes that are the root of an assignment
 	// target (the LHS of `x += …`, or the base of `x.f = …`). The write is reported
 	// by the mutation checks, so the same node must not be re-reported as a read.
@@ -360,7 +438,10 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 				for name := range scope.mutable {
 					locals[name] = true
 				}
-				child = &funcScope{locals: locals, mutBorrows: mutBorrowParams(e)}
+				// The callback parameters inference found for this lambda travel with the
+				// scope, so the call check below can tell "calls its own callback"
+				// (polymorphic, not this function's effect) from "calls something impure".
+				child = &funcScope{locals: locals, mutBorrows: mutBorrowParams(e), callbacks: c.callbacks[e]}
 			}
 			childCapture := pushScope(capture, scope)
 			walkLambdaBodies(e, c.stmtVisitor(child), c.exprVisitor(child, childCapture))
@@ -401,9 +482,8 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 						c.report(e.GetLocation(),
 							"pure function calls non-pure trait method %q via a bound", ref.Method)
 					}
-				} else if name := calleeName(e.Function); name != "" && c.isImpureCallee(capture, name) {
-					c.report(e.GetLocation(),
-						"pure function calls impure function %q", name)
+				} else if name := calleeName(e.Function); name != "" {
+					c.checkCallPurity(sc, capture, e, name)
 				}
 			}
 
@@ -428,6 +508,50 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 //     builtinEffects (known builtins with non-purity effects are fine) AND
 //     aren't pure type-conversion calls — these are treated conservatively as
 //     impure (imported/external functions whose purity we can't verify)
+//
+// checkCallPurity reports a call inside a `pure` function that is not pure *at this call
+// site* — which, for a higher-order callee, depends on the arguments and not on the callee
+// alone. See the effect-polymorphism note above lambdaEffects.
+//
+// Three outcomes, and the diagnostic distinguishes them because the fix differs:
+//   - the callee is this function's own callback: nothing to report. A `pure` annotation
+//     constrains the function's own body, and effects arriving through its parameters
+//     belong to whoever supplied them.
+//   - the callee's own base effect is impure: the old message, naming the callee.
+//   - the callee is pure but an argument is not: name the *argument*, since the callee is
+//     innocent and pointing at it would send the reader to the wrong file.
+func (c *purityChecker) checkCallPurity(sc *funcScope, capture []scopeBindings, call *ast.FunctionCallExpr, name string) {
+	if sc.isCallback(name) {
+		return
+	}
+	callee, resolved := resolveCallee(capture, name)
+	if !resolved {
+		if c.isImpureCallee(capture, name) {
+			c.report(call.GetLocation(), "pure function calls impure function %q", name)
+		}
+		return
+	}
+	if c.impureLambdas[callee]&PurityEffects != 0 {
+		c.report(call.GetLocation(), "pure function calls impure function %q", name)
+		return
+	}
+	// The callee contributes nothing of its own; anything impure came in through a
+	// callback this site supplied.
+	for cbName, idx := range c.callbacks[callee] {
+		if idx >= len(call.Arguments) {
+			continue // arity mismatch — the typechecker reports it
+		}
+		arg := call.Arguments[idx]
+		eff := argumentEffect(arg, capture, c.impureLambdas, c.callbacks, sc.callbacks, nil)
+		if eff&PurityEffects == 0 {
+			continue
+		}
+		c.report(arg.GetLocation(),
+			"pure function calls %q with an impure %s argument; the callback's effects are this call's",
+			name, cbName)
+	}
+}
+
 func (c *purityChecker) isImpureCallee(capture []scopeBindings, name string) bool {
 	// **A user binding is resolved first**, and only then the builtin table — the
 	// order the typechecker resolves a call in (scope, then print/println/panic on a
@@ -438,7 +562,7 @@ func (c *purityChecker) isImpureCallee(capture []scopeBindings, name string) boo
 	// is pure was reported impure (noise), and — once `panic` joined the table as
 	// EffectNone — a user `panic` that mutates or writes would have been waved through
 	// as pure. The name is not the callee.
-	if lam, ok := resolveFunction(capture, name); ok {
+	if lam, ok := resolveCallee(capture, name); ok {
 		// Mask with PurityEffects: an alloc-only callee is still pure to call
 		// from a pure function (EffectAlloc is orthogonal to purity).
 		return c.impureLambdas[lam]&PurityEffects != 0
@@ -943,9 +1067,15 @@ func collectFuncBindings(program *ast.Program, base []scopeBindings, frames *sco
 // with no detected effect is inferred pure exactly like an unannotated
 // function (FP/Imperative todo #3, "bottom-up purity inference for
 // unannotated methods"). methodTable is nil-safe — see purityChecker.methodTable.
-func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*ast.TraitMethodImpl, base []scopeBindings, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext, frames *scopeFrames) (map[*ast.LambdaExpr]Effect, map[*ast.TraitMethodImpl]Effect) {
+// It also returns each lambda's **callback parameters** — the function-typed ones it
+// calls, which is what makes its effect polymorphic; see the note above lambdaEffects.
+// That set is part of the same fixpoint, because discovering a callback can change a
+// caller's effect (it stops paying AllEffects for the call) and discovering an effect can
+// reveal a callback one round later.
+func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*ast.TraitMethodImpl, base []scopeBindings, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext, frames *scopeFrames) (map[*ast.LambdaExpr]Effect, map[*ast.TraitMethodImpl]Effect, map[*ast.LambdaExpr]map[string]int) {
 	impureLambdas := map[*ast.LambdaExpr]Effect{}
 	impureMethods := map[*ast.TraitMethodImpl]Effect{}
+	callbacks := map[*ast.LambdaExpr]map[string]int{}
 	// Fixpoint over an effect *set*: a callable's effect can only grow as more
 	// of its callees are analyzed, so each pass ORs in any newly found bits and
 	// we iterate until nothing changes. (This must recompute every callable
@@ -955,10 +1085,24 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 	for {
 		changed := false
 		for lam, capture := range lambdaDefs {
-			e := impureLambdas[lam] | lambdaEffects(lam, capture, impureLambdas, impureMethods, methodTable, boundGroups, alloc, frames)
+			effects, cbs := lambdaEffects(lam, capture, impureLambdas, impureMethods, methodTable, boundGroups, alloc, frames, callbacks)
+			e := impureLambdas[lam] | effects
 			if e != impureLambdas[lam] {
 				impureLambdas[lam] = e
 				changed = true
+			}
+			// The callback set grows monotonically too, and never shrinks: a parameter
+			// found to be called stays called. Merging (rather than replacing) keeps the
+			// fixpoint monotone even though an earlier round may have seen a call the
+			// current one resolves differently.
+			for name, idx := range cbs {
+				if _, seen := callbacks[lam][name]; !seen {
+					if callbacks[lam] == nil {
+						callbacks[lam] = map[string]int{}
+					}
+					callbacks[lam][name] = idx
+					changed = true
+				}
 			}
 		}
 		for _, m := range methods {
@@ -972,7 +1116,7 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 			break
 		}
 	}
-	return impureLambdas, impureMethods
+	return impureLambdas, impureMethods, callbacks
 }
 
 // collectMethodImpls gathers every trait-impl method declared in program,
@@ -1062,7 +1206,107 @@ func boundCallEffect(ref typetable.BoundMethodRef, groups map[typetable.BoundMet
 // accumulates an Effect bitmask instead of emitting diagnostics, and is used
 // only for inference. It does not descend into nested lambdas (they have
 // their own boundary). EffectNone means no effect was found (inferred pure).
-func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext, frames *scopeFrames) Effect {
+// Effect polymorphism over function-typed parameters.
+//
+// A higher-order function's effects are not a property of the function alone: what
+// `unwrap_or_else(m, f)` does depends entirely on `f`. Charging the *definition* for a
+// call it cannot see — the old behavior, where an unresolvable callee taints AllEffects —
+// made every combinator maximally impure, and the taint spread to callers, so no
+// callback-taking function was callable from `pure` code at all. That is the whole
+// std.maybe/prelude combinator layer.
+//
+// The scheme here is the *inferred* half of todo.md's entry: a function's stored effect is
+// its **base** — everything its own body does — plus a set of **callback parameters**, the
+// function-typed ones it calls. A call site then pays base ∪ the effects of the arguments
+// actually supplied for those parameters (callEffect). So `unwrap_or_else(m, () -> i64 => 0)`
+// is pure and `unwrap_or_else(m, () -> i64 => read())` is not, from one definition.
+//
+// Two consequences worth stating, because they are what make the annotations usable:
+//   - An annotation constrains a function's **own body**. `pure` on a higher-order function
+//     says "contributes no effects of its own", not "no effect can ever occur through me" —
+//     that second claim is not the function's to make, and needs the *declared* half
+//     (`f: pure () -> t`) which the grammar cannot yet spell. So the prelude may finally
+//     annotate `unwrap_or_else` `pure noalloc`, and a caller passing an impure callback is
+//     still caught, at the call site where the impurity actually is.
+//   - A callback *passed onward* stays polymorphic: `(f) => unwrap_or_else(m, f)` is
+//     polymorphic in `f` too, rather than being charged AllEffects for handing it over.
+//     Without that, combinators built out of combinators would be exactly as poisoned as
+//     before.
+//
+// What stays conservative (sound, imprecise): a callback reached through anything other than
+// a parameter or a resolvable binding — a struct field, a call result, an array element —
+// and multi-clause lambdas, whose parameters have no single index to match arguments
+// against. Trait-impl methods are not polymorphic yet either; methodEffects is unchanged.
+
+// callEffect is the effect of *this call site*: the callee's own base effect, plus the
+// effect of each argument supplied for a callback parameter.
+//
+// enclosing/enclosingCallbacks let a callback that is passed straight through — the
+// argument is one of the *caller's* own callback parameters — propagate rather than taint:
+// it is recorded as a callback of the enclosing function, to be charged one level up.
+func callEffect(
+	callee *ast.LambdaExpr,
+	call *ast.FunctionCallExpr,
+	capture []scopeBindings,
+	effects map[*ast.LambdaExpr]Effect,
+	callbacks map[*ast.LambdaExpr]map[string]int,
+	enclosing map[string]int,
+	enclosingCallbacks map[string]int,
+) Effect {
+	found := effects[callee]
+	for _, idx := range callbacks[callee] {
+		if idx >= len(call.Arguments) {
+			// Arity mismatch — the typechecker reports it; assume the worst here rather
+			// than reading past the end.
+			found |= AllEffects
+			continue
+		}
+		found |= argumentEffect(call.Arguments[idx], capture, effects, callbacks, enclosing, enclosingCallbacks)
+	}
+	return found
+}
+
+// argumentEffect is the effect of a value supplied for a callback parameter.
+func argumentEffect(
+	arg ast.Expression,
+	capture []scopeBindings,
+	effects map[*ast.LambdaExpr]Effect,
+	callbacks map[*ast.LambdaExpr]map[string]int,
+	enclosing map[string]int,
+	enclosingCallbacks map[string]int,
+) Effect {
+	switch a := arg.(type) {
+	case *ast.LambdaExpr:
+		// An inline lambda literal: its own inferred base. If it is *itself* polymorphic,
+		// nothing here supplies its callbacks, so assume the worst for those.
+		return effects[a] | unknownCallbackEffect(callbacks[a])
+	case *ast.IdentifierExpr:
+		// The caller's own callback, handed straight on: stay polymorphic and charge it
+		// one level up instead of tainting here.
+		if idx, ok := enclosing[a.Name]; ok {
+			if enclosingCallbacks != nil {
+				enclosingCallbacks[a.Name] = idx
+			}
+			return EffectNone
+		}
+		if lam, ok := resolveFunction(capture, a.Name); ok {
+			return effects[lam] | unknownCallbackEffect(callbacks[lam])
+		}
+	}
+	// A field, a call result, an element — nothing this pass can see through.
+	return AllEffects
+}
+
+// unknownCallbackEffect is AllEffects when a function being *passed as a value* has
+// callback parameters of its own, since this site supplies none of them.
+func unknownCallbackEffect(callbacks map[string]int) Effect {
+	if len(callbacks) > 0 {
+		return AllEffects
+	}
+	return EffectNone
+}
+
+func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext, frames *scopeFrames, callbacks map[*ast.LambdaExpr]map[string]int) (Effect, map[string]int) {
 	scope := frames.forLambda(lam)
 	locals := make(map[string]bool, len(scope.mutable))
 	for name := range scope.mutable {
@@ -1073,6 +1317,10 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 	// alongside lam in the same body), not just the scope it was defined in.
 	bodyCapture := pushScope(defCapture, scope)
 	mutBorrows := mutBorrowParams(lam)
+	params := callableParams(lam)
+	// foundCallbacks are the effect-polymorphic parameters discovered on this pass: the
+	// ones this body calls, or hands on to another function's callback slot.
+	foundCallbacks := make(map[string]int)
 	var found Effect
 	onStmt := func(s ast.Statement) bool {
 		switch st := s.(type) {
@@ -1113,11 +1361,20 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 				// the bound trait method (pure only if all of them are).
 				found |= boundCallEffect(ref, boundGroups, impureMethods)
 			} else if name := calleeName(ex.Function); name != "" {
-				// Scope before builtins, matching isImpureCallee and the typechecker:
-				// a user binding shadows a builtin of the same name, so its own body
-				// decides its effects.
-				if target, ok := resolveFunction(bodyCapture, name); ok {
-					found |= impureLambdas[target]
+				// Resolution order: a real binding, then our own parameters, then
+				// builtins — the typechecker's order, and it is also what makes a
+				// body-declared `let f = …` shadowing a parameter named `f` resolve to
+				// the declaration (both live in this lambda's frame, and resolveFunction
+				// consults .functions before .mutable).
+				if target, ok := resolveCallee(bodyCapture, name); ok {
+					// The callee's *base* effect plus whatever this site supplies for
+					// its callback parameters.
+					found |= callEffect(target, ex, bodyCapture, impureLambdas, callbacks, params, foundCallbacks)
+				} else if idx, isParam := params[name]; isParam {
+					// A call through one of our own function-typed parameters: this
+					// function is effect-polymorphic in it. The effect belongs to
+					// whoever supplies the callback and is charged at that call site.
+					foundCallbacks[name] = idx
 				} else if e, ok := builtinEffects[name]; ok {
 					found |= e
 				} else if !isTypeConversionCall(name) {
@@ -1155,7 +1412,7 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 		return true
 	}
 	walkLambdaBodies(lam, onStmt, onExpr)
-	return found
+	return found, foundCallbacks
 }
 
 // methodEffects is lambdaEffects's counterpart for a trait-impl method: same
@@ -1212,7 +1469,7 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 				// Scope before builtins, matching isImpureCallee and the typechecker:
 				// a user binding shadows a builtin of the same name, so its own body
 				// decides its effects.
-				if target, ok := resolveFunction(bodyCapture, name); ok {
+				if target, ok := resolveCallee(bodyCapture, name); ok {
 					found |= impureLambdas[target]
 				} else if e, ok := builtinEffects[name]; ok {
 					found |= e

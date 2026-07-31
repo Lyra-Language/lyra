@@ -170,3 +170,45 @@ func write(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+// The shipped combinators are callable from `pure` code — the property the whole
+// effect-polymorphism pass exists for, checked against the real std/ rather than a
+// synthetic module, because it is the shipped annotations that have to be right.
+//
+// Both directions matter. A pure callback must be accepted (before effect polymorphism a
+// call through a function-typed parameter tainted every effect, so no combinator was
+// callable from `pure` at all), and an impure one must still be rejected — at the call
+// site, which is where the impurity actually is.
+func TestShippedPrelude_CombinatorsAreUsableFromPureCode(t *testing.T) {
+	repo, path := shippedPreludePath(t)
+	dir := filepath.Dir(filepath.Dir(path)) // the root *containing* std/
+
+	t.Run("pure callback", func(t *testing.T) {
+		entry := filepath.Join(t.TempDir(), "app.lyra")
+		write(t, entry, `import std.maybe
+let pipeline = pure (m: Maybe<i64>) -> i64 => {
+  let doubled = maybe.map(m, (x: i64) -> i64 => x * 2)
+  unwrap_or_else(doubled, () -> i64 => 0)
+}
+let main = () -> u8 => u8(pipeline(Some(4)))`)
+		if errs := analyzeWith(t, entry, filepath.Dir(entry), dir, repo).Errors(); len(errs) != 0 {
+			t.Errorf("a pure pipeline over the shipped combinators should check; got %v", errs)
+		}
+	})
+
+	t.Run("impure callback is still rejected", func(t *testing.T) {
+		entry := filepath.Join(t.TempDir(), "app.lyra")
+		write(t, entry, `import std.maybe
+var log = 0
+let sneaky = (x: i64) -> i64 => { log = x  x }
+let pipeline = pure (m: Maybe<i64>) -> Maybe<i64> => maybe.map(m, sneaky)
+let main = () -> u8 => 0`)
+		errs := analyzeWith(t, entry, filepath.Dir(entry), dir, repo).Errors()
+		if len(errs) == 0 {
+			t.Fatal("a pure function passing an impure callback should be rejected")
+		}
+		if !strings.Contains(errs[0].Message, "impure") {
+			t.Errorf("expected an impurity diagnostic, got %v", errs)
+		}
+	})
+}

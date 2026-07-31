@@ -222,40 +222,30 @@ whole allocation-flavor axis — `stack`/`shared` compatibility (`lyra-E018`), r
 well-formedness (`lyra-E014`), `shared`/dynamic arrays, for-in across arrays/ranges/strings,
 interior assignment, and deep retain-on-copy.
 
-- **[OPEN] Effect polymorphism over function-typed parameters.** A higher-order function is
-  opaque to the effect system today, and the opacity is contagious. Purity is not part of a
-  function *type*: `lambda_type` (`tree-sitter-lyra/include/types/lambda_type.js`) admits only
-  `ref`/`mut`/`own`, and `types.LambdaType` is `{Parameters, ReturnType}` with no effect field,
-  so `f: pure () -> t` cannot be written. A call through a parameter therefore reaches
-  `isImpureCallee`'s unresolvable branch (`checker/purity.go:445`) — the one meant for imported
-  externals — and is assumed impure; the inference side is harsher still, ORing in **AllEffects**
-  rather than just `PurityEffects` (`purity.go:1112`), so `noalloc` and `det` are lost too.
-  Verified:
+- **[PARTIAL] Effect polymorphism over function-typed parameters.** The **inferred** half
+  landed 07/31: a function's stored effect is its *base* plus its callback parameters, and a
+  call site pays base ∪ the effects of the arguments supplied for them. `unwrap_or_else`,
+  `ok_or_else` and all of `std.maybe` are now annotated `pure noalloc` and callable from
+  `pure` code, with an impure callback rejected at the call site. Details in
+  `checker/README.md`; reasoning in COMPLETED.md's 07/31 entry.
 
-  ```
-  let apply  = pure (f: () -> i64) -> i64 => f()          // lyra-E007 on f()
-  let applyU =      (f: () -> i64) -> i64 => f()          // inferred: all effects
-  let caller = pure () -> i64 => applyU(() -> i64 => 7)   // lyra-E007 on applyU
-  ```
+  What is left:
+  - **[OPEN] The declared half.** Purity is still not part of a function *type*: `lambda_type`
+    (`tree-sitter-lyra/include/types/lambda_type.js`) admits only `ref`/`mut`/`own`, and
+    `types.LambdaType` is `{Parameters, ReturnType}` with no effect field, so `f: pure () -> t`
+    cannot be written. Consequently a `pure` annotation on a higher-order function constrains
+    only its **own body** — it cannot *promise* that calling it is pure, because it cannot
+    constrain its callback. That is sound (the caller is checked at the call site) but it is a
+    weaker contract than an API author may want, and it is the piece that would let a signature
+    say so. Needs the grammar change (push `tree-sitter-lyra` first), an effect field on
+    `LambdaType`, and an assignability rule — a `pure` lambda fits an unannotated slot, never
+    the reverse.
+  - **[OPEN] Callbacks reached through anything but a parameter or a binding** — a struct
+    field, a call result, an array element — stay conservative (`AllEffects`). Also
+    multi-clause lambdas, whose per-clause patterns give no index to match an argument
+    against, and **trait-impl methods**, which `methodEffects` still treats as before: a method
+    taking a callback is as poisoned as every function was before this landed.
 
-  Dropping the annotation does not help — it moves the error to every caller. The practical
-  consequence is that **no combinator taking a callback can be called from `pure` code**, which
-  is the whole prelude combinator layer — `std/prelude.lyra`'s `unwrap_or_else` must therefore
-  stay unannotated, where first-order `unwrap_or` is `pure noalloc`. Two designs, compatible:
-  - **Declared** — allow the modifiers in `lambda_type`, carry an effect on `LambdaType`, and
-    check it at assignability (a `pure` lambda fits an unannotated slot, never the reverse).
-    Precise, checkable at the definition, and it gives an API an enforceable contract — but on
-    its own it forces a `pure` and a non-`pure` copy of every combinator.
-  - **Inferred** — a higher-order function's effect is the join of its own body's and the
-    *actual arguments* at each call site, so `unwrap_or_else(m, () => 0)` is pure and
-    `unwrap_or_else(m, () => read())` is not. One copy of each combinator and no new syntax, at
-    the cost of a call-site-sensitive analysis (and a decision about what an escaping or
-    stored callback joins to).
-
-  The inferred half is what makes the standard library usable; the declared half is what lets a
-  signature *promise* purity. Sequencing: inferred first, declared later as an optional bound.
-  Whichever lands, `lyra-E007`'s message needs to stop saying "impure function" for a callee it
-  simply could not resolve.
 - **[OPEN] (#3) Purity inference phase 2 for trait-method clauses.** Lambdas and free functions
   read the collector's `ScopeTable`; method clauses still re-walk the AST, because
   `CollectLambdaClause` records no scope. Needs a collector change reconciled with

@@ -73,6 +73,42 @@ what a function returns and mutates, not whether it terminates. (Koka, which tra
 as effects in their own right, takes the other road — worth revisiting if a catchable panic or a
 totality guarantee is ever wanted, since both need that bit.)
 
+**Effect polymorphism over function-typed parameters.** A higher-order function's effects are
+not a property of the function alone — what `unwrap_or_else(m, f)` does depends entirely on
+`f`. A function's stored effect is therefore its **base** (what its own body does) plus its
+**callback parameters** (`callableParams` — the function-typed ones it calls, tracked in the
+same fixpoint as the effects, since finding one changes a caller's effect and finding an effect
+can reveal one a round later). A call site pays base ∪ the effects of the arguments actually
+supplied for those parameters (`callEffect`/`argumentEffect`), so one definition gives
+`unwrap_or_else(m, () -> i64 => 0)` pure and `unwrap_or_else(m, () -> i64 => log())` impure.
+
+Before this, a call through a parameter hit the unresolvable-callee branch and tainted
+`AllEffects`, which spread to every caller: **no callback-taking function was callable from
+`pure` code at all**, which is the entire std.maybe/std.result combinator layer.
+
+Two consequences that are the point rather than side effects:
+
+- **An annotation constrains a function's own body.** `pure` on a higher-order function claims
+  "contributes no effects of its own", not "no effect can occur through me" — the second is not
+  the function's to promise without constraining its callback, which needs the *declared* half
+  (`f: pure () -> t`) the grammar cannot spell yet. This is what lets the prelude annotate
+  `unwrap_or_else` `pure noalloc`; a caller passing an impure callback is still rejected, at the
+  call site, with the diagnostic naming the **argument** rather than the innocent callee.
+- **A callback passed onward stays polymorphic**: `(f) => or_else(m, f)` is polymorphic in `f`
+  too, so combinators built from combinators are not poisoned by the hand-off.
+
+Deliberately still conservative: a callback reached through a struct field, a call result or an
+array element; multi-clause lambdas (per-clause patterns give no index to match an argument
+against); and trait-impl methods, which `methodEffects` treats as before.
+
+**A namespace-qualified callee resolves through its last segment** (`resolveCallee`). `maybe.map`
+had no resolution at all, so *every* cross-module call from a `pure` function was reported
+impure — module paths are merged into one program before this pass, and a `pub` name is
+program-wide unique, so the last segment is the same lambda. The fallback is taken only when the
+object segment names no binding, mirroring the backend's `namespaceCallee`: with a local `math`
+in scope, `math.double` is a field read, and resolving it to another module's `double` would
+attribute the wrong body's effects.
+
 **Resolution order: scope, then the builtin table** — in `isImpureCallee` and in both
 `lambdaEffects`/`methodEffects` call cases, matching how the typechecker resolves a call
 (`print`/`println`/`panic` are consulted only when scope resolution misses). Consulting the
