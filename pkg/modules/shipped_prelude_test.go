@@ -120,10 +120,13 @@ func TestShippedPrelude_BuiltinMarkerIsNameIndependent(t *testing.T) {
 	}
 	// Rename the *type* only. The marker keeps naming the kind `Maybe`, so identity can
 	// now come from nothing but the marker.
-	renamed := strings.NewReplacer(
-		"data Maybe<t>", "data Option<t>",
-		"m: Maybe<t>", "m: Option<t>",
-	).Replace(string(source))
+	//
+	// Rewriting every type use rather than an enumerated few: `Maybe<` catches the
+	// declaration, parameters and return types alike, and cannot touch `@builtin(Maybe)`,
+	// which carries no `<`. Listing the positions individually meant the test broke — as
+	// "a renamed type should behave like Maybe" — the moment the prelude grew a function
+	// *returning* a `Maybe`, which is a prelude doing its job, not a regression.
+	renamed := strings.ReplaceAll(string(source), "Maybe<", "Option<")
 	if !strings.Contains(renamed, "data Option<t>") {
 		t.Fatalf("the prelude no longer declares `data Maybe<t>`, which this test rewrites:\n%s", renamed)
 	}

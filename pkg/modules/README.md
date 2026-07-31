@@ -35,6 +35,18 @@ backend's `namespaceCallee`, and both share three rules worth knowing:
   bare lookup would happily resolve `math.secret` to *another* module's `secret` — binding a
   reference the source never made, silently. The backend repeats the check rather than trusting
   the front end, per its standing rule that it errors rather than guesses.
+- **A namespace call resolves to the callee's *declaration*, not to its signature.** A generic
+  callee's type variables are free until a call's arguments solve them, so checking
+  `opt.wrap(7)` against the declared `(v: t) -> Opt<t>` rejected it ("cannot assign integer
+  literal to t") — while `import util.opt.{ wrap }` and the same function called in its own
+  module both worked, since those go through `inferIdentifierCall` → `inferGenericCall`.
+  `moduleMemberType` therefore returns the `*ast.LambdaExpr` alongside the type, and
+  `inferMemberCall` hands it to the same `inferLambdaCall` a direct call uses. The backend needs
+  the matching half: a generic function has no emitted body of its own, so `namespaceCallee`
+  asks `specializedFuncFor(call)` **before** `l.funcs` — which holds only functions emitted as
+  themselves, and so returned nothing, dropping the call out of the namespace path entirely to
+  die as `unsupported method call`. Both halves are load-bearing and separately mutation-tested
+  (`modules/generic_namespace_call_test.go`, `backend/llvm/llvm_module_call_test.go`).
 
 A local binding **shadows** a namespace, so `math.double` is an ordinary field read when `math`
 names a value.

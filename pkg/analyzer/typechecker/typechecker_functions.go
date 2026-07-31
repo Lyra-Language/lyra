@@ -587,7 +587,17 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// `math.double(21)` — a call through an imported namespace resolves to the
 	// module's function, then goes through the ordinary call path so arguments and
 	// generics are checked exactly as a direct call would be.
-	if t, handled := tc.moduleMemberType(member); handled {
+	//
+	// That means calling inferLambdaCall against the *declaration*, the same entry point
+	// inferIdentifierCall uses, rather than checking against the declared signature: a
+	// generic callee's type variables are free until this call's arguments solve them, so
+	// the signature route rejected every generic namespace call ("cannot assign
+	// Maybe<i64> to Maybe<t>") and, when it did not, recorded no instantiation for the
+	// backend to emit. A member that is not a function (a type) keeps the type route.
+	if t, fn, handled := tc.moduleMemberType(member); handled {
+		if fn != nil {
+			return tc.inferLambdaCall(member.Property.Name, fn, call)
+		}
 		if lt, ok := t.(*types.LambdaType); ok {
 			return tc.inferLambdaCallFromType(member.Property.Name, lt, call)
 		}

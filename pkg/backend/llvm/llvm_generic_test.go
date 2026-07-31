@@ -322,3 +322,69 @@ let main = () -> u8 => u8(or_else(Nil, fortyTwo))`,
 		})
 	}
 }
+
+// A function is generic when its signature mentions a type variable *anywhere*, including
+// where the variable appears only inside a composite — `Maybe<t>`, or a callback's own
+// signature — and never as a parameter of its own.
+//
+// mentionsTypeVar had no case for either, so isGenericLambda answered "not generic",
+// forEachUserFunction stopped skipping the function, and the backend tried to emit it
+// under its bare name — failing with "cannot lay out data type Opt yet", a message about
+// the *type* for a bug about the *function*. A bare `t` parameter is what hid it: it hits
+// the GenericType case directly, and every generic function written before the standard
+// library happened to have one. `is_some<t> = (m: Maybe<t>) -> bool` does not, so once the
+// prelude declared it no program could build at all — the prelude is implicitly imported,
+// so this took down programs that never mentioned Maybe.
+//
+// The data cases are the ones that fail without the fix, and the uncalled one is the
+// sharpest: with no call there is no instantiation, so nothing should be emitted for that
+// function whatsoever. The callback cases pass either way today — a boxed closure is a
+// pointer, so `() -> t` needs no layout — and are here as guards on the classification
+// itself, which is what release-tier closure lowering will change out from under.
+func TestExec_GenericVariableOnlyInsideAComposite(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			name: "variable only inside a data-typed parameter, never called",
+			src: `data Opt<t> = Nil | Just(t)
+let is_just = (m: Opt<t>) -> bool => match m { Just(_) => true, Nil => false, }
+let main = () -> u8 => 7`,
+			want: 7,
+		},
+		{
+			name: "variable only inside a data-typed parameter, called",
+			src: `data Opt<t> = Nil | Just(t)
+let is_just = (m: Opt<t>) -> bool => match m { Just(_) => true, Nil => false, }
+let main = () -> u8 => {
+  let m: Opt<i64> = Just(1)
+  if is_just(m) { 7 } else { 0 }
+}`,
+			want: 7,
+		},
+		{
+			name: "variable only inside a callback's signature, never called",
+			src: `let ignores = (g: () -> e) -> bool => true
+let main = () -> u8 => 7`,
+			want: 7,
+		},
+		{
+			name: "variable only inside a callback's signature, called",
+			src: `let ignores = (g: () -> e) -> bool => true
+let mk = () -> i64 => 1
+let main = () -> u8 => if ignores(mk) { 7 } else { 0 }`,
+			want: 7,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("exit = %d, want %d", got, c.want)
+			}
+		})
+	}
+}

@@ -10,6 +10,53 @@ Newest first.
 ## Dated log
 
 ### 07/30/26
+**A generic function whose type variable appears only inside a composite is now recognized
+as generic.** `mentionsTypeVar` (`backend/llvm/functions.go`) — the predicate behind
+`isGenericLambda` — recursed through arrays, tuples and `weak` but had **no case for
+`ParameterizedType`**, so `is_some<t> = (m: Maybe<t>) -> bool` answered "not generic".
+`forEachUserFunction` then stopped skipping it, the backend tried to emit it under its bare
+name, and lowering died on `cannot lay out data type "Maybe" yet` — a message naming the
+*type* for a bug about the *function*.
+
+Cost: **no program could build**, including programs that never mention `Maybe`, because the
+prelude is implicitly imported. It went unnoticed for exactly as long as every generic
+function happened to take a bare `t` parameter — `unwrap_or(m: Maybe<t>, fallback: t)` hits
+the `GenericType` case through `fallback` and lowers fine, which is why the prelude worked
+right up until it gained a predicate. The bisect is worth keeping: of the prelude's ten
+functions, the three with a bare-`t` parameter built and the other seven did not.
+
+Cases for `LambdaType`, `RawPointerType` and `ConstrainedType` went in on the same
+reasoning rather than from an observed failure — a boxed closure is a pointer, so `() -> t`
+happens to need no layout under the dev-tier lowering, and that is not a property to depend
+on once Lambda Set Specialization lands. Every composite that can hold a type needs a case
+here; a miss is not a missing feature but a wrong answer, and the symptom appears far from
+the cause.
+
+**A generic function is now callable through a module namespace.** `opt.wrap(7)` was rejected
+with "cannot assign integer literal to t" while `import util.opt.{ wrap }` and the same call
+inside its own module both checked — so the namespace form, which is the one the `std.maybe` /
+`std.result` split is built on, was the only broken way to call a generic. Found while
+exercising `maybe.map`.
+
+Two independent halves, each verified load-bearing by reverting it alone. The **front end**
+checked the call against the *declared signature*: `moduleMemberType` handed back a
+`*types.LambdaType` whose type variables are still free, and nothing downstream could solve
+them, because the solver (`inferGenericCall`) works from the declaration. It now returns the
+`*ast.LambdaExpr` too, and `inferMemberCall` calls the same `inferLambdaCall` a direct call
+does — which is what the comment there already claimed happened. The **backend** then failed
+one step later: a generic function has no emitted body (a type variable has no
+representation), so `namespaceCallee`'s `l.funcs` lookup found nothing, the call fell out of
+the namespace path entirely, and it died as `unsupported method call "unwrap"` *after* type-
+checking cleanly. It now asks `specializedFuncFor(call)` first, exactly as the by-name path
+does — the instantiation is keyed by call node, so the specialization the typechecker solved
+is already the right answer.
+
+Worth naming: the two failures are the same omission at two layers, and the second was
+invisible until the first was fixed. That is also why the test is an exec test —
+`pkg/backend/llvm` had **no multi-module harness at all** (`driver.Analyze` resolves no import
+graph), so nothing in that package could have caught a cross-module call regardless;
+`buildAndRunModules` is that gap closed.
+
 **Modules landed.** Design was already settled by the grammar (`module a.b`, `import a.b` / `as`
 / `.{ X, Y as Z }`, `pub` — with `IsPublic` already collected); what was missing is resolution
 semantics and implementation. Decided: the prelude is a **normal module, implicitly imported**

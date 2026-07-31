@@ -525,6 +525,24 @@ func isGenericLambda(fn *ast.LambdaExpr) bool {
 }
 
 // mentionsTypeVar reports whether a type contains a GenericType leaf.
+//
+// **Every composite that can hold a type must have a case here.** A miss is not a missing
+// feature, it is a wrong answer to "is this function generic?", and the consequence is
+// silent and remote: isGenericLambda says no, forEachUserFunction stops skipping the
+// function, the backend tries to emit it under its bare name, and lowering dies laying out
+// a type whose variable was never substituted — "cannot lay out data type Maybe yet",
+// pointing at the type rather than at the function.
+//
+// `Maybe<t>` (ParameterizedType) is the one that bit: `is_some<t> = (m: Maybe<t>) -> bool`
+// mentions `t` nowhere else, so it read as non-generic and no program could build with the
+// prelude present — including programs that never mention `Maybe`, since the prelude is
+// implicitly imported. A *bare* `t` parameter is what accidentally rescued every generic
+// function written before the standard library: it hits the GenericType case directly.
+//
+// The LambdaType, RawPointerType and ConstrainedType cases below are the same omission
+// elsewhere in the type tree, added on the reasoning above rather than because each was
+// observed failing — a boxed closure is a pointer, so a `() -> t` parameter happens to
+// lower without needing a layout *today*, and that is not a property to depend on.
 func mentionsTypeVar(t types.Type) bool {
 	switch tt := t.(type) {
 	case types.GenericType:
@@ -541,6 +559,26 @@ func mentionsTypeVar(t types.Type) bool {
 		}
 	case types.WeakType:
 		return mentionsTypeVar(tt.Inner)
+	case types.ParameterizedType:
+		// `Maybe<t>`: the variable is in the type arguments, never at the leaf.
+		for _, a := range tt.TypeArguments {
+			if mentionsTypeVar(a) {
+				return true
+			}
+		}
+	case *types.LambdaType:
+		// A function-typed parameter, e.g. `f: () -> t` — the callback's own signature is
+		// as much a part of this signature as any other parameter.
+		for _, p := range tt.Parameters {
+			if mentionsTypeVar(p.Type) {
+				return true
+			}
+		}
+		return mentionsTypeVar(tt.ReturnType.Type)
+	case types.RawPointerType:
+		return mentionsTypeVar(tt.Pointee)
+	case *types.ConstrainedType:
+		return mentionsTypeVar(tt.Type)
 	}
 	return false
 }

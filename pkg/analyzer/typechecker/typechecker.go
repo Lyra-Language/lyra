@@ -2620,7 +2620,7 @@ func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 	// `math.double` where `math` is an imported namespace, not a value. Checked first
 	// because inferring the object would report the namespace as an undefined
 	// identifier (see typechecker_modules.go).
-	if t, handled := tc.moduleMemberType(m); handled {
+	if t, _, handled := tc.moduleMemberType(m); handled {
 		return t
 	}
 	objType := tc.inferExprType(m.Object)

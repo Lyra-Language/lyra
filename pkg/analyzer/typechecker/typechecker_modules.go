@@ -25,22 +25,29 @@ import (
 // including when the member does not exist — in that case the error is already reported
 // and the caller must not fall through to a field read, which would report a second,
 // more confusing one.
-func (tc *TypeChecker) moduleMemberType(m *ast.MemberExpr) (typ types.Type, handled bool) {
+//
+// When the member is a function, its **declaration** comes back alongside the type. A
+// signature alone is not enough for a call: a *generic* callee's type variables have to be
+// solved from the call's arguments, and that solver (inferGenericCall) works from the
+// declaration, not from a `*types.LambdaType` whose variables are still free. Handing back
+// only the type is what made `maybe.map(m, f)` report "cannot assign Maybe<i64> to
+// Maybe<t>" while the same function called unqualified checked fine.
+func (tc *TypeChecker) moduleMemberType(m *ast.MemberExpr) (typ types.Type, fn *ast.LambdaExpr, handled bool) {
 	id, ok := m.Object.(*ast.IdentifierExpr)
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 	// A local binding shadows a namespace: a value named `math` in scope means
 	// `math.x` is a field read, not a module reference.
 	if _, shadowed := tc.scope.Lookup(id.Name); shadowed {
-		return nil, false
+		return nil, nil, false
 	}
 	if _, isParam := tc.paramTypes[id.Name]; isParam {
-		return nil, false
+		return nil, nil, false
 	}
 	imp, ok := tc.symTable.NamespaceImport(m.GetLocation().File, id.Name)
 	if !ok {
-		return nil, false
+		return nil, nil, false
 	}
 
 	name := m.Property.Name
@@ -53,25 +60,25 @@ func (tc *TypeChecker) moduleMemberType(m *ast.MemberExpr) (typ types.Type, hand
 	if !tc.symTable.ModuleDeclares(imp.Path, name) {
 		tc.addError(m.GetLocation(), SeverityError,
 			"module %q has no member %q", imp.Path, name)
-		return nil, true
+		return nil, nil, true
 	}
 	// A namespace reference is a cross-module reference by construction, so `pub` is
 	// checked before the member is handed back.
 	if !tc.checkVisible(tc.visibilityOf(name), m.GetLocation()) {
-		return nil, true
+		return nil, nil, true
 	}
 	if fn, ok := tc.symTable.LookupFunctionIn(imp.Path, name); ok {
 		t := tc.lambdaSignature(fn)
 		tc.typeTable.Set(m, t)
-		return t, true
+		return t, fn, true
 	}
 	if decl, ok := tc.symTable.LookupType(name); ok {
 		tc.typeTable.Set(m, decl.Type)
-		return decl.Type, true
+		return decl.Type, nil, true
 	}
 	tc.addError(m.GetLocation(), SeverityError,
 		"module %q has no member %q", imp.Path, name)
-	return nil, true
+	return nil, nil, true
 }
 
 // visibility is what the `pub` check needs from a declaration, so one check can serve
