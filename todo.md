@@ -342,3 +342,52 @@ first, dispatch is static, and a generic impl needs no extra machinery.
   one — so every parameter including the receiver is by value. If that changes,
   `traitMethodLambda` is the line that must carry it, or the call site and the body will
   disagree about who owns the receiver.
+
+## Method syntax for free functions (UFCS)
+
+**[DECIDED 07/31; NOT BUILT]** Add UFCS — `x.f(y)` resolving to a free function `f(x, y)` —
+**opt-in via a first parameter named `self`**. A function written `(self: Maybe<t>, …)` is
+callable both ways; every other function stays call-only.
+
+*Why it earns its place here, rather than being sugar.* A free function's name is a
+program-wide land grab today, which is the whole reason the standard library splits
+`maybe.map` from `result.map` and why putting either in the prelude claims the name `map`
+for one type forever. UFCS disambiguates on the **receiver type** — precisely the axis that
+distinguishes them — so both are reachable as `m.map(f)` / `r.map(f)` from free functions in
+different modules, with no overloading. The pressure to put combinators in the prelude at all
+goes away: a module's functions become reachable through values of its type without an import
+binding their names.
+
+It also **routes around trait type-parameter binding**, which is what blocks method-form
+combinators today (`typechecker_trait_dispatch.go`: a method returning the impl's element
+type "is not yet fully instantiated"). UFCS delivers the same ergonomics without traits, and
+is much the cheaper of the two — which is the sequencing argument: do this before anyone
+reaches for the trait feature to get `m.unwrap_or(0)`.
+
+*Why opt-in rather than universal.* The author decides what is a receiver, so adding a helper
+to a module cannot change what `x.f()` means elsewhere in it; `self` already spells "receiver"
+in trait impls, so the language gains no second word for the same idea; LSP completion on `m.`
+stays a curated set rather than every function in scope; and nothing existing changes meaning,
+so there is no migration. Note that **Odin, which Lyra borrows from elsewhere (`%%`, the
+`rune` naming), deliberately rejected UFCS** on the grounds that it obscures where a procedure
+comes from — the `self` opt-in is the answer to exactly that objection.
+
+*Resolution order:* struct field → trait method → UFCS → builtin. A real impl beats a free
+function, and user code still shadows a compiler builtin, both matching the existing ladder in
+`inferMemberCall` (and its mirror, the backend's `lowerBuiltinMethodCall`).
+
+*Open sub-decision:* **whether `own self` may be called method-style.** `x.consume()` moving
+`x` is caught by use-after-move (`lyra-E019`), but the receiver syntax hides the move, which
+cuts against making costs visible. Leaning toward refusing UFCS for an `own` receiver, so a
+move always looks like a call.
+
+*One hazard to build against, not discover.* **The purity pass indexes arguments
+positionally** — `callableParams` maps a parameter name to its position and
+`checkDeclaredCallbackBounds`/`callEffect` read `call.Arguments[idx]`. At a UFCS call site the
+receiver sits *outside* `call.Arguments`, so every index shifts by one: without handling,
+`m.unwrap_or_else(f)` checks `f` against the wrong parameter's declared bound — silently, since
+both are function-typed. The backend's `lowerDirectCall` argument coercion has the same shift.
+
+*Sequencing:* after the two open trait gaps above, since UFCS adds a fourth caller into the
+same member-call resolution path and that path is easier to extend when its existing rungs
+behave consistently.
