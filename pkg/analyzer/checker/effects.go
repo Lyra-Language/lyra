@@ -103,6 +103,24 @@ var builtinEffects = map[string]Effect{
 	"println":     EffectOutput,
 	"fmt.print":   EffectOutput,
 	"fmt.println": EffectOutput,
+	// `panic` is EffectNone — allowed in `pure`, `det` and `noalloc` alike.
+	//
+	// It writes to stderr and exits, so tagging it EffectOutput looks right at first.
+	// The reason it is not: *every integer operation in this language can already
+	// panic*. `a + b` traps on overflow, `xs[i]` traps out of bounds, a non-exhaustive
+	// match traps on fallthrough — all inside `pure` functions, all writing the same
+	// message to the same fd and exiting with the same code. Making the explicit form
+	// impure while the implicit ones are free would say the effect is the *writing*,
+	// when what is actually being classified is divergence, and would leave `pure`
+	// meaning "cannot panic on purpose" rather than "cannot panic".
+	//
+	// So the rule is: purity is about what a function *returns* and what it mutates,
+	// not about whether it terminates. A `pure` function that panics has produced no
+	// value and mutated nothing; it has no observable effect on the program because
+	// there is no longer a program. (Koka, which tracks `exn` and `div` as effects in
+	// their own right, takes the other road — worth revisiting if a catchable panic or
+	// a total-function guarantee is ever wanted, since both need this bit.)
+	"panic": EffectNone,
 	// Input — world → program. The returned value depends on external state, so
 	// it is non-deterministic: forbidden in both `pure` and `det`.
 	"read": EffectInput,

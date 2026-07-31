@@ -139,6 +139,14 @@ func TypesEqual(a, b Type) bool {
 			return true
 		}
 		return false
+	case NeverType:
+		// Only `never` equals `never`. Its assignability to every type is a
+		// *subtyping* rule and lives in isAssignable — making it equal to everything
+		// here would make two unrelated types equal through it.
+		if _, ok := b.(NeverType); ok {
+			return true
+		}
+		return false
 	case ParameterizedType:
 		// Nominal: same name and identical type arguments.
 		bt, ok := b.(ParameterizedType)

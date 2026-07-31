@@ -87,6 +87,30 @@ func (VoidType) typeNode()       {}
 func (VoidType) GetName() string { return "void" }
 func (VoidType) String() string  { return VoidType{}.GetName() }
 
+// NeverType is the type of an expression that does not produce a value because
+// control never reaches past it — today only a `panic(…)` call.
+//
+// It is the *bottom* type, and the distinction from `void` is the whole point:
+// `void` is "returns, with nothing useful", so it is one type among many and
+// assignable to nothing else. `never` is "does not return", which makes it
+// assignable to **every** type — vacuously, since there is no value to be wrong
+// about. That is what lets a diverging expression sit in value position:
+//
+//	match m { Some(v) => v, None => panic("…") }
+//
+// The `None` arm has to yield a `t` for the match to have a type, and `never`
+// satisfies that without inventing a value. Without a bottom type the only ways to
+// type that arm are to special-case `panic` in every construct that joins branch
+// types, or to forbid the pattern outright.
+//
+// Nothing is assignable *to* `never` except `never` itself, and no source syntax
+// spells it — a user cannot annotate a binding with it. See isAssignable.
+type NeverType struct{}
+
+func (NeverType) typeNode()       {}
+func (NeverType) GetName() string { return "never" }
+func (NeverType) String() string  { return NeverType{}.GetName() }
+
 // UnresolvedType represents a type reference that hasn't been resolved yet.
 // Allocation carries a usage-site modifier (e.g. from `let n: shared Node`) that
 // the typechecker applies on top of the declaration's default after resolution.

@@ -841,3 +841,29 @@ let bootstrap = () -> string => {
 		t.Error("bootstrap calls impure loadConfig and should be inferred impure transitively")
 	}
 }
+
+// `panic` is callable from a `pure` function (and from `det`/`noalloc`), which is
+// the effect classification decided in effects.go's builtinEffects: purity is about
+// what a function returns and mutates, not whether it terminates.
+//
+// The alternative — tagging it EffectOutput because it writes to stderr — would have
+// made `pure` mean "cannot panic *on purpose*" while `a + b`, `xs[i]` and a
+// non-exhaustive match all still panic implicitly from inside the same function,
+// writing the same message to the same fd and exiting with the same code.
+func TestPurity_PanicIsAllowedInPure(t *testing.T) {
+	src := `
+let at = pure (i: i64) -> i64 => if i < 0 { panic("negative index ${i}") } else { i }
+let sized = det noalloc (n: i64) -> i64 => if n == 0 { panic("empty") } else { n }`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}
+
+// A *user-declared* panic is an ordinary function and is classified on its body, so
+// shadowing the builtin with an impure one is still caught in a pure caller — the
+// builtin's exemption follows the builtin, not the name.
+func TestPurity_ShadowedPanicIsClassifiedOnItsBody(t *testing.T) {
+	src := `
+var log = 0
+let panic = (msg: string) -> i64 => { log = 1  0 }
+let f = pure (n: i64) -> i64 => panic("x")`
+	assertPurityCount(t, checkPurity(t, src), 1)
+}

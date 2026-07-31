@@ -483,6 +483,9 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		if isBuiltinPrintFn(ident.Name) {
 			return tc.inferPrintCall(ident.Name, call)
 		}
+		if isBuiltinPanicFn(ident.Name) {
+			return tc.inferPanicCall(call)
+		}
 		// A name that exists but belongs privately to another module gets the
 		// privacy diagnostic rather than "undefined": the distinction between "no
 		// such function" and "not yours to call" is the whole point of the rule.
@@ -567,6 +570,33 @@ func (tc *TypeChecker) inferPrintCall(name string, call *ast.FunctionCallExpr) t
 		tc.propagateLiteralType(arg, promoteToDefault(argType))
 	}
 	return types.VoidType{}
+}
+
+// inferPanicCall type-checks `panic(msg)`: exactly one `string` argument, and a
+// result of `never` (types.NeverType), which is assignable to anything — so the
+// call is legal wherever a value of any type is expected, and legal as a statement.
+//
+// The message is a runtime `string`, not a literal: an interpolated message
+// ("index ${i} out of range") is the case that makes a panic worth writing at all,
+// and restricting it to a literal would rule that out. The backend's existing traps
+// bake a constant message into a cached function; this one passes the fat pointer
+// through (see panicMessageFunc).
+//
+// It returns NeverType even on the error paths below, so one mistake produces one
+// diagnostic: handing back nil would make every construct downstream report the
+// missing type as a second, less specific error.
+func (tc *TypeChecker) inferPanicCall(call *ast.FunctionCallExpr) types.Type {
+	if len(call.Arguments) != 1 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"panic: expected 1 argument(s), got %d", len(call.Arguments))
+		return types.NeverType{}
+	}
+	arg := call.Arguments[0]
+	if argType := tc.inferExprType(arg); argType != nil && !types.IsString(argType) {
+		tc.addError(arg.GetLocation(), SeverityError,
+			"panic: message must be a string, got %s", promoteToDefault(argType))
+	}
+	return types.NeverType{}
 }
 
 // inferDirectLambdaCall type-checks a call where the callee is a bare lambda

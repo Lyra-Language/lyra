@@ -64,6 +64,40 @@ body-local read as "undefined identifier". A loop body is also checked *for effe
 (`checkBlockForEffect`), because it has no value: putting its last statement in value position
 rejected a one-armed `if` there.
 
+### `panic` and the `never` type
+
+`panic(msg)` is the one trap a program reaches deliberately — the other four
+(`lyra_panic_overflow`, `..._divide_by_zero`, `..._index_out_of_bounds`,
+`..._match_failed`) are emitted on conditions the compiler checks. It shares their exit
+code and their stderr convention, because a panic the programmer wrote and one the
+compiler inserted are the same event to whatever is watching the process.
+
+Its runtime differs from the other four in one way: `void @lyra_panic(i8*, i64)` takes the
+message as a **(pointer, length) pair** rather than baking a constant in, since a user
+message is a runtime `string` (an interpolated one is the case worth having) and that is
+exactly the fat pointer of STRING_LAYOUT.md. It writes the `"lyra: panic: "` prefix, the
+caller's bytes, and a newline as three separate `write` calls — assembling one buffer would
+mean allocating, and a trap has to work when the reason for trapping is that something is
+already wrong.
+
+`lowerPanicCall` emits `call` + `unreachable` and returns **no value with the block
+sealed**. That is what made `never` (`types.NeverType`, the bottom type — assignable to
+everything, so a diverging expression satisfies any context) need almost nothing here: the
+block-termination discipline above already guards every fall-through `br` and every phi
+incoming on `Term == nil`, for `return`/`break`/`continue`, and a panicking match arm or
+`if` branch is that same shape.
+
+What it *did* need is a guard at each site that **consumes** a lowered operand, since those
+dereference the value they get back. `diverged(v, block)` (trap.go) is that test — nil value
+*and* sealed block, because several lowerings legitimately produce no value while still
+reaching the next statement. It is checked in `lowerVarDecl`, `lowerVarReassignment`,
+`lowerDirectCall`'s argument loop, `lowerNumericConversion`, and the array-literal element
+loop; each was a nil dereference (a Go crash out of `lyrac`, not a loud error) before.
+Positions with no guard fail loudly instead: a tuple literal with a panicking element
+reports `unknown type: never`, because the *type* recorded for the tuple contains `never`
+and no `diverged` check can rescue that — the tuple is uninhabited and the honest fix is a
+typechecker diagnostic, not a lowering.
+
 ### Locals are lexically scoped
 
 **Locals are lexically scoped** (07/29, `pushLocalScope`): `l.locals` was a single flat

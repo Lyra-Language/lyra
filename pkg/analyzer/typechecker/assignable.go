@@ -11,6 +11,17 @@ func isAssignable(from, to types.Type) bool {
 	if types.TypesEqual(from, to) {
 		return true
 	}
+	// `never` (the type of a `panic(…)`) is assignable to everything: control does
+	// not reach past it, so there is no value that could be the wrong type. This is
+	// what puts a diverging expression in value position — `None => panic("…")` as a
+	// match arm — without every branch-joining construct learning about `panic`.
+	//
+	// The converse is deliberately absent: nothing is assignable *to* `never` except
+	// `never` itself (handled by TypesEqual above), because a slot of type `never` is
+	// one no value can fill.
+	if _, ok := from.(types.NeverType); ok {
+		return true
+	}
 	// A data-type value is assignable to the same nominal type whether the slot
 	// is written as a bare name, with generic arguments (`Maybe<i64>`), or as
 	// another reference to the data type. The checker does not instantiate

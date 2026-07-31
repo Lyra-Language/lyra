@@ -113,6 +113,21 @@ func isBuiltinPrintFn(name string) bool {
 	return name == "print" || name == "println"
 }
 
+// isBuiltinPanicFn reports whether name is the compiler-provided `panic`. Resolved
+// exactly like print/println — by name in inferIdentifierCall, only after scope
+// resolution misses, so a user binding of the same name shadows it.
+//
+// `panic(msg: string) -> never` is the *only* way a Lyra program can reach the trap
+// machinery deliberately. Every other trap (overflow, divide by zero, a bounds
+// check, a non-exhaustive match) is emitted by the compiler on a condition it
+// checks; this is the one the programmer writes. It shares their exit code and
+// their stderr convention, because a panic the programmer wrote and a panic the
+// compiler inserted are the same event and should be indistinguishable to whatever
+// is watching the process.
+func isBuiltinPanicFn(name string) bool {
+	return name == "panic"
+}
+
 // isPrintableType reports whether print/println can format a value of type t:
 // a string, any integer or float, a bool, or a rune. Each has a backend
 // formatting path (write for strings, snprintf for numbers, "true"/"false" for

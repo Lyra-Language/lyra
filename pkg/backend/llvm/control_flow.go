@@ -648,6 +648,12 @@ func (l *lowerer) lowerVarDecl(block *ir.Block, vds *ast.VarDeclStmt) (*ir.Block
 	if err != nil {
 		return nil, err
 	}
+	// `let x = panic("…")`: the initializer diverged, so there is no value to store
+	// and nothing after this binding can run. Returning early leaves the block sealed
+	// for lowerBlockStmts to stop on; without it, init.Type() dereferenced a nil.
+	if diverged(init, block) {
+		return block, nil
+	}
 	// Alloca in the *entry* block (mem2reg only promotes entry-block allocas).
 	entry := block.Parent.Blocks[0]
 	slot := entry.NewAlloca(init.Type())
@@ -681,6 +687,11 @@ func (l *lowerer) lowerVarReassignment(block *ir.Block, vrs *ast.VarReassignment
 	rhsVal, block, err := l.lowerExpr(block, vrs.Value)
 	if err != nil {
 		return nil, err
+	}
+	// `x = panic("…")`: nothing to assign, and the old value's drop is moot — control
+	// does not reach past the panic. Same shape as lowerVarDecl's guard.
+	if diverged(rhsVal, block) {
+		return block, nil
 	}
 	slot := l.locals[vrs.Name]
 	// Reassigning an *owning* binding drops what the old value owned before the new one

@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 07/31/26
+**`never` and `panic(msg)`.** A program had no way to reach the trap machinery on purpose:
+the four traps (overflow, divide by zero, bounds, match fallthrough) are all emitted on
+conditions the compiler checks, and nothing in the builtin registry exposed one. So
+`expect`-shaped functions — anything that has to produce a `t` from a case that has none —
+could not be written in Lyra at all, in the standard library or out of it.
+
+- **`types.NeverType`**, the bottom type, assignable to **everything** (`isAssignable`) and
+  equal only to itself (`TypesEqual` — subtyping belongs in assignability, and making it
+  *equal* to everything would make two unrelated types equal through it). That one rule is
+  what puts a diverging expression in value position: `None => panic("…")` as a match arm
+  satisfies the arm's `t` without inventing a value, and `branchCommonType` folds it away
+  from either side because it already goes through `isAssignable`. No syntax spells it, so a
+  user cannot annotate with it.
+- **`panic(msg: string) -> never`**, resolved like `print`/`println` — by name, only after
+  scope resolution misses, so a user binding of the same name shadows it and adding this
+  cannot break a program that already had its own. The message is a runtime `string`, not a
+  literal: an interpolated one ("negative index ${i}") is the case that makes a panic
+  message worth writing, so the runtime `void @lyra_panic(i8*, i64)` takes the fat pointer
+  rather than baking the text in like the other four.
+- **EffectNone** — callable from `pure`, `det` and `noalloc`. Tagging it Output would have
+  made `pure` mean "cannot panic *on purpose*" while `a + b` and `xs[i]` panic implicitly
+  from inside the same function, to the same fd, with the same exit code. Purity is about
+  what a function returns and mutates, not whether it terminates. Reasoning and the Koka
+  counterpoint are in `checker/README.md`.
+
+Two things fell out that were not the point. The backend needed **no control-flow work at
+all** — `lowerPanicCall` seals its block with `unreachable`, and every phi incoming and
+fall-through `br` was already guarded on `Term == nil` for `return`/`break`/`continue`. What
+it *did* need was a guard at each site that **consumes** an operand's value, because those
+dereference what they get back: `let x = panic(…)`, a reassignment, a call argument, a
+numeric conversion, and an array element each crashed `lyrac` with a nil dereference — a Go
+panic rather than the loud error the backend is supposed to produce. `diverged(v, block)`
+(nil value *and* sealed block, since several lowerings produce no value while still
+reaching the next statement) is the shared test.
+
+And the purity checker turned out to consult **`builtinEffects` before scope**, the opposite
+of the typechecker's order, so a user's own `print`/`panic` was classified by the builtin's
+entry instead of by its body. Harmless-but-noisy for `print` (a pure one reported impure);
+unsound the moment `panic` joined the table as EffectNone, since a user `panic` that mutates
+would have been waved through as pure. Fixed at all three call sites. The name is not the
+callee.
+
 ### 07/30/26
 **A generic function whose type variable appears only inside a composite is now recognized
 as generic.** `mentionsTypeVar` (`backend/llvm/functions.go`) — the predicate behind

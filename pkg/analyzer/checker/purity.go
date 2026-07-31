@@ -429,17 +429,25 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings) func
 //     aren't pure type-conversion calls — these are treated conservatively as
 //     impure (imported/external functions whose purity we can't verify)
 func (c *purityChecker) isImpureCallee(capture []scopeBindings, name string) bool {
+	// **A user binding is resolved first**, and only then the builtin table — the
+	// order the typechecker resolves a call in (scope, then print/println/panic on a
+	// miss), so the two cannot disagree about which declaration a name means.
+	//
+	// Consulting the table first classified a *user's own* function by the builtin's
+	// entry, which is wrong in both directions and unsound in one: a user `print` that
+	// is pure was reported impure (noise), and — once `panic` joined the table as
+	// EffectNone — a user `panic` that mutates or writes would have been waved through
+	// as pure. The name is not the callee.
+	if lam, ok := resolveFunction(capture, name); ok {
+		// Mask with PurityEffects: an alloc-only callee is still pure to call
+		// from a pure function (EffectAlloc is orthogonal to purity).
+		return c.impureLambdas[lam]&PurityEffects != 0
+	}
 	if e, ok := builtinEffects[name]; ok {
 		// Known builtin: only flag if it has a purity-violating effect.
 		// Builtins with EffectAlloc only (e.g. Arena.new) are fine to call from
 		// a pure function — allocation is orthogonal to purity.
 		return e&PurityEffects != 0
-	}
-	lam, ok := resolveFunction(capture, name)
-	if ok {
-		// Mask with PurityEffects: an alloc-only callee is still pure to call
-		// from a pure function (EffectAlloc is orthogonal to purity).
-		return c.impureLambdas[lam]&PurityEffects != 0
 	}
 	// Unresolvable — could be an imported/external function. Conservatively
 	// treat as impure unless it's a known pure type-conversion call.
@@ -1105,10 +1113,13 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 				// the bound trait method (pure only if all of them are).
 				found |= boundCallEffect(ref, boundGroups, impureMethods)
 			} else if name := calleeName(ex.Function); name != "" {
-				if e, ok := builtinEffects[name]; ok {
-					found |= e
-				} else if target, ok := resolveFunction(bodyCapture, name); ok {
+				// Scope before builtins, matching isImpureCallee and the typechecker:
+				// a user binding shadows a builtin of the same name, so its own body
+				// decides its effects.
+				if target, ok := resolveFunction(bodyCapture, name); ok {
 					found |= impureLambdas[target]
+				} else if e, ok := builtinEffects[name]; ok {
+					found |= e
 				} else if !isTypeConversionCall(name) {
 					// Cannot resolve to a local lambda or known builtin, and not a
 					// pure type-conversion call. Conservatively assume the worst —
@@ -1198,10 +1209,13 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 				// the bound trait method (pure only if all of them are).
 				found |= boundCallEffect(ref, boundGroups, impureMethods)
 			} else if name := calleeName(ex.Function); name != "" {
-				if e, ok := builtinEffects[name]; ok {
-					found |= e
-				} else if target, ok := resolveFunction(bodyCapture, name); ok {
+				// Scope before builtins, matching isImpureCallee and the typechecker:
+				// a user binding shadows a builtin of the same name, so its own body
+				// decides its effects.
+				if target, ok := resolveFunction(bodyCapture, name); ok {
 					found |= impureLambdas[target]
+				} else if e, ok := builtinEffects[name]; ok {
+					found |= e
 				} else if !isTypeConversionCall(name) {
 					// Cannot resolve to a local lambda or known builtin, and not a
 					// pure type-conversion call. Conservatively assume the worst —

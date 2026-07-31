@@ -57,6 +57,11 @@ func (l *lowerer) lowerArrayLiteralExpr(block *ir.Block, e *ast.ArrayLiteralExpr
 		if err != nil {
 			return nil, nil, err
 		}
+		// `[1, panic("…")]` — an element diverged, so the array is never built and any
+		// element after it is unreachable. See diverged (trap.go).
+		if diverged(elemVal, block) {
+			return nil, block, nil
+		}
 		elemVal, err = l.coerceAggregateElem(block, elemVal, arrayTy.ElemType, elemExpr)
 		if err != nil {
 			return nil, nil, err

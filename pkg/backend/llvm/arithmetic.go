@@ -503,6 +503,11 @@ func (l *lowerer) lowerNumericConversion(block *ir.Block, call *ast.FunctionCall
 	if err != nil {
 		return nil, nil, err
 	}
+	// `u8(panic("…"))`, or `u8(f(panic("…")))` — the operand diverged, so there is
+	// nothing to convert and the conversion cannot be reached. See diverged (trap.go).
+	if diverged(arg, block) {
+		return nil, block, nil
+	}
 	srcT, ok := l.recordedType(call.Arguments[0])
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: type not found for %T", call.Arguments[0])

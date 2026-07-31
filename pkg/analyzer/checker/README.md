@@ -58,10 +58,27 @@ layout/escape pass. An **unresolvable external call** (no local lambda, builtin,
 conversion) conservatively taints `AllEffects` (`PurityEffects | EffectAlloc`) — everything,
 including Alloc, so `noalloc` flags it too (we can't verify it doesn't allocate).
 `builtinEffects`: print/println→Output, read→Input, write→Input|Output, `await`→Input,
-`Random.global()`→Rand, `wallClock()`→Time. Only *ambient* rand/time sources carry the bit — a
-threaded RNG's `rng.next()` or a passed-in `tick` (reached through a local binding) is ordinary
-`mut`/`own` data, which is what lets `det` permit seeded randomness and sim-time. User surface
-is the `pure`/`det`/`noalloc` ladder — see `todo.md` FP/Imperative #5.
+`Random.global()`→Rand, `wallClock()`→Time, **`panic`→None**. Only *ambient* rand/time sources
+carry the bit — a threaded RNG's `rng.next()` or a passed-in `tick` (reached through a local
+binding) is ordinary `mut`/`own` data, which is what lets `det` permit seeded randomness and
+sim-time. User surface is the `pure`/`det`/`noalloc` ladder — see `todo.md` FP/Imperative #5.
+
+**`panic` is EffectNone**, so it is callable from `pure`, `det` and `noalloc` alike. It writes
+to stderr and exits, which argues for Output — but *every integer operation in this language
+can already panic*: `a + b` traps on overflow, `xs[i]` out of bounds, a non-exhaustive match on
+fallthrough, all from inside `pure` functions, all writing the same message to the same fd and
+exiting with the same code. Classifying the explicit form as impure while the implicit ones are
+free would make `pure` mean "cannot panic *on purpose*". The rule taken instead: purity is about
+what a function returns and mutates, not whether it terminates. (Koka, which tracks `exn`/`div`
+as effects in their own right, takes the other road — worth revisiting if a catchable panic or a
+totality guarantee is ever wanted, since both need that bit.)
+
+**Resolution order: scope, then the builtin table** — in `isImpureCallee` and in both
+`lambdaEffects`/`methodEffects` call cases, matching how the typechecker resolves a call
+(`print`/`println`/`panic` are consulted only when scope resolution misses). Consulting the
+table first classified a *user's own* function by the builtin's entry: a user `print` that was
+pure got reported impure, and — once `panic` was in the table as EffectNone — a user `panic`
+that mutated would have been waved through. The name is not the callee.
 
 ## `try_outside_result.go`
 

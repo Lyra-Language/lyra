@@ -8,6 +8,8 @@ import (
 	"github.com/llir/llvm/ir/enum"
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
+
+	"github.com/Lyra-Language/lyra/pkg/ast"
 )
 
 // Checked arithmetic — the trap side (Pit-of-Success #2, "checked arithmetic by
@@ -34,6 +36,9 @@ const (
 	divideByZeroTrapMessage = "lyra: divide by zero\n"
 	indexOOBTrapMessage     = "lyra: array index out of bounds\n"
 	matchFailedTrapMessage  = "lyra: match not exhaustive\n"
+	// The user message and its newline follow this at run time, so unlike the four
+	// above it carries neither.
+	panicPrefixMessage = "lyra: panic: "
 )
 
 // overflowTrapExitCode is retained as the name existing tests use; it is trapExitCode.
@@ -83,6 +88,85 @@ func (l *lowerer) panicIndexOOBFunc() *ir.Func {
 
 func (l *lowerer) panicMatchFailedFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_match_failed", matchFailedTrapMessage)
+}
+
+// panicMessageFunc lazily emits the trap behind a user-written `panic(msg)`:
+// `void @lyra_panic(i8* data, i64 len)`, noreturn, writing "lyra: panic: " then the
+// caller's bytes then a newline to stderr before exit(trapExitCode).
+//
+// It takes the message as a (pointer, length) pair rather than baking it in like
+// the four compiler traps above, because a user message is a runtime `string` — an
+// interpolated one ("index ${i} out of range") is the case worth having — and a
+// Lyra string is exactly that fat pointer (STRING_LAYOUT.md). Cached like the
+// others, so N panic sites share one function and pay a `call`+`unreachable` each.
+//
+// The three writes are separate calls rather than one assembled buffer: assembling
+// would mean allocating, and a trap must work when the reason for trapping is that
+// something is already wrong. stderr is unbuffered, so the ordering holds.
+func (l *lowerer) panicMessageFunc() *ir.Func {
+	const name = "lyra_panic"
+	if fn, ok := l.panics[name]; ok {
+		return fn
+	}
+	data := ir.NewParam("data", lltypes.NewPointer(lltypes.I8))
+	length := ir.NewParam("len", lltypes.I64)
+	fn := l.module.NewFunc(name, lltypes.Void, data, length)
+	fn.FuncAttrs = append(fn.FuncAttrs, enum.FuncAttrNoReturn)
+	b := fn.NewBlock("entry")
+	stderr := constant.NewInt(lltypes.I32, 2)
+	b.NewCall(l.writeFunc(), stderr, l.cString(panicPrefixMessage),
+		constant.NewInt(lltypes.I64, int64(len(panicPrefixMessage))))
+	b.NewCall(l.writeFunc(), stderr, data, length)
+	b.NewCall(l.writeFunc(), stderr, l.newlinePtr(), constant.NewInt(lltypes.I64, 1))
+	b.NewCall(l.exitFunc(), constant.NewInt(lltypes.I32, trapExitCode))
+	b.NewUnreachable()
+	l.panics[name] = fn
+	return fn
+}
+
+// lowerPanicCall lowers `panic(msg)` to that call plus an `unreachable`, and returns
+// **no value** with the block sealed.
+//
+// Sealing is the whole mechanism: every construct that joins branch values already
+// guards its fall-through and its phi incoming on `end.Term == nil` — the two-armed
+// `if` (control_flow.go), and each of the three match lowerings — because a branch
+// ending in `return`/`break`/`continue` had to be handled long before this existed.
+// A panicking arm is that same shape, so `never` needed no new code there at all.
+func (l *lowerer) lowerPanicCall(block *ir.Block, e *ast.FunctionCallExpr) (value.Value, *ir.Block, error) {
+	if len(e.Arguments) != 1 {
+		return nil, nil, fmt.Errorf("llvm: panic expects 1 argument, got %d", len(e.Arguments))
+	}
+	arg := e.Arguments[0]
+	argType, ok := l.recordedType(arg)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no type recorded for panic message")
+	}
+	val, block, err := l.lowerExpr(block, arg)
+	if err != nil {
+		return nil, nil, err
+	}
+	// formatForPrint on a string hands back its data pointer and byte length — the
+	// same extraction print does, rather than a second copy of the fat-pointer layout.
+	dataPtr, length, err := l.formatForPrint(block, val, argType)
+	if err != nil {
+		return nil, nil, err
+	}
+	block.NewCall(l.panicMessageFunc(), dataPtr, length)
+	block.NewUnreachable()
+	return nil, block, nil
+}
+
+// diverged reports whether lowering an operand ended the block instead of yielding a
+// value — today only a `panic(…)`, which sealed it with `unreachable`.
+//
+// A caller that consumes an operand's value must check this before touching it: the
+// value is nil, and whatever the caller was about to emit (a store, a call) cannot
+// run, because control does not reach it. `if v == nil` alone is not the test —
+// several lowerings legitimately produce no value while still reaching the next
+// statement (a void branch, a statement-position `if`) — so the *sealed block* is
+// what distinguishes "diverged" from "produced nothing".
+func diverged(v value.Value, block *ir.Block) bool {
+	return v == nil && block != nil && block.Term != nil
 }
 
 // sealMatchFallthrough terminates a match ladder's (or tag switch's) unmatched

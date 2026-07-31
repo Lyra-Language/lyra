@@ -414,6 +414,8 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 			return l.lowerPrintCall(block, e, false)
 		case "println":
 			return l.lowerPrintCall(block, e, true)
+		case "panic":
+			return l.lowerPanicCall(block, e)
 		}
 		return nil, nil, fmt.Errorf("llvm: call to unknown function %q", ident.Name)
 	}
@@ -460,6 +462,12 @@ func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 		v, block, err = l.lowerExpr(block, argExpr)
 		if err != nil {
 			return nil, nil, err
+		}
+		// `f(panic("…"))`: the argument diverged, so the call never happens. Abandon it
+		// and hand back the sealed block — arguments are evaluated left to right, so
+		// any argument after this one is unreachable too.
+		if diverged(v, block) {
+			return nil, block, nil
 		}
 		args = append(args, v)
 	}
