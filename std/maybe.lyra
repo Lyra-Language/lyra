@@ -1,0 +1,6 @@
+module std.maybe
+
+pub let map<t,u> = (m: Maybe<t>, f: (t) -> u) -> Maybe<u> => match m {
+  Some(v) => Some(f(v)),
+  None => None,
+}

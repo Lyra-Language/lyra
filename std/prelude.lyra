@@ -39,15 +39,57 @@ module std.prelude
 @builtin(Maybe)
 pub data Maybe<t> = None | Some(t)
 
-@builtin(Result)
-pub data Result<t, e> = Ok(t) | Err(e)
-
-pub let unwrap_or<t> = (m: Maybe<t>, fallback: t) -> t => match m {
+pub let unwrap_or<t> = pure noalloc (m: Maybe<t>, fallback: t) -> t => match m {
   Some(v) => v,
   None => fallback,
 }
 
+// `unwrap_or_else` will eventually take an annotated pure noalloc function f, once that function type
+// annotation is supported.
 pub let unwrap_or_else<t> = (m: Maybe<t>, f: () -> t) -> t => match m {
   Some(v) => v,
   None => f(),
+}
+
+pub let is_some<t> = pure noalloc (m: Maybe<t>) -> bool => match m {
+  Some(_) => true,
+  None => false,
+}
+
+pub let is_none<t> = pure noalloc (m: Maybe<t>) -> bool => match m {
+  Some(_) => false,
+  None => true,
+}
+
+pub let ok_or<t,e> = pure noalloc (m: Maybe<t>, err: e) -> Result<t,e> => match m {
+  Some(v) => Ok(v),
+  None => Err(err),
+}
+
+pub let ok_or_else<t,e> = (m: Maybe<t>, f: () -> e) -> Result<t,e> => match m {
+  Some(v) => Ok(v),
+  None => Err(f()),
+}
+
+@builtin(Result)
+pub data Result<t, e> = Ok(t) | Err(e)
+
+pub let is_ok<t,e> = pure noalloc (r: Result<t, e>) -> bool => match r {
+  Ok(_) => true,
+  Err(_) => false,
+}
+
+pub let is_err<t,e> = pure noalloc (r: Result<t, e>) -> bool => match r {
+  Ok(_) => false,
+  Err(_) => true,
+}
+
+pub let ok<t,e> = pure noalloc (r: Result<t,e>) -> Maybe<t> => match r {
+  Ok(v) => Some(v),
+  Err(_) => None,
+}
+
+pub let err<t,e> = pure noalloc (r: Result<t,e>) -> Maybe<e> => match r {
+  Ok(_) => None,
+  Err(err) => Some(err),
 }
