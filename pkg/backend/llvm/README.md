@@ -132,8 +132,13 @@ param width).
 **Void functions lower** (`lowerType` maps `VoidType` → LLVM `void`; `emitReturn` emits `ret
 void`, discarding any body value; `defineFunction`/`lowerEntry` lower a void body for *effect*
 via `lowerForEffect`, so an empty or non-expression-terminated block is fine, and route the void
-entry through `emitReturn(nil)` so owned temporaries flush). Deferred with loud errors:
-multi-clause functions, default params, and destructuring params.
+entry through `emitReturn(nil)` so owned temporaries flush). Deferred with a loud error: destructuring params.
+**Default params no longer reach here** — the typechecker fills every omitted argument from
+the declaration (`typechecker/default_args.go`), so a defaulted parameter is an ordinary one
+by the time it is lowered, and `lowerDirectCall` guards on the argument count so a call that
+somehow was not filled fails loudly instead of emitting a short argument list. **Multi-clause functions no longer reach here**: the typechecker
+desugars them into a match on the parameters (`typechecker/multi_clause.go`), so by the time
+the backend sees one it is an ordinary lambda whose body is a match.
 
 ## Closures
 
@@ -175,8 +180,9 @@ too), and any other callee expression (`fs[1](5)`).
 
 **Deferred, loud errors:** a `mut`/`ref` parameter on a lambda used as a value (a function type
 carries no borrow mode, so the call site would pass by value while the body expected a pointer —
-a disagreement that is a miscompile, not an error), multi-clause lambdas, and a lambda with no
-return annotation used as a value. Locals are modeled as entry-block `alloca` + store/load
+a disagreement that is a miscompile, not an error) and a lambda with no
+return annotation used as a value. (Multi-clause lambdas are desugared away in the front end
+before reaching this path.) Locals are modeled as entry-block `alloca` + store/load
 (mem2reg builds SSA — no hand-written phi nodes for variables), tracked in `lowerer.locals`
 (name → its alloca, a pointer). `lowerVarDecl` allocas in the function's entry block and stores
 the initializer; a reassignment stores into the *existing* alloca and leaves the `locals` entry

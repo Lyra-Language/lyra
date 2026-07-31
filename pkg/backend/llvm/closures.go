@@ -140,7 +140,12 @@ func (l *lowerer) declareClosure(fn *ast.LambdaExpr) error {
 	params := []*ir.Param{ir.NewParam("env", lltypes.NewPointer(lltypes.I8))}
 	for _, p := range fn.Parameters {
 		if p.DefaultValue != nil {
-			return fmt.Errorf("llvm: default parameter values are not implemented yet")
+			// Defaults are filled at the *call site* from the callee's declaration
+			// (typechecker/default_args.go), and an indirect call through a function
+			// value has no declaration to read: a `types.LambdaType` records that a
+			// parameter has a default but not what it is. So this one stays refused,
+			// and specifically for that reason rather than for want of lowering.
+			return fmt.Errorf("llvm: a default parameter value on a lambda used as a value is not implemented yet — a function type does not carry the default expression")
 		}
 		if paramIsByRef(p) {
 			// A function *type* carries no borrow mode, so an indirect call site can

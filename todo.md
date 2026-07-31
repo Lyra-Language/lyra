@@ -208,9 +208,9 @@ interior assignment, and deep retain-on-copy.
 
   What is left:
   - **[OPEN] Callbacks reached through anything but a parameter or a binding** — a struct
-    field, a call result, an array element — stay conservative (`AllEffects`). Also
-    multi-clause lambdas, whose per-clause patterns give no index to match an argument
-    against.
+    field, a call result, an array element — stay conservative (`AllEffects`). Multi-clause
+    lambdas are no longer among them: they are desugared into a single-body match before the
+    effect passes run, so their parameters are an ordinary indexed list.
   - **[DONE 07/31] Trait-impl methods** are polymorphic over their callbacks, and a bound
     written in a trait signature (`apply: (Self, pure () -> i64) -> i64`) is enforced at
     call sites. Note the receiver offset: signature parameter 0 is `Self`, which sits

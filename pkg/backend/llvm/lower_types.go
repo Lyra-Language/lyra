@@ -433,6 +433,18 @@ func (l *lowerer) resolveDataType(t types.Type) (types.DataType, bool) {
 				return dt, true
 			}
 		}
+	case types.ParameterizedType:
+		// `Opt<i64>` — normalize through the same choke point every other shape-reading
+		// site uses, then resolve the concrete type it denotes. Without this a data
+		// pattern *nested inside* an aggregate pattern (`(Just(v), _)`) failed with
+		// "data pattern on non-data value of type Opt<i64>": the top-level match path
+		// resolves its scrutinee before dispatching, but the sub-pattern path reads the
+		// element type straight off the tuple, where it is still parameterized.
+		if inst, err := l.resolveInstantiation(v); err == nil {
+			if dt, ok := inst.(types.DataType); ok {
+				return dt, true
+			}
+		}
 	}
 	return types.DataType{}, false
 }

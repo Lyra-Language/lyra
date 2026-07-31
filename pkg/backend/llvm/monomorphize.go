@@ -76,11 +76,11 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 	if err != nil {
 		return err
 	}
+	// A defaulted parameter is an ordinary parameter in a specialization too: the
+	// typechecker fills every omitted argument before the call is solved, so the default
+	// participates in inference like any other argument and this signature is complete.
 	irParams := make([]*ir.Param, 0, len(inst.Func.Parameters))
 	for _, param := range inst.Func.Parameters {
-		if param.DefaultValue != nil {
-			return fmt.Errorf("llvm: default parameter values are not implemented yet (%q)", inst.Name)
-		}
 		irParam, err := l.lowerParameter(param)
 		if err != nil {
 			return err

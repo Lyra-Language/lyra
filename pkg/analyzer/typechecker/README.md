@@ -366,8 +366,10 @@ applies the substitution at its single type lookup (`analyzer.typeOf`).
 **The one remaining boundary is deliberate:** an **unbounded** type variable supports only what
 every type supports — being passed, returned, stored. `x + x` on a `t` is rejected, correctly,
 since `t` could be `bool`; arithmetic needs bounded polymorphism over an operator trait (`where
-t: Add`), which does not exist. Also deferred: multi-clause generic functions, and a generic
-function calling another at a variable-dependent instantiation.
+t: Add`), which does not exist. Still deferred: a generic function calling another at a
+variable-dependent instantiation. (Multi-clause generic functions *do* work as of 07/31 —
+they are desugared into a single-body match before instantiation, so nothing downstream sees
+a clause list.)
 
 ## Generic types (`Box<t>`, `Maybe<t>`, `List<t>`)
 Landed 07/29, and they **compose** with generic functions — `let wrap = (x: t) -> Box<t> => Box
@@ -527,3 +529,71 @@ solved by the lambda's **own body** — `u` in `map(m, (x) => x * 2)` — would 
 written as its declared return and never solved. The consequence is that a lambda's return
 type can only be filled once solving finishes, which is why `inferGenericCall` elaborates
 again after `instantiateSignature`.
+
+## Multi-clause functions (`multi_clause.go`)
+
+A multi-clause function *is* a match on its parameters, so it is desugared into one rather
+than given a lowering of its own:
+
+```
+let fib = (n: i64, a: i64, b: i64) -> i64 {
+  (0, a, _) => a,
+  (n, a, b) => fib(n - 1, b, a + b),
+}
+```
+
+becomes `… -> i64 => match (n, a, b) { (0, a, _) => …, (n, a, b) => … }`, built from the
+parameter names the head declares. The grammar, collector and typechecker always accepted the
+clause form; only the backend refused it, and the match machinery it needed — the ladder,
+tuple destructuring, guards, the sealed fall-through — was already there and tested.
+
+**It must happen in the front end.** The backend reads every type by AST-node identity
+(`recordedType`), so a match synthesized *there* would have no entry for any of its nodes.
+Synthesizing it in `checkLambdaBody`, before the body is walked, means the typechecker types
+it like any other match and the ownership, capture and lowering passes need no changes.
+
+Details worth knowing:
+
+- **One parameter is matched directly**, not wrapped in a one-element tuple, so it reaches the
+  scalar ladder rather than an aggregate that exists only in the desugaring.
+- **The clauses are consumed** (`LambdaClauses = nil`). Leaving them would make
+  `checkLambdaBody` check every clause body a second time — one mistake, two diagnostics.
+- **Arity is checked here**, with the counts named. Left to the synthesized match it surfaces
+  as a tuple-shape mismatch about a tuple the programmer never wrote.
+- **No clause matching traps** rather than being undefined: the desugared match's
+  fall-through is sealed like any other, so a function-clause error exits 101 with
+  `lyra: match not exhaustive`.
+- **Generic multi-clause functions work**, because the body is ordinary afterwards — the
+  backend's `declareSpecialization` refusal is unreachable once every multi-clause lambda
+  arrives desugared.
+
+## Default parameter values (`default_args.go`)
+
+`let add = (a: i64, b: i64 = 10) -> i64 => a + b` called as `add(5)`. The grammar, collector
+and arity check already understood defaults; what was missing is that the **call site never
+received them**, so the backend saw a call shorter than the parameter list and refused the
+function outright.
+
+`applyDefaultArguments` appends the declaration's default expressions for any trailing
+arguments the call omits, before arity is counted or the generic path is taken. The rest of
+the pipeline then sees a call that passes everything explicitly — the defaults are
+type-checked against their parameters like any other argument, widths propagate, and the
+backend needs no notion of defaults at all. Filling is idempotent, which matters because the
+typechecker revisits nodes: after one pass the counts match, so a second adds nothing.
+
+**The appended expression is the same AST node as the declaration's default, not a copy**, so
+two call sites that both omit an argument share it. That is sound for everything keyed by
+node — the recorded type is the parameter's type at every site, and a default is evaluated
+against that type rather than varying by caller — and cloning would need a deep AST copy,
+which this compiler avoids everywhere else. The case that would expose a problem, a
+heap-allocating default at several call sites, is covered by an exec test.
+
+`checkDefaultsAreTrailing` rejects a defaulted parameter followed by an undefaulted one.
+Positional arguments fill left to right, so `(a: i64 = 1, b: i64)` cannot be called usefully —
+and it used to be silently *accepted*, because the arity check counts required parameters
+without checking their order, so `f(5)` bound 5 to `a` and left `b` unfilled.
+
+**One place still refuses**: a default on a lambda used as a *value*. Defaults are filled from
+the callee's declaration, and an indirect call has none — a `types.LambdaType` records *that*
+a parameter has a default, not what it is. Named arguments, if they ever exist, would be the
+other half of this feature and would lift the trailing rule.

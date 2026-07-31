@@ -69,6 +69,14 @@ func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
 // For typed functions it checks that the body expression / every explicit
 // return statement / the implicit last expression all match the declared type.
 func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) {
+	// A multi-clause function is a match on its parameters; rewrite it into one before
+	// anything looks at the body, so the rest of this function — and every pass after it —
+	// sees an ordinary lambda. See multi_clause.go for why this is a front-end elaboration.
+	tc.desugarClauses(funcName, lambda)
+	// Positional arguments fill left to right, so a defaulted parameter followed by one
+	// without a default can never be called as written.
+	tc.checkDefaultsAreTrailing(funcName, lambda)
+
 	declaredReturn := lambda.ReturnType.Type
 	// Track the enclosing return type so inferTryExpr can match a `?` operand's
 	// kind (Result/Maybe) against it. Save/restore handles nested lambdas.
@@ -257,6 +265,10 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 // inferLambdaCall validates a call against a LambdaExpr (from a VarDeclStmt or
 // direct lambda callee). calleeName is used in error messages.
 func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr) types.Type {
+	// Fill any omitted trailing arguments from the declaration's defaults, before arity is
+	// counted or the generic path is taken — both then see a call that passes everything
+	// explicitly, and so does the backend. Idempotent, since the count matches afterwards.
+	tc.applyDefaultArguments(lambda, call)
 	// A *generic* callee's signature mentions type variables, which have to be
 	// solved from this call's argument types before anything can be checked against
 	// them — a declared `t` is assignable from nothing until it is bound. Solving

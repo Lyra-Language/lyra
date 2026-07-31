@@ -10,6 +10,67 @@ Newest first.
 ## Dated log
 
 ### 07/31/26
+**Default parameter values work.** `add(5)` against `(a: i64, b: i64 = 10)`. Like multi-clause
+functions, they were already parsed, collected, and honoured by the arity check — which counts
+required parameters and allows a call to omit the rest — so the only thing missing was that
+the **call site never received them**. The backend saw a call shorter than the parameter list
+and refused the function outright.
+
+They are filled in the front end (`typechecker/default_args.go`): the declaration's default
+expressions are appended for any trailing arguments the call omits, before arity is counted or
+the generic path is taken. Everything downstream then sees a call that passes every argument
+explicitly, so the defaults are type-checked against their parameters like any other argument
+and the backend needed only to *stop refusing* — in two places, since specializations have
+their own parameter-lowering loop.
+
+Two decisions inside it. The appended expression is the **same AST node** as the declaration's
+default rather than a copy, so two call sites that omit it share one node; that is sound for
+everything keyed by node, since a default is evaluated against the parameter's declared type
+and cannot vary by caller, and cloning would need a deep AST copy this compiler avoids
+everywhere else. The case that would expose a problem — a heap-allocating default at several
+call sites — is covered by an exec test and is ASan-clean.
+
+And a defaulted parameter followed by an undefaulted one is now **rejected**. It used to be
+silently accepted: the arity check counts required parameters without checking their *order*,
+so `(a: i64 = 1, b: i64)` called as `f(5)` bound 5 to `a` and left `b` unfilled — a call the
+programmer plainly did not mean, accepted without a word.
+
+Still refused, and now for a stated reason rather than for want of lowering: a default on a
+lambda used as a **value**. Defaults are filled from the callee's declaration and an indirect
+call has none — a function type records that a parameter has a default, not what it is.
+
+### 07/31/26
+**Multi-clause functions lower.** They always parsed, collected and type-checked — only the
+backend refused, with "multi-clause functions are not implemented yet". So this was never a
+codegen project: a multi-clause function *is* a match on its parameters, and the match
+machinery it needs (the if-else ladder, tuple destructuring, guards, the sealed fall-through)
+was already there and tested. Verified before writing anything, by running the hand-written
+equivalent: `match (n, a, b) { … }` compiled and returned fib(10) = 55.
+
+So it is a **front-end desugaring**, in `checkLambdaBody` before the body is walked. It has to
+be: the backend reads every type by AST-node identity, so a match synthesized *there* would
+have no TypeTable entry for any of its nodes. Synthesized in the typechecker, it is typed like
+any other match and the ownership, capture and lowering passes needed no changes at all.
+
+Four details that are decisions rather than mechanics. A **one-parameter** function matches its
+parameter directly rather than through a one-element tuple, so it reaches the scalar ladder.
+The clauses are **consumed**, or `checkLambdaBody` would check every clause body a second time
+and turn one mistake into two diagnostics. **Arity is checked in the desugaring**, with the
+counts named, because left to the synthesized match it surfaces as a tuple-shape error about a
+tuple nobody wrote. And **no clause matching traps** (exit 101, `lyra: match not exhaustive`)
+rather than being undefined — the right semantics for a function-clause error, and what Erlang
+and Elixir do.
+
+**Generic multi-clause functions work too**, which needed a second, unrelated fix. The backend
+had refused them twice — once for being multi-clause, once in `declareSpecialization` — and
+with the body desugared, a third failure appeared: `data pattern on non-data value of type
+Opt<i64>`. `resolveDataType` had no `ParameterizedType` case, so a data pattern *nested inside*
+an aggregate pattern (`(Just(v), _)`) failed where a top-level one worked, because the
+top-level path normalizes its scrutinee and the sub-pattern path reads the element type
+straight off the tuple. Pre-existing and independent of clauses — the hand-written tuple match
+fails identically, which is how the regression test is written.
+
+### 07/31/26
 **A lambda literal now takes its missing annotations from context.** It used to take
 nothing: `(x) => x` reported `undefined symbol "x"` because an unannotated parameter never
 reached `tc.paramTypes`, and `() => 7` was rejected against `() -> i64` because the body's

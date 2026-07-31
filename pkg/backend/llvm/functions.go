@@ -251,11 +251,13 @@ func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, 
 	if err != nil {
 		return nil, err
 	}
+	// A defaulted parameter is an ordinary parameter here: the typechecker fills every
+	// omitted argument from the declaration before the call reaches this backend
+	// (`typechecker/default_args.go`), so the emitted function always receives all of them
+	// and needs no notion of defaults. The guard in lowerDirectCall is what catches a call
+	// that somehow did not get filled, loudly, rather than emitting a short argument list.
 	irParams := make([]*ir.Param, 0, len(fn.Parameters))
 	for _, param := range fn.Parameters {
-		if param.DefaultValue != nil {
-			return nil, fmt.Errorf("llvm: default parameter values are not implemented yet (%q)", name)
-		}
 		irParam, err := l.lowerParameter(param)
 		if err != nil {
 			return nil, err
@@ -470,6 +472,13 @@ func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 			return nil, block, nil
 		}
 		args = append(args, v)
+	}
+	// A short argument list means a default the front end should have filled did not reach
+	// here. Emitting the call anyway would produce IR whose argument count disagrees with
+	// the callee — invalid, and on a good day caught by clang rather than by us.
+	if len(params) > 0 && len(args) != len(fn.Params) {
+		return nil, nil, fmt.Errorf("llvm: %s expects %d argument(s), got %d",
+			fn.GlobalIdent.Ident(), len(fn.Params), len(args))
 	}
 	return block.NewCall(fn, args...), block, nil
 }
