@@ -239,10 +239,11 @@ interior assignment, and deep retain-on-copy.
   - **[OPEN] Callbacks reached through anything but a parameter or a binding** — a struct
     field, a call result, an array element — stay conservative (`AllEffects`). Also
     multi-clause lambdas, whose per-clause patterns give no index to match an argument
-    against, and **trait-impl methods**, which `methodEffects` still treats as before: a
-    method taking a callback is as poisoned as every function was before this landed. A
-    trait *signature* also has nowhere to write a bound on a method's parameter, which is
-    the same grammar gap the borrow-modifier item below notes.
+    against.
+  - **[DONE 07/31] Trait-impl methods** are polymorphic over their callbacks, and a bound
+    written in a trait signature (`apply: (Self, pure () -> i64) -> i64`) is enforced at
+    call sites. Note the receiver offset: signature parameter 0 is `Self`, which sits
+    outside `call.Arguments` (`methodArgumentAt`).
   - **[OPEN] A declared bound is not inferred.** Passing an unconstrained parameter into a
     bounded slot is rejected rather than propagating the requirement outward, so a wrapper
     must declare its own bound by hand. Inferring it (a caller's parameter *becomes*
@@ -338,10 +339,32 @@ Types, checked arithmetic, division via the builtins library, `match`, conversio
 Trait-method lowering landed 07/30: an impl method lowers to a function taking the receiver
 first, dispatch is static, and a generic impl needs no extra machinery.
 
-- **[OPEN] Trait signatures carry no borrow modifier** — the grammar has nowhere to write
-  one — so every parameter including the receiver is by value. If that changes,
-  `traitMethodLambda` is the line that must carry it, or the call site and the body will
-  disagree about who owns the receiver.
+- **[OPEN] Trait signatures carry no borrow modifier** in the *compiler* — every parameter
+  including the receiver is by value. **The grammar is not the gap**, contrary to what this
+  entry said until 07/31: `trait_method_signature` is an aliased `lambda_type`, whose
+  `parameter_type` has always had `optional(field("modifier", $.type_modifier))`, so
+  `bump: (mut Self, own i64) -> void` parses today and always did. What drops it is
+  `Collector.parseParameterType`, which reads only the `type` field — and
+  `types.ParameterType.Modifier` is an `AllocationModifier` (`stack`/`shared`), not the
+  `ref`/`mut`/`own` axis, so there is nowhere to put it either.
+
+  *Why this is bigger than it looks, and why a partial version is worse than none.* Three
+  passes would have to learn about method parameter modes, and none of them knows about them
+  today:
+  - the **typechecker** — `inferResolvedTraitMethodCall` performs no `checkMutArgument` or
+    allocation-compatibility check, so a `mut` argument would not be required to be a
+    mutable lvalue;
+  - the **ownership pass** — `pkg/analyzer/ownership` contains no reference to
+    `MethodTable`/`TraitMethodImpl` at all, so retain/release for a method call is not
+    decided from the callee's parameter modes the way it is for a free function;
+  - the **backend** — mostly ready, since `paramIsByRef` is generic over `ast.Parameter` and
+    `traitMethodLambda` is the one line that would carry the modifier through.
+
+  Collect the modifier without teaching ownership and the backend passes a **pointer** where
+  the ownership pass still believes a by-value copy was made: a `ref Self` that reads as
+  borrowed on one side and owned on the other, which is the borrowed-`string` use-after-free
+  shape from 07/30 with a different origin. So this wants doing as one vertical slice, with
+  the ASan suite (`./asan.sh`) run over it, rather than in front-to-back pieces.
 
 ## Method syntax for free functions (UFCS)
 

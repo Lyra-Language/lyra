@@ -69,16 +69,20 @@ func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
 	frames := newScopeFrames(program, scopeTable)
 	boundGroups := collectTraitMethodGroups(program)
-	impureLambdas, impureMethods, callbacks := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, methodTable, boundGroups, buildAllocContext(program, typeTable), frames)
+	traitDecls := collectTraitDecls(program)
+	signatures := collectMethodSignatures(program, traitDecls)
+	impureLambdas, impureMethods, callbacks, methodCallbacks := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, methodTable, boundGroups, buildAllocContext(program, typeTable), frames, signatures)
 	c := &purityChecker{
-		impureLambdas: impureLambdas,
-		impureMethods: impureMethods,
-		callbacks:     callbacks,
-		assignTargets: map[*ast.IdentifierExpr]bool{},
-		methodTable:   methodTable,
-		boundGroups:   boundGroups,
-		traitDecls:    collectTraitDecls(program),
-		frames:        frames,
+		methodCallbacks: methodCallbacks,
+		signatures:      signatures,
+		impureLambdas:   impureLambdas,
+		impureMethods:   impureMethods,
+		callbacks:       callbacks,
+		assignTargets:   map[*ast.IdentifierExpr]bool{},
+		methodTable:     methodTable,
+		boundGroups:     boundGroups,
+		traitDecls:      traitDecls,
+		frames:          frames,
 	}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -181,7 +185,7 @@ func InferredEffects(program *ast.Program, scopeTable *symbols.ScopeTable) map[s
 	// The third result is the per-lambda callback set; this helper reports each
 	// function's *base* effect, which is what a caller asking "what does this function
 	// itself do" wants — the callback contribution is per call site by construction.
-	impure, _, _ := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, nil, collectTraitMethodGroups(program), buildAllocContext(program, nil), frames)
+	impure, _, _, _ := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, nil, collectTraitMethodGroups(program), buildAllocContext(program, nil), frames, collectMethodSignatures(program, collectTraitDecls(program)))
 	result := make(map[string]Effect, len(base[0].functions))
 	for name, lam := range base[0].functions {
 		result[name] = impure[lam]
@@ -345,6 +349,20 @@ func declaredBound(lam *ast.LambdaExpr, idx int) *types.LambdaType {
 	return lt
 }
 
+// signatureBound is declaredBound for a *trait* method: the bounds written on parameter idx
+// of the trait's declared signature. A method's parameter types live only there — an impl
+// binds patterns, not typed parameters — so this is the trait-side counterpart.
+func signatureBound(sig *types.LambdaType, idx int) *types.LambdaType {
+	if sig == nil || idx < 0 || idx >= len(sig.Parameters) {
+		return nil
+	}
+	lt, ok := sig.Parameters[idx].Type.(*types.LambdaType)
+	if !ok || (!lt.IsPure && !lt.IsDet && !lt.IsNoAlloc) {
+		return nil
+	}
+	return lt
+}
+
 // boundEffect is the effect set a declared bound still permits: what a caller may not
 // assume is absent. `pure` permits nothing, `det` permits everything outside DetEffects,
 // `noalloc` constrains only allocation.
@@ -373,6 +391,12 @@ type purityChecker struct {
 	// impureMethods is impureLambdas' counterpart for trait-impl methods,
 	// populated by the same call to inferImpurity.
 	impureMethods map[*ast.TraitMethodImpl]Effect
+	// methodCallbacks is callbacks' counterpart for trait-impl methods. Positions index the
+	// *signature*, where the receiver is parameter 0 — see methodArgumentAt.
+	methodCallbacks map[*ast.TraitMethodImpl]map[string]int
+	// signatures maps each impl method to the signature its trait declares, the only place
+	// a method's parameter types (and so its declared callback bounds) exist.
+	signatures map[*ast.TraitMethodImpl]*types.LambdaType
 	// callbacks holds each lambda's effect-polymorphic parameters (name → position):
 	// the function-typed ones it calls, whose effects are charged at the call site
 	// rather than to the definition. See the note above lambdaEffects.
@@ -510,7 +534,9 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, encl
 			// at every call site regardless of whether the caller is itself pure — unlike
 			// the polymorphic case below, which only matters when the caller has something
 			// to protect.
-			if name := calleeName(e.Function); name != "" {
+			if method, ok := c.methodTable.Get(e); ok {
+				c.checkDeclaredMethodBounds(capture, enclosing, e, method)
+			} else if name := calleeName(e.Function); name != "" {
 				c.checkDeclaredCallbackBounds(capture, enclosing, e, name)
 			}
 			if sc != nil {
@@ -518,9 +544,21 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, encl
 					// Mask with PurityEffects: only correctness effects (mut/io)
 					// make a callee non-pure — EffectAlloc is orthogonal, so a
 					// pure function may call a method that merely allocates.
-					if c.impureMethods[method]&PurityEffects != 0 {
-						c.report(e.GetLocation(),
-							"pure function calls non-pure trait method %q", method.Name.GetName())
+					//
+					// The effect is of *this call site*: a method taking a callback is
+					// polymorphic in it exactly as a free function is, so what the
+					// argument supplied here does is part of the cost.
+					eff := methodCallEffect(method, e, capture, c.impureLambdas, c.impureMethods,
+						c.callbacks, c.methodCallbacks, callbackParamsOf(sc), nil)
+					if eff&PurityEffects != 0 {
+						if c.impureMethods[method]&PurityEffects != 0 {
+							c.report(e.GetLocation(),
+								"pure function calls non-pure trait method %q", method.Name.GetName())
+						} else {
+							c.report(e.GetLocation(),
+								"pure function calls trait method %q with an impure callback argument; "+
+									"the callback's effects are this call's", method.Name.GetName())
+						}
 					}
 				} else if ref, ok := c.methodTable.GetBound(e); ok {
 					// Abstract dispatch through a `where` bound: pure only if every
@@ -556,6 +594,16 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, encl
 //     aren't pure type-conversion calls — these are treated conservatively as
 //     impure (imported/external functions whose purity we can't verify)
 //
+// callbackParamsOf is the enclosing function's polymorphic parameters, or nil outside a
+// pure context. Passing them into an argument-effect walk is what lets a callback handed
+// straight on stay polymorphic rather than tainting the call it is handed to.
+func callbackParamsOf(sc *funcScope) map[string]int {
+	if sc == nil {
+		return nil
+	}
+	return sc.callbacks
+}
+
 // checkDeclaredCallbackBounds enforces the *declared* half of effect polymorphism: a
 // parameter typed `f: pure () -> t` constrains every function handed to it.
 //
@@ -578,21 +626,54 @@ func (c *purityChecker) checkDeclaredCallbackBounds(capture []scopeBindings, enc
 		if bound == nil || i >= len(call.Arguments) {
 			continue
 		}
-		arg := call.Arguments[i]
-		actual, known := c.suppliedEffect(arg, capture, enclosing)
-		if !known {
-			c.report(arg.GetLocation(),
-				"%s: cannot verify that this argument satisfies the declared `%s` bound on %q; "+
-					"pass a function literal or a named function, or declare the parameter it comes from",
-				name, strings.TrimSpace(bound.EffectPrefix()), callee.Parameters[i].Pattern.GetName())
+		c.reportBoundViolation(capture, enclosing, call.Arguments[i], bound, name,
+			fmt.Sprintf("%q", callee.Parameters[i].Pattern.GetName()))
+	}
+}
+
+// checkDeclaredMethodBounds is checkDeclaredCallbackBounds for a trait-method call. The
+// bounds come from the *trait's* signature (a method's parameter types live nowhere else),
+// and the arguments are offset by the receiver — see methodArgumentAt.
+func (c *purityChecker) checkDeclaredMethodBounds(capture []scopeBindings, enclosing *ast.LambdaExpr, call *ast.FunctionCallExpr, method *ast.TraitMethodImpl) {
+	sig := c.signatures[method]
+	if sig == nil {
+		return
+	}
+	for i := range sig.Parameters {
+		bound := signatureBound(sig, i)
+		if bound == nil {
 			continue
 		}
-		if bad := actual &^ boundEffect(bound); bad != 0 {
-			c.report(arg.GetLocation(),
-				"%s: argument for %q must be `%s`, but it %s",
-				name, callee.Parameters[i].Pattern.GetName(),
-				strings.TrimSpace(bound.EffectPrefix()), effectDescription(bad))
+		arg, ok := methodArgumentAt(call, i)
+		if !ok {
+			continue // arity mismatch, or the receiver — reported elsewhere
 		}
+		c.reportBoundViolation(capture, enclosing, arg, bound, method.Name.GetName(), parameterLabel(sig, i))
+	}
+}
+
+// parameterLabel names a signature parameter for a diagnostic. A trait signature carries
+// types, not names, so the position is the only handle there is.
+func parameterLabel(sig *types.LambdaType, idx int) string {
+	return fmt.Sprintf("parameter %d", idx)
+}
+
+// reportBoundViolation is the shared verdict for one argument against one declared bound,
+// so the free-function and trait-method paths cannot drift on what counts as a violation or
+// on how it is worded.
+func (c *purityChecker) reportBoundViolation(capture []scopeBindings, enclosing *ast.LambdaExpr, arg ast.Expression, bound *types.LambdaType, calleeName, paramLabel string) {
+	actual, known := c.suppliedEffect(arg, capture, enclosing)
+	if !known {
+		c.report(arg.GetLocation(),
+			"%s: cannot verify that this argument satisfies the declared `%s` bound on %s; "+
+				"pass a function literal or a named function, or declare the parameter it comes from",
+			calleeName, strings.TrimSpace(bound.EffectPrefix()), paramLabel)
+		return
+	}
+	if bad := actual &^ boundEffect(bound); bad != 0 {
+		c.report(arg.GetLocation(),
+			"%s: argument for %s must be `%s`, but it %s",
+			calleeName, paramLabel, strings.TrimSpace(bound.EffectPrefix()), effectDescription(bad))
 	}
 }
 
@@ -1230,10 +1311,11 @@ func collectFuncBindings(program *ast.Program, base []scopeBindings, frames *sco
 // That set is part of the same fixpoint, because discovering a callback can change a
 // caller's effect (it stops paying AllEffects for the call) and discovering an effect can
 // reveal a callback one round later.
-func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*ast.TraitMethodImpl, base []scopeBindings, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext, frames *scopeFrames) (map[*ast.LambdaExpr]Effect, map[*ast.TraitMethodImpl]Effect, map[*ast.LambdaExpr]map[string]int) {
+func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*ast.TraitMethodImpl, base []scopeBindings, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext, frames *scopeFrames, signatures map[*ast.TraitMethodImpl]*types.LambdaType) (map[*ast.LambdaExpr]Effect, map[*ast.TraitMethodImpl]Effect, map[*ast.LambdaExpr]map[string]int, map[*ast.TraitMethodImpl]map[string]int) {
 	impureLambdas := map[*ast.LambdaExpr]Effect{}
 	impureMethods := map[*ast.TraitMethodImpl]Effect{}
 	callbacks := map[*ast.LambdaExpr]map[string]int{}
+	methodCallbacks := map[*ast.TraitMethodImpl]map[string]int{}
 	// Fixpoint over an effect *set*: a callable's effect can only grow as more
 	// of its callees are analyzed, so each pass ORs in any newly found bits and
 	// we iterate until nothing changes. (This must recompute every callable
@@ -1264,17 +1346,30 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 			}
 		}
 		for _, m := range methods {
-			e := impureMethods[m] | methodEffects(m, base, impureLambdas, impureMethods, methodTable, boundGroups, alloc)
+			effects, cbs := methodEffects(m, base, impureLambdas, impureMethods, methodTable,
+				boundGroups, alloc, signatures[m], callbacks, methodCallbacks)
+			e := impureMethods[m] | effects
 			if e != impureMethods[m] {
 				impureMethods[m] = e
 				changed = true
+			}
+			// Monotone, exactly as the lambda side: a parameter found to be called stays
+			// called, so the sets only grow and the fixpoint still terminates.
+			for name, idx := range cbs {
+				if _, seen := methodCallbacks[m][name]; !seen {
+					if methodCallbacks[m] == nil {
+						methodCallbacks[m] = map[string]int{}
+					}
+					methodCallbacks[m][name] = idx
+					changed = true
+				}
 			}
 		}
 		if !changed {
 			break
 		}
 	}
-	return impureLambdas, impureMethods, callbacks
+	return impureLambdas, impureMethods, callbacks, methodCallbacks
 }
 
 // collectMethodImpls gathers every trait-impl method declared in program,
@@ -1293,6 +1388,66 @@ func collectMethodImpls(program *ast.Program) []*ast.TraitMethodImpl {
 		}
 	}
 	return methods
+}
+
+// collectMethodSignatures maps each trait-impl method to the signature its trait declares
+// for it. A method's *parameters* live in the trait declaration, not in the impl (an impl
+// binds patterns: `show = (self) => …`), so this is the only way the effect passes can see
+// what a method's parameters are typed as — which is what declared callback bounds
+// (`f: pure () -> t`) on a trait method need.
+//
+// A method with no matching declaration (an impl of an undeclared method, already an error)
+// simply gets no entry, and the passes fall back to their conservative behaviour.
+func collectMethodSignatures(program *ast.Program, traitDecls map[string]*ast.TraitDeclStmt) map[*ast.TraitMethodImpl]*types.LambdaType {
+	sigs := map[*ast.TraitMethodImpl]*types.LambdaType{}
+	for _, node := range program.Statements {
+		impl, ok := node.(*ast.TraitImplStmt)
+		if !ok {
+			continue
+		}
+		for i := range impl.Methods {
+			if decl := traitMethodDecl(traitDecls, impl.TraitName, impl.Methods[i].Name); decl != nil {
+				sigs[&impl.Methods[i]] = decl.Signature
+			}
+		}
+	}
+	return sigs
+}
+
+// clauseParams maps a trait-impl method's bound parameter names to their positions in the
+// *signature*, so a call through one can be recognized in the body. Position 0 is the
+// receiver: a trait signature includes `Self`, while a call site writes it as the receiver
+// rather than an argument — see methodArgumentAt for the offset that follows from this.
+//
+// Non-identifier patterns (a destructuring receiver) have no name to call, so they are
+// skipped rather than mismatching the signature.
+func clauseParams(m *ast.TraitMethodImpl) map[string]int {
+	if m == nil {
+		return nil
+	}
+	out := make(map[string]int, len(m.Clause.Patterns))
+	for i, pat := range m.Clause.Patterns {
+		if ip, ok := pat.(*ast.IdentifierPattern); ok && ip.Name != "" {
+			out[ip.Name] = i
+		}
+	}
+	return out
+}
+
+// methodArgumentAt returns the expression supplied for signature parameter idx at a method
+// call site, and whether there is one.
+//
+// **The offset is the whole point.** A trait signature counts `Self` as parameter 0, but
+// `x.foo(a, b)` puts the receiver outside `call.Arguments` — so signature index i is
+// `Arguments[i-1]`, and index 0 is the receiver, which is never a callback (it is the value
+// being dispatched on). Reading `Arguments[i]` instead would check every callback against
+// the argument one place to its right, silently, since a wrong function-typed argument
+// type-checks against the wrong parameter just as well.
+func methodArgumentAt(call *ast.FunctionCallExpr, idx int) (ast.Expression, bool) {
+	if idx <= 0 || idx-1 >= len(call.Arguments) {
+		return nil, false
+	}
+	return call.Arguments[idx-1], true
 }
 
 // collectTraitDecls indexes the program's trait declarations by name, so an
@@ -1421,6 +1576,34 @@ func callEffect(
 			continue
 		}
 		found |= argumentEffect(call.Arguments[idx], capture, effects, callbacks, enclosing, enclosingCallbacks)
+	}
+	return found
+}
+
+// methodCallEffect is callEffect for a *trait-method* call site: the method's own base
+// effect plus the effects of the arguments supplied for its callback parameters.
+//
+// Separate from callEffect only because of the receiver offset (methodArgumentAt) and
+// because a method's callbacks are keyed by *ast.TraitMethodImpl rather than by lambda.
+func methodCallEffect(
+	method *ast.TraitMethodImpl,
+	call *ast.FunctionCallExpr,
+	capture []scopeBindings,
+	effects map[*ast.LambdaExpr]Effect,
+	methodEffectsByImpl map[*ast.TraitMethodImpl]Effect,
+	callbacks map[*ast.LambdaExpr]map[string]int,
+	methodCallbacks map[*ast.TraitMethodImpl]map[string]int,
+	enclosing map[string]int,
+	enclosingCallbacks map[string]int,
+) Effect {
+	found := methodEffectsByImpl[method]
+	for _, idx := range methodCallbacks[method] {
+		arg, ok := methodArgumentAt(call, idx)
+		if !ok {
+			found |= AllEffects
+			continue
+		}
+		found |= argumentEffect(arg, capture, effects, callbacks, enclosing, enclosingCallbacks)
 	}
 	return found
 }
@@ -1591,13 +1774,23 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 // directScopeBindingsForClause). base is the program's top-level capture
 // frame; a method's own scope never nests inside another lambda's, so that
 // is the entire capture stack besides the method's own.
-func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext) Effect {
+// It returns the method's *base* effect plus the callback parameters it calls, exactly as
+// lambdaEffects does for a free function — a trait method taking a callback used to be as
+// poisoned as every function was before effect polymorphism landed.
+//
+// signature is what the method's trait declares for it (collectMethodSignatures); it is the
+// only place a method's parameter *types* live, so it is what declared bounds
+// (`f: pure () -> t` in a trait signature) are read from. A nil signature falls back to
+// treating every called parameter as unconstrained, which is the conservative answer.
+func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext, signature *types.LambdaType, callbacks map[*ast.LambdaExpr]map[string]int, methodCallbacks map[*ast.TraitMethodImpl]map[string]int) (Effect, map[string]int) {
 	scope := directScopeBindingsForClause(&m.Clause)
 	locals := make(map[string]bool, len(scope.mutable))
 	for name := range scope.mutable {
 		locals[name] = true
 	}
 	bodyCapture := pushScope(base, scope)
+	params := clauseParams(m)
+	foundCallbacks := make(map[string]int)
 	var found Effect
 	onStmt := func(s ast.Statement) bool {
 		switch st := s.(type) {
@@ -1628,7 +1821,8 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 			}
 		case *ast.FunctionCallExpr:
 			if method, ok := methodTable.Get(ex); ok {
-				found |= impureMethods[method]
+				found |= methodCallEffect(method, ex, bodyCapture, impureLambdas, impureMethods,
+					callbacks, methodCallbacks, params, foundCallbacks)
 			} else if ref, ok := methodTable.GetBound(ex); ok {
 				// Abstract dispatch through a `where` bound: join over the impls of
 				// the bound trait method (pure only if all of them are).
@@ -1638,7 +1832,16 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 				// a user binding shadows a builtin of the same name, so its own body
 				// decides its effects.
 				if target, ok := resolveCallee(bodyCapture, name); ok {
-					found |= impureLambdas[target]
+					found |= callEffect(target, ex, bodyCapture, impureLambdas, callbacks, params, foundCallbacks)
+				} else if idx, isParam := params[name]; isParam {
+					// A call through one of this method's own parameters. Its trait
+					// signature may constrain it (`f: pure () -> t`), in which case the
+					// cost is known and the method is not polymorphic in it.
+					if bound := signatureBound(signature, idx); bound != nil {
+						found |= boundEffect(bound)
+					} else {
+						foundCallbacks[name] = idx
+					}
 				} else if e, ok := builtinEffects[name]; ok {
 					found |= e
 				} else if !isTypeConversionCall(name) {
@@ -1668,7 +1871,7 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 		return true
 	}
 	ast.WalkExpr(m.Clause.Body, onStmt, onExpr)
-	return found
+	return found, foundCallbacks
 }
 
 // isTypeConversionCall reports whether name is a numeric primitive type name

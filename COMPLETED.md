@@ -10,6 +10,40 @@ Newest first.
 ## Dated log
 
 ### 07/31/26
+**Trait-impl methods are effect-polymorphic, and a trait signature can bound a callback.**
+The last conservative corner of the effect work: `methodEffects` charged a call through a
+method's own parameter the full `AllEffects` taint, so a trait method taking a callback was
+as poisoned as every function was before effect polymorphism landed, and the taint spread to
+its callers. It now returns a base effect plus callback parameters exactly as `lambdaEffects`
+does, and `methodCallEffect` charges each call site for the arguments it actually supplies.
+
+A method's parameter *types* live only in the trait declaration — an impl binds patterns
+(`show = (self) => …`), not typed parameters — so `collectMethodSignatures` maps each impl
+method to its declared signature. That is also what makes a bound written in a trait
+signature enforceable: `apply: (Self, pure () -> i64) -> i64` now binds every caller,
+including impure ones, via `signatureBound`.
+
+**The receiver offset is the trap in this path, and it is a silent one.** A trait signature
+counts `Self` as parameter 0, but `x.foo(a)` puts the receiver *outside* `call.Arguments` —
+so signature index i is `Arguments[i-1]` (`methodArgumentAt`). Reading `Arguments[i]` would
+check every callback against the argument one place to its right and report nothing, because
+two function-typed arguments type-check against each other's parameters perfectly well. The
+regression test uses two callbacks in different positions, since a single-callback test
+passes either way. This is the same hazard already written into the UFCS decision entry,
+which is where it will surface next.
+
+**What was *not* done, and why not partially:** borrow modifiers on trait signatures. The
+grammar was never the gap — `trait_method_signature` is an aliased `lambda_type` and its
+`parameter_type` has always taken `ref`/`mut`/`own`, so `(mut Self, own i64) -> void` parses
+today. The collector drops it, and three passes would have to learn about method parameter
+modes: the typechecker performs no `checkMutArgument` for method calls, the ownership pass
+contains no reference to trait methods at all, and only the backend is close to ready.
+Collecting the modifier without teaching ownership would have the backend pass a *pointer*
+where the ownership pass still believes a copy was made — the borrowed-`string`
+use-after-free shape from 07/30 with a different origin. It wants one vertical slice with
+ASan over it; todo.md carries the corrected scope.
+
+### 07/31/26
 **The parser shrank 9×, and `src/parser.c` left Git LFS.** 62,663 states → 6,475; 116 MB →
 12.8 MB. It started as a storage question — every grammar change cost 116 MB of LFS quota,
 and `.git/lfs` was 2.5 GB across 17 revisions against a 1 GB allowance — but the storage was

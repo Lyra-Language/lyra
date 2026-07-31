@@ -97,9 +97,23 @@ Two consequences that are the point rather than side effects:
 - **A callback passed onward stays polymorphic**: `(f) => or_else(m, f)` is polymorphic in `f`
   too, so combinators built from combinators are not poisoned by the hand-off.
 
+**Trait-impl methods are polymorphic too.** `methodEffects` returns a base effect plus callback
+parameters exactly as `lambdaEffects` does, and `methodCallEffect` charges a call site for the
+arguments it supplies. Their parameter *types* live only in the trait declaration (an impl binds
+patterns, not typed parameters), so `collectMethodSignatures` maps each impl method to its
+declared signature — which is also what makes a bound written in a trait signature
+(`apply: (Self, pure () -> i64) -> i64`) enforceable, via `signatureBound`.
+
+**The receiver offset is the hazard in that path.** A trait signature counts `Self` as parameter
+0, but `x.foo(a)` puts the receiver *outside* `call.Arguments`, so signature index i is
+`Arguments[i-1]` (`methodArgumentAt`). Reading `Arguments[i]` instead checks every callback
+against the argument one place to its right — silently, because two function-typed arguments
+type-check against each other's parameters perfectly well. A test with two callbacks in
+different positions is what makes that observable, and there is one.
+
 Deliberately still conservative: a callback reached through a struct field, a call result or an
-array element; multi-clause lambdas (per-clause patterns give no index to match an argument
-against); and trait-impl methods, which `methodEffects` treats as before.
+array element, and multi-clause lambdas (per-clause patterns give no index to match an argument
+against).
 
 **The declared half: `f: pure () -> t`.** A parameter's *type* may carry the same
 `pure`/`det`/`noalloc` modifiers a lambda value does (`tree-sitter-lyra`'s `lambda_type`),
