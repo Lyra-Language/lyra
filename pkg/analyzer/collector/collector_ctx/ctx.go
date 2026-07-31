@@ -101,6 +101,18 @@ func (ctx *Ctx) AddError(node *sitter.Node, sev diag.Severity, format string, ar
 	})
 }
 
+// AddErrorCoded is AddError with an explicit diagnostic code. Most collector errors are
+// internal "this shape should not reach here" reports with no code; a rule the *user* can
+// violate needs one, so it can be looked up and suppressed like any other.
+func (ctx *Ctx) AddErrorCoded(node *sitter.Node, sev diag.Severity, code string, format string, args ...any) {
+	*ctx.errors = append(*ctx.errors, diag.Diagnostic{
+		Code:     code,
+		Message:  fmt.Sprintf(format, args...),
+		Location: ctx.NodeLocation(node),
+		Severity: sev,
+	})
+}
+
 func (ctx *Ctx) AddErrorRelated(node *sitter.Node, sev diag.Severity, related []diag.RelatedInformation, format string, args ...any) {
 	*ctx.errors = append(*ctx.errors, diag.Diagnostic{
 		Message:            fmt.Sprintf(format, args...),

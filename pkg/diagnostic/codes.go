@@ -170,6 +170,18 @@ const (
 	// there or to stop reaching for it.
 	CodePrivateAccess = "lyra-E028"
 
+	// CodeMalformedModifiers: a callable's effect/behaviour modifiers are repeated or
+	// written out of the canonical order (`unsafe pure|det noalloc async gen rec`).
+	//
+	// This used to be a *parse* error — the grammar spelled the modifiers as seven
+	// ordered optionals. That shape was also the single largest thing in the generated
+	// parser (`lambda_expr` owned 91% of its states; collapsing it to one repeated choice
+	// took `parser.c` from 116 MB to 12.8 MB and out of Git LFS), so order and repetition
+	// moved here. The diagnostic is strictly better for it: a syntax error pointed at
+	// whichever token failed to shift, where this names the offending modifier and the
+	// order to write.
+	CodeMalformedModifiers = "lyra-E029"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

@@ -10,6 +10,48 @@ Newest first.
 ## Dated log
 
 ### 07/31/26
+**The parser shrank 9×, and `src/parser.c` left Git LFS.** 62,663 states → 6,475; 116 MB →
+12.8 MB. It started as a storage question — every grammar change cost 116 MB of LFS quota,
+and `.git/lfs` was 2.5 GB across 17 revisions against a 1 GB allowance — but the storage was
+the symptom.
+
+`tree-sitter generate --report-states-for-rule -` attributed **57,026 of the 62,663 states to
+`lambda_expr` alone (91%)**. The cause was seven independent `optional()` modifiers in
+sequence: an LR automaton tracks every distinct prefix through such a chain (2^7 = 128 before
+the parameter list), and because the GLR conflicts around `(` keep the lambda-parameter-list,
+tuple and parenthesized-expression readings alive simultaneously, each prefix grew its own
+family of states across the whole expression grammar. `LARGE_STATE_COUNT` agreed: 35% of
+states, where a few percent is normal.
+
+Worth recording what *didn't* work, since it is the obvious first move: ablating each of the
+17 declared GLR conflicts one at a time. Every one failed to generate — they are each
+load-bearing for a specific ambiguity, exactly as their comments claim. The conflicts are not
+the problem; what the conflicts *multiply* is.
+
+Three forms were measured before choosing:
+
+| Form | States | `parser.c` |
+|---|---|---|
+| Seven ordered `optional()`s | 62,663 | 116 MB |
+| Ordered, mutually-exclusive ones grouped (5 optionals) | 37,687 | 70 MB |
+| `repeat(choice(…))` — order-free | 6,475 | 12.8 MB |
+
+The 10× needs the third, and it costs modifier **order and repetition as parse errors** —
+one corpus test out of 373. Those moved to the collector (`lyra-E029`,
+`expressions/modifier_order.go`), which is a better home than a trade-off: a syntax error
+could only point at whichever token failed to shift, where the collector names the offending
+modifier and the canonical order. The semantic sibling — `pure` and `det` conflicting — was
+already a checker diagnostic, so the rules now sit together. Field labels survive a
+`repeat(choice(field(…)))`, so no collector read changed.
+
+Consequences beyond size, all of them the point: `git-lfs` is no longer a prerequisite for
+cloning (`setup.sh`/`setup.ps1` lost the skip-with-install-hint path, `README.md` the
+prerequisite row, CI its `lfs: true`), `parser.c` is diffable in review, and a grammar change
+costs a large text diff instead of an LFS revision. **A commit from before this still needs
+git-lfs** — `asan.sh` keeps its pointer-file guard for exactly that, and `lyra-zed-ext`'s pin
+reintroduces the requirement if it names an older commit.
+
+### 07/31/26
 **Effect polymorphism — the declared half: `f: pure () -> t`.** The inferred half (below)
 decides a higher-order function's purity per call site from the argument, which is what makes
 a standard library usable but leaves a signature unable to *promise* anything: `pure` on a

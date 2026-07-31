@@ -13,6 +13,10 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 		ctx.AddError(node, diag.SeverityError, "collectLambdaExpr: node has no children")
 		return nil
 	}
+	// Order and repetition are checked here rather than by the grammar — see
+	// modifier_order.go for why the grammar stopped enforcing them.
+	CheckModifierOrder(node, ctx)
+
 	isUnsafe := node.ChildByFieldName("is_unsafe") != nil
 	isPure := node.ChildByFieldName("is_pure") != nil
 	isDet := node.ChildByFieldName("is_det") != nil

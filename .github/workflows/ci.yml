@@ -29,15 +29,14 @@ jobs:
         with:
           path: lyra
 
-      # The tree-sitter grammar is a local `replace` dependency. Its
-      # src/parser.c is stored via Git LFS, so lfs must be enabled or the
-      # cgo build sees an LFS pointer file instead of the generated parser.
+      # The tree-sitter grammar is a local `replace` dependency. Its src/parser.c is
+      # ordinary tracked text since the state-explosion fix took it out of Git LFS, so
+      # no `lfs: true` is needed — and this job regenerates it below in any case.
       - name: Checkout tree-sitter-lyra grammar
         uses: actions/checkout@v4
         with:
           repository: Lyra-Language/tree-sitter-lyra
           path: tree-sitter-lyra
-          lfs: true
 
       - name: Set up Go
         uses: actions/setup-go@v5
