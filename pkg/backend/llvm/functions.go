@@ -16,10 +16,18 @@ import (
 // beginFunction resets the per-function lowering state before a body is lowered.
 // managedFrames starts with one root frame (holding `own` string params, added
 // by defineFunction); block lowering pushes nested frames on top.
-func (l *lowerer) beginFunction(retType lltypes.Type, retSigned, entryABI bool) {
+//
+// retLyra is the same return type as retType, unlowered. `?` needs it: propagating
+// an error means building an `Err(e)`/`None` of *the enclosing function's* Result or
+// Maybe, and the LLVM type alone cannot say which constructor that is or what the
+// error payload's Lyra type is (try.go). It is stored unsubstituted — inside a
+// specialization it still mentions the function's type variables, so every read runs
+// it through applyTypeSubst, exactly as recordedType does.
+func (l *lowerer) beginFunction(retType lltypes.Type, retLyra types.Type, retSigned, entryABI bool) {
 	l.locals = map[string]value.Value{}
 	l.loops = nil
 	l.retType = retType
+	l.retLyra = retLyra
 	l.retSigned = retSigned
 	l.entryABI = entryABI
 	l.managedFrames = [][]managedSlot{nil}
@@ -150,7 +158,7 @@ func (l *lowerer) emitReturn(start, block *ir.Block, val value.Value) error {
 // return; that's why main is set up with beginFunction like any other function.
 func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 	fn := l.module.NewFunc("main", lltypes.I32)
-	l.beginFunction(lltypes.I32, false, true) // entryABI: emitReturn handles the u8→i32 coercion
+	l.beginFunction(lltypes.I32, entry.Lambda.ReturnType.Type, false, true) // entryABI: emitReturn handles the u8→i32 coercion
 	block := fn.NewBlock("entry")
 
 	switch entry.Returns {
@@ -285,7 +293,7 @@ func (l *lowerer) defineFunctionInto(irFn *ir.Func, fn *ast.LambdaExpr, name str
 	if err != nil {
 		return err
 	}
-	l.beginFunction(retType, returnSigned(fn), false)
+	l.beginFunction(retType, fn.ReturnType.Type, returnSigned(fn), false)
 
 	entry := irFn.NewBlock("entry")
 	if err := l.bindParameters(entry, irFn, fn.Parameters, 0); err != nil {

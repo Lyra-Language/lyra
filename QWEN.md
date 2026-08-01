@@ -195,9 +195,11 @@ the entry point via `driver.ResolveEntryPoint`, then hand the typed program to t
 Diagnostics print as `path:line:col: severity[code]: message` (the `line:col` is omitted for a
 program-level error with no location, e.g. a missing `main`). `build` runs the
 `pkg/backend/llvm` backend via `lowerAndEmit`, writing `<name>.ll` next to the source and
-printing the `clang` command to compile it. Codegen is early (literals/arithmetic/int-width
-conversions — see that package's doc comment), so a non-trivial `main` may still hit a form
-`lowerExpr` errors on rather than lowering incorrectly. Build with `go build ./cmd/lyrac`.
+printing the `clang` command to compile it. Codegen is pre-release but no longer minimal —
+closures, generics, strings, arrays, `match`, traits, `?` and Perceus all lower; that
+package's README is the current inventory, and `todo.md` the gaps. A form that does not
+lower yet is a hard error, so a non-trivial `main` may still hit one rather than being
+lowered incorrectly. Build with `go build ./cmd/lyrac`.
 
 ## Building
 

@@ -117,9 +117,24 @@ enclosing return.
 
 - **[OPEN]** From-style **declared error conversion**, once a conversion trait exists.
   Today `?` is assignability-only.
-- **[OPEN] `?` does not lower** — `expression lowering not implemented for *ast.TryExpr`.
-  It type-checks (including the enclosing-return check, `lyra-E008`) and then fails the
-  build, so no program can actually use it. Found by exercising the prelude, 07/30.
+- **[DONE 08/01] `?` lowers.** It had type-checked and then failed the build
+  (`expression lowering not implemented for *ast.TryExpr`), so no program could use the
+  language's primary error-propagation operator; found by exercising the prelude, 07/30.
+  `pkg/backend/llvm/try.go` lowers it as the match it is — tag test, unwrap on success,
+  and on failure rebuild the failure variant **at the enclosing function's return type**
+  (the operand and the return are different instantiations, so the union cannot be
+  forwarded) and `emitReturn`. See COMPLETED.md; the ownership half is below.
+  - **[OPEN] A temporary produced by a *sub-expression* of the operand leaks on the
+    propagating path.** `f(g())?`, where `g`'s owned result was consumed by a borrowing
+    parameter: `lowerTryPropagate` holds the enclosing statement's pending temporaries
+    back from its `emitReturn` flush, because that flush releases each temp *in the block
+    that produced it* — which for the operand is the block before the branch, so flushing
+    there would free it ahead of the tag test on the **success** path too. The operand's
+    own reference is accounted for exactly (it transfers into the rebuilt error); what is
+    left is any nested temp, which leaks rather than double-frees — the same bias
+    break/continue take. Closing it means giving `pendingTemp` a *release* block rather
+    than a production block, which would also let break/continue stop leaking; that is one
+    change serving three call sites and is the reason to do it once rather than here.
 - **[OPEN] Shadowing a marked canonical type gives a useless diagnostic.** Now that
   `std/prelude.lyra` marks its types `@builtin(Maybe)`/`@builtin(Result)`, the marker
   claims the kind and `resolveCanonicalTypes` leaves a same-named *unmarked* type "an

@@ -113,6 +113,7 @@
 //   - aggregates.go — tuple/struct/data construction + field/index access
 //   - match.go — match dispatch, guards, and the scalar (int/float/string) if-else ladder
 //   - match_aggregate.go — struct/tuple/data pattern matching (aggPattern* + shared ladder + data payloads)
+//   - try.go — the `?` operator: unwrap on success, rebuild-and-return the failure variant otherwise
 //   - arithmetic.go — math ops, comparisons, &&/||, numeric conversions, width coercions
 //   - strings.go — string fat-pointer helpers (literals as pinned boxes, equality via memcmp, ++ concatenation)
 //   - shared.go — `shared` value boxing + the type-dispatching managed retain/release
@@ -309,6 +310,7 @@ type lowerer struct {
 	locals    map[string]value.Value // name → its alloca (a pointer)
 	loops     []loopCtx              // stack of enclosing loops; top is innermost
 	retType   lltypes.Type           // the current function's LLVM return type
+	retLyra   types.Type             // the same return type, unlowered — `?` rebuilds Err/None at it (try.go)
 	retSigned bool                   // whether that return type is a signed integer
 	entryABI  bool                   // true only for main (u8 body → i32 ABI slot)
 
@@ -599,6 +601,8 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		return l.lowerDataConstructorExpr(block, e)
 	case *ast.MatchExpr:
 		return l.lowerMatch(block, e)
+	case *ast.TryExpr:
+		return l.lowerTryExpr(block, e)
 	case *ast.LambdaExpr:
 		return l.lowerLambdaExpr(block, e)
 	}

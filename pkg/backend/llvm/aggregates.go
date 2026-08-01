@@ -265,37 +265,14 @@ func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctor
 		return nil, nil, fmt.Errorf("llvm: constructor %q expects %d argument(s), got %d", ctorName, len(fields), len(args))
 	}
 
-	// Build the inline tagged-union value first (stripping any `shared` flavor,
-	// which would lower to a box pointer); it's boxed at the end if shared.
-	stackDt := types.WithAllocation(dt, types.Stack).(types.DataType)
-	llType, err := l.lowerType(stackDt)
-	if err != nil {
-		return nil, nil, err
-	}
-	unionTy, ok := llType.(*lltypes.StructType)
-	if !ok {
-		return nil, nil, fmt.Errorf("llvm: data type %q did not lower to a struct", dt.Name)
-	}
-
-	// Alloca the union in the entry block (mem2reg-promotable), then fill it.
-	entry := block.Parent.Blocks[0]
-	slot := entry.NewAlloca(unionTy)
-
-	// Store the tag (field 0).
-	tagTy := unionTy.Fields[0].(*lltypes.IntType)
-	tagPtr := block.NewGetElementPtr(unionTy, slot,
-		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 0))
-	block.NewStore(constant.NewInt(tagTy, int64(tag)), tagPtr)
-
-	// Store the payload (field 1, the blob) reinterpreted as this variant's
-	// payload struct — only when the variant carries fields (a nullary variant of
-	// a type that *has* payloads just leaves the blob undefined).
+	// Lower the payload arguments first — an argument containing a branch moves the
+	// insertion point — then materialize the union from the resulting values.
+	var payloadFields []value.Value
 	if len(fields) > 0 {
 		payloadStructTy, err := l.dataPayloadStructType(ctor)
 		if err != nil {
 			return nil, nil, err
 		}
-		var payload value.Value = constant.NewUndef(payloadStructTy)
 		for i, argExpr := range args {
 			var v value.Value
 			v, block, err = l.lowerExpr(block, argExpr)
@@ -306,19 +283,23 @@ func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctor
 			if err != nil {
 				return nil, nil, err
 			}
-			payload = block.NewInsertValue(payload, v, uint64(i))
+			payloadFields = append(payloadFields, v)
 		}
-		blobPtr := block.NewGetElementPtr(unionTy, slot,
-			constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
-		typedPtr := block.NewBitCast(blobPtr, lltypes.NewPointer(payloadStructTy))
-		block.NewStore(payload, typedPtr)
 	}
 
-	union := block.NewLoad(unionTy, slot)
+	union, err := l.buildDataValue(block, dt, tag, ctor, payloadFields)
+	if err != nil {
+		return nil, nil, err
+	}
+
 	// A `shared` data value is heap-allocated in a ref-counted box; the value is the
 	// box pointer. (This is how a recursive `shared` payload field — a `Cons`'s
 	// `shared List` — is filled: the nested constructor is boxed here.)
 	if types.AllocationOf(dt) == types.Shared {
+		stackDt, ok := types.WithAllocation(dt, types.Stack).(types.DataType)
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: data type %q did not survive allocation stripping", dt.Name)
+		}
 		// Perceus reuse: if this construction is the reuse target of an enclosing
 		// reuse-match and that match's token is still live, write into the reclaimed
 		// box instead of allocating. Consuming the token clears it so a later
@@ -334,8 +315,79 @@ func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctor
 	return union, block, nil
 }
 
+// buildDataValue materializes the inline tagged union for variant ctor (declaration
+// index `tag`) of dt from already-lowered payload field values: alloca the union,
+// store the tag, and store the payload struct through a bitcast of the blob field
+// (DATA_LAYOUT.md).
+//
+// It is the **write-side mirror of extractDataPayload**, and the one place the
+// `{ tag, payload-blob }` encoding is written. Two callers reach it from opposite
+// directions: lowerDataConstruction, after lowering its argument *expressions*, and
+// `?` (try.go), which propagates an error payload it extracted from a *different*
+// instantiation's union and so has values rather than expressions. Sharing this is
+// what keeps the two from drifting apart on the layout.
+//
+// The value returned is the inline union. Boxing a `shared` flavor stays with the
+// caller, because only the caller knows whether a Perceus reuse token applies.
+//
+// Field types must already match the variant's payload struct exactly — a residual
+// int-width mismatch is a loud error here, not a silent coercion. lowerDataConstruction
+// reconciles widths through coerceAggregateElem before it calls in, where it still has
+// the source expression the signedness must be read from.
+func (l *lowerer) buildDataValue(block *ir.Block, dt types.DataType, tag int, ctor types.DataTypeConstructor, fields []value.Value) (value.Value, error) {
+	stackDt, ok := types.WithAllocation(dt, types.Stack).(types.DataType)
+	if !ok {
+		return nil, fmt.Errorf("llvm: data type %q did not survive allocation stripping", dt.Name)
+	}
+	llType, err := l.lowerType(stackDt)
+	if err != nil {
+		return nil, err
+	}
+	unionTy, ok := llType.(*lltypes.StructType)
+	if !ok {
+		return nil, fmt.Errorf("llvm: data type %q did not lower to a struct", dt.Name)
+	}
+	tagTy, ok := unionTy.Fields[0].(*lltypes.IntType)
+	if !ok {
+		return nil, fmt.Errorf("llvm: data type %q has a non-integer tag (%s)", dt.Name, unionTy.Fields[0])
+	}
+
+	// Alloca the union in the entry block (mem2reg-promotable), then fill it.
+	slot := block.Parent.Blocks[0].NewAlloca(unionTy)
+	tagPtr := block.NewGetElementPtr(unionTy, slot,
+		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 0))
+	block.NewStore(constant.NewInt(tagTy, int64(tag)), tagPtr)
+
+	// Store the payload (field 1, the blob) reinterpreted as this variant's payload
+	// struct — only when the variant carries fields (a nullary variant of a type that
+	// *has* payloads just leaves the blob undefined).
+	if len(fields) > 0 {
+		payloadStructTy, err := l.dataPayloadStructType(ctor)
+		if err != nil {
+			return nil, err
+		}
+		if len(fields) != len(payloadStructTy.Fields) {
+			return nil, fmt.Errorf("llvm: constructor %q takes %d payload field(s), got %d",
+				ctor.Name, len(payloadStructTy.Fields), len(fields))
+		}
+		var payload value.Value = constant.NewUndef(payloadStructTy)
+		for i, f := range fields {
+			if !f.Type().Equal(payloadStructTy.Fields[i]) {
+				return nil, fmt.Errorf("llvm: cannot store %s into field %d of constructor %q (expected %s)",
+					f.Type(), i, ctor.Name, payloadStructTy.Fields[i])
+			}
+			payload = block.NewInsertValue(payload, f, uint64(i))
+		}
+		blobPtr := block.NewGetElementPtr(unionTy, slot,
+			constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+		typedPtr := block.NewBitCast(blobPtr, lltypes.NewPointer(payloadStructTy))
+		block.NewStore(payload, typedPtr)
+	}
+	return block.NewLoad(unionTy, slot), nil
+}
+
 // dataPayloadStructType is the LLVM struct of a variant's payload fields, in
-// order — what gets stored into (and later read from) the union's payload blob.
+// order — what gets written by buildDataValue and read back by extractDataPayload.
 // A `shared` field lowers to a pointer (lowerType), which is also what makes a
 // recursive `shared` reference finite.
 func (l *lowerer) dataPayloadStructType(ctor types.DataTypeConstructor) (*lltypes.StructType, error) {

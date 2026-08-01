@@ -932,6 +932,28 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 			a.table.Retain[e] = true
 		}
 
+	case *ast.TryExpr:
+		// `x?` is a match in disguise — it tests the operand's tag, yields the success
+		// payload, and on failure rewraps the error into the enclosing function's
+		// return type and returns it. So the operand is **borrowed**, exactly as a
+		// match scrutinee is, and the payload this expression yields is a field read
+		// out of it: duplicated in an owning position, never moved, because the
+		// operand still owns (and drops) everything it holds. Same rule as
+		// MemberExpr / IndexExpr / TupleIndexExpr above.
+		//
+		// The failure path's rewrap is an owning position too, but it has no node of
+		// its own to mark, so the backend emits that retain directly (try.go).
+		//
+		// Falling through to `default` here recorded nothing at all, which for a `?`
+		// is not the leak-safe direction the rest of this pass biases toward: the
+		// operand's own sub-expressions went unvisited, so a managed value inside one
+		// (`parse(name)?`) missed its retain and dangled. See the package doc on why
+		// skipping a node is never the conservative choice.
+		a.expr(e.Operand, false)
+		if needOwned && a.ownsManaged(e) {
+			a.table.Retain[e] = true
+		}
+
 	case *ast.FunctionCallExpr:
 		a.call(e, needOwned)
 

@@ -182,7 +182,7 @@ func (l *lowerer) defineClosure(fn *ast.LambdaExpr) error {
 	if err != nil {
 		return err
 	}
-	l.beginFunction(retTy, returnSigned(fn), false)
+	l.beginFunction(retTy, fn.ReturnType.Type, returnSigned(fn), false)
 
 	entry := irFn.NewBlock("entry")
 	caps := l.res.Captures.Of(fn)

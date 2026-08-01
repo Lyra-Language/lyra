@@ -98,6 +98,48 @@ reports `unknown type: never`, because the *type* recorded for the tuple contain
 and no `diverged` check can rescue that — the tuple is uninhabited and the honest fix is a
 typechecker diagnostic, not a lowering.
 
+### The `?` operator lowers
+
+`try.go`. `x?` is a `match` in disguise and lowers as one — test the operand's tag, unwrap
+the payload on success, propagate the failure variant otherwise — so it joins `return` and
+`panic` as a construct that seals a block mid-stream, and returns the *success* block as
+the one control continues in (like `if` and `match`).
+
+**The error arm is the part that is not a plain match, and it is why this is a lowering
+rather than a desugaring.** The propagated value has a different LLVM type from the
+operand: `?` on a `Result<i64, string>` inside a `-> Result<bool, string>` function cannot
+forward the operand's union, because those are two distinct monomorphizations. So the error
+payload is *extracted* and a fresh `Err` built around it at the enclosing function's return
+type. That type is `l.retLyra` (set by `beginFunction`, unlowered) — `retType` alone cannot
+say which constructor to build or what the payload's Lyra type is. It is stored
+unsubstituted and read through `applyTypeSubst`, so a `?` inside a generic specialization
+rebuilds at that instantiation's type.
+
+The Result/Maybe shape is recognized by **constructor name** (`canonicalTryShape`), which is
+not a guess: `collector/canonical.go`'s `canonicalShape` pins a canonical Result to exactly
+`Ok(_) | Err(_)` and a Maybe to `Some(_) | None`, and refuses the `@builtin` marker to any
+declaration that does not match. The *type* name is deliberately free, which is why this
+reads the variants rather than the name — and why it does not add a third copy of the
+canonical-kind name resolution the collector stamps and the front end reads.
+
+**Refcounting: the propagated payload is duplicated or moved depending on how the operand's
+own reference is disposed of**, and both mistakes are real bugs in opposite directions. A
+borrowed operand (a binding) still owns its copy and will release it — at scope exit, or via
+the `releaseAllManagedFrames` this very return runs — so the rebuilt error needs a reference
+of its own. An owned temporary is not released on this path, so its reference is what the
+error carries away and a dup there would leak. Inverting the two makes the borrowed case
+print freed memory and trips ASan, which is what `TestExec_TryBorrowedOperand` and
+`TestASan_TryManagedPayload` exist to catch.
+
+**The propagating return deliberately does not flush the enclosing statement's
+temporaries.** `emitReturn` releases each pending temp *in the block that produced it*, and
+the operand's producing block is the one before the branch — so flushing from the error
+block would put a release ahead of that block's terminator, freeing the operand ahead of
+the tag test that reads it, on the **success** path too. Raising `pendingBase` leaves the
+release where it belongs. The residue is any temp produced by a sub-expression of the
+operand, which leaks on the propagating path rather than double-freeing (the same bias
+break/continue take); todo.md carries the fix that would serve all three.
+
 ### Locals are lexically scoped
 
 **Locals are lexically scoped** (07/29, `pushLocalScope`): `l.locals` was a single flat

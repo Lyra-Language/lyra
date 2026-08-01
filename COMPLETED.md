@@ -9,6 +9,70 @@ Newest first.
 
 ## Dated log
 
+### 08/01/26
+**`?` lowers.** The language's primary error-propagation operator type-checked — including
+the enclosing-return kind and error-type checks — and then failed the build with
+`expression lowering not implemented for *ast.TryExpr`, so no program could actually use
+it. `pkg/backend/llvm/try.go` closes that. Verified end to end against the real
+`std/prelude.lyra` (not just the single-file test harness): Result and Maybe, success and
+propagating paths, through `lyrac build`.
+
+`x?` is a `match` in disguise and lowers as one — tag test, unwrap on success, propagate on
+failure. **The one thing that is not a plain match is the error arm**, and it is the whole
+reason this needed a lowering of its own rather than a desugaring: the propagated value has
+a *different LLVM type* from the operand. `?` on a `Result<i64, string>` inside a
+`-> Result<bool, string>` function cannot forward the operand's union, because those are
+two distinct monomorphizations, so the error payload is extracted and a fresh `Err` is
+built around it at the enclosing type. That is what `retLyra` (the unlowered return type,
+new on the lowerer) is for — the LLVM return type alone cannot say which constructor to
+build or what the payload's Lyra type is. `TestExec_TryRebuildsErrorAtEnclosingType` is
+pointed at exactly this, since a skipped rebuild emits a type-confused union rather than a
+wrong answer.
+
+**The bug found on the way there was in the ownership pass, and it was the more serious
+half.** `pkg/analyzer/ownership` had no `*ast.TryExpr` case at all, so a `?` operand was
+never visited — and that package's own doc is explicit that skipping a node is *not* the
+leak-safe direction the rest of its bias assumes: a missed retain at an owning position
+dangles rather than leaks. This was reachable without any of the lowering above: in
+`parse(name)?` the operand's own sub-expressions went unannotated, so a managed value
+inside one missed its retain. The case added mirrors `MatchExpr`/`MemberExpr` — the operand
+is borrowed like a scrutinee, and the payload read out of it is duplicated in an owning
+position, never moved.
+
+**Whether the propagated payload is duplicated or moved is decided by how the operand's own
+reference is disposed of**, and it has to be, because both mistakes are real bugs in
+opposite directions. A *borrowed* operand (a binding) still owns its copy and will release
+it — at scope exit, or via the `releaseAllManagedFrames` the propagating return itself runs
+— so the rebuilt error needs a reference of its own. An owned *temporary* is not released
+on that path, so its reference is what the error carries away and a dup would leak it. That
+distinction was not taken on faith: inverting it (always transfer) makes
+`TestExec_TryBorrowedOperand` print fifteen NUL bytes out of freed memory and
+`TestASan_TryManagedPayload` report a fault, which is the check that these tests are worth
+having — this suite has passed vacuously before.
+
+**The propagating return deliberately does not flush the enclosing statement's
+temporaries.** `emitReturn` releases each pending temp *in the block that produced it*, and
+the operand's producing block is the one before the branch — so flushing from the error
+block would place a release ahead of that block's own terminator, freeing the operand ahead
+of the tag test that reads it, on the **success** path as well. Raising `pendingBase` leaves
+the release where it belongs (the enclosing statement's flush, on the success path). The
+residue is any temp produced by a *sub*-expression of the operand, which leaks on the
+propagating path — the same conservative bias break/continue take, and tracked in todo.md
+with the fix that would serve all three: a release block on `pendingTemp` rather than a
+production block.
+
+`buildDataValue` (aggregates.go) is new and shared: the write-side mirror of
+`extractDataPayload`, and now the one place DATA_LAYOUT.md's `{ tag, payload-blob }`
+encoding is *written*. `lowerDataConstruction` reaches it with lowered argument
+expressions, `?` with values extracted from another instantiation's union — two callers
+from opposite directions, which is precisely the shape that drifts if each keeps its own
+copy of the layout.
+
+`TestConservation_TryReleasesEnclosingScope` covers the other direction ASan cannot see: a
+managed binding allocated *before* the `?` must be released on the propagating path too,
+since `?` leaves every enclosing scope at once exactly as `return` does. A leak on one edge
+of a branch is invisible to a count of allocations against releases.
+
 ### 07/31/26
 **Return-type inference for a function written without `-> T`.** `let sum = ((a, b): (i64,
 i64)) => a + b` now builds. It type-checked before and then failed the *build* with

@@ -70,7 +70,13 @@ retain at an owning position dangles rather than leaks. The arithmetic forms
 arithmetic has no managed operands, which is true of the operation but not of what sits *inside*
 it: `consume(p.name) + 1` passes a managed field to an `own` parameter, and with no retain
 recorded the callee freed a box the struct still held (ASan-confirmed use-after-free, fixed
-07/29). When adding an expression kind, recurse into every sub-expression that can hold a value.
+07/29). `TryExpr` was the same omission with the same cause (fixed 08/01): `?` looked like
+control flow rather than a value, so it was never visited, and `parse(name)?` left the managed
+value *inside* its operand unannotated. It is now modelled as what it is — the operand borrowed
+like a match scrutinee, the payload read out of it duplicated in an owning position — and the
+propagating path's re-wrap, which has no node of its own to mark, is retained by the backend
+(`pkg/backend/llvm/try.go`). When adding an expression kind, recurse into every sub-expression
+that can hold a value.
 The backend half is `pkg/backend/llvm`'s `ownership_lower.go` (the managed-frame stack) + the
 retain/temp-release/last-use hooks in `lowerExpr`/`emitReturn`. Both last-use kinds are
 **fused** (stage 2 — no scope-exit release, no sentinel): a **transfer** removes the binding
