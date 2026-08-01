@@ -224,7 +224,7 @@ var ownershipCases = []struct {
 		`let f = (a: string, b: string) -> u8 => if a == "xy" { 3 } else { 4 }
 		 let g = () -> u8 => 0
 		 let main = () -> u8 => {
-		   let r = f("x" ++ "y", if 1 < 2 { let z = g()  "p" } else { "q" })
+		   let r = f("x" ++ "y", if 1 < 2 { let z = g(); "p" } else { "q" })
 		   r
 		 }`,
 		3,

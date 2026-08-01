@@ -125,13 +125,13 @@ func TestExec_AnonymousTupleTakesContextWidth(t *testing.T) {
 			// match the declared result type.
 			"tuple return type",
 			`let mk = () -> (u8, u8) => (4, 5)
-			 let main = () -> u8 => { let p = mk()  p.0 + p.1 }`,
+			 let main = () -> u8 => { let p = mk(); p.0 + p.1 }`,
 			9,
 		},
 		{
 			"tuple as a struct field value",
 			`struct Holder { p: (u8, u8) }
-			 let main = () -> u8 => { let s = Holder { p: (2, 4) }  s.p.0 + s.p.1 }`,
+			 let main = () -> u8 => { let s = Holder { p: (2, 4) }; s.p.0 + s.p.1 }`,
 			6,
 		},
 		{

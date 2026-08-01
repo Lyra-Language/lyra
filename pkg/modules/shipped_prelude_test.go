@@ -200,7 +200,7 @@ let main = () -> u8 => u8(pipeline(Some(4)))`)
 		entry := filepath.Join(t.TempDir(), "app.lyra")
 		write(t, entry, `import std.maybe
 var log = 0
-let sneaky = (x: i64) -> i64 => { log = x  x }
+let sneaky = (x: i64) -> i64 => { log = x; x }
 let pipeline = pure (m: Maybe<i64>) -> Maybe<i64> => maybe.map(m, sneaky)
 let main = () -> u8 => 0`)
 		errs := analyzeWith(t, entry, filepath.Dir(entry), dir, repo).Errors()

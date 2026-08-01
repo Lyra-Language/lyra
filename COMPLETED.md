@@ -10,6 +10,53 @@ Newest first.
 ## Dated log
 
 ### 07/31/26
+**A line break now ends a statement, and `;` is the explicit form.** A `tree-sitter-lyra`
+change; the reasoning lives in that repo's commit and `CLAUDE.md`. What matters on this
+side is *why it was worth a breaking grammar change*, and what it cost here.
+
+It started as an ergonomics question — whether to allow `;` so several statements could
+share a line — and the premise turned out to be inverted. Several statements per line
+**already worked**: `block` was `seq("{", repeat($.statement), "}")` with no separator at
+all, and newlines were only `extras`. So `;` would have added no expressiveness. What the
+missing separator *did* add was a silent misparse, since a line break meant nothing to the
+parser and the parse was maximally greedy:
+
+```
+let b = a          let f = add3        let n = xs
+-2                 (4)                 [1]
+```
+
+Each ran as one statement — `a - 2`, `add3(4)`, `xs[1]` — with no diagnostic. That is why
+the change is "newlines become significant, `;` is the explicit form" rather than "`;` is
+now allowed": optional `;` alone fixes nothing, because nobody writes a terminator on the
+line they did not know needed one.
+
+**Fallout here was mechanical and small.** About twenty test fixtures put two statements on
+one line separated only by spaces (`{ n = n + 1  n }`), which is exactly what no longer
+parses; they now use `;`, and read better for it. One `lyrac` golden moved: the syntax
+error for `let x = = 5` went from column 7 to column 9, pointing at the *second* `=` — the
+better answer, since `let x =` is fine.
+
+**One test-fixture note worth keeping.** `std/` needed no changes at all, and neither did
+any multi-line construct: the terminator is only offered where the grammar accepts one, so
+a newline inside an unfinished expression never produces it. Match arms, argument lists and
+multi-line `data` declarations are all untouched.
+
+**And it exposed a pre-existing bug**, now in `todo.md`: a negative literal in a pattern
+(`-1 => …`, `-128..=127 => …`) has never parsed. Two numeric-match tests were passing
+*vacuously* — the old parser wrapped the whole match in an `ERROR`, so the collector never
+saw a match expression and the exhaustiveness check never ran. Better error recovery under
+the new grammar makes the check run, and it correctly objects. Those two tests are red
+until the pattern gap is fixed; that is the honest state, not a regression.
+
+**Process note, and it cost real time:** A/B-ing the old and new parsers by stashing
+`src/parser.c` repopulates Go's build cache with the *old* compiled parser, so the next
+`go test` silently runs against it — presenting as "the semicolons I just added are syntax
+errors." `go clean -cache` after **every** parser swap, including a temporary one done only
+for diagnosis. This is hazard 1 in `CLAUDE.md`, walked into from the one direction the note
+did not spell out.
+
+### 07/31/26
 **Fixed: the shared AST walker never descended into a tuple index, and `pure` was unsound
 because of it.** `p.0` is a `*ast.TupleIndexExpr`, a different node from `p.x`
 (`*ast.MemberExpr`), and `ast.walkExprChildren` had no case for it. So every pass built on

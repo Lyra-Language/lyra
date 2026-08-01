@@ -23,26 +23,26 @@ func TestExec_ParamReassignment(t *testing.T) {
 		want int
 	}{
 		{
-			"self-referential arithmetic", `let inc = (n: own i64) -> i64 => { n = n + 1  n }
+			"self-referential arithmetic", `let inc = (n: own i64) -> i64 => { n = n + 1; n }
 let main = () -> u8 => u8(inc(41))`, 42,
 		},
 		{
-			"reads another parameter", `let acc = (n: i64, k: own i64) -> i64 => { k = n * 2  k = k + 1  k }
+			"reads another parameter", `let acc = (n: i64, k: own i64) -> i64 => { k = n * 2; k = k + 1; k }
 let main = () -> u8 => u8(acc(10, 0))`, 21,
 		},
 		{
-			"narrow width", `let inc = (n: own u8) -> u8 => { n = n + 1  n }
+			"narrow width", `let inc = (n: own u8) -> u8 => { n = n + 1; n }
 let main = () -> u8 => inc(7)`, 8,
 		},
 		{
 			// The float path always worked (no signedness lookup); pinned so the
 			// shared fix doesn't regress it.
-			"float", `let f = (x: own f64) -> f64 => { x = x + 1.5  x }
+			"float", `let f = (x: own f64) -> f64 => { x = x + 1.5; x }
 let main = () -> u8 => u8(f(1.5).floor())`, 3,
 		},
 		{
 			// An `own` parameter's binding is the callee's own storage.
-			"own parameter", `let f = (n: own i64) -> i64 => { n = n + 2  n }
+			"own parameter", `let f = (n: own i64) -> i64 => { n = n + 2; n }
 let main = () -> u8 => u8(f(40))`, 42,
 		},
 		{
@@ -87,7 +87,7 @@ let main = () -> u8 => {
 func TestExec_ParamReassignment_ManagedIsLeakFree(t *testing.T) {
 	t.Parallel()
 	src := `let setStr = (s: mut string) -> void => { s = "n" ++ "1" }
-let localStr = (s: own string) -> string => { s = "l" ++ "1"  s }
+let localStr = (s: own string) -> string => { s = "l" ++ "1"; s }
 let main = () -> u8 => {
   var t = "a" ++ "b"
   setStr(t)
@@ -129,7 +129,7 @@ func TestExec_OwningParamReassignment_ReleasesExactlyOnce(t *testing.T) {
 			// The shape that was the use-after-free, now with the mode that makes it
 			// legal: the caller transferred the value, so the callee may free it.
 			"own string parameter reassigned",
-			`let localStr = (s: own string) -> string => { s = "l" ++ "1"  s }
+			`let localStr = (s: own string) -> string => { s = "l" ++ "1"; s }
 			 let main = () -> u8 => if localStr("z" ++ "z") == "l1" { 0 } else { 1 }`,
 			0,
 		},

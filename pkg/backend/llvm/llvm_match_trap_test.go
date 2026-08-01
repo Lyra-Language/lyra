@@ -57,18 +57,18 @@ func TestExec_MatchFallthrough_Traps_AllScrutineeKinds(t *testing.T) {
 		src  string
 	}{
 		{"string", `let f = (s: string) -> i64 => match s { "a" => 1, "b" => 2 }
-		let main = () -> u8 => { print(f("z")) 0 }`},
+		let main = () -> u8 => { print(f("z")); 0 }`},
 		{"rune", `let f = (c: rune) -> i64 => match c { 'x' => 1 }
-		let main = () -> u8 => { print(f('q')) 0 }`},
+		let main = () -> u8 => { print(f('q')); 0 }`},
 		{"float", `let f = (x: f64) -> i64 => match x { 1.5 => 1 }
-		let main = () -> u8 => { print(f(9.5)) 0 }`},
+		let main = () -> u8 => { print(f(9.5)); 0 }`},
 		{"dynamic array", `let f = (xs: []i64) -> i64 => match xs { [1] => 1, [2, 3] => 2 }
-		let main = () -> u8 => { print(f([9, 9])) 0 }`},
+		let main = () -> u8 => { print(f([9, 9])); 0 }`},
 		{"tuple", `let f = (p: (i64, i64)) -> i64 => match p { (0, b) => b, (1, b) => b }
-		let main = () -> u8 => { print(f((7, 8))) 0 }`},
+		let main = () -> u8 => { print(f((7, 8))); 0 }`},
 		{"struct", `struct Pt { x: i64, y: i64 }
 		let f = (p: Pt) -> i64 => match p { { x: 0 } => 1 }
-		let main = () -> u8 => { print(f(Pt { x: 5, y: 6 })) 0 }`},
+		let main = () -> u8 => { print(f(Pt { x: 5, y: 6 })); 0 }`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

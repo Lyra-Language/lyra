@@ -10,6 +10,26 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
+- **[OPEN] A negative literal in a `match` pattern does not parse.** `-1 => …` and
+  `-128..=127 => …` both fail: `_number_literal` carries no sign, and `literal_pattern`
+  and `range_pattern` are each defined over it, so the `-` lands in an `ERROR` node.
+  Pre-existing, not new with the statement-terminator work — verified by parsing the same
+  source with the previous parser, which produces an `ERROR` wrapping the *whole* match.
+
+  That wrapping is why nobody noticed: the collector never saw a match expression, so the
+  exhaustiveness check never ran, and `TestTypeCheck_NumericMatch_I8_FullRange_Ok`
+  asserted "no errors" and got none — **passing vacuously**. The terminator change makes
+  error recovery reach further (a real `match_expr` with a `range_pattern` of `128..=127`,
+  minus still lost), so exhaustiveness now runs and correctly objects to that range. Those
+  two tests are red until this is fixed; they are the honest signal.
+
+  *For whoever takes it:* the grammar needs a signed form for both pattern rules. The
+  collector side looks cheap — `collectRangePattern` calls `CollectExpr` on the `start`
+  and `end` fields, so a negation node may flow through with no change. The risk is the
+  grammar: `grammar.js`'s own comments flag the negation-vs-subtraction ambiguity as
+  finely balanced (it is what the `[expression, literal_pattern]` conflict exists for),
+  so this wants its own pass and a check that `0 - 200` still parses as subtraction.
+
 - **[OPEN] The typechecker recurses forever on a malformed call to a curried function** —
   a Go stack overflow, so the whole process dies. Found 07/31 while exercising
   destructuring parameters; unrelated to them.

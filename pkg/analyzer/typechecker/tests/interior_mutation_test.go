@@ -407,7 +407,7 @@ func TestTypeCheck_ParamReassign_UndefinedInRHS_Error(t *testing.T) {
 func TestTypeCheck_ParamReassign_WellTyped_Ok(t *testing.T) {
 	for _, src := range []string{
 		`let f = (n: own i64) -> i64 => { n = n + 1  n }`,
-		`let f = (n: i64, k: own i64) -> i64 => { k = n * 2  k }`,
+		`let f = (n: i64, k: own i64) -> i64 => { k = n * 2; k }`,
 		`let f = (n: own i64) -> i64 => { n = 5  n }`,
 		`let f = (n: mut i64) -> i64 => { n = 5  n }`,
 		`let f = (x: own f64) -> f64 => { x = x + 1.5  x }`,
@@ -430,7 +430,7 @@ func TestTypeCheck_ParamReassign_Borrowed_Error(t *testing.T) {
 		`let f = (n: i64) -> i64 => { n = 5  n }`,
 		`let f = (n: ref i64) -> i64 => { n = 5  n }`,
 		`let f = (s: string) -> string => { s = "a"  s }`,
-		`let f = (n: i64, k: i64) -> i64 => { k = n * 2  k }`,
+		`let f = (n: i64, k: i64) -> i64 => { k = n * 2; k }`,
 	} {
 		res := parseCollectAndCheck(t, src, false)
 		assertErrorContainsGeneric(t, res, "cannot reassign a borrowed parameter")

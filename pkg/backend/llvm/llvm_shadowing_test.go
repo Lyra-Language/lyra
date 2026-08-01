@@ -25,7 +25,7 @@ func TestExec_ShadowedBindingsAreScoped(t *testing.T) {
 			"a nested block",
 			`let main = () -> u8 => {
 			   let n = 100
-			   let inner = { let n = 5  n }
+			   let inner = { let n = 5; n }
 			   u8(n + inner)
 			 }`,
 			105,
@@ -34,7 +34,7 @@ func TestExec_ShadowedBindingsAreScoped(t *testing.T) {
 			"an if branch",
 			`let main = () -> u8 => {
 			   let n = 100
-			   let r = if n > 50 { let n = 5  n } else { 0 }
+			   let r = if n > 50 { let n = 5; n } else { 0 }
 			   u8(n + r)
 			 }`,
 			105,
@@ -144,7 +144,7 @@ func TestExec_ShadowedBindingsAreScoped(t *testing.T) {
 			   let n = 100
 			   let mid = {
 			     let n = 20
-			     let deep = { let n = 3  n }
+			     let deep = { let n = 3; n }
 			     n + deep
 			   }
 			   u8(n + mid - 100)
@@ -170,7 +170,7 @@ func TestExec_ShadowedManagedBindings(t *testing.T) {
 	clang := lookClang(t)
 	src := `let main = () -> u8 => {
 	   let s = "a" ++ "b"
-	   let inner = { let s = "c" ++ "d"  s == "cd" }
+	   let inner = { let s = "c" ++ "d"; s == "cd" }
 	   if s == "ab" && inner { 7 } else { 1 }
 	 }`
 	if got := buildAndRun(t, src); got != 7 {

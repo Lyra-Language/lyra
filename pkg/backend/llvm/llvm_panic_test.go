@@ -105,8 +105,8 @@ func TestExec_PanicInValueConsumingPositions(t *testing.T) {
 		name string
 		src  string
 	}{
-		{"binding initializer", `let main = () -> u8 => { let x = panic("bound") 0 }`},
-		{"var reassignment", `let main = () -> u8 => { var x = 1 x = panic("reassigned") 0 }`},
+		{"binding initializer", `let main = () -> u8 => { let x = panic("bound"); 0 }`},
+		{"var reassignment", `let main = () -> u8 => { var x = 1; x = panic("reassigned"); 0 }`},
 		{
 			"call argument",
 			`let f = (n: i64) -> i64 => n
@@ -117,7 +117,7 @@ let main = () -> u8 => u8(f(panic("argument")))`,
 			`let f = (n: i64) -> i64 => n
 let main = () -> u8 => u8(f(f(panic("deep"))))`,
 		},
-		{"array element", `let main = () -> u8 => { let xs = [1, panic("element")] print(xs[0]) 0 }`},
+		{"array element", `let main = () -> u8 => { let xs = [1, panic("element")]; print(xs[0]); 0 }`},
 		{"statement position", `let main = () -> u8 => { panic("statement") }`},
 		{"whole function body", `let boom = (why: string) -> i64 => panic(why)
 let main = () -> u8 => u8(boom("every path"))`},

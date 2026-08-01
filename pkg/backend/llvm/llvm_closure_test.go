@@ -129,7 +129,7 @@ func TestExec_Closures(t *testing.T) {
 		// A void-returning closure, called for effect through a parameter.
 		{
 			"void closure",
-			`let run = (f: () -> void) -> u8 => { f()  7 }
+			`let run = (f: () -> void) -> u8 => { f(); 7 }
 			 let main = () -> u8 => run(() -> void => { })`,
 			7,
 		},
@@ -183,7 +183,7 @@ func TestExec_ClosureCaptureIsManaged(t *testing.T) {
 		{
 			// A void closure capturing a string, called through a parameter.
 			"captured string used for effect",
-			`let run = (f: () -> void) -> u8 => { f()  0 }
+			`let run = (f: () -> void) -> u8 => { f(); 0 }
 			 let main = () -> u8 => {
 			   let msg = "hello" ++ ""
 			   run(() -> void => println(msg))
