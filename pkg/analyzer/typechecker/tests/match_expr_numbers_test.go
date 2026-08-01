@@ -406,3 +406,36 @@ func TestTypeCheck_FloatMatch_RangePatterns_NoWildcard_Warning(t *testing.T) {
 	assertWarningsAre(t, res,
 		"match on numeric type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 }
+
+// The mirror of MissingNegatives: an arm covering only the negatives leaves the
+// positive half uncovered. It exists to be the **anti-vacuity** test for the
+// negative-pattern fix (07/31/26). Its siblings assert *no* errors, which a
+// parse failure satisfies for free — that is exactly how `-128..=127` sat broken
+// while `..._FullRange_Ok` stayed green: the old parser wrapped the whole match
+// in an ERROR, the collector saw no match expression, and exhaustiveness never
+// ran. This one asserts a diagnostic is *produced*, so the pattern has to have
+// parsed and been understood for it to pass.
+func TestTypeCheck_NumericMatch_I8_MissingPositives_Warning(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+  let x: i8 = -5
+  match x {
+    -128..=-1 => "ok",
+  }
+	`, false)
+	assertWarningsAre(t, res,
+		"match on numeric type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
+}
+
+// A negative *literal* arm, likewise asserted through a produced diagnostic:
+// -1 and 0 leave the rest of i8 uncovered.
+func TestTypeCheck_NumericMatch_NegativeLiteralArms_Warning(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+  let x: i8 = -5
+  match x {
+    -1 => "a",
+    0 => "b",
+  }
+	`, false)
+	assertWarningsAre(t, res,
+		"match on numeric type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
+}

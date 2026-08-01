@@ -10,6 +10,41 @@ Newest first.
 ## Dated log
 
 ### 07/31/26
+**Fixed: a negative literal in a `match` pattern now parses.** `-1 => …` and
+`-128..=127 => …` never did. `_number_literal` carries no sign and both `literal_pattern`
+and `range_pattern` were defined over it, so the `-` landed in an `ERROR` node.
+Pre-existing; found because the statement-terminator work changed how the wreckage looked.
+
+**Why it survived this long is the interesting part.** The error swallowed the *whole*
+match, so the collector never built a match expression, the exhaustiveness check never ran,
+and `TestTypeCheck_NumericMatch_I8_FullRange_Ok` — which asserts *no* errors on
+`match x { -128..=127 => "ok" }` — got none and passed. **Vacuously.** A test that asserts
+an absence is satisfied by a parse failure, which is the failure mode to remember: an
+"assert nothing went wrong" test cannot tell "it worked" from "it never ran". Better error
+recovery under the new grammar made the check start running, and it correctly objected to
+the `128..=127` it could see, which is what surfaced this.
+
+The fix is a signed form for both pattern rules, **aliased to `negation`** so the CST shape
+is one the tree already contains: `collectRangePattern` reads `start`/`end` with
+`CollectExpr`, which handles a `negation` with an `operand` field and would not know a new
+node kind. Two details that cost a cycle each. It has to be a *named* rule that is then
+aliased — `alias(seq(…), $.negation)` inline is not a node of its own, so its
+`operator`/`operand` fields hoisted onto the enclosing `range_pattern` and displaced
+`start`/`end`, leaving the collector with nothing. And the sign cannot live in the token:
+`decimal_int` swallowing a `-` would lex `a-1` as `a` then `-1` instead of subtraction.
+
+Two conflict declarations, both mirrors of entries already there for the unsigned case
+(`[expression, _signed_number_literal]` replacing the old `[expression, literal_pattern]`,
+which now warns as unnecessary, and `[_math_operand, _negated_number_literal]`). The
+grammar's own comments flag this as the finely balanced region, so `0 - 200` still parsing
+as subtraction — not as `0` plus a dangling `negation(-200)` — was checked explicitly.
+
+Tests are deliberately of the kind that cannot go vacuous: exec cases in
+`llvm_match_test.go` where a dropped sign is a wrong exit code (`-5` must take the
+`-128..=-1` arm, not `0..=127`), and two typechecker tests that assert a diagnostic is
+*produced* rather than absent.
+
+### 07/31/26
 **A line break now ends a statement, and `;` is the explicit form.** A `tree-sitter-lyra`
 change; the reasoning lives in that repo's commit and `CLAUDE.md`. What matters on this
 side is *why it was worth a breaking grammar change*, and what it cost here.

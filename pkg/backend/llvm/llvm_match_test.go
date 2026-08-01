@@ -901,3 +901,70 @@ func TestExec_LeadingNameTupleMatch(t *testing.T) {
 		})
 	}
 }
+
+// TestExec_NegativeLiteralAndRangePatterns: a negative literal or range in a match
+// pattern selects the right arm at run time.
+//
+// These did not parse at all until 07/31/26 — `_number_literal` carries no sign, and
+// both `literal_pattern` and `range_pattern` were defined over it, so the `-` landed in
+// an ERROR node. The error swallowed the whole match, which is why it hid: the collector
+// saw no match expression, so exhaustiveness never ran and a typechecker test asserting
+// "no errors" on `-128..=127` passed vacuously. Exec tests are the check that cannot go
+// vacuous — a wrong arm is a wrong exit code.
+func TestExec_NegativeLiteralAndRangePatterns(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			"negative literal arm",
+			`let classify = (n: i8) -> i64 => match n {
+			   -1 => 7,
+			   0 => 8,
+			   _ => 9
+			 }
+			 let main = () -> u8 => u8(classify(-1))`,
+			7,
+		},
+		{
+			// The arm that is *not* taken matters as much: a sign dropped from the
+			// pattern would make -5 match the 0..=127 arm instead.
+			"negative range arm",
+			`let f = (n: i8) -> i64 => match n {
+			   -128..=-1 => 3,
+			   0..=127 => 4
+			 }
+			 let main = () -> u8 => u8(f(-5))`,
+			3,
+		},
+		{
+			"positive value takes the positive arm",
+			`let f = (n: i8) -> i64 => match n {
+			   -128..=-1 => 3,
+			   0..=127 => 4
+			 }
+			 let main = () -> u8 => u8(f(5))`,
+			4,
+		},
+		{
+			// A single full-range arm is exhaustive, so this must compile with no
+			// wildcard — the case whose typechecker test was passing vacuously.
+			"full range in one arm needs no wildcard",
+			`let f = (n: i8) -> i64 => match n {
+			   -128..=127 => 5
+			 }
+			 let main = () -> u8 => u8(f(-5))`,
+			5,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
+	}
+}
