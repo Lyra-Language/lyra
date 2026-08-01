@@ -24,6 +24,14 @@ func (l *lowerer) lowerTypeDecl(typeDeclStmt *ast.TypeDeclStmt) error {
 	if typeDeclStmt.Name == "?" {
 		return nil
 	}
+	if typeDeclStmt.IsAlias {
+		// A transparent alias has no representation of its own — it *is* the type it
+		// names, which has its own declaration (or, for a primitive or a structural
+		// type, needs none). Skipping is not just an optimization: an alias holds the
+		// aliased type itself, so `type Point = Pt` would otherwise declare and define
+		// Pt's struct a second time under the name Point.
+		return nil
+	}
 	if len(typeDeclStmt.GenericParams) > 0 {
 		// A *generic* declaration has no single layout — `Box<t>` is a different
 		// struct at every binding of `t`, so there is nothing to register under the
@@ -85,6 +93,9 @@ func (l *lowerer) lowerTypeDefinitions(program *ast.Program) error {
 func (l *lowerer) lowerTypeDef(typeDeclStmt *ast.TypeDeclStmt) error {
 	if typeDeclStmt.Name == "?" {
 		return nil
+	}
+	if typeDeclStmt.IsAlias {
+		return nil // nothing to define — see lowerTypeDecl
 	}
 	if len(typeDeclStmt.GenericParams) > 0 {
 		return nil // see lowerTypeDecl — instantiations are materialized on demand
@@ -397,10 +408,24 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 // referencing another named type always resolves.
 func (l *lowerer) lookupNamedType(name string) (lltypes.Type, error) {
 	st, ok := l.structTypes[name]
-	if !ok {
-		return nil, fmt.Errorf("llvm: unknown named type %q", name)
+	if ok {
+		return st, nil
 	}
-	return st, nil
+	// A transparent alias registers no LLVM type of its own (lowerTypeDecl skips it),
+	// so lower what it names instead. An annotation keeps the alias's *name* — the
+	// typechecker resolves types for its own use without rewriting the AST — so the
+	// backend has to expand it here, at the one place a named type is resolved.
+	//
+	// Recursion handles a chain (`type A = B` with `type B = Pt`) because the alias's
+	// own recorded type is an UnresolvedType that comes straight back through
+	// lowerType. A *cycle* would not terminate, and is not guarded here on purpose:
+	// the typechecker rejects one (resolveType's resolvingTypes guard), and `lyrac
+	// build` runs the backend only on an error-free program, so a cycle cannot reach
+	// this code without the front end having been bypassed.
+	if decl, ok := l.res.SymbolTable.LookupType(name); ok && decl.IsAlias {
+		return l.lowerType(decl.Type)
+	}
+	return nil, fmt.Errorf("llvm: unknown named type %q", name)
 }
 
 // lowerAnonymousTupleType builds the (unnamed) LLVM struct type for an anonymous

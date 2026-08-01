@@ -10,6 +10,57 @@ Newest first.
 ## Dated log
 
 ### 07/31/26
+**Transparent `type` aliases.** `type Op = ((i64, i64)) -> i64`. The name and the type are
+interchangeable — no conversion at the boundary, no identity of its own. Grammar in
+`tree-sitter-lyra` 0741c3c; this side carries the collector and the three places that had
+to learn about them.
+
+The motivating case is a function type, which is where the language reads worst. A
+callback parameter spelled out is `(g: ((i64, i64)) -> i64, p: (i64, i64)) -> i64`, and
+the double parens are *not* removable — single parens would be a two-argument function, so
+a single tuple parameter has no shorter form. `newtype` could not serve: it is nominal, so
+it makes the value un-callable without unwrapping. Which is the argument for both
+declarations existing rather than one flag: an alias removes repetition, a `newtype` adds
+meaning at a boundary.
+
+**The implementation is one decision — register the aliased type *itself* under the
+alias's name** — after which most of the compiler needs no notion of aliases at all.
+Three places did:
+
+- **`resolveType` had to stop after one hop.** `type Point = Pt` registers
+  `UnresolvedType{Pt}`, so returning `decl.Type` handed back a *name*, and assignability
+  then rejected a real `Pt` with "cannot assign Pt to Point". It now resolves what the
+  declaration holds, which walks alias chains and leaves everything else alone (a struct
+  or data declaration lands on the switch's default and returns as-is).
+- **A cycle guard came with it.** `type A = B; type B = A` would otherwise recurse until
+  the stack ended — the type-level twin of the `inferExprType` guard added the same day,
+  and worth noticing that the *second* piece of work in a row needed one. Any resolver
+  that follows a user-controlled edge needs an in-progress set; the pattern should be
+  reached for by default now rather than after the crash.
+- **The backend had to skip the declaration and expand the name.** An alias holds the
+  aliased type itself, so without an explicit `IsAlias` marker `type Point = Pt` would
+  declare *and define* Pt's LLVM struct a second time under the name `Point`. `IsAlias` is
+  on the AST node because `Type` genuinely cannot distinguish the two. And since the
+  typechecker resolves types without rewriting the AST, an annotation still says `Op` when
+  it reaches codegen, so `lookupNamedType` expands an alias there — the one place a named
+  type is resolved.
+
+Validation happens at the **declaration**, not the use: an alias nothing mentions is still
+checked, so an unknown target or a cycle is reported even when unused. A declaration that
+cannot mean anything should not need a use site to be told so.
+
+One consequence accepted on purpose: the alias name is gone from diagnostics. A mismatch
+on an `Op` parameter names the function type, not `Op`. That is correct for a transparent
+alias — the name is a spelling, not an identity, and claiming otherwise in a message would
+be claiming an identity the type does not have — but it is the thing to revisit if the
+messages read badly.
+
+Tests: `typechecker/tests/type_alias_test.go` (transparency at each comparison site,
+chains, the cycle, declaration-site validation, and an explicit "is not nominal" case that
+would fail if someone later made aliases nominal) and `llvm_type_alias_test.go`, including
+an IR assertion that a struct alias emits exactly one type.
+
+### 07/31/26
 **Fixed: a definition cycle crashed the compiler, and with it the language server.**
 `let f = f(1)`, or the mutual `let a = b(1); let b = a(1)`, sent inference around a loop
 until the Go stack was exhausted. Not an error — a **process death**: `lyrac` printed a

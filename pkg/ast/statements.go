@@ -18,7 +18,13 @@ type TypeDeclStmt struct {
 	GenericParams []GenericParam
 	Type          types.Type
 	IsPublic      bool
-	Derives       []string
+	// IsAlias marks a transparent `type X = T` declaration. Type alone cannot say:
+	// an alias registers the aliased type *itself* (that is what transparency
+	// means), so `type Point = Pt` is a TypeDeclStmt holding the very
+	// NamedStructType that `struct Pt` holds. Without this flag the backend would
+	// declare and define that struct a second time, under the alias's name.
+	IsAlias bool
+	Derives []string
 	// Builtin is the raw argument of a `@builtin(X)` attribute on the declaration
 	// ("Result", "Maybe", …), or "" if absent. It is the *request* to be treated
 	// as a canonical compiler-known type; whether that request is honored (shape

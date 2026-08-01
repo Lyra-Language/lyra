@@ -18,6 +18,8 @@ func CollectTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Type
 			return collectDataTypeDeclaration(child, ctx)
 		case "constrained_type":
 			return collectConstrainedTypeDeclaration(child, ctx)
+		case "type_alias":
+			return collectTypeAliasDeclaration(child, ctx)
 		}
 	}
 	return nil

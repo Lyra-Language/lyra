@@ -29,6 +29,7 @@ type TypeChecker struct {
 	currentVarDecl *ast.VarDeclStmt              // the var decl whose initializer is currently being inferred; lets a self-reference in a rebind's initializer resolve to VarDeclStmt.Shadows (the prior binding) instead of itself
 	instantiations *typetable.InstantiationTable // generic call site -> the specialization it resolves to (instantiate.go); the backend monomorphizes from it
 	inferring      map[ast.Expression]bool       // expression nodes whose inference is on the stack right now; the cycle guard in inferExprType
+	resolvingTypes map[string]bool               // type names whose resolution is on the stack right now; the alias-cycle guard in resolveType
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
@@ -41,9 +42,10 @@ func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTabl
 		// The entry module's scope, not the global one: top-level declarations live in
 		// their module's scope now, and checkInModule swaps in the right one per
 		// statement — this is only the starting point.
-		scope:         symTable.EntryScope(),
-		resolvedTypes: make(map[string]types.Type),
-		inferring:     make(map[ast.Expression]bool),
+		scope:          symTable.EntryScope(),
+		resolvedTypes:  make(map[string]types.Type),
+		inferring:      make(map[ast.Expression]bool),
+		resolvingTypes: make(map[string]bool),
 	}
 }
 
@@ -146,6 +148,15 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 }
 
 func (tc *TypeChecker) checkTypeDecl(decl *ast.TypeDeclStmt) {
+	if decl.IsAlias {
+		// Resolve the alias's target here, at its declaration, rather than waiting for
+		// a use. Resolution is what reports an unknown target and what detects a cycle
+		// (`type A = B` with `type B = A`), and an alias nothing happens to mention
+		// would otherwise be checked by nobody — a declaration that cannot mean
+		// anything should not need a use site to be told so.
+		tc.resolveType(decl.Type, decl.GetLocation())
+		return
+	}
 	switch decl.Type.(type) {
 	case types.NamedStructType:
 		tc.checkStructDecl(decl)
@@ -1194,8 +1205,32 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 			tc.resolvedTypes[tt.Name] = t // cache unresolved itself so the error fires only once
 			return t
 		}
-		tc.resolvedTypes[tt.Name] = decl.Type
-		return types.WithAllocation(decl.Type, tt.Allocation)
+		// **Resolve what the declaration holds, too.** One hop is not enough once
+		// transparent aliases exist: `type Point = Pt` registers `UnresolvedType{Pt}`,
+		// so stopping here hands back a name rather than a type, and assignability
+		// then rejects a perfectly good value with "cannot assign Pt to Point". Every
+		// other composite case below already recurses for the same reason.
+		//
+		// A struct, data or tuple declaration is unaffected — the recursive call lands
+		// on the switch's default and returns as-is — so this only walks alias chains,
+		// which is exactly what it is for.
+		if tc.resolvingTypes[tt.Name] {
+			// `type A = B` with `type B = A`. Report once and hand back the unresolved
+			// name: the caller's own diagnostic ("unknown type", a mismatch) then reads
+			// normally, and, more to the point, we do not recurse until the stack ends
+			// — the same failure the expression-level guard in inferExprType exists to
+			// prevent, one level up in the type world.
+			tc.addError(loc, SeverityError,
+				"type alias %q is circular: its definition leads back to itself", tt.Name)
+			tc.resolvedTypes[tt.Name] = t
+			return t
+		}
+		tc.resolvingTypes[tt.Name] = true
+		resolved := tc.resolveType(decl.Type, loc)
+		delete(tc.resolvingTypes, tt.Name)
+
+		tc.resolvedTypes[tt.Name] = resolved
+		return types.WithAllocation(resolved, tt.Allocation)
 	case types.StaticArrayType:
 		// Resolve the element type too, so a named element (`[3]Node`) compares
 		// equal to the resolved element type of a literal. Without this the
