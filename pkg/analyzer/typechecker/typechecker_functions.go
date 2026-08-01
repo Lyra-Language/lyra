@@ -164,7 +164,127 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 				}
 			}
 		}
+
+		// Last, because it reads the types the walk above recorded: fill in a return
+		// type that was never written.
+		if lambda.ReturnType.Type == nil {
+			tc.inferLambdaReturnType(funcName, lambda)
+		}
 	})
+}
+
+// inferLambdaReturnType fills in `lambda.ReturnType.Type` for a function written
+// without `-> T`, from the type its body produces.
+//
+// **It writes to the AST node**, the same elaboration `contextual_lambda.go` performs
+// for a lambda literal's missing annotations, and for the same reason: every later pass
+// reads `ast.LambdaExpr.ReturnType`, so filling the blank once here means none of them —
+// ownership, captures, the backend — needs a notion of an un-annotated function. Until
+// 07/31/26 nothing did this, so `let sum = ((a, b): (i64, i64)) => a + b` type-checked
+// and then failed the *build* with "needs a return type annotation", the same
+// front-end-accepts-what-the-backend-refuses split that default params and multi-clause
+// functions had.
+//
+// Scope, deliberately: the body's *value* is the return type. A body containing an
+// explicit `return` is refused with a diagnostic asking for an annotation, because
+// inferring it means joining several candidates and that is a design question of its own
+// — what happens when they disagree, how a diverging `panic` arm participates — not
+// something to settle silently here. The refusal is still an improvement: a front-end
+// diagnostic naming the fix, where before there was a backend error naming an internal
+// requirement.
+func (tc *TypeChecker) inferLambdaReturnType(funcName string, lambda *ast.LambdaExpr) {
+	if lambda.Body == nil || len(lambda.LambdaClauses) > 0 {
+		return // a clause form is desugared before this; nothing to infer from
+	}
+
+	if stmt := explicitReturnIn(lambda.Body); stmt != nil {
+		tc.addError(stmt.GetLocation(), SeverityError,
+			"%s: a function with an explicit `return` needs a return type annotation — only a function whose body is its value can have one inferred",
+			funcName)
+		return
+	}
+
+	value := lambda.Body
+	if block, ok := lambda.Body.(*ast.BlockExpr); ok {
+		last, ok := blockValueExpr(block)
+		if !ok {
+			// A block that ends in something other than an expression has no value,
+			// which is exactly what `void` means.
+			lambda.ReturnType.Type = types.VoidType{}
+			lambda.ReturnTypeInferred = true
+			return
+		}
+		value = last
+	}
+
+	inferred, ok := tc.typeTable.Get(value)
+	if !ok || inferred == nil {
+		// The body was walked already, so a missing entry means inference could not
+		// finish — overwhelmingly because the function calls itself, where computing
+		// the return type requires the return type. Callers of a recursive function
+		// need its signature, so the annotation is not a limitation to apologize for.
+		tc.addError(lambda.GetLocation(), SeverityError,
+			"%s: cannot infer the return type — annotate it (a recursive function always needs one)",
+			funcName)
+		return
+	}
+	lambda.ReturnType.Type = defaultUntyped(inferred)
+	lambda.ReturnTypeInferred = true
+}
+
+// defaultUntyped resolves a literal's provisional type to the one it lowers as, so a
+// recorded signature reads `i64` rather than "integer literal". Nothing else consumes an
+// untyped type usefully — the backend already lays UntypedInt out as i64 — and leaving it
+// in a *signature* would leak an inference artifact into every call site's comparison.
+func defaultUntyped(t types.Type) types.Type {
+	p, ok := t.(types.PrimitiveType)
+	if !ok {
+		return t
+	}
+	switch p.Name {
+	case types.UntypedInt, types.UntypedSignedInt:
+		return types.PrimitiveType{Name: types.Int64}
+	case types.UntypedFloat:
+		return types.PrimitiveType{Name: types.Float64}
+	}
+	return t
+}
+
+// blockValueExpr returns the expression a block evaluates to — its final statement, when
+// that is an expression statement.
+func blockValueExpr(block *ast.BlockExpr) (ast.Expression, bool) {
+	if len(block.Statements) == 0 {
+		return nil, false
+	}
+	last, ok := block.Statements[len(block.Statements)-1].(*ast.ExpressionStmt)
+	if !ok {
+		return nil, false
+	}
+	return last.Expression, true
+}
+
+// explicitReturnIn finds a `return` belonging to this body, or nil.
+//
+// It stops at a nested `LambdaExpr`: a `return` inside one belongs to *that* function,
+// and counting it here would refuse to infer for an enclosing function that has no
+// `return` of its own — `let f = (n: i64) => { let g = (m: i64) -> i64 => { return m }; g(n) }`.
+func explicitReturnIn(body ast.Expression) *ast.ReturnStmt {
+	var found *ast.ReturnStmt
+	ast.WalkExpr(body,
+		func(s ast.Statement) bool {
+			if r, ok := s.(*ast.ReturnStmt); ok && found == nil {
+				found = r
+			}
+			return true
+		},
+		func(e ast.Expression) bool {
+			if _, isLambda := e.(*ast.LambdaExpr); isLambda {
+				return false
+			}
+			return true
+		},
+	)
+	return found
 }
 
 // checkBlockVoidReturn walks block reporting explicit `return <expr>` statements,

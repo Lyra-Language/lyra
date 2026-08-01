@@ -18,6 +18,13 @@ type LambdaExpr struct {
 	IsNoAlloc     bool
 	IsAsync       bool
 	IsGenerator   bool
+	// ReturnTypeInferred records that ReturnType.Type was filled in from the body
+	// (inferLambdaReturnType) rather than written by the author. Everything that
+	// consumes a signature wants the filled-in type and should ignore this; the one
+	// consumer that needs to tell them apart is the entry point, where an *absent*
+	// annotation is a documented spelling of `void` and must not become "returns
+	// whatever the last expression happened to be".
+	ReturnTypeInferred bool
 }
 
 func (e *LambdaExpr) exprNode() {}

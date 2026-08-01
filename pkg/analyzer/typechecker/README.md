@@ -525,6 +525,22 @@ Two properties keep it honest: it only ever fills what was **left blank**, so an
 annotation wins and is still diagnosed if wrong; and it runs **before** the body is inferred,
 which is the ordering bottom-up inference cannot give.
 
+**Return-type inference is the same elaboration from the other direction** (`checkLambdaBody`
+→ `inferLambdaReturnType`, 07/31/26): a function written without `-> T` has its return type
+filled in from the body, *after* the body is walked rather than before. Same reason for
+writing it onto the node — everything downstream reads `ReturnType`, and before this the
+program type-checked and then failed the build with "needs a return type annotation".
+
+Scoped to a body whose value is the return: an explicit `return` is refused with a
+diagnostic, since inferring across several `return`s means joining candidates and deciding
+what a disagreement or a diverging arm means. Recursion resolves whenever a non-recursive
+branch fixes the type (an `if` takes its type from the first arm), and reports otherwise.
+
+The one consumer that must distinguish a *written* signature from an inferred one is the
+**entry point**: `let main = () => { 0 }` is a documented spelling of void, so
+`ast.LambdaExpr.ReturnTypeInferred` lets `ResolveEntryPoint` discard the inferred type and
+keep it void. Nothing else should read that flag.
+
 Wired at the three sites that know what they want — an annotated binding (in the
 *lambda-valued* branch of `checkVarDecl`, which returns before the general path), a direct
 call's arguments, and a generic call's.

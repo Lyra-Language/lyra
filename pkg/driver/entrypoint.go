@@ -93,6 +93,22 @@ func ResolveEntryPoint(res *Result) (*EntryPoint, []diag.Diagnostic) {
 			Message:  fmt.Sprintf("entry point %q must take no parameters", EntryPointName),
 		})
 	}
+	// `let main = () => { 0 }` — no return annotation — is a documented spelling of a
+	// void entry point, and stayed one when return-type inference landed (07/31/26).
+	// Inference fills the blank from the body, so `main`'s would become the i64 of that
+	// trailing `0` and then be rejected as "must return u8 or void, got i64" — a program
+	// that compiled yesterday, broken by a feature that has nothing to do with it.
+	//
+	// So the entry point discards an *inferred* return and stays void. Only what the
+	// author actually wrote decides: `-> u8` is an exit code, `-> void` or nothing is
+	// void, and `-> i64` is still the error it always was. Reset the node rather than
+	// only classifying it, so the backend lowers the void shape it will be called with
+	// instead of building a return value nobody reads.
+	if lambda.ReturnTypeInferred {
+		if p, isPrim := lambda.ReturnType.Type.(types.PrimitiveType); !isPrim || p.Name != types.UInt8 {
+			lambda.ReturnType.Type = types.VoidType{}
+		}
+	}
 	ret, ok := entryReturnOf(lambda.ReturnType)
 	if !ok {
 		diags = append(diags, diag.Diagnostic{

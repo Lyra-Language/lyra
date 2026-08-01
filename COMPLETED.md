@@ -10,6 +10,47 @@ Newest first.
 ## Dated log
 
 ### 07/31/26
+**Return-type inference for a function written without `-> T`.** `let sum = ((a, b): (i64,
+i64)) => a + b` now builds. It type-checked before and then failed the *build* with
+"function needs a return type annotation" — the same front-end-accepts-what-the-backend-
+refuses split that default params, multi-clause functions and destructuring parameters
+each had, and the last one on the list from the higher-order-readability discussion.
+
+The fix is an elaboration, not a new pass: `inferLambdaReturnType` writes the body's type
+**onto the AST node**, exactly as `contextual_lambda.go` fills a lambda literal's missing
+annotations. Everything downstream reads `ast.LambdaExpr.ReturnType`, so filling the blank
+once means ownership, captures and the backend need no notion of an un-annotated function.
+
+**Scope, chosen rather than stumbled into.** The body's *value* is the return type. A body
+containing an explicit `return` is refused with a diagnostic asking for an annotation,
+because inferring it means joining several candidates, and what happens when they disagree
+— or when one arm diverges through `panic` — is a design question that deserves its own
+decision rather than whatever a first implementation happens to do. The refusal is still an
+improvement on what it replaces: a front-end diagnostic naming the fix, where there was a
+backend error naming an internal requirement.
+
+Recursion mostly works and does so for a reason worth knowing: `fact` infers fine because
+`if n == 0 { 1 } else { … }` takes its type from the first arm, so the recursive call is
+never consulted. When the recursive branch does come first, inference cannot finish and
+says so — the cycle guard added earlier the same day is what makes that a diagnostic
+instead of a stack overflow.
+
+**The interesting interaction was the entry point.** `let main = () => { 0 }` is a
+*documented* spelling of a void entry point. Inference fills the blank from the trailing
+`0`, so `main` became `i64` and the entry check rejected it — "must return u8 or void, got
+i64" — breaking a program that compiled the day before, via a feature with nothing to do
+with it. Caught by `TestBuild_Clean`, whose fixture is exactly that shape.
+
+The resolution keeps the convention: only a *written* annotation decides, so
+`ReturnTypeInferred` marks the filled-in case and the entry point discards it, resetting
+the node to `void` rather than merely classifying it — otherwise the backend would build a
+return value nobody reads. `-> u8` is still an exit code, `-> i64` is still the error it
+always was, and an inferred *u8* is honored, since there the inference and the convention
+agree. That flag is the only place in the compiler that needs to tell a written signature
+from a derived one, which is the argument for it being one narrow flag rather than a
+general "was this elaborated?" facility.
+
+### 07/31/26
 **Transparent `type` aliases.** `type Op = ((i64, i64)) -> i64`. The name and the type are
 interchangeable — no conversion at the boundary, no identity of its own. Grammar in
 `tree-sitter-lyra` 0741c3c; this side carries the collector and the three places that had
