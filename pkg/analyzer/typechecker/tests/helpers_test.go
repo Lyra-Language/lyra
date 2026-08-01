@@ -1,6 +1,7 @@
 package typechecker_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
@@ -64,6 +65,24 @@ func assertErrorsAre(t *testing.T, res checkResult, expected ...string) {
 		if e.Message != expected[idx] {
 			t.Errorf("expected: %q, got: %q", expected[idx], e.Message)
 		}
+	}
+}
+
+// assertHasErrorContaining checks that *some* diagnostic mentions want. Use it when the
+// program legitimately produces several — a definition cycle also trips the
+// use-before-declaration check, and reports once per reference into the cycle — so
+// assertErrorsAre's exact, ordered, full-set match would pin incidental diagnostics that
+// have nothing to do with what the test is about.
+func assertHasErrorContaining(t *testing.T, res checkResult, want string) {
+	t.Helper()
+	for _, e := range res.errors {
+		if strings.Contains(e.Message, want) {
+			return
+		}
+	}
+	t.Errorf("expected a diagnostic containing %q, got %d:", want, len(res.errors))
+	for _, e := range res.errors {
+		t.Errorf("  %s", e.Message)
 	}
 }
 

@@ -10,6 +10,46 @@ Newest first.
 ## Dated log
 
 ### 07/31/26
+**Fixed: a definition cycle crashed the compiler, and with it the language server.**
+`let f = f(1)`, or the mutual `let a = b(1); let b = a(1)`, sent inference around a loop
+until the Go stack was exhausted. Not an error — a **process death**: `lyrac` printed a
+runtime traceback instead of a diagnostic, and `lyra-lsp`, which runs the same
+`driver.Analyze` on every keystroke, simply vanished. In an editor that reads as
+completions and diagnostics going quiet with no explanation, and it fires exactly when a
+half-written cycle exists, which is most of the time you are typing one.
+
+The loop is `inferIdentifierCall` → `inferExprType(decl.Value)` → back to
+`inferIdentifierCall`: a binding whose type must come from its initializer, whose
+initializer names the binding. **The cache could not break it** — it is written *after* the
+recursive call returns, so a cycle never finds an entry. Marking the node in-progress on
+the way *in* is the whole fix, four lines in `inferExprType`.
+
+Two things about where it went. It is in `inferExprType` rather than in the call path that
+exposed it, because a cycle is a property of the graph and not of any one route through
+it — that is the single entry point every recursion passes, so any shape is caught. And it
+returns nil, "cannot be determined yet", which every caller already handles.
+
+*How it was found is the part worth keeping.* The original repro needed a **syntax error**:
+`{ let f = mk(1); u8(f(3)) }` before semicolons were legal, where error recovery produced
+two call nodes that inferred through each other. That framing — "reachable from a malformed
+AST" — made it look like an error-recovery problem and lower priority than it was. When the
+semicolon change made that program valid, the repro stopped reproducing, and reducing it
+from scratch produced `let f = f(1)`: two tokens, no syntax error, a plain typo. The bug
+was always reachable from ordinary source; the first repro just disguised it.
+
+Also fixed on the way past: the diagnostic reached for a nil type and rendered
+`identifier "f" is not callable (type %!s(<nil>))` — a Go format verb in a user-facing
+message. It now says the definition depends on itself and suggests breaking the cycle, and
+a test asserts no diagnostic ever contains `%!`.
+
+Tests: `typechecker/tests/definition_cycle_test.go` (the three cycle shapes, plus the two
+cases a too-broad guard would break — a legitimate `let add5 = makeAdder(5)`, and a
+genuinely non-callable binding keeping its own typed message) and
+`driver/driver_test.go`, which asserts through `Analyze` because "always returns, for any
+input" is the property the language server needs. Verified the tests catch it: with the
+guard stashed, the test binary dies with `fatal error: stack overflow`.
+
+### 07/31/26
 **Fixed: a negative literal in a `match` pattern now parses.** `-1 => …` and
 `-128..=127 => …` never did. `_number_literal` carries no sign and both `literal_pattern`
 and `range_pattern` were defined over it, so the `-` landed in an `ERROR` node.

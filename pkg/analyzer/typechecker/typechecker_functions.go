@@ -538,6 +538,19 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 				tc.typeTable.Set(ident, lt) // the indirect call's signature (see above)
 				return tc.inferLambdaCallFromType(ident.Name, lt, call)
 			}
+			if declValType == nil {
+				// The initializer has no type *yet*. The reachable way to get here is a
+				// definition cycle — `let f = f(1)`, or the mutual `let a = b(1); let b
+				// = a(1)` — which the guard in inferExprType breaks by returning nil
+				// rather than recursing until the process dies. Say that, instead of
+				// formatting the nil through `%s` and emitting the Go verb error
+				// `identifier "f" is not callable (type %!s(<nil>))`, which is what this
+				// line did and which tells the reader nothing about the actual mistake.
+				tc.addError(call.GetLocation(), SeverityError,
+					"cannot infer the type of %q: its definition depends on itself. Break the cycle, or annotate it",
+					ident.Name)
+				return nil
+			}
 			tc.addError(call.GetLocation(), SeverityError, "identifier %q is not callable (type %s)", ident.Name, declValType)
 			return nil
 		}

@@ -28,6 +28,7 @@ type TypeChecker struct {
 	genericBounds  map[string][]string           // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
 	currentVarDecl *ast.VarDeclStmt              // the var decl whose initializer is currently being inferred; lets a self-reference in a rebind's initializer resolve to VarDeclStmt.Shadows (the prior binding) instead of itself
 	instantiations *typetable.InstantiationTable // generic call site -> the specialization it resolves to (instantiate.go); the backend monomorphizes from it
+	inferring      map[ast.Expression]bool       // expression nodes whose inference is on the stack right now; the cycle guard in inferExprType
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
@@ -42,6 +43,7 @@ func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTabl
 		// statement — this is only the starting point.
 		scope:         symTable.EntryScope(),
 		resolvedTypes: make(map[string]types.Type),
+		inferring:     make(map[ast.Expression]bool),
 	}
 }
 
@@ -1332,6 +1334,22 @@ func (tc *TypeChecker) resolveTypeIfKnown(t types.Type) types.Type {
 // explicit Set elsewhere (promoting an untyped literal to its default,
 // recording an annotation's resolved type) still wins — it just runs after
 // this and replaces the value.
+// **Cycle guard.** A binding whose type must be inferred from its initializer can
+// reach itself: `let f = f(1)` and the mutual `let a = b(1); let b = a(1)` both send
+// inferIdentifierCall into inferExprType(decl.Value), which comes straight back. That
+// recursed until the Go stack was exhausted and the *process died* — `lyrac` printing a
+// runtime traceback, and, since this is the shared driver pipeline, `lyra-lsp`
+// disappearing mid-keystroke, which is exactly when a half-written cycle exists.
+//
+// The guard lives here rather than in the call path that happened to expose it, because
+// the cycle is a property of the graph and not of any one route through it: the crash was
+// first seen through error recovery on a curried call, and only later reduced to a
+// two-line program with no syntax error at all. Anything that re-enters the same
+// expression node is caught, whatever the shape.
+//
+// The cache cannot serve as the guard — it is populated *after* the recursive call
+// returns, so a cycle never sees an entry. Marking in-progress on the way *in* is the
+// whole trick.
 func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 	if expr == nil {
 		return nil
@@ -1340,6 +1358,16 @@ func (tc *TypeChecker) inferExprType(expr ast.Expression) types.Type {
 	if t, ok := tc.typeTable.Get(expr); ok {
 		return t
 	}
+	if tc.inferring[expr] {
+		// Re-entered while still computing. Return nil ("cannot be determined yet"),
+		// which every caller already handles — the diagnostic is reported by whoever
+		// owns the cycle (checkVarDecl, which knows the binding's name), not here,
+		// where the node in hand is an arbitrary point on the loop.
+		return nil
+	}
+	tc.inferring[expr] = true
+	defer delete(tc.inferring, expr)
+
 	t := tc.inferExprTypeUncached(expr)
 	if t != nil {
 		tc.typeTable.Set(expr, t)

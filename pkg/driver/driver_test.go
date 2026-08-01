@@ -379,3 +379,40 @@ func TestAnalyze_ForwardReferencedConst_IsTyped(t *testing.T) {
 		t.Fatal("the forward-referenced const use has no recorded type (the pre-fix bug)")
 	}
 }
+
+// TestAnalyze_DefinitionCycleDoesNotCrash: the whole pipeline survives a binding whose
+// type depends on itself, and reports it.
+//
+// This is the shape that mattered, and why the guard is in the typechecker rather than in
+// `lyrac`: `Analyze` is what **`lyra-lsp` runs on every keystroke**, so the stack overflow
+// did not merely fail a build — it killed the language server, in the middle of typing,
+// which is the only time a half-written cycle exists. A `lyrac` user at least saw a
+// traceback; an editor user saw completions and diagnostics stop, with no indication why.
+//
+// Asserted through `Analyze` rather than the typechecker alone because that is the
+// entry point with the property worth protecting: it must always return, for any input.
+func TestAnalyze_DefinitionCycleDoesNotCrash(t *testing.T) {
+	for _, src := range []string{
+		"let f = f(1)\n",
+		"let a = b(1)\nlet b = a(1)\n",
+		"let a = b(1)\nlet b = c(1)\nlet c = a(1)\n",
+	} {
+		res := Analyze([]byte(src))
+		if !res.HasErrors() {
+			t.Errorf("%q: expected a diagnostic for the cycle, got none", src)
+			continue
+		}
+		found := false
+		for _, d := range res.Diagnostics {
+			if strings.Contains(d.Message, "depends on itself") {
+				found = true
+			}
+			if strings.Contains(d.Message, "%!") {
+				t.Errorf("%q: a format verb leaked into a diagnostic: %s", src, d.Message)
+			}
+		}
+		if !found {
+			t.Errorf("%q: no diagnostic named the cycle; got %v", src, res.Diagnostics)
+		}
+	}
+}
