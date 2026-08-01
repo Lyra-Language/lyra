@@ -426,7 +426,10 @@ func (c *Collector) CollectGenericParams(node *sitter.Node) []ast.GenericParam {
 		if nameNode == nil {
 			continue
 		}
-		p := ast.GenericParam{Name: c.ctx.NodeText(nameNode)}
+		p := ast.GenericParam{
+			Name:     c.ctx.NodeText(nameNode),
+			Location: c.ctx.NodeLocation(child),
+		}
 		if boundsNode := child.ChildByFieldName("bounds"); boundsNode != nil {
 			p.Constraints = c.CollectBounds(boundsNode)
 		}
@@ -455,9 +458,21 @@ func (c *Collector) MergeWhereConstraints(params []ast.GenericParam, whereNode *
 		}
 		name := c.ctx.NodeText(nameNode)
 		bounds := c.CollectBounds(boundsNode)
-		if idx, ok := nameToIdx[name]; ok {
-			params[idx].Constraints = append(params[idx].Constraints, bounds...)
+		idx, ok := nameToIdx[name]
+		if !ok {
+			// A `where` clause naming a parameter the list does not declare. The
+			// bound has nowhere to attach, and dropping it silently is the same
+			// failure the authoritative-list rule (lyra-E031) exists to close:
+			// the constraint is written, reads as enforced, and constrains
+			// nothing. Reported here rather than in the checker because this is
+			// the only place the name still exists — the merge is what discards
+			// it, so by the AST there is nothing left to check.
+			c.ctx.AddErrorCoded(nameNode, diag.SeverityError, diag.CodeUndeclaredTypeVariable,
+				"type variable %q is constrained by this `where` clause but is not declared in the generic parameter list; add it to the list (`<%s>`) or remove the constraint",
+				name, name)
+			continue
 		}
+		params[idx].Constraints = append(params[idx].Constraints, bounds...)
 	}
 	return params
 }

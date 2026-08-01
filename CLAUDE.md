@@ -56,8 +56,9 @@ because each was learned from a real failure, and none is local to one package.
 4. **Resolve top-level names only through `LookupType`/`LookupTrait`/`LookupFunction`**,
    never by indexing `SymbolTable.Types`/`.Functions`/`.Traits`. Which declaration a name
    means depends on *which module is asking*, and a lookup scattered over dozens of sites
-   cannot be taught that. Same reason `recordedType`, `types.StripNewtype`, `slotIsOwning`
-   and `types.IsCopiedScalar` exist: one predicate, so two passes cannot drift apart.
+   cannot be taught that. Same reason `recordedType`, `types.StripNewtype`, `slotIsOwning`,
+   `types.IsCopiedScalar` and `types.CollectTypeVars` exist: one predicate, so two passes
+   cannot drift apart.
 
 5. **The backend errors loudly rather than emitting wrong code.** A form that does not lower
    yet is a hard error, never a guess — including where it must repeat a check the front end
@@ -84,6 +85,13 @@ because each was learned from a real failure, and none is local to one package.
    to lower, and two "never used" warnings fired on names plainly used. When adding a node
    kind or a composite type, grep for the switches over it; when fixing one, check the
    others in the same file, since these travel in pairs.
+
+   The durable fix for a switch with more than one caller is to stop having more than one
+   of it. The type-variable walk was three switches (typechecker `collectTypeVars`, backend
+   `mentionsTypeVar`, and the generic-parameter-list check that wanted a third); it is now
+   one, `types.CollectTypeVars` in `pkg/types/typevars.go`, with the other two delegating.
+   Taking the union of the copies turned up two composites *neither* had. Prefer that to
+   grepping, wherever the switches are answering the same question.
 
 ## Package map
 

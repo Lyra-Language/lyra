@@ -53,43 +53,22 @@ lowers; `CLAUDE.md`'s `pkg/backend/llvm` section is the current inventory. Settl
   enforced at the instantiation. `Maybe<weak T>` does not parse (a grammar change). A
   trait-impl *method* on a generic receiver does not lower — though neither does one on a
   non-generic receiver, so that is a trait gap, not a generics one.
-- **[OPEN] A binding's generic parameter list is decorative — nothing reconciles it with
-  the signature, in either direction.** Type variables are *lexical* by design (a lowercase
-  type name is a variable, an Uppercase one is a concrete type — `tree-sitter-lyra`'s
-  `generic_type` comment), and the typechecker derives a call's variables from the signature
-  (`lambdaTypeVars`), never from the declared list. So both of these compile and run:
+- **[DONE 08/01] A binding's written generic parameter list is authoritative** — option (b)
+  of the three that were on the table. A signature variable absent from a written list is
+  `lyra-E031`; a declared parameter the signature never mentions is `lyra-W013`. The list
+  stays **optional** (the lexical rule is unchanged, so `let unbox = (b: Box<t>, fb: t) -> t`
+  is still generic with no list); what changed is that a written one must agree with its
+  signature. `checker/generic_params.go`, reasoning in that package's README and in
+  COMPLETED.md. The three type-variable walkers are now one (`types.CollectTypeVars`).
 
-  ```
-  let unbox = (b: Box<t>, fb: t) -> t => …    // no <t> at all — generic anyway
-  let mismatch<t> = (a: u) -> u => a          // declares t, is generic in u
-  ```
-
-  The list being *optional* follows from the lexical rule and is defensible on its own.
-  Being **unchecked when written** is the part that is not: a declared-but-unused variable
-  and a used-but-undeclared one are both silent.
-
-  *The hazard is a typo, and it is a Pit-of-Success inversion.* A misspelled lowercase type
-  name does not fail — it silently becomes a *new type variable*, and the function becomes
-  generic in something its author never meant. The signature still type-checks; what changes
-  is that callers must now solve a variable that should have been a fixed type, so the
-  diagnostic (if any) lands at the call site, or the error surfaces only in the backend. That
-  is how the prelude's `ok`/`err` shipped without their `<t, e>` and drew no diagnostic at
-  all. Uppercase names have no such hole — an unknown one is `UnresolvedType` and is reported.
-
-  *Options, roughly in order of cost:* (a) **warn** on either mismatch, keeping the list
-  optional — cheapest, and enough to catch the typo the moment a list is written; (b) make a
-  written list **authoritative** (a signature variable absent from it is an error), so `<t>`
-  becomes a real declaration and the typo has somewhere to be caught; (c) require the list
-  outright, which reads as the least ML-ish of the three and buys little over (b). Note the
-  list is also the only place a **bound** can be written (`<t: Show>`), so an unchecked list
-  means a bound can silently constrain nothing — that is what makes this worth settling
-  before bound enforcement, not after.
-
-  *One implementation note for whoever takes it:* `collectTypeVars`
-  (`typechecker/instantiate.go`) already walks a signature for exactly this set. It is the
-  twin of the backend's `mentionsTypeVar`, and the two drifted — the backend's was missing
-  the `ParameterizedType` case, which is the 07/30 build failure in COMPLETED.md. Whatever
-  check lands here should reuse the typechecker's walker rather than add a third copy.
+  - **[OPEN] The same reconciliation for *type* declarations, traits and impls.** A
+    `struct`/`data`/named-`tuple` list, a `trait` list, and an `impl` list are each still
+    unreconciled with the bodies they parameterize. Lower severity than the binding case was:
+    a type declaration's list arity *is* load-bearing (checked against the type arguments at
+    instantiation, `backend/generic_types.go`), so a mismatch there tends to surface as an
+    arity error rather than as silence. Same pass, same walker; it needs the nominal-type
+    question answered per declaration kind (a struct's own fields **are** its signature,
+    unlike a signature that merely mentions the struct).
 
 ### Modules
 

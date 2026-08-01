@@ -197,6 +197,25 @@ const (
 	// a miscompile that type-checks.
 	CodeUnsupportedTraitBorrow = "lyra-E030"
 
+	// CodeUndeclaredTypeVariable: a signature mentions a type variable that the
+	// binding's *written* generic parameter list does not declare — `let f<t> =
+	// (a: u) -> u => a`.
+	//
+	// The list stays optional (type variables are lexical: a lowercase type name
+	// is a variable wherever it appears, so `let unbox = (b: Box<t>, fb: t) -> t`
+	// is generic with no list at all). Written, it is authoritative — which is
+	// what gives a typo somewhere to be caught. Without this, a misspelled
+	// lowercase type name does not fail: it silently becomes a *new* type
+	// variable, and the function becomes generic in something its author never
+	// meant. The signature still checks; what changes is that callers must now
+	// solve a variable that should have been a fixed type, so the diagnostic (if
+	// any) lands at a call site or surfaces only in the backend. That is how the
+	// prelude's `ok`/`err` shipped without their `<t, e>` and drew nothing.
+	//
+	// Uppercase names never had this hole — an unknown one is an UnresolvedType
+	// and is reported. This closes the lowercase half.
+	CodeUndeclaredTypeVariable = "lyra-E031"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"
@@ -243,4 +262,16 @@ const (
 	// exports permanently unusable, and adding a name to the prelude later would
 	// break programs that never mentioned it.
 	CodePreludeShadowed = "lyra-W012"
+
+	// CodeUnusedTypeParameter: a generic parameter declared in a written list that
+	// the signature never mentions — `let f<t, u> = (a: t) -> t => a`.
+	//
+	// The sibling of E031, and the other half of reconciling a written list with
+	// its signature. A warning rather than an error because the code is correct as
+	// written: an unused variable is solved by nothing, constrains nothing, and
+	// changes no call site. What makes it worth reporting is that the list is the
+	// only place a *bound* can be written, so `<u: Show>` on a variable the
+	// signature never mentions is a constraint that silently constrains nothing —
+	// the reading a programmer is least likely to expect.
+	CodeUnusedTypeParameter = "lyra-W013"
 )

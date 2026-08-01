@@ -531,9 +531,9 @@ func isGenericLambda(fn *ast.LambdaExpr) bool {
 	return mentionsTypeVar(fn.ReturnType.Type)
 }
 
-// mentionsTypeVar reports whether a type contains a GenericType leaf.
+// mentionsTypeVar reports whether a type mentions a type variable.
 //
-// **Every composite that can hold a type must have a case here.** A miss is not a missing
+// **Every composite that can hold a type must be covered.** A miss is not a missing
 // feature, it is a wrong answer to "is this function generic?", and the consequence is
 // silent and remote: isGenericLambda says no, forEachUserFunction stops skipping the
 // function, the backend tries to emit it under its bare name, and lowering dies laying out
@@ -546,48 +546,12 @@ func isGenericLambda(fn *ast.LambdaExpr) bool {
 // implicitly imported. A *bare* `t` parameter is what accidentally rescued every generic
 // function written before the standard library: it hits the GenericType case directly.
 //
-// The LambdaType, RawPointerType and ConstrainedType cases below are the same omission
-// elsewhere in the type tree, added on the reasoning above rather than because each was
-// observed failing — a boxed closure is a pointer, so a `() -> t` parameter happens to
-// lower without needing a layout *today*, and that is not a property to depend on.
+// That miss was possible because this switch was a *copy* of the typechecker's, free to
+// drift from it. It is no longer a copy: the walk lives in pkg/types and the typechecker
+// and the checker's generic-parameter-list reconciliation call the same one, so a composite
+// added there is covered here on the same commit. See types/typevars.go.
 func mentionsTypeVar(t types.Type) bool {
-	switch tt := t.(type) {
-	case types.GenericType:
-		return true
-	case types.StaticArrayType:
-		return mentionsTypeVar(tt.ElementType)
-	case types.DynamicArrayType:
-		return mentionsTypeVar(tt.ElementType)
-	case types.TupleType:
-		for _, e := range tt.Elements {
-			if mentionsTypeVar(e) {
-				return true
-			}
-		}
-	case types.WeakType:
-		return mentionsTypeVar(tt.Inner)
-	case types.ParameterizedType:
-		// `Maybe<t>`: the variable is in the type arguments, never at the leaf.
-		for _, a := range tt.TypeArguments {
-			if mentionsTypeVar(a) {
-				return true
-			}
-		}
-	case *types.LambdaType:
-		// A function-typed parameter, e.g. `f: () -> t` — the callback's own signature is
-		// as much a part of this signature as any other parameter.
-		for _, p := range tt.Parameters {
-			if mentionsTypeVar(p.Type) {
-				return true
-			}
-		}
-		return mentionsTypeVar(tt.ReturnType.Type)
-	case types.RawPointerType:
-		return mentionsTypeVar(tt.Pointee)
-	case *types.ConstrainedType:
-		return mentionsTypeVar(tt.Type)
-	}
-	return false
+	return types.MentionsTypeVar(t)
 }
 
 // userSymbol is the emitted name for a top-level user function: its module path under a

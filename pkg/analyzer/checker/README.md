@@ -261,6 +261,59 @@ type is still usable by reference; scoped to structs only (a `data` type constru
 constructors and a named tuple via `Name(…)`, so a SCREAMING_CASE name works there). Returns
 `[]diag.Diagnostic`; wired into the driver alongside the other lint passes.
 
+## `generic_params.go`
+
+`CheckGenericParams(program)` reconciles a binding's **written** generic parameter list against
+the type variables its signature actually mentions, in both directions: a signature variable
+missing from the list is an error (`lyra-E031`), a declared parameter the signature never
+mentions is a warning (`lyra-W013`). AST-only, and wired in *before* typechecking — reporting at
+the declaration is the whole point.
+
+**The list stays optional; written, it is authoritative.** Type variables are lexical (a
+lowercase type name is a variable wherever it appears), so `let unbox = (b: Box<t>, fb: t) -> t`
+is generic with no list at all and stays legal — that follows from the lexical rule. What did
+not follow is the list being *unchecked when written*: before this pass, `let mismatch<t> = (a:
+u) -> u => a` compiled and ran, declaring `t` while being generic in `u`.
+
+*The hazard is a typo, and it is a Pit-of-Success inversion.* A misspelled lowercase type name
+does not fail — it silently becomes a *new* type variable, and the function becomes generic in
+something its author never meant. The signature still type-checks; what changes is that callers
+must now solve a variable that should have been a fixed type, so the diagnostic (if any) lands
+at the call site, or the error surfaces only in the backend. That is how the prelude's
+`ok`/`err` shipped without their `<t, e>` and drew no diagnostic at all. Uppercase names never
+had the hole: an unknown one is an `UnresolvedType`, reported at the declaration.
+
+**Why an error and not just a warning** (option (b) of the three in `todo.md`, over (a) warn on
+both and (c) require the list outright). A warning also gives the typo somewhere to be caught;
+what only an error buys is that a bound cannot be quietly inert. The list is the only place a
+bound can be written (`<t: Show>`), so a list that need not agree with its signature means a
+constraint can silently constrain nothing — which is what makes this worth settling *before*
+bound enforcement rather than after: an unenforced bound and a bound on the wrong variable look
+identical from outside, and only one of them stops being a problem when enforcement lands. (c)
+was rejected as the least ML-ish of the three, buying little over (b).
+
+The `where`-clause half is enforced in the collector, not here — `Collector.MergeWhereConstraints`
+merges a `where u: Show` into the matching list entry, and *discarded* a name that matched
+nothing, so by the time there is an AST the constraint no longer exists to check. It now reports
+the same `lyra-E031` at the point the name is still visible.
+
+**The variable walk is `types.CollectTypeVars`, shared not copied.** This pass is the third
+consumer of "which variables does this signature mention?", after the typechecker's
+`lambdaTypeVars` and the backend's `mentionsTypeVar` — and those two had already drifted (the
+backend's was missing `ParameterizedType`, the 07/30 build failure). Adding a third switch was
+the one thing `todo.md` asked whoever took this not to do, so all three now call one walker in
+`pkg/types/typevars.go`; hazard 8 in `lyra/CLAUDE.md` covers the class. Unifying them turned up
+two composites *neither* copy had, `AnonymousStructType` and `RangeType`.
+
+Deliberately not walked: nominal types (`NamedStructType`, `DataType`). A `struct Box<t>` binds
+its own `t`, so a function taking a `Box<i64>` mentions no variable of its own — descending into
+the declaration would report `t` as a use and make every function touching a generic type
+spuriously generic.
+
+**Not covered** (unchanged behaviour, same defect class): the generic parameter lists on *type*
+declarations, traits, and impls. Those are reconciled by nothing today either; the arity of a
+type declaration's list is at least load-bearing at instantiation, which a binding's is not.
+
 ## `range_analysis.go`
 
 `CheckIntegerRanges(program, tt)` (`lyra-E020` / `lyra-E021` / `lyra-E022` / `lyra-E023` /

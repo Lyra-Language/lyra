@@ -10,6 +10,60 @@ Newest first.
 ## Dated log
 
 ### 08/01/26
+**A written generic parameter list is authoritative.** `let mismatch<t> = (a: u) -> u => a`
+compiled and ran: it declares `t`, is generic in `u`, and nothing reconciled the two. The
+list is now checked in both directions — a signature variable absent from a written list is
+`lyra-E031`, a declared parameter the signature never mentions is `lyra-W013`
+(`checker/generic_params.go`, before typechecking, AST-only).
+
+**The list stays optional, and that is not a compromise.** Type variables are *lexical* — a
+lowercase type name is a variable wherever it appears — so `let unbox = (b: Box<t>, fb: t)
+-> t` is generic with no list and stays legal. That much follows from the lexical rule.
+What never followed from it is the list being unchecked *when written*, which is the only
+thing that changed. This was option (b) of three: (a) warn on both mismatches, (c) require
+the list outright. (c) is the least ML-ish and buys little over (b).
+
+**Why an error rather than the cheaper warning.** Both catch the typo, and the typo is the
+motivating case — a misspelled lowercase type name does not fail, it silently becomes a
+*new* type variable, so the function turns generic in something its author never meant and
+the diagnostic (if any) lands at a call site or in the backend. That is how the prelude's
+`ok`/`err` shipped without their `<t, e>` and drew nothing. But only an error settles the
+part that outlives the typo: the list is the only place a **bound** can be written
+(`<t: Show>`), so a list that need not agree with its signature means a constraint can
+silently constrain nothing. An unenforced bound and a bound on a variable nothing solves
+are indistinguishable from outside, and only the first stops being a problem when bound
+enforcement lands — which is the argument for doing this *before* that, not after. The
+warning half says so explicitly when the unused parameter carries a bound.
+
+**The `where` half is enforced in the collector, and had to be.**
+`Collector.MergeWhereConstraints` merges `where u: Show` into the matching list entry and
+*silently discarded* a name matching nothing — so a bound on an undeclared variable was
+already gone by the time there was an AST to check. Reported at the point the name still
+exists, under the same code. This also covers trait declarations, which share the merge.
+
+**Three copies of "which type variables does this signature mention?" became one.** The
+pass needed that walk, and adding a third switch was the one thing todo.md asked whoever
+took this not to do: the existing two — the typechecker's `collectTypeVars` and the
+backend's `mentionsTypeVar` — had already drifted, the backend's missing
+`ParameterizedType`, which is the 07/30 build failure in this log. Both now delegate to
+`types.CollectTypeVars` (`pkg/types/typevars.go`); `MentionsTypeVar` is defined *over* it
+rather than as its own short-circuiting switch, trading a map allocation for the guarantee
+that a case added in one place cannot be missing in another. Taking the union turned up two
+composites **neither** copy had: `AnonymousStructType` (structural — `(p: { v: t }) -> t`
+writes its field types out in the signature) and `RangeType`. Nominal types are
+deliberately *not* walked, and the unified walker says why: a `struct Box<t>` binds its own
+`t`, so descending into it from a signature that merely mentions `Box<i64>` would report a
+use and make every function touching a generic type spuriously generic.
+
+Scope: bindings only. Type declarations, traits and impls have the same unreconciled list
+and are tracked in todo.md — a type declaration's arity is at least load-bearing at
+instantiation, so a mismatch there tends to surface as an arity error rather than silence.
+
+The full suite, `std/prelude.lyra` and `std/maybe.lyra` reconcile with no new diagnostic —
+the prelude's lists were corrected when `ok`/`err` were fixed, so this pass confirms them
+rather than finding them. Verified non-vacuous the way this project verifies things: with
+`CheckGenericParams` stubbed to return nil, 13 of its tests fail.
+
 **`?` lowers.** The language's primary error-propagation operator type-checked — including
 the enclosing-return kind and error-type checks — and then failed the build with
 `expression lowering not implemented for *ast.TryExpr`, so no program could actually use

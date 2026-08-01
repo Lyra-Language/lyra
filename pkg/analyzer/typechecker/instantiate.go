@@ -41,32 +41,14 @@ func lambdaTypeVars(lambda *ast.LambdaExpr) map[string]bool {
 	return vars
 }
 
-// collectTypeVars adds every GenericType leaf in t to vars, descending through the
+// collectTypeVars adds every type variable in t to vars, descending through the
 // composite types a signature can be built from.
+//
+// The walk itself lives in pkg/types, shared with the backend's MentionsTypeVar
+// and the checker's generic-parameter-list reconciliation — see the file comment
+// on types/typevars.go for why there is exactly one copy of it.
 func collectTypeVars(t types.Type, vars map[string]bool) {
-	switch tt := t.(type) {
-	case types.GenericType:
-		vars[tt.Name] = true
-	case types.StaticArrayType:
-		collectTypeVars(tt.ElementType, vars)
-	case types.DynamicArrayType:
-		collectTypeVars(tt.ElementType, vars)
-	case types.TupleType:
-		for _, e := range tt.Elements {
-			collectTypeVars(e, vars)
-		}
-	case types.WeakType:
-		collectTypeVars(tt.Inner, vars)
-	case types.ParameterizedType:
-		for _, a := range tt.TypeArguments {
-			collectTypeVars(a, vars)
-		}
-	case *types.LambdaType:
-		for _, p := range tt.Parameters {
-			collectTypeVars(p.Type, vars)
-		}
-		collectTypeVars(tt.ReturnType.Type, vars)
-	}
+	types.CollectTypeVars(t, vars)
 }
 
 // solveTypeVars unifies each parameter's declared type against its argument's

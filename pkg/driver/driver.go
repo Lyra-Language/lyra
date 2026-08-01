@@ -165,6 +165,15 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 		res.err(e.Location, e.Code, e.Message)
 	}
 
+	// Generic parameter lists, reconciled against the signature they belong to.
+	// Appended rather than run through res.err because, alone among the
+	// pre-typecheck passes, it reports both severities: an undeclared type
+	// variable is an error, a declared-but-unmentioned one a warning. It runs
+	// here, before typechecking, because reporting at the declaration is the
+	// point — the failure it closes is a diagnostic that lands at a call site or
+	// in the backend instead.
+	res.Diagnostics = append(res.Diagnostics, checker.CheckGenericParams(program)...)
+
 	// Typecheck: AST → TypeTable (+ MethodTable for dispatch resolutions).
 	tt := typetable.New()
 	tc := typechecker.New(symTable, scopeTable, tt)
