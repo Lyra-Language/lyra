@@ -132,7 +132,8 @@ param width).
 **Void functions lower** (`lowerType` maps `VoidType` → LLVM `void`; `emitReturn` emits `ret
 void`, discarding any body value; `defineFunction`/`lowerEntry` lower a void body for *effect*
 via `lowerForEffect`, so an empty or non-expression-terminated block is fine, and route the void
-entry through `emitReturn(nil)` so owned temporaries flush). Deferred with a loud error: destructuring params.
+entry through `emitReturn(nil)` so owned temporaries flush).
+**Destructuring params lower** — see [below](#destructuring-parameters-lower).
 **Default params no longer reach here** — the typechecker fills every omitted argument from
 the declaration (`typechecker/default_args.go`), so a defaulted parameter is an ordinary one
 by the time it is lowered, and `lowerDirectCall` guards on the argument count so a call that
@@ -580,6 +581,43 @@ shadowing bug, fixed 07/29 (`llvm_destructuring_test.go`); a `let … else` bind
 be a use of unbound names, so it is a loud error). Deferred with a loud error: destructuring an
 **array** with a pattern, whose length-test-plus-element-tests shape belongs to the array match
 driver rather than a single test/bind pair.
+
+### Destructuring parameters lower
+
+**Destructuring parameters lower** (07/31, `destructuring.go`) — `let sum = ((a, b): (i64,
+i64)) -> i64 => a + b`, `({ x, y }: Pt)`. This is the *fourth* destructuring form and the last
+one that did not compile, and it goes through the same `patternMatcher` the three statements do
+for the same reason: one meaning of "this pattern against this value", not two.
+
+It is the **irrefutable** form — a parameter has no failure path, since there is no `else` and a
+function cannot decline to be called — and that is checked rather than assumed, because the
+typechecker admits a value-testing sub-pattern here (`((1, b): (i64, i64))`, `(Just(v): Opt)`)
+and the backend has nowhere to put the failing edge. Refused with a message, as
+`lowerDestructuringDecl` refuses `let Some(v) = m`.
+
+One helper, `bindParameters`, binds parameters for **every** shape of function — plain,
+generic specialization, lifted closure (whose `ir.Param` slot 0 is the environment, hence its
+`offset`), and trait-impl method, which reaches it because `traitMethodLambda` synthesizes a
+`LambdaExpr` whose parameters are the impl's clause patterns. The two loops it replaced had
+already been copied once.
+
+The ownership rule is the one the other pattern forms use: **bound names are borrows**, not
+framed for release, because they are field copies out of a value someone else owns. For a bare
+or `ref` parameter that owner is the caller. For an `own` one it is this function, so the
+*whole* incoming aggregate is framed — one release that `drop.go` walks into each managed
+field, rather than one per bound name, which is also what frees a managed field the pattern
+never named (`({ age }: own Person)` must still free `name`). A field that escapes the callee
+is retained on the way out, since a pattern name has no declaration inside the function and so
+is never last-use-eligible. Both directions are ASan-covered in
+`llvm_destructuring_param_test.go`, along with the refcount shape itself.
+
+Two refusals. A **`mut`** parameter cannot be destructured: the bindings would be copies, so a
+write could not reach the caller, which is the entire content of `mut` — a borrow that silently
+is not one. **`ref`** *is* supported (the pointee is loaded and destructured from there): it is
+read-only, so copying fields out changes nothing observable, and a destructuring parameter asked
+for the fields by value in the first place. And an **array** pattern parameter fails with the
+same message a `let [a, b] = arr` does, since static-array patterns are unimplemented
+everywhere, not specifically here.
 
 ### match on a data value lowers
 

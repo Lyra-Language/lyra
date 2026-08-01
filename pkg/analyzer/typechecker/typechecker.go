@@ -1225,6 +1225,51 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 			tt.Inner = tc.resolveType(tt.Inner, loc)
 		}
 		return tt
+	case types.ParameterizedType:
+		// `Box<Pt>`: the named type is in the type *arguments*, never at the leaf, so
+		// the UnresolvedType case above never sees it. Same failure as the others and
+		// the same fix — without it `let get = (b: Box<Pt>) -> …` rejected a `Box<Pt>`
+		// with "cannot assign Box<Pt> to Box<Pt>", the two spellings differing only in
+		// whether the argument had been resolved. This is the same hole
+		// `mentionsTypeVar` had (see todo.md): the composite that holds its types in an
+		// argument list is the one every such switch forgets.
+		if len(tt.TypeArguments) > 0 {
+			args := make([]types.Type, len(tt.TypeArguments))
+			for i, a := range tt.TypeArguments {
+				args[i] = tc.resolveType(a, loc)
+			}
+			tt.TypeArguments = args
+		}
+		return tt
+	case *types.LambdaType:
+		// A function type's parameters and return are types like any other, and a named
+		// one inside them needs resolving for the same reason an array's element does:
+		// `(g: (Pair) -> i64)` kept an UnresolvedType `Pair` while the argument resolved
+		// to the full named tuple, so a perfectly good function was rejected with
+		// "cannot assign (Pair(i64, i64)) -> i64 to (Pair) -> i64" — the confusing
+		// looks-identical mismatch the StaticArrayType case above was added to prevent.
+		// It only bites through a function type, which is why naming a type was no help
+		// exactly where the signature is long enough to want it.
+		//
+		// **A copy, not an in-place rewrite.** LambdaType is the one type here held by
+		// pointer, so the value being resolved is shared with the declaration every
+		// other reference reads; mutating it would resolve one site's names into
+		// everyone's type.
+		resolved := *tt
+		if len(tt.Parameters) > 0 {
+			params := make([]types.ParameterType, len(tt.Parameters))
+			copy(params, tt.Parameters)
+			for i := range params {
+				if params[i].Type != nil {
+					params[i].Type = tc.resolveType(params[i].Type, loc)
+				}
+			}
+			resolved.Parameters = params
+		}
+		if tt.ReturnType.Type != nil {
+			resolved.ReturnType.Type = tc.resolveType(tt.ReturnType.Type, loc)
+		}
+		return &resolved
 	default:
 		return t
 	}

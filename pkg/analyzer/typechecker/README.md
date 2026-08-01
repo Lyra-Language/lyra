@@ -200,6 +200,16 @@ type (e.g. the LLVM backend's `getIntSignedness`).
   enclosing scope, like a plain `let`)
 - `assignable.go` — `effectiveType` and unification logic for type compatibility
 
+**Destructuring parameters** — `((a, b): (i64, i64))`, `({ x, y }: Pt)` — bind their names in
+`withParamScope`, which walks the pattern against the parameter's *annotation* with
+`walkDestructuredPattern`, the same walker `checkDestructuringDecl` uses. Statically, so it
+happens up front rather than lazily during body-checking. An **unannotated** one is skipped and
+its names stay undefined, which is the honest outcome for a free function: there is no type to
+destructure against. The exception is a **trait-impl method** (`checkTraitImplMethodBody`),
+where the trait's signature supplies the type, so `total = ({ x, y }) => x + y` binds without
+the impl writing an annotation the trait already gave. Before 07/31 that path bound identifier
+patterns only, and reported every destructured name undefined.
+
 ### `resolveTraitMethod(receiverType, methodName, requiredTrait)`
 
 (`typechecker_trait_dispatch.go`) — finds every impl whose target type matches `receiverType`

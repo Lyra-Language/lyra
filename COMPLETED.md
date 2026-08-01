@@ -10,6 +10,104 @@ Newest first.
 ## Dated log
 
 ### 07/31/26
+**Fixed: the shared AST walker never descended into a tuple index, and `pure` was unsound
+because of it.** `p.0` is a `*ast.TupleIndexExpr`, a different node from `p.x`
+(`*ast.MemberExpr`), and `ast.walkExprChildren` had no case for it. So every pass built on
+`WalkExpr` was blind to anything reached through a tuple index — and each consequence read
+as a bug in the pass that suffered it, not in the walker:
+
+- **`pure` accepted an impure call**: `pure () -> i64 => noisy().0` drew no diagnostic,
+  while the identical program through a struct field (`noisy().x`) was correctly rejected
+  with `lyra-E007` the whole time. A soundness hole in the effect system, reachable by
+  typing two characters.
+- **A closure capture was missed**, which is a *build failure*: a lambda whose only use of
+  `p` was `p.0` got no environment slot and died in lowering with `unbound identifier
+  "p"` — on a correct program, and only when no other use of `p` happened to be present.
+- **Use-before-declaration missed `b.0`**, and both "never used" warnings (`lyra-W005`
+  parameter, `lyra-W003` variable) fired on names that were plainly used.
+- Ownership last-use lost precision, which is the one harmless case: a missed last use
+  falls back to the scope-exit frame release, so it defers a free rather than double-freeing.
+
+One `case *TupleIndexExpr` fixes all of them, and no existing test changed — nothing had
+come to depend on the gap. Found while probing why higher-order signatures read badly,
+which is the second time a readability question has surfaced a correctness bug.
+
+**Fixed: `resolveType` left named types unresolved inside function types and inside a
+parameterized type's arguments.** The symptom is assignability rejecting a type against
+itself, because one side expanded the name and the other did not:
+
+```
+cannot assign (Pair(i64, i64)) -> i64 to (Pair) -> i64      // *types.LambdaType
+cannot assign Box<Pt> to Box<Pt>                            // types.ParameterizedType
+```
+
+The static-array, dynamic-array, tuple and weak cases in that switch each carry a comment
+saying this is precisely what they exist to prevent; these two composites had no case. The
+`LambdaType` one only bit *through* a function type — a plain `p: Pair` parameter always
+worked — so naming a type failed exactly where a signature is long enough to want the name,
+which is why it went unnoticed. `ParameterizedType` bit a plain parameter too. The
+`LambdaType` case returns a **copy**: it is the one type held by pointer, so resolving in
+place would rewrite the declaration every other reference shares.
+
+Both are the hazard now written up as rule 8 in `CLAUDE.md` — the same omission
+`mentionsTypeVar` had, in a third switch. Tests:
+`typechecker/tests/named_type_in_composite_test.go`,
+`checker/tuple_index_use_test.go`, and an exec test for the capture failure in
+`llvm_closure_test.go`.
+
+### 07/31/26
+**Destructuring parameters lower.** `let sum = ((a, b): (i64, i64)) -> i64 => a + b`,
+`({ x, y }: Pt)`. Parsed, collected and type-checked since long before; the backend refused
+them in two places ("destructuring parameters are not implemented yet"), which is the same
+front-end-enforces-what-the-backend-can't-build gap default params and multi-clause functions
+had. Like those, it was not a codegen project: a destructuring parameter is the **fourth
+destructuring form**, and the machinery the other three drive (`patternMatcher` →
+`aggPatternTest`/`aggPatternBind`) was already there. Routing it through the same helper is
+the point — two implementations of "does this value match this pattern" would drift.
+
+It is the **irrefutable** form, and that is *checked*, not assumed. A parameter has no failure
+path — no `else`, no next arm, and a function cannot decline to be called — but the typechecker
+happily admits a value-testing sub-pattern in one (`((1, b): (i64, i64))`, and
+`(Just(v): Opt)`, which the grammar accepts outright). Both are now refused with a message
+naming the fix, the same way `lowerDestructuringDecl` refuses `let Some(v) = m`.
+
+The two parameter-binding loops became one, `bindParameters`, and that is what made the feature
+reach every shape of function at once: a plain function, a generic specialization, a lifted
+closure (its `ir.Param` slot 0 is the environment, so the Lyra parameters carry an offset), and
+a **trait-impl method**, whose clause patterns *are* its parameters via `traitMethodLambda`.
+The trait case needed a front-end change to match: `checkTraitImplMethodBody` bound only
+identifier patterns, so `total = ({ x, y }) => x + y` reported `x` and `y` undefined. It now
+walks the pattern against the trait signature's parameter type with the same
+`walkDestructuredPattern` `withParamScope` uses — and the impl is the one place an *unannotated*
+destructured parameter works, because the signature supplies the type a free function has to
+write.
+
+**Ownership follows the rule the other pattern forms already use:** a bound name is a
+**borrow**, never framed, because it is a field copy out of a value someone else owns. For a
+bare or `ref` parameter that owner is the caller; for an `own` one it is the callee, so the
+*whole* incoming aggregate is framed for one release that `drop.go` walks into every managed
+field. That is deliberately not one release per bound name — a pattern need not name them all,
+and `({ age }: own Person)` must still free `name`. A field that escapes gets a retain for
+free: a pattern name has no declaration inside the function, so it is never last-use-eligible.
+Both directions are ASan-clean, and the refcount shape itself is pinned (exactly one release
+for the aggregate; a retain for the escaping field), because "it exits with the right code" and
+"it frees the right number of times" are different claims.
+
+Two refusals, both stated rather than incidental. A **`mut`** parameter cannot be destructured:
+its bindings would be copies, so a write could not reach the caller — which is the whole content
+of `mut`, and lowering it would be a mutable borrow that silently is not one. **`ref` is
+supported**, by loading the pointee and destructuring that: it is read-only, so copying the
+fields out is unobservable, and a destructuring parameter asked for them by value anyway. The
+load is the copy by-reference exists to avoid, which is an argument about cost, not correctness.
+An **array**-pattern parameter still fails, with the same message `let [a, b] = arr` gives —
+static-array patterns are unimplemented everywhere (`match` on one is refused too), so that is
+not a gap in this feature.
+
+Tests: `llvm_destructuring_param_test.go` — 16 exec cases across all four function shapes,
+`shared`/`ref`/`own` parameters and managed fields, every one repeated under ASan, plus the two
+refusals and the refcount-shape assertions.
+
+### 07/31/26
 **Default parameter values work.** `add(5)` against `(a: i64, b: i64 = 10)`. Like multi-clause
 functions, they were already parsed, collected, and honoured by the arity check — which counts
 required parameters and allows a call to omit the rest — so the only thing missing was that

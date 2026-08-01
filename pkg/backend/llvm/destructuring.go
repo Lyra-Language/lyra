@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/llir/llvm/ir"
+	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -102,6 +103,111 @@ func (l *lowerer) lowerDestructuringDecl(block *ir.Block, d *ast.DestructuringDe
 		return nil, err
 	}
 	return block, nil
+}
+
+// bindParameters binds a function's parameters into l.locals for its body, given the
+// entry block and the ir.Func whose Params they arrive in. offset is where the Lyra
+// parameters start in irFn.Params — 0 for a plain function, 1 for a lifted closure,
+// whose slot 0 is the environment pointer.
+//
+// A destructuring parameter is a fourth destructuring form, and it goes through the
+// same pattern machinery as the other three (patternMatcher) so that a pattern means
+// the same thing in a parameter as in a match arm. It is the *irrefutable* form —
+// `let (a, b) = …` without the `let` — because a parameter has no failure path: there
+// is no `else`, and a function cannot decline to be called.
+func (l *lowerer) bindParameters(entry *ir.Block, irFn *ir.Func, params []ast.Parameter, offset int) error {
+	for i, param := range params {
+		p := irFn.Params[i+offset]
+		byRef := paramIsByRef(param)
+		ident, isIdent := param.Pattern.(*ast.IdentifierPattern)
+
+		if isIdent && byRef {
+			// A by-reference `mut` parameter: the incoming pointer *is* the caller's
+			// storage, so bind it directly as the binding's slot. alloca+store would
+			// make the private copy this fix exists to remove. Deliberately not framed
+			// — `mut` is a borrow, so the callee releases nothing; the caller still
+			// owns the value and holds its +1.
+			l.locals[ident.Name] = p
+			l.byRefParams[p] = true
+			continue
+		}
+		if isIdent {
+			slot := entry.NewAlloca(p.Type())
+			entry.NewStore(p, slot)
+			l.locals[ident.Name] = slot
+			// An `own` parameter is consumed by the callee: the caller transferred its
+			// +1, so the callee releases it at function exit. A bare/`ref`/`mut` param
+			// is a borrow — the caller still owns it and did not retain, so it is not
+			// recorded here. Deep, matching the pass: an `own Person` carries a +1 on
+			// its string field, so the callee owes that release too.
+			if param.TypeModifier == types.Own && l.needsDrop(param.Type) {
+				l.addManagedBinding(slot, param.Type)
+			}
+			continue
+		}
+
+		val := value.Value(p)
+		if byRef {
+			if param.TypeModifier == types.Mut {
+				// The pattern's names are *copies* of the fields, so a write to one could
+				// not reach the caller — which is the whole content of `mut`. Refuse
+				// rather than lower a mutable borrow that silently is not one.
+				return fmt.Errorf("llvm: a `mut` parameter cannot be destructured — the bindings would be copies, so a write could not reach the caller; bind it plainly and destructure in the body")
+			}
+			// `ref` is read-only, so reading the fields out of the caller's storage
+			// changes nothing observable. The load is the copy by-reference exists to
+			// avoid, but a destructuring parameter asked for the fields by value anyway.
+			ptr, ok := p.Typ.(*lltypes.PointerType)
+			if !ok {
+				return fmt.Errorf("llvm: a `ref` parameter did not lower to a pointer (%s)", p.Typ)
+			}
+			val = entry.NewLoad(ptr.ElemType, p)
+		}
+		if err := l.bindDestructuredParameter(entry, param, val); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// bindDestructuredParameter binds the names of one destructuring parameter —
+// `((a, b): (i64, i64))`, `({ x, y }: Pt)` — against the incoming argument value.
+//
+// The pattern is required to be irrefutable, and that is checked rather than assumed:
+// the typechecker admits a value-testing sub-pattern here (`((1, b): (i64, i64))`),
+// which has no meaning in a parameter, so it is refused with the same reasoning
+// lowerDestructuringDecl refuses `let Some(v) = m`. A parameter has nowhere to put the
+// failure path.
+//
+// The bound names are **borrows**, deliberately not framed for release, exactly like a
+// match arm's or an `if let`'s: they are field copies read out of a value somebody else
+// owns. For a bare/`ref` parameter that owner is the caller. For an `own` one it is this
+// function, so the *whole* incoming value is framed below — one release of the aggregate,
+// which drop.go walks into each managed field, rather than a release per bound name (the
+// pattern may not even name them all).
+func (l *lowerer) bindDestructuredParameter(entry *ir.Block, param ast.Parameter, val value.Value) error {
+	if param.Type == nil {
+		// Without an annotation the typechecker never bound the pattern's names either
+		// (withParamScope skips it), so the body has already failed to resolve them.
+		return fmt.Errorf("llvm: a destructuring parameter needs a type annotation")
+	}
+	if param.TypeModifier == types.Own && l.needsDrop(param.Type) {
+		slot := entry.NewAlloca(val.Type())
+		entry.NewStore(val, slot)
+		l.addManagedBinding(slot, param.Type)
+	}
+	test, bind, err := l.patternMatcher(entry, val, param.Type)
+	if err != nil {
+		return err
+	}
+	cond, err := test(entry, param.Pattern)
+	if err != nil {
+		return err
+	}
+	if cond != nil {
+		return fmt.Errorf("llvm: a parameter pattern must match every value of its type, and this one can fail — bind the parameter plainly and `match` on it in the body")
+	}
+	return bind(entry, param.Pattern)
 }
 
 // lowerIfDestructuring lowers `if let pat = v { Then } else { Else }`: test the

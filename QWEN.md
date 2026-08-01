@@ -72,6 +72,19 @@ because each was learned from a real failure, and none is local to one package.
    `std/`, not `std/` itself. Every staleness failure this project has hit presented as a
    behaviour difference rather than as staleness, which is what makes them expensive.
 
+8. **A `switch` over AST node kinds or composite types must have a case for every one
+   that can hold a child — a missing case is silent and its symptom is remote.** This has
+   bitten four times, in three different switches, and never looked like what it was:
+   `mentionsTypeVar` missing `ParameterizedType` (a generic function emitted under its
+   bare name, failing in layout); `resolveType` missing `*LambdaType` and
+   `ParameterizedType` (assignability rejecting a type against *itself* — "cannot assign
+   `Box<Pt>` to `Box<Pt>`"); and `ast.walkExprChildren` missing `*TupleIndexExpr`, which
+   made every pass on the shared walker blind to anything reached through `p.0` — `pure`
+   silently accepted an impure `noisy().0`, a closure capturing `p` only as `p.0` failed
+   to lower, and two "never used" warnings fired on names plainly used. When adding a node
+   kind or a composite type, grep for the switches over it; when fixing one, check the
+   others in the same file, since these travel in pairs.
+
 ## Package map
 
 | Package | What it is | Depth |

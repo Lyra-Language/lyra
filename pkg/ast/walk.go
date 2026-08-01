@@ -131,6 +131,15 @@ func walkExprChildren(expr Expression, onStmt func(Statement) bool, onExpr func(
 		}
 	case *MemberExpr:
 		WalkExpr(e.Object, onStmt, onExpr)
+	case *TupleIndexExpr:
+		// `p.0` is a *different node* from `p.x` (MemberExpr) — positional access has
+		// its own kind. Omitting it here made every pass built on this walker blind to
+		// anything reached through a tuple index, and each consequence looked like a
+		// bug in the pass that suffered it: `pure` accepted an impure call written
+		// `noisy().0`, a closure capturing `p` only as `p.0` failed to lower with
+		// "unbound identifier", use-before-declaration missed `b.0`, and the
+		// unused-parameter/variable warnings fired on names that were plainly used.
+		WalkExpr(e.Object, onStmt, onExpr)
 	case *IndexExpr:
 		WalkExpr(e.Object, onStmt, onExpr)
 		WalkExpr(e.Index, onStmt, onExpr)

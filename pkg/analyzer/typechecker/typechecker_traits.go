@@ -127,9 +127,22 @@ func (tc *TypeChecker) checkTraitImplMethodBody(methodName string, implMethod as
 		if i >= len(traitSig.Parameters) {
 			break
 		}
-		if ip, ok := pat.(*ast.IdentifierPattern); ok && traitSig.Parameters[i].Type != nil {
-			tc.paramTypes[ip.Name] = traitSig.Parameters[i].Type
+		if traitSig.Parameters[i].Type == nil {
+			continue
 		}
+		if ip, ok := pat.(*ast.IdentifierPattern); ok {
+			tc.paramTypes[ip.Name] = traitSig.Parameters[i].Type
+			continue
+		}
+		// A destructuring parameter — `total = ({ x, y }) => x + y`. Its names come
+		// from the signature's type the same way withParamScope derives a free
+		// function's, and through the same walker, so a pattern binds identically in
+		// an impl method and in a plain lambda. The impl writes no annotation of its
+		// own (the trait's signature supplies it), which is what makes this reachable
+		// where an unannotated destructured parameter on a free function is not.
+		tc.walkDestructuredPattern(pat, traitSig.Parameters[i].Type, func(name string, typ types.Type) {
+			tc.paramTypes[name] = typ
+		})
 	}
 
 	// Track the enclosing return type so a `?` inside the body resolves (mirrors

@@ -403,3 +403,24 @@ let f = (MkPair((x, y)): Pair<i64, string>) -> i64 => x`
 	res := parseCollectAndCheck(t, source, false)
 	assertNoErrors(t, res)
 }
+
+// TestDestructuring_TraitImplMethodParamBindsNames: a trait-impl method clause may
+// destructure, and it is the one place a destructured parameter needs no annotation
+// — the trait's signature supplies the type the pattern is walked against. Before
+// 07/31 checkTraitImplMethodBody bound identifier patterns only, so every name in a
+// destructured clause parameter was reported undefined.
+func TestDestructuring_TraitImplMethodParamBindsNames(t *testing.T) {
+	for _, source := range []string{
+		// The receiver itself.
+		`struct Pt { x: i64, y: i64 }
+trait Summable { total: (Self) -> i64 }
+impl Summable for Pt { total = ({ x, y }) => x + y }`,
+		// A non-receiver parameter, whose type comes from the signature too.
+		`struct Pt { x: i64, y: i64 }
+trait Shift { by: (Self, (i64, i64)) -> i64 }
+impl Shift for Pt { by = (self, (dx, dy)) => self.x + dx + self.y + dy }`,
+	} {
+		res := parseCollectAndCheck(t, source, false)
+		assertNoErrors(t, res)
+	}
+}

@@ -10,7 +10,28 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
-None open. The lambda-context bug closed 07/31 (a lambda literal now takes its missing
+- **[OPEN] The typechecker recurses forever on a malformed call to a curried function** —
+  a Go stack overflow, so the whole process dies. Found 07/31 while exercising
+  destructuring parameters; unrelated to them.
+
+  ```
+  let mk = (n: i64) -> (i64) -> i64 => (a: i64) -> i64 => a + n
+  let main = () -> u8 => { let f = mk(1); u8(f(3)) }
+  ```
+
+  Both halves are needed: the same program with the block written across newlines checks
+  fine, and the `;` alone (blocks are newline-separated, so it is a syntax error) is
+  harmless without the curried function. Error recovery leaves two call nodes that infer
+  through each other — `inferIdentifierCall` → `inferLambdaCallFromType` → `inferExprType`
+  → `inferFunctionCallExpr` → `inferIdentifierCall` on the other node, forever
+  (`typechecker_functions.go:387/430/496/536`).
+
+  *Why it matters more than a bad program deserves:* this is `driver.Analyze`, so it kills
+  **`lyra-lsp`** too — and a half-typed line is exactly when the editor runs it. Whatever
+  fixes it wants a depth or in-progress guard on call inference, not a patch to the
+  recovery shape, since a cycle is reachable from any malformed AST.
+
+The lambda-context bug closed 07/31 (a lambda literal now takes its missing
 parameter and return annotations from the context it appears in — see COMPLETED.md).
 
 Before that, three closed 07/30 (borrowed-`string` use-after-free, anonymous-tuple literal

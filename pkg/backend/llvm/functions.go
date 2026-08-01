@@ -257,8 +257,8 @@ func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, 
 	// and needs no notion of defaults. The guard in lowerDirectCall is what catches a call
 	// that somehow did not get filled, loudly, rather than emitting a short argument list.
 	irParams := make([]*ir.Param, 0, len(fn.Parameters))
-	for _, param := range fn.Parameters {
-		irParam, err := l.lowerParameter(param)
+	for i, param := range fn.Parameters {
+		irParam, err := l.lowerParameter(param, i)
 		if err != nil {
 			return nil, err
 		}
@@ -281,7 +281,6 @@ func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) erro
 // framing, and the void/typed return split — three things that must not drift
 // between a generic function and a plain one.
 func (l *lowerer) defineFunctionInto(irFn *ir.Func, fn *ast.LambdaExpr, name string) error {
-	decl := &ast.VarDeclStmt{Name: name}
 	retType, err := l.lowerType(fn.ReturnType.Type)
 	if err != nil {
 		return err
@@ -289,33 +288,8 @@ func (l *lowerer) defineFunctionInto(irFn *ir.Func, fn *ast.LambdaExpr, name str
 	l.beginFunction(retType, returnSigned(fn), false)
 
 	entry := irFn.NewBlock("entry")
-	for i, param := range fn.Parameters {
-		ident, ok := param.Pattern.(*ast.IdentifierPattern)
-		if !ok {
-			return fmt.Errorf("llvm: destructuring parameters are not implemented yet (%q)", decl.Name)
-		}
-		p := irFn.Params[i]
-		if paramIsByRef(param) {
-			// A by-reference `mut` parameter: the incoming pointer *is* the caller's
-			// storage, so bind it directly as the binding's slot. alloca+store would
-			// make the private copy this fix exists to remove. Deliberately not framed
-			// — `mut` is a borrow, so the callee releases nothing; the caller still
-			// owns the value and holds its +1.
-			l.locals[ident.Name] = p
-			l.byRefParams[p] = true
-			continue
-		}
-		slot := entry.NewAlloca(p.Type())
-		entry.NewStore(p, slot)
-		l.locals[ident.Name] = slot
-		// An `own` parameter is consumed by the callee: the caller transferred its +1,
-		// so the callee releases it at function exit. A bare/`ref`/`mut` param is a
-		// borrow — the caller still owns it and did not retain, so it is not recorded
-		// here. Deep, matching the pass: an `own Person` carries a +1 on its string
-		// field, so the callee owes that release too.
-		if param.TypeModifier == types.Own && l.needsDrop(param.Type) {
-			l.addManagedBinding(slot, param.Type)
-		}
+	if err := l.bindParameters(entry, irFn, fn.Parameters, 0); err != nil {
+		return fmt.Errorf("%w (in %q)", err, name)
 	}
 
 	if _, isVoid := fn.ReturnType.Type.(types.VoidType); isVoid {
@@ -355,7 +329,11 @@ func returnSigned(fn *ast.LambdaExpr) bool {
 	return ok && IsSignedInt(p.Name)
 }
 
-func (l *lowerer) lowerParameter(param ast.Parameter) (*ir.Param, error) {
+// lowerParameter builds the ir.Param for one declared parameter. idx is its position,
+// used only to name a *destructuring* parameter: its pattern has no single name
+// (`Pattern.GetName()` is "" for a tuple or struct pattern), and an unnamed ir.Param
+// prints as a bare number that says nothing about which argument it is.
+func (l *lowerer) lowerParameter(param ast.Parameter, idx int) (*ir.Param, error) {
 	irType, err := l.lowerType(param.Type)
 	if err != nil {
 		return nil, err
@@ -363,7 +341,11 @@ func (l *lowerer) lowerParameter(param ast.Parameter) (*ir.Param, error) {
 	if paramIsByRef(param) {
 		irType = lltypes.NewPointer(irType)
 	}
-	return ir.NewParam(param.GetName(), irType), nil
+	name := param.GetName()
+	if name == "" {
+		name = fmt.Sprintf("arg%d", idx)
+	}
+	return ir.NewParam(name, irType), nil
 }
 
 func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr) (value.Value, *ir.Block, error) {

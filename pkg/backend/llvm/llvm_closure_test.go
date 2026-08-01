@@ -408,3 +408,23 @@ func TestEmit_ClosureEnvironmentDropGlue(t *testing.T) {
 		t.Errorf("a scalar-only capture set should generate no drop glue:\n%s", plain)
 	}
 }
+
+// TestExec_CaptureUsedOnlyThroughTupleIndex: a capture whose only use in the body is a
+// tuple index (`p.0`) must still be captured. It was not — `ast.walkExprChildren` had no
+// case for `*ast.TupleIndexExpr`, so the captures pass never descended into the indexed
+// object, the environment got no slot for `p`, and lowering died with "unbound identifier
+// \"p\"". A hard build failure on a correct program, and one that vanished the moment the
+// body mentioned `p` any other way, which is what kept it hidden. The walker case fixes
+// several passes at once (see checker/tuple_index_use_test.go); this is the one whose
+// symptom was a failed build rather than a missing diagnostic.
+func TestExec_CaptureUsedOnlyThroughTupleIndex(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `let mk = (p: (i64, i64)) -> () -> i64 => () -> i64 => p.0 + p.1
+	 let main = () -> u8 => {
+	   let f = mk((3, 4))
+	   u8(f())
+	 }`)
+	if got != 7 {
+		t.Errorf("exited %d; want 7", got)
+	}
+}

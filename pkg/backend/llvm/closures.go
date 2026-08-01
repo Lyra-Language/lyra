@@ -138,7 +138,7 @@ func (l *lowerer) declareClosure(fn *ast.LambdaExpr) error {
 		return err
 	}
 	params := []*ir.Param{ir.NewParam("env", lltypes.NewPointer(lltypes.I8))}
-	for _, p := range fn.Parameters {
+	for i, p := range fn.Parameters {
 		if p.DefaultValue != nil {
 			// Defaults are filled at the *call site* from the callee's declaration
 			// (typechecker/default_args.go), and an indirect call through a function
@@ -153,7 +153,7 @@ func (l *lowerer) declareClosure(fn *ast.LambdaExpr) error {
 			// than emit two disagreeing halves of one call.
 			return fmt.Errorf("llvm: a `mut`/`ref` parameter on a lambda value is not implemented yet — the function type does not carry the borrow mode")
 		}
-		irParam, err := l.lowerParameter(p)
+		irParam, err := l.lowerParameter(p, i)
 		if err != nil {
 			return err
 		}
@@ -201,23 +201,8 @@ func (l *lowerer) defineClosure(fn *ast.LambdaExpr) error {
 		}
 	}
 	// Parameters follow the environment, so their ir.Param index is offset by one.
-	for i, param := range fn.Parameters {
-		ident, ok := param.Pattern.(*ast.IdentifierPattern)
-		if !ok {
-			return fmt.Errorf("llvm: destructuring parameters are not implemented yet")
-		}
-		p := irFn.Params[i+1]
-		if paramIsByRef(param) {
-			l.locals[ident.Name] = p
-			l.byRefParams[p] = true
-			continue
-		}
-		slot := entry.NewAlloca(p.Type())
-		entry.NewStore(p, slot)
-		l.locals[ident.Name] = slot
-		if param.TypeModifier == types.Own && l.needsDrop(param.Type) {
-			l.addManagedBinding(slot, param.Type)
-		}
+	if err := l.bindParameters(entry, irFn, fn.Parameters, 1); err != nil {
+		return err
 	}
 
 	if _, isVoid := fn.ReturnType.Type.(types.VoidType); isVoid {

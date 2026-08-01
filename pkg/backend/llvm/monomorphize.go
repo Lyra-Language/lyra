@@ -80,8 +80,8 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 	// typechecker fills every omitted argument before the call is solved, so the default
 	// participates in inference like any other argument and this signature is complete.
 	irParams := make([]*ir.Param, 0, len(inst.Func.Parameters))
-	for _, param := range inst.Func.Parameters {
-		irParam, err := l.lowerParameter(param)
+	for i, param := range inst.Func.Parameters {
+		irParam, err := l.lowerParameter(param, i)
 		if err != nil {
 			return err
 		}
