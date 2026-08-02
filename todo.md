@@ -91,6 +91,79 @@ the backend's `structTypes` registry with them. Two modules may each declare a p
 - Out of scope by decision, none of it changing what a module's source looks like: package
   management, versioning, separate/incremental compilation.
 
+## Constructor syntax — juxtaposition
+
+**[DECIDED 08/02; BUILT]** `Some 42` is back alongside `Some(42)`. **One operand, never
+curried** — there is no `Rect 3 4`, because a constructor's positional payload is already a
+single anonymous tuple internally (`Rect(f64, f64)` → one `TupleType` param), so `Rect(3, 4)`
+re-reads as "Rect applied to the tuple `(3, 4)`": the parens belong to the tuple, not to a
+call, and the tree is byte-for-byte what it was.
+
+*Why now, when it was removed 06/18.* That commit is explicit that the machinery existed
+"solely to prevent a nullary constructor from greedily consuming the next statement **in the
+terminator-less grammar**" — `let c = None` ⏎ `match c {…}` parsing as `None(match …)`.
+Statements gained a terminator on 07/31, six weeks later. The sole stated reason expired.
+It also closes a real asymmetry: `Some 42` has always been legal in *pattern* position
+(`data_pattern` is `Name pattern`), so the two positions disagreed about the language's own
+constructor syntax.
+
+### `Some -1` is `Some(-1)` — application, not subtraction
+
+**[DECIDED 08/02]** Application binds tighter than binary operators, and `negation` is in the
+operand set, so `Some -1` applies `Some` to `-1`. `Some 42 ?? d` is `(Some 42) ?? d` and
+`Some a + b` is `(Some a) + b`, the ML reading.
+
+*Why this is not the Haskell ambiguity.* In Haskell `Some -1` is genuinely ambiguous because
+any identifier can be a value, so the subtraction reading has an operand. **Lyra's lexer has
+already split the cases**: `identifier` is `/(_[a-zA-Z0-9_]+|[a-z][a-zA-Z0-9_]*)/`
+(lowercase-leading) and `const_identifier` is `/[A-Z][A-Z0-9_]*/` (SCREAMING_CASE). A
+PascalCase name in expression position is therefore *always* a constructor — never a
+variable, never a constant — so the subtraction reading has nothing to bind and `MAX - 1`
+(a constant) is untouched arithmetic. The previous incarnation of the rule reached the same
+answer, keeping `negation` "so `Err -1` … still work[s]".
+
+- **[OPEN] The residual hazard: an operator overload on a data type.** `-` is overloadable
+  (`(_-_)` in a trait), so `Empty - 1` on a `data` type with a `Sub` impl now parses as
+  `Empty(-1)` rather than as subtraction. It needs all of: a `-` overload on a *sum* type, a
+  **nullary** constructor as the bare left operand, and an operand that is an atomic
+  constructor operand. Contrived, and `(Empty) - 1` still says the other thing. Worth a lint
+  if it ever bites — a `-` overload on a data type whose nullary constructor appears bare on
+  the left — rather than a grammar rule, since the grammar cannot know about the impl.
+- **[IDEA] Warn on `Some - 1` written with spaces on both sides.** Same parse as `Some -1`,
+  but it *reads* as subtraction. Not built: it has exactly one valid meaning, so a warning
+  is arguably noise. Revisit if it confuses anyone.
+
+### The operand must be atomic
+
+A juxtaposed operand is a literal, a name, a nullary constructor, a negated literal, a
+struct/array literal, or another application. A **compound** operand — a call, member access,
+index, `?`, deref, arithmetic — is parenthesized: `Ok(f(y))`, `Some(a.b)`. Those are the
+spellings they already had, so nothing regressed, but `Ok f(y)` is a parse error rather than
+sugar.
+
+That is forced, not chosen. **Every postfix form is headed by `_postfix_expr`, which reaches
+`parenthesized_expr`**, so admitting any of them as an operand also admits `Some (x)…` while
+the parser looks for the `.`/`[`/`?`/`^` — which reopens a third reading of `Some(x)` and
+tips the pre-existing parameter-position race, so `(Some(x): Maybe<i64>) -> i64` stops
+parsing as a destructured lambda parameter. No conflict entry fixes it; the reading has to
+not exist. Found by bisecting the operand set against the corpus — **the "unnecessary
+conflict" warnings are unreliable in this region**, so verify against corpus, not warnings.
+
+- **[IDEA] Admit compound operands after all**, if the parameter-position race can be settled
+  another way (restructuring `pattern` the way the 07/16 fix did, rather than by conflicts).
+  `Ok f(y)` reading as sugar would be nice; it is not worth a fragile parse.
+
+*Cost:* 5,537 → 6,606 states, `parser.c` 9.4 MB → 12.0 MB (+19% / +28%). Juxtaposition is
+genuinely expensive in an LR automaton — still an order of magnitude below the 62,663-state
+`lambda_expr` incident, but this is now the second-largest single feature in the parser.
+Re-measure with `--report-states-for-rule -` before adding anything else here.
+
+*Implementation:* the collector erases the spelling — `collectAppliedConstructorExpr` builds
+the **same named `TupleLiteralExpr`** the parenthesized form builds, so the typechecker,
+purity, ownership, exhaustiveness and the backend never learn juxtaposition exists. Proof
+that the erasure is exact: `Some None` and `Some(None)` fail with the identical
+(pre-existing) nested-generic lowering error.
+
 ## Ranges
 
 The three range grammars were unified 08/01 (`rangeBounds`, one `range_end_operator`,
