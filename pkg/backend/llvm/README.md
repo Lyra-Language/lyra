@@ -254,8 +254,9 @@ a loud error rather than miscompiled code.
 (`tuple Point(i32, i32)` → `%Point = type { i32, i32 }`, `struct Node {…}` → its field types in
 order, e.g. bool → i1, f64 → double). Like functions, types lower in **two passes** —
 `declareNamedStruct` first registers an *empty* named `NewStruct()` placeholder for every decl
-(recorded in `lowerer.structTypes`, keyed by the bare declared name, **not**
-`TupleType.GetName()`, which renders the full `Point(i32, i32)` shape), then
+(recorded in `lowerer.structTypes`, keyed by the declaration's **type key** — see
+Per-module type identity below — and **not** by `TupleType.GetName()`, which renders the full
+`Point(i32, i32)` shape), then
 `lowerTupleDef`/`lowerStructDef` fill in each one's fields. Declaring all names first makes
 declaration order irrelevant and lets a field reference another named type (`struct Line { a:
 Point }` → `%Line = type { %Point, %Point }`), including a forward reference. A
@@ -273,6 +274,35 @@ named type in a payload (`data W = Wrap(P)`) is sized by first resolving the ref
 the symbol table (`resolveForLayout`, which deep-rewrites `UnresolvedType` leaves and
 short-circuits a `shared` ref — that short-circuit is also what keeps the resolution finite,
 since a recursive cycle must pass through a `shared` field).
+
+### Per-module type identity
+
+A type name is **not** program-wide. Two modules may each declare a private `Point`, and a
+module may declare its own `Maybe` over the prelude's; the symbol table settles which
+declaration a name means with `declKey` (bare when exported, `<module>::<name>` when private or
+prelude-shadowing), and `l.structTypes` is keyed the same way through `l.typeKey(name)`. Keyed
+by bare name it was not: two same-named private structs emitted a single `%Point` carrying the
+*union* of both field lists, which clang rejected as a redefinition — loudly, but only at
+`clang` rather than as a Lyra diagnostic.
+
+**The asking position is ambient, not threaded** (`type_identity.go`). Unlike the function path's
+`funcKey(name, loc)`, a resolved `NamedStructType` reaching `lowerType` carries only a name — the
+location it was written at is long gone — and `lowerType` is reached from essentially every
+expression. What the lowerer does have is the item it is currently lowering, which belongs to
+exactly one module: `l.currentLoc` is set by `enterModuleOf` per type declaration/definition and
+inside `declareFunctionAs`/`defineFunctionInto`, plus `lowerEntry` for `main`. Those two shared
+bodies are deliberately where it sits rather than `declareFunction`/`defineFunction`, because a
+**trait method** and a **generic specialization** lower through them too and would otherwise
+resolve names against whichever module was lowered last.
+
+It is an `ast.Location` rather than a module path so the backend deals in the same currency as
+every other caller (`LookupTypeFrom`, `ownership.OwnsManaged`) and the symbol table keeps sole
+authority over the file → module step. `lookupTypeDecl(name)` is the backend's `LookupTypeFrom`;
+a bare `SymbolTable.LookupType` is wrong here because it cannot see a private declaration at all.
+The emitted type *name* keeps the declared spelling whenever the key equals it — so ordinary IR
+is byte-for-byte what it was — and is mangled only when qualified. A generic instantiation's
+symbol (`Box$i64`) is qualified the same way, which is a separate path and would otherwise still
+have collided.
 
 ### data value construction lowers
 

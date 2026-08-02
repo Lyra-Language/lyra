@@ -141,7 +141,7 @@ func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, e
 	if !isData || dt.Name != inst.Name {
 		return false
 	}
-	decl, ok := tc.symTable.LookupType(inst.Name)
+	decl, ok := tc.symTable.LookupTypeFrom(inst.Name, node.GetLocation())
 	if !ok || decl == nil || len(decl.GenericParams) != len(inst.TypeArguments) {
 		return false
 	}
@@ -231,7 +231,7 @@ func mentionsGenericParam(t types.Type, params map[string]bool) bool {
 // the recursion below exists for the other case: a field whose own value is itself a
 // partly solved construction, which the context can now complete.
 func (tc *TypeChecker) stampAggregate(node ast.Expression, values []ast.Expression, names []string, declared []types.Type, inst types.ParameterizedType) bool {
-	decl, ok := tc.symTable.LookupType(inst.Name)
+	decl, ok := tc.symTable.LookupTypeFrom(inst.Name, node.GetLocation())
 	if !ok || decl == nil || len(decl.GenericParams) != len(inst.TypeArguments) {
 		return false
 	}

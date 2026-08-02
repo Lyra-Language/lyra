@@ -64,7 +64,7 @@ func (tc *TypeChecker) moduleMemberType(m *ast.MemberExpr) (typ types.Type, fn *
 	}
 	// A namespace reference is a cross-module reference by construction, so `pub` is
 	// checked before the member is handed back.
-	if !tc.checkVisible(tc.visibilityOf(name), m.GetLocation()) {
+	if !tc.checkVisible(tc.visibilityIn(imp.Path, name), m.GetLocation()) {
 		return nil, nil, true
 	}
 	if fn, ok := tc.symTable.LookupFunctionIn(imp.Path, name); ok {
@@ -72,7 +72,7 @@ func (tc *TypeChecker) moduleMemberType(m *ast.MemberExpr) (typ types.Type, fn *
 		tc.typeTable.Set(m, t)
 		return t, fn, true
 	}
-	if decl, ok := tc.symTable.LookupType(name); ok {
+	if decl, ok := tc.symTable.LookupTypeIn(imp.Path, name); ok {
 		tc.typeTable.Set(m, decl.Type)
 		return decl.Type, nil, true
 	}
@@ -90,22 +90,75 @@ type visibility struct {
 	found    bool
 }
 
-// visibilityOf looks a top-level name up and reports where it was declared and whether
-// it is exported.
+// visibilityOf looks a bare top-level name up and reports where it was declared and
+// whether it is exported.
 func (tc *TypeChecker) visibilityOf(name string) visibility {
-	v := visibility{name: name, module: tc.symTable.DeclaringModule(name)}
-	if decl, ok := tc.symTable.LookupType(name); ok {
-		return visibility{name, v.module, decl.IsPublic, true}
+	return tc.visibilityIn(tc.symTable.DeclaringModule(name), name)
+}
+
+// visibilityIn is the same question asked of a **named** module, which is what a
+// namespace reference (`shapes.Point`) needs: the member belongs to the module the
+// import names, not to whichever module DeclaringModule happens to remember.
+//
+// The lookups are the `In` forms rather than LookupType/LookupTrait, and that is the
+// whole point of them: a private declaration lives under a module-qualified key, so a
+// bare read no longer finds it — and a visibility check that cannot see a private
+// declaration reports every one of them as *visible*, which is the failure mode this
+// function exists to prevent.
+func (tc *TypeChecker) visibilityIn(module, name string) visibility {
+	v := visibility{name: name, module: module}
+	if decl, ok := tc.symTable.LookupTypeIn(module, name); ok {
+		return visibility{name, module, decl.IsPublic, true}
 	}
-	if decl, ok := tc.symTable.LookupTrait(name); ok {
-		return visibility{name, v.module, decl.IsPublic, true}
+	if decl, ok := tc.symTable.LookupTraitIn(module, name); ok {
+		return visibility{name, module, decl.IsPublic, true}
 	}
 	// A function's `pub` lives on its *binding*, not on the lambda, so it is read from
 	// the declaring statement rather than from SymbolTable.Functions.
 	if decl, ok := tc.symTable.BindingOf(name); ok {
-		return visibility{name, v.module, decl.IsPublic, true}
+		return visibility{name, module, decl.IsPublic, true}
 	}
 	return v
+}
+
+// declVisibility reports the visibility of **the declaration a reference actually
+// resolved to**, rather than of whichever declaration shares its name.
+//
+// That distinction is the whole point. visibilityOf finds a declaration by name, through
+// DeclaringModule — a last-writer-wins map — so once two modules may each declare a
+// private `Point`, it answers for whichever was collected last: module one's `impl Size
+// for Point` reported *its own* type as "private to module two". This is the identical
+// mistake the bare-call path made before privacy became structural (see
+// pkg/modules/README.md), and the same fix — ask about the declaration in hand.
+func (tc *TypeChecker) declVisibility(name string, decl ast.AstNode, isPublic bool) visibility {
+	return visibility{
+		name:     name,
+		module:   tc.symTable.ModuleOfFile[decl.GetLocation().File],
+		isPublic: isPublic,
+		found:    true,
+	}
+}
+
+// reportPrivateType turns a failed type lookup into "not yours" when some other module
+// does declare the name, without exporting it. Reports true when it did.
+//
+// Privacy for a type is enforced **structurally**, the way it already is for a binding:
+// a private declaration lives under a module-qualified key, so a reference from another
+// module does not find it rather than finding it and being refused. That is the right
+// mechanism and, on its own, the wrong message — "unknown type" reads as a typo for a
+// name the author can see in the other file. This is the same not-found path lyra-E028
+// survives on for a bare call.
+func (tc *TypeChecker) reportPrivateType(name string, loc ast.Location) bool {
+	from := tc.symTable.ModuleOfFile[loc.File]
+	for _, module := range tc.symTable.DeclaringModulesOf(name) {
+		if module == from {
+			continue
+		}
+		tc.addErrorCode(loc, SeverityError, diag.CodePrivateAccess,
+			"%s is private to module %q — declare it `pub` there to export it", name, module)
+		return true
+	}
+	return false
 }
 
 // checkVisible reports whether a reference at loc may see name, and reports an error

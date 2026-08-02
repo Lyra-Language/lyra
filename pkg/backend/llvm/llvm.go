@@ -264,18 +264,24 @@ type lowerer struct {
 	consts              map[string]*ast.VarDeclStmt    // top-level `const` name → its declaration (its value is inlined at each use)
 	traitMethods        map[string]*ir.Func            // emitted trait-impl methods, keyed by mangled symbol
 	pendingTraitMethods []pendingTraitMethod           // declared, body not yet lowered (see traits.go)
-	structTypes         map[string]*lltypes.StructType // name → its struct type (for named tuple and struct lowering)
-	strLitCount         int                            // counter for unique string-literal global names
-	memcmp              *ir.Func                       // libc memcmp, declared lazily on first string comparison
-	memcpy              *ir.Func                       // libc memcpy, declared lazily on first string concatenation
-	write               *ir.Func                       // libc write, declared lazily on first print/println
-	snprintf            *ir.Func                       // libc snprintf, declared lazily on first numeric print
-	fmtRune             *ir.Func                       // lyra_rune_to_utf8, defined lazily on first rune print
-	utf8Decode          *ir.Func                       // lyra_utf8_decode, defined lazily on first string for-in
-	fmtI128             *ir.Func                       // lyra_i128_to_str, defined lazily on first i128/u128 print
-	mulOverflowI128     *ir.Func                       // lyra_i128_mul_overflow, defined lazily (compiler-rt's __muloti4 is not linkable on Linux)
-	newlineByte         *ir.Global                     // interned "\n" byte, for println's trailing newline
-	cStrings            map[string]*ir.Global          // interned NUL-terminated C strings (snprintf formats, bool text)
+	structTypes         map[string]*lltypes.StructType // type key → its struct type (for named tuple and struct lowering)
+
+	// currentLoc is a position inside the item being lowered, and is what resolves a
+	// named type reference to a declaration — see type_identity.go. Set per top-level
+	// item (a type definition, a function body) rather than threaded, because the
+	// resolved types reaching lowerType carry no location of their own.
+	currentLoc      ast.Location
+	strLitCount     int                   // counter for unique string-literal global names
+	memcmp          *ir.Func              // libc memcmp, declared lazily on first string comparison
+	memcpy          *ir.Func              // libc memcpy, declared lazily on first string concatenation
+	write           *ir.Func              // libc write, declared lazily on first print/println
+	snprintf        *ir.Func              // libc snprintf, declared lazily on first numeric print
+	fmtRune         *ir.Func              // lyra_rune_to_utf8, defined lazily on first rune print
+	utf8Decode      *ir.Func              // lyra_utf8_decode, defined lazily on first string for-in
+	fmtI128         *ir.Func              // lyra_i128_to_str, defined lazily on first i128/u128 print
+	mulOverflowI128 *ir.Func              // lyra_i128_mul_overflow, defined lazily (compiler-rt's __muloti4 is not linkable on Linux)
+	newlineByte     *ir.Global            // interned "\n" byte, for println's trailing newline
+	cStrings        map[string]*ir.Global // interned NUL-terminated C strings (snprintf formats, bool text)
 
 	// roundingIntrinsics caches lazily-declared llvm.{floor,ceil,round}.<width>
 	// intrinsics (rounding.go), keyed by full intrinsic name.

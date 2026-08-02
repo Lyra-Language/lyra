@@ -6,7 +6,7 @@ import (
 )
 
 func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
-	trait, ok := tc.symTable.LookupTrait(impl.TraitName)
+	trait, ok := tc.symTable.LookupTraitFrom(impl.TraitName, impl.GetLocation())
 	if !ok {
 		tc.addError(impl.GetLocation(), SeverityError,
 			"impl: unknown trait %q", impl.TraitName)
@@ -153,7 +153,7 @@ func (tc *TypeChecker) checkTraitImplMethodBody(methodName string, implMethod as
 	defer func() { tc.enclosingRet = prevRet }()
 
 	body := implMethod.Clause.Body
-	declaredReturn := tc.resolveTypeIfKnown(traitSig.ReturnType.Type)
+	declaredReturn := tc.resolveTypeIfKnown(traitSig.ReturnType.Type, body.GetLocation())
 	if declaredReturn == nil {
 		tc.inferExprType(body) // no declared return to check against; still infer
 		return

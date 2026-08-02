@@ -96,7 +96,7 @@ func matchArmsAction(analysis *docAnalysis, source string, uri lsp.DocumentURI, 
 	if !ok {
 		return nil
 	}
-	dt, ok := resolveDataType(st, analysis.symTable)
+	dt, ok := resolveDataType(st, analysis.symTable, ast.Location{})
 	if !ok {
 		return nil
 	}
@@ -142,7 +142,7 @@ func structFieldsAction(analysis *docAnalysis, source string, uri lsp.DocumentUR
 		return nil
 	}
 
-	decl, ok := analysis.symTable.Types[s.Name]
+	decl, ok := analysis.symTable.LookupTypeFrom(s.Name, s.GetLocation())
 	if !ok {
 		return nil
 	}
@@ -323,7 +323,7 @@ func deleteLinesRange(source string, loc ast.Location) lsp.Range {
 
 // resolveDataType returns the DataType underlying t, following an UnresolvedType
 // name through the symbol table. Returns (_, false) when t is not a data type.
-func resolveDataType(t types.Type, symTable *symbols.SymbolTable) (types.DataType, bool) {
+func resolveDataType(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) (types.DataType, bool) {
 	if t == nil {
 		return types.DataType{}, false
 	}
@@ -331,7 +331,7 @@ func resolveDataType(t types.Type, symTable *symbols.SymbolTable) (types.DataTyp
 		return dt, true
 	}
 	if u, ok := t.(types.UnresolvedType); ok {
-		if decl, exists := symTable.Types[u.Name]; exists {
+		if decl, exists := symTable.LookupTypeFrom(u.Name, loc); exists {
 			if dt, ok := decl.Type.(types.DataType); ok {
 				return dt, true
 			}

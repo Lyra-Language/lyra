@@ -103,12 +103,18 @@ func (c *Collector) recordModuleBindings(modulePath string, stmts []ast.AstNode)
 		switch s := stmt.(type) {
 		case *ast.ImportStmt:
 			c.table.Imports[modulePath] = append(c.table.Imports[modulePath], importBinding(s))
+		// A type or trait is already in its module's scope: RegisterType/RegisterTrait
+		// put it there during the walk, because their key (declKey) is computed from
+		// that scope and so cannot wait until the file is finished. Only the export is
+		// left to do here, and it is the same export a `pub` binding gets — a private
+		// declaration stays out of the global scope, which is what lets two modules each
+		// declare a `Point`.
 		case *ast.TypeDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
-			c.defineInModule(moduleScope, s)
+			c.exportToGlobal(modulePath, s, s.IsPublic)
 		case *ast.TraitDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
-			c.defineInModule(moduleScope, s)
+			c.exportToGlobal(modulePath, s, s.IsPublic)
 		case *ast.VarDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
 			c.defineInModule(moduleScope, s)
@@ -281,7 +287,7 @@ func (c *Collector) reclassifyPattern(pat ast.Pattern) ast.Pattern {
 	switch p := pat.(type) {
 	case *ast.DataPattern:
 		p.Pattern = c.reclassifyPattern(p.Pattern)
-		if decl, ok := c.table.LookupType(p.Name); ok {
+		if decl, ok := c.table.LookupTypeFrom(p.Name, p.GetLocation()); ok {
 			if _, isStruct := decl.Type.(types.NamedStructType); isStruct {
 				if sp, ok := p.Pattern.(*ast.StructPattern); ok {
 					sp.Name = p.Name

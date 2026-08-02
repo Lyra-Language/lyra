@@ -6,7 +6,6 @@ import (
 	lltypes "github.com/llir/llvm/ir/types"
 
 	"github.com/Lyra-Language/lyra/pkg/types"
-	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
 // Generic *types* are monomorphized the same way generic functions are — one
@@ -56,7 +55,7 @@ func (l *lowerer) resolveInstantiation(t types.Type) (types.Type, error) {
 	if _, err := l.lowerParameterizedType(p); err != nil {
 		return t, err
 	}
-	decl, ok := l.res.SymbolTable.LookupType(p.Name)
+	decl, ok := l.lookupTypeDecl(p.Name)
 	if !ok {
 		return t, fmt.Errorf("llvm: undefined generic type %q", p.Name)
 	}
@@ -66,7 +65,7 @@ func (l *lowerer) resolveInstantiation(t types.Type) (types.Type, error) {
 			subst[gp.Name] = p.TypeArguments[i]
 		}
 	}
-	name := typetable.TypeSymbol(p.Name, p.TypeArguments)
+	name := l.instantiationSymbol(p)
 	switch inst := substituteTypeVars(decl.Type, subst).(type) {
 	case types.NamedStructType:
 		inst.Name = name
@@ -88,14 +87,14 @@ func (l *lowerer) resolveInstantiation(t types.Type) (types.Type, error) {
 func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Type, error) {
 	// A `shared`/dynamic-array flavor was already handled by lowerType before it got
 	// here, so what remains is the by-value layout of this instantiation.
-	name := typetable.TypeSymbol(p.Name, p.TypeArguments)
+	name := l.instantiationSymbol(p)
 	if st, ok := l.structTypes[name]; ok {
 		return st, nil
 	}
 	if l.res.SymbolTable == nil {
 		return nil, fmt.Errorf("llvm: cannot instantiate %s without a symbol table", p)
 	}
-	decl, ok := l.res.SymbolTable.LookupType(p.Name)
+	decl, ok := l.lookupTypeDecl(p.Name)
 	if !ok {
 		return nil, fmt.Errorf("llvm: undefined generic type %q", p.Name)
 	}
@@ -118,7 +117,7 @@ func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Typ
 	}
 
 	// Declare before defining: a recursive reference below must find this.
-	if err := l.declareNamedStruct(name); err != nil {
+	if err := l.declareNamedStruct(name, name); err != nil {
 		return nil, err
 	}
 	st := l.structTypes[name]

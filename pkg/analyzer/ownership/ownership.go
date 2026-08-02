@@ -213,36 +213,36 @@ func IsManaged(t types.Type) bool {
 // (whose needsDrop delegates here). They must agree exactly: the pass decides where a
 // +1 is minted and the backend decides where one is released, so any divergence is
 // either a leak or a double free.
-func OwnsManaged(t types.Type, symTable *symbols.SymbolTable) bool {
+func OwnsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) bool {
 	if t == nil {
 		return false
 	}
 	if IsManaged(t) {
 		return true
 	}
-	switch v := resolveNamedType(t, symTable).(type) {
+	switch v := resolveNamedType(t, symTable, loc).(type) {
 	case *types.ConstrainedType:
 		// A newtype owns exactly what its base owns. IsManaged above already
 		// stripped a *direct* wrapper; this case catches the one that arrives as
 		// an UnresolvedType — how a field or element typed `Email` is recorded.
-		return OwnsManaged(v.Type, symTable)
+		return OwnsManaged(v.Type, symTable, loc)
 	case types.NamedStructType:
 		return slices.ContainsFunc(v.Fields, func(f types.StructField) bool {
-			return OwnsManaged(f.Type, symTable)
+			return OwnsManaged(f.Type, symTable, loc)
 		})
 	case types.TupleType:
 		return slices.ContainsFunc(v.Elements, func(e types.Type) bool {
-			return OwnsManaged(e, symTable)
+			return OwnsManaged(e, symTable, loc)
 		})
 	case types.DataType:
 		return slices.ContainsFunc(v.Constructors, func(c types.DataTypeConstructor) bool {
 			return slices.ContainsFunc(c.FieldTypes(), func(f types.Type) bool {
-				return OwnsManaged(f, symTable)
+				return OwnsManaged(f, symTable, loc)
 			})
 		})
 	case types.StaticArrayType:
 		// A `[N]T` owns whatever T owns, once per element.
-		return OwnsManaged(v.ElementType, symTable)
+		return OwnsManaged(v.ElementType, symTable, loc)
 	case types.ParameterizedType:
 		// One instantiation of a generic type owns what its *substituted* contents
 		// own: `Box<string>` owns a string, `Box<i64>` owns nothing — so the question
@@ -258,7 +258,7 @@ func OwnsManaged(t types.Type, symTable *symbols.SymbolTable) bool {
 		// never. That is precisely the drift this predicate exists to prevent, and it
 		// is the generic-function lesson again: a decision made against an
 		// un-substituted generic is wrong at a managed type argument.
-		return parameterizedOwnsManaged(v, symTable)
+		return parameterizedOwnsManaged(v, symTable, loc)
 	}
 	return false
 }
@@ -271,11 +271,11 @@ func OwnsManaged(t types.Type, symTable *symbols.SymbolTable) bool {
 // finite: a recursive type must break its cycle with a `shared` (or `weak`) field
 // (lyra-E014), and both are managed outright — IsManaged answers them before this
 // recurses — so a cycle is always cut before it repeats.
-func parameterizedOwnsManaged(p types.ParameterizedType, symTable *symbols.SymbolTable) bool {
+func parameterizedOwnsManaged(p types.ParameterizedType, symTable *symbols.SymbolTable, loc ast.Location) bool {
 	if symTable == nil {
 		return false
 	}
-	decl, ok := symTable.LookupType(p.Name)
+	decl, ok := symTable.LookupTypeFrom(p.Name, loc)
 	if !ok {
 		return false
 	}
@@ -285,18 +285,18 @@ func parameterizedOwnsManaged(p types.ParameterizedType, symTable *symbols.Symbo
 			subst[gp.Name] = p.TypeArguments[i]
 		}
 	}
-	return OwnsManaged(substituteTypeVars(decl.Type, subst), symTable)
+	return OwnsManaged(substituteTypeVars(decl.Type, subst), symTable, loc)
 }
 
 // resolveNamedType resolves an UnresolvedType to the declaration's actual type,
 // carrying the reference's own allocation flavor across; any other type is returned
 // unchanged. Shallow by design — OwnsManaged recurses field by field anyway.
-func resolveNamedType(t types.Type, symTable *symbols.SymbolTable) types.Type {
+func resolveNamedType(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) types.Type {
 	u, ok := t.(types.UnresolvedType)
 	if !ok || symTable == nil {
 		return t
 	}
-	decl, ok := symTable.LookupType(u.Name)
+	decl, ok := symTable.LookupTypeFrom(u.Name, loc)
 	if !ok {
 		return t
 	}
@@ -586,7 +586,7 @@ func (a *analyzer) sharedDataName(e ast.Expression) (string, bool) {
 		return v.Name, true
 	case types.UnresolvedType:
 		if a.symTable != nil {
-			if decl, ok := a.symTable.LookupType(v.Name); ok {
+			if decl, ok := a.symTable.LookupTypeFrom(v.Name, e.GetLocation()); ok {
 				if dt, ok := decl.Type.(types.DataType); ok {
 					return dt.Name, true
 				}
@@ -701,7 +701,7 @@ func collectNames(block *ast.BlockExpr, into map[string]bool) {
 // use-after-free and not merely a leak (see the package doc).
 func (a *analyzer) ownsManaged(e ast.Expression) bool {
 	t, ok := a.typeOf(e)
-	return ok && OwnsManaged(t, a.symTable)
+	return ok && OwnsManaged(t, a.symTable, e.GetLocation())
 }
 
 // typeOf is the pass's single type lookup: the recorded type of an expression with
@@ -807,7 +807,7 @@ func (a *analyzer) bindingOwnsManaged(vds *ast.VarDeclStmt) bool {
 		// the enclosing function's type variables inside a generic body — substitute
 		// for the instantiation being analyzed (a `let copy: t = x` is managed exactly
 		// when this instantiation's `t` is).
-		return OwnsManaged(substituteTypeVars(vds.Type, a.subst), a.symTable)
+		return OwnsManaged(substituteTypeVars(vds.Type, a.subst), a.symTable, vds.GetLocation())
 	}
 	return a.ownsManaged(vds.Value)
 }

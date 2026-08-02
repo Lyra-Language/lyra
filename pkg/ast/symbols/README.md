@@ -22,12 +22,42 @@ Lexical `SymbolTable` with a tree of `Scope` nodes:
   checker's `scopeFrames.forLambda` for lambdas/free functions (trait-method clauses still
   reconstruct by AST walk — they have no recorded scope; see `todo.md` FP/Imperative #3, Phase
   2).
-**Every read of these maps goes through `LookupType`/`LookupTrait`/`LookupFunction`, never by
-indexing them directly** — a choke point, not sugar: with modules, which declaration a name
-means depends on *which module is asking*, and a lookup scattered over 37 sites in 7 packages
-cannot be taught that. Registration rejects a duplicate across modules (a type always did;
-`RegisterFunction` used to overwrite silently, which with modules meant a program built against
-whichever module was collected last), and the message names the other file.
+**Every read of these maps goes through the `Lookup*` accessors, never by indexing them
+directly** — a choke point, not sugar: with modules, which declaration a name means depends on
+*which module is asking*, and a lookup scattered over 37 sites in 7 packages cannot be taught
+that. Registration rejects a duplicate across modules (a type always did; `RegisterFunction`
+used to overwrite silently, which with modules meant a program built against whichever module
+was collected last), and the message names the other file.
+
+**All three maps are keyed by `declKey`**, not by bare name: a declaration keeps its own name
+when it is `pub` (or in the entry module), and gets `<module>::<name>` when it is **private**,
+or when it takes a name the prelude exports — whatever its visibility, so the prelude keeps the
+bare key for every module that did not shadow it. That is one rule for bindings, types and
+traits (`FunctionKey` and `TypeKey` are two names for it), because "whose declaration is this"
+does not depend on what kind of declaration it is, and a second copy of the rule is exactly the
+drift hazard 4 warns about. Types and traits joined it on 08/01; before that their namespace
+was program-wide, so two modules could not each declare a `Point` and a shadowed prelude type
+was replaced for the entire program.
+
+Which accessor a site wants is therefore **not a style choice**:
+
+- `LookupTypeFrom` / `LookupTraitFrom` / `LookupFunctionFrom(name, loc)` — resolve as the file
+  at `loc` sees it. This is what almost every pass wants. A bare read from inside a module that
+  declares its own `Point` returns *another* module's.
+- `LookupTypeIn` / `LookupTraitIn` / `LookupFunctionIn(module, name)` — resolve as a member of a
+  named module (`shapes.Point`). These find a **private** declaration deliberately: the
+  visibility check needs it in order to refuse it, and a lookup that hid it would report "no
+  such member" for a name the module really does declare.
+- `LookupType` / `LookupTrait` / `LookupFunction(name)` — the bare key only, i.e. a name that is
+  program-wide. Correct for a caller that genuinely has no asking position.
+
+A private declaration lands only in its own module's scope, so privacy is **structural** rather
+than a post-lookup check — a reference from elsewhere does not find it. The cost is the message:
+"unknown type" reads as a typo for a name the author can see in another file, so the typechecker
+recovers `lyra-E028` on the not-found path (`reportPrivateType`, via `DeclaringModulesOf`).
+`RegisterType`/`RegisterTrait` write the module scope **before** computing the key, because the
+key is read out of that scope and types are registered mid-walk — there is no later point at
+which it is already populated.
 
 - `SymbolTable.Types` / `.Functions` — flat maps for fast global lookup by name; `.Functions`
   (and its `.PureFuncs` subset, the explicitly-`pure`-declared ones) is populated only for

@@ -75,12 +75,10 @@ lowers; `CLAUDE.md`'s `pkg/backend/llvm` section is the current inventory. Settl
 Resolution, per-module scoping, `pub`, the implicit prelude, per-module name resolution and
 symbol mangling all landed 07/30.
 
-- **[OPEN] Types and traits share one program-wide namespace.** Two modules cannot declare
-  unrelated same-named types, and a user type shadowing a prelude type replaces it for the
-  whole program. Both need the same thing: per-module type *identity* end to end — mangled
-  type symbols plus a location-aware `LookupType`. `SymbolTable.Types` is keyed by bare
-  name today, and so is the backend's registry of emitted LLVM struct types, which resolves
-  a type reference carrying no location to say who is asking.
+Types and traits got per-module identity 08/01 — `SymbolTable.Types`/`.Traits` are keyed
+by the same `declKey` bindings already used, the typechecker's `resolvedTypes` cache and
+the backend's `structTypes` registry with them. Two modules may each declare a private
+`Point`, and a prelude type shadow no longer reaches another module. See COMPLETED.md.
 - Out of scope by decision, none of it changing what a module's source looks like: package
   management, versioning, separate/incremental compilation.
 
@@ -117,14 +115,19 @@ enclosing return.
 - **[OPEN] Shadowing a marked canonical type gives a useless diagnostic.** Now that
   `std/prelude.lyra` marks its types `@builtin(Maybe)`/`@builtin(Result)`, the marker
   claims the kind and `resolveCanonicalTypes` leaves a same-named *unmarked* type "an
-  ordinary type" — correct in itself. But a user's `data Maybe` shadows the prelude's
-  **program-wide** (types share one namespace), so the reachable outcome is a program
-  whose `?` reports `` `?` operand must be a Result or Maybe, got Maybe ``. The rule is
-  right and the message is indefensible. Options: have a shadowing declaration inherit
-  the kind it shadows, or say what is actually wrong — "`Maybe` here is your own
-  declaration, not the prelude's canonical one; mark it `@builtin(Maybe)` or rename it".
-  Note the fallback's own comment still reads "which is every program today (there is no
-  prelude)"; that premise is what changed.
+  ordinary type" — correct in itself. So a module declaring its own `data Maybe` and then
+  using `?` on it gets `` `?` operand must be a Result or Maybe, got Maybe ``. The rule is
+  right and the message is still poor. Options: have a shadowing declaration inherit the
+  kind it shadows, or say what is actually wrong — "`Maybe` here is your own declaration,
+  not the prelude's canonical one; mark it `@builtin(Maybe)` or rename it". Note the
+  fallback's own comment still reads "which is every program today (there is no prelude)";
+  that premise is what changed.
+
+  **Scope narrowed 08/01.** This used to reach a module that never mentioned `Maybe` — a
+  type shadow was program-wide, so *another* module's `?` reported the message about a
+  declaration it had never seen, which is what made it indefensible. Per-module type
+  identity confined it to the module that makes the shadow; what is left is a bad message
+  in the one place the author actually did something worth explaining.
 ### 2. Checked arithmetic by default; wraparound explicit
 
 Trap-on-overflow covers all integer arithmetic, `wrapping_*`/`saturating_*` are the lowered

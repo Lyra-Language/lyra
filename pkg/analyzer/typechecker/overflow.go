@@ -149,7 +149,7 @@ func (tc *TypeChecker) checkIntegerLiteralRange(varName string, expr ast.Express
 		if hasRangeConstraint(ct) {
 			return
 		}
-		targetType = tc.resolveTypeIfKnown(ct.Type)
+		targetType = tc.resolveTypeIfKnown(ct.Type, expr.GetLocation())
 	}
 	toP, ok := targetType.(types.PrimitiveType)
 	if !ok || !isAnyConcreteInt(toP.Name) {

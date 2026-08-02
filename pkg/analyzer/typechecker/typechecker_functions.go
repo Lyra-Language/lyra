@@ -100,7 +100,7 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 		// with no `-> T`). The body is still walked below so body-level
 		// diagnostics surface; only the return-type comparison is skipped.
 		if declaredReturn != nil {
-			declaredReturn = tc.resolveTypeIfKnown(declaredReturn)
+			declaredReturn = tc.resolveTypeIfKnown(declaredReturn, lambda.GetLocation())
 		}
 
 		// An owned return (bare or `own`) transfers the value to the caller, so its
@@ -415,7 +415,7 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 				"%s: expected %d to %d argument(s), got %d",
 				calleeName, required, total, got)
 		}
-		return tc.resolveTypeIfKnown(lambda.ReturnType.Type)
+		return tc.resolveTypeIfKnown(lambda.ReturnType.Type, lambda.GetLocation())
 	}
 
 	// A parameter's declared type is the argument's context, which for a lambda literal
@@ -472,7 +472,7 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 	// so an unresolved result compared unequal to the same type resolved from an
 	// annotation — `let p: Point = mk()` reported "cannot assign Point to Point",
 	// and the newtype analogue made a newtype unusable across any call boundary.
-	return tc.resolveTypeIfKnown(lambda.ReturnType.Type)
+	return tc.resolveTypeIfKnown(lambda.ReturnType.Type, lambda.GetLocation())
 }
 
 // inferLambdaCallFromType validates a call against a LambdaType (used for
@@ -496,7 +496,7 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 				"%s: expected %d to %d argument(s), got %d",
 				calleeName, required, total, got)
 		}
-		return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type)
+		return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type, call.GetLocation())
 	}
 
 	for i, arg := range call.Arguments {
@@ -515,7 +515,7 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 		}
 	}
 
-	return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type)
+	return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type, call.GetLocation())
 }
 
 // inferFunctionCallExpr checks argument count and types at a call site and
@@ -562,7 +562,7 @@ func (tc *TypeChecker) inferFunctionCallExpr(call *ast.FunctionCallExpr) types.T
 // drives dispatch and the whole parameter list — including Self — lines up
 // directly against call.Arguments.
 func (tc *TypeChecker) inferTraitMethodPathCall(path *ast.TraitMethodPathExpr, call *ast.FunctionCallExpr) types.Type {
-	if _, ok := tc.symTable.LookupTrait(path.TraitName); !ok {
+	if _, ok := tc.symTable.LookupTraitFrom(path.TraitName, path.GetLocation()); !ok {
 		tc.addError(call.GetLocation(), SeverityError, "unknown trait %q", path.TraitName)
 		return nil
 	}
@@ -794,7 +794,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// struct; trait dispatch below keeps the original objType, which for a
 	// generic receiver is the ParameterizedType still carrying the type
 	// arguments the unifier needs.
-	if f, ok := structFieldByName(tc.resolveGenericAggregate(objType), methodName); ok {
+	if f, ok := structFieldByName(tc.resolveGenericAggregate(objType, member.Object.GetLocation()), methodName); ok {
 		tc.typeTable.Set(member, f.Type)
 		if lambdaType, ok := f.Type.(*types.LambdaType); ok {
 			return tc.inferLambdaCallFromType(methodName, lambdaType, call)

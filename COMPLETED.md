@@ -10,6 +10,90 @@ Newest first.
 ## Dated log
 
 ### 08/01/26
+**Types and traits have per-module identity.** Two modules can each declare a private
+`Point`, and a module declaring its own `Maybe` no longer takes the prelude's away from
+everybody else. Both were one missing piece, and `todo.md` had said so: their namespace was
+program-wide *by construction*, because `SymbolTable.Types` was keyed by bare name.
+
+**Nothing new was invented — types were made to follow the rule bindings already had.**
+`declKey` (the old `functionKey`) gives a declaration its own name when it is `pub` or in
+the entry module, and `<module>::<name>` when it is private, or when it takes a prelude
+name whatever its visibility — so the prelude keeps the bare key for every module that did
+not shadow it. `FunctionKey` and `TypeKey` are now two names for that one function rather
+than two rules that happen to agree, which is hazard 4's whole point: they would have to
+agree anyway, since "whose declaration is this" does not depend on the kind of declaration.
+`noteShadowed` consequently does nothing but record the warning; withdrawing the prelude's
+entry was only ever a way to make one `Maybe` fit in a namespace that had room for one.
+
+**The reachable symptom was a diagnostic about a declaration you had never seen.** A module
+that never mentioned `Maybe` lost the canonical one the moment *another* module shadowed
+it, and its `?` reported `` `?` operand must be a Result or Maybe, got Maybe ``. `todo.md`
+called that message indefensible; it was the namespace, not the message. What is left is
+the same message in the module that actually did shadow — poor, but about something its
+author did (todo.md, Pit of Success #1).
+
+**Three things had to move with the key, and each was a separate way to be wrong.**
+Registration writes the module scope *before* computing the key (the key is read out of
+that scope, and unlike functions — registered in `Finish`, after every file — types
+register mid-walk, so there is no later point at which it is populated) and no longer
+defines into the global scope at all: publication is `exportToGlobal`, the same path a
+`pub` binding takes, which is what stops a private type competing for a program-wide name.
+The typechecker's `resolvedTypes` cache was keyed by bare name, which would have let the
+first module to mention a type answer for every other one — precisely the hazard that had
+already kept the *visibility* check out of that cache. And the backend's `structTypes`
+registry needed the same key.
+
+**The backend could not thread a location, so it carries one.** `funcKey(name, loc)` works
+because a call site is a node; a resolved `NamedStructType` reaching `lowerType` is just a
+name, and `lowerType` is reached from nearly every expression. The lowerer therefore holds
+`currentLoc`, set per type declaration/definition and inside `declareFunctionAs` /
+`defineFunctionInto`. **Those two shared bodies, not `declareFunction`/`defineFunction`** —
+a trait method and a generic specialization lower through them too, and putting it on the
+outer pair left those resolving names against whichever module was lowered last. A location
+rather than a module path so the backend deals in the same currency as everything else and
+the symbol table keeps sole authority over file → module.
+
+**Measured, not predicted:** two same-named private structs emitted a single `%Point = type
+{ i64, i64, i64 }` — the union of both field lists — which clang rejected as a redefinition.
+Loud, but at clang rather than as a Lyra diagnostic. A generic instantiation's symbol
+(`Box$i64`) is derived from the bare name and is a separate path, so it would still have
+collided after the plain-declaration fix; it is qualified too.
+
+**Privacy for types became structural, and took the message down with it.** A private
+declaration simply is not found from another module, exactly as a private binding is not in
+the global scope. That is the right mechanism and, alone, the wrong message: "unknown type"
+reads as a typo for a name plainly visible in another file. `lyra-E028` is recovered on the
+not-found path (`reportPrivateType`, via the new `DeclaringModulesOf`, which is the exact
+form of the question `ModuleOf` answers approximately).
+
+**One bug this surfaced immediately, and it was the old one wearing a new hat.** `impl Size
+for Point` in module one reported *its own* `Point` as "private to module two". `visibilityOf`
+found a declaration by name through `DeclaringModule` — last-writer-wins — so with two
+private `Point`s it answered for whichever was collected last. That is the identical mistake
+the bare-**call** path made before privacy became structural (asking whether *some*
+declaration of that name was private, rather than whether *the one this reference resolved
+to* was visible), and it has the same fix: `declVisibility` asks about the declaration in
+hand. A namespace member asks `visibilityIn(imp.Path, …)`, about the module the import names.
+
+**A map key is not a source name.** Two user-facing readers iterated `SymbolTable.Types` and
+used the *key*: LSP completion would have offered `one::Point` as a type to type, and
+`captures` would have recorded it as a declared name while missing the real one. Both read
+`decl.Name` now. Worth stating as a rule (CLAUDE.md hazard 4) because the map is the obvious
+place to enumerate declarations from and the keys look like names until one is qualified.
+
+**Coverage.** `pkg/modules/type_identity_test.go` pins the three front-end cases;
+`pkg/backend/llvm/llvm_type_identity_test.go` compiles and *runs* four two-module programs
+whose same-named private types have deliberately different shapes and field orders, so a
+collision cannot accidentally produce the right answer. The LSP tests are honest about being
+smoke tests: the server analyses one document through `driver.Analyze`, which builds a unit
+with no `Path`, so the collector sees module `""` and a qualified key never arises there
+yet — reverting the fix still passes them. They become load-bearing when the server resolves
+a real import graph. Whole suite green on macOS and on Linux (`./asan.sh ./...`), ASan clean.
+
+**Still program-wide:** two modules exporting the same type name is an error, as it is for
+two exported functions — a bare reference could mean either, so it is a genuine clash rather
+than something privacy resolves.
+
 **A written generic parameter list is authoritative.** `let mismatch<t> = (a: u) -> u => a`
 compiled and ran: it declares `t`, is generic in `u`, and nothing reconciled the two. The
 list is now checked in both directions — a signature variable absent from a written list is

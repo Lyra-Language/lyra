@@ -579,7 +579,7 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 		}
 
 	case *ast.DataPattern:
-		dt, ok := tc.resolveToDataType(t)
+		dt, ok := tc.resolveToDataType(t, p.GetLocation())
 		if !ok {
 			tc.addError(p.GetLocation(), SeverityError,
 				"cannot destructure %s with a data pattern", t)
@@ -686,12 +686,12 @@ func structFields(t types.Type) ([]types.StructField, bool) {
 // All three aggregate shapes go through one function rather than a resolver each: they
 // differ only in which member list gets substituted, and the alternative is three
 // copies that can disagree about what an instantiation means.
-func (tc *TypeChecker) resolveGenericAggregate(t types.Type) types.Type {
+func (tc *TypeChecker) resolveGenericAggregate(t types.Type, loc ast.Location) types.Type {
 	p, ok := t.(types.ParameterizedType)
 	if !ok {
 		return t
 	}
-	decl, ok := tc.symTable.LookupType(p.Name)
+	decl, ok := tc.symTable.LookupTypeFrom(p.Name, loc)
 	if !ok {
 		return t
 	}
@@ -1187,22 +1187,38 @@ func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
 func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 	switch tt := t.(type) {
 	case types.UnresolvedType:
-		if cached, ok := tc.resolvedTypes[tt.Name]; ok {
+		// **The cache is keyed by the resolved identity, not by the bare name.** Two
+		// modules may each declare a private `Point`, and a module may declare its own
+		// `Maybe` over the prelude's; keyed by name, whichever resolved first would
+		// answer for every other module — the same hazard that kept the visibility check
+		// below out of the cache when the key was a bare name.
+		key := tc.symTable.TypeKey(tt.Name, loc)
+		if cached, ok := tc.resolvedTypes[key]; ok {
 			return types.WithAllocation(cached, tt.Allocation)
 		}
-		decl, ok := tc.symTable.LookupType(tt.Name)
+		decl, ok := tc.symTable.LookupTypeFrom(tt.Name, loc)
 		if ok {
 			// A type named from another module must be exported. Checked here rather
 			// than at each annotation site because every named type reaches its
-			// declaration through this one function. Deliberately *not* cached in
-			// resolvedTypes: visibility depends on where the reference is, and the
-			// cache is keyed only by name, so caching it would let the first
-			// module to mention a type decide the answer for every other one.
-			tc.checkVisible(tc.visibilityOf(tt.Name), loc)
+			// declaration through this one function. Still deliberately *not* cached:
+			// the key confines a private declaration to its own module, but a `pub`
+			// one shares the bare key with every module that can see it, and only the
+			// reference's own location says whether this one may.
+			//
+			// Asked of `decl` — the declaration this reference resolved to — and not by
+			// name: see declVisibility.
+			tc.checkVisible(tc.declVisibility(tt.Name, decl, decl.IsPublic), loc)
 		}
 		if !ok {
+			// A name that resolves to nothing here may still be *someone's* — a private
+			// declaration in another module, which the key deliberately hides. Saying so
+			// beats "unknown type", which reads as a typo.
+			if tc.reportPrivateType(tt.Name, loc) {
+				tc.resolvedTypes[key] = t
+				return t
+			}
 			tc.addError(loc, SeverityError, "unknown type %q", t)
-			tc.resolvedTypes[tt.Name] = t // cache unresolved itself so the error fires only once
+			tc.resolvedTypes[key] = t // cache unresolved itself so the error fires only once
 			return t
 		}
 		// **Resolve what the declaration holds, too.** One hop is not enough once
@@ -1214,7 +1230,7 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 		// A struct, data or tuple declaration is unaffected — the recursive call lands
 		// on the switch's default and returns as-is — so this only walks alias chains,
 		// which is exactly what it is for.
-		if tc.resolvingTypes[tt.Name] {
+		if tc.resolvingTypes[key] {
 			// `type A = B` with `type B = A`. Report once and hand back the unresolved
 			// name: the caller's own diagnostic ("unknown type", a mismatch) then reads
 			// normally, and, more to the point, we do not recurse until the stack ends
@@ -1222,14 +1238,18 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 			// prevent, one level up in the type world.
 			tc.addError(loc, SeverityError,
 				"type alias %q is circular: its definition leads back to itself", tt.Name)
-			tc.resolvedTypes[tt.Name] = t
+			tc.resolvedTypes[key] = t
 			return t
 		}
-		tc.resolvingTypes[tt.Name] = true
-		resolved := tc.resolveType(decl.Type, loc)
-		delete(tc.resolvingTypes, tt.Name)
+		tc.resolvingTypes[key] = true
+		// Resolve the declaration's own type **from the declaration's location**, not
+		// from the reference's: an alias in module A pointing at A's private `Pt` is
+		// A's to resolve, and continuing to ask as the referencing module would look
+		// for a `Pt` that module cannot see.
+		resolved := tc.resolveType(decl.Type, decl.GetLocation())
+		delete(tc.resolvingTypes, key)
 
-		tc.resolvedTypes[tt.Name] = resolved
+		tc.resolvedTypes[key] = resolved
 		return types.WithAllocation(resolved, tt.Allocation)
 	case types.StaticArrayType:
 		// Resolve the element type too, so a named element (`[3]Node`) compares
@@ -1318,38 +1338,42 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 // a duplicate "unknown type" diagnostic (e.g. the return-type annotation in
 // checkLambdaBody, where the parameter-annotation pass may have already emitted
 // the error or where the caller intends to report a different error).
-func (tc *TypeChecker) resolveTypeIfKnown(t types.Type) types.Type {
+// loc is the *referencing* location, for the same reason resolveType takes one: which
+// declaration a name means depends on which module is asking, so a name-only resolution
+// silently picks another module's type when two declare one privately.
+func (tc *TypeChecker) resolveTypeIfKnown(t types.Type, loc ast.Location) types.Type {
 	switch tt := t.(type) {
 	case types.UnresolvedType:
-		if cached, ok := tc.resolvedTypes[tt.Name]; ok {
+		key := tc.symTable.TypeKey(tt.Name, loc)
+		if cached, ok := tc.resolvedTypes[key]; ok {
 			return types.WithAllocation(cached, tt.Allocation)
 		}
-		if decl, ok := tc.symTable.LookupType(tt.Name); ok {
+		if decl, ok := tc.symTable.LookupTypeFrom(tt.Name, loc); ok {
 			return types.WithAllocation(decl.Type, tt.Allocation)
 		}
 		return t
 	case types.StaticArrayType:
 		if tt.ElementType != nil {
-			tt.ElementType = tc.resolveTypeIfKnown(tt.ElementType)
+			tt.ElementType = tc.resolveTypeIfKnown(tt.ElementType, loc)
 		}
 		return tt
 	case types.DynamicArrayType:
 		if tt.ElementType != nil {
-			tt.ElementType = tc.resolveTypeIfKnown(tt.ElementType)
+			tt.ElementType = tc.resolveTypeIfKnown(tt.ElementType, loc)
 		}
 		return tt
 	case types.TupleType:
 		if len(tt.Elements) > 0 {
 			elems := make([]types.Type, len(tt.Elements))
 			for i, e := range tt.Elements {
-				elems[i] = tc.resolveTypeIfKnown(e)
+				elems[i] = tc.resolveTypeIfKnown(e, loc)
 			}
 			tt.Elements = elems
 		}
 		return tt
 	case types.WeakType:
 		if tt.Inner != nil {
-			tt.Inner = tc.resolveTypeIfKnown(tt.Inner)
+			tt.Inner = tc.resolveTypeIfKnown(tt.Inner, loc)
 		}
 		return tt
 	default:
@@ -1760,7 +1784,7 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 	// `let s: Small = 200 + 100` would silently produce 44 where the same
 	// expression against a bare u8 traps.
 	if ct, ok := concrete.(*types.ConstrainedType); ok {
-		tc.propagateLiteralType(expr, tc.resolveTypeIfKnown(ct.Type))
+		tc.propagateLiteralType(expr, tc.resolveTypeIfKnown(ct.Type, expr.GetLocation()))
 		return
 	}
 
@@ -2163,7 +2187,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 			// function's variables from its call arguments — and the same unifier,
 			// so "what does this type variable match" keeps one definition.
 			// `Some(5)` binds t = i64 and the value is a `Maybe<i64>`.
-			decl, _ := tc.symTable.LookupType(dt.Name)
+			decl, _ := tc.symTable.LookupTypeFrom(dt.Name, expr.GetLocation())
 			subst := tc.solveDataTypeVars(decl, declaredFields, expr.Elements)
 			// Whether the payload alone pinned down every parameter. When it did
 			// not, the context will (propagateInstantiation), and recording a width
@@ -2237,7 +2261,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 // TupleType would be unsound: two unrelated literals sharing a name could
 // compare equal despite different shapes.
 func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, name string) types.Type {
-	decl, ok := tc.symTable.LookupType(name)
+	decl, ok := tc.symTable.LookupTypeFrom(name, expr.GetLocation())
 	if !ok {
 		tc.addError(expr.GetLocation(), SeverityError, "undefined tuple type %q", name)
 		return nil
@@ -2428,7 +2452,7 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 	// struct, or the owning data type for an inline-record constructor.
 	var resultType types.Type
 
-	if d, ok := tc.symTable.LookupType(expr.Name); ok {
+	if d, ok := tc.symTable.LookupTypeFrom(expr.Name, expr.GetLocation()); ok {
 		st, ok := d.Type.(types.NamedStructType)
 		if !ok {
 			tc.addError(expr.GetLocation(), SeverityError, "%s: not a struct type", expr.Name)
@@ -2691,7 +2715,7 @@ func (tc *TypeChecker) convertAnonymousStructFieldsToTypeFields(fields []ast.Str
 // declaration path already checked.
 func (tc *TypeChecker) lambdaSignature(lambda *ast.LambdaExpr) *types.LambdaType {
 	t := &types.LambdaType{
-		ReturnType: types.ReturnType{Type: tc.resolveTypeIfKnown(lambda.ReturnType.Type)},
+		ReturnType: types.ReturnType{Type: tc.resolveTypeIfKnown(lambda.ReturnType.Type, lambda.GetLocation())},
 	}
 	for _, p := range lambda.Parameters {
 		t.Parameters = append(t.Parameters, types.ParameterType{
@@ -2750,7 +2774,7 @@ func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 	// type arguments substituted so its fields are visible. A field read needs no
 	// trait dispatch, so resolving fully here (also improving the error message)
 	// is safe.
-	objType = tc.resolveGenericAggregate(objType)
+	objType = tc.resolveGenericAggregate(objType, m.Object.GetLocation())
 	fieldName := m.Property.Name
 
 	if f, ok := structFieldByName(objType, fieldName); ok {
@@ -2759,7 +2783,7 @@ func (tc *TypeChecker) inferMemberExprType(m *ast.MemberExpr) types.Type {
 		// the *read* had a different type from the annotation it is assigned to
 		// ("cannot assign Meters to i64" for a `dist: Meters` field, since one
 		// side was the name and the other the resolved newtype).
-		ft := tc.resolveTypeIfKnown(f.Type)
+		ft := tc.resolveTypeIfKnown(f.Type, m.GetLocation())
 		tc.typeTable.Set(m, ft)
 		return ft
 	}
@@ -2797,7 +2821,7 @@ func (tc *TypeChecker) inferTupleIndexExprType(t *ast.TupleIndexExpr) types.Type
 	objType = tc.resolveType(objType, t.Object.GetLocation())
 	// A generic named tuple's instantiation carries the type arguments; resolve it so
 	// the indexed element is the argument's type rather than the type variable.
-	objType = tc.resolveGenericAggregate(objType)
+	objType = tc.resolveGenericAggregate(objType, t.Object.GetLocation())
 	tup, ok := objType.(types.TupleType)
 	if !ok {
 		// A nil object type already produced its own diagnostic (e.g. undefined

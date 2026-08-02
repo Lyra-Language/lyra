@@ -27,7 +27,7 @@ func (tc *TypeChecker) checkMustUseResult(expr ast.Expression, t types.Type) {
 	if t == nil {
 		return
 	}
-	kind, _, _, ok := tc.resultOrMaybeKind(t)
+	kind, _, _, ok := tc.resultOrMaybeKind(t, expr.GetLocation())
 	if !ok {
 		return
 	}

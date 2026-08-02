@@ -101,13 +101,39 @@ learn about the prelude. Consequently `ownership`/`use_after_move` resolve a cal
 `LookupFunctionFrom`, not a bare `Functions` read — those passes take the callee's parameter
 modes as a memory-safety decision, and a bare lookup hands back another module's function.
 
-**A shadowed *type* or *trait* is still program-wide.** That namespace is program-wide by
-construction: `SymbolTable.Types` is keyed by bare name, and so is the backend's registry of
-emitted LLVM struct types, which resolves a type reference carrying no location to say who is
-asking. A program therefore has exactly one `Maybe`, and the shadowing declaration is it —
-`noteShadowed` still withdraws the prelude's type/trait entries, and only those. Confining a
-type shadow needs per-module type *identity* end to end, which is the same work two modules
-declaring unrelated same-named types needs.
+**Types and traits reach exactly as far too** (08/01). They were the exception until then:
+`SymbolTable.Types` was keyed by bare name, so a program had exactly one `Maybe` and the
+shadowing declaration was it — `noteShadowed` withdrew the prelude's entry outright. The
+reachable consequence was a module that never mentioned `Maybe` losing the canonical one and
+reporting `` `?` operand must be a Result or Maybe, got Maybe `` about a declaration it had
+never seen, and two modules being unable to each declare a private `Point`.
+
+Both were the same missing piece — per-module type *identity* — and both are closed by keying
+`Types`/`Traits` with the same `declKey` bindings already used, so nothing new was invented:
+a private or prelude-shadowing declaration is filed under `<module>::<name>` and the two
+coexist. `noteShadowed` now only records the warning. Three things had to move with the key:
+
+- **Registration.** `RegisterType`/`RegisterTrait` write the module scope *before* computing
+  the key (the key is read out of that scope, and types register mid-walk), and no longer
+  define into the global scope — publication is `exportToGlobal`, the same path a `pub` binding
+  takes, so a private type never competes for a program-wide name.
+- **The typechecker's resolution cache.** `resolvedTypes` was keyed by bare name, which would
+  have let the first module to mention a type answer for every other one — the hazard that had
+  already kept the visibility check out of that cache. It is keyed by the resolved key now.
+- **The backend.** `l.structTypes` is keyed the same way, and the lowerer carries the position
+  it is lowering from (`currentLoc`, set per type definition and per function body) because the
+  resolved types reaching `lowerType` carry no location of their own. Without it two modules'
+  private `Point`s emitted one `%Point` holding the union of both field lists, which clang
+  rejected outright. A generic instantiation's symbol (`Box$i64`) is qualified the same way.
+
+One consequence worth knowing: the `pub` check now asks about **the declaration a reference
+resolved to** (`declVisibility`), not about whichever declaration shares its name.
+`visibilityOf` went through `DeclaringModule`, which is last-writer-wins, so with two private
+`Point`s it answered for whichever module was collected last — module one's own `impl Size for
+Point` reported *its own* type as private to module two. That is the identical mistake the bare
+**call** path made before privacy became structural (see the end of this file), and it has the
+same fix. A namespace member likewise asks `visibilityIn(imp.Path, …)`, about the module the
+import names.
 
 Two ordering traps that shape the implementation, both worth knowing before touching it. The
 prelude module must be named *before* any file is walked, since type registration happens during

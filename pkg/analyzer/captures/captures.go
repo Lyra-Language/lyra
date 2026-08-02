@@ -286,12 +286,15 @@ func globalNames(program *ast.Program, symTable *symbols.SymbolTable) map[string
 		}
 	}
 	if symTable != nil {
-		for name := range symTable.Types {
-			out[name] = true
-			decl, ok := symTable.LookupType(name)
-			if !ok || decl == nil {
+		// Ranged for the declarations, not the keys: Types is keyed by declKey, so a
+		// private type is filed under `<module>::<name>` — recording that as a declared
+		// name would enter a string no source can write, while missing the real one.
+		for _, decl := range symTable.Types {
+			if decl == nil {
 				continue
 			}
+			name := decl.Name
+			out[name] = true
 			if dt, ok := decl.Type.(types.DataType); ok {
 				for _, ctor := range dt.Constructors {
 					out[ctor.Name] = true

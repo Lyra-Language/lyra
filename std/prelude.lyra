@@ -28,13 +28,14 @@ module std.prelude
 // A name declared here can be shadowed by user code: that warns (lyra-W012) and the
 // user's declaration wins, so adding a name here cannot break a program that never
 // mentioned it. The shadow is confined to the module that declared it — another module
-// still gets the version below — except for a type or trait, whose namespace is
-// program-wide, where the user's declaration replaces this one everywhere.
+// still gets the version below — and since 08/01 that holds for a **type** or **trait**
+// too, which used to be replaced program-wide.
 //
-// One sharp edge in that last case, tracked in todo.md: because the markers below claim
-// the canonical kinds, a user type of the same name is *not* canonical — so shadowing
-// `Maybe` and then using `?` on it reports "`?` operand must be a Result or Maybe, got
-// Maybe". The rule is right; the diagnostic is not.
+// Note what a shadow still means for the module that makes one: the markers below claim
+// the canonical kinds, so a user's own same-named `Maybe` is an ordinary type, and `?` on
+// it reports "`?` operand must be a Result or Maybe, got Maybe". That no longer reaches a
+// module which never mentioned `Maybe` — which is what made it indefensible — but the
+// message is still poor for the module that did. See todo.md.
 
 @builtin(Maybe)
 pub data Maybe<t> = None | Some(t)

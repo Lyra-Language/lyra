@@ -282,7 +282,7 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
 				"match on array type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
-	} else if dt, ok := tc.resolveToDataType(scrutineeType); ok {
+	} else if dt, ok := tc.resolveToDataType(scrutineeType, expr.GetLocation()); ok {
 		for _, arm := range expr.MatchArms {
 			tc.checkDataMatchArm(arm.Pattern, dt)
 		}
@@ -299,7 +299,7 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
 				"match on tuple type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
-	} else if st, ok := tc.resolveToNamedStructType(scrutineeType); ok {
+	} else if st, ok := tc.resolveToNamedStructType(scrutineeType, expr.GetLocation()); ok {
 		for _, arm := range expr.MatchArms {
 			tc.checkStructMatchArm(arm.Pattern, st)
 		}
@@ -533,7 +533,7 @@ func (tc *TypeChecker) findDataTypeByConstructor(ctorName string) (types.DataTyp
 //     for the corresponding concrete type argument (substituteGenerics), so a
 //     caller pattern-matching/destructuring `Some(x)` against a `Maybe<i64>`
 //     value gets `x: i64`, not the unsubstituted type variable `t`.
-func (tc *TypeChecker) resolveToDataType(t types.Type) (types.DataType, bool) {
+func (tc *TypeChecker) resolveToDataType(t types.Type, loc ast.Location) (types.DataType, bool) {
 	if t == nil {
 		return types.DataType{}, false
 	}
@@ -541,14 +541,14 @@ func (tc *TypeChecker) resolveToDataType(t types.Type) (types.DataType, bool) {
 		return dt, true
 	}
 	if u, ok := t.(types.UnresolvedType); ok {
-		if decl, exists := tc.symTable.LookupType(u.Name); exists {
+		if decl, exists := tc.symTable.LookupTypeFrom(u.Name, loc); exists {
 			if dt, ok := decl.Type.(types.DataType); ok {
 				return dt, true
 			}
 		}
 	}
 	if p, ok := t.(types.ParameterizedType); ok {
-		decl, exists := tc.symTable.LookupType(p.Name)
+		decl, exists := tc.symTable.LookupTypeFrom(p.Name, loc)
 		if !exists {
 			return types.DataType{}, false
 		}
@@ -1050,7 +1050,7 @@ func (tc *TypeChecker) checkTuplePatternElement(pattern ast.Pattern, elemType ty
 
 // resolveToNamedStructType returns the NamedStructType underlying t, following
 // UnresolvedType indirection, or (NamedStructType{}, false) when t is not a struct.
-func (tc *TypeChecker) resolveToNamedStructType(t types.Type) (types.NamedStructType, bool) {
+func (tc *TypeChecker) resolveToNamedStructType(t types.Type, loc ast.Location) (types.NamedStructType, bool) {
 	if t == nil {
 		return types.NamedStructType{}, false
 	}
@@ -1058,7 +1058,7 @@ func (tc *TypeChecker) resolveToNamedStructType(t types.Type) (types.NamedStruct
 		return st, true
 	}
 	if u, ok := t.(types.UnresolvedType); ok {
-		if decl, exists := tc.symTable.LookupType(u.Name); exists {
+		if decl, exists := tc.symTable.LookupTypeFrom(u.Name, loc); exists {
 			if st, ok := decl.Type.(types.NamedStructType); ok {
 				return st, true
 			}
@@ -1403,7 +1403,7 @@ func (tc *TypeChecker) inferNullCoalescingExpr(expr *ast.NullCoalescingExpr) typ
 
 	// The left operand must be optional (Maybe<T>); unwrap it to its payload.
 	payload := optType
-	if kind, t, _, ok := tc.resultOrMaybeKind(optType); ok && kind == "Maybe" {
+	if kind, t, _, ok := tc.resultOrMaybeKind(optType, expr.Optional.GetLocation()); ok && kind == "Maybe" {
 		payload = t
 	} else {
 		tc.addErrorCode(expr.Optional.GetLocation(), SeverityWarning,

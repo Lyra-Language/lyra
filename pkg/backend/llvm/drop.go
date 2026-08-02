@@ -62,7 +62,7 @@ import (
 // and this side decides where one is released, so any divergence between them is
 // either a leak or a double free.
 func (l *lowerer) needsDrop(t types.Type) bool {
-	return ownership.OwnsManaged(t, l.res.SymbolTable)
+	return ownership.OwnsManaged(t, l.res.SymbolTable, l.currentLoc)
 }
 
 // resolveNamedType resolves an UnresolvedType (how a reference to another declared
@@ -80,7 +80,7 @@ func (l *lowerer) resolveNamedType(t types.Type) types.Type {
 	if !ok {
 		return t
 	}
-	decl, ok := l.res.SymbolTable.LookupType(u.Name)
+	decl, ok := l.lookupTypeDecl(u.Name)
 	if !ok {
 		return t
 	}

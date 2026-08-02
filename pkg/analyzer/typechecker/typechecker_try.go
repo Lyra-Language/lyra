@@ -25,14 +25,14 @@ func (tc *TypeChecker) inferTryExpr(e *ast.TryExpr) types.Type {
 		return nil // operand already failed to infer; it was reported elsewhere
 	}
 
-	kind, payload, operandErr, ok := tc.resultOrMaybeKind(operandT)
+	kind, payload, operandErr, ok := tc.resultOrMaybeKind(operandT, e.GetLocation())
 	if !ok {
 		tc.addError(e.GetLocation(), SeverityError,
 			"`?` operand must be a Result or Maybe, got %s", operandT.GetName())
 		return nil
 	}
 
-	enclKind, enclErr, found := tc.enclosingReturnKind()
+	enclKind, enclErr, found := tc.enclosingReturnKind(e.GetLocation())
 	if found && enclKind != kind {
 		tc.addError(e.GetLocation(), SeverityError,
 			"cannot propagate %s with `?` from a %s-returning function; convert it explicitly",
@@ -67,12 +67,12 @@ func (tc *TypeChecker) inferTryExpr(e *ast.TryExpr) types.Type {
 // shaped `data Result<a,b> = Foo a | Bar b` — stamped with no CanonicalKind — is
 // correctly not recognized, while an `@builtin(Result)`-marked `Either` is. The
 // arity guard stays local: it protects the TypeArguments indexing below.
-func (tc *TypeChecker) resultOrMaybeKind(t types.Type) (kind string, payload, errType types.Type, ok bool) {
+func (tc *TypeChecker) resultOrMaybeKind(t types.Type, loc ast.Location) (kind string, payload, errType types.Type, ok bool) {
 	p, isParam := t.(types.ParameterizedType)
 	if !isParam {
 		return "", nil, nil, false
 	}
-	switch tc.canonicalKind(p.Name) {
+	switch tc.canonicalKind(p.Name, loc) {
 	case "Result":
 		if len(p.TypeArguments) == 2 {
 			return "Result", p.TypeArguments[0], p.TypeArguments[1], true
@@ -92,8 +92,8 @@ func (tc *TypeChecker) resultOrMaybeKind(t types.Type) (kind string, payload, er
 // not recognized. Only a name with *no* declaration falls back to the ambient
 // legacy behavior (a bare Result/Maybe annotation with no `data` declaration
 // anywhere), matching checker.canonicalKindOfName.
-func (tc *TypeChecker) canonicalKind(name string) string {
-	if decl, ok := tc.symTable.LookupType(name); ok {
+func (tc *TypeChecker) canonicalKind(name string, loc ast.Location) string {
+	if decl, ok := tc.symTable.LookupTypeFrom(name, loc); ok {
 		return decl.CanonicalKind
 	}
 	if name == "Result" || name == "Maybe" {
@@ -106,11 +106,11 @@ func (tc *TypeChecker) canonicalKind(name string) string {
 // the error type E of the return type of the lambda body currently being
 // checked, or found=false when there is no enclosing function or its return type
 // is neither Result nor Maybe.
-func (tc *TypeChecker) enclosingReturnKind() (kind string, errType types.Type, found bool) {
+func (tc *TypeChecker) enclosingReturnKind(loc ast.Location) (kind string, errType types.Type, found bool) {
 	if tc.enclosingRet == nil {
 		return "", nil, false
 	}
-	k, _, e, ok := tc.resultOrMaybeKind(tc.enclosingRet.Type)
+	k, _, e, ok := tc.resultOrMaybeKind(tc.enclosingRet.Type, loc)
 	return k, e, ok
 }
 

@@ -104,7 +104,7 @@ func memberCompletions(receiver string, scope *symbols.Scope, analysis *docAnaly
 	if t == nil {
 		return nil
 	}
-	fields, ok := structFieldsOf(t, analysis.symTable)
+	fields, ok := structFieldsOf(t, analysis.symTable, ast.Location{})
 	if !ok {
 		return nil
 	}
@@ -135,7 +135,7 @@ func resolveReceiverType(receiver string, scope *symbols.Scope, analysis *docAna
 		if t == nil {
 			return nil
 		}
-		fields, ok := structFieldsOf(t, analysis.symTable)
+		fields, ok := structFieldsOf(t, analysis.symTable, ast.Location{})
 		if !ok {
 			return nil
 		}
@@ -164,20 +164,25 @@ func bindingType(named ast.Named, analysis *docAnalysis) types.Type {
 
 // structFieldsOf returns the fields of a struct type, following a named or
 // unresolved type reference through the symbol table to its declaration.
-func structFieldsOf(t types.Type, symTable *symbols.SymbolTable) ([]types.StructField, bool) {
+// loc is the location the lookup is made *from*, which decides whose declaration a
+// name means. The server analyses one document at a time through driver.Analyze, which
+// stamps no file, so callers pass the zero Location — and ModuleOfFile[""] is then the
+// module *this document declares*. That is what makes a private type in a `module one`
+// document resolvable: its key is `one::Point`, which a bare Types[…] read misses.
+func structFieldsOf(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) ([]types.StructField, bool) {
 	switch s := t.(type) {
 	case types.AnonymousStructType:
 		return s.Fields, true
 	case types.NamedStructType:
-		if decl, ok := symTable.Types[s.Name]; ok {
+		if decl, ok := symTable.LookupTypeFrom(s.Name, loc); ok {
 			if ns, ok := decl.Type.(types.NamedStructType); ok {
 				return ns.Fields, true
 			}
 		}
 		return s.Fields, true
 	case types.UnresolvedType:
-		if decl, ok := symTable.Types[s.Name]; ok {
-			return structFieldsOf(decl.Type, symTable)
+		if decl, ok := symTable.LookupTypeFrom(s.Name, loc); ok {
+			return structFieldsOf(decl.Type, symTable, loc)
 		}
 	}
 	return nil, false
@@ -214,13 +219,17 @@ func scopeCompletions(scope *symbols.Scope, analysis *docAnalysis) []lsp.Complet
 		}
 	}
 
-	for name, decl := range analysis.symTable.Types {
-		if seen[name] {
+	// Labelled from decl.Name, never from the map key: Types is keyed by declKey, so a
+	// private or prelude-shadowing declaration is filed under `<module>::<name>` — which
+	// is a key, not something a user can type. Offering it would put `one::Point` in the
+	// completion list.
+	for _, decl := range analysis.symTable.Types {
+		if seen[decl.Name] {
 			continue
 		}
-		seen[name] = true
+		seen[decl.Name] = true
 		kind := typeDeclCompletionKind(decl.Type)
-		items = append(items, lsp.CompletionItem{Label: name, Kind: &kind})
+		items = append(items, lsp.CompletionItem{Label: decl.Name, Kind: &kind})
 	}
 
 	return items

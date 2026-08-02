@@ -12,7 +12,12 @@ import (
 func (l *lowerer) lowerTypeDeclarations(program *ast.Program) error {
 	for _, statement := range program.Statements {
 		if typeDeclStmt, ok := statement.(*ast.TypeDeclStmt); ok {
-			if err := l.lowerTypeDecl(typeDeclStmt); err != nil {
+			// A declaration's own name and its field types are resolved as its
+			// declaring module sees them, not as the last-walked module did.
+			restore := l.enterModuleOf(typeDeclStmt.GetLocation())
+			err := l.lowerTypeDecl(typeDeclStmt)
+			restore()
+			if err != nil {
 				return err
 			}
 		}
@@ -49,7 +54,7 @@ func (l *lowerer) lowerTypeDecl(typeDeclStmt *ast.TypeDeclStmt) error {
 		// the definition pass and lowerType both look the type up by its bare
 		// declared name ("Point"). A `data` type registers the same way — its
 		// definition is the tagged union `{ tag, payload-blob }`.
-		return l.declareNamedStruct(typeDeclStmt.Name)
+		return l.declareNamedStruct(l.typeKey(typeDeclStmt.Name), typeDeclStmt.Name)
 	case *types.ConstrainedType:
 		// A `newtype` declares no representation of its own — it is nominal to
 		// the typechecker and *is* its base at run time (types.StripNewtype), so
@@ -69,20 +74,26 @@ func (l *lowerer) lowerTypeDecl(typeDeclStmt *ast.TypeDeclStmt) error {
 // lowerStructDef) fills in its fields; declaring every named type first lets a
 // later type's fields reference an earlier one — and a type reference itself,
 // once boxed layout lands.
-func (l *lowerer) declareNamedStruct(name string) error {
+func (l *lowerer) declareNamedStruct(key, name string) error {
 	if name == "" {
 		return fmt.Errorf("llvm: tuple or struct type must have a name")
 	}
-	st := lltypes.NewStruct()     // empty placeholder
-	l.module.NewTypeDef(name, st) // registers it, sets TypeName — st now has identity
-	l.structTypes[name] = st
+	st := lltypes.NewStruct() // empty placeholder
+	// Registered under the *key* but named by the readable form: two modules' private
+	// `Point`s are two entries and two LLVM types, while an ordinary program's IR is
+	// byte-for-byte what it was.
+	l.module.NewTypeDef(llvmTypeName(key, name), st) // sets TypeName — st now has identity
+	l.structTypes[key] = st
 	return nil
 }
 
 func (l *lowerer) lowerTypeDefinitions(program *ast.Program) error {
 	for _, statement := range program.Statements {
 		if typeDeclStmt, ok := statement.(*ast.TypeDeclStmt); ok {
-			if err := l.lowerTypeDef(typeDeclStmt); err != nil {
+			restore := l.enterModuleOf(typeDeclStmt.GetLocation())
+			err := l.lowerTypeDef(typeDeclStmt)
+			restore()
+			if err != nil {
 				return err
 			}
 		}
@@ -128,7 +139,7 @@ func (l *lowerer) lowerTypeDef(typeDeclStmt *ast.TypeDeclStmt) error {
 // (A recursive reference must be `shared`, i.e. a pointer per lyra-E014, which is
 // pointer-sized and stops the resolution before it recurses.)
 func (l *lowerer) lowerDataDef(t types.DataType) error {
-	return l.lowerDataDefInto(l.structTypes[t.Name], t)
+	return l.lowerDataDefInto(l.structTypes[l.typeKey(t.Name)], t)
 }
 
 // lowerDataDefInto is lowerDataDef against an explicit target, so a generic
@@ -165,7 +176,7 @@ func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 		if v.Allocation == types.Shared {
 			return t // a pointer; don't chase the referent (it may be recursive)
 		}
-		decl, ok := l.res.SymbolTable.LookupType(v.Name)
+		decl, ok := l.lookupTypeDecl(v.Name)
 		if !ok {
 			return t // unknown name; SizeAndAlign will fail loudly downstream
 		}
@@ -204,7 +215,7 @@ func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 }
 
 func (l *lowerer) lowerTupleDef(t types.TupleType) error {
-	return l.lowerTupleDefInto(l.structTypes[t.Name], t)
+	return l.lowerTupleDefInto(l.structTypes[l.typeKey(t.Name)], t)
 }
 
 func (l *lowerer) lowerTupleDefInto(st *lltypes.StructType, t types.TupleType) error {
@@ -222,7 +233,7 @@ func (l *lowerer) lowerTupleDefInto(st *lltypes.StructType, t types.TupleType) e
 }
 
 func (l *lowerer) lowerStructDef(t types.NamedStructType) error {
-	return l.lowerStructDefInto(l.structTypes[t.Name], t)
+	return l.lowerStructDefInto(l.structTypes[l.typeKey(t.Name)], t)
 }
 
 func (l *lowerer) lowerStructDefInto(st *lltypes.StructType, t types.NamedStructType) error {
@@ -286,7 +297,7 @@ func (l *lowerer) stripNewtype(t types.Type) types.Type {
 		if !ok || l.res.SymbolTable == nil {
 			return t
 		}
-		decl, ok := l.res.SymbolTable.LookupType(u.Name)
+		decl, ok := l.lookupTypeDecl(u.Name)
 		if !ok {
 			return t
 		}
@@ -407,7 +418,7 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 // declareNamedStruct) before any definition is lowered, so a field/element
 // referencing another named type always resolves.
 func (l *lowerer) lookupNamedType(name string) (lltypes.Type, error) {
-	st, ok := l.structTypes[name]
+	st, ok := l.structTypes[l.typeKey(name)]
 	if ok {
 		return st, nil
 	}
@@ -422,7 +433,7 @@ func (l *lowerer) lookupNamedType(name string) (lltypes.Type, error) {
 	// the typechecker rejects one (resolveType's resolvingTypes guard), and `lyrac
 	// build` runs the backend only on an error-free program, so a cycle cannot reach
 	// this code without the front end having been bypassed.
-	if decl, ok := l.res.SymbolTable.LookupType(name); ok && decl.IsAlias {
+	if decl, ok := l.lookupTypeDecl(name); ok && decl.IsAlias {
 		return l.lowerType(decl.Type)
 	}
 	return nil, fmt.Errorf("llvm: unknown named type %q", name)
@@ -453,7 +464,7 @@ func (l *lowerer) resolveDataType(t types.Type) (types.DataType, bool) {
 	case types.DataType:
 		return v, true
 	case types.UnresolvedType:
-		if decl, ok := l.res.SymbolTable.LookupType(v.Name); ok {
+		if decl, ok := l.lookupTypeDecl(v.Name); ok {
 			if dt, ok := decl.Type.(types.DataType); ok {
 				return dt, true
 			}
@@ -481,7 +492,7 @@ func (l *lowerer) resolveStructType(t types.Type) (types.NamedStructType, bool) 
 	case types.NamedStructType:
 		return v, true
 	case types.UnresolvedType:
-		if decl, ok := l.res.SymbolTable.LookupType(v.Name); ok {
+		if decl, ok := l.lookupTypeDecl(v.Name); ok {
 			if st, ok := decl.Type.(types.NamedStructType); ok {
 				return st, true
 			}
@@ -497,7 +508,7 @@ func (l *lowerer) resolveTupleType(t types.Type) (types.TupleType, bool) {
 	case types.TupleType:
 		return v, true
 	case types.UnresolvedType:
-		if decl, ok := l.res.SymbolTable.LookupType(v.Name); ok {
+		if decl, ok := l.lookupTypeDecl(v.Name); ok {
 			if tt, ok := decl.Type.(types.TupleType); ok {
 				return tt, true
 			}

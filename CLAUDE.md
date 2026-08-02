@@ -53,12 +53,25 @@ because each was learned from a real failure, and none is local to one package.
    crashes a later pass on the first field access. The statement analogue: a block skips a
    child that collects to nil, because a block's value is its final statement.
 
-4. **Resolve top-level names only through `LookupType`/`LookupTrait`/`LookupFunction`**,
-   never by indexing `SymbolTable.Types`/`.Functions`/`.Traits`. Which declaration a name
-   means depends on *which module is asking*, and a lookup scattered over dozens of sites
-   cannot be taught that. Same reason `recordedType`, `types.StripNewtype`, `slotIsOwning`,
+4. **Resolve top-level names only through the `Lookup*` accessors**, never by indexing
+   `SymbolTable.Types`/`.Functions`/`.Traits`. Which declaration a name means depends on
+   *which module is asking*, and a lookup scattered over dozens of sites cannot be taught
+   that. Same reason `recordedType`, `types.StripNewtype`, `slotIsOwning`,
    `types.IsCopiedScalar` and `types.CollectTypeVars` exist: one predicate, so two passes
    cannot drift apart.
+
+   **All three maps are keyed by `declKey`** — bare when a declaration is `pub` or in the
+   entry module, `<module>::<name>` when private or when it takes a prelude name — so
+   *which* accessor you use is a correctness question, not a style one. Prefer
+   `LookupTypeFrom`/`LookupTraitFrom`/`LookupFunctionFrom(name, loc)`, which resolve as the
+   file at `loc` sees it; bare `LookupType(name)` answers only for a program-wide name, and
+   asking it from inside a module that declares its own returns *another* module's
+   declaration. Two corollaries that have already bitten: a map key is **not** a source
+   name, so anything user-facing (an LSP completion label, a "declared names" set) must read
+   `decl.Name` rather than the key; and a `pub` check must ask about the declaration a
+   reference *resolved to* (`declVisibility`), never look one up by name — `DeclaringModule`
+   is last-writer-wins, and reported a module's own type as private to another module that
+   happened to declare the same name.
 
 5. **The backend errors loudly rather than emitting wrong code.** A form that does not lower
    yet is a hard error, never a guess — including where it must repeat a check the front end

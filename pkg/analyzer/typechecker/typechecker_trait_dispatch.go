@@ -49,12 +49,12 @@ func (tc *TypeChecker) resolveTraitMethod(receiverType types.Type, methodName st
 		if requiredTrait != "" && impl.TraitName != requiredTrait {
 			continue
 		}
-		implType := tc.resolveTypeIfKnown(impl.Type)
+		implType := tc.resolveTypeIfKnown(impl.Type, impl.GetLocation())
 		bindings, ok := implTargetMatches(implType, receiverType)
 		if !ok {
 			continue
 		}
-		trait, ok := tc.symTable.LookupTrait(impl.TraitName)
+		trait, ok := tc.symTable.LookupTraitFrom(impl.TraitName, impl.GetLocation())
 		if !ok {
 			continue
 		}
@@ -281,7 +281,7 @@ func (tc *TypeChecker) typeImplementsTrait(t types.Type, traitName string) bool 
 		if impl.TraitName != traitName {
 			continue
 		}
-		implType := tc.resolveTypeIfKnown(impl.Type)
+		implType := tc.resolveTypeIfKnown(impl.Type, impl.GetLocation())
 		if _, ok := implTargetMatches(implType, t); ok {
 			return true
 		}
@@ -300,7 +300,7 @@ func (tc *TypeChecker) typeImplementsTrait(t types.Type, traitName string) bool 
 // already verified the bound holds), so nothing is written to the MethodTable.
 func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodName string, call *ast.FunctionCallExpr) (types.Type, bool) {
 	for _, traitName := range tc.genericBounds[recv.Name] {
-		trait, ok := tc.symTable.LookupTrait(traitName)
+		trait, ok := tc.symTable.LookupTraitFrom(traitName, call.GetLocation())
 		if !ok {
 			continue
 		}

@@ -207,7 +207,7 @@ func (l *lowerer) namedStructFields(t types.Type) ([]types.StructField, bool) {
 	case types.NamedStructType:
 		return s.Fields, true
 	case types.UnresolvedType:
-		if decl, ok := l.res.SymbolTable.LookupType(s.Name); ok {
+		if decl, ok := l.lookupTypeDecl(s.Name); ok {
 			if ns, ok := decl.Type.(types.NamedStructType); ok {
 				return ns.Fields, true
 			}

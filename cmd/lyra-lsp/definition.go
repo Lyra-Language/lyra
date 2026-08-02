@@ -66,7 +66,7 @@ func resolveDefinition(expr ast.Expression, line, col int, analysis *docAnalysis
 	case *ast.StructInstanceExpr:
 		// Cursor is on the struct type name (the name occupies the start of the expression).
 		if cursorOnName(e.GetLocation(), e.Name, line, col) {
-			if decl, ok := analysis.symTable.Types[e.Name]; ok {
+			if decl, ok := analysis.symTable.LookupTypeFrom(e.Name, e.GetLocation()); ok {
 				loc := decl.GetLocation()
 				return &loc
 			}
@@ -75,7 +75,7 @@ func resolveDefinition(expr ast.Expression, line, col int, analysis *docAnalysis
 	case *ast.DataConstructorExpr:
 		// Cursor is on a data-type constructor name (e.g. Some, None, Ok, Err).
 		if cursorOnName(e.GetLocation(), e.Constructor, line, col) {
-			if decl, ok := analysis.symTable.Types[e.Constructor]; ok {
+			if decl, ok := analysis.symTable.LookupTypeFrom(e.Constructor, e.GetLocation()); ok {
 				loc := decl.GetLocation()
 				return &loc
 			}

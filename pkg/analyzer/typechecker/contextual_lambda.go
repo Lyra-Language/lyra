@@ -38,7 +38,7 @@ func (tc *TypeChecker) elaborateLambda(expr ast.Expression, want types.Type) {
 	if !ok {
 		return
 	}
-	sig, ok := types.StripNewtype(tc.resolveTypeIfKnown(want)).(*types.LambdaType)
+	sig, ok := types.StripNewtype(tc.resolveTypeIfKnown(want, expr.GetLocation())).(*types.LambdaType)
 	if !ok || sig == nil {
 		return
 	}

@@ -157,6 +157,11 @@ func (l *lowerer) emitReturn(start, block *ir.Block, val value.Value) error {
 // which lowerEntry shares with every explicit `return` and the implicit tail
 // return; that's why main is set up with beginFunction like any other function.
 func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
+	// `main` does not go through declareFunctionAs/defineFunctionInto (it has the
+	// platform's C ABI, not a Lyra signature), so it enters its own module here. That is
+	// the entry module — usually "" — but saying so explicitly is what keeps it from
+	// inheriting whichever module happened to be lowered last.
+	defer l.enterModuleOf(entry.Lambda.GetLocation())()
 	fn := l.module.NewFunc("main", lltypes.I32)
 	l.beginFunction(lltypes.I32, entry.Lambda.ReturnType.Type, false, true) // entryABI: emitReturn handles the u8→i32 coercion
 	block := fn.NewBlock("entry")
@@ -249,6 +254,12 @@ func (l *lowerer) declareFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) err
 // name can reach, which an emitted trait method is not (its symbol is mangled, and it
 // is only ever reached through dispatch).
 func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, error) {
+	// The module is entered *here*, on the shared body, rather than in declareFunction:
+	// a trait method declares through this path too, and a named type in its signature
+	// is its own module's to resolve. Same reason defineFunctionInto does it — those two
+	// are the only places a signature or body is lowered, so covering them covers the
+	// plain, generic-specialization and trait-method paths at once.
+	defer l.enterModuleOf(fn.GetLocation())()
 	if len(fn.LambdaClauses) > 0 {
 		return nil, fmt.Errorf("llvm: multi-clause functions are not implemented yet (%q)", name)
 	}
@@ -289,6 +300,7 @@ func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) erro
 // framing, and the void/typed return split — three things that must not drift
 // between a generic function and a plain one.
 func (l *lowerer) defineFunctionInto(irFn *ir.Func, fn *ast.LambdaExpr, name string) error {
+	defer l.enterModuleOf(fn.GetLocation())()
 	retType, err := l.lowerType(fn.ReturnType.Type)
 	if err != nil {
 		return err
