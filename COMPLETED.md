@@ -10,6 +10,75 @@ Newest first.
 ## Dated log
 
 ### 08/01/26
+**One `..` notation, three sites.** The range notation appears in an expression (`0..<n`),
+a match pattern (`0..=9`) and a `newtype` constraint (`range(0..=100)`). They were three
+independent grammar rules that had drifted on four axes — whether the end operator was
+required, whether either bound could be omitted, what an operand may be — plus a fifth:
+the same two characters `<`/`=` were `range_end_operator` in two rules and
+`less_than_comparator`/`equal_to_comparator` under a `comparator` field in the third.
+`rangeBounds` in `tree-sitter-lyra/include/helpers.js` is now the one shape.
+
+**Two of those axes are real and stayed parameters; the rest were drift.** The *operand*
+must differ — a pattern needs a compile-time literal (exhaustiveness and the jump-ladder
+lowering depend on it), a constraint a constant expression, an expression arbitrary runtime
+values; unifying them would either let a match arm hold a call or break `for i in 0..<n`.
+*Open-endedness* must differ too: `range(0..)` and the pattern `10..` are useful, while an
+open-ended expression range needs the lazy iterator the language does not have. What is now
+uniform: one node kind for the operator, and — where bounds may be omitted — at least one
+required, so `range(..)` and a bare `..` pattern are unspellable.
+
+**The defect worth the whole change was a silent default.** `range_pattern` made the end
+operator optional, and every reader of `RangePattern.EndOperator` tests `== "<"`, so an
+omitted one fell through to *inclusive*: `0..9` meant `0..=9`. Not cosmetic — that extra
+value is exactly the boundary the exhaustiveness checker and the emitted comparison would
+disagree on. It is now `lyra-E032` at all three sites through one collector check, and the
+suggestion is spliced from the source so it is right for every form the notation takes,
+including open-start (`..9`) and stepped (`0..10:2`).
+
+*Where each rule is enforced, and the line between them.* The operator is optional in the
+grammar everywhere and required by the collector everywhere; a bare `..` is refused by the
+grammar. **Enforce in the collector when the construct has a plausible intended meaning
+that must be disambiguated** — `0..9` is what a Rust or Python programmer writes *meaning*
+something, and a message naming both fixes beats a syntax error pointing at whichever token
+failed to shift (the `lyra-E029` trade) — **and in the grammar when it has no meaning at
+all.** Only one existing line in the whole tree used the ambiguous form, in a test whose
+subject was rune-scrutinee rejection.
+
+**Patterns gained open bounds, and exhaustiveness got better for it.** `..<0`, `0..=9`,
+`10..` with no wildcard now compiles: `armIntInterval` reads an absent bound as the
+scrutinee type's own limit, which is what writing it means. The backend *omits* the
+comparison for an open side rather than emitting one against the type's limit — on an
+unsigned scrutinee `x >= 0` is not merely redundant but the always-true compare the range
+analysis reports as `lyra-W011` elsewhere. Ten exec cases cover it, weighted toward the arm
+*not* taken and the boundary values, because dropping the wrong side of a two-sided test
+still passes for one input.
+
+**The two step spellings now answer to one rule.** An expression's `:step` and a newtype's
+`step()` are deliberately separate — the constraint composes with `precision()` and the
+newtype's domain, the expression drives a loop counter — but they did not agree on what a
+legal step *is*: the expression form was checked for numeric type-compatibility and nothing
+else, and the constraint form was collected and validated by nothing at all.
+`types.InvalidStepReason` is the shared rule (`lyra-E033`): zero never advances, and a
+fractional step cannot be represented over an integer domain. Type compatibility does not
+subsume it — `0..<10:0` type-checks perfectly and is a loop that cannot terminate. A
+negative step is deliberately *not* judged there: which direction a range runs is unsettled,
+and inventing an answer inside a well-formedness check is how the two would drift apart
+again. Still open: a step constraint is not enforced against values at run time, so
+`step(0.25)` documents and validates but does not yet reject 0.3.
+
+**`RangePattern.GetName` printed the operator after the bound it qualifies** — `0..9=` for
+`0..=9`. It reaches users (diagnostics interpolate it) but no golden file, which is how it
+survived. Fixing it surfaced a larger one in the same messages, left alone and noted in
+todo.md: a literal renders as `IntegerLiteralExpr(0, Base: 10)`, so a real diagnostic reads
+"expected array pattern, got IntegerLiteralExpr(0, Base: 10)..=IntegerLiteralExpr(10, Base:
+10)".
+
+One thing this cost that is worth writing down: **a recovered parse is not an absent
+bound.** Where the grammar requires a bound, tree-sitter inserts one to keep going —
+`range(..)` yields a zero-width `decimal_int` on the `)` — and a nil check reads that as a
+bound of value zero. `collector_ctx.RangeBound` tests missing-or-empty, and the pre-existing
+"range constraint must have a start or end" check only kept working because of it.
+
 **Types and traits have per-module identity.** Two modules can each declare a private
 `Point`, and a module declaring its own `Maybe` no longer takes the prelude's away from
 everybody else. Both were one missing piece, and `todo.md` had said so: their namespace was

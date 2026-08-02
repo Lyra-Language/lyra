@@ -216,6 +216,39 @@ const (
 	// and is reported. This closes the lowercase half.
 	CodeUndeclaredTypeVariable = "lyra-E031"
 
+	// CodeMissingRangeEndOperator: a range pattern with an end bound but no end
+	// operator — `0..9` rather than `0..=9` or `0..<9`.
+	//
+	// The grammar accepts it, and every consumer of `RangePattern.EndOperator`
+	// tests `== "<"`, so an empty operator fell through to *inclusive*: `0..9`
+	// silently meant `0..=9`. A token whose absence carries a defined-but-unwritten
+	// meaning is what this language refuses everywhere else (wraparound explicit,
+	// lossy conversions loud), and the default is not even the harmless kind — the
+	// extra value is the difference between a `match` the exhaustiveness checker
+	// calls complete and one it does not.
+	//
+	// Enforced here rather than in the grammar, following lyra-E029: a collector
+	// diagnostic names the offending construct and both fixes, where a syntax error
+	// would point at whichever token failed to shift. It also keeps the `..`
+	// notation uniform across its three sites, so the *pattern* rule need not
+	// differ from the expression rule in shape merely to express strictness.
+	CodeMissingRangeEndOperator = "lyra-E032"
+
+	// CodeInvalidRangeStep: a range step that cannot mean what it says — a step of
+	// 0, or a fractional step over an integer domain.
+	//
+	// A step has two spellings: an expression range's `:step` (`0..=100:2`) and a
+	// `newtype`'s `step()` constraint (`range(0..=100), step(0.25)`). They stay
+	// separate on purpose — the constraint composes with `precision()` and the
+	// newtype's domain, the expression drives a loop counter — but they must not
+	// *mean* different things, and they did: the expression step was checked for
+	// numeric type-compatibility only, and the constraint step was validated by
+	// nothing at all. `types.InvalidStepReason` is now the one rule and both ask it.
+	//
+	// Type compatibility does not subsume this. `0..=10:0` type-checks perfectly
+	// and is a loop that cannot terminate.
+	CodeInvalidRangeStep = "lyra-E033"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

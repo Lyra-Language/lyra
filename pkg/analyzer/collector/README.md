@@ -94,3 +94,33 @@ comment-only body collects to an empty block.
 - `node.ChildByFieldName("field")` — first child with that field name
 - `node.FieldNameForChild(uint32(i))` — field name at index `i`; use when a rule repeats the
   same field name (e.g. multiple `value:` fields in `commaSep1`)
+
+## Ranges: one notation, one strictness rule
+
+The `..` notation has three sites — an expression (`0..<n`), a match pattern (`0..=9`), and
+a `newtype` range constraint (`range(0..=100)`). Since 08/01 they share one grammar shape
+(`rangeBounds` in `tree-sitter-lyra/include/helpers.js`) and one collector check here:
+
+- **`ctx.RangeEndOperator(node, form)`** enforces that a range with an end bound says
+  whether that bound is included (`lyra-E032`), and returns the operator. The operator is
+  *optional in the grammar* at all three sites and required here, deliberately: every reader
+  of the collected operator tests `== "<"`, so an omitted one fell through to **inclusive**
+  and `0..9` silently meant `0..=9`. A diagnostic naming both fixes beats a syntax error
+  pointing at whichever token failed to shift — the same trade `lyra-E029` made for modifier
+  order. The suggestion is spliced from the source at the first `..`, so it is right for
+  open-start (`..9`) and stepped (`0..10:2`) forms too. Returns `"="` after reporting so the
+  caller still builds a well-formed node (hazard 3).
+
+- **`collector_ctx.RangeBound(node)`** answers "was this bound actually written?" — and it
+  is not a nil check. Where the grammar *requires* a bound, tree-sitter's error recovery can
+  **insert** one to keep parsing: `range(..)` yields a zero-width `decimal_int` sitting on
+  the `)`. A plain nil check reads that insertion as a bound of value zero, which is how the
+  long-standing "range constraint must have a start or end" check would have started passing
+  silently. Both the missing flag and the empty span are tested, because the recovery does
+  not always set the former.
+
+A nil `Start` or `End` on a collected `RangePattern` therefore means an **open** range
+(`10..`, `..<0`), never a malformed one — a bare `..` does not parse. Every consumer must
+read it that way; the ones that exist are the backend's match lowering, the exhaustiveness
+check's `armIntInterval`, and the range analysis's pattern refinement, and all three treat
+an absent bound as the scrutinee type's own limit.

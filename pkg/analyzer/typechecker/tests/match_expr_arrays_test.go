@@ -69,7 +69,7 @@ func TestTypeCheck_ArrayMatchExpr_RangePattern_Error(t *testing.T) {
 	}
 	`, false)
 	// RangePattern.GetName() formats via its child expression nodes.
-	assertErrorsAre(t, res, "expected array pattern, got IntegerLiteralExpr(0, Base: 10)..IntegerLiteralExpr(10, Base: 10)=")
+	assertErrorsAre(t, res, "expected array pattern, got IntegerLiteralExpr(0, Base: 10)..=IntegerLiteralExpr(10, Base: 10)")
 }
 
 // ── element type checking ──────────────────────────────────────────────────

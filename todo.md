@@ -10,7 +10,16 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
-None open. The typechecker's infinite recursion on a definition cycle closed 07/31 — an
+- **[OPEN] A literal renders as its Go struct in diagnostics.** `IntegerLiteralExpr.GetName()`
+  returns `IntegerLiteralExpr(0, Base: 10)`, and `GetName` is what diagnostics interpolate,
+  so a real message reads `expected array pattern, got IntegerLiteralExpr(0, Base: 10)..=
+  IntegerLiteralExpr(10, Base: 10)`. Found 08/01 while fixing `RangePattern.GetName`'s
+  operator position (that half is closed — see COMPLETED.md). It reaches no golden file,
+  which is why neither half was noticed. The fix is a source-form rendering for literal
+  expressions; check every `GetName` on an `ast.Expression` at the same time, since the
+  literals are unlikely to be the only ones.
+
+Otherwise none open. The typechecker's infinite recursion on a definition cycle closed 07/31 — an
 in-progress guard in `inferExprType`, which is also what stopped `lyra-lsp` dying
 mid-keystroke (see COMPLETED.md).
 
@@ -81,6 +90,27 @@ the backend's `structTypes` registry with them. Two modules may each declare a p
 `Point`, and a prelude type shadow no longer reaches another module. See COMPLETED.md.
 - Out of scope by decision, none of it changing what a module's source looks like: package
   management, versioning, separate/incremental compilation.
+
+## Ranges
+
+The three range grammars were unified 08/01 (`rangeBounds`, one `range_end_operator`,
+`lyra-E032` for a missing end operator at all three sites, open-ended patterns,
+`lyra-E033` for an ill-formed step). See COMPLETED.md. What is left:
+
+- **[OPEN] A `step()` constraint is not enforced against values.** Nothing reads
+  `types.StepConstraint` after collection, so `newtype Quarter = f32 where range(0..=100),
+  step(0.25)` validates the *step* but still accepts 0.3. Unlike `range(…)`, which the
+  value-range pass checks (`lyra-E023`), a step is a divisibility test — cheap for a
+  compile-time constant, a runtime check otherwise, which is the decision to make first.
+- **[OPEN] Descending ranges have no semantics.** `InvalidStepReason` deliberately does not
+  judge a negative step, because the language has never said what `10..=0` or `0..=10:-1`
+  means (an expression range has no descending form today). Settle it before anything reads
+  the sign — the well-formedness rule is shared by both step spellings, so a guess made in
+  one place silently becomes the language's answer in both.
+- **[IDEA] Open-ended expression ranges** (`0..`), which need a lazy/infinite iterator. The
+  pattern and constraint spellings have open bounds; the expression one deliberately does
+  not, and that asymmetry is documented in `tree-sitter-lyra`'s `rangeBounds` rather than
+  left to be rediscovered.
 
 ## Language design — Pit of Success
 

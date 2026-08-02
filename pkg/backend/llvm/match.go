@@ -258,32 +258,50 @@ func (l *lowerer) scalarMatchTest(block *ir.Block, scrut value.Value, pattern as
 		}
 		return block.NewICmp(enum.IPredEQ, scrut, constant.NewInt(intTy, n)), nil
 	case *ast.RangePattern:
-		lo, ok := constIntFromExpr(p.Start, intTy)
-		if !ok {
-			return nil, fmt.Errorf("llvm: unsupported range start in match pattern")
+		// An open bound (`0..`, `..<10`) *omits* its comparison rather than
+		// clamping to the type's limit. An absent bound means exactly the type's
+		// own min or max, so the comparison it would emit is a tautology — and on
+		// an unsigned scrutinee `x >= 0` is not merely redundant but the kind of
+		// always-true compare the range analysis reports as lyra-W011 elsewhere.
+		// Both bounds absent does not parse (rangeBounds requires one).
+		var tests []value.Value
+		if p.Start != nil {
+			lo, ok := constIntFromExpr(p.Start, intTy)
+			if !ok {
+				return nil, fmt.Errorf("llvm: unsupported range start in match pattern")
+			}
+			gePred := enum.IPredUGE
+			if signed {
+				gePred = enum.IPredSGE
+			}
+			tests = append(tests, block.NewICmp(gePred, scrut, lo))
 		}
-		hi, ok := constIntFromExpr(p.End, intTy)
-		if !ok {
-			return nil, fmt.Errorf("llvm: unsupported range end in match pattern")
+		if p.End != nil {
+			hi, ok := constIntFromExpr(p.End, intTy)
+			if !ok {
+				return nil, fmt.Errorf("llvm: unsupported range end in match pattern")
+			}
+			var hiPred enum.IPred
+			switch {
+			case p.EndOperator == "<" && signed:
+				hiPred = enum.IPredSLT
+			case p.EndOperator == "<":
+				hiPred = enum.IPredULT
+			case signed:
+				hiPred = enum.IPredSLE
+			default:
+				hiPred = enum.IPredULE
+			}
+			tests = append(tests, block.NewICmp(hiPred, scrut, hi))
 		}
-		gePred := enum.IPredUGE
-		if signed {
-			gePred = enum.IPredSGE
-		}
-		geLo := block.NewICmp(gePred, scrut, lo)
-		var hiPred enum.IPred
-		switch {
-		case p.EndOperator == "<" && signed:
-			hiPred = enum.IPredSLT
-		case p.EndOperator == "<":
-			hiPred = enum.IPredULT
-		case signed:
-			hiPred = enum.IPredSLE
+		switch len(tests) {
+		case 0:
+			return nil, fmt.Errorf("llvm: range match pattern has neither bound")
+		case 1:
+			return tests[0], nil
 		default:
-			hiPred = enum.IPredULE
+			return block.NewAnd(tests[0], tests[1]), nil
 		}
-		leHi := block.NewICmp(hiPred, scrut, hi)
-		return block.NewAnd(geLo, leHi), nil
 	default:
 		return nil, fmt.Errorf("llvm: match pattern %T not implemented for a scalar scrutinee", pattern)
 	}
@@ -324,21 +342,36 @@ func (l *lowerer) floatScalarMatchTest(block *ir.Block, scrut value.Value, patte
 		}
 		return block.NewFCmp(enum.FPredOEQ, scrut, constant.NewFloat(floatTy, f)), nil
 	case *ast.RangePattern:
-		lo, ok := constFloatFromExpr(p.Start, floatTy)
-		if !ok {
-			return nil, fmt.Errorf("llvm: unsupported range start in float match pattern")
+		// Open bounds as in the integer path above. Note this keeps the ordered
+		// predicates on both sides, so a NaN scrutinee still fails an open range —
+		// `0.0..` is "at least 0.0", not "not less than 0.0".
+		var tests []value.Value
+		if p.Start != nil {
+			lo, ok := constFloatFromExpr(p.Start, floatTy)
+			if !ok {
+				return nil, fmt.Errorf("llvm: unsupported range start in float match pattern")
+			}
+			tests = append(tests, block.NewFCmp(enum.FPredOGE, scrut, lo))
 		}
-		hi, ok := constFloatFromExpr(p.End, floatTy)
-		if !ok {
-			return nil, fmt.Errorf("llvm: unsupported range end in float match pattern")
+		if p.End != nil {
+			hi, ok := constFloatFromExpr(p.End, floatTy)
+			if !ok {
+				return nil, fmt.Errorf("llvm: unsupported range end in float match pattern")
+			}
+			hiPred := enum.FPredOLE
+			if p.EndOperator == "<" {
+				hiPred = enum.FPredOLT
+			}
+			tests = append(tests, block.NewFCmp(hiPred, scrut, hi))
 		}
-		geLo := block.NewFCmp(enum.FPredOGE, scrut, lo)
-		hiPred := enum.FPredOLE
-		if p.EndOperator == "<" {
-			hiPred = enum.FPredOLT
+		switch len(tests) {
+		case 0:
+			return nil, fmt.Errorf("llvm: range match pattern has neither bound")
+		case 1:
+			return tests[0], nil
+		default:
+			return block.NewAnd(tests[0], tests[1]), nil
 		}
-		leHi := block.NewFCmp(hiPred, scrut, hi)
-		return block.NewAnd(geLo, leHi), nil
 	default:
 		return nil, fmt.Errorf("llvm: match pattern %T not implemented for a float scrutinee", pattern)
 	}

@@ -993,18 +993,25 @@ func (c *Collector) collectDataPattern(node *sitter.Node) *ast.DataPattern {
 	}
 }
 
+// collectRangePattern collects `0..=9` and, since the range grammars were
+// unified, the open forms `0..` and `..<0`. Exactly one bound may be absent — a
+// bare `..` does not parse — so a nil Start or End here means an open range, not
+// a malformed one, and every consumer must read it that way.
 func (c *Collector) collectRangePattern(node *sitter.Node) ast.Pattern {
-	endOperatorNode := node.ChildByFieldName("end_operator")
-	endOperator := ""
-	if endOperatorNode != nil {
-		endOperator = c.ctx.NodeText(endOperatorNode)
-	}
-	return &ast.RangePattern{
+	startNode := node.ChildByFieldName("start")
+	endNode := node.ChildByFieldName("end")
+
+	pattern := &ast.RangePattern{
 		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
-		Start:       c.CollectExpr(node.ChildByFieldName("start")),
-		End:         c.CollectExpr(node.ChildByFieldName("end")),
-		EndOperator: endOperator,
+		EndOperator: c.ctx.RangeEndOperator(node, "range pattern"),
 	}
+	if collector_ctx.RangeBound(startNode) {
+		pattern.Start = c.CollectExpr(startNode)
+	}
+	if collector_ctx.RangeBound(endNode) {
+		pattern.End = c.CollectExpr(endNode)
+	}
+	return pattern
 }
 
 func (c *Collector) collectRestPattern(node *sitter.Node) ast.Pattern {

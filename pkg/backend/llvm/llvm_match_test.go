@@ -1,6 +1,7 @@
 package llvm
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -957,6 +958,86 @@ func TestExec_NegativeLiteralAndRangePatterns(t *testing.T) {
 			 }
 			 let main = () -> u8 => u8(f(-5))`,
 			5,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+		})
+	}
+}
+
+// TestExec_OpenEndedRangePatterns: `10..` and `..<0` select the right arm at run
+// time, and a set of them is exhaustive without a wildcard.
+//
+// Open bounds arrived when the three range grammars were unified — the pattern
+// rule had allowed an *omitted end operator* but never an omitted bound, while
+// the constraint rule allowed omitted bounds but under different node names.
+// An absent bound lowers to no comparison at all rather than to a comparison
+// against the type's limit, so the arm that is *not* taken is the real check
+// here: dropping the wrong side of the test still passes for one input.
+func TestExec_OpenEndedRangePatterns(t *testing.T) {
+	t.Parallel()
+	// Three open-ended arms with no wildcard. That this compiles at all is half
+	// the test: it means exhaustiveness reads an absent bound as the type's limit.
+	const classify = `let classify = (n: i8) -> i64 => match n {
+			   ..<0 => 1,
+			   0..=9 => 2,
+			   10.. => 3
+			 }
+			 let main = () -> u8 => u8(classify(%s))`
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{"open start takes the low arm", fmt.Sprintf(classify, "-5"), 1},
+		{"closed middle arm", fmt.Sprintf(classify, "5"), 2},
+		{"open end takes the high arm", fmt.Sprintf(classify, "100"), 3},
+		{"boundary: 0 is the middle arm, not the open-start one", fmt.Sprintf(classify, "0"), 2},
+		{"boundary: 9 is the middle arm, not the open-end one", fmt.Sprintf(classify, "9"), 2},
+		{"boundary: 10 is the open-end arm", fmt.Sprintf(classify, "10"), 3},
+		{
+			// An open end on an *unsigned* scrutinee: the omitted low side must
+			// emit no `x >= 0`, which on a u8 is always true.
+			"open end on unsigned",
+			`let f = (n: u8) -> i64 => match n {
+			   200.. => 6,
+			   _ => 7
+			 }
+			 let main = () -> u8 => u8(f(250))`,
+			6,
+		},
+		{
+			"open end on unsigned, below the bound",
+			`let f = (n: u8) -> i64 => match n {
+			   200.. => 6,
+			   _ => 7
+			 }
+			 let main = () -> u8 => u8(f(199))`,
+			7,
+		},
+		{
+			// An exclusive open start: `..<0` must not include 0.
+			"exclusive open start excludes its bound",
+			`let f = (n: i8) -> i64 => match n {
+			   ..<0 => 1,
+			   _ => 2
+			 }
+			 let main = () -> u8 => u8(f(0))`,
+			2,
+		},
+		{
+			"inclusive open start includes its bound",
+			`let f = (n: i8) -> i64 => match n {
+			   ..=0 => 1,
+			   _ => 2
+			 }
+			 let main = () -> u8 => u8(f(0))`,
+			1,
 		},
 	}
 	for _, c := range cases {

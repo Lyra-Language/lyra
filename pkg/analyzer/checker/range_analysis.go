@@ -608,16 +608,31 @@ func patternInterval(p ast.Pattern) (lo, hi int64, ok bool) {
 		}
 		return n, n, true
 	case *ast.RangePattern:
-		start, sok := patternBound(pat.Start)
-		end, eok := patternBound(pat.End)
-		if !sok || !eok {
-			return 0, 0, false
-		}
-		if pat.EndOperator == "<" { // exclusive end (..<)
-			if end == math.MinInt64 {
+		// An open bound (`10..`, `..<0`) refines only the side that was written.
+		// The other stays at the int64 limit, which is the widest thing this
+		// function can say and therefore always sound — the caller intersects
+		// this with the scrutinee's own tracked range, so the type's real limit
+		// is applied there rather than guessed at here.
+		start, end := int64(math.MinInt64), int64(math.MaxInt64)
+		if pat.Start != nil {
+			v, ok := patternBound(pat.Start)
+			if !ok {
 				return 0, 0, false
 			}
-			end--
+			start = v
+		}
+		if pat.End != nil {
+			v, ok := patternBound(pat.End)
+			if !ok {
+				return 0, 0, false
+			}
+			end = v
+			if pat.EndOperator == "<" { // exclusive end (..<)
+				if end == math.MinInt64 {
+					return 0, 0, false
+				}
+				end--
+			}
 		}
 		return start, end, true
 	}

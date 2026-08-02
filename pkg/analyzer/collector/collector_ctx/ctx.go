@@ -2,6 +2,7 @@ package collector_ctx
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
@@ -120,6 +121,52 @@ func (ctx *Ctx) AddErrorRelated(node *sitter.Node, sev diag.Severity, related []
 		Severity:           sev,
 		RelatedInformation: related,
 	})
+}
+
+// RangeBound reports whether a range's `start`/`end` field is a bound that was
+// actually written.
+//
+// Absent is not only nil. Where the grammar requires a bound, tree-sitter's error
+// recovery can *insert* one to keep parsing — `range(..)` yields a zero-width
+// `decimal_int` sitting on the `)` — and a nil check alone reads that as a bound
+// of value zero. Both the missing flag and the empty span are tested because the
+// recovery does not always set the former.
+func RangeBound(node *sitter.Node) bool {
+	return node != nil && !node.IsMissing() && node.EndByte() > node.StartByte()
+}
+
+// RangeEndOperator reads a range's `end_operator` field, enforcing the one rule
+// the three range grammars share: a range with an end bound must say whether that
+// bound is included (`lyra-E032`). `form` names the construct for the message
+// ("range pattern", "range expression", "range constraint").
+//
+// The operator is optional in all three grammars and required here, deliberately.
+// Every reader of the collected operator tests `== "<"`, so an omitted one fell
+// through to *inclusive* — `0..9` silently meant `0..=9`, and the extra value is
+// the boundary the exhaustiveness checker and the emitted comparison disagree on.
+// A diagnostic naming both fixes beats a syntax error pointing at whichever token
+// failed to shift, which is the same trade lyra-E029 made for modifier order.
+//
+// Returns "=" after reporting, so the caller still builds a well-formed node
+// (hazard 3: a diagnostic *and* a usable node, never a nil one). An open-ended
+// range — no end bound at all — has no operator to write and is not this error.
+func (ctx *Ctx) RangeEndOperator(node *sitter.Node, form string) string {
+	if opNode := node.ChildByFieldName("end_operator"); opNode != nil {
+		return ctx.NodeText(opNode)
+	}
+	if !RangeBound(node.ChildByFieldName("end")) {
+		return ""
+	}
+	// Build both suggestions from the source itself by splicing at the `..`, so
+	// they are right for every form the notation takes — open-start (`..9`),
+	// signed (`-128..-1`), and stepped (`0..10:2`).
+	text := ctx.NodeText(node)
+	ctx.AddErrorCoded(node, diag.SeverityError, diag.CodeMissingRangeEndOperator,
+		"%s `%s` does not say whether its end bound is included; write `%s` for inclusive or `%s` for exclusive",
+		form, text,
+		strings.Replace(text, "..", "..=", 1),
+		strings.Replace(text, "..", "..<", 1))
+	return "="
 }
 
 // MustField retrieves a required child-by-field-name node.

@@ -25,6 +25,12 @@ func collectConstrainedTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx
 		constraints = append(constraints, literalUnion)
 		typeType = inferTypeFromValues(literalUnion.Values, literalUnionNode, ctx)
 	}
+	// The step's well-formedness is checked here rather than in collectStepConstraint
+	// because it needs the newtype's *base* type, which only this function has —
+	// a fractional step is fine on `f32` and meaningless on `u8`. The rule itself
+	// is types.InvalidStepReason, shared with an expression range's `:step` so the
+	// two spellings cannot disagree about which steps are legal.
+	checkStepConstraints(constraints, typeType, constraintsNode, ctx)
 
 	astNode := &ast.TypeDeclStmt{
 		AstBase:      ast.AstBase{Location: ctx.NodeLocation(node)},
@@ -93,18 +99,25 @@ func collectRangeConstraint(node *sitter.Node, ctx *collector_ctx.Ctx) *types.Ra
 	var comparator string
 	var end types.MathConstraintExpr
 
-	if startNode := node.ChildByFieldName("start"); startNode != nil {
+	// `end_operator`, not `comparator`, and one `range_end_operator` node kind
+	// rather than this rule's own `less_than_comparator`/`equal_to_comparator` —
+	// the three range grammars share one notation now, and the operator is
+	// enforced by the same check they all use (lyra-E032).
+	comparator = ctx.RangeEndOperator(node, "range constraint")
+
+	if startNode := node.ChildByFieldName("start"); collector_ctx.RangeBound(startNode) {
 		start = collectMathConstraintExpr(startNode, ctx)
 	}
-	if comparatorNode := node.ChildByFieldName("comparator"); comparatorNode != nil {
-		comparator = ctx.NodeText(comparatorNode)
-	}
-	if endNode := node.ChildByFieldName("end"); endNode != nil {
+	if endNode := node.ChildByFieldName("end"); collector_ctx.RangeBound(endNode) {
 		end = collectMathConstraintExpr(endNode, ctx)
 	}
 
+	// The grammar makes `range(..)` unspellable — rangeBounds' open mode requires
+	// one bound — so this is now a guard against a recovered parse rather than the
+	// primary rule. Kept: tree-sitter can *insert* a bound to keep going, and
+	// RangeBound above is what turns that back into "absent".
 	if start == nil && end == nil {
-		ctx.AddError(node, diag.SeverityError, "range constraint must have a start or end")
+		ctx.AddError(node, diag.SeverityError, "range constraint must have a start or an end bound")
 	}
 	return &types.RangeConstraint{
 		Start:      start,
@@ -215,6 +228,59 @@ func collectPrecisionConstraint(node *sitter.Node, ctx *collector_ctx.Ctx) *type
 		Value:        collectMathConstraintExpr(valueNode, ctx),
 		RoundingMode: roundingMode,
 	}
+}
+
+// checkStepConstraints validates each `step()` against the newtype's base type,
+// using the same rule an expression range's `:step` is held to
+// (types.InvalidStepReason). Until this existed a step constraint was collected
+// and checked by nothing at all, while the expression spelling was checked for
+// type compatibility — the two spellings of one idea disagreeing about what a
+// legal step even is.
+//
+// A step built from an identifier or an arithmetic expression folds to no
+// constant and is left alone: it is legal and simply not decidable here.
+func checkStepConstraints(constraints []types.Constraint, base types.Type, node *sitter.Node, ctx *collector_ctx.Ctx) {
+	if node == nil {
+		return
+	}
+	integerDomain := types.StepDomainIsInteger(base)
+	for _, c := range constraints {
+		step, ok := c.(*types.StepConstraint)
+		if !ok {
+			continue
+		}
+		v, isConst := constraintExprFloat(step.Value)
+		if !isConst {
+			continue
+		}
+		if reason := types.InvalidStepReason(v, integerDomain); reason != "" {
+			ctx.AddErrorCoded(node, diag.SeverityError, diag.CodeInvalidRangeStep,
+				"invalid step constraint `%s` on %s: %s", step.GetName(), base, reason)
+		}
+	}
+}
+
+// constraintExprFloat folds a constraint expression to a float64 when it is a
+// literal (possibly negated). The counterpart of the typechecker's
+// constNumericFromExpr, over the constraint expression tree rather than the AST.
+func constraintExprFloat(e types.MathConstraintExpr) (float64, bool) {
+	switch v := e.(type) {
+	case *types.MathConstraintLiteralExpr:
+		if v.Value == nil {
+			return 0, false
+		}
+		if f, ok := v.Value.Float64(); ok {
+			return f, true
+		}
+		if i, ok := v.Value.Int64(); ok {
+			return float64(i), true
+		}
+	case *types.MathConstraintNegationExpr:
+		if inner, ok := constraintExprFloat(v.Operand); ok {
+			return -inner, true
+		}
+	}
+	return 0, false
 }
 
 func collectStepConstraint(node *sitter.Node, ctx *collector_ctx.Ctx) *types.StepConstraint {

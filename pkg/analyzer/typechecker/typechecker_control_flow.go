@@ -847,11 +847,38 @@ func extractIntFromExpr(e ast.Expression) (int64, bool) {
 	return 0, false
 }
 
+// constNumericFromExpr folds a range bound or step to a float64 when it is a
+// compile-time numeric literal (possibly negated). Returns ok=false for anything
+// else — a variable step is legal and simply cannot be checked here.
+//
+// float64 rather than a pair of int64/float64 paths because the caller only needs
+// to ask "is it zero" and "is it whole", both of which float64 answers exactly for
+// every literal a source file can spell.
+func constNumericFromExpr(e ast.Expression) (float64, bool) {
+	switch v := e.(type) {
+	case *ast.IntegerLiteralExpr:
+		return float64(v.Value), true
+	case *ast.FloatLiteralExpr:
+		return v.Value, true
+	case *ast.NegationExpr:
+		if inner, ok := constNumericFromExpr(v.Operand); ok {
+			return -inner, true
+		}
+	}
+	return 0, false
+}
+
 // armIntInterval returns the inclusive [lo, hi] integer interval that an
 // unguarded arm's pattern covers. Returns ok=false for guarded arms, arms
 // whose pattern is not a numeric literal/range, or bounds that cannot be
 // statically evaluated.
-func armIntInterval(arm ast.MatchArm) (lo, hi int64, ok bool) {
+//
+// typeMin/typeMax stand in for an **open** range bound (`10..`, `..<0`), because
+// the scrutinee type's own limit is exactly what omitting a bound means. Callers
+// that know the scrutinee type pass its limits; checkDuplicateMatchArms does not
+// have one and passes the widest, which can only widen an interval — and a wider
+// interval never *hides* an overlap, it can only reveal one that is really there.
+func armIntInterval(arm ast.MatchArm, typeMin, typeMax int64) (lo, hi int64, ok bool) {
 	if arm.Guard != nil {
 		return 0, 0, false
 	}
@@ -867,16 +894,29 @@ func armIntInterval(arm ast.MatchArm) (lo, hi int64, ok bool) {
 		}
 		return n, n, true
 	case *ast.RangePattern:
-		start, startOk := extractIntFromExpr(p.Start)
-		end, endOk := extractIntFromExpr(p.End)
-		if !startOk || !endOk {
-			return 0, 0, false
-		}
-		if p.EndOperator == "<" { // exclusive end (..<)
-			if end == math.MinInt64 {
-				return 0, 0, false // underflow
+		// An absent bound is the type's limit, not a failure to evaluate: `10..`
+		// covers [10, typeMax]. This is what lets a set of open-ended arms
+		// (`..<0`, `0..=9`, `10..`) be recognised as exhaustive.
+		start, end := typeMin, typeMax
+		if p.Start != nil {
+			v, okStart := extractIntFromExpr(p.Start)
+			if !okStart {
+				return 0, 0, false
 			}
-			end--
+			start = v
+		}
+		if p.End != nil {
+			v, okEnd := extractIntFromExpr(p.End)
+			if !okEnd {
+				return 0, 0, false
+			}
+			end = v
+			if p.EndOperator == "<" { // exclusive end (..<)
+				if end == math.MinInt64 {
+					return 0, 0, false // underflow
+				}
+				end--
+			}
 		}
 		return start, end, true
 	}
@@ -889,7 +929,7 @@ func integerIntervalsExhaustive(arms []ast.MatchArm, typeMin, typeMax int64) boo
 	type interval struct{ lo, hi int64 }
 	var ivs []interval
 	for _, arm := range arms {
-		lo, hi, ok := armIntInterval(arm)
+		lo, hi, ok := armIntInterval(arm, typeMin, typeMax)
 		if ok && lo <= hi {
 			ivs = append(ivs, interval{lo, hi})
 		}
@@ -1139,7 +1179,9 @@ func (tc *TypeChecker) checkDuplicateMatchArms(arms []ast.MatchArm) {
 		if _, isRange := arm.Pattern.(*ast.RangePattern); !isRange {
 			continue
 		}
-		lo, hi, ok := armIntInterval(arm)
+		// No scrutinee type here, so an open bound widens to the int64 limits —
+		// see armIntInterval on why that is sound for overlap detection.
+		lo, hi, ok := armIntInterval(arm, math.MinInt64, math.MaxInt64)
 		if ok && lo <= hi {
 			ivs = append(ivs, intervalLoc{lo, hi, arm.Pattern.GetLocation()})
 		}
@@ -1234,6 +1276,17 @@ func (tc *TypeChecker) inferRangeExpr(expr *ast.RangeExpr) types.Type {
 				tc.addError(expr.Step.GetLocation(), SeverityError,
 					"range step type %s is not compatible with range operand type %s",
 					stepType, commonType)
+			}
+		}
+		// Well-formedness of the step's *value*, shared with the `newtype`
+		// `step()` constraint via types.InvalidStepReason — the two spellings
+		// must not disagree about which steps are legal. Type compatibility above
+		// does not cover it: `0..=10:0` is a loop that never terminates and
+		// type-checks perfectly.
+		if v, ok := constNumericFromExpr(expr.Step); ok {
+			if reason := types.InvalidStepReason(v, types.StepDomainIsInteger(commonType)); reason != "" {
+				tc.addErrorCode(expr.Step.GetLocation(), SeverityError, diag.CodeInvalidRangeStep,
+					"invalid range step: %s", reason)
 			}
 		}
 	}

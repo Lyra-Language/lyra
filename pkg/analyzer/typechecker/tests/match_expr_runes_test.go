@@ -54,7 +54,7 @@ func TestTypeCheck_RuneMatchExpr_RangePattern_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let c: rune = 'a'
   match c {
-    0..9 => 1,
+    0..=9 => 1,
     _ => 0,
   }
 	`, false)
