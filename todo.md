@@ -17,10 +17,6 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
   inconsistently — and the diagnostic points at the wrong line, which is what makes it cost
   minutes rather than seconds. Found 08/03 while writing `own`-receiver tests.
 
-- **[OPEN] A struct literal cannot be a method receiver.** `Node { n: 0 }.a()` is a syntax
-  error ("unexpected `{ n: 0 }`"); the same call works through a binding. Presumably the
-  `named_struct_literal` / block ambiguity the grammar's conflict notes describe, resolved
-  toward the reading that loses here. Found the same way.
 
 - **[OPEN] A literal renders as its Go struct in diagnostics.** `IntegerLiteralExpr.GetName()`
   returns `IntegerLiteralExpr(0, Base: 10)`, and `GetName` is what diagnostics interpolate,

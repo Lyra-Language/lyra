@@ -10,6 +10,32 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**A struct literal is a postfix head.** `Node { n: 7 }.n`, `Node { n: 7 }.a()` and
+`Grid { cells: […] }.cells[0]` parse; before this *no* postfix attached to a struct literal
+— not a method call, not plain field access, not an index — while every other
+value-producing expression already worked as one (`mk().a()`, `(Node { n: 7 }).a()`, a
+literal in argument position). The grammar change is `named_struct_literal` joining
+`_primary_expr`; the reasoning is in `tree-sitter-lyra`'s CLAUDE.md.
+
+Two things worth keeping from doing it as a measured prototype rather than a guess.
+
+**The cost was 26 states.** 8,182 → 8,208 (+0.3%), and +69 KB of `parser.c`. The estimate
+going in was "unknown, possibly large" — juxtaposition had cost +19% states for less, and
+`lambda_expr` once owned 91% of a 62,663-state parser, so the honest answer before measuring
+was that it might not be affordable. It was, by two orders of magnitude, and the measurement
+took one `generate`.
+
+**Lyra needs no "no struct literal in an `if` header" rule.** Rust and Go both have one,
+because the `{` of `if Node { n: 7 }.n > 0 {` cannot be told from the body's opening brace
+with bounded lookahead. The plan here assumed Lyra would need the same restriction and said
+so; GLR keeps both readings alive until a token decides, so the form simply works and is now
+in the corpus. That is a real advantage of this grammar's architecture over theirs, and it
+was found by trying rather than by reasoning — the prediction was wrong in the direction of
+caution.
+
+Found while writing `own`-receiver tests, where it read as a puzzling test failure.
+
+### 08/03/26
 **`own` on a trait method's parameter — and on its receiver — is supported; lyra-E030 is
 retired.** The restriction existed because the ownership pass analyzed no trait-method body,
 so `take: (Self, own string) -> string` compiled to a heap-use-after-free (measured, 07/31).
