@@ -10,6 +10,39 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**`own` on a trait method's parameter — and on its receiver — is supported; lyra-E030 is
+retired.** The restriction existed because the ownership pass analyzed no trait-method body,
+so `take: (Self, own string) -> string` compiled to a heap-use-after-free (measured, 07/31).
+Method bodies are analyzed per specialization as of earlier today, which is the condition
+the restriction itself named for lifting.
+
+**Deleting the check was the first ten minutes.** Two other passes could not resolve a
+*method* callee, and both mattered:
+
+- **Use-after-move went unchecked through a method call.** `resolveCallee` handled an
+  identifier callee only, so a method call recorded no moves whatever its signature said —
+  `h.take(msg)` followed by `println(msg)` drew nothing, while the free-function spelling of
+  the same mistake was a clean lyra-E019. That is the diagnostic that makes `own` safe for
+  the *caller*, so lifting E030 without it would have reintroduced the same use-after-free
+  one layer up. It now resolves through the MethodTable, with the receiver as parameter 0.
+- **The ownership pass did not transfer the receiver.** Its argument loop had carried the
+  +1 offset from the start, but the receiver is not in `e.Arguments`, so an `own Self` method
+  left the caller lending a value the callee had adopted. Both released it: an ASan
+  heap-use-after-free inside `lyra_rc_release`, which is how it announced itself — the plain
+  run of the same program exits 0 and prints the right answer.
+
+That is the receiver-offset hazard for the **third and fourth time in one day** (purity's
+`methodArgumentAt`, the UFCS desugar, then these two). The pattern is worth naming: every
+pass that reads a callee's parameter modes has to know that a `.`-call's receiver is
+parameter 0, and each has discovered it separately, late, and with a silent failure mode.
+UFCS avoids it by rewriting the receiver into the argument list before any later pass runs,
+which is the shape the others would benefit from.
+
+Two limitations found while testing and left alone, both unrelated to `own`: a trait or impl
+with several methods needs **commas** between them (a newline does not separate them), and a
+struct literal cannot be a method receiver directly (`Node { n: 0 }.a()` does not parse).
+
+### 08/03/26
 **Generic trait-impl methods are monomorphized.** `impl Unwrap<t> for Maybe<t>` type-checked
 and then died in the backend — `match on Maybe<t> not implemented yet` — because the body
 was emitted once with `t` still abstract. This is the gap that decided UFCS's sequencing

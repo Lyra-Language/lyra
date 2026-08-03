@@ -1,12 +1,10 @@
 package checker_test
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
-	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 )
 
@@ -76,22 +74,19 @@ func TestEffectBounds_TraitMethod_DetAlone_OK(t *testing.T) {
 }`)
 }
 
-// `own` on a trait method parameter is rejected. `ref` and `mut` are borrows — retained and
-// released by nobody, so ownership analysis needs to know nothing about the method to stay
-// correct — but `own` transfers, making the callee's parameter an owning binding, and the
-// ownership pass does not analyze trait-method bodies at all. Before this rejection the
-// combination compiled to a heap-use-after-free, confirmed under ASan.
-func TestEffectBounds_OwnOnTraitParameterIsRejected(t *testing.T) {
+// `own` on a trait method parameter is **accepted** as of 08/03, once ownership analysis
+// covered method bodies (driver.OwnershipByMethod) and use-after-move learned to resolve a
+// method callee. It was rejected before that (lyra-E030, now retired): the pass analyzed no
+// method body, so a transferred value was dropped by the callee and still used by the
+// caller — a heap-use-after-free confirmed under ASan.
+//
+// The transfer cases live where they can be *run*: llvm_own_receiver_test.go under the ASan
+// harness, and use_after_move_test.go for the diagnostic that makes them safe.
+func TestEffectBounds_OwnOnTraitParameterIsAccepted(t *testing.T) {
 	errs := checkEffectBounds(t, `
 trait Consume { take: (Self, own string) -> string }`)
-	if len(errs) != 1 {
-		t.Fatalf("expected 1 diagnostic, got %v", errs)
-	}
-	if errs[0].Code != diag.CodeUnsupportedTraitBorrow {
-		t.Errorf("code = %s, want %s", errs[0].Code, diag.CodeUnsupportedTraitBorrow)
-	}
-	if !strings.Contains(errs[0].Message, "use `ref` or `mut`") {
-		t.Errorf("the message should say which modes work, got %q", errs[0].Message)
+	if len(errs) != 0 {
+		t.Fatalf("expected no diagnostic, got %v", errs)
 	}
 }
 

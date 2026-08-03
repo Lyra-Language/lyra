@@ -121,11 +121,25 @@ the wrong offset takes each argument's mode from the parameter to its left, whic
 is a double free or a leak rather than a type error — so the offset is written out rather
 than folded into a loop index.
 
-**`own` on a trait parameter is rejected by the checker (`lyra-E030`)**, and this pass is
-why: it does not analyze trait-method *bodies*, so nothing records that a returned `own`
-parameter was transferred rather than dropped. Implemented without that, `take: (Self, own
-string) -> string` is a heap-use-after-free (measured under ASan, 07/31). `ref`/`mut` need
-nothing from this pass — a borrow is retained and released by nobody — which is exactly why
-they are supported and `own` is not. Supporting it means walking each `TraitMethodImpl` as a
-function here, with a per-method table for the backend, the way `OwnershipBySpec` works per
-instantiation.
+**The receiver is also transferred when parameter 0 is `own`** (08/03). It is not in
+`e.Arguments`, so the argument loop never saw it, and the caller went on lending a value the
+callee had adopted — the caller's frame released a box the callee had already freed, which
+ASan reports as a heap-use-after-free inside `lyra_rc_release`. The argument offset above had
+been right from the start; the receiver was simply a third place the same fact had to be
+written down.
+
+**`own` on a trait parameter used to be rejected by the checker (`lyra-E030`, retired
+08/03)**, and this pass was the reason: it analyzed no trait-method *body*, so nothing
+recorded that a returned `own` parameter was transferred rather than dropped —
+`take: (Self, own string) -> string` was a heap-use-after-free, measured under ASan on 07/31.
+Method bodies are now analyzed per specialization (`driver.OwnershipByMethod`, keyed by
+`Resolution.SpecKey`), which is what the restriction named as its condition for lifting.
+
+What the restriction did *not* name, and what made lifting it more than deleting a check:
+**two other passes could not resolve a method callee either**. Use-after-move
+(`checker/use_after_move.go`) resolved an identifier callee only, so the caller's side of a
+transfer went unchecked — the diagnostic that makes `own` safe never fired through a method
+call. And this pass had the receiver gap above. Both are the same shape as the offset already
+documented here, which is the argument for treating "a method call is a call whose first
+parameter is the receiver" as one fact with several readers rather than a special case each
+pass discovers for itself.

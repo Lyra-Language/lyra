@@ -197,7 +197,7 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	// Use-after-move also runs after typechecking: it needs the TypeTable to tell
 	// which values are managed (only those are actually consumed by an `own`
 	// parameter).
-	res.Diagnostics = append(res.Diagnostics, checker.CheckUseAfterMove(program, symTable, tt)...)
+	res.Diagnostics = append(res.Diagnostics, checker.CheckUseAfterMove(program, symTable, tt, res.MethodTable)...)
 
 	// Value-range analysis (integer overflow / constant comparisons) also runs
 	// after typechecking — it reads the TypeTable for each expression's width and

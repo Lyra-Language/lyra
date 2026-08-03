@@ -10,6 +10,18 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
+- **[OPEN] A trait or impl with several methods needs commas between them.** A newline does
+  not separate two method signatures: `trait C { a: (Self) -> i64 \n b: (Self) -> i64 }`
+  fails with "missing }" pointing at the *first* signature's end, then cascades. With commas
+  it parses. Statements gained a terminator on 07/31 and this list did not, so the two read
+  inconsistently — and the diagnostic points at the wrong line, which is what makes it cost
+  minutes rather than seconds. Found 08/03 while writing `own`-receiver tests.
+
+- **[OPEN] A struct literal cannot be a method receiver.** `Node { n: 0 }.a()` is a syntax
+  error ("unexpected `{ n: 0 }`"); the same call works through a binding. Presumably the
+  `named_struct_literal` / block ambiguity the grammar's conflict notes describe, resolved
+  toward the reading that loses here. Found the same way.
+
 - **[OPEN] A literal renders as its Go struct in diagnostics.** `IntegerLiteralExpr.GetName()`
   returns `IntegerLiteralExpr(0, Base: 10)`, and `GetName` is what diagnostics interpolate,
   so a real message reads `expected array pattern, got IntegerLiteralExpr(0, Base: 10)..=
@@ -510,21 +522,10 @@ table per specialization. See COMPLETED.md.
   a field to hold them (`types.ParameterType.Borrow` now exists beside the allocation
   `Modifier`).
 
-  - **[OPEN] `own` is rejected** (`lyra-E030`) rather than supported. It is not a parsing or
-    plumbing gap: `own` *transfers*, which makes the callee's parameter an owning binding to
-    drop or pass on, and nothing recorded that a returned `own` parameter was transferred
-    rather than dropped. Implemented naively it compiles to a heap-use-after-free; that is
-    measured, not predicted (`take: (Self, own string) -> string`, ASan report, 07/31).
-
-    **The prerequisite this named is now built.** It read "lifting the restriction means
-    teaching the ownership pass about method bodies — walking each `TraitMethodImpl` as a
-    function with its parameter modes, and giving the backend a per-method table the way
-    `OwnershipBySpec` does per instantiation", and that is exactly what landed 08/03
-    (`driver.OwnershipByMethod`, keyed by `Resolution.SpecKey`). What remains is the
-    `own`-specific half: the parameter modes reach the synthesized lambda already
-    (`Resolution.Lambda` carries `Borrow`), so the work is lifting lyra-E030 and checking
-    the transfer cases under ASan — starting with the `take` program that produced the
-    original report.
+  - **[DONE 08/03] `own` is supported**, on parameters and on the receiver. lyra-E030 is
+    retired. The restriction had named its own prerequisite — teach the ownership pass
+    about method bodies — and that was the smaller half of what it turned out to be
+    guarding; see COMPLETED.md for the two resolution gaps behind it.
   - *Watch for*: the rule that any code rebuilding a `types.ParameterType` field-by-field
     silently drops new fields. Three sites did (`substituteSelf`, the lambda→signature
     conversion in `typechecker_traits.go`, and `lambdaSignature`), and the symptom was a

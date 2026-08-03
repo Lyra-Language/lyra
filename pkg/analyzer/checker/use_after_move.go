@@ -57,8 +57,8 @@ import (
 // Uncertainty resolves toward *not* reporting: an unresolvable callee (a method
 // call, a call through a local, a function value) records no move at all, so a new
 // hard error can't fire on code the analysis doesn't actually understand.
-func CheckUseAfterMove(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.TypeTable) []diag.Diagnostic {
-	c := &useAfterMove{symTable: symTable, tt: tt, reported: map[reportKey]bool{}}
+func CheckUseAfterMove(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.TypeTable, mt *typetable.MethodTable) []diag.Diagnostic {
+	c := &useAfterMove{symTable: symTable, tt: tt, mt: mt, reported: map[reportKey]bool{}}
 	state := moveState{}
 	for _, stmt := range program.Statements {
 		if vds, ok := stmt.(*ast.VarDeclStmt); ok {
@@ -77,6 +77,7 @@ func CheckUseAfterMove(program *ast.Program, symTable *symbols.SymbolTable, tt *
 type useAfterMove struct {
 	symTable    *symbols.SymbolTable
 	tt          *typetable.TypeTable
+	mt          *typetable.MethodTable // dispatch results, for a method call's borrow modes
 	diagnostics []diag.Diagnostic
 	// reported dedupes by (binding, move site) so one mistake yields one error.
 	// It matters most for a loop-carried move, where the seeded state makes *every*
@@ -266,13 +267,32 @@ func (c *useAfterMove) expr(st moveState, e ast.Expression) moveState {
 // p was already moved — and `consume(p, p)` correctly flags the second p.
 func (c *useAfterMove) call(st moveState, e *ast.FunctionCallExpr) moveState {
 	st = c.expr(st, e.Function)
-	lam := c.resolveCallee(e)
+	params, recv := c.calleeParams(e)
+	// A `.`-call's receiver is parameter 0 and its arguments start at 1. **The offset
+	// is the whole difference**, and getting it wrong is silent: every argument would
+	// be checked against the mode of the parameter to its left, so an `own` parameter
+	// would consume the wrong binding — or none. The purity pass pays the same tax
+	// (methodArgumentAt); UFCS avoids it by desugaring the receiver into the argument
+	// list before any of this runs.
+	offset := 0
+	if recv != nil {
+		offset = 1
+		// `own Self` consumes the receiver, so `h.into_tag()` moves `h`. Recorded
+		// after e.Function was walked above, so the receiver's own read counts as a
+		// use *before* the move rather than after it.
+		if len(params) > 0 && params[0].TypeModifier == types.Own {
+			if name, ok := movedName(recv); ok && c.isManaged(recv) {
+				st[name] = moveSite{loc: recv.GetLocation()}
+			}
+		}
+	}
 	for i, arg := range e.Arguments {
 		st = c.expr(st, arg)
-		if lam == nil || i >= len(lam.Parameters) {
+		p := i + offset
+		if p >= len(params) {
 			continue // unresolvable callee, or a default/variadic position: assume no move
 		}
-		if lam.Parameters[i].TypeModifier != types.Own {
+		if params[p].TypeModifier != types.Own {
 			continue // bare/`ref`/`mut` borrow — the caller keeps ownership
 		}
 		if name, ok := movedName(arg); ok && c.isManaged(arg) {
@@ -280,6 +300,35 @@ func (c *useAfterMove) call(st moveState, e *ast.FunctionCallExpr) moveState {
 		}
 	}
 	return st
+}
+
+// calleeParams returns the callee's declared parameters and, for a `.`-call, the
+// receiver expression that fills parameter 0.
+//
+// A **trait method** resolves through the MethodTable rather than by name: dispatch
+// already chose the impl, and its signature is where the borrow modes live. Until 08/03
+// this path did not exist at all — resolveCallee handles an identifier callee only — so a
+// method call recorded no moves whatever its signature said. That was invisible while
+// `own` was rejected on trait signatures (lyra-E030); it is exactly the hole that
+// restriction was standing in front of.
+func (c *useAfterMove) calleeParams(e *ast.FunctionCallExpr) ([]ast.Parameter, ast.Expression) {
+	if lam := c.resolveCallee(e); lam != nil {
+		return lam.Parameters, nil
+	}
+	res, ok := c.mt.GetResolution(e)
+	if !ok {
+		return nil, nil
+	}
+	lam, err := res.Lambda()
+	if err != nil {
+		return nil, nil
+	}
+	// A fully-qualified `Trait::method(x)` passes the receiver *in* the argument list,
+	// so it has no separate receiver and no offset; a `.`-call has both.
+	if member, isDot := e.Function.(*ast.MemberExpr); isDot {
+		return lam.Parameters, member.Object
+	}
+	return lam.Parameters, nil
 }
 
 // loopBody analyzes a loop body with every move inside it already in effect, so a

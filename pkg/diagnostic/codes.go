@@ -182,19 +182,18 @@ const (
 	// order to write.
 	CodeMalformedModifiers = "lyra-E029"
 
-	// CodeUnsupportedTraitBorrow: `own` written on a trait method's parameter.
+	// CodeUnsupportedTraitBorrow is **retired** (08/03) and no longer emitted. The
+	// number stays reserved rather than reused, so an old build's message and a search
+	// for it still mean one thing.
 	//
-	// `ref` and `mut` work: they are *borrows*, so nobody in the callee retains or
-	// releases them and the ownership pass needs to know nothing about the method.
-	// `own` transfers, which makes the callee's parameter an owning binding that must
-	// be dropped — or transferred onward — and the ownership pass does not analyze
-	// trait-method bodies at all, so nothing records that a returned `own` parameter
-	// was transferred rather than dropped. Measured before this rejection existed: a
-	// heap-use-after-free under ASan, from `take: (Self, own string) -> string`.
-	//
-	// The fix is to teach `pkg/analyzer/ownership` about method bodies, at which point
-	// this restriction lifts. Until then it is a loud error, because the alternative is
-	// a miscompile that type-checks.
+	// It rejected `own` on a trait method's parameter, because the ownership pass did
+	// not analyze trait-method bodies at all — nothing recorded that a returned `own`
+	// parameter was transferred rather than dropped, and the combination was a
+	// heap-use-after-free under ASan (`take: (Self, own string) -> string`). Its own
+	// doc named the condition for lifting it: teach `pkg/analyzer/ownership` about
+	// method bodies. That landed with per-specialization method tables, together with
+	// the other half nobody had written down — use-after-move could not resolve a
+	// *method* callee either, so the caller's side of the transfer went unchecked.
 	CodeUnsupportedTraitBorrow = "lyra-E030"
 
 	// CodeUndeclaredTypeVariable: a signature mentions a type variable that the

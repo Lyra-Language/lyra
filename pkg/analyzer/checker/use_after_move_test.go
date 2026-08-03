@@ -27,8 +27,11 @@ func checkMoves(t *testing.T, source string) []diag.Diagnostic {
 		t.Fatalf("collector errors: %v", collectErrs)
 	}
 	tt := typetable.New()
-	typechecker.New(symTable, scopeTable, tt).Check(program)
-	return checker.CheckUseAfterMove(program, symTable, tt)
+	// The MethodTable comes from the same typechecker pass: a method call's borrow
+	// modes live on the resolution dispatch recorded, not on anything reachable by name.
+	tc := typechecker.New(symTable, scopeTable, tt)
+	tc.Check(program)
+	return checker.CheckUseAfterMove(program, symTable, tt, tc.MethodTable())
 }
 
 func assertMoveErrors(t *testing.T, source string, want int) []diag.Diagnostic {
@@ -325,4 +328,102 @@ let main = () -> u8 => {
 	if !strings.Contains(got[0].Message, `"e" is used after it was moved`) {
 		t.Errorf("message should name the binding: %q", got[0].Message)
 	}
+}
+
+// --- moves through a method call ---------------------------------------------
+//
+// A method call resolves its callee through the MethodTable, not by name, and a `.`-call's
+// receiver is parameter 0 with the arguments starting at 1. Neither was true before 08/03:
+// resolveCallee handled an identifier callee only, so a method call recorded no moves at
+// all whatever its signature said.
+//
+// That hole was invisible while `own` was rejected on trait signatures (lyra-E030, now
+// retired) — and it is the reason lifting that restriction was not merely deleting a check.
+
+const consumeImpl = `
+struct Holder { tag: string }
+trait Consume { take: (Self, own string) -> string }
+impl Consume for Holder { take = (self, s) => s }
+`
+
+func TestUseAfterMove_ThroughMethodArgument(t *testing.T) {
+	assertMoveErrors(t, consumeImpl+`
+let main = () -> u8 => {
+  let h = Holder { tag: "h" }
+  let msg = "hello"
+  println(h.take(msg))
+  println(msg)
+  u8(0)
+}`, 1)
+}
+
+// One use is not a move-then-use — the control, since a check that flagged every `own`
+// argument would satisfy the test above.
+func TestUseAfterMove_MethodArgumentUsedOnce(t *testing.T) {
+	assertMoveErrors(t, consumeImpl+`
+let main = () -> u8 => {
+  let h = Holder { tag: "h" }
+  let msg = "hello"
+  println(h.take(msg))
+  u8(0)
+}`, 0)
+}
+
+// The offset is load-bearing: with arguments checked against parameter i instead of i+1,
+// `take`'s `own` mode would land on the receiver and this borrowed argument would be
+// reported as moved.
+func TestUseAfterMove_MethodBorrowedArgumentIsNotMoved(t *testing.T) {
+	assertMoveErrors(t, `
+struct Holder { tag: string }
+trait Peek { peek: (Self, ref string) -> string }
+impl Peek for Holder { peek = (self, s) => s }
+let main = () -> u8 => {
+  let h = Holder { tag: "h" }
+  let msg = "hello"
+  println(h.peek(msg))
+  println(msg)
+  u8(0)
+}`, 0)
+}
+
+// `own Self` consumes the receiver, so the receiver is what gets moved.
+func TestUseAfterMove_OwnReceiverConsumesTheReceiver(t *testing.T) {
+	assertMoveErrors(t, `
+struct Node { tag: string }
+trait Into { into_tag: (own Self) -> string }
+impl Into for Node { into_tag = (self) => self.tag }
+let main = () -> u8 => {
+  let n: shared Node = Node { tag: "hello" }
+  println(n.into_tag())
+  println(n.tag)
+  u8(0)
+}`, 1)
+}
+
+// …but only when the receiver is actually managed. An `own` stack struct is copied by
+// value, so the original stays valid — the same rule that makes `own i64` not a move.
+func TestUseAfterMove_OwnReceiverOfUnmanagedValueIsNotAMove(t *testing.T) {
+	assertMoveErrors(t, `
+struct Node { tag: string }
+trait Into { into_tag: (own Self) -> string }
+impl Into for Node { into_tag = (self) => self.tag }
+let main = () -> u8 => {
+  let n = Node { tag: "hello" }
+  println(n.into_tag())
+  println(n.tag)
+  u8(0)
+}`, 0)
+}
+
+// A fully-qualified call passes the receiver *in* the argument list, so it has no offset.
+// Getting this branch wrong would shift every argument by one in the opposite direction.
+func TestUseAfterMove_QualifiedCallHasNoReceiverOffset(t *testing.T) {
+	assertMoveErrors(t, consumeImpl+`
+let main = () -> u8 => {
+  let h = Holder { tag: "h" }
+  let msg = "hello"
+  println(Consume::take(h, msg))
+  println(msg)
+  u8(0)
+}`, 1)
 }

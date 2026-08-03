@@ -1159,6 +1159,17 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	// error, so it is spelled out here rather than folded into the loop index.
 	methodSig := a.methodSignature(e)
 
+	// …and parameter 0 is the receiver itself. An `own Self` method *consumes* the
+	// receiver, so the caller transfers it rather than lending it — without this the
+	// caller's frame still drops a box the callee already released, which ASan reports
+	// as a heap-use-after-free inside `lyra_rc_release`. The arguments' offset was
+	// handled from the start; the receiver was not, because it is not in e.Arguments.
+	if member, isDot := e.Function.(*ast.MemberExpr); isDot && methodSig != nil && len(methodSig.Parameters) > 0 {
+		if paramOwnsArgument(methodSig.Parameters[0].Borrow) {
+			a.expr(member.Object, true)
+		}
+	}
+
 	for i, arg := range e.Arguments {
 		argOwns := true // conservative default: transfer (leak-safe) for an unknown callee
 		switch {
