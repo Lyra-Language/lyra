@@ -150,10 +150,37 @@ rebuilt error.
 was emitted from, which is the error block's predecessor and so certainly live there. A temp
 produced inside a conditional sub-expression (an `&&` right operand, a match arm) is not
 dominated by that block, and releasing it would touch a value undefined on the path the
-branch did not take; those still leak, the safe direction. `break`/`continue` leak the same
-way and are *not* fixed by this helper — the producing block dominates a `break` without
-being its predecessor, so reaching it needs real dominance information. todo.md carries the
-measurement and the options.
+branch did not take; those still leak, the safe direction.
+
+`break`/`continue` leaked the same way and are fixed differently, because the producing
+block dominates a `break` without being its predecessor — no block-equality test reaches it.
+See **Exit releases** below.
+
+### Exit releases (`dominators.go`, `resolveExitReleases`)
+
+A `break` or `continue` leaves every statement between it and the loop without reaching
+their flushes, so it owes those statements' pending temporaries a release. It may only
+release the ones live where it stands: an SSA value has one defining block, so it is
+available at the jump exactly when that block **dominates** the jump's block. Releasing a
+non-dominated one frees a value the taken path never produced — a double free, where
+skipping merely leaks.
+
+Dominance is a property of the finished CFG, and the CFG does not exist while the jump is
+being lowered; an edge added later can only *remove* dominators, so computing it early could
+report a dominance a later edge invalidates — the unsound direction. So `lowerBreak`/
+`lowerContinue` record the obligation (`recordExitReleases`) and `resolveExitReleases` emits
+it after the body, against a tree that can no longer change. Appending to the sealed jump
+block is safe: llir keeps `Insts` and `Term` apart and prints instructions first, so the
+release lands before the jump, and every release is straight-line so no block is split.
+
+`loopCtx.tempBase` bounds which temporaries are the jump's to release — the mirror of
+`frameDepth`. One recorded below it belongs to a statement enclosing the whole loop, whose
+flush still runs after the loop exits; releasing it at the jump too would double-free.
+
+Note the dominance check has never been observed to reject a temporary: the candidates that
+would need it are released in their own block by the statement flush before a sibling jump
+is lowered. It is kept as a guarantee rather than a demonstrated filter — see COMPLETED.md
+(08/03) for why that trade was taken rather than relying on the structural argument.
 
 ### Bitwise and shift operators lower
 

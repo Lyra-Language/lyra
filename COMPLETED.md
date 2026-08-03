@@ -10,6 +10,55 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**`break` and `continue` no longer leak the pending temporaries of the statements they jump
+out of.** `for { if ("a" ++ "b") == "ab" { break } }` leaked the concatenation — 18 bytes,
+measured with LeakSanitizer on Linux both before and after. `lowerBreak`/`lowerContinue`
+called `flushTemps()`, which releases only from `pendingBase` up, and the concat belongs to
+the enclosing `if` statement's scope, whose flush the jump skips entirely.
+
+**The jump cannot answer the question it needs to answer, which is what shapes the fix.**
+It may only release a temporary that is live where it stands — an SSA value is defined in
+one block, so it is available at the jump exactly when that block dominates the jump's
+block. Release one that is not dominated and the taken path frees a value it never
+produced: a double free, the failure direction that actually matters here (skipping one
+merely leaks). And dominance is a property of the *whole* CFG, which does not exist yet
+while the jump is being lowered — later blocks can still add edges, and an edge added later
+can only *remove* dominators, so computing it early against a partial CFG could report a
+dominance that is subsequently false. That is precisely the unsound direction.
+
+So the jump records the obligation and `resolveExitReleases` settles it once the body is
+complete, against a dominator tree that can no longer change (`dominators.go`, the standard
+iterative Cooper/Harvey/Kennedy fixpoint — functions here have tens of blocks, so the simple
+algorithm is the right trade against a Lengauer-Tarjan nobody would maintain). Deferring
+works because llir keeps a block's `Insts` and its `Term` in separate fields and prints the
+instructions first: appending to a sealed block lands *before* its jump. Every release
+emitted is straight-line (a store and a call), so none needs a block of its own.
+
+`loopCtx.tempBase` is the other half, and the one a too-eager fix gets wrong. Only
+temporaries recorded at or above the loop's entry are the jump's to release; one below it
+belongs to a statement enclosing the whole loop, whose flush still runs after the loop
+exits, so releasing it at the jump as well would double-free. It is the temporary-side
+mirror of `frameDepth`.
+
+**What I could not do, stated plainly: I could not construct a program where the dominance
+check actually rejects a temporary.** The obvious candidates do not reach it — a temporary
+produced in a conditional sub-expression (an `&&`/`||` right operand) is released in its own
+block by the existing statement flush, so it is no longer pending by the time a `break` in a
+sibling branch is lowered, and a temporary belonging to an enclosing statement is produced
+on a path the jump is nested inside, which dominates it. The check is therefore defensive
+rather than demonstrated: it is cheap, it is computed once per function that jumps, and the
+alternative to having it is relying on that structural argument holding for every lowering
+shape added later, in the region this project already treats as carrying real double-free
+risk. It stays, and this paragraph is here so the next person knows it has never been seen
+to fire.
+
+Coverage: `TestEmit_BreakReleasesPendingTemp` pins two release sites in the loop (one per
+way out; one is the leak, and it fails with that message without the fix), five
+`TestExec_ExitReleases` cases over break/continue/labeled-break plus the two negative
+shapes — a temporary enclosing the loop and one after it, which a too-eager fix would
+double-free — each under ASan, and `TestDomTree` over a hand-built diamond CFG, including
+that an unknown block answers false (the direction that leaks rather than double-frees).
+
 **A `?` no longer leaks a temporary produced by a sub-expression of its operand.**
 `f(g())?`, where `g`'s owned result is consumed by a borrowing parameter: the temporary was
 released on the success path and not on the propagating one. Measured both ways with

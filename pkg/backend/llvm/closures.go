@@ -211,18 +211,23 @@ func (l *lowerer) defineClosure(fn *ast.LambdaExpr) error {
 			return err
 		}
 		if end.Term == nil {
-			return l.emitReturn(entry, end, nil)
+			if err := l.emitReturn(entry, end, nil); err != nil {
+				return err
+			}
 		}
-		return nil
+		return l.resolveExitReleases(irFn)
 	}
 	val, end, err := l.lowerExpr(entry, fn.Body)
 	if err != nil {
 		return err
 	}
 	if end.Term == nil {
-		return l.emitReturn(entry, end, val)
+		if err := l.emitReturn(entry, end, val); err != nil {
+			return err
+		}
 	}
-	return nil
+	// The CFG is complete; settle any break/continue's deferred releases (llvm.go).
+	return l.resolveExitReleases(irFn)
 }
 
 // envPayloadType is the environment's payload layout: `{ i8* dropFn, captures... }`.

@@ -22,6 +22,12 @@ type loopCtx struct {
 	continueTarget *ir.Block // where `continue` transfers control (the loop's post block)
 	label          string    // the loop's label, "" if unlabeled
 	frameDepth     int       // len(managedFrames) at loop entry; break/continue release frames from here up
+	// tempBase is len(pendingReleases) at loop entry — the temporary-side mirror of
+	// frameDepth. break/continue owe releases for temporaries recorded from here up
+	// (the statements they jump out of never reach their own flush); one recorded
+	// *below* it belongs to a statement enclosing the whole loop, which still flushes
+	// after the loop exits, so releasing it at the jump too would be a double free.
+	tempBase int
 }
 
 // loopTarget returns the loop a break/continue refers to: the innermost loop for
@@ -197,6 +203,12 @@ func (l *lowerer) lowerBreak(block *ir.Block, s *ast.BreakStmt) error {
 	if err := l.flushTemps(); err != nil {
 		return err
 	}
+	// The temporaries of the statements this jump leaves behind — an `if` condition's,
+	// say — are not in [pendingBase:] and so are untouched by the flush above: they
+	// belong to statements still being lowered, whose own flushes this jump will never
+	// reach. Whether each is live *here* is a dominance question the CFG cannot answer
+	// yet, so the obligation is recorded and settled once the body is complete.
+	l.recordExitReleases(block, ctx.tempBase)
 	if err := l.releaseManagedFramesFrom(block, ctx.frameDepth); err != nil {
 		return err
 	}
@@ -210,10 +222,12 @@ func (l *lowerer) lowerContinue(block *ir.Block, s *ast.ContinueStmt) error {
 		return err
 	}
 	// Same as break: the current iteration's managed bindings are released before
-	// looping back (they're rebuilt next iteration).
+	// looping back (they're rebuilt next iteration), and the skipped statements'
+	// temporaries are recorded for the post-body dominance pass.
 	if err := l.flushTemps(); err != nil {
 		return err
 	}
+	l.recordExitReleases(block, ctx.tempBase)
 	if err := l.releaseManagedFramesFrom(block, ctx.frameDepth); err != nil {
 		return err
 	}
@@ -294,7 +308,7 @@ func (l *lowerer) lowerForLoop(block *ir.Block, e *ast.ForLoopExpr) (value.Value
 	// own frame), so a break/continue releases exactly the frames the loop body (and
 	// any nested block) introduced — the current iteration's managed bindings —
 	// without touching the loop variable or enclosing scopes.
-	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: postBlock, label: e.Label, frameDepth: len(l.managedFrames)})
+	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: postBlock, label: e.Label, frameDepth: len(l.managedFrames), tempBase: len(l.pendingReleases)})
 	bodyEnd, err := l.lowerForEffect(bodyBlock, e.Body)
 	l.loops = l.loops[:len(l.loops)-1]
 	if err != nil {
@@ -435,7 +449,7 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 	if idxSlot != nil {
 		bodyBlock.NewStore(ib, idxSlot)
 	}
-	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames)})
+	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames), tempBase: len(l.pendingReleases)})
 	bodyEnd, err := l.lowerForEffect(bodyBlock, e.Body)
 	l.loops = l.loops[:len(l.loops)-1]
 	if err != nil {
@@ -533,7 +547,7 @@ func (l *lowerer) lowerForInRange(block *ir.Block, e *ast.ForInLoopExpr) (value.
 	}
 	condBlock.NewCondBr(condBlock.NewICmp(pred, iv, end), bodyBlock, exitBlock)
 
-	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames)})
+	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames), tempBase: len(l.pendingReleases)})
 	bodyEnd, err := l.lowerForEffect(bodyBlock, e.Body)
 	l.loops = l.loops[:len(l.loops)-1]
 	if err != nil {
@@ -626,7 +640,7 @@ func (l *lowerer) lowerForInString(block *ir.Block, e *ast.ForInLoopExpr) (value
 	biB := bodyBlock.NewLoad(lltypes.I64, biSlot)
 	n := bodyBlock.NewCall(decode, data, biB, cpSlot)
 	bodyBlock.NewStore(bodyBlock.NewLoad(lltypes.I32, cpSlot), cSlot)
-	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames)})
+	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames), tempBase: len(l.pendingReleases)})
 	bodyEnd, err := l.lowerForEffect(bodyBlock, e.Body)
 	l.loops = l.loops[:len(l.loops)-1]
 	if err != nil {

@@ -341,6 +341,16 @@ type lowerer struct {
 	// length on entry and restores it on exit; a flush only ever touches [base:].
 	pendingBase int
 
+	// exitReleases are releases a `break`/`continue` owes but cannot emit yet. Such a
+	// jump leaves every statement between it and the loop without reaching their
+	// flushes, so it must release their pending temporaries itself — but only the ones
+	// live where it stands, which is a question about dominance, and the CFG is not
+	// finished while the jump is being lowered. Each entry records the jumping block
+	// and a *copy* of the temporaries in question (the pending list is truncated as
+	// statements finish, so a slice of it would dangle). resolveExitReleases settles
+	// them once the body is complete. Reset by beginFunction.
+	exitReleases []exitRelease
+
 	// byRefParams holds the slots of this function's by-reference `mut` parameters
 	// (functions.go, paramIsByRef). Such a slot is the *caller's* storage, handed in
 	// as a pointer parameter rather than an entry-block alloca, which two things
@@ -518,6 +528,58 @@ func (l *lowerer) flushStmtTemps(start, end *ir.Block) error {
 // used at an early exit (break/continue/return), which has no single statement-end
 // block to move them to.
 func (l *lowerer) flushTemps() error { return l.flushStmtTemps(nil, nil) }
+
+// exitRelease is one `break`/`continue`'s deferred obligation: the temporaries the
+// jump skipped past, and the block it jumps from.
+type exitRelease struct {
+	block *ir.Block
+	temps []pendingTemp
+}
+
+// recordExitReleases notes that the jump in block owes releases for the temporaries
+// the loop's statements have pending — those recorded at or above the loop's own
+// base. The base matters: a temporary belonging to a statement *outside* the loop is
+// still reached by that statement's flush after the loop exits, so releasing it here
+// as well would be a double free. This is the temporary-side mirror of
+// releaseManagedFramesFrom's frameDepth.
+//
+// The temporaries are copied because pendingReleases is truncated as statements
+// complete; the entries must outlive that.
+func (l *lowerer) recordExitReleases(block *ir.Block, tempBase int) {
+	if tempBase >= len(l.pendingReleases) {
+		return
+	}
+	temps := make([]pendingTemp, len(l.pendingReleases)-tempBase)
+	copy(temps, l.pendingReleases[tempBase:])
+	l.exitReleases = append(l.exitReleases, exitRelease{block: block, temps: temps})
+}
+
+// resolveExitReleases emits the releases recorded by break/continue, now that fn is
+// complete and its dominator tree is therefore final. A temporary is released only if
+// the block that produced it dominates the jumping block — otherwise the jumped-from
+// path may never have produced the value, and freeing it would be a double free
+// rather than the leak that skipping it costs. See dominators.go.
+//
+// The releases land before each jump's terminator (llir prints a block's instructions
+// ahead of its terminator), and each is straight-line, so no block is split.
+func (l *lowerer) resolveExitReleases(fn *ir.Func) error {
+	if len(l.exitReleases) == 0 {
+		return nil
+	}
+	dt := newDomTree(fn)
+	for _, ex := range l.exitReleases {
+		for _, p := range ex.temps {
+			if !dt.dominates(p.block, ex.block) {
+				continue
+			}
+			if err := l.deepRelease(ex.block, p.val, p.ty); err != nil {
+				return err
+			}
+		}
+	}
+	l.exitReleases = nil
+	return nil
+}
 
 // releaseTempsOnExit releases, *in* exit, the pending temporaries that are dead on a
 // path leaving the statement early — a `?` propagating, and eventually break/continue.

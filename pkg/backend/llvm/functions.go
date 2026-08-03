@@ -33,6 +33,7 @@ func (l *lowerer) beginFunction(retType lltypes.Type, retLyra types.Type, retSig
 	l.managedFrames = [][]managedSlot{nil}
 	l.pendingReleases = nil
 	l.pendingBase = 0
+	l.exitReleases = nil
 	l.reuseToken = nil
 	l.byRefParams = map[value.Value]bool{}
 }
@@ -193,7 +194,7 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 				return err
 			}
 			if block.Term != nil {
-				return nil // the body sealed the block (e.g. an early return)
+				return l.resolveExitReleases(fn) // the body sealed the block (e.g. an early return)
 			}
 		}
 		// Route through emitReturn (val == nil): it flushes owned temporaries and
@@ -204,7 +205,8 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 			return err
 		}
 	}
-	return nil
+	// The CFG is complete; settle any break/continue's deferred releases (llvm.go).
+	return l.resolveExitReleases(fn)
 }
 
 // forEachUserFunction calls fn for every top-level `let name = <lambda>` binding
@@ -325,7 +327,9 @@ func (l *lowerer) defineFunctionInto(irFn *ir.Func, fn *ast.LambdaExpr, name str
 				return err
 			}
 		}
-		return nil
+		// The CFG is complete, so any break/continue's deferred releases can be
+		// settled against a dominator tree that can no longer change (llvm.go).
+		return l.resolveExitReleases(irFn)
 	}
 
 	v, end, err := l.lowerExpr(entry, fn.Body)
@@ -339,7 +343,7 @@ func (l *lowerer) defineFunctionInto(irFn *ir.Func, fn *ast.LambdaExpr, name str
 			return err
 		}
 	}
-	return nil
+	return l.resolveExitReleases(irFn)
 }
 
 // returnSigned reports whether fn's declared return type is a signed integer
