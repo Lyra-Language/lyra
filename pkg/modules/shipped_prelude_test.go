@@ -75,7 +75,7 @@ let step = (n: i64) -> Maybe<i64> => {
 let main = () -> u8 => {
   let m: Maybe<i64> = Some(40)
   let n: Maybe<i64> = None
-  u8(unwrap_or(m, 0) + unwrap_or(n, 2))
+  u8(m.unwrap_or(0) + n.unwrap_or(2))
 }`)
 	res := analyzeWith(t, filepath.Join(dir, "app.lyra"), dir, repo)
 	if errs := res.Errors(); len(errs) != 0 {
@@ -95,7 +95,7 @@ func TestShippedPrelude_CombinatorsAreCallable(t *testing.T) {
 let main = () -> u8 => {
   let n: Maybe<i64> = None
   let m: Maybe<i64> = Some(0)
-  u8(unwrap_or(m, 1) + unwrap_or_else(n, fortyTwo))
+  u8(m.unwrap_or(1) + n.unwrap_or_else(fortyTwo))
 }`)
 	res := analyzeWith(t, filepath.Join(dir, "app.lyra"), dir, repo)
 	if errs := res.Errors(); len(errs) != 0 {
@@ -145,7 +145,7 @@ let step = (n: i64) -> Option<i64> => {
   let v = mk(n)?
   Some(v)
 }
-let main = () -> u8 => u8(unwrap_or(mk(42), 0))`)
+let main = () -> u8 => u8(mk(42).unwrap_or(0))`)
 
 	res := analyzeWith(t, filepath.Join(dir, "app.lyra"), dir, repo)
 	for _, d := range res.Errors() {
@@ -187,8 +187,8 @@ func TestShippedPrelude_CombinatorsAreUsableFromPureCode(t *testing.T) {
 		entry := filepath.Join(t.TempDir(), "app.lyra")
 		write(t, entry, `import std.maybe
 let pipeline = pure (m: Maybe<i64>) -> i64 => {
-  let doubled = maybe.map(m, (x: i64) -> i64 => x * 2)
-  unwrap_or_else(doubled, () -> i64 => 0)
+  let doubled = m.map((x: i64) -> i64 => x * 2)
+  doubled.unwrap_or_else(() -> i64 => 0)
 }
 let main = () -> u8 => u8(pipeline(Some(4)))`)
 		if errs := analyzeWith(t, entry, filepath.Dir(entry), dir, repo).Errors(); len(errs) != 0 {
@@ -201,7 +201,7 @@ let main = () -> u8 => u8(pipeline(Some(4)))`)
 		write(t, entry, `import std.maybe
 var log = 0
 let sneaky = (x: i64) -> i64 => { log = x; x }
-let pipeline = pure (m: Maybe<i64>) -> Maybe<i64> => maybe.map(m, sneaky)
+let pipeline = pure (m: Maybe<i64>) -> Maybe<i64> => m.map(sneaky)
 let main = () -> u8 => 0`)
 		errs := analyzeWith(t, entry, filepath.Dir(entry), dir, repo).Errors()
 		if len(errs) == 0 {
