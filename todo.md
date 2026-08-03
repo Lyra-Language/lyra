@@ -59,9 +59,18 @@ lowers; `CLAUDE.md`'s `pkg/backend/llvm` section is the current inventory. Settl
   body-only edits keep lambda sets stable; adding/removing a lambda or changing captures
   means a full rebuild even in dev.
 - **[OPEN] Generic types** — `where` bounds on a type parameter are collected but not
-  enforced at the instantiation. `Maybe<weak T>` does not parse (a grammar change). A
-  trait-impl *method* on a generic receiver does not lower — though neither does one on a
-  non-generic receiver, so that is a trait gap, not a generics one.
+  enforced at the instantiation. `Maybe<weak T>` does not parse (a grammar change).
+  (A trait-impl method on a generic receiver **does** lower as of 08/03 — see COMPLETED.md
+  and `pkg/backend/llvm/README.md`'s trait section.)
+- **[OPEN] A generic body may not call another generic at a variable-dependent
+  instantiation.** `let getOr<t> = (o: Opt<t>, d: t) -> t => o.unwrap(d)` is refused with
+  "type variable t has no concrete type here", and so is the free-function analogue
+  (`unwrap(o, d)` from inside a generic). Substitutions are deliberately not composed
+  (`monomorphize.go`), so the callee's bindings would map `t` to `t` rather than to a type.
+  It fails loudly, which is the right failure, but it bites a natural thing to write: a
+  generic combinator built on another one. The fix is composing the caller's active
+  substitution into the callee's bindings before keying the specialization, plus deciding
+  what to do about a recursive generic (the instantiation set must stay finite).
 - **[DONE 08/01] A binding's written generic parameter list is authoritative** — option (b)
   of the three that were on the table. A signature variable absent from a written list is
   `lyra-E031`; a declared parameter the signature never mentions is `lyra-W013`. The list
@@ -488,7 +497,10 @@ Types, checked arithmetic, division via the builtins library, `match`, conversio
 ## Traits
 
 Trait-method lowering landed 07/30: an impl method lowers to a function taking the receiver
-first, dispatch is static, and a generic impl needs no extra machinery.
+first, and dispatch is static. That entry used to end "and a generic impl needs no extra
+machinery" — it needed exactly the machinery a generic function needs, built 08/03: one
+emitted function per binding set, the body lowered under those bindings, and an ownership
+table per specialization. See COMPLETED.md.
 
 - **[PARTIAL] Borrow modifiers on trait signatures.** `ref` and `mut` landed 07/31:
   `bump: (mut Self) -> void` writes through to the caller, and `peek: (ref Self) -> i64`
@@ -500,13 +512,19 @@ first, dispatch is static, and a generic impl needs no extra machinery.
 
   - **[OPEN] `own` is rejected** (`lyra-E030`) rather than supported. It is not a parsing or
     plumbing gap: `own` *transfers*, which makes the callee's parameter an owning binding to
-    drop or pass on, and **`pkg/analyzer/ownership` does not analyze trait-method bodies at
-    all** — nothing records that a returned `own` parameter was transferred rather than
-    dropped. Implemented naively it compiles to a heap-use-after-free; that is measured, not
-    predicted (`take: (Self, own string) -> string`, ASan report, 07/31). Lifting the
-    restriction means teaching the ownership pass about method bodies — walking each
-    `TraitMethodImpl` as a function with its parameter modes, and giving the backend a
-    per-method table the way `OwnershipBySpec` does per instantiation.
+    drop or pass on, and nothing recorded that a returned `own` parameter was transferred
+    rather than dropped. Implemented naively it compiles to a heap-use-after-free; that is
+    measured, not predicted (`take: (Self, own string) -> string`, ASan report, 07/31).
+
+    **The prerequisite this named is now built.** It read "lifting the restriction means
+    teaching the ownership pass about method bodies — walking each `TraitMethodImpl` as a
+    function with its parameter modes, and giving the backend a per-method table the way
+    `OwnershipBySpec` does per instantiation", and that is exactly what landed 08/03
+    (`driver.OwnershipByMethod`, keyed by `Resolution.SpecKey`). What remains is the
+    `own`-specific half: the parameter modes reach the synthesized lambda already
+    (`Resolution.Lambda` carries `Borrow`), so the work is lifting lyra-E030 and checking
+    the transfer cases under ASan — starting with the `take` program that produced the
+    original report.
   - *Watch for*: the rule that any code rebuilding a `types.ParameterType` field-by-field
     silently drops new fields. Three sites did (`substituteSelf`, the lambda→signature
     conversion in `typechecker_traits.go`, and `lambdaSignature`), and the symptom was a

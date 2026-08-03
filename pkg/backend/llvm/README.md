@@ -692,7 +692,7 @@ and the backend has nowhere to put the failing edge. Refused with a message, as
 
 One helper, `bindParameters`, binds parameters for **every** shape of function — plain,
 generic specialization, lifted closure (whose `ir.Param` slot 0 is the environment, hence its
-`offset`), and trait-impl method, which reaches it because `traitMethodLambda` synthesizes a
+`offset`), and trait-impl method, which reaches it because `Resolution.Lambda` synthesizes a
 `LambdaExpr` whose parameters are the impl's clause patterns. The two loops it replaced had
 already been copied once.
 
@@ -1064,12 +1064,55 @@ combinators had to be free functions.
 
 Methods are emitted **lazily, at the first call**, like generic types and for the same two
 reasons: an uncalled method costs nothing, and the *call site* is where the receiver-substituted
-signature exists (`impl Show<t> for Box<t>` has no single type until a receiver picks one). That
-is why a **generic impl needs no extra machinery** — dispatch has already substituted `Self`
-with the concrete receiver, and `typetable.Resolution` now carries the impl and that signature
-alongside the method, so the backend never re-derives Self substitution. Duplicating it would be
-a second implementation of "what is this method's type", free to disagree with the one that
-type-checked the call.
+signature exists (`impl Show<t> for Box<t>` has no single type until a receiver picks one).
+`typetable.Resolution` carries the impl and that signature alongside the method, so the backend
+never re-derives Self substitution; duplicating it would be a second implementation of "what is
+this method's type", free to disagree with the one that type-checked the call.
+
+### A generic impl is monomorphized, one function per binding set (08/03)
+
+The paragraph above used to end "which is why a generic impl needs no extra machinery". It
+needed exactly the machinery a generic *function* needs, and the absence showed up two ways.
+A body that touched the impl's type variable could not lower at all —
+`match on Maybe<t> not implemented yet`, `field access on non-struct type Box<t>` — because
+the body was emitted with `t` still abstract. And a body that did *not* touch it lowered once
+and was called with every receiver type:
+
+```llvm
+define i64 @Box$Sized$size(%Box$i64 %self)
+  call i64 @Box$Sized$size(%Box$i64 %4)
+  call i64 @Box$Sized$size(%Box$boolean %6)   ; ← the same function
+```
+
+Apple clang accepts that (opaque pointers make the two function types indistinguishable), so
+it stood as a silent miscompile rather than a build failure — the class of bug `asan.sh` and
+its typed-pointer clang exist to catch.
+
+Dispatch had been computing the bindings all along, to check the impl's `where` bounds; they
+now travel on the resolution as `Bindings`, and `Resolution.SpecKey()` names the specialization
+for all three consumers that must agree — the emitted symbol, the method cache, and the
+ownership table. The body is then lowered exactly as a generic function's is: `pushTypeSubst`
+with the bindings, so `lowerType` and `recordedType` — the two accessors every type already
+funnels through — make the whole body concrete without rewriting a node.
+
+**The substitution has to survive the queue.** Bodies are deferred (see below), so a
+substitution pushed while declaring is long gone by the time the body is lowered;
+`pendingTraitMethod` carries the bindings and the spec key, and the define loop installs both.
+
+**Ownership is per specialization too**, and this is where "no extra machinery" was most
+expensive: `pkg/analyzer/ownership` walks top-level declarations, which impl methods are not,
+so **no method body had ever been analyzed** — generic or otherwise, a method holding a
+`string` emitted neither retains nor releases. `driver.OwnershipByMethod` now holds one table
+per `SpecKey`, built by the same `ownership.AnalyzeLambda` the generic-function path uses.
+Whether a value is reference-counted is a property of the type *argument*, so the answer at
+`t = string` (retain the returned payload) is not the answer at `t = i64` (do nothing), and
+the tables cannot be merged — they are keyed by AST node, and it is the *same* node.
+
+**Not composed, and deliberately so.** A generic body calling a generic impl method
+(`getOr<t>` calling `o.unwrap(d)` on an `Opt<t>`) is refused with "type variable t has no
+concrete type here", exactly as a generic function calling another generic function already
+was. Both are the same limitation, and both fail loudly rather than emitting a body at the
+wrong instantiation.
 
 The synthesized function is built as a real `*ast.LambdaExpr` (trait signature for the types,
 impl clause for the parameter names and body) and lowered through `defineFunctionInto` — the
@@ -1083,10 +1126,12 @@ corrupted), and the declare-before-define split lets a self-recursive method ter
 has no run-time status: it is the receiver purely because dispatch put its type in the
 signature's first position, which is where the call site passes it.
 
-**Open:** a trait signature carries no borrow modifier (the grammar has nowhere to write one),
-so every parameter including the receiver is by value; if that changes, `traitMethodLambda` is
-the line that must carry it or the call site and body would disagree about who owns the
-receiver.
+**Borrow modifiers travel with the parameter** — `Resolution.Lambda` copies each signature
+parameter's `Borrow` onto the synthesized `ast.Parameter`, which is what makes a `ref Self` a
+pointer on both sides. This paragraph used to say a trait signature carried no modifier and
+that everything was by value; `ref`/`mut` landed 07/31, and the line it warned about is the
+one now doing the carrying. `own` is still rejected (lyra-E030) — see `todo.md`, where the
+ownership prerequisite it named is now built.
 
 ## Behavioural tests
 

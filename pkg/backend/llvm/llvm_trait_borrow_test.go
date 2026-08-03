@@ -9,7 +9,7 @@ import (
 //
 // The grammar always accepted these; the collector dropped them, so every trait method
 // parameter was by value however it was written. The danger in fixing that is not the
-// parsing but the *agreement*: traitMethodLambda binds the body against the mode, and the
+// parsing but the *agreement*: Resolution.Lambda binds the body against the mode, and the
 // call site must pass an address for the same parameters — a body expecting a pointer handed
 // a value is a wild load, not a type error anything catches.
 

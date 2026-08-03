@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"fmt"
+	"sort"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/value"
@@ -28,11 +29,34 @@ import (
 // this and must find the declaration rather than recursing forever.
 
 // traitMethodSymbol is the emitted name for one impl method: the implementing type, the
-// trait, and the method. All three, because neither pair alone is unique — one type may
-// implement two traits that both declare `show`, and one trait may be implemented by
-// many types.
-func traitMethodSymbol(implType types.Type, traitName, method string) string {
-	return typetable.TypeSymbol(implType.GetName()+"$"+traitName, nil) + "$" + method
+// trait, the method, and — for a generic impl — the bindings this specialization was
+// emitted at.
+//
+// All four, because no subset is unique. One type may implement two traits that both
+// declare `show`, one trait may be implemented by many types, and **one generic impl
+// serves many receivers**. That last one was missing until 08/03, and it was not a
+// cosmetic collision: `impl Sized for Box<t>` emitted a single
+// `@Box$Sized$size(%Box$i64)` that both `Box<i64>` and `Box<bool>` call sites called, so
+// the second passed a `%Box$boolean` into an i64-shaped parameter. Apple clang accepts
+// that — opaque pointers make the two function types indistinguishable — which is what
+// let it stand as a silent miscompile rather than a build failure.
+func traitMethodSymbol(res typetable.Resolution) string {
+	base := typetable.TypeSymbol(res.Impl.Type.GetName()+"$"+res.Impl.TraitName, nil) + "$" + res.Method.GetName()
+	if len(res.Bindings) == 0 {
+		return base
+	}
+	names := make([]string, 0, len(res.Bindings))
+	for n := range res.Bindings {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	args := make([]types.Type, 0, len(names))
+	for _, n := range names {
+		args = append(args, res.Bindings[n])
+	}
+	// Mangled through the same helper a generic function's symbol uses, so the two
+	// families of specialization read alike in the IR (`Box$Sized$size$i64`).
+	return typetable.TypeSymbol(base, args)
 }
 
 // traitMethodCallee returns the emitted function for a resolved method call, emitting it
@@ -55,23 +79,39 @@ func (l *lowerer) traitMethodCallee(call *ast.FunctionCallExpr) (*ir.Func, bool,
 // traitMethod declares and defines one impl method, caching it by symbol so two call
 // sites reaching the same method share one emitted function.
 func (l *lowerer) traitMethod(res typetable.Resolution) (*ir.Func, error) {
-	name := traitMethodSymbol(res.Impl.Type, res.Impl.TraitName, res.Method.GetName())
+	name := traitMethodSymbol(res)
 	if fn, ok := l.traitMethods[name]; ok {
 		return fn, nil
 	}
 
-	lambda, err := traitMethodLambda(res)
+	lambda, err := res.Lambda()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("llvm: %w", err)
 	}
+	// The signature is declared under this specialization's bindings. Dispatch has
+	// already substituted Self and the trait's own parameters, so the signature is
+	// usually concrete before it gets here — but an impl whose *method* mentions the
+	// impl's variable elsewhere still needs them, and installing the substitution costs
+	// nothing when it is empty.
+	restore := l.pushTypeSubst(res.Bindings)
 	fn, err := l.declareFunctionAs(name, lambda)
+	restore()
 	if err != nil {
 		return nil, err
 	}
 	// Cached before the body is lowered, so a method that calls itself finds the
 	// declaration instead of recursing into this again.
 	l.traitMethods[name] = fn
-	l.pendingTraitMethods = append(l.pendingTraitMethods, pendingTraitMethod{fn: fn, lambda: lambda})
+	// The bindings travel with the queued body. Bodies are lowered after the current
+	// function finishes (see below), by which point a substitution pushed here is long
+	// gone — and lowering a generic body without one is exactly the `match on Maybe<t>`
+	// failure this whole path existed to hit.
+	l.pendingTraitMethods = append(l.pendingTraitMethods, pendingTraitMethod{
+		fn:      fn,
+		lambda:  lambda,
+		subst:   res.Bindings,
+		specKey: res.SpecKey(),
+	})
 	return fn, nil
 }
 
@@ -81,8 +121,10 @@ func (l *lowerer) traitMethod(res typetable.Resolution) (*ir.Func, error) {
 // frame stack) that lowering a second body underneath would corrupt. Closures are lifted
 // for the same reason.
 type pendingTraitMethod struct {
-	fn     *ir.Func
-	lambda *ast.LambdaExpr
+	fn      *ir.Func
+	lambda  *ast.LambdaExpr
+	subst   map[string]types.Type // this specialization's bindings; empty for a non-generic impl
+	specKey string                // typetable.Resolution.SpecKey, for the body's ownership table
 }
 
 // defineePendingTraitMethods lowers the bodies queued during this module's emission,
@@ -92,53 +134,22 @@ func (l *lowerer) definePendingTraitMethods() error {
 		pending := l.pendingTraitMethods
 		l.pendingTraitMethods = nil
 		for _, p := range pending {
-			if err := l.defineFunctionInto(p.fn, p.lambda, p.fn.GlobalIdent.Ident()); err != nil {
+			// Both halves of the specialization, installed together: the bindings so
+			// the body's types are concrete, and the ownership table computed for
+			// *this* binding set so its retains and releases are the ones the
+			// concrete types call for. Consulting the program-wide table instead is
+			// what made `t = string` a double free for generic functions.
+			restoreSubst := l.pushTypeSubst(p.subst)
+			restoreOwn := l.pushMethodOwnership(p.specKey)
+			err := l.defineFunctionInto(p.fn, p.lambda, p.fn.GlobalIdent.Ident())
+			restoreOwn()
+			restoreSubst()
+			if err != nil {
 				return err
 			}
 		}
 	}
 	return nil
-}
-
-// traitMethodLambda synthesizes the function an impl method *is*: the trait's signature
-// supplies the types, the impl's clause supplies the parameter names and the body.
-//
-// Building a LambdaExpr rather than a bespoke lowering path is deliberate — it means
-// parameter binding, `own`-parameter framing, and the void/typed return split all come
-// from defineFunctionInto, the same code a plain function and a generic specialization
-// go through, and cannot drift between them.
-//
-// The receiver is simply the first parameter. `self` has no special status at run time;
-// what makes it the receiver is that dispatch put the receiver's type in Signature's
-// first position, which is exactly where the call site passes it.
-func traitMethodLambda(res typetable.Resolution) (*ast.LambdaExpr, error) {
-	clause := res.Method.Clause
-	sig := res.Signature
-	if len(clause.Patterns) != len(sig.Parameters) {
-		return nil, fmt.Errorf(
-			"llvm: trait method %q takes %d parameter(s) but its impl binds %d",
-			res.Method.GetName(), len(sig.Parameters), len(clause.Patterns))
-	}
-	params := make([]ast.Parameter, len(clause.Patterns))
-	for i, pat := range clause.Patterns {
-		// The signature's borrow modifier travels with the parameter. This is the line
-		// the old comment here warned about: carry it, or the call site and the body
-		// disagree about who owns the receiver. Everything downstream — paramIsByRef,
-		// the owning-binding frame in defineFunctionInto — reads ast.Parameter, so
-		// carrying it here is what makes a `ref Self` a pointer on both sides.
-		params[i] = ast.Parameter{
-			AstBase:      ast.AstBase{Location: clause.GetLocation()},
-			Pattern:      pat,
-			Type:         sig.Parameters[i].Type,
-			TypeModifier: sig.Parameters[i].Borrow,
-		}
-	}
-	return &ast.LambdaExpr{
-		ExprBase:   ast.ExprBase{AstBase: ast.AstBase{Location: clause.GetLocation()}},
-		Parameters: params,
-		ReturnType: sig.ReturnType,
-		Body:       clause.Body,
-	}, nil
 }
 
 // lowerTraitMethodCall emits the call, passing the receiver as the first argument.
@@ -149,7 +160,7 @@ func traitMethodLambda(res typetable.Resolution) (*ast.LambdaExpr, error) {
 func (l *lowerer) lowerTraitMethodCall(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, fn *ir.Func) (value.Value, *ir.Block, error) {
 	// The receiver is signature parameter 0 and each argument i is parameter i+1. Both go
 	// by pointer when their parameter is a `mut`/`ref` borrow — the same convention
-	// traitMethodLambda binds the body against, and the two must agree: a body expecting a
+	// Resolution.Lambda binds the body against, and the two must agree: a body expecting a
 	// pointer handed a value (or the reverse) is not a type error the front end can catch,
 	// it is a wild load.
 	params := l.methodParamModes(call)

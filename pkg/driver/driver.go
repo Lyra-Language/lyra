@@ -48,9 +48,16 @@ type Result struct {
 	// the specialization it is lowering. The tables cannot be merged: they are keyed
 	// by AST node, and the same node carries different annotations per instantiation.
 	OwnershipBySpec map[string]*ownership.Table
-	Captures        *captures.Table      // each lambda's free variables (its closure environment)
-	RangeSafety     *checker.SafetyTable // overflow ops the backend may leave unchecked
-	Diagnostics     []diag.Diagnostic
+	// OwnershipByMethod is the same thing for **trait-impl method bodies**, keyed by
+	// typetable.Resolution.SpecKey(). It is separate from OwnershipBySpec only because
+	// the two are keyed differently; the reason both exist is identical.
+	//
+	// Until 08/03 there was no ownership analysis for a method body at all — generic or
+	// not — so a method holding a managed value emitted no retains and no releases.
+	OwnershipByMethod map[string]*ownership.Table
+	Captures          *captures.Table      // each lambda's free variables (its closure environment)
+	RangeSafety       *checker.SafetyTable // overflow ops the backend may leave unchecked
+	Diagnostics       []diag.Diagnostic
 }
 
 // HasErrors reports whether any diagnostic is error-severity. A compiler should
@@ -209,6 +216,22 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	res.OwnershipBySpec = map[string]*ownership.Table{}
 	for _, inst := range res.Instantiations.All() {
 		res.OwnershipBySpec[inst.Key()] = ownership.AnalyzeLambda(inst.Func, symTable, tt, inst.Subst, res.MethodTable)
+	}
+	// …and once per trait-method specialization. `Analyze` above walks top-level
+	// declarations, which impl methods are not — they hang off a TraitImplStmt — so
+	// before this a method body was analyzed by nothing at all, and a `string` inside one
+	// was neither retained nor released. A method is analyzed the same way a generic
+	// function is, per binding set: whether a value is reference-counted is a property of
+	// the type *argument*, so the answer at `t = string` is not the answer at `t = i64`.
+	res.OwnershipByMethod = map[string]*ownership.Table{}
+	for _, r := range res.MethodTable.Specializations() {
+		lam, err := r.Lambda()
+		if err != nil {
+			// A method with no declared signature cannot be given one here. The
+			// backend reports it when the call is lowered, with the location.
+			continue
+		}
+		res.OwnershipByMethod[r.SpecKey()] = ownership.AnalyzeLambda(lam, symTable, tt, r.Bindings, res.MethodTable)
 	}
 
 	// Capture analysis: each lambda's free variables, which the backend copies

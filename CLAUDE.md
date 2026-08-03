@@ -369,3 +369,13 @@ is named `self`, by rewriting the call to pass the receiver as its first argumen
 take `self`, so they read both ways. It matters beyond ergonomics — dispatch on the receiver
 is what makes `map` on a `Maybe` and `map` on an array able to coexist, which the bare
 top-level name cannot (see `todo.md`'s Modules section).
+
+**Generic trait-impl methods monomorphize as of 08/03**, which is the other half of the same
+story: `impl Unwrap<t> for Maybe<t>` now emits one function per binding set, its body lowered
+under those bindings, with an ownership table per specialization
+(`driver.OwnershipByMethod`). Before that a generic impl either failed to lower or — for a
+body that never touched the type variable — emitted *one* function that every instantiation
+called, passing the wrong receiver type into it. Two consequences for anyone working nearby:
+**a method body is analyzed for ownership at all now** (it never was, generic or not), and
+`typetable.Resolution.SpecKey()` is the one name for a specialization, shared by the symbol,
+the emitted-method cache and that table.

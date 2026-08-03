@@ -10,6 +10,60 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**Generic trait-impl methods are monomorphized.** `impl Unwrap<t> for Maybe<t>` type-checked
+and then died in the backend — `match on Maybe<t> not implemented yet` — because the body
+was emitted once with `t` still abstract. This is the gap that decided UFCS's sequencing
+earlier the same day: method ergonomics through traits needed this built, while UFCS rode
+the free-function path that already monomorphized.
+
+**It was worse than an unimplemented error, which is what the investigation turned up.**
+Where a generic impl's body *did* lower — one that never touches the type variable — the
+emitted symbol was keyed by `impl.Type` (`Box<t>`), so every instantiation shared one
+function:
+
+```llvm
+define i64 @Box$Sized$size(%Box$i64 %self)
+  call i64 @Box$Sized$size(%Box$i64 %4)
+  call i64 @Box$Sized$size(%Box$boolean %6)   ; ← the same function
+```
+
+Apple clang accepts that and runs it: opaque pointers make the two function types
+indistinguishable, which is precisely the class of invalid IR `asan.sh` and its
+typed-pointer clang exist to catch. A silent miscompile, not a missing feature.
+
+**The bindings existed the whole time.** `resolveTraitMethod` unifies the impl's target
+against the receiver and keeps the result to check the impl's `where` bounds; it simply
+never left the typechecker. They now travel on `typetable.Resolution`, and
+`Resolution.SpecKey()` names the specialization for the three consumers that have to agree —
+the emitted symbol, the method cache, and the ownership table. Those three disagreeing *was*
+the bug, so they get one string.
+
+Lowering is then the existing monomorphizer, not a second one: `pushTypeSubst` with the
+bindings, and the body's types come out concrete through the two accessors every type
+already funnels through. One wrinkle worth recording: method bodies are **deferred to a
+queue** (a method calling another would otherwise be lowered re-entrantly, corrupting the
+lowerer's per-function state), so a substitution pushed while declaring is long gone by the
+time the body is lowered. The queue entry carries the bindings.
+
+**Ownership was the larger half.** `pkg/analyzer/ownership` walks top-level declarations,
+which impl methods are not — they hang off a `TraitImplStmt` — so **no method body had ever
+been analyzed**, generic or not: a method holding a `string` emitted neither retains nor
+releases. `driver.OwnershipByMethod` now holds one table per specialization, built by the
+same `ownership.AnalyzeLambda` the generic-function path uses. Whether a value is
+reference-counted is a property of the type *argument*, so `t = string` retains its returned
+payload and `t = i64` does nothing, from the same source line and the same AST nodes — which
+is why the tables cannot be merged. Verified under `LEAKS=1 ./asan.sh`, which is where a
+wrong answer here shows up as a fault rather than as a number.
+
+Two things deliberately not changed. A generic body calling a generic impl method
+(`getOr<t>` calling `o.unwrap(d)`) is still refused with "type variable t has no concrete
+type here" — substitutions are not composed, and the free-function analogue was already
+refused identically; it is now in todo.md as one limitation rather than two. And
+`traitMethodLambda` moved out of the backend onto `Resolution.Lambda`, because the ownership
+pass needs the same synthesized function and two constructions of it would be two answers to
+"what are this method's parameters".
+
+### 08/03/26
 **A negated literal and a plain one now have a common type.** `if c { -1 } else { 2 }` did
 not compile. Neither did `match n { 0 => -1, _ => 2 }` or `[-1, 2]` — ordinary code, in
 three constructs, rejected with a message comparing a type to itself: *then is integer

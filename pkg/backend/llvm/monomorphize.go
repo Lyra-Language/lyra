@@ -159,6 +159,19 @@ func (l *lowerer) pushSpecOwnership(key string) func() {
 	return func() { l.specOwnership = prev }
 }
 
+// pushMethodOwnership is the same for a trait-impl method body, whose table is keyed by
+// the resolution's SpecKey rather than by an instantiation's.
+//
+// A missing entry installs nil, which falls back to the program-wide table — the behaviour
+// every method body had before there were per-method tables at all. That is the right
+// fallback: the program-wide table simply has no annotations for these nodes, so the body
+// lowers without retains or releases rather than with someone else's.
+func (l *lowerer) pushMethodOwnership(specKey string) func() {
+	prev := l.specOwnership
+	l.specOwnership = l.res.OwnershipByMethod[specKey]
+	return func() { l.specOwnership = prev }
+}
+
 // applyTypeSubst replaces type variables in t with their concrete bindings. It is
 // called from the two accessors every lowering decision already goes through, so a
 // specialization's body sees concrete types everywhere without any node being

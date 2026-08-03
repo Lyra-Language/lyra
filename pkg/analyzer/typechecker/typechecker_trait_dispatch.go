@@ -356,6 +356,11 @@ func (tc *TypeChecker) inferResolvedTraitMethodCall(calleeName string, match res
 		Impl:      match.Impl,
 		Method:    match.Method,
 		Signature: match.Signature,
+		// The bindings a generic impl unified with, which dispatch has already worked
+		// out for the `where`-bound check below. They travel with the resolution
+		// because the *body* is monomorphized against them: one emitted function per
+		// distinct binding set, analyzed for ownership at the concrete types.
+		Bindings: match.Bindings,
 	})
 	if match.Signature == nil {
 		// No declared signature to check args against (shouldn't normally

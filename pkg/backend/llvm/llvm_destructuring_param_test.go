@@ -14,7 +14,7 @@ import (
 //
 // It reaches every shape of function at once, because they all bind parameters through
 // bindParameters: a plain function, a generic specialization, a lifted closure, and a
-// trait-impl method (whose clause patterns *are* its parameters, via traitMethodLambda).
+// trait-impl method (whose clause patterns *are* its parameters, via typetable.Resolution.Lambda).
 var destructuringParamCases = []struct {
 	name string
 	src  string
