@@ -131,14 +131,29 @@ error carries away and a dup there would leak. Inverting the two makes the borro
 print freed memory and trips ASan, which is what `TestExec_TryBorrowedOperand` and
 `TestASan_TryManagedPayload` exist to catch.
 
-**The propagating return deliberately does not flush the enclosing statement's
-temporaries.** `emitReturn` releases each pending temp *in the block that produced it*, and
-the operand's producing block is the one before the branch — so flushing from the error
-block would put a release ahead of that block's terminator, freeing the operand ahead of
-the tag test that reads it, on the **success** path too. Raising `pendingBase` leaves the
-release where it belongs. The residue is any temp produced by a sub-expression of the
-operand, which leaks on the propagating path rather than double-freeing (the same bias
-break/continue take); todo.md carries the fix that would serve all three.
+**The propagating return releases the statement's dead temporaries itself, rather than
+letting `emitReturn` flush them.** That flush releases each pending temp *in the block that
+produced it*, and the operand's producing block is the one before the branch — so flushing
+from the error block would put a release ahead of that block's terminator, freeing the
+operand ahead of the tag test that reads it, on the **success** path too. So the error block
+emits its own releases (`releaseTempsOnExit`) and then raises `pendingBase` to keep the
+return's flush off them.
+
+`releaseTempsOnExit` differs from `flushStmtTemps` in the one way that matters here: **it
+does not truncate the pending list.** The propagating path is one exit from a statement that
+still has another, and the success path must still reach the statement's own flush —
+truncating would move the release rather than add one, leaking on every non-exiting path
+instead. The operand's own temp is excluded, its reference having transferred into the
+rebuilt error.
+
+**What it releases is bounded by dominance**: only temps produced in the block the branch
+was emitted from, which is the error block's predecessor and so certainly live there. A temp
+produced inside a conditional sub-expression (an `&&` right operand, a match arm) is not
+dominated by that block, and releasing it would touch a value undefined on the path the
+branch did not take; those still leak, the safe direction. `break`/`continue` leak the same
+way and are *not* fixed by this helper — the producing block dominates a `break` without
+being its predecessor, so reaching it needs real dominance information. todo.md carries the
+measurement and the options.
 
 ### Bitwise and shift operators lower
 

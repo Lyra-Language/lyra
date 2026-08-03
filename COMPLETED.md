@@ -10,6 +10,43 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**A `?` no longer leaks a temporary produced by a sub-expression of its operand.**
+`f(g())?`, where `g`'s owned result is consumed by a borrowing parameter: the temporary was
+released on the success path and not on the propagating one. Measured both ways with
+LeakSanitizer on Linux (macOS has no LSan) — **19 bytes in 1 allocation before, none
+after**.
+
+`lowerTryPropagate` held the *whole* pending list back from its return's flush. The reason
+was sound: that flush releases each temporary in the block that produced it, and the
+operand's block is the one before the branch, so a release emitted there would sit ahead of
+the tag test and free the value on the **success** path too. Holding everything back avoided
+that, at the cost of also suppressing temporaries that genuinely die on the propagating path.
+
+The fix is that the propagating path releases them itself, into its own block —
+`releaseTempsOnExit`, which differs from `flushStmtTemps` in the one way that matters: **it
+does not truncate the pending list.** An early exit is one path out of a statement that still
+has another, and that other path must still reach the statement's own flush. Truncating would
+move the release rather than add one, leaking on every non-exiting path instead. The operand's
+own temporary stays excluded, since its reference transfers into the rebuilt error.
+
+**The residue is bounded by dominance, and that is what makes it stop here.** Only
+temporaries produced in the exiting branch's *predecessor* are released — that block is known
+to dominate the exit, so the value is live. One produced inside a conditional sub-expression
+(an `&&` right operand, a match arm) is not dominated, and releasing it would touch a value
+undefined on the path that branch did not take. Those still leak, which is the safe direction.
+
+**A prediction this disproved, worth recording.** The old note said the general fix was to
+give `pendingTemp` a *release* block rather than a production block, and that one change
+would stop `?`, `break` and `continue` leaking alike. Checking `break` with LSan showed it
+leaks too (18 bytes, confirmed) — but not in a way that idea reaches. A `?` propagates from
+a block whose predecessor produced the temporaries, so block equality is enough. A `break`
+sits at the end of a *branch*: the producing block dominates it without being its
+predecessor, and widening the test to "release everything pending" is unsound, because a
+temp produced in a sibling branch is undefined on the path the `break` takes — a double free
+rather than a leak. Closing that one needs real dominance information, which the backend does
+not compute today; it is now an open item saying so, instead of an estimate that was too
+cheap.
+
 **An array *element* may carry an allocation or `weak` modifier** — `[]shared Node`,
 `[3]weak Observer`, `[16]stack Vec3`. Measured while closing the `Maybe<weak T>` item below,
 which is where the gap surfaced: the two look like one problem and are not.

@@ -340,3 +340,91 @@ func TestASan_TryManagedPayload(t *testing.T) {
 		})
 	}
 }
+
+// A temporary produced by a *sub-expression* of the operand — `f(g())?`, where g's
+// owned result is consumed by a borrowing parameter — must be released on the
+// propagating path too, not only on the success path.
+//
+// It used to leak. lowerTryPropagate held the whole pending list back from its
+// return's flush, because that flush releases each temporary *in the block that
+// produced it*, and the operand's block is the one before the branch — so flushing
+// there would free it ahead of the tag test, on the success path as well. Holding
+// everything back was the safe direction (a leak, never a double free) but it also
+// suppressed temporaries that genuinely die on this path. The propagating path now
+// releases them itself, into its own block (releaseTempsOnExit).
+//
+// Here `"x" ++ s` is the nested temporary: it is allocated before the `?`, borrowed
+// by `parse`, and dead once the tag is known.
+const tryNestedTempSrc = `data Result<t, e> = Ok(t) | Err(e)
+
+let parse = (s: string) -> Result<i64, string> =>
+  if s == "x42" { Ok(42) } else { Err("bad: " ++ s) }
+
+let use = (s: string) -> Result<i64, string> => {
+  let n = parse("x" ++ s)?
+  Ok(n + 1)
+}
+`
+
+// The structural half. `lyra.use` allocates one string (the concat) and must release
+// it on **both** paths out of the function, so two release sites: one on the success
+// path, one on the propagating path. Before the fix there was exactly one — the
+// success path's — which is the leak, and a count is the most direct way to say
+// "both paths, not one" about a program with a single allocation.
+func TestEmit_TryReleasesNestedTemp(t *testing.T) {
+	t.Parallel()
+	ir, err := emitSource(t, tryNestedTempSrc+"let main = () -> u8 => 0\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := strings.Index(ir, "@lyra.use")
+	if start < 0 {
+		t.Fatal("no lyra.use in the emitted module")
+	}
+	body := ir[start:]
+	body = body[:strings.Index(body, "\n}")]
+	if got := strings.Count(body, "call void @lyra_rc_release"); got != 2 {
+		t.Errorf("lyra.use has %d release sites, want 2 (the success path and the "+
+			"propagating path); 1 means the propagating path leaks the nested temporary\n%s",
+			got, body)
+	}
+}
+
+// The behavioural half: the released temporary must be the *nested* one and not the
+// error payload, which is transferred into the rebuilt error and read by the caller.
+// Getting that backwards is a use-after-free rather than a wrong answer, so the ASan
+// run below is the one that matters.
+func TestExec_TryNestedTemp(t *testing.T) {
+	t.Parallel()
+	clang := lookClang(t)
+	cases := []struct {
+		name string
+		main string
+		out  string
+		code int
+	}{
+		// The propagating path: the error payload still reads correctly after the
+		// nested temp beside it has been freed.
+		{"propagates", `match use("zz") { Ok(_) => 0, Err(e) => { print(e); 7 } }`, "bad: xzz", 7},
+		// The success path is unchanged — the temp is released by the statement flush.
+		{"succeeds", `match use("42") { Ok(v) => { print("ok"); u8(v) }, Err(_) => 99 }`, "ok", 43},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			src := tryNestedTempSrc + "let main = () -> u8 => " + c.main + "\n"
+			out, code := buildAndRunCapture(t, src)
+			if strings.TrimSpace(out) != c.out {
+				t.Errorf("printed %q; want %q\n%s", out, c.out, src)
+			}
+			if code != c.code {
+				t.Errorf("exited %d; want %d\n%s", code, c.code, src)
+			}
+			asanSrc := tryNestedTempSrc + "let main = () -> u8 => " +
+				strings.Replace(c.main, "print(e); 7", "print(e); 0", 1) + "\n"
+			if got := buildAndRunASan(t, clang, asanSrc); got != 0 && got != 43 {
+				t.Errorf("asan run exited %d (a sanitizer report exits non-zero)\n%s", got, asanSrc)
+			}
+		})
+	}
+}

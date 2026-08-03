@@ -10,7 +10,31 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
-None open. Two closed 08/03, both hazard-8 misses found while making a `weak` field
+- **[OPEN] `break`/`continue` leak an enclosing statement's pending temporaries.**
+  Confirmed 08/03 with LeakSanitizer, not inferred: `for { if ("a" ++ "b") == "ab" { break } }`
+  leaks 18 bytes. `lowerBreak`/`lowerContinue` call `flushTemps()`, which releases only from
+  `pendingBase` up — and the concat temp belongs to the enclosing `if` statement's scope,
+  whose flush the jump skips.
+
+  **The fix is bigger than the one the `?` entry used to predict, and this is the part worth
+  recording.** That prediction was "give `pendingTemp` a release block rather than a
+  production block, and all three call sites stop leaking". It is not sufficient here. The
+  `?` case works because the exiting block's predecessor *is* the block that produced the
+  temporaries, so "release the temps produced in block X, into the exit block" is sound with
+  no dominance computation (`releaseTempsOnExit`). A `break` sits at the end of a *branch*:
+  the producing block dominates it, but is not its predecessor, so no block-equality test
+  reaches it — and widening the test to "release everything pending" is unsound, because a
+  temp produced in a sibling branch (`for { if c { … mk() … } else { break } }`) is
+  undefined on the path the `break` takes. That is a double free, not a leak, so the
+  conservative direction is the one in place today.
+
+  So closing it needs real **dominance information** over the function under construction,
+  which the backend does not currently compute. Options: compute a dominator tree at the
+  jump (blocks are already emitted, so this is available, just not cheap), or have the
+  lowerer track a per-temp "conditional depth" at record time so a temp produced on the
+  straight-line spine is distinguishable from one produced inside an arm.
+
+Two closed 08/03, both hazard-8 misses found while making a `weak` field
 constructible and both wider than the feature that surfaced them: `resolveForLayout` could
 not size a `shared` struct holding *any* generic field (`Maybe<i64>`), and
 `resolveTypeIfKnown` rejected a return annotation against itself. See COMPLETED.md.
@@ -262,17 +286,12 @@ enclosing return.
   and on failure rebuild the failure variant **at the enclosing function's return type**
   (the operand and the return are different instantiations, so the union cannot be
   forwarded) and `emitReturn`. See COMPLETED.md; the ownership half is below.
-  - **[OPEN] A temporary produced by a *sub-expression* of the operand leaks on the
-    propagating path.** `f(g())?`, where `g`'s owned result was consumed by a borrowing
-    parameter: `lowerTryPropagate` holds the enclosing statement's pending temporaries
-    back from its `emitReturn` flush, because that flush releases each temp *in the block
-    that produced it* — which for the operand is the block before the branch, so flushing
-    there would free it ahead of the tag test on the **success** path too. The operand's
-    own reference is accounted for exactly (it transfers into the rebuilt error); what is
-    left is any nested temp, which leaks rather than double-frees — the same bias
-    break/continue take. Closing it means giving `pendingTemp` a *release* block rather
-    than a production block, which would also let break/continue stop leaking; that is one
-    change serving three call sites and is the reason to do it once rather than here.
+  - **[DONE 08/03] A temporary produced by a *sub-expression* of the operand no longer
+    leaks on the propagating path.** `f(g())?`, where `g`'s owned result was consumed by a
+    borrowing parameter. The propagating path now releases those temporaries into its own
+    block (`releaseTempsOnExit`) instead of holding the whole pending list back. Measured
+    both ways with LeakSanitizer on Linux: 19 bytes in 1 allocation before, none after.
+    See COMPLETED.md.
 - **[OPEN] Shadowing a marked canonical type gives a useless diagnostic.** Now that
   `std/prelude.lyra` marks its types `@builtin(Maybe)`/`@builtin(Result)`, the marker
   claims the kind and `resolveCanonicalTypes` leaves a same-named *unmarked* type "an

@@ -519,6 +519,39 @@ func (l *lowerer) flushStmtTemps(start, end *ir.Block) error {
 // block to move them to.
 func (l *lowerer) flushTemps() error { return l.flushStmtTemps(nil, nil) }
 
+// releaseTempsOnExit releases, *in* exit, the pending temporaries that are dead on a
+// path leaving the statement early — a `?` propagating, and eventually break/continue.
+//
+// It differs from flushStmtTemps in the one way that matters here: **it does not
+// truncate the pending list.** An early exit is one path out of a statement that
+// still has another, and that other path reaches the statement's own flush, which
+// must still release these. Truncating would release them here and nowhere else,
+// leaking on every non-exiting path. So this emits releases and leaves the list
+// alone; each path ends up releasing exactly once.
+//
+// `from` is the block the exiting branch was emitted in. Only temporaries produced
+// *there* are released, because only that block is known to dominate exit — it is
+// exit's predecessor. A temporary produced inside a conditional sub-expression (an
+// `&&` right operand, a match-arm body) is not dominated, and releasing it here
+// would touch a value undefined on the path that branch did not take; those are
+// skipped and leak, which is the conservative direction (never a double free).
+// Closing that residue needs real dominance information, not a wider block test.
+//
+// skip is a value whose reference *transfers* out on this path (the `?` operand,
+// whose reference moves into the rebuilt error) and so must not be released.
+func (l *lowerer) releaseTempsOnExit(exit, from *ir.Block, skip value.Value) error {
+	for i := l.pendingBase; i < len(l.pendingReleases); i++ {
+		p := l.pendingReleases[i]
+		if p.block != from || (skip != nil && p.val == skip) {
+			continue
+		}
+		if err := l.deepRelease(exit, p.val, p.ty); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value.Value, *ir.Block, error) {
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:

@@ -149,7 +149,16 @@ func (l *lowerer) lowerTryExpr(block *ir.Block, e *ast.TryExpr) (value.Value, *i
 	// How the operand's *own* reference is disposed of on the failure path decides
 	// whether the error payload needs a fresh +1 — see lowerTryPropagate.
 	transferring := l.needsDrop(opT) && l.ownership().ShouldReleaseTemp(e.Operand)
-	if err := l.lowerTryPropagate(errBlock, scrut, opShape, retDt, retShape, transferring); err != nil {
+	// `block` is where the tag test was emitted, so it is errBlock's predecessor and
+	// dominates it — which is what lets the propagating path release the temporaries
+	// produced there. `whole` is the operand's own value: when it is an owned
+	// temporary its reference transfers into the rebuilt error, so it is the one
+	// value that must *not* be released on that path.
+	var transferred value.Value
+	if transferring {
+		transferred = whole
+	}
+	if err := l.lowerTryPropagate(errBlock, block, transferred, scrut, opShape, retDt, retShape, transferring); err != nil {
 		return nil, nil, err
 	}
 
@@ -176,7 +185,7 @@ func (l *lowerer) lowerTryExpr(block *ir.Block, e *ast.TryExpr) (value.Value, *i
 // pass draws everywhere else, and getting it wrong is a refcount bug in either
 // direction: retaining a transferred reference leaks it, and moving a borrowed one
 // hands the caller a payload the operand's owner will free.
-func (l *lowerer) lowerTryPropagate(block *ir.Block, scrut value.Value, opShape tryShape, retDt types.DataType, retShape tryShape, transferring bool) error {
+func (l *lowerer) lowerTryPropagate(block, preBranch *ir.Block, transferred, scrut value.Value, opShape tryShape, retDt types.DataType, retShape tryShape, transferring bool) error {
 	var fields []value.Value
 	if fieldTypes := opShape.failure.FieldTypes(); len(fieldTypes) > 0 {
 		payload, err := l.extractDataPayload(block, scrut, opShape.failure)
@@ -214,24 +223,25 @@ func (l *lowerer) lowerTryPropagate(block *ir.Block, scrut value.Value, opShape 
 		}
 	}
 
-	// Hold the enclosing statement's temporaries back from this return's flush.
+	// Release the temporaries that die on this path, here, before the return.
 	//
-	// emitReturn releases every pending temporary at or above pendingBase, each in
-	// *the block that produced it* — and the operand's temporary was produced before
-	// the branch above. Letting this return flush it would therefore put a release in
-	// that earlier block, ahead of its own terminator and so ahead of the tag test
-	// that reads it: an early free on the **success** path too, not just this one.
-	// Raising the base is what keeps the release where it belongs, at the enclosing
-	// statement's flush on the success path. On this path the operand is not released
-	// at all, which is exactly what `transferring` accounts for above — its reference
-	// is the one the propagated error carries away.
+	// They cannot be left to emitReturn: its flush releases each pending temporary in
+	// *the block that produced it*, and the operand's temporaries were produced before
+	// the branch above. A release emitted there would sit ahead of that block's own
+	// terminator and so ahead of the tag test that reads them — an early free on the
+	// **success** path too, not just this one. So this path releases them itself, into
+	// its own block, and then holds them back from the return's flush.
 	//
-	// The residue is any temporary produced by a *sub*-expression of the operand
-	// (`f(g())?`, where g's owned result was consumed by a borrowing parameter): those
-	// are suppressed here too, and leak on the propagating path. That is the same
-	// conservative bias break/continue take for the scopes they jump out of — safe,
-	// never a double free — and closing it needs the pending-temp list to carry a
-	// release block rather than a production block. Noted in todo.md.
+	// releaseTempsOnExit deliberately does not truncate the pending list: the success
+	// path still reaches the enclosing statement's flush and must still release them
+	// there. Each path releases exactly once.
+	//
+	// The operand's own temporary is the exception, passed as `transferred` — its
+	// reference moves into the rebuilt error above (see `transferring`), so releasing
+	// it here would hand the caller a payload that has already been freed.
+	if err := l.releaseTempsOnExit(block, preBranch, transferred); err != nil {
+		return err
+	}
 	savedBase := l.pendingBase
 	l.pendingBase = len(l.pendingReleases)
 	defer func() { l.pendingBase = savedBase }()
