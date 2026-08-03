@@ -10,6 +10,25 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**A negated literal and a plain one now have a common type.** `if c { -1 } else { 2 }` did
+not compile. Neither did `match n { 0 => -1, _ => 2 }` or `[-1, 2]` — ordinary code, in
+three constructs, rejected with a message comparing a type to itself: *then is integer
+literal, else is integer literal*. The match form managed *i64 vs i64*.
+
+The cause is that a negated literal is `untyped_signed_int` while a plain one is
+`untyped_int`, and `branchCommonType` only knew two moves — equality, and assignability in
+either direction. Neither untyped kind is assignable to the other, so it gave up, and both
+print as "integer literal", which is why the diagnostic read as nonsense. The join is the
+signed kind: a set containing a negative value cannot settle to an unsigned one. The result
+stays *untyped*, so an annotation narrows it exactly as it would either operand, and the
+range check still applies to whatever it narrows to.
+
+Deliberately narrow: it joins two untyped integers and says nothing about concrete widths,
+which remain a real disagreement worth reporting. Found by a boundary case in the tests for
+the range-check fix below (`[-128, 127]`), which is a reminder that a test written for one
+rule is a decent probe for its neighbours.
+
+### 08/03/26
 **Composite narrowing range-checks its literals.** `let t: (u8, u8) = (300, 1)` and
 `let a: [2]u8 = [300, 1]` were both accepted, silently, putting 300 into a u8 slot — while
 the scalar `let n: u8 = 300` was rejected. `checkIntegerLiteralRange` reads the *declared*

@@ -1489,5 +1489,37 @@ func branchCommonType(a, b types.Type) (types.Type, bool) {
 	if isAssignable(b, a) {
 		return a, true
 	}
+	// Two *untyped* integer literals of different signedness. A negated literal is
+	// `untyped_signed_int` and a plain one `untyped_int`, and neither is assignable to
+	// the other — so `if c { -1 } else { 2 }`, `match n { 0 => -1, _ => 2 }` and
+	// `[-1, 2]` were all rejected, each with a message comparing a type to itself
+	// ("then is integer literal, else is integer literal") because the two print the
+	// same. The join is the signed kind: a set containing a negative value cannot
+	// settle to an unsigned one, and both are still untyped afterwards, so an
+	// annotation can narrow the result exactly as it could either operand.
+	if signed, ok := untypedIntegerJoin(a, b); ok {
+		return signed, true
+	}
 	return nil, false
+}
+
+// untypedIntegerJoin returns the common type of two untyped integer literal types, and
+// whether they are both untyped integers. Deliberately narrow: it says nothing about a
+// concrete width, which is a real disagreement the caller must keep reporting.
+func untypedIntegerJoin(a, b types.Type) (types.Type, bool) {
+	ap, aok := a.(types.PrimitiveType)
+	bp, bok := b.(types.PrimitiveType)
+	if !aok || !bok {
+		return nil, false
+	}
+	untyped := func(n types.PrimitiveTypeName) bool {
+		return n == types.UntypedInt || n == types.UntypedSignedInt
+	}
+	if !untyped(ap.Name) || !untyped(bp.Name) {
+		return nil, false
+	}
+	if ap.Name == types.UntypedSignedInt || bp.Name == types.UntypedSignedInt {
+		return types.PrimitiveType{Name: types.UntypedSignedInt}, true
+	}
+	return types.PrimitiveType{Name: types.UntypedInt}, true
 }
