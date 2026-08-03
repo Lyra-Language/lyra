@@ -1,6 +1,6 @@
 # `pkg/modules` — import resolution, namespacing, the prelude
 
-Resolves a program's import graph: `Resolve(entryFile, roots) ([]Unit, []diag.Diagnostic)` turns
+Resolves a program's import graph: `Resolve(entryFile, roots, opts) ([]Unit, []diag.Diagnostic)` turns
 an entry file into the ordered source units a compile needs, following `import` statements
 transitively. Module paths map to files **by directory convention** — `std.io` is `std/io.lyra`
 beneath a search root — so a module's name and location agree by construction with no manifest
@@ -17,6 +17,22 @@ going through the collector.
 
 **Deliberately out of scope**, none of it changing what a module's source looks like: package
 management, versioning, and separate/incremental compilation.
+
+### Roots, and the overlay (`roots.go`)
+`DefaultRoots(entryFile)`, `DefaultOptions()` and `StdRoot()` answer "where does a compile look
+for source?" once, for every front-end consumer. They lived in `cmd/lyrac` until the language
+server needed the same answer and, not having it, analyzed each buffer as a lone unit with no
+prelude — so every use of `Maybe`/`Some`/`Result` was an error in the editor while `lyrac check`
+on the same file was clean. Two details in `StdRoot` each cost a debugging session and are
+commented where they live: the root is the directory *containing* `std/`, and the executable's
+path is symlink-resolved before its directory is taken (the LSP is normally reached through a
+symlink on `PATH`).
+
+`Options.Overlay` maps a filesystem path to in-memory source that **wins over the disk**, and
+makes an overlaid path count as existing — that second half is what lets an import of a
+never-saved file resolve rather than being reported missing. It exists for an editor, whose
+buffer is by definition not what is on disk; keys are normalized with `filepath.Clean` on entry
+so a later lookup is a plain map hit.
 
 ### Modules and namespacing
 `import util.math` binds a **namespace** under the path's last segment (or its `as` alias), so

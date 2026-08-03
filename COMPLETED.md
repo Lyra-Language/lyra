@@ -10,6 +10,69 @@ Newest first.
 ## Dated log
 
 ### 08/02/26
+**The language server analyzes a program, not a buffer.** `cmd/lyra-lsp` called
+`driver.Analyze` on the single open document, and a single unit is not a smaller version of
+the real thing — it is a *different program*. It has no prelude in it, so `Maybe`, `Some`,
+`Ok` and every standard-library name were undefined **in the editor only**: the reported
+symptom was `undefined tuple type "Some"` on `std/maybe.lyra`, a file `lyrac check` compiled
+cleanly. A program's own modules were unresolved the same way.
+
+The cause was a fork nobody had noticed: `modules.Resolve`, the search roots and `stdRoot`
+lived in `cmd/lyrac`, and `stdRoot` had no other caller. Those moved to
+`pkg/modules/roots.go` as `DefaultRoots`/`DefaultOptions`/`StdRoot`, so the two tools cannot
+disagree about where the standard library is — the same "one definition, so two callers
+cannot drift" rule the type-variable walk was consolidated under.
+
+**The buffer is not the file**, which is what an editor adds to the compiler's problem.
+`Options.Overlay` maps a path to in-memory source that wins over the disk, and — the half
+that is easy to miss — makes an overlaid path count as *existing*, so an import of a file
+that has never been saved resolves instead of being reported missing. Every open document
+goes in, not just the one being analyzed.
+
+**What resolving a program forced back out again.** With several files in one AST, a line
+and column no longer identify a position: the prelude's line 40 would answer a request about
+the user's line 40. So `diagnosticsFor` filters diagnostics by file before publishing (one
+naming no file is kept — it is program-level and has nowhere else to go), and `docProgram`
+narrows the stored AST to this document's own top-level statements, which is what every
+position-based handler walks. Two handlers needed more than filtering, both because they
+return locations rather than consume them: a definition resolving into another file is now
+returned against *that* file's URI, and a rename whose declaration lives in another file is
+declined outright rather than applied at those coordinates in this buffer — that one would
+have been a silent corruption. The remaining single-file edges are in todo.md.
+
+`docAnalysis` also gained the module scope of the file it holds. A file declaring
+`module std.maybe` puts its declarations there, not in the unnamed entry scope every handler
+was asking for, so a top-level position in such a file resolved against none of its own names.
+
+### 08/02/26
+**Shift-check elision, and `x <<= n` typed like `x = x << n`.** The two follow-ups the
+bitwise work left open.
+
+**`NoShiftOverflow`** joins `NoDivZero`/`NoOverflow` in the safety table. A constant count
+was already folded away at lowering, so this is the variable case — a count refined by
+`if n < 8`, or a bounded loop counter. The proof obligation is written to mirror the
+emitted check rather than to approximate it: that check compares the count **unsigned**
+against the width, so a negative count reads as an enormous one, which is why marking
+requires *both* a lower bound of 0 and a finite upper below the width. Getting that half
+wrong would elide a check a negative count needs.
+
+**The compound-shift asymmetry came from one function doing two jobs.**
+`checkAssignToBinding` resolved the assignment *target* — does the name exist, may it be
+written, what type is it — and checked the *value* against that type, in one pass. For
+every other operator that is right. For a shift it is not: the right operand is a count,
+not a value in the target's domain, so `x <<= count32` on a `u8` demanded a conversion
+that `x = x << count32` never asked for. Splitting out `resolveAssignTarget` lets the
+shift path take the target rules and supply its own value rule.
+
+One detail preserved through the split, because it is load-bearing and easy to lose: a
+*rejected* target still hands back its type. Every caller checks the value regardless, so
+that a refused assignment reports its own diagnostic without swallowing the errors inside
+its right-hand side.
+
+`isIntegerOperand` now strips a constrained newtype first — `newtype Mask = u8` is a u8
+wearing a name, and masking one is exactly what such a type is for.
+
+### 08/02/26
 **The value-range pass tracks bitwise results.** `andI`/`orI`/`xorI`/`shlI`/`shrI` join
 `addI`/`subI`/`mulI`, so a masked value carries its bound into the arithmetic that
 follows: `(x & 0x0F) + 1` is now proved in range and drops its overflow trap, where

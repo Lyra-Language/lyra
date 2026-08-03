@@ -11,7 +11,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/backend/llvm"
@@ -90,21 +89,10 @@ func build(path string) int {
 // printing to stderr) when the file cannot be read.
 func analyze(path string) (*driver.Result, bool) {
 	// Resolve the import graph before analyzing: every unit is collected into one
-	// program, so they all have to be known up front (see driver.AnalyzeUnits).
-	// Roots are the entry file's own directory first — a program's modules sit
-	// alongside it — then the standard library.
-	roots := []string{filepath.Dir(path)}
-	if std := stdRoot(); std != "" {
-		roots = append(roots, std)
-	}
-	// LYRA_NO_PRELUDE exists for bootstrapping and for tests: the prelude is ordinary
-	// Lyra, so it has to be compilable by a compiler that is not yet handing it to
-	// everything else.
-	opts := modules.Options{Prelude: modules.PreludeModule}
-	if os.Getenv("LYRA_NO_PRELUDE") != "" {
-		opts.Prelude = ""
-	}
-	units, diags := modules.Resolve(path, roots, opts)
+	// program, so they all have to be known up front (see driver.AnalyzeUnits). The
+	// roots and the prelude setting are modules' to define, so the compiler and the
+	// language server cannot disagree about where the standard library is.
+	units, diags := modules.Resolve(path, modules.DefaultRoots(path), modules.DefaultOptions())
 	if len(units) == 0 {
 		for _, d := range diags {
 			fmt.Fprintf(os.Stderr, "lyrac: %s\n", d.Message)
@@ -116,41 +104,6 @@ func analyze(path string) (*driver.Result, bool) {
 	// follow from the names it failed to provide.
 	res.Diagnostics = append(diags, res.Diagnostics...)
 	return res, true
-}
-
-// stdRoot locates the standard library: the directory that *contains* `std/`, since a
-// module path resolves beneath a root (`std.prelude` → `<root>/std/prelude.lyra`).
-//
-// LYRA_STD wins so a build can point at a working copy; otherwise the compiler's own
-// directory is used, which is where ./build.sh puts `std` beside the binary — the same
-// beside-the-executable convention Rust, Zig and Go use for a sysroot. An absent
-// standard library is not an error: a program that uses nothing from it still builds.
-func stdRoot() string {
-	if root := os.Getenv("LYRA_STD"); root != "" {
-		return root
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	// Resolve symlinks before taking the directory. os.Executable does not do it
-	// consistently — on Linux it reads /proc/self/exe, which is already resolved, but on
-	// macOS it can hand back the symlink's own path. So a compiler symlinked onto PATH
-	// (`ln -s .../build/lyrac /usr/local/bin/lyrac`) would look for the standard library
-	// beside the *link* rather than beside the real binary, and find nothing — a
-	// platform split that shows up as "the prelude works on my machine".
-	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
-		exe = resolved
-	}
-	// The *root* is the directory holding `std/`, not `std/` itself: a module path is
-	// resolved beneath a root, so `std.prelude` becomes `<root>/std/prelude.lyra`.
-	// Returning the `std` directory here instead looked for `std/std/prelude.lyra` and
-	// silently found no prelude.
-	root := filepath.Dir(exe)
-	if info, err := os.Stat(filepath.Join(root, "std")); err == nil && info.IsDir() {
-		return root
-	}
-	return ""
 }
 
 // lowerAndEmit runs the backend over a fully-typed, error-free program and

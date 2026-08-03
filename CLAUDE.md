@@ -167,8 +167,13 @@ returns a `Result{Program, SymbolTable, ScopeTable, TypeTable, MethodTable, Owne
 RangeSafety, Diagnostics}`. Every pass's errors are normalized to `[]diagnostic.Diagnostic` (CST
 parse errors converted from tree-sitter's 0-based positions to 1-based `ast.Location`).
 `Result.HasErrors()` / `Result.Errors()` filter by severity. This is where a backend (or any
-tool needing a typed program) starts, instead of re-implementing the pipeline. Both `cmd/lyrac`
-and `cmd/lyra-lsp` call it, so the pipeline is defined in exactly one place.
+tool needing a typed program) starts, instead of re-implementing the pipeline.
+
+`driver.AnalyzeUnits(units)` is the multi-module form, with `Analyze` as its single-unit case;
+both user-facing tools go through it, since both resolve an import graph first (`cmd/lyrac`'s
+`analyze`, `cmd/lyra-lsp`'s `analyzeDocument`). `Analyze` remains for a caller with a snippet
+and no file — a test, or an unsaved editor buffer — and its units carry no file, which is why
+the LSP's per-file filtering treats an empty file name as "this one".
 
 `driver.ResolveEntryPoint(res) (*EntryPoint, []diagnostic.Diagnostic)` (`entrypoint.go`) finds
 and validates the program's entry function: a top-level `let main` that is a zero-parameter
@@ -199,12 +204,32 @@ pretty-prints a raw tree-sitter CST node (useful for debugging).
 LSP server. Uses `github.com/owenrumney/go-lsp` over stdio. On every `textDocument/didOpen` or
 `textDocument/didChange`:
 1. Applies incremental edits to an in-memory doc store
-2. Calls `driver.Analyze` (the shared pipeline) and persists the returned `docAnalysis`
-   (program + tables) for hover/definition/etc.
-3. Maps the returned `[]diagnostic.Diagnostic` to LSP via `diagToLSP` and publishes them
+2. Resolves the document's **import graph** and runs `driver.AnalyzeUnits` over the whole
+   unit set (`units.go`), persisting the returned `docAnalysis` for hover/definition/etc.
+3. Maps this document's `[]diagnostic.Diagnostic` to LSP via `diagToLSP` and publishes them
 
-The `analyze` method is now a thin wrapper over `driver.Analyze` — it no longer re-implements
-the pass sequence.
+**The server analyzes a program, not a buffer** (`analyzeDocument`, `units.go`). It called
+`driver.Analyze` on the single open file until 08/02, which is not a smaller version of the
+real thing but a *different program*: it has no prelude, so `Maybe`, `Some`, `Ok` and every
+other standard-library name was undefined in the editor — `undefined tuple type "Some"` on
+files `lyrac check` compiled cleanly — and a program's own modules were unresolved the same
+way. Roots and prelude selection now come from `modules.DefaultRoots`/`DefaultOptions`, so the
+server and `lyrac` cannot disagree about where the standard library is.
+
+Two things follow from being an editor rather than a compiler, and both are load-bearing:
+
+- **The buffer is not the file.** Every open document is passed to the resolver as an
+  `Options.Overlay`, so analysis sees unsaved text — including a file that has never been
+  saved and has no on-disk content to read.
+- **Only this document's half of the result may be used.** The program spans several files
+  now, so `diagnosticsFor` filters diagnostics by file (a diagnostic naming none is kept —
+  it is program-level and has nowhere else to go) and `docProgram` narrows the AST to this
+  file's top-level statements. Every position-based handler walks that narrowed program:
+  a line and column alone do not say which file they came from, so the prelude's line 40
+  would otherwise answer a request about the user's line 40. For the same reason a
+  definition resolving into another file is returned against *that* file's URI
+  (`locationIn`), and a rename whose declaration lives in another file is declined rather
+  than applied at those coordinates in this buffer.
 
 Logs to `/tmp/lyra-lsp.log`. Build with `go build ./cmd/lyra-lsp`.
 

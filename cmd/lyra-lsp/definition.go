@@ -44,7 +44,30 @@ func (h *Handler) Definition(_ context.Context, params *lsp.DefinitionParams) (r
 	}
 
 	log.Printf("definition: found at %s", loc.Pretty())
-	return []lsp.Location{astLocToLSPLocation(uri, source, *loc)}, nil
+	target, ok := h.locationIn(uri, source, analysis, *loc)
+	if !ok {
+		return nil, nil
+	}
+	return []lsp.Location{target}, nil
+}
+
+// locationIn builds the lsp.Location for a definition, which since the server resolves
+// a document's whole import graph may live in another file — `Some` is declared in the
+// prelude, not in the buffer the user is looking at. Reporting it against the current
+// URI would jump to those line and column numbers *in the open document*, so the
+// target's own file has to supply both the URI and the source the columns are measured
+// against. It reports false when that file cannot be read, since a location that cannot
+// be converted is better dropped than sent to the wrong place.
+func (h *Handler) locationIn(uri, source string, analysis *docAnalysis, loc ast.Location) (lsp.Location, bool) {
+	if loc.File == "" || sameFile(loc.File, analysis.file) {
+		return astLocToLSPLocation(uri, source, loc), true
+	}
+	targetURI, targetSource, ok := h.sourceOf(loc.File)
+	if !ok {
+		log.Printf("definition: cannot read %s", loc.File)
+		return lsp.Location{}, false
+	}
+	return astLocToLSPLocation(targetURI, targetSource, loc), true
 }
 
 // resolveDefinition maps the expression at the cursor to its definition location.
@@ -55,7 +78,7 @@ func resolveDefinition(expr ast.Expression, line, col int, analysis *docAnalysis
 	}
 	switch e := expr.(type) {
 	case *ast.IdentifierExpr:
-		scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.EntryScope(), line, col)
+		scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.fileScope(), line, col)
 		named, ok := scope.Lookup(e.Name)
 		if !ok {
 			return nil

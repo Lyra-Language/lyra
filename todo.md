@@ -91,6 +91,52 @@ the backend's `structTypes` registry with them. Two modules may each declare a p
 - Out of scope by decision, none of it changing what a module's source looks like: package
   management, versioning, separate/incremental compilation.
 
+**An import can make an ordinary name unusable, and the prelude cannot.** A `pub`
+declaration takes the *bare* program-wide key whichever module made it (`declKeyIn`,
+`pkg/ast/symbols/table.go`), so importing a module claims every name it exports. `import
+std.maybe` plus a perfectly ordinary `let map = (n: i64) -> i64 => n + 1` is a hard error:
+
+```
+shadow.lyra:3:1: error: function "map" is already defined at .../std/maybe.lyra:3:20-6:2
+```
+
+The comparison is what makes it wrong rather than merely strict. The **prelude** — the names
+you never asked for — takes the *soft* path: `let unwrap_or = …` warns (`lyra-W012`) and the
+user's declaration wins. The names you deliberately imported take the hard one. That is
+backwards on both counts: the explicit act is punished, and the implicit one forgiven. A
+user's read of that error is that the standard library owns `map` and their program may not
+have one, which is not a rule this language means to have.
+
+The mechanism to fix it already exists and is keyed too narrowly: `shadowsPrelude` qualifies
+the shadowing declaration and leaves the bare key to the prelude, which is exactly the
+"local declaration wins, the other stays reachable" rule wanted here. Two shapes to weigh —
+(a) generalize that to any imported module, so a local declaration always wins and the
+imported one is reached through its namespace (`maybe.map(…)`), which is the form the
+`std.maybe`/`std.result` split is built around anyway; or (b) qualify `pub` keys outright and
+teach the bare lookups to consult the importing module's bindings. (a) is a smaller change
+and keeps a genuine *cross-module* duplicate — two modules both exporting `map`, neither
+importing the other — reportable as it is now.
+
+Worth doing before the standard library grows: every name added under `pub` is currently a
+name taken away from anyone who imports that module. It is also the constraint that decides
+what may live in `std.maybe` vs the prelude (see the 08/02 discussion of `map`/`filter`),
+and it mostly evaporates under UFCS, where these become methods dispatched on the receiver
+rather than bare top-level names — so weigh the fix against how near that is.
+
+The LSP resolves a document's whole import graph as of 08/02 (see COMPLETED.md), which leaves
+two editor features single-file where the program no longer is:
+
+- **Rename declines a cross-file declaration.** Renaming a prelude function from a use site
+  would need every unit's occurrences and a multi-file `WorkspaceEdit`; today
+  `resolveRenameAnchor` returns false rather than splicing the new name into this buffer at
+  the *other* file's coordinates. Declining is right until the multi-file form exists — the
+  alternative is a silent corruption — but the message the user gets is nothing at all.
+- **References only searches the open document.** Uses of a name in sibling modules are
+  missing from the result, which reads as "no other uses" rather than "not looked".
+
+Both want the same thing: walking every unit's program, which the server now has, keyed by
+each node's `Location.File`.
+
 ## Constructor syntax — juxtaposition
 
 **[DECIDED 08/02; BUILT]** `Some 42` is back alongside `Some(42)`. **One operand, never
@@ -253,18 +299,17 @@ escape hatches, and the value-range pass both diagnoses definite faults (`lyra-E
     Soundness is checked by exhaustive brute force over every interval of a small
     width. See COMPLETED.md. Still imprecise on purpose: `|`/`~` over a possibly
     negative operand, and `&` where *both* sides may be negative, all widen to ⊤.
-  - **[OPEN] A *variable* shift amount always emits its check.** A constant in range is
-    folded away at lowering (`constShiftInRange`), which covers `x << 3`, but a
-    loop-carried amount the range pass could bound still pays a compare-and-branch.
-    Wiring it up is a `NoShiftOverflow(e)` predicate alongside `NoDivZero`/`NoOverflow`,
-    and it depends on the interval work above.
-  - **[OPEN] `x <<= n` is stricter than `x = x << n`.** The binary form types the shift
-    count independently (any integer — it is a distance, not a value in the shifted
-    type's domain), but the compound form goes through `checkAssignToBinding`, which
-    requires the RHS to be *assignable to the target*. So `x <<= count32` on a `u8`
-    demands a conversion the binary spelling does not. Fixing it means letting
-    `checkMathAssignOp` opt out of the value-assignability half while keeping the
-    mutability and target checks, which is a seam that does not exist yet.
+  - **[DONE 08/02] A variable shift amount elides its check when the range pass can
+    bound it.** `NoShiftOverflow(e)` joins `NoDivZero`/`NoOverflow`; the proof
+    obligation mirrors the emitted check exactly (an *unsigned* compare against the
+    width, so the count needs a lower bound of 0 and a finite upper below the width).
+    A constant in range was already folded at lowering; this covers the variable case,
+    e.g. a count refined by `if n < 8`.
+  - **[DONE 08/02] `x <<= n` types like `x = x << n`.** `checkAssignToBinding` split
+    into `resolveAssignTarget` (the target's existence, mutability and type) plus the
+    value check, so the shift path can apply the first and type its count as a count.
+    A rejected target still returns its type, because every caller checks the value
+    either way — a refused assignment must not hide the errors inside its value.
 - **[IDEA] Type-level overflow policy on a `newtype`** — an overflow behaviour
   (`wrapping`/`saturating`) as a new constraint kind in the existing
   `newtype N = Base where …` grammar, so arithmetic on `N` uses that policy instead of the

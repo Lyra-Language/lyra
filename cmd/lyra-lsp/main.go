@@ -17,16 +17,32 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
-	"github.com/Lyra-Language/lyra/pkg/driver"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
 // docAnalysis holds the full analysis result for one open document.
+//
+// The tables span the document's whole import graph — that is the point of resolving
+// units (see units.go), and it is what lets a name declared in the prelude or another
+// module resolve at all. `program`, by contrast, holds only *this* document's top-level
+// statements, since every handler that walks it does so by source position.
 type docAnalysis struct {
-	program    *ast.Program
-	symTable   *symbols.SymbolTable
-	scopeTable *symbols.ScopeTable
-	typeTable  *typetable.TypeTable
+	program     *ast.Program
+	symTable    *symbols.SymbolTable
+	scopeTable  *symbols.ScopeTable
+	typeTable   *typetable.TypeTable
+	file        string         // filesystem path, "" for a buffer with no file
+	moduleScope *symbols.Scope // the scope of the module this file declares
+}
+
+// fileScope is the scope a top-level position in this document resolves in. A file
+// declaring `module std.maybe` puts its declarations in that module's scope, not the
+// unnamed entry one, so asking the entry scope would find none of the file's own names.
+func (a *docAnalysis) fileScope() *symbols.Scope {
+	if a.moduleScope != nil {
+		return a.moduleScope
+	}
+	return a.symTable.EntryScope()
 }
 
 type Handler struct {
@@ -145,8 +161,9 @@ func (h *Handler) DidClose(ctx context.Context, params *lsp.DidCloseTextDocument
 	})
 }
 
-// analyze runs the shared front-end pipeline (driver.Analyze), persists the
-// typed result for other requests, and publishes the diagnostics.
+// analyze runs the shared front-end pipeline over the document's whole import graph
+// (analyzeDocument), persists the typed result for other requests, and publishes the
+// diagnostics belonging to this document.
 func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source string) (retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -165,11 +182,14 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 		}
 	}()
 
-	res := driver.Analyze([]byte(source))
+	// The whole import graph, not just this buffer — see units.go for why, and for
+	// what has to be filtered back out afterwards.
+	res, file := h.analyzeDocument(uri, source)
 
-	diags := make([]lsp.Diagnostic, 0, len(res.Diagnostics))
-	for i := range res.Diagnostics {
-		diags = append(diags, diagToLSP(uri, source, res.Diagnostics[i]))
+	own := diagnosticsFor(res.Diagnostics, file)
+	diags := make([]lsp.Diagnostic, 0, len(own))
+	for i := range own {
+		diags = append(diags, diagToLSP(uri, source, own[i]))
 	}
 
 	// Persist the analysis for hover/definition/etc. Program is nil only on a
@@ -177,10 +197,12 @@ func (h *Handler) analyze(ctx context.Context, uri lsp.DocumentURI, source strin
 	if res.Program != nil {
 		h.mu.Lock()
 		h.analysisStore[string(uri)] = &docAnalysis{
-			program:    res.Program,
-			symTable:   res.SymbolTable,
-			scopeTable: res.ScopeTable,
-			typeTable:  res.TypeTable,
+			program:     docProgram(res.Program, file),
+			symTable:    res.SymbolTable,
+			scopeTable:  res.ScopeTable,
+			typeTable:   res.TypeTable,
+			file:        file,
+			moduleScope: moduleScopeOf(res.SymbolTable, file),
 		}
 		h.mu.Unlock()
 	}

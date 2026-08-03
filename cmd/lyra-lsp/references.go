@@ -59,7 +59,12 @@ func (h *Handler) References(_ context.Context, params *lsp.ReferenceParams) (re
 			return
 		}
 		seen[loc] = true
-		out = append(out, astLocToLSPLocation(uri, source, loc))
+		// The occurrences come from this document, but the declaration may be in
+		// another file now that the whole import graph is analyzed — a use of a
+		// prelude function resolves to the prelude. locationIn puts it in that file.
+		if target, ok := h.locationIn(uri, source, analysis, loc); ok {
+			out = append(out, target)
+		}
 	}
 
 	walkExprs(analysis.program, func(e ast.Expression) {
@@ -83,7 +88,7 @@ func (h *Handler) References(_ context.Context, params *lsp.ReferenceParams) (re
 // resolveDeclLocation returns the declaration location that name resolves to
 // from the scope enclosing (line, col). Returns false when the name is unbound.
 func resolveDeclLocation(name string, line, col int, analysis *docAnalysis) (ast.Location, bool) {
-	scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.EntryScope(), line, col)
+	scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.fileScope(), line, col)
 	named, ok := scope.Lookup(name)
 	if !ok {
 		return ast.Location{}, false

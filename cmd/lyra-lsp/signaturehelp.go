@@ -48,7 +48,7 @@ func (h *Handler) SignatureHelp(_ context.Context, params *lsp.SignatureHelpPara
 	}
 
 	// Resolve the callee name to a LambdaExpr via the lexical scope.
-	scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.EntryScope(), line, col)
+	scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.fileScope(), line, col)
 	named, ok := scope.Lookup(callee)
 	if !ok {
 		return nil, nil

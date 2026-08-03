@@ -4,10 +4,10 @@
 // (e.g. codegen) needs, plus the normalized diagnostics from every pass.
 //
 // It exists so the pipeline has one definition that any front-end consumer
-// shares. The compiler (cmd/lyrac) calls Analyze; the LSP server (cmd/lyra-lsp)
-// still runs its own copy of the same passes and should be migrated onto Analyze
-// next (its inline pipeline is byte-for-byte mirrored here). Anything that wants
-// a typed program — the backend included — starts here.
+// shares. Both user-facing tools resolve an import graph and then call
+// AnalyzeUnits — the compiler (cmd/lyrac) and the LSP server (cmd/lyra-lsp) —
+// while Analyze serves a caller holding a lone snippet. Anything that wants a
+// typed program, the backend included, starts here.
 package driver
 
 import (

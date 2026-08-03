@@ -61,6 +61,7 @@ type Unit struct {
 func Resolve(entryFile string, roots []string, opts Options) ([]Unit, []diag.Diagnostic) {
 	r := &resolver{
 		roots:   roots,
+		overlay: cleanOverlay(opts.Overlay),
 		byPath:  map[string]bool{},
 		onStack: map[string]bool{},
 	}
@@ -79,6 +80,32 @@ type Options struct {
 	// Prelude is the module implicitly available to every file, e.g. "std.prelude".
 	// Empty disables it.
 	Prelude string
+
+	// Overlay supplies in-memory source for files, keyed by filesystem path, and wins
+	// over what is on disk. It exists for an editor: a language server analyzes the
+	// buffer the user is typing into, which is by definition not what is saved — and
+	// a file that has never been saved has nothing on disk at all. Resolution
+	// therefore treats an overlaid path as existing, so an import of an unsaved file
+	// resolves too.
+	//
+	// Keys are compared after filepath.Clean, so a caller need not pre-normalize
+	// them; they do have to be absolute if the roots are (they are, since the entry
+	// file's own directory is the first root).
+	Overlay map[string][]byte
+}
+
+// cleanOverlay normalizes an overlay's keys once, at entry, so every later lookup is a
+// plain map hit rather than a path comparison that each call site could get subtly
+// different.
+func cleanOverlay(in map[string][]byte) map[string][]byte {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string][]byte, len(in))
+	for file, src := range in {
+		out[filepath.Clean(file)] = src
+	}
+	return out
 }
 
 // includePrelude resolves the prelude ahead of the entry file's own imports, so it is
@@ -98,7 +125,7 @@ func (r *resolver) includePrelude(opts Options, entry Unit) {
 	rel := filepath.Join(strings.Split(opts.Prelude, ".")...) + Extension
 	for _, root := range r.roots {
 		candidate := filepath.Join(root, rel)
-		if _, err := os.Stat(candidate); err != nil {
+		if !r.exists(candidate) {
 			continue
 		}
 		if unit, ok := r.load(candidate, opts.Prelude, ast.Location{}, entry.File); ok {
@@ -110,10 +137,31 @@ func (r *resolver) includePrelude(opts Options, entry Unit) {
 
 type resolver struct {
 	roots   []string
+	overlay map[string][]byte // filesystem path → in-memory source (see Options.Overlay)
 	units   []Unit
 	byPath  map[string]bool // module path → already emitted
 	onStack map[string]bool // module path → currently being visited (cycle detection)
 	diags   []diag.Diagnostic
+}
+
+// exists reports whether a candidate file is available to be loaded — on disk, or as an
+// overlay. Both the prelude search and import resolution ask this before load, so an
+// unsaved buffer has to answer yes here or it would be reported missing despite being
+// readable.
+func (r *resolver) exists(file string) bool {
+	if _, ok := r.overlay[filepath.Clean(file)]; ok {
+		return true
+	}
+	_, err := os.Stat(file)
+	return err == nil
+}
+
+// read returns a file's source, preferring the overlay.
+func (r *resolver) read(file string) ([]byte, error) {
+	if src, ok := r.overlay[filepath.Clean(file)]; ok {
+		return src, nil
+	}
+	return os.ReadFile(file)
 }
 
 // visit walks u's imports depth-first, emitting each dependency before u itself.
@@ -153,7 +201,7 @@ func (r *resolver) resolveImport(path, fromFile string, loc ast.Location) (Unit,
 	var tried []string
 	for _, root := range r.roots {
 		candidate := filepath.Join(root, rel)
-		if _, err := os.Stat(candidate); err == nil {
+		if r.exists(candidate) {
 			return r.load(candidate, path, loc, fromFile)
 		}
 		tried = append(tried, candidate)
@@ -165,7 +213,7 @@ func (r *resolver) resolveImport(path, fromFile string, loc ast.Location) (Unit,
 
 // load reads and parses one file.
 func (r *resolver) load(file, path string, loc ast.Location, fromFile string) (Unit, bool) {
-	source, err := os.ReadFile(file)
+	source, err := r.read(file)
 	if err != nil {
 		r.errorf(fromFile, loc, diag.CodeUnresolvedImport, "cannot read %s: %v", file, err)
 		return Unit{}, false

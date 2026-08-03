@@ -29,7 +29,7 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 
 	// Fast path: cursor is on an expression-position identifier (a usage).
 	if ident, ok := findExprAtPos(analysis.program, line, col).(*ast.IdentifierExpr); ok {
-		scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.EntryScope(), line, col)
+		scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.fileScope(), line, col)
 		if n, ok := scope.Lookup(ident.Name); ok {
 			name = ident.Name
 			named = n
@@ -61,7 +61,7 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 					return true
 				}
 				// Resolve the binding from the scope at the name's position.
-				scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.EntryScope(), sNameLoc.StartLine, sNameLoc.StartCol)
+				scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.fileScope(), sNameLoc.StartLine, sNameLoc.StartCol)
 				if n, ok2 := scope.Lookup(sName); ok2 {
 					name = sName
 					named = n
@@ -108,11 +108,24 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 		return renameAnchor{}, false
 	}
 
-	return renameAnchor{
+	anchor := renameAnchor{
 		name:    name,
 		declLoc: named.GetLocation(),
 		nameLoc: namedNameLoc(named),
-	}, true
+	}
+
+	// A name can now resolve into another file — the prelude, or another module of
+	// the program — and this server renames within one document. Editing the
+	// declaration's span in *this* buffer would splice the new name in at the other
+	// file's line and column, so a cross-file declaration declines the rename instead.
+	// (Doing it properly means collecting occurrences across every unit and returning
+	// a multi-file WorkspaceEdit; see todo.md.)
+	if !sameFile(anchor.nameLoc.File, analysis.file) {
+		log.Printf("rename: %q is declared in %s, not this document — declining", name, anchor.nameLoc.File)
+		return renameAnchor{}, false
+	}
+
+	return anchor, true
 }
 
 // namedNameLoc returns the span covering just the bound name of a Named node
@@ -151,7 +164,7 @@ func paramBodyScope(lambda *ast.LambdaExpr, analysis *docAnalysis) *symbols.Scop
 			return sc
 		}
 	}
-	return analysis.symTable.EntryScope()
+	return analysis.fileScope()
 }
 
 // locationContains reports whether loc spans the 1-based (line, col) position.

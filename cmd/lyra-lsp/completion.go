@@ -52,7 +52,7 @@ func (h *Handler) Completion(_ context.Context, params *lsp.CompletionParams) (r
 	cursor := posToOffset(source, params.Position.Line, params.Position.Character)
 	prefix := source[lineStart:cursor]
 
-	scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.symTable.EntryScope(), line, col)
+	scope := findScopeAtPos(analysis.program, analysis.scopeTable, analysis.fileScope(), line, col)
 
 	var items []lsp.CompletionItem
 	if receiver, isMember := memberReceiver(prefix); isMember {

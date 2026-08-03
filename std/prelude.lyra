@@ -38,10 +38,10 @@ module std.prelude
 // message is still poor for the module that did. See todo.md.
 
 @builtin(Maybe)
-pub data Maybe<t> = None | Some(t)
+pub data Maybe<t> = None | Some t
 
 pub let unwrap_or<t> = pure noalloc (m: Maybe<t>, fallback: t) -> t => match m {
-  Some(v) => v,
+  Some v => v,
   None => fallback,
 }
 
@@ -56,27 +56,27 @@ pub let unwrap_or<t> = pure noalloc (m: Maybe<t>, fallback: t) -> t => match m {
 // combinator should not make that choice for its callers; the inferred half already keeps
 // pure callers pure.
 pub let unwrap_or_else<t> = pure noalloc (m: Maybe<t>, f: () -> t) -> t => match m {
-  Some(v) => v,
+  Some v => v,
   None => f(),
 }
 
 pub let is_some<t> = pure noalloc (m: Maybe<t>) -> bool => match m {
-  Some(_) => true,
+  Some _ => true,
   None => false,
 }
 
 pub let is_none<t> = pure noalloc (m: Maybe<t>) -> bool => match m {
-  Some(_) => false,
+  Some _ => false,
   None => true,
 }
 
 pub let ok_or<t,e> = pure noalloc (m: Maybe<t>, err: e) -> Result<t,e> => match m {
-  Some(v) => Ok(v),
-  None => Err(err),
+  Some v => Ok v,
+  None => Err err,
 }
 
 pub let ok_or_else<t,e> = pure noalloc (m: Maybe<t>, f: () -> e) -> Result<t,e> => match m {
-  Some(v) => Ok(v),
+  Some v => Ok v,
   None => Err(f()),
 }
 
@@ -84,21 +84,21 @@ pub let ok_or_else<t,e> = pure noalloc (m: Maybe<t>, f: () -> e) -> Result<t,e> 
 pub data Result<t, e> = Ok(t) | Err(e)
 
 pub let is_ok<t,e> = pure noalloc (r: Result<t, e>) -> bool => match r {
-  Ok(_) => true,
-  Err(_) => false,
+  Ok _ => true,
+  Err _ => false,
 }
 
 pub let is_err<t,e> = pure noalloc (r: Result<t, e>) -> bool => match r {
-  Ok(_) => false,
-  Err(_) => true,
+  Ok _ => false,
+  Err _ => true,
 }
 
 pub let ok<t,e> = pure noalloc (r: Result<t,e>) -> Maybe<t> => match r {
-  Ok(v) => Some(v),
-  Err(_) => None,
+  Ok v => Some v,
+  Err _ => None,
 }
 
 pub let err<t,e> = pure noalloc (r: Result<t,e>) -> Maybe<e> => match r {
-  Ok(_) => None,
-  Err(err) => Some(err),
+  Ok _ => None,
+  Err err => Some err,
 }
