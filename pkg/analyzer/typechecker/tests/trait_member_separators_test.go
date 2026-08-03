@@ -81,3 +81,57 @@ impl Ops for Node {
 let f = (x: Node) -> i64 => x.b()`, false)
 	assertNoErrors(t, res)
 }
+
+// --- struct declarations ------------------------------------------------------
+//
+// The same separator, for the same reason: a struct declaration's fields were the last
+// users of the comma-only list shape, giving the same "missing }" aimed at the first field.
+
+func TestStructSeparators_FieldsOnSeparateLines(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+struct Node {
+  n: i64
+  tag: string
+}
+let f = (x: Node) -> i64 => x.n`, false)
+	assertNoErrors(t, res)
+}
+
+// Commas, mixed separators, defaults, `readonly` and an attribute list all still work —
+// the field is a member, and only how members are *separated* changed.
+func TestStructSeparators_FieldModifiersAndDefaults(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+@packed
+struct Node {
+  readonly n: i64 = 3, tag: string
+  flag: bool = false
+}
+let f = (x: Node) -> i64 => x.n`, false)
+	assertNoErrors(t, res)
+}
+
+// An anonymous struct *type* shares the rule, so it wraps across lines too.
+func TestStructSeparators_AnonymousStructType(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let f = (p: { x: i64
+  y: i64 }) -> i64 => p.x + p.y`, false)
+	assertNoErrors(t, res)
+}
+
+// A struct *literal* is deliberately unchanged: its field list sits inside the
+// literal-vs-block ambiguity, so it is a separate question rather than the same one-word
+// change. Pinned so the distinction is a decision on the record rather than an oversight.
+func TestStructSeparators_LiteralStillRequiresCommas(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+struct Node { n: i64, tag: string }
+let f = () -> i64 => {
+  let x = Node {
+    n: 7
+    tag: "hi"
+  }
+  x.n
+}`, false)
+	if len(res.errors) == 0 {
+		t.Error("a struct literal's fields still need commas; if that changed on purpose, this test should change with it")
+	}
+}

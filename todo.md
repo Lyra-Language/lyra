@@ -10,15 +10,6 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
-- **[OPEN] A struct declaration's fields need commas between them.** `struct Node { n: i64 ⏎
-  tag: string }` fails with "missing }" pointing at the *first* field, the same misdirecting
-  error trait methods used to give. Trait and impl method lists took the statement terminator
-  on 08/03 (`memberList`, `include/helpers.js`); `struct_type_body` and
-  `anonymous_struct_type` are the remaining users of the old comma-only shape and want one
-  word each. Struct *literals* are a separate question — their field list sits inside the
-  literal-vs-block GLR conflict, so it deserves its own thought rather than the same reflex.
-
-
 - **[OPEN] A literal renders as its Go struct in diagnostics.** `IntegerLiteralExpr.GetName()`
   returns `IntegerLiteralExpr(0, Base: 10)`, and `GetName` is what diagnostics interpolate,
   so a real message reads `expected array pattern, got IntegerLiteralExpr(0, Base: 10)..=

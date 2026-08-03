@@ -30,10 +30,18 @@ an unfinished parameter list never reaches it. Verified rather than assumed.
 
 Cost: 8,208 → 8,224 states (+0.2%), `parser.c` +21 KB.
 
-**Struct declarations were left alone**, though they have the identical defect and are a
-one-word change each. They were not what this set out to fix; they are in todo.md instead.
-Struct *literals* are a genuinely separate question — their field list sits inside the
-literal-vs-block conflict that the postfix-head change touched earlier the same day.
+**Struct declarations followed** (`struct_type_body`, `anonymous_struct_type`), which were
+the last users of the comma-only shape. Held back from the first commit on purpose — they
+were not what it set out to fix — and done as its own change once that one was in.
+
+**A struct literal's fields still require commas, deliberately.** That list sits inside the
+literal-vs-block ambiguity — `Point { … }` is contested between a struct literal and a name
+followed by a block, which the postfix-head change touched earlier the same day — so a
+newline separator there is a question about *that* conflict rather than the same one-word
+change. There is a test pinning the current behaviour, so if it ever changes it changes on
+purpose.
+
+Total cost of both: 8,208 → 8,237 states (+0.35%), `parser.c` +32 KB.
 
 
 ### 08/03/26
