@@ -108,19 +108,23 @@ func CheckIntegerRanges(program *ast.Program, tt *typetable.TypeTable) ([]diag.D
 //     division (drops the signed-division overflow check).
 //   - inBounds — `xs[i]` whose index is provably within [0, size) (drops the array
 //     bounds check and the negative-index adjustment).
+//   - noShiftOverflow — `<<`/`>>` (and their compound forms) whose count is provably
+//     within [0, width) (drops the shift-amount check).
 type SafetyTable struct {
-	noOverflow    map[ast.Expression]bool
-	noDivZero     map[ast.Expression]bool
-	noDivOverflow map[ast.Expression]bool
-	inBounds      map[ast.Expression]bool
+	noOverflow      map[ast.Expression]bool
+	noDivZero       map[ast.Expression]bool
+	noDivOverflow   map[ast.Expression]bool
+	inBounds        map[ast.Expression]bool
+	noShiftOverflow map[ast.Expression]bool
 }
 
 func newSafetyTable() *SafetyTable {
 	return &SafetyTable{
-		noOverflow:    map[ast.Expression]bool{},
-		noDivZero:     map[ast.Expression]bool{},
-		noDivOverflow: map[ast.Expression]bool{},
-		inBounds:      map[ast.Expression]bool{},
+		noOverflow:      map[ast.Expression]bool{},
+		noDivZero:       map[ast.Expression]bool{},
+		noDivOverflow:   map[ast.Expression]bool{},
+		inBounds:        map[ast.Expression]bool{},
+		noShiftOverflow: map[ast.Expression]bool{},
 	}
 }
 
@@ -139,6 +143,11 @@ func (t *SafetyTable) NoDivOverflow(e ast.Expression) bool { return t.has(t.noDi
 // IndexInBounds reports whether e is an index whose value is provably within
 // [0, size) — so both the bounds trap and the negative-index adjustment drop.
 func (t *SafetyTable) IndexInBounds(e ast.Expression) bool { return t.has(t.inBounds, e) }
+
+// NoShiftOverflow reports whether e is a shift whose count is provably within
+// [0, width) — so the amount check drops. The backend already folds away a constant
+// count on its own; this is what covers a *variable* one the analysis can bound.
+func (t *SafetyTable) NoShiftOverflow(e ast.Expression) bool { return t.has(t.noShiftOverflow, e) }
 
 func (t *SafetyTable) has(m map[ast.Expression]bool, e ast.Expression) bool {
 	if t == nil || m == nil {
@@ -368,6 +377,7 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 			if !tyOK {
 				return c.typeIntervalIn(e, st)
 			}
+			c.markShiftInRange(e, e, v.Operator, rv, rt)
 			r, ok := bitwiseI(v.Operator, lv, rv, tyIv)
 			if !ok {
 				return c.typeIntervalIn(e, st)
@@ -411,6 +421,10 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 			// RHS carries the target's propagated width (the compound-assign node itself
 			// is typed void), so it supplies the type bounds.
 			if tyIv, tyOK, _ := c.typeIntervalIn(v.Right, st); tyOK {
+				// The compound-assign node is typed void, so the width comes from the RHS
+				// (which carries the target's propagated width), while the fact is keyed
+				// on the node the backend will ask about — the assignment itself.
+				c.markShiftInRange(e, v.Right, binOp, rv, rt)
 				if r, ok := bitwiseI(binOp, lv, rv, tyIv); ok {
 					st.vars[v.Left.Name] = clampToType(r, tyIv)
 					return interval{}, false, st
@@ -1508,6 +1522,35 @@ func mulI(a, b interval) (interval, bool) {
 	return interval{lo, hi}, true
 }
 
+// markShiftInRange records that a shift's count cannot trap, so the backend can drop
+// the amount check. markAt is the node the backend queries; widthAt supplies the
+// shifted type (they differ for a compound assignment, whose own node is void).
+//
+// The proof obligation mirrors the emitted check exactly: it compares the count
+// *unsigned* against the width, so a negative count is caught as a huge one. Hence
+// both halves here — a lower bound of 0 and a finite upper below the width. A count
+// the analysis could not bound simply keeps its check.
+func (c *rangeChecker) markShiftInRange(markAt, widthAt ast.Expression, op ast.MathBinaryOp, count interval, counted bool) {
+	if c.silent || !op.IsShift() || !counted {
+		return
+	}
+	t, ok := c.tt.Get(widthAt)
+	if !ok {
+		return
+	}
+	p, ok := t.(types.PrimitiveType)
+	if !ok {
+		return
+	}
+	width, ok := intWidth(p.Name)
+	if !ok {
+		return
+	}
+	if count.lo >= 0 && finiteBound(count.hi) && count.hi < int64(width) {
+		c.safe.noShiftOverflow[markAt] = true
+	}
+}
+
 // ── bitwise interval arithmetic ──────────────────────────────────────────────
 //
 // Every function here returns ok=false to mean "no useful bound" — the caller then
@@ -1765,6 +1808,24 @@ func intBounds(name types.PrimitiveTypeName) (min, max int64, ok bool) {
 		return 0, posInf, true // [0, +∞): true max 2^64-1 is unrepresentable
 	}
 	return 0, 0, false
+}
+
+// intWidth is intBounds' sibling: the bit width of a concrete integer type. It
+// covers exactly the same set of types, deliberately — a type intBounds refuses is
+// never tracked, so a width for it would be unreachable and would only suggest
+// otherwise.
+func intWidth(name types.PrimitiveTypeName) (int, bool) {
+	switch name {
+	case types.Int8, types.UInt8:
+		return 8, true
+	case types.Int16, types.UInt16:
+		return 16, true
+	case types.Int32, types.UInt32:
+		return 32, true
+	case types.Int64, types.UInt64:
+		return 64, true
+	}
+	return 0, false
 }
 
 func dec(v int64) int64 {

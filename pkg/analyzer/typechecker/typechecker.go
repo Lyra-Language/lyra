@@ -798,6 +798,41 @@ func (tc *TypeChecker) checkPatternConstraints(name string, value ast.Expression
 // follow-up checks (e.g. an integer-literal range check). loc anchors the
 // mutability and assignability errors.
 func (tc *TypeChecker) checkAssignToBinding(name string, value ast.Expression, loc ast.Location) types.Type {
+	target, found := tc.resolveAssignTarget(name, loc)
+	if !found {
+		return nil
+	}
+	// The value is checked even when the target rejected the write: a bad assignment
+	// should not also swallow the errors inside its right-hand side, and the backend
+	// reads the recorded types either way.
+	res := tc.checkAssignedValue(name, value, target.typ, loc)
+	if !target.writable {
+		return nil
+	}
+	return res
+}
+
+// assignTarget is what a name on the left of an assignment resolves to: its type,
+// and whether writing to it is allowed.
+//
+// A *rejected* target still carries its type. That is not an oddity — every caller
+// goes on to check the right-hand side regardless, so that a refused assignment
+// reports its own diagnostic without hiding the ones inside its value.
+type assignTarget struct {
+	typ      types.Type
+	writable bool
+}
+
+// resolveAssignTarget enforces everything about the assignment *target* — that the
+// name resolves, that it may be written, and what type it has — and deliberately
+// says nothing about the value.
+//
+// The split exists because the two questions are genuinely independent for one
+// operator: `x <<= n` must apply the target's mutability rules while typing `n` as a
+// shift *count* (any integer) rather than as a value assignable to x, matching what
+// `x = x << n` does. Folding the value check in here is what made the compound form
+// stricter than the binary one.
+func (tc *TypeChecker) resolveAssignTarget(name string, loc ast.Location) (assignTarget, bool) {
 	// A parameter is not a VarDeclStmt in scope — it lives in paramTypes — and it
 	// shadows any outer binding of the same name, so it is resolved first (mirroring
 	// IdentifierExpr resolution and checkLValueAssignment's ordering). Without this
@@ -824,7 +859,7 @@ func (tc *TypeChecker) checkAssignToBinding(name string, value ast.Expression, l
 	if paramType, ok := tc.paramTypes[name]; ok {
 		switch tc.paramMods[name] {
 		case types.Own, types.Mut:
-			return tc.checkAssignedValue(name, value, paramType, loc)
+			return assignTarget{paramType, true}, true
 		}
 		if tc.patternBound[name] {
 			// Same rule, different thing: a match-arm / if-let binding borrows out of
@@ -838,28 +873,26 @@ func (tc *TypeChecker) checkAssignToBinding(name string, value ast.Expression, l
 				"%s: cannot reassign a borrowed parameter — the caller still owns the value, so the write would only affect this function's copy. Shadow it instead (`let %s = …`), or take it as `own %s` to rebind your own copy, or as `mut %s` to write through to the caller",
 				name, name, name, name)
 		}
-		// Still check the value: a rejected assignment should not also swallow the
-		// errors in its right-hand side, and the backend reads the recorded types.
-		tc.checkAssignedValue(name, value, paramType, loc)
-		return nil
+		// Rejected, but the type still goes back so the caller can check the value.
+		return assignTarget{paramType, false}, true
 	}
 	sym, ok := tc.scope.Lookup(name)
 	if !ok {
-		return nil
+		return assignTarget{}, false
 	}
 	decl, ok := sym.(*ast.VarDeclStmt)
 	if !ok {
-		return nil
+		return assignTarget{}, false
 	}
 	if !decl.IsMutable() {
 		tc.addImmutableBindingError(loc, name, decl.BindingKind)
-		return nil
+		return assignTarget{}, false
 	}
 	effective := tc.effectiveType(decl)
 	if effective == nil {
-		return nil
+		return assignTarget{}, false
 	}
-	return tc.checkAssignedValue(name, value, effective, loc)
+	return assignTarget{effective, true}, true
 }
 
 // checkAssignedValue infers value and verifies it can be stored in a binding of
@@ -1045,6 +1078,29 @@ func (tc *TypeChecker) addParamImmutableError(loc ast.Location, name string, mod
 }
 
 func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
+	// `x <<= n` is `x = x << n`, and a shift's right operand is a *count* rather than
+	// a value in the target's domain — so it is typed independently, exactly as the
+	// binary form does (inferMathBinaryExpr). Routing it through checkAssignToBinding
+	// would demand the count be assignable to x, which the binary spelling never asks
+	// for: `x <<= count32` on a `u8` would need a conversion that `x = x << count32`
+	// does not. That asymmetry is what this split exists to remove.
+	if binOp, isBin := expr.Operator.BinaryOp(); isBin && binOp.IsShift() {
+		target, found := tc.resolveAssignTarget(expr.Left.Name, expr.GetLocation())
+		if !found {
+			return
+		}
+		count := tc.inferExprType(expr.Right)
+		if count == nil {
+			return
+		}
+		if !isIntegerOperand(target.typ) || !isIntegerOperand(count) {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"operator %s: operands must be integers, got %s and %s",
+				expr.Operator, target.typ, count)
+		}
+		return
+	}
+
 	effective := tc.checkAssignToBinding(expr.Left.Name, expr.Right, expr.GetLocation())
 	if effective == nil {
 		return
@@ -2170,7 +2226,9 @@ func (tc *TypeChecker) inferInterpolatedStringExpr(e *ast.InterpolatedStringExpr
 // still awaiting its context. Deliberately excludes every float, including
 // untyped_float — `IsNumeric` is the wrong test for these operators.
 func isIntegerOperand(t types.Type) bool {
-	p, ok := t.(types.PrimitiveType)
+	// A constrained newtype over an integer is one: `newtype Mask = u8` is a u8
+	// wearing a name, and masking it is exactly what such a type is for.
+	p, ok := types.StripNewtype(t).(types.PrimitiveType)
 	if !ok {
 		return false
 	}

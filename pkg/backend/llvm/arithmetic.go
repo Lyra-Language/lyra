@@ -337,7 +337,7 @@ func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, rig
 	case ast.MathBinaryOpBitXor:
 		return block.NewXor(left, right), block, nil
 	case ast.MathBinaryOpShl, ast.MathBinaryOpShr:
-		return l.emitShiftOp(block, op, left, right, signed)
+		return l.emitShiftOp(block, op, left, right, signed, e)
 	default:
 		return nil, nil, fmt.Errorf("llvm: math binary op lowering not implemented for %v", op)
 	}
@@ -365,17 +365,20 @@ func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, rig
 //     The comparison is **unsigned**, which catches a negative signed count in the
 //     same instruction: as a two's-complement bit pattern, -1 is huge.
 //
-// A count that is a compile-time constant already in range emits no check at all,
-// which covers the overwhelmingly common `x << 3`. Range-analysis-driven elision
-// for a *variable* count is not wired up yet — see todo.md.
-func (l *lowerer) emitShiftOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value, signed bool) (value.Value, *ir.Block, error) {
+// The check is **elided** two ways. A compile-time constant already in range needs
+// no analysis at all (`constShiftInRange`), which covers the overwhelmingly common
+// `x << 3`; a *variable* count drops it when the value-range pass proved the count
+// within [0, width) (`NoShiftOverflow`, keyed by e — the same arrangement
+// `NoDivZero` uses for the divisor). An absent entry keeps the check, so a count the
+// analysis could not bound always still traps.
+func (l *lowerer) emitShiftOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value, signed bool, e ast.Expression) (value.Value, *ir.Block, error) {
 	intTy, ok := left.Type().(*lltypes.IntType)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: shift on a non-integer operand (%s)", left.Type())
 	}
 	width := int64(intTy.BitSize)
 
-	if !constShiftInRange(right, width) {
+	if !constShiftInRange(right, width) && !l.res.RangeSafety.NoShiftOverflow(e) {
 		// Compare at the count's own width: coercing first could truncate an
 		// out-of-range count into range and hide the very thing being checked.
 		countTy, ok := right.Type().(*lltypes.IntType)

@@ -163,6 +163,49 @@ let main = () -> u8 => f(200)
 	}
 }
 
+// A *variable* shift count drops its check when the value-range pass can bound it —
+// here by branch refinement, which pins `n` to [0,7] inside the `if`. The constant
+// case was already folded away at lowering; this is the half that needed the
+// analysis (NoShiftOverflow), and it is the shape real code takes.
+func TestEmit_BoundedShiftCountElidesTheCheck(t *testing.T) {
+	t.Parallel()
+	bounded, err := emitSource(t, `let f = (x: u8, n: u8) -> u8 => if n < 8 { x << n } else { 0 }
+let main = () -> u8 => f(1, 3)
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(bounded, "lyra_panic_shift_overflow") {
+		t.Errorf("a count refined to [0,7] cannot trap; the check should be gone:\n%s", bounded)
+	}
+
+	// The control: the same shift with nothing bounding the count keeps its check.
+	// Without this, the test would pass just as well if shifts had stopped emitting
+	// checks altogether.
+	unbounded, err := emitSource(t, `let f = (x: u8, n: u8) -> u8 => x << n
+let main = () -> u8 => f(1, 3)
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(unbounded, "lyra_panic_shift_overflow") {
+		t.Errorf("an unbounded count can trap and must keep its check:\n%s", unbounded)
+	}
+}
+
+// ...and the elided form still computes the right answer, which the IR assertion
+// above cannot show.
+func TestExec_BoundedShiftStillComputes(t *testing.T) {
+	t.Parallel()
+	const src = `let f = (x: u8, n: u8) -> u8 => if n < 8 { x << n } else { 0 }
+let main = () -> u8 => f(3, 4) + f(1, 9)
+`
+	// 3 << 4 == 48, and the guarded else gives 0 for the out-of-range count.
+	if got := buildAndRun(t, src); got != 48 {
+		t.Errorf("exited %d; want 48\n%s", got, src)
+	}
+}
+
 func TestExec_BitwiseCompoundAssignment(t *testing.T) {
 	t.Parallel()
 	const src = `let main = () -> u8 => {
@@ -187,6 +230,46 @@ func TestExec_BitwiseCompoundAssignment(t *testing.T) {
 // The precedence chosen in the grammar, verified by what the program computes
 // rather than by the parse tree: bitwise binds tighter than comparison (C's
 // classic footgun), looser than arithmetic, and `&` > `~` > `|`.
+// `x <<= n` types its count independently of the target, exactly as `x = x << n`
+// does. Before, the compound form went through the assignability check and demanded
+// `u8(n)` for a `u32` count — a conversion the binary spelling never asked for, and
+// an asymmetry between two spellings of the same operation.
+func TestExec_CompoundShiftTakesAnyIntegerCount(t *testing.T) {
+	t.Parallel()
+	const src = `let f = (x: u8, n: u32) -> u8 => {
+  var v: u8 = x
+  v <<= n
+  v
+}
+let g = (x: u8, n: u32) -> u8 => x << n
+let main = () -> u8 => f(3, 4) - g(3, 3)
+`
+	// 3 << 4 == 48, 3 << 3 == 24; the two spellings now accept the same count type.
+	if got := buildAndRun(t, src); got != 24 {
+		t.Errorf("exited %d; want 24\n%s", got, src)
+	}
+}
+
+// ...and the count is still checked against the *shifted* width, not its own: a u32
+// count of 8 is a perfectly ordinary u32 but out of range for a u8 shift.
+func TestExec_CompoundShiftStillTrapsOnAWideCount(t *testing.T) {
+	t.Parallel()
+	const src = `let f = (x: u8, n: u32) -> u8 => {
+  var v: u8 = x
+  v <<= n
+  v
+}
+let main = () -> u8 => f(1, 8)
+`
+	out, code := buildAndRunPanic(t, src)
+	if code != overflowTrapExitCode {
+		t.Errorf("exited %d; want %d (the trap)", code, overflowTrapExitCode)
+	}
+	if !strings.Contains(out, "shift amount out of range") {
+		t.Errorf("stderr = %q; want the shift-amount trap message", out)
+	}
+}
+
 func TestExec_BitwisePrecedence(t *testing.T) {
 	t.Parallel()
 	// Each `if` is one precedence rule, and the operands are chosen so the *other*
