@@ -10,6 +10,45 @@ Newest first.
 ## Dated log
 
 ### 08/02/26
+**The value-range pass tracks bitwise results.** `andI`/`orI`/`xorI`/`shlI`/`shrI` join
+`addI`/`subI`/`mulI`, so a masked value carries its bound into the arithmetic that
+follows: `(x & 0x0F) + 1` is now proved in range and drops its overflow trap, where
+before the mask widened to ⊤ and the addition kept a check it could never need.
+
+**The rule that does the work is the masking one, and it is stronger than the obvious
+version.** For a mask `m >= 0`, `x & m` lies in `[0, m]` **whatever the sign of x** — the
+result can only have bits that m has, so it is non-negative and no larger. Stating it as
+"both operands non-negative" would have missed exactly the case worth having, a signed
+value masked down to a small range. `|` and `~` do need both operands non-negative (their
+bound is the all-ones ceiling over the wider one), and `&` with both sides possibly
+negative has no useful bound at all (`-1 & -1 == -1`), so it widens.
+
+**None of this goes through `checkArith`, and that is the substantive decision.** Those
+operators do not trap on overflow, so there is no E020 to report and no `noOverflow` to
+record — and `<<` **wraps**. Routing a too-wide shift through the arithmetic path would
+have reported "this operation always overflows", which is simply false: the value is
+defined, it just lost bits. For the same reason `shlI` *refuses* rather than clamps when
+the mathematical product could leave the type — clamping would assert a range the wrapped
+value need not be in, which is the unsound direction.
+
+**Soundness is checked by exhaustive brute force, not by argument.** These intervals feed
+trap elision, so an interval that is too narrow is a miscompile — the backend drops a
+check the program needed — while one that is too wide only costs precision. That asymmetry
+does not tolerate hand-picked examples, so `bitwise_interval_test.go` enumerates *every*
+interval over a 4-bit type, both signednesses, every value in each, and every non-trapping
+shift count, comparing the abstract answer against what the machine would really produce
+(including the truncation `<<` performs). 18,496 interval pairs are proved for `u4 &`
+alone. The first attempt tried this at i16 and did not finish — 65,536 values per interval
+— which is why the exhaustive layer is small-width and the real widths are covered by
+targeted boundary tests instead. The per-rule counter is an anti-vacuity guard: a rule
+that always gave up would otherwise pass having checked nothing.
+
+The ±∞ sentinels needed care throughout. A `u64` upper bound is `+∞` because its true
+maximum does not fit an int64, so any rule that *computes* with a bound (the all-ones
+ceiling, a shift count) refuses an infinite one rather than treating `MaxInt64` as a real
+value — while `&`, which only needs to know a bound is non-negative, still profits from it.
+
+### 08/02/26
 **Bitwise and shift operators.** `& | ~ << >>`, prefix `~` for complement, and the five
 compound assignments. A systems language aimed at games had no way to touch a bit, which
 made every mask, flag set and packed field unwritable; the trait `binary_operator` list had

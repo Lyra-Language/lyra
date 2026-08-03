@@ -3,6 +3,7 @@ package checker
 import (
 	"fmt"
 	"math"
+	"math/bits"
 	"strconv"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -52,6 +53,17 @@ import (
 //     (`x < 0` is always false, a refined `x >= size` index is a definite OOB),
 //     while the +∞ upper only ever causes conservative untracking — see intBounds
 //     and compareConst's sentinel guards.
+//   - Bitwise and shift results are tracked (andI/orI/xorI/shlI/shrI), but each
+//     rule proves only the case it can and widens otherwise: `&` needs one operand
+//     known non-negative, `|`/`~` need both, and the shifts need a bounded count.
+//     The load-bearing one is masking — `x & m` for a mask m >= 0 lies in [0, m]
+//     whatever the sign of x — because that is what lets the *arithmetic after* a
+//     mask prove itself in range and drop its trap. None of these goes through
+//     checkArith: none of them traps on overflow, and `<<` **wraps**, so reporting
+//     a too-wide shift as "always overflows" would be wrong. Soundness here is
+//     checked by exhaustive brute force over every interval of a small width
+//     (bitwise_interval_test.go), because an interval that is too narrow silently
+//     removes a check the program needed.
 //   - A branch refines a variable only against a comparison with a *pure* constant
 //     side (literal / negated literal / another tracked variable); anything else
 //     leaves the branch un-refined.
@@ -346,6 +358,22 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 		if !lt || !rt {
 			return c.typeIntervalIn(e, st)
 		}
+		// Bitwise and shift results are tracked, but never through checkArith: none of
+		// these operators traps on overflow, so there is no E020 to report and no
+		// noOverflow to record. The payoff is downstream — a masked value carries its
+		// bound into the *arithmetic* that follows, so `(x & 0x0F) + 1` can prove its
+		// addition safe and drop that trap.
+		if v.Operator.IsBitwise() {
+			tyIv, tyOK, _ := c.typeIntervalIn(e, st)
+			if !tyOK {
+				return c.typeIntervalIn(e, st)
+			}
+			r, ok := bitwiseI(v.Operator, lv, rv, tyIv)
+			if !ok {
+				return c.typeIntervalIn(e, st)
+			}
+			return clampToType(r, tyIv), true, st
+		}
 		var r interval
 		var ok bool
 		switch v.Operator {
@@ -375,6 +403,19 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 			// the operation's integer type and is the divisor. The new value of x isn't
 			// tracked → ⊤.
 			c.checkDivision(e, v.Right, v.Right, lv, lt, rv, rt)
+			delete(st.vars, v.Left.Name)
+			return interval{}, false, st
+		}
+		if binOp, isBin := v.Operator.BinaryOp(); isBin && binOp.IsBitwise() && lt && rt {
+			// `x &= m` updates x with the bitwise rule, again without checkArith. The
+			// RHS carries the target's propagated width (the compound-assign node itself
+			// is typed void), so it supplies the type bounds.
+			if tyIv, tyOK, _ := c.typeIntervalIn(v.Right, st); tyOK {
+				if r, ok := bitwiseI(binOp, lv, rv, tyIv); ok {
+					st.vars[v.Left.Name] = clampToType(r, tyIv)
+					return interval{}, false, st
+				}
+			}
 			delete(st.vars, v.Left.Name)
 			return interval{}, false, st
 		}
@@ -1465,6 +1506,172 @@ func mulI(a, b interval) (interval, bool) {
 		lo, hi = minI(lo, p), maxI(hi, p)
 	}
 	return interval{lo, hi}, true
+}
+
+// ── bitwise interval arithmetic ──────────────────────────────────────────────
+//
+// Every function here returns ok=false to mean "no useful bound" — the caller then
+// widens to the operand type, which is always sound because a bitwise result is by
+// construction a value of that type. Failing is therefore free; being *wrong* is
+// not, since these intervals feed trap elision (checkArith's noOverflow), so each
+// rule below is stated for the case it can actually prove and refuses the rest.
+//
+// A ±∞ sentinel bound is not a value (posInf / negInf), so anything that computes
+// with a bound checks finiteBound first.
+
+// finiteBound reports whether v is a real value rather than a ±∞ sentinel.
+func finiteBound(v int64) bool { return v != posInf && v != negInf }
+
+// allOnesAtLeast returns the smallest 2^n - 1 that is >= m, for m >= 0 — the
+// tightest power-of-two-minus-one ceiling on any value whose set bits are a subset
+// of those needed to represent m. Used as the upper bound for `|` and `~`: neither
+// can set a bit above the highest bit either operand could have.
+func allOnesAtLeast(m int64) (int64, bool) {
+	if m < 0 {
+		return 0, false
+	}
+	n := bits.Len64(uint64(m))
+	if n >= 63 { // 1<<63 overflows int64
+		return 0, false
+	}
+	return int64(1)<<uint(n) - 1, true
+}
+
+// andI bounds `a & b`.
+//
+// The rule that matters: for a mask m >= 0, `x & m` lies in [0, m] whatever the sign
+// of x — the result can only have bits that m has, so it is non-negative and no
+// larger. That is why masking (`x & 0x0F`), the whole reason to track these, comes
+// out exact rather than approximate. With both operands non-negative the two bounds
+// combine to min(a.hi, b.hi).
+//
+// When *both* operands may be negative the result may be negative too (-1 & -1 ==
+// -1) and no useful bound follows, so it gives up.
+func andI(a, b interval) (interval, bool) {
+	hi, ok := int64(0), false
+	if a.lo >= 0 {
+		hi, ok = a.hi, true
+	}
+	if b.lo >= 0 && (!ok || b.hi < hi) {
+		hi, ok = b.hi, true
+	}
+	if !ok {
+		return interval{}, false
+	}
+	return interval{0, hi}, true
+}
+
+// orI bounds `a | b` for non-negative operands: at least max(a, b) — OR only sets
+// bits — and at most the all-ones ceiling over the wider operand.
+func orI(a, b interval) (interval, bool) {
+	if a.lo < 0 || b.lo < 0 || !finiteBound(a.hi) || !finiteBound(b.hi) {
+		return interval{}, false
+	}
+	hi, ok := allOnesAtLeast(maxI(a.hi, b.hi))
+	if !ok {
+		return interval{}, false
+	}
+	return interval{maxI(a.lo, b.lo), hi}, true
+}
+
+// xorI bounds `a ~ b` for non-negative operands. The upper bound is the same
+// all-ones ceiling as OR; the lower is 0, since equal operands cancel.
+func xorI(a, b interval) (interval, bool) {
+	if a.lo < 0 || b.lo < 0 || !finiteBound(a.hi) || !finiteBound(b.hi) {
+		return interval{}, false
+	}
+	hi, ok := allOnesAtLeast(maxI(a.hi, b.hi))
+	if !ok {
+		return interval{}, false
+	}
+	return interval{0, hi}, true
+}
+
+// shlI bounds `a << k` within the result type ty.
+//
+// `a << k` is `a * 2^k` **only while no bits are shifted out**, and Lyra's `<<`
+// wraps rather than trapping (unlike `*`), so the product is a valid bound only if
+// it cannot leave the type. If it can, bits may have been dropped and the result is
+// any value of the type — hence the containment test rather than a clamp, which
+// would claim a range the wrapped value need not be in.
+//
+// The multiplier is widened to the whole interval [2^k.lo, 2^k.hi] rather than the
+// set of powers of two inside it; that is a superset, so the bound stays sound.
+func shlI(a, k, ty interval) (interval, bool) {
+	if k.lo < 0 || !finiteBound(k.hi) || k.hi > 62 {
+		return interval{}, false
+	}
+	r, ok := mulI(a, interval{int64(1) << uint(k.lo), int64(1) << uint(k.hi)})
+	if !ok {
+		return interval{}, false
+	}
+	if r.lo < ty.lo || r.hi > ty.hi {
+		return interval{}, false
+	}
+	return r, true
+}
+
+// shrI bounds `a >> k`. Shifting right never grows a magnitude, so this always has
+// an answer for a non-negative operand; the signed case needs both bounds finite
+// because it evaluates them.
+//
+// `>>` is monotonic in each argument separately — non-decreasing in the value, and
+// (for a fixed value) monotonic in the count in whichever direction the value's sign
+// dictates — so the extremes lie at the corners. Go's `>>` on a signed int64 is an
+// arithmetic shift, which is exactly the semantics of Lyra's `>>` on a signed type.
+func shrI(a, k, ty interval) (interval, bool) {
+	if k.lo < 0 || !finiteBound(k.hi) || k.hi > 62 {
+		return interval{}, false
+	}
+	if a.lo >= 0 {
+		// Non-negative: arithmetic and logical shifts agree, and a larger count gives
+		// a smaller result. An unbounded upper stays unbounded.
+		hi := posInf
+		if finiteBound(a.hi) {
+			hi = a.hi >> uint(k.lo)
+		}
+		return interval{a.lo >> uint(k.hi), hi}, true
+	}
+	// A negative operand only makes sense for a signed type; a non-negative type
+	// bound here would be a contradiction, so refuse rather than guess.
+	if ty.lo >= 0 || !finiteBound(a.lo) || !finiteBound(a.hi) {
+		return interval{}, false
+	}
+	lo, hi := posInf, negInf
+	for _, v := range [2]int64{a.lo, a.hi} {
+		for _, s := range [2]int64{k.lo, k.hi} {
+			r := v >> uint(s)
+			lo, hi = minI(lo, r), maxI(hi, r)
+		}
+	}
+	return interval{lo, hi}, true
+}
+
+// bitwiseI dispatches to the rule for op. ty is the result type's interval, needed
+// by the shifts (see shlI) and used by the caller to clamp.
+func bitwiseI(op ast.MathBinaryOp, a, b, ty interval) (interval, bool) {
+	switch op {
+	case ast.MathBinaryOpBitAnd:
+		return andI(a, b)
+	case ast.MathBinaryOpBitOr:
+		return orI(a, b)
+	case ast.MathBinaryOpBitXor:
+		return xorI(a, b)
+	case ast.MathBinaryOpShl:
+		return shlI(a, b, ty)
+	case ast.MathBinaryOpShr:
+		return shrI(a, b, ty)
+	}
+	return interval{}, false
+}
+
+// clampToType intersects a computed interval with the result type's, which every
+// bitwise result satisfies by construction. It is what replaces the checkArith call
+// the arithmetic operators make: none of these operators traps on overflow, so
+// there is no E020 to report and no noOverflow to record — `<<` *wraps*, and
+// reporting that as "this operation always overflows" would be simply wrong.
+func clampToType(r, ty interval) interval {
+	return interval{maxI(r.lo, ty.lo), minI(r.hi, ty.hi)}
 }
 
 func negI(a interval) (interval, bool) {

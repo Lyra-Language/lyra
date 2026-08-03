@@ -245,13 +245,14 @@ escape hatches, and the value-range pass both diagnoses definite faults (`lyra-E
   (`lyra_panic_shift_overflow`), which is the same call div-by-zero makes and for the
   same reason: LLVM's shifts are UB there, so the alternative is a silently
   target-shaped answer. See COMPLETED.md. Two follow-ups:
-  - **[OPEN] The value-range pass does not track bitwise results.** They fall through
-    its operator switch to `typeIntervalIn`, i.e. ⊤ — sound (a bitwise result really is
-    within its type) and it is what keeps elision from going wrong, but it means
-    `(x & 0x0F) + 1` cannot prove its addition safe even though the mask bounds the
-    left operand to 0..15. Masking is *the* idiom for producing a known-small value, so
-    this is the case where interval tracking would pay most. Wants `andI`/`orI`/`xorI`/
-    `shlI`/`shrI` beside the existing `addI`/`subI`/`mulI`.
+  - **[DONE 08/02] The value-range pass tracks bitwise results.** `andI`/`orI`/`xorI`/
+    `shlI`/`shrI` sit beside `addI`/`subI`/`mulI`, so `(x & 0x0F) + 1` now proves its
+    addition safe and drops the trap. Each rule widens rather than guess: `&` needs one
+    operand known non-negative (which is the masking case, and holds whatever the sign
+    of the masked value), `|`/`~` need both, and the shifts need a bounded count.
+    Soundness is checked by exhaustive brute force over every interval of a small
+    width. See COMPLETED.md. Still imprecise on purpose: `|`/`~` over a possibly
+    negative operand, and `&` where *both* sides may be negative, all widen to ⊤.
   - **[OPEN] A *variable* shift amount always emits its check.** A constant in range is
     folded away at lowering (`constShiftInRange`), which covers `x << 3`, but a
     loop-carried amount the range pass could bound still pays a compare-and-branch.

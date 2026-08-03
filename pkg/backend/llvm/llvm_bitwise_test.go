@@ -133,6 +133,36 @@ let main = () -> u8 => u8(shift(1, 2))
 	}
 }
 
+// The point of teaching the value-range pass about bitwise results: a mask bounds
+// its output, so the *arithmetic that follows* can be proved in range and drop its
+// overflow trap. `x & 0x0F` is [0,15], so `+ 1` is [1,16] — comfortably inside u8.
+//
+// The unmasked control is the anti-vacuity half. Without it this test would pass
+// just as well if the backend had stopped emitting checked adds altogether, which
+// is the failure mode that makes an elision test worth writing carefully.
+func TestEmit_MaskBoundsTheFollowingArithmetic(t *testing.T) {
+	t.Parallel()
+	masked, err := emitSource(t, `let f = (x: u8) -> u8 => (x & 0x0F) + 1
+let main = () -> u8 => f(200)
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(masked, "add.with.overflow") {
+		t.Errorf("a masked value should prove the addition safe and drop the trap:\n%s", masked)
+	}
+
+	unmasked, err := emitSource(t, `let f = (x: u8) -> u8 => x + 1
+let main = () -> u8 => f(200)
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(unmasked, "add.with.overflow") {
+		t.Errorf("an unbounded u8 + 1 can overflow and must keep its check:\n%s", unmasked)
+	}
+}
+
 func TestExec_BitwiseCompoundAssignment(t *testing.T) {
 	t.Parallel()
 	const src = `let main = () -> u8 => {
