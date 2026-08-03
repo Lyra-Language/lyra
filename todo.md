@@ -10,15 +10,6 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
-- **[OPEN] An untyped literal is not range-checked when it narrows through a *tuple* or
-  *array*.** `let t: (u8, u8) = (300, 1)` and `let a: [2]u8 = [300, 1]` are both accepted;
-  the scalar `let n: u8 = 300` is rejected, and as of 08/03 so is the data-payload form
-  (`Maybe<u8> = Some 300`). `checkIntegerLiteralRange` is called at the three scalar
-  assignment sites and by the data-construction stamp, but the composite narrowing paths
-  never reach it. The fix is one call at each narrowing site — or, better, at the single
-  point where `propagateLiteralType` fixes a literal's width, if the double-reporting
-  against the scalar sites can be avoided.
-
 - **[OPEN] A literal renders as its Go struct in diagnostics.** `IntegerLiteralExpr.GetName()`
   returns `IntegerLiteralExpr(0, Base: 10)`, and `GetName` is what diagnostics interpolate,
   so a real message reads `expected array pattern, got IntegerLiteralExpr(0, Base: 10)..=

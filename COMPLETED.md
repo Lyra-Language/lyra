@@ -10,6 +10,21 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**Composite narrowing range-checks its literals.** `let t: (u8, u8) = (300, 1)` and
+`let a: [2]u8 = [300, 1]` were both accepted, silently, putting 300 into a u8 slot — while
+the scalar `let n: u8 = 300` was rejected. `checkIntegerLiteralRange` reads the *declared*
+type, and for those the declared type is a tuple or an array rather than an integer, so it
+returned immediately and nothing else looked.
+
+The check now sits where the narrowing happens, in `propagateLiteralType`'s tuple and array
+branches, which means it covers every context that narrows rather than only an annotated
+`let`: a return body (`() -> (u8, u8) => (300, 1)`) and an argument position are now caught
+too. It carries a guard keyed by literal node, because a leaf can be narrowed by more than
+one context on the way down — a struct field holding a tuple is narrowed by the field's
+declared type and again by the enclosing annotation — and one too-large literal is one
+mistake however many times it is checked.
+
+### 08/03/26
 **An annotation now narrows a data constructor's untyped payload.** `let m: Maybe<u8> =
 Some 7` was rejected — *cannot assign Maybe<i64> to Maybe<u8>*, against an annotation
 sitting right there. Solving binds `t` from the payload, and to unify it promotes the

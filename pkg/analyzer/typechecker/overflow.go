@@ -160,6 +160,17 @@ func (tc *TypeChecker) checkIntegerLiteralRange(varName string, expr ast.Express
 		return
 	}
 	if !integerFitsInType(value, toP.Name) {
+		// At most once per literal. A leaf can be narrowed by more than one context on
+		// the way down — a struct field whose value is a tuple is narrowed by
+		// stampAggregate and again by the enclosing declaration — and one literal that
+		// is too large is one mistake however many times it is checked.
+		if tc.overflowReported[expr] {
+			return
+		}
+		if tc.overflowReported == nil {
+			tc.overflowReported = map[ast.Expression]bool{}
+		}
+		tc.overflowReported[expr] = true
 		tc.addError(expr.GetLocation(), SeverityError,
 			"%s: literal value %d overflows %s", varName, value, toP.Name)
 	}

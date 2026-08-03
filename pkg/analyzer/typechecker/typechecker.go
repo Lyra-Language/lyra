@@ -32,6 +32,9 @@ type TypeChecker struct {
 	resolvingTypes map[string]bool               // type names whose resolution is on the stack right now; the alias-cycle guard in resolveType
 	ufcsModules    map[string]map[string]bool    // file -> modules it reached through a UFCS call; see UFCSModules
 	defaultedCtors map[ast.Expression]bool       // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
+	// overflowReported guards checkIntegerLiteralRange: a leaf can be narrowed by more
+	// than one context on the way down, and one too-large literal is one mistake.
+	overflowReported map[ast.Expression]bool
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
@@ -1916,6 +1919,13 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 		for i, elem := range tl.Elements {
 			resolved[i] = tc.resolveType(tt.Elements[i], elem.GetLocation())
 			tc.propagateLiteralType(elem, resolved[i])
+			// …and a leaf that does not fit the width it was just narrowed to is
+			// reported here, because nothing downstream will. The scalar form has
+			// checkIntegerLiteralRange at its assignment sites, but those look at the
+			// declared type — which for `let t: (u8, u8) = (300, 1)` is a tuple, not
+			// an integer, so the check returns immediately and the 300 sailed through
+			// to a u8 slot.
+			tc.checkIntegerLiteralRange(fmt.Sprintf("element %d", i+1), elem, resolved[i])
 		}
 		// Re-record the literal itself at the context's element widths, exactly as the
 		// array case below does and for the same reason: narrowing the *leaves* is not
@@ -1960,8 +1970,9 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 			return
 		}
 		resolved := tc.resolveType(ctxElem, expr.GetLocation())
-		for _, elem := range al.Elements {
+		for i, elem := range al.Elements {
 			tc.propagateLiteralType(elem, resolved)
+			tc.checkIntegerLiteralRange(fmt.Sprintf("element %d", i+1), elem, resolved)
 		}
 		// Re-record with the concrete element type so the backend builds the right
 		// shape. A *static* context records `[N x <resolved>]`; a *dynamic* context

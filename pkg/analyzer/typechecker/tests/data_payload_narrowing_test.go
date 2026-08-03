@@ -105,3 +105,62 @@ func TestPayloadNarrowing_TypeMismatchStillRejected(t *testing.T) {
 let m: Maybe<string> = Some 7`, false)
 	assertErrorsAre(t, res, "Some: cannot assign integer literal to string")
 }
+
+// --- the same rule for tuples and arrays -------------------------------------
+//
+// A literal narrowed by a *composite* context is range-checked too. It was not until
+// 08/03: `checkIntegerLiteralRange` runs at the scalar assignment sites and reads the
+// *declared* type, which for `let t: (u8, u8) = (300, 1)` is a tuple rather than an
+// integer — so the check returned immediately and the 300 reached a u8 slot. The check
+// now sits where the narrowing happens, so it covers every context that narrows, not only
+// an annotated `let`.
+
+func TestCompositeNarrowing_TupleElementOutOfRange(t *testing.T) {
+	res := parseCollectAndCheck(t, `let t: (u8, u8) = (300, 1)`, false)
+	assertErrorsAre(t, res, "element 1: literal value 300 overflows u8")
+}
+
+func TestCompositeNarrowing_ArrayElementOutOfRange(t *testing.T) {
+	res := parseCollectAndCheck(t, `let a: [2]u8 = [300, 1]`, false)
+	assertErrorsAre(t, res, "element 1: literal value 300 overflows u8")
+}
+
+// The boundary fits — the control, since a check that rejected every narrowed literal
+// would satisfy the two above.
+func TestCompositeNarrowing_BoundaryValuesFit(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `let t: (u8, u8) = (255, 0)`, false))
+	assertNoErrors(t, parseCollectAndCheck(t, `let a: [2]u8 = [0, 255]`, false))
+}
+
+// Every narrowing context, not just the annotated `let` the bug was found through.
+func TestCompositeNarrowing_ReturnAndArgumentPositions(t *testing.T) {
+	assertErrorsAre(t, parseCollectAndCheck(t, `
+let f = () -> (u8, u8) => (300, 1)`, false), "element 1: literal value 300 overflows u8")
+
+	res := parseCollectAndCheck(t, `
+let f = (t: (u8, u8)) -> u8 => 0
+let x = f((300, 1))`, false)
+	assertErrorsAre(t, res, "element 1: literal value 300 overflows u8")
+}
+
+// Nesting narrows one level at a time, so the innermost leaf is still reached.
+func TestCompositeNarrowing_Nested(t *testing.T) {
+	assertErrorsAre(t, parseCollectAndCheck(t, `let t: ((u8, u8), u8) = ((300, 1), 2)`, false),
+		"element 1: literal value 300 overflows u8")
+	assertErrorsAre(t, parseCollectAndCheck(t, `let a: [2][2]u8 = [[300, 1], [2, 3]]`, false),
+		"element 1: literal value 300 overflows u8")
+}
+
+// One mistake, one diagnostic. A leaf can be narrowed by more than one context on the way
+// down — here the struct field's tuple is narrowed by the field's declared type and again
+// by the enclosing annotation — and the guard in checkIntegerLiteralRange is what keeps
+// that from reading as two separate errors.
+func TestCompositeNarrowing_ReportedOnce(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+struct Pair { xs: (u8, u8) }
+let p: Pair = Pair { xs: (300, 1) }`, false)
+	if len(res.errors) != 1 {
+		t.Errorf("expected exactly one overflow error, got %d: %v", len(res.errors), res.errors)
+	}
+}
+
