@@ -143,10 +143,28 @@ front end and was caught only by the backend refusing to store a string into an 
 payload — a type error in the wrong layer, which survived only because the value could
 not lower. Each payload element is re-checked under the context's substitution, and the
 node is left bare on a mismatch so a wrong payload can never lower as that instantiation.
-Three guards decide whether the stamp applies: the node must currently be the bare
-declaration (an already-solved construction is the value's own answer and ordinary
-assignability checks it), it must be the same declaration the context names, and the
-arities must agree. Covers data constructors, generic **structs** and named **tuples**. The aggregates needed a
+Three guards decide whether the stamp applies: the node must be **open** to a context, it
+must be the same declaration the context names, and the arities must agree.
+
+**Open means one of two things** (`stampableDataType`), and the second was missing until
+08/03. The bare declaration is open, as above. So is an instantiation the construction
+reached *by defaulting an untyped payload literal* — `Some 7` is a `Maybe<i64>` only
+because an untyped 7 defaults to i64, which is the expression's guess rather than the
+program's decision, and a guess must not outrank `let m: Maybe<u8> = Some 7`. That
+annotation was rejected with "cannot assign Maybe<i64> to Maybe<u8>" until such nodes were
+marked (`markDefaultedConstruction`) and the leaf left untyped for the context to narrow.
+Everything else stays closed, which is the load-bearing half: an instantiation the program
+determined has already been checked by ordinary assignability, and overriding it would let
+a real mismatch through.
+
+The line runs through the **declared field**, not through the payload
+(`fieldTakesWidthFromSolve`): a field that is a type variable takes its width from the
+substitution and may be deferred, while a concrete one (`Wrapped(u8)`) takes it from the
+declaration and must be narrowed on the spot. Deferring both was the first version of that
+fix, and it type-checked fine — the symptom appeared in the backend, storing an i64 into a
+u8 slot. A narrowed literal is also range-checked against what it was narrowed *to*, since
+assignability cannot catch a 300 that has just been given the type u8. (Tuple and array
+narrowing still skip that check — see `todo.md`'s Known bugs.) Covers data constructors, generic **structs** and named **tuples**. The aggregates needed a
 second pass because they fail differently: a bare `DataType` is assignable to any
 instantiation of itself (so a partly solved data construction reached the backend), while a
 bare `NamedStructType`/`TupleType` is not (so a partly solved one was rejected up front with

@@ -31,6 +31,7 @@ type TypeChecker struct {
 	inferring      map[ast.Expression]bool       // expression nodes whose inference is on the stack right now; the cycle guard in inferExprType
 	resolvingTypes map[string]bool               // type names whose resolution is on the stack right now; the alias-cycle guard in resolveType
 	ufcsModules    map[string]map[string]bool    // file -> modules it reached through a UFCS call; see UFCSModules
+	defaultedCtors map[ast.Expression]bool       // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
@@ -2361,11 +2362,29 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 					// binds it to. Recording the variable itself would put a type with
 					// no representation into the TypeTable, which the backend reads to
 					// lower the payload.
-					if !complete && tc.currentTypeIsUntyped(elem) {
-						continue // leave the width to the context (see `complete` above)
+					// Where the payload's width comes from decides whether it may be
+					// recorded here. A **concrete** declared field (`Wrapped(u8)`,
+					// `Pt(f64, f64)`) fixes it from the declaration, so narrowing to
+					// it is right whatever the solve did. A field that is a **type
+					// variable** takes its width from the substitution — and for an
+					// untyped literal that substitution is the literal's own default,
+					// this expression's guess rather than the program's decision. Such
+					// a leaf is left untyped so a context can still narrow it, and the
+					// node is marked so the context is allowed to (a complete solve
+					// otherwise reads as settled). With no context the guess stands and
+					// the leaf settles to the same default anyway.
+					if tc.fieldTakesWidthFromSolve(decl, declaredFields[i]) &&
+						(tc.currentTypeIsUntyped(elem) || tc.defaultedCtors[elem]) {
+						if complete {
+							tc.markDefaultedConstruction(expr)
+						}
+						continue
 					}
 					expected := tc.resolveType(substituteGenerics(declaredFields[i], subst), elem.GetLocation())
 					tc.propagateLiteralType(elem, expected)
+					// A payload that is itself a construction narrows too, so a
+					// concrete declared field reaches all the way down.
+					tc.propagateInstantiation(elem, expected)
 					tc.typeTable.Set(elem, expected)
 				} else {
 					tc.typeTable.Set(elem, promoteToDefault(t))

@@ -10,16 +10,14 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
-- **[OPEN] An annotation does not narrow a data constructor's untyped payload.**
-  `let m: Maybe<u8> = Some 7` is rejected — `cannot assign Maybe<i64> to Maybe<u8>` — because
-  the `7` settles at the default `i64` instead of taking `u8` from the annotation. Both
-  spellings fail (`Some 7` and `Some(7)`), so it is not the juxtaposition path. Everywhere
-  else an untyped literal is deliberately left untyped for the context to narrow
-  (`propagateInstantiation`, and the `complete` check in `inferTupleLiteralExpr` exists
-  precisely so a partial solve does not pre-empt it) — so the machinery is there and the
-  annotation is not reaching the payload. Found 08/03 while writing UFCS tests, where it
-  first read as a UFCS failure; the workaround in those tests is an `i64` payload converted
-  at the end.
+- **[OPEN] An untyped literal is not range-checked when it narrows through a *tuple* or
+  *array*.** `let t: (u8, u8) = (300, 1)` and `let a: [2]u8 = [300, 1]` are both accepted;
+  the scalar `let n: u8 = 300` is rejected, and as of 08/03 so is the data-payload form
+  (`Maybe<u8> = Some 300`). `checkIntegerLiteralRange` is called at the three scalar
+  assignment sites and by the data-construction stamp, but the composite narrowing paths
+  never reach it. The fix is one call at each narrowing site — or, better, at the single
+  point where `propagateLiteralType` fixes a literal's width, if the double-reporting
+  against the scalar sites can be avoided.
 
 - **[OPEN] A literal renders as its Go struct in diagnostics.** `IntegerLiteralExpr.GetName()`
   returns `IntegerLiteralExpr(0, Base: 10)`, and `GetName` is what diagnostics interpolate,

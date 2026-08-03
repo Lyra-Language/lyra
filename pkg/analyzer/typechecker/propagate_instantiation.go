@@ -127,18 +127,13 @@ func (tc *TypeChecker) contextualType(expr ast.Expression, want, current types.T
 // context names, after checking its payload against that instantiation's substitution.
 //
 // Three guards decide whether the stamp applies at all, and each one is load-bearing:
-// the node must currently be recorded as the *bare* declaration (an already-solved
-// construction has been checked against the context by ordinary assignability, and
-// overriding it would let a genuine mismatch through); it must be the same declaration
-// the context names (otherwise the mismatch is a real type error somebody else reports);
-// and the declaration's parameters must match the context's arguments in number.
+// the node must be *open* to a context (see stampableDataType); it must be the same
+// declaration the context names (otherwise the mismatch is a real type error somebody
+// else reports); and the declaration's parameters must match the context's arguments in
+// number.
 func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, elements []ast.Expression, inst types.ParameterizedType) bool {
-	recorded, ok := tc.typeTable.Get(node)
+	dt, ok := tc.stampableDataType(node, inst)
 	if !ok {
-		return false
-	}
-	dt, isData := recorded.(types.DataType)
-	if !isData || dt.Name != inst.Name {
 		return false
 	}
 	decl, ok := tc.symTable.LookupTypeFrom(inst.Name, node.GetLocation())
@@ -169,6 +164,17 @@ func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, e
 		// `Result<u8, string>` records a u8 payload rather than the i64 default —
 		// exactly what the local solve does, but with the arguments it lacked.
 		tc.propagateLiteralType(elem, expected)
+		// …and a payload that is itself a construction takes the same treatment, so
+		// the context reaches all the way down: `Maybe<Maybe<u8>> = Some(Some 7)`
+		// narrows the inner 7, not just the outer instantiation. stampAggregate does
+		// the same for a struct or tuple payload.
+		tc.propagateInstantiation(elem, expected)
+		// A narrowed literal must still fit what it was narrowed *to*. Assignability
+		// below cannot answer this — after the narrowing above, `Some 300` against a
+		// `Maybe<u8>` has a u8 payload holding 300, which is assignable to u8 and
+		// wrong. Until this stamp existed the question could not arise, because the
+		// annotation was rejected wholesale before any narrowing happened.
+		tc.checkIntegerLiteralRange(ctor, elem, expected)
 		actual := tc.inferExprType(elem)
 		if actual != nil && !isAssignable(actual, expected) {
 			tc.addError(elem.GetLocation(), SeverityError,
@@ -179,6 +185,82 @@ func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, e
 	}
 	tc.typeTable.Set(node, inst)
 	return false
+}
+
+// fieldTakesWidthFromSolve reports whether a declared payload field's type depends on the
+// declaration's type parameters, and so gets its width from the substitution rather than
+// from the declaration.
+//
+// This is the line between `Wrapped(u8)`, whose payload is a u8 because the author said
+// so, and `Some t`, whose payload width is whatever solving decided — which for an untyped
+// literal is that literal's default. Only the second kind may be deferred to a context;
+// deferring the first leaves the leaf untyped and the backend stores an i64 into a u8
+// slot, which is how the over-general version of this check announced itself.
+func (tc *TypeChecker) fieldTakesWidthFromSolve(decl *ast.TypeDeclStmt, field types.Type) bool {
+	if decl == nil || len(decl.GenericParams) == 0 {
+		return false
+	}
+	params := make(map[string]bool, len(decl.GenericParams))
+	for _, gp := range decl.GenericParams {
+		params[gp.Name] = true
+	}
+	return mentionsGenericParam(field, params)
+}
+
+// markDefaultedConstruction records that a data construction reached its instantiation
+// only by promoting an untyped payload literal to that literal's default width.
+//
+// The distinction it preserves is between a solve the *program* determined and one this
+// expression guessed. `Some(x)` where `x: i64` is a `Maybe<i64>` because the program says
+// so; `Some 7` is a `Maybe<i64>` because an untyped 7 defaults to i64 — and that guess
+// must not outrank a context saying `Maybe<u8>`. Without the mark the two are
+// indistinguishable after the fact: both are recorded as `Maybe<i64>`, so the annotated
+// `let m: Maybe<u8> = Some 7` was rejected with "cannot assign Maybe<i64> to Maybe<u8>"
+// against an annotation that was right there.
+func (tc *TypeChecker) markDefaultedConstruction(node ast.Expression) {
+	if tc.defaultedCtors == nil {
+		tc.defaultedCtors = map[ast.Expression]bool{}
+	}
+	tc.defaultedCtors[node] = true
+}
+
+// stampableDataType returns the data declaration behind a node the context may still
+// complete, and whether there is one.
+//
+// Two shapes qualify, for the same underlying reason — the node's recorded type does not
+// yet reflect a decision the program made:
+//
+//   - **the bare declaration.** A construction that solved nothing (`None`) or only some
+//     of its parameters (`Ok(v)` for a `Result<t, e>`) is deliberately left bare, since
+//     fabricating an instantiation from a partial substitution would claim precision the
+//     construction did not supply.
+//   - **an instantiation this expression defaulted into** (markDefaultedConstruction).
+//
+// Everything else is refused, and that is the load-bearing half: an instantiation the
+// program genuinely determined has already been checked against the context by ordinary
+// assignability, so overriding it here would let a real mismatch through.
+func (tc *TypeChecker) stampableDataType(node ast.Expression, inst types.ParameterizedType) (types.DataType, bool) {
+	recorded, ok := tc.typeTable.Get(node)
+	if !ok {
+		return types.DataType{}, false
+	}
+	switch r := recorded.(type) {
+	case types.DataType:
+		return r, r.Name == inst.Name
+	case types.ParameterizedType:
+		if r.Name != inst.Name || !tc.defaultedCtors[node] {
+			return types.DataType{}, false
+		}
+		// The constructors come from the declaration: an instantiation carries its
+		// type arguments, not its payload shapes.
+		decl, found := tc.symTable.LookupTypeFrom(r.Name, node.GetLocation())
+		if !found || decl == nil {
+			return types.DataType{}, false
+		}
+		dt, isData := decl.Type.(types.DataType)
+		return dt, isData
+	}
+	return types.DataType{}, false
 }
 
 // mentionsGenericParam reports whether t still contains any of the named type

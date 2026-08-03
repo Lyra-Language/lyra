@@ -10,6 +10,44 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**An annotation now narrows a data constructor's untyped payload.** `let m: Maybe<u8> =
+Some 7` was rejected — *cannot assign Maybe<i64> to Maybe<u8>*, against an annotation
+sitting right there. Solving binds `t` from the payload, and to unify it promotes the
+untyped 7 to its i64 default; the result was recorded as a settled `Maybe<i64>`, and the
+annotation never got a say. The scalar, tuple and array spellings of the same narrowing all
+worked, which is what made it read as a quirk of data types rather than as the general rule
+failing in one place.
+
+**The missing distinction is between a width the program determined and one the expression
+guessed.** `Some(x)` where `x: i64` is a `Maybe<i64>` because the program says so;
+`Some 7` is one only by defaulting. Both were recorded identically, so the second could not
+be told from the first after the fact. Such nodes are now marked
+(`markDefaultedConstruction`), their payload leaf is left untyped for a context to narrow,
+and `stampDataConstruction` accepts them alongside the bare declarations it already
+accepted. Everything else stays closed to the context, which is the half that keeps a real
+mismatch from being overwritten.
+
+**The line runs through the declared field, not the payload.** A field that is a type
+variable takes its width from the substitution and may be deferred; a concrete one
+(`Wrapped(u8)`) takes it from the declaration and must be narrowed immediately. The first
+version of the fix deferred both — it type-checked cleanly, and announced itself in the
+backend as `aggregate element type mismatch: cannot store i64 into double`. A type rule
+whose failure surfaces two layers away is the argument for `fieldTakesWidthFromSolve`
+existing as a named predicate rather than as an inline condition.
+
+Two consequences worth noting. A narrowed literal is now **range-checked against what it
+was narrowed to** — `Maybe<u8> = Some 300` is an error, where previously the question could
+not arise because the annotation was rejected wholesale first, and where assignability
+alone cannot help (after narrowing, a u8 payload holding 300 is assignable to u8 and
+wrong). And a payload type mismatch now reports at the payload — "Some: cannot assign
+integer literal to string" rather than "cannot assign Maybe<i64> to Maybe<string>" — which
+is the same preference the surrounding code already had for reporting the precise site.
+
+Found while writing UFCS tests, where it first read as a UFCS failure. The tuple and array
+narrowing paths still skip the range check; that is now in todo.md's Known bugs with the
+two cases that demonstrate it.
+
+### 08/03/26
 **UFCS: `m.unwrap_or(0)` is `unwrap_or(m, 0)`.** A free function opts in by naming its first
 parameter `self`; everything else stays call-only, so adding a helper to a module cannot
 change what `x.f()` means elsewhere in it. The rung sits in `inferMemberCall`, making the

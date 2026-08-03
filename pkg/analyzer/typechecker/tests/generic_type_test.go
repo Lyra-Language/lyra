@@ -42,7 +42,14 @@ let f = () -> i64 => get(Box { value: "s" })`
 }
 
 // A generic `data` type's argument is solved from the constructor's payload, so
-// `Some(5)` is a `Maybe<i64>` and mismatches a `Maybe<string>` annotation.
+// `Some(5)` mismatches a `Maybe<string>` annotation.
+//
+// The message names the **payload**, not the two instantiations. It used to read "m:
+// cannot assign Maybe<i64> to Maybe<string>", which was the same mistake reported one
+// level up — and that level is exactly where the width was a guess, since an untyped 5
+// is a `Maybe<i64>` only by defaulting. Now that a context may narrow such a payload
+// (08/03, the annotation-narrowing fix), the width no longer settles before the
+// annotation is consulted, so the disagreement surfaces where it actually is: the 5.
 func TestGenericType_DataConstructorSolvesArgument(t *testing.T) {
 	source := `
 data Maybe<t> = None | Some(t)
@@ -51,5 +58,5 @@ let f = () -> i64 => {
     0
 }`
 	res := parseCollectAndCheck(t, source, false)
-	assertErrorsAre(t, res, "m: cannot assign Maybe<i64> to Maybe<string>")
+	assertErrorsAre(t, res, "Some: cannot assign integer literal to string")
 }
