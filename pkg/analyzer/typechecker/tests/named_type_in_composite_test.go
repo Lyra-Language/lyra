@@ -59,3 +59,39 @@ let use = () -> i64 => apply(unbox, B(Pt { x: 7 }))`,
 		assertNoErrors(t, res)
 	}
 }
+
+// **`resolveTypeIfKnown` is `resolveType`'s twin and had drifted from it by exactly
+// the same two composites** — the argument-list pair above. It resolves the *return*
+// annotation (checkLambdaBody uses it so an unknown name is not reported twice), so
+// the hole shows up only in return position, and only for a type whose name sits in
+// an argument list: `-> Maybe<weak Node>` kept `Node` unresolved while the body's
+// value resolved it, giving "return type mismatch: expected Maybe<weak Node>, got
+// Maybe<weak Node>".
+//
+// This is the fifth instance of the hazard and the second in this one file, which is
+// what the rule in lyra/CLAUDE.md means by "these travel in pairs": fixing a switch
+// means checking its twin, not only its neighbours.
+func TestResolveTypeIfKnown_NamedTypeInsideReturnAnnotation(t *testing.T) {
+	for _, source := range []string{
+		// The motivating case: an optional weak back-edge, which is the only way to
+		// spell a constructible `weak` field (todo.md).
+		`struct Node { n: i64, parent: Maybe<weak Node> }
+data Maybe<t> = None | Some(t)
+let orphan = () -> Maybe<weak Node> => {
+  let tmp: shared Node = Node { n: 9, parent: None }
+  Some(tmp.weak())
+}`,
+		// No `weak` involved — a named type in a return annotation's argument list is
+		// enough on its own.
+		`struct Pt { x: i64 }
+data Box<t> = B(t)
+let mk = () -> Box<Pt> => B(Pt { x: 1 })`,
+		// The other half of the drift: a named type inside a function type in return
+		// position.
+		`struct Pt { x: i64 }
+let mk = () -> (Pt) -> i64 => (p: Pt) -> i64 => p.x`,
+	} {
+		res := parseCollectAndCheck(t, source, false)
+		assertNoErrors(t, res)
+	}
+}

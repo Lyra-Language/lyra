@@ -10,7 +10,12 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
-None open. The typechecker's infinite recursion on a definition cycle closed 07/31 — an
+None open. Two closed 08/03, both hazard-8 misses found while making a `weak` field
+constructible and both wider than the feature that surfaced them: `resolveForLayout` could
+not size a `shared` struct holding *any* generic field (`Maybe<i64>`), and
+`resolveTypeIfKnown` rejected a return annotation against itself. See COMPLETED.md.
+
+The typechecker's infinite recursion on a definition cycle closed 07/31 — an
 in-progress guard in `inferExprType`, which is also what stopped `lyra-lsp` dying
 mid-keystroke (see COMPLETED.md).
 
@@ -50,9 +55,10 @@ lowers; `CLAUDE.md`'s `pkg/backend/llvm` section is the current inventory. Settl
   body-only edits keep lambda sets stable; adding/removing a lambda or changing captures
   means a full rebuild even in dev.
 - **[OPEN] Generic types** — `where` bounds on a type parameter are collected but not
-  enforced at the instantiation. `Maybe<weak T>` does not parse (a grammar change).
+  enforced at the instantiation.
   (A trait-impl method on a generic receiver **does** lower as of 08/03 — see COMPLETED.md
-  and `pkg/backend/llvm/README.md`'s trait section.)
+  and `pkg/backend/llvm/README.md`'s trait section. `Maybe<weak T>` parses and lowers as of
+  08/03 too; the "does not parse" note that stood here was never true.)
 - **[OPEN] A generic body may not call another generic at a variable-dependent
   instantiation.** `let getOr<t> = (o: Opt<t>, d: t) -> t => o.unwrap(d)` is refused with
   "type variable t has no concrete type here", and so is the free-function analogue
@@ -413,11 +419,26 @@ interior assignment, and deep retain-on-copy.
   through its own box — errors loudly; dynamic-array **growth** (no grow op exists in the
   language yet); construction-site `shared T {…}` syntax; implicit-alloc / escape analysis;
   atomic refcounts (deferred to the job system).
-- **[OPEN] A `weak` field is unconstructible.** A field must be initialized and there is no
-  empty weak, so the cycle-breaking use needs `Maybe<weak T>` or a nullable weak. Generics
-  are no longer the blocker — but `Maybe<weak Node>` **does not parse**: the grammar will
-  not take a `weak` type inside type arguments, so this needs a `tree-sitter-lyra` change
-  (push the grammar first, then `lyra`).
+- **[OPEN] An array *element* cannot carry an allocation or `weak` modifier.** Measured
+  08/03 while closing the item below, since the two look like one gap and are not:
+  `[]shared Node`, `[3]shared Node` and `[]weak Node` are all parse errors, and so is
+  `Maybe<[]shared Node>` (the inner array is what fails), while `Maybe<weak Node>` and
+  `shared []Node` are fine. The cause is one rule: `array_type`'s `element_type` is
+  `_non_allocated_type`, which deliberately excludes `allocated_type` and `weak_type` to
+  stop the recursion in array types — so the exclusion is doing a job and cannot just be
+  widened to `$.type` without re-checking what that costs in parser states.
+  *Why it matters:* `[]shared Node` is the obvious spelling for a tree's children, so the
+  natural shape for the very object graph `weak` exists to support is unwritable; the 08/03
+  cycle test had to use `kid: Maybe<shared Node>` instead. This is a `tree-sitter-lyra`
+  change, so push the grammar first, then `lyra` (and re-measure `parser.c`: this region is
+  the one that produced the 62,663-state incident).
+- **[DONE 08/03] A `weak` field is constructible** — `Maybe<weak T>`, so a cycle back-edge
+  is optional and "no back-edge" stays distinct from "the referent is gone". **The premise
+  this item was filed under was wrong twice over**, which is the part worth keeping: the
+  grammar parses `Maybe<weak Node>` and always did (`parameterized_type`'s arguments are
+  `$.type`, which includes `weak_type`), so no `tree-sitter-lyra` change was needed, and the
+  real blockers were two missing switch cases with nothing to do with `weak` — a `shared`
+  struct holding *any* generic field (`Maybe<i64>`) failed identically. See COMPLETED.md.
 - **[DECIDED 07/11] Command-line args are ambient, not a `main` parameter.** `main` stays
   parameter-less always (one uniform entry-point shape); args are read through a builtin
   accessor (`CommandLine.args()`) tagged `EffectInput` — the same ambient-effect pattern as
@@ -484,6 +505,23 @@ Types, checked arithmetic, division via the builtins library, `match`, conversio
   (`typechecker/overflow.go`'s `extractIntLiteralValue`), so correct `i128` folding needs
   128-bit constant arithmetic. The value-range pass needs no change — it already widens
   `i128`/`u128` to ⊤, which is sound.
+
+## Type resolution
+
+- **[OPEN] Fold `resolveType` and `resolveTypeIfKnown` into one walk.** They recurse over
+  the same composites and differ only at an unknown *name* — report "unknown type", or hand
+  the type back untouched — so the entire recursion is duplicated for a difference that
+  lives in one leaf. That duplication has now drifted once (08/03: the twin was missing
+  `ParameterizedType` and `*LambdaType`, giving "expected `Maybe<weak Node>`, got
+  `Maybe<weak Node>`"), and it is the same shape as the `collectTypeVars` /
+  `mentionsTypeVar` split that `types.CollectTypeVars` already fixed by unification —
+  where taking the union of the copies turned up composites *neither* had.
+  *Shape:* one walk taking the leaf behaviour (a callback, or a `report bool`), with both
+  names kept as thin wrappers so no call site changes. Note the two also differ in a second,
+  easier-to-miss way — `resolveType` recurses into an alias chain, caches by resolved
+  identity, checks visibility, and guards circularity, none of which the twin does — so the
+  fold must keep those on the reporting path rather than assume the walks are identical
+  apart from the leaf.
 
 ## Traits
 

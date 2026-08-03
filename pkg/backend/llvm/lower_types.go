@@ -210,6 +210,24 @@ func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 	case types.StaticArrayType:
 		v.ElementType = l.resolveForLayout(v.ElementType)
 		return v
+	case types.ParameterizedType:
+		// A generic instantiation used *by value* inside another type — a field
+		// (`struct Node { parent: Maybe<weak Node> }`), a payload, an element. It is
+		// normalized through the same choke point every other shape-reading site uses
+		// (resolveInstantiation, generic_types.go), then laid out as the concrete
+		// aggregate it denotes; without this it reaches SizeAndAlign as a shape that
+		// matches none of its cases and boxing fails with "cannot size a `shared T`
+		// payload yet". A failure to instantiate returns the type untouched, so it
+		// fails loudly downstream rather than silently laying out something else —
+		// the same contract as the unknown-name arm above.
+		if v.Allocation == types.Shared {
+			return t // a pointer; don't chase the referent (it may be recursive)
+		}
+		inst, err := l.resolveInstantiation(v)
+		if err != nil {
+			return t
+		}
+		return l.resolveForLayout(inst)
 	}
 	return t
 }

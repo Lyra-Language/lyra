@@ -10,6 +10,56 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**A `weak` field is constructible — `Maybe<weak T>` — and the two things blocking it had
+nothing to do with `weak`.** A cycle back-edge is the reason `weak` exists (refcounting
+leaks cycles and there is no collector, ALLOCATION.md), and it could not be written: a
+field must be initialized, there is no empty weak, so the edge has to be *optional*.
+
+**Both premises in the todo item were wrong, which is the useful part.** It said the fix
+needed a grammar change because `Maybe<weak Node>` "does not parse". It parses, and always
+did — `parameterized_type`'s arguments are `$.type`, and `$.type` includes `weak_type`. The
+claim was never tested, only reasoned from the neighbouring gap that *is* real (`[N]shared T`
+mis-parses, because `array_type`'s element is `_non_allocated_type`). Checking cost one
+`tree-sitter parse` and would have redirected the work at the start; the whole item was
+filed against the wrong repo.
+
+What actually blocked it was **two hazard-8 misses**, and neither is weak-specific — a
+`shared` struct holding a plain `Maybe<i64>` failed identically, which is the tell that the
+feature was never the variable:
+
+- **`resolveForLayout` had no `ParameterizedType` case.** A generic instantiation used by
+  value inside another type reached `SizeAndAlign` as a shape none of its cases match, so
+  boxing the enclosing value failed with "cannot size a `shared Node` payload yet". The fix
+  is to normalize through `resolveInstantiation` — the choke point `recordedType` and
+  `resolveDataType` already use, and whose own comment predicted this: "adding a case to
+  each would be a dozen places to keep in agreement". A `shared` instantiation
+  short-circuits before the recursion, exactly as the `UnresolvedType` arm does, which is
+  what keeps resolution finite on a recursive generic.
+- **`resolveTypeIfKnown` had drifted from `resolveType` by exactly two composites** —
+  `ParameterizedType` and `*LambdaType`, the argument-list pair every such switch forgets.
+  It resolves the *return* annotation (`checkLambdaBody` uses it so an unknown name is not
+  reported twice), so the symptom appeared only in return position: `-> Maybe<weak Node>`
+  kept `Node` unresolved while the body's value resolved it, and the two spellings compared
+  unequal — "return type mismatch: expected `Maybe<weak Node>`, got `Maybe<weak Node>`".
+  `resolveType` had been fixed for this same pair earlier; its twin was not, and the file
+  documenting that fix (`named_type_in_composite_test.go`) is now where both live.
+
+That is the fifth and sixth instance of hazard 8, and the first where the drifted switch was
+a *twin in the same file* rather than a copy in another package — so the rule's "check the
+others in the same file" now has a companion: check the function it was copied from.
+`resolveType`/`resolveTypeIfKnown` differ only in what they do at an unknown leaf and
+duplicate the whole recursion for it; folding them into one walk is the durable fix and is
+now an open item.
+
+Coverage: five `TestExec_WeakOptionalField` cases — the two no-`weak` regressions (a generic
+field, and a nested `Maybe<Maybe<i64>>` so resolution has to recurse rather than stop at the
+first normalization), a back-edge read through the field, a real parent/child cycle with the
+`shared` edge one way and the `weak` edge back, and the dead-referent path where the field
+is `Some` but the upgrade fails — that last one being why the field is `Maybe<weak T>` and
+not a nullable weak: "no back-edge" and "the referent is gone" stay distinct branches. All
+five run under ASan and on Linux (`./asan.sh`), where the older clang's typed pointers would
+catch a payload built at the wrong width.
+
 **Diagnostics render literals as source, not as Go structs.** A real message read
 `expected array pattern, got IntegerLiteralExpr(0, Base: 10)..= IntegerLiteralExpr(10,
 Base: 10)`; it now reads `expected array pattern, got 0..=10`.

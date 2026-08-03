@@ -1462,6 +1462,42 @@ func (tc *TypeChecker) resolveTypeIfKnown(t types.Type, loc ast.Location) types.
 			tt.Inner = tc.resolveTypeIfKnown(tt.Inner, loc)
 		}
 		return tt
+	case types.ParameterizedType:
+		// `Maybe<weak Node>` as a *return* annotation. This function is resolveType's
+		// twin and had drifted from it by exactly the two composites that hold their
+		// types in an argument list — the pair CLAUDE.md hazard 8 says every such
+		// switch forgets, and the same hole resolveType itself had (`Box<Pt>`) and
+		// `mentionsTypeVar` had before it. The symptom is identical and is the reason
+		// to keep the two in step: the head resolved while the argument stayed an
+		// UnresolvedType, so a body returning a perfectly good value was rejected with
+		// "return type mismatch: expected Maybe<weak Node>, got Maybe<weak Node>".
+		if len(tt.TypeArguments) > 0 {
+			args := make([]types.Type, len(tt.TypeArguments))
+			for i, a := range tt.TypeArguments {
+				args[i] = tc.resolveTypeIfKnown(a, loc)
+			}
+			tt.TypeArguments = args
+		}
+		return tt
+	case *types.LambdaType:
+		// A copy, not an in-place rewrite: LambdaType is the one type here held by
+		// pointer, so mutating it would resolve one site's names into the shared
+		// declaration every other reference reads (see resolveType's mirror case).
+		resolved := *tt
+		if len(tt.Parameters) > 0 {
+			params := make([]types.ParameterType, len(tt.Parameters))
+			copy(params, tt.Parameters)
+			for i := range params {
+				if params[i].Type != nil {
+					params[i].Type = tc.resolveTypeIfKnown(params[i].Type, loc)
+				}
+			}
+			resolved.Parameters = params
+		}
+		if tt.ReturnType.Type != nil {
+			resolved.ReturnType.Type = tc.resolveTypeIfKnown(tt.ReturnType.Type, loc)
+		}
+		return &resolved
 	default:
 		return t
 	}

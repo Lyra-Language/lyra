@@ -120,6 +120,14 @@ still isn't stamped.
   assign Point to Point"**, and the newtype analogue made a newtype unusable across any call
   boundary. Distinctness is unaffected — resolving both sides is what lets `TypesEqual` compare
   them at all, so a `Meters`-returning call is still rejected against a `Feet` annotation.
+- **`resolveTypeIfKnown` is `resolveType`'s twin and must carry the same composite cases.**
+  It exists only to skip the "unknown type" diagnostic where a caller would duplicate it
+  (the return annotation in `checkLambdaBody`), so any composite the one walks the other
+  must too. It had drifted by `ParameterizedType` and `*LambdaType` — the argument-list pair
+  hazard 8 names — and the symptom was the same tell-tale self-rejection, confined to return
+  position: **"return type mismatch: expected `Maybe<weak Node>`, got `Maybe<weak Node>`"**
+  (08/03). Unifying the two is an open item in `todo.md`; until then an edit to either
+  belongs in both, and `tests/named_type_in_composite_test.go` covers both.
 
 ### `propagateInstantiation(expr, want)`
 

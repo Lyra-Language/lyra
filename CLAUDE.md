@@ -88,11 +88,17 @@ because each was learned from a real failure, and none is local to one package.
 
 8. **A `switch` over AST node kinds or composite types must have a case for every one
    that can hold a child — a missing case is silent and its symptom is remote.** This has
-   bitten four times, in three different switches, and never looked like what it was:
+   bitten six times, in five different switches, and never looked like what it was:
    `mentionsTypeVar` missing `ParameterizedType` (a generic function emitted under its
    bare name, failing in layout); `resolveType` missing `*LambdaType` and
    `ParameterizedType` (assignability rejecting a type against *itself* — "cannot assign
-   `Box<Pt>` to `Box<Pt>`"); and `ast.walkExprChildren` missing `*TupleIndexExpr`, which
+   `Box<Pt>` to `Box<Pt>`"); **`resolveTypeIfKnown` — `resolveType`'s twin — missing the
+   same two** (08/03: the identical self-rejection, but only in *return* position, because
+   that is the one thing the twin resolves: "expected `Maybe<weak Node>`, got
+   `Maybe<weak Node>`"); `resolveForLayout` missing `ParameterizedType` (08/03: a `shared`
+   struct with a generic field could not be sized — "cannot size a `shared Node` payload
+   yet" — which read as a `weak` bug because `Maybe<weak T>` was the case being built);
+   and `ast.walkExprChildren` missing `*TupleIndexExpr`, which
    made every pass on the shared walker blind to anything reached through `p.0` — `pure`
    silently accepted an impure `noisy().0`, a closure capturing `p` only as `p.0` failed
    to lower, and two "never used" warnings fired on names plainly used. When adding a node
@@ -105,6 +111,13 @@ because each was learned from a real failure, and none is local to one package.
    one, `types.CollectTypeVars` in `pkg/types/typevars.go`, with the other two delegating.
    Taking the union of the copies turned up two composites *neither* had. Prefer that to
    grepping, wherever the switches are answering the same question.
+
+   **`resolveType` / `resolveTypeIfKnown` are the outstanding instance of exactly that.**
+   They walk the same composites and differ only in what they do at an unknown *name* —
+   report it, or hand the type back untouched — so the recursion is duplicated for a
+   difference that lives in one leaf. The 08/03 drift above is what that costs. Folding
+   them into one walk parameterized by the leaf behaviour is `todo.md`'s open item; until
+   then, an edit to either belongs in both.
 
 9. **A pass that indexes a call's arguments positionally is one AST shape away from
    being silently wrong.** Purity reads `call.Arguments[idx]` against the *declaration's*

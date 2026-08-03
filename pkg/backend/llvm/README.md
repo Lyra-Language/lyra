@@ -298,6 +298,18 @@ the symbol table (`resolveForLayout`, which deep-rewrites `UnresolvedType` leave
 short-circuits a `shared` ref — that short-circuit is also what keeps the resolution finite,
 since a recursive cycle must pass through a `shared` field).
 
+`resolveForLayout` also normalizes a **`ParameterizedType`** through `resolveInstantiation`
+(generic_types.go) before laying it out, so a generic used *by value* inside another type —
+`struct Node { parent: Maybe<weak Node> }`, a payload, an array element — is sized as the
+concrete aggregate its instantiation denotes. Without it the instantiation reached
+`SizeAndAlign` as a shape none of its cases match and boxing the enclosing value failed with
+"cannot size a `shared T` payload yet" (08/03). A `shared` instantiation short-circuits
+first, for the same reason and with the same finiteness argument as the `UnresolvedType` arm.
+This is the case `resolveInstantiation`'s own comment anticipated: every site reading an
+aggregate's shape switches on NamedStructType / TupleType / DataType, and a
+ParameterizedType matches none of them, so it is normalized once at the accessor rather than
+cased for at each site.
+
 ### Per-module type identity
 
 A type name is **not** program-wide. Two modules may each declare a private `Point`, and a
