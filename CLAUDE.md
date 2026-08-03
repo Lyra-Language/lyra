@@ -106,6 +106,16 @@ because each was learned from a real failure, and none is local to one package.
    Taking the union of the copies turned up two composites *neither* had. Prefer that to
    grepping, wherever the switches are answering the same question.
 
+9. **A pass that indexes a call's arguments positionally is one AST shape away from
+   being silently wrong.** Purity reads `call.Arguments[idx]` against the *declaration's*
+   parameter at `idx` (`callableParams`), so any call form whose receiver sits outside
+   `Arguments` shifts every index by one — and a function-typed argument satisfies the
+   wrong function-typed parameter without complaint, so a declared effect bound simply
+   stops being enforced with nothing reported. Trait methods pay this with
+   `methodArgumentAt`; UFCS avoids it by desugaring the receiver *into* `Arguments` before
+   any later pass runs. Prefer the desugar: one rewrite beats teaching every consumer the
+   same offset, and the mistake is invisible in review either way.
+
 ## Package map
 
 | Package | What it is | Depth |
@@ -352,3 +362,10 @@ that file.
 The active areas are the typechecker (match exhaustiveness — see
 `pkg/analyzer/typechecker/README.md`) and the FP/imperative purity work (see
 `pkg/analyzer/checker/README.md`).
+
+**UFCS landed 08/03**: `m.unwrap_or(0)` resolves to a free function whose first parameter
+is named `self`, by rewriting the call to pass the receiver as its first argument
+(`typechecker_ufcs.go`, and that README's last section). The standard library's combinators
+take `self`, so they read both ways. It matters beyond ergonomics — dispatch on the receiver
+is what makes `map` on a `Maybe` and `map` on an array able to coexist, which the bare
+top-level name cannot (see `todo.md`'s Modules section).

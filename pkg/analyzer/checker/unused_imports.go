@@ -11,7 +11,13 @@ import (
 // CheckUnusedImports walks all top-level ImportStmt nodes and warns for any
 // imported name (member alias/name, or module alias) that never appears as an
 // identifier reference anywhere in the program.
-func CheckUnusedImports(program *ast.Program) []diag.Diagnostic {
+//
+// ufcsModules maps a file to the modules it reached through a **UFCS call**
+// (typechecker.UFCSModules), and may be nil for a caller with no typechecker pass. Such
+// a call never writes the module's name — `m.map(f)`, not `maybe.map(m, f)` — so the
+// syntactic test below cannot see it, while the import is exactly what permitted the
+// call. Without this the warning tells you to delete an import the program needs.
+func CheckUnusedImports(program *ast.Program, ufcsModules map[string]map[string]bool) []diag.Diagnostic {
 	// Collect all identifier references used anywhere in the program.
 	refs := collectAllRefs(program)
 
@@ -22,6 +28,12 @@ func CheckUnusedImports(program *ast.Program) []diag.Diagnostic {
 			continue
 		}
 		loc := stmt.GetLocation()
+		// A module this file called into method-style is used, whatever its name does
+		// or does not appear in the source. Checked before the name-based tests below,
+		// which cannot see such a use at all.
+		if ufcsModules[loc.File][modulePath(stmt)] {
+			continue
+		}
 
 		switch {
 		case len(stmt.Members) > 0:
@@ -81,6 +93,16 @@ func CheckUnusedImports(program *ast.Program) []diag.Diagnostic {
 		}
 	}
 	return warnings
+}
+
+// modulePath renders an import's dotted module path ("util.math"), the form the
+// typechecker records a UFCS-reached module under.
+func modulePath(stmt *ast.ImportStmt) string {
+	parts := make([]string, len(stmt.Path))
+	for i, p := range stmt.Path {
+		parts[i] = p.Name
+	}
+	return strings.Join(parts, ".")
 }
 
 // collectAllRefs returns the set of all identifier names referenced anywhere

@@ -10,6 +10,17 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
+- **[OPEN] An annotation does not narrow a data constructor's untyped payload.**
+  `let m: Maybe<u8> = Some 7` is rejected — `cannot assign Maybe<i64> to Maybe<u8>` — because
+  the `7` settles at the default `i64` instead of taking `u8` from the annotation. Both
+  spellings fail (`Some 7` and `Some(7)`), so it is not the juxtaposition path. Everywhere
+  else an untyped literal is deliberately left untyped for the context to narrow
+  (`propagateInstantiation`, and the `complete` check in `inferTupleLiteralExpr` exists
+  precisely so a partial solve does not pre-empt it) — so the machinery is there and the
+  annotation is not reaching the payload. Found 08/03 while writing UFCS tests, where it
+  first read as a UFCS failure; the workaround in those tests is an `i64` payload converted
+  at the end.
+
 - **[OPEN] A literal renders as its Go struct in diagnostics.** `IntegerLiteralExpr.GetName()`
   returns `IntegerLiteralExpr(0, Base: 10)`, and `GetName` is what diagnostics interpolate,
   so a real message reads `expected array pattern, got IntegerLiteralExpr(0, Base: 10)..=
@@ -119,9 +130,15 @@ importing the other — reportable as it is now.
 
 Worth doing before the standard library grows: every name added under `pub` is currently a
 name taken away from anyone who imports that module. It is also the constraint that decides
-what may live in `std.maybe` vs the prelude (see the 08/02 discussion of `map`/`filter`),
-and it mostly evaporates under UFCS, where these become methods dispatched on the receiver
-rather than bare top-level names — so weigh the fix against how near that is.
+what may live in `std.maybe` vs the prelude (see the 08/02 discussion of `map`/`filter`).
+
+**Less pressing since UFCS landed 08/03, and not fixed by it.** The combinators are now
+reached as `m.map(f)`, dispatched on the receiver, so the bare name `map` no longer has to
+mean one type's version — which was the reason this decided where `map` could live. The
+collision itself is untouched: `import std.maybe` still claims the top-level name `map`, so
+a program that imports it still may not declare its own. What changed is that the workaround
+(don't import it) now costs less, which is exactly the kind of relief that lets a real bug
+sit for a year. The fix is still (a) or (b) above.
 
 The LSP resolves a document's whole import graph as of 08/02 (see COMPLETED.md), which leaves
 two editor features single-file where the program no longer is:
@@ -508,9 +525,25 @@ first, dispatch is static, and a generic impl needs no extra machinery.
 
 ## Method syntax for free functions (UFCS)
 
-**[DECIDED 07/31; NOT BUILT]** Add UFCS — `x.f(y)` resolving to a free function `f(x, y)` —
+**[DECIDED 07/31; BUILT 08/03]** UFCS — `x.f(y)` resolving to a free function `f(x, y)` —
 **opt-in via a first parameter named `self`**. A function written `(self: Maybe<t>, …)` is
-callable both ways; every other function stays call-only.
+callable both ways; every other function stays call-only. See COMPLETED.md, and
+`pkg/analyzer/typechecker/README.md`'s last section for the mechanism.
+
+Two decisions taken at build time, neither of which the design below had settled:
+
+- **An import is required** to call into another module method-style. A file's own module
+  and the prelude need none. The alternative — any `pub` function in the program being
+  reachable through a value of its type — reads better in the abstract and worse in
+  practice: whether your call compiles would depend on whether some *other* file imported
+  that module.
+- **An `own` receiver is refused**, so a move always looks like a call.
+
+Still open here: **the two spellings are one call, but only the desugared one is what later
+passes see.** That is what makes the feature cheap, and it means a diagnostic reported
+against an argument index can name a position the reader did not write (argument 1 of
+`m.f(x)` is `m`). Nothing does that today — the messages in play name parameters, not
+indices — but a future one could, and the fix belongs wherever that message is written.
 
 *Why it earns its place here, rather than being sugar.* A free function's name is a
 program-wide land grab today, which is the whole reason the standard library splits
@@ -551,6 +584,12 @@ receiver sits *outside* `call.Arguments`, so every index shifts by one: without 
 `m.unwrap_or_else(f)` checks `f` against the wrong parameter's declared bound — silently, since
 both are function-typed. The backend's `lowerDirectCall` argument coercion has the same shift.
 
-*Sequencing:* after the two open trait gaps above, since UFCS adds a fourth caller into the
-same member-call resolution path and that path is easier to extend when its existing rungs
-behave consistently.
+*Sequencing (superseded).* This said "after the two open trait gaps above, since UFCS adds a
+fourth caller into the same member-call resolution path". It went first instead, and the
+reasoning was wrong in a way worth keeping: those gaps are `own` receivers and ownership
+analysis of method bodies — orthogonal to the ladder, which UFCS extends by inserting one
+rung that returns early. What actually made the order right is that UFCS rides the path that
+*works*: a generic free function monomorphizes today, while a generic trait impl's method
+does not (it reaches the backend with `Maybe<t>` unspecialized — "match on Maybe<t> not
+implemented yet"). Method ergonomics through traits needs that built first; through UFCS it
+needed nothing.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"runtime/debug"
 	"sort"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/owenrumney/go-lsp/lsp"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -97,28 +99,80 @@ func isIdentChar(b byte) bool {
 		(b >= '0' && b <= '9')
 }
 
-// memberCompletions resolves the receiver chain to a struct type and returns a
-// completion item for each of its fields.
+// memberCompletions resolves the receiver chain to a type and returns a completion item
+// for each of its struct fields and each free function callable on it method-style.
 func memberCompletions(receiver string, scope *symbols.Scope, analysis *docAnalysis) []lsp.CompletionItem {
 	t := resolveReceiverType(receiver, scope, analysis)
 	if t == nil {
 		return nil
 	}
-	fields, ok := structFieldsOf(t, analysis.symTable, ast.Location{})
-	if !ok {
-		return nil
+	var items []lsp.CompletionItem
+	// Fields first only in the sense of being collected first; the caller sorts.
+	// A non-struct receiver (an integer, a `Maybe`) has none, and that is not a
+	// reason to stop — it can still have UFCS methods.
+	if fields, ok := structFieldsOf(t, analysis.symTable, analysis.declLocation()); ok {
+		kind := lsp.CompletionItemKindField
+		for _, f := range fields {
+			k := kind
+			items = append(items, lsp.CompletionItem{
+				Label:  f.Name,
+				Kind:   &k,
+				Detail: typeDetail(f.Type),
+			})
+		}
 	}
-	kind := lsp.CompletionItemKindField
-	items := make([]lsp.CompletionItem, 0, len(fields))
-	for _, f := range fields {
-		k := kind
-		items = append(items, lsp.CompletionItem{
-			Label:  f.Name,
-			Kind:   &k,
-			Detail: typeDetail(f.Type),
-		})
+	return append(items, ufcsCompletions(t, analysis)...)
+}
+
+// ufcsCompletions offers the free functions that take this receiver as `self`.
+//
+// Candidates are enumerated from the module scopes rather than from SymbolTable.Functions
+// because a completion needs the **source name**, and Functions is keyed by declKey — a
+// private or prelude-shadowing declaration is filed under `<module>::<name>`, which is not
+// something a user can type. The scopes are keyed by the name as written.
+//
+// Whether each candidate is actually callable is asked of the typechecker
+// (typechecker.UFCSCallable), so the list cannot drift from what will compile.
+func ufcsCompletions(recv types.Type, analysis *docAnalysis) []lsp.CompletionItem {
+	loc := analysis.declLocation()
+	kind := lsp.CompletionItemKindMethod
+	seen := map[string]bool{}
+	var items []lsp.CompletionItem
+	for _, scope := range analysis.symTable.ModuleScopes {
+		for name, named := range scope.Symbols {
+			decl, ok := named.(*ast.VarDeclStmt)
+			if !ok || seen[name] {
+				continue
+			}
+			fn, ok := decl.Value.(*ast.LambdaExpr)
+			if !ok || !typechecker.UFCSCallable(analysis.symTable, fn, recv, loc) {
+				continue
+			}
+			seen[name] = true
+			k := kind
+			items = append(items, lsp.CompletionItem{
+				Label:  name,
+				Kind:   &k,
+				Detail: ufcsDetail(fn),
+			})
+		}
 	}
 	return items
+}
+
+// ufcsDetail renders a candidate's signature **without its receiver** — `(fallback: t)
+// -> t`, not `(self: Maybe<t>, fallback: t) -> t`. The receiver is what the user just
+// typed; repeating it describes a call they are not making.
+func ufcsDetail(fn *ast.LambdaExpr) string {
+	parts := make([]string, 0, len(fn.Parameters))
+	for _, p := range fn.Parameters[1:] {
+		parts = append(parts, fmt.Sprintf("%s: %s", p.Pattern.GetName(), typeDetail(p.Type)))
+	}
+	sig := "(" + strings.Join(parts, ", ") + ")"
+	if fn.ReturnType.Type != nil {
+		sig += " -> " + typeDetail(fn.ReturnType.Type)
+	}
+	return sig
 }
 
 // resolveReceiverType walks a dotted receiver chain (`a.b.c`) to the type of its

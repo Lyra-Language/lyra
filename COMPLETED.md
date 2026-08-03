@@ -9,6 +9,59 @@ Newest first.
 
 ## Dated log
 
+### 08/03/26
+**UFCS: `m.unwrap_or(0)` is `unwrap_or(m, 0)`.** A free function opts in by naming its first
+parameter `self`; everything else stays call-only, so adding a helper to a module cannot
+change what `x.f()` means elsewhere in it. The rung sits in `inferMemberCall`, making the
+ladder field → trait method → UFCS → builtin.
+
+**It went before the trait work, and the reason is a measurement.** The 07/31 design
+sequenced this after the open trait gaps. But a generic *free function* over `Maybe<t>`
+monomorphizes and runs today, while a generic *trait impl's* method type-checks and then
+dies in the backend — `match on Maybe<t> not implemented yet`, because an impl method's body
+is not specialized per instantiation. So the trait route to `m.map(f)` needs monomorphization
+built first, and the UFCS route needed nothing: it desugars to the call that already works.
+
+**The whole feature is one rewrite.** A matching call becomes `f(receiver, args…)` in place —
+receiver into `Arguments[0]`, callee into an ordinary identifier — so generic solving,
+purity, ownership, captures and the backend all see a direct call and none of them learned
+anything. The two spellings emit byte-identical IR, which is the test that says so.
+
+That is not a shortcut, it is the defence against a silent bug. Purity indexes arguments
+*positionally* against the declaration's parameters, so a receiver left outside `Arguments`
+shifts every index by one and each callback is checked against the bound of the parameter to
+its right — and a function-typed argument satisfies the wrong function-typed parameter
+without complaint, so a declared `pure` bound would simply stop being enforced, reporting
+nothing. Trait methods pay exactly that tax through `methodArgumentAt`. `applyDefaultArguments`
+was already rewriting calls for the same reason, which is what made this feel like the
+grain of the code rather than against it.
+
+**What the build turned up that the plan had not:**
+
+- **The unused-import warning became wrong.** A UFCS call never writes the module's name, so
+  the syntactic check called the import that permitted it unused — advice that breaks the
+  program. `TypeChecker.UFCSModules()` now carries the resolutions to it. The lesson is
+  general: a syntactic "is this used" test is only as good as the ways a thing can be used,
+  and adding a resolution path silently invalidates it.
+- **The obvious multi-clause exclusion was order-dependent.** Refusing candidates with
+  `len(LambdaClauses) > 0` looks safe and is not: `desugarClauses` *consumes* the clauses, so
+  the same function would qualify after its declaration had been checked and not before. The
+  test is on the declared parameter instead, and multi-clause functions are candidates like
+  any other (their heads must bind plain names, so one can be `self`).
+- **`structFieldsOf` in the LSP was passing a zero Location**, correct only while the server
+  analysed one unnamed file at a time — which stopped being true when it started resolving
+  the import graph the day before. It now passes the document's own path, which is what
+  decides whose declaration a name means.
+
+Two decisions the design had left open, both taken toward the conservative reading: an
+**import is required** to reach another module method-style (so what a file may call depends
+on its own import list, not on what an unrelated file imported), and an **`own` receiver is
+refused** with an error naming the call form (so a move always looks like a call).
+
+The standard library's `Maybe`/`Result` combinators now name their receiver `self`, so they
+read both ways. Also fixed a stale note in `std/prelude.lyra` claiming no method lowers —
+that stopped being true on 07/30; the real limit is *generic* impls.
+
 ### 08/02/26
 **The language server analyzes a program, not a buffer.** `cmd/lyra-lsp` called
 `driver.Analyze` on the single open document, and a single unit is not a smaller version of

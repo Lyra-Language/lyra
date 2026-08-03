@@ -623,3 +623,60 @@ without checking their order, so `f(5)` bound 5 to `a` and left `b` unfilled.
 the callee's declaration, and an indirect call has none — a `types.LambdaType` records *that*
 a parameter has a default, not what it is. Named arguments, if they ever exist, would be the
 other half of this feature and would lift the trailing rule.
+
+## UFCS — method syntax for free functions (`typechecker_ufcs.go`)
+
+`m.unwrap_or(0)` resolves to the free function `unwrap_or(m, 0)` when that function opts in
+by **naming its first parameter `self`**. Everything else stays call-only, so adding a helper
+to a module cannot change what `x.f()` means elsewhere in it. The rung sits in
+`inferMemberCall`, giving the ladder **field → trait method → UFCS → builtin**: a real impl
+wins, and a `self` function may shadow a compiler-provided method the way user code does
+everywhere else. A receiver that is a bare type parameter never reaches it — that case exits
+at the generic-bound rung above, so UFCS never competes with a `where` bound.
+
+**A matching call is rewritten in place** (`desugarUFCSCall`): the receiver becomes
+`Arguments[0]` and the callee an ordinary `IdentifierExpr`. Everything after this point —
+generic solving, purity, ownership, captures, the backend — sees a direct call, and none of
+them knows UFCS exists. The two spellings emit byte-identical IR, which is the test that says
+so.
+
+**That rewrite is the design, not a shortcut.** The alternative — keeping the member shape and
+teaching each consumer about an implicit receiver — has a failure mode with no diagnostic. The
+purity pass indexes arguments *positionally* against the declaration's parameters
+(`callableParams`), so a receiver outside `Arguments` shifts every index by one and each
+callback is checked against the declared bound of the parameter to its right; a function-typed
+argument satisfies the wrong function-typed parameter quietly, so the bound simply stops being
+enforced. Trait methods, whose receiver genuinely is implicit, pay exactly that tax through
+`methodArgumentAt`. Desugaring means the two line up by construction, and
+`checker/ufcs_bounds_test.go` fails loudly if that is ever traded away.
+
+Mutating a call mid-check has precedent in `applyDefaultArguments` above, for the same reason:
+so that the checker and the backend both see a call that passes everything explicitly. It is
+structurally idempotent — once `Function` is an `IdentifierExpr` this rung is unreachable for
+that node — and the passes that run *before* typechecking see the un-desugared form, which is
+fine because none of them resolves a method name.
+
+Checking a candidate reuses rather than reinvents: `LookupFunctionFrom` (so a private function
+in another module is simply not found, exactly as for a bare call) and `unifyGenericTarget`
+(the same predicate trait dispatch uses to match an impl against a receiver, so the function's
+type variables act as wildcards — `self: Maybe<t>` accepts a `Maybe<i64>` receiver and binds
+`t` from it). The `self` test is on the **declared parameter**, never on whether the function
+has clauses: a multi-clause head must bind plain names, so it can name one `self`, and testing
+`LambdaClauses` would make membership depend on *when* the check runs, since `desugarClauses`
+consumes them.
+
+Two rules that are decisions rather than mechanics:
+
+- **An import is required.** A file's own module and the prelude need none; anything else must
+  be named in that file's imports. What a file may call stays a property of its own import
+  list, rather than of what some unrelated file happened to import. The cost is that the
+  syntactic unused-import check cannot see such a use — a UFCS call never writes the module's
+  name — so `UFCSModules()` carries the fact to it. Without that, the warning advises deleting
+  the import that makes the program compile.
+- **An `own` receiver is refused**, with its own error naming the call form. `own` transfers,
+  and the receiver syntax hides the transfer; use-after-move catches a later read either way,
+  so this is about the move staying legible. The refusal does not fall through to "has no
+  method", which would give the reader two answers, one of them wrong.
+
+`UFCSCallable` exports the predicate for the language server, so completion after `.` offers
+exactly the calls that will compile.

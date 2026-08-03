@@ -30,6 +30,7 @@ type TypeChecker struct {
 	instantiations *typetable.InstantiationTable // generic call site -> the specialization it resolves to (instantiate.go); the backend monomorphizes from it
 	inferring      map[ast.Expression]bool       // expression nodes whose inference is on the stack right now; the cycle guard in inferExprType
 	resolvingTypes map[string]bool               // type names whose resolution is on the stack right now; the alias-cycle guard in resolveType
+	ufcsModules    map[string]map[string]bool    // file -> modules it reached through a UFCS call; see UFCSModules
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
@@ -54,6 +55,19 @@ func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTabl
 // checker) and need to know which method body a given call dispatches to.
 func (tc *TypeChecker) MethodTable() *typetable.MethodTable {
 	return tc.methodTable
+}
+
+// UFCSModules reports, per file, which modules that file reached through a UFCS call
+// (`m.map(f)` resolving to `std.maybe`'s `map`).
+//
+// It exists for the unused-import warning, which is otherwise *wrong* about exactly these
+// imports. That check is syntactic — an import is used if its bound name appears as an
+// identifier — and a UFCS call never writes the module's name. But the import is what
+// permitted the call, so deleting it on the warning's advice breaks the build: the
+// friendliest possible way to lose an hour. The typechecker is where the resolution
+// happens, so it is where the fact has to come from.
+func (tc *TypeChecker) UFCSModules() map[string]map[string]bool {
+	return tc.ufcsModules
 }
 
 // Instantiations returns the generic specializations the program uses — each call

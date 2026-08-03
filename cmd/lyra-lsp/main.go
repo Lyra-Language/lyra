@@ -45,6 +45,19 @@ func (a *docAnalysis) fileScope() *symbols.Scope {
 	return a.symTable.EntryScope()
 }
 
+// declLocation is a bare location in this document, for the symbol-table lookups that
+// resolve a name *as the asking file sees it* (LookupTypeFrom, UFCSCallable, …). Which
+// declaration a name means, and which module a file may reach, are both answered from
+// `Location.File`, so a request originating in this document has to carry its path.
+//
+// Passing the zero Location was right only while the server analysed one file at a time
+// with nothing stamped on it. Now that it resolves the whole import graph, an empty file
+// names no module, and every such lookup would answer for the entry module instead of
+// this one.
+func (a *docAnalysis) declLocation() ast.Location {
+	return ast.Location{File: a.file}
+}
+
 type Handler struct {
 	client        *server.Client
 	mu            sync.Mutex

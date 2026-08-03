@@ -21,9 +21,16 @@ module std.prelude
 //     from the fallback that reads the literal name `Maybe`/`Result`, which is precisely
 //     the coupling to spelling the marker exists to remove.
 //
-//   - **Write free functions, not methods, for now.** A trait impl type-checks and then
-//     fails to lower ("unsupported method call"), so `unwrap_or(m, 0)` works and
-//     `m.unwrap_or(0)` does not yet.
+//   - **Write free functions, not trait impls** — and name the receiver `self`, which is
+//     what makes `m.unwrap_or(0)` work as well as `unwrap_or(m, 0)` (UFCS, 08/03). The
+//     method spelling costs nothing: it is rewritten to the call form before anything
+//     downstream sees it.
+//
+//     A trait impl is the thing to avoid here. It type-checks, and a *generic* one — which
+//     every combinator below would be — then fails in the backend, because an impl method's
+//     body is not specialized per instantiation ("match on Maybe<t> not implemented yet").
+//     A non-generic impl method does lower; this file has no use for one. The note that
+//     used to sit here said no method lowered at all, which stopped being true on 07/30.
 //
 // A name declared here can be shadowed by user code: that warns (lyra-W012) and the
 // user's declaration wins, so adding a name here cannot break a program that never
@@ -40,7 +47,7 @@ module std.prelude
 @builtin(Maybe)
 pub data Maybe<t> = None | Some t
 
-pub let unwrap_or<t> = pure noalloc (m: Maybe<t>, fallback: t) -> t => match m {
+pub let unwrap_or<t> = pure noalloc (self: Maybe<t>, fallback: t) -> t => match self {
   Some v => v,
   None => fallback,
 }
@@ -55,27 +62,27 @@ pub let unwrap_or<t> = pure noalloc (m: Maybe<t>, fallback: t) -> t => match m {
 // that logs, which is a legitimate thing to want from a lazy default. A general-purpose
 // combinator should not make that choice for its callers; the inferred half already keeps
 // pure callers pure.
-pub let unwrap_or_else<t> = pure noalloc (m: Maybe<t>, f: () -> t) -> t => match m {
+pub let unwrap_or_else<t> = pure noalloc (self: Maybe<t>, f: () -> t) -> t => match self {
   Some v => v,
   None => f(),
 }
 
-pub let is_some<t> = pure noalloc (m: Maybe<t>) -> bool => match m {
+pub let is_some<t> = pure noalloc (self: Maybe<t>) -> bool => match self {
   Some _ => true,
   None => false,
 }
 
-pub let is_none<t> = pure noalloc (m: Maybe<t>) -> bool => match m {
+pub let is_none<t> = pure noalloc (self: Maybe<t>) -> bool => match self {
   Some _ => false,
   None => true,
 }
 
-pub let ok_or<t,e> = pure noalloc (m: Maybe<t>, err: e) -> Result<t,e> => match m {
+pub let ok_or<t,e> = pure noalloc (self: Maybe<t>, err: e) -> Result<t,e> => match self {
   Some v => Ok v,
   None => Err err,
 }
 
-pub let ok_or_else<t,e> = pure noalloc (m: Maybe<t>, f: () -> e) -> Result<t,e> => match m {
+pub let ok_or_else<t,e> = pure noalloc (self: Maybe<t>, f: () -> e) -> Result<t,e> => match self {
   Some v => Ok v,
   None => Err(f()),
 }
@@ -83,22 +90,22 @@ pub let ok_or_else<t,e> = pure noalloc (m: Maybe<t>, f: () -> e) -> Result<t,e> 
 @builtin(Result)
 pub data Result<t, e> = Ok(t) | Err(e)
 
-pub let is_ok<t,e> = pure noalloc (r: Result<t, e>) -> bool => match r {
+pub let is_ok<t,e> = pure noalloc (self: Result<t, e>) -> bool => match self {
   Ok _ => true,
   Err _ => false,
 }
 
-pub let is_err<t,e> = pure noalloc (r: Result<t, e>) -> bool => match r {
+pub let is_err<t,e> = pure noalloc (self: Result<t, e>) -> bool => match self {
   Ok _ => false,
   Err _ => true,
 }
 
-pub let ok<t,e> = pure noalloc (r: Result<t,e>) -> Maybe<t> => match r {
+pub let ok<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<t> => match self {
   Ok v => Some v,
   Err _ => None,
 }
 
-pub let err<t,e> = pure noalloc (r: Result<t,e>) -> Maybe<e> => match r {
+pub let err<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<e> => match self {
   Ok _ => None,
   Err err => Some err,
 }

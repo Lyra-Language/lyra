@@ -1,16 +1,16 @@
 module std.maybe
 
-pub let map<t,u> = pure noalloc (m: Maybe<t>, f: (t) -> u) -> Maybe<u> => match m {
+pub let map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> u) -> Maybe<u> => match self {
   Some v => Some(f(v)),
   None => None,
 }
 
-pub let flat_map<t,u> = pure noalloc (m: Maybe<t>, f: (t) -> Maybe<u>) -> Maybe<u> => match m {
+pub let flat_map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> Maybe<u>) -> Maybe<u> => match self {
   Some v => f(v),
   None => None,
 }
 
-pub let filter<t> = pure noalloc (m: Maybe<t>, predicate: (t) -> bool) -> Maybe<t> => match m {
+pub let filter<t> = pure noalloc (self: Maybe<t>, predicate: (t) -> bool) -> Maybe<t> => match self {
   Some v => if predicate(v) { Some v } else { None },
   None => None,
 }

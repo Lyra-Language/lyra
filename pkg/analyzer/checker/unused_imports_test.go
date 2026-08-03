@@ -18,7 +18,9 @@ func parseAndCheckUnusedImports(t *testing.T, source string) []diag.Diagnostic {
 	}
 	c := collector.NewCollector([]byte(source))
 	program, _, _, _ := c.Collect(tree.RootNode())
-	return checker.CheckUnusedImports(program)
+	// No typechecker pass here, so no UFCS resolutions to consult — the syntactic
+	// behaviour these tests pin is unchanged by that map being absent.
+	return checker.CheckUnusedImports(program, nil)
 }
 
 func assertNoUnusedImports(t *testing.T, diags []diag.Diagnostic) {

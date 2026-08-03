@@ -828,6 +828,25 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		return nil
 	}
 
+	// UFCS: a free function that opted in by naming its first parameter `self`
+	// (typechecker_ufcs.go). Below a real trait impl, so an impl always wins; above
+	// the builtins, so a `self` function may shadow one — matching the rule that user
+	// code beats a compiler-provided method. The call is rewritten to pass the
+	// receiver as its first argument and then checked as the direct call it now is.
+	//
+	// Against the *declaration*, not a signature — the same reason the namespace path
+	// at the top of this function gives: a generic callee's type variables are free
+	// until this call's arguments solve them, and solving is also what records the
+	// specialization the backend emits. With the receiver prepended, a `Maybe<i64>`
+	// receiver binds `t` exactly as it does when the call is written `map(m, f)`.
+	if fn, res := tc.ufcsCandidate(objType, methodName, member, call); res != ufcsNoMatch {
+		if res == ufcsRefused {
+			return nil
+		}
+		desugarUFCSCall(member, call)
+		return tc.inferLambdaCall(methodName, fn, call)
+	}
+
 	// A compiler-provided method on a primitive receiver (e.g. `x.wrapping_add(y)`
 	// on an integer). Checked last so a user type or trait impl of the same name
 	// always takes priority (see builtins.go).
@@ -836,18 +855,22 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		return tc.inferLambdaCallFromType(methodName, sig, call)
 	}
 
+	// A free function of this name that *nearly* matched — one that never opted in, or
+	// one this file has not imported — is the likeliest thing the author meant, so the
+	// "no such member" message says so rather than leaving them hunting for a method.
+	hint := tc.ufcsHint(methodName, member.GetLocation())
 	switch t := objType.(type) {
 	case types.NamedStructType:
-		tc.addError(member.GetLocation(), SeverityError, "%s has no field or method %q", t.Name, methodName)
+		tc.addError(member.GetLocation(), SeverityError, "%s has no field or method %q%s", t.Name, methodName, hint)
 	case types.AnonymousStructType:
-		tc.addError(member.GetLocation(), SeverityError, "anonymous struct has no field %q", methodName)
+		tc.addError(member.GetLocation(), SeverityError, "anonymous struct has no field %q%s", methodName, hint)
 	case types.PrimitiveType:
 		// A primitive is a valid method receiver (see the builtin methods above),
 		// so report the missing method rather than "non-struct type".
-		tc.addError(member.GetLocation(), SeverityError, "%s has no method %q", t, methodName)
+		tc.addError(member.GetLocation(), SeverityError, "%s has no method %q%s", t, methodName, hint)
 	default:
 		if objType != nil {
-			tc.addError(member.GetLocation(), SeverityError, "member access on non-struct type %s", objType)
+			tc.addError(member.GetLocation(), SeverityError, "member access on non-struct type %s%s", objType, hint)
 		}
 	}
 	return nil

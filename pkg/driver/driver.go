@@ -224,7 +224,9 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	// carry their own severity and Unnecessary/Deprecated tags).
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnreachableCode(program)...)
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedVariables(program)...)
-	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedImports(program)...)
+	// The UFCS map comes from the typechecker: a method-style call into another module
+	// never writes that module's name, so the syntactic check cannot see the use.
+	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedImports(program, tc.UFCSModules())...)
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedParameters(program)...)
 	res.Diagnostics = append(res.Diagnostics, checker.CheckTypeNames(program)...)
 	res.Diagnostics = append(res.Diagnostics, checker.CheckInertBorrowModifiers(program)...)
