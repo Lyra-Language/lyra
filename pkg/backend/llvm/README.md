@@ -140,6 +140,29 @@ release where it belongs. The residue is any temp produced by a sub-expression o
 operand, which leaks on the propagating path rather than double-freeing (the same bias
 break/continue take); todo.md carries the fix that would serve all three.
 
+### Bitwise and shift operators lower
+
+`arithmetic.go`. `&`/`|`/`~` are a plain `and`/`or`/`xor`; prefix `~x` is `xor x, -1` (LLVM
+has no complement instruction, and `-1` is an all-ones mask at any width). None of them can
+trap — every bit pattern has a complement, at every width and either signedness.
+
+Shifts carry three things the others do not (`emitShiftOp`):
+
+- **Width.** The count is typed independently of the shifted value, so `u8 << i64` is
+  well-typed while LLVM requires both `shl` operands to share a type. The count is coerced
+  to the shifted width — *after* the check, deliberately, since coercing first could
+  truncate an out-of-range count into range and hide exactly what is being checked.
+- **Signedness of `>>`.** Signed shifts arithmetically (`ashr`, sign-filling), unsigned
+  logically (`lshr`, zero-filling). This is the only place the two spellings of `>>` differ,
+  and getting it backwards is a wrong answer rather than a crash —
+  `TestExec_ShiftRightSignedness` pins both directions with values that disagree.
+- **The amount check.** `shl`/`lshr`/`ashr` are UB once the amount reaches the operand's
+  width, so an out-of-range count branches to `lyra_panic_shift_overflow` — the same
+  treatment div-by-zero gets, for the same reason. The comparison is **unsigned**, which
+  catches a negative count in the same instruction. A compile-time constant already in range
+  (`constShiftInRange`) emits no check at all, covering `x << 3`; range-analysis elision for
+  a *variable* count is not wired up yet (todo.md).
+
 ### Locals are lexically scoped
 
 **Locals are lexically scoped** (07/29, `pushLocalScope`): `l.locals` was a single flat

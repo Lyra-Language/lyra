@@ -41,6 +41,16 @@ func collectCompoundAssignmentExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 		operator = ast.MathAssignOpMod
 	case "remainder_assign_operator":
 		operator = ast.MathAssignOpRemainder
+	case "bitand_assign_operator":
+		operator = ast.MathAssignOpBitAnd
+	case "bitor_assign_operator":
+		operator = ast.MathAssignOpBitOr
+	case "bitxor_assign_operator":
+		operator = ast.MathAssignOpBitXor
+	case "shl_assign_operator":
+		operator = ast.MathAssignOpShl
+	case "shr_assign_operator":
+		operator = ast.MathAssignOpShr
 	default:
 		ctx.AddError(opNode, diag.SeverityError, "Unknown compound assignment operator: %s", opNode.Kind())
 		return nil

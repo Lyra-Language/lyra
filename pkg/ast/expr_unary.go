@@ -16,6 +16,16 @@ type NegationExpr struct {
 
 func (e *NegationExpr) GetName() string { return "negation_expr" }
 
+// BitwiseNotExpr is `~x`, the bitwise complement. It is a separate node from
+// NegationExpr rather than a flag on it because the two have different operand
+// rules — `-` accepts floats, `~` is integers only — and different lowerings.
+type BitwiseNotExpr struct {
+	ExprBase
+	Operand Expression
+}
+
+func (e *BitwiseNotExpr) GetName() string { return "bitwise_not_expr" }
+
 type AddressOfExpr struct {
 	ExprBase
 	Operand Expression

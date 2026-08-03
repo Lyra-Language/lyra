@@ -114,6 +114,8 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 		return collectUnsafeBlockExpr(node, ctx, loc)
 	case "negation":
 		return collectNegationExpr(node, ctx, loc)
+	case "bitwise_not":
+		return collectBitwiseNotExpr(node, ctx, loc)
 	case "address_of_expr":
 		return collectAddressOfExpr(node, ctx, loc)
 	case "deref_expr":

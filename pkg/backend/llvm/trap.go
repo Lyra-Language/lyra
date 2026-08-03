@@ -32,10 +32,11 @@ const trapExitCode = 101
 
 // Trap messages, written to stderr (fd 2) before the process exits.
 const (
-	overflowTrapMessage     = "lyra: arithmetic overflow\n"
-	divideByZeroTrapMessage = "lyra: divide by zero\n"
-	indexOOBTrapMessage     = "lyra: array index out of bounds\n"
-	matchFailedTrapMessage  = "lyra: match not exhaustive\n"
+	overflowTrapMessage      = "lyra: arithmetic overflow\n"
+	divideByZeroTrapMessage  = "lyra: divide by zero\n"
+	indexOOBTrapMessage      = "lyra: array index out of bounds\n"
+	matchFailedTrapMessage   = "lyra: match not exhaustive\n"
+	shiftOverflowTrapMessage = "lyra: shift amount out of range\n"
 	// The user message and its newline follow this at run time, so unlike the four
 	// above it carries neither.
 	panicPrefixMessage = "lyra: panic: "
@@ -88,6 +89,15 @@ func (l *lowerer) panicIndexOOBFunc() *ir.Func {
 
 func (l *lowerer) panicMatchFailedFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_match_failed", matchFailedTrapMessage)
+}
+
+// panicShiftOverflowFunc is the trap for a shift whose amount is at or beyond the
+// shifted type's width (or negative). LLVM's `shl`/`lshr`/`ashr` are *undefined
+// behavior* there, exactly as div/rem are on a zero divisor, so it is checked for
+// the same reason: the alternative is a silently platform-shaped answer, which is
+// what the fixed-width primitives exist to rule out.
+func (l *lowerer) panicShiftOverflowFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_shift_overflow", shiftOverflowTrapMessage)
 }
 
 // panicMessageFunc lazily emits the trap behind a user-written `panic(msg)`:

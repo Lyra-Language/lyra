@@ -581,6 +581,8 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		return l.lowerMathAssignOp(block, e)
 	case *ast.NegationExpr:
 		return l.lowerNegationExpr(block, e)
+	case *ast.BitwiseNotExpr:
+		return l.lowerBitwiseNotExpr(block, e)
 	case *ast.FunctionCallExpr:
 		return l.lowerFunctionCallExpr(block, e)
 	case *ast.BlockExpr:

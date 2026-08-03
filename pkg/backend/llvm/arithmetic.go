@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -329,9 +330,98 @@ func (l *lowerer) applyIntMathOp(block *ir.Block, op ast.MathBinaryOp, left, rig
 		return l.emitCheckedIntOp(block, "mul", left, right, signed)
 	case ast.MathBinaryOpDiv, ast.MathBinaryOpMod, ast.MathBinaryOpRemainder:
 		return l.emitCheckedDivOp(block, op, left, right, signed, e)
+	case ast.MathBinaryOpBitAnd:
+		return block.NewAnd(left, right), block, nil
+	case ast.MathBinaryOpBitOr:
+		return block.NewOr(left, right), block, nil
+	case ast.MathBinaryOpBitXor:
+		return block.NewXor(left, right), block, nil
+	case ast.MathBinaryOpShl, ast.MathBinaryOpShr:
+		return l.emitShiftOp(block, op, left, right, signed)
 	default:
 		return nil, nil, fmt.Errorf("llvm: math binary op lowering not implemented for %v", op)
 	}
+}
+
+// emitShiftOp lowers `<<` / `>>` with a checked shift amount.
+//
+// Three things are going on:
+//
+//   - **Width.** A shift's count is typed independently of the shifted value
+//     (inferMathBinaryExpr), so `u8 << i64` is well-typed while LLVM requires both
+//     operands of `shl` to be the same type. The count is coerced to the shifted
+//     width here, which is also where an over-wide count would be *truncated* into
+//     range — hence the check below runs on the original value, before coercion.
+//
+//   - **Signedness of `>>`.** A signed operand shifts arithmetically (`ashr`,
+//     sign-filling), an unsigned one logically (`lshr`, zero-filling). This is the
+//     one place the two spellings of `>>` differ, and getting it backwards is a
+//     wrong answer rather than a crash.
+//
+//   - **The amount check.** `shl`/`lshr`/`ashr` are undefined behavior when the
+//     amount is >= the operand width, so an out-of-range count traps rather than
+//     producing whatever the target hardware happens to do (x86 masks, ARM
+//     saturates — precisely the divergence fixed-width primitives exist to avoid).
+//     The comparison is **unsigned**, which catches a negative signed count in the
+//     same instruction: as a two's-complement bit pattern, -1 is huge.
+//
+// A count that is a compile-time constant already in range emits no check at all,
+// which covers the overwhelmingly common `x << 3`. Range-analysis-driven elision
+// for a *variable* count is not wired up yet — see todo.md.
+func (l *lowerer) emitShiftOp(block *ir.Block, op ast.MathBinaryOp, left, right value.Value, signed bool) (value.Value, *ir.Block, error) {
+	intTy, ok := left.Type().(*lltypes.IntType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: shift on a non-integer operand (%s)", left.Type())
+	}
+	width := int64(intTy.BitSize)
+
+	if !constShiftInRange(right, width) {
+		// Compare at the count's own width: coercing first could truncate an
+		// out-of-range count into range and hide the very thing being checked.
+		countTy, ok := right.Type().(*lltypes.IntType)
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: shift amount is not an integer (%s)", right.Type())
+		}
+		tooWide := block.NewICmp(enum.IPredUGE, right, constant.NewInt(countTy, width))
+		block = l.emitTrapIf(block, tooWide, l.panicShiftOverflowFunc())
+	}
+
+	amount := coerceIntWidth(block, right, false, intTy)
+	if op == ast.MathBinaryOpShl {
+		return block.NewShl(left, amount), block, nil
+	}
+	if signed {
+		return block.NewAShr(left, amount), block, nil
+	}
+	return block.NewLShr(left, amount), block, nil
+}
+
+// constShiftInRange reports whether v is a constant shift amount already known to
+// be within [0, width) — the case where the trap can be skipped outright. Read as
+// unsigned so a negative constant is correctly *not* in range.
+func constShiftInRange(v value.Value, width int64) bool {
+	c, ok := v.(*constant.Int)
+	if !ok {
+		return false
+	}
+	return c.X.Sign() >= 0 && c.X.Cmp(big.NewInt(width)) < 0
+}
+
+// lowerBitwiseNotExpr lowers `~x`. LLVM IR has no dedicated complement
+// instruction; `xor x, -1` is the standard idiom (an all-ones mask at the
+// operand's width, which is what `-1` is as a two's-complement constant), and it
+// is what clang emits for C's `~`. Unlike negation there is nothing to trap: every
+// bit pattern has a complement, at every width and either signedness.
+func (l *lowerer) lowerBitwiseNotExpr(block *ir.Block, e *ast.BitwiseNotExpr) (value.Value, *ir.Block, error) {
+	operand, block, err := l.lowerExpr(block, e.Operand)
+	if err != nil {
+		return nil, nil, err
+	}
+	intTy, ok := operand.Type().(*lltypes.IntType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: `~` on a non-integer operand (%s)", operand.Type())
+	}
+	return block.NewXor(operand, constant.NewInt(intTy, -1)), block, nil
 }
 
 // emitCheckedDivOp lowers a checked division-family op (`/`, `%`, `%%`). LLVM's
@@ -394,16 +484,12 @@ func (l *lowerer) emitCheckedDivOp(block *ir.Block, op ast.MathBinaryOp, left, r
 	}
 }
 
-// mathAssignToBinaryOp maps a compound-assignment operator to the plain binary op
-// it applies (`+=` → `+`), so lowerMathAssignOp reuses applyIntMathOp.
-var mathAssignToBinaryOp = map[ast.MathAssignOp]ast.MathBinaryOp{
-	ast.MathAssignOpAdd:       ast.MathBinaryOpAdd,
-	ast.MathAssignOpSub:       ast.MathBinaryOpSub,
-	ast.MathAssignOpMul:       ast.MathBinaryOpMul,
-	ast.MathAssignOpDiv:       ast.MathBinaryOpDiv,
-	ast.MathAssignOpMod:       ast.MathBinaryOpMod,
-	ast.MathAssignOpRemainder: ast.MathBinaryOpRemainder,
-}
+// The compound-assignment → binary-operator mapping lives on the AST type
+// (ast.MathAssignOp.BinaryOp), not here. It used to be a table in this file, which
+// meant adding an operator required editing two lists that nothing checked against
+// each other — and the typechecker needs the same mapping to carry the binary
+// operand rules onto a compound assignment (checkMathAssignOp's integers-only
+// check). One accessor, so the two cannot drift.
 
 // lowerMathAssignOp lowers a compound assignment (`i += x`) to load / op / store
 // against the target's alloca: load the current value, apply the binary op with
@@ -416,7 +502,7 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: compound assignment to unbound identifier %q", e.Left.Name)
 	}
-	binOp, ok := mathAssignToBinaryOp[e.Operator]
+	binOp, ok := e.Operator.BinaryOp()
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: compound assignment %q not implemented", e.Operator)
 	}

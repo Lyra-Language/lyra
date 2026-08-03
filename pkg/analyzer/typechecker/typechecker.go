@@ -1046,12 +1046,24 @@ func (tc *TypeChecker) addParamImmutableError(loc ast.Location, name string, mod
 
 func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 	effective := tc.checkAssignToBinding(expr.Left.Name, expr.Right, expr.GetLocation())
-	if effective != nil {
-		// Record the target's width on untyped literal leaves of the RHS, so
-		// `i += 1` with a narrow `i` lowers `1` at that width (matching plain
-		// reassignment — see checkVarReassignment) rather than the i64 default.
-		tc.propagateLiteralType(expr.Right, effective)
+	if effective == nil {
+		return
 	}
+	// A bitwise compound assignment carries the binary operator's integers-only
+	// rule onto the target too: `f &= 1` on a float is the same mistake as `f & 1`,
+	// and it would otherwise slip through on the strength of the literal being
+	// assignable to a float.
+	if binOp, ok := expr.Operator.BinaryOp(); ok && binOp.IsBitwise() {
+		if !isIntegerOperand(effective) {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"operator %s: operands must be integers, got %s", expr.Operator, effective)
+			return
+		}
+	}
+	// Record the target's width on untyped literal leaves of the RHS, so
+	// `i += 1` with a narrow `i` lowers `1` at that width (matching plain
+	// reassignment — see checkVarReassignment) rather than the i64 default.
+	tc.propagateLiteralType(expr.Right, effective)
 }
 
 func (tc *TypeChecker) checkBooleanLiteralExpr(expr *ast.BooleanLiteralExpr) {
@@ -1467,6 +1479,8 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		return tc.inferTryExpr(e)
 	case *ast.NegationExpr:
 		return tc.inferNegationExpr(e)
+	case *ast.BitwiseNotExpr:
+		return tc.inferBitwiseNotExpr(e)
 	case *ast.StructInstanceExpr:
 		return tc.inferStructInstanceExpr(e)
 	case *ast.AnonymousStructInstanceExpr:
@@ -1716,6 +1730,32 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 		return nil
 	}
 
+	// Bitwise and shift operators are integers-only. A float has no meaningful bit
+	// operation short of reinterpreting its IEEE representation, which is exactly
+	// the sort of platform-shaped behaviour the fixed-width primitives exist to
+	// keep out; the explicit spelling for that is a conversion, not an operator.
+	if expr.Operator.IsBitwise() {
+		if !isIntegerOperand(left) || !isIntegerOperand(right) {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"operator %s: operands must be integers, got %s and %s", expr.Operator, left, right)
+			return nil
+		}
+	}
+
+	// A shift's right operand is a *distance*, not a value in the left operand's
+	// domain, so the two are not unified the way `+`'s are: the result is the left
+	// operand's type and the count is typed independently (any integer will do).
+	// Requiring both sides to match would reject `x << n` for a `u32` counter over
+	// a `u8` value, which is a conversion that buys nothing — the count is not
+	// stored anywhere, and the backend narrows it to the shifted width regardless.
+	// This matches Rust/Go/C; the trap for an out-of-range count is what makes it
+	// safe (see trap.go's shift-amount check).
+	if expr.Operator.IsShift() {
+		tc.propagateOperandType(expr.Left, left)
+		tc.typeTable.Set(expr, left)
+		return left
+	}
+
 	if expr.Operator == ast.MathBinaryOpDiv || expr.Operator == ast.MathBinaryOpMod || expr.Operator == ast.MathBinaryOpRemainder {
 		if isLiteralZero(expr.Right) {
 			tc.addError(expr.Right.GetLocation(), SeverityError,
@@ -1910,7 +1950,15 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 		tc.typeTable.Set(e, cp)
 	case *ast.MathBinaryOpExpr:
 		tc.propagateLiteralType(e.Left, concrete)
-		tc.propagateLiteralType(e.Right, concrete)
+		// A shift is width-preserving on the *left* only: its right operand is a
+		// count with its own type, so pushing the shifted value's width onto it
+		// would narrow an unrelated leaf (and, for a small signed target, fail the
+		// fits-check and leave it untyped for no reason).
+		if !e.Operator.IsShift() {
+			tc.propagateLiteralType(e.Right, concrete)
+		}
+	case *ast.BitwiseNotExpr:
+		tc.propagateLiteralType(e.Operand, concrete)
 	case *ast.NegationExpr:
 		// A negated integer literal whose *negation* is exactly the signed
 		// target's minimum (i8 -128, i16 -32768, i32 -2147483648) must narrow to
@@ -2115,6 +2163,36 @@ func (tc *TypeChecker) inferInterpolatedStringExpr(e *ast.InterpolatedStringExpr
 		}
 	}
 	return str
+}
+
+// isIntegerOperand reports whether t is acceptable where a bitwise or shift
+// operator wants an integer: any concrete width, or an untyped integer literal
+// still awaiting its context. Deliberately excludes every float, including
+// untyped_float — `IsNumeric` is the wrong test for these operators.
+func isIntegerOperand(t types.Type) bool {
+	p, ok := t.(types.PrimitiveType)
+	if !ok {
+		return false
+	}
+	return isAnyConcreteInt(p.Name) ||
+		p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt
+}
+
+// inferBitwiseNotExpr types `~x`, the bitwise complement. Integers only, and the
+// result is the operand's own type — complementing does not change width, and
+// unlike negation it is meaningful on unsigned types (`~u8(0)` is 255).
+func (tc *TypeChecker) inferBitwiseNotExpr(expr *ast.BitwiseNotExpr) types.Type {
+	operandType := tc.inferExprType(expr.Operand)
+	if operandType == nil {
+		return nil
+	}
+	if !isIntegerOperand(operandType) {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"operator ~: operand must be an integer, got %s", operandType)
+		return nil
+	}
+	tc.typeTable.Set(expr, operandType)
+	return operandType
 }
 
 func (tc *TypeChecker) inferNegationExpr(expr *ast.NegationExpr) types.Type {

@@ -9,6 +9,73 @@ Newest first.
 
 ## Dated log
 
+### 08/02/26
+**Bitwise and shift operators.** `& | ~ << >>`, prefix `~` for complement, and the five
+compound assignments. A systems language aimed at games had no way to touch a bit, which
+made every mask, flag set and packed field unwritable; the trait `binary_operator` list had
+reserved `<< >> & | ^` for overloads since before any of them existed in expression
+position.
+
+**Xor is `~`, not `^`, and that is forced rather than stylistic.** `^` is already prefix
+raw-pointer syntax (`^T`) and postfix deref (`ptr^`), so a binary `^` is ambiguous with a
+deref in operand position — `ptr^ ^ mask` has no good reading. `~` was completely free, and
+already reserved in the trait `prefix_operator` list. Odin, which this language borrows from
+elsewhere (`%%`, the `rune` naming), spells xor `~` for its own reasons and gets the same
+result. Complement is the same token in prefix position, exactly as `-` is both subtraction
+and negation.
+
+**Precedence is deliberately not C's**, and the tests check the grouping by what the program
+*computes*, since a parse-tree assertion would not catch a lowering that ignored it. Bitwise
+binds tighter than comparison, so `flags & MASK == 0` means `(flags & MASK) == 0` — in C it
+means `flags & (MASK == 0)`, which is why C codebases parenthesise every masked comparison.
+It binds looser than arithmetic (Python/Ruby, not Go, which ties `|`/`^` to `+`), and shifts
+sit above addition as in Go. `&` > `~` > `|` matches everyone except Go.
+
+**An out-of-range shift amount traps.** `shl`/`lshr`/`ashr` are undefined behavior when the
+amount reaches the operand's width, so this is the same call div-by-zero already makes: the
+alternative is whatever the target's shift hardware does (x86 masks, ARM saturates), which
+is exactly the divergence the fixed-width primitives exist to rule out. The comparison is
+*unsigned*, which catches a negative count in the same instruction — as a two's-complement
+pattern, -1 is enormous — and it runs on the count **before** it is coerced to the shifted
+width, because coercing first could truncate an out-of-range count into range and hide the
+thing being checked. A compile-time constant already in range emits no check at all, which
+covers `x << 3`.
+
+**A shift's count is typed independently of the value being shifted.** It is a *distance*,
+not a value in the left operand's domain, so `u8 << i64` is well-typed and the backend
+narrows the count. Unifying them the way `+` does would demand a conversion that buys
+nothing — the count is not stored anywhere, and the trap is what makes it safe. The compound
+form `x <<= n` is stricter, because it routes through `checkAssignToBinding`; that asymmetry
+is recorded in todo.md rather than papered over.
+
+**Three `|` collisions, resolved two different ways.** `|` was already the struct-update
+separator (`P { base | f: v }`) and the array-comprehension delimiter. The struct-update and
+generator races are shift/reduce and take `conflicts:` entries. The comprehension needed
+something else: `[ x in R | A | B ]` fits two *complete* parses — guard `A` with result `B`,
+or no guard and the single result `A | B` — which is an ambiguity between finished trees,
+the one thing `prec.dynamic` resolves and `conflicts:` does not. Getting it wrong was not a
+parse error: every guarded comprehension silently became an unguarded one whose result was a
+bitwise-or, and only the pre-existing corpus test caught it.
+
+**Cost, measured before accepting it** (the grammar's CLAUDE.md says to run
+`--report-states-for-rule -` before adding anything here): 6,606 → 8,182 states, `parser.c`
+12.0 → 15.3 MB. The alternative of collapsing the three bitwise bands into Go's two saves
+only **424 states (5%)**, so the distinct bands are nearly free and buy the conventional
+`&` > `~` > `|` ordering — the bulk of the growth is having the operators at all. `>>` does
+not break nested generics (`Maybe<Result<i64, string>>`): tree-sitter's lexer only considers
+tokens valid in the current parse state, verified before and after.
+
+The compound-assignment → binary-operator mapping moved onto `ast.MathAssignOp.BinaryOp`,
+replacing a table in the backend. Adding an operator used to mean editing two lists nothing
+checked against each other, and the typechecker needs the same mapping to carry the binary
+operand rules onto a compound assignment.
+
+**The value-range pass is untouched and that is the sound outcome, not an oversight.** Its
+operator switch leaves an unrecognised operator's `ok` false, which falls back to the type's
+full interval — so bitwise results are ⊤ rather than mistracked, and no trap elision can go
+wrong on them. Tracking them properly (a mask is *the* idiom for producing a known-small
+value) is in todo.md.
+
 ### 08/01/26
 **One `..` notation, three sites.** The range notation appears in an expression (`0..<n`),
 a match pattern (`0..=9`) and a `newtype` constraint (`range(0..=100)`). They were three

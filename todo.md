@@ -240,6 +240,30 @@ escape hatches, and the value-range pass both diagnoses definite faults (`lyra-E
 - **[OPEN] `checked_*`** — returns `Maybe<T>`. It was blocked on a prelude; the prelude
   landed 07/30 and generic types 07/29, so it is unblocked. Shares the unresolved
   return-type-from-context problem with #5's narrowing conversions.
+- **[DONE 08/02] Bitwise and shift operators** — `& | ~ << >>`, prefix `~`, and the five
+  compound assignments. An out-of-range shift amount traps
+  (`lyra_panic_shift_overflow`), which is the same call div-by-zero makes and for the
+  same reason: LLVM's shifts are UB there, so the alternative is a silently
+  target-shaped answer. See COMPLETED.md. Two follow-ups:
+  - **[OPEN] The value-range pass does not track bitwise results.** They fall through
+    its operator switch to `typeIntervalIn`, i.e. ⊤ — sound (a bitwise result really is
+    within its type) and it is what keeps elision from going wrong, but it means
+    `(x & 0x0F) + 1` cannot prove its addition safe even though the mask bounds the
+    left operand to 0..15. Masking is *the* idiom for producing a known-small value, so
+    this is the case where interval tracking would pay most. Wants `andI`/`orI`/`xorI`/
+    `shlI`/`shrI` beside the existing `addI`/`subI`/`mulI`.
+  - **[OPEN] A *variable* shift amount always emits its check.** A constant in range is
+    folded away at lowering (`constShiftInRange`), which covers `x << 3`, but a
+    loop-carried amount the range pass could bound still pays a compare-and-branch.
+    Wiring it up is a `NoShiftOverflow(e)` predicate alongside `NoDivZero`/`NoOverflow`,
+    and it depends on the interval work above.
+  - **[OPEN] `x <<= n` is stricter than `x = x << n`.** The binary form types the shift
+    count independently (any integer — it is a distance, not a value in the shifted
+    type's domain), but the compound form goes through `checkAssignToBinding`, which
+    requires the RHS to be *assignable to the target*. So `x <<= count32` on a `u8`
+    demands a conversion the binary spelling does not. Fixing it means letting
+    `checkMathAssignOp` opt out of the value-assignability half while keeping the
+    mutability and target checks, which is a seam that does not exist yet.
 - **[IDEA] Type-level overflow policy on a `newtype`** — an overflow behaviour
   (`wrapping`/`saturating`) as a new constraint kind in the existing
   `newtype N = Base where …` grammar, so arithmetic on `N` uses that policy instead of the

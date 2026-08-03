@@ -1040,6 +1040,12 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		// managed values in owning positions, exactly as above.
 		a.expr(e.Right, false)
 
+	case *ast.BitwiseNotExpr:
+		// Same reasoning as the arithmetic forms below: the operation itself owns
+		// nothing, but a managed value can sit inside its operand, and skipping the
+		// node records nothing rather than something conservative.
+		a.expr(e.Operand, false)
+
 	case *ast.NegationExpr:
 		a.expr(e.Operand, false)
 

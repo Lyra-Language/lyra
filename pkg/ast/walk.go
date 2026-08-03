@@ -158,6 +158,8 @@ func walkExprChildren(expr Expression, onStmt func(Statement) bool, onExpr func(
 		WalkExpr(e.Expression, onStmt, onExpr)
 	case *NegationExpr:
 		WalkExpr(e.Operand, onStmt, onExpr)
+	case *BitwiseNotExpr:
+		WalkExpr(e.Operand, onStmt, onExpr)
 	case *AwaitExpr:
 		WalkExpr(e.Operand, onStmt, onExpr)
 	case *AddressOfExpr:

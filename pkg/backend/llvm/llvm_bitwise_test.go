@@ -1,0 +1,213 @@
+package llvm
+
+import (
+	"github.com/Lyra-Language/lyra/pkg/driver"
+	"strings"
+	"testing"
+)
+
+// Bitwise and shift operators (`& | ~ << >>`, prefix `~`), lowered in
+// arithmetic.go. Xor is `~` rather than `^`, which is taken by raw-pointer types
+// and postfix deref — see tree-sitter-lyra's CLAUDE.md.
+
+func TestExec_BitwiseOps(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		src  string
+		want int
+	}{
+		{"let main = () -> u8 => 12 & 10\n", 8},  // 1100 & 1010 == 1000
+		{"let main = () -> u8 => 12 | 10\n", 14}, // 1100 | 1010 == 1110
+		{"let main = () -> u8 => 12 ~ 10\n", 6},  // 1100 ^ 1010 == 0110
+		{"let main = () -> u8 => 1 << 4\n", 16},  //
+		{"let main = () -> u8 => 64 >> 3\n", 8},  //
+		{"let main = () -> u8 => 0b1010 & 0b0110\n", 2},
+		{"let main = () -> u8 => 0xF0 >> 4\n", 15},
+		// Complement of an unsigned zero is all ones at that width.
+		{"let main = () -> u8 => ~u8(0)\n", 255},
+		// ...and complementing twice is the identity.
+		{"let main = () -> u8 => ~~u8(42)\n", 42},
+	}
+	for _, c := range cases {
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%q exited %d; want %d", c.src, got, c.want)
+			}
+		})
+	}
+}
+
+// `>>` is arithmetic on a signed operand (sign-filling) and logical on an
+// unsigned one (zero-filling). This is the one place the two spellings of `>>`
+// differ, and getting it backwards is a wrong answer rather than a crash — so it
+// is checked by running both and comparing against the known results.
+func TestExec_ShiftRightSignedness(t *testing.T) {
+	t.Parallel()
+	const src = `let main = () -> u8 => {
+  let signed: i8 = -8
+  let unsigned: u8 = 248
+  var score: u8 = 0
+  if signed >> 1 == -4 { score += 1 }
+  if unsigned >> 1 == 124 { score += 2 }
+  score
+}
+`
+	// -8 >> 1 is -4 only under an arithmetic shift; 248 >> 1 is 124 only under a
+	// logical one. A backend using ashr for both would give 248 >> 1 == 252.
+	if got := buildAndRun(t, src); got != 3 {
+		t.Errorf("exited %d; want 3 (1 = signed ashr, 2 = unsigned lshr)\n%s", got, src)
+	}
+}
+
+// A shift amount at or beyond the operand's width is undefined behavior in raw
+// LLVM, so it traps instead — the same treatment divide-by-zero gets, and for the
+// same reason: the alternative is an answer that depends on the target's shift
+// hardware.
+func TestExec_ShiftOverflowTraps(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{
+			"shift left at the width",
+			`let shift = (n: i64, by: i64) -> i64 => n << by
+			 let main = () -> u8 => u8(shift(1, 64))` + "\n",
+		},
+		{
+			"shift right beyond the width",
+			`let shift = (n: i64, by: i64) -> i64 => n >> by
+			 let main = () -> u8 => u8(shift(1, 100))` + "\n",
+		},
+		{
+			// Negative counts are caught by the same unsigned comparison: as a
+			// two's-complement bit pattern, -1 is enormous.
+			"negative shift amount",
+			`let shift = (n: i64, by: i64) -> i64 => n << by
+			 let main = () -> u8 => u8(shift(1, 0 - 1))` + "\n",
+		},
+		{
+			// The count is narrower than the value, so it is widened before the
+			// comparison — a check done after truncation would miss this.
+			"narrow operand, in-range-looking count",
+			`let shift = (n: u8, by: u8) -> u8 => n << by
+			 let main = () -> u8 => shift(1, 8)` + "\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			out, code := buildAndRunPanic(t, c.src)
+			if code != overflowTrapExitCode {
+				t.Errorf("exited %d; want %d (the trap)\n%s", code, overflowTrapExitCode, c.src)
+			}
+			if !strings.Contains(out, "shift amount out of range") {
+				t.Errorf("stderr = %q; want the shift-amount trap message", out)
+			}
+		})
+	}
+}
+
+// A shift by a compile-time constant already in range emits no check at all —
+// the overwhelmingly common `x << 3`. Asserted on the IR because the whole point
+// is the absence of a branch, which running the program cannot observe.
+func TestEmit_ConstantShiftEmitsNoTrap(t *testing.T) {
+	t.Parallel()
+	got, err := emitSource(t, "let main = () -> u8 => 1 << 3\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "lyra_panic_shift_overflow") {
+		t.Errorf("a constant in-range shift should emit no trap:\n%s", got)
+	}
+	// ...while a variable amount keeps it.
+	got, err = emitSource(t, `let shift = (n: i64, by: i64) -> i64 => n << by
+let main = () -> u8 => u8(shift(1, 2))
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "lyra_panic_shift_overflow") {
+		t.Errorf("a variable shift amount must keep its check:\n%s", got)
+	}
+}
+
+func TestExec_BitwiseCompoundAssignment(t *testing.T) {
+	t.Parallel()
+	const src = `let main = () -> u8 => {
+  var x: u8 = 12
+  x &= 10
+  var y: u8 = 12
+  y |= 10
+  var z: u8 = 12
+  z ~= 10
+  var s: u8 = 1
+  s <<= 3
+  var r: u8 = 64
+  r >>= 3
+  if x == 8 && y == 14 && z == 6 && s == 8 && r == 8 { 42 } else { 0 }
+}
+`
+	if got := buildAndRun(t, src); got != 42 {
+		t.Errorf("exited %d; want 42\n%s", got, src)
+	}
+}
+
+// The precedence chosen in the grammar, verified by what the program computes
+// rather than by the parse tree: bitwise binds tighter than comparison (C's
+// classic footgun), looser than arithmetic, and `&` > `~` > `|`.
+func TestExec_BitwisePrecedence(t *testing.T) {
+	t.Parallel()
+	// Each `if` is one precedence rule, and the operands are chosen so the *other*
+	// grouping gives a different answer — otherwise the test would pass either way:
+	//
+	//   12 & 8 == 8   →  (12 & 8) == 8 is true; 12 & (8 == 8) is not even well-typed
+	//   3 | 1 + 1     →  3 | (1 + 1) == 3, but (3 | 1) + 1 == 4
+	//   1 << 2 + 1    →  (1 << 2) + 1 == 5, but 1 << (2 + 1) == 8
+	//   12 & 10 | 1   →  (12 & 10) | 1 == 9, but 12 & (10 | 1) == 8
+	const src = `let main = () -> u8 => {
+  var score: u8 = 0
+  if 12 & 8 == 8 { score += 1 }
+  if 3 | 1 + 1 == 3 { score += 2 }
+  if 1 << 2 + 1 == 5 { score += 4 }
+  if 12 & 10 | 1 == 9 { score += 8 }
+  score
+}
+`
+	if got := buildAndRun(t, src); got != 15 {
+		t.Errorf("exited %d; want 15 (each bit is one precedence rule)\n%s", got, src)
+	}
+}
+
+// Bitwise operators are integers-only: there is no meaningful bit operation on a
+// float short of reinterpreting its IEEE representation, which is the kind of
+// platform-shaped behaviour the fixed-width primitives exist to keep out.
+func TestBitwiseRejectsFloats(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		"let main = () -> u8 => { let a: f64 = 1.5\n let b: f64 = 2.5\n u8(a & b) }\n",
+		"let main = () -> u8 => { let a: f64 = 1.5\n u8(~a) }\n",
+		"let main = () -> u8 => { let a: f64 = 1.5\n u8(a << 1) }\n",
+	}
+	for _, src := range cases {
+		t.Run("", func(t *testing.T) {
+			t.Parallel()
+			// driver.Analyze directly rather than emitSource, which fatals on
+			// analysis errors — here the error *is* the expected result.
+			res := driver.Analyze([]byte(src))
+			if !res.HasErrors() {
+				t.Errorf("expected a type error for a float operand:\n%s", src)
+				return
+			}
+			var joined string
+			for _, d := range res.Errors() {
+				joined += d.Message + "\n"
+			}
+			if !strings.Contains(joined, "must be an integer") &&
+				!strings.Contains(joined, "must be integers") {
+				t.Errorf("diagnostics = %q; want one naming the integer requirement", joined)
+			}
+		})
+	}
+}
