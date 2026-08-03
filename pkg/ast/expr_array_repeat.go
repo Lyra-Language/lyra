@@ -13,5 +13,5 @@ type ArrayRepeatExpr struct {
 func (a *ArrayRepeatExpr) exprNode() {}
 
 func (a *ArrayRepeatExpr) GetName() string {
-	return fmt.Sprintf("ArrayRepeatExpr(Value: %s, Count: %s)", a.Value.GetName(), a.Count.GetName())
+	return fmt.Sprintf("[%s; %s]", a.Value.GetName(), a.Count.GetName())
 }

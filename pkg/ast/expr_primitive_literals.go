@@ -2,6 +2,7 @@ package ast
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -39,8 +40,25 @@ func (i *IntegerLiteralExpr) decimalString() string {
 	return fmt.Sprintf("%d", i.Value)
 }
 
+// GetName renders the literal **as it was written**, base and all — `0xFF`, not
+// `IntegerLiteralExpr(255, Base: 16)`.
+//
+// Every GetName on an expression is a source rendering, composed into diagnostics by
+// its parents (a match arm builds `match <pattern> { <body> }` out of them). The
+// literals were the family that dumped their Go type instead, which produced messages
+// like `expected array pattern, got IntegerLiteralExpr(0, Base: 10)..=
+// IntegerLiteralExpr(10, Base: 10)` — a rendering of the compiler's internals handed to
+// someone reading their own program.
 func (i *IntegerLiteralExpr) GetName() string {
-	return fmt.Sprintf("IntegerLiteralExpr(%s, Base: %d)", i.decimalString(), i.Base)
+	switch i.Base {
+	case IntegerBase16:
+		return fmt.Sprintf("0x%X", i.UnsignedValue())
+	case IntegerBase8:
+		return fmt.Sprintf("0o%o", i.UnsignedValue())
+	case IntegerBase2:
+		return fmt.Sprintf("0b%b", i.UnsignedValue())
+	}
+	return i.decimalString()
 }
 
 func (i *IntegerLiteralExpr) GetType() types.Type {
@@ -71,7 +89,7 @@ func (f *FloatLiteralExpr) primitiveLiteralValueNode() {}
 func (f *FloatLiteralExpr) LiteralText() string        { return fmt.Sprintf("%g", f.Value) }
 
 func (f *FloatLiteralExpr) GetName() string {
-	return fmt.Sprintf("FloatLiteralExpr(%g)", f.Value) // NOTE: no trailing zeros
+	return f.LiteralText() // %g — no trailing zeros
 }
 
 func (f *FloatLiteralExpr) GetType() types.Type      { return types.PrimitiveType{Name: types.UntypedFloat} }
@@ -88,9 +106,10 @@ func (s *StringLiteralExpr) primitiveLiteralValueNode() {}
 func (s *StringLiteralExpr) LiteralText() string        { return fmt.Sprintf("%q", s.Value) }
 
 func (s *StringLiteralExpr) GetType() types.Type { return types.PrimitiveType{Name: types.String} }
-func (s *StringLiteralExpr) GetName() string {
-	return fmt.Sprintf("StringLiteralExpr(%s)", s.Value)
-}
+
+// Quoted, so a message naming a string cannot be misread as naming a binding — and so
+// an empty or space-only literal is visible at all.
+func (s *StringLiteralExpr) GetName() string { return s.LiteralText() }
 
 // InterpolatedStringExpr represents a double-quoted string with one or more
 // `${expr}` interpolations. Each segment is either a *StringLiteralExpr holding
@@ -101,8 +120,24 @@ type InterpolatedStringExpr struct {
 	Segments []Expression
 }
 
+// Rendered with its interpolations back in place: `"a${b}c"`. A literal chunk prints its
+// text, anything else prints as `${…}` around its own rendering.
 func (s *InterpolatedStringExpr) GetName() string {
-	return "InterpolatedStringExpr"
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, seg := range s.Segments {
+		if lit, ok := seg.(*StringLiteralExpr); ok {
+			b.WriteString(lit.Value)
+			continue
+		}
+		b.WriteString("${")
+		if seg != nil {
+			b.WriteString(seg.GetName())
+		}
+		b.WriteString("}")
+	}
+	b.WriteByte('"')
+	return b.String()
 }
 
 type BooleanLiteralExpr struct {
@@ -114,9 +149,7 @@ func (b *BooleanLiteralExpr) primitiveLiteralValueNode() {}
 func (b *BooleanLiteralExpr) LiteralText() string        { return fmt.Sprintf("%t", b.Value) }
 
 func (b *BooleanLiteralExpr) GetType() types.Type { return types.PrimitiveType{Name: types.Boolean} }
-func (b *BooleanLiteralExpr) GetName() string {
-	return fmt.Sprintf("BooleanLiteralExpr(%t)", b.Value)
-}
+func (b *BooleanLiteralExpr) GetName() string     { return b.LiteralText() }
 
 type CharacterLiteralExpr struct {
 	ExprBase
@@ -127,15 +160,17 @@ func (c *CharacterLiteralExpr) primitiveLiteralValueNode() {}
 func (c *CharacterLiteralExpr) LiteralText() string        { return fmt.Sprintf("%q", c.Value) }
 
 func (c *CharacterLiteralExpr) GetType() types.Type { return types.PrimitiveType{Name: types.Rune} }
-func (c *CharacterLiteralExpr) GetName() string {
-	return fmt.Sprintf("CharacterLiteralExpr(%c)", c.Value)
-}
+func (c *CharacterLiteralExpr) GetName() string     { return c.LiteralText() }
 
 type RegexLiteralExpr struct {
 	ExprBase
 	Pattern string
 }
 
+// `r"…"`, the spelling since 07/29. The old `r/…/` form is gone from the language, so a
+// message using it would send the reader to write something that no longer parses.
 func (r *RegexLiteralExpr) GetName() string {
-	return fmt.Sprintf("RegexLiteralExpr(%s)", r.Pattern)
+	// Verbatim, not %q: a regex is mostly backslashes, and Go quoting would double every
+	// one of them — `r"\\d+"` for what the author wrote as `r"\d+"`.
+	return fmt.Sprintf(`r"%s"`, r.Pattern)
 }

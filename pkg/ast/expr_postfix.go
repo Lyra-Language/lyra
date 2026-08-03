@@ -25,7 +25,7 @@ type MemberExpr struct {
 }
 
 func (m *MemberExpr) GetName() string {
-	return fmt.Sprintf("MemberExpr(%s.%s)", m.Object.GetName(), m.Property.GetName())
+	return fmt.Sprintf("%s.%s", m.Object.GetName(), m.Property.GetName())
 }
 
 type IndexExpr struct {
@@ -36,7 +36,7 @@ type IndexExpr struct {
 }
 
 func (i *IndexExpr) GetName() string {
-	return fmt.Sprintf("IndexExpr(%s[%s])", i.Object.GetName(), i.Index.GetName())
+	return fmt.Sprintf("%s[%s]", i.Object.GetName(), i.Index.GetName())
 }
 
 // TupleIndexExpr is positional tuple element access (`pair.0`, `pair.1`) — the
@@ -49,7 +49,7 @@ type TupleIndexExpr struct {
 }
 
 func (t *TupleIndexExpr) GetName() string {
-	return fmt.Sprintf("TupleIndexExpr(%s.%d)", t.Object.GetName(), t.Index)
+	return fmt.Sprintf("%s.%d", t.Object.GetName(), t.Index)
 }
 
 type TryExpr struct {
@@ -58,7 +58,7 @@ type TryExpr struct {
 }
 
 func (t *TryExpr) GetName() string {
-	return fmt.Sprintf("TryExpr(%s)", t.Operand.GetName())
+	return fmt.Sprintf("%s?", t.Operand.GetName())
 }
 
 // TraitMethodPathExpr is the fully-qualified `TraitName::method` call form —
@@ -74,5 +74,5 @@ type TraitMethodPathExpr struct {
 }
 
 func (t *TraitMethodPathExpr) GetName() string {
-	return fmt.Sprintf("TraitMethodPathExpr(%s::%s)", t.TraitName, t.Method.GetName())
+	return fmt.Sprintf("%s::%s", t.TraitName, t.Method.GetName())
 }

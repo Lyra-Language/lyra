@@ -10,16 +10,7 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
-- **[OPEN] A literal renders as its Go struct in diagnostics.** `IntegerLiteralExpr.GetName()`
-  returns `IntegerLiteralExpr(0, Base: 10)`, and `GetName` is what diagnostics interpolate,
-  so a real message reads `expected array pattern, got IntegerLiteralExpr(0, Base: 10)..=
-  IntegerLiteralExpr(10, Base: 10)`. Found 08/01 while fixing `RangePattern.GetName`'s
-  operator position (that half is closed — see COMPLETED.md). It reaches no golden file,
-  which is why neither half was noticed. The fix is a source-form rendering for literal
-  expressions; check every `GetName` on an `ast.Expression` at the same time, since the
-  literals are unlikely to be the only ones.
-
-Otherwise none open. The typechecker's infinite recursion on a definition cycle closed 07/31 — an
+None open. The typechecker's infinite recursion on a definition cycle closed 07/31 — an
 in-progress guard in `inferExprType`, which is also what stopped `lyra-lsp` dying
 mid-keystroke (see COMPLETED.md).
 

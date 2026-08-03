@@ -3,6 +3,7 @@ package ast
 import (
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // Pattern is the interface for all pattern AST nodes
@@ -46,8 +47,19 @@ type LiteralPattern struct {
 	Value any
 }
 
-func (p *LiteralPattern) patternNode()    {}
-func (p *LiteralPattern) GetName() string { return fmt.Sprintf("%v", p.Value) }
+func (p *LiteralPattern) patternNode() {}
+
+// GetName renders the literal in source form. Value is `any`, so a plain %v would print
+// whatever Go makes of it — for an expression that is the struct, which is how
+// `IntegerLiteralExpr(0, Base: 10)` reached users through the range pattern below.
+func (p *LiteralPattern) GetName() string {
+	if node, ok := p.Value.(AstNode); ok {
+		if named, ok := node.(Named); ok {
+			return named.GetName()
+		}
+	}
+	return fmt.Sprintf("%v", p.Value)
+}
 
 type TuplePattern struct {
 	PatternBase
@@ -55,7 +67,7 @@ type TuplePattern struct {
 }
 
 func (p *TuplePattern) patternNode()    {}
-func (p *TuplePattern) GetName() string { return fmt.Sprintf("(%v)", p.Elements) }
+func (p *TuplePattern) GetName() string { return "(" + patternNames(p.Elements) + ")" }
 
 type ArrayPattern struct {
 	PatternBase
@@ -63,7 +75,7 @@ type ArrayPattern struct {
 }
 
 func (p *ArrayPattern) patternNode()    {}
-func (p *ArrayPattern) GetName() string { return fmt.Sprintf("[%v]", p.Elements) }
+func (p *ArrayPattern) GetName() string { return "[" + patternNames(p.Elements) + "]" }
 
 // StructPattern destructures a struct value by field. Name is the struct type it
 // names ("" for the anonymous/brace-only form `{ x, y }`); the named form
@@ -159,8 +171,11 @@ type RegexPattern struct {
 	Pattern string
 }
 
-func (p *RegexPattern) patternNode()    {}
-func (p *RegexPattern) GetName() string { return fmt.Sprintf("r/%s/", p.Pattern) }
+func (p *RegexPattern) patternNode() {}
+
+// `r"…"` — the spelling since 07/29. `r/…/` no longer parses, so a message using it would
+// send the reader to write something the grammar rejects.
+func (p *RegexPattern) GetName() string { return fmt.Sprintf(`r"%s"`, p.Pattern) }
 
 // BindingPattern binds a name to the whole matched value while also matching
 // an inner pattern. Written `name @ pattern` — equivalent to Rust's @ bindings
@@ -174,3 +189,17 @@ type BindingPattern struct {
 
 func (p *BindingPattern) patternNode()    {}
 func (p *BindingPattern) GetName() string { return fmt.Sprintf("%s @ %s", p.Name, p.Pattern.GetName()) }
+
+// patternNames renders a pattern list as source: `a, b, c`. Formatting the slice with %v
+// prints Go's view of it — a list of pointers — which is never what a diagnostic wants.
+func patternNames(elements []Pattern) string {
+	parts := make([]string, 0, len(elements))
+	for _, e := range elements {
+		if e == nil {
+			parts = append(parts, "_")
+			continue
+		}
+		parts = append(parts, e.GetName())
+	}
+	return strings.Join(parts, ", ")
+}

@@ -10,6 +10,38 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**Diagnostics render literals as source, not as Go structs.** A real message read
+`expected array pattern, got IntegerLiteralExpr(0, Base: 10)..= IntegerLiteralExpr(10,
+Base: 10)`; it now reads `expected array pattern, got 0..=10`.
+
+`GetName` on an expression is a **source rendering** — parents compose them, so a match arm
+builds `match <pattern> { <body> }` out of its children's — and the literals were the family
+that returned their Go type and fields instead. Their parents dutifully composed *that*,
+which is how a `RangePattern` came to hand someone the compiler's internals about their own
+program. The fix is small; the interesting part is why it lasted.
+
+**It reaches no golden file.** Every other rendering in the compiler is pinned by the
+collector's golden tests, so drift is caught the next time anyone regenerates. `GetName`
+is interpolated into diagnostics and nowhere else, which means the only reader who ever
+sees it is a user, and the only reviewer is whoever happens to read a failing message
+closely. `RangePattern` printing `0..9=` for `0..=9` survived the same way (fixed 08/01).
+There is now a test that no expression rendering contains `Expr` or `Pattern` — neither
+substring can occur in the Lyra source these are meant to produce, so a node added later
+fails there rather than in someone's terminal.
+
+Fixed across the family rather than at the reported site, per the note the bug carried:
+the literals, the postfix forms (`xs[0]`, `xs.len`, `xs.1`, `xs?`, `Show::show`), array
+repeat (`[0; 3]`), and the pattern lists — a tuple or array pattern was formatting its
+element slice with `%v`, printing Go's list of pointers.
+
+Two things corrected in passing, both stale rather than wrong-by-design: a regex rendered
+as `r/…/`, the spelling that stopped parsing on 07/29, and it rendered through `%q`, which
+doubles every backslash — `r"\\d+"` for what the author wrote as `r"\d+"`. A regex is
+mostly backslashes, so that one is worth the verbatim form even though `%q` is right for
+strings.
+
+
+### 08/03/26
 **Trait and impl methods may be separated by newlines.** Statements gained a terminator on
 07/31 and member lists did not, so `trait Ops { a: … ⏎ b: … }` failed — and failed in the
 expensive way: "missing }" pointed at the end of the **first** signature, several lines above

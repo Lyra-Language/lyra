@@ -48,7 +48,10 @@ let main = () -> u8 => {
   u8(xs[0](3))
 }
 `, false)
-	assertErrorsAre(t, res, "cannot call IndexExpr(xs[IntegerLiteralExpr(0, Base: 10)]) expression")
+	// The subject is rendered as source. It read `IndexExpr(xs[IntegerLiteralExpr(0,
+	// Base: 10)])` until 08/03 — the compiler's own type names handed to someone reading
+	// their program.
+	assertErrorsAre(t, res, "cannot call xs[0] expression")
 }
 
 // A nested lambda sees the enclosing lambda's parameters — it is lexically
