@@ -237,3 +237,66 @@ func TestAlloc_TupleElementFlavorMismatch_Error(t *testing.T) {
 	assertErrorsAre(t, res,
 		"p: cannot store a 'stack' value where a 'shared' value is expected; converting allocation is an explicit operation")
 }
+
+// TestAlloc_ArrayElementFlavorMismatch_Error is the array counterpart of the tuple
+// case above, and until 08/03 it could not be written at all: `array_type`'s element
+// was `_non_allocated_type`, so `[2]shared Node` was a parse error. The *checking*
+// was there the whole time — `firstAllocationMismatch` recurses into array elements
+// and its comment cites "a `stack` element assigned into a `[N]shared` slot" as the
+// case it exists for — so this closes the gap between a rule and the syntax needed
+// to reach it.
+func TestAlloc_ArrayElementFlavorMismatch_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node {
+			value: i64,
+		}
+		let src: [2]stack Node = [Node { value: 1 }, Node { value: 2 }]
+		let xs: [2]shared Node = src
+	`, false)
+	assertErrorsAre(t, res,
+		"xs: cannot store a 'stack' value where a 'shared' value is expected; converting allocation is an explicit operation")
+}
+
+// The dynamic-array counterpart: the element flavor is checked through `[]T` too,
+// not only the fixed-size form.
+func TestAlloc_DynamicArrayElementFlavorMismatch_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Node {
+			value: i64,
+		}
+		let src: []stack Node = [Node { value: 1 }]
+		let xs: []shared Node = src
+	`, false)
+	assertErrorsAre(t, res,
+		"xs: cannot store a 'stack' value where a 'shared' value is expected; converting allocation is an explicit operation")
+}
+
+// An array element carrying a modifier resolves and checks like any other type: a
+// matching flavor is accepted, and `weak` is a legal element type. `[]shared Node`
+// is the shape the change was made for — a tree's children — and `[]weak T` the
+// observer-list shape that goes with it.
+func TestAlloc_ArrayElementModifier_Ok(t *testing.T) {
+	for _, source := range []string{
+		// Matching flavors, fixed size.
+		`struct Node { value: i64 }
+let a: shared Node = Node { value: 1 }
+let xs: [1]shared Node = [a]`,
+		// Dynamic array of shared elements — the motivating shape.
+		`struct Node { value: i64, kids: []shared Node }
+let leaf: shared Node = Node { value: 1, kids: [] }
+let root: shared Node = Node { value: 2, kids: [leaf] }`,
+		// An array of weak references.
+		`struct Node { value: i64 }
+let a: shared Node = Node { value: 1 }
+let xs: [1]weak Node = [a.weak()]`,
+		// Nesting composes in both directions: a modifier inside an array of arrays,
+		// and an array-of-weak inside an outer allocation modifier.
+		`struct Node { value: i64 }
+let xs: [][]shared Node = [[]]
+let a: shared Node = Node { value: 1 }
+let ys: stack [1]weak Node = [a.weak()]`,
+	} {
+		res := parseCollectAndCheck(t, source, false)
+		assertNoErrors(t, res)
+	}
+}

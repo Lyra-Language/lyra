@@ -10,6 +10,38 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**An array *element* may carry an allocation or `weak` modifier** — `[]shared Node`,
+`[3]weak Observer`, `[16]stack Vec3`. Measured while closing the `Maybe<weak T>` item below,
+which is where the gap surfaced: the two look like one problem and are not.
+
+**A grammar change only; this repo needed no code at all.** `array_type`'s `element_type` was
+`_non_allocated_type`, so a modifier had no way in — but every pass downstream was already
+built for one. `firstAllocationMismatch` (`assignable.go`) recurses into array elements and
+its comment names the case it exists for: "a `stack` element assigned into a `[N]shared`
+slot". That rule shipped, and the syntax needed to reach it did not, so it sat unreachable
+and untested until now. The backend was the same story — an element flavor flows through the
+existing layout and ownership paths, and a `shared` element is pointer-sized — so `lyra-E018`
+fires on `[2]stack Node` → `[2]shared Node`, and `[]shared Node`, `[N]weak T`, `for-in` over
+managed elements, and the whole tree shape all worked on the first build.
+
+*Why it mattered:* `kids: []shared Node` is the obvious spelling for a tree's children, so
+the natural shape for the very object graph `weak` exists to support was unwritable. The
+cycle work below had to use `kid: Maybe<shared Node>` for exactly this reason.
+
+*The rule that shaped it:* exactly **one** modifier deep. `_element_type` is a `choice` of
+`_non_allocated_type | allocated_type | weak_type` whose operand stays `_non_allocated_type`,
+so `[]shared shared Node` is still an error, and the *other two* users of that rule
+(`weak_type`'s inner, `allocated_type`'s type) are deliberately untouched — widening them
+would make `shared weak T` and `weak shared T` writable, and `weak T` already means
+"non-owning reference to a `shared T`". Two `:error` corpus tests pin that.
+
+Cost: 8,237 → 8,240 states (+3, +0.04%), `parser.c` +5 KB — cheap because the element sits
+after a closing `]`, leaving no prefix for the automaton to track. Coverage: six corpus tests
+in `tree-sitter-lyra`, `TestAlloc_ArrayElement*` / `TestAlloc_DynamicArrayElement*` /
+`TestAlloc_ArrayElementModifier_Ok` here, and five `TestExec_ArrayOfManagedElements` cases
+ending in the full shape — `shared` children, a `weak` parent edge — run under ASan and on
+Linux.
+
 **A `weak` field is constructible — `Maybe<weak T>` — and the two things blocking it had
 nothing to do with `weak`.** A cycle back-edge is the reason `weak` exists (refcounting
 leaks cycles and there is no collector, ALLOCATION.md), and it could not be written: a

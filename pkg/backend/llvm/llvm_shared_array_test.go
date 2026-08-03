@@ -159,3 +159,105 @@ func TestExec_SharedArray_ManagedElementsASan(t *testing.T) {
 		t.Errorf("expected per-type drop glue for the managed-element array:\n%s", ir)
 	}
 }
+
+// An array whose *elements* carry the modifier — `[N]shared T`, `[]shared T`,
+// `[N]weak T` — as opposed to `shared [N]T`, which boxes the array itself. The two
+// read alike and mean different things: one array of N boxes, versus one box holding
+// N inline values.
+//
+// This syntax did not exist until 08/03 (`array_type`'s element was
+// `_non_allocated_type`), which is why the shape a tree actually wants —
+// `kids: []shared Node` — had no spelling. The backend needed no change for it: an
+// element flavor flows through the same layout and ownership paths as any other, and
+// a `shared` element is pointer-sized, so these tests are here to hold that.
+func TestExec_ArrayOfManagedElements(t *testing.T) {
+	t.Parallel()
+	clang := lookClang(t)
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			// Fixed-size array of boxes; each element is an independent allocation.
+			"fixed-size array of shared elements",
+			`struct Node { n: i64 }
+			 let main = () -> u8 => {
+			   let a: shared Node = Node { n: 3 }
+			   let b: shared Node = Node { n: 4 }
+			   let xs: [2]shared Node = [a, b]
+			   u8(xs[0].n + xs[1].n)
+			 }`,
+			7,
+		},
+		{
+			// The dynamic form, which is the one a tree's children want.
+			"dynamic array of shared elements",
+			`struct Node { n: i64 }
+			 let main = () -> u8 => {
+			   let a: shared Node = Node { n: 5 }
+			   let xs: []shared Node = [a]
+			   u8(xs[0].n)
+			 }`,
+			5,
+		},
+		{
+			// for-in over managed elements: each iteration borrows an element rather
+			// than taking a reference the loop then has to give back.
+			"for-in over an array of shared elements",
+			`struct Node { n: i64 }
+			 let main = () -> u8 => {
+			   let a: shared Node = Node { n: 1 }
+			   let b: shared Node = Node { n: 2 }
+			   let c: shared Node = Node { n: 4 }
+			   let kids: []shared Node = [a, b, c]
+			   var sum = 0
+			   for k in kids { sum = sum + k.n }
+			   u8(sum)
+			 }`,
+			7,
+		},
+		{
+			// An array of weak references — the observer-list shape. Each element is
+			// upgraded independently, and the referents are still alive here.
+			"array of weak elements, upgraded",
+			`struct Node { n: i64 }
+			 let main = () -> u8 => {
+			   let a: shared Node = Node { n: 6 }
+			   let xs: [1]weak Node = [a.weak()]
+			   var out = 0
+			   if let p = xs[0] { out = p.n }
+			   u8(out)
+			 }`,
+			6,
+		},
+		{
+			// Both element modifiers in one type, which is the whole shape the two
+			// 08/03 changes were for: children owned `shared`, parent held `weak` so
+			// the cycle does not leak.
+			"a tree: shared children and a weak parent edge",
+			`data Maybe<t> = None | Some(t)
+			 struct Node { n: i64, parent: Maybe<weak Node>, kids: []shared Node }
+			 let main = () -> u8 => {
+			   let a: shared Node = Node { n: 1, parent: None, kids: [] }
+			   let b: shared Node = Node { n: 2, parent: None, kids: [] }
+			   let root: shared Node = Node { n: 4, parent: None, kids: [a, b] }
+			   var sum = 0
+			   for k in root.kids { sum = sum + k.n }
+			   u8(sum + root.n)
+			 }`,
+			7,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("%s: exited %d; want %d", c.name, got, c.want)
+			}
+			if got := buildAndRunASan(t, clang, c.src); got != c.want {
+				t.Errorf("%s: ASan run exited %d; want %d", c.name, got, c.want)
+			}
+		})
+	}
+}

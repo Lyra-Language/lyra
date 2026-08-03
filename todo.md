@@ -419,19 +419,11 @@ interior assignment, and deep retain-on-copy.
   through its own box — errors loudly; dynamic-array **growth** (no grow op exists in the
   language yet); construction-site `shared T {…}` syntax; implicit-alloc / escape analysis;
   atomic refcounts (deferred to the job system).
-- **[OPEN] An array *element* cannot carry an allocation or `weak` modifier.** Measured
-  08/03 while closing the item below, since the two look like one gap and are not:
-  `[]shared Node`, `[3]shared Node` and `[]weak Node` are all parse errors, and so is
-  `Maybe<[]shared Node>` (the inner array is what fails), while `Maybe<weak Node>` and
-  `shared []Node` are fine. The cause is one rule: `array_type`'s `element_type` is
-  `_non_allocated_type`, which deliberately excludes `allocated_type` and `weak_type` to
-  stop the recursion in array types — so the exclusion is doing a job and cannot just be
-  widened to `$.type` without re-checking what that costs in parser states.
-  *Why it matters:* `[]shared Node` is the obvious spelling for a tree's children, so the
-  natural shape for the very object graph `weak` exists to support is unwritable; the 08/03
-  cycle test had to use `kid: Maybe<shared Node>` instead. This is a `tree-sitter-lyra`
-  change, so push the grammar first, then `lyra` (and re-measure `parser.c`: this region is
-  the one that produced the 62,663-state incident).
+- **[DONE 08/03] An array element carries an allocation or `weak` modifier** —
+  `[]shared Node`, `[3]weak Observer`, `[16]stack Vec3`. A `tree-sitter-lyra` change only
+  (`_element_type`); **nothing in this repo needed changing**, because the checking had been
+  written for a syntax that did not exist — `firstAllocationMismatch` already recursed into
+  array elements. See COMPLETED.md.
 - **[DONE 08/03] A `weak` field is constructible** — `Maybe<weak T>`, so a cycle back-edge
   is optional and "no back-edge" stays distinct from "the referent is gone". **The premise
   this item was filed under was wrong twice over**, which is the part worth keeping: the
