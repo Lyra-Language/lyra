@@ -10,12 +10,13 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
-- **[OPEN] A trait or impl with several methods needs commas between them.** A newline does
-  not separate two method signatures: `trait C { a: (Self) -> i64 \n b: (Self) -> i64 }`
-  fails with "missing }" pointing at the *first* signature's end, then cascades. With commas
-  it parses. Statements gained a terminator on 07/31 and this list did not, so the two read
-  inconsistently — and the diagnostic points at the wrong line, which is what makes it cost
-  minutes rather than seconds. Found 08/03 while writing `own`-receiver tests.
+- **[OPEN] A struct declaration's fields need commas between them.** `struct Node { n: i64 ⏎
+  tag: string }` fails with "missing }" pointing at the *first* field, the same misdirecting
+  error trait methods used to give. Trait and impl method lists took the statement terminator
+  on 08/03 (`memberList`, `include/helpers.js`); `struct_type_body` and
+  `anonymous_struct_type` are the remaining users of the old comma-only shape and want one
+  word each. Struct *literals* are a separate question — their field list sits inside the
+  literal-vs-block GLR conflict, so it deserves its own thought rather than the same reflex.
 
 
 - **[OPEN] A literal renders as its Go struct in diagnostics.** `IntegerLiteralExpr.GetName()`

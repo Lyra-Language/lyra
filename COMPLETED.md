@@ -10,6 +10,33 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**Trait and impl methods may be separated by newlines.** Statements gained a terminator on
+07/31 and member lists did not, so `trait Ops { a: … ⏎ b: … }` failed — and failed in the
+expensive way: "missing }" pointed at the end of the **first** signature, several lines above
+anything a reader would suspect, then cascaded through the file. A misdirecting parse error
+costs minutes rather than seconds, which is the whole reason this was worth fixing rather
+than documenting.
+
+`memberList` (`include/helpers.js`) is the shared shape, and two of its details are
+decisions rather than mechanics. Its separator is `_statement_separator`, not a bare
+`_newline`, so `;` works here too and the language keeps one answer to "what ends a thing on
+its own line". And it keeps `commaSep1`'s structure rather than `statementList`'s, because
+that is what makes the list non-empty — `trait C {}` stays a syntax error, preserved on
+purpose rather than by accident.
+
+A signature wrapped across lines is unaffected, and that is the property the design rests
+on: the scanner only runs where tree-sitter marks the terminator valid, so a newline inside
+an unfinished parameter list never reaches it. Verified rather than assumed.
+
+Cost: 8,208 → 8,224 states (+0.2%), `parser.c` +21 KB.
+
+**Struct declarations were left alone**, though they have the identical defect and are a
+one-word change each. They were not what this set out to fix; they are in todo.md instead.
+Struct *literals* are a genuinely separate question — their field list sits inside the
+literal-vs-block conflict that the postfix-head change touched earlier the same day.
+
+
+### 08/03/26
 **A struct literal is a postfix head.** `Node { n: 7 }.n`, `Node { n: 7 }.a()` and
 `Grid { cells: […] }.cells[0]` parse; before this *no* postfix attached to a struct literal
 — not a method call, not plain field access, not an index — while every other
