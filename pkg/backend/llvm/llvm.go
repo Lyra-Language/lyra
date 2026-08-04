@@ -179,6 +179,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		locals:             map[string]value.Value{},
 		funcs:              map[string]*ir.Func{},
 		funcParams:         map[string][]ast.Parameter{},
+		overloads:          map[*ast.LambdaExpr]emitted{},
 		byRefParams:        map[value.Value]bool{},
 		consts:             map[string]*ast.VarDeclStmt{},
 		structTypes:        map[string]*lltypes.StructType{},
@@ -261,6 +262,7 @@ type lowerer struct {
 	res                 *driver.Result                 // gives you TypeTable, SymbolTable, MethodTable, …
 	funcs               map[string]*ir.Func            // name → its function IR (all declared before any body)
 	funcParams          map[string][]ast.Parameter     // name → its declared parameters (call sites need the `mut` by-ref modes)
+	overloads           map[*ast.LambdaExpr]emitted    // receiver-keyed overloads, by declaration (see overloads.go)
 	consts              map[string]*ast.VarDeclStmt    // top-level `const` name → its declaration (its value is inlined at each use)
 	traitMethods        map[string]*ir.Func            // emitted trait-impl methods, keyed by mangled symbol
 	pendingTraitMethods []pendingTraitMethod           // declared, body not yet lowered (see traits.go)

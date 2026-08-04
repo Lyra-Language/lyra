@@ -1,6 +1,7 @@
 package modules_test
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -251,5 +252,61 @@ func TestPrelude_OptOut(t *testing.T) {
 	res := driver.AnalyzeUnits(units)
 	if len(res.Errors()) == 0 {
 		t.Error("expected prelude names to be unavailable when the prelude is disabled")
+	}
+}
+
+// The **shipped** standard library, analyzed as a program compiles it.
+//
+// Every other test here builds a fixture prelude, which is the right call for pinning a
+// resolution rule but leaves `std/prelude.lyra` itself unexercised: it could stop
+// compiling and the whole suite would stay green, with the breakage surfacing only when
+// someone ran `lyrac` on a real program. The prelude is ordinary Lyra reached through the
+// ordinary search roots, so checking it costs one resolve.
+//
+// The root is the directory *containing* `std/`, which is the project root two levels up
+// — the same rule stdRoot applies to the executable's own directory.
+func TestPrelude_ShippedStdlibAnalyzes(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(root, "std", "prelude.lyra")
+	if _, err := os.Stat(entry); err != nil {
+		t.Skipf("no shipped prelude at %s: %v", entry, err)
+	}
+	units, diags := modules.Resolve(entry, []string{root}, modules.Options{Prelude: modules.PreludeModule})
+	if len(diags) != 0 {
+		t.Fatalf("resolving the shipped prelude failed: %v", diags)
+	}
+	if res := driver.AnalyzeUnits(units); res.HasErrors() {
+		t.Fatalf("the shipped prelude does not analyze cleanly: %v", res.Errors())
+	}
+}
+
+// The two names the prelude declares *twice* — once for Maybe, once for Result — resolve
+// to the member the receiver picks. This is the feature's reason for existing, so it is
+// pinned against the real file rather than a fixture.
+func TestPrelude_ReceiverOverloadsResolve(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "std", "prelude.lyra")); err != nil {
+		t.Skipf("no shipped prelude: %v", err)
+	}
+	app := buildTree(t, map[string]string{"app.lyra": `
+let main = () -> u8 => {
+  let m: Maybe<i64> = Some 7
+  let r: Result<i64, string> = Ok 9
+  u8(m.unwrap_or(0) + r.unwrap_or(0) + r.unwrap_or_else(() -> i64 => 1))
+}
+`})
+	units, diags := modules.Resolve(filepath.Join(app, "app.lyra"), []string{app, root},
+		modules.Options{Prelude: modules.PreludeModule})
+	if len(diags) != 0 {
+		t.Fatalf("resolve failed: %v", diags)
+	}
+	if res := driver.AnalyzeUnits(units); res.HasErrors() {
+		t.Fatalf("both overloads of unwrap_or should resolve on their own receiver: %v", res.Errors())
 	}
 }

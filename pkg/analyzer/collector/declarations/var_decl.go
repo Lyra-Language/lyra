@@ -97,6 +97,14 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 	}
 
 	if existing, alreadyDeclared := ctx.LookupCurrentScope(name); alreadyDeclared {
+		// Receiver-keyed overloading, asked first because the branch below would
+		// otherwise consume the case: two module-level `let`s of one name look exactly
+		// like sequential rebinding, and rebinding would keep the second and drop the
+		// first with nothing reported. A refusal falls through to the existing paths,
+		// so nothing that was legal before changes meaning.
+		if accepted, _ := ctx.DeclareOverload(astNode); accepted {
+			return astNode
+		}
 		if v, ok := existing.(*ast.VarDeclStmt); ok && v.BindingKind != ast.BindingConst {
 			// Same-scope sequential rebinding (e.g. `let x = parse(x)`) is
 			// idiomatic and safe in ML-family languages, so it is allowed for

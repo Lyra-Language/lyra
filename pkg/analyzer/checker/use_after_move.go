@@ -415,6 +415,12 @@ func (c *useAfterMove) reportIfMoved(st moveState, id *ast.IdentifierExpr) {
 // unrecognized call shape can never produce a false positive. Mirrors the
 // ownership pass's resolution, which is what actually decides the retain.
 func (c *useAfterMove) resolveCallee(e *ast.FunctionCallExpr) *ast.LambdaExpr {
+	// The overload the typechecker picked, for the reason the ownership pass gives: a
+	// name shared by several declarations does not resolve to one, and this must see the
+	// same function the retain decision is made against.
+	if fn, ok := c.tt.Callee(e); ok {
+		return fn
+	}
 	id, ok := e.Function.(*ast.IdentifierExpr)
 	if !ok || c.symTable == nil {
 		return nil

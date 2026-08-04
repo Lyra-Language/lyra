@@ -7,7 +7,7 @@ module std.prelude
 // any other, and it compiles standalone (it does not import itself). Nothing here is
 // special-cased in the compiler, which is what lets it be read, tested and replaced.
 //
-// Three constraints worth knowing before adding to it:
+// Four constraints worth knowing before adding to it:
 //
 //   - **Exports need `pub`.** A declaration without it is private to this module, and
 //     a reference from elsewhere is lyra-E028.
@@ -31,6 +31,14 @@ module std.prelude
 //     body is not specialized per instantiation ("match on Maybe<t> not implemented yet").
 //     A non-generic impl method does lower; this file has no use for one. The note that
 //     used to sit here said no method lowered at all, which stopped being true on 07/30.
+//
+//   - **A name may be declared twice, if the two take different receivers** — receiver-keyed
+//     overloading (08/03). Both declarations must take a `self` parameter and their receiver
+//     types must have different *heads*: `Maybe<t>` beside `Result<t,e>` is fine, a second
+//     `Maybe<…>` is refused where it is written. That is what lets `unwrap_or` below mean
+//     both types rather than one of them getting a name the other did not need. Everything
+//     else about a redeclaration is unchanged — two functions without receivers are the
+//     error they always were.
 //
 // A name declared here can be shadowed by user code: that warns (lyra-W012) and the
 // user's declaration wins, so adding a name here cannot break a program that never
@@ -98,6 +106,26 @@ pub let is_ok<t,e> = pure noalloc (self: Result<t, e>) -> bool => match self {
 pub let is_err<t,e> = pure noalloc (self: Result<t, e>) -> bool => match self {
   Ok _ => false,
   Err _ => true,
+}
+
+// `unwrap_or` and `unwrap_or_else` are declared **twice** in this module, once for each
+// of the two types — receiver-keyed overloading (08/03). A name may be redeclared here
+// when every declaration takes a `self` receiver and their receivers have different type
+// heads, which is what lets `Maybe` and `Result` share a vocabulary instead of the second
+// one getting an asymmetric name (`unwrap_or_result`) or being exiled to another module.
+//
+// The rule is the receiver's *head*, not its full type: `Maybe<t>` against `Result<t,e>`
+// is two heads and is allowed, `Maybe<i64>` against `Maybe<string>` is one head twice and
+// is refused at the declaration. That keeps a call site from ever having to rank two
+// candidates that both match.
+pub let unwrap_or<t,e> = pure noalloc (self: Result<t,e>, fallback: t) -> t => match self {
+  Ok v => v,
+  Err _ => fallback,
+}
+
+pub let unwrap_or_else<t,e> = pure noalloc (self: Result<t,e>, f: () -> t) -> t => match self {
+  Ok v => v,
+  Err _ => f(),
 }
 
 pub let ok<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<t> => match self {

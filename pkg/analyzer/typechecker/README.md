@@ -706,3 +706,49 @@ Two rules that are decisions rather than mechanics:
 
 `UFCSCallable` exports the predicate for the language server, so completion after `.` offers
 exactly the calls that will compile.
+
+## Receiver-keyed overloading (`typechecker_overload.go`)
+
+A name may be declared **more than once in one module** when every declaration takes a `self`
+receiver and their receivers have different type *heads* — the type constructor with its
+arguments dropped (`types.HeadName`). So the prelude declares `unwrap_or` twice, once for
+`Maybe<t>` and once for `Result<t,e>`, and the two types get the same vocabulary instead of
+the second one being given a name it did not need.
+
+This is the declaration-side half of what UFCS did for call sites. UFCS already dispatched
+`m.map(f)` on the receiver's type; what it could not do is let two `map`s be *written* in one
+module, since a second `let map` was a redeclaration. That is why the standard library split
+`maybe.map` from `result.map` into separate modules — a split this removes the need for.
+
+**Resolution happens in one place, because the desugar already normalized the two spellings.**
+`m.f(x)` becomes `f(m, x)` before anything picks a member, so the receiver is argument 0
+whichever way the call was written, and `receiverAccepts` — `unifyGenericTarget` again, the
+predicate trait dispatch and UFCS both use — is asked from exactly two sites: the bare-call
+path (`inferOverloadedCall`) and the UFCS rung. The rung has to resolve *before* desugaring,
+since it decides whether `m.f` is a method call at all; asking an arbitrary member would
+answer "no method" for a receiver some other member accepts.
+
+Three consequences worth knowing:
+
+- **Overlap is refused where it is written, not at each call.** Two members with one head
+  could both match, and ranking them needs a specificity ordering the language does not have.
+  `ast.OverloadableWith` refuses the pair once, with a message naming the shared receiver,
+  rather than every call site reporting an ambiguity the author cannot resolve. A bare type
+  variable (`self: t`) has no head at all — it accepts everything, so it can never be one
+  candidate among several.
+- **An overloaded name is absent from `SymbolTable.Functions`.** That map answers "which
+  declaration does this name mean", and for a set the honest answer is "not decidable from a
+  name". Leaving a member under the bare key would make every pass reading it silently pick
+  one; leaving it empty makes them report the callee unresolved and take their conservative
+  path. The set lives in `OverloadSets`, and a scope holds an `ast.OverloadSet` in place of
+  the single declaration — so a pass that type-asserts to `*VarDeclStmt` fails rather than
+  taking a member it had no business choosing.
+- **The resolved callee is published** (`typetable.TypeTable.SetCallee`). Ownership, the
+  use-after-move check, the purity pass and the backend all resolved a callee by name in
+  order to read its parameter modes; that question has no answer here, so the pass that did
+  resolve it records the answer, exactly as `MethodTable` does for trait dispatch. Each
+  consumer reads it first and falls back to name lookup, which leaves every non-overloaded
+  call resolving as it did.
+
+A name used as a *value* rather than called (`let f = unwrap_or`) is an error: the members
+have different signatures, so there is no one type to hand back.

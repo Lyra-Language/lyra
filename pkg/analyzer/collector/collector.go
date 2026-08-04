@@ -118,7 +118,11 @@ func (c *Collector) recordModuleBindings(modulePath string, stmts []ast.AstNode)
 		case *ast.VarDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
 			c.defineInModule(moduleScope, s)
-			c.exportToGlobal(modulePath, s, s.IsPublic)
+			// An overloaded name exports as its *set*, not as the member being walked:
+			// the set is the one thing the name means to another module, and exporting
+			// members individually would put the first one in the global scope and
+			// report the second as a clash with it.
+			c.exportToGlobal(modulePath, exportedSymbol(moduleScope, s), s.IsPublic)
 		}
 	}
 }
@@ -150,6 +154,12 @@ func (c *Collector) exportToGlobal(modulePath string, decl ast.Named, isPublic b
 		_ = c.table.PreludeScope.Define(decl)
 		return
 	}
+	if existing, bound := c.table.GlobalScope.LookupLocal(decl.GetName()); bound && existing == decl {
+		// Already exported. Reachable only for an overload set, which arrives here once
+		// per member — the same set object each time, so this is not the name clash the
+		// error below is for.
+		return
+	}
 	if err := c.table.GlobalScope.Define(decl); err != nil {
 		// Two modules exporting the same name: a bare reference could mean either, so
 		// it is a genuine clash rather than something privacy can resolve.
@@ -159,6 +169,22 @@ func (c *Collector) exportToGlobal(modulePath string, decl ast.Named, isPublic b
 			Message:  err.Error(),
 		})
 	}
+}
+
+// exportedSymbol is what a top-level binding publishes under its name: the overload set
+// the module scope built for it, when the name is overloaded, and otherwise the
+// declaration itself. The module scope is the authority on which of the two it is — the
+// merge happened there, during the walk.
+func exportedSymbol(moduleScope *symbols.Scope, decl *ast.VarDeclStmt) ast.Named {
+	if moduleScope == nil {
+		return decl
+	}
+	if bound, ok := moduleScope.LookupLocal(decl.Name); ok {
+		if set, overloaded := bound.(*ast.OverloadSet); overloaded {
+			return set
+		}
+	}
+	return decl
 }
 
 // defineInModule adds a top-level declaration to its module's own scope, alongside the
@@ -529,6 +555,22 @@ func (c *Collector) RegisterVariable(stmt *ast.VarDeclStmt) error {
 // declaration.
 func (c *Collector) RedefineVariable(stmt *ast.VarDeclStmt) {
 	c.table.RedefineVariable(stmt)
+}
+
+// DeclareOverload offers stmt to the same-named declaration already in scope as a
+// receiver-keyed overload.
+//
+// **Only at module level.** Overloading is a property of a module's public surface, and
+// a set is resolved by looking one up in a module scope; a `let` inside a function body
+// that happens to reuse a name is sequential rebinding, which is a different feature with
+// a different meaning, and admitting overloads there would change what the second `let`
+// means based on whether the first took a `self` parameter.
+func (c *Collector) DeclareOverload(stmt *ast.VarDeclStmt) (bool, string) {
+	scope := c.table.CurrentScope
+	if scope == nil || scope.Kind != symbols.ScopeModule {
+		return false, ""
+	}
+	return scope.DefineOverload(stmt)
 }
 
 func (c *Collector) RegisterDestructuredName(name string, decl *ast.DestructuringDeclStmt) {

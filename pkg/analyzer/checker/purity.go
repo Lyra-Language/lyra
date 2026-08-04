@@ -83,6 +83,7 @@ func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable
 		boundGroups:     boundGroups,
 		traitDecls:      traitDecls,
 		frames:          frames,
+		typeTable:       typeTable,
 	}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -421,6 +422,29 @@ type purityChecker struct {
 	// frames builds a lambda's flat scope-bindings frame from the collector's
 	// Scope tree (see scopeFrames), replacing the earlier AST re-walk.
 	frames *scopeFrames
+	// typeTable carries the resolved callee of an overloaded call (see calleeFor).
+	// Nil-safe, like methodTable, so a caller that has not run the typechecker
+	// simply resolves callees by name as this pass always did.
+	typeTable *typetable.TypeTable
+}
+
+// calleeFor resolves the function a *specific call* invokes.
+//
+// A name is no longer enough: with receiver-keyed overloading several declarations share
+// one, and which is meant depends on the receiver's type. The typechecker recorded the
+// answer for exactly those calls, so this reads it first and falls back to the by-name
+// walk for every other call — which is every call that was resolvable before.
+//
+// Getting this wrong is silent rather than loud, which is why it is worth a named
+// function instead of an inline check at each site: an overloaded call resolved by name
+// alone would be scored against whichever member the capture frame happened to hold, so
+// a `pure` function could call an impure overload with nothing reported, and a declared
+// callback bound would be checked against the wrong member's parameter list.
+func calleeFor(tt *typetable.TypeTable, call *ast.FunctionCallExpr, capture []scopeBindings, name string) (*ast.LambdaExpr, bool) {
+	if fn, ok := tt.Callee(call); ok {
+		return fn, true
+	}
+	return resolveCallee(capture, name)
 }
 
 // stmtVisitor returns a statement callback. sc is non-nil exactly when we are
@@ -617,7 +641,7 @@ func callbackParamsOf(sc *funcScope) map[string]int {
 // which is also why assignability deliberately lets the two types through (see
 // isAssignable) instead of reporting a shape mismatch that explains nothing.
 func (c *purityChecker) checkDeclaredCallbackBounds(capture []scopeBindings, enclosing *ast.LambdaExpr, call *ast.FunctionCallExpr, name string) {
-	callee, ok := resolveCallee(capture, name)
+	callee, ok := calleeFor(c.typeTable, call, capture, name)
 	if !ok {
 		return
 	}
@@ -763,7 +787,7 @@ func (c *purityChecker) checkCallPurity(sc *funcScope, capture []scopeBindings, 
 			}
 		}
 	}
-	callee, resolved := resolveCallee(capture, name)
+	callee, resolved := calleeFor(c.typeTable, call, capture, name)
 	if !resolved {
 		if c.isImpureCallee(capture, name) {
 			c.report(call.GetLocation(), "pure function calls impure function %q", name)
@@ -1190,6 +1214,18 @@ type allocContext struct {
 	// discharged holds construction exprs lexically inside a `with`-arena
 	// block, whose allocation goes into the arena rather than escaping.
 	discharged map[ast.Expression]bool
+}
+
+// table exposes the type table for the callee lookup an overloaded call needs
+// (calleeFor). It rides along here rather than becoming a ninth parameter on
+// inferImpurity/lambdaEffects: the context is already threaded to every point in the
+// effect walk that inspects a call, which is exactly where the resolved callee is
+// wanted. Nil-safe, so the typechecker-less entry points keep working.
+func (a *allocContext) table() *typetable.TypeTable {
+	if a == nil {
+		return nil
+	}
+	return a.typeTable
 }
 
 // allocates reports whether the construction expr heap-allocates: its recorded
@@ -1708,7 +1744,7 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 				// body-declared `let f = …` shadowing a parameter named `f` resolve to
 				// the declaration (both live in this lambda's frame, and resolveFunction
 				// consults .functions before .mutable).
-				if target, ok := resolveCallee(bodyCapture, name); ok {
+				if target, ok := calleeFor(alloc.table(), ex, bodyCapture, name); ok {
 					// The callee's *base* effect plus whatever this site supplies for
 					// its callback parameters.
 					found |= callEffect(target, ex, bodyCapture, impureLambdas, callbacks, params, foundCallbacks)
@@ -1831,7 +1867,7 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 				// Scope before builtins, matching isImpureCallee and the typechecker:
 				// a user binding shadows a builtin of the same name, so its own body
 				// decides its effects.
-				if target, ok := resolveCallee(bodyCapture, name); ok {
+				if target, ok := calleeFor(alloc.table(), ex, bodyCapture, name); ok {
 					found |= callEffect(target, ex, bodyCapture, impureLambdas, callbacks, params, foundCallbacks)
 				} else if idx, isParam := params[name]; isParam {
 					// A call through one of this method's own parameters. Its trait

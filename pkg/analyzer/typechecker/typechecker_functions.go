@@ -643,6 +643,12 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 	// rather than whether *the declaration this reference resolved to* is visible. Two
 	// modules each declaring `helper` made one module's call to its own function report
 	// the other module's privacy.
+	// An overloaded name: several declarations telling themselves apart by the type of
+	// their `self` receiver, which at this point is argument 0 whether the call was
+	// written `f(m, x)` or desugared from `m.f(x)`.
+	if set, ok := sym.(*ast.OverloadSet); ok {
+		return tc.inferOverloadedCall(set, call)
+	}
 	if lambda, ok := sym.(*ast.LambdaExpr); ok {
 		return tc.inferLambdaCall(ident.Name, lambda, call)
 	}

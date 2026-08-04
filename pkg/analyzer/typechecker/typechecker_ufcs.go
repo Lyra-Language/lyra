@@ -52,7 +52,7 @@ func (tc *TypeChecker) ufcsCandidate(objType types.Type, methodName string, memb
 	// Resolved as the *calling file* sees the name. Privacy is structural — another
 	// module's private function lives under a module-qualified key — so a private
 	// callee is simply not found here, exactly as it is for a bare call.
-	fn, ok := tc.symTable.LookupFunctionFrom(methodName, loc)
+	fn, ok := tc.ufcsFunction(methodName, objType, loc)
 	if !ok {
 		return nil, ufcsNoMatch
 	}
@@ -89,7 +89,27 @@ func (tc *TypeChecker) ufcsCandidate(objType types.Type, methodName string, memb
 		return nil, ufcsNoMatch
 	}
 	tc.noteUFCSModule(fn, loc)
+	tc.noteResolvedCallee(call, fn)
 	return fn, ufcsMatch
+}
+
+// ufcsFunction resolves methodName to the declaration a receiver of objType would call:
+// the single function of that name, or — when the name is **overloaded on its receiver**
+// — the member objType selects.
+//
+// Overload resolution has to happen here rather than after the desugar, even though the
+// desugared call would reach the bare-call path that also resolves it. This rung decides
+// whether `m.f(…)` is a method call at all, and it decides by asking whether *some*
+// declaration accepts the receiver; without picking the member first it would ask that of
+// an arbitrary one and answer "no method" for a receiver another member accepts. Both
+// paths use one predicate (receiverAccepts), so the two cannot disagree about which
+// member a receiver picks.
+func (tc *TypeChecker) ufcsFunction(methodName string, objType types.Type, loc ast.Location) (*ast.LambdaExpr, bool) {
+	if set, ok := tc.symTable.LookupOverloadsFrom(methodName, loc); ok {
+		fn := tc.resolveOverload(set, objType)
+		return fn, fn != nil
+	}
+	return tc.symTable.LookupFunctionFrom(methodName, loc)
 }
 
 // noteUFCSModule records that the file at loc reached fn's module through a UFCS call,
@@ -115,6 +135,11 @@ func (tc *TypeChecker) noteUFCSModule(fn *ast.LambdaExpr, loc ast.Location) {
 // The name is the opt-in, and `self` is already the word for a receiver in a trait impl,
 // so the language gains no second one.
 //
+// It defers to ast.ReceiverParam, which is the same question overload registration asks
+// when deciding whether two same-named declarations may coexist. The two must agree:
+// a pair admitted as an overload set that this rung then refused to treat as methods
+// would be a name no call site could reach.
+//
 // **The test is on the declared parameter, never on whether the function has clauses.**
 // A multi-clause function is a candidate like any other: its head must bind plain names
 // (clauseScrutinee enforces that — the clauses do the destructuring), so it can name one
@@ -123,14 +148,7 @@ func (tc *TypeChecker) noteUFCSModule(fn *ast.LambdaExpr, loc ast.Location) {
 // desugarClauses consumes the clauses, so the same function would be a candidate after
 // its declaration was checked and not before.
 func ufcsReceiverParam(fn *ast.LambdaExpr) (*ast.Parameter, bool) {
-	if fn == nil || len(fn.Parameters) == 0 {
-		return nil, false
-	}
-	recv := &fn.Parameters[0]
-	if recv.Pattern == nil || recv.Pattern.GetName() != "self" {
-		return nil, false
-	}
-	return recv, true
+	return ast.ReceiverParam(fn)
 }
 
 // ufcsImported reports whether the file at loc may reach fn's module: its own module
@@ -196,6 +214,14 @@ func desugarUFCSCall(member *ast.MemberExpr, call *ast.FunctionCallExpr) {
 // the two near-misses worth naming, since "has no field or method" alone sends the reader
 // looking for a method that was never going to be there.
 func (tc *TypeChecker) ufcsHint(methodName string, loc ast.Location) string {
+	// An overloaded name reaches here only when *no* member accepted the receiver, so
+	// the useful thing to say is which receivers there are — the reader picked a real
+	// method and applied it to the wrong type, and "has no method" alone reads as
+	// though the name does not exist.
+	if set, ok := tc.symTable.LookupOverloadsFrom(methodName, loc); ok {
+		return fmt.Sprintf("; %s is overloaded on its receiver and takes %s",
+			methodName, overloadReceiverTypes(set))
+	}
 	fn, ok := tc.symTable.LookupFunctionFrom(methodName, loc)
 	if !ok {
 		return ""

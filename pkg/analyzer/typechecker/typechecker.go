@@ -1675,6 +1675,16 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		if vd, ok := sym.(*ast.VarDeclStmt); ok && vd == tc.currentVarDecl && vd.Shadows != nil {
 			sym = vd.Shadows
 		}
+		// An overloaded name used as a *value* rather than called. There is no receiver
+		// to pick a member with, and the members have different signatures, so there is
+		// no one type to hand back — `let f = unwrap_or` cannot mean anything until the
+		// receiver is known.
+		if set, ok := sym.(*ast.OverloadSet); ok {
+			tc.addError(e.GetLocation(), SeverityError,
+				"%s is overloaded on its receiver (%s), so it has no single type — call it on a receiver rather than referring to it on its own",
+				set.Name, overloadReceiverTypes(set))
+			return nil
+		}
 		if v, ok := sym.(*ast.VarDeclStmt); ok {
 			var t types.Type
 			if v.Value != nil {

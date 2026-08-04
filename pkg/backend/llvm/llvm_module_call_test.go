@@ -107,3 +107,32 @@ let main = () -> u8 => u8(opt.double(3))`,
 		t.Errorf("exit code: got %d, want 6", got)
 	}
 }
+
+// A **private** function taking a `mut` parameter, called from inside its own module.
+//
+// Its parameters were looked up under the bare source name while they had been recorded
+// under the module-qualified key a private declaration gets, so the call site read an
+// empty parameter list — and with no parameters to consult, paramIsByRef is never asked
+// and the argument is passed *by value* instead of by address. The mutation then lands on
+// a copy, so the write the caller is waiting for never arrives. Nothing reports it: the
+// arity guard is skipped by the same empty list.
+func TestExec_PrivateMutParamPassedByReference(t *testing.T) {
+	t.Parallel()
+	got := buildAndRunModules(t, map[string]string{
+		"app.lyra": `import util.counter
+let main = () -> u8 => u8(counter.run())
+`,
+		"util/counter.lyra": `module util.counter
+struct Box { n: i64 }
+let bump = (b: mut Box) -> void => { b.n = b.n + 1 }
+pub let run = () -> i64 => {
+  var b = Box { n: 41 }
+  bump(b)
+  b.n
+}
+`,
+	})
+	if got != 42 {
+		t.Errorf("expected 42 — the private callee's `mut` write should reach the caller's Box, got %d", got)
+	}
+}

@@ -245,6 +245,13 @@ func (l *lowerer) declareFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) err
 	if err != nil {
 		return err
 	}
+	// An **overload** is keyed by its declaration, not by its name: the name is shared
+	// with the other members, so the by-name table below could hold only one of them and
+	// every call would reach that one. See overloads.go.
+	if _, overloaded := l.overloadHead(decl); overloaded {
+		l.recordOverload(fn, declared, fn.Parameters)
+		return nil
+	}
 	key := l.funcKey(decl.Name, decl.GetLocation())
 	l.funcs[key] = declared
 	l.funcParams[key] = fn.Parameters
@@ -292,6 +299,9 @@ func (l *lowerer) declareFunctionAs(name string, fn *ast.LambdaExpr) (*ir.Func, 
 // fresh alloca (so the body reads it like any local), lower the body, and emit
 // the implicit tail return (unless the body already ended in an explicit one).
 func (l *lowerer) defineFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) error {
+	if e, overloaded := l.overloads[fn]; overloaded {
+		return l.defineFunctionInto(e.fn, fn, decl.Name)
+	}
 	return l.defineFunctionInto(l.funcs[l.funcKey(decl.Name, decl.GetLocation())], fn, decl.Name)
 }
 
@@ -412,7 +422,14 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	if fn, params, ok := l.specializedFuncFor(e); ok {
 		return l.lowerDirectCall(block, e, fn, params)
 	}
-	fn, ok := l.funcs[l.funcKey(ident.Name, e.GetLocation())]
+	// An **overloaded** callee: the member is whichever one the typechecker resolved
+	// this call to, since the name alone names several. Checked before l.funcs, which
+	// does not hold overloads at all (overloads.go).
+	if overload, ok := l.resolvedOverload(e); ok {
+		return l.lowerDirectCall(block, e, overload.fn, overload.params)
+	}
+	key := l.funcKey(ident.Name, e.GetLocation())
+	fn, ok := l.funcs[key]
 	if !ok {
 		// A compiler-provided free function (print/println) — checked only after
 		// user functions, so a user binding of the same name shadows the builtin,
@@ -431,7 +448,14 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	// arity and assignability, and propagated each parameter's width onto its
 	// argument (inferLambdaCall), so a literal arg already lowers at the param's
 	// width — no coercion needed here.
-	return l.lowerDirectCall(block, e, fn, l.funcParams[ident.Name])
+	//
+	// Read under the same `key` the declaration wrote, not under the bare name: a
+	// private function — and one that took a prelude name — is keyed by its module, so
+	// the bare name found nothing and the call was lowered against an *empty* parameter
+	// list. That is not a missing optimization: with no parameters to consult, a `mut`
+	// or `ref` argument is passed by value instead of by address (paramIsByRef is never
+	// asked), and the arity guard below is skipped along with it.
+	return l.lowerDirectCall(block, e, fn, l.funcParams[key])
 }
 
 // lowerDirectCall lowers the arguments of a call to a known function and emits it.
@@ -591,10 +615,18 @@ func (l *lowerer) userSymbol(decl *ast.VarDeclStmt) string {
 	if l.res != nil && l.res.SymbolTable != nil {
 		module = l.res.SymbolTable.ModuleOfFile[decl.GetLocation().File]
 	}
-	if module == "" {
-		return "lyra." + decl.Name
+	symbol := "lyra." + decl.Name
+	if module != "" {
+		symbol = "lyra." + module + "." + decl.Name
 	}
-	return "lyra." + module + "." + decl.Name
+	// An overloaded name is several functions, and the module path is common to all of
+	// them — without the receiver head they would emit as one repeated symbol, which
+	// clang rejects as a redefinition. The head is the discriminant the front end
+	// guarantees is unique within the set, so qualifying by it is enough.
+	if head, overloaded := l.overloadHead(decl); overloaded {
+		symbol += "$" + mangleTypeKey(head)
+	}
+	return symbol
 }
 
 // funcKey is the key a function is stored and found under in l.funcs.

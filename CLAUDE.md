@@ -119,7 +119,23 @@ because each was learned from a real failure, and none is local to one package.
    them into one walk parameterized by the leaf behaviour is `todo.md`'s open item; until
    then, an edit to either belongs in both.
 
-9. **A pass that indexes a call's arguments positionally is one AST shape away from
+9. **A name does not identify a declaration, and since 08/03 it may not even identify
+   one function.** Two facts compound here. A *key* is module-qualified for a private
+   declaration (invariant 4), and a **receiver-overloaded** name maps to several
+   declarations at once, told apart only by the receiver's type. So any pass that
+   answers "what does this call call?" by looking the name up is wrong in one of two
+   ways, both quiet: it gets another module's function, or it gets whichever overload
+   was registered last. Read `typetable.TypeTable.Callee(call)` first — the typechecker
+   publishes the member it picked — and fall back to `LookupFunctionFrom` for the rest.
+   The backend pays the same tax twice over: `l.funcs` cannot hold two functions of one
+   name, so an overload is keyed by its *declaration* and its emitted symbol carries the
+   receiver head. The by-name form of this bug had already shipped — `funcParams` was
+   written under the module-qualified key and read under the bare name, so a private
+   function's parameter modes came back empty, a `mut` argument was passed by value
+   instead of by address, and the program segfaulted (fixed 08/03,
+   `TestExec_PrivateMutParamPassedByReference`).
+
+10. **A pass that indexes a call's arguments positionally is one AST shape away from
    being silently wrong.** Purity reads `call.Arguments[idx]` against the *declaration's*
    parameter at `idx` (`callableParams`), so any call form whose receiver sits outside
    `Arguments` shifts every index by one — and a function-typed argument satisfies the
@@ -175,7 +191,14 @@ AST files are organized by node kind, e.g. `expr_math.go`, `expr_if.go`, `stmt_f
   a trait-impl method) → the matched `*ast.TraitMethodImpl`. Populated by the typechecker during
   dispatch (`typechecker_trait_dispatch.go`); read by the purity checker so it doesn't have to
   re-derive dispatch. `Get` is nil-receiver-safe (no resolutions) so callers without a
-  typechecker pass can pass `nil`. A second map records **abstract bound dispatch** (a call on a
+  typechecker pass can pass `nil`.
+- `TypeTable.SetCallee`/`Callee` (`calleetable.go`) is that same arrangement one rung down, for
+  **receiver-keyed overloading**: a call whose callee name has several declarations records the
+  one it resolved to, since the name no longer picks. Only overloaded calls are recorded —
+  every other callee still resolves by lookup, and a second answer to a settled question is a
+  thing that can disagree — so a consumer reads this first and falls back.
+
+  A second map on `MethodTable` records **abstract bound dispatch** (a call on a
   bare type parameter resolved through a `where` bound): `SetBound`/`GetBound` associate the
   call with a `BoundMethodRef{Trait, Method}` — there is no single concrete impl, so the purity
   checker joins over all impls of that trait method.
@@ -382,6 +405,16 @@ is named `self`, by rewriting the call to pass the receiver as its first argumen
 take `self`, so they read both ways. It matters beyond ergonomics — dispatch on the receiver
 is what makes `map` on a `Maybe` and `map` on an array able to coexist, which the bare
 top-level name cannot (see `todo.md`'s Modules section).
+
+**Receiver-keyed overloading landed 08/03**, the declaration-side half of that
+(`typechecker_overload.go`). A name may be declared several times in one module when every
+declaration takes a `self` receiver and their receiver *type heads* differ (`types.HeadName`:
+`Maybe<t>` and `Maybe<i64>` share the head `Maybe`). UFCS could already dispatch `m.map(f)`
+on the receiver; what it could not do is let two `map`s be **written** in one module, which
+is why the standard library had to split `maybe.map` from `result.map`. The prelude now
+declares `unwrap_or` and `unwrap_or_else` twice each, for `Maybe` and for `Result`.
+Overlapping heads are refused at the declaration rather than reported at each call, since
+ranking two matching candidates would need a specificity ordering the language does not have.
 
 **Generic trait-impl methods monomorphize as of 08/03**, which is the other half of the same
 story: `impl Unwrap<t> for Maybe<t>` now emits one function per binding set, its body lowered

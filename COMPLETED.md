@@ -10,6 +10,84 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**Receiver-keyed overloading: one module may declare a name several times, if the
+declarations differ in what they take as `self`.** The prelude now declares `unwrap_or` and
+`unwrap_or_else` twice each — once for `Maybe<t>`, once for `Result<t,e>` — so the two types
+share a vocabulary instead of the second one getting a name it did not need.
+
+This is the **declaration-side half of UFCS**, and only makes sense read against it. UFCS
+(earlier today) made `m.map(f)` dispatch on the receiver's type, which settled *call* sites;
+what it did not touch is that a second `let map` in one module was a redeclaration error. So
+the two halves of "`Maybe` and `Result` both want `map`" had opposite answers: reachable
+from a call, unwritable in a module. That is the whole reason the standard library split
+`maybe.map` from `result.map` into separate modules, and the reason putting either in the
+prelude claimed the name `map` for one type forever.
+
+**The rule is the receiver's *head*** — the type constructor with its arguments dropped
+(`types.HeadName`, one definition, shared with the backend's symbol mangling). `Maybe<t>`
+beside `Result<t,e>` is two heads and is admitted; `Maybe<i64>` beside `Maybe<string>` is one
+head twice and is refused **where it is written**. That refusal is the design decision worth
+recording: two members that can both match a receiver need a specificity ordering to rank,
+and the language has none — so the choice was between inventing one and forbidding the
+overlap. Forbidding it makes the error a fixed thing in one place, with the clashing receiver
+named, instead of an ambiguity reported at every call site that the author cannot resolve
+without changing a declaration anyway. Relaxing it later means *adding* an ordering, not
+reinterpreting anything. A bare type variable (`self: t`) has no head at all — it accepts
+every receiver — so it can never be one candidate among several, which is the case the head
+rule has to reject to stay coherent rather than a case it happens to miss.
+
+**Resolution is in one place because the desugar had already earned it.** UFCS rewrites
+`m.f(x)` to `f(m, x)` before anything downstream runs, so the receiver is argument 0 whichever
+way the call was written, and one predicate (`receiverAccepts` — `unifyGenericTarget` again,
+the same one trait dispatch and UFCS use) serves both spellings. The UFCS rung still has to
+resolve *before* desugaring, since it is what decides whether `m.f` is a method call at all:
+asking an arbitrary member would answer "no method" for a receiver a different member accepts.
+
+**Where the cost actually landed: four passes that resolved a callee by name.** Ownership,
+use-after-move, purity and the backend each looked a callee up in the symbol table to read its
+parameter modes, and that question has no answer for an overloaded name. Two ways to fix it,
+and the tempting one is wrong — re-deriving dispatch in each pass, from a receiver type each
+would have to recover, is three more chances to disagree with the front end about which
+function a program calls. So the pass that *did* resolve it publishes the answer
+(`typetable.TypeTable.SetCallee`), which is exactly what `MethodTable` already does for trait
+dispatch, and each consumer reads it first and falls back to name lookup. **Only overloaded
+calls are recorded**: filling it in for every call would be a second answer to a question the
+symbol table already answers, and a second answer is a thing that can drift.
+
+Two structural choices that make the omissions loud rather than silent:
+
+- **A scope holds an `ast.OverloadSet` in place of the single declaration**, so every pass
+  that type-asserts a looked-up symbol to `*VarDeclStmt` now *fails* instead of quietly taking
+  a member. Picking one needs a receiver; a pass without one has no business picking, and a
+  failed assertion sends it down its not-found path where the worst case is a missing feature.
+  This is CLAUDE.md hazard 8's reasoning run in the other direction — make the gap visible on
+  purpose.
+- **An overloaded name is absent from `SymbolTable.Functions` entirely**, for the same reason.
+  Leaving a member under the bare key would have made every existing reader silently correct
+  for one receiver and silently wrong for the rest.
+
+**It turned up a shipped miscompile in the same code path.** The backend wrote `funcParams`
+under the module-qualified key a private declaration gets and read it back under the *bare*
+name, so a private function's parameter list came back empty — and with no parameters to
+consult, `paramIsByRef` is never asked and a `mut` argument is passed **by value where the
+callee expects an address**. A private function taking `mut` and called from inside its own
+module segfaults; the arity guard that might have caught it is skipped by the same empty list.
+Fixed here because overloading made the keying load-bearing, and pinned by
+`TestExec_PrivateMutParamPassedByReference`, which was confirmed to fail (exit -1, a signal)
+against the unfixed backend rather than merely asserted to.
+
+Also closed a gap the tests had: nothing analyzed the **shipped** `std/prelude.lyra` — every
+prelude test built its own fixture — so the real file could have stopped compiling with the
+suite still green. `TestPrelude_ShippedStdlibAnalyzes` runs it through the ordinary resolve.
+
+What this does **not** fix is the neighbouring bug in todo.md's Modules section: a `pub` name
+still claims the bare program-wide key, so `import std.maybe` still forbids the importer its
+own `map`. The two do not compose — an overload set is confined to one module, and that
+collision is cross-module by construction. What did change is the *motive*: splitting a module
+to give two types the same method name is no longer a reason to, so that bug is now the only
+one left.
+
+### 08/03/26
 **Shadowing a canonical type explains itself instead of reporting the answer as the
 problem.** `?` on a user's own `data Maybe` said `` `?` operand must be a Result or Maybe,
 got Maybe ``. The rule behind it is right — `std/prelude.lyra` marks its types

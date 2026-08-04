@@ -1241,6 +1241,13 @@ func (a *analyzer) calleeLambdaType(e *ast.FunctionCallExpr) *types.LambdaType {
 // through a local, a type-conversion call) — in which case call() falls back to
 // the leak-safe conservative modes.
 func (a *analyzer) resolveCallee(e *ast.FunctionCallExpr) *ast.LambdaExpr {
+	// An **overloaded** callee cannot be resolved by name — several declarations share
+	// it, told apart by the receiver's type — so the typechecker recorded which one this
+	// call picked. Read first, and fall through for every other call, so a singly
+	// declared name still resolves exactly as it did.
+	if fn, ok := a.tt.Callee(e); ok {
+		return fn
+	}
 	id, ok := e.Function.(*ast.IdentifierExpr)
 	if !ok || a.symTable == nil {
 		return nil

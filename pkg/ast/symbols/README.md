@@ -79,3 +79,34 @@ registers into the current scope; `if let … { Then } else { Else }` registers 
 pushed around `Then` only (names visible there via the parent chain, not in `Else`); `let … = v
 else { Else }` registers into the *enclosing* scope only after collecting the diverging `Else`
 block, so `Else` never sees the names but code after the statement does.
+
+## Receiver-keyed overloading (`overload.go`)
+
+A module may declare one name several times when every declaration takes a `self` receiver
+and their receiver *type heads* differ (`types.HeadName`) — see the typechecker's README for
+the language rule and `ast/overload_set.go` for what may form a set. Two things about it are
+this package's business.
+
+**A scope holds an `*ast.OverloadSet` where it would otherwise hold the declaration.** The
+merge happens during the walk, when the second declaration of a name meets the first in its
+module scope — the only moment both are in hand, and the moment the alternative (sequential
+rebinding, `declarations/var_decl.go`) would otherwise silently keep one and drop the other.
+So the scope is the authority; `Finish` mirrors the finished set into `OverloadSets`, rather
+than the set being reconstructed from the registered members afterwards. Deriving it twice is
+the drift invariant 4 exists to prevent.
+
+That the set is what a lookup *returns* is deliberate: a consumer type-asserting to
+`*VarDeclStmt` fails rather than taking whichever member came first. Choosing needs a
+receiver type, and a pass without one should not choose.
+
+**An overloaded name is absent from `Functions`.** That map answers "which declaration does
+this name mean", and for a set there is no answer without a receiver. A member left under the
+bare key would be silently right for one receiver and silently wrong for every other, so the
+key is simply empty and a by-name lookup reports the callee unresolved — which is the
+conservative path every consumer already has. The passes that must do better read the
+callee the typechecker resolved (`typetable.TypeTable.Callee`).
+
+`declKey` treats a set as one declaration, keyed by the visibility its members share —
+`ast.OverloadableWith` refuses a set whose members disagree on `pub` precisely so that
+question has an answer, since a half-exported set would be findable from another module for
+some receivers and not others.

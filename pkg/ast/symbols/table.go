@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // Scope represents a lexical scope
@@ -127,6 +128,12 @@ type SymbolTable struct {
 	// (and which are implicitly pure by default). PureFuncs is a subset
 	// of Functions.
 	PureFuncs map[string]*ast.LambdaExpr
+
+	// OverloadSets holds the names that are overloaded on their receiver, keyed by
+	// declKey exactly as Functions is. A name appears in one map or the other, never
+	// both — see overload.go for why an overloaded name is kept out of Functions
+	// rather than being represented there by one of its members.
+	OverloadSets map[string]*ast.OverloadSet
 }
 
 func NewSymbolTable() *SymbolTable {
@@ -143,6 +150,7 @@ func NewSymbolTable() *SymbolTable {
 		Imports:      make(map[string][]Import),
 		ModuleScopes: make(map[string]*Scope),
 		PreludeNames: make(map[string]bool),
+		OverloadSets: make(map[string]*ast.OverloadSet),
 	}
 	st.CurrentScope = st.ModuleScopeFor("")
 	return st
@@ -376,18 +384,61 @@ func (st *SymbolTable) RegisterFunction(name string, node *ast.LambdaExpr) error
 	if st.takesPreludeName(name, node.GetLocation()) {
 		st.noteShadowed(name, node.GetLocation())
 	}
+	// An **overloaded** name is registered as its whole set, once, and kept out of
+	// Functions entirely (overload.go). The scope decided the name was overloaded, back
+	// when the two declarations met during the walk; this only mirrors the result, so
+	// the merge rule stays in one place. Every member reaches this function — Finish
+	// walks top-level bindings, not names — and each one re-registers the same set,
+	// which is why the write is idempotent rather than an append.
+	key := st.declKey(name, node.GetLocation())
+	if set, overloaded := st.OverloadSetFor(name, node.GetLocation()); overloaded {
+		st.registerOverloadSet(key, set)
+		return nil
+	}
 	// A *private* function is keyed by module, so two modules may each declare one
 	// without competing. Only exported names share the bare key, where a clash is
 	// genuine: a bare reference to either would be ambiguous.
-	key := st.declKey(name, node.GetLocation())
 	if existing, exists := st.Functions[key]; exists && existing != node {
-		return fmt.Errorf("function %q is already defined at %s", name, describeLocation(existing.GetLocation()))
+		return fmt.Errorf("function %q is already defined at %s%s", name,
+			describeLocation(existing.GetLocation()), overloadRefusal(existing, node))
 	}
 	st.Functions[key] = node
 	if node.IsPure {
 		st.PureFuncs[key] = node
 	}
 	return nil
+}
+
+// overloadRefusal explains why two same-named functions were not accepted as receiver
+// overloads, as a clause appended to the "already defined" message.
+//
+// It is only worth saying when both really are functions taking a `self` receiver: that
+// is the reader who tried to overload and hit a rule, and who would otherwise be told
+// only that the name is taken. For a plain redeclaration — the common case by far — the
+// clause would be noise about a feature the author was not using, so it stays empty.
+func overloadRefusal(existing, node *ast.LambdaExpr) string {
+	if _, ok := ast.ReceiverParam(existing); !ok {
+		return ""
+	}
+	if _, ok := ast.ReceiverParam(node); !ok {
+		return ""
+	}
+	existingHead, _ := types.HeadName(receiverType(existing))
+	nodeHead, _ := types.HeadName(receiverType(node))
+	if existingHead != "" && existingHead == nodeHead {
+		return fmt.Sprintf(". Both take a `%s` receiver: overloads are told apart by the"+
+			" receiver's type, so two of one type cannot be", existingHead)
+	}
+	return ". A `self` function may be overloaded only against another declared in the" +
+		" same module, on a receiver with a concrete type of its own"
+}
+
+func receiverType(fn *ast.LambdaExpr) types.Type {
+	recv, ok := ast.ReceiverParam(fn)
+	if !ok {
+		return nil
+	}
+	return recv.Type
 }
 
 // FunctionKey and TypeKey are the key a declaration is stored under: its bare name when
@@ -453,6 +504,13 @@ func declIsPublic(sym ast.Named) bool {
 		return d.IsPublic
 	case *ast.TraitDeclStmt:
 		return d.IsPublic
+	case *ast.OverloadSet:
+		// The members agree on `pub` — a set that disagreed was refused at the
+		// declaration (ast.OverloadableWith) precisely so this question has an answer.
+		// Without this case a set would fall to the default and be keyed as exported
+		// whatever its members said, putting a module's private overloads in the
+		// program-wide namespace.
+		return len(d.Members) > 0 && d.Members[0].IsPublic
 	default:
 		return true
 	}

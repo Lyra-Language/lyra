@@ -34,6 +34,11 @@ type Collector interface {
 	// same-scope sequential rebinding (e.g. `let x = parse(x)`) so that later
 	// references resolve to the newest declaration.
 	RedefineVariable(*ast.VarDeclStmt)
+	// DeclareOverload offers a top-level declaration to an existing same-named one as
+	// a receiver-keyed overload, reporting whether it was accepted and, if not, why.
+	// It is asked *before* sequential rebinding, since two same-named module-level
+	// functions are the case rebinding would otherwise silently collapse into one.
+	DeclareOverload(*ast.VarDeclStmt) (bool, string)
 	// RegisterDestructuredName binds one name from a destructuring declaration
 	// (e.g. `x` in `let (x, y) = pair`) into the current scope, mapped to the
 	// owning declaration so its mutability is recoverable.

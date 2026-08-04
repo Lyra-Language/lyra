@@ -141,6 +141,16 @@ a program that imports it still may not declare its own. What changed is that th
 (don't import it) now costs less, which is exactly the kind of relief that lets a real bug
 sit for a year. The fix is still (a) or (b) above.
 
+**Receiver-keyed overloading (08/03) removed the other half of the pressure, and again did
+not fix this.** Two `self` functions of one name may now be *declared* in one module when
+their receiver heads differ, so `Maybe` and `Result` no longer need separate modules merely
+to have `unwrap_or` each — which was the standing argument for the `std.maybe`/`std.result`
+split, and so for putting anything in the prelude at all. What remains is exactly the bug
+above, now the only reason left to split a module: a `pub` name still claims the bare
+program-wide key, so `import std.maybe` still forbids the importer its own `map`. Note the
+two features do *not* compose into a fix — an overload set is confined to one module, and
+`std.maybe`'s `map` and a user's are in two, which is the cross-module case (a) addresses.
+
 The LSP resolves a document's whole import graph as of 08/02 (see COMPLETED.md), which leaves
 two editor features single-file where the program no longer is:
 

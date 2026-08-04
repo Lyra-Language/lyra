@@ -9,6 +9,9 @@ import (
 // It is populated by the type-checker and consulted by later compiler passes.
 type TypeTable struct {
 	entries map[ast.Expression]types.Type
+	// callees records which declaration an overloaded call resolved to; see
+	// calleetable.go for why only those are recorded.
+	callees map[*ast.FunctionCallExpr]*ast.LambdaExpr
 }
 
 func New() *TypeTable {
