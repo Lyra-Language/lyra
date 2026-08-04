@@ -109,3 +109,75 @@ let main = () -> u8 => {
 		}
 	}
 }
+
+// An overload that panics: each member traps with its own message, so this pins that the
+// call reached the member the receiver selected and not merely *a* member with the right
+// signature. The two bodies are otherwise identical, which is the point — a wrong
+// resolution would still compile, still trap, and still exit 101, and only the message
+// distinguishes them.
+func TestExec_OverloadPanicsFromTheSelectedMember(t *testing.T) {
+	t.Parallel()
+	const decls = `
+data Maybe<t> = None | Some t
+data Result<t, e> = Ok(t) | Err(e)
+
+let unwrap<t> = (self: Maybe<t>) -> t => match self {
+  Some v => v,
+  None => panic("unwrap on a None"),
+}
+
+let unwrap<t, e> = (self: Result<t, e>) -> t => match self {
+  Ok v => v,
+  Err _ => panic("unwrap on an Err"),
+}
+`
+	cases := []struct {
+		name, main, want string
+	}{
+		{"maybe", `let m: Maybe<i64> = None
+  u8(m.unwrap())`, "lyra: panic: unwrap on a None\n"},
+		{"result", `let r: Result<i64, string> = Err "boom"
+  u8(r.unwrap())`, "lyra: panic: unwrap on an Err\n"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			stderr, code := buildAndRunPanic(t, decls+"\nlet main = () -> u8 => {\n  "+c.main+"\n}")
+			if code != trapExitCode {
+				t.Errorf("exit code: got %d, want %d", code, trapExitCode)
+			}
+			if stderr != c.want {
+				t.Errorf("stderr: got %q, want %q", stderr, c.want)
+			}
+		})
+	}
+}
+
+// `expect` takes its message from the caller, which is the reason it exists beside
+// `unwrap`: the message can name the concrete situation, including values interpolated at
+// the call site. Interpolating inside the combinator is what is *not* expressible — the
+// receiver's payload is a type variable, and only the printable primitives have a
+// formatter — so this pins the shape that works rather than the one that does not.
+func TestExec_ExpectCarriesTheCallersMessage(t *testing.T) {
+	t.Parallel()
+	stderr, code := buildAndRunPanic(t, `
+data Maybe<t> = None | Some t
+
+let expect<t> = (self: Maybe<t>, msg: string) -> t => match self {
+  Some v => v,
+  None => panic(msg),
+}
+
+let main = () -> u8 => {
+  let name = "database"
+  let port = 5432
+  let m: Maybe<i64> = None
+  u8(m.expect("config for ${name} on port ${port} is required"))
+}`)
+	if code != trapExitCode {
+		t.Errorf("exit code: got %d, want %d", code, trapExitCode)
+	}
+	if want := "lyra: panic: config for database on port 5432 is required\n"; stderr != want {
+		t.Errorf("stderr: got %q, want %q", stderr, want)
+	}
+}

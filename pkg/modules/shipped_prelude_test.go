@@ -326,3 +326,45 @@ let main = () -> u8 => {
 		t.Errorf("a file's own `map` should win over the prelude's; got %v", errs)
 	}
 }
+
+// `unwrap` and `expect` on both types, and the overload set they form.
+//
+// `expect` takes the message as a `string` rather than interpolating the value: `t` is a
+// type variable, and interpolation is checked against the types the backend can format, so
+// `${value}` on a generic is not expressible until a Show-style capability exists. Passing
+// the message moves the formatting to the caller, who has the concrete type — which is the
+// property this pins, since it is the whole reason the signature is shaped that way.
+func TestShippedPrelude_UnwrapAndExpect(t *testing.T) {
+	repo, path := shippedPreludePath(t)
+	std := filepath.Dir(filepath.Dir(path))
+
+	app := t.TempDir()
+	write(t, filepath.Join(app, "app.lyra"), `let main = () -> u8 => {
+  let m: Maybe<i64> = Some 7
+  let r: Result<i64, string> = Ok 9
+  let name = "database"
+  let viaUnwrap: i64 = m.unwrap() + r.unwrap()
+  let viaExpect: i64 = m.expect("m must be set") + r.expect("config for ${name} is required")
+  u8(viaUnwrap + viaExpect)
+}`)
+
+	if errs := analyzeWith(t, filepath.Join(app, "app.lyra"), app, std, repo).Errors(); len(errs) != 0 {
+		t.Errorf("unwrap/expect should resolve on both receivers, with an interpolated caller message; got %v", errs)
+	}
+}
+
+// Both are `pure noalloc`, so a `pure` function may call them: `panic` is EffectNone, and a
+// trap is not an effect the system tracks. If that ever changes, the whole combinator layer
+// stops being callable from pure code, so it is worth asserting rather than assuming.
+func TestShippedPrelude_UnwrapIsCallableFromPureCode(t *testing.T) {
+	repo, path := shippedPreludePath(t)
+	std := filepath.Dir(filepath.Dir(path))
+
+	app := t.TempDir()
+	write(t, filepath.Join(app, "app.lyra"), `let force = pure (m: Maybe<i64>) -> i64 => m.expect("must be set")
+let main = () -> u8 => u8(force(Some(4)))`)
+
+	if errs := analyzeWith(t, filepath.Join(app, "app.lyra"), app, std, repo).Errors(); len(errs) != 0 {
+		t.Errorf("a pure function should be able to call expect; got %v", errs)
+	}
+}

@@ -60,19 +60,19 @@ pub let unwrap_or<t> = pure noalloc (self: Maybe<t>, fallback: t) -> t => match 
   None => fallback,
 }
 
-// `pure noalloc` here constrains this function's *own* body. Effects arriving through
-// `f` belong to whoever supplies it and are charged at that call site, so
-// `unwrap_or_else(m, () -> i64 => 0)` is pure and passing an effectful callback is
-// rejected there rather than here.
-//
-// `f` is deliberately left *unbounded*. Writing `f: pure () -> t` is now possible and
-// would make this function pure for every caller — at the cost of forbidding a fallback
-// that logs, which is a legitimate thing to want from a lazy default. A general-purpose
-// combinator should not make that choice for its callers; the inferred half already keeps
-// pure callers pure.
 pub let unwrap_or_else<t> = pure noalloc (self: Maybe<t>, f: () -> t) -> t => match self {
   Some v => v,
   None => f(),
+}
+
+pub let unwrap<t> = pure noalloc (self: Maybe<t>) -> t => match self {
+  Some v => v,
+  None => panic("unwrap on a None"),
+}
+
+pub let expect<t> = pure noalloc (self: Maybe<t>, msg: string) -> t => match self {
+  Some v => v,
+  None => panic(msg),
 }
 
 pub let is_some<t> = pure noalloc (self: Maybe<t>) -> bool => match self {
@@ -126,16 +126,6 @@ pub let is_err<t,e> = pure noalloc (self: Result<t, e>) -> bool => match self {
   Err _ => true,
 }
 
-// `unwrap_or` and `unwrap_or_else` are declared **twice** in this module, once for each
-// of the two types — receiver-keyed overloading (08/03). A name may be redeclared here
-// when every declaration takes a `self` receiver and their receivers have different type
-// heads, which is what lets `Maybe` and `Result` share a vocabulary instead of the second
-// one getting an asymmetric name (`unwrap_or_result`) or being exiled to another module.
-//
-// The rule is the receiver's *head*, not its full type: `Maybe<t>` against `Result<t,e>`
-// is two heads and is allowed, `Maybe<i64>` against `Maybe<string>` is one head twice and
-// is refused at the declaration. That keeps a call site from ever having to rank two
-// candidates that both match.
 pub let unwrap_or<t,e> = pure noalloc (self: Result<t,e>, fallback: t) -> t => match self {
   Ok v => v,
   Err _ => fallback,
@@ -144,6 +134,16 @@ pub let unwrap_or<t,e> = pure noalloc (self: Result<t,e>, fallback: t) -> t => m
 pub let unwrap_or_else<t,e> = pure noalloc (self: Result<t,e>, f: () -> t) -> t => match self {
   Ok v => v,
   Err _ => f(),
+}
+
+pub let unwrap<t,e> = pure noalloc (self: Result<t,e>) -> t => match self {
+  Ok v => v,
+  Err _ => panic("unwrap on an Err"),
+}
+
+pub let expect<t,e> = pure noalloc (self: Result<t,e>, msg: string) -> t => match self {
+  Ok v => v,
+  Err _ => panic(msg),
 }
 
 pub let ok<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<t> => match self {
