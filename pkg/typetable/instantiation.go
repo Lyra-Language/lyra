@@ -89,12 +89,84 @@ func mangleTypeName(s string) string {
 
 // InstantiationTable maps each generic call site to the specialization it resolves
 // to. Populated by the typechecker, consumed by the backend.
+//
+// **Two kinds of entry live here, and telling them apart is the point.** A call in
+// ordinary code solves its callee's variables to concrete types — `identity<t=i64>`.
+// A call *inside a generic body* solves them to whatever the enclosing body has in
+// scope, which is that body's own type variables: `unwrap<t>`'s call to `expect`
+// records `expect<t=t>`. The second kind is not a specialization at all — it is a
+// template, one per enclosing specialization, and lowering it directly is what
+// produced "type variable t has no concrete type here".
+//
+// So the table holds both, and `Concrete` is what separates them. The templates must
+// stay: they are how a call inside a generic body is resolved, by composing the
+// enclosing specialization's bindings into them (driver.closeInstantiations).
 type InstantiationTable struct {
 	byCall map[*ast.FunctionCallExpr]Instantiation
+	// discovered holds specializations reached by composition rather than by a call
+	// site of their own, keyed by Key(). `unwrap<t=i64>` calling `expect` needs
+	// `expect<t=i64>` emitted, and no call site in the program mentions it.
+	discovered map[string]Instantiation
 }
 
 func NewInstantiationTable() *InstantiationTable {
-	return &InstantiationTable{byCall: map[*ast.FunctionCallExpr]Instantiation{}}
+	return &InstantiationTable{
+		byCall:     map[*ast.FunctionCallExpr]Instantiation{},
+		discovered: map[string]Instantiation{},
+	}
+}
+
+// Add records a specialization that no call site names directly.
+func (t *InstantiationTable) Add(inst Instantiation) {
+	if t == nil {
+		return
+	}
+	if t.discovered == nil {
+		t.discovered = map[string]Instantiation{}
+	}
+	t.discovered[inst.Key()] = inst
+}
+
+// IsConcrete reports whether every binding is a real type — nothing still mentioning
+// a type variable. Only a concrete instantiation can be emitted; see the note above.
+func (i Instantiation) IsConcrete() bool {
+	for _, bound := range i.Subst {
+		if bound == nil || types.MentionsTypeVar(bound) {
+			return false
+		}
+	}
+	return true
+}
+
+// Substituted returns this instantiation with subst applied to each of its bindings —
+// the composition that turns a template into a specialization.
+//
+// The substitution is applied to the binding *values*, never to the keys: the keys are
+// the callee's own variable names and the values are written in the caller's scope, so
+// `expect<t=t>` composed under `{t: i64}` is `expect<t=i64>`. That the two `t`s are
+// spelled the same is a coincidence of the source and must not be treated as a
+// relationship.
+func (i Instantiation) Substituted(subst map[string]types.Type, apply func(types.Type, map[string]types.Type) types.Type) Instantiation {
+	if len(subst) == 0 {
+		return i
+	}
+	out := Instantiation{Name: i.Name, Func: i.Func, Subst: make(map[string]types.Type, len(i.Subst))}
+	for name, bound := range i.Subst {
+		out.Subst[name] = apply(bound, subst)
+	}
+	return out
+}
+
+// Concrete returns every emittable specialization — those with no type variable left
+// in any binding — in a stable order.
+func (t *InstantiationTable) Concrete() []Instantiation {
+	var out []Instantiation
+	for _, inst := range t.All() {
+		if inst.IsConcrete() {
+			out = append(out, inst)
+		}
+	}
+	return out
 }
 
 func (t *InstantiationTable) Set(call *ast.FunctionCallExpr, inst Instantiation) {
@@ -124,6 +196,9 @@ func (t *InstantiationTable) All() []Instantiation {
 	unique := map[string]Instantiation{}
 	for _, inst := range t.byCall {
 		unique[inst.Key()] = inst
+	}
+	for key, inst := range t.discovered {
+		unique[key] = inst
 	}
 	keys := make([]string, 0, len(unique))
 	for k := range unique {

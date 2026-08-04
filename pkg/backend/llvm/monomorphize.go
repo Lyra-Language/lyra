@@ -37,10 +37,17 @@ import (
 // matters for soundness — arity, assignability, the borrow rules — is either
 // generic or performed at the call site against the substituted signature.
 
-// specializations returns every distinct instantiation the program uses, in a
-// stable order so the emitted module is deterministic.
+// specializations returns every instantiation to emit, in a stable order so the
+// emitted module is deterministic.
+//
+// **Concrete ones only.** The table also holds *templates* — a generic call made from
+// inside a generic body, whose bindings are the enclosing body's own type variables
+// (`unwrap<t>` calling `expect` records `expect<t=t>`). Those are not specializations and
+// have no representation; emitting one is what produced "type variable t has no concrete
+// type here". The driver has already composed each template against every specialization
+// that reaches it and added the results here, so the concrete set is complete.
 func (l *lowerer) specializations() []typetable.Instantiation {
-	return l.res.Instantiations.All()
+	return l.res.Instantiations.Concrete()
 }
 
 // declareSpecializations emits the signature of every specialization before any
@@ -183,90 +190,40 @@ func (l *lowerer) applyTypeSubst(t types.Type) types.Type {
 	return substituteTypeVars(t, l.typeSubst)
 }
 
-// substituteTypeVars is the structural substitution: a GenericType leaf becomes its
-// binding, and every composite type a signature or body can mention is rebuilt with
-// its parts substituted.
+// substituteTypeVars is `types.Substitute`, kept as a name this package's call sites
+// already use. The walk itself lives in pkg/types because the driver needs the same one
+// to compose a caller's bindings into a callee's before the specialization set is closed —
+// and a switch over composite types that exists twice drifts (CLAUDE.md hazard 8; the
+// move turned up `*LambdaType`, which this copy never handled, so a generic combinator
+// taking a callback kept a type variable in its signature).
 func substituteTypeVars(t types.Type, subst map[string]types.Type) types.Type {
-	switch tt := t.(type) {
-	case types.GenericType:
-		if concrete, ok := subst[tt.Name]; ok {
-			return concrete
-		}
-		return tt
-	case types.StaticArrayType:
-		tt.ElementType = substituteTypeVars(tt.ElementType, subst)
-		return tt
-	case types.DynamicArrayType:
-		tt.ElementType = substituteTypeVars(tt.ElementType, subst)
-		return tt
-	case types.TupleType:
-		elems := make([]types.Type, len(tt.Elements))
-		for i, e := range tt.Elements {
-			elems[i] = substituteTypeVars(e, subst)
-		}
-		tt.Elements = elems
-		return tt
-	case types.WeakType:
-		tt.Inner = substituteTypeVars(tt.Inner, subst)
-		return tt
-	case types.ParameterizedType:
-		// `Box<t>` inside a generic body, and the nested arguments of `Box<Box<i64>>`.
-		// Substituting these is what makes one instantiation's identity concrete —
-		// without it `Box<t>` at two different bindings mangles to the same name and
-		// the two would share a layout.
-		args := make([]types.Type, len(tt.TypeArguments))
-		for i, a := range tt.TypeArguments {
-			args[i] = substituteTypeVars(a, subst)
-		}
-		tt.TypeArguments = args
-		return tt
-	case types.NamedStructType:
-		// Substituting a *declaration's* contents is how an instantiation's layout is
-		// built (generic_types.go): `struct Box<t> { value: t }` at `t = i64` is a
-		// struct whose field is i64. Fields are copied rather than written in place —
-		// the declaration is shared by every instantiation, so mutating it would let
-		// the first one lowered decide the rest.
-		fields := make([]types.StructField, len(tt.Fields))
-		copy(fields, tt.Fields)
-		for i := range fields {
-			fields[i].Type = substituteTypeVars(fields[i].Type, subst)
-		}
-		tt.Fields = fields
-		return tt
-	case types.DataType:
-		ctors := make([]types.DataTypeConstructor, len(tt.Constructors))
-		copy(ctors, tt.Constructors)
-		for i := range ctors {
-			params := make([]types.Type, len(ctors[i].Params))
-			for j, p := range ctors[i].Params {
-				params[j] = substituteTypeVars(p, subst)
-			}
-			ctors[i].Params = params
-		}
-		tt.Constructors = ctors
-		return tt
-	case types.AnonymousStructType:
-		fields := make([]types.StructField, len(tt.Fields))
-		copy(fields, tt.Fields)
-		for i := range fields {
-			fields[i].Type = substituteTypeVars(fields[i].Type, subst)
-		}
-		tt.Fields = fields
-		return tt
-	}
-	return t
+	return types.Substitute(t, subst)
 }
 
 // specializedFuncFor returns the emitted function a generic call resolves to, and
 // false when the call is not generic.
+//
+// **The active substitution is composed in first.** A call sitting inside a generic body
+// recorded its callee's bindings in terms of *that body's* type variables, so the key it
+// names is a template rather than a specialization: lowering `unwrap<t=i64>`, the call to
+// `expect` is recorded as `expect<t=t>` and only becomes `expect<t=i64>` once this
+// specialization's own bindings are applied. Outside a generic body `l.typeSubst` is
+// empty and composition is the identity, so an ordinary call resolves exactly as before.
+//
+// The composed specialization is guaranteed to have been declared: the driver closed the
+// instantiation set under this same composition before ownership ran, so anything
+// reachable this way is in `l.specialized`. A miss therefore means the two disagreed, and
+// returning false here would report it as "unknown function" — the loud error below is a
+// better failure, and hazard 5 is the reason it is an error at all rather than a guess.
 func (l *lowerer) specializedFuncFor(call *ast.FunctionCallExpr) (*ir.Func, []ast.Parameter, bool) {
 	inst, ok := l.res.Instantiations.Get(call)
 	if !ok {
 		return nil, nil, false
 	}
-	fn := l.specialized[inst.Key()]
+	key := inst.Substituted(l.typeSubst, types.Substitute).Key()
+	fn := l.specialized[key]
 	if fn == nil {
 		return nil, nil, false
 	}
-	return fn, l.specializedParams[inst.Key()], true
+	return fn, l.specializedParams[key], true
 }

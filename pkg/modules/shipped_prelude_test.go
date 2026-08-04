@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Lyra-Language/lyra/pkg/backend/llvm"
 	"github.com/Lyra-Language/lyra/pkg/driver"
 	"github.com/Lyra-Language/lyra/pkg/modules"
 )
@@ -366,5 +367,60 @@ let main = () -> u8 => u8(force(Some(4)))`)
 
 	if errs := analyzeWith(t, filepath.Join(app, "app.lyra"), app, std, repo).Errors(); len(errs) != 0 {
 		t.Errorf("a pure function should be able to call expect; got %v", errs)
+	}
+}
+
+// The shipped prelude **lowers**, not merely type-checks.
+//
+// This is the gap that let a non-building prelude ship green. Every other test here stops
+// at analysis (`driver.AnalyzeUnits`), and the backend's own tests use hand-written
+// declarations rather than `std/`, so nothing ever asked the code generator to emit the
+// real combinators. A prelude whose `unwrap` delegated to `expect` passed `lyrac check`
+// and the entire suite, and failed only when someone ran `lyrac build` — "type variable t
+// has no concrete type here", three layers from the edit that caused it.
+//
+// Emitting is the whole assertion; the IR is not inspected. What is being guarded is that
+// every construct the prelude uses has a lowering at all, which is exactly what analysis
+// cannot see.
+func TestShippedPrelude_Lowers(t *testing.T) {
+	repo, path := shippedPreludePath(t)
+	std := filepath.Dir(filepath.Dir(path))
+
+	app := t.TempDir()
+	// Exercises each combinator, both receivers, and the generic-calls-generic chain
+	// (`unwrap` is written in terms of `expect`), at a managed payload as well as a
+	// scalar one — a specialization at `string` is where the ownership tables matter.
+	write(t, filepath.Join(app, "app.lyra"), `let main = () -> u8 => {
+  let m: Maybe<i64> = Some 7
+  let r: Result<i64, string> = Ok 9
+  let s: Maybe<string> = Some "hi"
+  let a = m.unwrap() + r.unwrap()
+  let b = m.expect("m") + r.expect("r")
+  let c = m.unwrap_or(0) + r.unwrap_or(0) + m.unwrap_or_else(() -> i64 => 1)
+  let d = m.map((x: i64) -> i64 => x).unwrap_or(0)
+  let e = r.map((x: i64) -> i64 => x).unwrap_or(0)
+  let f = m.flat_map((x: i64) -> Maybe<i64> => Some(x)).unwrap_or(0)
+  let g = m.filter((x: i64) -> bool => true).unwrap_or(0)
+  let h = if m.is_some() && r.is_ok() && m.is_none() == false { 1 } else { 0 }
+  let i = m.ok_or("e").unwrap_or(0) + r.ok().unwrap_or(0)
+  let j = s.unwrap()
+  u8(a + b + c + d + e + f + g + h + i)
+}`)
+
+	units, diags := modules.Resolve(filepath.Join(app, "app.lyra"), []string{app, std, repo},
+		modules.Options{Prelude: modules.PreludeModule})
+	if len(diags) != 0 {
+		t.Fatalf("resolve failed: %v", diags)
+	}
+	res := driver.AnalyzeUnits(units)
+	if res.HasErrors() {
+		t.Fatalf("the prelude should analyze cleanly: %v", res.Errors())
+	}
+	entry, epDiags := driver.ResolveEntryPoint(res)
+	if entry == nil {
+		t.Fatalf("no entry point: %v", epDiags)
+	}
+	if _, err := llvm.New().Emit(res, entry); err != nil {
+		t.Fatalf("the shipped prelude does not lower: %v", err)
 	}
 }

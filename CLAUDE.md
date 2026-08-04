@@ -215,6 +215,15 @@ parse errors converted from tree-sitter's 0-based positions to 1-based `ast.Loca
 `Result.HasErrors()` / `Result.Errors()` filter by severity. This is where a backend (or any
 tool needing a typed program) starts, instead of re-implementing the pipeline.
 
+One ordering inside it is load-bearing rather than incidental: **the generic instantiation
+set is closed before the per-specialization ownership pass runs** (`instantiations.go`). A
+generic body calling another generic records a *template* — bindings written in the
+enclosing body's own type variables — and composing those into real specializations is what
+lets `unwrap<t> = expect(self, …)` compile. Doing it later, in the backend, would leave the
+discovered specializations with no ownership table of their own, falling back to the
+program-wide one; that table is analyzed generically, where a type variable is not
+reference-counted, so a `t = string` body would emit neither retains nor releases.
+
 `driver.AnalyzeUnits(units)` is the multi-module form, with `Analyze` as its single-unit case;
 both user-facing tools go through it, since both resolve an import graph first (`cmd/lyrac`'s
 `analyze`, `cmd/lyra-lsp`'s `analyzeDocument`). `Analyze` remains for a caller with a snippet

@@ -211,10 +211,21 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	// after typechecking — it reads the TypeTable to identify managed types. It
 	// produces no diagnostics; the backend consumes the table.
 	res.Ownership = ownership.Analyze(program, symTable, tt, res.MethodTable)
+	// Close the instantiation set *before* the per-specialization ownership pass below,
+	// not after: a specialization discovered later would have no table of its own and
+	// would fall back to the program-wide one, which is analyzed generically — where a
+	// type variable is not managed, so a `t = string` body would emit neither retains nor
+	// releases. See instantiations.go.
+	res.Diagnostics = append(res.Diagnostics, closeInstantiations(res)...)
 	// …and once more per generic instantiation, with that instantiation's type
 	// arguments substituted (see OwnershipBySpec).
+	//
+	// Over `Concrete()` rather than `All()`: a template — a call inside a generic body,
+	// whose bindings are the enclosing body's own type variables — is not a
+	// specialization and is never emitted, so analyzing it would key a table under a name
+	// nothing looks up, at types that are not real.
 	res.OwnershipBySpec = map[string]*ownership.Table{}
-	for _, inst := range res.Instantiations.All() {
+	for _, inst := range res.Instantiations.Concrete() {
 		res.OwnershipBySpec[inst.Key()] = ownership.AnalyzeLambda(inst.Func, symTable, tt, inst.Subst, res.MethodTable)
 	}
 	// …and once per trait-method specialization. `Analyze` above walks top-level

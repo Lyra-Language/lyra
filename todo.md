@@ -65,15 +65,22 @@ lowers; `CLAUDE.md`'s `pkg/backend/llvm` section is the current inventory. Settl
   (A trait-impl method on a generic receiver **does** lower as of 08/03 — see COMPLETED.md
   and `pkg/backend/llvm/README.md`'s trait section. `Maybe<weak T>` parses and lowers as of
   08/03 too; the "does not parse" note that stood here was never true.)
-- **[OPEN] A generic body may not call another generic at a variable-dependent
-  instantiation.** `let getOr<t> = (o: Opt<t>, d: t) -> t => o.unwrap(d)` is refused with
-  "type variable t has no concrete type here", and so is the free-function analogue
-  (`unwrap(o, d)` from inside a generic). Substitutions are deliberately not composed
-  (`monomorphize.go`), so the callee's bindings would map `t` to `t` rather than to a type.
-  It fails loudly, which is the right failure, but it bites a natural thing to write: a
-  generic combinator built on another one. The fix is composing the caller's active
-  substitution into the callee's bindings before keying the specialization, plus deciding
-  what to do about a recursive generic (the instantiation set must stay finite).
+- **[DONE 08/04] A generic body may call another generic at a variable-dependent
+  instantiation.** `let get_or<t> = (o: Maybe<t>, d: t) -> t => o.unwrap_or(d)` compiles,
+  and so does the free-function analogue. The fix is the one this entry called for:
+  compose the caller's bindings into the callee's, done in the **driver**
+  (`instantiations.go`) rather than the backend, because the per-specialization ownership
+  pass runs off the instantiation set and a specialization discovered after it would fall
+  back to the program-wide table — analyzed generically, where a type variable is not
+  managed, so a `t = string` body would emit neither retains nor releases.
+
+  The recursive-generic question this entry raised is answered by **bounding type depth**,
+  not the count: polymorphic recursion (`f<t>` calling `f<Box<t>>`) is infinite, and what
+  grows is the type. A count-only bound does terminate, but only after the set is both
+  enormous and individually huge — measured at over a minute and a gigabyte, which is
+  indistinguishable from the hang it was meant to prevent. Depth catches it in a few dozen
+  cheap steps and reports it as what it is. Recursion at the *same* type is untouched.
+  See COMPLETED.md.
 - **[DONE 08/01] A binding's written generic parameter list is authoritative** — option (b)
   of the three that were on the table. A signature variable absent from a written list is
   `lyra-E031`; a declared parameter the signature never mentions is `lyra-W013`. The list

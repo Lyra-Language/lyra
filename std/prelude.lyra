@@ -65,15 +65,12 @@ pub let unwrap_or_else<t> = pure noalloc (self: Maybe<t>, f: () -> t) -> t => ma
   None => f(),
 }
 
-pub let unwrap<t> = pure noalloc (self: Maybe<t>) -> t => match self {
-  Some v => v,
-  None => panic("unwrap on a None"),
-}
-
 pub let expect<t> = pure noalloc (self: Maybe<t>, msg: string) -> t => match self {
   Some v => v,
   None => panic(msg),
 }
+
+pub let unwrap<t> = pure noalloc (self: Maybe<t>) -> t => expect(self, "unwrap on a None")
 
 pub let is_some<t> = pure noalloc (self: Maybe<t>) -> bool => match self {
   Some _ => true,
@@ -136,15 +133,12 @@ pub let unwrap_or_else<t,e> = pure noalloc (self: Result<t,e>, f: () -> t) -> t 
   Err _ => f(),
 }
 
-pub let unwrap<t,e> = pure noalloc (self: Result<t,e>) -> t => match self {
-  Ok v => v,
-  Err _ => panic("unwrap on an Err"),
-}
-
 pub let expect<t,e> = pure noalloc (self: Result<t,e>, msg: string) -> t => match self {
   Ok v => v,
   Err _ => panic(msg),
 }
+
+pub let unwrap<t,e> = pure noalloc (self: Result<t,e>) -> t => expect(self, "unwrap on an Err")
 
 pub let ok<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<t> => match self {
   Ok v => Some v,

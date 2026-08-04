@@ -1123,6 +1123,38 @@ signature exists (`impl Show<t> for Box<t>` has no single type until a receiver 
 never re-derives Self substitution; duplicating it would be a second implementation of "what is
 this method's type", free to disagree with the one that type-checked the call.
 
+### A generic body may call another generic (08/04)
+
+`unwrap<t>` written as `expect(self, "…")` — a generic calling a generic at a
+*variable-dependent* instantiation — used to be refused with `type variable "t" has no
+concrete type here`, because substitutions were not composed: the typechecker records that
+inner call as `expect<t=t>`, where the right-hand `t` is the **caller's** variable, and
+that is a template rather than a specialization.
+
+Two halves, and the interesting one is not in this package:
+
+- **Here:** `specializations()` emits only `Instantiations.Concrete()`, so a template is
+  never lowered, and `specializedFuncFor` composes the lowerer's active `typeSubst` into
+  the callee's bindings before keying — lowering `unwrap<t=i64>`, the call resolves to
+  `expect<t=i64>`. Outside a generic body the substitution is empty and composition is the
+  identity, so an ordinary call is unchanged.
+- **In the driver** (`driver/instantiations.go`): the set of specializations is closed
+  under that same composition *before* the per-instantiation ownership pass runs. That
+  ordering is the whole reason it does not live here. `OwnershipBySpec` is built from the
+  instantiation set, so a specialization discovered later would find no table of its own
+  and fall back to the program-wide one — analyzed generically, where a type variable is
+  not reference-counted, so a `t = string` body would emit neither retains nor releases.
+  That is the double free this package already fixed once (see `ownership()`).
+
+Polymorphic recursion (`f<t>` calling `f<Box<t>>`) is infinite and is refused, bounded on
+type **depth** rather than count — what diverges is the type, and a count-only bound
+terminates only after the set is both enormous and individually huge.
+
+`substituteTypeVars` is now `types.Substitute`: the driver needs the same walk, and a
+switch over composite types that exists twice drifts (hazard 8). Moving it turned up
+`*LambdaType`, which this package's copy never handled — invisible until something
+substituted into a signature carrying a callback, which is exactly a generic combinator.
+
 ### A generic impl is monomorphized, one function per binding set (08/03)
 
 The paragraph above used to end "which is why a generic impl needs no extra machinery". It

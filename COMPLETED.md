@@ -10,6 +10,70 @@ Newest first.
 ## Dated log
 
 ### 08/04/26
+**A generic body may call another generic at a variable-dependent instantiation.** The
+prelude's `unwrap` is now written as `expect(self, "unwrap on a None")` — one trap site
+instead of two — and `let get_or<t> = (o: Maybe<t>, d: t) -> t => o.unwrap_or(d)` compiles,
+which is the case todo.md had listed as open since generics landed.
+
+**What was actually wrong.** The typechecker records, per call site, the bindings it
+solved. Inside a generic body those are written in the *enclosing* body's type variables:
+`unwrap<t>`'s call to `expect` records `expect<t=t>`, where the right-hand `t` is unwrap's.
+That is not a specialization — it is a template, one per enclosing specialization — and the
+monomorphizer refused to lower it (`type variable "t" has no concrete type here`) rather
+than guess, which was the correct failure and not a useful one.
+
+The fix is composition, closed to a fixpoint: for each concrete specialization the program
+uses, walk its body and compose its bindings into every generic call it contains, turning
+`expect<t=t>` into `expect<t=i64>` — a specialization that must be emitted although no call
+site in the program names it.
+
+**Where it runs is the part worth recording, because the obvious place is wrong.** The
+failure surfaces in the backend, so that is where the fix wants to go. It cannot: the
+ownership pass runs **once per instantiation** (`OwnershipBySpec`), because whether a value
+is reference-counted is a property of the type argument. A specialization discovered after
+that pass has no table of its own and silently falls back to the program-wide one — which
+is analyzed generically, where a type variable is *not* managed, so a `t = string` body
+emits neither retains nor releases. That is precisely the double free this project fixed
+once before, and re-creating it would have been invisible on every scalar test. So the
+closure runs in the driver, before ownership; `pkg/driver/instantiations.go` says so at the
+top, and a test asserts every concrete specialization has a table.
+
+**Polymorphic recursion, and a bound chosen by measurement rather than taste.** `f<t>`
+calling `f<Box<t>>` needs infinitely many specializations, each one deeper than the last;
+monomorphization is not defined for it, and every monomorphizing language refuses it. The
+first bound written here was a count — 10,000 specializations, "deliberately far above any
+real program". It terminates in theory. In practice the run went past a minute and a
+gigabyte of resident memory before firing, because with polymorphic recursion *each member
+is also huge*: the keys are `Box<Box<Box<…>>>` strings growing linearly, so reaching the cap
+costs quadratic time and space. A compiler that eventually errors after a gigabyte is
+indistinguishable, to the person waiting, from the hang it was meant to prevent.
+
+The bound that works tests the thing that is actually growing — **type depth**. Twenty-four
+constructors deep is far beyond anything hand-written, it fires in a few dozen cheap steps,
+and it names the real condition in the diagnostic. The count survives as a backstop for
+divergence that is wide rather than deep, which nothing is known to produce. The test pins
+the *deadline*, not just the message: a 30-second timeout fails if the depth bound ever
+stops firing. Recursion at the same type is untouched — the composed key repeats and the
+worklist closes.
+
+`substituteTypeVars` moved to **`types.Substitute`**, since the driver now needs the same
+walk the backend has always had, and hazard 8 is explicit about what two copies of a switch
+over composite types do. Taking the union turned up `*LambdaType`, which the backend's copy
+never handled: invisible until something substitutes into a signature carrying a callback,
+which is exactly what a generic combinator is.
+
+**And the test gap that let this ship.** The prelude was committed in a state that
+type-checked and could not build, and `go test ./...` was fully green. Every prelude test
+stopped at analysis, and the backend's own tests use hand-written declarations rather than
+`std/`, so nothing ever asked the code generator to emit the real combinators — the failure
+was reachable only by running `lyrac build` by hand. `TestShippedPrelude_Lowers` closes it
+by emitting IR for a program that exercises every combinator on both receivers, at a managed
+payload as well as a scalar one; it was confirmed to fail against the unfixed driver rather
+than merely added. This is the same gap as yesterday's "nothing analyzed the shipped
+prelude", one layer down, which is the uncomfortable part: the fix then should have been the
+fix now.
+
+### 08/04/26
 **A method call resolves against every declaration of the name the file can reach, not
 against the one its key resolves to.** `ufcsFunction` now gathers candidates by name
 (`SymbolTable.FunctionsNamed`) and filters them by the three things that actually decide a
