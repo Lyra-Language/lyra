@@ -86,10 +86,14 @@ func matchesCanonicalShape(decl *ast.TypeDeclStmt, kind string) bool {
 //     same-named unmarked type is left an ordinary type.
 //
 // That last rule has a sharp edge now that `std/prelude.lyra` marks its own
-// types: a user declaration shadows a prelude type *program-wide*, so shadowing
-// `Maybe` yields a non-canonical type and `?` on it reports "operand must be a
-// Result or Maybe, got Maybe". The rule is right; the diagnostic is not. See
-// todo.md, Pit of Success #1.
+// types: a user declaration named `Maybe` is left an ordinary type, and `?` on it
+// used to report "operand must be a Result or Maybe, got Maybe" — a message that
+// names the answer as the problem. The rule is right, so what changed is the
+// diagnostic: such a declaration is stamped `ShadowedCanonical` (plus whether its
+// shape would have qualified) and `?` reports what actually happened. Note the fix
+// that reads as obvious is not available — marking the shadow `@builtin(Maybe)`
+// too is `lyra-E017`, a duplicate claim — so the advice is to drop the declaration
+// or rename it, never to add a marker.
 //
 // Truly ambient use (a Result/Maybe annotation with no declaration at all) has
 // no declaration to stamp; the recognition sites keep a name+arity fallback for
@@ -127,6 +131,25 @@ func (c *Collector) resolveCanonicalTypes() {
 				d.CanonicalKind = kind
 			}
 			continue
+		}
+		// The kind is claimed by a marker, so a same-named *unmarked* declaration is
+		// not it. Record that, and whether it would otherwise have qualified, so the
+		// `?` diagnostic can say which of the two mistakes this is rather than
+		// reporting "must be a Maybe, got Maybe". Stamped here because the shape test
+		// lives here; a consumer re-deriving it would be a second copy to drift.
+		//
+		// Walked over the statements rather than looked up in `c.table.Types`, for a
+		// reason that is easy to get wrong: a declaration shadowing a prelude name is
+		// registered under a *qualified* key so the prelude keeps the bare one
+		// (symbols' declKeyIn), so `Types[kind]` returns the prelude's declaration —
+		// exactly the one this is not about.
+		for _, stmt := range c.ast.Statements {
+			d, ok := stmt.(*ast.TypeDeclStmt)
+			if !ok || d.Name != kind || d.Builtin != "" {
+				continue
+			}
+			d.ShadowedCanonical = kind
+			d.ShapeMatchesCanonical = matchesCanonicalShape(d, kind)
 		}
 		// One or more explicit markers: the first well-shaped one wins; a
 		// wrong-shaped marker and any subsequent claimant are errors.

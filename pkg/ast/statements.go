@@ -38,6 +38,20 @@ type TypeDeclStmt struct {
 	// instead of re-matching name and shape, so recognition has one source of
 	// truth and no longer hinges on the literal type name.
 	CanonicalKind string
+	// ShadowedCanonical names the canonical kind this declaration *looks* like it
+	// should be but is not ("Result"/"Maybe", "" otherwise): it carries that kind's
+	// name while an `@builtin`-marked declaration elsewhere — normally the prelude's
+	// — actually holds the kind. It exists only so a diagnostic can say what went
+	// wrong, and is stamped by the same pass that decides CanonicalKind, for the
+	// reason CLAUDE.md's rule 4 gives: the shape test that decides it lives in the
+	// collector, and a consumer re-deriving it would be a second copy to drift.
+	//
+	// ShapeMatchesCanonical says whether that declaration would otherwise have
+	// qualified — it is the difference between "you re-declared the prelude's type"
+	// and "you gave an unrelated type the prelude's name", which want different
+	// advice.
+	ShadowedCanonical     string
+	ShapeMatchesCanonical bool
 }
 
 func (t *TypeDeclStmt) statementNode() {}

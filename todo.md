@@ -274,22 +274,19 @@ enclosing return.
     block (`releaseTempsOnExit`) instead of holding the whole pending list back. Measured
     both ways with LeakSanitizer on Linux: 19 bytes in 1 allocation before, none after.
     See COMPLETED.md.
-- **[OPEN] Shadowing a marked canonical type gives a useless diagnostic.** Now that
-  `std/prelude.lyra` marks its types `@builtin(Maybe)`/`@builtin(Result)`, the marker
-  claims the kind and `resolveCanonicalTypes` leaves a same-named *unmarked* type "an
-  ordinary type" — correct in itself. So a module declaring its own `data Maybe` and then
-  using `?` on it gets `` `?` operand must be a Result or Maybe, got Maybe ``. The rule is
-  right and the message is still poor. Options: have a shadowing declaration inherit the
-  kind it shadows, or say what is actually wrong — "`Maybe` here is your own declaration,
-  not the prelude's canonical one; mark it `@builtin(Maybe)` or rename it". Note the
-  fallback's own comment still reads "which is every program today (there is no prelude)";
-  that premise is what changed.
+- **[DONE 08/03] Shadowing a marked canonical type now explains itself.** `?` on a
+  user's own `data Maybe` reported `` `?` operand must be a Result or Maybe, got Maybe ``
+  — true, and useless, because it names the answer as the problem. The rule was kept (the
+  marker confers the kind; a same-named unmarked type is ordinary) and the message
+  replaced: the collector stamps `ShadowedCanonical`, and `?` says whether the shadow
+  re-declares the prelude's type or is a different type wearing its name, each with the
+  fix that fits.
 
-  **Scope narrowed 08/01.** This used to reach a module that never mentioned `Maybe` — a
-  type shadow was program-wide, so *another* module's `?` reported the message about a
-  declaration it had never seen, which is what made it indefensible. Per-module type
-  identity confined it to the module that makes the shadow; what is left is a bad message
-  in the one place the author actually did something worth explaining.
+  **The advice this entry used to recommend does not work**, which is the part worth
+  keeping: "mark it `@builtin(Maybe)`" is `lyra-E017` (duplicate claim), because the
+  prelude already holds the kind. A program can have exactly one canonical Maybe. The
+  shipped message therefore never mentions `@builtin` — it says remove the declaration or
+  rename it, and both are covered by tests that run the suggested fix. See COMPLETED.md.
 ### 2. Checked arithmetic by default; wraparound explicit
 
 Trap-on-overflow covers all integer arithmetic, `wrapping_*`/`saturating_*` are the lowered

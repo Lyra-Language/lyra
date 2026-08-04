@@ -16,10 +16,24 @@ check key off. Identity is conferred by a `@builtin(Result)`/`@builtin(Maybe)` a
 (collected onto `TypeDeclStmt.Builtin` via `collectBuiltin`, reusing the `@derive` attribute
 grammar — no grammar change), which is *name-independent* (a type named `Either` can be the
 canonical Result) but shape-validated; with no marker, an unmarked type literally named
-"Result"/"Maybe" with the canonical constructor shape is stamped as a fallback (the only path
-today — there is no prelude). A malformed marker (wrong shape, unknown kind, duplicate claim) is
-`lyra-E017`. Recognition sites read the stamp via the symbol table and keep a name+arity
-fallback only for a truly undeclared ambient annotation.
+"Result"/"Maybe" with the canonical constructor shape is stamped as a fallback — the path a
+program with no prelude in its search roots takes, which is most tests, though `std/prelude.lyra`
+now marks its own types so a normal build goes through the marker. A malformed marker (wrong
+shape, unknown kind, duplicate claim) is `lyra-E017`. Recognition sites read the stamp via the
+symbol table and keep a name+arity fallback only for a truly undeclared ambient annotation.
+
+Once a marker claims a kind, a same-named *unmarked* declaration is an ordinary type — right,
+but it used to surface as `` `?` operand must be a Result or Maybe, got Maybe ``. So the same
+pass also stamps `ShadowedCanonical` (the kind the declaration looks like but is not) and
+`ShapeMatchesCanonical` (whether it would otherwise have qualified), which is all `?` needs to
+say whether the author re-declared the prelude's type or gave an unrelated type its name. It is
+stamped here rather than re-derived at the diagnostic, so the shape test has one home.
+
+Two traps that pass live in that stamp. It walks the statement list rather than reading
+`c.table.Types[kind]`, because a declaration shadowing a prelude name is keyed `<module>::<name>`
+so the prelude keeps the bare key — the lookup returns the prelude's declaration, the one this is
+not about. And the advice it enables must never be "mark it `@builtin(Maybe)` too": that is a
+duplicate claim, `lyra-E017`, so the message says remove or rename instead.
 
 **Struct-pattern reclassification (`reclassifyStructPatterns`, `collector.go`):** after
 `walkProgram`, `Collect` walks every pattern site (match arms, destructuring `let`s, `if

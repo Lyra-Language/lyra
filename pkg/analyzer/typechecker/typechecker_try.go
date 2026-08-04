@@ -1,6 +1,8 @@
 package typechecker
 
 import (
+	"fmt"
+
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -27,6 +29,10 @@ func (tc *TypeChecker) inferTryExpr(e *ast.TryExpr) types.Type {
 
 	kind, payload, operandErr, ok := tc.resultOrMaybeKind(operandT, e.GetLocation())
 	if !ok {
+		if msg, shadowed := tc.shadowedCanonicalMessage(operandT, e.GetLocation()); shadowed {
+			tc.addError(e.GetLocation(), SeverityError, "%s", msg)
+			return nil
+		}
 		tc.addError(e.GetLocation(), SeverityError,
 			"`?` operand must be a Result or Maybe, got %s", operandT.GetName())
 		return nil
@@ -83,6 +89,48 @@ func (tc *TypeChecker) resultOrMaybeKind(t types.Type, loc ast.Location) (kind s
 		}
 	}
 	return "", nil, nil, false
+}
+
+// shadowedCanonicalMessage returns the message for the one case where "`?` operand
+// must be a Result or Maybe, got Maybe" is technically true and useless: the operand
+// *is* named Maybe (or Result), but it is the user's own declaration, and the kind
+// belongs to the `@builtin`-marked one in the prelude. Naming the answer as the
+// problem is what made the old message unreadable; this says which of the two
+// mistakes it is and what to do about it.
+//
+// The identity work is not repeated here — the collector stamps
+// ShadowedCanonical/ShapeMatchesCanonical alongside CanonicalKind, so the shape test
+// has one home (CLAUDE.md rule 4).
+//
+// **The advice deliberately never suggests `@builtin`.** Marking the shadow is
+// `lyra-E017` ("duplicate `@builtin(Maybe)`"), because the prelude already claims
+// the kind — so recommending it would walk the author straight into a second error.
+// A program can have exactly one canonical Maybe, and it is the prelude's.
+func (tc *TypeChecker) shadowedCanonicalMessage(t types.Type, loc ast.Location) (string, bool) {
+	name := t.GetName()
+	if p, isParam := t.(types.ParameterizedType); isParam {
+		name = p.Name
+	}
+	decl, ok := tc.symTable.LookupTypeFrom(name, loc)
+	if !ok || decl.ShadowedCanonical == "" {
+		return "", false
+	}
+	kind := decl.ShadowedCanonical
+	if decl.ShapeMatchesCanonical {
+		// They re-declared the prelude's type, most likely without knowing it was
+		// already in scope (it is implicitly imported). Deleting it is the fix that
+		// makes `?` work; renaming keeps their type but not `?`.
+		return fmt.Sprintf(
+			"`?` works on the prelude's %s, and %q here is your own declaration at %s, not that one. "+
+				"Remove it to use the prelude's %s, or rename it if you meant a separate type",
+			kind, name, decl.NameLocation.Pretty(), kind), true
+	}
+	// A differently-shaped type wearing the name: `?` was never going to apply, and
+	// the name is what made that look like a contradiction.
+	return fmt.Sprintf(
+		"`?` works on the prelude's %s, and %q here is your own declaration at %s — a different type "+
+			"that happens to share the name. Rename it, or return the prelude's %s instead",
+		kind, name, decl.NameLocation.Pretty(), kind), true
 }
 
 // canonicalKind returns the canonical kind ("Result"/"Maybe") a type name

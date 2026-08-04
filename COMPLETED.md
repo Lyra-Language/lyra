@@ -10,6 +10,47 @@ Newest first.
 ## Dated log
 
 ### 08/03/26
+**Shadowing a canonical type explains itself instead of reporting the answer as the
+problem.** `?` on a user's own `data Maybe` said `` `?` operand must be a Result or Maybe,
+got Maybe ``. The rule behind it is right — `std/prelude.lyra` marks its types
+`@builtin(Maybe)`/`@builtin(Result)`, the marker confers the kind, and a same-named
+*unmarked* declaration is therefore an ordinary type — so what changed is only the message.
+
+It now distinguishes the two mistakes, because they want opposite fixes:
+
+- **Same shape** (`None | Some(t)`) — the author re-declared the prelude's type, almost
+  always without knowing it was already in scope: *"`?` works on the prelude's Maybe, and
+  "Maybe" here is your own declaration at 1:6, not that one. Remove it to use the prelude's
+  Maybe, or rename it if you meant a separate type."*
+- **Different shape** (`Nothing | Just(t)`) — a genuinely different type wearing the name,
+  which `?` was never going to accept; the shared name is what made that read as a
+  contradiction: *"… a different type that happens to share the name. Rename it, or return
+  the prelude's Maybe instead."*
+
+An operand that is simply the wrong type keeps the original wording, which reads correctly
+there ("got Foo").
+
+**The advice the plan called for turned out to be wrong, and that is the useful part.** The
+recorded suggestion was to say "mark it `@builtin(Maybe)` or rename it". Marking it is
+`lyra-E017` — *duplicate `@builtin(Maybe)`* — because the prelude already claims the kind,
+so that message would have walked the author straight into a second error. A program can
+have exactly one canonical Maybe, and it is the prelude's. The shipped message never
+mentions `@builtin`; both fixes it *does* offer are covered by tests that actually run them
+(`TestCanonicalShadow_AdviceResolvesIt`), and a third pins why the tempting fix is refused
+(`TestCanonicalShadow_MarkingTheShadowIsAnError`) so no future edit reintroduces it.
+
+The other option on the table — letting a shadow *inherit* the kind it shadows — was
+declined: `@builtin` exists to give the kind exactly one owner (claiming it twice is already
+an error), and silently granting canonical identity to an unmarked same-named type
+re-creates the ambiguity the marker was introduced to remove.
+
+`ShadowedCanonical`/`ShapeMatchesCanonical` are stamped by `resolveCanonicalTypes` beside
+`CanonicalKind`, not re-derived at the diagnostic site, for CLAUDE.md rule 4's reason — the
+shape test has one home. One trap on the way: the stamp walks the statement list rather than
+looking up `c.table.Types[kind]`, because a declaration shadowing a prelude name is
+registered under a *qualified* key so the prelude keeps the bare one, and the lookup
+therefore returns the prelude's declaration — precisely the one this is not about.
+
 **`break` and `continue` no longer leak the pending temporaries of the statements they jump
 out of.** `for { if ("a" ++ "b") == "ab" { break } }` leaked the concatenation — 18 bytes,
 measured with LeakSanitizer on Linux both before and after. `lowerBreak`/`lowerContinue`

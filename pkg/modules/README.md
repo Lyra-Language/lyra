@@ -122,7 +122,9 @@ modes as a memory-safety decision, and a bare lookup hands back another module's
 shadowing declaration was it — `noteShadowed` withdrew the prelude's entry outright. The
 reachable consequence was a module that never mentioned `Maybe` losing the canonical one and
 reporting `` `?` operand must be a Result or Maybe, got Maybe `` about a declaration it had
-never seen, and two modules being unable to each declare a private `Point`.
+never seen, and two modules being unable to each declare a private `Point`. (That message is
+gone as of 08/03: the shadowing module still gets an error — its `Maybe` is genuinely not the
+canonical one — but it now names the shadow and the fix. See `collector/README.md`.)
 
 Both were the same missing piece — per-module type *identity* — and both are closed by keying
 `Types`/`Traits` with the same `declKey` bindings already used, so nothing new was invented:
