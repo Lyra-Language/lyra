@@ -95,6 +95,24 @@ pub let ok_or_else<t,e> = pure noalloc (self: Maybe<t>, f: () -> e) -> Result<t,
   None => Err(f()),
 }
 
+pub let map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> u) -> Maybe<u> => match self {
+  Some v => Some(f(v)),
+  None => None,
+}
+
+pub let flat_map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> Maybe<u>) -> Maybe<u> => match self {
+  Some v => f(v),
+  None => None,
+}
+
+// `filter` has no `Result` counterpart, and deliberately: rejecting an `Ok` would have to
+// invent the `e` to fail with, which only the caller can supply — that is `ok_or`'s job,
+// not this one's. A name declared once here is an ordinary prelude name, not a set.
+pub let filter<t> = pure noalloc (self: Maybe<t>, predicate: (t) -> bool) -> Maybe<t> => match self {
+  Some v => if predicate(v) { Some v } else { None },
+  None => None,
+}
+
 @builtin(Result)
 pub data Result<t, e> = Ok(t) | Err(e)
 
@@ -136,4 +154,14 @@ pub let ok<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<t> => match self {
 pub let err<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<e> => match self {
   Ok _ => None,
   Err err => Some err,
+}
+
+pub let map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> u) -> Result<u,e> => match self {
+  Ok v => Ok(f(v)),
+  Err err => Err err,
+}
+
+pub let flat_map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> Result<u,e>) -> Result<u,e> => match self {
+  Ok v => f(v),
+  Err err => Err err,
 }

@@ -106,11 +106,16 @@ the backend's `structTypes` registry with them. Two modules may each declare a p
 **An import can make an ordinary name unusable, and the prelude cannot.** A `pub`
 declaration takes the *bare* program-wide key whichever module made it (`declKeyIn`,
 `pkg/ast/symbols/table.go`), so importing a module claims every name it exports. `import
-std.maybe` plus a perfectly ordinary `let map = (n: i64) -> i64 => n + 1` is a hard error:
+util.seq` (which exports a `map`) plus a perfectly ordinary
+`let map = (n: i64) -> i64 => n + 1` is a hard error:
 
 ```
-shadow.lyra:3:1: error: function "map" is already defined at .../std/maybe.lyra:3:20-6:2
+shadow.lyra:3:1: error: function "map" is already defined at .../util/seq.lyra:3:20-6:2
 ```
+
+The example used to be `import std.maybe`, which is no longer a module — the standard
+library is one module as of 08/04. The bug is unchanged; only the illustration had to move
+to a user module, and that it *can* is the point.
 
 The comparison is what makes it wrong rather than merely strict. The **prelude** — the names
 you never asked for — takes the *soft* path: `let unwrap_or = …` warns (`lyra-W012`) and the
@@ -123,33 +128,50 @@ The mechanism to fix it already exists and is keyed too narrowly: `shadowsPrelud
 the shadowing declaration and leaves the bare key to the prelude, which is exactly the
 "local declaration wins, the other stays reachable" rule wanted here. Two shapes to weigh —
 (a) generalize that to any imported module, so a local declaration always wins and the
-imported one is reached through its namespace (`maybe.map(…)`), which is the form the
-`std.maybe`/`std.result` split is built around anyway; or (b) qualify `pub` keys outright and
+imported one is reached through its namespace (`seq.map(…)`), which is a form the language
+supports for every module; or (b) qualify `pub` keys outright and
 teach the bare lookups to consult the importing module's bindings. (a) is a smaller change
 and keeps a genuine *cross-module* duplicate — two modules both exporting `map`, neither
 importing the other — reportable as it is now.
 
 Worth doing before the standard library grows: every name added under `pub` is currently a
 name taken away from anyone who imports that module. It is also the constraint that decides
-what may live in `std.maybe` vs the prelude (see the 08/02 discussion of `map`/`filter`).
+where a combinator could live at all, back when the library was split (see the 08/02
+ discussion of `map`/`filter`); the whole standard library is one module as of 08/04.
 
 **Less pressing since UFCS landed 08/03, and not fixed by it.** The combinators are now
 reached as `m.map(f)`, dispatched on the receiver, so the bare name `map` no longer has to
 mean one type's version — which was the reason this decided where `map` could live. The
-collision itself is untouched: `import std.maybe` still claims the top-level name `map`, so
-a program that imports it still may not declare its own. What changed is that the workaround
-(don't import it) now costs less, which is exactly the kind of relief that lets a real bug
-sit for a year. The fix is still (a) or (b) above.
+collision itself is untouched: importing a module still claims every top-level name it
+exports, so a program that imports one still may not declare its own. What changed is that
+the workaround (don't import it) now costs less, which is exactly the kind of relief that
+lets a real bug sit for a year. The fix is still (a) or (b) above.
 
 **Receiver-keyed overloading (08/03) removed the other half of the pressure, and again did
 not fix this.** Two `self` functions of one name may now be *declared* in one module when
 their receiver heads differ, so `Maybe` and `Result` no longer need separate modules merely
-to have `unwrap_or` each — which was the standing argument for the `std.maybe`/`std.result`
-split, and so for putting anything in the prelude at all. What remains is exactly the bug
-above, now the only reason left to split a module: a `pub` name still claims the bare
-program-wide key, so `import std.maybe` still forbids the importer its own `map`. Note the
-two features do *not* compose into a fix — an overload set is confined to one module, and
-`std.maybe`'s `map` and a user's are in two, which is the cross-module case (a) addresses.
+to have `unwrap_or` each — which was the standing argument for the split. `std.maybe` was
+folded into the prelude on 08/04 and deleted; the whole standard library is now one module,
+so the shipped code no longer trips this at all.
+
+**And the way it got tripped on the way there is the sharpest statement of the bug.** Adding
+`map` for `Result` to the prelude while `std.maybe` still declared `map` for `Maybe` did not
+produce an error — it *silently removed a method*. The prelude keeps bare keys, so its `map`
+took the program-wide one; that flipped `shadowsPrelude("std.maybe", "map")` to true, which
+pushed `std.maybe`'s `map` to a qualified key; and the UFCS rung consults exactly one
+candidate by name, so `m.map(f)` on a `Maybe` found the `Result` overload, failed to match
+the receiver, and reported "member access on non-struct type Maybe<i64>". Two features that
+each work correctly, composing into a disappearance. Reproduced on the commit *before*
+overloading landed, so it is this bug and not that feature.
+
+The follow-up that addresses it directly: **UFCS should resolve against every declaration of
+the name the file can reach** — its own module, the prelude, and each imported module — and
+pick by receiver, rather than taking the single `declKey` winner. That is the cross-module
+form of the dispatch overloading already does within a module, it keeps the import
+requirement intact, and it turns the silent case above into either a correct resolution or
+an ambiguity that says so. It does not subsume (a) or (b): the bare-call form
+(`map(m, f)`) resolves through the scope chain, where the prelude still shadows an imported
+name, so the key-level fix is still wanted.
 
 The LSP resolves a document's whole import graph as of 08/02 (see COMPLETED.md), which leaves
 two editor features single-file where the program no longer is:
@@ -391,7 +413,7 @@ interior assignment, and deep retain-on-copy.
   07/31; details in `checker/README.md`, reasoning in COMPLETED.md.
   - The **inferred** half: a function's stored effect is its *base* plus its callback
     parameters, and a call site pays base ∪ the effects of the arguments supplied for them.
-    `unwrap_or_else`, `ok_or_else` and all of `std.maybe` are annotated `pure noalloc` and
+    `unwrap_or_else`, `ok_or_else` and every prelude combinator are annotated `pure noalloc` and
     callable from `pure` code, with an impure callback rejected at the call site.
   - The **declared** half: `lambda_type` takes the same `pure`/`det`/`noalloc` modifiers a
     lambda value does (`f: pure () -> t`), carried on `types.LambdaType` and enforced by

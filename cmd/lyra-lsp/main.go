@@ -36,7 +36,7 @@ type docAnalysis struct {
 }
 
 // fileScope is the scope a top-level position in this document resolves in. A file
-// declaring `module std.maybe` puts its declarations in that module's scope, not the
+// declaring `module util.math` puts its declarations in that module's scope, not the
 // unnamed entry one, so asking the entry scope would find none of the file's own names.
 func (a *docAnalysis) fileScope() *symbols.Scope {
 	if a.moduleScope != nil {

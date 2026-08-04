@@ -185,8 +185,7 @@ func TestShippedPrelude_CombinatorsAreUsableFromPureCode(t *testing.T) {
 
 	t.Run("pure callback", func(t *testing.T) {
 		entry := filepath.Join(t.TempDir(), "app.lyra")
-		write(t, entry, `import std.maybe
-let pipeline = pure (m: Maybe<i64>) -> i64 => {
+		write(t, entry, `let pipeline = pure (m: Maybe<i64>) -> i64 => {
   let doubled = m.map((x: i64) -> i64 => x * 2)
   doubled.unwrap_or_else(() -> i64 => 0)
 }
@@ -198,8 +197,7 @@ let main = () -> u8 => u8(pipeline(Some(4)))`)
 
 	t.Run("impure callback is still rejected", func(t *testing.T) {
 		entry := filepath.Join(t.TempDir(), "app.lyra")
-		write(t, entry, `import std.maybe
-var log = 0
+		write(t, entry, `var log = 0
 let sneaky = (x: i64) -> i64 => { log = x; x }
 let pipeline = pure (m: Maybe<i64>) -> Maybe<i64> => m.map(sneaky)
 let main = () -> u8 => 0`)

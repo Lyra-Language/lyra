@@ -84,7 +84,7 @@ supplied for those parameters (`callEffect`/`argumentEffect`), so one definition
 
 Before this, a call through a parameter hit the unresolvable-callee branch and tainted
 `AllEffects`, which spread to every caller: **no callback-taking function was callable from
-`pure` code at all**, which is the entire std.maybe/std.result combinator layer.
+`pure` code at all**, which is the entire prelude combinator layer.
 
 Two consequences that are the point rather than side effects:
 

@@ -62,7 +62,7 @@ func (tc *TypeChecker) MethodTable() *typetable.MethodTable {
 }
 
 // UFCSModules reports, per file, which modules that file reached through a UFCS call
-// (`m.map(f)` resolving to `std.maybe`'s `map`).
+// (`p.scaled(2)` resolving to an imported `util.geom`'s `scaled`).
 //
 // It exists for the unused-import warning, which is otherwise *wrong* about exactly these
 // imports. That check is syntactic — an import is used if its bound name appears as an

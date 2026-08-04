@@ -238,8 +238,12 @@ func capturedMutable(capture []scopeBindings, name string) bool {
 // A dotted callee had no resolution at all before, so it fell through to the
 // conservative "external, assume every effect" branch — which meant **any** cross-module
 // call from a `pure` function was reported impure, and a standard library reached through
-// its namespace (`maybe.map(…)`, the whole point of the std.maybe/std.result split) was
-// unusable from pure code no matter how pure it was.
+// its namespace (`maybe.map(…)`, which is how the combinators were reached while they
+// lived in `std.maybe`) was unusable from pure code no matter how pure it was.
+//
+// The standard library no longer splits that way — receiver-keyed overloading let the
+// combinators for both types move into the prelude (08/04) — but the namespace form is
+// ordinary syntax any program may use, so the resolution here is not vestigial.
 //
 // The last segment is what resolves, against the merged program's top-level functions:
 // module paths are collapsed into one program before this pass runs, and a `pub` name is
@@ -1562,7 +1566,7 @@ func boundCallEffect(ref typetable.BoundMethodRef, groups map[typetable.BoundMet
 // call it cannot see — the old behavior, where an unresolvable callee taints AllEffects —
 // made every combinator maximally impure, and the taint spread to callers, so no
 // callback-taking function was callable from `pure` code at all. That is the whole
-// std.maybe/prelude combinator layer.
+// prelude combinator layer.
 //
 // The scheme here is the *inferred* half of todo.md's entry: a function's stored effect is
 // its **base** — everything its own body does — plus a set of **callback parameters**, the
