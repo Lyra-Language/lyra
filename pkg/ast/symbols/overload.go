@@ -1,6 +1,10 @@
 package symbols
 
-import "github.com/Lyra-Language/lyra/pkg/ast"
+import (
+	"sort"
+
+	"github.com/Lyra-Language/lyra/pkg/ast"
+)
 
 // Receiver-keyed overloading — the symbol table's half. `ast.OverloadSet` says what a set
 // is and which declarations may form one; this file says where one is *kept*.
@@ -98,6 +102,63 @@ func (st *SymbolTable) LookupOverloadsFrom(name string, loc ast.Location) (*ast.
 		return set, true
 	}
 	return nil, false
+}
+
+// FunctionsNamed returns every registered declaration of name, from every module, in a
+// stable order (bare key first, then by module path).
+//
+// It exists because **a receiver call has to consider all of them.** Every other lookup
+// here answers "which declaration does this name mean", settling it with one key — and for
+// a method call that question is wrong, because the receiver's type is what decides, and
+// the candidates may live in different modules. Asking by key instead picks the bare-key
+// winner and reports "no method" for a receiver some other module's declaration would have
+// accepted. That is not hypothetical: the prelude gaining a `map` for `Result` pushed
+// `std.maybe`'s `map` for `Maybe` onto a qualified key and silently removed `m.map(f)` from
+// every program (08/04).
+//
+// Reachability is deliberately **not** applied here. Whether the asking file may call a
+// given declaration depends on its imports, which is the typechecker's rule to state
+// (`ufcsImportedIn`) and is also what its diagnostics are phrased around — so this returns
+// the candidates and the caller filters. Ordering is fixed so a diagnostic listing them
+// does not depend on map iteration.
+func (st *SymbolTable) FunctionsNamed(name string) []*ast.LambdaExpr {
+	if st == nil {
+		return nil
+	}
+	var (
+		out  []*ast.LambdaExpr
+		seen = map[*ast.LambdaExpr]bool{}
+	)
+	add := func(key string) {
+		if set, ok := st.OverloadSets[key]; ok {
+			for _, lam := range set.Lambdas() {
+				if !seen[lam] {
+					seen[lam] = true
+					out = append(out, lam)
+				}
+			}
+		}
+		if fn, ok := st.Functions[key]; ok && !seen[fn] {
+			seen[fn] = true
+			out = append(out, fn)
+		}
+	}
+	add(name)
+	modules := make([]string, 0, len(st.ModuleScopes))
+	for module := range st.ModuleScopes {
+		modules = append(modules, module)
+	}
+	sort.Strings(modules)
+	for _, module := range modules {
+		// The **entry** module is included, empty path and all. It takes bare keys like
+		// any other module, except when it declares a name the prelude also has — then
+		// declKeyIn qualifies it to `::name`, which is a key nothing else produces and
+		// which skipping the empty module would hide. That is exactly the case that
+		// matters here: a file declaring its own `map` over the prelude's, whose
+		// declaration would otherwise not be a candidate for its own call.
+		add(qualifiedName(module, name))
+	}
+	return out
 }
 
 // registerOverloadSet mirrors a scope's finished set into the lookup table, under the

@@ -140,24 +140,44 @@ func ufcsCompletions(recv types.Type, analysis *docAnalysis) []lsp.CompletionIte
 	var items []lsp.CompletionItem
 	for _, scope := range analysis.symTable.ModuleScopes {
 		for name, named := range scope.Symbols {
-			decl, ok := named.(*ast.VarDeclStmt)
-			if !ok || seen[name] {
+			if seen[name] {
 				continue
 			}
-			fn, ok := decl.Value.(*ast.LambdaExpr)
-			if !ok || !typechecker.UFCSCallable(analysis.symTable, fn, recv, loc) {
-				continue
+			// A name may be **overloaded on its receiver**, in which case the scope holds
+			// the set rather than a declaration. Each member is offered on its own merits
+			// and UFCSCallable keeps only the one this receiver can call — so `m.` lists
+			// `map` once, described by the Maybe overload, rather than dropping the name
+			// because it was not a single declaration.
+			for _, fn := range candidateLambdas(named) {
+				if !typechecker.UFCSCallable(analysis.symTable, fn, recv, loc) {
+					continue
+				}
+				seen[name] = true
+				k := kind
+				items = append(items, lsp.CompletionItem{
+					Label:  name,
+					Kind:   &k,
+					Detail: ufcsDetail(fn),
+				})
+				break
 			}
-			seen[name] = true
-			k := kind
-			items = append(items, lsp.CompletionItem{
-				Label:  name,
-				Kind:   &k,
-				Detail: ufcsDetail(fn),
-			})
 		}
 	}
 	return items
+}
+
+// candidateLambdas returns the functions a scope symbol offers under one name: one for an
+// ordinary binding, several for a receiver-keyed overload set.
+func candidateLambdas(named ast.Named) []*ast.LambdaExpr {
+	switch d := named.(type) {
+	case *ast.VarDeclStmt:
+		if fn, ok := d.Value.(*ast.LambdaExpr); ok {
+			return []*ast.LambdaExpr{fn}
+		}
+	case *ast.OverloadSet:
+		return d.Lambdas()
+	}
+	return nil
 }
 
 // ufcsDetail renders a candidate's signature **without its receiver** — `(fallback: t)

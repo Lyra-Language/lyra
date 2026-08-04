@@ -2,6 +2,8 @@ package typechecker
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
@@ -49,22 +51,14 @@ const (
 // and reports whether it may be called on a receiver of objType.
 func (tc *TypeChecker) ufcsCandidate(objType types.Type, methodName string, member *ast.MemberExpr, call *ast.FunctionCallExpr) (*ast.LambdaExpr, ufcsResult) {
 	loc := member.GetLocation()
-	// Resolved as the *calling file* sees the name. Privacy is structural — another
-	// module's private function lives under a module-qualified key — so a private
-	// callee is simply not found here, exactly as it is for a bare call.
-	fn, ok := tc.ufcsFunction(methodName, objType, loc)
-	if !ok {
-		return nil, ufcsNoMatch
+	// Every declaration of the name this file can reach, narrowed to the ones that accept
+	// this receiver — not the one the name's key happens to resolve to. See ufcsFunction.
+	fn, res := tc.ufcsFunction(methodName, objType, member, loc)
+	if res != ufcsMatch {
+		return nil, res
 	}
 	recv, ok := ufcsReceiverParam(fn)
 	if !ok {
-		return nil, ufcsNoMatch
-	}
-	if !tc.ufcsImported(fn, loc) {
-		// Reachability follows the file's own import list, so what a file may call is
-		// decided by what it imports rather than by what some other file imported.
-		// Not an error of its own: fall through to "has no method", which carries a
-		// hint naming the import (see ufcsHint).
 		return nil, ufcsNoMatch
 	}
 	// An `own` receiver is refused rather than supported: `own` *transfers*, and the
@@ -81,35 +75,124 @@ func (tc *TypeChecker) ufcsCandidate(objType types.Type, methodName string, memb
 			methodName, methodName, exprText(member.Object), rest)
 		return nil, ufcsRefused
 	}
-	// Does the receiver fit the `self` parameter? Same predicate trait dispatch uses to
-	// match an impl against a receiver, so "this receiver matches that declaration"
-	// has one definition: the function's own type variables act as wildcards and bind
-	// to the receiver's subterms, and everything else must match structurally.
-	if !unifyGenericTarget(recv.Type, objType, lambdaTypeVars(fn), map[string]types.Type{}) {
-		return nil, ufcsNoMatch
-	}
 	tc.noteUFCSModule(fn, loc)
 	tc.noteResolvedCallee(call, fn)
 	return fn, ufcsMatch
 }
 
-// ufcsFunction resolves methodName to the declaration a receiver of objType would call:
-// the single function of that name, or — when the name is **overloaded on its receiver**
-// — the member objType selects.
+// ufcsFunction picks the declaration a receiver of objType calls, from **every**
+// declaration of methodName the calling file can reach.
 //
-// Overload resolution has to happen here rather than after the desugar, even though the
-// desugared call would reach the bare-call path that also resolves it. This rung decides
-// whether `m.f(…)` is a method call at all, and it decides by asking whether *some*
-// declaration accepts the receiver; without picking the member first it would ask that of
-// an arbitrary one and answer "no method" for a receiver another member accepts. Both
-// paths use one predicate (receiverAccepts), so the two cannot disagree about which
-// member a receiver picks.
-func (tc *TypeChecker) ufcsFunction(methodName string, objType types.Type, loc ast.Location) (*ast.LambdaExpr, bool) {
-	if set, ok := tc.symTable.LookupOverloadsFrom(methodName, loc); ok {
-		fn := tc.resolveOverload(set, objType)
-		return fn, fn != nil
+// The obvious implementation — resolve the name to one declaration, then ask whether that
+// one takes this receiver — is wrong, and wrong in a way that removes methods without
+// saying so. A name resolves through a single key, and the candidates for a method call
+// can be in different modules: when the prelude gained a `map` for `Result`, it took the
+// bare key, `std.maybe`'s `map` for `Maybe` moved to a module-qualified one, and every
+// `m.map(f)` in every program began reporting "member access on non-struct type
+// Maybe<i64>" (08/04). Nothing was ambiguous and nothing was shadowed in the sense the
+// reader would recognise; one lookup simply could not see the other declaration.
+//
+// So candidates are gathered by name (`FunctionsNamed`) and filtered by the three things
+// that actually decide the call:
+//
+//   - it must **take a receiver** — the `self` opt-in, or it is call-only;
+//   - it must be **reachable** — the file's own module and the prelude need no import,
+//     anything else must be named in this file's imports, so what a file may call stays a
+//     property of its own import list;
+//   - it must **accept this receiver** — `receiverAccepts`, the predicate overload
+//     resolution and trait dispatch both use.
+//
+// A candidate failing any of these is not an error here: the call falls through to "has no
+// method", whose hint names the near-miss (`ufcsHint`).
+//
+// **A local declaration wins a tie.** Two reachable candidates accepting one receiver is
+// otherwise ambiguous, and the module doing the asking is the one whose intent is least in
+// doubt — the same rule the scope chain applies everywhere else. A tie that survives that
+// is reported rather than broken arbitrarily, since the alternative is a call whose meaning
+// depends on which module the resolver happened to visit first.
+func (tc *TypeChecker) ufcsFunction(methodName string, objType types.Type, member *ast.MemberExpr, loc ast.Location) (*ast.LambdaExpr, ufcsResult) {
+	var matches []*ast.LambdaExpr
+	for _, fn := range tc.symTable.FunctionsNamed(methodName) {
+		if _, isReceiver := ufcsReceiverParam(fn); !isReceiver {
+			continue
+		}
+		if !tc.ufcsImported(fn, loc) {
+			continue
+		}
+		if !receiverAccepts(fn, objType) {
+			continue
+		}
+		matches = append(matches, fn)
 	}
-	return tc.symTable.LookupFunctionFrom(methodName, loc)
+	switch len(matches) {
+	case 0:
+		return nil, ufcsNoMatch
+	case 1:
+		return matches[0], ufcsMatch
+	}
+	if local := tc.localCandidate(matches, loc); local != nil {
+		return local, ufcsMatch
+	}
+	tc.addError(member.GetLocation(), SeverityError,
+		"%s.%s is ambiguous: %s each define a %s taking this receiver — name the one you mean through its module, e.g. `%s.%s(%s, …)`",
+		exprText(member.Object), methodName, tc.modulesOf(matches), methodName,
+		tc.namespaceHint(matches, loc), methodName, exprText(member.Object))
+	return nil, ufcsRefused
+}
+
+// namespaceHint picks a module qualifier the reader can actually write, for the ambiguity
+// message: the namespace one of the candidates is imported under. The prelude has none —
+// it is reachable precisely because nothing names it — so a candidate from there can never
+// supply the hint, and one that is imported always can.
+func (tc *TypeChecker) namespaceHint(matches []*ast.LambdaExpr, loc ast.Location) string {
+	for _, fn := range matches {
+		module := tc.symTable.ModuleOfFile[fn.GetLocation().File]
+		if module == "" || module == tc.symTable.PreludeModule {
+			continue
+		}
+		for _, imp := range tc.symTable.ImportsFor(loc.File) {
+			if imp.Path == module && imp.IsNamespace() {
+				return imp.Alias
+			}
+		}
+		if idx := strings.LastIndex(module, "."); idx >= 0 {
+			return module[idx+1:]
+		}
+		return module
+	}
+	return "module"
+}
+
+// localCandidate returns the one candidate declared in the asking file's own module, when
+// exactly one is — the tiebreak ufcsFunction describes.
+func (tc *TypeChecker) localCandidate(matches []*ast.LambdaExpr, loc ast.Location) *ast.LambdaExpr {
+	asking := tc.symTable.ModuleOfFile[loc.File]
+	var found *ast.LambdaExpr
+	for _, fn := range matches {
+		if tc.symTable.ModuleOfFile[fn.GetLocation().File] != asking {
+			continue
+		}
+		if found != nil {
+			return nil // two in one module: registration would have refused this
+		}
+		found = fn
+	}
+	return found
+}
+
+// modulesOf names the modules a set of candidates was declared in, for the ambiguity
+// message. The entry module has no path to print, so it is named for what it is.
+func (tc *TypeChecker) modulesOf(matches []*ast.LambdaExpr) string {
+	names := make([]string, 0, len(matches))
+	for _, fn := range matches {
+		module := tc.symTable.ModuleOfFile[fn.GetLocation().File]
+		if module == "" {
+			module = "this file"
+		}
+		names = append(names, module)
+	}
+	sort.Strings(names)
+	return strings.Join(names, " and ")
 }
 
 // noteUFCSModule records that the file at loc reached fn's module through a UFCS call,

@@ -9,6 +9,87 @@ Newest first.
 
 ## Dated log
 
+### 08/04/26
+**A method call resolves against every declaration of the name the file can reach, not
+against the one its key resolves to.** `ufcsFunction` now gathers candidates by name
+(`SymbolTable.FunctionsNamed`) and filters them by the three things that actually decide a
+method call — it takes a `self` receiver, this file can reach it, and it accepts this
+receiver — instead of resolving the name to one declaration and asking whether *that* one
+fits.
+
+**The bug it fixes had no diagnostic, which is the whole reason it is worth recording.**
+Adding `map` for `Result` to the prelude, while `std.maybe` still declared `map` for
+`Maybe`, did not produce an error — it silently removed a method. The prelude keeps bare
+declaration keys, so its `map` took the program-wide one; that flipped
+`shadowsPrelude("std.maybe", "map")` to true, which pushed `std.maybe`'s `map` onto a
+qualified key; and the UFCS rung consulted exactly one candidate by name, so `m.map(f)` on
+a `Maybe` found the `Result` overload, failed to match the receiver, and reported "member
+access on non-struct type Maybe<i64>". Two features that are each individually correct,
+composing into a method that quietly was not there. Nothing was ambiguous and nothing was
+shadowed in a sense a reader would recognise — one lookup could not see the other
+declaration, and the failure surfaced three layers away as a type error about the receiver.
+
+Confirmed against the commit *before* receiver-keyed overloading landed, with only `map`
+added to the prelude: identical failure. So this is the cross-module name-claiming bug
+recorded under todo.md's Modules section, not a fault in that feature — which matters,
+because the tempting reading was that overloading had broken UFCS.
+
+**What did not change is as deliberate as what did.** The **import requirement** still
+gates reachability: gathering every declaration of a name must not quietly become "every
+`pub` function in the program is a method on values of its type", which is the design that
+was explicitly declined when UFCS landed. An unimported module's same-named method stays
+unreachable, and there is a test that fails if that stops being true.
+
+Two decisions inside the new rule:
+
+- **A file's own module wins a tie.** Two reachable candidates accepting one receiver is
+  otherwise ambiguous, and the module doing the asking is the one whose intent is least in
+  doubt — the same precedence the scope chain applies everywhere else. This is what lets a
+  file declare its own `map` for `Maybe` over the prelude's, which is the soft-shadowing
+  rule the prelude already promised for bindings.
+- **A tie that survives that is reported, not broken.** Candidates are gathered from a map
+  of modules, so "whichever came first" would not be stable between runs — a call whose
+  meaning depends on iteration order is worse than one that refuses. The message names the
+  modules and suggests a qualifier the reader can actually type
+  (`` `dup.map(m, …)` ``), taken from the import's own namespace alias; a test asserts the
+  suggestion, and it was checked by running it.
+
+One thing this turned up on its own: the **entry module** takes bare keys like any other,
+*except* when it declares a name the prelude also has — `declKeyIn` then qualifies it to
+`::name`, a key nothing else produces. Skipping the empty module path while enumerating
+candidates therefore hid a file's own declaration from its own call, which is how the
+local-wins test first failed.
+
+Also fixed here, and caused by the overloading work rather than found by it: **LSP
+completion dropped every overloaded name.** `ufcsCompletions` enumerates module scopes and
+type-asserted each symbol to `*ast.VarDeclStmt`, so a scope holding an `*ast.OverloadSet`
+was skipped — `m.` stopped offering `map`, `flat_map`, `unwrap_or` and `unwrap_or_else` the
+moment those became sets. It now offers each member and keeps the one the receiver can call,
+so the name appears once, described by the overload that applies.
+
+**Still open, and narrowed:** only the *method* form resolves this way. A **bare call**
+(`map(m, f)`) still goes through the scope chain, where the prelude shadows an imported
+module's name, and two modules exporting one name still collide on the bare key. The
+receiver is available there too — it is argument 0, which is the premise of the UFCS desugar
+— so extending the same gathering to `inferIdentifierCall` is the natural next step. The
+key-level fix in todo.md is what settles the names with no receiver at all.
+
+### 08/04/26
+**`std.maybe` folded into the prelude and deleted.** `map`, `flat_map` and `filter` for
+`Maybe` moved beside the `Result` ones; the standard library is a single module again.
+
+The split existed for one reason, and receiver-keyed overloading removed it the day before:
+a name could be declared only once per module, so `Maybe` and `Result` could not both have a
+`map` written in one place. `map` and `flat_map` are now overload sets exactly as
+`unwrap_or`/`unwrap_or_else` already were. `filter` stays `Maybe`-only and single — rejecting
+an `Ok` would have to invent the `e` to fail with, which only the caller can supply, and that
+is `ok_or`'s job.
+
+The user-visible half: the combinators need **no import at all** now, so the shipped-prelude
+tests dropped their `import std.maybe`. Comments across the checker, typechecker and LSP that
+described the split as current structure were corrected; the dated entries in this file are
+left as the record of what was true when written.
+
 ### 08/03/26
 **Receiver-keyed overloading: one module may declare a name several times, if the
 declarations differ in what they take as `self`.** The prelude now declares `unwrap_or` and

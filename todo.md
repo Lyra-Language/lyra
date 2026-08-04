@@ -164,14 +164,22 @@ the receiver, and reported "member access on non-struct type Maybe<i64>". Two fe
 each work correctly, composing into a disappearance. Reproduced on the commit *before*
 overloading landed, so it is this bug and not that feature.
 
-The follow-up that addresses it directly: **UFCS should resolve against every declaration of
-the name the file can reach** — its own module, the prelude, and each imported module — and
-pick by receiver, rather than taking the single `declKey` winner. That is the cross-module
-form of the dispatch overloading already does within a module, it keeps the import
-requirement intact, and it turns the silent case above into either a correct resolution or
-an ambiguity that says so. It does not subsume (a) or (b): the bare-call form
-(`map(m, f)`) resolves through the scope chain, where the prelude still shadows an imported
-name, so the key-level fix is still wanted.
+**[DONE 08/04] UFCS resolves against every declaration of the name the file can reach** —
+its own module, the prelude, and each imported module — and picks by receiver, rather than
+taking the single `declKey` winner (`ufcsFunction`). That is the cross-module form of the
+dispatch overloading already does within a module; the import requirement is unchanged, so
+an unimported module's method is still unreachable. A file's own module wins a tie, and a
+tie that survives that is reported with a qualifier the reader can type
+(`` `dup.map(m, …)` ``) rather than broken by map-iteration order. See COMPLETED.md.
+
+**It does not subsume (a) or (b), and the remaining half is worth stating precisely.** Only
+the *method* form resolves this way. The **bare-call** form (`map(m, f)`) still goes through
+the scope chain — module → prelude → global — so the prelude's `map` still shadows an
+imported module's for a plain call, and two modules exporting one name still collide on the
+bare key. The receiver is available at a bare call too (it is argument 0, which is the whole
+premise of the desugar), so extending the same candidate gathering to `inferIdentifierCall`
+is the natural next step; the key-level fix (a)/(b) is what settles the non-receiver names,
+which have no receiver to disambiguate on and so cannot be fixed this way at all.
 
 The LSP resolves a document's whole import graph as of 08/02 (see COMPLETED.md), which leaves
 two editor features single-file where the program no longer is:

@@ -210,3 +210,119 @@ let main = () -> u8 => 0`)
 		}
 	})
 }
+
+// A module may declare a method for its own type under a name the prelude also uses.
+//
+// This is the case that broke on 08/04 and had no diagnostic: the prelude's `map` took the
+// bare declaration key, the other module's moved to a qualified one, and the UFCS rung —
+// which consulted a single candidate by name — reported "member access on non-struct type"
+// for a receiver the other module's `map` accepted perfectly well. Two correct features
+// composing into a method that silently was not there.
+//
+// Both calls must resolve: `Maybe` through the prelude, `Box` through the import. Different
+// return types, so picking the wrong candidate fails rather than merely taking a different
+// path to the same answer.
+func TestShippedPrelude_ImportedModuleMayReusePreludeMethodName(t *testing.T) {
+	repo, path := shippedPreludePath(t)
+	std := filepath.Dir(filepath.Dir(path))
+
+	app := t.TempDir()
+	write(t, filepath.Join(app, "app.lyra"), `import util.box
+let main = () -> u8 => {
+  let m: Maybe<i64> = Some 3
+  let b = Box { v: 4 }
+  let viaPrelude: Maybe<i64> = m.map((x: i64) -> i64 => x * 2)
+  let viaImport: i64 = b.map((x: i64) -> i64 => x * 5)
+  u8(viaPrelude.unwrap_or(0) + viaImport)
+}`)
+	write(t, filepath.Join(app, "util", "box.lyra"), `module util.box
+pub struct Box { v: i64 }
+pub let map = pure (self: Box, f: (i64) -> i64) -> i64 => f(self.v)
+`)
+
+	if errs := analyzeWith(t, filepath.Join(app, "app.lyra"), app, std, repo).Errors(); len(errs) != 0 {
+		t.Errorf("a module's own `map` and the prelude's should both resolve, each on its own receiver; got %v", errs)
+	}
+}
+
+// The other half: an unimported module's same-named method stays unreachable. Gathering
+// every candidate must not turn into "every pub function in the program is a method on its
+// own type" — what a file may call is a property of its own import list.
+func TestShippedPrelude_UnimportedModuleMethodStaysUnreachable(t *testing.T) {
+	repo, path := shippedPreludePath(t)
+	std := filepath.Dir(filepath.Dir(path))
+
+	app := t.TempDir()
+	write(t, filepath.Join(app, "app.lyra"), `let main = () -> u8 => {
+  let b = Box { v: 4 }
+  u8(b.scaled(2))
+}`)
+	write(t, filepath.Join(app, "util", "box.lyra"), `module util.box
+pub struct Box { v: i64 }
+pub let scaled = pure (self: Box, by: i64) -> i64 => self.v * by
+`)
+
+	errs := analyzeWith(t, filepath.Join(app, "app.lyra"), app, std, repo).Errors()
+	if len(errs) == 0 {
+		t.Fatal("a method from a module this file never imported should not be callable")
+	}
+}
+
+// Two reachable candidates that both accept the receiver is genuinely ambiguous, and is
+// reported rather than broken by visit order — the resolver gathers candidates from a map
+// of modules, so "whichever came first" would not even be stable between runs.
+//
+// The message must name a qualifier the reader can actually type, so this asserts the
+// suggested form as well as the refusal.
+func TestShippedPrelude_AmbiguousMethodIsReported(t *testing.T) {
+	repo, path := shippedPreludePath(t)
+	std := filepath.Dir(filepath.Dir(path))
+
+	app := t.TempDir()
+	write(t, filepath.Join(app, "app.lyra"), `import util.dup
+let main = () -> u8 => {
+  let m: Maybe<i64> = Some 3
+  u8(m.map((x: i64) -> i64 => x).unwrap_or(0))
+}`)
+	write(t, filepath.Join(app, "util", "dup.lyra"), `module util.dup
+pub let map<t,u> = pure (self: Maybe<t>, f: (t) -> u) -> Maybe<u> => match self {
+  Some v => Some(f(v)),
+  None => None,
+}
+`)
+
+	errs := analyzeWith(t, filepath.Join(app, "app.lyra"), app, std, repo).Errors()
+	if len(errs) == 0 {
+		t.Fatal("two modules defining `map` for Maybe should make `m.map(f)` ambiguous")
+	}
+	var joined strings.Builder
+	for _, e := range errs {
+		joined.WriteString(e.Message)
+	}
+	for _, want := range []string{"ambiguous", "std.prelude", "util.dup", "dup.map("} {
+		if !strings.Contains(joined.String(), want) {
+			t.Errorf("expected the ambiguity message to contain %q; got %s", want, joined.String())
+		}
+	}
+}
+
+// A file's *own* module wins a tie, which is the rule the scope chain applies everywhere
+// else — so declaring your own `map` for Maybe shadows the prelude's rather than colliding
+// with it. Pinned by return type: the local one returns i64, so resolving to the prelude's
+// (which returns Maybe<u>) fails the annotation.
+func TestShippedPrelude_LocalDeclarationWinsTheTie(t *testing.T) {
+	repo, path := shippedPreludePath(t)
+	std := filepath.Dir(filepath.Dir(path))
+
+	app := t.TempDir()
+	write(t, filepath.Join(app, "app.lyra"), `let map<t> = pure (self: Maybe<t>, f: (t) -> t) -> i64 => 7
+let main = () -> u8 => {
+  let m: Maybe<i64> = Some 3
+  let mine: i64 = m.map((x: i64) -> i64 => x)
+  u8(mine)
+}`)
+
+	if errs := analyzeWith(t, filepath.Join(app, "app.lyra"), app, std, repo).Errors(); len(errs) != 0 {
+		t.Errorf("a file's own `map` should win over the prelude's; got %v", errs)
+	}
+}

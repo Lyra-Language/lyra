@@ -682,8 +682,21 @@ structurally idempotent — once `Function` is an `IdentifierExpr` this rung is 
 that node — and the passes that run *before* typechecking see the un-desugared form, which is
 fine because none of them resolves a method name.
 
-Checking a candidate reuses rather than reinvents: `LookupFunctionFrom` (so a private function
-in another module is simply not found, exactly as for a bare call) and `unifyGenericTarget`
+**Candidates are gathered by name, not resolved to one** (`ufcsFunction`, over
+`SymbolTable.FunctionsNamed`). This is the part that is easy to get wrong, because the wrong
+version removes methods without saying so. A name resolves through a single key, and the
+candidates for a method call can live in different modules: when the prelude gained a `map`
+for `Result`, it took the bare key, `std.maybe`'s `map` for `Maybe` moved to a
+module-qualified one, and every `m.map(f)` in every program started reporting "member access
+on non-struct type Maybe<i64>". Nothing was ambiguous and nothing was shadowed in a sense the
+reader would recognise — one lookup simply could not see the other declaration. So every
+declaration of the name is collected and filtered by the three things that decide the call:
+it takes a `self` receiver, the file can reach it (`ufcsImportedIn` — imports still gate
+this), and it accepts this receiver. A file's own module wins a tie; a surviving tie is
+reported with a qualifier the reader can type, since the candidates come from a map and
+"whichever came first" would not be stable between runs.
+
+Checking a candidate otherwise reuses rather than reinvents: `unifyGenericTarget`
 (the same predicate trait dispatch uses to match an impl against a receiver, so the function's
 type variables act as wildcards — `self: Maybe<t>` accepts a `Maybe<i64>` receiver and binds
 `t` from it). The `self` test is on the **declared parameter**, never on whether the function
