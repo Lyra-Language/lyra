@@ -159,3 +159,5 @@ pub let flat_map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> Result<u,e>
   Ok v => f(v),
   Err err => Err err,
 }
+
+pub let map<t,u> = pure noalloc (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]

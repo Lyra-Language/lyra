@@ -217,8 +217,38 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 		// concrete-callee propagation site never sees an instantiation to push.
 		tc.propagateLiteralType(arg, params[i])
 	}
-	tc.instantiations.Set(call, typetable.Instantiation{Name: calleeName, Func: lambda, Subst: subst})
+	tc.instantiations.Set(call, typetable.Instantiation{
+		Name: calleeName, Func: lambda, Disc: tc.instantiationDisc(lambda), Subst: subst,
+	})
 	return ret
+}
+
+// instantiationDisc is what tells two same-named generic declarations apart, for the key a
+// specialization is emitted under.
+//
+// It is the receiver's type head, and only for a name that really is overloaded — the same
+// discriminant `userSymbol` uses for a non-generic overload, so the two paths agree about
+// what makes `map` on a `Maybe` a different function from `map` on a `[]t`. A name with one
+// declaration gets no discriminant at all, which keeps every existing key and emitted
+// symbol byte-for-byte what it was.
+func (tc *TypeChecker) instantiationDisc(lambda *ast.LambdaExpr) string {
+	recv, ok := ast.ReceiverParam(lambda)
+	if !ok || tc.symTable == nil {
+		return ""
+	}
+	// Membership is asked by **identity**, not by name: a lambda's own GetName is not the
+	// name its binding gave it, and the sets are keyed by the latter — so looking one up
+	// by the lambda's name finds nothing and silently returns no discriminant, which is
+	// exactly the collision this exists to prevent.
+	for _, set := range tc.symTable.OverloadSets {
+		for _, member := range set.Lambdas() {
+			if member == lambda {
+				head, _ := types.HeadName(recv.Type)
+				return head
+			}
+		}
+	}
+	return ""
 }
 
 // typeVarList renders a signature's type variables for a diagnostic, in a stable

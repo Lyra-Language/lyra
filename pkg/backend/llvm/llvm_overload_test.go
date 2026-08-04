@@ -181,3 +181,50 @@ let main = () -> u8 => {
 		t.Errorf("stderr: got %q, want %q", stderr, want)
 	}
 }
+
+// **Two generic overloads of one name must not share a specialization.**
+//
+// A specialization was keyed by name plus bindings, which stopped identifying a function
+// the moment one name could mean several: `map<t=i64,u=i64>` named both the `Maybe`
+// overload and the array one, so they collapsed onto a single emitted function and a call
+// to one reached the other. It surfaced as an invalid GEP against the wrong type — in the
+// emitted IR, not anywhere a diagnostic could reach — and only when a program used *both*
+// at the same type arguments, which is why neither overload's own tests caught it.
+//
+// The two here are deliberately the same generic shape at the same bindings; only the
+// receiver differs.
+func TestExec_GenericOverloadsDoNotShareASpecialization(t *testing.T) {
+	t.Parallel()
+	src := `
+data Maybe<t> = None | Some t
+
+let convert<t,u> = (self: Maybe<t>, f: (t) -> u, fallback: u) -> u => match self {
+  Some v => f(v),
+  None => fallback,
+}
+
+let convert<t,u> = (self: []t, f: (t) -> u, fallback: u) -> u => fallback
+
+let main = () -> u8 => {
+  let m: Maybe<i64> = Some 7
+  let xs: []i64 = [1, 2]
+  u8(m.convert((x: i64) -> i64 => x, 0) + xs.convert((x: i64) -> i64 => x, 5))
+}`
+	if got := buildAndRun(t, src); got != 12 {
+		t.Errorf("expected 12 (7 through the Maybe overload + 5 through the array one), got %d", got)
+	}
+	ir, err := emitSource(t, src)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	// Same name, same bindings, different receiver head — so two emitted functions.
+	if n := strings.Count(ir, "define "); n < 2 {
+		t.Fatalf("expected several emitted functions, got %d", n)
+	}
+	if !strings.Contains(ir, "convert$Maybe$i64$i64") {
+		t.Errorf("expected the Maybe overload to carry its receiver head in its symbol:\n%s", ir)
+	}
+	if strings.Count(ir, "@lyra.convert") < 2 {
+		t.Errorf("expected two distinct convert specializations:\n%s", ir)
+	}
+}

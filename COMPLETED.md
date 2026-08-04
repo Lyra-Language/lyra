@@ -10,6 +10,60 @@ Newest first.
 ## Dated log
 
 ### 08/04/26
+**Array comprehensions lower, and with them `map` for arrays.** `[ x in xs | x % 2 == 0 |
+x * 2 ]` collects, type-checks and emits. The grammar has had them since before there was a
+collector for them — with a careful note about `|` being both a section separator and
+bitwise-or — but nothing downstream did, so the expression reported `unknown expression
+type "array_comp_expr"`.
+
+**Why this was the thing to build rather than the thing that was asked for.** The request
+was a `map` for `[]t` in the prelude, written recursively over `[head, ...tail]`. That
+formulation cannot work, and neither can any other, because **there is no way to build an
+array**: no growth operation, and a spread in an array literal (`[0, ...xs]`) parses but is
+never collected. A comprehension is the only construct that produces one, which makes it the
+prerequisite rather than an alternative. `map` for arrays is now a single line in the
+prelude, and `[]t` is a third receiver head beside `Maybe` and `Result`.
+
+The lowering allocates one box, walks the generators as nested counter loops, short-circuits
+the guards, and stores each survivor at a running count that becomes the box's length.
+**Capacity is the product of the source lengths**, allocated up front. The alternatives were
+to run the generators twice — once to count, once to fill — or to grow the box as it fills.
+Running twice is wrong rather than slow: a guard may call a function, and evaluating it
+twice per element makes the number of calls a property of the lowering. Growing needs a
+reallocation primitive that does not exist. Over-allocating costs memory only when a guard
+actually filters, and keeps every guard evaluated exactly once.
+
+A comprehension is always `[]u`, never `[N]u`, even with no guard — a guard decides the
+length at run time, and adding one should not change the expression's type.
+
+**It exposed a real bug in yesterday's overloading work, of the worst kind.** A
+specialization was keyed by `name + bindings`, which stopped identifying a function the
+moment one name could mean several: the `Maybe` `map` and the array `map` at `t=i64,u=i64`
+produced the *same* key, collapsed onto one emitted function, and a call to one reached the
+other. There is no diagnostic anywhere in that path — it surfaced as an invalid GEP against
+the wrong type while emitting IR, and only in a program using **both** overloads at the same
+type arguments, which is why neither overload's own tests found it. `Instantiation` now
+carries a `Disc`riminant — the receiver head, the same discriminant `userSymbol` uses for a
+non-generic overload, so the two paths agree about what makes two `map`s different
+functions. It is empty for a name with one declaration, so every existing key and emitted
+symbol is byte-for-byte unchanged. Pinned by a test that was confirmed to fail without it,
+where the wrong resolution returns 0 instead of 12 rather than crashing.
+
+Deferred loudly rather than approximated: a **range or string** generator source (a range
+needs its count derived from start/end/step including inclusive and negative-step cases; a
+string yields *runes*, whose count is not its byte length, so the capacity rule is wrong for
+it as well as the walk), and a generator whose source **depends on an earlier generator**
+(`[ row in grid, cell in row | cell ]`) — sources are materialized once before the loops,
+which is precisely what makes the capacity computable.
+
+Two limitations found on the way and recorded rather than fixed: `result_expr` in the
+grammar is narrower than an expression, so `[ x in xs | "a" ++ b ]` is a *syntax* error; and
+**`noalloc` does not see an array allocation at all** — `allocContext.allocates` counts only
+values whose flavor is `shared`, and a `[]T` box is heap-allocated without being one, so an
+allocating function may be declared `noalloc` today. That one is pre-existing and applies to
+array literals just as much as to comprehensions.
+
+### 08/04/26
 **A generic body may call another generic at a variable-dependent instantiation.** The
 prelude's `unwrap` is now written as `expect(self, "unwrap on a None")` — one trap site
 instead of two — and `let get_or<t> = (o: Maybe<t>, d: t) -> t => o.unwrap_or(d)` compiles,

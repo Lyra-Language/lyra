@@ -540,6 +540,32 @@ array's element, a string's `rune`, a range's numeric type kept *untyped* when i
 untyped, so `for i in 0..<3 { t: u8 = i }` binds `i` to `t`'s width) — without which a body use
 of the loop variable had no recorded type and couldn't lower.
 
+### Array comprehensions lower (`array_comp.go`, 08/04)
+
+`[ x in xs | guard | result ]` allocates one box and fills it: the generators become nested
+counter loops, the guards a short-circuiting conjunction, and the surviving results are
+stored at a running count which becomes the box's `len` at the end. **This is the only way
+to build an array** — there is no growth operation and no collected spread — so it is what
+makes `map`/`filter` for `[]t` writable in the prelude.
+
+**Capacity is the product of the source lengths**, allocated before anything is known about
+how many elements survive a guard. The three options were to run the generators twice (once
+to count, once to fill), to grow the box as it fills, or to over-allocate once and record
+the real length. Running twice is *wrong* rather than slow — a guard may call a function,
+and evaluating it twice per element makes the call count a detail of the lowering. Growing
+needs a reallocation primitive the language does not have. Over-allocating costs memory only
+on a filtering comprehension, and keeps every guard evaluated exactly once.
+
+Sources are reduced to `compSource` — a length plus an index→value function — so an array
+and (later) a range share one nested-loop emitter instead of a loop shape each, which is the
+consolidation `lowerForInLoop` did not make and the reason it has three functions.
+
+Deferred, loud errors: a **range or string** source (a range needs its count derived from
+start/end/step; a string yields runes, whose count is not its byte length, so the capacity
+rule is wrong for it too), and a generator whose source **depends on an earlier generator**
+(`[ row in grid, cell in row | cell ]`) — sources are materialized once before the loops,
+which is exactly what makes the capacity computable.
+
 ### match on a dynamic []T
 
 **`match` on a dynamic `[]T`** lowers via `lowerArrayMatch`/`lowerArrayPatternMatch`

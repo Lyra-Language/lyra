@@ -17,8 +17,18 @@ import (
 // signature; the substitution has to survive that check because the backend needs
 // to know both which specializations to emit and which one each call resolves to.
 type Instantiation struct {
-	Name  string                // the generic function's declared name
-	Func  *ast.LambdaExpr       // its (shared) body
+	Name string          // the generic function's declared name
+	Func *ast.LambdaExpr // its (shared) body
+	// Disc distinguishes declarations that share Name — a **receiver-keyed overload**
+	// (`map` for `Maybe` and `map` for `[]t`), or two modules' private same-named
+	// generics. Empty when the name is a declaration's alone.
+	//
+	// Without it, `Key` is `name + bindings`, which stopped identifying a specialization
+	// the moment one name could mean several functions: `map<t=i64,u=i64>` named both
+	// the Maybe overload and the array one, they shared a single emitted function, and a
+	// call to one reached the other — an invalid GEP against the wrong type, at run time
+	// in the emitted IR rather than anywhere a diagnostic could reach.
+	Disc  string
 	Subst map[string]types.Type // type variable → concrete type
 }
 
@@ -35,7 +45,16 @@ func (i Instantiation) Key() string {
 	for _, n := range names {
 		parts = append(parts, fmt.Sprintf("%s=%s", n, i.Subst[n]))
 	}
-	return i.Name + "<" + strings.Join(parts, ",") + ">"
+	return i.Name + i.discSuffix() + "<" + strings.Join(parts, ",") + ">"
+}
+
+// discSuffix renders the declaration discriminant, and nothing when there is none — so
+// every non-overloaded generic keeps exactly the key and symbol it had.
+func (i Instantiation) discSuffix() string {
+	if i.Disc == "" {
+		return ""
+	}
+	return "$" + i.Disc
 }
 
 // Symbol is the emitted function's name: the generic name plus its bindings, in
@@ -47,8 +66,14 @@ func (i Instantiation) Symbol() string {
 		names = append(names, n)
 	}
 	sort.Strings(names)
-	parts := make([]string, 0, len(names)+1)
+	parts := make([]string, 0, len(names)+2)
 	parts = append(parts, i.Name)
+	if i.Disc != "" {
+		// Two overloads of one name would otherwise emit the same symbol, which clang
+		// rejects as a redefinition — the same reason userSymbol qualifies a
+		// non-generic overload by its receiver head.
+		parts = append(parts, mangleTypeName(i.Disc))
+	}
 	for _, n := range names {
 		parts = append(parts, mangleTypeName(i.Subst[n].String()))
 	}

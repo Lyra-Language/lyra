@@ -275,6 +275,46 @@ purity, ownership, exhaustiveness and the backend never learn juxtaposition exis
 that the erasure is exact: `Some None` and `Some(None)` fail with the identical
 (pre-existing) nested-generic lowering error.
 
+## Array comprehensions
+
+**[DONE 08/04]** `[ x in xs | x % 2 == 0 | x * 2 ]` — generators, optional guards, result —
+collects, type-checks and lowers. The grammar had them from the start; nothing else did, so
+the expression reported `unknown expression type "array_comp_expr"`.
+
+They matter beyond convenience: **a comprehension is the only way to build an array.** There
+is no growth operation, and a spread in an array literal (`[0, ...xs]`) parses but is not
+collected, so before this the prelude could not have a `map` for `[]t` at all — the natural
+recursive `[head, ...tail]` formulation needs both of the missing pieces. `map` for arrays
+is now one line in `std/prelude.lyra`, and a third receiver head beside `Maybe` and
+`Result`.
+
+A comprehension is always `[]u`, never `[N]u`, even with no guard: a guard decides at run
+time how many elements survive, and adding one to a comprehension should not change its
+type. Capacity is the product of the source lengths and the box records the survivor
+*count* as its length — the reasoning for over-allocating rather than counting twice or
+growing is in `pkg/backend/llvm/array_comp.go`.
+
+Still open, each refused loudly rather than approximated:
+
+- **[OPEN] A range or string source.** `[ x in 1..=10 | x * x ]` is the grammar's own
+  example and does not lower. A range needs its iteration count derived from
+  start/end/step including the inclusive and negative-step cases; a string yields *runes*,
+  whose count is not its byte length, so the capacity rule needs a different answer as well
+  as the walk.
+- **[OPEN] A generator whose source depends on an earlier generator** —
+  `[ row in grid, cell in row | cell ]`. Sources are materialized once before the loops,
+  which is what makes the capacity computable; a dependent source would need
+  materialization inside the enclosing loop and a capacity that is not known up front.
+- **[OPEN] `result_expr` is narrower than an expression.** The grammar admits
+  `_math_operand`, a tuple, the struct literals and an array literal — so `[ x in xs |
+  "a" ++ b ]` is a *syntax* error. Worth widening in the grammar rather than working around.
+
+**[OPEN] `noalloc` does not see an array allocation** — pre-existing, found here.
+`allocContext.allocates` counts only values whose allocation flavor is `shared`, and a
+`[]T` box is heap-allocated without being one, so `pure noalloc (…) -> []i64 => [1, 2, 3]`
+is accepted. A comprehension inherits the same hole. The fix is for the alloc effect to ask
+about the *representation* rather than the flavor.
+
 ## Ranges
 
 The three range grammars were unified 08/01 (`rangeBounds`, one `range_end_operator`,

@@ -1603,6 +1603,8 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		return types.PrimitiveType{Name: types.Boolean}
 	case *ast.BlockExpr:
 		return tc.inferBlockType(e)
+	case *ast.ArrayCompExpr:
+		return tc.inferArrayCompType(e)
 	case *ast.IfExpr:
 		return tc.checkIfExpr(e, true)
 	case *ast.MatchExpr:

@@ -404,7 +404,9 @@ func TestShippedPrelude_Lowers(t *testing.T) {
   let h = if m.is_some() && r.is_ok() && m.is_none() == false { 1 } else { 0 }
   let i = m.ok_or("e").unwrap_or(0) + r.ok().unwrap_or(0)
   let j = s.unwrap()
-  u8(a + b + c + d + e + f + g + h + i)
+  let ns: []i64 = [1, 2, 3]
+  let k = ns.map((n: i64) -> i64 => n * 2).len()
+  u8(a + b + c + d + e + f + g + h + i + k)
 }`)
 
 	units, diags := modules.Resolve(filepath.Join(app, "app.lyra"), []string{app, std, repo},
