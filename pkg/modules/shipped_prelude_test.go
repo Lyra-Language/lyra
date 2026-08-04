@@ -406,7 +406,8 @@ func TestShippedPrelude_Lowers(t *testing.T) {
   let j = s.unwrap()
   let ns: []i64 = [1, 2, 3]
   let k = ns.map((n: i64) -> i64 => n * 2).len()
-  u8(a + b + c + d + e + f + g + h + i + k)
+  let l = ns.filter((n: i64) -> bool => n != 2).len()
+  u8(a + b + c + d + e + f + g + h + i + k + l)
 }`)
 
 	units, diags := modules.Resolve(filepath.Join(app, "app.lyra"), []string{app, std, repo},

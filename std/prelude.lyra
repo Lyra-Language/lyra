@@ -160,4 +160,6 @@ pub let flat_map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> Result<u,e>
   Err err => Err err,
 }
 
-pub let map<t,u> = pure noalloc (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]
+pub let map<t,u> = pure (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]
+
+pub let filter<t> = pure (self: []t, predicate: (t) -> bool) -> []t => [x in self | predicate(x) | x]
