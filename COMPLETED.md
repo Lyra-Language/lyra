@@ -10,6 +10,31 @@ Newest first.
 ## Dated log
 
 ### 08/05/26
+**A call could not be the first thing inside parentheses**, and the cause was a grammar
+rule no legal program could have used. `(f(7))`, `(f(7), 1)`, `(f(7) + 1, 1)` and
+`((f(7)), 1)` were all syntax errors — while `(1, f(7))` was fine, which is the tell: by
+the second element the competing reading is already dead.
+
+`tuple_pattern` carried an optional leading name aliased from `$.identifier`. That name
+could never be right — `identifier` is lowercase-leading by lexer rule, a named tuple
+*type* is PascalCase — so it matched nothing a program could legally write, but it did
+outbid the expression reading of the same tokens: `(f(7))` parsed as a parameter list
+holding the tuple pattern `f(7)`, then failed at the close paren. The parse tree said so
+directly, which is what turned a puzzling "unexpected `(f(7), 1)`" into a one-line fix.
+
+An **uppercase** named tuple pattern was never this rule: `Point(x, y)` is a
+`data_pattern`, which the typechecker resolves to a tuple type when the name is one. So
+`tuple_pattern` is anonymous-only now, and the generic-argument slot went with the name,
+since arguments with nothing to apply them to are not a form. No corpus test used the
+name and no collector read the field — only `tuple_literal.go` reads `tuple_name`, from
+the *expression* rule that happens to share the alias.
+
+Removing it **shrank** the parser: 8,262 → 8,234 states, `parser.c` −44 KB. The forms
+that share the rule are pinned by tests — a lambda's tuple parameter, a destructuring
+`let`, a match arm, and `(Some(x): Opt) -> i64`, the destructured parameter the grammar's
+own notes call this region's canary.
+
+### 08/05/26
 **Two parse bugs, and the second was why the first had been stuck.**
 
 **An all-uppercase type name could not be used in a struct literal.** `struct S` declared

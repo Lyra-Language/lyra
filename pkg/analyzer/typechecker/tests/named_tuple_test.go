@@ -244,3 +244,53 @@ let n = if Point { x: 7 }.x > 0 { 1 } else { 0 }`,
 		assertNoErrors(t, res)
 	}
 }
+
+// A call may be the first thing inside parentheses. It could not be until 08/05:
+// `tuple_pattern` carried an optional leading name aliased from `$.identifier`, which
+// is lowercase-leading, while a named tuple *type* is PascalCase — so the name could
+// never be used by a legal program, but it did outbid the expression reading of the
+// same tokens. `(f(7))` parsed as a parameter list holding the tuple pattern `f(7)`
+// and then failed.
+//
+// `(1, f(7))` always worked, which is the tell: by the second element the pattern
+// reading is already dead. Fixed in tree-sitter-lyra by making tuple_pattern
+// anonymous-only; an uppercase named tuple pattern was never this rule (`Point(x, y)`
+// is a data_pattern).
+func TestParenthesizedCall_MayLeadATuple(t *testing.T) {
+	for _, source := range []string{
+		`let f = (a: i64) -> i64 => a
+let p = (f(7), 1)`,
+		`let f = (a: i64) -> i64 => a
+let p = (f(7))`,
+		`let f = (a: i64) -> i64 => a
+let p = (f(7) + 1, 1)`,
+		`let f = (a: i64) -> i64 => a
+let p = ((f(7)), 1)`,
+		// The control that always worked, kept so a regression cannot hide behind it.
+		`let f = (a: i64) -> i64 => a
+let p = (1, f(7))`,
+	} {
+		res := parseCollectAndCheck(t, source, false)
+		assertNoErrors(t, res)
+	}
+}
+
+// The forms that share tuple_pattern must be untouched — a lambda's tuple parameter, a
+// destructuring `let`, a match arm, and the destructured *parameter* the grammar's own
+// notes call this region's canary.
+func TestTuplePattern_SharedFormsUnaffected(t *testing.T) {
+	for _, source := range []string{
+		`let g = ((a, b): (i64, i64)) -> i64 => a + b`,
+		`let pair = (20, 22)
+let (x, y) = pair`,
+		`let p = ((1, 2), 3)
+let n = match p {
+  ((a, b), c) => a + b + c,
+}`,
+		`data Opt = None | Some(i64)
+let f = (Some(x): Opt) -> i64 => x`,
+	} {
+		res := parseCollectAndCheck(t, source, false)
+		assertNoErrors(t, res)
+	}
+}
