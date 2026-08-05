@@ -10,6 +10,29 @@ Newest first.
 ## Dated log
 
 ### 08/04/26
+**A comprehension's result may be any expression.** `[ x in xs | "a" ++ b ]` parses, as do
+an `if`, a `match`, and a lambda in result position. `result_expr` had been a
+hand-maintained `choice` — `_math_operand`, the tuple and struct literals, an array literal
+— which is a list of "forms someone has needed so far" rather than a rule, and it read to a
+user as one they had to learn: string concatenation in a comprehension was a *syntax error*
+with nothing to suggest why.
+
+**Widening it to `$.expression` made the parser smaller**, which is the part worth
+recording, because the reflex is to add the one missing node (`string_concat_expr`) and move
+on. Measured: 8,232 → 8,202 states and 35 KB off `parser.c`, *and* it retired the
+`[result_expr, _primary_expr]` conflict entry outright. The narrow list had been competing
+with `_primary_expr` over what a bare name or literal in result position reduces to;
+`$.expression` subsumes that reduction, so the ambiguity stops existing rather than being
+resolved. The conflict removal was verified against the corpus rather than trusted —
+`tree-sitter`'s "unnecessary conflict" warning is documented in that repo's CLAUDE.md as
+unreliable in exactly this region, and this time it happened to be right.
+
+The `|` rule is untouched: `[ x in R | A | B ]` is still guard-then-result by `prec.dynamic`,
+and a bitwise-or meant as a value is still parenthesized. That is a choice between two
+*complete* parses, which widening the operand does not affect — pinned from both sides now,
+in the corpus and in a behavioural test.
+
+### 08/04/26
 **Descending ranges, and `..=` became `..<=`.** The four end operators are now `..<` `..<=`
 `..>` `..>=` — two axes, direction and whether the end bound is included, each named by the
 operator. `5..>1` is 5, 4, 3, 2; `5..>=1` is 5, 4, 3, 2, 1. Both work in `for-in` and as a

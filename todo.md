@@ -318,9 +318,14 @@ Still open, each refused loudly rather than approximated:
   `[ row in grid, cell in row | cell ]`. Sources are materialized once before the loops,
   which is what makes the capacity computable; a dependent source would need
   materialization inside the enclosing loop and a capacity that is not known up front.
-- **[OPEN] `result_expr` is narrower than an expression.** The grammar admits
-  `_math_operand`, a tuple, the struct literals and an array literal — so `[ x in xs |
-  "a" ++ b ]` is a *syntax* error. Worth widening in the grammar rather than working around.
+- **[DONE 08/04] `result_expr` is any expression.** It was a hand-maintained list of forms,
+  so `[ x in xs | "a" ++ b ]` was a *syntax* error, as were an `if` and a `match` in result
+  position. Widening it to `$.expression` made the parser **smaller** — 8,232 → 8,202 states
+  and 35 KB off `parser.c` — and retired the `[result_expr, _primary_expr]` conflict entry,
+  because the list had been competing with `_primary_expr` over what a bare name in result
+  position reduces to and `$.expression` subsumes that. The `|` rule is untouched: a
+  top-level `|` is still a section separator, and a bitwise-or meant as a value is still
+  parenthesized. See COMPLETED.md.
 
 **[OPEN] `noalloc` does not see an array allocation** — pre-existing, found here.
 `allocContext.allocates` counts only values whose allocation flavor is `shared`, and a

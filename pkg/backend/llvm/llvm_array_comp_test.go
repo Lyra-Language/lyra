@@ -267,3 +267,42 @@ let main = () -> u8 => {
 		t.Errorf("expected 20 (6 elements + 11 + 23 - 20), got %d", got)
 	}
 }
+
+// A comprehension's **result may be any expression** (08/04). It used to be a
+// hand-maintained list of forms — `_math_operand`, the tuple and struct literals, an array
+// literal — so `[ x in xs | "a" ++ b ]` was a *syntax error*, as were an `if` and a
+// `match` in result position. There is no property of a comprehension any of those violate;
+// the list was just what had been needed so far.
+func TestExec_ArrayCompResultMayBeAnyExpression(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let size = (s: string) -> i64 => 2
+let main = () -> u8 => {
+  let xs: []i64 = [1, 2, 3]
+  let names = [x in xs | "n" ++ "x"]
+  let branched = [x in xs | if x > 1 { 10 } else { 20 }]
+  let matched = [x in xs | match x { 1 => 100, _ => 5 }]
+  u8(names.len() + size(names[0]) + branched[0] + matched[0] / 10 + matched[1])
+}`)
+	if got != 40 {
+		t.Errorf("expected 40 (3 + 2 + 20 + 10 + 5), got %d", got)
+	}
+}
+
+// The `|` rule is unchanged by that widening: a top-level `|` is still a section separator,
+// and a bitwise-or meant as a value is still parenthesized. This is a choice between two
+// *complete* parses (`prec.dynamic`), which widening the operand does not touch — so it is
+// worth pinning from the behavioural side rather than only in the corpus.
+func TestExec_ArrayCompTopLevelBarIsAGuard(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let main = () -> u8 => {
+  let xs: []i64 = [1, 2, 3, 4]
+  let guarded = [x in xs | x > 2 | x]
+  let ored = [x in xs | (x | 8)]
+  u8(guarded.len() * 10 + ored[0])
+}`)
+	if got != 29 {
+		t.Errorf("expected 29 (2 survivors → 20, then 1|8 = 9), got %d", got)
+	}
+}
