@@ -10,6 +10,44 @@ Newest first.
 ## Dated log
 
 ### 08/04/26
+**`noalloc` sees string allocation too.** `"a" ++ s` and `"n=${n}"` in a `noalloc` function
+are `lyra-E016`; a string **literal** is not, and neither is passing one through or
+comparing two.
+
+**Strings needed a second rule, not an extension of the first.** The array fix earlier today
+made the alloc effect ask about a value's *representation*, which works because the type is
+exactly what separates the allocating `[]T` from the stack-resident `[N]T`. For strings the
+type carries no such information: a literal, a `++` and an interpolation are all `string`,
+and only the last two allocate. A literal interns as a **pinned static box** whose
+retain/release are no-ops; `++` and interpolation each build a fresh ref-counted box
+(`lowerStringConcat`, `lowerInterpolatedString` — the backend's own note calls concatenation
+"the first value this backend heap-allocates").
+
+So the discriminator is the **expression kind**, and `allocatesByForm` is deliberately kept
+separate from `heapRepresented` rather than folded in. One predicate covering both would
+have to mean "the type says so" in one case and "the syntax says so" in the other, which is
+how a rule stops being checkable by reading it.
+
+Two details that are decisions rather than mechanics:
+
+- **`allocatesByForm` is gated on the TypeTable even though it never reads one.** The
+  AST-only `InferredEffects` entry point reports no allocation at all by contract; letting
+  it find strings but not `shared` values or arrays would make its answer partial in a way
+  no caller could detect, which is worse than the documented nothing.
+- **The arena discharge already covered it.** `buildAllocContext` marks *every* expression
+  inside a `with` body, not only constructions, so a `++` inside an arena was discharged
+  from the moment it started counting.
+
+The `lyra-E016` message now lists all three allocating forms and says explicitly that a
+literal is not one — that distinction is the whole reason strings are shaped differently
+from arrays, so a reader who hits this needs it. It names forms rather than the offending
+expression because `EffectAlloc` is one bit; recording the site is noted in todo.md.
+
+Only **escaping closures** are left of the original deferral, and that one is genuinely
+blocked rather than merely undone: they are boxed in the dev lowering and free under Lambda
+Set Specialization, so what `noalloc` should say depends on a tier that does not exist yet.
+
+### 08/04/26
 **`noalloc` sees array allocation.** The alloc effect asks about a value's **representation**
 now, not its flavor, so `pure noalloc (…) -> []i64 => [1, 2, 3]` and a `noalloc` function
 containing a comprehension are both `lyra-E016`.

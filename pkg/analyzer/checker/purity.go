@@ -876,12 +876,13 @@ func (c *purityChecker) checkBoundedEffects(isDet, isNoAlloc bool, effects Effec
 		}
 	}
 	if isNoAlloc && effects.Has(EffectAlloc) {
-		// The message names both ways to allocate rather than only `shared`, which is
-		// what it said until dynamic arrays joined the rule (08/04) — a `[]T` is a
-		// ref-counted box whatever flavor it carries, so a reader told "a `shared`-typed
-		// value" would go looking for a construction that is not there.
+		// The message lists every allocating form rather than only `shared`, which is
+		// what it said until arrays and strings joined the rule (08/04) — a reader told
+		// "a `shared`-typed value" would go looking for a construction that is not
+		// there. It names the *forms* rather than the offending expression because the
+		// effect is a bit: which construct set it is not recorded (see todo.md).
 		c.reportCode(diag.CodeEffectBoundViolation, loc,
-			"`noalloc` function heap-allocates — it constructs a `shared`-typed value or builds a dynamic array (`[]T`, including an array comprehension); a `noalloc` function must not allocate")
+			"`noalloc` function heap-allocates; a `noalloc` function must not allocate. The allocating forms are a `shared`-typed construction, a dynamic array (`[]T`, including an array comprehension), and a newly built string (`++` or `\"${…}\"` interpolation — a string *literal* is a constant and does not allocate)")
 	}
 }
 
@@ -1259,6 +1260,33 @@ func (a *allocContext) allocates(expr ast.Expression) bool {
 	return ok && heapRepresented(t)
 }
 
+// allocatesByForm reports whether an expression heap-allocates because of **what it is**,
+// independently of its type — string concatenation and `${…}` interpolation.
+//
+// Strings need this second rule because the type cannot carry the answer: a literal, a
+// `++` and an interpolation are all `string`, and only the last two allocate. A literal
+// interns as a *pinned static box* whose retain/release are no-ops, while `++` and
+// interpolation each build a fresh ref-counted box (`lowerStringConcat`,
+// `lowerInterpolatedString`). That is the opposite of the array case, where the type is
+// exactly what distinguishes the allocating `[]T` from the stack-resident `[N]T` — so the
+// two rules are kept apart rather than folded into one predicate that would have to mean
+// something different for each.
+//
+// Gated on the TypeTable like `allocates`, even though it never reads one. The AST-only
+// `InferredEffects` entry point deliberately reports *no* allocation at all; letting it
+// find strings but not `shared` values or arrays would make its answer partial in a way a
+// caller cannot detect, which is worse than the documented nothing.
+func (a *allocContext) allocatesByForm(expr ast.Expression) bool {
+	if a == nil || a.typeTable == nil || a.discharged[expr] {
+		return false
+	}
+	switch expr.(type) {
+	case *ast.StringConcatExpr, *ast.InterpolatedStringExpr:
+		return true
+	}
+	return false
+}
+
 // heapRepresented reports whether a value of t lives in a heap box.
 //
 // Two ways to be one, and they are genuinely different questions. A `shared` **flavor** is
@@ -1268,12 +1296,10 @@ func (a *allocContext) allocates(expr ast.Expression) bool {
 // the flavor is even consulted (`lowerType`) — so there is no flavor that makes `[1, 2, 3]`
 // not allocate.
 //
-// Deliberately *not* included yet, and both are the same shape as the array case was:
-// **strings** (`"a" ++ b` builds a new one) and **escaping closures** (boxed in the dev
-// lowering). Each needs its own decision about which producing forms to charge — a string
-// literal is a constant, so unlike `[1, 2, 3]` the literal itself does not allocate — and
-// widening the rule without that is how `noalloc` would start being wrong in the other
-// direction. See todo.md.
+// **Strings are not here**, and not because they do not allocate — they do, but which ones
+// is not a question about the type (see allocatesByForm). Still deferred: **escaping
+// closures**, boxed in the dev lowering and free under Lambda Set Specialization, so what
+// `noalloc` should say about one depends on the tier it is defined against. See todo.md.
 func heapRepresented(t types.Type) bool {
 	if types.AllocationOf(t) == types.Shared {
 		return true
@@ -1848,6 +1874,13 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 			if alloc.allocates(ex) {
 				found |= EffectAlloc
 			}
+		case *ast.StringConcatExpr, *ast.InterpolatedStringExpr:
+			// `a ++ b` and `"${x}"` each build a fresh ref-counted box. A string
+			// *literal* does not — it interns as a pinned static box — which is why
+			// these are charged by form rather than by type: all three are `string`.
+			if alloc.allocatesByForm(ex) {
+				found |= EffectAlloc
+			}
 		case *ast.AwaitExpr:
 			// Awaiting resumes with the result of an external async operation, so
 			// its value is non-deterministic — an input effect (forbidden in
@@ -1965,6 +1998,10 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 			}
 		case *ast.ArrayCompExpr:
 			if alloc.allocates(ex) {
+				found |= EffectAlloc
+			}
+		case *ast.StringConcatExpr, *ast.InterpolatedStringExpr:
+			if alloc.allocatesByForm(ex) {
 				found |= EffectAlloc
 			}
 		case *ast.AwaitExpr:

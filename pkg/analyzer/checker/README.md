@@ -64,11 +64,20 @@ It is asked of producing forms rather than of every expression on purpose: a `[]
 *identifier* is heap-represented and allocates nothing, so a type-only rule would charge
 every mention of an array to its enclosing function.
 
+**Strings are charged by *form*, not by type** (`allocatesByForm`, 08/04): `StringConcatExpr`
+and `InterpolatedStringExpr` each build a fresh ref-counted box, while a string **literal**
+interns as a pinned static box and allocates nothing. The type cannot make that distinction
+— all three are `string` — which is the exact opposite of the array case, where the type is
+what does. The two predicates stay separate for that reason; one covering both would mean
+"the type says so" in one case and "the syntax says so" in the other. `allocatesByForm` is
+gated on the `TypeTable` anyway, even though it never reads one, so the AST-only
+`InferredEffects` keeps its all-or-nothing contract instead of reporting strings alone.
+
 `CheckPurity` is threaded the `TypeTable` for this; the AST-only `InferredEffects` helper has no
 `TypeTable` and so never sets `EffectAlloc`. A `shared` construction in a return/argument
 position (flavor not yet recorded on the construction node), implicit allocation from
-**strings** (`"a" ++ b`) and **escaping closures**, and precise arena escape are deferred to a
-future layout/escape pass — see `todo.md` for the extra decision each needs. An **unresolvable external call** (no local lambda, builtin, or type
+**escaping closures**, and precise arena escape are deferred to a future layout/escape pass —
+see `todo.md`. An **unresolvable external call** (no local lambda, builtin, or type
 conversion) conservatively taints `AllEffects` (`PurityEffects | EffectAlloc`) — everything,
 including Alloc, so `noalloc` flags it too (we can't verify it doesn't allocate).
 `builtinEffects`: print/println→Output, read→Input, write→Input|Output, `await`→Input,

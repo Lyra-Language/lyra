@@ -333,10 +333,17 @@ both count, while the same literal as a fixed `[N]T` is stack storage and does n
 a question about value-*producing* forms — a `[]T` identifier is heap-represented and
 allocates nothing — so the walk asks it of the construction cases only. See COMPLETED.md.
 
-- **[OPEN] Strings.** `"a" ++ b` and `"${x}"` build a new string and are not counted. Same
-  shape as the array hole was, with one extra decision: a string *literal* is a constant, so
-  unlike `[1, 2, 3]` the literal itself does not allocate, and only the producing forms
-  (concatenation, interpolation) should be charged.
+- **[DONE 08/04] Strings.** `"a" ++ b` and `"${x}"` are counted; a string *literal* is not,
+  because it interns as a pinned static box. That is charged by **form** rather than by
+  type (`allocatesByForm`) — a literal, a `++` and an interpolation are all `string`, so the
+  type cannot separate them, which is the exact opposite of the array case where the type is
+  what does. Keeping the two rules apart rather than folding them into one predicate is the
+  point. See COMPLETED.md.
+
+- **[IDEA] Name the offending expression.** `lyra-E016` lists the allocating *forms* because
+  `EffectAlloc` is one bit — which construct set it is is not recorded. Reporting the site
+  would mean carrying the first allocating expression per lambda through `lambdaEffects`.
+  Cheap enough, and the message is long precisely because it cannot point.
 - **[OPEN] Escaping closures.** Boxed in the dev lowering, free under Lambda Set
   Specialization — so what `noalloc` should say depends on the tier, which is the reason
   `noalloc` is defined against the *release* lowering in the first place. Settle that before

@@ -252,3 +252,57 @@ func TestNoAlloc_MessageNamesBothWaysToAllocate(t *testing.T) {
 		t.Errorf("expected the message to name the dynamic array, got %q", errs[0].Message)
 	}
 }
+
+// --- noalloc: a newly built string allocates; a literal does not ---
+
+// `++` builds a fresh ref-counted box — the backend's own note calls concatenation "the
+// first value this backend heap-allocates", since a concatenated string's bytes do not
+// exist until run time and cannot point into a constant global.
+func TestNoAlloc_StringConcat_Violates(t *testing.T) {
+	src := `let greet = pure noalloc (s: string) -> string => "a" ++ s`
+	assertBoundError(t, checkPurity(t, src), "lyra-E016")
+}
+
+// Interpolation is the N-segment generalization of `++` and allocates the same way.
+func TestNoAlloc_StringInterpolation_Violates(t *testing.T) {
+	src := `let label = pure noalloc (n: i64) -> string => "n=${n}"`
+	assertBoundError(t, checkPurity(t, src), "lyra-E016")
+}
+
+// A string **literal** allocates nothing: it interns as a *pinned* static box whose
+// retain/release are no-ops. This is why strings are charged by *form* rather than by type
+// — a literal, a `++` and an interpolation are all `string`, so the type cannot tell them
+// apart, which is the opposite of the array case where the type is exactly what does.
+func TestNoAlloc_StringLiteral_IsFine(t *testing.T) {
+	src := `let name = pure noalloc (n: i64) -> string => "constant"`
+	if errs := checkPurity(t, src); len(errs) != 0 {
+		t.Errorf("a string literal is a constant and must not count as an allocation: %v", errs)
+	}
+}
+
+// Passing a string through, and comparing two, allocate nothing either — the rule is about
+// forms that *build* a string, not about touching one.
+func TestNoAlloc_StringPassThroughAndCompare_IsFine(t *testing.T) {
+	for _, src := range []string{
+		`let echo = pure noalloc (s: string) -> string => s`,
+		`let same = pure noalloc (s: string) -> bool => s == "abc"`,
+	} {
+		if errs := checkPurity(t, src); len(errs) != 0 {
+			t.Errorf("%s: expected no allocation, got %v", src, errs)
+		}
+	}
+}
+
+// The message must name the string forms, and must say that a literal is not one — that
+// distinction is the whole reason this rule is shaped differently from the array one.
+func TestNoAlloc_MessageNamesTheStringForms(t *testing.T) {
+	errs := checkPurity(t, `let greet = pure noalloc (s: string) -> string => "a" ++ s`)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %v", errs)
+	}
+	for _, want := range []string{"++", "literal"} {
+		if !strings.Contains(errs[0].Message, want) {
+			t.Errorf("expected %q in the message, got %q", want, errs[0].Message)
+		}
+	}
+}
