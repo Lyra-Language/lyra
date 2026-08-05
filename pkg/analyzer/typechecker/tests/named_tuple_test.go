@@ -148,3 +148,44 @@ let b: (i64, i64) = a
 `, false)
 	assertNoErrors(t, res)
 }
+
+// ── an all-uppercase type name ───────────────────────────────────────────────
+
+// `user_defined_type_name` (`[A-Z][a-zA-Z0-9]*`) and `const_identifier`
+// (`[A-Z][A-Z0-9_]*`) match the *same text at the same length* for any name with no
+// lowercase letter and no underscore — `S`, `AB`, `HTTP2`. Tree-sitter's lexer picks
+// one, and in expression position, where a constant is also legal, it picks
+// `const_identifier`. So `AB(1, 2)` fell through to the call reading and failed with
+// "cannot resolve function AB" while the identical `Ab(1, 2)` worked.
+//
+// The grammar's `_tuple_name` now accepts either spelling and lets the following
+// token decide (helpers.js `typeNameInExpr`).
+func TestNamedTuple_AllUppercaseTypeName(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+tuple AB(i64, i64)
+let p = AB(1, 2)
+let first = p.0
+`, false)
+	assertNoErrors(t, res)
+}
+
+// The control: the same declaration with one lowercase letter never had the
+// collision, so this passed throughout and pins that nothing changed for it.
+func TestNamedTuple_MixedCaseTypeName(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+tuple Ab(i64, i64)
+let p = Ab(1, 2)
+let first = p.0
+`, false)
+	assertNoErrors(t, res)
+}
+
+// A constant is still a constant: the fix must not turn `MAX - 1` into an
+// application, nor make a constant followed by a block a struct literal.
+func TestAllUppercase_ConstantStillReadsAsAConstant(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+const MAX: i64 = 5
+let n = MAX - 1
+`, false)
+	assertNoErrors(t, res)
+}
