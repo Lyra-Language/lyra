@@ -10,6 +10,36 @@ Newest first.
 ## Dated log
 
 ### 08/04/26
+**`lyra-E016` points at the allocation.** The message is now *"`noalloc` function
+heap-allocates: an array comprehension builds a `[]T` at 2:46"* instead of a list of every
+form the language can allocate with.
+
+It listed forms because `EffectAlloc` is a single bit: by the time the bound was checked,
+*that* something allocated was known and *what* was not. So the effect inference records
+each callable's first directly-allocating expression as it walks
+(`allocContext.lambdaSites`/`methodSites`, alongside the existing
+`impureLambdas`/`impureMethods` pair). The alloc context was already threaded to every point
+that sets the bit, so this cost a local recorder in each walk rather than another parameter.
+
+Three decisions in it:
+
+- **First, not all.** One precise location is what a reader acts on, and a second allocation
+  in the same `noalloc` function is not a separate mistake — removing the bound or the
+  allocation fixes both.
+- **First-write-wins, because the inference is a fixpoint.** Each body is walked several
+  times; keeping the earliest write makes the reported site independent of how many passes
+  convergence happened to take, which is the difference between a stable diagnostic and one
+  that moves when an unrelated function is edited.
+- **An allocation through a callee is not attributed to the call.** There is no allocating
+  expression in this body — the call is here, the allocation is in the callee — so that case
+  keeps the form-listing wording. Pointing at the call would name a line that does not
+  allocate, which is a worse error than a vague one. Pinned by its own test.
+
+The descriptions track the *syntax* rather than the representation (`describeAllocation`):
+"an array comprehension builds a `[]T`", "`++` builds a new string". Naming the construct is
+only useful if the name matches what is on the line the position points at.
+
+### 08/04/26
 **`noalloc` sees string allocation too.** `"a" ++ s` and `"n=${n}"` in a `noalloc` function
 are `lyra-E016`; a string **literal** is not, and neither is passing one through or
 comparing two.

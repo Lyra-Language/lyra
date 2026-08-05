@@ -340,10 +340,12 @@ allocates nothing — so the walk asks it of the construction cases only. See CO
   what does. Keeping the two rules apart rather than folding them into one predicate is the
   point. See COMPLETED.md.
 
-- **[IDEA] Name the offending expression.** `lyra-E016` lists the allocating *forms* because
-  `EffectAlloc` is one bit — which construct set it is is not recorded. Reporting the site
-  would mean carrying the first allocating expression per lambda through `lambdaEffects`.
-  Cheap enough, and the message is long precisely because it cannot point.
+- **[DONE 08/04] `lyra-E016` names the offending expression.** The effect inference records
+  each callable's **first** directly-allocating expression (`allocContext.lambdaSites` /
+  `methodSites`), so the message reads *"an array comprehension builds a `[]T` at 2:46"*
+  rather than listing every allocating form. An allocation arriving through a **callee**
+  keeps the form-listing wording — the call is in this body and the allocation is not, so
+  pointing at the call would name a line that does not allocate. See COMPLETED.md.
 - **[OPEN] Escaping closures.** Boxed in the dev lowering, free under Lambda Set
   Specialization — so what `noalloc` should say depends on the tier, which is the reason
   `noalloc` is defined against the *release* lowering in the first place. Settle that before

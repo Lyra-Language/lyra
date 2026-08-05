@@ -71,7 +71,10 @@ func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable
 	boundGroups := collectTraitMethodGroups(program)
 	traitDecls := collectTraitDecls(program)
 	signatures := collectMethodSignatures(program, traitDecls)
-	impureLambdas, impureMethods, callbacks, methodCallbacks := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, methodTable, boundGroups, buildAllocContext(program, typeTable), frames, signatures)
+	// Bound rather than built inline: the inference fills in the allocation *sites* as it
+	// goes, and `lyra-E016` reads them back to point at the offending expression.
+	alloc := buildAllocContext(program, typeTable)
+	impureLambdas, impureMethods, callbacks, methodCallbacks := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, methodTable, boundGroups, alloc, frames, signatures)
 	c := &purityChecker{
 		methodCallbacks: methodCallbacks,
 		signatures:      signatures,
@@ -84,6 +87,7 @@ func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable
 		traitDecls:      traitDecls,
 		frames:          frames,
 		typeTable:       typeTable,
+		allocSites:      alloc,
 	}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -116,7 +120,7 @@ func (c *purityChecker) checkTraitMethodBounds(impl *ast.TraitImplStmt, base []s
 			isDet = isDet || td.IsDet
 			isNoAlloc = isNoAlloc || td.IsNoAlloc
 		}
-		c.checkBoundedEffects(isDet, isNoAlloc, c.impureMethods[m], m.Clause.GetLocation())
+		c.checkBoundedEffects(isDet, isNoAlloc, c.impureMethods[m], m.Clause.GetLocation(), c.allocSites.methodSites[m])
 		if !isPure {
 			continue
 		}
@@ -430,6 +434,29 @@ type purityChecker struct {
 	// Nil-safe, like methodTable, so a caller that has not run the typechecker
 	// simply resolves callees by name as this pass always did.
 	typeTable *typetable.TypeTable
+	// allocSites is the alloc context the effect inference filled in, read here for the
+	// one expression `lyra-E016` points at.
+	allocSites *allocContext
+}
+
+// describeAllocation names what an expression allocates, in the terms the author wrote it
+// in. `lyra-E016` used to list every allocating form because the effect is a single bit and
+// the site was not recorded; naming the construct is only useful if the name matches what
+// is on the line, so these track the syntax rather than the representation.
+func describeAllocation(ex ast.Expression) string {
+	switch ex.(type) {
+	case *ast.ArrayCompExpr:
+		return "an array comprehension builds a `[]T`"
+	case *ast.ArrayLiteralExpr:
+		return "an array literal builds a `[]T`"
+	case *ast.StringConcatExpr:
+		return "`++` builds a new string"
+	case *ast.InterpolatedStringExpr:
+		return "a `${…}` interpolation builds a new string"
+	case *ast.StructInstanceExpr, *ast.TupleLiteralExpr, *ast.DataConstructorExpr:
+		return "a `shared`-typed value is constructed"
+	}
+	return "a value is heap-allocated"
 }
 
 // calleeFor resolves the function a *specific call* invokes.
@@ -513,7 +540,7 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, encl
 		case *ast.LambdaExpr:
 			// `det`/`noalloc` are enforced against this lambda's full inferred
 			// (transitive) effect set, independent of the enclosing context.
-			c.checkBoundedEffects(e.IsDet, e.IsNoAlloc, c.impureLambdas[e], e.GetLocation())
+			c.checkBoundedEffects(e.IsDet, e.IsNoAlloc, c.impureLambdas[e], e.GetLocation(), c.allocSites.lambdaSites[e])
 			// Default values execute at the call site, in the *enclosing* context.
 			for i := range e.Parameters {
 				ast.WalkExpr(e.Parameters[i].DefaultValue, c.stmtVisitor(sc), c.exprVisitor(sc, capture, enclosing))
@@ -868,7 +895,7 @@ func (c *purityChecker) reportCode(code string, loc ast.Location, format string,
 // naming the offending effect — per-operation locating is a later refinement.
 // `pure` is handled by the walk (precise per-op diagnostics), not here; a
 // `pure`+`det` pair is already an error (CodeConflictingEffectBounds).
-func (c *purityChecker) checkBoundedEffects(isDet, isNoAlloc bool, effects Effect, loc ast.Location) {
+func (c *purityChecker) checkBoundedEffects(isDet, isNoAlloc bool, effects Effect, loc ast.Location, allocSite ast.Expression) {
 	if isDet {
 		if bad := effects & DetEffects; bad != 0 {
 			c.reportCode(diag.CodeEffectBoundViolation, loc,
@@ -876,13 +903,18 @@ func (c *purityChecker) checkBoundedEffects(isDet, isNoAlloc bool, effects Effec
 		}
 	}
 	if isNoAlloc && effects.Has(EffectAlloc) {
-		// The message lists every allocating form rather than only `shared`, which is
-		// what it said until arrays and strings joined the rule (08/04) — a reader told
-		// "a `shared`-typed value" would go looking for a construction that is not
-		// there. It names the *forms* rather than the offending expression because the
-		// effect is a bit: which construct set it is not recorded (see todo.md).
-		c.reportCode(diag.CodeEffectBoundViolation, loc,
-			"`noalloc` function heap-allocates; a `noalloc` function must not allocate. The allocating forms are a `shared`-typed construction, a dynamic array (`[]T`, including an array comprehension), and a newly built string (`++` or `\"${…}\"` interpolation — a string *literal* is a constant and does not allocate)")
+		// Point at the allocation when it is in this body, and fall back to naming the
+		// forms when it is not. The two cases are genuinely different: a direct
+		// allocation has a line to fix, while one arriving through a callee has only a
+		// call here — pointing at that call would name a line that does not allocate.
+		if allocSite != nil {
+			c.reportCode(diag.CodeEffectBoundViolation, loc,
+				"`noalloc` function heap-allocates: %s at %s. A `noalloc` function must not allocate",
+				describeAllocation(allocSite), allocSite.GetLocation().Pretty())
+		} else {
+			c.reportCode(diag.CodeEffectBoundViolation, loc,
+				"`noalloc` function heap-allocates by calling something that allocates; a `noalloc` function must not allocate. Allocating forms are a `shared`-typed construction, a dynamic array (`[]T`, including a comprehension), and a newly built string (`++` or interpolation)")
+		}
 	}
 }
 
@@ -1223,6 +1255,42 @@ type allocContext struct {
 	// discharged holds construction exprs lexically inside a `with`-arena
 	// block, whose allocation goes into the arena rather than escaping.
 	discharged map[ast.Expression]bool
+	// lambdaSites / methodSites record the **first** expression found to allocate in
+	// each callable, so `lyra-E016` can point at it instead of listing every form the
+	// language can allocate with.
+	//
+	// First rather than all: one precise location is what a reader acts on, and the
+	// second allocation in a `noalloc` function is not a separate mistake — removing the
+	// bound or the allocation fixes both. Parallel maps keyed by lambda and by method,
+	// matching `impureLambdas`/`impureMethods`, because the two callables have no common
+	// type and a `map[any]` would lose that at every read.
+	//
+	// **Only a *direct* allocation is recorded.** An allocation reaching a function
+	// through a *callee* has no expression in this body to name — the call is here, the
+	// allocation is not — so those keep the form-listing message. Recording the call site
+	// instead would point at a line that does not allocate.
+	lambdaSites map[*ast.LambdaExpr]ast.Expression
+	methodSites map[*ast.TraitMethodImpl]ast.Expression
+}
+
+// noteLambda / noteMethod record a callable's first directly-allocating expression.
+//
+// The effect inference runs to a fixpoint, so each walk happens several times; keeping the
+// first write makes the reported site independent of how many passes convergence took,
+// which is the difference between a stable diagnostic and one that moves when an unrelated
+// function is edited.
+func (a *allocContext) noteLambda(lam *ast.LambdaExpr, ex ast.Expression) {
+	if a == nil || a.lambdaSites == nil || a.lambdaSites[lam] != nil {
+		return
+	}
+	a.lambdaSites[lam] = ex
+}
+
+func (a *allocContext) noteMethod(m *ast.TraitMethodImpl, ex ast.Expression) {
+	if a == nil || a.methodSites == nil || a.methodSites[m] != nil {
+		return
+	}
+	a.methodSites[m] = ex
 }
 
 // table exposes the type table for the callee lookup an overloaded call needs
@@ -1313,8 +1381,10 @@ func heapRepresented(t types.Type) bool {
 // block as discharged. typeTable may be nil (see allocContext.typeTable).
 func buildAllocContext(program *ast.Program, typeTable *typetable.TypeTable) *allocContext {
 	a := &allocContext{
-		typeTable:  typeTable,
-		discharged: map[ast.Expression]bool{},
+		typeTable:   typeTable,
+		discharged:  map[ast.Expression]bool{},
+		lambdaSites: map[*ast.LambdaExpr]ast.Expression{},
+		methodSites: map[*ast.TraitMethodImpl]ast.Expression{},
 	}
 	// Mark every expression lexically inside a `with`-arena body as discharged.
 	// WithStmt is a *statement*, so it is caught in the onStmt callback; the
@@ -1770,6 +1840,12 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 	// ones this body calls, or hands on to another function's callback slot.
 	foundCallbacks := make(map[string]int)
 	var found Effect
+	// noteAlloc sets the bit *and* remembers where it came from, so lyra-E016 can point at
+	// the allocation instead of listing every form the language can allocate with.
+	noteAlloc := func(ex ast.Expression) {
+		found |= EffectAlloc
+		alloc.noteLambda(lam, ex)
+	}
 	onStmt := func(s ast.Statement) bool {
 		switch st := s.(type) {
 		case *ast.VarReassignmentStmt:
@@ -1847,18 +1923,18 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 			// Constructing a value used as `shared` heap-allocates (allocates
 			// reads the flavor the typechecker recorded on this construction).
 			if alloc.allocates(ex) {
-				found |= EffectAlloc
+				noteAlloc(ex)
 			}
 		case *ast.TupleLiteralExpr:
 			// A named tuple literal (`Foo(1, 2)`) or a data construction
 			// (`Branch(5)`) — allocates when its recorded flavor is `shared`.
 			if alloc.allocates(ex) {
-				found |= EffectAlloc
+				noteAlloc(ex)
 			}
 		case *ast.DataConstructorExpr:
 			// A nullary constructor (`Leaf`) — allocates when used as `shared`.
 			if alloc.allocates(ex) {
-				found |= EffectAlloc
+				noteAlloc(ex)
 			}
 		case *ast.ArrayLiteralExpr:
 			// `[1, 2, 3]` as a `[]T` allocates its box; the same literal as a fixed
@@ -1866,20 +1942,20 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 			// typechecker recorded, so the two are told apart by what the literal was
 			// used as rather than by how it was written.
 			if alloc.allocates(ex) {
-				found |= EffectAlloc
+				noteAlloc(ex)
 			}
 		case *ast.ArrayCompExpr:
 			// A comprehension always builds a `[]T` box — its length is a runtime
 			// question, so there is no fixed-size form of it to be the cheap case.
 			if alloc.allocates(ex) {
-				found |= EffectAlloc
+				noteAlloc(ex)
 			}
 		case *ast.StringConcatExpr, *ast.InterpolatedStringExpr:
 			// `a ++ b` and `"${x}"` each build a fresh ref-counted box. A string
 			// *literal* does not — it interns as a pinned static box — which is why
 			// these are charged by form rather than by type: all three are `string`.
 			if alloc.allocatesByForm(ex) {
-				found |= EffectAlloc
+				noteAlloc(ex)
 			}
 		case *ast.AwaitExpr:
 			// Awaiting resumes with the result of an external async operation, so
@@ -1919,6 +1995,10 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 	params := clauseParams(m)
 	foundCallbacks := make(map[string]int)
 	var found Effect
+	noteAlloc := func(ex ast.Expression) {
+		found |= EffectAlloc
+		alloc.noteMethod(m, ex)
+	}
 	onStmt := func(s ast.Statement) bool {
 		switch st := s.(type) {
 		case *ast.VarReassignmentStmt:
@@ -1982,27 +2062,27 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 			}
 		case *ast.StructInstanceExpr:
 			if alloc.allocates(ex) {
-				found |= EffectAlloc
+				noteAlloc(ex)
 			}
 		case *ast.TupleLiteralExpr:
 			if alloc.allocates(ex) {
-				found |= EffectAlloc
+				noteAlloc(ex)
 			}
 		case *ast.DataConstructorExpr:
 			if alloc.allocates(ex) {
-				found |= EffectAlloc
+				noteAlloc(ex)
 			}
 		case *ast.ArrayLiteralExpr:
 			if alloc.allocates(ex) {
-				found |= EffectAlloc
+				noteAlloc(ex)
 			}
 		case *ast.ArrayCompExpr:
 			if alloc.allocates(ex) {
-				found |= EffectAlloc
+				noteAlloc(ex)
 			}
 		case *ast.StringConcatExpr, *ast.InterpolatedStringExpr:
 			if alloc.allocatesByForm(ex) {
-				found |= EffectAlloc
+				noteAlloc(ex)
 			}
 		case *ast.AwaitExpr:
 			found |= EffectInput

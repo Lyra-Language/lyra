@@ -241,15 +241,18 @@ func TestNoAlloc_ReadingADynamicArray_IsFine(t *testing.T) {
 	}
 }
 
-// The message must not say "a `shared`-typed value" any more — a reader told that would go
-// looking for a construction that is not there.
-func TestNoAlloc_MessageNamesBothWaysToAllocate(t *testing.T) {
+// The message **points at the allocation** rather than listing every form the language can
+// allocate with. It listed forms while `EffectAlloc` was a bit with no recorded site; the
+// site is recorded now, and a reader with a position acts on it directly.
+func TestNoAlloc_MessagePointsAtTheAllocation(t *testing.T) {
 	errs := checkPurity(t, `let build = pure noalloc (n: i64) -> []i64 => [1, 2, 3]`)
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %v", errs)
 	}
-	if !strings.Contains(errs[0].Message, "dynamic array") {
-		t.Errorf("expected the message to name the dynamic array, got %q", errs[0].Message)
+	for _, want := range []string{"array literal", "1:47"} {
+		if !strings.Contains(errs[0].Message, want) {
+			t.Errorf("expected %q in the message, got %q", want, errs[0].Message)
+		}
 	}
 }
 
@@ -293,16 +296,28 @@ func TestNoAlloc_StringPassThroughAndCompare_IsFine(t *testing.T) {
 	}
 }
 
-// The message must name the string forms, and must say that a literal is not one — that
-// distinction is the whole reason this rule is shaped differently from the array one.
-func TestNoAlloc_MessageNamesTheStringForms(t *testing.T) {
+// A string allocation names the operator that built it, not "a string" — the construct on
+// the line is what the reader is looking at.
+func TestNoAlloc_MessageNamesTheStringOperator(t *testing.T) {
 	errs := checkPurity(t, `let greet = pure noalloc (s: string) -> string => "a" ++ s`)
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %v", errs)
 	}
-	for _, want := range []string{"++", "literal"} {
-		if !strings.Contains(errs[0].Message, want) {
-			t.Errorf("expected %q in the message, got %q", want, errs[0].Message)
-		}
+	if !strings.Contains(errs[0].Message, "`++` builds a new string") {
+		t.Errorf("expected the message to name `++`, got %q", errs[0].Message)
+	}
+}
+
+// An allocation reaching the function through a **callee** has no expression in this body
+// to point at — the call is here, the allocation is not — so that case keeps the
+// form-listing message rather than naming a line that does not allocate.
+func TestNoAlloc_AllocationThroughACalleeIsNotMisattributed(t *testing.T) {
+	errs := checkPurity(t, `let helper = (n: i64) -> []i64 => [1, 2, 3]
+let viaCall = pure noalloc (n: i64) -> []i64 => helper(n)`)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %v", errs)
+	}
+	if !strings.Contains(errs[0].Message, "by calling something that allocates") {
+		t.Errorf("expected the indirect wording, got %q", errs[0].Message)
 	}
 }
