@@ -95,3 +95,45 @@ let mk = () -> (Pt) -> i64 => (p: Pt) -> i64 => p.x`,
 		assertNoErrors(t, res)
 	}
 }
+
+// **The twins are one walk as of 08/05.** `resolveType` and `resolveTypeIfKnown` had
+// been two copies of the same ~120-line recursion differing only at the unknown-name
+// leaf, which is how the drift above happened twice; they now share
+// `resolveTypeWith`, parameterized by that leaf, so a composite added later reaches
+// both or neither. `lyra/CLAUDE.md` hazard 8 named this pair as its outstanding
+// instance of "the durable fix is to stop having more than one of it".
+//
+// The cases below put a named type inside *every* composite the walk handles, in
+// return position — the half resolved by the quiet twin, and so the half that was
+// missing cases. They are a guard on the fold itself: each of these resolved before,
+// and must still.
+func TestResolveType_EveryCompositeInReturnPosition(t *testing.T) {
+	for _, source := range []string{
+		// Static array.
+		`struct Pt { x: i64 }
+let mk = () -> [2]Pt => [Pt { x: 1 }, Pt { x: 2 }]`,
+		// Dynamic array.
+		`struct Pt { x: i64 }
+let mk = () -> []Pt => [Pt { x: 1 }]`,
+		// Tuple.
+		`struct Pt { x: i64 }
+let mk = () -> (Pt, i64) => (Pt { x: 1 }, 2)`,
+		// Parameterized type, and a function type, each already covered above but
+		// repeated here so this case list is the whole switch rather than its tail.
+		`struct Pt { x: i64 }
+data Box<t> = B(t)
+let mk = () -> Box<Pt> => B(Pt { x: 1 })`,
+		`struct Pt { x: i64 }
+let mk = () -> (Pt) -> i64 => (p: Pt) -> i64 => p.x`,
+		// Nested composites: the walk has to keep descending, not stop at the first.
+		`struct Pt { x: i64 }
+data Box<t> = B(t)
+let mk = () -> [2]Box<Pt> => [B(Pt { x: 1 }), B(Pt { x: 2 })]`,
+		`struct Pt { x: i64 }
+data Box<t> = B(t)
+let mk = () -> (Box<Pt>, []Pt) => (B(Pt { x: 1 }), [Pt { x: 2 }])`,
+	} {
+		res := parseCollectAndCheck(t, source, false)
+		assertNoErrors(t, res)
+	}
+}

@@ -169,3 +169,56 @@ func TestEmit_TraitMethodSymbolIsQualified(t *testing.T) {
 		}
 	}
 }
+
+// A trait method's body is narrowed by its declared return type, exactly as a free
+// function's is. The check that does this was written four times and the trait-impl
+// copy had drifted: it ran neither contextualType nor propagateLiteralType, so the
+// body computed at the i64 default and was truncated at the return boundary.
+//
+// That was a *semantic* difference, not only a width one, because Lyra's arithmetic
+// is checked: `200 + 100` returning `u8` traps in a free function and, before 08/05,
+// silently produced 44 in the identical trait method. The exec pair below is the
+// assertion — same expression, same declared return, one answer.
+func TestExec_TraitMethodNarrowsToItsDeclaredReturn(t *testing.T) {
+	t.Parallel()
+	const traitSrc = `struct Pt { x: i64 }
+	 trait Small { get: (Self) -> u8 }
+	 impl Small for Pt { get = (self) => 200 + 100 }
+	 let main = () -> u8 => {
+	   let p = Pt { x: 1 }
+	   p.get()
+	 }`
+	const freeSrc = `let get = () -> u8 => 200 + 100
+	 let main = () -> u8 => get()`
+
+	traitStderr, traitCode := buildAndRunPanic(t, traitSrc)
+	freeStderr, freeCode := buildAndRunPanic(t, freeSrc)
+	if traitCode != freeCode {
+		t.Errorf("trait method exited %d but the identical free function exited %d "+
+			"(trait stderr %q, free stderr %q)", traitCode, freeCode, traitStderr, freeStderr)
+	}
+	if traitCode != trapExitCode {
+		t.Errorf("u8 arithmetic overflowing should trap: exited %d, want %d (stderr %q)",
+			traitCode, trapExitCode, traitStderr)
+	}
+}
+
+// The narrowing itself, not only its overflow consequence: the body's literals lower
+// at the declared u8 rather than the i64 default.
+func TestEmit_TraitMethodBodyUsesTheDeclaredWidth(t *testing.T) {
+	t.Parallel()
+	src := `struct Pt { x: i64 }
+	 trait Small { get: (Self) -> u8 }
+	 impl Small for Pt { get = (self) => 5 + 3 }
+	 let main = () -> u8 => {
+	   let p = Pt { x: 1 }
+	   p.get()
+	 }`
+	ir, err := emitSource(t, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(ir, "i64 5") || strings.Contains(ir, "i64 3") {
+		t.Errorf("the body should compute at the declared u8, not the i64 default:\n%s", ir)
+	}
+}

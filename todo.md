@@ -635,23 +635,6 @@ Types, checked arithmetic, division via the builtins library, `match`, conversio
   128-bit constant arithmetic. The value-range pass needs no change — it already widens
   `i128`/`u128` to ⊤, which is sound.
 
-## Type resolution
-
-- **[OPEN] Fold `resolveType` and `resolveTypeIfKnown` into one walk.** They recurse over
-  the same composites and differ only at an unknown *name* — report "unknown type", or hand
-  the type back untouched — so the entire recursion is duplicated for a difference that
-  lives in one leaf. That duplication has now drifted once (08/03: the twin was missing
-  `ParameterizedType` and `*LambdaType`, giving "expected `Maybe<weak Node>`, got
-  `Maybe<weak Node>`"), and it is the same shape as the `collectTypeVars` /
-  `mentionsTypeVar` split that `types.CollectTypeVars` already fixed by unification —
-  where taking the union of the copies turned up composites *neither* had.
-  *Shape:* one walk taking the leaf behaviour (a callback, or a `report bool`), with both
-  names kept as thin wrappers so no call site changes. Note the two also differ in a second,
-  easier-to-miss way — `resolveType` recurses into an alias chain, caches by resolved
-  identity, checks visibility, and guards circularity, none of which the twin does — so the
-  fold must keep those on the reporting path rather than assume the walks are identical
-  apart from the leaf.
-
 ## Traits
 
 ### [OPEN] `Show` — no value of a generic type can be formatted

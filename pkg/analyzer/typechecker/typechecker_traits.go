@@ -170,14 +170,13 @@ func (tc *TypeChecker) checkTraitImplMethodBody(methodName string, implMethod as
 		}
 		return
 	}
-	// Single-expression body: its value is the return value.
-	bodyType := tc.inferExprType(body)
-	if !isVoid && bodyType != nil && !isAssignable(bodyType, declaredReturn) {
-		tc.addError(body.GetLocation(), SeverityError,
-			"%s: return type mismatch: expected %s, got %s", methodName, declaredReturn, bodyType)
-	} else if !isVoid && bodyType != nil && ownedReturn {
-		tc.checkAllocationCompat(bodyType, declaredReturn, body.GetLocation(), methodName)
+	// Single-expression body: its value is the return value. A void one is still
+	// inferred so an effectful call is validated, exactly as in checkLambdaBody.
+	if isVoid {
+		tc.inferExprType(body)
+		return
 	}
+	tc.checkReturnValue(methodName, body, body.GetLocation(), declaredReturn, ownedReturn)
 }
 
 // implLambdaSignature builds a *types.LambdaType from a LambdaExpr only when

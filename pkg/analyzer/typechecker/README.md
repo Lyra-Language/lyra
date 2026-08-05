@@ -120,14 +120,18 @@ still isn't stamped.
   assign Point to Point"**, and the newtype analogue made a newtype unusable across any call
   boundary. Distinctness is unaffected — resolving both sides is what lets `TypesEqual` compare
   them at all, so a `Meters`-returning call is still rejected against a `Feet` annotation.
-- **`resolveTypeIfKnown` is `resolveType`'s twin and must carry the same composite cases.**
+- **`resolveTypeIfKnown` is `resolveType`'s twin, and since 08/05 they are one walk.**
   It exists only to skip the "unknown type" diagnostic where a caller would duplicate it
   (the return annotation in `checkLambdaBody`), so any composite the one walks the other
-  must too. It had drifted by `ParameterizedType` and `*LambdaType` — the argument-list pair
-  hazard 8 names — and the symptom was the same tell-tale self-rejection, confined to return
-  position: **"return type mismatch: expected `Maybe<weak Node>`, got `Maybe<weak Node>`"**
-  (08/03). Unifying the two is an open item in `todo.md`; until then an edit to either
-  belongs in both, and `tests/named_type_in_composite_test.go` covers both.
+  must too — and it had drifted by `ParameterizedType` and `*LambdaType`, the argument-list
+  pair hazard 8 names, with the same tell-tale self-rejection confined to return position:
+  **"return type mismatch: expected `Maybe<weak Node>`, got `Maybe<weak Node>`"** (08/03).
+  Both now delegate to **`resolveTypeWith(t, loc, leaf)`**, which owns the composite
+  recursion, so a composite added later cannot reach one and miss the other. The leaves are
+  where they genuinely differ, and by more than whether they report: the reporting leaf also
+  follows alias chains, caches by resolved identity, checks visibility and guards
+  circularity, none of which the quiet one does. `tests/named_type_in_composite_test.go`
+  covers both, including every composite in return position as a guard on the fold.
 
 ### `propagateInstantiation(expr, want)`
 

@@ -121,12 +121,16 @@ because each was learned from a real failure, and none is local to one package.
    Taking the union of the copies turned up two composites *neither* had. Prefer that to
    grepping, wherever the switches are answering the same question.
 
-   **`resolveType` / `resolveTypeIfKnown` are the outstanding instance of exactly that.**
-   They walk the same composites and differ only in what they do at an unknown *name* —
-   report it, or hand the type back untouched — so the recursion is duplicated for a
-   difference that lives in one leaf. The 08/03 drift above is what that costs. Folding
-   them into one walk parameterized by the leaf behaviour is `todo.md`'s open item; until
-   then, an edit to either belongs in both.
+   **`resolveType` / `resolveTypeIfKnown` were the outstanding instance of exactly that,
+   and were folded 08/05.** They walked the same composites and differed only in what they
+   do at an unknown *name* — report it, or hand the type back untouched — so the recursion
+   was duplicated for a difference living in one leaf, and the 08/03 drift above is what
+   that cost. They now share `resolveTypeWith`, which takes the leaf as a callback; the two
+   names remain as wrappers, so no call site changed. What did *not* move into the shared
+   walk is the reporting leaf's own work — alias-chain recursion, caching by resolved
+   identity, the visibility check, the circularity guard — none of which the quiet twin
+   does; the leaves differ by more than whether they report, which is the thing to preserve
+   if this is ever touched again.
 
 9. **A name does not identify a declaration, and since 08/03 it may not even identify
    one function.** Two facts compound here. A *key* is module-qualified for a private

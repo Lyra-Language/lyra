@@ -1258,6 +1258,93 @@ func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
 	return nil
 }
 
+// resolveTypeWith walks a type's composites, applying `leaf` at every
+// UnresolvedType it reaches, and returns the type with those names resolved.
+//
+// **This walk exists once on purpose.** resolveType and resolveTypeIfKnown below
+// are the same recursion over the same composites and differ only in what they do
+// at an unknown *name* — report it, or hand it back untouched — so for a long time
+// they were two copies of ~120 lines that had to be edited in tandem. They were not:
+// resolveType grew `*LambdaType` and `ParameterizedType` cases (assignability
+// rejecting a type against *itself*, "cannot assign `Box<Pt>` to `Box<Pt>`") and its
+// twin did not, which produced the identical self-rejection in *return* position on
+// 08/03 — "expected `Maybe<weak Node>`, got `Maybe<weak Node>`". CLAUDE.md hazard 8
+// names this pair as its outstanding instance and prescribes the fix taken here: one
+// walk parameterized by the leaf, so a composite added later cannot reach one
+// resolver and miss the other.
+//
+// Each composite case is here for a failure of its own, all the same shape — an
+// unresolved name *inside* a type made two spellings of one type compare unequal:
+// a named element (`[3]Node`, `(Node, Node)`) against a literal's resolved element;
+// a `weak Node` referent; a type *argument* (`Box<Pt>`), which is the case every such
+// switch forgets because the name is never at the leaf; and a function type's
+// parameters and return (`(g: (Pair) -> i64)`), which bit exactly where a signature
+// is long enough to want a named type.
+//
+// `*types.LambdaType` is copied rather than rewritten in place: it is the one type
+// here held by pointer, so the value being resolved is shared with the declaration
+// every other reference reads, and mutating it would resolve one site's names into
+// everyone's type. The value composites are safe to assign through because the type
+// switch already binds a copy.
+func (tc *TypeChecker) resolveTypeWith(t types.Type, loc ast.Location, leaf func(types.UnresolvedType, ast.Location) types.Type) types.Type {
+	recur := func(inner types.Type) types.Type { return tc.resolveTypeWith(inner, loc, leaf) }
+	switch tt := t.(type) {
+	case types.UnresolvedType:
+		return leaf(tt, loc)
+	case types.StaticArrayType:
+		if tt.ElementType != nil {
+			tt.ElementType = recur(tt.ElementType)
+		}
+		return tt
+	case types.DynamicArrayType:
+		if tt.ElementType != nil {
+			tt.ElementType = recur(tt.ElementType)
+		}
+		return tt
+	case types.TupleType:
+		if len(tt.Elements) > 0 {
+			elems := make([]types.Type, len(tt.Elements))
+			for i, e := range tt.Elements {
+				elems[i] = recur(e)
+			}
+			tt.Elements = elems
+		}
+		return tt
+	case types.WeakType:
+		if tt.Inner != nil {
+			tt.Inner = recur(tt.Inner)
+		}
+		return tt
+	case types.ParameterizedType:
+		if len(tt.TypeArguments) > 0 {
+			args := make([]types.Type, len(tt.TypeArguments))
+			for i, a := range tt.TypeArguments {
+				args[i] = recur(a)
+			}
+			tt.TypeArguments = args
+		}
+		return tt
+	case *types.LambdaType:
+		resolved := *tt
+		if len(tt.Parameters) > 0 {
+			params := make([]types.ParameterType, len(tt.Parameters))
+			copy(params, tt.Parameters)
+			for i := range params {
+				if params[i].Type != nil {
+					params[i].Type = recur(params[i].Type)
+				}
+			}
+			resolved.Parameters = params
+		}
+		if tt.ReturnType.Type != nil {
+			resolved.ReturnType.Type = recur(tt.ReturnType.Type)
+		}
+		return &resolved
+	default:
+		return t
+	}
+}
+
 // resolveType looks up an UnresolvedType name in the symbol table and returns
 // the concrete declared type (e.g. *ConstrainedType, NamedStructType, DataType).
 // All other type values are returned unchanged.
@@ -1271,151 +1358,77 @@ func (tc *TypeChecker) effectiveType(decl *ast.VarDeclStmt) types.Type {
 // Results are cached so that repeated resolutions of the same name only emit
 // "unknown type" once per Check run.
 func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
-	switch tt := t.(type) {
-	case types.UnresolvedType:
-		// **The cache is keyed by the resolved identity, not by the bare name.** Two
-		// modules may each declare a private `Point`, and a module may declare its own
-		// `Maybe` over the prelude's; keyed by name, whichever resolved first would
-		// answer for every other module — the same hazard that kept the visibility check
-		// below out of the cache when the key was a bare name.
-		key := tc.symTable.TypeKey(tt.Name, loc)
-		if cached, ok := tc.resolvedTypes[key]; ok {
-			return types.WithAllocation(cached, tt.Allocation)
-		}
-		decl, ok := tc.symTable.LookupTypeFrom(tt.Name, loc)
-		if ok {
-			// A type named from another module must be exported. Checked here rather
-			// than at each annotation site because every named type reaches its
-			// declaration through this one function. Still deliberately *not* cached:
-			// the key confines a private declaration to its own module, but a `pub`
-			// one shares the bare key with every module that can see it, and only the
-			// reference's own location says whether this one may.
-			//
-			// Asked of `decl` — the declaration this reference resolved to — and not by
-			// name: see declVisibility.
-			tc.checkVisible(tc.declVisibility(tt.Name, decl, decl.IsPublic), loc)
-		}
-		if !ok {
-			// A name that resolves to nothing here may still be *someone's* — a private
-			// declaration in another module, which the key deliberately hides. Saying so
-			// beats "unknown type", which reads as a typo.
-			if tc.reportPrivateType(tt.Name, loc) {
-				tc.resolvedTypes[key] = t
-				return t
-			}
-			tc.addError(loc, SeverityError, "unknown type %q", t)
-			tc.resolvedTypes[key] = t // cache unresolved itself so the error fires only once
-			return t
-		}
-		// **Resolve what the declaration holds, too.** One hop is not enough once
-		// transparent aliases exist: `type Point = Pt` registers `UnresolvedType{Pt}`,
-		// so stopping here hands back a name rather than a type, and assignability
-		// then rejects a perfectly good value with "cannot assign Pt to Point". Every
-		// other composite case below already recurses for the same reason.
-		//
-		// A struct, data or tuple declaration is unaffected — the recursive call lands
-		// on the switch's default and returns as-is — so this only walks alias chains,
-		// which is exactly what it is for.
-		if tc.resolvingTypes[key] {
-			// `type A = B` with `type B = A`. Report once and hand back the unresolved
-			// name: the caller's own diagnostic ("unknown type", a mismatch) then reads
-			// normally, and, more to the point, we do not recurse until the stack ends
-			// — the same failure the expression-level guard in inferExprType exists to
-			// prevent, one level up in the type world.
-			tc.addError(loc, SeverityError,
-				"type alias %q is circular: its definition leads back to itself", tt.Name)
-			tc.resolvedTypes[key] = t
-			return t
-		}
-		tc.resolvingTypes[key] = true
-		// Resolve the declaration's own type **from the declaration's location**, not
-		// from the reference's: an alias in module A pointing at A's private `Pt` is
-		// A's to resolve, and continuing to ask as the referencing module would look
-		// for a `Pt` that module cannot see.
-		resolved := tc.resolveType(decl.Type, decl.GetLocation())
-		delete(tc.resolvingTypes, key)
+	return tc.resolveTypeWith(t, loc, tc.resolveNameReporting)
+}
 
-		tc.resolvedTypes[key] = resolved
-		return types.WithAllocation(resolved, tt.Allocation)
-	case types.StaticArrayType:
-		// Resolve the element type too, so a named element (`[3]Node`) compares
-		// equal to the resolved element type of a literal. Without this the
-		// annotation keeps an UnresolvedType element and assignability fails with
-		// a confusing "cannot assign StaticArray<Node,3> to StaticArray<Node,3>".
-		if tt.ElementType != nil {
-			tt.ElementType = tc.resolveType(tt.ElementType, loc)
-		}
-		return tt
-	case types.DynamicArrayType:
-		if tt.ElementType != nil {
-			tt.ElementType = tc.resolveType(tt.ElementType, loc)
-		}
-		return tt
-	case types.TupleType:
-		// Resolve each element type for the same reason (`(Node, Node)`).
-		if len(tt.Elements) > 0 {
-			elems := make([]types.Type, len(tt.Elements))
-			for i, e := range tt.Elements {
-				elems[i] = tc.resolveType(e, loc)
-			}
-			tt.Elements = elems
-		}
-		return tt
-	case types.WeakType:
-		// Resolve the referent (`weak Node` → the named type) so it isn't left an
-		// UnresolvedType; the weak wrapper itself is preserved.
-		if tt.Inner != nil {
-			tt.Inner = tc.resolveType(tt.Inner, loc)
-		}
-		return tt
-	case types.ParameterizedType:
-		// `Box<Pt>`: the named type is in the type *arguments*, never at the leaf, so
-		// the UnresolvedType case above never sees it. Same failure as the others and
-		// the same fix — without it `let get = (b: Box<Pt>) -> …` rejected a `Box<Pt>`
-		// with "cannot assign Box<Pt> to Box<Pt>", the two spellings differing only in
-		// whether the argument had been resolved. This is the same hole
-		// `mentionsTypeVar` had (see todo.md): the composite that holds its types in an
-		// argument list is the one every such switch forgets.
-		if len(tt.TypeArguments) > 0 {
-			args := make([]types.Type, len(tt.TypeArguments))
-			for i, a := range tt.TypeArguments {
-				args[i] = tc.resolveType(a, loc)
-			}
-			tt.TypeArguments = args
-		}
-		return tt
-	case *types.LambdaType:
-		// A function type's parameters and return are types like any other, and a named
-		// one inside them needs resolving for the same reason an array's element does:
-		// `(g: (Pair) -> i64)` kept an UnresolvedType `Pair` while the argument resolved
-		// to the full named tuple, so a perfectly good function was rejected with
-		// "cannot assign (Pair(i64, i64)) -> i64 to (Pair) -> i64" — the confusing
-		// looks-identical mismatch the StaticArrayType case above was added to prevent.
-		// It only bites through a function type, which is why naming a type was no help
-		// exactly where the signature is long enough to want it.
-		//
-		// **A copy, not an in-place rewrite.** LambdaType is the one type here held by
-		// pointer, so the value being resolved is shared with the declaration every
-		// other reference reads; mutating it would resolve one site's names into
-		// everyone's type.
-		resolved := *tt
-		if len(tt.Parameters) > 0 {
-			params := make([]types.ParameterType, len(tt.Parameters))
-			copy(params, tt.Parameters)
-			for i := range params {
-				if params[i].Type != nil {
-					params[i].Type = tc.resolveType(params[i].Type, loc)
-				}
-			}
-			resolved.Parameters = params
-		}
-		if tt.ReturnType.Type != nil {
-			resolved.ReturnType.Type = tc.resolveType(tt.ReturnType.Type, loc)
-		}
-		return &resolved
-	default:
-		return t
+// resolveNameReporting is resolveType's leaf: resolve the name, and say so when it
+// cannot be resolved.
+func (tc *TypeChecker) resolveNameReporting(tt types.UnresolvedType, loc ast.Location) types.Type {
+	// **The cache is keyed by the resolved identity, not by the bare name.** Two
+	// modules may each declare a private `Point`, and a module may declare its own
+	// `Maybe` over the prelude's; keyed by name, whichever resolved first would
+	// answer for every other module — the same hazard that kept the visibility check
+	// below out of the cache when the key was a bare name.
+	key := tc.symTable.TypeKey(tt.Name, loc)
+	if cached, ok := tc.resolvedTypes[key]; ok {
+		return types.WithAllocation(cached, tt.Allocation)
 	}
+	decl, ok := tc.symTable.LookupTypeFrom(tt.Name, loc)
+	if ok {
+		// A type named from another module must be exported. Checked here rather
+		// than at each annotation site because every named type reaches its
+		// declaration through this one function. Still deliberately *not* cached:
+		// the key confines a private declaration to its own module, but a `pub`
+		// one shares the bare key with every module that can see it, and only the
+		// reference's own location says whether this one may.
+		//
+		// Asked of `decl` — the declaration this reference resolved to — and not by
+		// name: see declVisibility.
+		tc.checkVisible(tc.declVisibility(tt.Name, decl, decl.IsPublic), loc)
+	}
+	if !ok {
+		// A name that resolves to nothing here may still be *someone's* — a private
+		// declaration in another module, which the key deliberately hides. Saying so
+		// beats "unknown type", which reads as a typo.
+		if tc.reportPrivateType(tt.Name, loc) {
+			tc.resolvedTypes[key] = tt
+			return tt
+		}
+		tc.addError(loc, SeverityError, "unknown type %q", tt)
+		tc.resolvedTypes[key] = tt // cache unresolved itself so the error fires only once
+		return tt
+	}
+	// **Resolve what the declaration holds, too.** One hop is not enough once
+	// transparent aliases exist: `type Point = Pt` registers `UnresolvedType{Pt}`,
+	// so stopping here hands back a name rather than a type, and assignability
+	// then rejects a perfectly good value with "cannot assign Pt to Point". Every
+	// composite in the walk above already recurses for the same reason.
+	//
+	// A struct, data or tuple declaration is unaffected — the recursive call lands
+	// on the walk's default and returns as-is — so this only walks alias chains,
+	// which is exactly what it is for.
+	if tc.resolvingTypes[key] {
+		// `type A = B` with `type B = A`. Report once and hand back the unresolved
+		// name: the caller's own diagnostic ("unknown type", a mismatch) then reads
+		// normally, and, more to the point, we do not recurse until the stack ends
+		// — the same failure the expression-level guard in inferExprType exists to
+		// prevent, one level up in the type world.
+		tc.addError(loc, SeverityError,
+			"type alias %q is circular: its definition leads back to itself", tt.Name)
+		tc.resolvedTypes[key] = tt
+		return tt
+	}
+	tc.resolvingTypes[key] = true
+	// Resolve the declaration's own type **from the declaration's location**, not
+	// from the reference's: an alias in module A pointing at A's private `Pt` is
+	// A's to resolve, and continuing to ask as the referencing module would look
+	// for a `Pt` that module cannot see. That change of location is why this recurses
+	// through resolveType rather than through the walk's own `recur`.
+	resolved := tc.resolveType(decl.Type, decl.GetLocation())
+	delete(tc.resolvingTypes, key)
+
+	tc.resolvedTypes[key] = resolved
+	return types.WithAllocation(resolved, tt.Allocation)
 }
 
 // resolveTypeIfKnown resolves an UnresolvedType only when the name is actually
@@ -1428,79 +1441,21 @@ func (tc *TypeChecker) resolveType(t types.Type, loc ast.Location) types.Type {
 // declaration a name means depends on which module is asking, so a name-only resolution
 // silently picks another module's type when two declare one privately.
 func (tc *TypeChecker) resolveTypeIfKnown(t types.Type, loc ast.Location) types.Type {
-	switch tt := t.(type) {
-	case types.UnresolvedType:
-		key := tc.symTable.TypeKey(tt.Name, loc)
-		if cached, ok := tc.resolvedTypes[key]; ok {
-			return types.WithAllocation(cached, tt.Allocation)
-		}
-		if decl, ok := tc.symTable.LookupTypeFrom(tt.Name, loc); ok {
-			return types.WithAllocation(decl.Type, tt.Allocation)
-		}
-		return t
-	case types.StaticArrayType:
-		if tt.ElementType != nil {
-			tt.ElementType = tc.resolveTypeIfKnown(tt.ElementType, loc)
-		}
-		return tt
-	case types.DynamicArrayType:
-		if tt.ElementType != nil {
-			tt.ElementType = tc.resolveTypeIfKnown(tt.ElementType, loc)
-		}
-		return tt
-	case types.TupleType:
-		if len(tt.Elements) > 0 {
-			elems := make([]types.Type, len(tt.Elements))
-			for i, e := range tt.Elements {
-				elems[i] = tc.resolveTypeIfKnown(e, loc)
-			}
-			tt.Elements = elems
-		}
-		return tt
-	case types.WeakType:
-		if tt.Inner != nil {
-			tt.Inner = tc.resolveTypeIfKnown(tt.Inner, loc)
-		}
-		return tt
-	case types.ParameterizedType:
-		// `Maybe<weak Node>` as a *return* annotation. This function is resolveType's
-		// twin and had drifted from it by exactly the two composites that hold their
-		// types in an argument list — the pair CLAUDE.md hazard 8 says every such
-		// switch forgets, and the same hole resolveType itself had (`Box<Pt>`) and
-		// `mentionsTypeVar` had before it. The symptom is identical and is the reason
-		// to keep the two in step: the head resolved while the argument stayed an
-		// UnresolvedType, so a body returning a perfectly good value was rejected with
-		// "return type mismatch: expected Maybe<weak Node>, got Maybe<weak Node>".
-		if len(tt.TypeArguments) > 0 {
-			args := make([]types.Type, len(tt.TypeArguments))
-			for i, a := range tt.TypeArguments {
-				args[i] = tc.resolveTypeIfKnown(a, loc)
-			}
-			tt.TypeArguments = args
-		}
-		return tt
-	case *types.LambdaType:
-		// A copy, not an in-place rewrite: LambdaType is the one type here held by
-		// pointer, so mutating it would resolve one site's names into the shared
-		// declaration every other reference reads (see resolveType's mirror case).
-		resolved := *tt
-		if len(tt.Parameters) > 0 {
-			params := make([]types.ParameterType, len(tt.Parameters))
-			copy(params, tt.Parameters)
-			for i := range params {
-				if params[i].Type != nil {
-					params[i].Type = tc.resolveTypeIfKnown(params[i].Type, loc)
-				}
-			}
-			resolved.Parameters = params
-		}
-		if tt.ReturnType.Type != nil {
-			resolved.ReturnType.Type = tc.resolveTypeIfKnown(tt.ReturnType.Type, loc)
-		}
-		return &resolved
-	default:
-		return t
+	return tc.resolveTypeWith(t, loc, tc.resolveNameIfKnown)
+}
+
+// resolveNameIfKnown is resolveTypeIfKnown's leaf: the quiet counterpart, which
+// reports nothing and — unlike the reporting leaf — does not follow an alias chain
+// or write the cache. It answers with what the declaration holds, or the name itself.
+func (tc *TypeChecker) resolveNameIfKnown(tt types.UnresolvedType, loc ast.Location) types.Type {
+	key := tc.symTable.TypeKey(tt.Name, loc)
+	if cached, ok := tc.resolvedTypes[key]; ok {
+		return types.WithAllocation(cached, tt.Allocation)
 	}
+	if decl, ok := tc.symTable.LookupTypeFrom(tt.Name, loc); ok {
+		return types.WithAllocation(decl.Type, tt.Allocation)
+	}
+	return tt
 }
 
 // inferExprType returns the type of expr, or nil if it cannot be determined yet.

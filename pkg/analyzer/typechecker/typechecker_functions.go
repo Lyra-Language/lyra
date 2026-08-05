@@ -121,27 +121,7 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 				}
 			} else if !isVoid {
 				// Single-expression body: the expression value is the return value.
-				bodyType := tc.inferExprType(lambda.Body)
-				bodyType, reported := tc.contextualType(lambda.Body, declaredReturn, bodyType)
-				if reported {
-					// the propagation named the offending value; a coarser
-					// "return type mismatch" on top would be the same mistake twice
-				} else if declaredReturn != nil && bodyType != nil && !isAssignable(bodyType, declaredReturn) {
-					tc.addError(lambda.Body.GetLocation(), SeverityError,
-						"%s: return type mismatch: expected %s, got %s",
-						funcName, declaredReturn, bodyType)
-				} else if declaredReturn != nil && bodyType != nil {
-					// The declared return type is the body's context: push its width
-					// onto untyped literal leaves so `() -> u8 => 5 + 3` lowers at u8.
-					tc.propagateLiteralType(lambda.Body, declaredReturn)
-					// A `shared` return type is the context for the value the body
-					// builds, so stamp construction leaves (incl. inside match arms)
-					// `shared` — `(xs) -> shared List => match xs { … => Cons(…) }`.
-					tc.propagateAllocation(lambda.Body, types.AllocationOf(declaredReturn))
-					if ownedReturn {
-						tc.checkAllocationCompat(bodyType, declaredReturn, lambda.Body.GetLocation(), funcName)
-					}
-				}
+				tc.checkReturnValue(funcName, lambda.Body, lambda.Body.GetLocation(), declaredReturn, ownedReturn)
 			} else {
 				// Single-expression body of a void function: the value is discarded,
 				// but still infer it so an effectful call (`() -> void => print("x")`)
@@ -322,6 +302,46 @@ func (tc *TypeChecker) checkBlockVoidReturn(funcName string, block *ast.BlockExp
 //
 // The block's own scope is entered for the duration so that variables declared
 // inside the body (e.g. `let local: i32 = 5`) are visible to inferExprType.
+// checkReturnValue checks one value against a function's declared return type. It
+// is the single definition of what returning a value means, and every position that
+// has one goes through it: a single-expression body, an explicit `return`, a block's
+// trailing expression, and a trait-impl method's body.
+//
+// `loc` is separate from `value` because the two disagree about where to point — a
+// `return` reports at the statement, a body expression at itself.
+//
+// The order is load-bearing, which is the reason to have one copy rather than four.
+// contextualType runs *first* and may report on its own, and when it has, the
+// coarser "return type mismatch" is suppressed: naming the offending value and then
+// restating it as a whole-body mismatch is the same mistake twice. Only once the
+// value is known assignable does the declared type act as its context — pushing its
+// width onto untyped literal leaves so `() -> u8 => 5 + 3` lowers at u8, and
+// stamping construction leaves with its allocation flavor so
+// `(xs) -> shared List => match xs { … => Cons(…) }` builds shared nodes inside
+// match arms. The allocation *check* is last and only for an owned return, since a
+// `ref`/`mut` return is a borrow and allocation-polymorphic (isOwnedReturn).
+//
+// Written four times until 08/05, and the fourth had already drifted: the trait-impl
+// copy did none of the propagation, so a method body's literals kept their default
+// width where the identical free function's narrowed (hazard 8).
+func (tc *TypeChecker) checkReturnValue(funcName string, value ast.Expression, loc ast.Location, declaredReturn types.Type, ownedReturn bool) {
+	valueType := tc.inferExprType(value)
+	valueType, reported := tc.contextualType(value, declaredReturn, valueType)
+	if reported || declaredReturn == nil || valueType == nil {
+		return
+	}
+	if !isAssignable(valueType, declaredReturn) {
+		tc.addError(loc, SeverityError,
+			"%s: return type mismatch: expected %s, got %s", funcName, declaredReturn, valueType)
+		return
+	}
+	tc.propagateLiteralType(value, declaredReturn)
+	tc.propagateAllocation(value, types.AllocationOf(declaredReturn))
+	if ownedReturn {
+		tc.checkAllocationCompat(valueType, declaredReturn, loc, funcName)
+	}
+}
+
 func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, declaredReturn types.Type, ownedReturn bool) {
 	tc.enterScope(block, func() {
 		stmts := block.Statements
@@ -331,41 +351,12 @@ func (tc *TypeChecker) checkBlockReturn(funcName string, block *ast.BlockExpr, d
 				if s.Value == nil {
 					continue // bare return – void compatibility is not checked yet
 				}
-				retType := tc.inferExprType(s.Value)
-				retType, reported := tc.contextualType(s.Value, declaredReturn, retType)
-				if reported {
-				} else if declaredReturn != nil && retType != nil && !isAssignable(retType, declaredReturn) {
-					tc.addError(s.GetLocation(), SeverityError,
-						"%s: return type mismatch: expected %s, got %s",
-						funcName, declaredReturn, retType)
-				} else if declaredReturn != nil && retType != nil {
-					tc.propagateLiteralType(s.Value, declaredReturn)
-					tc.propagateAllocation(s.Value, types.AllocationOf(declaredReturn))
-					if ownedReturn {
-						tc.checkAllocationCompat(retType, declaredReturn, s.GetLocation(), funcName)
-					}
-				}
+				tc.checkReturnValue(funcName, s.Value, s.GetLocation(), declaredReturn, ownedReturn)
 			case *ast.ExpressionStmt:
 				if i == len(stmts)-1 {
 					// The last expression in a block is its implicit return value,
-					// so it is being used (returned), not dropped — check only that
-					// its type matches the declared return type.
-					exprType := tc.inferExprType(s.Expression)
-					exprType, reported := tc.contextualType(s.Expression, declaredReturn, exprType)
-					if reported {
-					} else if declaredReturn != nil && exprType != nil && !isAssignable(exprType, declaredReturn) {
-						tc.addError(s.GetLocation(), SeverityError,
-							"%s: return type mismatch: expected %s, got %s",
-							funcName, declaredReturn, exprType)
-					} else if declaredReturn != nil && exprType != nil {
-						// The declared return type is the context for the block's
-						// value; push its width onto untyped literal leaves.
-						tc.propagateLiteralType(s.Expression, declaredReturn)
-						tc.propagateAllocation(s.Expression, types.AllocationOf(declaredReturn))
-						if ownedReturn {
-							tc.checkAllocationCompat(exprType, declaredReturn, s.GetLocation(), funcName)
-						}
-					}
+					// so it is being used (returned), not dropped.
+					tc.checkReturnValue(funcName, s.Expression, s.GetLocation(), declaredReturn, ownedReturn)
 				} else {
 					// A non-final expression statement is evaluated for effect and
 					// its value discarded; run the full statement check so dropped

@@ -10,6 +10,44 @@ Newest first.
 ## Dated log
 
 ### 08/05/26
+**The two typechecker duplications behind the same hazard, and one of them was a live
+semantic bug.** Same review pass as the backend entry below; these are the front-end half.
+
+**A trait method did not narrow to its declared return type, so its arithmetic had
+different semantics from an identical free function.** The check that compares a value
+against the declared return — infer, `contextualType`, assignability, then
+`propagateLiteralType` / `propagateAllocation` and the owned-return allocation check — was
+written four times: a single-expression body, an explicit `return`, a block's trailing
+expression, and a trait-impl body. The fourth had drifted, running neither `contextualType`
+nor either propagation. The consequence was not cosmetic. Lyra's arithmetic is checked, so
+width decides whether an operation traps:
+
+```
+trait Small { get: (Self) -> u8 }
+impl Small for Pt { get = (self) => 200 + 100 }   // silently 44
+let get = () -> u8 => 200 + 100                   // traps, exit 101
+```
+
+The same expression with the same declared return gave two answers depending on where it
+was written — the body computed at the `i64` default and was truncated at the return
+boundary, so the overflow the language exists to catch went unreported. All four sites now
+call one `checkReturnValue`, and the trait path inherited the propagation it never had.
+
+**`resolveType` and `resolveTypeIfKnown` are one walk.** The pair `CLAUDE.md` hazard 8
+named as its outstanding instance, and `todo.md`'s open item: ~120 lines of identical
+recursion over the same composites, differing only at an unknown *name*. That is what let
+the twin fall behind by `ParameterizedType` and `*LambdaType` on 08/03 ("expected
+`Maybe<weak Node>`, got `Maybe<weak Node>`"). They now share `resolveTypeWith`, which takes
+the leaf as a callback; both names stay as wrappers, so no call site changed.
+
+The fold's one subtlety is the thing todo.md warned about: **the leaves differ by more than
+whether they report.** The reporting one also follows alias chains, caches by resolved
+identity, checks visibility and guards circularity — none of which the quiet one does — and
+it recurses through `resolveType` rather than the walk's own recursion because it resolves a
+declaration's type *from the declaration's location*, not the reference's. Those stayed in
+the leaf; only the composite recursion is shared.
+
+### 08/05/26
 **Three backend paths that had drifted from their siblings.** All three are hazard 8 — a
 thing written more than once, where only one copy got the fix — found by reviewing the
 backend for duplication rather than by hitting the bugs.
