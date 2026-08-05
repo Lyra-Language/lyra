@@ -64,7 +64,7 @@ name (a `const N`, checked against the global scope) shadows the constructor and
 rewrite, so existing constant code is untouched. Pattern position already resolved these
 constructors, so only expressions needed it.
 
-**Nil-node hazard:** `node.ChildByFieldName(...)` returns a genuine Go `nil` `*sitter.Node` for
+**Nil-node hazard:** `cst.Field(node, ...)` returns a genuine Go `nil` `*sitter.Node` for
 an absent *optional* grammar field (e.g. a zero-parameter `lambda_type`'s `parameter_types`).
 Calling any accessor (`ChildCount`, `Child`, `Kind`, …) on that nil node **hangs inside the
 go-tree-sitter CGO binding instead of panicking** — found via a real bug (`parseParameterTypes`,
@@ -105,7 +105,13 @@ comment-only body collects to an empty block.
 **Tree-sitter traversal conventions:**
 - `node.ChildCount()` / `node.Child(i)` — all children including anonymous keyword tokens; use
   with `switch child.Kind()`
-- `node.ChildByFieldName("field")` — first child with that field name
+- `cst.Field(node, "field")` — first child with that field name. **Use this, not
+  `node.ChildByFieldName`**: the two answer identically, but ChildByFieldName allocates a C
+  string from the Go name, calls into C and frees it on *every* lookup, which made it about a
+  quarter of all samples in an analysis run — the collector asks at nearly every node.
+  `cst.Field` resolves the name to a grammar field id once and reuses it, and moving the
+  collector onto it made the whole pipeline ~25% faster (`pkg/cst`, and the benchmarks in
+  `pkg/driver/bench_test.go`)
 - `node.FieldNameForChild(uint32(i))` — field name at index `i`; use when a rule repeats the
   same field name (e.g. multiple `value:` fields in `commaSep1`)
 

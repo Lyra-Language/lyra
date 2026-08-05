@@ -3,6 +3,7 @@ package typedecls
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -15,17 +16,17 @@ func collectNamedTupleTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx)
 	var elements []types.Type
 	isPublic := false
 
-	if visibilityNode := node.ChildByFieldName("visibility"); visibilityNode != nil {
+	if visibilityNode := cst.Field(node, "visibility"); visibilityNode != nil {
 		isPublic = true
 	}
-	if nameNode := node.ChildByFieldName("name"); nameNode != nil {
+	if nameNode := cst.Field(node, "name"); nameNode != nil {
 		name = ctx.NodeText(nameNode)
 		nameLoc = ctx.NodeLocation(nameNode)
 	}
-	if genericParamsNode := node.ChildByFieldName("generic_parameters"); genericParamsNode != nil {
+	if genericParamsNode := cst.Field(node, "generic_parameters"); genericParamsNode != nil {
 		genericParams = ctx.CollectGenericParams(genericParamsNode)
 	}
-	if elementsNode := node.ChildByFieldName("tuple_type_body"); elementsNode != nil {
+	if elementsNode := cst.Field(node, "tuple_type_body"); elementsNode != nil {
 		elements = CollectTupleTypeBody(elementsNode, ctx)
 	}
 

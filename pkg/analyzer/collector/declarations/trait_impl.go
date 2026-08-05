@@ -4,6 +4,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -20,7 +21,7 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	// The `<…>` after the trait name is the trait's argument list, whose grammar
 	// (`field("generic_parameters", seq("<", commaSep1($.type), ">"))`) labels
 	// every child — the `<`/`>` tokens and each type — with the same field name,
-	// so ChildByFieldName would return only the `<`. Iterate with
+	// so cst.Field would return only the `<`. Iterate with
 	// FieldNameForChild and parse the named (type) children into trait args, used
 	// to bind the trait's own type parameters at dispatch.
 	var traitArgs []types.Type
@@ -47,14 +48,14 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 		return nil
 	}
 
-	constraintsNode := node.ChildByFieldName("constraints")
+	constraintsNode := cst.Field(node, "constraints")
 	constraints := []ast.TraitImplConstraint{}
 	if constraintsNode != nil {
 		constraints = collectTraitImplConstraints(constraintsNode, ctx)
 	}
 
 	methods := []ast.TraitMethodImpl{}
-	if methodsNode := node.ChildByFieldName("methods"); methodsNode != nil {
+	if methodsNode := cst.Field(node, "methods"); methodsNode != nil {
 		methods = collectTraitMethodImpls(methodsNode, ctx)
 	}
 
@@ -121,9 +122,9 @@ func collectTraitMethodImpl(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Trait
 	clause := *expressions.CollectLambdaClause(clauseNode, ctx)
 	return ast.TraitMethodImpl{
 		Name:      methodName,
-		IsPure:    node.ChildByFieldName("is_pure") != nil,
-		IsDet:     node.ChildByFieldName("is_det") != nil,
-		IsNoAlloc: node.ChildByFieldName("is_noalloc") != nil,
+		IsPure:    cst.Field(node, "is_pure") != nil,
+		IsDet:     cst.Field(node, "is_det") != nil,
+		IsNoAlloc: cst.Field(node, "is_noalloc") != nil,
 		Clause:    clause,
 	}
 }

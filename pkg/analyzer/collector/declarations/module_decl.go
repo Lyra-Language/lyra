@@ -3,6 +3,7 @@ package declarations
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -11,7 +12,7 @@ func CollectModuleDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Mo
 	moduleDecl := &ast.ModuleDeclStmt{
 		Path: []ast.ModuleName{},
 	}
-	pathNode := node.ChildByFieldName("path")
+	pathNode := cst.Field(node, "path")
 	if pathNode == nil {
 		ctx.AddError(node, diag.SeverityError, "Expected module path, got %s", node.Kind())
 		return nil

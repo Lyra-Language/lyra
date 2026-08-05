@@ -4,6 +4,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/statements"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -69,7 +70,7 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 	case "spread_expr":
 		return collectSpreadExpr(node, ctx, loc)
 	case "boolean_expr", "for_condition_expr":
-		opNode := node.ChildByFieldName("operator")
+		opNode := cst.Field(node, "operator")
 		if opNode != nil && opNode.Kind() == "not" {
 			return collectNotBooleanExpr(node, ctx, loc)
 		}

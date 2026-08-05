@@ -3,6 +3,7 @@ package statements
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -11,18 +12,18 @@ func CollectForLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopE
 	loopScope := ctx.PushLoopScope()
 	defer ctx.PopScope()
 
-	labelNode := node.ChildByFieldName("label")
+	labelNode := cst.Field(node, "label")
 	label := ""
 	if labelNode != nil {
 		label = ctx.NodeText(labelNode)
 	}
 
-	forConditionNode := node.ChildByFieldName("for_condition")
+	forConditionNode := cst.Field(node, "for_condition")
 	var initExpr *ast.VarDeclStmt
 	var conditionExpr *ast.Expression
 	var postExpr *ast.Expression
 	if forConditionNode != nil {
-		conditionExprNode := forConditionNode.ChildByFieldName("condition_expr")
+		conditionExprNode := cst.Field(forConditionNode, "condition_expr")
 		if conditionExprNode == nil {
 			ctx.AddError(forConditionNode, diag.SeverityError, "Expected for loop condition expression, got %s", forConditionNode.Kind())
 			return nil
@@ -30,7 +31,7 @@ func CollectForLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopE
 		maybeConditionExpr := ctx.CollectExpr(conditionExprNode)
 		conditionExpr = &maybeConditionExpr
 
-		initExprNode := forConditionNode.ChildByFieldName("initial_expr")
+		initExprNode := cst.Field(forConditionNode, "initial_expr")
 		if initExprNode != nil {
 			stmt := ctx.CollectStatement(initExprNode)
 			if varDecl, ok := stmt.(*ast.VarDeclStmt); ok {
@@ -40,14 +41,14 @@ func CollectForLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForLoopE
 			}
 		}
 
-		postExprNode := forConditionNode.ChildByFieldName("post_expr")
+		postExprNode := cst.Field(forConditionNode, "post_expr")
 		if postExprNode != nil {
 			expr := ctx.CollectExpr(postExprNode)
 			postExpr = &expr
 		}
 	}
 
-	bodyNode := node.ChildByFieldName("for_body")
+	bodyNode := cst.Field(node, "for_body")
 	if bodyNode == nil {
 		ctx.AddError(node, diag.SeverityError, "Expected for loop body")
 		return nil

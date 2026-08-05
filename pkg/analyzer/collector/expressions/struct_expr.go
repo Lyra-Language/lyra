@@ -3,33 +3,34 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 func collectNamedStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
-	nameNode := node.ChildByFieldName("struct_name")
+	nameNode := cst.Field(node, "struct_name")
 	name := "?"
 	if nameNode != nil {
 		name = ctx.NodeText(nameNode)
 	}
 
-	genericArgumentsNode := node.ChildByFieldName("generic_arguments")
+	genericArgumentsNode := cst.Field(node, "generic_arguments")
 	genericArguments := []types.Type(nil)
 	if genericArgumentsNode != nil {
 		genericArguments = collectGenericArgs(genericArgumentsNode, ctx)
 	}
 
-	structBodyNode := node.ChildByFieldName("struct_body")
-	structUpdateNode := structBodyNode.ChildByFieldName("struct_update")
-	structShorthandNode := structBodyNode.ChildByFieldName("struct_shorthand")
-	structFieldsNode := structBodyNode.ChildByFieldName("struct_fields")
+	structBodyNode := cst.Field(node, "struct_body")
+	structUpdateNode := cst.Field(structBodyNode, "struct_update")
+	structShorthandNode := cst.Field(structBodyNode, "struct_shorthand")
+	structFieldsNode := cst.Field(structBodyNode, "struct_fields")
 
 	baseStruct := (*ast.IdentifierExpr)(nil)
 	fields := []ast.StructField(nil)
 	if structUpdateNode != nil {
-		baseStructNode := structUpdateNode.ChildByFieldName("base")
+		baseStructNode := cst.Field(structUpdateNode, "base")
 		if baseStructNode == nil {
 			ctx.AddError(node, diag.SeverityError, "struct update must have a base struct")
 			return nil
@@ -54,14 +55,14 @@ func collectNamedStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, lo
 }
 
 func collectAnonymousStructLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.AnonymousStructInstanceExpr {
-	structBodyNode := node.ChildByFieldName("struct_body")
+	structBodyNode := cst.Field(node, "struct_body")
 
 	fields := []ast.StructField(nil)
 	var baseStructIdentifier *ast.IdentifierExpr
 	if structBodyNode != nil {
-		structUpdateNode := structBodyNode.ChildByFieldName("struct_update")
-		structShorthandNode := structBodyNode.ChildByFieldName("struct_shorthand")
-		structFieldsNode := structBodyNode.ChildByFieldName("struct_fields")
+		structUpdateNode := cst.Field(structBodyNode, "struct_update")
+		structShorthandNode := cst.Field(structBodyNode, "struct_shorthand")
+		structFieldsNode := cst.Field(structBodyNode, "struct_fields")
 		if structUpdateNode != nil {
 			baseStructIdentifier = collectBaseStruct(structUpdateNode, ctx)
 			fields = collectStructFields(structUpdateNode, ctx)
@@ -102,8 +103,8 @@ func collectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Struct
 
 func collectStructInstanceField(node *sitter.Node, ctx *collector_ctx.Ctx) ast.StructField {
 	return ast.StructField{
-		Name:  ctx.NodeText(node.ChildByFieldName("field_name")),
-		Value: CollectExpression(node.ChildByFieldName("field_value"), ctx),
+		Name:  ctx.NodeText(cst.Field(node, "field_name")),
+		Value: CollectExpression(cst.Field(node, "field_value"), ctx),
 	}
 }
 

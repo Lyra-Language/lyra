@@ -4,6 +4,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 )
 
 // The import graph has to be known *before* collection, because collection needs
@@ -21,7 +22,7 @@ import (
 func importsOf(u Unit) []*ast.ImportStmt {
 	var out []*ast.ImportStmt
 	forEachTopLevel(u.Root, "import_statement", func(node *sitter.Node) {
-		path := node.ChildByFieldName("path")
+		path := cst.Field(node, "path")
 		if path == nil {
 			return
 		}
@@ -40,7 +41,7 @@ func declaredModulePath(u Unit) string {
 		if path != "" {
 			return // a file declares at most one module; the first wins
 		}
-		if p := node.ChildByFieldName("path"); p != nil {
+		if p := cst.Field(node, "path"); p != nil {
 			path = joinPath(modulePathOf(p, u.Source))
 		}
 	})

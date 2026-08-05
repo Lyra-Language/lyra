@@ -3,6 +3,7 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -17,14 +18,14 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 	// modifier_order.go for why the grammar stopped enforcing them.
 	CheckModifierOrder(node, ctx)
 
-	isUnsafe := node.ChildByFieldName("is_unsafe") != nil
-	isPure := node.ChildByFieldName("is_pure") != nil
-	isDet := node.ChildByFieldName("is_det") != nil
-	isNoAlloc := node.ChildByFieldName("is_noalloc") != nil
-	isAsync := node.ChildByFieldName("is_async") != nil
-	isGenerator := node.ChildByFieldName("is_gen") != nil
+	isUnsafe := cst.Field(node, "is_unsafe") != nil
+	isPure := cst.Field(node, "is_pure") != nil
+	isDet := cst.Field(node, "is_det") != nil
+	isNoAlloc := cst.Field(node, "is_noalloc") != nil
+	isAsync := cst.Field(node, "is_async") != nil
+	isGenerator := cst.Field(node, "is_gen") != nil
 
-	parametersNode := node.ChildByFieldName("parameters")
+	parametersNode := cst.Field(node, "parameters")
 	if parametersNode == nil {
 		ctx.AddError(node, diag.SeverityError, "collectLambdaExpr: lambda expression missing parameters")
 		return nil
@@ -44,20 +45,20 @@ func CollectLambdaExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 		}
 	}
 
-	bodyNode := node.ChildByFieldName("body")
+	bodyNode := cst.Field(node, "body")
 	var body = ast.Expression(nil)
 	var lambdaClauses = []ast.LambdaClause(nil)
 	if bodyNode != nil {
 		body = ctx.CollectExpr(bodyNode)
 	} else {
-		lambdClauseNodes := node.ChildByFieldName("lambda_clauses")
+		lambdClauseNodes := cst.Field(node, "lambda_clauses")
 		if lambdClauseNodes == nil {
 			ctx.AddError(node, diag.SeverityError, "collectLambdaExpr: lambda expression must have either a body or lambda clauses")
 			return nil
 		}
 		lambdaClauses = collectLambdaClauses(lambdClauseNodes, ctx)
 	}
-	returnTypeNode := node.ChildByFieldName("return_type")
+	returnTypeNode := cst.Field(node, "return_type")
 	var returnType types.ReturnType
 	if returnTypeNode != nil {
 		returnType = collectReturnType(returnTypeNode, ctx)
@@ -95,12 +96,12 @@ func collectLambdaClauses(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Lambd
 }
 
 func CollectLambdaClause(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.LambdaClause {
-	patterns := collectPatternParameters(node.ChildByFieldName("parameters"), ctx)
+	patterns := collectPatternParameters(cst.Field(node, "parameters"), ctx)
 	var guard *ast.GuardExpr
-	if guardNode := node.ChildByFieldName("guard"); guardNode != nil {
+	if guardNode := cst.Field(node, "guard"); guardNode != nil {
 		guard = collectGuard(guardNode, ctx)
 	}
-	body := ctx.CollectExpr(node.ChildByFieldName("body"))
+	body := ctx.CollectExpr(cst.Field(node, "body"))
 	return &ast.LambdaClause{
 		AstBase:  ast.AstBase{Location: ctx.NodeLocation(node)},
 		Patterns: patterns,
@@ -135,24 +136,24 @@ func collectParameters(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Paramete
 }
 
 func collectParameter(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Parameter {
-	patternNode := node.ChildByFieldName("pattern")
+	patternNode := cst.Field(node, "pattern")
 	if patternNode == nil {
 		ctx.AddError(node, diag.SeverityError, "parameter node missing pattern")
 		return ast.Parameter{}
 	}
 	pattern := ctx.CollectPattern(patternNode)
-	typeModifierNode := node.ChildByFieldName("type_modifier")
+	typeModifierNode := cst.Field(node, "type_modifier")
 	var typeModifier string
 	if typeModifierNode != nil {
 		typeModifier = ctx.NodeText(typeModifierNode)
 	}
-	typeNode := node.ChildByFieldName("type")
+	typeNode := cst.Field(node, "type")
 	var paramType types.Type
 	if typeNode != nil {
 		paramType = ctx.ParseType(typeNode)
 	}
 	var defaultValue ast.Expression
-	if defaultValueNode := node.ChildByFieldName("default_value"); defaultValueNode != nil {
+	if defaultValueNode := cst.Field(node, "default_value"); defaultValueNode != nil {
 		defaultValue = ctx.CollectExpr(defaultValueNode)
 	}
 	return ast.Parameter{
@@ -165,12 +166,12 @@ func collectParameter(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Parameter {
 }
 
 func collectReturnType(node *sitter.Node, ctx *collector_ctx.Ctx) types.ReturnType {
-	typeModifierNode := node.ChildByFieldName("type_modifier")
+	typeModifierNode := cst.Field(node, "type_modifier")
 	var typeModifier string
 	if typeModifierNode != nil {
 		typeModifier = ctx.NodeText(typeModifierNode)
 	}
-	typeNode := node.ChildByFieldName("type")
+	typeNode := cst.Field(node, "type")
 	if typeNode == nil {
 		ctx.AddError(node, diag.SeverityError, "return type node missing type")
 		return types.ReturnType{}

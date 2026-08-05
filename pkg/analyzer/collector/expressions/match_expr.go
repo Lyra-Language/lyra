@@ -3,6 +3,7 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -50,7 +51,7 @@ func CollectMatchArm(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.MatchArm {
 		return nil
 	}
 	pattern := ctx.CollectPattern(patternNode)
-	guardNode := node.ChildByFieldName("guard")
+	guardNode := cst.Field(node, "guard")
 	var guard *ast.GuardExpr = nil
 	if guardNode != nil {
 		guard = collectGuard(guardNode, ctx)

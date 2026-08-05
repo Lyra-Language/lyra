@@ -18,6 +18,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/typedecls"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	"github.com/Lyra-Language/lyra/pkg/types"
 
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -454,7 +455,7 @@ func (c *Collector) CollectGenericParams(node *sitter.Node) []ast.GenericParam {
 		if child.Kind() != "generic_parameter" {
 			continue
 		}
-		nameNode := child.ChildByFieldName("name")
+		nameNode := cst.Field(child, "name")
 		if nameNode == nil {
 			continue
 		}
@@ -462,7 +463,7 @@ func (c *Collector) CollectGenericParams(node *sitter.Node) []ast.GenericParam {
 			Name:     c.ctx.NodeText(nameNode),
 			Location: c.ctx.NodeLocation(child),
 		}
-		if boundsNode := child.ChildByFieldName("bounds"); boundsNode != nil {
+		if boundsNode := cst.Field(child, "bounds"); boundsNode != nil {
 			p.Constraints = c.CollectBounds(boundsNode)
 		}
 		params = append(params, p)
@@ -645,7 +646,7 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 }
 
 func (c *Collector) parseParameterizedType(node *sitter.Node) types.Type {
-	name := c.ctx.NodeText(node.ChildByFieldName("name"))
+	name := c.ctx.NodeText(cst.Field(node, "name"))
 	// The grammar applies the "type_arguments" field to each type in the
 	// comma-separated list (field("type_arguments", commaSep1($.type))), so the
 	// args are sibling fields on this node, not children of one container.
@@ -678,13 +679,13 @@ func (c *Collector) parseAnonymousTupleType(node *sitter.Node) types.Type {
 
 func (c *Collector) parseLambdaType(node *sitter.Node) *types.LambdaType {
 	return &types.LambdaType{
-		Parameters: c.parseParameterTypes(node.ChildByFieldName("parameter_types")),
-		ReturnType: types.ReturnType{Type: c.parseType(node.ChildByFieldName("return_type"))},
+		Parameters: c.parseParameterTypes(cst.Field(node, "parameter_types")),
+		ReturnType: types.ReturnType{Type: c.parseType(cst.Field(node, "return_type"))},
 		// The declared effect bounds (`f: pure () -> t`). They are labelled fields on
 		// lambda_type, so presence alone is the answer — no text comparison.
-		IsPure:    node.ChildByFieldName("is_pure") != nil,
-		IsDet:     node.ChildByFieldName("is_det") != nil,
-		IsNoAlloc: node.ChildByFieldName("is_noalloc") != nil,
+		IsPure:    cst.Field(node, "is_pure") != nil,
+		IsDet:     cst.Field(node, "is_det") != nil,
+		IsNoAlloc: cst.Field(node, "is_noalloc") != nil,
 	}
 }
 
@@ -693,7 +694,7 @@ func (c *Collector) parseParameterTypes(node *sitter.Node) []types.ParameterType
 	if node == nil {
 		// `parameter_types` is an optional field (lambda_type.js): a
 		// zero-parameter lambda type like `() -> string` omits it entirely,
-		// so ChildByFieldName returns nil here — not an error, just no
+		// so cst.Field returns nil here — not an error, just no
 		// parameters. Calling a *sitter.Node accessor (ChildCount, Child, …)
 		// on a nil node hangs inside the go-tree-sitter CGO binding instead
 		// of panicking, so this guard is load-bearing, not defensive fluff.
@@ -709,19 +710,19 @@ func (c *Collector) parseParameterTypes(node *sitter.Node) []types.ParameterType
 }
 
 func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
-	pt := types.ParameterType{Type: c.parseType(node.ChildByFieldName("type"))}
+	pt := types.ParameterType{Type: c.parseType(cst.Field(node, "type"))}
 	// The `ref`/`mut`/`own` modifier on a parameter of a function type. The grammar has
 	// always accepted it here (`parameter_type` carries an optional `type_modifier`); it was
 	// simply never read, which is why a trait signature's borrow modes were silently by
 	// value however they were written.
-	if m := node.ChildByFieldName("modifier"); m != nil {
+	if m := cst.Field(node, "modifier"); m != nil {
 		pt.Borrow = types.TypeModifier(c.ctx.NodeText(m))
 	}
 	return pt
 }
 
 func (c *Collector) parseSelfType(node *sitter.Node) types.Type {
-	genericParamsNode := node.ChildByFieldName("generic_parameters")
+	genericParamsNode := cst.Field(node, "generic_parameters")
 	var names []string
 	if genericParamsNode != nil {
 		for _, p := range c.CollectGenericParams(genericParamsNode) {
@@ -732,7 +733,7 @@ func (c *Collector) parseSelfType(node *sitter.Node) types.Type {
 }
 
 func (c *Collector) parseArrayType(node *sitter.Node, allocation types.AllocationModifier) types.Type {
-	typeNode := node.ChildByFieldName("element_type")
+	typeNode := cst.Field(node, "element_type")
 	if typeNode == nil {
 		c.addError(node, CollectorErrorSeverityError, "parseArrayType: element type node is nil")
 		return nil
@@ -744,7 +745,7 @@ func (c *Collector) parseArrayType(node *sitter.Node, allocation types.Allocatio
 		return nil
 	}
 
-	sizeNode := node.ChildByFieldName("size")
+	sizeNode := cst.Field(node, "size")
 	if sizeNode != nil {
 		sizeString := c.ctx.NodeText(sizeNode)
 		sizeInt, err := strconv.ParseInt(sizeString, 10, 64)
@@ -760,25 +761,25 @@ func (c *Collector) parseArrayType(node *sitter.Node, allocation types.Allocatio
 
 func (c *Collector) parseConstrainedType(node *sitter.Node) types.Type {
 	constraints := []types.Constraint{}
-	if constraintsNode := node.ChildByFieldName("constraints"); constraintsNode != nil {
+	if constraintsNode := cst.Field(node, "constraints"); constraintsNode != nil {
 		constraints = typedecls.CollectConstraints(constraintsNode, c.ctx)
 	}
 	return &types.ConstrainedType{
-		Name:        c.ctx.NodeText(node.ChildByFieldName("name")),
-		Type:        c.parseType(node.ChildByFieldName("type")),
+		Name:        c.ctx.NodeText(cst.Field(node, "name")),
+		Type:        c.parseType(cst.Field(node, "type")),
 		Constraints: constraints,
 	}
 }
 
 func (c *Collector) parseRawPointerType(node *sitter.Node) types.Type {
-	pointeeNode := node.ChildByFieldName("pointee")
+	pointeeNode := cst.Field(node, "pointee")
 	if pointeeNode == nil {
 		c.addError(node, CollectorErrorSeverityError, "parseRawPointerType: missing pointee")
 		return nil
 	}
 	return types.RawPointerType{
 		Pointee: c.parseType(pointeeNode),
-		IsMut:   node.ChildByFieldName("is_mut") != nil,
+		IsMut:   cst.Field(node, "is_mut") != nil,
 	}
 }
 
@@ -807,7 +808,7 @@ func (c *Collector) parseFixedPointType(node *sitter.Node) types.Type {
 // parsed normally (a named type stays an UnresolvedType for the typechecker to
 // resolve).
 func (c *Collector) parseWeakType(node *sitter.Node) types.Type {
-	innerNode := node.ChildByFieldName("inner_type")
+	innerNode := cst.Field(node, "inner_type")
 	if innerNode == nil {
 		c.addError(node, CollectorErrorSeverityError, "parseWeakType: missing inner type")
 		return nil
@@ -816,9 +817,9 @@ func (c *Collector) parseWeakType(node *sitter.Node) types.Type {
 }
 
 func (c *Collector) parseAllocatedType(node *sitter.Node) types.Type {
-	allocationNode := node.ChildByFieldName("allocation")
+	allocationNode := cst.Field(node, "allocation")
 	allocation := types.AllocationModifier(c.ctx.NodeText(allocationNode))
-	typeNode := node.ChildByFieldName("type")
+	typeNode := cst.Field(node, "type")
 	if typeNode == nil {
 		c.addError(node, CollectorErrorSeverityError, "parseAllocatedType: type node is nil")
 		return nil
@@ -963,7 +964,7 @@ func (c *Collector) collectStructPatternFields(node *sitter.Node) []ast.StructPa
 }
 
 func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatternField {
-	nameNode := node.ChildByFieldName("name")
+	nameNode := cst.Field(node, "name")
 	if nameNode != nil {
 		return &ast.StructPatternField{
 			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
@@ -971,32 +972,32 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 			Pattern:     nil,
 		}
 	}
-	structFieldRenameNode := node.ChildByFieldName("struct_field_rename")
+	structFieldRenameNode := cst.Field(node, "struct_field_rename")
 	if structFieldRenameNode != nil {
 		// `{ oldName: newName }`: Name is the *struct's* field (what binding.go's
 		// field lookups match against — same convention as the shorthand and
 		// with-pattern cases above), and the local bound name is represented as
 		// an ordinary identifier sub-pattern, exactly like the with-pattern case
 		// (`{ oldName: somePattern }`) just below.
-		newNameNode := structFieldRenameNode.ChildByFieldName("new_name")
+		newNameNode := cst.Field(structFieldRenameNode, "new_name")
 		return &ast.StructPatternField{
 			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
-			Name:        c.ctx.NodeText(structFieldRenameNode.ChildByFieldName("name")),
+			Name:        c.ctx.NodeText(cst.Field(structFieldRenameNode, "name")),
 			Pattern: &ast.IdentifierPattern{
 				PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(newNameNode)}},
 				Name:        c.ctx.NodeText(newNameNode),
 			},
 		}
 	}
-	structFieldWithPatternNode := node.ChildByFieldName("struct_field_with_pattern")
+	structFieldWithPatternNode := cst.Field(node, "struct_field_with_pattern")
 	if structFieldWithPatternNode != nil {
 		return &ast.StructPatternField{
 			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
-			Name:        c.ctx.NodeText(structFieldWithPatternNode.ChildByFieldName("name")),
-			Pattern:     c.CollectPattern(structFieldWithPatternNode.ChildByFieldName("pattern")),
+			Name:        c.ctx.NodeText(cst.Field(structFieldWithPatternNode, "name")),
+			Pattern:     c.CollectPattern(cst.Field(structFieldWithPatternNode, "pattern")),
 		}
 	}
-	restPatternNode := node.ChildByFieldName("rest_pattern")
+	restPatternNode := cst.Field(node, "rest_pattern")
 	if restPatternNode != nil {
 		return &ast.StructPatternField{
 			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
@@ -1004,7 +1005,7 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 			Pattern:     c.collectRestPattern(restPatternNode),
 		}
 	}
-	wildcardPatternNode := node.ChildByFieldName("wildcard_pattern")
+	wildcardPatternNode := cst.Field(node, "wildcard_pattern")
 	if wildcardPatternNode != nil {
 		return &ast.StructPatternField{
 			PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
@@ -1018,12 +1019,12 @@ func (c *Collector) collectStructPatternField(node *sitter.Node) *ast.StructPatt
 
 func (c *Collector) collectDataPattern(node *sitter.Node) *ast.DataPattern {
 	loc := c.ctx.NodeLocation(node)
-	nameNode := node.ChildByFieldName("name")
+	nameNode := cst.Field(node, "name")
 	if nameNode == nil {
 		c.addError(node, CollectorErrorSeverityError, "collectDataPattern: name node is nil")
 		return nil
 	}
-	patternNode := node.ChildByFieldName("pattern")
+	patternNode := cst.Field(node, "pattern")
 	var pattern ast.Pattern
 	if patternNode != nil {
 		pattern = c.CollectPattern(patternNode)
@@ -1040,8 +1041,8 @@ func (c *Collector) collectDataPattern(node *sitter.Node) *ast.DataPattern {
 // bare `..` does not parse — so a nil Start or End here means an open range, not
 // a malformed one, and every consumer must read it that way.
 func (c *Collector) collectRangePattern(node *sitter.Node) ast.Pattern {
-	startNode := node.ChildByFieldName("start")
-	endNode := node.ChildByFieldName("end")
+	startNode := cst.Field(node, "start")
+	endNode := cst.Field(node, "end")
 
 	pattern := &ast.RangePattern{
 		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
@@ -1059,7 +1060,7 @@ func (c *Collector) collectRangePattern(node *sitter.Node) ast.Pattern {
 func (c *Collector) collectRestPattern(node *sitter.Node) ast.Pattern {
 	return &ast.RestPattern{
 		PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: c.ctx.NodeLocation(node)}},
-		Identifier:  c.ctx.NodeText(node.ChildByFieldName("identifier")),
+		Identifier:  c.ctx.NodeText(cst.Field(node, "identifier")),
 	}
 }
 
@@ -1070,12 +1071,12 @@ func (c *Collector) collectWildcardPattern(node *sitter.Node) ast.Pattern {
 }
 
 func (c *Collector) collectBindingPattern(node *sitter.Node) ast.Pattern {
-	nameNode := node.ChildByFieldName("name")
+	nameNode := cst.Field(node, "name")
 	if nameNode == nil {
 		c.addError(node, CollectorErrorSeverityError, "collectBindingPattern: name node is nil")
 		return nil
 	}
-	patternNode := node.ChildByFieldName("pattern")
+	patternNode := cst.Field(node, "pattern")
 	if patternNode == nil {
 		c.addError(node, CollectorErrorSeverityError, "collectBindingPattern: pattern node is nil")
 		return nil

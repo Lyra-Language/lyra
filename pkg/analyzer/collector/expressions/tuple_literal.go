@@ -3,17 +3,18 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 func collectTupleLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.TupleLiteralExpr {
-	tupleNameNode := node.ChildByFieldName("tuple_name")
+	tupleNameNode := cst.Field(node, "tuple_name")
 	tupleName := "?"
 	if tupleNameNode != nil {
 		tupleName = ctx.NodeText(tupleNameNode)
 	}
-	genericArgumentsNode := node.ChildByFieldName("generic_arguments")
+	genericArgumentsNode := cst.Field(node, "generic_arguments")
 	genericArguments := []types.Type(nil)
 	if genericArgumentsNode != nil {
 		genericArguments = collectGenericArgs(genericArgumentsNode, ctx)

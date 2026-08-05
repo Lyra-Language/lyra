@@ -3,6 +3,7 @@ package typedecls
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -25,8 +26,8 @@ import (
 // the type does not have — but it is the thing to revisit if the messages read
 // badly in practice.
 func collectTypeAliasDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.TypeDeclStmt {
-	nameNode := node.ChildByFieldName("name")
-	typeNode := node.ChildByFieldName("type")
+	nameNode := cst.Field(node, "name")
+	typeNode := cst.Field(node, "type")
 	if nameNode == nil || typeNode == nil {
 		// Both are required by the grammar, so this is only reachable from a partial
 		// parse. Bail rather than register a half-built type: a nil `Type` in the
@@ -42,7 +43,7 @@ func collectTypeAliasDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast
 		Name:         name,
 		NameLocation: ctx.NodeLocation(nameNode),
 		Type:         ctx.ParseType(typeNode),
-		IsPublic:     node.ChildByFieldName("visibility") != nil,
+		IsPublic:     cst.Field(node, "visibility") != nil,
 		IsAlias:      true,
 	}
 

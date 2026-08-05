@@ -2,6 +2,7 @@ package typedecls
 
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
@@ -13,11 +14,11 @@ func collectDerives(attrList *sitter.Node, ctx *collector_ctx.Ctx) []string {
 		if child.Kind() != "attribute" {
 			continue
 		}
-		nameNode := child.ChildByFieldName("name")
+		nameNode := cst.Field(child, "name")
 		if nameNode == nil || ctx.NodeText(nameNode) != "derive" {
 			continue
 		}
-		argsNode := child.ChildByFieldName("args")
+		argsNode := cst.Field(child, "args")
 		if argsNode == nil {
 			continue
 		}
@@ -41,11 +42,11 @@ func collectBuiltin(attrList *sitter.Node, ctx *collector_ctx.Ctx) string {
 		if child.Kind() != "attribute" {
 			continue
 		}
-		nameNode := child.ChildByFieldName("name")
+		nameNode := cst.Field(child, "name")
 		if nameNode == nil || ctx.NodeText(nameNode) != "builtin" {
 			continue
 		}
-		argsNode := child.ChildByFieldName("args")
+		argsNode := cst.Field(child, "args")
 		if argsNode == nil {
 			continue
 		}

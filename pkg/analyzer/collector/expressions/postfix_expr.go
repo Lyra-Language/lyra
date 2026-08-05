@@ -6,6 +6,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -14,14 +15,14 @@ import (
 func collectFunctionCallExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.FunctionCallExpr {
 	return &ast.FunctionCallExpr{
 		ExprBase:         ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		Function:         CollectExpression(node.ChildByFieldName("function"), ctx),
+		Function:         CollectExpression(cst.Field(node, "function"), ctx),
 		GenericArguments: collectCallGenericArguments(node, ctx),
-		Arguments:        collectArgumentList(node.ChildByFieldName("arguments"), ctx),
+		Arguments:        collectArgumentList(cst.Field(node, "arguments"), ctx),
 	}
 }
 
 func collectCallGenericArguments(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Type {
-	genericArgumentsNode := node.ChildByFieldName("generic_arguments")
+	genericArgumentsNode := cst.Field(node, "generic_arguments")
 	if genericArgumentsNode == nil {
 		return nil
 	}
@@ -47,7 +48,7 @@ func collectArgumentList(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Expres
 }
 
 func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location, optional bool) ast.Expression {
-	object := CollectExpression(node.ChildByFieldName("object"), ctx)
+	object := CollectExpression(cst.Field(node, "object"), ctx)
 	// A member expression with no property (`f.`, a natural mid-edit state, or the
 	// callee of `f.()`) must still yield an inert placeholder node, never a nil: a
 	// nil `ast.Expression` slips past `== nil` checks and crashes a later pass — e.g.
@@ -62,7 +63,7 @@ func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 			Optional: optional,
 		}
 	}
-	propertyNode := node.ChildByFieldName("property")
+	propertyNode := cst.Field(node, "property")
 	if propertyNode == nil {
 		ctx.AddError(node, diag.SeverityError, "member expression missing property")
 		return placeholder()
@@ -82,7 +83,7 @@ func collectMemberExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locati
 }
 
 func collectTupleIndexExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
-	object := CollectExpression(node.ChildByFieldName("object"), ctx)
+	object := CollectExpression(cst.Field(node, "object"), ctx)
 	// An inert placeholder (index 0), never a nil node — same typed-nil hazard as
 	// collectMemberExpr; the emitted error keeps the program from compiling.
 	placeholder := func() ast.Expression {
@@ -92,7 +93,7 @@ func collectTupleIndexExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Lo
 			Index:    0,
 		}
 	}
-	indexNode := node.ChildByFieldName("index")
+	indexNode := cst.Field(node, "index")
 	if indexNode == nil {
 		ctx.AddError(node, diag.SeverityError, "tuple index expression missing index")
 		return placeholder()
@@ -114,8 +115,8 @@ func collectTupleIndexExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Lo
 }
 
 func collectTraitMethodPathExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
-	traitNameNode := node.ChildByFieldName("trait_name")
-	methodNode := node.ChildByFieldName("method")
+	traitNameNode := cst.Field(node, "trait_name")
+	methodNode := cst.Field(node, "method")
 	if traitNameNode == nil || methodNode == nil {
 		ctx.AddError(node, diag.SeverityError, "trait method path missing trait name or method")
 		// An inert placeholder, never a nil node (typed-nil hazard); the error keeps
@@ -135,8 +136,8 @@ func collectTraitMethodPathExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc a
 func collectIndexExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location, optional bool) *ast.IndexExpr {
 	return &ast.IndexExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		Object:   CollectExpression(node.ChildByFieldName("object"), ctx),
-		Index:    CollectExpression(node.ChildByFieldName("index"), ctx),
+		Object:   CollectExpression(cst.Field(node, "object"), ctx),
+		Index:    CollectExpression(cst.Field(node, "index"), ctx),
 		Optional: optional,
 	}
 }
@@ -144,6 +145,6 @@ func collectIndexExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locatio
 func collectTryExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.TryExpr {
 	return &ast.TryExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		Operand:  CollectExpression(node.ChildByFieldName("operand"), ctx),
+		Operand:  CollectExpression(cst.Field(node, "operand"), ctx),
 	}
 }

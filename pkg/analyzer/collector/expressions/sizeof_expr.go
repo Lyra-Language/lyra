@@ -3,12 +3,13 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 func collectSizeofExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) *ast.SizeofExpr {
-	typeNode := node.ChildByFieldName("type")
+	typeNode := cst.Field(node, "type")
 	if typeNode == nil {
 		ctx.AddError(node, diag.SeverityError, "sizeof_expr: missing type")
 		return nil

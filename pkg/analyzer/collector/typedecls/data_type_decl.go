@@ -3,6 +3,7 @@ package typedecls
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -15,7 +16,7 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	var constructors []types.DataTypeConstructor
 	var derives []string
 	var builtin string
-	isPublic := node.ChildByFieldName("visibility") != nil
+	isPublic := cst.Field(node, "visibility") != nil
 
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)

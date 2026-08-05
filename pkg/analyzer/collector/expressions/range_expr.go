@@ -3,6 +3,7 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -24,19 +25,19 @@ func collectRangeExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Locatio
 	// rather than an open range. Report it, but keep building: a nil returned as
 	// an ast.Expression is a *typed* nil that slips past `expr == nil` and
 	// crashes a later pass on its first field access (hazard 3).
-	startNode := node.ChildByFieldName("start")
+	startNode := cst.Field(node, "start")
 	if collector_ctx.RangeBound(startNode) {
 		rangeExpr.Start = CollectExpression(startNode, ctx)
 	} else {
 		ctx.AddError(node, diag.SeverityError, "range expression must have a start bound")
 	}
-	endNode := node.ChildByFieldName("end")
+	endNode := cst.Field(node, "end")
 	if collector_ctx.RangeBound(endNode) {
 		rangeExpr.End = CollectExpression(endNode, ctx)
 	} else {
 		ctx.AddError(node, diag.SeverityError, "range expression must have an end bound")
 	}
-	if stepNode := node.ChildByFieldName("step"); stepNode != nil {
+	if stepNode := cst.Field(node, "step"); stepNode != nil {
 		rangeExpr.Step = CollectExpression(stepNode, ctx)
 	}
 	return rangeExpr

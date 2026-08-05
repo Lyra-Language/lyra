@@ -3,14 +3,15 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 func collectCompoundAssignmentExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.Location) ast.Expression {
-	leftNode := node.ChildByFieldName("left")
-	opNode := node.ChildByFieldName("operator")
-	rightNode := node.ChildByFieldName("right")
+	leftNode := cst.Field(node, "left")
+	opNode := cst.Field(node, "operator")
+	rightNode := cst.Field(node, "right")
 	if leftNode == nil || opNode == nil || rightNode == nil {
 		ctx.AddError(node, diag.SeverityError, "Invalid compound assignment expression. Must have left, operator, and right operands")
 		return nil

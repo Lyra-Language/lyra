@@ -3,6 +3,7 @@ package statements
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -13,9 +14,9 @@ func CollectImportStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Impo
 		Path:    []ast.ModuleName{},
 	}
 
-	pathNode := node.ChildByFieldName("path")
-	aliasNode := node.ChildByFieldName("alias")
-	membersNode := node.ChildByFieldName("members")
+	pathNode := cst.Field(node, "path")
+	aliasNode := cst.Field(node, "alias")
+	membersNode := cst.Field(node, "members")
 
 	if pathNode == nil {
 		ctx.AddError(node, diag.SeverityError, "Expected module path, got %s", node.Kind())
@@ -30,7 +31,7 @@ func CollectImportStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Impo
 	}
 
 	if aliasNode != nil {
-		aliasNameNode := aliasNode.ChildByFieldName("name")
+		aliasNameNode := cst.Field(aliasNode, "name")
 		if aliasNameNode != nil {
 			importStmt.Alias = ctx.NodeText(aliasNameNode)
 		}
@@ -50,13 +51,13 @@ func CollectImportStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Impo
 }
 
 func CollectImportMember(node *sitter.Node, ctx *collector_ctx.Ctx) ast.ImportMember {
-	nameNode := node.ChildByFieldName("name")
+	nameNode := cst.Field(node, "name")
 	if nameNode == nil {
 		ctx.AddError(node, diag.SeverityError, "Expected import member name, got %s", node.Kind())
 		return ast.ImportMember{Name: "", Alias: ""}
 	}
 	name := ctx.NodeText(nameNode)
-	aliasNode := node.ChildByFieldName("alias")
+	aliasNode := cst.Field(node, "alias")
 	alias := ""
 	if aliasNode != nil {
 		alias = ctx.NodeText(aliasNode)

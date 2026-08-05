@@ -5,6 +5,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -29,10 +30,10 @@ func bindingKind(keyword string, ctx *collector_ctx.Ctx) ast.BindingKind {
 // The two branches are distinguished by which field is present: "name" for
 // identifier bindings, "pattern" for destructuring bindings.
 func CollectVariableDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Statement {
-	if nameNode := node.ChildByFieldName("name"); nameNode != nil {
+	if nameNode := cst.Field(node, "name"); nameNode != nil {
 		return collectIdentifierDeclaration(node, nameNode, ctx)
 	}
-	if patternNode := node.ChildByFieldName("pattern"); patternNode != nil {
+	if patternNode := cst.Field(node, "pattern"); patternNode != nil {
 		return collectPatternDeclaration(node, patternNode, ctx)
 	}
 	ctx.AddError(node, diag.SeverityError, "declaration missing both name and pattern fields")
@@ -40,30 +41,30 @@ func CollectVariableDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) ast.S
 }
 
 func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *collector_ctx.Ctx) *ast.VarDeclStmt {
-	kind := bindingKind(ctx.NodeText(node.ChildByFieldName("keyword")), ctx)
-	isPublic := node.ChildByFieldName("visibility") != nil
-	isMut := node.ChildByFieldName("mutability") != nil
+	kind := bindingKind(ctx.NodeText(cst.Field(node, "keyword")), ctx)
+	isPublic := cst.Field(node, "visibility") != nil
+	isMut := cst.Field(node, "mutability") != nil
 	if isMut && kind == ast.BindingVar {
 		ctx.AddError(node, diag.SeverityWarning,
 			"`var mut` is redundant: a `var` is already interior-mutable; write `var` (or use `let mut` for a non-reassignable but interior-mutable binding)")
 	}
 	name := ctx.NodeText(nameNode)
 
-	genericParametersNode := node.ChildByFieldName("generic_parameters")
+	genericParametersNode := cst.Field(node, "generic_parameters")
 	genericParameters := []ast.GenericParam{}
 	if genericParametersNode != nil {
 		genericParameters = ctx.CollectGenericParams(genericParametersNode)
 	}
-	if whereNode := node.ChildByFieldName("generic_parameter_constraints"); whereNode != nil {
+	if whereNode := cst.Field(node, "generic_parameter_constraints"); whereNode != nil {
 		genericParameters = ctx.MergeWhereConstraints(genericParameters, whereNode)
 	}
 
 	var varType types.Type
-	if typeAnnotation := node.ChildByFieldName("type_annotation"); typeAnnotation != nil {
-		varType = ctx.ParseType(typeAnnotation.ChildByFieldName("type"))
+	if typeAnnotation := cst.Field(node, "type_annotation"); typeAnnotation != nil {
+		varType = ctx.ParseType(cst.Field(typeAnnotation, "type"))
 	}
 
-	valueNode := node.ChildByFieldName("value")
+	valueNode := cst.Field(node, "value")
 	var initExpr ast.Expression
 	if valueNode != nil {
 		initExpr = ctx.CollectExpr(valueNode)
@@ -75,7 +76,7 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 	// `let name = pure (params) => body` binding. The grammar only admits a
 	// lambda value in this arm, so any non-lambda here is a parse-level
 	// impossibility; guard anyway and report it rather than silently drop.
-	if modifiersNode := node.ChildByFieldName("modifiers"); modifiersNode != nil {
+	if modifiersNode := cst.Field(node, "modifiers"); modifiersNode != nil {
 		if lambda, ok := initExpr.(*ast.LambdaExpr); ok {
 			applyFunctionModifiers(modifiersNode, lambda, ctx)
 		} else {
@@ -188,20 +189,20 @@ func applyFunctionModifiers(modifiersNode *sitter.Node, lambda *ast.LambdaExpr, 
 }
 
 func collectPatternDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx *collector_ctx.Ctx) *ast.DestructuringDeclStmt {
-	keyword := ctx.NodeText(node.ChildByFieldName("keyword"))
+	keyword := ctx.NodeText(cst.Field(node, "keyword"))
 	pattern := ctx.ParseDestructuringPattern(nameNode)
 
 	var varType types.Type
-	if typeAnnotation := node.ChildByFieldName("type_annotation"); typeAnnotation != nil {
-		varType = ctx.ParseType(typeAnnotation.ChildByFieldName("type"))
+	if typeAnnotation := cst.Field(node, "type_annotation"); typeAnnotation != nil {
+		varType = ctx.ParseType(cst.Field(typeAnnotation, "type"))
 	}
 
-	value := ctx.CollectExpr(node.ChildByFieldName("value"))
+	value := ctx.CollectExpr(cst.Field(node, "value"))
 
 	decl := &ast.DestructuringDeclStmt{
 		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
 		Keyword: keyword,
-		IsMut:   node.ChildByFieldName("mutability") != nil,
+		IsMut:   cst.Field(node, "mutability") != nil,
 		Pattern: pattern,
 		Type:    varType,
 		Value:   value,

@@ -4,14 +4,15 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
 func CollectDestructuringIfStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.IfDestructuringStmt {
-	declNode := node.ChildByFieldName("declaration")
+	declNode := cst.Field(node, "declaration")
 	destructuringStatement := CollectDestructuringDeclaration(declNode, ctx)
-	thenNode := node.ChildByFieldName("then_block")
+	thenNode := cst.Field(node, "then_block")
 	if thenNode == nil {
 		ctx.AddError(node, diag.SeverityError, "CollectDestructuringIfStatement: then block node is nil")
 		return nil
@@ -41,7 +42,7 @@ func CollectDestructuringIfStatement(node *sitter.Node, ctx *collector_ctx.Ctx) 
 	ctx.PopScope()
 
 	var elseBlock *ast.BlockExpr
-	if elseNode := node.ChildByFieldName("else_block"); elseNode != nil {
+	if elseNode := cst.Field(node, "else_block"); elseNode != nil {
 		elseBlock = expressions.CollectBlockExpr(elseNode, ctx, ctx.NodeLocation(elseNode))
 	}
 

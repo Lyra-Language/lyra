@@ -163,6 +163,7 @@ because each was learned from a real failure, and none is local to one package.
 | Package | What it is | Depth |
 |---|---|---|
 | `pkg/parser` | CGO wrapper around tree-sitter; `Parse(source) (*sitter.Tree, error)` | — |
+| `pkg/cst` | CST accessors — `cst.Field`, the one way to read a grammar field | below |
 | `pkg/ast` | AST node definitions; `AstNode` / `Named` / `Statement` / `Expression` / `Pattern` | — |
 | `pkg/ast/symbols` | `SymbolTable` + the `Scope` tree; per-module name resolution | [README](pkg/ast/symbols/README.md) |
 | `pkg/types` | The `Type` interface and every implementation; allocation flavors | [README](pkg/types/README.md) |
@@ -178,6 +179,20 @@ because each was learned from a real failure, and none is local to one package.
 | `pkg/printer` | Reflection-based AST printer, for golden tests | — |
 | `cmd/lyra-lsp` | LSP server over stdio | below |
 | `cmd/lyrac` | Compiler CLI (`check` / `build`) | below |
+
+### `pkg/cst`
+
+`cst.Field(node, "name")` is **the** way to read a grammar field, and the collector uses
+nothing else. It answers exactly what `node.ChildByFieldName` did, nil included — so the
+nil-node hazard (invariant 2) is unchanged — but resolves the field name to a grammar id
+once instead of allocating a C string, calling into C and freeing it on every lookup.
+
+That mattered more than anything the code review of 08/05 predicted: `ChildByFieldName` was
+**~26% of all samples** in an analysis run, roughly half the front end, because the collector
+asks at nearly every node. Going through the cached id is ~3.7x faster on the same walk and
+made the whole pipeline **~25% faster** end to end. Measure with `pkg/driver`'s
+`BenchmarkAnalyze_*`, which run the real pipeline over the real prelude — the LSP re-runs all
+of it on every keystroke, so this is per-keystroke cost.
 
 ### `pkg/parser` and `pkg/ast`
 

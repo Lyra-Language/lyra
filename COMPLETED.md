@@ -10,6 +10,46 @@ Newest first.
 ## Dated log
 
 ### 08/05/26
+**The front end is ~25% faster, and the reason was not on anybody's list.** The 08/05 review
+proposed ten performance fixes, ranked by reading the code: linear scans in the typechecker
+(`findDataTypeByConstructor` over every type × constructor per constructor expression,
+`resolveTraitMethod` over every impl per method call), fixpoint recomputation in purity,
+four body walks in ownership, quadratic captures. All plausible from the source. The first
+thing built here was not a fix but a **benchmark** — `pkg/driver`'s `BenchmarkAnalyze_*`,
+running the real pipeline over the real prelude, since the LSP re-runs all of it per
+keystroke — and a profile of it disagreed with the whole list.
+
+The cost was `(*Node).ChildByFieldName`, at **~26% of all samples**, about half the front
+end, spread over ~12 collector call sites with no single hot caller. Not the lookup: the
+*name*. Every call allocates a C string from the Go field name, calls into C, and frees it,
+and the collector asks at nearly every node. tree-sitter also takes a pre-resolved field
+**id**, so `pkg/cst`'s `Field` memoizes name → id and calls `ChildByFieldId`. Same answers,
+nil included — verified node-by-node over the prelude, including a name the grammar does not
+define — and ~3.7x faster on the same walk. All 231 call sites moved with `gofmt -r`, which
+is AST-aware and so safe on arbitrary receivers. End to end: **1.33ms → 0.99ms, 2.44 → 1.85,
+6.84 → 5.23** (small/medium/large, three runs each), a consistent ~25%.
+
+**What the measurement said about the proposed fixes is the more useful half.** Seven of them
+— `resolveTraitMethod`, `lambdaTypeVars`, `ownsManaged`, `typeImplementsTrait`, `ufcsFunction`,
+`substituteTypeVars`, `capturesOf` — do not appear in the profile at all, and the remaining
+three sit near 1%. That is not proof they are cheap in principle, so the claim was tested
+where it should bite: `BenchmarkAnalyze_WideTypes` builds 60 data types with three
+constructors each, 60 trait impls and 120 use sites, exactly what those scans are quadratic
+in. `findDataTypeByConstructor` reaches 2%; the rest are still absent. The scans are real in
+big-O and irrelevant at any size this language is written at today. None were changed.
+
+The remaining tree-sitter cost is now diffuse — `ChildByFieldId` 6.7%, `Kind` 3.9%, `Child`
+2.9%, `StartPosition` 2.9% — with no single win left. `Kind()` is the next one worth
+considering, since it converts a C string to a Go string per call and the collectors switch
+on it constantly, but it needs kind *ids* threaded through many switches for ~4%.
+
+Found while building the wide benchmark and left as separate work: **a struct literal whose
+type name is a single uppercase letter or letter-plus-digit (`S`, `S0`) does not parse
+anywhere** — block `let`, top-level `let`, call argument, return expression — while `Sa`,
+`So`, `Box2` and `Point9` are fine, and the *declaration* parses either way. Almost certainly
+a grammar rule reserving short uppercase names.
+
+### 08/05/26
 **The two typechecker duplications behind the same hazard, and one of them was a live
 semantic bug.** Same review pass as the backend entry below; these are the front-end half.
 

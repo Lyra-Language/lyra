@@ -3,6 +3,7 @@ package expressions
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -35,7 +36,7 @@ func collectGenericArgs(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Type 
 }
 
 func collectGuard(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.GuardExpr {
-	guardExpression := CollectExpression(node.ChildByFieldName("guard_expression"), ctx)
+	guardExpression := CollectExpression(cst.Field(node, "guard_expression"), ctx)
 	if guardExpression == nil {
 		ctx.AddError(node, diag.SeverityError, "CollectGuard: guard expression is nil")
 		return nil

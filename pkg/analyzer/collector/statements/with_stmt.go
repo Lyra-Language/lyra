@@ -3,6 +3,7 @@ package statements
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
@@ -12,7 +13,7 @@ func CollectWithStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.WithSt
 	defer ctx.PopScope()
 
 	name := ""
-	if nameNode := node.ChildByFieldName("name"); nameNode != nil {
+	if nameNode := cst.Field(node, "name"); nameNode != nil {
 		name = ctx.NodeText(nameNode)
 		v := &ast.VarDeclStmt{
 			AstBase:     ast.AstBase{Location: ctx.NodeLocation(nameNode)},
@@ -24,14 +25,14 @@ func CollectWithStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.WithSt
 		}
 	}
 
-	arenaNode := node.ChildByFieldName("arena")
+	arenaNode := cst.Field(node, "arena")
 	if arenaNode == nil {
 		ctx.AddError(node, diag.SeverityError, "Expected arena expression in with statement")
 		return nil
 	}
 	arena := ctx.CollectExpr(arenaNode)
 
-	bodyNode := node.ChildByFieldName("body")
+	bodyNode := cst.Field(node, "body")
 	if bodyNode == nil {
 		ctx.AddError(node, diag.SeverityError, "Expected body block in with statement")
 		return nil

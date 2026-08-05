@@ -3,6 +3,7 @@ package typedecls
 import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -16,15 +17,15 @@ func CollectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Stru
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "struct_member" {
-			fieldTypeNode := child.ChildByFieldName("field_type")
+			fieldTypeNode := cst.Field(child, "field_type")
 			var fieldType types.Type
 			if fieldTypeNode != nil {
 				fieldType = ctx.ParseType(fieldTypeNode.Child(0))
 			}
-			fieldNameNode := child.ChildByFieldName("field_name")
+			fieldNameNode := cst.Field(child, "field_name")
 			fieldName := ctx.NodeText(fieldNameNode)
-			defaultValue := ctx.CollectExpr(child.ChildByFieldName("default_value"))
-			frozen := child.ChildByFieldName("frozen") != nil
+			defaultValue := ctx.CollectExpr(cst.Field(child, "default_value"))
+			frozen := cst.Field(child, "frozen") != nil
 			if prevLoc, dup := seen[fieldName]; dup {
 				ctx.AddErrorRelated(child, diag.SeverityError,
 					[]diag.RelatedInformation{{Location: prevLoc, Message: "previously declared here"}},
@@ -78,7 +79,7 @@ func CollectTupleTypeBody(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Typ
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "tuple_type_element" {
-			elements = append(elements, ctx.ParseType(child.ChildByFieldName("type")))
+			elements = append(elements, ctx.ParseType(cst.Field(child, "type")))
 		}
 	}
 	return elements

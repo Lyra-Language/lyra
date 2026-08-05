@@ -6,6 +6,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
+	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -163,7 +164,7 @@ func ascendingOperator(op string) string {
 // produced `0)..<=range(100` — a suggestion that is not merely ugly but unparseable, which
 // is worse than none. Reading the bounds gets the same answer at all three sites.
 func (ctx *Ctx) ascendingRange(node *sitter.Node, op string) string {
-	start, end := node.ChildByFieldName("start"), node.ChildByFieldName("end")
+	start, end := cst.Field(node, "start"), cst.Field(node, "end")
 	if !RangeBound(start) || !RangeBound(end) {
 		return ""
 	}
@@ -186,7 +187,7 @@ func (ctx *Ctx) ascendingRange(node *sitter.Node, op string) string {
 // (hazard 3: a diagnostic *and* a usable node, never a nil one). An open-ended
 // range — no end bound at all — has no operator to write and is not this error.
 func (ctx *Ctx) RangeEndOperator(node *sitter.Node, form string) string {
-	if opNode := node.ChildByFieldName("end_operator"); opNode != nil {
+	if opNode := cst.Field(node, "end_operator"); opNode != nil {
 		op := ctx.NodeText(opNode)
 		// A descending range is an *iteration* order, and only an expression is iterated.
 		// A pattern and a constraint are **sets**, where `5..>1` describes exactly the
@@ -207,7 +208,7 @@ func (ctx *Ctx) RangeEndOperator(node *sitter.Node, form string) string {
 		}
 		return op
 	}
-	if !RangeBound(node.ChildByFieldName("end")) {
+	if !RangeBound(cst.Field(node, "end")) {
 		return ""
 	}
 	// Build both suggestions from the source itself by splicing at the `..`, so
@@ -225,7 +226,7 @@ func (ctx *Ctx) RangeEndOperator(node *sitter.Node, form string) string {
 // MustField retrieves a required child-by-field-name node.
 // If the field is missing, it records a consistent location-aware error and returns false.
 func (ctx *Ctx) MustField(node *sitter.Node, fieldName string) (*sitter.Node, bool) {
-	field := node.ChildByFieldName(fieldName)
+	field := cst.Field(node, fieldName)
 	if field == nil {
 		ctx.AddError(node, diag.SeverityError, "%s is missing %q field", node.Kind(), fieldName)
 		return nil, false
