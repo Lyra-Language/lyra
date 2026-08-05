@@ -294,13 +294,26 @@ type. Capacity is the product of the source lengths and the box records the surv
 *count* as its length — the reasoning for over-allocating rather than counting twice or
 growing is in `pkg/backend/llvm/array_comp.go`.
 
+**[DONE 08/04] Range and string sources.** `[ x in 1..=10 | x * x ]` and
+`[ c in "héllo" | c ]` both lower, and mix with array sources in one comprehension.
+
+A source now **drives its own loop** rather than answering "the value at index i". The
+index model fitted arrays and ranges and not strings — UTF-8 is variable width, so the walk
+is a byte cursor whose advance is whatever the decoder just consumed — and forcing all
+three through one shape would have meant a special case in the nesting instead of in the
+source.
+
+The load-bearing rule is that **the capacity bounds the loop by construction**, since
+writing past the box is memory corruption rather than a wrong answer. An array's is its
+length; a string's is its **byte** length, which bounds the rune count because no encoded
+rune is shorter than a byte; a range's is computed up front and the loop then runs exactly
+that many times, so a degenerate range (`5..<1`, a non-positive step) yields an empty array
+instead of racing past the allocation. Note that a backwards `for-in` range still loops
+forever — a comprehension deliberately does not inherit that, because here it would be
+unsafe rather than merely wrong.
+
 Still open, each refused loudly rather than approximated:
 
-- **[OPEN] A range or string source.** `[ x in 1..=10 | x * x ]` is the grammar's own
-  example and does not lower. A range needs its iteration count derived from
-  start/end/step including the inclusive and negative-step cases; a string yields *runes*,
-  whose count is not its byte length, so the capacity rule needs a different answer as well
-  as the walk.
 - **[OPEN] A generator whose source depends on an earlier generator** —
   `[ row in grid, cell in row | cell ]`. Sources are materialized once before the loops,
   which is what makes the capacity computable; a dependent source would need

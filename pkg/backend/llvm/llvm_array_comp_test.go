@@ -154,3 +154,116 @@ let main = () -> u8 => {
 		t.Errorf("expected the message to name the dependency, got %v", err)
 	}
 }
+
+// A **range** source. The count is derived up front and the loop runs exactly that many
+// times, so the capacity bounds the fill by construction rather than by the loop and the
+// formula happening to agree.
+func TestExec_ArrayCompOverRange(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let main = () -> u8 => {
+  let squares = [x in 1..=5 | x * x]
+  u8(squares.len() + squares[0] + squares[4])
+}`)
+	if got != 31 {
+		t.Errorf("expected 31 (len 5 + 1 + 25), got %d", got)
+	}
+}
+
+// The end operator and the step both reach the count: `..<` excludes, `..=` includes, and
+// `:n` strides. Getting any of them wrong changes the length, which is what is asserted.
+func TestExec_ArrayCompRangeBounds(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, expr string
+		want       int
+	}{
+		{"exclusive", "[x in 0..<4 | x]", 4},
+		{"inclusive", "[x in 0..=4 | x]", 5},
+		{"stepped", "[x in 0..<10:3 | x]", 4},
+		{"single", "[x in 3..=3 | x]", 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			got := buildAndRun(t, "let main = () -> u8 => {\n  let ys = "+c.expr+"\n  u8(ys.len())\n}")
+			if got != c.want {
+				t.Errorf("%s: expected len %d, got %d", c.expr, c.want, got)
+			}
+		})
+	}
+}
+
+// A range that yields nothing — an empty span, or one running backwards — is an empty
+// array, not a runaway. The count is clamped at zero and the loop is driven by it, so a
+// degenerate range cannot outrun the box it was sized for. (A backwards `for-in` range
+// loops forever today; a comprehension deliberately does not inherit that.)
+func TestExec_ArrayCompDegenerateRangeIsEmpty(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let main = () -> u8 => {
+  let empty = [x in 5..<5 | x]
+  let backwards = [x in 5..<1 | x]
+  u8(empty.len() + backwards.len() + 9)
+}`)
+	if got != 9 {
+		t.Errorf("expected 9 (both empty), got %d", got)
+	}
+}
+
+// A **string** source yields runes. This is the source the index model could not serve —
+// UTF-8 is variable width — so the walk is a byte cursor and the capacity is the byte
+// length, which over-approximates the rune count.
+func TestExec_ArrayCompOverString(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let main = () -> u8 => {
+  let cs = [c in "abc" | c]
+  u8(cs.len() + i64(cs[0]) - 96)
+}`)
+	if got != 4 {
+		t.Errorf("expected 4 (len 3 + 'a'(97) - 96), got %d", got)
+	}
+}
+
+// Multi-byte runes: "héllo" is five runes in six bytes, so the recorded length must be the
+// rune count and not the capacity the box was allocated at.
+func TestExec_ArrayCompStringCountsRunesNotBytes(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let main = () -> u8 => {
+  let cs = [c in "héllo" | c]
+  u8(cs.len())
+}`)
+	if got != 5 {
+		t.Errorf("expected 5 runes (the string is 6 bytes), got %d", got)
+	}
+}
+
+// Guards apply to a string source like any other.
+func TestExec_ArrayCompStringWithGuard(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let main = () -> u8 => {
+  let ls = [c in "hello" | c == 'l' | c]
+  u8(ls.len())
+}`)
+	if got != 2 {
+		t.Errorf("expected 2 l's, got %d", got)
+	}
+}
+
+// Sources of different kinds nest together — the capacity is the product, and each source
+// drives its own loop shape inside the others.
+func TestExec_ArrayCompMixedSources(t *testing.T) {
+	t.Parallel()
+	got := buildAndRun(t, `
+let main = () -> u8 => {
+  let xs: []i64 = [10, 20]
+  let pairs = [x in xs, n in 1..=3 | x + n]
+  u8(pairs.len() + pairs[0] + pairs[5] - 20)
+}`)
+	if got != 20 {
+		t.Errorf("expected 20 (6 elements + 11 + 23 - 20), got %d", got)
+	}
+}

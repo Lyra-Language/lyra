@@ -556,13 +556,23 @@ and evaluating it twice per element makes the call count a detail of the lowerin
 needs a reallocation primitive the language does not have. Over-allocating costs memory only
 on a filtering comprehension, and keeps every guard evaluated exactly once.
 
-Sources are reduced to `compSource` — a length plus an index→value function — so an array
-and (later) a range share one nested-loop emitter instead of a loop shape each, which is the
-consolidation `lowerForInLoop` did not make and the reason it has three functions.
+**Arrays, ranges and strings** are all sources. Each is a `compSource` that **emits its own
+loop** rather than exposing an index: the index model fits an array and a range and not a
+string, since UTF-8 is variable width and its walk is a byte cursor whose advance is
+whatever the decoder just consumed. Arrays and ranges share `countedSource` (run *n* times,
+bind `at(i)`); a string gets its own cursor loop.
 
-Deferred, loud errors: a **range or string** source (a range needs its count derived from
-start/end/step; a string yields runes, whose count is not its byte length, so the capacity
-rule is wrong for it too), and a generator whose source **depends on an earlier generator**
+**The capacity must bound the loop by construction, not by agreement** — writing past the
+box is memory corruption, not a wrong answer. An array's bound is its length. A string's is
+its **byte** length, which bounds the rune count because no encoded rune is shorter than a
+byte. A range's count is derived once (`ceil(span/step)`, clamped at zero, with the divisor
+made safe before the division since `sdiv` by zero is undefined) and the loop is then driven
+by that count rather than re-testing `i < end` — so a degenerate range yields an empty array
+instead of a fill loop racing past the allocation. A backwards `for-in` range loops forever
+today; a comprehension deliberately does not inherit that, because here the consequence
+would be memory corruption rather than a hang.
+
+Deferred, loud error: a generator whose source **depends on an earlier generator**
 (`[ row in grid, cell in row | cell ]`) — sources are materialized once before the loops,
 which is exactly what makes the capacity computable.
 

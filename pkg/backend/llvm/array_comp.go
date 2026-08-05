@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/llir/llvm/ir"
+	"github.com/llir/llvm/ir/constant"
 	"github.com/llir/llvm/ir/enum"
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
@@ -14,33 +15,43 @@ import (
 
 // Array comprehensions — `[ x in xs | x > 0 | x * 2 ]` lowered to a fill loop.
 //
-// The shape is: allocate one box, walk the generators as nested counter loops, and store
-// each result that survives the guards at a running count. The count — not the capacity —
+// The shape is: allocate one box, walk the generators as nested loops, and store each
+// result that survives the guards at a running count. The count — not the capacity —
 // becomes the box's length at the end.
 //
-// **Capacity is the product of the source lengths, and the box is deliberately allocated
-// at that size before anything is known about how many elements survive.** A guard filters,
-// so the final length is somewhere between zero and the capacity, and there are only three
-// ways to handle that: run the generators twice (once to count, once to fill), grow the box
-// as it fills, or over-allocate once and record the real length. Running twice is wrong
-// rather than slow — a guard may call a function, and evaluating it twice per element makes
-// the number of calls a detail of the lowering. Growing needs a reallocation primitive the
+// **Capacity is the product of the sources' upper bounds, and the box is allocated at that
+// size before anything is known about how many elements survive.** A guard filters, so the
+// final length is somewhere between zero and the capacity, and there are only three ways to
+// handle that: run the generators twice (once to count, once to fill), grow the box as it
+// fills, or over-allocate once and record the real length. Running twice is wrong rather
+// than slow — a guard may call a function, and evaluating it twice per element makes the
+// number of calls a detail of the lowering. Growing needs a reallocation primitive the
 // language does not have. Over-allocating costs memory on a filtering comprehension and
 // nothing on a mapping one, which is the common case, and it keeps every guard evaluated
 // exactly once. That is the trade recorded here so a future change knows what it is undoing.
 //
-// **Sources become a uniform index loop.** An array yields its element at index `i`, a
-// range yields `start + i*step`. Both are then "length, plus a function from an index to a
-// value", which is what lets one nested-loop emitter serve both instead of a loop shape per
-// source kind — the same consolidation the for-in lowering did not do, and the reason it
-// has three separate functions.
+// **A source drives its own loop** (`compSource.emit`) rather than exposing an index. The
+// first version assumed every source could answer "the value at index i", which is true of
+// an array and of a range but *not* of a string: UTF-8 is variable width, so its walk is a
+// byte cursor whose advance is whatever the decoder just consumed. Letting each source emit
+// its own loop is what admits all three without a shape per kind leaking into the nesting.
+//
+// **The capacity must bound the loop by construction, not by agreement.** Writing past the
+// box is memory corruption, so it is not enough for the count formula to *match* the loop
+// under the conditions the author expects — the loop has to be incapable of running more
+// times than the capacity allows. An array's is its length. A string's is its **byte**
+// length, which bounds its rune count because no encoded rune is shorter than a byte. A
+// range's is computed up front and the loop then runs exactly that many times (see
+// rangeSource), so a degenerate step yields an empty array rather than a fill loop racing
+// past the allocation.
 
-// compSource is a generator's source reduced to what the loop needs: how many iterations,
-// and the value bound on each.
+// compSource is a generator's source reduced to what the fill loop needs.
 type compSource struct {
-	length value.Value                                  // iteration count, i64
-	elemLL lltypes.Type                                 // the bound variable's LLVM type
-	bind   func(b *ir.Block, i value.Value) value.Value // the value at index i
+	capacity value.Value // an upper bound on the iteration count, for the allocation
+	elemLL   lltypes.Type
+	// emit runs body once per element, having written that element into slot. It returns
+	// the block execution continues in after the loop.
+	emit func(block *ir.Block, slot value.Value, body func(*ir.Block) (*ir.Block, error)) (*ir.Block, error)
 }
 
 // lowerArrayComp lowers a comprehension to a freshly allocated `[]T`.
@@ -83,11 +94,9 @@ func (l *lowerer) lowerArrayComp(block *ir.Block, e *ast.ArrayCompExpr) (value.V
 		sources = append(sources, src)
 	}
 
-	// capacity = the product of the source lengths, which bounds how many results the
-	// nested loops can produce.
-	capacity := sources[0].length
+	capacity := sources[0].capacity
 	for _, src := range sources[1:] {
-		capacity = block.NewMul(capacity, src.length)
+		capacity = block.NewMul(capacity, src.capacity)
 	}
 
 	l.ensureRCRuntime()
@@ -101,69 +110,38 @@ func (l *lowerer) lowerArrayComp(block *ir.Block, e *ast.ArrayCompExpr) (value.V
 	countSlot := entry.NewAlloca(lltypes.I64)
 	block.NewStore(i64c(0), countSlot)
 
-	// Bind each generator into a slot the nested loops write per iteration, so the guards
-	// and result read them as ordinary locals.
+	// Bind each generator into a slot its loop writes per iteration, so the guards and
+	// result read them as ordinary locals.
 	slots := make([]value.Value, len(sources))
 	for i, src := range sources {
 		slots[i] = entry.NewAlloca(src.elemLL)
 		l.locals[e.Generators[i].Identifier] = slots[i]
 	}
 
-	done := fn.NewBlock("")
-	after, err := l.emitCompLoops(block, e, sources, slots, boxTy, box, countSlot, elemLL, 0, done)
+	after, err := l.emitCompLoops(block, e, sources, slots, boxTy, box, countSlot, elemLL, 0)
 	if err != nil {
 		return nil, nil, err
 	}
-	if after.Term == nil {
-		after.NewBr(done)
-	}
 	// The *count*, not the capacity: the box holds as many elements as survived the guards.
-	count := done.NewLoad(lltypes.I64, countSlot)
-	done.NewStore(count, dynArrayLenPtr(done, boxTy, box))
-	return box, done, nil
+	count := after.NewLoad(lltypes.I64, countSlot)
+	after.NewStore(count, dynArrayLenPtr(after, boxTy, box))
+	return box, after, nil
 }
 
 // emitCompLoops emits generator `depth`'s loop, recursing for the generators inside it and
 // emitting the guard-and-store at the innermost level.
 //
 // Recursion rather than iteration because each loop's body *is* the next loop: the blocks
-// have to nest, and the innermost body is the only one that stores. `done` is the block
-// every loop's exit eventually falls through to.
+// have to nest, and the innermost body is the only one that stores.
 func (l *lowerer) emitCompLoops(block *ir.Block, e *ast.ArrayCompExpr, sources []compSource, slots []value.Value,
-	boxTy *lltypes.StructType, box value.Value, countSlot value.Value, elemLL lltypes.Type, depth int, done *ir.Block,
+	boxTy *lltypes.StructType, box value.Value, countSlot value.Value, elemLL lltypes.Type, depth int,
 ) (*ir.Block, error) {
 	if depth == len(sources) {
 		return l.emitCompBody(block, e, boxTy, box, countSlot, elemLL)
 	}
-	fn := block.Parent
-	entry := fn.Blocks[0]
-	iSlot := entry.NewAlloca(lltypes.I64)
-	block.NewStore(i64c(0), iSlot)
-
-	cond := fn.NewBlock("")
-	body := fn.NewBlock("")
-	inc := fn.NewBlock("")
-	exit := fn.NewBlock("")
-	block.NewBr(cond)
-
-	i := cond.NewLoad(lltypes.I64, iSlot)
-	cond.NewCondBr(cond.NewICmp(enum.IPredSLT, i, sources[depth].length), body, exit)
-
-	// Bind this generator's variable for the iteration, then emit whatever is inside.
-	ib := body.NewLoad(lltypes.I64, iSlot)
-	body.NewStore(sources[depth].bind(body, ib), slots[depth])
-	bodyEnd, err := l.emitCompLoops(body, e, sources, slots, boxTy, box, countSlot, elemLL, depth+1, done)
-	if err != nil {
-		return nil, err
-	}
-	if bodyEnd.Term == nil {
-		bodyEnd.NewBr(inc)
-	}
-
-	ic := inc.NewLoad(lltypes.I64, iSlot)
-	inc.NewStore(inc.NewAdd(ic, i64c(1)), iSlot)
-	inc.NewBr(cond)
-	return exit, nil
+	return sources[depth].emit(block, slots[depth], func(body *ir.Block) (*ir.Block, error) {
+		return l.emitCompLoops(body, e, sources, slots, boxTy, box, countSlot, elemLL, depth+1)
+	})
 }
 
 // emitCompBody is the innermost level: test the guards, and on success store the result at
@@ -204,6 +182,43 @@ func (l *lowerer) emitCompBody(block *ir.Block, e *ast.ArrayCompExpr, boxTy *llt
 	return skip, nil
 }
 
+// countedSource builds a source that runs exactly `count` times, binding `at(i)` each time.
+// Arrays and ranges are both this; only the binding differs.
+func countedSource(count value.Value, elemLL lltypes.Type, at func(b *ir.Block, i value.Value) value.Value) compSource {
+	return compSource{
+		capacity: count,
+		elemLL:   elemLL,
+		emit: func(block *ir.Block, slot value.Value, body func(*ir.Block) (*ir.Block, error)) (*ir.Block, error) {
+			fn := block.Parent
+			iSlot := fn.Blocks[0].NewAlloca(lltypes.I64)
+			block.NewStore(i64c(0), iSlot)
+
+			cond := fn.NewBlock("")
+			bodyBlock := fn.NewBlock("")
+			inc := fn.NewBlock("")
+			exit := fn.NewBlock("")
+			block.NewBr(cond)
+
+			i := cond.NewLoad(lltypes.I64, iSlot)
+			cond.NewCondBr(cond.NewICmp(enum.IPredSLT, i, count), bodyBlock, exit)
+
+			ib := bodyBlock.NewLoad(lltypes.I64, iSlot)
+			bodyBlock.NewStore(at(bodyBlock, ib), slot)
+			bodyEnd, err := body(bodyBlock)
+			if err != nil {
+				return nil, err
+			}
+			if bodyEnd.Term == nil {
+				bodyEnd.NewBr(inc)
+			}
+			ic := inc.NewLoad(lltypes.I64, iSlot)
+			inc.NewStore(inc.NewAdd(ic, i64c(1)), iSlot)
+			inc.NewBr(cond)
+			return exit, nil
+		},
+	}
+}
+
 // dependentGenerator reports a generator whose source mentions an earlier generator's
 // binding — `[ xs in grid, x in xs | x ]`.
 //
@@ -239,11 +254,17 @@ func dependentGenerator(generators []ast.Generator) error {
 	return nil
 }
 
-// lowerCompSource reduces a generator's source to a length and an index→value function.
+// lowerCompSource reduces a generator's source to a capacity and a loop emitter.
 func (l *lowerer) lowerCompSource(block *ir.Block, gen *ast.Generator) (compSource, *ir.Block, error) {
 	srcType, ok := l.recordedType(gen.Value)
 	if !ok {
 		return compSource{}, nil, fmt.Errorf("llvm: no type recorded for a comprehension generator's source")
+	}
+	if _, isRange := srcType.(types.RangeType); isRange {
+		return l.rangeSource(block, gen)
+	}
+	if types.IsString(srcType) {
+		return l.stringSource(block, gen)
 	}
 	switch it := srcType.(type) {
 	case types.StaticArrayType:
@@ -260,13 +281,9 @@ func (l *lowerer) lowerCompSource(block *ir.Block, gen *ast.Generator) (compSour
 		if err != nil {
 			return compSource{}, nil, err
 		}
-		return compSource{
-			length: i64c(int64(it.Size)),
-			elemLL: arrayTy.ElemType,
-			bind: func(b *ir.Block, i value.Value) value.Value {
-				return b.NewLoad(arrayTy.ElemType, b.NewGetElementPtr(arrayTy, arrPtr, i64c(0), i))
-			},
-		}, block, nil
+		return countedSource(i64c(int64(it.Size)), arrayTy.ElemType, func(b *ir.Block, i value.Value) value.Value {
+			return b.NewLoad(arrayTy.ElemType, b.NewGetElementPtr(arrayTy, arrPtr, i64c(0), i))
+		}), block, nil
 	case types.DynamicArrayType:
 		elem, err := l.lowerType(it.ElementType)
 		if err != nil {
@@ -279,19 +296,171 @@ func (l *lowerer) lowerCompSource(block *ir.Block, gen *ast.Generator) (compSour
 			return compSource{}, nil, err
 		}
 		length := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
-		return compSource{
-			length: length,
-			elemLL: elem,
-			bind: func(b *ir.Block, i value.Value) value.Value {
-				return b.NewLoad(elem, dynArrayElemPtr(b, boxTy, box, i))
-			},
-		}, block, nil
+		return countedSource(length, elem, func(b *ir.Block, i value.Value) value.Value {
+			return b.NewLoad(elem, dynArrayElemPtr(b, boxTy, box, i))
+		}), block, nil
 	}
-	// A range or a string source. Both are meaningful and neither is implemented: a range
-	// needs its iteration count derived from start/end/step (including the inclusive and
-	// negative-step cases), and a string yields *runes*, whose count is not its byte
-	// length — so the capacity rule above would be wrong for it as well as the walk.
-	// Loudly deferred rather than approximated (hazard 5).
+	// The grammar admits an identifier, a range, an array literal or a string literal as a
+	// source, so reaching here means an identifier bound to something none of the above —
+	// a tuple, a struct. Those are not iterable at all (the typechecker says so first),
+	// which makes this the backstop rather than a deferral.
 	return compSource{}, nil, fmt.Errorf(
-		"llvm: a comprehension over %s is not implemented yet — a generator's source must be an array", srcType)
+		"llvm: a comprehension over %s is not implemented — a generator's source must be an array, a range, or a string", srcType)
+}
+
+// rangeSource walks `start..<end` / `start..=end` with an optional step.
+//
+// **The iteration count is computed first and the loop then runs exactly that many times**,
+// rather than the loop re-testing `i < end` as a for-in loop does. That is what makes the
+// capacity a real bound instead of a prediction: a comprehension writes into a box sized
+// from this count, so a loop that could outrun it would corrupt memory rather than produce
+// a wrong answer. Deriving the count once and driving the loop from it means the two cannot
+// disagree, whatever the bounds and step turn out to be at run time.
+//
+// A non-positive step yields a count of zero — an empty array — instead of the runaway a
+// re-testing loop would produce (`for i in 1..<10` with step -1 never terminates today).
+// The division is guarded against a zero divisor for the same reason: `sdiv` by zero is
+// undefined, and undefined is not an acceptable answer to a degenerate range.
+func (l *lowerer) rangeSource(block *ir.Block, gen *ast.Generator) (compSource, *ir.Block, error) {
+	rng, ok := gen.Value.(*ast.RangeExpr)
+	if !ok {
+		return compSource{}, nil, fmt.Errorf("llvm: a comprehension's range source is not a range expression (%T)", gen.Value)
+	}
+	iType, _ := l.rangeIntType(rng)
+
+	coerce := func(b *ir.Block, ex ast.Expression) (value.Value, *ir.Block, error) {
+		v, b, err := l.lowerExpr(b, ex)
+		if err != nil {
+			return nil, nil, err
+		}
+		vi, ok := v.Type().(*lltypes.IntType)
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: range bound is not an integer (%s)", v.Type())
+		}
+		if vi.BitSize != iType.BitSize {
+			vs, _ := l.getIntSignedness(ex)
+			v = coerceIntWidth(b, v, vs, iType)
+		}
+		return v, b, nil
+	}
+	start, block, err := coerce(block, rng.Start)
+	if err != nil {
+		return compSource{}, nil, err
+	}
+	end, block, err := coerce(block, rng.End)
+	if err != nil {
+		return compSource{}, nil, err
+	}
+	var step value.Value = constant.NewInt(iType, 1)
+	if rng.Step != nil {
+		if step, block, err = coerce(block, rng.Step); err != nil {
+			return compSource{}, nil, err
+		}
+	}
+
+	// span = end - start, plus one for an inclusive end.
+	var span value.Value = block.NewSub(end, start)
+	if rng.EndOperator != "<" {
+		span = block.NewAdd(span, constant.NewInt(iType, 1))
+	}
+	zero := constant.NewInt(iType, 0)
+	stepPos := block.NewICmp(enum.IPredSGT, step, zero)
+	spanPos := block.NewICmp(enum.IPredSGT, span, zero)
+	// A zero divisor is undefined even on a path whose result is discarded, so the divisor
+	// is made safe before the division rather than after.
+	safeStep := block.NewSelect(stepPos, step, constant.NewInt(iType, 1))
+	// ceil(span / step), for a positive span and step.
+	rounded := block.NewAdd(block.NewSub(span, constant.NewInt(iType, 1)), safeStep)
+	raw := block.NewSDiv(rounded, safeStep)
+	count := block.NewSelect(block.NewAnd(stepPos, spanPos), raw, zero)
+
+	// The counter is i64 (every fill loop's is); the bound value is computed in the range's
+	// own width, so `x` is typed exactly as the typechecker recorded it.
+	count64 := widenIndexToI64(block, count, iType)
+	return countedSource(count64, iType, func(b *ir.Block, i value.Value) value.Value {
+		idx := narrowIndexFrom64(b, i, iType)
+		return b.NewAdd(start, b.NewMul(idx, step))
+	}), block, nil
+}
+
+// widenIndexToI64 / narrowIndexFrom64 move between the fill loop's i64 counter and a
+// range's own integer width. A range's count is non-negative by construction (rangeSource
+// clamps it), so the widening is a zero-extend and the narrowing cannot lose a value the
+// loop will actually reach.
+func widenIndexToI64(block *ir.Block, v value.Value, from *lltypes.IntType) value.Value {
+	switch {
+	case from.BitSize == 64:
+		return v
+	case from.BitSize < 64:
+		return block.NewZExt(v, lltypes.I64)
+	default:
+		return block.NewTrunc(v, lltypes.I64)
+	}
+}
+
+func narrowIndexFrom64(block *ir.Block, v value.Value, to *lltypes.IntType) value.Value {
+	switch {
+	case to.BitSize == 64:
+		return v
+	case to.BitSize < 64:
+		return block.NewTrunc(v, to)
+	default:
+		return block.NewZExt(v, to)
+	}
+}
+
+// stringSource walks a string's **runes**, UTF-8 decoded.
+//
+// This is the source the index model could not serve: a rune's width is whatever the
+// decoder just consumed, so the walk is a byte cursor rather than an index. The capacity is
+// the **byte** length, which bounds the rune count because no encoded rune occupies less
+// than one byte — an over-approximation exactly like a guard's, and safe for the same
+// reason.
+func (l *lowerer) stringSource(block *ir.Block, gen *ast.Generator) (compSource, *ir.Block, error) {
+	str, block, err := l.lowerExpr(block, gen.Value)
+	if err != nil {
+		return compSource{}, nil, err
+	}
+	if !isStringLLVMType(str.Type()) {
+		return compSource{}, nil, fmt.Errorf("llvm: a comprehension's string source did not lower to a string (%s)", str.Type())
+	}
+	data := block.NewExtractValue(str, 0)
+	byteLen := block.NewExtractValue(str, 1)
+	decode := l.utf8DecodeFunc()
+
+	return compSource{
+		capacity: byteLen,
+		elemLL:   lltypes.I32, // a rune
+		emit: func(block *ir.Block, slot value.Value, body func(*ir.Block) (*ir.Block, error)) (*ir.Block, error) {
+			fn := block.Parent
+			entry := fn.Blocks[0]
+			biSlot := entry.NewAlloca(lltypes.I64) // byte cursor
+			cpSlot := entry.NewAlloca(lltypes.I32) // decode out-param
+			block.NewStore(i64c(0), biSlot)
+
+			cond := fn.NewBlock("")
+			bodyBlock := fn.NewBlock("")
+			inc := fn.NewBlock("")
+			exit := fn.NewBlock("")
+			block.NewBr(cond)
+
+			bi := cond.NewLoad(lltypes.I64, biSlot)
+			cond.NewCondBr(cond.NewICmp(enum.IPredULT, bi, byteLen), bodyBlock, exit)
+
+			biB := bodyBlock.NewLoad(lltypes.I64, biSlot)
+			n := bodyBlock.NewCall(decode, data, biB, cpSlot)
+			bodyBlock.NewStore(bodyBlock.NewLoad(lltypes.I32, cpSlot), slot)
+			bodyEnd, err := body(bodyBlock)
+			if err != nil {
+				return nil, err
+			}
+			if bodyEnd.Term == nil {
+				bodyEnd.NewBr(inc)
+			}
+			biI := inc.NewLoad(lltypes.I64, biSlot)
+			inc.NewStore(inc.NewAdd(biI, n), biSlot) // advance by the decoded byte count
+			inc.NewBr(cond)
+			return exit, nil
+		},
+	}, block, nil
 }

@@ -10,6 +10,42 @@ Newest first.
 ## Dated log
 
 ### 08/04/26
+**Range and string sources for comprehensions.** `[ x in 1..=10 | x * x ]` — the shape the
+grammar has documented since it was written — and `[ c in "héllo" | c ]` both lower, and mix
+with array sources in one comprehension.
+
+**A source now drives its own loop.** The first version reduced every source to "a length,
+plus the value at index *i*", which fits an array and a range and does *not* fit a string:
+UTF-8 is variable width, so a string's walk is a byte cursor whose advance is whatever the
+decoder just consumed. The choice was to special-case strings in the nesting or to let each
+source emit its own loop; the second keeps the nesting ignorant of what it is nesting, and
+arrays and ranges still share one emitter (`countedSource`).
+
+**The interesting constraint is that a comprehension's capacity must bound its loop by
+construction rather than by agreement.** Everywhere else, a count that disagrees with its
+loop is a wrong answer; here the loop writes into a box sized from that count, so a
+disagreement is memory corruption. An array's bound is its length, and a string's is its
+*byte* length — which bounds the rune count because no encoded rune is shorter than a byte,
+an over-approximation of exactly the kind a guard already forces.
+
+A range is the one that had to change shape for this. A `for-in` range re-tests `i < end`
+each iteration; a comprehension instead derives the count once and runs the loop exactly
+that many times. The formulas would agree for every sensible range, and "would agree" is not
+the property worth having — driving the loop from the count means they *cannot* disagree
+whatever the bounds turn out to be at run time. The payoff is visible in the degenerate
+cases: `5..<1` and a non-positive step both yield an empty array, where a re-testing loop
+would run away past the allocation. (`for i in 5..<1:-1` loops forever today. A
+comprehension deliberately does not inherit that, because the consequence here is not a
+hang.) The division is guarded against a zero divisor before the fact, since `sdiv` by zero
+is undefined even on a path whose result is then discarded by a `select`.
+
+Tested through the edges rather than the happy path: inclusive against exclusive ends, a
+stride, an empty span, a backwards span, a guard over a string, multi-byte runes (`"héllo"`
+is five runes in six bytes, so the recorded length must be the rune count and not the
+capacity), and a mixed array-plus-range comprehension. Clean under Linux ASan with
+LeakSanitizer.
+
+### 08/04/26
 **Array comprehensions lower, and with them `map` for arrays.** `[ x in xs | x % 2 == 0 |
 x * 2 ]` collects, type-checks and emits. The grammar has had them since before there was a
 collector for them — with a careful note about `|` being both a section separator and
