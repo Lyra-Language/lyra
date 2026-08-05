@@ -64,14 +64,14 @@ func TestTypeCheck_ArrayMatchExpr_RangePattern_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 	let nums: []i64 = [1, 2, 3]
 	match nums {
-		0..=10 => "ok",
+		0..<=10 => "ok",
 		_ => "ok",
 	}
 	`, false)
 	// RangePattern.GetName() formats via its child expression nodes, which now render as
 	// source. This asserted the struct dump until 08/03 — it was the message that put
 	// literal rendering on the bug list.
-	assertErrorsAre(t, res, "expected array pattern, got 0..=10")
+	assertErrorsAre(t, res, "expected array pattern, got 0..<=10")
 }
 
 // ── element type checking ──────────────────────────────────────────────────

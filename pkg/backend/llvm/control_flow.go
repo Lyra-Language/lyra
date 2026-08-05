@@ -466,15 +466,15 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 	return nil, exitBlock, nil
 }
 
-// lowerForInRange lowers `for i in START..<END` (and `..=`, with an optional
+// lowerForInRange lowers `for i in START..<END` (and `..<=`, with an optional
 // `step`) as a counter loop: `i = START; while i </<= END { <body>; i += step }`.
 // The counter is the loop variable (a plain integer value, not a borrow). `..<` is
-// an exclusive end (`i < END`), `..=` inclusive (`i <= END`).
+// an exclusive end (`i < END`), `..<=` inclusive (`i <= END`).
 //
 // The counter width is the first concrete-integer bound's type (else i64), matching
 // the typechecker's iterableElementType; the bounds and step are coerced to it. The
 // increment is a plain (wrapping) add — a range whose end is the counter type's max
-// with an inclusive `..=` therefore loops forever (the increment wraps past it), the
+// with an inclusive `..<=` therefore loops forever (the increment wraps past it), the
 // one edge to keep in mind. There is no two-variable form over a range.
 func (l *lowerer) lowerForInRange(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
 	// The loop variable (and a C-style init's counter) belongs to the loop, not to
@@ -534,17 +534,11 @@ func (l *lowerer) lowerForInRange(block *ir.Block, e *ast.ForInLoopExpr) (value.
 	block.NewBr(condBlock)
 
 	iv := condBlock.NewLoad(iType, iSlot)
-	var pred enum.IPred
-	switch {
-	case rng.EndOperator == "<" && signed:
-		pred = enum.IPredSLT
-	case rng.EndOperator == "<":
-		pred = enum.IPredULT
-	case signed:
-		pred = enum.IPredSLE
-	default:
-		pred = enum.IPredULE
-	}
+	// The operator decides the comparison in both axes: which way the range runs, and
+	// whether the end bound is inside it. A descending range tests `>`/`>=` against the
+	// end and steps *down* — the step is a magnitude, so the sign lives here rather than
+	// in the value the author wrote (types.InvalidStepReason refuses a negative one).
+	pred := rangeLoopPredicate(rng.EndOperator, signed)
 	condBlock.NewCondBr(condBlock.NewICmp(pred, iv, end), bodyBlock, exitBlock)
 
 	l.loops = append(l.loops, loopCtx{breakTarget: exitBlock, continueTarget: incBlock, label: e.Label, frameDepth: len(l.managedFrames), tempBase: len(l.pendingReleases)})
@@ -558,10 +552,45 @@ func (l *lowerer) lowerForInRange(block *ir.Block, e *ast.ForInLoopExpr) (value.
 	}
 
 	iv2 := incBlock.NewLoad(iType, iSlot)
-	incBlock.NewStore(incBlock.NewAdd(iv2, step), iSlot) // plain (wrapping) increment
+	// Plain (wrapping) advance, subtracting for a descending range. The step is a
+	// magnitude — its direction is the operator's, not the value's.
+	if types.RangeDescends(rng.EndOperator) {
+		incBlock.NewStore(incBlock.NewSub(iv2, step), iSlot)
+	} else {
+		incBlock.NewStore(incBlock.NewAdd(iv2, step), iSlot)
+	}
 	incBlock.NewBr(condBlock)
 
 	return nil, exitBlock, nil
+}
+
+// rangeLoopPredicate is the comparison a range loop continues on, from the end operator's
+// two axes: direction picks `<`/`>`, and whether the end is included picks the `=`.
+//
+// Signedness comes from the counter's type, not the operator — an unsigned descending range
+// is perfectly ordinary (`for i in 5u8..>=0`), and using a signed predicate for it would
+// make the loop's last iteration depend on a wrap the author never wrote.
+func rangeLoopPredicate(endOperator string, signed bool) enum.IPred {
+	descending := types.RangeDescends(endOperator)
+	exclusive := types.RangeExcludesEnd(endOperator)
+	switch {
+	case descending && exclusive && signed:
+		return enum.IPredSGT
+	case descending && exclusive:
+		return enum.IPredUGT
+	case descending && signed:
+		return enum.IPredSGE
+	case descending:
+		return enum.IPredUGE
+	case exclusive && signed:
+		return enum.IPredSLT
+	case exclusive:
+		return enum.IPredULT
+	case signed:
+		return enum.IPredSLE
+	default:
+		return enum.IPredULE
+	}
 }
 
 // rangeIntType returns the LLVM integer type and signedness a range for-in's

@@ -114,8 +114,8 @@ func TestTypeCheck_NumericMatchExpr_RangeOnlyNoWildcard_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let foo = 42
   match foo {
-    1..=10 => "ok",
-    11..=99 => "ok",
+    1..<=10 => "ok",
+    11..<=99 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -128,7 +128,7 @@ func TestTypeCheck_NumericMatch_U8_FullRange_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    0..=255 => "ok",
+    0..<=255 => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -138,19 +138,19 @@ func TestTypeCheck_NumericMatch_U8_TwoRanges_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    0..=127 => "ok",
-    128..=255 => "ok",
+    0..<=127 => "ok",
+    128..<=255 => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_NumericMatch_U8_RangePlusLiteral_Ok(t *testing.T) {
-	// 0..=254 plus a single literal for 255 covers all of u8.
+	// 0..<=254 plus a single literal for 255 covers all of u8.
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    0..=254 => "ok",
+    0..<=254 => "ok",
     255 => "ok",
   }
 	`, false)
@@ -158,7 +158,7 @@ func TestTypeCheck_NumericMatch_U8_RangePlusLiteral_Ok(t *testing.T) {
 }
 
 func TestTypeCheck_NumericMatch_U8_ExclusiveRange_Ok(t *testing.T) {
-	// 0..<256 (exclusive end) is identical to 0..=255 for integers.
+	// 0..<256 (exclusive end) is identical to 0..<=255 for integers.
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
@@ -170,12 +170,12 @@ func TestTypeCheck_NumericMatch_U8_ExclusiveRange_Ok(t *testing.T) {
 
 func TestTypeCheck_NumericMatch_U8_OverlappingRanges_Warning(t *testing.T) {
 	// Overlapping ranges still cover the full range, but the overlap portion
-	// of the second arm (150..=200) is unreachable — so a warning is emitted.
+	// of the second arm (150..<=200) is unreachable — so a warning is emitted.
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    0..=200   => "ok",
-    150..=255 => "ok",
+    0..<=200   => "ok",
+    150..<=255 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res, "overlapping match arm: this range overlaps with a previous arm")
@@ -185,7 +185,7 @@ func TestTypeCheck_NumericMatch_U8_MissingTop_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    0..=254 => "ok",
+    0..<=254 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -196,7 +196,7 @@ func TestTypeCheck_NumericMatch_U8_MissingBottom_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    1..=255 => "ok",
+    1..<=255 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -204,12 +204,12 @@ func TestTypeCheck_NumericMatch_U8_MissingBottom_Warning(t *testing.T) {
 }
 
 func TestTypeCheck_NumericMatch_U8_Gap_Warning(t *testing.T) {
-	// Covers 0..=100 and 102..=255, leaving 101 uncovered.
+	// Covers 0..<=100 and 102..<=255, leaving 101 uncovered.
 	res := parseCollectAndCheck(t, `
   let x: u8 = 200
   match x {
-    0..=100  => "ok",
-    102..=255 => "ok",
+    0..<=100  => "ok",
+    102..<=255 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -220,7 +220,7 @@ func TestTypeCheck_NumericMatch_I8_FullRange_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: i8 = -5
   match x {
-    -128..=127 => "ok",
+    -128..<=127 => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -230,9 +230,9 @@ func TestTypeCheck_NumericMatch_I8_NegAndPos_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: i8 = -5
   match x {
-    -128..=-1 => "ok",
+    -128..<=-1 => "ok",
     0         => "ok",
-    1..=127   => "ok",
+    1..<=127   => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -242,7 +242,7 @@ func TestTypeCheck_NumericMatch_I8_MissingNegatives_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: i8 = -5
   match x {
-    0..=127 => "ok",
+    0..<=127 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -253,7 +253,7 @@ func TestTypeCheck_NumericMatch_I32_FullRange_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: i32 = 0
   match x {
-    -2147483648..=2147483647 => "ok",
+    -2147483648..<=2147483647 => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)
@@ -399,8 +399,8 @@ func TestTypeCheck_FloatMatch_RangePatterns_NoWildcard_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: f64 = 3.14
   match x {
-    0.0..=1.0 => "ok",
-    1.0..=2.0 => "ok",
+    0.0..<=1.0 => "ok",
+    1.0..<=2.0 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,
@@ -410,7 +410,7 @@ func TestTypeCheck_FloatMatch_RangePatterns_NoWildcard_Warning(t *testing.T) {
 // The mirror of MissingNegatives: an arm covering only the negatives leaves the
 // positive half uncovered. It exists to be the **anti-vacuity** test for the
 // negative-pattern fix (07/31/26). Its siblings assert *no* errors, which a
-// parse failure satisfies for free — that is exactly how `-128..=127` sat broken
+// parse failure satisfies for free — that is exactly how `-128..<=127` sat broken
 // while `..._FullRange_Ok` stayed green: the old parser wrapped the whole match
 // in an ERROR, the collector saw no match expression, and exhaustiveness never
 // ran. This one asserts a diagnostic is *produced*, so the pattern has to have
@@ -419,7 +419,7 @@ func TestTypeCheck_NumericMatch_I8_MissingPositives_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: i8 = -5
   match x {
-    -128..=-1 => "ok",
+    -128..<=-1 => "ok",
   }
 	`, false)
 	assertWarningsAre(t, res,

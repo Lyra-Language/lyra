@@ -22,7 +22,7 @@ func TestExec_Newtype(t *testing.T) {
 		// this shape is in nearly every program that uses one.
 		{
 			"construct and read out",
-			`newtype Percent = u8 where range(0..=100)
+			`newtype Percent = u8 where range(0..<=100)
 			 let main = () -> u8 => {
 			   let p: Percent = 42
 			   let raw: u8 = p
@@ -96,9 +96,9 @@ func TestExec_Newtype(t *testing.T) {
 		// the range arm is a u8 comparison.
 		{
 			"match on a newtype scrutinee",
-			`newtype Percent = u8 where range(0..=100)
+			`newtype Percent = u8 where range(0..<=100)
 			 let bucket = (p: Percent) -> u8 => match p {
-			   0..=50 => 1,
+			   0..<=50 => 1,
 			   _ => 2,
 			 }
 			 let main = () -> u8 => bucket(75)`,
@@ -171,7 +171,7 @@ func TestExec_NewtypeArithmeticUsesBaseWidth(t *testing.T) {
 	t.Run("literal leaves narrow to the base", func(t *testing.T) {
 		t.Parallel()
 		// 40 + 2 under a `Percent = u8` annotation must lower as u8 arithmetic.
-		got, err := emitSource(t, `newtype Percent = u8 where range(0..=100)
+		got, err := emitSource(t, `newtype Percent = u8 where range(0..<=100)
 		 let main = () -> u8 => {
 		   let p: Percent = 40 + 2
 		   let raw: u8 = p
@@ -378,7 +378,7 @@ func TestExec_NewtypeManagedAssignment(t *testing.T) {
 // value, which is why this asserts the *absence*.
 func TestEmit_NewtypeIsTransparent(t *testing.T) {
 	t.Parallel()
-	got, err := emitSource(t, `newtype Percent = u8 where range(0..=100)
+	got, err := emitSource(t, `newtype Percent = u8 where range(0..<=100)
 	 let bump = (p: Percent) -> Percent => p
 	 let main = () -> u8 => {
 	   let p: Percent = 42

@@ -7,7 +7,7 @@ import (
 
 // RangePattern.GetName renders a pattern back toward its source form. It is what
 // diagnostics interpolate, so a wrong rendering is user-visible even though it
-// reaches no golden file — which is how `0..9=` for `0..=9` survived: the
+// reaches no golden file — which is how `0..9=` for `0..<=9` survived: the
 // operator was printed *after* the bound it qualifies.
 //
 // Expectations are built from the operands' own GetName rather than hard-coded,
@@ -27,8 +27,8 @@ func TestRangePatternGetName(t *testing.T) {
 	}{
 		{
 			"inclusive puts the operator before the end bound",
-			RangePattern{Start: zero, End: nine, EndOperator: "="},
-			fmt.Sprintf("%s..=%s", zero.GetName(), nine.GetName()),
+			RangePattern{Start: zero, End: nine, EndOperator: "<="},
+			fmt.Sprintf("%s..<=%s", zero.GetName(), nine.GetName()),
 		},
 		{
 			"exclusive puts the operator before the end bound",
@@ -44,8 +44,8 @@ func TestRangePatternGetName(t *testing.T) {
 		},
 		{
 			"open start inclusive",
-			RangePattern{End: zero, EndOperator: "="},
-			fmt.Sprintf("..=%s", zero.GetName()),
+			RangePattern{End: zero, EndOperator: "<="},
+			fmt.Sprintf("..<=%s", zero.GetName()),
 		},
 		{
 			"open start exclusive",

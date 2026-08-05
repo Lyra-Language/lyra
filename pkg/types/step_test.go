@@ -19,7 +19,9 @@ func TestInvalidStepReason(t *testing.T) {
 		{"fractional step over integers", 0.5, true, true},
 		{"zero over integers", 0, true, true},
 		{"zero over floats", 0, false, true},
-		{"negative whole step is not rejected here", -2, true, false},
+		// Rejected as of 08/04: `..>`/`..>=` made direction the operator's, which leaves
+		// a step as a pure magnitude and a negative one a contradiction.
+		{"negative whole step", -2, true, true},
 		{"negative fractional over integers", -0.5, true, true},
 	}
 	for _, c := range cases {

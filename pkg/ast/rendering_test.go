@@ -7,7 +7,7 @@ import "testing"
 // interpolate the result, so what these return is read by users about their own code.
 //
 // The literals did not hold up their end until 08/03: they printed their Go type and
-// fields, which is how `expected array pattern, got IntegerLiteralExpr(0, Base: 10)..=
+// fields, which is how `expected array pattern, got IntegerLiteralExpr(0, Base: 10)..<=
 // IntegerLiteralExpr(10, Base: 10)` reached a diagnostic. Nothing caught it because
 // GetName reaches no golden file — these tests are the substitute for that.
 

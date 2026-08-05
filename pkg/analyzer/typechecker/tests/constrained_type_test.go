@@ -49,19 +49,19 @@ func TestConstrainedType_PrecisionConstraintNoErrors(t *testing.T) {
 // fall within the declared range.
 
 func TestRangeConstraint_IntAboveInclusiveEnd(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..=100)
+	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
 let p: Percent = 150`, false)
-	assertErrorsAre(t, res, "p: value 150 is outside the range 0..=100 of Percent")
+	assertErrorsAre(t, res, "p: value 150 is outside the range 0..<=100 of Percent")
 }
 
 func TestRangeConstraint_IntBelowStart(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Grade = i32 where range(1..=5)
+	res := parseCollectAndCheck(t, `newtype Grade = i32 where range(1..<=5)
 let g: Grade = 0`, false)
-	assertErrorsAre(t, res, "g: value 0 is outside the range 1..=5 of Grade")
+	assertErrorsAre(t, res, "g: value 0 is outside the range 1..<=5 of Grade")
 }
 
 func TestRangeConstraint_IntInRange_NoError(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..=100)
+	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
 let p: Percent = 50`, false)
 	assertNoErrors(t, res)
 }
@@ -87,26 +87,26 @@ let n: NonNeg = -5`, false)
 }
 
 func TestRangeConstraint_OpenUpperBound(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Small = i32 where range(..=100)
+	res := parseCollectAndCheck(t, `newtype Small = i32 where range(..<=100)
 let s: Small = 150`, false)
-	assertErrorsAre(t, res, "s: value 150 is outside the range ..=100 of Small")
+	assertErrorsAre(t, res, "s: value 150 is outside the range ..<=100 of Small")
 }
 
 // A negative start via a negated-literal bound.
 func TestRangeConstraint_NegativeStart(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Temp = i32 where range(-40..=50)
+	res := parseCollectAndCheck(t, `newtype Temp = i32 where range(-40..<=50)
 let t2: Temp = -50`, false)
-	assertErrorsAre(t, res, "t2: value -50 is outside the range -40..=50 of Temp")
+	assertErrorsAre(t, res, "t2: value -50 is outside the range -40..<=50 of Temp")
 }
 
 func TestRangeConstraint_FloatAboveRange(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Ratio = f64 where range(0..=1)
+	res := parseCollectAndCheck(t, `newtype Ratio = f64 where range(0..<=1)
 let r: Ratio = 1.5`, false)
-	assertErrorsAre(t, res, "r: value 1.5 is outside the range 0..=1 of Ratio")
+	assertErrorsAre(t, res, "r: value 1.5 is outside the range 0..<=1 of Ratio")
 }
 
 func TestRangeConstraint_FloatInRange_NoError(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Ratio = f64 where range(0..=1)
+	res := parseCollectAndCheck(t, `newtype Ratio = f64 where range(0..<=1)
 let r: Ratio = 0.5`, false)
 	assertNoErrors(t, res)
 }
@@ -114,20 +114,20 @@ let r: Ratio = 0.5`, false)
 // A non-constant value is not checked at compile time (a future flow-sensitive
 // pass / the runtime owns it) — no false positive.
 func TestRangeConstraint_NonConstant_NoError(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..=100)
+	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
 let f = (x: u8) -> Percent => x`, false)
 	assertNoErrors(t, res)
 }
 
 // Reassigning an out-of-range constant to a constrained var is also enforced.
 func TestRangeConstraint_Reassignment(t *testing.T) {
-	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..=100)
+	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
 let f = () -> u8 => {
 	var p: Percent = 50
 	p = 200
 	0
 }`, false)
-	assertErrorsAre(t, res, "p: value 200 is outside the range 0..=100 of Percent")
+	assertErrorsAre(t, res, "p: value 200 is outside the range 0..<=100 of Percent")
 }
 
 // ── nominal isolation ─────────────────────────────────────────────────────────
@@ -273,8 +273,8 @@ let s: Small = 200
 // the base, so a violation of it subsumes any base overflow).
 func TestNewtype_RangeConstraintOwnsTheReport(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-newtype Percent = u8 where range(0..=100)
+newtype Percent = u8 where range(0..<=100)
 let p: Percent = 300
 `, false)
-	assertErrorsAre(t, res, "p: value 300 is outside the range 0..=100 of Percent")
+	assertErrorsAre(t, res, "p: value 300 is outside the range 0..<=100 of Percent")
 }

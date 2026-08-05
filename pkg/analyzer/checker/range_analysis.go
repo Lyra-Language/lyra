@@ -584,8 +584,8 @@ func (c *rangeChecker) evalMatch(st rangeEnv, v *ast.MatchExpr) (interval, bool,
 	_, _, st = c.eval(st, v.Scrutinee)
 	// When the scrutinee is a tracked integer *variable*, each arm refines it to the
 	// values its pattern matches — a literal (`0 => …`, refine to [0,0]) or a numeric
-	// range (`1..=10 => …`). So a definite overflow / OOB / divide-by-zero inside an
-	// arm whose pattern constrains the scrutinee is caught (`match x { 100..=127 =>
+	// range (`1..<=10 => …`). So a definite overflow / OOB / divide-by-zero inside an
+	// arm whose pattern constrains the scrutinee is caught (`match x { 100..<=127 =>
 	// x + 100 }` on an i8 overflows), and an in-range arm elides its checks — the
 	// analogue of branch refinement for `match`. A non-identifier / non-integer
 	// scrutinee, or a non-numeric pattern (a wildcard/identifier catch-all, a
@@ -644,7 +644,7 @@ func (c *rangeChecker) refineScrutinee(env *rangeEnv, id *ast.IdentifierExpr, lo
 }
 
 // patternInterval returns the inclusive [lo, hi] integer interval a match pattern
-// matches, for the numeric literal / range patterns (`0`, `1..=10`, `0..<3`). Any
+// matches, for the numeric literal / range patterns (`0`, `1..<=10`, `0..<3`). Any
 // other pattern — a wildcard/identifier catch-all, a rune/string literal, a
 // data/tuple/struct pattern, or a bound that isn't a compile-time integer — returns
 // ok=false (no refinement). Mirrors the typechecker's exhaustiveness reader so the
@@ -682,7 +682,7 @@ func patternInterval(p ast.Pattern) (lo, hi int64, ok bool) {
 				return 0, 0, false
 			}
 			end = v
-			if pat.EndOperator == "<" { // exclusive end (..<)
+			if types.RangeExcludesEnd(pat.EndOperator) { // exclusive end (..< / ..>)
 				if end == math.MinInt64 {
 					return 0, 0, false
 				}
@@ -1152,7 +1152,7 @@ func foldConstraintBound(m types.MathConstraintExpr) (int64, bool) {
 }
 
 // rangeConstraintString renders a RangeConstraint back to its source form for a
-// diagnostic (`0..=100`, `0..<360`, `..=100`, `0..`).
+// diagnostic (`0..<=100`, `0..<360`, `..<=100`, `0..`).
 func rangeConstraintString(rc *types.RangeConstraint) string {
 	start := ""
 	if rc.Start != nil {

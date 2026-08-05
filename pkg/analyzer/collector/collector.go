@@ -1035,7 +1035,7 @@ func (c *Collector) collectDataPattern(node *sitter.Node) *ast.DataPattern {
 	}
 }
 
-// collectRangePattern collects `0..=9` and, since the range grammars were
+// collectRangePattern collects `0..<=9` and, since the range grammars were
 // unified, the open forms `0..` and `..<0`. Exactly one bound may be absent — a
 // bare `..` does not parse — so a nil Start or End here means an open range, not
 // a malformed one, and every consumer must read it that way.

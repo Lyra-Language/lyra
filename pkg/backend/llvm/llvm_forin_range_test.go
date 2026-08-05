@@ -2,8 +2,8 @@ package llvm
 
 import "testing"
 
-// `for i in START..<END` (and `..=`, with an optional `:step`) lowers as a counter
-// loop: the counter is the loop variable, `..<` is an exclusive end and `..=`
+// `for i in START..<END` (and `..<=`, with an optional `:step`) lowers as a counter
+// loop: the counter is the loop variable, `..<` is an exclusive end and `..<=`
 // inclusive.
 func TestExec_ForInRange(t *testing.T) {
 	t.Parallel()
@@ -24,10 +24,10 @@ func TestExec_ForInRange(t *testing.T) {
 			6, // 0+1+2+3
 		},
 		{
-			"inclusive range sums 0..=4",
+			"inclusive range sums 0..<=4",
 			`let main = () -> u8 => {
   var sum: u8 = 0
-  for i in 0..=4 {
+  for i in 0..<=4 {
     sum += u8(i)
   }
   sum

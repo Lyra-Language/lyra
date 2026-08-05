@@ -140,6 +140,36 @@ func RangeBound(node *sitter.Node) bool {
 	return node != nil && !node.IsMissing() && node.EndByte() > node.StartByte()
 }
 
+// rangeExpressionForm is the `form` string the *iterated* range passes, and the only one a
+// descending operator is legal in. A constant rather than a literal at the call site
+// because the check below turns on it: a typo would silently permit a descending pattern.
+const rangeExpressionForm = "range expression"
+
+// ascendingOperator is the operator a refused descending one is repaired to, so collection
+// continues with a well-formed node (hazard 3). `>` → `<`, `>=` → `<=`.
+func ascendingOperator(op string) string {
+	if op == ">" {
+		return "<"
+	}
+	return "<="
+}
+
+// ascendingRange renders the ascending spelling of the same *set*, for the diagnostic —
+// bounds swapped as well as the operator, since `5..>1` covers 2 through 5 and its
+// ascending twin is `1..<5`.
+//
+// Built from the `start`/`end` **fields** rather than by splicing the node's source at the
+// operator. A constraint's node text is the whole `range(0..<=100)` wrapper, so splicing it
+// produced `0)..<=range(100` — a suggestion that is not merely ugly but unparseable, which
+// is worse than none. Reading the bounds gets the same answer at all three sites.
+func (ctx *Ctx) ascendingRange(node *sitter.Node, op string) string {
+	start, end := node.ChildByFieldName("start"), node.ChildByFieldName("end")
+	if !RangeBound(start) || !RangeBound(end) {
+		return ""
+	}
+	return ctx.NodeText(end) + ".." + ascendingOperator(op) + ctx.NodeText(start)
+}
+
 // RangeEndOperator reads a range's `end_operator` field, enforcing the one rule
 // the three range grammars share: a range with an end bound must say whether that
 // bound is included (`lyra-E032`). `form` names the construct for the message
@@ -147,7 +177,7 @@ func RangeBound(node *sitter.Node) bool {
 //
 // The operator is optional in all three grammars and required here, deliberately.
 // Every reader of the collected operator tests `== "<"`, so an omitted one fell
-// through to *inclusive* — `0..9` silently meant `0..=9`, and the extra value is
+// through to *inclusive* — `0..9` silently meant `0..<=9`, and the extra value is
 // the boundary the exhaustiveness checker and the emitted comparison disagree on.
 // A diagnostic naming both fixes beats a syntax error pointing at whichever token
 // failed to shift, which is the same trade lyra-E029 made for modifier order.
@@ -157,7 +187,25 @@ func RangeBound(node *sitter.Node) bool {
 // range — no end bound at all — has no operator to write and is not this error.
 func (ctx *Ctx) RangeEndOperator(node *sitter.Node, form string) string {
 	if opNode := node.ChildByFieldName("end_operator"); opNode != nil {
-		return ctx.NodeText(opNode)
+		op := ctx.NodeText(opNode)
+		// A descending range is an *iteration* order, and only an expression is iterated.
+		// A pattern and a constraint are **sets**, where `5..>1` describes exactly the
+		// members `1..<5` does — so the operator is not wrong about a detail, it is
+		// asking for something the construct cannot have. The grammar accepts all four
+		// spellings everywhere (one node kind, per the 08/01 unification) and the
+		// restriction lives here, where the message can name the ascending form to write
+		// instead.
+		if types.RangeDescends(op) && form != rangeExpressionForm {
+			suggestion := ""
+			if ascending := ctx.ascendingRange(node, op); ascending != "" {
+				suggestion = fmt.Sprintf(" — write it ascending, as `%s`", ascending)
+			}
+			ctx.AddErrorCoded(node, diag.SeverityError, diag.CodeDescendingRangeNotIterated,
+				"a %s cannot count downwards: `%s` describes a set, and a set has no direction%s",
+				form, ctx.NodeText(node), suggestion)
+			return ascendingOperator(op)
+		}
+		return op
 	}
 	if !RangeBound(node.ChildByFieldName("end")) {
 		return ""
@@ -169,9 +217,9 @@ func (ctx *Ctx) RangeEndOperator(node *sitter.Node, form string) string {
 	ctx.AddErrorCoded(node, diag.SeverityError, diag.CodeMissingRangeEndOperator,
 		"%s `%s` does not say whether its end bound is included; write `%s` for inclusive or `%s` for exclusive",
 		form, text,
-		strings.Replace(text, "..", "..=", 1),
+		strings.Replace(text, "..", "..<=", 1),
 		strings.Replace(text, "..", "..<", 1))
-	return "="
+	return "<="
 }
 
 // MustField retrieves a required child-by-field-name node.

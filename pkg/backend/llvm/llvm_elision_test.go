@@ -276,11 +276,11 @@ func TestExec_U64_ElisionSoundness(t *testing.T) {
 
 // Match-arm scrutinee refinement drives the same elision as branch refinement: a
 // pattern that bounds the index into range elides its bounds check, and this must
-// preserve semantics. Here `2` matches the `0..=2` arm and reads xs[2] == 30.
+// preserve semantics. Here `2` matches the `0..<=2` arm and reads xs[2] == 30.
 func TestExec_MatchRefinementElisionPreservesResults(t *testing.T) {
 	t.Parallel()
 	src := `let at = (xs: [3]u8, i: u8) -> u8 => match i {
-	  0..=2 => xs[i],
+	  0..<=2 => xs[i],
 	  _ => 0,
 	}
 	let main = () -> u8 => {

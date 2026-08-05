@@ -21,7 +21,7 @@ func TestBindingPatternInDestructuring(t *testing.T) {
 func TestBindingPatternNested(t *testing.T) {
 	source := `
 	match point {
-		{ x: px @ 0..=100, y } => print(px),
+		{ x: px @ 0..<=100, y } => print(px),
 		_ => print("out of range"),
 	}`
 	runGoldenTest(t, source, "binding_pattern_nested")

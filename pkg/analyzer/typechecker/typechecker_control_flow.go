@@ -896,7 +896,7 @@ func armIntInterval(arm ast.MatchArm, typeMin, typeMax int64) (lo, hi int64, ok 
 	case *ast.RangePattern:
 		// An absent bound is the type's limit, not a failure to evaluate: `10..`
 		// covers [10, typeMax]. This is what lets a set of open-ended arms
-		// (`..<0`, `0..=9`, `10..`) be recognised as exhaustive.
+		// (`..<0`, `0..<=9`, `10..`) be recognised as exhaustive.
 		start, end := typeMin, typeMax
 		if p.Start != nil {
 			v, okStart := extractIntFromExpr(p.Start)
@@ -1281,7 +1281,7 @@ func (tc *TypeChecker) inferRangeExpr(expr *ast.RangeExpr) types.Type {
 		// Well-formedness of the step's *value*, shared with the `newtype`
 		// `step()` constraint via types.InvalidStepReason — the two spellings
 		// must not disagree about which steps are legal. Type compatibility above
-		// does not cover it: `0..=10:0` is a loop that never terminates and
+		// does not cover it: `0..<=10:0` is a loop that never terminates and
 		// type-checks perfectly.
 		if v, ok := constNumericFromExpr(expr.Step); ok {
 			if reason := types.InvalidStepReason(v, types.StepDomainIsInteger(commonType)); reason != "" {

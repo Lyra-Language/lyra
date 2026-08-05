@@ -10,7 +10,7 @@ import (
 
 // checkRangeConstraints tests a compile-time numeric value against every
 // RangeConstraint on a range-constrained newtype (`newtype Percent = u8 where
-// range(0..=100)`) — the numeric analogue of checkPatternConstraints (which does
+// range(0..<=100)`) — the numeric analogue of checkPatternConstraints (which does
 // the same for string PatternConstraints). It fires only for a foldable constant
 // value (an int/float literal, incl. a negated one, or a folded arithmetic
 // constant for the integer case) against foldable literal bounds; a non-constant
@@ -74,7 +74,7 @@ func (tc *TypeChecker) checkIntRange(name, typeName string, value ast.Expression
 			if rc.Comparator == "<" {
 				aboveEnd = v >= hi // exclusive end (..<)
 			} else {
-				aboveEnd = v > hi // inclusive end (..=)
+				aboveEnd = v > hi // inclusive end (..<=)
 			}
 		}
 	}
@@ -116,7 +116,7 @@ func (tc *TypeChecker) reportRangeViolation(name, typeName, valueStr string, val
 }
 
 // rangeConstraintString renders a RangeConstraint back to its source form for a
-// diagnostic (`0..=100`, `0..<360`, `..=100`, `0..`).
+// diagnostic (`0..<=100`, `0..<360`, `..<=100`, `0..`).
 func rangeConstraintString(rc *types.RangeConstraint) string {
 	start := ""
 	if rc.Start != nil {

@@ -12,7 +12,7 @@ func TestCollect_ForInLoopWithIdentifier(t *testing.T) {
 
 func TestCollect_ForInLoopWithRange(t *testing.T) {
 	source := `
-	for i in 1..=3 {
+	for i in 1..<=3 {
 		println("i == ${i}")
 	}`
 	runGoldenTest(t, source, "for_in_loop_with_range")

@@ -6,8 +6,8 @@ import "math"
 //
 // A step means the same thing in both places it can be written: the values
 // covered are start, start+step, start+2*step, … Two spellings express it —
-// an expression range's `:step` (`0..=100:2`) and a `newtype`'s `step()`
-// constraint (`newtype Quarter = f32 where range(0..=100), step(0.25)`).
+// an expression range's `:step` (`0..<=100:2`) and a `newtype`'s `step()`
+// constraint (`newtype Quarter = f32 where range(0..<=100), step(0.25)`).
 //
 // **They stay separate spellings on purpose.** The constraint form composes with
 // `precision()` and with the newtype's own domain, which an inline `:step` cannot;
@@ -32,18 +32,23 @@ import "math"
 //   - **Zero never advances.** As an expression step it is a loop that cannot
 //     terminate; as a constraint it admits only the start value, which `values()`
 //     already says better. Neither is plausibly intended.
-//   - **A fractional step over an integer domain is unrepresentable.** `0..=10:0.5`
+//   - **A fractional step over an integer domain is unrepresentable.** `0..<=10:0.5`
 //     and `newtype N = u8 where step(0.5)` both describe values the domain cannot
 //     hold.
 //
-// Deliberately *not* a rule here: a negative step. Which direction a range runs is
-// a semantic question the language has not settled (an expression range has no
-// descending form today), and inventing an answer inside a well-formedness check
-// is how the two spellings would drift apart again.
+// **A negative step is now a rule** (08/04), and the reason it was not before is worth
+// keeping: which direction a range ran was a question the language had not answered, so
+// judging the sign here would have invented one. `..>`/`..>=` answered it — direction is
+// the *operator's*, decided at parse time — which leaves the step as a pure magnitude with
+// nothing left for a sign to mean. `10..>=0:-2` is not a descending range written another
+// way; it is a contradiction between two things that both claim to say direction, and the
+// old reading of it (in an ascending range) was an infinite loop.
 func InvalidStepReason(step float64, integerDomain bool) string {
 	switch {
 	case step == 0:
 		return "a step of 0 never advances"
+	case step < 0:
+		return "a step is a distance, not a direction — write a descending range as `start..>end` or `start..>=end` and give the step its magnitude"
 	case math.IsNaN(step) || math.IsInf(step, 0):
 		return "a step must be a finite number"
 	case integerDomain && step != math.Trunc(step):

@@ -41,9 +41,9 @@ func TestCollectMatchExpressionWithStructsReturned(t *testing.T) {
 func TestCollectMatchExpressionWithRangePatterns(t *testing.T) {
 	source := `
 	match foo {
-		0..=9 => print("one digit"),
+		0..<=9 => print("one digit"),
 		42 => print("The Answer!"),
-		10..=99 => print("two digits"),
+		10..<=99 => print("two digits"),
 		_ => print("lots of digits!"),
 	}`
 	runGoldenTest(t, source, "match_expression_with_range_patterns")

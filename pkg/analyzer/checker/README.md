@@ -373,7 +373,7 @@ then-branch and `||` into the else, and swaps for `!`. **Match-arm refinement**
 (`evalMatch`/`refineScrutinee`) is the `match` analogue: when the scrutinee is a tracked integer
 variable, each arm narrows it to the values its pattern matches (a literal or a numeric range
 via `patternInterval`, mirroring the typechecker's exhaustiveness reader), so `match x {
-100..=127 => x + 100 }` on an i8 is a definite overflow and an arm whose pattern can't overlap
+100..<=127 => x + 100 }` on an i8 is a definite overflow and an arm whose pattern can't overlap
 the scrutinee's range is unreachable/skipped; a catch-all/identifier arm refines nothing. A
 *possible* overflow (`a + b` on two full-range i8s) is deliberately left to the runtime trap. A
 compound assign (`v += k`) is typed `void`, so its overflow bound is read off the RHS (which

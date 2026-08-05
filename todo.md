@@ -294,7 +294,7 @@ type. Capacity is the product of the source lengths and the box records the surv
 *count* as its length — the reasoning for over-allocating rather than counting twice or
 growing is in `pkg/backend/llvm/array_comp.go`.
 
-**[DONE 08/04] Range and string sources.** `[ x in 1..=10 | x * x ]` and
+**[DONE 08/04] Range and string sources.** `[ x in 1..<=10 | x * x ]` and
 `[ c in "héllo" | c ]` both lower, and mix with array sources in one comprehension.
 
 A source now **drives its own loop** rather than answering "the value at index i". The
@@ -335,15 +335,25 @@ The three range grammars were unified 08/01 (`rangeBounds`, one `range_end_opera
 `lyra-E033` for an ill-formed step). See COMPLETED.md. What is left:
 
 - **[OPEN] A `step()` constraint is not enforced against values.** Nothing reads
-  `types.StepConstraint` after collection, so `newtype Quarter = f32 where range(0..=100),
+  `types.StepConstraint` after collection, so `newtype Quarter = f32 where range(0..<=100),
   step(0.25)` validates the *step* but still accepts 0.3. Unlike `range(…)`, which the
   value-range pass checks (`lyra-E023`), a step is a divisibility test — cheap for a
   compile-time constant, a runtime check otherwise, which is the decision to make first.
-- **[OPEN] Descending ranges have no semantics.** `InvalidStepReason` deliberately does not
-  judge a negative step, because the language has never said what `10..=0` or `0..=10:-1`
-  means (an expression range has no descending form today). Settle it before anything reads
-  the sign — the well-formedness rule is shared by both step spellings, so a guess made in
-  one place silently becomes the language's answer in both.
+- **[DONE 08/04] Descending ranges.** `5..>1` and `5..>=1` count down, in `for-in` and in a
+  comprehension. The inclusive end moved from `..=` to `..<=`, so the four operators are
+  `..<` `..<=` `..>` `..>=` — two axes, direction and whether the end is included, each
+  named by the operator.
+
+  **Direction is the operator's, never the bounds'.** `5..<1` is an *ascending* range that
+  happens to be empty, not a descending one. The alternative on the table was to keep a
+  single inclusive `..=` meaning "whichever way the bounds point", which is one token fewer
+  and was rejected: direction would then be a property of the operand *values*, so a range
+  over variables could run the opposite way from the way it reads, with no diagnostic
+  anywhere. Making it a parse-time fact is also what lets the step be a plain magnitude —
+  so `InvalidStepReason` now judges a negative step, which this entry was waiting on.
+  Descending is refused where a range is a **set** rather than an iteration (`lyra-E034`:
+  a match pattern, a `newtype` constraint), with the message naming the ascending spelling
+  of the same set. See COMPLETED.md.
 - **[IDEA] Open-ended expression ranges** (`0..`), which need a lazy/infinite iterator. The
   pattern and constraint spellings have open bounds; the expression one deliberately does
   not, and that asymmetry is documented in `tree-sitter-lyra`'s `rangeBounds` rather than
@@ -431,13 +441,13 @@ escape hatches, and the value-range pass both diagnoses definite faults (`lyra-E
     is opted into at the boundary (`Wrapping8(x)`, or an annotation) — locality lives at the
     conversion site rather than at every operation.
   - *What justifies it over the existing methods:* a `newtype` already carries a `range`, so
-    `saturating` can clamp to the **domain** (`newtype Volume = u8 where range(0..=100),
+    `saturating` can clamp to the **domain** (`newtype Volume = u8 where range(0..<=100),
     saturating`) — something `saturating_add`, which is full-width only, cannot express.
   - *Open decisions:* (a) precedence — an explicit `.wrapping_add()` on a `saturating`
     newtype should override the type default, keeping the escape hatch meaningful;
     (b) mixing — `wrappingVal + plainU8` forces a conversion (nominal), sidestepping "whose
     policy wins"; (c) range-saturating semantics — does every intermediate clamp, or only
-    bind/store (`(x+60)+60` for `0..=100`)?
+    bind/store (`(x+60)+60` for `0..<=100`)?
   - *Sequencing:* full-width wrap/saturate is one native op or an `llvm.*.sat` intrinsic;
     arbitrary-range saturation is compare+select after each op. **Wrapping-only** is the
     cheap, unambiguous first slice.

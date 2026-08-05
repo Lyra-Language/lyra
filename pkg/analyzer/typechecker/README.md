@@ -330,8 +330,8 @@ literal's full source text, which `regexPatternBody` strips of its `r"…"` deli
 compiling; the syntax changed from `r/…/` on 07/29 to kill an ambiguity with division, see
 `tree-sitter-lyra/CLAUDE.md`); **`checkRangeConstraints`** (`range_constraint.go`, `lyra-E023`)
 tests a **compile-time numeric constant** (int or float literal, incl. negation / a folded
-arithmetic constant) against a `RangeConstraint` — inclusive start, `..<` exclusive / `..=`
-inclusive end, either bound optional (`0..`, `..=100`); bounds are folded from the constraint's
+arithmetic constant) against a `RangeConstraint` — inclusive start, `..<` exclusive / `..<=`
+inclusive end, either bound optional (`0..`, `..<=100`); bounds are folded from the constraint's
 literal/negated-literal `MathConstraintExpr` (`foldConstraintInt`/`Float`, an unfoldable
 identifier/compound bound leaves that side unenforced). Both are compile-time, definite-only
 checks over constants; a non-constant value proven out of range by flow is caught by the range

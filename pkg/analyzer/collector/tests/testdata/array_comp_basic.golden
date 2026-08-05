@@ -16,7 +16,7 @@ Program(1 statements) {
 											Value: 5
 										}
 									}
-									EndOperator: =
+									EndOperator: <=
 									Start: {
 										IntegerLiteralExpr {
 											Base: 10

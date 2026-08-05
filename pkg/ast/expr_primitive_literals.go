@@ -46,7 +46,7 @@ func (i *IntegerLiteralExpr) decimalString() string {
 // Every GetName on an expression is a source rendering, composed into diagnostics by
 // its parents (a match arm builds `match <pattern> { <body> }` out of them). The
 // literals were the family that dumped their Go type instead, which produced messages
-// like `expected array pattern, got IntegerLiteralExpr(0, Base: 10)..=
+// like `expected array pattern, got IntegerLiteralExpr(0, Base: 10)..<=
 // IntegerLiteralExpr(10, Base: 10)` — a rendering of the compiler's internals handed to
 // someone reading their own program.
 func (i *IntegerLiteralExpr) GetName() string {

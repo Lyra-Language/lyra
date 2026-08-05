@@ -308,7 +308,7 @@ func (l *lowerer) lowerCompSource(block *ir.Block, gen *ast.Generator) (compSour
 		"llvm: a comprehension over %s is not implemented — a generator's source must be an array, a range, or a string", srcType)
 }
 
-// rangeSource walks `start..<end` / `start..=end` with an optional step.
+// rangeSource walks `start..<end` / `start..<=end` with an optional step.
 //
 // **The iteration count is computed first and the loop then runs exactly that many times**,
 // rather than the loop re-testing `i < end` as a for-in loop does. That is what makes the
@@ -358,9 +358,18 @@ func (l *lowerer) rangeSource(block *ir.Block, gen *ast.Generator) (compSource, 
 		}
 	}
 
-	// span = end - start, plus one for an inclusive end.
-	var span value.Value = block.NewSub(end, start)
-	if rng.EndOperator != "<" {
+	// span is always measured *along* the range's direction, so the count arithmetic below
+	// is the same for both: a descending range spans start - end. Direction comes from the
+	// operator, never from which bound is larger — `5..<1` is an ascending range that
+	// happens to be empty, and must produce nothing rather than quietly counting down.
+	descending := types.RangeDescends(rng.EndOperator)
+	var span value.Value
+	if descending {
+		span = block.NewSub(start, end)
+	} else {
+		span = block.NewSub(end, start)
+	}
+	if !types.RangeExcludesEnd(rng.EndOperator) {
 		span = block.NewAdd(span, constant.NewInt(iType, 1))
 	}
 	zero := constant.NewInt(iType, 0)
@@ -379,7 +388,11 @@ func (l *lowerer) rangeSource(block *ir.Block, gen *ast.Generator) (compSource, 
 	count64 := widenIndexToI64(block, count, iType)
 	return countedSource(count64, iType, func(b *ir.Block, i value.Value) value.Value {
 		idx := narrowIndexFrom64(b, i, iType)
-		return b.NewAdd(start, b.NewMul(idx, step))
+		offset := b.NewMul(idx, step)
+		if descending {
+			return b.NewSub(start, offset)
+		}
+		return b.NewAdd(start, offset)
 	}), block, nil
 }
 

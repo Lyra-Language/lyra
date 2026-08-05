@@ -400,7 +400,7 @@ func TestRange_U64_DivByZero(t *testing.T) {
 func TestRange_Match_ArmRange_Overflow(t *testing.T) {
 	onlyDiag(t, `
 		let f = (x: i8) -> i8 => match x {
-			100..=127 => x + 100,
+			100..<=127 => x + 100,
 			_ => 0,
 		}
 		let main = () -> u8 => 0
@@ -423,7 +423,7 @@ func TestRange_Match_ArmLiteral_DivByZero(t *testing.T) {
 func TestRange_Match_ArmRange_OutOfBounds(t *testing.T) {
 	onlyDiag(t, `
 		let f = (xs: [3]i64, i: i64) -> i64 => match i {
-			5..=10 => xs[i],
+			5..<=10 => xs[i],
 			_ => 0,
 		}
 		let main = () -> u8 => 0
@@ -448,7 +448,7 @@ func TestRange_Match_ArmExclusiveRange_OutOfBounds(t *testing.T) {
 func TestRange_Match_ArmInRange_NoDiag(t *testing.T) {
 	noDiag(t, `
 		let f = (x: i8) -> i8 => match x {
-			0..=10 => x + 100,
+			0..<=10 => x + 100,
 			_ => 0,
 		}
 		let main = () -> u8 => 0
@@ -476,19 +476,19 @@ func TestRange_Match_CatchAll_NoDiag(t *testing.T) {
 // A variable refined past the constraint's range is a definite violation.
 func TestRange_Constraint_RefinedVar(t *testing.T) {
 	onlyDiag(t, `
-		newtype Percent = u8 where range(0..=100)
+		newtype Percent = u8 where range(0..<=100)
 		let f = (x: u8) -> u8 => if x > 100 { let p: Percent = x
 			0
 		} else { 0 }
 		let main = () -> u8 => 0
-	`, diag.CodeRangeConstraintViolation, "always outside the range 0..=100 of Percent", "[101, 255]")
+	`, diag.CodeRangeConstraintViolation, "always outside the range 0..<=100 of Percent", "[101, 255]")
 }
 
 // A binding whose constant value propagates — the typechecker can't fold the
 // identifier `y`, so this is the range pass's to catch.
 func TestRange_Constraint_ConstPropagatedBinding(t *testing.T) {
 	onlyDiag(t, `
-		newtype Percent = u8 where range(0..=100)
+		newtype Percent = u8 where range(0..<=100)
 		let f = () -> u8 => {
 			let y: u8 = 150
 			let p: Percent = y
@@ -503,7 +503,7 @@ func TestRange_Constraint_ConstPropagatedBinding(t *testing.T) {
 // A variable refined into range is fine.
 func TestRange_Constraint_RefinedInRange_NoDiag(t *testing.T) {
 	noDiag(t, `
-		newtype Percent = u8 where range(0..=100)
+		newtype Percent = u8 where range(0..<=100)
 		let f = (x: u8) -> u8 => if x < 50 { let p: Percent = x
 			0
 		} else { 0 }
@@ -515,7 +515,7 @@ func TestRange_Constraint_RefinedInRange_NoDiag(t *testing.T) {
 // runtime — a possible, not definite, violation.
 func TestRange_Constraint_PossibleNotDefinite_NoDiag(t *testing.T) {
 	noDiag(t, `
-		newtype Percent = u8 where range(0..=100)
+		newtype Percent = u8 where range(0..<=100)
 		let f = (x: u8) -> u8 => {
 			let p: Percent = x
 			0
@@ -732,7 +732,7 @@ func TestRange_Safety_MatchRefinedIndexInBounds(t *testing.T) {
 	// its bounds check is elided — the elision counterpart to match-arm refinement.
 	program, safety := analyzeForSafety(t, `
 		let get = (xs: [3]u8, i: u8) -> u8 => match i {
-			0..=2 => xs[i],
+			0..<=2 => xs[i],
 			_ => 0,
 		}
 		let main = () -> u8 => 0
@@ -872,12 +872,12 @@ func TestRange_ForIn_IndexInBounds_NoDiag(t *testing.T) {
 	`)
 }
 
-// An inclusive range `0..=2` bounds the counter to [0,2] — in bounds for size 3.
+// An inclusive range `0..<=2` bounds the counter to [0,2] — in bounds for size 3.
 func TestRange_ForIn_InclusiveRange_NoDiag(t *testing.T) {
 	noDiag(t, `
 		let f = (xs: [3]u8) -> u8 => {
 			var s: u8 = 0
-			for i in 0..=2 {
+			for i in 0..<=2 {
 				s += xs[i]
 			}
 			s

@@ -7,7 +7,7 @@ import (
 	sitter "github.com/tree-sitter/go-tree-sitter"
 )
 
-// collectRangeExpr collects `0..<n`, `0..=10`, `0..=10:2`.
+// collectRangeExpr collects `0..<n`, `0..<=10`, `0..<=10:2`.
 //
 // Unlike a range *pattern*, an expression range has no open form — both bounds
 // are required by the grammar, because an open-ended one would need the lazy

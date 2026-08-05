@@ -568,9 +568,14 @@ its **byte** length, which bounds the rune count because no encoded rune is shor
 byte. A range's count is derived once (`ceil(span/step)`, clamped at zero, with the divisor
 made safe before the division since `sdiv` by zero is undefined) and the loop is then driven
 by that count rather than re-testing `i < end` — so a degenerate range yields an empty array
-instead of a fill loop racing past the allocation. A backwards `for-in` range loops forever
-today; a comprehension deliberately does not inherit that, because here the consequence
-would be memory corruption rather than a hang.
+instead of a fill loop racing past the allocation.
+
+Since 08/04 a range also has a **direction**, taken from its end operator (`..>` / `..>=`,
+`types.RangeDescends`), and the span is measured along it: a descending range spans
+`start - end`. Direction never comes from which bound is larger — `5..<1` is an ascending
+range that is empty, and must produce nothing rather than quietly counting down. `for-in`
+gets the same information through `rangeLoopPredicate`, which picks one of eight
+comparisons from direction × inclusivity × signedness, and subtracts when descending.
 
 Deferred, loud error: a generator whose source **depends on an earlier generator**
 (`[ row in grid, cell in row | cell ]`) — sources are materialized once before the loops,
@@ -604,10 +609,10 @@ array — no ownership action). The **two-variable form `for i, x in xs`** binds
 as the index `i` (i64) alongside the element `x` (`lowerForInLoop` — the collector puts the
 first name in `Key` = the index, the second in `Value` = the element; the single-variable form
 leaves `Value` empty and `Key` is the element). A **numeric range** iterable `for i in
-START..<END` (also `..=` inclusive, and an optional `:step`) lowers to a counter loop
+START..<END` (also `..<=` inclusive, and an optional `:step`) lowers to a counter loop
 (`lowerForInRange`: `i = START; while i </<= END { body; i += step }`) — the counter *is* the
 loop variable, its width the first concrete-integer bound's type (else i64, matching
-`iterableElementType`), with a plain (wrapping) increment (so an inclusive `..=` to the counter
+`iterableElementType`), with a plain (wrapping) increment (so an inclusive `..<=` to the counter
 type's max loops forever — the one edge). A **string** iterable `for c in s` walks the string's
 **runes** — UTF-8 decoded (`lowerForInString` + the `lyra_utf8_decode` runtime shim, the inverse
 of `lyra_rune_to_utf8`): `bi = 0; while bi < byteLen { c = decode(data, bi); body; bi += n }`,

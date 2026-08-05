@@ -123,7 +123,7 @@ type RestPattern struct {
 func (p *RestPattern) patternNode()    {}
 func (p *RestPattern) GetName() string { return fmt.Sprintf("...%s", p.Identifier) }
 
-// RangePattern is `0..=9`, `-128..<0`, and the open forms `0..` and `..<0`.
+// RangePattern is `0..<=9`, `-128..<0`, and the open forms `0..` and `..<0`.
 //
 // Exactly one of Start/End may be nil — a bare `..` does not parse — and a nil
 // one means an *open* bound, i.e. the scrutinee type's own limit, not a missing
@@ -140,7 +140,7 @@ func (p *RangePattern) patternNode() {}
 
 // GetName renders the pattern back to its source form.
 //
-// The operator belongs *before* the end bound: this printed `0..9=` for `0..=9`
+// The operator belongs *before* the end bound: this printed `0..9=` for `0..<=9`
 // until 08/01, putting the operator after the bound it qualifies. It reaches
 // users — GetName is what diagnostics interpolate — though not golden files,
 // which is why it survived.

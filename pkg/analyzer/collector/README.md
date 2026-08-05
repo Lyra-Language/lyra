@@ -111,15 +111,15 @@ comment-only body collects to an empty block.
 
 ## Ranges: one notation, one strictness rule
 
-The `..` notation has three sites — an expression (`0..<n`), a match pattern (`0..=9`), and
-a `newtype` range constraint (`range(0..=100)`). Since 08/01 they share one grammar shape
+The `..` notation has three sites — an expression (`0..<n`), a match pattern (`0..<=9`), and
+a `newtype` range constraint (`range(0..<=100)`). Since 08/01 they share one grammar shape
 (`rangeBounds` in `tree-sitter-lyra/include/helpers.js`) and one collector check here:
 
 - **`ctx.RangeEndOperator(node, form)`** enforces that a range with an end bound says
   whether that bound is included (`lyra-E032`), and returns the operator. The operator is
   *optional in the grammar* at all three sites and required here, deliberately: every reader
   of the collected operator tests `== "<"`, so an omitted one fell through to **inclusive**
-  and `0..9` silently meant `0..=9`. A diagnostic naming both fixes beats a syntax error
+  and `0..9` silently meant `0..<=9`. A diagnostic naming both fixes beats a syntax error
   pointing at whichever token failed to shift — the same trade `lyra-E029` made for modifier
   order. The suggestion is spliced from the source at the first `..`, so it is right for
   open-start (`..9`) and stepped (`0..10:2`) forms too. Returns `"="` after reporting so the

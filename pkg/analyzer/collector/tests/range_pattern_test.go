@@ -11,7 +11,7 @@ import (
 //
 // The grammar accepts `0..9`, and every reader of `RangePattern.EndOperator`
 // tests `== "<"` — so an empty operator fell through to *inclusive* and `0..9`
-// silently meant `0..=9`. The extra value is not cosmetic: it is the boundary the
+// silently meant `0..<=9`. The extra value is not cosmetic: it is the boundary the
 // exhaustiveness checker and the emitted comparison would disagree on.
 
 func rangeEndOperatorErrors(t *testing.T, source string) []diag.Diagnostic {
@@ -40,7 +40,7 @@ func TestRangePattern_MissingEndOperatorIsRejected(t *testing.T) {
 		t.Errorf("should be an error, got severity %v", got[0].Severity)
 	}
 	// The message must show both fixes, not just name the problem.
-	for _, want := range []string{"0..=9", "0..<9"} {
+	for _, want := range []string{"0..<=9", "0..<9"} {
 		if !strings.Contains(got[0].Message, want) {
 			t.Errorf("message should offer %q: %q", want, got[0].Message)
 		}
@@ -50,11 +50,11 @@ func TestRangePattern_MissingEndOperatorIsRejected(t *testing.T) {
 func TestRangePattern_InclusiveIsAccepted(t *testing.T) {
 	if got := rangeEndOperatorErrors(t, `
 		let f = (n: i64) -> i64 => match n {
-			0..=9 => 1,
+			0..<=9 => 1,
 			_ => 0,
 		}
 	`); len(got) != 0 {
-		t.Fatalf("`..=` is explicit and must not be flagged, got: %v", got)
+		t.Fatalf("`..<=` is explicit and must not be flagged, got: %v", got)
 	}
 }
 
@@ -106,7 +106,7 @@ func TestRangeExpr_MissingEndOperatorIsRejected(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("expected 1 error on a range expression, got %d: %v", len(got), got)
 	}
-	for _, want := range []string{"range expression", "0..=10", "0..<10"} {
+	for _, want := range []string{"range expression", "0..<=10", "0..<10"} {
 		if !strings.Contains(got[0].Message, want) {
 			t.Errorf("message should contain %q: %q", want, got[0].Message)
 		}
@@ -114,7 +114,7 @@ func TestRangeExpr_MissingEndOperatorIsRejected(t *testing.T) {
 }
 
 func TestRangeExpr_ExplicitOperatorsAccepted(t *testing.T) {
-	for _, src := range []string{`let r = 0..<10`, `let r = 0..=10`, `let r = 0..=10:2`} {
+	for _, src := range []string{`let r = 0..<10`, `let r = 0..<=10`, `let r = 0..<=10:2`} {
 		if got := rangeEndOperatorErrors(t, src); len(got) != 0 {
 			t.Errorf("%s must not be flagged, got: %v", src, got)
 		}
@@ -127,7 +127,7 @@ func TestRangeExpr_SuggestionKeepsStep(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("expected 1 error, got %d: %v", len(got), got)
 	}
-	if !strings.Contains(got[0].Message, "0..=10:2") {
+	if !strings.Contains(got[0].Message, "0..<=10:2") {
 		t.Errorf("suggestion should keep the step: %q", got[0].Message)
 	}
 }
@@ -137,7 +137,7 @@ func TestRangeConstraint_MissingEndOperatorIsRejected(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("expected 1 error on a range constraint, got %d: %v", len(got), got)
 	}
-	for _, want := range []string{"range constraint", "range(0..=100)", "range(0..<100)"} {
+	for _, want := range []string{"range constraint", "range(0..<=100)", "range(0..<100)"} {
 		if !strings.Contains(got[0].Message, want) {
 			t.Errorf("message should contain %q: %q", want, got[0].Message)
 		}
@@ -146,7 +146,7 @@ func TestRangeConstraint_MissingEndOperatorIsRejected(t *testing.T) {
 
 func TestRangeConstraint_ExplicitAndOpenFormsAccepted(t *testing.T) {
 	for _, src := range []string{
-		`newtype Pct = u8 where range(0..=100)`,
+		`newtype Pct = u8 where range(0..<=100)`,
 		`newtype Angle = f64 where range(0..<360)`,
 		`newtype AtLeast = i64 where range(0..)`, // open end: no operator to write
 		`newtype Below = i64 where range(..<10)`,
@@ -199,7 +199,7 @@ func TestStepConstraint_ZeroIsRejected(t *testing.T) {
 }
 
 func TestStepConstraint_FractionalOverIntegerBaseIsRejected(t *testing.T) {
-	got := stepErrors(t, `newtype N = u8 where range(0..=100), step(0.5)`)
+	got := stepErrors(t, `newtype N = u8 where range(0..<=100), step(0.5)`)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 invalid-step error, got %d: %v", len(got), got)
 	}
@@ -211,13 +211,13 @@ func TestStepConstraint_FractionalOverIntegerBaseIsRejected(t *testing.T) {
 // The motivating good case: a quarter-step over a float domain, which is exactly
 // what the constraint spelling is for and what `saturating_add` cannot express.
 func TestStepConstraint_FractionalOverFloatBaseIsAccepted(t *testing.T) {
-	if got := stepErrors(t, `newtype Quarter = f32 where range(0..=100), step(0.25)`); len(got) != 0 {
+	if got := stepErrors(t, `newtype Quarter = f32 where range(0..<=100), step(0.25)`); len(got) != 0 {
 		t.Fatalf("a fractional step over f32 is legal, got: %v", got)
 	}
 }
 
 func TestStepConstraint_WholeStepOverIntegerBaseIsAccepted(t *testing.T) {
-	if got := stepErrors(t, `newtype Even = u8 where range(0..=100), step(2)`); len(got) != 0 {
+	if got := stepErrors(t, `newtype Even = u8 where range(0..<=100), step(2)`); len(got) != 0 {
 		t.Fatalf("a whole step over u8 is legal, got: %v", got)
 	}
 }

@@ -10,7 +10,51 @@ Newest first.
 ## Dated log
 
 ### 08/04/26
-**Range and string sources for comprehensions.** `[ x in 1..=10 | x * x ]` — the shape the
+**Descending ranges, and `..=` became `..<=`.** The four end operators are now `..<` `..<=`
+`..>` `..>=` — two axes, direction and whether the end bound is included, each named by the
+operator. `5..>1` is 5, 4, 3, 2; `5..>=1` is 5, 4, 3, 2, 1. Both work in `for-in` and as a
+comprehension source.
+
+**What the design turns on: direction is the operator's, never the bounds'.** `5..<1` is an
+*ascending* range that happens to be empty, not a descending one. The first proposal was to
+add only `..>` and let `..=` mean "inclusive, whichever way the bounds point" — one token
+fewer, and no migration. It was rejected on the second pass because direction would then be
+a property of the operand *values*: `a..=b` over variables would decide at run time which
+way to run, and could silently run the opposite way from the way it reads, with nothing to
+report. Every operator naming its own direction makes it a parse-time fact instead. The cost
+was renaming the inclusive end at 260 sites across three repos; the benefit is that the
+failure mode does not exist rather than being documented.
+
+Two things fall out of it. The **step becomes a magnitude**, so `InvalidStepReason` can
+finally judge a negative one — the open item that deliberately refused to, on the grounds
+that judging the sign would invent a direction semantics the language had not chosen. And
+the **predicate and the increment both come from the operator**: `rangeLoopPredicate` picks
+one of eight comparisons from direction × inclusivity × signedness, and a descending loop
+subtracts. Signedness stays a property of the counter's type, not the direction, so an
+unsigned descending range does not depend on a wrap the author never wrote.
+
+**What this fixed, which was worse than "descending was missing".** Measured before
+changing anything: `for i in 1..<10:-1` ran forever (1, 0, −1, … all satisfy `i < 10`), and
+`for i in 5..<1:-1` silently did nothing. A negative step either hung or was ignored
+depending on which way the bounds happened to point, and there was no way to count down at
+all.
+
+**Descending is refused where a range is a set** (`lyra-E034`) — a match pattern, a
+`newtype` constraint. There `5..>1` describes exactly the members `1..<5` does, so the
+spelling implies an order the construct does not have. The grammar accepts all four
+operators at all three sites, keeping the one node kind the 08/01 unification established,
+and the collector draws the line: that is the rule `rangeBounds` already states — the
+grammar refuses what has no meaning anywhere, the collector refuses what has a plausible
+meaning needing disambiguation. The message names the ascending spelling of the same set,
+built from the `start`/`end` **fields** rather than by splicing the node's source, because
+a constraint's text is the whole `range(…)` wrapper and splicing produced `0)..<=range(100`
+— a suggestion that will not parse, which is worse than no suggestion.
+
+One migration note for anyone reading older entries here: they show `..<=` because the
+spelling was rewritten throughout, not because it existed before today.
+
+### 08/04/26
+**Range and string sources for comprehensions.** `[ x in 1..<=10 | x * x ]` — the shape the
 grammar has documented since it was written — and `[ c in "héllo" | c ]` both lower, and mix
 with array sources in one comprehension.
 
@@ -533,8 +577,8 @@ five run under ASan and on Linux (`./asan.sh`), where the older clang's typed po
 catch a payload built at the wrong width.
 
 **Diagnostics render literals as source, not as Go structs.** A real message read
-`expected array pattern, got IntegerLiteralExpr(0, Base: 10)..= IntegerLiteralExpr(10,
-Base: 10)`; it now reads `expected array pattern, got 0..=10`.
+`expected array pattern, got IntegerLiteralExpr(0, Base: 10)..<= IntegerLiteralExpr(10,
+Base: 10)`; it now reads `expected array pattern, got 0..<=10`.
 
 `GetName` on an expression is a **source rendering** — parents compose them, so a match arm
 builds `match <pattern> { <body> }` out of its children's — and the literals were the family
@@ -546,7 +590,7 @@ program. The fix is small; the interesting part is why it lasted.
 collector's golden tests, so drift is caught the next time anyone regenerates. `GetName`
 is interpolated into diagnostics and nowhere else, which means the only reader who ever
 sees it is a user, and the only reviewer is whoever happens to read a failing message
-closely. `RangePattern` printing `0..9=` for `0..=9` survived the same way (fixed 08/01).
+closely. `RangePattern` printing `0..9=` for `0..<=9` survived the same way (fixed 08/01).
 There is now a test that no expression rendering contains `Expr` or `Pattern` — neither
 substring can occur in the Lyra source these are meant to produce, so a node added later
 fails there rather than in someone's terminal.
@@ -1007,7 +1051,7 @@ value) is in todo.md.
 
 ### 08/01/26
 **One `..` notation, three sites.** The range notation appears in an expression (`0..<n`),
-a match pattern (`0..=9`) and a `newtype` constraint (`range(0..=100)`). They were three
+a match pattern (`0..<=9`) and a `newtype` constraint (`range(0..<=100)`). They were three
 independent grammar rules that had drifted on four axes — whether the end operator was
 required, whether either bound could be omitted, what an operand may be — plus a fifth:
 the same two characters `<`/`=` were `range_end_operator` in two rules and
@@ -1025,7 +1069,7 @@ required, so `range(..)` and a bare `..` pattern are unspellable.
 
 **The defect worth the whole change was a silent default.** `range_pattern` made the end
 operator optional, and every reader of `RangePattern.EndOperator` tests `== "<"`, so an
-omitted one fell through to *inclusive*: `0..9` meant `0..=9`. Not cosmetic — that extra
+omitted one fell through to *inclusive*: `0..9` meant `0..<=9`. Not cosmetic — that extra
 value is exactly the boundary the exhaustiveness checker and the emitted comparison would
 disagree on. It is now `lyra-E032` at all three sites through one collector check, and the
 suggestion is spliced from the source so it is right for every form the notation takes,
@@ -1040,7 +1084,7 @@ failed to shift (the `lyra-E029` trade) — **and in the grammar when it has no 
 all.** Only one existing line in the whole tree used the ambiguous form, in a test whose
 subject was rune-scrutinee rejection.
 
-**Patterns gained open bounds, and exhaustiveness got better for it.** `..<0`, `0..=9`,
+**Patterns gained open bounds, and exhaustiveness got better for it.** `..<0`, `0..<=9`,
 `10..` with no wildcard now compiles: `armIntInterval` reads an absent bound as the
 scrutinee type's own limit, which is what writing it means. The backend *omits* the
 comparison for an open side rather than emitting one against the type's limit — on an
@@ -1063,10 +1107,10 @@ again. Still open: a step constraint is not enforced against values at run time,
 `step(0.25)` documents and validates but does not yet reject 0.3.
 
 **`RangePattern.GetName` printed the operator after the bound it qualifies** — `0..9=` for
-`0..=9`. It reaches users (diagnostics interpolate it) but no golden file, which is how it
+`0..<=9`. It reaches users (diagnostics interpolate it) but no golden file, which is how it
 survived. Fixing it surfaced a larger one in the same messages, left alone and noted in
 todo.md: a literal renders as `IntegerLiteralExpr(0, Base: 10)`, so a real diagnostic reads
-"expected array pattern, got IntegerLiteralExpr(0, Base: 10)..=IntegerLiteralExpr(10, Base:
+"expected array pattern, got IntegerLiteralExpr(0, Base: 10)..<=IntegerLiteralExpr(10, Base:
 10)".
 
 One thing this cost that is worth writing down: **a recovered parse is not an absent
@@ -1410,18 +1454,18 @@ guard stashed, the test binary dies with `fatal error: stack overflow`.
 
 ### 07/31/26
 **Fixed: a negative literal in a `match` pattern now parses.** `-1 => …` and
-`-128..=127 => …` never did. `_number_literal` carries no sign and both `literal_pattern`
+`-128..<=127 => …` never did. `_number_literal` carries no sign and both `literal_pattern`
 and `range_pattern` were defined over it, so the `-` landed in an `ERROR` node.
 Pre-existing; found because the statement-terminator work changed how the wreckage looked.
 
 **Why it survived this long is the interesting part.** The error swallowed the *whole*
 match, so the collector never built a match expression, the exhaustiveness check never ran,
 and `TestTypeCheck_NumericMatch_I8_FullRange_Ok` — which asserts *no* errors on
-`match x { -128..=127 => "ok" }` — got none and passed. **Vacuously.** A test that asserts
+`match x { -128..<=127 => "ok" }` — got none and passed. **Vacuously.** A test that asserts
 an absence is satisfied by a parse failure, which is the failure mode to remember: an
 "assert nothing went wrong" test cannot tell "it worked" from "it never ran". Better error
 recovery under the new grammar made the check start running, and it correctly objected to
-the `128..=127` it could see, which is what surfaced this.
+the `128..<=127` it could see, which is what surfaced this.
 
 The fix is a signed form for both pattern rules, **aliased to `negation`** so the CST shape
 is one the tree already contains: `collectRangePattern` reads `start`/`end` with
@@ -1440,7 +1484,7 @@ as subtraction — not as `0` plus a dangling `negation(-200)` — was checked e
 
 Tests are deliberately of the kind that cannot go vacuous: exec cases in
 `llvm_match_test.go` where a dropped sign is a wrong exit code (`-5` must take the
-`-128..=-1` arm, not `0..=127`), and two typechecker tests that assert a diagnostic is
+`-128..<=-1` arm, not `0..<=127`), and two typechecker tests that assert a diagnostic is
 *produced* rather than absent.
 
 ### 07/31/26
@@ -1477,7 +1521,7 @@ a newline inside an unfinished expression never produces it. Match arms, argumen
 multi-line `data` declarations are all untouched.
 
 **And it exposed a pre-existing bug**, now in `todo.md`: a negative literal in a pattern
-(`-1 => …`, `-128..=127 => …`) has never parsed. Two numeric-match tests were passing
+(`-1 => …`, `-128..<=127 => …`) has never parsed. Two numeric-match tests were passing
 *vacuously* — the old parser wrapped the whole match in an `ERROR`, so the collector never
 saw a match expression and the exhaustiveness check never ran. Better error recovery under
 the new grammar makes the check run, and it correctly objects. Those two tests are red
@@ -3195,7 +3239,7 @@ purpose, and ambient-ness is a concept a prelude needs under any design.
 - **Range for-in (`for i in START..<END`) lowers (backend).** A numeric-range iterable —
   previously a loud error — now lowers to a counter loop (`lowerForInRange`, `control_flow.go`):
   `i = START; while i </<= END { <body>; i += step }`, reusing the C-style loop's break/continue
-  machinery. `..<` is an exclusive end (`i < END`), `..=` inclusive (`i <= END`); an optional
+  machinery. `..<` is an exclusive end (`i < END`), `..<=` inclusive (`i <= END`); an optional
   `:step` (grammar `START..<END:STEP`) sets the stride, default 1. The **counter is the loop
   variable** (a plain integer value, not a borrow, and immutable so never re-stored by the
   body). Its **width** is the first concrete-integer bound's type (End, then Start, then Step),
@@ -3203,7 +3247,7 @@ purpose, and ambient-ness is a concept a prelude needs under any design.
   matches the loop variable's declared type — and the bounds/step are `coerceIntWidth`'d to it
   (so `0..<n` with a u8 `n` runs at u8, an untyped `0..<3` at i64). The comparison predicate is
   signed/unsigned per the counter type. The increment is a **plain (wrapping) add**, so an
-  inclusive `..=` whose end is the counter type's max loops forever (the increment wraps past
+  inclusive `..<=` whose end is the counter type's max loops forever (the increment wraps past
   it) — the one documented edge; no two-variable form over a range. Tests:
   `backend/llvm/llvm_forin_range_test.go` (exclusive/inclusive sums, variable end, typed-u8
   bounds, `:2` step, break, continue, and the `for i in 0..<xs.len() { sum += xs[i] }` indexing
@@ -3408,14 +3452,14 @@ purpose, and ambient-ness is a concept a prelude needs under any design.
 
 ### 07/26/26
 - **for…in range widening — the last item in the value-range backlog, plus a latent for-in
-  scope-bug fix.** A `for i in START..<END` (or `..=`) over a numeric range now binds its loop
+  scope-bug fix.** A `for i in START..<END` (or `..<=`) over a numeric range now binds its loop
   variable to the range interval in the body (`forInRangeKey` in `checker/range_analysis.go`),
   the for-in analogue of the C-style loop counter — but with no fixpoint, since the range gives
   the bounds directly. So `for i in 5..<10 { xs[i] }` on a size-3 array is a definite
   out-of-bounds (E022), `for i in 0..<3 { xs[i] }` elides its bounds check (`IndexInBounds`),
-  and an inclusive `0..=2` bounds to `[0,2]`. **Sound via a provably-non-empty guard:** the
+  and an inclusive `0..<=2` bounds to `[0,2]`. **Sound via a provably-non-empty guard:** the
   variable is bound (enabling body diagnostics) only when `start.hi < end.lo` (`..<`) /
-  `start.hi <= end.lo` (`..=`), so the loop definitely runs ≥ 1 iteration and a body diagnostic
+  `start.hi <= end.lo` (`..<=`), so the loop definitely runs ≥ 1 iteration and a body diagnostic
   — which holds for the whole widened `[start.lo, end.hi]`, hence at the first iteration `i =
   start` — is genuinely definite, not a maybe-empty false positive. A variable-length range
   (`0..<n`, not provably non-empty), a stepped range, a two-variable form, or a non-range
@@ -3442,7 +3486,7 @@ purpose, and ambient-ness is a concept a prelude needs under any design.
   assigned value node (`checkVarDecl` → `tt.Set(decl.Value, resolvedDeclType)`), so `tt.Get(x)`
   for `let p: Percent = x` recovers the `*ConstrainedType`; the check reads the
   `RangeConstraint` bounds from it (folding literal/negated-literal bounds, honoring
-  `..<`/`..=`/open-ended, replicated from the typechecker's folder). **Scoped to an *identifier*
+  `..<`/`..<=`/open-ended, replicated from the typechecker's folder). **Scoped to an *identifier*
   value** — the typechecker's `checkRangeConstraints` folds and owns literal/constant values,
   and an identifier is exactly what it can't fold, so restricting to a variable both avoids a
   double report (verified: a literal `let p: Percent = 150` yields exactly one E023, the
@@ -3457,16 +3501,16 @@ purpose, and ambient-ness is a concept a prelude needs under any design.
 - **`RangeConstraint` enforcement on `newtype … where range(…)` — the constant-value case
   (`lyra-E023`).** A range-constrained newtype's constraint was collected by the front-end but
   *never checked* against actual values — `let p: Percent = 150` for `newtype Percent = u8 where
-  range(0..=100)` compiled clean. Now a compile-time numeric constant assigned or annotated to a
+  range(0..<=100)` compiled clean. Now a compile-time numeric constant assigned or annotated to a
   range-constrained newtype is checked against the declared range: `checkRangeConstraints`
   (`typechecker/range_constraint.go`), the numeric analogue of the existing string
   `checkPatternConstraints`, wired into the three value sites (`checkVarDecl`,
   `checkVarReassignment`, member-assign). It folds a constant value (int or float literal, incl.
   a negated one / a folded arithmetic constant) and the constraint's literal/negated-literal
-  bounds, honoring inclusive start, `..<` exclusive vs `..=` inclusive end, and open-ended
-  bounds (`0..`, `..=100`); an unfoldable identifier/compound bound leaves that side unenforced
+  bounds, honoring inclusive start, `..<` exclusive vs `..<=` inclusive end, and open-ended
+  bounds (`0..`, `..<=100`); an unfoldable identifier/compound bound leaves that side unenforced
   (conservative — no false positive). Covers both integer and float base types (`newtype Ratio =
-  f64 where range(0..=1)`). **No double report:** `checkIntegerLiteralRange` skips a
+  f64 where range(0..<=1)`). **No double report:** `checkIntegerLiteralRange` skips a
   `*ConstrainedType` (it matches only a bare `PrimitiveType`), and a range constraint is
   normally ⊆ the base type, so a range violation subsumes any base overflow. Definite-only, like
   the literal integer range check — a *non-constant* value (`let f = (x: u8) -> Percent => x`)
@@ -3476,16 +3520,16 @@ purpose, and ambient-ness is a concept a prelude needs under any design.
   reassignment), `driver/driver_test.go` (E023 through the pipeline).
 - **Per-match-arm scrutinee refinement — the `match` analogue of `if`-branch refinement.** A
   `match` on a tracked integer *variable* now refines the scrutinee, per arm, to the values that
-  arm's pattern matches — a literal (`0 => …` → `[0,0]`) or a numeric range (`1..=10`, `0..<3`),
+  arm's pattern matches — a literal (`0 => …` → `[0,0]`) or a numeric range (`1..<=10`, `0..<3`),
   extracted by `patternInterval` (mirroring the typechecker's exhaustiveness reader
   `armIntInterval`, so the two agree on what a pattern covers; guards are irrelevant to the
   refinement). `evalMatch` intersects that with the scrutinee's current interval in the arm's
   env (`refineScrutinee`); an empty intersection makes the arm **unreachable** (skipped — no
   value, env, or diagnostics), and a catch-all / identifier / non-numeric pattern refines
   nothing (the arm sees the full range — sound). This lets every range-analysis conclusion fire
-  inside a constraining arm: `match x { 100..=127 => x + 100 }` on an i8 → E020, `match x { 0 =>
-  a / x }` (scrutinee *is* the divisor) → E021, `match i { 5..=10 => xs[i] }` on a size-3 array
-  → E022, and an in-range arm elides its checks (`match i { 0..=2 => xs[i] }` →
+  inside a constraining arm: `match x { 100..<=127 => x + 100 }` on an i8 → E020, `match x { 0 =>
+  a / x }` (scrutinee *is* the divisor) → E021, `match i { 5..<=10 => xs[i] }` on a size-3 array
+  → E022, and an in-range arm elides its checks (`match i { 0..<=2 => xs[i] }` →
   `IndexInBounds`). The post-match env still unions with the pre-match state, so the scrutinee's
   range after the match is unchanged (sound). No new false positives (an in-range arm and a
   catch-all arm both stay clean); full suite green. Tests: `checker/range_analysis_test.go`

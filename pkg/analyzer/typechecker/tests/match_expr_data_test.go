@@ -129,7 +129,7 @@ func TestTypeCheck_DataMatchExpr_RangePattern_Error(t *testing.T) {
   data Maybe = None | Some i32
   let foo = Some(42)
   match foo {
-    0..=100 => "ok",
+    0..<=100 => "ok",
     _ => "ok",
   }
 	`, false)

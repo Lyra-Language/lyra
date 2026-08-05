@@ -69,8 +69,8 @@ func TestTypeCheck_OverlappingArms_Ranges_Warning(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 100
   match x {
-    0..=200   => "low",
-    150..=255 => "high",
+    0..<=200   => "low",
+    150..<=255 => "high",
   }`, false)
 	assertWarningsAre(t, res,
 		"overlapping match arm: this range overlaps with a previous arm")
@@ -80,8 +80,8 @@ func TestTypeCheck_OverlappingArms_NonOverlapping_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 100
   match x {
-    0..=127   => "low",
-    128..=255 => "high",
+    0..<=127   => "low",
+    128..<=255 => "high",
   }`, false)
 	assertNoErrors(t, res)
 }
@@ -92,8 +92,8 @@ func TestTypeCheck_OverlappingArms_Ranges_NoWildcard_BothWarnings(t *testing.T) 
 	res := parseCollectAndCheck(t, `
   let x: u8 = 50
   match x {
-    0..=100 => "low",
-    50..=200 => "mid",
+    0..<=100 => "low",
+    50..<=200 => "mid",
   }`, false)
 	assertWarningsAre(t, res,
 		"match on numeric type is not exhaustive: add a wildcard `_ => ...` or catch-all arm",
@@ -105,7 +105,7 @@ func TestTypeCheck_OverlappingArms_GuardedNotOverlapping_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let x: u8 = 100
   match x {
-    0..=255 => "full",
+    0..<=255 => "full",
     n if n > 150 => "guarded",
   }`, false)
 	assertNoErrors(t, res)

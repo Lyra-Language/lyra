@@ -162,7 +162,7 @@ func TestExec_ArrayCompOverRange(t *testing.T) {
 	t.Parallel()
 	got := buildAndRun(t, `
 let main = () -> u8 => {
-  let squares = [x in 1..=5 | x * x]
+  let squares = [x in 1..<=5 | x * x]
   u8(squares.len() + squares[0] + squares[4])
 }`)
 	if got != 31 {
@@ -170,7 +170,7 @@ let main = () -> u8 => {
 	}
 }
 
-// The end operator and the step both reach the count: `..<` excludes, `..=` includes, and
+// The end operator and the step both reach the count: `..<` excludes, `..<=` includes, and
 // `:n` strides. Getting any of them wrong changes the length, which is what is asserted.
 func TestExec_ArrayCompRangeBounds(t *testing.T) {
 	t.Parallel()
@@ -179,9 +179,9 @@ func TestExec_ArrayCompRangeBounds(t *testing.T) {
 		want       int
 	}{
 		{"exclusive", "[x in 0..<4 | x]", 4},
-		{"inclusive", "[x in 0..=4 | x]", 5},
+		{"inclusive", "[x in 0..<=4 | x]", 5},
 		{"stepped", "[x in 0..<10:3 | x]", 4},
-		{"single", "[x in 3..=3 | x]", 1},
+		{"single", "[x in 3..<=3 | x]", 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -260,7 +260,7 @@ func TestExec_ArrayCompMixedSources(t *testing.T) {
 	got := buildAndRun(t, `
 let main = () -> u8 => {
   let xs: []i64 = [10, 20]
-  let pairs = [x in xs, n in 1..=3 | x + n]
+  let pairs = [x in xs, n in 1..<=3 | x + n]
   u8(pairs.len() + pairs[0] + pairs[5] - 20)
 }`)
 	if got != 20 {

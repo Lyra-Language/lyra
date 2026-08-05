@@ -910,7 +910,7 @@ func TestExec_LeadingNameTupleMatch(t *testing.T) {
 // both `literal_pattern` and `range_pattern` were defined over it, so the `-` landed in
 // an ERROR node. The error swallowed the whole match, which is why it hid: the collector
 // saw no match expression, so exhaustiveness never ran and a typechecker test asserting
-// "no errors" on `-128..=127` passed vacuously. Exec tests are the check that cannot go
+// "no errors" on `-128..<=127` passed vacuously. Exec tests are the check that cannot go
 // vacuous — a wrong arm is a wrong exit code.
 func TestExec_NegativeLiteralAndRangePatterns(t *testing.T) {
 	t.Parallel()
@@ -931,11 +931,11 @@ func TestExec_NegativeLiteralAndRangePatterns(t *testing.T) {
 		},
 		{
 			// The arm that is *not* taken matters as much: a sign dropped from the
-			// pattern would make -5 match the 0..=127 arm instead.
+			// pattern would make -5 match the 0..<=127 arm instead.
 			"negative range arm",
 			`let f = (n: i8) -> i64 => match n {
-			   -128..=-1 => 3,
-			   0..=127 => 4
+			   -128..<=-1 => 3,
+			   0..<=127 => 4
 			 }
 			 let main = () -> u8 => u8(f(-5))`,
 			3,
@@ -943,8 +943,8 @@ func TestExec_NegativeLiteralAndRangePatterns(t *testing.T) {
 		{
 			"positive value takes the positive arm",
 			`let f = (n: i8) -> i64 => match n {
-			   -128..=-1 => 3,
-			   0..=127 => 4
+			   -128..<=-1 => 3,
+			   0..<=127 => 4
 			 }
 			 let main = () -> u8 => u8(f(5))`,
 			4,
@@ -954,7 +954,7 @@ func TestExec_NegativeLiteralAndRangePatterns(t *testing.T) {
 			// wildcard — the case whose typechecker test was passing vacuously.
 			"full range in one arm needs no wildcard",
 			`let f = (n: i8) -> i64 => match n {
-			   -128..=127 => 5
+			   -128..<=127 => 5
 			 }
 			 let main = () -> u8 => u8(f(-5))`,
 			5,
@@ -985,7 +985,7 @@ func TestExec_OpenEndedRangePatterns(t *testing.T) {
 	// the test: it means exhaustiveness reads an absent bound as the type's limit.
 	const classify = `let classify = (n: i8) -> i64 => match n {
 			   ..<0 => 1,
-			   0..=9 => 2,
+			   0..<=9 => 2,
 			   10.. => 3
 			 }
 			 let main = () -> u8 => u8(classify(%s))`
@@ -1033,7 +1033,7 @@ func TestExec_OpenEndedRangePatterns(t *testing.T) {
 		{
 			"inclusive open start includes its bound",
 			`let f = (n: i8) -> i64 => match n {
-			   ..=0 => 1,
+			   ..<=0 => 1,
 			   _ => 2
 			 }
 			 let main = () -> u8 => u8(f(0))`,

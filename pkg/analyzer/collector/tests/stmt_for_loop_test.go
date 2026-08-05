@@ -113,8 +113,8 @@ func TestCollect_ForInLoopAsExpression(t *testing.T) {
 
 func TestCollect_LabeledForLoopBreakWithValue(t *testing.T) {
 	source := `
-	let result = outer: for i in 0..=10 {
-		for j in 0..=10 {
+	let result = outer: for i in 0..<=10 {
+		for j in 0..<=10 {
 			break outer i + j
 		}
 	}`

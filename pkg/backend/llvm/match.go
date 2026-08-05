@@ -283,9 +283,9 @@ func (l *lowerer) scalarMatchTest(block *ir.Block, scrut value.Value, pattern as
 			}
 			var hiPred enum.IPred
 			switch {
-			case p.EndOperator == "<" && signed:
+			case types.RangeExcludesEnd(p.EndOperator) && signed:
 				hiPred = enum.IPredSLT
-			case p.EndOperator == "<":
+			case types.RangeExcludesEnd(p.EndOperator):
 				hiPred = enum.IPredULT
 			case signed:
 				hiPred = enum.IPredSLE
@@ -359,7 +359,7 @@ func (l *lowerer) floatScalarMatchTest(block *ir.Block, scrut value.Value, patte
 				return nil, fmt.Errorf("llvm: unsupported range end in float match pattern")
 			}
 			hiPred := enum.FPredOLE
-			if p.EndOperator == "<" {
+			if types.RangeExcludesEnd(p.EndOperator) {
 				hiPred = enum.FPredOLT
 			}
 			tests = append(tests, block.NewFCmp(hiPred, scrut, hi))

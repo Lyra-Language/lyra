@@ -19,7 +19,7 @@ Program(1 statements) {
 							}
 						}
 					}
-					EndOperator: =
+					EndOperator: <=
 					Start: {
 						MathBinaryOpExpr {
 							Left: {

@@ -7,7 +7,7 @@ import (
 // ── Range expression operand types ───────────────────────────────────────────
 
 func TestTypeCheck_RangeExpr_IntLiterals_NoError(t *testing.T) {
-	res := parseCollectAndCheck(t, `for i in 1..=10 { }`, false)
+	res := parseCollectAndCheck(t, `for i in 1..<=10 { }`, false)
 	assertNoErrors(t, res)
 }
 
@@ -15,28 +15,28 @@ func TestTypeCheck_RangeExpr_IntVars_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let start: i64 = 1
 		let end: i64 = 5
-		for i in start..=end { }
+		for i in start..<=end { }
 	`, false)
 	assertNoErrors(t, res)
 }
 
 func TestTypeCheck_RangeExpr_StringStart_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `for i in "a"..=10 { }`, false)
+	res := parseCollectAndCheck(t, `for i in "a"..<=10 { }`, false)
 	assertErrorsAre(t, res, "range start must be numeric, got string")
 }
 
 func TestTypeCheck_RangeExpr_StringEnd_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `for i in 1..="z" { }`, false)
+	res := parseCollectAndCheck(t, `for i in 1..<="z" { }`, false)
 	assertErrorsAre(t, res, "range end must be numeric, got string")
 }
 
 func TestTypeCheck_RangeExpr_BoolStart_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `for i in true..=10 { }`, false)
+	res := parseCollectAndCheck(t, `for i in true..<=10 { }`, false)
 	assertErrorsAre(t, res, "range start must be numeric, got boolean")
 }
 
 func TestTypeCheck_RangeExpr_BoolEnd_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `for i in 1..=true { }`, false)
+	res := parseCollectAndCheck(t, `for i in 1..<=true { }`, false)
 	assertErrorsAre(t, res, "range end must be numeric, got boolean")
 }
 
@@ -44,25 +44,25 @@ func TestTypeCheck_RangeExpr_IncompatibleOperands_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let a: i32 = 0
 		let b: f64 = 10.0
-		for i in a..=b { }
+		for i in a..<=b { }
 	`, false)
 	assertErrorsAre(t, res, "range operands have incompatible types: start is i32, end is f64")
 }
 
 func TestTypeCheck_RangeExpr_StringStart_Standalone_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `"a"..=10`, false)
+	res := parseCollectAndCheck(t, `"a"..<=10`, false)
 	assertErrorsAre(t, res, "range start must be numeric, got string")
 }
 
 func TestTypeCheck_RangeExpr_StringEnd_Standalone_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `1..="z"`, false)
+	res := parseCollectAndCheck(t, `1..<="z"`, false)
 	assertErrorsAre(t, res, "range end must be numeric, got string")
 }
 
 func TestTypeCheck_RangeExpr_VarStringStart_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let s: string = "hello"
-		for i in s..=10 { }
+		for i in s..<=10 { }
 	`, false)
 	assertErrorsAre(t, res, "range start must be numeric, got string")
 }
@@ -70,7 +70,7 @@ func TestTypeCheck_RangeExpr_VarStringStart_Error(t *testing.T) {
 // ── For-in iterable must be iterable ─────────────────────────────────────────
 
 func TestTypeCheck_ForIn_RangeIterable_NoError(t *testing.T) {
-	res := parseCollectAndCheck(t, `for i in 1..=10 { }`, false)
+	res := parseCollectAndCheck(t, `for i in 1..<=10 { }`, false)
 	assertNoErrors(t, res)
 }
 
@@ -123,6 +123,6 @@ func TestTypeCheck_ForIn_FloatLiteral_Error(t *testing.T) {
 func TestTypeCheck_ForIn_InvalidRange_EmitsRangeError(t *testing.T) {
 	// A range with invalid operand types still emits a range error.
 	// The for-in check sees nil iterType (start was cleared), so no double-error.
-	res := parseCollectAndCheck(t, `for i in "a"..=10 { }`, false)
+	res := parseCollectAndCheck(t, `for i in "a"..<=10 { }`, false)
 	assertErrorsAre(t, res, "range start must be numeric, got string")
 }
