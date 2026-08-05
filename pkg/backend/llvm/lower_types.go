@@ -474,63 +474,50 @@ func (l *lowerer) lowerAnonymousTupleType(t types.TupleType) (*lltypes.StructTyp
 	return lltypes.NewStruct(fields...), nil
 }
 
-// resolveDataType resolves a scrutinee type to its DataType — directly, or via
-// the symbol table for an UnresolvedType naming a non-generic data type. A
-// generic (ParameterizedType) data type is not handled (monomorphization TODO).
-func (l *lowerer) resolveDataType(t types.Type) (types.DataType, bool) {
+// resolveShape normalizes a scrutinee (or sub-pattern) type to the concrete
+// aggregate shape it denotes: the declaration's own type for an UnresolvedType
+// naming one, and the substituted instantiation for a ParameterizedType (`Opt<i64>`
+// → the DataType named `Opt$i64`). An already-concrete type — or one this cannot
+// resolve — comes back untouched, so the three resolvers below stay total.
+//
+// This switch is deliberately the only one of its kind. Each of resolveDataType /
+// resolveStructType / resolveTupleType used to carry its own copy, and only the data
+// one ever grew the ParameterizedType arm: a data pattern *nested inside* an
+// aggregate pattern (`(Just(v), _)`) had failed with "data pattern on non-data value
+// of type Opt<i64>", because the top-level match path resolves its scrutinee before
+// dispatching while the sub-pattern path reads the element type straight off the
+// tuple, where it is still parameterized. Struct and tuple sub-patterns reach that
+// same path and so had the identical latent failure with none of the fix — hazard 8,
+// where the durable answer is to stop having more than one switch rather than to add
+// the missing arm to each.
+func (l *lowerer) resolveShape(t types.Type) types.Type {
 	switch v := t.(type) {
-	case types.DataType:
-		return v, true
 	case types.UnresolvedType:
 		if decl, ok := l.lookupTypeDecl(v.Name); ok {
-			if dt, ok := decl.Type.(types.DataType); ok {
-				return dt, true
-			}
+			return decl.Type
 		}
 	case types.ParameterizedType:
-		// `Opt<i64>` — normalize through the same choke point every other shape-reading
-		// site uses, then resolve the concrete type it denotes. Without this a data
-		// pattern *nested inside* an aggregate pattern (`(Just(v), _)`) failed with
-		// "data pattern on non-data value of type Opt<i64>": the top-level match path
-		// resolves its scrutinee before dispatching, but the sub-pattern path reads the
-		// element type straight off the tuple, where it is still parameterized.
 		if inst, err := l.resolveInstantiation(v); err == nil {
-			if dt, ok := inst.(types.DataType); ok {
-				return dt, true
-			}
+			return inst
 		}
 	}
-	return types.DataType{}, false
+	return t
 }
 
-// resolveStructType resolves a scrutinee type to its NamedStructType — directly,
-// or via the symbol table for an UnresolvedType naming a struct.
+// resolveDataType resolves a scrutinee type to its DataType.
+func (l *lowerer) resolveDataType(t types.Type) (types.DataType, bool) {
+	dt, ok := l.resolveShape(t).(types.DataType)
+	return dt, ok
+}
+
+// resolveStructType resolves a scrutinee type to its NamedStructType.
 func (l *lowerer) resolveStructType(t types.Type) (types.NamedStructType, bool) {
-	switch v := t.(type) {
-	case types.NamedStructType:
-		return v, true
-	case types.UnresolvedType:
-		if decl, ok := l.lookupTypeDecl(v.Name); ok {
-			if st, ok := decl.Type.(types.NamedStructType); ok {
-				return st, true
-			}
-		}
-	}
-	return types.NamedStructType{}, false
+	st, ok := l.resolveShape(t).(types.NamedStructType)
+	return st, ok
 }
 
-// resolveTupleType resolves a scrutinee type to its TupleType — directly (named
-// or anonymous), or via the symbol table for an UnresolvedType naming one.
+// resolveTupleType resolves a scrutinee type to its TupleType (named or anonymous).
 func (l *lowerer) resolveTupleType(t types.Type) (types.TupleType, bool) {
-	switch v := t.(type) {
-	case types.TupleType:
-		return v, true
-	case types.UnresolvedType:
-		if decl, ok := l.lookupTypeDecl(v.Name); ok {
-			if tt, ok := decl.Type.(types.TupleType); ok {
-				return tt, true
-			}
-		}
-	}
-	return types.TupleType{}, false
+	tt, ok := l.resolveShape(t).(types.TupleType)
+	return tt, ok
 }

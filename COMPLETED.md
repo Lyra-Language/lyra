@@ -9,6 +9,54 @@ Newest first.
 
 ## Dated log
 
+### 08/05/26
+**Three backend paths that had drifted from their siblings.** All three are hazard 8 — a
+thing written more than once, where only one copy got the fix — found by reviewing the
+backend for duplication rather than by hitting the bugs.
+
+**An indirect call had no diverging-argument guard.** `lowerDirectCall` checks `diverged`
+per argument because a `panic(…)` argument seals the block and yields nil; the README
+calls that guard load-bearing, since without it llir dereferences the nil and the compiler
+segfaults. `lowerIndirectCall` had its own argument loop and never grew the check, so the
+same `panic` through a function *value* still crashed:
+
+```
+let apply = (f: (i64) -> i64) -> i64 => f(panic("indirect argument"))
+```
+
+crashed `lyrac` in `InstCall.LLString` — a Go stack trace, not the loud error the backend
+is supposed to produce. Both paths now lower arguments through one `lowerCallArgs`, which
+also owns the by-reference `mut`/`ref` handling; an indirect call passes no parameter list,
+because a lambda *type* carries no borrow modes, so that half is simply inert there.
+
+**The three shape resolvers were one switch written three times, and only one had been
+fixed.** `resolveDataType` grew a `ParameterizedType` arm when a `data` sub-pattern nested
+inside an aggregate failed — the top-level match path resolves its scrutinee before
+dispatching, but a sub-pattern reads the element type straight off the enclosing tuple,
+where it is still parameterized. `resolveStructType` and `resolveTupleType` sit on that
+identical path and had none of it, so a nested generic struct or named-tuple sub-pattern
+failed with *"struct pattern on non-struct value of type `Box<i64>`"* — the same sentence,
+one noun changed. The durable form was available here and taken: the normalization is now
+one `resolveShape`, and the three resolvers are a type assertion each. Only the **nested**
+position was broken; the top-level one is now a control case in the tests, since it
+resolves its scrutinee first and worked throughout.
+
+**A struct literal skipped `coerceAggregateElem`**, which the tuple-literal and
+data-payload paths both apply so a residual int-width mismatch is coerced rather than
+panicking llir. This one is a **parity fix, not a fixed crash**: no program was found that
+reaches it, because the typechecker currently *rejects* the shapes that would (a generic
+struct at a narrow width — `let b: Box<u8> = Box { v: 42 }` — is "cannot assign `Box<i64>`
+to `Box<u8>`", where the analogous data payload narrows fine). So the third way into an
+aggregate now matches the other two before literal-width propagation ever reaches through
+a generic struct and makes it reachable.
+
+**Two adjacent gaps found while testing, both left alone as separate work:** a named-tuple
+constructor pattern (`Pair(7, _)`) nested in an aggregate is parsed as a data pattern and
+never falls back to the tuple shape, so it fails for a *non-generic* named tuple too; and
+binding a name out of a generic aggregate pattern (`Box { v }`) is "undefined identifier
+`v`" in the typechecker, at top level as much as nested — a front-end gap, not a lowering
+one.
+
 ### 08/04/26
 **A bare call resolves across modules the way a method call does.** `map(b, f)` now reaches
 whatever `b.map(f)` reaches.

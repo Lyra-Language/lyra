@@ -854,6 +854,95 @@ func TestExec_NestedDataPatterns(t *testing.T) {
 	}
 }
 
+// A *generic* struct or named tuple as a sub-pattern of an aggregate pattern. The
+// element type is read straight off the enclosing tuple, where it is still a
+// ParameterizedType (`Box<i64>`), so the shape resolver has to normalize it — the
+// same fix a nested `data` sub-pattern already had, and which its struct and tuple
+// siblings were missing: both failed with "struct/tuple pattern on non-struct/tuple
+// value of type Box<i64>". Only the *nested* position regressed; the top-level one
+// is covered by the last case as the control, since it resolves its scrutinee before
+// dispatching and worked throughout.
+func TestExec_NestedGenericAggregatePatterns(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			"generic struct nested in a tuple (hit)",
+			`struct Box<t> { v: t }
+			 let main = () -> u8 => {
+			   let p = (Box { v: 7 }, 1)
+			   match p {
+			     (Box { v: 7 }, _) => 42,
+			     _ => 0,
+			   }
+			 }`,
+			42,
+		},
+		{
+			"generic struct nested in a tuple (miss)",
+			`struct Box<t> { v: t }
+			 let main = () -> u8 => {
+			   let p = (Box { v: 9 }, 1)
+			   match p {
+			     (Box { v: 7 }, _) => 42,
+			     _ => 13,
+			   }
+			 }`,
+			13,
+		},
+		// A wildcard field still routes through the shape resolver (the struct arm
+		// resolves before it looks at any field), so this covers the bind path too —
+		// binding a *name* out of a generic aggregate pattern is a separate front-end
+		// gap ("undefined identifier"), which is why no case here does.
+		{
+			"generic struct sub-pattern with a wildcard field",
+			`struct Box<t> { v: t }
+			 let main = () -> u8 => {
+			   let p = (Box { v: 7 }, 1)
+			   match p {
+			     (Box { v: _ }, _) => 42,
+			   }
+			 }`,
+			42,
+		},
+		{
+			"generic named tuple nested in a tuple",
+			`tuple Pair<t>(t, t)
+			 let main = () -> u8 => {
+			   let p = (Pair(7, 8), 1)
+			   match p {
+			     ((7, 8), _) => 42,
+			     _ => 0,
+			   }
+			 }`,
+			42,
+		},
+		{
+			"generic named tuple at top level (control)",
+			`tuple Pair<t>(t, t)
+			 let main = () -> u8 => {
+			   let p = Pair(7, 8)
+			   match p {
+			     (7, 8) => 42,
+			     _ => 0,
+			   }
+			 }`,
+			42,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("exited %d; want %d", got, c.want)
+			}
+		})
+	}
+}
+
 // A tuple literal whose *first* element is a bare name — an identifier (`(a, b)`)
 // or a nullary constructor (`(None, 7)`) — used to fail to parse: the leading
 // name was precedence-committed to a lambda parameter / data pattern with no GLR

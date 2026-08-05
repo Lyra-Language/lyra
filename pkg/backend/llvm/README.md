@@ -91,8 +91,12 @@ What it *did* need is a guard at each site that **consumes** a lowered operand, 
 dereference the value they get back. `diverged(v, block)` (trap.go) is that test — nil value
 *and* sealed block, because several lowerings legitimately produce no value while still
 reaching the next statement. It is checked in `lowerVarDecl`, `lowerVarReassignment`,
-`lowerDirectCall`'s argument loop, `lowerNumericConversion`, and the array-literal element
+`lowerCallArgs`, `lowerNumericConversion`, and the array-literal element
 loop; each was a nil dereference (a Go crash out of `lyrac`, not a loud error) before.
+The call-argument check lives in `lowerCallArgs` because it once lived in the *direct*
+call's own loop: `lowerIndirectCall` had a second argument loop with no guard, so
+`f(panic(…))` through a function value still crashed until 08/05. One loop now serves
+both, and it is also where by-reference `mut`/`ref` arguments are handled.
 Positions with no guard fail loudly instead: a tuple literal with a panicking element
 reports `unknown type: never`, because the *type* recorded for the tuple contains `never`
 and no `diverged` check can rescue that — the tuple is uninhabited and the honest fix is a
@@ -393,7 +397,8 @@ collector wraps a positional constructor's fields in a single anonymous tuple (`
 `types.DataTypeConstructor.FieldTypes()`. A nullary constructor (`Red`, `Nil` — a
 `DataConstructorExpr`) just stores the tag; a positional one (`Cons(1, x)` — a
 `TupleLiteralExpr` whose recorded type is a `DataType`) stores the payload too. Both
-`lowerTupleLiteralExpr` and `lowerDataConstruction` run each lowered element through
+`lowerTupleLiteralExpr` and `lowerDataConstruction` — and, since 08/05, `lowerStructInstanceExpr`,
+the third way into an aggregate, which had been left out — run each lowered element through
 `coerceAggregateElem` before the `insertvalue` — normally the identity (the typechecker already
 narrowed the leaves), but a residual int-width mismatch is coerced (trunc/ext) rather than
 letting llir *panic* inside `NewInsertValue`, and an irreconcilable mismatch is a loud error; a

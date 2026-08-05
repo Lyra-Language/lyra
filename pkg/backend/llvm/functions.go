@@ -463,18 +463,48 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 // Shared by an ordinary call by name and a call to a generic *specialization*, so
 // the by-reference `mut`/`ref` argument handling below has one definition.
 func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *ir.Func, params []ast.Parameter) (value.Value, *ir.Block, error) {
-	args := make([]value.Value, 0, len(e.Arguments))
-	for i, argExpr := range e.Arguments {
+	args, block, ok, err := l.lowerCallArgs(block, make([]value.Value, 0, len(e.Arguments)), e.Arguments, params)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
+		return nil, block, nil
+	}
+	// A short argument list means a default the front end should have filled did not reach
+	// here. Emitting the call anyway would produce IR whose argument count disagrees with
+	// the callee — invalid, and on a good day caught by clang rather than by us.
+	if len(params) > 0 && len(args) != len(fn.Params) {
+		return nil, nil, fmt.Errorf("llvm: %s expects %d argument(s), got %d",
+			fn.GlobalIdent.Ident(), len(fn.Params), len(args))
+	}
+	return block.NewCall(fn, args...), block, nil
+}
+
+// lowerCallArgs lowers a call's arguments left to right onto `args`, and is the one
+// definition of that shared by direct and indirect calls. It reports `ok == false`
+// when an argument diverged, in which case the returned block is the sealed one and
+// the caller must abandon the call rather than emit it.
+//
+// Two rules live here, and each was written on only one side before. A `mut`/`ref`
+// parameter is by reference (paramIsByRef), so the argument's *address* is passed
+// rather than a copy of its value; `params` is empty for an indirect call, whose
+// lambda type carries no borrow modes (lambdaTypeParams), so that path simply never
+// triggers there. And `f(panic("…"))` diverges: the argument sealed the block, the
+// call never happens, and everything after it is unreachable because arguments
+// evaluate left to right. Only the direct path checked the second, so the same
+// `panic` through a function value handed a nil argument to NewCall and segfaulted
+// inside llir — a Go crash out of lyrac, which is exactly what the guard exists to
+// prevent (hazard 8: the two argument loops travel in pairs).
+func (l *lowerer) lowerCallArgs(block *ir.Block, args []value.Value, argExprs []ast.Expression, params []ast.Parameter) ([]value.Value, *ir.Block, bool, error) {
+	for i, argExpr := range argExprs {
 		var (
 			v   value.Value
 			err error
 		)
-		// A `mut`/`ref` parameter is by reference (paramIsByRef), so pass the
-		// argument's *address* rather than a copy of its value. lvalueAddress walks
-		// the same identifier/field/index path an assignment target does, so `f(p)`,
-		// `f(grid[i])`, and `f(p.inner)` all forward the right slot; forwarding a
-		// by-ref parameter onward (`g(p)` inside the callee) resolves to the incoming
-		// pointer, which is already the caller's address.
+		// lvalueAddress walks the same identifier/field/index path an assignment target
+		// does, so `f(p)`, `f(grid[i])`, and `f(p.inner)` all forward the right slot;
+		// forwarding a by-ref parameter onward (`g(p)` inside the callee) resolves to
+		// the incoming pointer, which is already the caller's address.
 		//
 		// A **temporary** has no such address, and unlike `mut` (where the typechecker
 		// requires a mutable lvalue) it is perfectly legitimate to lend one out:
@@ -487,31 +517,21 @@ func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 			var ptr value.Value
 			ptr, block, err = l.argumentAddress(block, argExpr)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, false, err
 			}
 			args = append(args, ptr)
 			continue
 		}
 		v, block, err = l.lowerExpr(block, argExpr)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, false, err
 		}
-		// `f(panic("…"))`: the argument diverged, so the call never happens. Abandon it
-		// and hand back the sealed block — arguments are evaluated left to right, so
-		// any argument after this one is unreachable too.
 		if diverged(v, block) {
-			return nil, block, nil
+			return nil, block, false, nil
 		}
 		args = append(args, v)
 	}
-	// A short argument list means a default the front end should have filled did not reach
-	// here. Emitting the call anyway would produce IR whose argument count disagrees with
-	// the callee — invalid, and on a good day caught by clang rather than by us.
-	if len(params) > 0 && len(args) != len(fn.Params) {
-		return nil, nil, fmt.Errorf("llvm: %s expects %d argument(s), got %d",
-			fn.GlobalIdent.Ident(), len(fn.Params), len(args))
-	}
-	return block.NewCall(fn, args...), block, nil
+	return args, block, true, nil
 }
 
 // argumentAddress yields the address to pass for a by-reference parameter

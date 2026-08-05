@@ -565,14 +565,16 @@ func (l *lowerer) lowerIndirectCall(block *ir.Block, e *ast.FunctionCallExpr, lt
 	env := block.NewExtractValue(callee, 1)
 	typed := block.NewBitCast(fnPtr, lltypes.NewPointer(lltypes.NewFunc(retTy, paramTys...)))
 
-	args := []value.Value{env}
-	for _, argExpr := range e.Arguments {
-		v, blk, err := l.lowerExpr(block, argExpr)
-		if err != nil {
-			return nil, nil, err
-		}
-		block = blk
-		args = append(args, v)
+	// The environment leads; the rest go through the shared argument lowering, which
+	// is what gives an indirect call the same diverging-argument guard a direct one
+	// has. No parameter list is passed because a lambda *type* carries no borrow
+	// modes (see lambdaTypeParams), so no argument here is by reference.
+	args, block, ok, err := l.lowerCallArgs(block, []value.Value{env}, e.Arguments, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !ok {
+		return nil, block, nil
 	}
 	return block.NewCall(typed, args...), block, nil
 }

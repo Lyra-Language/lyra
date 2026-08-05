@@ -105,6 +105,15 @@ because each was learned from a real failure, and none is local to one package.
    kind or a composite type, grep for the switches over it; when fixing one, check the
    others in the same file, since these travel in pairs.
 
+   Two more landed 08/05, both in the backend and both found by *reviewing* for duplication
+   rather than by hitting them: `resolveStructType`/`resolveTupleType` missing the
+   `ParameterizedType` arm their sibling `resolveDataType` had been given (a nested generic
+   struct sub-pattern failing with "struct pattern on non-struct value of type `Box<i64>`",
+   the same sentence as the data case with one noun changed), and `lowerIndirectCall`
+   missing the `diverged` argument guard `lowerDirectCall` had — a `panic(…)` argument
+   through a function value segfaulted the compiler inside llir. The lesson those two add
+   is that a *second* copy is enough: neither had three.
+
    The durable fix for a switch with more than one caller is to stop having more than one
    of it. The type-variable walk was three switches (typechecker `collectTypeVars`, backend
    `mentionsTypeVar`, and the generic-parameter-list check that wanted a third); it is now

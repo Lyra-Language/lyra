@@ -131,6 +131,14 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 		if err != nil {
 			return nil, nil, err
 		}
+		// Reconcile a residual width mismatch, as the tuple-literal and data-payload
+		// paths above already do. A struct literal is the third way into an aggregate
+		// and had none of this, so the one mismatch that is a loud error on a tuple
+		// would have been an llir panic here.
+		v, err = l.coerceAggregateElem(block, v, structTy.Fields[i], valExpr)
+		if err != nil {
+			return nil, nil, err
+		}
 		agg = block.NewInsertValue(agg, v, uint64(i))
 	}
 	// A `shared`-flavored construction is heap-allocated in a ref-counted box; the

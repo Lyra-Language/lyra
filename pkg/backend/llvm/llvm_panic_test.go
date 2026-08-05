@@ -117,6 +117,14 @@ let main = () -> u8 => u8(f(panic("argument")))`,
 			`let f = (n: i64) -> i64 => n
 let main = () -> u8 => u8(f(f(panic("deep"))))`,
 		},
+		// The same argument, but through a function *value* rather than a name. Only
+		// the direct-call path had the guard, so this handed a nil argument to llir
+		// and segfaulted out of lyrac; both paths now lower arguments in one place.
+		{
+			"indirect call argument",
+			`let apply = (f: (i64) -> i64) -> i64 => f(panic("indirect argument"))
+let main = () -> u8 => u8(apply((x: i64) -> i64 => x))`,
+		},
 		{"array element", `let main = () -> u8 => { let xs = [1, panic("element")]; print(xs[0]); 0 }`},
 		{"statement position", `let main = () -> u8 => { panic("statement") }`},
 		{"whole function body", `let boom = (why: string) -> i64 => panic(why)
