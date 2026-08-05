@@ -179,14 +179,20 @@ an unimported module's method is still unreachable. A file's own module wins a t
 tie that survives that is reported with a qualifier the reader can type
 (`` `dup.map(m, …)` ``) rather than broken by map-iteration order. See COMPLETED.md.
 
-**It does not subsume (a) or (b), and the remaining half is worth stating precisely.** Only
-the *method* form resolves this way. The **bare-call** form (`map(m, f)`) still goes through
-the scope chain — module → prelude → global — so the prelude's `map` still shadows an
-imported module's for a plain call, and two modules exporting one name still collide on the
-bare key. The receiver is available at a bare call too (it is argument 0, which is the whole
-premise of the desugar), so extending the same candidate gathering to `inferIdentifierCall`
-is the natural next step; the key-level fix (a)/(b) is what settles the non-receiver names,
-which have no receiver to disambiguate on and so cannot be fixed this way at all.
+**[DONE 08/04] The bare-call form resolves the same way.** `map(b, f)` now reaches what
+`b.map(f)` reaches. A bare call still resolves its *name* through the scope chain first —
+so a local declaration wins exactly as before — but when the name it lands on takes a `self`
+receiver it does not accept, `receiverFallback` gathers every reachable declaration and
+picks by receiver, which is what the method form always did. Additive by construction: only
+calls that were errors change meaning. A plain (non-receiver) function whose first argument
+does not fit is still an ordinary argument-type error, since dispatching there would turn a
+typo into a call to something else. See COMPLETED.md.
+
+**What (a)/(b) is still for.** Names with **no receiver** cannot be disambiguated this way
+at all — two modules exporting a plain `helper` still collide on the bare key, and an
+imported `pub` name still forbids the importer its own. That is the original bug, untouched:
+receiver dispatch fixes the names that have something to dispatch on, and the key-level fix
+is what settles the rest.
 
 The LSP resolves a document's whole import graph as of 08/02 (see COMPLETED.md), which leaves
 two editor features single-file where the program no longer is:

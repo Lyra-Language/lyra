@@ -245,11 +245,12 @@ func (l *lowerer) declareFunction(decl *ast.VarDeclStmt, fn *ast.LambdaExpr) err
 	if err != nil {
 		return err
 	}
-	// An **overload** is keyed by its declaration, not by its name: the name is shared
-	// with the other members, so the by-name table below could hold only one of them and
-	// every call would reach that one. See overloads.go.
+	// Recorded by **declaration** as well as by name. An overload can only be found this
+	// way — its name is shared with the other members, so the by-name table could hold
+	// just one of them — and an ordinary function needs it too, since a bare call that
+	// resolved past the scope chain reaches its callee by identity. See overloads.go.
+	l.recordByDecl(fn, declared, fn.Parameters)
 	if _, overloaded := l.overloadHead(decl); overloaded {
-		l.recordOverload(fn, declared, fn.Parameters)
 		return nil
 	}
 	key := l.funcKey(decl.Name, decl.GetLocation())
@@ -425,7 +426,7 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	// An **overloaded** callee: the member is whichever one the typechecker resolved
 	// this call to, since the name alone names several. Checked before l.funcs, which
 	// does not hold overloads at all (overloads.go).
-	if overload, ok := l.resolvedOverload(e); ok {
+	if overload, ok := l.resolvedCallee(e); ok {
 		return l.lowerDirectCall(block, e, overload.fn, overload.params)
 	}
 	key := l.funcKey(ident.Name, e.GetLocation())

@@ -650,7 +650,7 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		return tc.inferOverloadedCall(set, call)
 	}
 	if lambda, ok := sym.(*ast.LambdaExpr); ok {
-		return tc.inferLambdaCall(ident.Name, lambda, call)
+		return tc.inferLambdaCall(ident.Name, tc.bareCalleeFor(ident.Name, lambda, call), call)
 	}
 	if decl, ok := sym.(*ast.VarDeclStmt); ok {
 		lambda, ok := decl.Value.(*ast.LambdaExpr)
@@ -685,6 +685,11 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		// The signature is built from the declaration alone (lambdaSignature), never
 		// by inferring the lambda as an expression — that would re-check a body
 		// checkVarDecl has already checked.
+		// The callee may not be the one the scope chain found: a `self` function that
+		// does not take this receiver gives way to a reachable one that does (see
+		// bareCalleeFor). The recorded signature must be the chosen callee's, since an
+		// indirect call lowers through it.
+		lambda = tc.bareCalleeFor(ident.Name, lambda, call)
 		tc.typeTable.Set(ident, tc.lambdaSignature(lambda))
 		return tc.inferLambdaCall(ident.Name, lambda, call)
 	}

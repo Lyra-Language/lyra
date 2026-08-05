@@ -765,3 +765,19 @@ Three consequences worth knowing:
 
 A name used as a *value* rather than called (`let f = unwrap_or`) is an error: the members
 have different signatures, so there is no one type to hand back.
+
+**A bare call resolves like a method call** (`receiverFallback`, `bareCalleeFor`, 08/04).
+The two spellings used different machinery: a method call gathers every reachable
+declaration and picks by receiver, while a bare call resolves a *name* through the scope
+chain (module → prelude → global) and stops at the first hit. With a `map` for `Box` in an
+imported module, `b.map(f)` resolved and `map(b, f)` did not — the prelude's scope sits
+nearer than the global one an import exports into. A bare call still tries the scope chain
+first, so a local declaration wins as before; only when the name it lands on takes a `self`
+receiver it does *not* accept does it gather candidates and pick by receiver. Additive: only
+calls that were errors change meaning, and a plain non-receiver function whose first
+argument does not fit is still an ordinary argument-type error.
+
+One consequence reaches the backend: a call resolved this way finds its callee by
+**identity**, and that callee is usually an ordinary singly-declared function rather than an
+overload member — so every user function is recorded by declaration (`recordByDecl`), not
+just the overloads.

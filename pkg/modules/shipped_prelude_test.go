@@ -427,3 +427,83 @@ func TestShippedPrelude_Lowers(t *testing.T) {
 		t.Fatalf("the shipped prelude does not lower: %v", err)
 	}
 }
+
+// **A bare call resolves across modules the way a method call does.**
+//
+// The two spellings had different resolution machinery: `m.f(x)` gathers every reachable
+// declaration and picks by receiver, while `f(m, x)` resolved a *name* through the scope
+// chain — module → prelude → global — and stopped at the first hit. So with a `map` for
+// `Box` in an imported module, `b.map(f)` resolved and `map(b, f)` did not, because the
+// prelude's scope sits nearer than the global one the import exports into. Same call, same
+// receiver, two answers.
+//
+// Both forms are exercised against the *imported* module and the *prelude* in one program,
+// since the fix must not cost the prelude case its resolution.
+func TestShippedPrelude_BareCallResolvesLikeAMethodCall(t *testing.T) {
+	repo, path := shippedPreludePath(t)
+	std := filepath.Dir(filepath.Dir(path))
+
+	app := t.TempDir()
+	write(t, filepath.Join(app, "app.lyra"), `import util.box
+let main = () -> u8 => {
+  let b = Box { v: 4 }
+  let m: Maybe<i64> = Some 5
+  let viaMethod = b.map((x: i64) -> i64 => x * 2)
+  let viaCall = map(b, (x: i64) -> i64 => x * 2)
+  let preludeMethod = m.map((x: i64) -> i64 => x).unwrap_or(0)
+  let preludeCall = unwrap_or(map(m, (x: i64) -> i64 => x), 0)
+  u8(viaMethod + viaCall + preludeMethod + preludeCall)
+}`)
+	write(t, filepath.Join(app, "util", "box.lyra"), `module util.box
+pub struct Box { v: i64 }
+pub let map = pure (self: Box, f: (i64) -> i64) -> i64 => f(self.v)
+`)
+
+	if errs := analyzeWith(t, filepath.Join(app, "app.lyra"), app, std, repo).Errors(); len(errs) != 0 {
+		t.Errorf("both spellings should resolve, for the import and the prelude; got %v", errs)
+	}
+}
+
+// A **singly-declared** name shadowed by the prelude's, which reported the resolution
+// failure as a unification failure — `is_some: cannot infer type variable t from these
+// arguments` — because the scope chain had already committed to the prelude's
+// `is_some<t>(self: Maybe<t>)`.
+func TestShippedPrelude_BareCallReachesASinglyDeclaredImport(t *testing.T) {
+	repo, path := shippedPreludePath(t)
+	std := filepath.Dir(filepath.Dir(path))
+
+	app := t.TempDir()
+	write(t, filepath.Join(app, "app.lyra"), `import util.box
+let main = () -> u8 => {
+  let b = Box { v: 4 }
+  u8(if is_some(b) { 7 } else { 0 })
+}`)
+	write(t, filepath.Join(app, "util", "box.lyra"), `module util.box
+pub struct Box { v: i64 }
+pub let is_some = pure (self: Box) -> bool => self.v > 0
+`)
+
+	if errs := analyzeWith(t, filepath.Join(app, "app.lyra"), app, std, repo).Errors(); len(errs) != 0 {
+		t.Errorf("a bare call should reach the imported declaration; got %v", errs)
+	}
+}
+
+// The fallback runs **only after** the scope chain has failed, so a plain (non-receiver)
+// function whose first argument does not fit is still an ordinary argument-type error.
+// Dispatching there would turn a typo into a call to something else entirely.
+func TestShippedPrelude_BareCallToAPlainFunctionStillErrors(t *testing.T) {
+	repo, path := shippedPreludePath(t)
+	std := filepath.Dir(filepath.Dir(path))
+
+	app := t.TempDir()
+	write(t, filepath.Join(app, "app.lyra"), `let scale = (n: i64, by: i64) -> i64 => n * by
+let main = () -> u8 => u8(scale("not a number", 2))`)
+
+	errs := analyzeWith(t, filepath.Join(app, "app.lyra"), app, std, repo).Errors()
+	if len(errs) == 0 {
+		t.Fatal("a wrong first argument to a plain function should still be an error")
+	}
+	if !strings.Contains(errs[0].Message, "cannot assign") {
+		t.Errorf("expected an argument-type error, got %v", errs[0].Message)
+	}
+}

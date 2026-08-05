@@ -60,14 +60,22 @@ func (l *lowerer) overloadHead(decl *ast.VarDeclStmt) (string, bool) {
 	return head, true
 }
 
-// recordOverload registers an emitted overload under its declaration.
-func (l *lowerer) recordOverload(fn *ast.LambdaExpr, declared *ir.Func, params []ast.Parameter) {
+// recordByDecl registers an emitted function under its declaration.
+//
+// Every user function is recorded, not only an overload. The by-name table is what a call
+// normally resolves through, and it answers for the name as *this* call site sees it —
+// which is not always the declaration the typechecker picked. A bare call whose name the
+// scope chain resolved elsewhere (`receiverFallback`) reaches its callee only by identity,
+// and that callee is often an ordinary singly-declared function in another module. Keying
+// every function here costs one map entry and removes the distinction entirely.
+func (l *lowerer) recordByDecl(fn *ast.LambdaExpr, declared *ir.Func, params []ast.Parameter) {
 	l.overloads[fn] = emitted{fn: declared, params: params}
 }
 
-// resolvedOverload returns the emitted function a call was resolved to, when the callee
-// was an overloaded name.
-func (l *lowerer) resolvedOverload(e *ast.FunctionCallExpr) (emitted, bool) {
+// resolvedCallee returns the emitted function a call was resolved to, when the typechecker
+// recorded a callee for it — an overload member, or a declaration a bare call reached past
+// the scope chain.
+func (l *lowerer) resolvedCallee(e *ast.FunctionCallExpr) (emitted, bool) {
 	if l.res == nil || l.res.TypeTable == nil {
 		return emitted{}, false
 	}

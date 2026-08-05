@@ -10,6 +10,48 @@ Newest first.
 ## Dated log
 
 ### 08/04/26
+**A bare call resolves across modules the way a method call does.** `map(b, f)` now reaches
+whatever `b.map(f)` reaches.
+
+The two spellings had different machinery, and that is the whole bug. A method call has
+never used the scope chain — `ufcsFunction` gathers every reachable declaration and picks by
+receiver — while a bare call resolves a *name*, module → prelude → global, stopping at the
+first hit. So with a `map` for `Box` in an imported module, `b.map(f)` resolved and
+`map(b, f)` reported *"no overload of map takes a Box receiver"*: the prelude's scope sits
+nearer than the global one an import exports into. Same call, same receiver, two answers,
+and the desugar's own premise is that those two spellings are one call.
+
+**The fallback runs only after the scope chain has failed**, which is what makes it
+additive. A name that resolves to something accepting the receiver is untouched, so a local
+declaration still wins and nothing that compiled before changes meaning — only calls that
+were errors become resolutions. Reachability and ambiguity reuse the method form's rules
+exactly, because they are the same question asked from the other spelling rather than a
+second dispatch mechanism.
+
+Two boundaries held deliberately:
+
+- **A plain function still errors normally.** Only a *receiver* function gives way; a
+  non-`self` function whose first argument does not fit is an ordinary argument-type error.
+  Dispatching there would turn a typo into a call to something else entirely.
+- **The single-declaration case needed it as much as the overloaded one**, and reported
+  worse: a prelude `is_some<t>(self: Maybe<t>)` shadowing an imported `is_some(self: Box)`
+  produced *"cannot infer type variable t from these arguments"* — a unification failure
+  describing the symptom of a resolution that had already gone wrong.
+
+**The backend needed widening too**, which is the part that would have been easy to miss:
+a call resolved this way reaches its callee by *identity*, and that callee is usually an
+ordinary singly-declared function rather than an overload member. `l.overloads` held only
+overloads, so the typechecker resolved the call and the backend then reported `call to
+unknown function "map"`. Every user function is now recorded by declaration
+(`recordByDecl`), which costs one map entry and removes the distinction. Found by running
+the program rather than by type-checking it — the analysis was already clean at that point.
+
+**What this does not fix**, and cannot: names with **no receiver**. Two modules exporting a
+plain `helper` still collide on the bare key, and an imported `pub` name still forbids the
+importer its own. Receiver dispatch settles the names that have something to dispatch on;
+the key-level fix in todo.md is what settles the rest.
+
+### 08/04/26
 **`lyra-E016` points at the allocation.** The message is now *"`noalloc` function
 heap-allocates: an array comprehension builds a `[]T` at 2:46"* instead of a list of every
 form the language can allocate with.
