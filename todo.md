@@ -718,6 +718,36 @@ table per specialization. See COMPLETED.md.
 
 ## Method syntax for free functions (UFCS)
 
+**[DECIDED 08/04] Overloading stays receiver-keyed — no general overloading on argument
+types.** Two same-named functions without a `self` receiver remain a redeclaration error.
+Revisited deliberately; the reasons are Lyra-specific rather than a general position:
+
+- **The specificity ordering comes back.** Receiver-keyed overloading works *because*
+  overlap is refused at the declaration — different type heads, one axis, checked once in
+  one place. Whether two arbitrary signatures overlap depends on the whole type system
+  across N parameters, so it cannot be refused there and needs ranking at every call site,
+  which is exactly what the head rule exists to avoid.
+- **It fights context-directed literal inference**, which is the sharpest one. `5` stays
+  `untyped_int` and a width flows *down* onto the leaves (`propagateLiteralType`, nine call
+  sites). Overloading needs the callee's type to flow *up* from the arguments, so `f(5)`
+  against `f(i64)` and `f(u8)` has no answer without a preference rule — and any such rule
+  is pulling against a mechanism the whole typechecker leans on. Generics (`f<t>(x: t)` vs
+  `f(x: i64)`) and default arguments make it worse.
+- **Traits already give ad-hoc polymorphism**, with one canonical name, static dispatch, and
+  composition with generics through `where` bounds. `trait Abs` with impls for `i64` and
+  `f64` compiles and runs today (verified 08/04). This is the Haskell/Rust trade: typeclasses
+  instead of overloading, because overload resolution and type inference pull against each
+  other.
+
+Receiver-keyed overloading is the narrow exception on purpose: it is method *syntax* rather
+than ad-hoc polymorphism, the receiver is a single privileged position, and the head rule
+keeps it decidable where it is written.
+
+**Corollary worth stating, since it is the tempting shortcut:** the cross-module name
+collision (Modules, above) must **not** be fixed with overloading. It is a namespacing
+problem — letting `import a; import b` silently merge two unrelated `helper`s into an
+overload set is worse than today's error. The key-level fix is the right shape.
+
 **[DECIDED 07/31; BUILT 08/03]** UFCS — `x.f(y)` resolving to a free function `f(x, y)` —
 **opt-in via a first parameter named `self`**. A function written `(self: Maybe<t>, …)` is
 callable both ways; every other function stays call-only. See COMPLETED.md, and
