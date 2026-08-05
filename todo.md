@@ -10,36 +10,17 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## Known bugs
 
-- **[OPEN] An all-uppercase type name cannot be used in a struct literal.** `struct S`
-  declares fine and `S { v: 1 }` is a syntax error — in *every* position (block `let`,
-  top-level `let`, call argument, return expression). It is not about the name being short,
-  as it first looked: the affected set is any name with **no lowercase letter and no
-  underscore** — `S`, `S0`, `AB`, `HTTP2`, `A1B` — while `Sa`, `So`, `Box2` and `Point9` are
-  fine. `user_defined_type_name` (`[A-Z][a-zA-Z0-9]*`) and `const_identifier`
-  (`[A-Z][A-Z0-9_]*`) match that text at the same length, and in expression position, where
-  a constant is also legal, the lexer picks `const_identifier`.
-
-  The sibling case — an all-caps **named tuple**, `AB(1, 2)`, which failed with "cannot
-  resolve function AB" — **is fixed** (08/05): `_tuple_name` accepts either spelling
-  (`typeNameInExpr`, tree-sitter-lyra `include/helpers.js`). The struct literal cannot take
-  the same fix yet, and *the reason is a second, pre-existing bug*: **`if Point { 1 } else
-  { 0 }` is already a syntax error today**, for a PascalCase name, because `{ 1 }` fits both
-  a block and (as far as the decision point can see) a struct literal, and precedence
-  commits to the struct. Letting all-caps names start struct literals extends that to
-  constants and breaks `if MAX { 1 } else { 0 }`, which works today and is ordinary code —
-  a strictly worse trade, so it was reverted rather than shipped.
-
-  Fixing the struct half therefore means fixing the brace ambiguity first. Measured
-  attempt: `prec.dynamic` on `named_struct_literal` makes the decision a real conflict
-  (a conflict entry is inert while `prec.left` is there — tree-sitter calls it unnecessary),
-  and from there the required conflict entries cascade, the next being
-  `'if' user_defined_type_name const_identifier • '{'`. Budget it as a grammar project. The
-  corpus test `A Constant Followed by a Block Is Not a Struct` pins the reading a careless
-  fix inverts.
-
-  Juxtaposition is deliberately *not* part of any of this: `CD 5` stays a parse error for an
-  all-caps constructor because `data_constructor_expr` must keep taking a PascalCase-only
-  name — that property is what makes `MAX - 1` arithmetic rather than an application.
+Two closed 08/05, and the second was the reason the first had been stuck. **An
+all-uppercase type name could not be used in a struct literal** — `struct S` declared fine
+and `S { v: 1 }` was a syntax error in every position, for any name with no lowercase letter
+and no underscore (`S`, `AB`, `HTTP2`, `A1B`), because `user_defined_type_name` and
+`const_identifier` match that text identically and the lexer picks the constant in expression
+position. And **`if Point { 1 } else { 0 }` was a syntax error**, because precedence resolved
+`Name • {` toward the struct literal before the parser could see that `{ 1 }` is a block
+rather than a struct body. The first could not be fixed without the second: letting all-caps
+names start struct literals extends that failure to `if MAX { 1 }`, which is ordinary code.
+Both are fixed in tree-sitter-lyra; see COMPLETED.md and that repo's CLAUDE.md for the two
+dead ends measured along the way.
 
 `break`/`continue` no longer leak an enclosing statement's pending temporaries
 (closed 08/03, measured with LeakSanitizer both ways — 18 bytes before, none after). The

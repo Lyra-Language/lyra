@@ -10,6 +10,47 @@ Newest first.
 ## Dated log
 
 ### 08/05/26
+**Two parse bugs, and the second was why the first had been stuck.**
+
+**An all-uppercase type name could not be used in a struct literal.** `struct S` declared
+fine and `S { v: 1 }` was a syntax error — in every position tried: block `let`, top-level
+`let`, call argument, return expression. It was reported as being about *short* names, and
+it is not: the affected set is any name with **no lowercase letter and no underscore** —
+`S`, `S0`, `AB`, `HTTP2`, `A1B` — while `Sa`, `So`, `Box2` and `Point9` are fine.
+`user_defined_type_name` (`[A-Z][a-zA-Z0-9]*`) and `const_identifier` (`[A-Z][A-Z0-9_]*`)
+match that text at the same length, so the state-aware lexer must pick one, and in
+expression position — where a constant is also a legal expression — it picks the constant.
+Scoping it turned up two more victims of the same collision: a named tuple (`AB(1, 2)`,
+which failed with "cannot resolve function AB") and juxtaposition (`CD 5`).
+
+**`if Point { 1 } else { 0 }` was also a syntax error**, for any type name, and this is what
+blocked the first fix. `prec.left(PREC.STRUCT_LITERAL)` resolved `Name • {` statically toward
+the struct literal, so the parser committed before it could see that `{ 1 }` is a block and
+not a struct body. Letting all-caps names start struct literals extends that failure to
+`if MAX { 1 }` — ordinary code — so the struct half was **reverted** on the first attempt and
+only the tuple half shipped, with the blocker written down. Fixing the brace ambiguity
+unblocked it, and both landed together.
+
+The fix is `named_struct_literal` as a **choice of two alternatives with different precedence
+kinds**, because the name is contested by two rivals wanting opposite resolutions. With
+generic arguments (`Point::<f64> { … }`) the rival is `_tuple_name`, settled by the static
+precedence the two deliberately share, so that alternative keeps `prec`. Without them the
+rival is the bare-name reading, so that alternative takes `prec.dynamic` and three declared
+conflicts let GLR decide on the brace's contents.
+
+**Two dead ends, both found by measurement.** Putting the whole rule on `prec.dynamic` breaks
+the first contest — `_tuple_name`'s static precedence wins and `Point::<f64> { … }` stops
+parsing. Making `_tuple_name` dynamic to match fixes that and breaks parenthesized forms far
+afield, down to `(f(7), 1)`. And the corpus did **not** catch that second one; the sibling Go
+suite did, which is the case for running both before believing a grammar change. Cost: 8,206
+→ 8,262 states (+0.7%), `parser.c` +82 KB.
+
+**Juxtaposition is deliberately still PascalCase-only.** `data_constructor_expr` must keep
+taking a name that can only be a constructor, because that is what leaves `MAX - 1` with no
+competing "apply `MAX` to `-1`" reading. So `CD 5` remains an error for an all-caps
+constructor while `CD(5)` works — the one part of the collision left unfixed, on purpose.
+
+### 08/05/26
 **The front end is ~25% faster, and the reason was not on anybody's list.** The 08/05 review
 proposed ten performance fixes, ranked by reading the code: linear scans in the typechecker
 (`findDataTypeByConstructor` over every type × constructor per constructor expression,

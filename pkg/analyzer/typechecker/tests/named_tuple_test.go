@@ -189,3 +189,58 @@ let n = MAX - 1
 `, false)
 	assertNoErrors(t, res)
 }
+
+// The struct half of the same collision, unblocked 08/05 once the `Name • {` decision
+// became a GLR conflict. `struct S` could be declared but never constructed: `S { v: 1 }`
+// was a syntax error in every position.
+func TestStructLiteral_AllUppercaseTypeName(t *testing.T) {
+	for _, source := range []string{
+		`struct S {
+  v: i64,
+}
+let s = S { v: 1 }`,
+		`struct HTTP2 {
+  v: i64,
+}
+let s = HTTP2 { v: 1 }`,
+		// Every position the original report named: call argument and return expression.
+		`struct S {
+  v: i64,
+}
+let f = (s: S) -> i64 => s.v
+let n = f(S { v: 1 })`,
+		`struct S {
+  v: i64,
+}
+let mk = () -> S => S { v: 1 }`,
+	} {
+		res := parseCollectAndCheck(t, source, false)
+		assertNoErrors(t, res)
+	}
+}
+
+// A name followed by a brace that is *not* a struct body is a block, and deciding that
+// needs the brace's contents — one token past where an LR parser must choose. Precedence
+// used to settle it toward the struct literal, so `if Point { 1 } else { 0 }` was a syntax
+// error; it is a GLR conflict now. The constant case is the one that makes this matter:
+// `if MAX { … }` is ordinary code, and it is what a careless fix to the struct half breaks
+// first.
+func TestIfHeader_NameFollowedByPlainBlock(t *testing.T) {
+	for _, source := range []string{
+		`struct Point {
+  x: i64,
+}
+let n = if Point { 1 } else { 0 }`,
+		`const MAX: bool = true
+let n = if MAX { 1 } else { 0 }`,
+		// And the reading that must survive: a struct literal really *is* the condition's
+		// head here, decided by the brace holding fields rather than statements.
+		`struct Point {
+  x: i64,
+}
+let n = if Point { x: 7 }.x > 0 { 1 } else { 0 }`,
+	} {
+		res := parseCollectAndCheck(t, source, false)
+		assertNoErrors(t, res)
+	}
+}
