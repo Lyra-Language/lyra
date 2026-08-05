@@ -44,17 +44,31 @@ accumulates this per function/method (set-monotonic fixpoint) instead of a bool;
 function may allocate) and **`DetEffects = Input|Rand|Time`** (⊆ PurityEffects, so `pure` ⟹
 `det`; `det` forbids only the non-determinism sources, permitting Mut/Alloc/Output — the
 input-vs-output IO split is what lets `det` allow logging). `EffectAlloc` detection
-(`purity.go`'s `allocContext`/`buildAllocContext`): a construction expression
-(`StructInstanceExpr`/`TupleLiteralExpr`/`DataConstructorExpr`) whose recorded `TypeTable` type
-is `shared` — i.e. the value is *used* as `shared` (allocation is a use-site flavor, so an
-annotated binding `let n: shared Node = Node{…}` records the flavor onto the construction via
-`checkVarDecl`, and `allocContext.allocates` reads it via `AllocationOf`), *unless* lexically
-inside a `with`-arena block (a hard-coded discharge — Lyra has no general effect handlers).
+(`purity.go`'s `allocContext`/`buildAllocContext`): a value-**producing** expression whose
+recorded `TypeTable` type is **heap-represented**, *unless* lexically inside a `with`-arena
+block (a hard-coded discharge — Lyra has no general effect handlers). Two ways to be
+heap-represented, and they are different questions (`heapRepresented`):
+
+- a **`shared` flavor** — a use-site property, so an annotated binding
+  `let n: shared Node = Node{…}` records the flavor onto the construction via `checkVarDecl`
+  and `allocContext.allocates` reads it via `AllocationOf`. The producing forms are
+  `StructInstanceExpr`/`TupleLiteralExpr`/`DataConstructorExpr`;
+- a **dynamic array** (`ArrayLiteralExpr` recorded as `[]T`, `ArrayCompExpr`) — heap-boxed by
+  its own nature, since `lowerType` maps `[]T` to a ref-counted box *before* the flavor is
+  consulted. Added 08/04, when array `map`/`filter` reached the prelude as comprehensions and
+  `noalloc` could be claimed by a function allocating per element. The **same literal** as a
+  fixed `[N]T` is stack storage and does not count — the rule reads the recorded type, not
+  the syntax.
+
+It is asked of producing forms rather than of every expression on purpose: a `[]T`
+*identifier* is heap-represented and allocates nothing, so a type-only rule would charge
+every mention of an array to its enclosing function.
+
 `CheckPurity` is threaded the `TypeTable` for this; the AST-only `InferredEffects` helper has no
 `TypeTable` and so never sets `EffectAlloc`. A `shared` construction in a return/argument
-position (flavor not yet recorded on the construction node), implicit allocation (dynamic
-arrays/strings, escaping closures), and precise arena escape are deferred to a future
-layout/escape pass. An **unresolvable external call** (no local lambda, builtin, or type
+position (flavor not yet recorded on the construction node), implicit allocation from
+**strings** (`"a" ++ b`) and **escaping closures**, and precise arena escape are deferred to a
+future layout/escape pass — see `todo.md` for the extra decision each needs. An **unresolvable external call** (no local lambda, builtin, or type
 conversion) conservatively taints `AllEffects` (`PurityEffects | EffectAlloc`) — everything,
 including Alloc, so `noalloc` flags it too (we can't verify it doesn't allocate).
 `builtinEffects`: print/println→Output, read→Input, write→Input|Output, `await`→Input,

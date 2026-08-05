@@ -200,3 +200,55 @@ impl Loader for World {
 }`
 	assertBoundError(t, checkPurity(t, src), "lyra-E016")
 }
+
+// --- noalloc: a dynamic array is a heap box, whatever flavor it carries ---
+
+// A `[]T` literal allocates. Until 08/04 the alloc effect asked only whether a value's
+// *flavor* was `shared` — the right question for a construction, where allocation is a
+// use-site property, and the wrong one for a dynamic array, which lowers to a ref-counted
+// box before any flavor is consulted. So this was accepted, and once `map`/`filter` for
+// arrays went into the prelude as comprehensions the annotation was being claimed by
+// functions that allocate per element.
+func TestNoAlloc_DynamicArrayLiteral_Violates(t *testing.T) {
+	src := `let build = pure noalloc (n: i64) -> []i64 => [1, 2, 3]`
+	assertBoundError(t, checkPurity(t, src), "lyra-E016")
+}
+
+// A comprehension always builds a box — its length is a runtime question, so it has no
+// fixed-size form to be the cheap case.
+func TestNoAlloc_ArrayComprehension_Violates(t *testing.T) {
+	src := `let double = pure noalloc (xs: []i64) -> []i64 => [x in xs | x * 2]`
+	assertBoundError(t, checkPurity(t, src), "lyra-E016")
+}
+
+// The **same literal** as a fixed-size `[N]T` is stack storage and allocates nothing. This
+// is the assertion that fails if the rule ever keys off the syntax instead of the recorded
+// type — the two are told apart by what the literal was used as, not by how it was written.
+func TestNoAlloc_FixedSizeArrayLiteral_IsFine(t *testing.T) {
+	src := `let build = pure noalloc (n: i64) -> [3]i64 => [1, 2, 3]`
+	if errs := checkPurity(t, src); len(errs) != 0 {
+		t.Errorf("a fixed-size array is stack storage and must not count as an allocation: %v", errs)
+	}
+}
+
+// Reading through a `[]T` allocates nothing: the rule is about value-*producing* forms, not
+// about every expression whose type happens to be heap-represented. An identifier is the
+// case that would break if `heapRepresented` were asked of everything.
+func TestNoAlloc_ReadingADynamicArray_IsFine(t *testing.T) {
+	src := `let first = pure noalloc (xs: []i64) -> i64 => xs[0]`
+	if errs := checkPurity(t, src); len(errs) != 0 {
+		t.Errorf("indexing an array allocates nothing: %v", errs)
+	}
+}
+
+// The message must not say "a `shared`-typed value" any more — a reader told that would go
+// looking for a construction that is not there.
+func TestNoAlloc_MessageNamesBothWaysToAllocate(t *testing.T) {
+	errs := checkPurity(t, `let build = pure noalloc (n: i64) -> []i64 => [1, 2, 3]`)
+	if len(errs) != 1 {
+		t.Fatalf("expected 1 error, got %v", errs)
+	}
+	if !strings.Contains(errs[0].Message, "dynamic array") {
+		t.Errorf("expected the message to name the dynamic array, got %q", errs[0].Message)
+	}
+}

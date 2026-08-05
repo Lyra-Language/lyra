@@ -327,11 +327,20 @@ Still open, each refused loudly rather than approximated:
   top-level `|` is still a section separator, and a bitwise-or meant as a value is still
   parenthesized. See COMPLETED.md.
 
-**[OPEN] `noalloc` does not see an array allocation** — pre-existing, found here.
-`allocContext.allocates` counts only values whose allocation flavor is `shared`, and a
-`[]T` box is heap-allocated without being one, so `pure noalloc (…) -> []i64 => [1, 2, 3]`
-is accepted. A comprehension inherits the same hole. The fix is for the alloc effect to ask
-about the *representation* rather than the flavor.
+**[PARTIAL] `noalloc` and implicit allocation.** Arrays landed 08/04: `allocContext.allocates`
+now asks about **representation** rather than flavor, so a `[]T` literal and a comprehension
+both count, while the same literal as a fixed `[N]T` is stack storage and does not. It stays
+a question about value-*producing* forms — a `[]T` identifier is heap-represented and
+allocates nothing — so the walk asks it of the construction cases only. See COMPLETED.md.
+
+- **[OPEN] Strings.** `"a" ++ b` and `"${x}"` build a new string and are not counted. Same
+  shape as the array hole was, with one extra decision: a string *literal* is a constant, so
+  unlike `[1, 2, 3]` the literal itself does not allocate, and only the producing forms
+  (concatenation, interpolation) should be charged.
+- **[OPEN] Escaping closures.** Boxed in the dev lowering, free under Lambda Set
+  Specialization — so what `noalloc` should say depends on the tier, which is the reason
+  `noalloc` is defined against the *release* lowering in the first place. Settle that before
+  charging a closure.
 
 ## Ranges
 

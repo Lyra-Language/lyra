@@ -10,6 +10,43 @@ Newest first.
 ## Dated log
 
 ### 08/04/26
+**`noalloc` sees array allocation.** The alloc effect asks about a value's **representation**
+now, not its flavor, so `pure noalloc (…) -> []i64 => [1, 2, 3]` and a `noalloc` function
+containing a comprehension are both `lyra-E016`.
+
+The old rule — flavor is `shared` — is the *right* question for a construction, and that is
+why it was written that way: allocation there is a use-site property, the same `Node{…}`
+being stack or heap depending on how the value is used. It is the wrong question for a
+`[]T`, which lowers to a pointer to `{ rc, len, [0 x T] }` before any flavor is consulted.
+There is no flavor that makes `[1, 2, 3]` not allocate, so a function could claim `noalloc`
+and allocate on every call.
+
+It became urgent rather than theoretical when `map` and `filter` for arrays went into the
+prelude as comprehensions: the annotation was briefly on functions that allocate per
+element, which is how it was noticed. (That one was removed by hand at the time — this is
+the check that would have caught it.)
+
+Two properties the rule keeps, both worth stating because the obvious simplification loses
+them:
+
+- **It is about value-*producing* forms, not about types.** A `[]T` identifier is
+  heap-represented and allocates nothing, so `heapRepresented` is asked of the construction
+  cases in the effect walk rather than of every expression. Asking it everywhere would
+  charge every mention of an array to its enclosing function.
+- **The same literal is judged by what it was used as.** `[1, 2, 3]` as a `[]T` allocates
+  and as a `[3]i64` does not, because `allocates` reads the type the typechecker recorded
+  rather than the syntax. Pinned by a test whose two cases differ only in the return type.
+
+The diagnostic no longer says "by constructing a `shared`-typed value" — a reader told that
+about an array would go looking for a construction that is not there.
+
+Still deferred, and both are the shape the array case had: **strings** (`"a" ++ b` builds a
+new one; the extra decision is that a string *literal* is a constant, so unlike `[1, 2, 3]`
+only the producing forms should be charged) and **escaping closures** (boxed in the dev
+lowering, free under Lambda Set Specialization — so the answer depends on the tier, which is
+why `noalloc` is defined against the release lowering).
+
+### 08/04/26
 **A comprehension's result may be any expression.** `[ x in xs | "a" ++ b ]` parses, as do
 an `if`, a `match`, and a lambda in result position. `result_expr` had been a
 hand-maintained `choice` — `_math_operand`, the tuple and struct literals, an array literal

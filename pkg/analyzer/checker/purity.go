@@ -876,8 +876,12 @@ func (c *purityChecker) checkBoundedEffects(isDet, isNoAlloc bool, effects Effec
 		}
 	}
 	if isNoAlloc && effects.Has(EffectAlloc) {
+		// The message names both ways to allocate rather than only `shared`, which is
+		// what it said until dynamic arrays joined the rule (08/04) — a `[]T` is a
+		// ref-counted box whatever flavor it carries, so a reader told "a `shared`-typed
+		// value" would go looking for a construction that is not there.
 		c.reportCode(diag.CodeEffectBoundViolation, loc,
-			"`noalloc` function heap-allocates by constructing a `shared`-typed value; a `noalloc` function must not allocate")
+			"`noalloc` function heap-allocates — it constructs a `shared`-typed value or builds a dynamic array (`[]T`, including an array comprehension); a `noalloc` function must not allocate")
 	}
 }
 
@@ -1232,14 +1236,50 @@ func (a *allocContext) table() *typetable.TypeTable {
 	return a.typeTable
 }
 
-// allocates reports whether the construction expr heap-allocates: its recorded
-// type is `shared` and it is not discharged into an enclosing arena.
+// allocates reports whether a value-*producing* expr heap-allocates: its recorded type is
+// heap-represented, and it is not discharged into an enclosing arena.
+//
+// The question is about **representation, not flavor**. Until 08/04 this asked only whether
+// the flavor was `shared`, which is the right question for a construction — allocation is a
+// use-site property there, with no declaration-level flavor — and the wrong one for a
+// `[]T`, which is a ref-counted box *whatever* flavor it carries. So
+// `pure noalloc (…) -> []i64 => [1, 2, 3]` was accepted, and once `map`/`filter` for arrays
+// went into the prelude as comprehensions the annotation was being claimed on functions
+// that allocate per element.
+//
+// It stays a question about the *expression*, not merely its type: a `[]T` **identifier**
+// is heap-represented and allocates nothing, so only the producing forms are asked (the
+// `case`s in lambdaEffects/methodEffects). Asking `heapRepresented` of every expression
+// would charge every mention of an array to its function.
 func (a *allocContext) allocates(expr ast.Expression) bool {
 	if a == nil || a.typeTable == nil || a.discharged[expr] {
 		return false
 	}
 	t, ok := a.typeTable.Get(expr)
-	return ok && types.AllocationOf(t) == types.Shared
+	return ok && heapRepresented(t)
+}
+
+// heapRepresented reports whether a value of t lives in a heap box.
+//
+// Two ways to be one, and they are genuinely different questions. A `shared` **flavor** is
+// a use-site decision: the same `Node{…}` is stack or heap depending on how the value is
+// used, so the flavor recorded on the construction is what decides. A **dynamic array** is
+// heap-boxed by its own nature — `[]T` lowers to a pointer to `{ rc, len, [0 x T] }` before
+// the flavor is even consulted (`lowerType`) — so there is no flavor that makes `[1, 2, 3]`
+// not allocate.
+//
+// Deliberately *not* included yet, and both are the same shape as the array case was:
+// **strings** (`"a" ++ b` builds a new one) and **escaping closures** (boxed in the dev
+// lowering). Each needs its own decision about which producing forms to charge — a string
+// literal is a constant, so unlike `[1, 2, 3]` the literal itself does not allocate — and
+// widening the rule without that is how `noalloc` would start being wrong in the other
+// direction. See todo.md.
+func heapRepresented(t types.Type) bool {
+	if types.AllocationOf(t) == types.Shared {
+		return true
+	}
+	_, isDynamicArray := types.StripNewtype(t).(types.DynamicArrayType)
+	return isDynamicArray
 }
 
 // buildAllocContext records the TypeTable (for reading each construction's
@@ -1794,6 +1834,20 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 			if alloc.allocates(ex) {
 				found |= EffectAlloc
 			}
+		case *ast.ArrayLiteralExpr:
+			// `[1, 2, 3]` as a `[]T` allocates its box; the same literal as a fixed
+			// `[3]T` is stack storage and does not. `allocates` reads the type the
+			// typechecker recorded, so the two are told apart by what the literal was
+			// used as rather than by how it was written.
+			if alloc.allocates(ex) {
+				found |= EffectAlloc
+			}
+		case *ast.ArrayCompExpr:
+			// A comprehension always builds a `[]T` box — its length is a runtime
+			// question, so there is no fixed-size form of it to be the cheap case.
+			if alloc.allocates(ex) {
+				found |= EffectAlloc
+			}
 		case *ast.AwaitExpr:
 			// Awaiting resumes with the result of an external async operation, so
 			// its value is non-deterministic — an input effect (forbidden in
@@ -1902,6 +1956,14 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 				found |= EffectAlloc
 			}
 		case *ast.DataConstructorExpr:
+			if alloc.allocates(ex) {
+				found |= EffectAlloc
+			}
+		case *ast.ArrayLiteralExpr:
+			if alloc.allocates(ex) {
+				found |= EffectAlloc
+			}
+		case *ast.ArrayCompExpr:
 			if alloc.allocates(ex) {
 				found |= EffectAlloc
 			}
