@@ -684,10 +684,6 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		tc.typeTable.Set(ident, tc.lambdaSignature(lambda))
 		return tc.inferLambdaCall(ident.Name, lambda, call)
 	}
-	// sym is some other Named (e.g. Parameter) — fall through to lambda call
-	if lambda, ok := sym.(*ast.LambdaExpr); ok {
-		return tc.inferLambdaCall(ident.Name, lambda, call)
-	}
 	tc.addError(call.GetLocation(), SeverityError, "cannot resolve function %q", ident.Name)
 	return nil
 }

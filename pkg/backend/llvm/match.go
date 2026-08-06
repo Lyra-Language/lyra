@@ -99,6 +99,46 @@ func (l *lowerer) lowerGuardedArmBody(matched *ir.Block, guard *ast.GuardExpr, b
 	return lowerBody(bodyBlock, body)
 }
 
+// matchMerge is the value-producing half of every `match`, whatever shape its arms
+// take: the block the arms converge on, and the phi that picks whichever one ran.
+//
+// All three lowerings need exactly this and nothing more — the if-else ladder
+// (lowerMatchLadder), the `data` tag switch (lowerDataMatch) and the array ladder
+// (lowerArrayMatch) — and each carried its own copy until 08/05, including a local
+// `type incoming struct` declared three times over. The bookkeeping is small but the
+// invariant in it is not: an arm only reaches the merge **if its block is still open**,
+// so a body that diverged (a `return`, a `panic`) must contribute neither a branch nor
+// a phi incoming, and a match whose arms *all* diverged has no value at all rather than
+// an empty phi.
+type matchMerge struct {
+	block     *ir.Block
+	incomings []*ir.Incoming
+}
+
+// newMatchMerge creates the block the arms will converge on.
+func newMatchMerge(fn *ir.Func) *matchMerge {
+	return &matchMerge{block: fn.NewBlock("")}
+}
+
+// arm records one lowered arm. `end` is the block its body finished in and `val` the
+// value it produced; a sealed `end` means the arm diverged and is dropped.
+func (m *matchMerge) arm(val value.Value, end *ir.Block) {
+	if end.Term != nil {
+		return
+	}
+	end.NewBr(m.block)
+	m.incomings = append(m.incomings, ir.NewIncoming(val, end))
+}
+
+// value finishes the merge, yielding the phi and the block to keep lowering into. A
+// nil value means every arm diverged, so there is nothing to merge.
+func (m *matchMerge) value() (value.Value, *ir.Block) {
+	if len(m.incomings) == 0 {
+		return nil, m.block
+	}
+	return m.block.NewPhi(m.incomings...), m.block
+}
+
 // lowerScalarMatch lowers a `match` on a scalar scrutinee — a bool, a concrete
 // integer, a float, or a string — as an if-else ladder: each non-catch-all arm
 // becomes a comparison (`icmp`/`fcmp` for a numeric literal, a byte-equality test
@@ -137,83 +177,19 @@ func (l *lowerer) lowerScalarMatch(block *ir.Block, e *ast.MatchExpr, scrutPrim 
 	}
 	isBool := scrutPrim.Name == types.Boolean
 	signed := IsSignedInt(scrutPrim.Name)
-	fn := block.Parent
 
-	merge := fn.NewBlock("")
-	type incoming struct {
-		val value.Value
-		end *ir.Block
-	}
-	var incomings []incoming
-	lowerBody := func(b *ir.Block, body ast.Expression) error {
-		val, end, err := l.lowerExpr(b, body)
-		if err != nil {
-			return err
-		}
-		if end.Term == nil {
-			end.NewBr(merge)
-			incomings = append(incomings, incoming{val, end})
-		}
-		return nil
-	}
-
-	current := block
-	sealed := false // an unguarded catch-all consumed the fall-through
-	// Each arm's pattern bindings are scoped to that arm: reset to the bindings
-	// visible outside the match before every arm, and restore them after it.
-	armScope := l.pushLocalScope()
-	defer armScope()
-	for _, arm := range e.MatchArms {
-		armScope()
-		switch p := arm.Pattern.(type) {
-		case *ast.WildcardPattern, *ast.IdentifierPattern:
-			if ip, ok := p.(*ast.IdentifierPattern); ok && ip.Name != "_" {
-				slot := fn.Blocks[0].NewAlloca(scrutTy)
-				current.NewStore(scrut, slot)
-				l.locals[ip.Name] = slot
-			}
-			if arm.Guard == nil {
-				if err := lowerBody(current, arm.Body); err != nil {
-					return nil, nil, err
-				}
-				sealed = true
-			} else {
-				// A guarded catch-all may fail, so it doesn't seal the ladder.
-				next := fn.NewBlock("")
-				if err := l.lowerGuardedArmBody(current, arm.Guard, arm.Body, next, lowerBody); err != nil {
-					return nil, nil, err
-				}
-				current = next
-			}
-		default:
-			cond, err := l.scalarMatchTest(current, scrut, arm.Pattern, isBool, signed)
-			if err != nil {
-				return nil, nil, err
-			}
-			bodyBlock := fn.NewBlock("")
-			nextBlock := fn.NewBlock("")
-			current.NewCondBr(cond, bodyBlock, nextBlock)
-			if err := l.lowerGuardedArmBody(bodyBlock, arm.Guard, arm.Body, nextBlock, lowerBody); err != nil {
-				return nil, nil, err
-			}
-			current = nextBlock
-		}
-		if sealed {
-			break // remaining arms are unreachable after an unconditional match
-		}
-	}
-	if !sealed {
-		l.sealMatchFallthrough(current)
-	}
-
-	if len(incomings) == 0 {
-		return nil, merge, nil
-	}
-	incs := make([]*ir.Incoming, len(incomings))
-	for i, in := range incomings {
-		incs[i] = ir.NewIncoming(in.val, in.end)
-	}
-	return merge.NewPhi(incs...), merge, nil
+	// The ladder itself is lowerMatchLadder's — a scalar match is that same shape with
+	// a comparison for `test` and nothing to bind. It had its own copy of the merge
+	// block, the incoming/phi bookkeeping, the per-arm scope reset, the catch-all
+	// handling and the seal until 08/05, which is four invariants maintained twice.
+	return l.lowerMatchLadder(block, e, scrut,
+		func(b *ir.Block, pat ast.Pattern) (value.Value, error) {
+			return l.scalarMatchTest(b, scrut, pat, isBool, signed)
+		},
+		// A scalar pattern is a test, never a binding: the only name a scalar arm can
+		// introduce is a catch-all identifier, and the driver binds that from `whole`.
+		func(*ir.Block, ast.Pattern) error { return nil },
+	)
 }
 
 // scalarMatchTest builds the i1 "does the scrutinee match this pattern?" test for

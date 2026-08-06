@@ -244,7 +244,7 @@ A `shared T` lowers to a **pointer to `SharedBox(T) = { i64 rc, T }`** (`lowerTy
 inline payload out of the box (`box → field 1`) and the existing tag/pattern
 machinery runs on that first-class value; an identifier catch-all still binds the
 *box pointer* (its declared type), so the union and the whole value are threaded
-separately (`lowerAggregateMatch`'s `whole` param). The box's own last-use release
+separately (`lowerMatchLadder`'s `whole` param). The box's own last-use release
 is the ordinary managed-binding drop — reading through it consumes no reference.
 This is the prerequisite for Perceus reuse/FBIP on `shared` values (you can't
 reuse a box you can't destructure). A **nested** `shared data` sub-pattern

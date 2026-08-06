@@ -851,7 +851,7 @@ the switch).
 
 **`match` on a struct or tuple value lowers** too (`lowerStructMatch`/`lowerTupleMatch`): these
 are single-shape aggregates (no tag/switch), so both go through one shared if-else ladder
-(`lowerAggregateMatch`) — a pattern with no literal sub-pattern matches unconditionally and
+(`lowerMatchLadder`) — a pattern with no literal sub-pattern matches unconditionally and
 binds by position/name (`extractvalue` → alloca → `l.locals`), a literal sub-pattern (`{ x: 0, y
 }`, `(0, b)`) makes the arm conditional, and a `_`/identifier arm is the catch-all. The
 per-pattern test and bind are the mutually-recursive `aggPatternTest`/`aggPatternBind`, which
@@ -889,7 +889,7 @@ payload field — it `extractDataPayload`s the payload and recurses
 payload bits are meaningless but the tag comparison has already forced the AND false, and
 reading them is harmless (they stay within the union's stack blob). *Top-level* (`match m {
 Some(0) => .., Some(x) => .., None => .. }`): `lowerDataMatch` detects a payload test via
-`dataMatchHasPayloadTest` and falls back to the shared if-else ladder (`lowerAggregateMatch`
+`dataMatchHasPayloadTest` and falls back to the shared if-else ladder (`lowerMatchLadder`
 with `aggPatternTest`/`aggPatternBind` closures over the `data` type) instead of the `switch` —
 each arm's condition is the tag check ANDed with its payload tests, first-match-wins; the
 no-payload-test case keeps the compact `switch`.
@@ -899,8 +899,9 @@ no-payload-test case keeps the compact `switch`.
 **Match arm guards lower** (`Some(x) if x > 0`): a guard is a boolean test evaluated *after* the
 pattern matches and its variables are bound, so it may reference them — `lowerGuardedArmBody`
 cond-branches on the guard to the arm body (true) or to the next arm (false, exactly like a
-failed pattern test). It plugs into both ladders (`lowerScalarMatch`, `lowerAggregateMatch`); a
-guarded arm never seals the ladder (it can fall through), and a `data` match with any guard
+failed pattern test). It plugs into every ladder — `lowerMatchLadder`, which `lowerScalarMatch`
+delegates to, and the array one — so a guarded arm never seals the ladder (it can fall
+through), and a `data` match with any guard
 takes the ladder fallback (`matchHasGuard`) rather than the `switch`. The typechecker checks
 each guard condition with the pattern's bindings in scope and requires it to be a `bool`
 (`checkMatchExpr`); a guarded arm never counts toward exhaustiveness (it may fail), which was
@@ -942,7 +943,7 @@ expression decode for escapes), not raw text — and an identifier catch-all bin
 **A `shared` aggregate scrutinee** (data/struct/tuple) is a pointer to its ref-counted box, so
 the match unboxes it first (`unboxSharedData` — load the inline payload out of `box → field 1`)
 and every path above runs on the first-class union; an identifier catch-all binds the *box
-pointer* (its declared type), so `lowerAggregateMatch` threads that `whole` value separately
+pointer* (its declared type), so `lowerMatchLadder` threads that `whole` value separately
 from the unboxed `scrut`, and the box's own drop is the ordinary last-use release (reading
 through it consumes no reference). This is the prerequisite for Perceus reuse/FBIP on `shared`
 values.

@@ -175,19 +175,20 @@ func (tc *TypeChecker) checkTypeDecl(decl *ast.TypeDeclStmt) {
 		tc.resolveType(decl.Type, decl.GetLocation())
 		return
 	}
-	switch decl.Type.(type) {
-	case types.NamedStructType:
-		tc.checkStructDecl(decl)
-	case *types.ConstrainedType:
-		tc.checkConstrainedTypeDecl(decl)
+	// Only a constrained type has anything left to check at its declaration. A
+	// struct, data or tuple declaration is checked by being *used*: its field types
+	// resolve through resolveType at each reference, and there is no declaration-level
+	// rule for it to violate. There was an empty checkStructDecl dispatched here until
+	// 08/05, which read as "structs are checked" and did nothing.
+	if ct, ok := decl.Type.(*types.ConstrainedType); ok {
+		tc.checkConstrainedTypeDecl(decl, ct)
 	}
 }
 
 // checkConstrainedTypeDecl validates the constraints on a constrained-type
 // declaration. Currently this means compiling every PatternConstraint regex
 // at type-declaration time so users see syntax errors immediately.
-func (tc *TypeChecker) checkConstrainedTypeDecl(decl *ast.TypeDeclStmt) {
-	ct := decl.Type.(*types.ConstrainedType)
+func (tc *TypeChecker) checkConstrainedTypeDecl(decl *ast.TypeDeclStmt, ct *types.ConstrainedType) {
 	for _, c := range ct.Constraints {
 		pc, ok := c.(*types.PatternConstraint)
 		if !ok {
@@ -210,10 +211,6 @@ func regexPatternBody(p string) string {
 		return p[2 : len(p)-1]
 	}
 	return p // already stripped or bare pattern string
-}
-
-func (tc *TypeChecker) checkStructDecl(decl *ast.TypeDeclStmt) {
-
 }
 
 func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {

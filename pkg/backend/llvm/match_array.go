@@ -50,21 +50,13 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, arrType typ
 	}
 
 	fn := block.Parent
-	merge := fn.NewBlock("")
-	type incoming struct {
-		val value.Value
-		end *ir.Block
-	}
-	var incomings []incoming
+	merge := newMatchMerge(fn)
 	lowerBody := func(b *ir.Block, body ast.Expression) error {
 		val, end, err := l.lowerExpr(b, body)
 		if err != nil {
 			return err
 		}
-		if end.Term == nil {
-			end.NewBr(merge)
-			incomings = append(incomings, incoming{val, end})
-		}
+		merge.arm(val, end)
 		return nil
 	}
 
@@ -121,9 +113,8 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, arrType typ
 					if err := l.releaseTopManagedFrame(end); err != nil {
 						return err
 					}
-					end.NewBr(merge)
-					incomings = append(incomings, incoming{val, end})
 				}
+				merge.arm(val, end)
 				return nil
 			}
 			// A guard is tested *after* the pattern's bindings exist, so a `[h, ...t]`
@@ -158,15 +149,8 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, arrType typ
 	if !sealed {
 		l.sealMatchFallthrough(current)
 	}
-
-	if len(incomings) == 0 {
-		return nil, merge, nil
-	}
-	incs := make([]*ir.Incoming, len(incomings))
-	for i, in := range incomings {
-		incs[i] = ir.NewIncoming(in.val, in.end)
-	}
-	return merge.NewPhi(incs...), merge, nil
+	val, end := merge.value()
+	return val, end, nil
 }
 
 // lowerArrayPatternMatch tests one `[...]` array-pattern arm against the scrutinee

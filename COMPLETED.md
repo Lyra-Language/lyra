@@ -10,6 +10,43 @@ Newest first.
 ## Dated log
 
 ### 08/05/26
+**Three clarity cleanups, two of which were the codebase telling readers something
+false.**
+
+**One match ladder instead of two, and one merge instead of three.**
+`lowerScalarMatch` had its own copy of the if-else ladder that `lowerAggregateMatch`
+already expressed as a driver taking `test` and `bind` closures — the same merge block,
+incoming/phi bookkeeping, per-arm scope reset, catch-all handling and seal, differing
+only in the two closures. A scalar match is that shape with a comparison for `test` and
+nothing to bind, so it delegates now, and the driver is renamed **`lowerMatchLadder`**
+since it is no longer aggregate-only. The `data` tag switch and the array ladder stay
+separate — a tag switch is not a ladder, and an array pattern's test spans several blocks
+rather than yielding one condition in the current block, which is a different *shape*
+rather than a different filling — but all three shared one more thing, a local
+`type incoming struct` and its phi epilogue declared three times over. That is
+**`matchMerge`** now, which also gives the invariant a name: an arm reaches the merge only
+if its block is still open, so a diverged body contributes neither a branch nor an
+incoming, and a match whose arms all diverge has no value rather than an empty phi. Net
+−57 lines across the three files.
+
+**`llvm.go`'s package comment was actively wrong.** A ~120-line status inventory lived
+there and had drifted into announcing default parameters, destructuring parameters, string
+interpolation and higher-order calls as "deferred with loud errors" long after each
+lowered, describing `Emit` as a SKELETON emitting a placeholder body, and listing 14 of the
+package's 35 files. It is now a short pointer to README.md — which is the inventory — plus
+the two cross-cutting invariants (refuse rather than guess; never panic on a well-typed
+program) and an accurate file map. This is the same drift the workspace CLAUDE.md records
+against its own duplicated package map, with the same fix.
+
+**Dead code in the typechecker.** `inferIdentifierCall` repeated a `*ast.LambdaExpr` type
+assertion that had already returned twenty lines earlier, so the block was unreachable and
+its comment ("sym is some other Named (e.g. Parameter)") described something that could not
+happen — a `Parameter` would not satisfy that assertion either. And `checkStructDecl` was an
+empty function still dispatched from `checkTypeDecl`, which read as "structs are checked"
+while doing nothing; the switch is now an `if` for the one type that has declaration-level
+rules, with a note that a struct is checked by being used.
+
+### 08/05/26
 **A call could not be the first thing inside parentheses**, and the cause was a grammar
 rule no legal program could have used. `(f(7))`, `(f(7), 1)`, `(f(7) + 1, 1)` and
 `((f(7)), 1)` were all syntax errors — while `(1, f(7))` was fine, which is the tell: by

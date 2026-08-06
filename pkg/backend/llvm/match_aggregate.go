@@ -30,56 +30,58 @@ func (l *lowerer) lowerStructMatch(block *ir.Block, e *ast.MatchExpr, st types.N
 	if _, ok := scrut.Type().(*lltypes.StructType); !ok {
 		return nil, nil, fmt.Errorf("llvm: struct match scrutinee did not lower to a struct (%s)", scrut.Type())
 	}
-	return l.lowerAggregateMatch(block, e, whole,
+	return l.lowerMatchLadder(block, e, whole,
 		func(b *ir.Block, pat ast.Pattern) (value.Value, error) {
 			return l.aggPatternTest(b, scrut, pat, st)
 		},
 		func(b *ir.Block, pat ast.Pattern) error {
 			return l.aggPatternBind(b, scrut, pat, st)
-		},
-	)
+		})
+
 }
 
-// lowerAggregateMatch lowers a `match` as an if-else ladder driven by the `test`
-// and `bind` closures. Used for a single-shape aggregate (a struct or a tuple —
-// no variant tag, so no `switch`) and, when a payload value test rules out the
-// tag `switch`, for a `data` scrutinee too (its closures encode the tag check in
-// `test`). A `_`/identifier arm is an unconditional catch-all (an identifier binds
-// the whole value). Every other arm calls `test` for its condition in the current
-// block (nil → unconditional) and, on the taken path, `bind` for its sub-pattern
-// bindings; the scrutinee-specific pattern shape lives entirely in those two
-// closures. An `if` guard (any arm, catch-all included) is a further test after
-// binding — when it fails, control falls through to the next arm, so a guarded
-// arm never seals the ladder (lowerGuardedArmBody). Arms feed a merge phi, so the
-// match is a value like `if`; the unmatched fall-through is `unreachable`.
+// lowerMatchLadder lowers a `match` as an if-else ladder driven by the `test` and
+// `bind` closures. It is the one ladder in the backend: a struct or tuple scrutinee
+// (single shape, no variant tag), a `data` scrutinee whose payload value test rules
+// out the tag `switch` (its closures encode the tag check in `test`), and a **scalar**
+// — bool, integer, float or string — whose `test` is a comparison and whose `bind`
+// does nothing, since the only name a scalar arm introduces is a catch-all identifier
+// this driver binds itself.
 //
-// `whole` is the value an identifier catch-all binds to (the whole scrutinee) —
-// the inline aggregate for a `stack` value, but the *box pointer* for a `shared`
-// scrutinee, whose bound name has the box-pointer type, not the unboxed union. The
-// per-arm pattern shape (which references the unboxed value) lives in the `test`
-// and `bind` closures, so this driver only needs `whole`.
-func (l *lowerer) lowerAggregateMatch(
+// A `_`/identifier arm is an unconditional catch-all (an identifier binds the whole
+// value). Every other arm calls `test` for its condition in the current block (nil →
+// the pattern always matches) and, on the taken path, `bind` for its sub-pattern
+// bindings; the scrutinee-specific pattern shape lives entirely in those two closures.
+// An `if` guard (any arm, catch-all included) is a further test after binding — when it
+// fails, control falls through to the next arm, so a guarded arm never seals the ladder
+// (lowerGuardedArmBody). Arms feed a merge phi, so the match is a value like `if`; the
+// unmatched fall-through is sealed by sealMatchFallthrough.
+//
+// `whole` is the value an identifier catch-all binds to (the whole scrutinee) — the
+// inline aggregate for a `stack` value, but the *box pointer* for a `shared` scrutinee,
+// whose bound name has the box-pointer type, not the unboxed union. The per-arm pattern
+// shape (which references the unboxed value) lives in the `test` and `bind` closures,
+// so this driver only needs `whole`.
+//
+// Scalar matches had a second copy of all of this until 08/05 — merge block, incoming
+// and phi bookkeeping, per-arm scope reset, catch-all handling, seal — differing only
+// in the two closures. Array matches still have their own (match_array.go): their
+// pattern test spans several blocks rather than yielding one condition in the current
+// block, which is a different shape, not a different filling.
+func (l *lowerer) lowerMatchLadder(
 	block *ir.Block, e *ast.MatchExpr, whole value.Value,
 	test func(b *ir.Block, pat ast.Pattern) (value.Value, error),
 	bind func(b *ir.Block, pat ast.Pattern) error,
 ) (value.Value, *ir.Block, error) {
 	fn := block.Parent
-	merge := fn.NewBlock("")
-	type incoming struct {
-		val value.Value
-		end *ir.Block
-	}
-	var incomings []incoming
+	merge := newMatchMerge(fn)
 
 	lowerArmInto := func(b *ir.Block, body ast.Expression) error {
 		val, end, err := l.lowerExpr(b, body)
 		if err != nil {
 			return err
 		}
-		if end.Term == nil {
-			end.NewBr(merge)
-			incomings = append(incomings, incoming{val, end})
-		}
+		merge.arm(val, end)
 		return nil
 	}
 
@@ -149,15 +151,8 @@ func (l *lowerer) lowerAggregateMatch(
 	if !sealed {
 		l.sealMatchFallthrough(current)
 	}
-
-	if len(incomings) == 0 {
-		return nil, merge, nil
-	}
-	incs := make([]*ir.Incoming, len(incomings))
-	for i, in := range incomings {
-		incs[i] = ir.NewIncoming(in.val, in.end)
-	}
-	return merge.NewPhi(incs...), merge, nil
+	val, end := merge.value()
+	return val, end, nil
 }
 
 // matchCatchAll reports whether a pattern is an unconditional catch-all (a
@@ -414,14 +409,14 @@ func (l *lowerer) lowerTupleMatch(block *ir.Block, e *ast.MatchExpr, tt types.Tu
 	if _, ok := scrut.Type().(*lltypes.StructType); !ok {
 		return nil, nil, fmt.Errorf("llvm: tuple match scrutinee did not lower to a struct (%s)", scrut.Type())
 	}
-	return l.lowerAggregateMatch(block, e, whole,
+	return l.lowerMatchLadder(block, e, whole,
 		func(b *ir.Block, pat ast.Pattern) (value.Value, error) {
 			return l.aggPatternTest(b, scrut, pat, tt)
 		},
 		func(b *ir.Block, pat ast.Pattern) error {
 			return l.aggPatternBind(b, scrut, pat, tt)
-		},
-	)
+		})
+
 }
 
 // dataMatchHasPayloadTest reports whether any arm of a `data` match imposes a
@@ -484,14 +479,14 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 	// the tag check ANDed with its payload tests (aggPatternTest) and then its
 	// guard, first-match-wins preserved.
 	if dataMatchHasPayloadTest(e, dt) || matchHasGuard(e) {
-		return l.lowerAggregateMatch(block, e, whole,
+		return l.lowerMatchLadder(block, e, whole,
 			func(b *ir.Block, pat ast.Pattern) (value.Value, error) {
 				return l.aggPatternTest(b, scrut, pat, dt)
 			},
 			func(b *ir.Block, pat ast.Pattern) error {
 				return l.aggPatternBind(b, scrut, pat, dt)
-			},
-		)
+			})
+
 	}
 
 	fn := block.Parent
@@ -527,12 +522,7 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 		}
 	}
 
-	mergeBlock := fn.NewBlock("")
-	type incoming struct {
-		val value.Value
-		end *ir.Block
-	}
-	var incomings []incoming
+	merge := newMatchMerge(fn)
 	var cases []*ir.Case
 	var defaultBlock *ir.Block
 
@@ -585,10 +575,7 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 			end.NewCall(l.free, reuseToken)
 		}
 		l.reuseToken = nil
-		if end.Term == nil {
-			end.NewBr(mergeBlock)
-			incomings = append(incomings, incoming{val, end})
-		}
+		merge.arm(val, end)
 	}
 
 	if defaultBlock == nil {
@@ -601,14 +588,10 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 	}
 	block.NewSwitch(tag, defaultBlock, cases...)
 
-	if len(incomings) == 0 {
+	phi, mergeBlock := merge.value()
+	if phi == nil {
 		return nil, mergeBlock, nil // every arm diverged (e.g. all `return`)
 	}
-	incs := make([]*ir.Incoming, len(incomings))
-	for i, in := range incomings {
-		incs[i] = ir.NewIncoming(in.val, in.end)
-	}
-	phi := mergeBlock.NewPhi(incs...)
 	end, err := l.dropReclaimedPayload(mergeBlock, reuseToken, scrut, dt)
 	if err != nil {
 		return nil, nil, err
