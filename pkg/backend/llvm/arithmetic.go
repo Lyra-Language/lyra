@@ -68,6 +68,30 @@ func (l *lowerer) literalRecordedFloatType(e ast.Expression) (*lltypes.FloatType
 	return nil, false
 }
 
+// lowerNotBooleanExpr lowers `!x` as `xor i1 x, true`, which is the canonical
+// i1 complement — not `icmp eq x, false`, which is the same thing one instruction
+// later and gives InstCombine something to undo.
+//
+// It is deliberately *not* routed through the short-circuit machinery that `&&`
+// and `||` use: those exist because their right operand must not be evaluated, and
+// `!` has one operand which is always evaluated. So there is no new block here,
+// and the caller's insertion point is whatever lowering the operand left behind.
+//
+// The typechecker has already established the operand is `bool`
+// (checkNotBooleanExpr), so a non-i1 here means that guarantee broke and is a loud
+// error rather than a silent truncation — backend rule 5.
+func (l *lowerer) lowerNotBooleanExpr(block *ir.Block, e *ast.NotBooleanExpr) (value.Value, *ir.Block, error) {
+	operand, block, err := l.lowerExpr(block, e.Expression)
+	if err != nil {
+		return nil, nil, err
+	}
+	it, ok := operand.Type().(*lltypes.IntType)
+	if !ok || it.BitSize != 1 {
+		return nil, nil, fmt.Errorf("llvm: `!` expects a bool operand, got %s", operand.Type())
+	}
+	return block.NewXor(operand, constant.True), block, nil
+}
+
 func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinaryOpExpr) (value.Value, *ir.Block, error) {
 	left, block, err := l.lowerExpr(block, e.Left)
 	if err != nil {

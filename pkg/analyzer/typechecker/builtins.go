@@ -128,6 +128,30 @@ func isBuiltinPanicFn(name string) bool {
 	return name == "panic"
 }
 
+// isBuiltinReadLineFn reports whether name is the compiler-provided `read_line`.
+// Resolved exactly like print/panic — by name in inferIdentifierCall, only after
+// scope resolution misses, so a user binding of the same name shadows it.
+//
+// `read_line() -> Maybe<string>` reads one line from stdin with the line
+// terminator removed, and is the program's only way to get input. Two decisions
+// are worth stating because both had a cheaper alternative:
+//
+//   - **It returns `Maybe<string>`, not `string`.** EOF has to be distinguishable
+//     from a blank line, and with a bare `string` it is not — the two are both
+//     `""`. That is not a theoretical loss: the natural shape for reading input is
+//     a loop, and a loop that cannot see EOF spins forever the moment stdin
+//     closes. `None` at EOF makes the terminating case the one the reader has to
+//     handle, which is the whole argument for having `Maybe` at all.
+//   - **It is a builtin rather than a prelude function**, unlike `parse_i64`,
+//     which is written in Lyra. The line has to come from libc, and Lyra has no
+//     FFI — so unlike parsing, this genuinely cannot be expressed in the language.
+//     Anything that *can* be belongs in the prelude, where it is readable and
+//     testable; keeping the builtin surface to what is actually primitive is what
+//     stops this registry from growing a standard library inside the compiler.
+func isBuiltinReadLineFn(name string) bool {
+	return name == "read_line"
+}
+
 // isPrintableType reports whether print/println can format a value of type t:
 // a string, any integer or float, a bool, or a rune. Each has a backend
 // formatting path (write for strings, snprintf for numbers, "true"/"false" for

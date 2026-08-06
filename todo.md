@@ -8,6 +8,41 @@ status report.
 Tags: **[OPEN]** not started · **[PARTIAL]** landed in part · **[DECIDED]** settled, not
 built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberately later.
 
+## I/O and the number-guessing program
+
+Console input and string→int parsing landed 08/05 (`read_line() -> Maybe<string>` as a
+builtin; `parse_i64` in `std/prelude.lyra`, written in Lyra). See COMPLETED.md. What that
+exercise turned up, roughly in order of how much it costs a program that wants to be
+written today:
+
+- **[OPEN] There is no randomness.** `Random.global()` is an entry in
+  `checker/effects.go`'s `builtinEffects` table (tagged `EffectRand`) and **nothing else**:
+  no signature in the typechecker, no lowering. So it passes `lyrac check` with no
+  diagnostic at all and dies in the backend with `llvm: unsupported method call "global"` —
+  a front-end hole as much as a missing feature, since rule 5 says the backend refuses what
+  the front end accepted for a *reason*, not what it never looked at. It is the last thing
+  the guessing game needs.
+- **[OPEN] A `match` arm whose body block ends in an assignment does not lower.**
+  `match m { Some v => { x = v; }, None => { x = 0; } }` fails with `llvm: block has no
+  value (empty, or last statement is not an expression)`. A `match` used as a *statement*,
+  for its effect, is ordinary imperative code, and every arm currently has to end in an
+  expression — so the workaround is to restructure into `if`/`else`, which is exactly
+  backwards for a language whose sum types are its main idiom.
+- **[OPEN] `break` inside a `match` arm is not in scope.** `None => break` reports
+  `undefined identifier "break"` — the arm body is checked as an expression, and the jump
+  forms are statements. Together with the item above, this is what stops the natural
+  read-until-EOF loop from being written as a `match`.
+- **[OPEN] `for flag {}` does not parse.** The condition field is a `boolean_expr`, and a
+  bare identifier is not one — `for done == true {}` is the workaround, which no one would
+  write by choice. Widening the condition to admit a `_bool_operand` is the obvious fix; the
+  hazard is the usual one in this grammar region (todo's juxtaposition notes), so verify
+  against corpus rather than against conflict warnings.
+- **[OPEN] No string length or slicing.** `s.len()` is array-only
+  (`builtinMethodSignature`), and there is no trim. `parse_i64` sidesteps both by walking
+  runes with `for c in s`, and `read_line` strips its own terminator so nothing needs
+  trimming yet — but the first program that wants to validate input before parsing it will
+  want both.
+
 ## Known bugs
 
 Two closed 08/05, and the second was the reason the first had been stuck. **An

@@ -436,6 +436,17 @@ The active areas are the typechecker (match exhaustiveness — see
 `pkg/analyzer/typechecker/README.md`) and the FP/imperative purity work (see
 `pkg/analyzer/checker/README.md`).
 
+**Console input landed 08/05**: `read_line() -> Maybe<string>` (`pkg/backend/llvm/input.go`)
+is the program's only input, and the only builtin returning an **owned** managed value —
+which needed `calleeIsOwningBuiltin` in the ownership pass, because the unresolved-callee
+default treats a *result* as borrowed and that direction leaks rather than being leak-safe.
+Its companion `parse_i64` is in `std/prelude.lyra`, **written in Lyra**: the line has to come
+from libc and there is no FFI, so input cannot be expressed in the language, while parsing
+can — and anything that can belongs in the prelude rather than the builtin registry. See
+COMPLETED.md, and that backend README's `read_line` section for why the call site must emit
+no branches (a merge block is neither case `flushStmtTemps` handles, which released the
+string before the `match` consuming it).
+
 **UFCS landed 08/03**: `m.unwrap_or(0)` resolves to a free function whose first parameter
 is named `self`, by rewriting the call to pass the receiver as its first argument
 (`typechecker_ufcs.go`, and that README's last section). The standard library's combinators

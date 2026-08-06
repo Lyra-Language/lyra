@@ -150,6 +150,42 @@ func (tc *TypeChecker) canonicalKind(name string, loc ast.Location) string {
 	return ""
 }
 
+// canonicalTypeName is canonicalKind's inverse: given a kind ("Result"/"Maybe"),
+// it returns the *source name* of the declaration stamped with that kind. It is
+// what a compiler-synthesized type of canonical kind must be built from — a
+// builtin whose signature mentions `Maybe<T>` (today `read_line`) has a kind in
+// hand and needs a name to put in a ParameterizedType.
+//
+// Two things it deliberately does not do. It does not assume the name is
+// "Maybe": the `@builtin(Maybe)` marker confers the identity and the spelling is
+// free, so an `@builtin(Maybe) data Option<t>` must yield "Option". And it reads
+// `decl.Name` rather than the map key, per CLAUDE.md rule 4 — a key is
+// module-qualified for a private or prelude-shadowing declaration, so using it
+// would produce a "type" name no source file could ever write.
+//
+// The scan is over all declarations rather than a lookup, because there is no
+// name to look up — that is the whole question being asked. It is O(types) on a
+// path taken once per `read_line` call site, and the alternative (an index built
+// at collection) is a second place for the canonical identity to live, which
+// rule 4 is specifically about not having.
+func (tc *TypeChecker) canonicalTypeName(kind string, loc ast.Location) (string, bool) {
+	if tc.symTable == nil {
+		return "", false
+	}
+	for _, decl := range tc.symTable.Types {
+		if decl != nil && decl.CanonicalKind == kind {
+			return decl.Name, true
+		}
+	}
+	// No declaration carries the kind. Fall back to the bare name only if it also
+	// resolves to that kind — matching canonicalKind's own legacy fallback for a
+	// program with no `data Maybe` declaration anywhere.
+	if tc.canonicalKind(kind, loc) == kind {
+		return kind, true
+	}
+	return "", false
+}
+
 // enclosingReturnKind returns the kind ("Result"/"Maybe") and — for a Result —
 // the error type E of the return type of the lambda body currently being
 // checked, or found=false when there is no enclosing function or its return type

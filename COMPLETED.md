@@ -10,6 +10,90 @@ Newest first.
 ## Dated log
 
 ### 08/05/26
+**Console input and `parse_i64` — a program can finally read a number from a user.**
+Both halves of what the number-guessing exercise needed, minus randomness. The split
+between them is the point: **`read_line` is a builtin because it has to be** (the line
+comes from libc and Lyra has no FFI), and **`parse_i64` is written in Lyra in
+`std/prelude.lyra` because it can be**. Anything expressible in the language belongs in
+the prelude where it is readable, testable and replaceable; keeping the builtin surface
+to what is genuinely primitive is what stops the compiler growing a standard library
+inside itself.
+
+**`read_line() -> Maybe<string>`, not `-> string`.** EOF has to be distinguishable from a
+blank line, and with a bare `string` it is not — both are `""`. That is not a theoretical
+loss: the natural shape for reading input is a loop, and a loop that cannot see EOF spins
+forever the moment stdin closes. The guessing game demonstrates it either way — with the
+`Maybe`, a closed stdin ends the game; without it, the program prints "that isn't a whole
+number" until killed. `None` at EOF makes termination the case the reader must handle,
+which is the argument for having `Maybe` at all.
+
+Three things in the shim (`input.go`, `lyra_read_line`) that were decisions rather than
+details. It reads with **`getchar`** rather than `getline`/`fgets`, because those need the
+`stdin` global whose *symbol* differs by platform (`__stdinp` on macOS, `stdin` on glibc)
+— a host conditional inside otherwise target-independent IR. It reads **straight into a
+ref-counted box** (header + capacity, `realloc`'d as it grows), so the result is an
+ordinary owned heap string that the existing release and drop glue already understand. And
+it **returns the `Maybe` union itself**, doing the null test internally, so the call site
+emits no branches.
+
+**That last one was a real use-after-free, and the shape of it is worth keeping.**
+`flushStmtTemps` releases an owned temporary at the statement's *end* block when the temp
+was produced in the statement's *start* block, and otherwise **in its own production
+block** — the latter because a temp produced inside a branch is undefined on the path not
+taken. A **merge** block is neither case. The first version branched at the call site and
+returned a merge block, so the owned `Maybe<string>` was released *there* — before the
+`match` consuming it ran its switch. The program printed a line of blanks with the right
+length instead of the input, which reads as a string-encoding bug rather than a lifetime
+one. Making the call a single instruction is what makes an owned builtin result behave
+exactly like an ordinary function call, which is what the temp machinery is written
+against.
+
+**The ownership pass needed a new predicate, in the direction that is not leak-safe.** A
+builtin has neither a `LambdaExpr` nor a `LambdaType`, so it lands on the unresolved-callee
+default — *borrowed*. For arguments that default is the safe bias (transfer, i.e. leak);
+for a **result** it is the wrong direction: a consuming site retains a value that is already
++1, and a discarded call is never released at all. `calleeIsOwningBuiltin` says so
+explicitly, as the result-side counterpart of the existing `calleeIsBorrowingBuiltin`.
+Measured both ways with LeakSanitizer on Linux: reverting the rule leaks **848 bytes in 5
+allocations**, exactly one per line read; with it, clean.
+
+**`parse_i64` accumulates negatively**, which looks wrong and is not. The i64 range is
+asymmetric — there is no `+9223372036854775808` to mirror the minimum — so a
+magnitude-then-negate parser cannot represent its own most negative input and would have to
+reject `-9223372036854775808`, a perfectly good i64. Building on the negative side covers
+the whole range in one path (Go's strconv does the same, for the same reason). The range
+guard runs *before* each digit is folded in rather than checking the result after, because
+there is no result to check: arithmetic traps on overflow here, so `acc * 10 - d` on a
+too-long input would abort the program instead of returning the `None` the function exists
+to return. It is also why the minimum is never written as a literal — it is not
+representable in `IntegerLiteralExpr.Value` (an `int64`), the open >64-bit-literal gap — so
+the final digit is bounded by 8 or 7 according to the sign instead.
+
+Tested against the **real** `std/prelude.lyra` through the resolver rather than a copy
+pasted into the test, since a copy would be a second implementation free to drift from the
+one users get (`llvm_input_test.go`, `buildAndRunWithPrelude`).
+
+**`!` lowers, and it had been grouping the wrong way.** `!x` is `xor i1 x, true`. It had
+type-checked since long before it lowered, so it reached the backend as "expression
+lowering not implemented for `*ast.NotBooleanExpr`" and no program using `!` could be
+built — which is exactly why nobody had noticed that **`!a && b` parsed as `!(a && b)`**.
+`!`'s operand was `$.expression`, so it absorbed the `&&`: the opposite grouping from every
+C-family language, and silent, because both readings are well-typed `bool`. `PREC.UNARY` on
+the rule could not fix it — a precedence does not stop a wider operand rule from absorbing
+more — so the operand was narrowed to a postfix expression (`_not_operand`), which still
+reaches `parenthesized_expr` so `!(a && b)` says the other thing. Parser cost was mild:
+441 corpus tests pass, no new conflicts.
+
+The regression tests assert on an observable **side effect** rather than on the result,
+because the two readings usually agree on the value and differ only in whether the right
+operand is evaluated — `if !a && side()` takes the same branch under both, and only a
+`println` inside `side` distinguishes them.
+
+**Still missing for the guessing game: randomness.** `Random.global()` is an entry in
+`checker/effects.go`'s table and nothing else — it passes `lyrac check` clean and dies in
+the backend with "unsupported method call \"global\"". See todo.md.
+
+### 08/05/26
 **Three clarity cleanups, two of which were the codebase telling readers something
 false.**
 

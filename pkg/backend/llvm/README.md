@@ -186,6 +186,21 @@ would need it are released in their own block by the statement flush before a si
 is lowered. It is kept as a guarantee rather than a demonstrated filter — see COMPLETED.md
 (08/03) for why that trade was taken rather than relying on the structural argument.
 
+### Logical not lowers
+
+`!x` is `xor i1 x, true` (`lowerNotBooleanExpr`, `arithmetic.go`). It type-checked long before
+it lowered — reaching the backend as "expression lowering not implemented for
+`*ast.NotBooleanExpr`", so no program using `!` could be built at all.
+
+That is also why a **precedence** bug rode along with it undetected: `!`'s grammar operand was
+`$.expression`, so `!a && b` parsed as `!(a && b)` — the opposite grouping from every C-family
+language, and silent, since both readings are well-typed `bool`. Narrowing the operand to a
+postfix expression (`_not_operand`, tree-sitter-lyra) fixed it; `PREC.UNARY` on the rule could
+not, because a precedence does not stop a wider operand rule from absorbing more. Pinned by
+`TestExec_NotBindsTighterThanAnd`/`...Or`, which assert on an observable **side effect** rather
+than the result: both readings usually agree on the value and differ only in whether the right
+operand is evaluated.
+
 ### Bitwise and shift operators lower
 
 `arithmetic.go`. `&`/`|`/`~` are a plain `and`/`or`/`xor`; prefix `~x` is `xor x, -1` (LLVM
@@ -1135,6 +1150,50 @@ refinement). `layout.go` provides the llir type toolkit — `LLVMPrimitive`, `Is
 builtin overflow-arithmetic methods (`typechecker/builtins.go`), the `stack`/`shared`
 representation (ALLOCATION.md), and the `data` tagged-union layout (DATA_LAYOUT.md) are the
 settled lowering decisions; SIMD is a roadmap (SIMD.md).
+
+### `read_line` lowers (`input.go`, 08/05)
+
+**`read_line() -> Maybe<string>`** is the program's only console input, and the only builtin
+that *returns* an owned managed value. It is intercepted in `lowerFunctionCallExpr` beside
+`print`/`panic`, after the user-function lookup, so a user binding shadows it.
+
+The runtime shim (`ensureReadLineRuntime`, `lyra_read_line`) is emitted into the module like
+the refcount shims, so `clang out.ll` stays self-contained. Three decisions in it are
+load-bearing:
+
+- **It reads with `getchar`**, not `getline`/`fgets`. Those need the `stdin` global, whose
+  *symbol* is platform-dependent (`__stdinp` on macOS, `stdin` on glibc) — a host conditional
+  in otherwise target-independent IR. `getchar` needs no such global.
+- **It reads straight into a ref-counted box** (header + capacity, `realloc`'d as it grows),
+  so what comes back is an ordinary owned heap string that release and drop glue already
+  understand — no scratch buffer, no copy, and no "string that came from input" special case.
+- **It returns the `Maybe` union itself**, doing the null test and both constructions
+  internally, so the *call site emits no branches*. That is not tidiness. `flushStmtTemps`
+  releases a temporary at the statement's end block when the temp was produced in the
+  statement's start block, and otherwise **in its own production block** (because a temp
+  produced inside a branch is undefined on the other path). A merge block is neither case, so
+  an earlier version that branched at the call site and returned a merge block had the owned
+  `Maybe<string>` released *in that merge block* — before the `match` consuming it ran its
+  switch. It printed a line of blanks instead of the input. Keeping the call one instruction
+  makes an owned builtin result behave exactly like an ordinary function call, which is what
+  the temp machinery is written against.
+
+The line terminator is consumed and not returned, and a trailing `\r` goes with it. EOF with
+bytes already read is a final unterminated line; EOF with nothing read is `None` — which is
+the whole reason the return type is `Maybe<string>` rather than `string`, since a bare string
+cannot tell EOF from a blank line and the natural read loop then never terminates.
+
+The ownership pass needs `calleeIsOwningBuiltin` for this: a builtin has neither a
+`LambdaExpr` nor a `LambdaType`, so it falls to the unresolved-callee default, which treats a
+**result** as borrowed. That default is leak-safe for arguments and the wrong direction for a
+result — the consuming site retains a +1 value (a leak) and a discarded call is never released
+at all. Verified by reverting the rule under LeakSanitizer on Linux: 848 bytes across 5
+allocations, one per line read (`TestExec_ReadLineUnderASan`).
+
+Parsing is deliberately **not** here: `parse_i64` is written in Lyra in `std/prelude.lyra`.
+The line has to come from libc and Lyra has no FFI, so input genuinely cannot be expressed in
+the language; parsing can, and anything that can belongs in the prelude where it is readable
+and replaceable.
 
 ## Emitted symbol names
 

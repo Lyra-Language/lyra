@@ -124,6 +124,20 @@ var builtinEffects = map[string]Effect{
 	// Input — world → program. The returned value depends on external state, so
 	// it is non-deterministic: forbidden in both `pure` and `det`.
 	"read": EffectInput,
+	// `read_line` consumes a line of stdin. Input for the obvious reason (the value
+	// comes from outside), but note it is also *destructive* — the line is gone, so
+	// two identical calls do not return the same thing. That is what Input already
+	// means for `det` purposes, so it needs no bit of its own; recorded because
+	// "reads external state" undersells it.
+	//
+	// It allocates too: the returned string owns heap bytes (`lyra_read_line`
+	// mallocs them), so it is not `noalloc`. That is not expressible here — this
+	// table is consulted for the purity ladder, while allocation is charged by
+	// *form* in allocContext (todo.md's `noalloc` section) — and is the reason the
+	// EffectAlloc bit is not set: setting it here would be the only entry doing so
+	// and would not reach the pass that decides `noalloc`. Left for whenever a
+	// builtin's allocation is charged at all; today no builtin's is.
+	"read_line": EffectInput,
 	// A write returns a status (bytes written / error) the program can branch on,
 	// so external state can leak back into the computation — tagged Input
 	// (non-deterministic, forbidden in `det`) as well as Output.

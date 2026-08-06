@@ -614,6 +614,9 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		if isBuiltinPanicFn(ident.Name) {
 			return tc.inferPanicCall(call)
 		}
+		if isBuiltinReadLineFn(ident.Name) {
+			return tc.inferReadLineCall(call)
+		}
 		// A name that exists but belongs privately to another module gets the
 		// privacy diagnostic rather than "undefined": the distinction between "no
 		// such function" and "not yours to call" is the whole point of the rule.
@@ -745,6 +748,36 @@ func (tc *TypeChecker) inferPanicCall(call *ast.FunctionCallExpr) types.Type {
 			"panic: message must be a string, got %s", promoteToDefault(argType))
 	}
 	return types.NeverType{}
+}
+
+// inferReadLineCall type-checks `read_line()` and gives it the type
+// `Maybe<string>` — see isBuiltinReadLineFn for why that is the return type.
+//
+// The `Maybe` is the program's *canonical* one, reached through the kind stamped
+// at collection rather than by writing the name "Maybe" here. That matters because
+// the canonical type's spelling is deliberately free (the `@builtin(Maybe)` marker
+// confers the identity, not the name), so a hard-coded "Maybe" would build a type
+// naming whatever the user happens to have declared — which is precisely the type
+// the marker says is *not* the canonical one. It also means a program with no
+// prelude gets a diagnostic saying what is missing, instead of a
+// ParameterizedType pointing at an undeclared name that fails later and further
+// away.
+func (tc *TypeChecker) inferReadLineCall(call *ast.FunctionCallExpr) types.Type {
+	if len(call.Arguments) != 0 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"read_line: expected 0 argument(s), got %d", len(call.Arguments))
+	}
+	name, ok := tc.canonicalTypeName("Maybe", call.GetLocation())
+	if !ok {
+		tc.addError(call.GetLocation(), SeverityError,
+			"read_line returns a Maybe, and this program has no canonical Maybe type "+
+				"(it is normally the prelude's)")
+		return nil
+	}
+	return types.ParameterizedType{
+		Name:          name,
+		TypeArguments: []types.Type{types.PrimitiveType{Name: types.String}},
+	}
 }
 
 // inferDirectLambdaCall type-checks a call where the callee is a bare lambda

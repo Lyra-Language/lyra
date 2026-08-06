@@ -1197,6 +1197,16 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	if lam == nil && calleeType != nil {
 		resultOwned = isOwnedReturn(calleeType.ReturnType.TypeModifier)
 	}
+	// A compiler-provided builtin has neither a LambdaExpr nor a LambdaType, so it
+	// lands on the "unresolved callee" default above — *borrowed*. That default is
+	// the leak-safe one for arguments, but for a **result** it is the unsafe
+	// direction: `read_line` hands back a freshly malloc'd string at +1, and calling
+	// that borrowed makes the consuming site retain it (+2 for one allocation, a
+	// leak) while a discarded call is never released at all. So an owning builtin
+	// has to say so explicitly.
+	if lam == nil && calleeType == nil && calleeIsOwningBuiltin(e) {
+		resultOwned = true
+	}
 	if resultOwned {
 		if !needOwned {
 			a.table.ReleaseTemp[e] = true
@@ -1275,6 +1285,26 @@ func calleeIsBorrowingBuiltin(e *ast.FunctionCallExpr) bool {
 		return true
 	}
 	return false
+}
+
+// calleeIsOwningBuiltin reports whether e is a direct call to a compiler-provided
+// builtin that returns an **owned** (+1) managed value, which the caller is
+// therefore responsible for releasing.
+//
+// It is the result-side counterpart of calleeIsBorrowingBuiltin, and separate from
+// it because the two answer different questions about different halves of a call —
+// `print` borrows its argument and returns nothing; `read_line` takes nothing and
+// returns an owned string. Folding them into one "builtin conventions" predicate
+// would mean a builtin with neither property still having to appear in it.
+//
+// Callers gate this on the name not being shadowed by a user function (lam == nil),
+// matching the typechecker's and backend's resolution order.
+func calleeIsOwningBuiltin(e *ast.FunctionCallExpr) bool {
+	id, ok := e.Function.(*ast.IdentifierExpr)
+	if !ok {
+		return false
+	}
+	return id.Name == "read_line"
 }
 
 // paramOwnsArgument / isOwnedReturn mirror the typechecker's ownership predicates

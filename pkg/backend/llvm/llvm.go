@@ -45,6 +45,7 @@
 //	  array_comp.go       array comprehensions
 //	  strings.go          string fat pointers: literals, equality, ++ concatenation
 //	  print.go            print/println, per-type formatting
+//	  input.go            read_line: the stdin shim and its Maybe<string> result
 //	  arithmetic.go       math, comparisons, &&/||, numeric conversions, width coercions
 //	  rounding.go         x.floor()/.ceil()/.round() via LLVM intrinsics
 //	  trap.go             checked arithmetic and the trap runtime; the diverged() guard
@@ -254,6 +255,7 @@ type lowerer struct {
 	// until ensureRCRuntime runs; all five are populated together.
 	malloc      *ir.Func // libc malloc
 	free        *ir.Func // libc free
+	readLine    *ir.Func // lyra_read_line: one line of stdin into a fresh box (input.go)
 	rcAlloc     *ir.Func // lyra_rc_alloc: malloc a box, rc = 1
 	rcRetain    *ir.Func // lyra_rc_retain: rc += 1 (pinned no-op)
 	rcRelease   *ir.Func // lyra_rc_release: rc -= 1, drop + free at 0 (pinned no-op)
@@ -624,6 +626,8 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		return nil, nil, fmt.Errorf("llvm: unbound identifier %q", e.Name)
 	case *ast.BooleanBinaryOpExpr:
 		return l.lowerBooleanBinaryOpExpr(block, e)
+	case *ast.NotBooleanExpr:
+		return l.lowerNotBooleanExpr(block, e)
 	case *ast.MathBinaryOpExpr:
 		return l.lowerMathBinaryOpExpr(block, e)
 	case *ast.MathAssignOpExpr:

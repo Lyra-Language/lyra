@@ -274,7 +274,7 @@ func globalNames(program *ast.Program, symTable *symbols.SymbolTable) map[string
 	// shadows the builtin for the typechecker; treating it as global here would
 	// only mean *not* capturing it, which surfaces as a loud unbound-identifier
 	// error in the backend rather than wrong code.)
-	for _, name := range []string{"print", "println"} {
+	for _, name := range []string{"print", "println", "read_line"} {
 		out[name] = true
 	}
 	for _, stmt := range program.Statements {
