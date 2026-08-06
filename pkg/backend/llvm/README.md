@@ -747,6 +747,35 @@ share a binding, and scalars are exempt since they're passed by value.
 
 ## Pattern matching
 
+### A match may be a statement (08/06)
+
+An arm body is **value-optional**, exactly as an `if` branch is: it goes through
+`lowerBranchValue`, so a block body whose last statement is an assignment simply comes back
+with no value. Until 08/06 the arm bodies went through `lowerExpr`, which routes a block to
+`lowerBlock` and *requires* a value — so `match m { Some v => { x = v; }, None => { x = 0; } }`
+failed with "block has no value", and every statement-position match had to be rewritten as an
+`if`/`else` chain. `if` never had the problem, because it had been using the value-optional
+helper all along; the two helpers answer the same question and only one of them was reaching
+the arms.
+
+**Four sites lower an arm body** — the shared ladder (`lowerMatchLadder`: scalar, struct,
+tuple), the `data` tag switch, and two helpers in the array match — so a partial fix leaves the
+identical source failing under a different scrutinee, which is the remote symptom rule 8
+describes.
+
+`matchMerge` carries the bookkeeping: a **reaching** arm with no value sets `void`, and
+`value()` then yields nothing rather than a phi over a nil operand. That is a different case
+from the one it already handled — a **diverged** arm has a sealed block and contributes no edge
+at all, whereas a void arm reaches the merge and control continues past the match. Arms may
+mix: one ending in an expression beside one ending in an assignment makes the match a statement
+and discards the stray value.
+
+The consumer side needed a guard for the same reason. `lowerVarDecl` knew about a *diverging*
+initializer but not a *void* one, so `let r = if c { x = 1 } else { x = 2 }` dereferenced a nil
+`init.Type()` and **crashed the compiler** — a pre-existing violation of the never-panic
+invariant, now an error naming the binding. Binding a void expression is not rejected by the
+typechecker (only warned as unused), so the backend is where it is caught.
+
 ### [head, ...tail] lowers
 
 **`[head, ...tail]` lowers** (07/29): the tail is a **fresh** `[]T` box — the one array binding

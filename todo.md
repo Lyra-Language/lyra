@@ -33,16 +33,15 @@ write today:
   with no typechecker signature and no lowering. Either implement it beside `random_seed`
   (it is the smaller job — one libc call, no generator) or drop the entry. Leaving it is
   what let the random one masquerade as built for months.
-- **[OPEN] A `match` arm whose body block ends in an assignment does not lower.**
-  `match m { Some v => { x = v; }, None => { x = 0; } }` fails with `llvm: block has no
-  value (empty, or last statement is not an expression)`. A `match` used as a *statement*,
-  for its effect, is ordinary imperative code, and every arm currently has to end in an
-  expression — so the workaround is to restructure into `if`/`else`, which is exactly
-  backwards for a language whose sum types are its main idiom.
+- **[DONE 08/06] A `match` arm may end in an assignment** — a `match` used as a
+  *statement*, for its effect. The four arm-body sites lowered through `lowerExpr`, which
+  requires a block value; they use `lowerBranchValue` now, the same value-optional helper
+  `if` branches have always used. See COMPLETED.md.
 - **[OPEN] `break` inside a `match` arm is not in scope.** `None => break` reports
   `undefined identifier "break"` — the arm body is checked as an expression, and the jump
-  forms are statements. Together with the item above, this is what stops the natural
-  read-until-EOF loop from being written as a `match`.
+  forms are statements. This is now the *only* thing stopping the natural read-until-EOF
+  loop from being a `match`: with statement arms landed, `match read_line() { … }` reads
+  correctly as long as no arm wants to `break`.
 - **[OPEN] `for flag {}` does not parse.** The condition field is a `boolean_expr`, and a
   bare identifier is not one — `for done == true {}` is the workaround, which no one would
   write by choice. Widening the condition to admit a `_bool_operand` is the obvious fix; the

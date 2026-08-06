@@ -697,6 +697,18 @@ func (l *lowerer) lowerVarDecl(block *ir.Block, vds *ast.VarDeclStmt) (*ir.Block
 	if diverged(init, block) {
 		return block, nil
 	}
+	// A **void** initializer is the other way a value can be missing, and it is not
+	// the same case: `diverged` above means control never gets here, whereas this
+	// means control does get here with nothing to store — `let r = if c { x = 1 }
+	// else { x = 2 }`, or the same shape written as a `match`. The typechecker does
+	// not reject binding a void expression today, so the backend has to, and it must
+	// do so as an error rather than by dereferencing the nil: `init.Type()` below
+	// segfaulted the compiler on exactly this input, which is the "never panic on a
+	// well-typed program" invariant rather than a missing feature.
+	if init == nil {
+		return nil, fmt.Errorf("llvm: %q is bound to an expression that produces no value "+
+			"(its branches or arms end in a statement rather than an expression)", vds.Name)
+	}
 	// Alloca in the *entry* block (mem2reg only promotes entry-block allocas).
 	entry := block.Parent.Blocks[0]
 	slot := entry.NewAlloca(init.Type())

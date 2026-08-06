@@ -10,6 +10,65 @@ Newest first.
 ## Dated log
 
 ### 08/06/26
+**A `match` arm may end in an assignment — a `match` used as a statement.** It failed
+with "block has no value (empty, or last statement is not an expression)", so
+`match m { Some v => { x = v; }, None => { x = 0; } }` did not compile and every
+statement-position match had to be rewritten as an `if`/`else` chain. Backwards for a
+language whose sum types are its main idiom, and the reason the guessing game's read
+loop was written with `is_none()`/`unwrap_or` instead of the `match` it wanted to be.
+
+The cause is small and the shape is the interesting part: **`if` never had this
+problem**. Its branches go through `lowerBranchValue`, which routes a block body to
+`lowerBlockStmts` and lets it come back with no value; the arm bodies went through
+`lowerExpr`, which routes a block to `lowerBlock` and *requires* one. Two helpers for
+the same question — "lower this body, value optional" — and only one of them was used
+by the arms. They now use the same one.
+
+**Four sites, not one.** The arm body is lowered in the shared ladder
+(`lowerMatchLadder`, covering scalar, struct and tuple scrutinees), in the `data` tag
+switch, and in *two* helpers inside the array match. Fixing a subset would have left
+the identical source failing with a different scrutinee — the remote-symptom shape
+rule 8 is about — so the tests run one case per scrutinee form.
+
+`matchMerge` gained the bookkeeping that makes it safe: a **reaching** arm with no
+value marks the whole match void, so `value()` returns nothing instead of building a
+phi over a nil operand. That is deliberately not the same as the case already handled —
+an arm that *diverged* has a sealed block and contributes no edge at all, while a void
+arm still reaches the merge and control still continues past the match. Mixing arms is
+allowed and does the obvious thing: with one arm ending in an expression and another in
+an assignment, the match is a statement and the stray value is discarded.
+
+**A pre-existing segfault came with it, in `if` rather than in `match`.**
+`lowerVarDecl` guarded a *diverging* initializer (`let x = panic("…")`) but not a
+**void** one, and the two are different — diverging means control never reaches the
+store, void means it does reach it with nothing to store. So `let r = if c { x = 1 }
+else { x = 2 }` dereferenced a nil `init.Type()` and **crashed the compiler**, which is
+the "a well-typed program must never panic the backend" invariant rather than a missing
+feature. It is now an error naming the binding. The typechecker does not reject binding
+a void expression (it only warns the binding is unused), so the backend is where this
+has to be caught; making it a *type* error is a language decision, not a bug fix.
+
+Verified by reverting: the four sites restored to `lowerExpr` fail 12 of the new
+subtests. Full suite on macOS and on Linux under ASan + LeakSanitizer — worth running
+here because an arm holding a managed value through the merge is exactly where a
+release goes missing.
+
+The guessing game now reads the way it should:
+
+```lyra
+match read_line() {
+  None => { println("Giving up? The number was ${secret}."); done = true; },
+  Some line => match line.parse_i64() {
+    None => println("That isn't a whole number — try again."),
+    Some g => { … },
+  },
+}
+```
+
+Still open, and now the only thing keeping that loop from being one `match`: `break`
+inside an arm is not in scope (`undefined identifier "break"`). See todo.md.
+
+### 08/06/26
 **`lyrac build` produces an executable.** It emitted `<name>.ll` and printed the `clang`
 command to run by hand; it now runs it — IR to a temp file, `clang <ir> -lm -o <exe>`, and
 the artifact is `<name>` beside the source. `-o`, `--keep-ll`, `--emit-llvm` (the old

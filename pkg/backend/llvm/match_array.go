@@ -52,7 +52,7 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, arrType typ
 	fn := block.Parent
 	merge := newMatchMerge(fn)
 	lowerBody := func(b *ir.Block, body ast.Expression) error {
-		val, end, err := l.lowerExpr(b, body)
+		val, end, err := l.lowerBranchValue(b, body)
 		if err != nil {
 			return err
 		}
@@ -102,7 +102,7 @@ func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, arrType typ
 				return nil, nil, err
 			}
 			armBody := func(b *ir.Block, body ast.Expression) error {
-				val, end, err := l.lowerExpr(b, body)
+				val, end, err := l.lowerBranchValue(b, body)
 				if err != nil {
 					return err
 				}

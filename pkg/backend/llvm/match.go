@@ -113,6 +113,12 @@ func (l *lowerer) lowerGuardedArmBody(matched *ir.Block, guard *ast.GuardExpr, b
 type matchMerge struct {
 	block     *ir.Block
 	incomings []*ir.Incoming
+	// void records that some arm reached the merge without producing a value — a
+	// `match` used as a *statement*, whose arms end in an assignment or another
+	// statement form. The whole match then has no value, exactly as a one-armed or
+	// void `if` has none (lowerIf's "reaching branch is void" rule), rather than a
+	// phi over a nil operand.
+	void bool
 }
 
 // newMatchMerge creates the block the arms will converge on.
@@ -127,13 +133,27 @@ func (m *matchMerge) arm(val value.Value, end *ir.Block) {
 		return
 	}
 	end.NewBr(m.block)
+	// A *reaching* arm with no value makes the match void. Note the two nil cases are
+	// different and only one lands here: an arm that **diverged** returned above with
+	// its block already sealed and contributes nothing, while an arm that merely
+	// produced no value still reaches the merge and control still continues past the
+	// match — there is just nothing to phi.
+	if val == nil {
+		m.void = true
+		return
+	}
 	m.incomings = append(m.incomings, ir.NewIncoming(val, end))
 }
 
 // value finishes the merge, yielding the phi and the block to keep lowering into. A
 // nil value means every arm diverged, so there is nothing to merge.
 func (m *matchMerge) value() (value.Value, *ir.Block) {
-	if len(m.incomings) == 0 {
+	// A void arm means the match is a statement, so there is no value even though
+	// other arms may have produced one — mixing them into a phi would give the match
+	// a value on some paths and not others. (The typechecker has already established
+	// the arms agree; a mix here means the match is being used for effect and one arm
+	// happens to end in an expression.)
+	if m.void || len(m.incomings) == 0 {
 		return nil, m.block
 	}
 	return m.block.NewPhi(m.incomings...), m.block

@@ -77,7 +77,10 @@ func (l *lowerer) lowerMatchLadder(
 	merge := newMatchMerge(fn)
 
 	lowerArmInto := func(b *ir.Block, body ast.Expression) error {
-		val, end, err := l.lowerExpr(b, body)
+		// lowerBranchValue, not lowerExpr: an arm body is value-*optional*, exactly as
+		// an `if` branch is. A block body whose last statement is an assignment has no
+		// value, and requiring one made a `match` used as a statement fail to lower.
+		val, end, err := l.lowerBranchValue(b, body)
 		if err != nil {
 			return err
 		}
@@ -565,7 +568,7 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 		// consumes the token (a construction writes into the reclaimed box) or, failing
 		// to consume it, frees it below.
 		l.reuseToken = reuseToken
-		val, end, err := l.lowerExpr(armBlock, arm.Body)
+		val, end, err := l.lowerBranchValue(armBlock, arm.Body)
 		if err != nil {
 			return nil, nil, err
 		}

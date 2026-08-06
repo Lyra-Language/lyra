@@ -124,6 +124,15 @@ because each was learned from a real failure, and none is local to one package.
    `det`". Fixing two of the three would have been worse than fixing none — a call charged
    no effect by the inference while still reported as impure by the walk.
 
+   **A fourth landed 08/06, and it is the "two helpers, one question" variant.** An arm
+   body was lowered at four sites through `lowerExpr`, which requires a block value, while
+   `if` branches went through `lowerBranchValue`, which does not — so a `match` used as a
+   *statement* (arms ending in an assignment) failed to lower while the identical `if` had
+   always worked. Two helpers answering "lower this body, value optional", and only one of
+   them reaching the arms. Same lesson as the missing switch case: when a question has more
+   than one answer in the tree, the copies drift, and here the drift was old enough that the
+   feature simply looked unimplemented.
+
    The durable fix for a switch with more than one caller is to stop having more than one
    of it. The type-variable walk was three switches (typechecker `collectTypeVars`, backend
    `mentionsTypeVar`, and the generic-parameter-list check that wanted a third); it is now
