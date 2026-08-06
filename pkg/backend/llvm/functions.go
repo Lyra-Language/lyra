@@ -444,6 +444,8 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 			return l.lowerPanicCall(block, e)
 		case "read_line":
 			return l.lowerReadLineCall(block, e)
+		case "random_seed":
+			return l.lowerRandomSeedCall(block, e)
 		}
 		return nil, nil, fmt.Errorf("llvm: call to unknown function %q", ident.Name)
 	}

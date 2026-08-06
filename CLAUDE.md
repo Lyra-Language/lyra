@@ -114,6 +114,16 @@ because each was learned from a real failure, and none is local to one package.
    through a function value segfaulted the compiler inside llir. The lesson those two add
    is that a *second* copy is enough: neither had three.
 
+   **A third instance landed 08/05, and it had *three* copies rather than two.** The
+   purity pass asks "what does this call call?" in three places — `lambdaEffects`,
+   `methodEffects`, and the reporting walk in `checkCallPurity` — each a ladder over
+   `MethodTable.Get` → `GetBound` → the name. None had an arm for a **builtin method**, so
+   `x.wrapping_mul(y)` fell through all three to the unresolved-callee default
+   (`AllEffects`) and was charged as reading input *and* allocating. The symptom was remote
+   in the usual way: not "wrapping_mul is broken" but "the prelude's PRNG cannot be marked
+   `det`". Fixing two of the three would have been worse than fixing none — a call charged
+   no effect by the inference while still reported as impure by the walk.
+
    The durable fix for a switch with more than one caller is to stop having more than one
    of it. The type-variable walk was three switches (typechecker `collectTypeVars`, backend
    `mentionsTypeVar`, and the generic-parameter-list check that wanted a third); it is now
@@ -446,6 +456,29 @@ can — and anything that can belongs in the prelude rather than the builtin reg
 COMPLETED.md, and that backend README's `read_line` section for why the call site must emit
 no branches (a merge block is neither case `flushStmtTemps` handles, which released the
 string before the `match` consuming it).
+
+**Randomness landed 08/05**, and its shape is the same division of labour as `read_line`:
+`random_seed() -> u64` (`pkg/backend/llvm/random.go`) is the only builtin — one word of OS
+entropy via `getentropy` — while the generator (`Rng`, `next_u64`, `below`, `between`,
+`random_below`) is ordinary Lyra in `std/prelude.lyra`. A PRNG is arithmetic; asking the OS
+for entropy is not.
+
+Keeping the **seed** as the primitive is what makes `det` usable with randomness, and it is
+not enforced by a rule anywhere — it falls out of effect inference. A seeded generator only
+mutates its own receiver (`EffectMut`, which `det` permits), so a seeded draw is `det`-legal
+and reproducible; `rng_from_entropy`/`random_below` reach `random_seed`, so inference gives
+*them* `EffectRand` and `det` refuses them.
+
+It also required fixing a pre-existing hole that had made the design impossible: a **builtin
+method call** (`x.wrapping_mul(y)`, `x.floor()`, `xs.len()`) reaches the purity pass as a
+`MemberExpr` callee whose dotted name matches nothing, so it fell to the unresolved-callee
+default — `AllEffects` — and was charged as reading input *and* allocating. Explicit wrapping
+arithmetic was therefore unusable from any `pure`/`det`/`noalloc` function, which is exactly
+the code that wants it. The typechecker now publishes the resolution
+(`typetable.MethodTable.SetBuiltinMethod`) rather than the checker re-deriving it from the
+name — hazard 9's rule. **There were three copies of that dispatch ladder** (`lambdaEffects`,
+`methodEffects`, and the reporting walk in `checkCallPurity`); all three needed the same arm,
+which is hazard 8 again.
 
 **UFCS landed 08/03**: `m.unwrap_or(0)` resolves to a free function whose first parameter
 is named `self`, by rewriting the call to pass the receiver as its first argument

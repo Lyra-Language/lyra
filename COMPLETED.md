@@ -10,6 +10,81 @@ Newest first.
 ## Dated log
 
 ### 08/05/26
+**Randomness — and the number-guessing program is complete.** `random_seed() -> u64` is
+the only builtin: one word of OS entropy. Everything else — `Rng`, `next_u64`, `below`,
+`between`, `random_below`, `random_between` — is ordinary Lyra in `std/prelude.lyra`.
+Same division of labour as `read_line` beside `parse_i64`, and for the same reason: a
+PRNG is arithmetic and arithmetic is expressible; asking the operating system for entropy
+is not.
+
+**Keeping the *seed* as the primitive is what makes `det` usable with randomness, and
+nothing enforces it — it falls out of bottom-up effect inference.** A seeded generator
+only mutates its own receiver, so `rng.below(100)` carries `EffectMut`, which `det`
+permits, and a program holding a seeded `Rng` is reproducible. `rng_from_entropy` and
+`random_below` reach `random_seed`, so inference gives *them* `EffectRand` and `det`
+refuses them. Nobody had to enumerate which randomness is deterministic: drawing from a
+seed you were given is, and asking for a seed you were not is not. Had the builtin been
+`random_below` instead, every draw would carry the Rand bit and `det` code could not draw
+at all.
+
+**That design was impossible until a pre-existing hole was fixed, and the hole is the
+most interesting thing here.** A **builtin method** call — `x.wrapping_mul(y)`,
+`x.floor()`, `xs.len()` — reaches the purity pass as a `MemberExpr` callee. The pass
+derives the dotted name `x.wrapping_mul`, finds it in no table, and falls to the
+unresolved-callee default: `AllEffects`. So every builtin method was charged as reading
+external input *and* heap-allocating, which made the explicit wrapping/saturating
+arithmetic unusable from any `pure`, `det` or `noalloc` function — precisely the code
+that wants it, and precisely the functions that want to be `det`. The symptom was remote
+in the usual way: not "wrapping_mul is broken" but "the prelude's `next_u64` cannot be
+marked `det`".
+
+The fix follows hazard 9 rather than re-deriving the answer: the typechecker
+**publishes** the resolution (`typetable.MethodTable.SetBuiltinMethod`) at the one site
+that definitively knows, and the checker reads it. Re-deriving it from the property name
+would have been a second copy of a settled question *and* blind to the receiver's type —
+so a user's own `wrapping_mul` on their own type would have been silently declared pure.
+
+**And it was three copies, not two.** The purity pass asks "what does this call call?" in
+`lambdaEffects`, in `methodEffects`, and in the reporting walk in `checkCallPurity`. All
+three are ladders over `MethodTable.Get` → `GetBound` → the name; none had a builtin arm.
+Fixing two of the three would have been *worse* than fixing none — a call charged no
+effect by the inference while still reported as impure by the walk. Hazard 8's note that
+"a second copy is enough" now has an instance with a third.
+
+**`below` rejects rather than taking a modulo.** `next_u64() %% bound` is not uniform:
+2^64 values do not divide evenly into `bound` buckets, so low residues get one extra value
+each. The bias is negligible for a small bound and total for a large one, which is the
+worst possible shape — it never appears in the case you test. The cutoff is
+`m - ((m %% bound) + 1) %% bound`, where neither the `+ 1` nor the subtraction can
+overflow. Note `~u64(0)` for the u64 maximum: it is not writable as a literal
+(`IntegerLiteralExpr.Value` is an `int64`, the open >64-bit-literal gap), and
+complementing zero is the spelling that does not need it.
+
+**Seed 0 is redirected, not rejected.** xorshift maps 0 to 0, so a zero-seeded generator
+emits zero forever; and 0 is exactly what someone reaching for the simplest fixed seed
+would write. `rng_seeded` substitutes xorshift64's usual default rather than panicking on
+the most natural input a caller has.
+
+`getentropy` is the entropy source — on both targets (macOS 10.12+, glibc 2.25+), unlike
+`getrandom` (Linux-only) or `arc4random_buf` (glibc 2.36+), and needing no `FILE*`, so it
+avoids the platform-dependent `stdin` symbol that shaped `read_line`. The slot is filled
+with `time(NULL)` **before** the call rather than after a failure test: POSIX leaves the
+buffer unspecified on failure, so checking the return value and then reading an untouched
+buffer would be seeding from an uninitialized stack word.
+
+**`Random.global()` is gone.** It had been a `builtinEffects` entry naming nothing — no
+typechecker signature, no lowering — so a program writing it got a clean `lyrac check`
+followed by `llvm: unsupported method call "global"`. The existing
+`TestDet_AmbientRandom_Violates` used it, and kept its own promise on the way out: it
+asserts the diagnostic names *randomness* rather than the conservative Input fallback, and
+swapping the source made it fail with exactly the fallback message it was written to rule
+out.
+
+Still open and now visible: `Rng.seeded(42)` type-checks and dies in the backend the same
+way `Random.global()` did — a member call on a type name is not rejected by the front end.
+That is why the constructors are bare (`rng_seeded`), and it is recorded in todo.md.
+
+### 08/05/26
 **Console input and `parse_i64` — a program can finally read a number from a user.**
 Both halves of what the number-guessing exercise needed, minus randomness. The split
 between them is the point: **`read_line` is a builtin because it has to be** (the line

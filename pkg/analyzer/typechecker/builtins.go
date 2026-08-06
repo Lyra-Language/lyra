@@ -152,6 +152,29 @@ func isBuiltinReadLineFn(name string) bool {
 	return name == "read_line"
 }
 
+// isBuiltinRandomSeedFn reports whether name is the compiler-provided
+// `random_seed`. Resolved exactly like print/panic/read_line — by name in
+// inferIdentifierCall, after scope resolution misses.
+//
+// `random_seed() -> u64` draws one word of **entropy from the operating system**,
+// and that is all it does. It is deliberately not a random-number *generator*:
+// the generator (`Rng`, `next_u64`, `below`, `random_below`) is ordinary Lyra in
+// `std/prelude.lyra`, because a PRNG is arithmetic and arithmetic is expressible.
+// Only the entropy is primitive — nothing in the language can ask the OS for a
+// random word — so only the entropy is a builtin. Same division of labour as
+// `read_line` (primitive, must be a builtin) beside `parse_i64` (expressible, so
+// it is not).
+//
+// Keeping the *seed* as the primitive is also what makes the determinism story
+// work. A seeded generator is pure arithmetic over its state, so `rng.below(100)`
+// carries only EffectMut and stays legal in `det`; it is reaching for a seed
+// nobody supplied that is non-deterministic, and that is exactly where EffectRand
+// is charged. Had the builtin been `random_below` instead, every draw would carry
+// the Rand bit and `det` code could not use randomness at all.
+func isBuiltinRandomSeedFn(name string) bool {
+	return name == "random_seed"
+}
+
 // isPrintableType reports whether print/println can format a value of type t:
 // a string, any integer or float, a bool, or a rune. Each has a backend
 // formatting path (write for strings, snprintf for numbers, "true"/"false" for

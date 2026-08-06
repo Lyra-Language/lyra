@@ -1195,6 +1195,31 @@ The line has to come from libc and Lyra has no FFI, so input genuinely cannot be
 the language; parsing can, and anything that can belongs in the prelude where it is readable
 and replaceable.
 
+### `random_seed` lowers (`random.go`, 08/05)
+
+**`random_seed() -> u64`** returns one word of OS entropy, and is the *only* part of
+randomness in the backend. The generator — `Rng`, `next_u64`, `below`, `between`,
+`random_below` — is ordinary Lyra in `std/prelude.lyra`, because a PRNG is arithmetic and
+arithmetic is expressible; asking the OS for entropy is not.
+
+The shim uses **`getentropy`**: available on both targets (macOS 10.12+, glibc 2.25+),
+unlike `getrandom` (Linux-only) and `arc4random_buf` (glibc 2.36+), and it needs no `FILE*`,
+so it avoids the platform-dependent `stdin` symbol problem that shaped `read_line`. The slot
+is filled with `time(NULL)` **before** the getentropy call rather than after a failure test:
+POSIX leaves the buffer unspecified on failure, so testing the return value and then reading
+an untouched buffer would seed from an uninitialized stack word. The fallback is weak by
+design (one-second resolution) and is not a security primitive.
+
+The result is a `u64` — a plain scalar owning nothing — so unlike `read_line` there is no
+ownership question and nothing for the temp machinery to do.
+
+**Keeping the *seed* as the primitive is what makes `det` usable with randomness.** A seeded
+generator is arithmetic over its own state, so `rng.below(100)` carries only `EffectMut`,
+which `det` permits; the Rand bit is charged exactly at the point of asking for a seed nobody
+supplied. Had the builtin been `random_below`, every draw would be non-deterministic and
+`det` code could not draw at all. None of that is written down as a rule — it falls out of
+bottom-up effect inference over the prelude.
+
 ## Emitted symbol names
 
 A top-level user function is emitted as **`lyra.<module>.<name>`** (`userSymbol`), and a generic

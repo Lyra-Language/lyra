@@ -595,7 +595,13 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, encl
 				c.checkDeclaredCallbackBounds(capture, enclosing, e, name)
 			}
 			if sc != nil {
-				if method, ok := c.methodTable.Get(e); ok {
+				if c.methodTable.IsBuiltinMethod(e) {
+					// A compiler builtin method (`x.wrapping_mul(y)`, `x.floor()`) is
+					// pure arithmetic. This is the *reporting* copy of the ladder that
+					// lambdaEffects and methodEffects also carry — all three ask "what
+					// does this call call?" and all three must answer alike, or a call
+					// is charged no effect while still being reported as impure.
+				} else if method, ok := c.methodTable.Get(e); ok {
 					// Mask with PurityEffects: only correctness effects (mut/io)
 					// make a callee non-pure — EffectAlloc is orthogonal, so a
 					// pure function may call a method that merely allocates.
@@ -1878,7 +1884,14 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 				found |= EffectMut
 			}
 		case *ast.FunctionCallExpr:
-			if method, ok := methodTable.Get(ex); ok {
+			if methodTable.IsBuiltinMethod(ex) {
+				// A compiler builtin method (`x.wrapping_mul(y)`, `x.floor()`,
+				// `xs.len()`): pure arithmetic, no effect. Checked before the
+				// name-based ladder below, which would otherwise see the dotted name
+				// `x.wrapping_mul`, resolve it to nothing, and charge AllEffects —
+				// making explicit wrapping arithmetic unusable from exactly the
+				// `pure`/`det`/`noalloc` code that wants it.
+			} else if method, ok := methodTable.Get(ex); ok {
 				found |= impureMethods[method]
 			} else if ref, ok := methodTable.GetBound(ex); ok {
 				// Abstract dispatch through a `where` bound: join over the impls of
@@ -2027,7 +2040,13 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 				found |= EffectMut
 			}
 		case *ast.FunctionCallExpr:
-			if method, ok := methodTable.Get(ex); ok {
+			if methodTable.IsBuiltinMethod(ex) {
+				// A compiler builtin method — pure, and checked first, for the reason
+				// spelled out in lambdaEffects's copy of this ladder. The two must stay
+				// in step: this one is the same question asked from inside a trait-impl
+				// method body, so a divergence would make `x.wrapping_mul(y)` pure in a
+				// free function and all-effects in a method.
+			} else if method, ok := methodTable.Get(ex); ok {
 				found |= methodCallEffect(method, ex, bodyCapture, impureLambdas, impureMethods,
 					callbacks, methodCallbacks, params, foundCallbacks)
 			} else if ref, ok := methodTable.GetBound(ex); ok {

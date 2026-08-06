@@ -19,6 +19,7 @@ type MethodTable struct {
 	entries     map[*ast.FunctionCallExpr]*ast.TraitMethodImpl
 	resolutions map[*ast.FunctionCallExpr]Resolution
 	boundCalls  map[*ast.FunctionCallExpr]BoundMethodRef
+	builtins    map[*ast.FunctionCallExpr]bool
 }
 
 // BoundMethodRef names a trait method reached by *abstract* dispatch — a call on
@@ -35,7 +36,40 @@ func NewMethodTable() *MethodTable {
 	return &MethodTable{
 		entries:    make(map[*ast.FunctionCallExpr]*ast.TraitMethodImpl),
 		boundCalls: make(map[*ast.FunctionCallExpr]BoundMethodRef),
+		builtins:   make(map[*ast.FunctionCallExpr]bool),
 	}
+}
+
+// SetBuiltinMethod records that dispatch resolved this call to a **compiler
+// builtin method** — `x.wrapping_mul(y)`, `x.floor()`, `xs.len()`, `s.weak()` —
+// rather than to a user function or a trait impl.
+//
+// It exists because the name alone cannot say so, and guessing wrong is expensive
+// in both directions. A builtin method call reaches a consumer as a `MemberExpr`
+// callee, so the purity pass sees the dotted name `x.wrapping_mul`, finds it in no
+// table, and falls to the unresolved-callee default — `AllEffects`. That default is
+// right for a genuinely unknown callee and badly wrong here: every builtin method
+// is pure arithmetic, so it made `wrapping_mul` and friends unusable from any
+// `pure`, `det` or `noalloc` function. Which is precisely the arithmetic that wants
+// them — a PRNG, a hash, a checksum — and precisely the functions that want to be
+// `det`.
+//
+// The alternative was to re-derive "is this a builtin method?" in the checker from
+// the property name, which is a second copy of a question the typechecker has
+// already answered definitively (CLAUDE.md rules 8 and 9), and one that cannot see
+// the receiver's type — so a user's own `wrapping_mul` on their own type would have
+// been silently declared pure.
+func (t *MethodTable) SetBuiltinMethod(call *ast.FunctionCallExpr) {
+	if t == nil {
+		return
+	}
+	t.builtins[call] = true
+}
+
+// IsBuiltinMethod reports whether this call resolved to a compiler builtin method.
+// Nil-receiver-safe, like Get.
+func (t *MethodTable) IsBuiltinMethod(call *ast.FunctionCallExpr) bool {
+	return t != nil && t.builtins[call]
 }
 
 func (t *MethodTable) Set(call *ast.FunctionCallExpr, method *ast.TraitMethodImpl) {

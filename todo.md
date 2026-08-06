@@ -10,18 +10,29 @@ built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberatel
 
 ## I/O and the number-guessing program
 
-Console input and string→int parsing landed 08/05 (`read_line() -> Maybe<string>` as a
-builtin; `parse_i64` in `std/prelude.lyra`, written in Lyra). See COMPLETED.md. What that
-exercise turned up, roughly in order of how much it costs a program that wants to be
-written today:
+**The program works.** Console input (`read_line() -> Maybe<string>`), string→int parsing
+(`parse_i64`) and randomness (`random_seed()` plus the prelude's `Rng`) all landed 08/05, and
+each follows the same rule: the builtin is only what cannot be written in Lyra, and everything
+else is in `std/prelude.lyra`. See COMPLETED.md.
 
-- **[OPEN] There is no randomness.** `Random.global()` is an entry in
-  `checker/effects.go`'s `builtinEffects` table (tagged `EffectRand`) and **nothing else**:
-  no signature in the typechecker, no lowering. So it passes `lyrac check` with no
-  diagnostic at all and dies in the backend with `llvm: unsupported method call "global"` —
-  a front-end hole as much as a missing feature, since rule 5 says the backend refuses what
-  the front end accepted for a *reason*, not what it never looked at. It is the last thing
-  the guessing game needs.
+What writing it turned up, roughly in order of how much it costs a program someone wants to
+write today:
+
+- **[OPEN] A member call on a type name type-checks into a backend crash.** `Rng.seeded(42)`
+  and `Foo.bar()` generally pass `lyrac check` with no diagnostic and then fail with
+  `llvm: unsupported method call "seeded"`. This is the hole that made `Random.global()`
+  *look* implemented for so long — it is a front-end gap as much as a missing feature, since
+  rule 5 says the backend refuses forms the front end accepted for a reason, not forms it
+  never looked at. It is why the prelude's constructors are bare (`rng_seeded`) rather than
+  namespaced. Two ways out, and they are different features: reject the call in the
+  typechecker (small, honest, and what rule 5 wants today), or implement **type-namespaced
+  associated functions**, which is the thing the spelling suggests and which `Trait::method`
+  already half-exists for.
+- **[OPEN] `wallClock()` is the remaining entry naming nothing.** Same shape
+  `Random.global()` had before it was replaced: a `builtinEffects` entry tagged `EffectTime`
+  with no typechecker signature and no lowering. Either implement it beside `random_seed`
+  (it is the smaller job — one libc call, no generator) or drop the entry. Leaving it is
+  what let the random one masquerade as built for months.
 - **[OPEN] A `match` arm whose body block ends in an assignment does not lower.**
   `match m { Some v => { x = v; }, None => { x = 0; } }` fails with `llvm: block has no
   value (empty, or last statement is not an expression)`. A `match` used as a *statement*,

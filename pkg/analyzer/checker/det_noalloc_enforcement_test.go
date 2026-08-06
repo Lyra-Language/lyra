@@ -64,12 +64,19 @@ let load = det (p: string) -> string => { helper(p) }`
 	assertBoundError(t, checkPurity(t, src), "lyra-E016")
 }
 
-// Drawing from the ambient global RNG is non-deterministic, so it breaks `det`.
+// Asking the OS for a seed is non-deterministic, so it breaks `det`.
 // The message must name the *random* source specifically — proving the Rand bit
 // was detected, not the conservative "unknown external call" Input fallback that
 // would also produce E016 but describe it as reading input.
+//
+// The source was `Random.global()` until 08/05, which was a builtinEffects entry
+// naming nothing: no typechecker signature and no lowering, so a program writing
+// it type-checked and then crashed the backend. `random_seed()` is the real
+// builtin that replaced it. Note this test kept its own promise — swapping the
+// source made it fail with exactly the Input-fallback message it was written to
+// rule out.
 func TestDet_AmbientRandom_Violates(t *testing.T) {
-	src := `let roll = det (n: i64) -> i64 => { Random.global() }`
+	src := `let roll = det (n: i64) -> i64 => { i64(random_seed()) }`
 	errs := checkPurity(t, src)
 	assertBoundError(t, errs, "lyra-E016")
 	if !strings.Contains(errs[0].Message, "random source") {

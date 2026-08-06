@@ -617,6 +617,13 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		if isBuiltinReadLineFn(ident.Name) {
 			return tc.inferReadLineCall(call)
 		}
+		if isBuiltinRandomSeedFn(ident.Name) {
+			if len(call.Arguments) != 0 {
+				tc.addError(call.GetLocation(), SeverityError,
+					"random_seed: expected 0 argument(s), got %d", len(call.Arguments))
+			}
+			return types.PrimitiveType{Name: types.UInt64}
+		}
 		// A name that exists but belongs privately to another module gets the
 		// privacy diagnostic rather than "undefined": the distinction between "no
 		// such function" and "not yours to call" is the whole point of the rule.
@@ -883,6 +890,12 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// always takes priority (see builtins.go).
 	if sig, ok := builtinMethodSignature(objType, methodName); ok {
 		tc.typeTable.Set(member, sig)
+		// Publish the resolution: a later pass sees only a MemberExpr callee, and the
+		// dotted name it can derive from that (`x.wrapping_mul`) names nothing in any
+		// table — so without this the purity pass charges the unresolved-callee default
+		// (AllEffects) and every builtin method becomes unusable from `pure`/`det`/
+		// `noalloc` code. See MethodTable.SetBuiltinMethod.
+		tc.methodTable.SetBuiltinMethod(call)
 		return tc.inferLambdaCallFromType(methodName, sig, call)
 	}
 

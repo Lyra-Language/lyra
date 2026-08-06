@@ -8,8 +8,9 @@ package checker
 // PurityEffects mask), `det` (deterministic, via DetEffects), and `noalloc`
 // (via EffectAlloc).
 //
-// EffectMut, the two IO bits, EffectAlloc, and (via the ambient `Random.global()`
-// / `wallClock()` builtins) EffectRand and EffectTime are all detected today. IO
+// EffectMut, the two IO bits, EffectAlloc and EffectRand (via the `random_seed()`
+// builtin) are all detected today; EffectTime has a `wallClock()` table entry that
+// nothing implements yet. IO
 // is split into two bits because the halves threaten determinism
 // asymmetrically — that asymmetry is exactly what lets `det` be more permissive
 // than `pure`:
@@ -42,10 +43,12 @@ const (
 	// outside a `with`-arena block. A resource/budget effect, orthogonal to
 	// determinism: forbidden only by `noalloc`, never by `pure` or `det`.
 	EffectAlloc
-	// EffectRand: draws from a non-deterministic random source (the ambient
-	// `Random.global()`). Non-deterministic, so it breaks `pure` and `det`. A
-	// *threaded* RNG value reached through a local binding (`rng.next()`) is
-	// ordinary data, not this effect.
+	// EffectRand: reaches for randomness nobody supplied — in practice, calls
+	// `random_seed()` for OS entropy, directly or through the prelude's
+	// `random_below`/`rng_from_entropy`. Non-deterministic, so it breaks `pure` and
+	// `det`. A *seeded* RNG value reached through a local binding (`rng.below(100)`)
+	// is arithmetic over ordinary data and carries only EffectMut, which is what
+	// lets `det` code use reproducible randomness.
 	EffectRand
 	// EffectTime: reads wall-clock/system time (the ambient `wallClock()`).
 	// Non-deterministic, so it breaks `pure` and `det`. A *threaded* tick passed
@@ -153,18 +156,30 @@ var builtinEffects = map[string]Effect{
 	"kilobytes":   EffectNone,
 	"bytes":       EffectNone,
 	// Ambient nondeterminism sources — the entries that give `det` its teeth.
-	// Only the *ambient* (globally-reachable, un-threaded) sources are tagged:
-	// `Random.global()` reaches a process-wide RNG and `wallClock()` reads the
-	// system clock, so their results depend on external state the caller never
-	// passed in — non-deterministic, forbidden in both `pure` and `det`.
+	// Only the *ambient* (un-threaded) sources are tagged: their results depend on
+	// state the caller never passed in, so they are forbidden in both `pure` and
+	// `det`. A *threaded* value — a seeded `Rng` binding, a passed-in `tick`
+	// parameter — is ordinary `mut`/`own` data and carries no Rand/Time bit, which
+	// is what lets a `det` function use reproducible randomness and sim-time
+	// without randomness being banned outright.
+	// `random_seed()` asks the OS for a word of entropy. It is the *only* Rand
+	// entry that names something real: the generator built on top of it (`Rng`,
+	// `next_u64`, `below`) is ordinary Lyra in the prelude and carries no bit from
+	// here at all.
 	//
-	// The ambient-vs-threaded split lives in the *call shape*, not here: a
-	// threaded RNG value's `rng.next()` or a passed-in `tick` parameter is
-	// ordinary `mut`/`own` data reached through a local binding (base `rng`,
-	// `tick`), never one of these ambient entry points — so it carries no
-	// Rand/Time bit and a `det` function may use seeded randomness and sim-time.
-	// That is exactly what lets `det` be reproducible-from-its-inputs without
-	// banning randomness or time outright.
-	"Random.global": EffectRand,
-	"wallClock":     EffectTime,
+	// **That split is the whole determinism story, and it falls out of inference
+	// rather than being written down.** A seeded generator is arithmetic over its
+	// own state, so `rng.below(100)` carries only EffectMut — legal in `det`, which
+	// forbids Input/Rand/Time and not mutation. The prelude's `random_below(100)`
+	// and `rng_from_entropy()` reach `random_seed`, so bottom-up inference gives
+	// *them* the Rand bit, and `det` code is refused them. Nobody had to enumerate
+	// which randomness is deterministic: asking for a seed you were not given is
+	// what is non-deterministic, and that is the one place the bit is charged.
+	//
+	// This replaced a `Random.global` entry that named nothing — there was no such
+	// builtin in the typechecker or the backend, so it classified the effects of a
+	// call that could not be compiled, and a program writing it got a clean `lyrac
+	// check` followed by a backend crash.
+	"random_seed": EffectRand,
+	"wallClock":   EffectTime,
 }
