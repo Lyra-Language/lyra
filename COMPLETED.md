@@ -9,6 +9,20 @@ Newest first.
 
 ## Dated log
 
+### 08/06/26
+**`lyrac build` produces an executable.** It emitted `<name>.ll` and printed the `clang`
+command to run by hand; it now runs it — IR to a temp file, `clang <ir> -lm -o <exe>`, and
+the artifact is `<name>` beside the source. `-o`, `--keep-ll`, `--emit-llvm` (the old
+behaviour, and the one build that needs no C compiler) and `--cc` cover the rest;
+`--cc` falls back to `$LYRA_CC` and then `clang`.
+
+Two choices worth the words. **`cc` is not a fallback**: the input is LLVM IR, so a gcc
+found under a generic name would reject the file with an error about the file rather than
+about the setup. And **a missing compiler still writes the `.ll` next to the source**, even
+though the default build otherwise leaves none — the IR is the only thing the user can
+compile once they install one, and discarding it is only right on the path where something
+better was produced.
+
 ### 08/05/26
 **Randomness — and the number-guessing program is complete.** `random_seed() -> u64` is
 the only builtin: one word of OS entropy. Everything else — `Rng`, `next_u64`, `below`,

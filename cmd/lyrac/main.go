@@ -11,6 +11,8 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/backend/llvm"
@@ -28,12 +30,21 @@ func run(args []string) int {
 		usage()
 		return 2
 	}
-	cmd, path := args[0], args[1]
+	cmd, rest := args[0], args[1:]
 	switch cmd {
 	case "check":
-		return check(path)
+		if len(rest) != 1 {
+			usage()
+			return 2
+		}
+		return check(rest[0])
 	case "build":
-		return build(path)
+		opts, ok := parseBuildArgs(rest)
+		if !ok {
+			usage()
+			return 2
+		}
+		return build(opts)
 	default:
 		fmt.Fprintf(os.Stderr, "lyrac: unknown command %q\n", cmd)
 		usage()
@@ -42,12 +53,69 @@ func run(args []string) int {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `usage: lyrac <command> <file.lyra>
+	fmt.Fprint(os.Stderr, `usage: lyrac <command> [flags] <file.lyra>
 
 commands:
   check   parse and type-check a source file, reporting diagnostics
-  build   check, then (once implemented) generate code
+  build   check, then compile to a native executable
+
+build flags:
+  -o <path>     write the executable here (default: the source path without .lyra)
+  --emit-llvm   stop after emitting <name>.ll; do not link an executable
+  --keep-ll     keep the emitted <name>.ll beside the executable
+  --cc <path>   C compiler used to assemble and link (default: $LYRA_CC, else clang)
 `)
+}
+
+// buildOptions is what `lyrac build` was asked for. The zero value (plus a path)
+// is the default build: link an executable next to the source and keep no IR.
+type buildOptions struct {
+	path     string // the .lyra source
+	out      string // executable path; empty means derive it from path
+	emitOnly bool   // --emit-llvm: write the .ll and stop
+	keepLL   bool   // --keep-ll: keep the .ll as well as the executable
+	cc       string // C compiler override
+}
+
+// parseBuildArgs accepts flags before or after the source path, since a build
+// command is as often edited by appending a flag as by inserting one.
+func parseBuildArgs(args []string) (buildOptions, bool) {
+	var o buildOptions
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		// A flag taking a value consumes the next argument; running off the end
+		// is a usage error rather than an empty value silently taking effect.
+		takesValue := arg == "-o" || arg == "--cc"
+		if takesValue {
+			if i+1 >= len(args) {
+				fmt.Fprintf(os.Stderr, "lyrac: %s needs a value\n", arg)
+				return o, false
+			}
+			i++
+		}
+		switch {
+		case arg == "-o":
+			o.out = args[i]
+		case arg == "--cc":
+			o.cc = args[i]
+		case arg == "--emit-llvm":
+			o.emitOnly = true
+		case arg == "--keep-ll":
+			o.keepLL = true
+		case strings.HasPrefix(arg, "-"):
+			fmt.Fprintf(os.Stderr, "lyrac: unknown flag %q\n", arg)
+			return o, false
+		case o.path != "":
+			fmt.Fprintf(os.Stderr, "lyrac: build takes one source file (got %q and %q)\n", o.path, arg)
+			return o, false
+		default:
+			o.path = arg
+		}
+	}
+	if o.path == "" {
+		return o, false
+	}
+	return o, true
 }
 
 // check analyzes path and reports diagnostics. Exit status: 0 clean, 1 on any
@@ -64,25 +132,23 @@ func check(path string) int {
 	return 0
 }
 
-// build runs the same analysis, resolves the program's entry point, and then
-// hands the typed program to the backend. The backend does not exist yet, so a
-// clean build stops at lowerAndEmit with a clear notice rather than silently
-// producing nothing.
-func build(path string) int {
-	res, ok := analyze(path)
+// build runs the same analysis, resolves the program's entry point, hands the
+// typed program to the backend, and links the emitted IR into an executable.
+func build(o buildOptions) int {
+	res, ok := analyze(o.path)
 	if !ok {
 		return 2
 	}
-	printDiagnostics(path, res.Diagnostics)
+	printDiagnostics(o.path, res.Diagnostics)
 	if res.HasErrors() {
 		return 1
 	}
 	entry, entryDiags := driver.ResolveEntryPoint(res)
-	printDiagnostics(path, entryDiags)
+	printDiagnostics(o.path, entryDiags)
 	if entry == nil {
 		return 1
 	}
-	return lowerAndEmit(path, res, entry)
+	return lowerAndEmit(o, res, entry)
 }
 
 // analyze reads path and runs the front-end pipeline. Returns ok=false (after
@@ -106,25 +172,102 @@ func analyze(path string) (*driver.Result, bool) {
 	return res, true
 }
 
-// lowerAndEmit runs the backend over a fully-typed, error-free program and
-// writes the emitted artifact. The LLVM backend is early (see pkg/backend/llvm's
-// doc comment for what's covered); a form it doesn't lower yet returns an error
-// here rather than silently emitting wrong code.
-func lowerAndEmit(path string, res *driver.Result, entry *driver.EntryPoint) int {
+// lowerAndEmit runs the backend over a fully-typed, error-free program, then
+// links the emitted IR into an executable (unless --emit-llvm asked to stop at
+// the IR). The LLVM backend is early (see pkg/backend/llvm's doc comment for
+// what's covered); a form it doesn't lower yet returns an error here rather
+// than silently emitting wrong code.
+func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) int {
 	be := llvm.New()
 	ir, err := be.Emit(res, entry)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %s backend: %v\n", be.Name(), err)
 		return 1
 	}
-	out := replaceExt(path, ".ll")
-	if err := os.WriteFile(out, ir, 0o644); err != nil {
+
+	llPath := replaceExt(o.path, ".ll")
+	keepLL := o.emitOnly || o.keepLL
+	if !keepLL {
+		// A throwaway .ll: the executable is the artifact, so the IR does not
+		// belong in the user's source tree. It still has to reach the compiler
+		// as a file, since clang reads IR from a path, not from stdin.
+		dir, err := os.MkdirTemp("", "lyrac-")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
+			return 1
+		}
+		defer os.RemoveAll(dir)
+		llPath = filepath.Join(dir, filepath.Base(replaceExt(o.path, ".ll")))
+	}
+	if err := os.WriteFile(llPath, ir, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
 		return 1
 	}
-	fmt.Printf("%s: wrote %s (%s backend)\n", path, out, be.Name())
-	fmt.Printf("  compile with: clang %s -o %s\n", out, replaceExt(path, ""))
+
+	if o.emitOnly {
+		fmt.Printf("%s: wrote %s (%s backend)\n", o.path, llPath, be.Name())
+		fmt.Printf("  compile with: clang %s -lm -o %s\n", llPath, exePath(o))
+		return 0
+	}
+
+	cc, err := findCC(o.cc)
+	if err != nil {
+		// Keep the IR on this path whatever the flags said: without it the user
+		// has nothing to hand to a compiler they install later.
+		fallback := replaceExt(o.path, ".ll")
+		if fallback != llPath {
+			if werr := os.WriteFile(fallback, ir, 0o644); werr == nil {
+				llPath = fallback
+			}
+		}
+		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
+		fmt.Fprintf(os.Stderr, "  wrote %s; compile it with: clang %s -lm -o %s\n", llPath, llPath, exePath(o))
+		return 1
+	}
+
+	exe := exePath(o)
+	// -lm links libm for the float intrinsics (floor/ceil/round, fmod). It is
+	// passed unconditionally: harmless for a program that needs none of them,
+	// and matching what the backend's behavioural tests compile with.
+	cmd := exec.Command(cc, llPath, "-lm", "-o", exe)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "lyrac: %s failed to compile the emitted IR: %v\n%s", cc, err, out)
+		return 1
+	}
+
+	fmt.Printf("%s: wrote %s (%s backend)\n", o.path, exe, be.Name())
+	if keepLL {
+		fmt.Printf("  kept %s\n", llPath)
+	}
 	return 0
+}
+
+// exePath is where the executable goes: -o if given, else the source path with
+// its .lyra extension dropped.
+func exePath(o buildOptions) string {
+	if o.out != "" {
+		return o.out
+	}
+	return replaceExt(o.path, "")
+}
+
+// findCC resolves the C compiler that assembles and links the emitted IR:
+// --cc, else $LYRA_CC, else clang on PATH. It must understand LLVM IR as an
+// input file, so `cc` is not a fallback — gcc would reject the .ll with a
+// confusing error rather than a clear one.
+func findCC(override string) (string, error) {
+	cc := "clang"
+	for _, candidate := range []string{override, os.Getenv("LYRA_CC")} {
+		if candidate != "" {
+			cc = candidate
+			break
+		}
+	}
+	path, err := exec.LookPath(cc)
+	if err != nil {
+		return "", fmt.Errorf("cannot run %q: %v", cc, err)
+	}
+	return path, nil
 }
 
 // replaceExt returns path with a trailing ".lyra" replaced by ext (ext may be

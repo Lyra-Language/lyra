@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -67,6 +69,28 @@ func copyFixtureToTemp(t *testing.T, name string) string {
 		t.Fatalf("write temp fixture: %v", err)
 	}
 	return dst
+}
+
+// requireCC skips a test that needs to link an executable when no clang is on
+// PATH, matching the backend's behavioural tests: a machine without a C
+// compiler can still run everything else.
+func requireCC(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("clang"); err != nil {
+		t.Skip("clang not on PATH")
+	}
+}
+
+// assertIsIR fails unless path holds the emitted LLVM IR.
+func assertIsIR(t *testing.T, path string) {
+	t.Helper()
+	ir, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("expected emitted IR at %s: %v", path, err)
+	}
+	if !strings.Contains(string(ir), "define i32 @main()") {
+		t.Errorf("%s is missing the @main definition:\n%s", path, ir)
+	}
 }
 
 // checkGolden compares got against testdata/<name>. If the golden file is

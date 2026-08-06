@@ -2,6 +2,8 @@ package main
 
 import (
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -96,24 +98,95 @@ func TestCheck_MissingFile(t *testing.T) {
 
 // --- build ------------------------------------------------------------------
 
+// TestBuild_Clean is the default build: an executable, no IR left behind.
 func TestBuild_Clean(t *testing.T) {
+	requireCC(t)
 	path := copyFixtureToTemp(t, "ok.lyra")
 	stdout, stderr, code := captureRun(t, "build", path)
 	if code != 0 {
 		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
 	}
-	if !strings.Contains(stdout, "wrote") || !strings.Contains(stdout, "compile with: clang") {
-		t.Errorf("stdout missing build summary:\n%s", stdout)
+	exe := replaceExt(path, "")
+	if !strings.Contains(stdout, "wrote "+exe) {
+		t.Errorf("stdout missing build summary naming %s:\n%s", exe, stdout)
 	}
+	// The artifact is an executable that runs, not just a file that exists.
+	if err := exec.Command(exe).Run(); err != nil {
+		t.Errorf("running %s: %v", exe, err)
+	}
+	// The .ll is scratch, so it must not be left in the user's source tree.
+	if _, err := os.Stat(replaceExt(path, ".ll")); !os.IsNotExist(err) {
+		t.Errorf("default build left an .ll beside the source (stat err = %v)", err)
+	}
+}
 
-	// The .ll artifact is written next to the source and is real LLVM IR.
-	llPath := replaceExt(path, ".ll")
-	ir, err := os.ReadFile(llPath)
-	if err != nil {
-		t.Fatalf("expected emitted IR at %s: %v", llPath, err)
+func TestBuild_OutputPath(t *testing.T) {
+	requireCC(t)
+	path := copyFixtureToTemp(t, "ok.lyra")
+	exe := filepath.Join(filepath.Dir(path), "renamed")
+	if _, stderr, code := captureRun(t, "build", "-o", exe, path); code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
 	}
-	if !strings.Contains(string(ir), "define i32 @main()") {
-		t.Errorf("emitted IR missing @main definition:\n%s", ir)
+	if err := exec.Command(exe).Run(); err != nil {
+		t.Errorf("running %s: %v", exe, err)
+	}
+}
+
+func TestBuild_KeepLL(t *testing.T) {
+	requireCC(t)
+	path := copyFixtureToTemp(t, "ok.lyra")
+	if _, stderr, code := captureRun(t, "build", "--keep-ll", path); code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	assertIsIR(t, replaceExt(path, ".ll"))
+	if _, err := os.Stat(replaceExt(path, "")); err != nil {
+		t.Errorf("--keep-ll should still link an executable: %v", err)
+	}
+}
+
+// TestBuild_EmitLLVM stops at the IR, which is the one build that needs no C
+// compiler at all — hence no requireCC.
+func TestBuild_EmitLLVM(t *testing.T) {
+	path := copyFixtureToTemp(t, "ok.lyra")
+	stdout, stderr, code := captureRun(t, "build", "--emit-llvm", path)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, "compile with: clang") {
+		t.Errorf("stdout missing manual compile hint:\n%s", stdout)
+	}
+	assertIsIR(t, replaceExt(path, ".ll"))
+	if _, err := os.Stat(replaceExt(path, "")); !os.IsNotExist(err) {
+		t.Errorf("--emit-llvm should not link an executable (stat err = %v)", err)
+	}
+}
+
+// TestBuild_MissingCC covers the compiler-not-found path: it must fail loudly
+// and still leave the IR behind, since that is all the user has to compile once
+// they install one.
+func TestBuild_MissingCC(t *testing.T) {
+	path := copyFixtureToTemp(t, "ok.lyra")
+	_, stderr, code := captureRun(t, "build", "--cc", "definitely-not-a-compiler", path)
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if !strings.Contains(stderr, "definitely-not-a-compiler") {
+		t.Errorf("stderr missing the compiler name:\n%s", stderr)
+	}
+	assertIsIR(t, replaceExt(path, ".ll"))
+}
+
+func TestBuild_BadFlags(t *testing.T) {
+	cases := [][]string{
+		{"build", "--frobnicate", "x.lyra"},
+		{"build", "-o"},               // -o with no value
+		{"build", "a.lyra", "b.lyra"}, // two sources
+		{"build", "--emit-llvm"},      // no source at all
+	}
+	for _, args := range cases {
+		if _, stderr, code := captureRun(t, args...); code != 2 {
+			t.Errorf("run(%q) exit code = %d, want 2\nstderr: %s", args, code, stderr)
+		}
 	}
 }
 
