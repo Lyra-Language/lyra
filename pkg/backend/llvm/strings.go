@@ -81,9 +81,9 @@ func (l *lowerer) lowerStringIndex(block *ir.Block, e *ast.IndexExpr) (value.Val
 
 	fn := block.Parent
 	entry := fn.Blocks[0]
-	biSlot := entry.NewAlloca(lltypes.I64)  // byte index
-	riSlot := entry.NewAlloca(lltypes.I64)  // rune index
-	cpSlot := entry.NewAlloca(lltypes.I32)  // decode out-param
+	biSlot := entry.NewAlloca(lltypes.I64) // byte index
+	riSlot := entry.NewAlloca(lltypes.I64) // rune index
+	cpSlot := entry.NewAlloca(lltypes.I32) // decode out-param
 	block.NewStore(constant.NewInt(lltypes.I64, 0), biSlot)
 	block.NewStore(constant.NewInt(lltypes.I64, 0), riSlot)
 
@@ -136,9 +136,9 @@ func (l *lowerer) utf8DecodeFunc() *ir.Func {
 	fn := l.module.NewFunc("lyra_utf8_decode", lltypes.I64, data, pos, cpOut)
 
 	entry := fn.NewBlock("entry")
-	one := fn.NewBlock("one")       // b0 < 0x80
-	twoPlus := fn.NewBlock("twoP")  // else
-	two := fn.NewBlock("two")       // (b0 & 0xE0) == 0xC0
+	one := fn.NewBlock("one")      // b0 < 0x80
+	twoPlus := fn.NewBlock("twoP") // else
+	two := fn.NewBlock("two")      // (b0 & 0xE0) == 0xC0
 	threePlus := fn.NewBlock("triP")
 	three := fn.NewBlock("three") // (b0 & 0xF0) == 0xE0
 	four := fn.NewBlock("four")   // else
@@ -192,7 +192,6 @@ func (l *lowerer) utf8DecodeFunc() *ir.Func {
 	l.utf8Decode = fn
 	return fn
 }
-
 
 // memcmpFunc lazily declares libc's `i32 @memcmp(i8*, i8*, i64)` (clang links
 // libc), caching it so string comparisons share one declaration.
@@ -250,9 +249,9 @@ func (l *lowerer) lowerStringConcat(block *ir.Block, e *ast.StringConcatExpr) (v
 
 	_, dst := l.rcAllocPayload(block, total)
 	memcpy := l.memcpyFunc()
-	block.NewCall(memcpy, dst, dataA, lenA)          // dst[0 .. lenA)  = a
+	block.NewCall(memcpy, dst, dataA, lenA) // dst[0 .. lenA)  = a
 	tail := block.NewGetElementPtr(lltypes.I8, dst, lenA)
-	block.NewCall(memcpy, tail, dataB, lenB)         // dst[lenA .. total) = b
+	block.NewCall(memcpy, tail, dataB, lenB) // dst[lenA .. total) = b
 
 	strTy := StringLLVMType()
 	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dst, 0)

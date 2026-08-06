@@ -435,7 +435,7 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 
 	condBlock := fn.NewBlock("")
 	bodyBlock := fn.NewBlock("")
-	incBlock := fn.NewBlock("") // continue target: advance the counter
+	incBlock := fn.NewBlock("")  // continue target: advance the counter
 	exitBlock := fn.NewBlock("") // break target
 	block.NewBr(condBlock)
 
@@ -650,9 +650,9 @@ func (l *lowerer) lowerForInString(block *ir.Block, e *ast.ForInLoopExpr) (value
 
 	fn := block.Parent
 	entry := fn.Blocks[0]
-	biSlot := entry.NewAlloca(lltypes.I64)  // byte index
-	cSlot := entry.NewAlloca(lltypes.I32)   // the rune loop variable
-	cpSlot := entry.NewAlloca(lltypes.I32)  // decode out-param
+	biSlot := entry.NewAlloca(lltypes.I64) // byte index
+	cSlot := entry.NewAlloca(lltypes.I32)  // the rune loop variable
+	cpSlot := entry.NewAlloca(lltypes.I32) // decode out-param
 	block.NewStore(constant.NewInt(lltypes.I64, 0), biSlot)
 	l.locals[e.Key] = cSlot // the rune value (immutable, non-managed — no ownership)
 

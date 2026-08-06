@@ -254,7 +254,7 @@ func isEmptyComposite(v reflect.Value) bool {
 	case reflect.Struct:
 		fields := exportedFields(v)
 		if len(fields) == 0 {
-			return false  // unit type — its presence is meaningful
+			return false // unit type — its presence is meaningful
 		}
 		for _, f := range fields {
 			fieldValue := v.FieldByIndex(f.Index)

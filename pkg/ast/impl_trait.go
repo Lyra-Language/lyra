@@ -4,7 +4,7 @@ import "github.com/Lyra-Language/lyra/pkg/types"
 
 type TraitImplStmt struct {
 	AstBase
-	TraitName string
+	TraitName     string
 	GenericParams []GenericParam
 	// TraitArgs are the trait's type arguments written after the trait name
 	// (`impl Get<t> for Box<t>` → [t]), positionally matched to the trait's
@@ -12,10 +12,10 @@ type TraitImplStmt struct {
 	// site (the method's `-> e` return becomes the impl's `t`, then the
 	// receiver's concrete type). Distinct from GenericParams, which the grammar
 	// does not populate for impls.
-	TraitArgs []types.Type
-	Type types.Type
+	TraitArgs   []types.Type
+	Type        types.Type
 	Constraints []TraitImplConstraint
-	Methods []TraitMethodImpl
+	Methods     []TraitMethodImpl
 }
 
 func (t *TraitImplStmt) statementNode() {}

@@ -278,7 +278,7 @@ func TestEmit_StringLiteralIsPinnedBox(t *testing.T) {
 	}
 	for _, want := range []string{
 		`private constant { i64, i64, [2 x i8] } { i64 -1, i64 -1,`, // pinned box: both counts
-		`i32 0, i32 2, i32 0`,                                       // data points past the header
+		`i32 0, i32 2, i32 0`, // data points past the header
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("literal-box IR missing %q:\n%s", want, got)

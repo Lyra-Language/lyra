@@ -2,8 +2,8 @@ package ast
 
 type ImportStmt struct {
 	AstBase
-	Path []ModuleName
-	Alias string
+	Path    []ModuleName
+	Alias   string
 	Members []ImportMember
 }
 

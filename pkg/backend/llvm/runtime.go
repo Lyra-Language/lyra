@@ -84,7 +84,7 @@ func (l *lowerer) ensureRCRuntime() {
 	}
 	i8ptr := lltypes.NewPointer(lltypes.I8)
 	i64ptr := lltypes.NewPointer(lltypes.I64)
-	pinnedBits := PinnedRC                                   // via a var: int64(constant) would overflow at compile time
+	pinnedBits := PinnedRC                                    // via a var: int64(constant) would overflow at compile time
 	pinned := constant.NewInt(lltypes.I64, int64(pinnedBits)) // all-ones bit pattern == -1
 	one := constant.NewInt(lltypes.I64, 1)
 	zero := constant.NewInt(lltypes.I64, 0)
@@ -99,7 +99,7 @@ func (l *lowerer) ensureRCRuntime() {
 		b := fn.NewBlock("entry")
 		box := b.NewCall(l.malloc, size)
 		counts := b.NewBitCast(box, i64ptr)
-		b.NewStore(one, counts)                     // strong = 1
+		b.NewStore(one, counts)                        // strong = 1
 		b.NewStore(zero, weakCountPtr(b, box, i64ptr)) // weak = 0
 		b.NewRet(box)
 		l.rcAlloc = fn

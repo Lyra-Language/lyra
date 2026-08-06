@@ -11,7 +11,7 @@ type TraitDeclStmt struct {
 	GenericParams []GenericParam
 	Bounds        []string
 	Methods       []TraitMethod
-	IsPublic                    bool
+	IsPublic      bool
 }
 
 func (t *TraitDeclStmt) statementNode() {}

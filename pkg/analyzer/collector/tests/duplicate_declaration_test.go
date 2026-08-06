@@ -178,7 +178,6 @@ func TestRebind_Destructuring_RebindsVar_NoError(t *testing.T) {
 	}
 }
 
-
 func TestDuplicate_Destructuring_WildcardNoError(t *testing.T) {
 	// Wildcard _ should never trigger a duplicate error.
 	errors := parseAndCollectErrors(t, `
@@ -201,7 +200,6 @@ func TestDuplicate_Trait(t *testing.T) {
 	`)
 	assertCollectorErrorContains(t, errors, `trait "Show" already defined`)
 }
-
 
 func TestDuplicate_Destructuring_NoConflict_NoError(t *testing.T) {
 	errors := parseAndCollectErrors(t, `

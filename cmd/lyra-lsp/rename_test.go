@@ -40,10 +40,11 @@ func assertEditLines(t *testing.T, we *lsp.WorkspaceEdit, want []int) {
 }
 
 // Source layout (tab-indented, 0-based lines):
-//   0: ""
-//   1: "\tlet x = 5"          declaration of x
-//   2: "\tlet y = x"          usage
-//   3: "\tlet z = x"          usage
+//
+//	0: ""
+//	1: "\tlet x = 5"          declaration of x
+//	2: "\tlet y = x"          usage
+//	3: "\tlet z = x"          usage
 const src3 = `
 	let x = 5
 	let y = x

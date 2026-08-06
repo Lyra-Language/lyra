@@ -92,9 +92,9 @@ func (l *lowerer) runeToUTF8Func() *ir.Func {
 	fn := l.module.NewFunc("lyra_rune_to_utf8", lltypes.I64, cp, buf)
 
 	entry := fn.NewBlock("entry")
-	one := fn.NewBlock("one")       // cp < 0x80
-	twoPlus := fn.NewBlock("twoP")  // else
-	two := fn.NewBlock("two")       // cp < 0x800
+	one := fn.NewBlock("one")      // cp < 0x80
+	twoPlus := fn.NewBlock("twoP") // else
+	two := fn.NewBlock("two")      // cp < 0x800
 	threePlus := fn.NewBlock("triP")
 	three := fn.NewBlock("three") // cp < 0x10000
 	four := fn.NewBlock("four")   // else
@@ -227,6 +227,7 @@ func (l *lowerer) i128ToStrFunc() *ir.Func {
 //   - rune:   UTF-8 encoded into a stack buffer via lyra_rune_to_utf8.
 //   - int:    snprintf "%lld"/"%llu" (by signedness) into a stack buffer.
 //   - float:  snprintf "%g" into a stack buffer.
+//
 // Numeric/rune buffers are entry-block allocas (allocated once even inside a
 // loop). The typechecker guarantees argType is one of these printable primitives.
 func (l *lowerer) formatForPrint(block *ir.Block, val value.Value, argType types.Type) (value.Value, value.Value, error) {
