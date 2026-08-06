@@ -1,6 +1,6 @@
 let main = () => {
   var guess_count = 0
-  let rand_int = random_between(1, 100)
+  let secret = random_between(1, 100)
   println("I am thinking of an integer between 1 and 100.")
   for {
     print("Enter your guess: ")
@@ -13,13 +13,10 @@ let main = () => {
               continue
             } else {
               guess_count += 1
-              if guess < rand_int {
-                println("Too low!")
-              } else if guess > rand_int {
-                println("Too high!")
-              } else {
-                println("You guessed it!")
-                break
+              match guess <=> secret {
+                Less    => println("Too low!"),
+                Greater => println("Too high!"),
+                Equal   => { println("You guessed it!"); break },
               }
             }
           },
@@ -30,7 +27,7 @@ let main = () => {
       },
       None => {
         println("")
-        println("No more input — the number was ${rand_int}.")
+        println("No more input — the number was ${secret}.")
         break
       },
     }
