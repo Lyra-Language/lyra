@@ -1,0 +1,4 @@
+// A program whose exit status is its own, not the compiler's.
+let main = () -> u8 => {
+  7
+}

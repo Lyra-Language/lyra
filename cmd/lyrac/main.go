@@ -9,6 +9,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -39,12 +40,19 @@ func run(args []string) int {
 		}
 		return check(rest[0])
 	case "build":
-		opts, ok := parseBuildArgs(rest)
+		opts, ok := parseBuildArgs(cmd, rest)
 		if !ok {
 			usage()
 			return 2
 		}
 		return build(opts)
+	case "run":
+		opts, ok := parseBuildArgs(cmd, rest)
+		if !ok {
+			usage()
+			return 2
+		}
+		return runProgram(opts)
 	default:
 		fmt.Fprintf(os.Stderr, "lyrac: unknown command %q\n", cmd)
 		usage()
@@ -58,28 +66,40 @@ func usage() {
 commands:
   check   parse and type-check a source file, reporting diagnostics
   build   check, then compile to a native executable
+  run     build to a temporary location and execute it
 
 build flags:
   -o <path>     write the executable here (default: the source path without .lyra)
   --emit-llvm   stop after emitting <name>.ll; do not link an executable
   --keep-ll     keep the emitted <name>.ll beside the executable
   --cc <path>   C compiler used to assemble and link (default: $LYRA_CC, else clang)
+
+run flags:
+  --cc <path>   as above; run leaves no executable or IR behind
 `)
 }
 
-// buildOptions is what `lyrac build` was asked for. The zero value (plus a path)
-// is the default build: link an executable next to the source and keep no IR.
+// buildOptions is what `lyrac build` (or `run`) was asked for. The zero value
+// (plus a path) is the default build: link an executable next to the source and
+// keep no IR.
 type buildOptions struct {
 	path     string // the .lyra source
 	out      string // executable path; empty means derive it from path
 	emitOnly bool   // --emit-llvm: write the .ll and stop
 	keepLL   bool   // --keep-ll: keep the .ll as well as the executable
 	cc       string // C compiler override
+
+	// ephemeral is `run`: every artifact is a temp file, so nothing may be
+	// written into the source tree — not even the IR that a failed link
+	// otherwise leaves behind for the user to compile by hand.
+	ephemeral bool
 }
 
 // parseBuildArgs accepts flags before or after the source path, since a build
-// command is as often edited by appending a flag as by inserting one.
-func parseBuildArgs(args []string) (buildOptions, bool) {
+// command is as often edited by appending a flag as by inserting one. cmd names
+// the subcommand: `run` produces a throwaway executable, so the flags choosing
+// where artifacts land are rejected rather than quietly ignored.
+func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 	var o buildOptions
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
@@ -92,6 +112,10 @@ func parseBuildArgs(args []string) (buildOptions, bool) {
 				return o, false
 			}
 			i++
+		}
+		if cmd == "run" && (arg == "-o" || arg == "--emit-llvm" || arg == "--keep-ll") {
+			fmt.Fprintf(os.Stderr, "lyrac: %s is a build flag; run keeps no artifact (use `lyrac build`)\n", arg)
+			return o, false
 		}
 		switch {
 		case arg == "-o":
@@ -106,7 +130,7 @@ func parseBuildArgs(args []string) (buildOptions, bool) {
 			fmt.Fprintf(os.Stderr, "lyrac: unknown flag %q\n", arg)
 			return o, false
 		case o.path != "":
-			fmt.Fprintf(os.Stderr, "lyrac: build takes one source file (got %q and %q)\n", o.path, arg)
+			fmt.Fprintf(os.Stderr, "lyrac: %s takes one source file (got %q and %q)\n", cmd, o.path, arg)
 			return o, false
 		default:
 			o.path = arg
@@ -135,20 +159,90 @@ func check(path string) int {
 // build runs the same analysis, resolves the program's entry point, hands the
 // typed program to the backend, and links the emitted IR into an executable.
 func build(o buildOptions) int {
-	res, ok := analyze(o.path)
-	if !ok {
-		return 2
+	res, entry, code := typedProgram(o.path)
+	if entry == nil {
+		return code
 	}
-	printDiagnostics(o.path, res.Diagnostics)
-	if res.HasErrors() {
+	exe, code := lowerAndEmit(o, res, entry)
+	if code != 0 {
+		return code
+	}
+	if o.emitOnly {
+		return 0
+	}
+	fmt.Printf("%s: wrote %s (llvm backend)\n", o.path, exe)
+	if o.keepLL {
+		fmt.Printf("  kept %s\n", replaceExt(o.path, ".ll"))
+	}
+	return 0
+}
+
+// runProgram builds into a temp directory and executes the result, leaving no
+// executable and no IR behind. The program's own exit status is passed through,
+// which is why nothing here prints a build summary on success: `lyrac run`'s
+// output should be the program's, so that piping it works.
+//
+// The cost of passing the status through is that a program exiting 1 or 2 is
+// indistinguishable from a compile error — the same trade `go run` makes, and
+// the compiler's own failures are the ones that also print a diagnostic.
+func runProgram(o buildOptions) int {
+	res, entry, code := typedProgram(o.path)
+	if entry == nil {
+		return code
+	}
+
+	dir, err := os.MkdirTemp("", "lyrac-run-")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
 		return 1
+	}
+	defer os.RemoveAll(dir)
+
+	o.ephemeral = true
+	o.out = filepath.Join(dir, filepath.Base(replaceExt(o.path, "")))
+	exe, code := lowerAndEmit(o, res, entry)
+	if code != 0 {
+		return code
+	}
+
+	cmd := exec.Command(exe)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	if err := cmd.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			// The program ran and chose this status (or was killed by a signal,
+			// which ExitCode reports as -1). Either way it is the program's
+			// outcome, not the compiler's, so it is reported without comment.
+			if status := exit.ExitCode(); status >= 0 {
+				return status
+			}
+			fmt.Fprintf(os.Stderr, "lyrac: %s: %v\n", filepath.Base(exe), exit)
+			return 1
+		}
+		fmt.Fprintf(os.Stderr, "lyrac: cannot run %s: %v\n", exe, err)
+		return 1
+	}
+	return 0
+}
+
+// typedProgram is the front half both build and run need: analyze, report
+// diagnostics, and resolve the entry point. A nil entry means it failed and the
+// returned code is what the process should exit with.
+func typedProgram(path string) (*driver.Result, *driver.EntryPoint, int) {
+	res, ok := analyze(path)
+	if !ok {
+		return nil, nil, 2
+	}
+	printDiagnostics(path, res.Diagnostics)
+	if res.HasErrors() {
+		return nil, nil, 1
 	}
 	entry, entryDiags := driver.ResolveEntryPoint(res)
-	printDiagnostics(o.path, entryDiags)
+	printDiagnostics(path, entryDiags)
 	if entry == nil {
-		return 1
+		return nil, nil, 1
 	}
-	return lowerAndEmit(o, res, entry)
+	return res, entry, 0
 }
 
 // analyze reads path and runs the front-end pipeline. Returns ok=false (after
@@ -174,55 +268,63 @@ func analyze(path string) (*driver.Result, bool) {
 
 // lowerAndEmit runs the backend over a fully-typed, error-free program, then
 // links the emitted IR into an executable (unless --emit-llvm asked to stop at
-// the IR). The LLVM backend is early (see pkg/backend/llvm's doc comment for
-// what's covered); a form it doesn't lower yet returns an error here rather
-// than silently emitting wrong code.
-func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) int {
+// the IR) and returns its path. The LLVM backend is early (see pkg/backend/llvm's
+// doc comment for what's covered); a form it doesn't lower yet returns an error
+// here rather than silently emitting wrong code.
+//
+// It prints nothing on success — the caller knows whether its command has a
+// summary to report — so `lyrac run`'s output is the program's alone.
+func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) (string, int) {
 	be := llvm.New()
 	ir, err := be.Emit(res, entry)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %s backend: %v\n", be.Name(), err)
-		return 1
+		return "", 1
 	}
 
 	llPath := replaceExt(o.path, ".ll")
-	keepLL := o.emitOnly || o.keepLL
-	if !keepLL {
+	if !o.emitOnly && !o.keepLL {
 		// A throwaway .ll: the executable is the artifact, so the IR does not
 		// belong in the user's source tree. It still has to reach the compiler
 		// as a file, since clang reads IR from a path, not from stdin.
 		dir, err := os.MkdirTemp("", "lyrac-")
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
-			return 1
+			return "", 1
 		}
 		defer os.RemoveAll(dir)
 		llPath = filepath.Join(dir, filepath.Base(replaceExt(o.path, ".ll")))
 	}
 	if err := os.WriteFile(llPath, ir, 0o644); err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
-		return 1
+		return "", 1
 	}
 
 	if o.emitOnly {
 		fmt.Printf("%s: wrote %s (%s backend)\n", o.path, llPath, be.Name())
 		fmt.Printf("  compile with: clang %s -lm -o %s\n", llPath, exePath(o))
-		return 0
+		return llPath, 0
 	}
 
 	cc, err := findCC(o.cc)
 	if err != nil {
 		// Keep the IR on this path whatever the flags said: without it the user
-		// has nothing to hand to a compiler they install later.
-		fallback := replaceExt(o.path, ".ll")
-		if fallback != llPath {
-			if werr := os.WriteFile(fallback, ir, 0o644); werr == nil {
-				llPath = fallback
+		// has nothing to hand to a compiler they install later. `run` is the
+		// exception — it promised to leave nothing behind, and a temp path in
+		// the message would name a file already deleted.
+		if !o.ephemeral {
+			fallback := replaceExt(o.path, ".ll")
+			if fallback != llPath {
+				if werr := os.WriteFile(fallback, ir, 0o644); werr == nil {
+					llPath = fallback
+				}
 			}
+			fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
+			fmt.Fprintf(os.Stderr, "  wrote %s; compile it with: clang %s -lm -o %s\n", llPath, llPath, exePath(o))
+			return "", 1
 		}
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
-		fmt.Fprintf(os.Stderr, "  wrote %s; compile it with: clang %s -lm -o %s\n", llPath, llPath, exePath(o))
-		return 1
+		return "", 1
 	}
 
 	exe := exePath(o)
@@ -232,14 +334,9 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 	cmd := exec.Command(cc, llPath, "-lm", "-o", exe)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %s failed to compile the emitted IR: %v\n%s", cc, err, out)
-		return 1
+		return "", 1
 	}
-
-	fmt.Printf("%s: wrote %s (%s backend)\n", o.path, exe, be.Name())
-	if keepLL {
-		fmt.Printf("  kept %s\n", llPath)
-	}
-	return 0
+	return exe, 0
 }
 
 // exePath is where the executable goes: -o if given, else the source path with

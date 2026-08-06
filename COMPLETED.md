@@ -175,6 +175,20 @@ Still open, and now the only thing keeping that loop from being one `match`: `br
 inside an arm is not in scope (`undefined identifier "break"`). See todo.md.
 
 ### 08/06/26
+**`lyrac run`.** The build pipeline with every artifact in a temp directory, then `exec`
+with the child inheriting stdin/stdout/stderr — so a program reading `read_line()` works
+under a pipe, and nothing lands in the source tree.
+
+Two things it deliberately gives up. It **prints no build summary**, because `lyrac run
+prog.lyra | grep …` should see the program's output and not the compiler's; that is what
+moved the reporting out of `lowerAndEmit` and made it return the executable's path. And it
+**passes the program's exit status through**, which means a program exiting 1 cannot be told
+from a compile failure — the trade `go run` makes, mitigated by the compiler's own failures
+being the ones that also print a diagnostic. The build flags choosing where an artifact
+lands (`-o`, `--emit-llvm`, `--keep-ll`) are refused for `run` rather than ignored, and the
+missing-compiler fallback that writes `<name>.ll` beside the source is suppressed: a promise
+to leave nothing behind, and a message naming a temp path already deleted helps nobody.
+
 **`lyrac build` produces an executable.** It emitted `<name>.ll` and printed the `clang`
 command to run by hand; it now runs it — IR to a temp file, `clang <ir> -lm -o <exe>`, and
 the artifact is `<name>` beside the source. `-o`, `--keep-ll`, `--emit-llvm` (the old

@@ -337,9 +337,10 @@ Logs to `/tmp/lyra-lsp.log`. Build with `go build ./cmd/lyra-lsp`.
 
 ### `cmd/lyrac`
 
-Compiler CLI, built on `pkg/driver`. Two subcommands: `lyrac check <file.lyra>` (parse +
-typecheck, print diagnostics, exit 1 on any error) and `lyrac build <file.lyra>` (check, resolve
-the entry point via `driver.ResolveEntryPoint`, then hand the typed program to the backend).
+Compiler CLI, built on `pkg/driver`. Three subcommands: `lyrac check <file.lyra>` (parse +
+typecheck, print diagnostics, exit 1 on any error), `lyrac build <file.lyra>` (check, resolve
+the entry point via `driver.ResolveEntryPoint`, hand the typed program to the backend, link an
+executable) and `lyrac run <file.lyra>` (build into a temp directory and execute it).
 Diagnostics print as `path:line:col: severity[code]: message` (the `line:col` is omitted for a
 program-level error with no location, e.g. a missing `main`).
 
@@ -361,6 +362,21 @@ would reject the IR with a confusing error instead of a clear one. When none is 
 build fails (exit 1) but **writes `<name>.ll` next to the source anyway** and prints the
 `clang` line: that IR is all the user has to compile once they install one, and the flags
 said nothing about wanting it discarded on a path where nothing else was produced.
+
+`run` (08/06) is that same pipeline with every artifact in a temp directory (`buildOptions.
+ephemeral`), then `exec` with the child inheriting stdin/stdout/stderr. Two consequences to
+keep:
+
+- **It prints no build summary**, which is why `lowerAndEmit` returns the executable's path
+  and leaves reporting to its caller. `lyrac run prog.lyra | grep …` should see the
+  program's output, not the compiler's.
+- **The program's exit status is the command's** (`exec.ExitError.ExitCode`), so an exit 1
+  from a program is indistinguishable from a compile failure — the same trade `go run`
+  makes. The compiler's own failures are the ones that also print a diagnostic.
+
+`ephemeral` also suppresses the missing-compiler `.ll` fallback above: `run` promised to
+leave nothing behind, and the temp path it would name is deleted by the time the message is
+read. `-o`/`--emit-llvm`/`--keep-ll` are refused for `run` rather than ignored.
 
 Codegen is pre-release but no longer minimal —
 closures, generics, strings, arrays, `match`, traits, `?` and Perceus all lower; that

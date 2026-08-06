@@ -176,6 +176,74 @@ func TestBuild_MissingCC(t *testing.T) {
 	assertIsIR(t, replaceExt(path, ".ll"))
 }
 
+// --- run --------------------------------------------------------------------
+
+// TestRunCmd_Clean runs a program end to end: its stdout is the command's, and
+// nothing is left in the source directory.
+func TestRunCmd_Clean(t *testing.T) {
+	requireCC(t)
+	path := copyFixtureToTemp(t, "hello.lyra")
+	stdout, stderr, code := captureRun(t, "run", path)
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0\nstderr: %s", code, stderr)
+	}
+	if stdout != "hello\n" {
+		t.Errorf("stdout = %q, want the program's output alone (%q)", stdout, "hello\n")
+	}
+	entries, err := os.ReadDir(filepath.Dir(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != "hello.lyra" {
+			t.Errorf("run left %s behind in the source directory", e.Name())
+		}
+	}
+}
+
+// TestRunCmd_ExitCode is the reason run cannot report build failures with a
+// status of its own: the program's `main` picks it.
+func TestRunCmd_ExitCode(t *testing.T) {
+	requireCC(t)
+	path := copyFixtureToTemp(t, "exit7.lyra")
+	if _, stderr, code := captureRun(t, "run", path); code != 7 {
+		t.Errorf("exit code = %d, want 7 (the program's own)\nstderr: %s", code, stderr)
+	}
+}
+
+func TestRunCmd_Diagnostics(t *testing.T) {
+	// A program that doesn't compile fails before anything is executed, and the
+	// diagnostic is the compiler's, on stderr.
+	stdout, stderr, code := captureRun(t, "run", fixture("typeerr.lyra"))
+	if code != 1 {
+		t.Errorf("exit code = %d, want 1", code)
+	}
+	if stdout != "" {
+		t.Errorf("stdout = %q, want empty (nothing ran)", stdout)
+	}
+	if !strings.Contains(stderr, "error") {
+		t.Errorf("stderr missing the type error:\n%s", stderr)
+	}
+}
+
+// TestRunCmd_RejectsBuildFlags: run keeps no artifact, so a flag choosing where
+// one lands is refused rather than silently ignored.
+func TestRunCmd_RejectsBuildFlags(t *testing.T) {
+	for _, flag := range []string{"-o", "--emit-llvm", "--keep-ll"} {
+		args := []string{"run", flag, "x.lyra"}
+		if flag == "-o" {
+			args = []string{"run", "-o", "out", "x.lyra"}
+		}
+		_, stderr, code := captureRun(t, args...)
+		if code != 2 {
+			t.Errorf("run %s: exit code = %d, want 2", flag, code)
+		}
+		if !strings.Contains(stderr, "build flag") {
+			t.Errorf("run %s: stderr missing the build-flag notice:\n%s", flag, stderr)
+		}
+	}
+}
+
 func TestBuild_BadFlags(t *testing.T) {
 	cases := [][]string{
 		{"build", "--frobnicate", "x.lyra"},
