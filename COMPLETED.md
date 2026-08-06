@@ -10,6 +10,44 @@ Newest first.
 ## Dated log
 
 ### 08/06/26
+**A bare jump may be a `match` arm body** — `None => break`, `_ => continue`,
+`v if v > 10 => return v`. With the statement-arm fix below, the read-until-EOF loop is
+finally written the way it reads:
+
+```lyra
+for {
+  match read_line() {
+    None => break,
+    Some line => match line.parse_i64() {
+      None => println("That isn't a whole number — try again."),
+      Some g => { … },
+    },
+  }
+}
+```
+
+**Only the spelling was missing.** The jump forms are statements and a `match_arm` body
+was `$.expression`, so `None => break` parsed `break` as an identifier and reported
+`undefined identifier "break"` — while the *braced* form `None => { break }` worked end
+to end, because a block holds statements and the backend already seals a block whose
+statement jumped (`matchMerge` then drops the arm, since its block is no longer open).
+
+So the collector **erases** it: `collectMatchArmBody` turns a bare jump into exactly the
+single-statement `BlockExpr` the braced form produces. Nothing after the collector learns
+the alternative exists — the same treatment juxtaposed constructor application gets.
+
+That erasure is the whole design, and the alternative is the tempting one: letting
+`MatchArm.Body` hold a *statement* would push the distinction into the typechecker, the
+purity and ownership passes, and all four of the backend's arm-body lowering sites, each
+needing a case that does what the block case already does. Erasing at the boundary costs
+one function and zero downstream changes. The invariant it buys — and the thing to keep —
+is that **the two spellings stay byte-identical in the AST**; a test collects both and
+compares the printed trees, because the day they diverge is the day the erased form has a
+meaning of its own.
+
+Grammar cost was negligible: `parser.c` +21 KB, no new conflicts, 443 corpus parses.
+
+### 08/06/26
 **A `match` arm may end in an assignment — a `match` used as a statement.** It failed
 with "block has no value (empty, or last statement is not an expression)", so
 `match m { Some v => { x = v; }, None => { x = 0; } }` did not compile and every

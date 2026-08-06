@@ -37,11 +37,11 @@ write today:
   *statement*, for its effect. The four arm-body sites lowered through `lowerExpr`, which
   requires a block value; they use `lowerBranchValue` now, the same value-optional helper
   `if` branches have always used. See COMPLETED.md.
-- **[OPEN] `break` inside a `match` arm is not in scope.** `None => break` reports
-  `undefined identifier "break"` — the arm body is checked as an expression, and the jump
-  forms are statements. This is now the *only* thing stopping the natural read-until-EOF
-  loop from being a `match`: with statement arms landed, `match read_line() { … }` reads
-  correctly as long as no arm wants to `break`.
+- **[DONE 08/06] A bare jump may be a `match` arm body** — `None => break`,
+  `_ => continue`, `v if … => return v`. The *braced* form (`None => { break }`) already
+  worked, so only the spelling was missing; the collector erases the bare one into exactly
+  that block, and nothing downstream changed. With this and statement arms, the
+  read-until-EOF loop is finally the `match` it wanted to be. See COMPLETED.md.
 - **[OPEN] `for flag {}` does not parse.** The condition field is a `boolean_expr`, and a
   bare identifier is not one — `for done == true {}` is the workaround, which no one would
   write by choice. Widening the condition to admit a `_bool_operand` is the obvious fix; the

@@ -188,3 +188,131 @@ let main = () -> u8 => {
 		})
 	}
 }
+
+// A **bare jump** as an arm body — `None => break`, `_ => continue`,
+// `v if … => return v`.
+//
+// The jump forms are statements and an arm body is an expression, so the bare
+// spelling parsed `break` as an identifier ("undefined identifier \"break\"") until
+// 08/06. The *braced* form already worked end to end, so the collector erases the
+// bare one into exactly that block — which is why these are behavioural tests of a
+// feature with no backend change behind it. They exist because the erasure is only
+// worth anything if the erased form really does run.
+func TestExec_BareJumpInMatchArm(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name, src string
+		want      int
+	}{
+		{
+			// break out of a loop from an arm: sums 1+2+3 and stops at the None.
+			"break",
+			`
+data Maybe<t> = None | Some t
+let main = () -> u8 => {
+  var n = 0
+  var total = 0
+  for {
+    n = n + 1
+    let m: Maybe<i64> = if n < 4 { Some n } else { None }
+    match m {
+      Some v => { total = total + v; },
+      None => break,
+    }
+  }
+  u8(total)
+}
+`, 6,
+		},
+		{
+			// continue from an arm: sums the odd numbers 1..9.
+			"continue",
+			`
+let main = () -> u8 => {
+  var total = 0
+  for var i = 1; i <= 9; i += 1 {
+    match i %% 2 {
+      0 => continue,
+      _ => { total = total + i; },
+    }
+  }
+  u8(total)
+}
+`, 25,
+		},
+		{
+			// return from an arm, out of the enclosing function.
+			"return with a value",
+			`
+let firstBig = (xs: []i64) -> i64 => {
+  for x in xs {
+    match x {
+      v if v > 10 => return v,
+      _ => { },
+    }
+  }
+  -1
+}
+let main = () -> u8 => u8(firstBig([1, 5, 42, 7]))
+`, 42,
+		},
+		{
+			// A bare `return` with no value, from a void function.
+			"bare return",
+			`
+data Maybe<t> = None | Some t
+var seen = 0
+let main = () -> u8 => {
+  var n = 0
+  let step = (m: Maybe<i64>) -> void => {
+    match m {
+      None => return,
+      Some _ => { },
+    }
+  }
+  step(None)
+  u8(n)
+}
+`, 0,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("got %d, want %d", got, c.want)
+			}
+		})
+	}
+}
+
+// The bare and braced spellings must behave identically — the collector claims they
+// are the same AST, and this is the end-to-end half of that claim (the collector
+// tests pin the ASTs themselves).
+func TestExec_BareAndBracedJumpAgree(t *testing.T) {
+	t.Parallel()
+	const tmpl = `
+data Maybe<t> = None | Some t
+let main = () -> u8 => {
+  var n = 0
+  var total = 0
+  for {
+    n = n + 1
+    let m: Maybe<i64> = if n < 5 { Some n } else { None }
+    match m {
+      Some v => { total = total + v; },
+      None => %s,
+    }
+  }
+  u8(total)
+}
+`
+	bare := buildAndRun(t, strings.Replace(tmpl, "%s", "break", 1))
+	braced := buildAndRun(t, strings.Replace(tmpl, "%s", "{ break; }", 1))
+	if bare != braced {
+		t.Errorf("bare break gave %d, braced gave %d", bare, braced)
+	}
+	if bare != 10 { // 1+2+3+4
+		t.Errorf("got %d, want 10", bare)
+	}
+}

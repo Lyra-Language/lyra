@@ -61,7 +61,7 @@ func CollectMatchArm(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.MatchArm {
 		ctx.AddError(node, diag.SeverityError, "CollectMatchArm: body node is missing")
 		return nil
 	}
-	body := CollectExpression(bodyNode, ctx)
+	body := collectMatchArmBody(bodyNode, ctx)
 	if body == nil {
 		ctx.AddError(node, diag.SeverityError, "CollectMatchArm: body is nil")
 		return nil
@@ -70,5 +70,45 @@ func CollectMatchArm(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.MatchArm {
 		Pattern: pattern,
 		Guard:   guard,
 		Body:    body,
+	}
+}
+
+// armJumpKinds are the statement forms a match arm may hold *bare*, without the
+// braces a block would need: `None => break`, `_ => continue`, `Err e => return e`.
+var armJumpKinds = map[string]bool{
+	"break_statement":    true,
+	"continue_statement": true,
+	"return_statement":   true,
+}
+
+// collectMatchArmBody collects an arm body, **erasing the bare-jump spelling**: a
+// bare `break`/`continue`/`return` becomes the single-statement block the braced
+// form already produced, so `None => break` and `None => { break }` collect to
+// byte-identical ASTs.
+//
+// Doing it here is what makes the feature cheap. The jump forms are statements and
+// an arm body is an expression, so the alternative — teaching `MatchArm.Body` to
+// hold a statement — would push the distinction through the typechecker, the purity
+// and ownership passes, and all four of the backend's arm-body lowering sites, each
+// of which would need a case that does exactly what the block case already does.
+// Erasing it at the boundary means nothing after the collector learns this
+// alternative exists, which is the same treatment juxtaposed constructor
+// application gets (`Some 42` collects as `Some(42)`).
+//
+// The braced form already worked end to end — the backend seals a block whose
+// statement jumped and `matchMerge` drops an arm whose block is sealed — so this
+// adds a spelling rather than a behaviour.
+func collectMatchArmBody(bodyNode *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression {
+	if !armJumpKinds[bodyNode.Kind()] {
+		return CollectExpression(bodyNode, ctx)
+	}
+	stmt := ctx.CollectStatement(bodyNode)
+	if stmt == nil {
+		return nil
+	}
+	loc := ctx.NodeLocation(bodyNode)
+	return &ast.BlockExpr{
+		ExprBase:   ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+		Statements: []ast.Statement{stmt},
 	}
 }

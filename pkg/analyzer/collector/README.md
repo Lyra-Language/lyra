@@ -115,6 +115,30 @@ comment-only body collects to an empty block.
 - `node.FieldNameForChild(uint32(i))` — field name at index `i`; use when a rule repeats the
   same field name (e.g. multiple `value:` fields in `commaSep1`)
 
+## Spellings the collector erases
+
+Two surface forms build the same AST as an existing one, so nothing after the collector
+learns they exist:
+
+- **Juxtaposed constructor application.** `Some 42` builds the same named `TupleLiteralExpr`
+  that `Some(42)` builds (`collectAppliedConstructorExpr`), so the typechecker, purity,
+  exhaustiveness and the backend never see juxtaposition.
+- **A bare jump as a match arm body** (08/06). `None => break` builds the single-statement
+  `BlockExpr` that `None => { break }` builds (`collectMatchArmBody`). The jump forms are
+  statements and an arm body is an expression, so the bare spelling did not parse at all
+  before; the braced one already worked end to end.
+
+The second is worth stating as a rule rather than a trick, because the alternative is
+expensive and looks reasonable: letting `MatchArm.Body` hold a *statement* would push the
+distinction into the typechecker, the purity and ownership passes, and all four of the
+backend's arm-body lowering sites — every one of which would need a case doing exactly what
+the block case already does. Erasing at the boundary costs one function.
+
+The invariant to keep: **the two spellings must stay byte-identical in the AST.** If they
+ever diverge, the erased form has acquired a meaning of its own and every downstream pass
+becomes a place the two can differ. `TestMatchArm_BareJumpCollectsAsTheBracedForm` pins it
+by collecting both and comparing the printed trees.
+
 ## Ranges: one notation, one strictness rule
 
 The `..` notation has three sites — an expression (`0..<n`), a match pattern (`0..<=9`), and
