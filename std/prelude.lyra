@@ -340,3 +340,19 @@ pub let random_between = (lo: i64, hi: i64) -> i64 => {
   var rng = rng_from_entropy();
   rng.between(lo, hi)
 }
+
+// The result of a three-way comparison (`a <=> b`). A sum type rather than the
+// -1/0/1 integer Ruby and Perl return: an integer invites `if (a <=> b) == -1`,
+// which is strictly worse than `a < b` and would leave the operator with no reason
+// to exist. Named variants make the one thing `<=>` is *for* — handling all three
+// outcomes in one place — the natural way to write it:
+//
+//   match guess <=> secret {
+//     Less    => println("Too low!"),
+//     Greater => println("Too high!"),
+//     Equal   => println("You got it!"),
+//   }
+//
+// and exhaustiveness then insists every case is covered, which is the property the
+// `if`/`else if`/`else` chain it replaces cannot offer.
+pub data Ordering = Less | Equal | Greater

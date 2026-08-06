@@ -219,3 +219,23 @@ func errorTypesCompatible(from, to types.Type) bool {
 	}
 	return isAssignable(from, to)
 }
+
+// orderingType resolves the prelude's `Ordering` — the result type of `<=>`.
+//
+// Looked up by name rather than synthesized, so the type the expression carries is
+// the *same* declaration a `match` arm's `Less`/`Equal`/`Greater` patterns resolve
+// against; a fresh DataType built here would compare unequal to it and every
+// three-way match would fail on its own arms.
+//
+// Unlike Maybe and Result there is no `@builtin` marker, so this is a plain
+// lookup: `Ordering` is an ordinary prelude type that `<=>` happens to name. A
+// program without a prelude gets a diagnostic saying so rather than a type
+// pointing at nothing.
+func (tc *TypeChecker) orderingType(loc ast.Location) types.Type {
+	if decl, ok := tc.symTable.LookupTypeFrom("Ordering", loc); ok && decl != nil {
+		return tc.resolveType(types.UnresolvedType{Name: decl.Name}, loc)
+	}
+	tc.addError(loc, SeverityError,
+		"`<=>` produces an Ordering, and this program has no Ordering type (it is normally the prelude's)")
+	return nil
+}

@@ -1181,6 +1181,37 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 		} else {
 			tc.propagateComparisonWidth(expr, leftType, rightType)
 		}
+	case ast.BooleanBinaryOpSpaceship:
+		// `<=>` orders its operands, so it takes the *same* operand domain as `<`
+		// and friends — with floats deliberately excluded, which is the one place it
+		// is narrower than they are.
+		//
+		// **Floats are refused because NaN has no ordering.** `<` answers false for
+		// every comparison involving NaN, which is a defensible lie for a two-way
+		// answer; a three-way one has to say *which* of Less/Equal/Greater NaN is,
+		// and every choice is wrong. C++ has a separate `partial_ordering` with an
+		// `unordered` case for exactly this. Adding a fourth variant would make every
+		// integer `match` carry a case that cannot occur, so the decision is deferred
+		// rather than guessed — see todo.md.
+		if isRuneType(leftType) && isRuneType(rightType) {
+			return
+		}
+		if isFloatType(leftType) || isFloatType(rightType) {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"operator <=>: floats are not orderable three ways, because NaN is neither "+
+					"less than, equal to, nor greater than anything; compare with < and == instead")
+			return
+		}
+		if !types.IsNumeric(leftType) || !types.IsNumeric(rightType) {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"operator <=>: operands must be numeric, got %s and %s", leftType, rightType)
+			return
+		}
+		if numericResultType(leftType, rightType) == nil {
+			tc.addIncompatibleTypesError(expr, string(expr.Operator), leftType, rightType)
+		} else {
+			tc.propagateComparisonWidth(expr, leftType, rightType)
+		}
 	case ast.BooleanBinaryOpLT, ast.BooleanBinaryOpLTE, ast.BooleanBinaryOpGT, ast.BooleanBinaryOpGTE:
 		// Two runes are ordered by code point, which is what makes classification
 		// expressible (`c >= 'a' && c <= 'z'`). `rune` stays *non-numeric* — it has
@@ -1552,6 +1583,10 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		return types.PrimitiveType{Name: types.Boolean}
 	case *ast.BooleanBinaryOpExpr:
 		tc.checkBooleanBinaryOpExpr(e)
+		// `<=>` is the one operator on this node whose result is not `bool`.
+		if e.Operator == ast.BooleanBinaryOpSpaceship {
+			return tc.orderingType(e.GetLocation())
+		}
 		return types.PrimitiveType{Name: types.Boolean}
 	case *ast.BlockExpr:
 		return tc.inferBlockType(e)

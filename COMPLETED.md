@@ -10,6 +10,74 @@ Newest first.
 ## Dated log
 
 ### 08/06/26
+**`<=>` lowers, and it yields `Ordering` rather than a bool.** It had parsed and
+type-checked since the grammar had a `spaceship_operator` — as a **bool**, with its
+operands never checked, because the operator appears in no case of
+`checkBooleanBinaryOpExpr` — and then failed the build with "boolean operator <=> not
+implemented". Same family as `Random.global()` and `Rng.seeded()`: a form the front
+end waved through into a backend that had never heard of it.
+
+**The result type is a sum type, not Ruby's -1/0/1.** An integer invites
+`if (a <=> b) == -1`, which is strictly worse than `a < b` and would leave the
+operator with no reason to exist. `data Ordering = Less | Equal | Greater` in the
+prelude makes the one thing `<=>` is *for* — handling all three outcomes together —
+the natural spelling, and exhaustiveness then insists every case is covered, which is
+exactly what the `if`/`else if`/`else` chain it replaces cannot offer:
+
+```lyra
+match guess <=> secret {
+  Less    => println("Too low!"),
+  Greater => println("Too high!"),
+  Equal   => { println("You got it!"); break },
+}
+```
+
+**Floats are refused**, and that is the one place `<=>` is narrower than `<`. NaN is
+neither less than, equal to, nor greater than anything; `<` can answer false and call
+it a day, but a three-way answer must name one of three variants and every choice is a
+lie. C++ splits `strong_ordering` from `partial_ordering` (with an `unordered` case)
+for this reason. A fourth variant would burden every *integer* match with a case that
+cannot occur, so the decision is deferred with a diagnostic that explains itself rather
+than guessed. Integers and runes are supported, runes ordering by code point as they do
+under `<`.
+
+**The lowering is branchless**, and deliberately so. Every `Ordering` variant is
+nullary, so the three values differ in one field — the tag — which two `select`s
+compute and an `insertvalue` places. No new blocks, so the call site returns the block
+it was given. That matters beyond tidiness: a branching call site returns a *merge*
+block, which is neither case `flushStmtTemps` handles, and that is what made
+`read_line` free its string before the `match` read it. `Ordering` owns nothing so the
+bug could not bite here, but the shape is worth keeping, and a test asserts it on the
+emitted IR.
+
+Two details that would each have been a silent wrong answer. The predicates follow the
+operand's **signedness** — `u8(200) <=> u8(1)` is Greater, but read as signed 200 is
+-56 and the answer flips to Less. And the tags come from `findConstructor` rather than
+being hard-coded 0/1/2, so reordering the prelude's variants cannot silently
+miscompile every three-way match.
+
+**A body ending in a loop now infers `void`.** `let f = () => { for { … } }` reported
+"cannot infer the return type — annotate it (a recursive function always needs one)",
+which was wrong twice: a loop is an expression in the AST but never *has* a value
+(`break` with one is unimplemented), and the message blamed recursion for something
+that had none. `blockValueExpr` answers void for a `for`/`for-in` tail — the same
+answer it already gave for a block ending in a statement. The message no longer states
+recursion as the cause, because a tail `if`/`match` used for effect still trips it and
+is equally non-recursive.
+
+**A `const` still cannot be a range-pattern bound**, and the attempt is worth
+recording because the blocker is not where it looks. Admitting `const_identifier` to
+`range_pattern` is one line, and it generates after two GLR conflict entries — but then
+every all-uppercase *data constructor* pattern (`A`, `MAX`) misparses as a range bound
+with a `MISSING ".."`, because `const_identifier` and `user_defined_type_name` match
+that text identically and the lexer picks the constant as soon as one is legal in the
+state. A third conflict entry is reported "unnecessary": the decision is lexical, not
+syntactic, so GLR never gets to weigh it. That is the same ambiguity that blocked the
+all-caps struct literal, and it wants that grammar project rather than this reflex.
+Backed out; the finding is a comment in `include/patterns/index.js`, so the next person
+does not re-derive it.
+
+### 08/06/26
 **A bare jump may be a `match` arm body** — `None => break`, `_ => continue`,
 `v if v > 10 => return v`. With the statement-arm fix below, the read-until-EOF loop is
 finally written the way it reads:

@@ -200,11 +200,18 @@ func (tc *TypeChecker) inferLambdaReturnType(funcName string, lambda *ast.Lambda
 	inferred, ok := tc.typeTable.Get(value)
 	if !ok || inferred == nil {
 		// The body was walked already, so a missing entry means inference could not
-		// finish — overwhelmingly because the function calls itself, where computing
-		// the return type requires the return type. Callers of a recursive function
-		// need its signature, so the annotation is not a limitation to apologize for.
+		// finish. The usual cause is self-recursion, where computing the return type
+		// requires the return type — and a recursive function's callers need its
+		// signature anyway, so that annotation is not a limitation to apologize for.
+		//
+		// It is *not* the only cause, which is why the message no longer states it as
+		// one: a tail `if`/`match` used for effect records no type either, and reading
+		// "a recursive function always needs one" on a plainly non-recursive function
+		// sends the reader looking for recursion that is not there. (A tail **loop** was
+		// the third case and is no longer one — blockValueExpr answers void for it.)
 		tc.addError(lambda.GetLocation(), SeverityError,
-			"%s: cannot infer the return type — annotate it (a recursive function always needs one)",
+			"%s: cannot infer the return type — annotate it (needed when a function calls "+
+				"itself, or when its last expression produces no value)",
 			funcName)
 		return
 	}
@@ -238,6 +245,20 @@ func blockValueExpr(block *ast.BlockExpr) (ast.Expression, bool) {
 	}
 	last, ok := block.Statements[len(block.Statements)-1].(*ast.ExpressionStmt)
 	if !ok {
+		return nil, false
+	}
+	// A **loop** is an expression in the AST but never produces a value: `break`
+	// with a value is not implemented (the backend refuses it outright), so a
+	// `for`/`for-in` in tail position leaves the block valueless — which is what
+	// `void` means, and is the same answer as a block ending in a statement.
+	//
+	// Without this, a function whose body ends in a loop could not infer its return
+	// type at all: the loop has no recorded type, so inference fell through to the
+	// "annotate it" error, which additionally blamed *recursion* — a cause that has
+	// nothing to do with it. `let main = () => { for { … } }` is an ordinary shape,
+	// and it is the shape a read-until-EOF program has.
+	switch last.Expression.(type) {
+	case *ast.ForLoopExpr, *ast.ForInLoopExpr:
 		return nil, false
 	}
 	return last.Expression, true

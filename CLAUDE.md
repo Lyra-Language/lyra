@@ -485,6 +485,13 @@ COMPLETED.md, and that backend README's `read_line` section for why the call sit
 no branches (a merge block is neither case `flushStmtTemps` handles, which released the
 string before the `match` consuming it).
 
+**`<=>` landed 08/06**, yielding the prelude's `Ordering` (`Less | Equal | Greater`)
+rather than a bool — so a three-way comparison is one exhaustiveness-checked `match`
+instead of an `if`/`else if`/`else` chain. Floats are refused (NaN has no three-way
+answer); integers and runes are supported. The lowering is branchless, for the reason
+`read_line`'s is: a branching call site returns a merge block, which the temp-release
+machinery does not handle. See `pkg/backend/llvm/README.md`.
+
 **Randomness landed 08/05**, and its shape is the same division of labour as `read_line`:
 `random_seed() -> u64` (`pkg/backend/llvm/random.go`) is the only builtin — one word of OS
 entropy via `getentropy` — while the generator (`Rng`, `next_u64`, `below`, `between`,

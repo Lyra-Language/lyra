@@ -47,6 +47,38 @@ write today:
   write by choice. Widening the condition to admit a `_bool_operand` is the obvious fix; the
   hazard is the usual one in this grammar region (todo's juxtaposition notes), so verify
   against corpus rather than against conflict warnings.
+- **[DONE 08/06] `<=>` lowers**, yielding the prelude's `Ordering`
+  (`Less | Equal | Greater`) rather than a bool or Ruby's -1/0/1 — so all three
+  outcomes are handled in one exhaustiveness-checked `match`. Integers and runes only:
+  **floats are refused**, because NaN is neither less than, equal to nor greater than
+  anything and a three-way answer has to pick one. See COMPLETED.md.
+  - **[OPEN] A partial ordering for floats.** C++ splits `strong_ordering` from
+    `partial_ordering` (which has an `unordered` case) for exactly this. Adding a
+    fourth `Ordering` variant would make every *integer* three-way match carry a case
+    that cannot occur, so the choice is a second type versus a widened one, and it is
+    deferred rather than guessed.
+- **[OPEN] A `const` cannot be a range-pattern bound.** `const LOW = 1` … `LOW..<=HIGH`
+  is a syntax error while `1..<=100` works, so a program must choose between naming its
+  bounds and matching on them — and the numbers then get duplicated into the range check
+  and the message describing it, which is where they drift.
+
+  **Measured, and it is the lexical ambiguity rather than a missing alternative.**
+  Admitting `const_identifier` in `range_pattern` is one line and it generates (after two
+  GLR conflict entries, `_primary_expr` and `_constructor_value`), but every all-uppercase
+  *data constructor* pattern — `A`, `MAX` — then misparses as a range bound with a
+  `MISSING ".."`, because `const_identifier` and `user_defined_type_name` match that text
+  identically and the lexer picks the constant once one is legal in the state. A further
+  conflict entry is reported "unnecessary": the decision is made in the lexer, not the
+  parser. This is the same ambiguity as the all-caps struct literal above and wants that
+  grammar project, not this reflex. Backed out; the finding is recorded in
+  `tree-sitter-lyra`'s `include/patterns/index.js`.
+- **[DONE 08/06] A body ending in a loop infers `void`.** `let f = () => { for { … } }`
+  reported "cannot infer the return type", because a loop is an expression in the AST with
+  no recorded type — so a read-until-EOF `main` could not be written without an
+  annotation. `blockValueExpr` answers void for a `for`/`for-in` tail, which is what a loop
+  produces (`break` with a value is not implemented). The message also stopped blaming
+  recursion outright: a tail `if`/`match` used for effect still trips it and is not
+  recursive.
 - **[OPEN] No string length or slicing.** `s.len()` is array-only
   (`builtinMethodSignature`), and there is no trim. `parse_i64` sidesteps both by walking
   runes with `for c in s`, and `read_line` strips its own terminator so nothing needs

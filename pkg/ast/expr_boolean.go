@@ -31,4 +31,11 @@ const (
 	BooleanBinaryOpNEq BooleanBinaryOp = "!="
 	BooleanBinaryOpAnd BooleanBinaryOp = "&&"
 	BooleanBinaryOpOr  BooleanBinaryOp = "||"
+	// BooleanBinaryOpSpaceship is `<=>`, the three-way comparison. It is grouped
+	// with the boolean operators because the grammar puts it among the relational
+	// ones and it collects into the same node — but unlike every other operator
+	// here its result is **not** `bool`: it is the prelude's `Ordering`
+	// (`Less | Equal | Greater`), which is what makes it worth having rather than
+	// a slower spelling of `<`.
+	BooleanBinaryOpSpaceship BooleanBinaryOp = "<=>"
 )

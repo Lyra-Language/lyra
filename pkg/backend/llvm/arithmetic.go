@@ -137,6 +137,12 @@ func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinary
 	if err != nil {
 		return nil, nil, err
 	}
+	// `<=>` yields the prelude's `Ordering`, not an i1, so it leaves before the
+	// icmp-predicate table below.
+	if e.Operator == ast.BooleanBinaryOpSpaceship {
+		v, err := l.lowerSpaceship(block, e, left, right, signed)
+		return v, block, err
+	}
 	var cmpOp enum.IPred
 	switch e.Operator {
 	case ast.BooleanBinaryOpEq:
@@ -748,4 +754,73 @@ func (l *lowerer) getIntSignedness(e ast.Expression) (bool, error) {
 		return false, fmt.Errorf("llvm: type not found for %T", e)
 	}
 	return IsSignedInt(pt.Name), nil
+}
+
+// lowerSpaceship lowers `a <=> b` to the prelude's `Ordering` — `Less`, `Equal` or
+// `Greater`.
+//
+// **Branchless, and that is the reason it is written by hand rather than as three
+// buildDataValue calls behind a phi.** Every `Ordering` variant is nullary, so the
+// three values differ in exactly one field: the tag. So the tag is computed with
+// two `select`s and inserted into an undef union, and the call site never leaves
+// the block it was given — no new blocks, no merge, and none of the temp-release
+// hazard that a merge block carries (input.go's `lowerReadLineCall` records what
+// that cost when `read_line` branched at its call site).
+//
+// The payload blob is left undef, which is what DATA_LAYOUT.md already specifies
+// for a nullary variant ("store the tag; leave the payload undefined") — nothing
+// reads a nullary variant's payload, and `match` dispatches on the tag alone.
+//
+// Tags come from the declaration order in the prelude via findConstructor rather
+// than being hard-coded 0/1/2: the tag is a layout fact owned by the type, and
+// assuming it here would silently miscompile every three-way match the day someone
+// reorders the variants.
+func (l *lowerer) lowerSpaceship(block *ir.Block, e *ast.BooleanBinaryOpExpr, left, right value.Value, signed bool) (value.Value, error) {
+	recorded, ok := l.recordedType(e)
+	if !ok {
+		return nil, fmt.Errorf("llvm: `<=>` has no recorded type")
+	}
+	dt, ok := recorded.(types.DataType)
+	if !ok {
+		return nil, fmt.Errorf("llvm: `<=>` must produce an Ordering, got %s", recorded)
+	}
+	lessC, lessTag, hasLess := findConstructor(dt, "Less")
+	equalC, equalTag, hasEqual := findConstructor(dt, "Equal")
+	greaterC, greaterTag, hasGreater := findConstructor(dt, "Greater")
+	if !hasLess || !hasEqual || !hasGreater {
+		return nil, fmt.Errorf("llvm: `<=>` result type %q is not an Ordering (needs Less, Equal and Greater)", dt.Name)
+	}
+	// All three are nullary — a payload would have to be built per variant, and the
+	// branchless form could not be used.
+	for _, c := range []types.DataTypeConstructor{lessC, equalC, greaterC} {
+		if len(c.FieldTypes()) != 0 {
+			return nil, fmt.Errorf("llvm: `<=>` result type %q has a non-nullary variant %q", dt.Name, c.Name)
+		}
+	}
+
+	llType, err := l.lowerType(dt)
+	if err != nil {
+		return nil, err
+	}
+	unionTy, ok := llType.(*lltypes.StructType)
+	if !ok {
+		return nil, fmt.Errorf("llvm: Ordering did not lower to a struct (%s)", llType)
+	}
+	tagTy, ok := unionTy.Fields[0].(*lltypes.IntType)
+	if !ok {
+		return nil, fmt.Errorf("llvm: Ordering has a non-integer tag (%s)", unionTy.Fields[0])
+	}
+
+	ltPred, gtPred := enum.IPredSLT, enum.IPredSGT
+	if !signed {
+		ltPred, gtPred = enum.IPredULT, enum.IPredUGT
+	}
+	isLess := block.NewICmp(ltPred, left, right)
+	isGreater := block.NewICmp(gtPred, left, right)
+	tag := block.NewSelect(isLess,
+		constant.NewInt(tagTy, int64(lessTag)),
+		block.NewSelect(isGreater,
+			constant.NewInt(tagTy, int64(greaterTag)),
+			constant.NewInt(tagTy, int64(equalTag))))
+	return block.NewInsertValue(constant.NewUndef(unionTy), tag, 0), nil
 }

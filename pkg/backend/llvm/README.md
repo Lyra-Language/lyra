@@ -201,6 +201,29 @@ not, because a precedence does not stop a wider operand rule from absorbing more
 than the result: both readings usually agree on the value and differ only in whether the right
 operand is evaluated.
 
+### The `<=>` three-way comparison lowers (08/06)
+
+`a <=> b` yields the prelude's `Ordering` (`Less | Equal | Greater`), not a bool — the one
+operator on `BooleanBinaryOpExpr` whose result is not `i1`, so it leaves
+`lowerBooleanBinaryOpExpr` before the icmp-predicate table (`lowerSpaceship`).
+
+**Branchless.** All three variants are nullary, so the values differ in exactly one field —
+the tag — and two `select`s plus an `insertvalue` on an undef union produce it. The payload
+blob is left undef, which DATA_LAYOUT.md already specifies for a nullary variant. No new
+blocks, so the call site returns the block it was given: a branching call site returns a
+*merge* block, which is neither case `flushStmtTemps` handles, and that is the bug
+`read_line` hit. `Ordering` owns nothing so it could not bite here, and the shape is pinned
+by a test on the emitted IR anyway.
+
+Two things that would each be a silent wrong answer rather than a crash: the predicates
+follow the **operand's signedness** (`u8(200) <=> u8(1)` is Greater; read as signed, 200 is
+-56 and it flips), and the tags come from `findConstructor` rather than a hard-coded 0/1/2,
+so reordering the prelude's variants cannot quietly miscompile every three-way match.
+
+Integers and runes only — **floats are refused in the typechecker**, because NaN is neither
+less than, equal to nor greater than anything and a three-way answer has to pick one. See
+`todo.md` for the partial-ordering question that decides.
+
 ### Bitwise and shift operators lower
 
 `arithmetic.go`. `&`/`|`/`~` are a plain `and`/`or`/`xor`; prefix `~x` is `xor x, -1` (LLVM
