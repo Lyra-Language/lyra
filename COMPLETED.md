@@ -10,6 +10,67 @@ Newest first.
 ## Dated log
 
 ### 08/06/26
+**String `len`, `slice` and the trim family.** `s.len()` was array-only and there was no
+way to take a substring, so a program could inspect input (`for c in s`, `s[i]`) but never
+carve it up — the gap the todo predicted "the first program that wants to validate input
+before parsing it" would hit.
+
+**The design question answered itself, which is the part worth recording.** Bytes-vs-runes
+looked like an open fork — Go and Rust count bytes, Swift counts graphemes — but `s[i]`
+already yielded the i-th *code point* and `for c in s` already walked code points, both
+shipped. A byte-based `len` would therefore have made
+
+```lyra
+for i in 0..<s.len() { print(s[i]) }
+```
+
+wrong on the first non-ASCII input: silently, for some inputs only, in the most obvious loop
+anyone writes. So `len` counts runes and is **O(n)**, which is the honest price of agreeing
+with the index. The fat pointer's `len` field stays a byte count — that is the
+representation (STRING_LAYOUT.md), not the language.
+
+`slice(start, end)` is the half-open rune range, matching `..<`. **It allocates, and a
+borrowed slice is deliberately not on offer**: a substring of UTF-8 is a contiguous byte
+range, so `{data + off, n}` would be free and is exactly how Go does it — but every Lyra
+string is a ref-counted box whose header sits at the box's *start*, so a pointer into the
+middle cannot find the header to retain or release through. Copying into a fresh box keeps
+the one uniform rule that a string value is a box.
+
+Bounds are checked in rune terms and traps; `start > end` traps too, rather than quietly
+yielding `""` that cannot be told from a correct empty slice. Both got their own trap
+messages, because a string index and a string slice had been reporting **"array index out of
+bounds"** — a message that sends the reader looking for an array that is not there.
+
+`trim`/`trim_start`/`trim_end` are ordinary Lyra in `std/prelude.lyra`, by the rule that put
+`parse_i64` there and `read_line` in the compiler: a UTF-8 walk needs the decoder and is
+primitive, and everything built on it is not. Whitespace is the **five ASCII characters**
+and deliberately not Unicode's `White_Space`, which needs a table that belongs in a real
+Unicode library rather than smuggled into a prelude. `trim` makes one pass per end and a
+*single* slice rather than `trim_start().trim_end()`, which would build a whole intermediate
+string only to copy most of it again.
+
+**Writing the prelude half exposed a live `noalloc` hole, and it is hazard 8 for the fifth
+time.** A builtin method is charged **no** effect — that is the 08/05 fix that makes
+`x.wrapping_mul(y)` usable from `pure noalloc` code — and the purity pass asks "what does
+this call call?" in *three* places, all three of which say so. `slice` is the first builtin
+method that genuinely allocates, so it was invisible to all three at once and
+
+```lyra
+let bad = pure noalloc (s: string) -> string => s.trim()
+```
+
+type-checked clean. A bound that silently stops binding is worse than no bound. Fixed by
+hazard 9's rule rather than by a fourth name test: the typechecker records *whether the
+resolved builtin allocates* (`MethodTable.SetBuiltinMethod(call, allocates)`), since only it
+still has the receiver's type in hand — `slice` is a string method and nothing else, but a
+consumer testing the bare name would be taking that on faith. All three ladders read the
+flag. `len` and `s[i]` stay allocation-free, so the fix is not the blanket "builtin methods
+allocate" that would have been wrong in the other direction.
+
+Verified on Linux under ASan **with LeakSanitizer on**: the fresh box a slice builds is
+released by the ownership model with no leak and no fault.
+
+### 08/06/26
 **`for flag { … }` parses.** The condition field was `alias($.boolean_expr,
 $.for_condition_expr)` and a bare identifier is not a `boolean_expr`, so looping on a bool
 binding had to be spelled `for done == true { … }` — a workaround nobody writes by choice,

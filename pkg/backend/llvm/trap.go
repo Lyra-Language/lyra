@@ -32,11 +32,18 @@ const trapExitCode = 101
 
 // Trap messages, written to stderr (fd 2) before the process exits.
 const (
-	overflowTrapMessage      = "lyra: arithmetic overflow\n"
-	divideByZeroTrapMessage  = "lyra: divide by zero\n"
-	indexOOBTrapMessage      = "lyra: array index out of bounds\n"
-	matchFailedTrapMessage   = "lyra: match not exhaustive\n"
-	shiftOverflowTrapMessage = "lyra: shift amount out of range\n"
+	overflowTrapMessage     = "lyra: arithmetic overflow\n"
+	divideByZeroTrapMessage = "lyra: divide by zero\n"
+	indexOOBTrapMessage     = "lyra: array index out of bounds\n"
+	// A string is indexed and sliced in *runes*, not elements, and both had been
+	// reporting the array message — which sends the reader looking for an array. The
+	// slice message says "range" rather than "index" because it covers a second
+	// mistake the index form cannot make: `start > end`, an inverted range, which
+	// traps rather than quietly yielding "".
+	stringIndexOOBTrapMessage = "lyra: string index out of bounds\n"
+	stringSliceOOBTrapMessage = "lyra: string slice out of range\n"
+	matchFailedTrapMessage    = "lyra: match not exhaustive\n"
+	shiftOverflowTrapMessage  = "lyra: shift amount out of range\n"
 	// The user message and its newline follow this at run time, so unlike the four
 	// above it carries neither.
 	panicPrefixMessage = "lyra: panic: "
@@ -85,6 +92,14 @@ func (l *lowerer) panicDivideByZeroFunc() *ir.Func {
 
 func (l *lowerer) panicIndexOOBFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_index_out_of_bounds", indexOOBTrapMessage)
+}
+
+func (l *lowerer) panicStringIndexOOBFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_string_index_out_of_bounds", stringIndexOOBTrapMessage)
+}
+
+func (l *lowerer) panicStringSliceOOBFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_string_slice_out_of_range", stringSliceOOBTrapMessage)
 }
 
 func (l *lowerer) panicMatchFailedFunc() *ir.Func {

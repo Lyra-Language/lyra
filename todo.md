@@ -86,11 +86,27 @@ write today:
   produces (`break` with a value is not implemented). The message also stopped blaming
   recursion outright: a tail `if`/`match` used for effect still trips it and is not
   recursive.
-- **[OPEN] No string length or slicing.** `s.len()` is array-only
-  (`builtinMethodSignature`), and there is no trim. `parse_i64` sidesteps both by walking
-  runes with `for c in s`, and `read_line` strips its own terminator so nothing needs
-  trimming yet — but the first program that wants to validate input before parsing it will
-  want both.
+- **[DONE 08/06] String length, slicing and trimming.** `s.len()` (rune count, O(n)) and
+  `s.slice(start, end)` (half-open rune range, allocating) are builtins;
+  `trim`/`trim_start`/`trim_end` are ordinary Lyra in the prelude. Bytes-vs-runes was not
+  an open question once looked at: `s[i]` and `for c in s` already walked code points, so a
+  byte length would have made `for i in 0..<s.len() { s[i] }` silently wrong on non-ASCII.
+  It exposed a live `noalloc` hole — a builtin method is charged no effect by all three of
+  the purity pass's dispatch ladders, and `slice` is the first that allocates. See
+  COMPLETED.md.
+  - **[OPEN] A literal is not a postfix head.** `"abc".len()` does not parse (`missing )`),
+    and neither does `1.wrapping_add(2)` — both verified 08/06 — while binding the value
+    first (`let s = "abc"` … `s.len()`) or parenthesizing it (`("abc").len()`) works.
+    `_primary_expr` admits an identifier, a `parenthesized_expr` and a struct literal, and
+    no literal at all, so every postfix form is unreachable from one. It matters more now
+    that UFCS has made method syntax the normal way to call: every combinator the prelude
+    gains is unreachable from the literal a reader would naturally test it on. The hazard is
+    the usual one for `_primary_expr` — juxtaposition already showed that widening the
+    operand set here tips the parameter-position race — so measure against corpus, not
+    conflict warnings.
+  - **[OPEN] No `starts_with`/`ends_with`/`contains`/`split`.** All expressible in the
+    prelude now that `len` and `slice` exist, and none written. `split` needs a `[]string`
+    return, so it also needs an array-building story beyond a comprehension.
 
 ## Known bugs
 

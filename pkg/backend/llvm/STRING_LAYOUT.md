@@ -72,6 +72,31 @@ This is the Go `string` / Rust `&str` / Swift contiguous-UTF-8 representation.
   transfers, a temporary is released after its statement. Verified memory-safe
   under AddressSanitizer.
 
+## The `len` field is bytes; the *language's* `len()` is runes
+
+Worth stating together, because they disagree on purpose and the disagreement is the
+design rather than an oversight.
+
+The fat pointer carries a **byte** count, for the reasons above — O(1), NUL-clean,
+memcpy-able, the Go/Rust/Swift representation. The language's `s.len()` (08/06,
+`string_methods.go`) returns the **rune** count and is therefore O(n).
+
+The tie-breaker is not aesthetics. `s[i]` yields the i-th *code point*
+(`lowerStringIndex`) and `for c in s` walks code points, both of which shipped first,
+so a byte-based `len()` would make `for i in 0..<s.len() { s[i] }` — the most obvious
+loop over a string — trap or skip on the first non-ASCII input, silently and only for
+some inputs. Given an index that counts runes, the length has to count runes.
+
+**`slice(start, end)` copies rather than borrowing**, which is the other place the
+representation would suggest something the ownership model forbids. A substring is a
+contiguous byte range, so `{data + off, n}` is a valid fat pointer and costs nothing —
+that is how Go slices. Here every string is a ref-counted box whose header sits at the
+box's **start**, so a pointer into the middle cannot find the header to retain or
+release through: a borrowed slice would either leak the parent or free bytes it does
+not own. Copying into a fresh box (exactly as `++` does) keeps the uniform rule that a
+string value is a box, at the price of an allocation — which `noalloc` correctly
+refuses.
+
 ## Deferred
 
 - **Interpolation** — no longer blocked on the allocator (it exists); what it

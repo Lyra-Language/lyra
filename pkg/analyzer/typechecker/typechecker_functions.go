@@ -923,7 +923,10 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		// table — so without this the purity pass charges the unresolved-callee default
 		// (AllEffects) and every builtin method becomes unusable from `pure`/`det`/
 		// `noalloc` code. See MethodTable.SetBuiltinMethod.
-		tc.methodTable.SetBuiltinMethod(call)
+		// Whether it allocates travels with the resolution, because only here is the
+		// receiver's type still in hand: `slice` is a string method and nothing else,
+		// but a consumer testing the bare name would have to take that on faith.
+		tc.methodTable.SetBuiltinMethod(call, builtinMethodAllocates(objType, methodName))
 		return tc.inferLambdaCallFromType(methodName, sig, call)
 	}
 

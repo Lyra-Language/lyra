@@ -228,6 +228,73 @@ pub let parse_i64 = pure noalloc (self: string) -> Maybe<i64> => {
 }
 
 // ---------------------------------------------------------------------------
+// Trimming
+//
+// Written here in Lyra rather than as compiler builtins, by the same rule that
+// puts `parse_i64` here and `read_line` in the compiler: `len`, `slice` and `s[i]`
+// are primitive because a UTF-8 walk needs the decoder, and everything built on
+// them is ordinary code. Trimming is a loop over runes and one slice, so it is
+// ordinary code.
+//
+// **Whitespace is the five ASCII characters** — space, tab, newline, carriage
+// return, form feed — and deliberately not Unicode's full `White_Space` set. That
+// larger set needs a table (U+00A0, U+2000–200A, U+3000 and more), and a table is
+// the sort of thing that belongs in a real Unicode library rather than smuggled
+// into a prelude; a caller trimming input from a keyboard or a file wants exactly
+// these five. Anything wider should be an explicit choice made against a real
+// table, not a default nobody can see.
+//
+// Each is `pure` but **not `noalloc`** — `slice` builds a fresh string, which is
+// what a substring costs when every string is a ref-counted box.
+pub let is_ascii_space = pure noalloc (self: rune) -> bool => {
+  let c = i64(self);
+  c == 32 || c == 9 || c == 10 || c == 13 || c == 12
+}
+
+// Drop leading whitespace.
+pub let trim_start = pure (self: string) -> string => {
+  let n = self.len();
+  var i = 0;
+  var scanning = true;
+  for scanning && i < n {
+    if self[i].is_ascii_space() { i = i + 1 } else { scanning = false }
+  }
+  self.slice(i, n)
+}
+
+// Drop trailing whitespace.
+pub let trim_end = pure (self: string) -> string => {
+  let n = self.len();
+  var end = n;
+  var scanning = true;
+  for scanning && end > 0 {
+    if self[end - 1].is_ascii_space() { end = end - 1 } else { scanning = false }
+  }
+  self.slice(0, end)
+}
+
+// Drop whitespace from both ends.
+//
+// One pass over each end and a *single* slice, rather than `self.trim_start()
+// .trim_end()` — which reads better and allocates twice, building a whole
+// intermediate string only to copy most of it again. An all-whitespace input finds
+// `i == n` and yields "" without the second scan running at all.
+pub let trim = pure (self: string) -> string => {
+  let n = self.len();
+  var i = 0;
+  var scanning = true;
+  for scanning && i < n {
+    if self[i].is_ascii_space() { i = i + 1 } else { scanning = false }
+  }
+  var end = n;
+  scanning = true;
+  for scanning && end > i {
+    if self[end - 1].is_ascii_space() { end = end - 1 } else { scanning = false }
+  }
+  self.slice(i, end)
+}
+
+// ---------------------------------------------------------------------------
 // Randomness
 //
 // The generator lives here, in Lyra, and only the *seed* is a compiler builtin

@@ -712,6 +712,12 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, encl
 					// lambdaEffects and methodEffects also carry — all three ask "what
 					// does this call call?" and all three must answer alike, or a call
 					// is charged no effect while still being reported as impure.
+					//
+					// Nothing to report either way: the one builtin method that is not
+					// free is `s.slice(…)`, and what it costs is EffectAlloc, which
+					// this walk does not report on (it reports purity violations, and
+					// allocation is orthogonal). `noalloc` sees it through the two
+					// inference copies below.
 				} else if method, ok := c.methodTable.Get(e); ok {
 					// Mask with PurityEffects: only correctness effects (mut/io)
 					// make a callee non-pure — EffectAlloc is orthogonal, so a
@@ -1046,7 +1052,7 @@ func (c *purityChecker) checkBoundedEffects(isDet, isNoAlloc bool, effects Effec
 				describeAllocation(allocSite), allocSite.GetLocation().Pretty())
 		} else {
 			c.reportCode(diag.CodeEffectBoundViolation, loc,
-				"`noalloc` function heap-allocates by calling something that allocates; a `noalloc` function must not allocate. Allocating forms are a `shared`-typed construction, a dynamic array (`[]T`, including a comprehension), and a newly built string (`++` or interpolation)")
+				"`noalloc` function heap-allocates by calling something that allocates; a `noalloc` function must not allocate. Allocating forms are a `shared`-typed construction, a dynamic array (`[]T`, including a comprehension), and a newly built string (`++`, interpolation, or `slice`)")
 		}
 	}
 }
@@ -2018,6 +2024,13 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 				// `x.wrapping_mul`, resolve it to nothing, and charge AllEffects —
 				// making explicit wrapping arithmetic unusable from exactly the
 				// `pure`/`det`/`noalloc` code that wants it.
+				//
+				// "No effect" is not quite "nothing": `s.slice(…)` builds a fresh
+				// string, so it carries EffectAlloc — pure, and refused by `noalloc`.
+				// The typechecker records which, since only it saw the receiver's type.
+				if methodTable.BuiltinMethodAllocates(ex) {
+					found |= EffectAlloc
+				}
 			} else if method, ok := methodTable.Get(ex); ok {
 				found |= impureMethods[method]
 			} else if ref, ok := methodTable.GetBound(ex); ok {
@@ -2172,7 +2185,12 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 				// spelled out in lambdaEffects's copy of this ladder. The two must stay
 				// in step: this one is the same question asked from inside a trait-impl
 				// method body, so a divergence would make `x.wrapping_mul(y)` pure in a
-				// free function and all-effects in a method.
+				// free function and all-effects in a method — or, with the allocating
+				// case below, `noalloc` refusing `s.slice(…)` in a function and
+				// permitting it in a method.
+				if methodTable.BuiltinMethodAllocates(ex) {
+					found |= EffectAlloc
+				}
 			} else if method, ok := methodTable.Get(ex); ok {
 				found |= methodCallEffect(method, ex, bodyCapture, impureLambdas, impureMethods,
 					callbacks, methodCallbacks, params, foundCallbacks)

@@ -61,6 +61,36 @@ func builtinMethodSignature(recv types.Type, name string) (*types.LambdaType, bo
 			ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.Int64}},
 		}, true
 	}
+	// String methods, both **rune-indexed**, which is not a fresh decision: `s[i]`
+	// already yields the i-th *code point* and `for c in s` already walks code
+	// points, so a byte-based length would make `for i in 0..<s.len() { s[i] }` —
+	// the most obvious loop anyone writes — wrong on the first non-ASCII input. The
+	// fat pointer's `len` field stays bytes (STRING_LAYOUT.md); that is the
+	// representation, and this is the language.
+	//
+	//   - `len() -> i64` is the rune count, so it is **O(n)** rather than the O(1)
+	//     the array version is. That is the price of agreeing with the index, and
+	//     `for c in s` remains the way to traverse without paying it per element.
+	//   - `slice(start, end) -> string` is the half-open rune range `[start, end)`,
+	//     matching `..<` and array indexing. It **allocates**, so `noalloc` refuses
+	//     it — see lowerStringSlice for why a borrowed slice is not on offer.
+	//
+	// i64 for both, like the array `len`, so they compose with signed index
+	// arithmetic rather than forcing a conversion at every use.
+	if types.IsString(recv) {
+		switch name {
+		case "len":
+			return &types.LambdaType{
+				ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.Int64}},
+			}, true
+		case "slice":
+			i64t := types.PrimitiveType{Name: types.Int64}
+			return &types.LambdaType{
+				Parameters: []types.ParameterType{{Type: i64t}, {Type: i64t}},
+				ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.String}},
+			}, true
+		}
+	}
 	// `x.weak()` on a `shared T` → a non-owning `weak T`. A method rather than new
 	// syntax: `weak` is only a *type* in the grammar, and there was previously no
 	// expression that produced one at all, so a `weak` field could be declared but
@@ -101,6 +131,27 @@ func builtinMethodSignature(recv types.Type, name string) (*types.LambdaType, bo
 		}, true
 	}
 	return nil, false
+}
+
+// builtinMethodAllocates reports whether a resolved builtin method puts a value on
+// the heap, so `noalloc` can refuse it.
+//
+// Almost none of them do — the registry is otherwise arithmetic over a scalar, and
+// the 08/05 work that made builtin methods *pure* exists precisely so a PRNG or a
+// checksum can be `pure noalloc`. `s.slice(a, b)` is the exception: a substring of a
+// ref-counted string cannot borrow its parent's bytes, so it copies into a fresh box
+// (backend/llvm/string_methods.go).
+//
+// Asked here, where the receiver's type is still in hand, and recorded on the call
+// (`MethodTable.SetBuiltinMethod`) rather than re-derived downstream from the
+// property name. The purity pass carries *three* copies of the "what does this call
+// call?" ladder, and every one of them treats a builtin method as effect-free — so
+// an allocating builtin is invisible to all three at once, and `noalloc` silently
+// accepts a function that allocates on every call. That is the failure this
+// parameter exists to prevent; it was live for as long as it took to write the
+// prelude's `trim`.
+func builtinMethodAllocates(recv types.Type, name string) bool {
+	return name == "slice" && types.IsString(recv)
 }
 
 // isBuiltinPrintFn reports whether name is one of the compiler-provided output

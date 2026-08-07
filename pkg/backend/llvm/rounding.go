@@ -44,8 +44,24 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	if m, ok := intOverflowMethods[member.Property.Name]; ok {
 		return l.lowerIntOverflowMethod(block, call, member, m)
 	}
-	if member.Property.Name == "len" {
-		return l.lowerArrayLen(block, call, member)
+	// `len` is two methods sharing a name, told apart by the receiver: an array's is
+	// an O(1) field read, a string's an O(n) rune walk (string_methods.go). Dispatch
+	// on the recorded receiver type rather than on the lowered value, so an
+	// unrecorded receiver is an error here instead of silently taking the array path.
+	if member.Property.Name == "len" || member.Property.Name == "slice" {
+		recvT, ok := l.recordedType(member.Object)
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: no type recorded for %s() receiver", member.Property.Name)
+		}
+		if types.IsString(recvT) {
+			if member.Property.Name == "len" {
+				return l.lowerStringLen(block, call, member)
+			}
+			return l.lowerStringSlice(block, call, member)
+		}
+		if member.Property.Name == "len" {
+			return l.lowerArrayLen(block, call, member)
+		}
 	}
 	if member.Property.Name == "weak" {
 		return l.lowerWeakDowngrade(block, call, member)

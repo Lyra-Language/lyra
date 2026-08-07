@@ -133,6 +133,19 @@ because each was learned from a real failure, and none is local to one package.
    than one answer in the tree, the copies drift, and here the drift was old enough that the
    feature simply looked unimplemented.
 
+   **A fifth landed 08/06, in the same three-copy ladder as the third, and it shows the
+   copies do not even have to drift to be wrong — they can agree, and be wrong together.**
+   All three of `lambdaEffects`, `methodEffects` and `checkCallPurity` treat a builtin
+   method as carrying no effect, which is the *fix* from 08/05 and is right for every
+   builtin that is arithmetic over a scalar. `s.slice(a, b)` is the first that allocates,
+   so it was invisible to all three at once and `pure noalloc … => s.trim()` type-checked
+   clean — a bound that silently stops binding, which is worse than no bound. The lesson
+   the fourth instance does not carry: a shared answer is a shared *assumption*, and it
+   fails the moment one case violates it, with no divergence to notice. The fix follows
+   rule 9 rather than adding a fourth name test — the typechecker records whether the
+   resolved builtin allocates (`MethodTable.SetBuiltinMethod(call, allocates)`), since only
+   it still has the receiver's type, and all three ladders read the flag.
+
    The durable fix for a switch with more than one caller is to stop having more than one
    of it. The type-variable walk was three switches (typechecker `collectTypeVars`, backend
    `mentionsTypeVar`, and the generic-parameter-list check that wanted a third); it is now
@@ -522,6 +535,22 @@ instead of an `if`/`else if`/`else` chain. Floats are refused (NaN has no three-
 answer); integers and runes are supported. The lowering is branchless, for the reason
 `read_line`'s is: a branching call site returns a merge block, which the temp-release
 machinery does not handle. See `pkg/backend/llvm/README.md`.
+
+**String `len`/`slice`/trim landed 08/06** (`pkg/backend/llvm/string_methods.go`), and the
+bytes-vs-runes question was already answered by what shipped: `s[i]` and `for c in s` walk
+code points, so `s.len()` counts runes (O(n)) and `slice(start, end)` is a half-open rune
+range. The fat pointer's `len` field stays bytes — representation, not language. `slice`
+copies into a fresh box rather than borrowing its parent's bytes, because a ref-counted
+box's header sits at its *start* and a pointer into the middle cannot reach it.
+`trim`/`trim_start`/`trim_end` are ordinary Lyra in the prelude.
+
+It exposed a live `noalloc` hole worth remembering as hazard 8's fifth instance: a builtin
+method is charged **no** effect by all three copies of the purity pass's dispatch ladder —
+that is what makes `x.wrapping_mul(y)` usable from `pure noalloc` code — so `slice`, the
+first builtin method that genuinely allocates, was invisible to all three at once and
+`pure noalloc … => s.trim()` type-checked clean. The typechecker now records whether the
+resolved builtin allocates (`MethodTable.SetBuiltinMethod(call, allocates)`), since only it
+still has the receiver's type; all three ladders read the flag.
 
 **Two phantom builtins closed 08/06.** A **member call on a type name** (`Rng.seeded(42)`)
 type-checked clean and then crashed the backend with `llvm: unsupported method call` — hazard

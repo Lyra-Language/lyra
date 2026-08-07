@@ -20,6 +20,10 @@ type MethodTable struct {
 	resolutions map[*ast.FunctionCallExpr]Resolution
 	boundCalls  map[*ast.FunctionCallExpr]BoundMethodRef
 	builtins    map[*ast.FunctionCallExpr]bool
+	// The subset of `builtins` that put a value on the heap — `s.slice(…)` and
+	// nothing else today. Separate from `builtins` rather than a value on it,
+	// because "is a builtin" and "allocates" are asked by different passes.
+	builtinAllocs map[*ast.FunctionCallExpr]bool
 }
 
 // BoundMethodRef names a trait method reached by *abstract* dispatch — a call on
@@ -34,9 +38,10 @@ type BoundMethodRef struct {
 
 func NewMethodTable() *MethodTable {
 	return &MethodTable{
-		entries:    make(map[*ast.FunctionCallExpr]*ast.TraitMethodImpl),
-		boundCalls: make(map[*ast.FunctionCallExpr]BoundMethodRef),
-		builtins:   make(map[*ast.FunctionCallExpr]bool),
+		entries:       make(map[*ast.FunctionCallExpr]*ast.TraitMethodImpl),
+		boundCalls:    make(map[*ast.FunctionCallExpr]BoundMethodRef),
+		builtins:      make(map[*ast.FunctionCallExpr]bool),
+		builtinAllocs: make(map[*ast.FunctionCallExpr]bool),
 	}
 }
 
@@ -59,17 +64,36 @@ func NewMethodTable() *MethodTable {
 // already answered definitively (CLAUDE.md rules 8 and 9), and one that cannot see
 // the receiver's type — so a user's own `wrapping_mul` on their own type would have
 // been silently declared pure.
-func (t *MethodTable) SetBuiltinMethod(call *ast.FunctionCallExpr) {
+//
+// **`allocates` is part of the resolution, not a property of the name.** Almost
+// every builtin method is arithmetic over a scalar and allocates nothing, which is
+// the whole point above — but `s.slice(a, b)` builds a fresh ref-counted box,
+// because a substring of a ref-counted string cannot borrow its parent's bytes
+// (backend/llvm/string_methods.go). Recording it here rather than letting each
+// consumer test the name keeps this the one place that knows, which matters
+// because there are *three* copies of the "what does this call call?" ladder in
+// the purity pass and a builtin that allocates is invisible to all of them
+// otherwise: `noalloc` would accept a function that allocates on every call.
+func (t *MethodTable) SetBuiltinMethod(call *ast.FunctionCallExpr, allocates bool) {
 	if t == nil {
 		return
 	}
 	t.builtins[call] = true
+	if allocates {
+		t.builtinAllocs[call] = true
+	}
 }
 
 // IsBuiltinMethod reports whether this call resolved to a compiler builtin method.
 // Nil-receiver-safe, like Get.
 func (t *MethodTable) IsBuiltinMethod(call *ast.FunctionCallExpr) bool {
 	return t != nil && t.builtins[call]
+}
+
+// BuiltinMethodAllocates reports whether this builtin-method call puts a value on
+// the heap. Only `s.slice(…)` does today. Nil-receiver-safe, like Get.
+func (t *MethodTable) BuiltinMethodAllocates(call *ast.FunctionCallExpr) bool {
+	return t != nil && t.builtinAllocs[call]
 }
 
 func (t *MethodTable) Set(call *ast.FunctionCallExpr, method *ast.TraitMethodImpl) {

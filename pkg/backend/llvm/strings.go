@@ -59,7 +59,8 @@ func (l *lowerer) stringBox(block *ir.Block, str value.Value) value.Value {
 // that rune. It is therefore O(i) — for a full traversal, prefer `for c in s`. The
 // index is a rune index, not a byte offset; running off the end before reaching `i`
 // (which includes any negative index, since the rune counter only ever grows) traps
-// out-of-bounds, the same trap an array index uses. There is no from-the-end
+// out-of-bounds (its own trap, not the array one — a string index is a rune index
+// and pointing the reader at an array is a wrong turn). There is no from-the-end
 // (negative) form for a string — that would require a full rune count first.
 func (l *lowerer) lowerStringIndex(block *ir.Block, e *ast.IndexExpr) (value.Value, *ir.Block, error) {
 	str, block, err := l.lowerExpr(block, e.Object)
@@ -98,7 +99,7 @@ func (l *lowerer) lowerStringIndex(block *ir.Block, e *ast.IndexExpr) (value.Val
 	bi := condBlock.NewLoad(lltypes.I64, biSlot)
 	condBlock.NewCondBr(condBlock.NewICmp(enum.IPredULT, bi, length), bodyBlock, trapBlock)
 
-	trapBlock.NewCall(l.panicIndexOOBFunc())
+	trapBlock.NewCall(l.panicStringIndexOOBFunc())
 	trapBlock.NewUnreachable()
 
 	// Decode the rune at the current byte index; if its rune index is the target,
