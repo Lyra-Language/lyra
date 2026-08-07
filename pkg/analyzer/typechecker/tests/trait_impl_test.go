@@ -49,17 +49,20 @@ func TestTraitImpl_DefaultMethodNotRequired(t *testing.T) {
 }
 
 func TestTraitImpl_MissingOneOfMultipleRequired(t *testing.T) {
+	// Identifier method names: this is about an impl *missing* one of several required
+	// methods, and the operator spellings it used were incidental — they are now
+	// refused (lyra-E039), which would drown the assertion this test exists for.
 	res := parseCollectAndCheck(t, `
-	trait Eq {
-		(_==_): (Self, Self) -> bool,
-		(_!=_): (Self, Self) -> bool
+	trait Pair {
+		first: (Self) -> bool,
+		second: (Self) -> bool
 	}
 
-	impl Eq for i64 {
-		(_==_) = (a, b) => true
+	impl Pair for i64 {
+		first = (a) => true
 	}
 	`, false)
-	assertErrorsAre(t, res, `impl of Eq for i64: missing required method "!="`)
+	assertErrorsAre(t, res, `impl of Pair for i64: missing required method "second"`)
 }
 
 func TestTraitImpl_ExtraneousMethod(t *testing.T) {

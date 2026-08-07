@@ -954,6 +954,34 @@ still refuses them. See COMPLETED.md.
   above. Supertrait syntax parses and the bound is collected onto `TraitDeclStmt.Bounds`;
   whether anything enforces it is still unverified, and no longer on this path.
 
+### [DECIDED 08/07] Operator-named trait methods
+
+`(_==_)`, `(_+_)`, `(-_)`, `(_++)` parse and collect, and **nothing dispatches to them**:
+every consumer (`resolveTraitMethod`, `findTraitMethod`, the purity pass) filters on
+`MethodNameKindIdentifier` and skips the rest, so a `(_==_)` impl on a struct is never
+called and `==` keeps its built-in meaning. The grammar reserves twenty binary spellings
+plus the prefix and suffix forms. The fourth collected-and-unread surface found in two
+days, after `wallClock`, the `where` bounds and `@derive`.
+
+**Split, rather than kept or removed wholesale.**
+
+- **The seven comparison operators are refused** (`lyra-E039`), naming the trait that owns
+  each: `==`/`!=` → `Eq`, `<`/`<=`/`>`/`>=`/`<=>` → `Ord`. The compiler owns them as of
+  08/07, so a second mechanism is a coherence question with no answer — and declaring them
+  one at a time reintroduces exactly the `<`-disagrees-with-`<=>` failure `Ord`'s single
+  `compare` exists to prevent, which is the C++/Java shape.
+- **Everything else warns** (`lyra-W015`) that nothing dispatches to it. Arithmetic has no
+  canonical trait and no other design on the table, and `(_-_)` is load-bearing for a
+  hazard already recorded (`Empty - 1` parses as `Empty(-1)`, which only bites a `data`
+  type overloading `-`). Removing the syntax would discard the only plan; keeping it silent
+  is what this project keeps paying for.
+
+- **[OPEN] Implement the arithmetic half, or delete it.** The warning is a holding
+  position, not an answer. If operator overloading is wanted, the dispatch is the same
+  machinery `Eq`/`Ord` now use, keyed on a trait the compiler need not know by name; if it
+  is not, the twenty reserved spellings should leave the grammar and take their parser
+  states with them.
+
 ### Trait machinery
 
 Trait-method lowering landed 07/30: an impl method lowers to a function taking the receiver

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
@@ -33,7 +34,14 @@ func parseCollectAndCheck(t *testing.T, source string, printTree bool) checkResu
 	}
 	c := collector.NewCollector([]byte(source))
 	program, symTable, scopeTable, collectorErrors := c.Collect(tree.RootNode())
-	if len(collectorErrors) > 0 {
+	// Errors only. A collector *warning* leaves a well-formed program — the AST is
+	// exactly what it would otherwise be — so failing on one makes any advisory
+	// diagnostic break every test whose source happens to trip it. The golden helper
+	// had the same fault (fixed 08/07 for `@derive`), and this is its twin.
+	for _, e := range collectorErrors {
+		if d, ok := e.(diag.Diagnostic); ok && d.Severity != diag.SeverityError {
+			continue
+		}
 		t.Fatalf("collector errors: %v", collectorErrors)
 	}
 	typeTable := typetable.New()

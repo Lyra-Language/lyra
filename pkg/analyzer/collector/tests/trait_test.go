@@ -152,11 +152,16 @@ func TestCollector_TraitDeclarationForSuffixOperator(t *testing.T) {
 	runGoldenTest(t, source, "trait_declaration_for_suffix_operator")
 }
 
+// Operator-named methods still *collect*, which is what this asserts. It used the
+// comparison operators until 08/07; those are now refused outright (lyra-E039) because
+// the compiler owns them — `==`/`!=` through the prelude's `Eq`, the ordering ones
+// through `Ord::compare`. Arithmetic has no canonical trait, so it keeps the syntax and
+// merely warns that nothing dispatches to it yet.
 func TestCollector_TraitDeclarationForBinaryOperator(t *testing.T) {
 	source := `
-	trait Eq {
-		(_==_): (Self, Self) -> bool,
-		(_!=_): (Self, Self) -> bool
+	trait Arith {
+		(_+_): (Self, Self) -> Self,
+		(_-_): (Self, Self) -> Self
 	}
 	`
 	runGoldenTest(t, source, "trait_declaration_for_binary_operator")

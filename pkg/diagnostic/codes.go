@@ -313,12 +313,32 @@ const (
 	// nothing; naming it is what keeps it from being the next phantom builtin.
 	CodeMalformedDerive = "lyra-E038"
 
+	// CodeComparisonOperatorMethod: a trait method named for a comparison operator —
+	// `(_==_)`, `(_<_)`, `(_<=>_)` and the rest.
+	//
+	// The compiler owns those seven as of 08/07: `==`/`!=` are structural and
+	// overridden by the prelude's `Eq`, and `<`/`<=`/`>`/`>=`/`<=>` all derive from
+	// `Ord::compare`. A second way to override them would be a coherence question with
+	// no answer (which impl wins?), and declaring them separately reintroduces the
+	// failure `Ord`'s single method exists to prevent — a type whose `<` and `<=>`
+	// disagree, which is the C++/Java shape.
+	CodeComparisonOperatorMethod = "lyra-E039"
+
 	// CodeInertDerive: a `@derive(X)` naming a trait the compiler does not synthesize,
 	// so the attribute does nothing. A warning rather than an error — the derive is not
 	// wrong, the trait simply does not exist yet — but reported, because an attribute
 	// that compiles and silently does nothing is the phantom-builtin shape this
 	// compiler keeps having to dig out. Becomes moot when the trait lands.
 	CodeInertDerive = "lyra-W014"
+
+	// CodeInertOperatorMethod: an operator-named trait method (`(_+_)`, `(-_)`) that
+	// nothing dispatches to. The grammar reserves twenty of these and every consumer
+	// filters on an *identifier* method name, so the declaration parses, collects, and
+	// is skipped — an impl of one is never called. A warning rather than an error
+	// because user-defined arithmetic operators are the standing design for `(_+_)` on
+	// a vector type; the comparison operators are a different case and are refused
+	// outright (lyra-E039).
+	CodeInertOperatorMethod = "lyra-W015"
 
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"

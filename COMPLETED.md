@@ -10,6 +10,36 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**Operator-named trait methods are refused where the compiler owns the operator, and
+warned about everywhere else.** `trait Eq { (_==_): (Self, Self) -> bool }` parsed,
+collected, type-checked — and was dispatched by nobody: every consumer filters on
+`MethodNameKindIdentifier` and skips the rest, so a `(_==_)` impl on a struct is never
+called and `==` keeps its built-in meaning. The grammar reserves twenty binary spellings
+plus prefix and suffix forms, none wired to anything. The fourth collected-and-unread
+surface found in two days.
+
+**The question that prompted it was whether the syntax still makes sense**, and the answer
+turned on what had just been built rather than on taste. It makes *less* sense than before:
+`Eq` and `Ord` now own those operators, so `(_==_)` would be a rival way to override `==`
+with no rule for which wins, and `(_<_)` beside `(_<=>_)` reintroduces precisely the
+disagreement `Ord`'s single `compare` was designed to prevent.
+
+**But deleting the whole syntax would have thrown away the only design on the table for
+user-defined arithmetic** — `(_+_)` on a vector type — and `(_-_)` is load-bearing for a
+hazard already recorded, since `Empty - 1` parsing as `Empty(-1)` only bites a `data` type
+that overloads `-`. So the list is split: seven refused, the rest warned.
+
+Two existing tests used the refused shape — one of them *literally* the
+`trait Eq { (_==_), (_!=_) }` in the question. The collector golden test is about
+operator-name collection and keeps testing it on `(_+_)`/`(_-_)`; the impl-completeness
+test was using the operator spellings incidentally and now uses identifier names.
+
+It also turned up the twin of a fault fixed hours earlier: the **typechecker** test helper
+failed on any collector diagnostic, treating a warning as fatal, exactly as the golden
+helper had. Both are errors-only now. A warning leaves a well-formed program, so failing on
+one makes any advisory diagnostic break every test whose source happens to trip it.
+
+### 08/07/26
 **A generic instantiated at a type declared in a named module lowers.** It failed with
 `llvm: unknown named type "Tag"` for as little as
 

@@ -1,12 +1,12 @@
 Program(1 statements) {
 	Statements: {
-		TraitDeclStmt(Eq) {
+		TraitDeclStmt(Arith) {
 			Methods: {
 				TraitMethod {
 					Name: {
-						MethodName(==) {
+						MethodName(+) {
 							Kind: 3
-							Value: ==
+							Value: +
 						}
 					}
 					Signature: {
@@ -15,15 +15,6 @@ Program(1 statements) {
 								ParameterType(Self) {
 								}
 								ParameterType(Self) {
-								}
-							}
-							ReturnType: {
-								ReturnType(boolean) {
-									Type: {
-										PrimitiveType(boolean) {
-											Name: boolean
-										}
-									}
 								}
 							}
 						}
@@ -31,9 +22,9 @@ Program(1 statements) {
 				}
 				TraitMethod {
 					Name: {
-						MethodName(!=) {
+						MethodName(-) {
 							Kind: 3
-							Value: !=
+							Value: -
 						}
 					}
 					Signature: {
@@ -42,22 +33,13 @@ Program(1 statements) {
 								ParameterType(Self) {
 								}
 								ParameterType(Self) {
-								}
-							}
-							ReturnType: {
-								ReturnType(boolean) {
-									Type: {
-										PrimitiveType(boolean) {
-											Name: boolean
-										}
-									}
 								}
 							}
 						}
 					}
 				}
 			}
-			Name: Eq
+			Name: Arith
 		}
 	}
 }
