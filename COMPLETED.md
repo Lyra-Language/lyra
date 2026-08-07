@@ -10,6 +10,44 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**`@derive(Ord)`** — the structural ordering, lexicographic in field-declaration order.
+`@derive(...)` had parsed and been collected onto `TypeDeclStmt.Derives` since the
+attribute existed, and was read by nobody: the same collected-and-unread shape the `where`
+bounds had that morning, and the third such field found in two days.
+
+**It synthesizes an ordinary `ast.TraitImplStmt` and appends it to the program**, rather
+than teaching dispatch about derives. Everything downstream then treats a derived impl
+exactly as a hand-written one, and the payoff is that three behaviours came for free rather
+than needing code: deriving over a field with no ordering is an ordinary comparison error
+naming that field's type; a derive beside a hand-written `impl Ord` is the duplicate-impl
+error added earlier the same day; and the backend lowers it through the path `Ord` already
+uses. That is the erasure this compiler reaches for repeatedly — juxtaposition, bare
+match-arm jumps, UFCS — and it is why the whole feature is one file with no counterpart
+anywhere else.
+
+**Declaration order is the ordering**, which is a real commitment: reordering a struct's
+fields changes how its values sort. That is exactly why it is opt-in through an attribute
+rather than automatic — a type that silently acquired an order nobody chose, and a field
+reordering that silently changed it, is the worse failure. Rust makes the same trade.
+
+Two diagnostics, and the split between them is the interesting part:
+
+- **`@derive(Ord)` on a `data` type is an error** (`lyra-E038`) naming the hand-written
+  fix. The derived ordering there is by constructor order and then payload, and the
+  language has no way to read a tag, so the synthesis is an N-squared match over both
+  scrutinees.
+- **A derive naming a trait that does not exist yet is a *warning*** (`lyra-W014`). It was
+  an error first, which broke three collector golden tests that use `@derive(Eq, Hash,
+  Show)` as arbitrary names — and those tests were right. The derive is not *wrong*; it is
+  a no-op, and refusing a program over a feature that has not landed is worse than saying
+  so. Reporting it at all is what keeps it from being the next phantom builtin.
+
+That also turned up a real fault in the golden helper: it failed on any collector
+diagnostic, treating a **warning** as fatal. A warning leaves the collected AST exactly as
+it is, which is what a golden file records, so an advisory diagnostic would break every
+golden that happened to trip it. Errors only now.
+
+### 08/07/26
 **`Ord` — a user type can be ordered.** `compare: (Self, Self) -> Ordering` in
 `std/prelude/ordering.lyra`, with `<=>` returning it directly and `<` `<=` `>` `>=` derived
 from its tag. Nothing could order a user type before: `<` on a struct was "operands must be

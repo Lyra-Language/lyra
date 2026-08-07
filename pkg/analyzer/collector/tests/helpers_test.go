@@ -7,6 +7,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/printer"
 
@@ -33,8 +34,18 @@ func parseAndCollectFull(t *testing.T, source string, printTree bool) (*ast.Prog
 	}
 	c := collector.NewCollector([]byte(source))
 	program, table, scopeTable, errors := c.Collect(tree.RootNode())
-	if len(errors) > 0 {
-		t.Fatalf("Collector errors: %v", errors)
+	// Errors only: a *warning* leaves the collected AST exactly as it is, which is
+	// what a golden file records, so failing on one would make an advisory diagnostic
+	// break every golden that happens to trip it.
+	var fatal []error
+	for _, e := range errors {
+		if d, ok := e.(diag.Diagnostic); ok && d.Severity != diag.SeverityError {
+			continue
+		}
+		fatal = append(fatal, e)
+	}
+	if len(fatal) > 0 {
+		t.Fatalf("Collector errors: %v", fatal)
 	}
 	return program, table, scopeTable, errors
 }

@@ -306,6 +306,20 @@ const (
 	// far from the two declarations that caused it.
 	CodeDuplicateTraitImpl = "lyra-E037"
 
+	// CodeMalformedDerive: a `@derive(...)` the compiler cannot synthesize — a trait
+	// it does not derive, or `@derive(Ord)` on something other than a struct with
+	// fields. `@derive` parsed and was collected onto TypeDeclStmt.Derives from the
+	// start and read by nobody, so an unsupported one compiled and silently did
+	// nothing; naming it is what keeps it from being the next phantom builtin.
+	CodeMalformedDerive = "lyra-E038"
+
+	// CodeInertDerive: a `@derive(X)` naming a trait the compiler does not synthesize,
+	// so the attribute does nothing. A warning rather than an error — the derive is not
+	// wrong, the trait simply does not exist yet — but reported, because an attribute
+	// that compiles and silently does nothing is the phantom-builtin shape this
+	// compiler keeps having to dig out. Becomes moot when the trait lands.
+	CodeInertDerive = "lyra-W014"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

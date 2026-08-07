@@ -282,6 +282,9 @@ func (c *Collector) Finish() (*ast.Program, *symbols.SymbolTable, *symbols.Scope
 	c.reclassifyStructPatterns()
 	c.reclassifyConstructorExprs()
 	c.resolveCanonicalTypes()
+	// After the types are registered and canonicalized: a derived impl is an ordinary
+	// impl, so it must exist before the typechecker's up-front impl gathering.
+	c.synthesizeDerives()
 	return c.ast, c.table, c.scopeTable, c.errors
 }
 

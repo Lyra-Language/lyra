@@ -911,6 +911,20 @@ still refuses them. See COMPLETED.md.
   `canonical.go` already applies to types, so this is the existing rule extended rather than
   a new one — but it means a user's own `trait Ord` in the entry module would be taken for
   the prelude's. Worth closing when the grammar is touched for `Eq`.
+- **[DONE 08/07] `@derive(Ord)` synthesizes the structural ordering** — lexicographic in
+  field-declaration order, built as an ordinary `ast.TraitImplStmt` and appended to the
+  program by the collector. Nothing downstream learns derives exist: the typechecker checks
+  the synthesized body (so deriving over an unorderable field is an ordinary error naming
+  that field's type), the coherence check refuses a derive beside a hand-written impl for
+  free, and the backend lowers it through the path that already exists. `@derive(...)` had
+  parsed and been collected onto `TypeDeclStmt.Derives` from the start and read by nobody.
+  - **[OPEN] `@derive(Ord)` on a `data` type.** Refused (`lyra-E038`) with the hand-written
+    fix named. The derived ordering is by constructor order and then payload, and the
+    language has no way to read a tag, so the synthesis is an N-squared match over both
+    scrutinees — worth building, not worth guessing at.
+  - **Declaration order is the ordering**, which is why it is opt-in: reordering a struct's
+    fields changes how its values sort, and a type that silently acquired an order nobody
+    chose would be worse. Rust makes the same trade.
 - **[OPEN] `Ord: Eq` is not enforced.** Supertrait syntax parses and the bound is collected
   onto `TraitDeclStmt.Bounds`; whether anything checks it is unverified. It is what stops
   `compare` answering `Equal` where equality says false, so it matters once `Eq` exists.
