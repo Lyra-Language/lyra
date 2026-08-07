@@ -10,6 +10,31 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**`let _ = expr` discards.** A bare `_` in binding position evaluates the value and binds
+nothing — the canonical way to opt out of the must-use rule.
+
+**The compiler had been recommending a spelling its own parser rejected.** The must-use
+warning ends *"bind it (`let _ = ...`) to discard it intentionally"*, and following that
+advice produced "cannot destructure integer literal with a data pattern": `_` fell into
+`data_pattern`, which recovered with an **empty** name — the CST showed a `data_type_name`
+spanning zero characters. `wildcard_pattern` is one of `destructuring_only_pattern`'s
+alternatives now.
+
+**Why it survived:** the named form `let _ignored = …` always worked, taking `declaration`'s
+identifier branch, so the workaround reads as a style choice rather than a necessity. And
+the test asserting the opt-out *worked* passed — the source did not parse, so the truncated
+AST contained no call to warn about. It surfaced only when the does-it-parse guard landed in
+the test helpers the same day, which is the guard paying for itself within hours.
+
+**Cost: zero parser states** (7,720 → 7,720), no new conflicts. `_` in that position was
+already unambiguous — nothing else can follow `let` there — so the alternative folds into
+the existing automaton.
+
+`_` remains not an *expression*: `let _ = 5; _` does not parse, which is what keeps a
+discard from being read back. The side effect is preserved, which is the point of writing
+one — `let _ = noisy()` still calls `noisy`.
+
+### 08/07/26
 **Every test source parses now, and the class is closed by a guard.** `parseCollectAndCheck`
 and the collector's golden helper both check `tree.RootNode().HasError()`, so a source with
 a syntax error fails the test instead of reaching the typechecker as a *truncated AST* that

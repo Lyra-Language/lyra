@@ -129,12 +129,11 @@ write today:
   `TestTypeCheck_StructLiteralWithAllDefaults_Ok`. It is kept, inverted, so the day the
   grammar admits an empty body the test fails and says so.
 
-- **[OPEN] `let _ = expr` does not parse**, so the canonical way to discard a must-use
-  result is unavailable. A bare `_` in binding position is read as a *destructuring*
-  pattern and recovers as a `data_pattern` with an empty name, which `lyrac` then reports
-  as "cannot destructure integer literal with a data pattern". The named form
-  (`let _ignored = …`) works. A grammar change; found 08/07 when the does-it-parse guard
-  caught the test that asserted the opt-out *worked*.
+- **[DONE 08/07] `let _ = expr` discards.** `wildcard_pattern` joined
+  `destructuring_only_pattern`, so a bare `_` in binding position evaluates the value and
+  binds nothing — the opt-out the must-use warning has always recommended in its own
+  message (*"bind it (`let _ = ...`) to discard it intentionally"*) and the parser rejected.
+  Zero parser states. `_` is still not an expression, so a discard cannot be read back.
 
 - **[OPEN] A generic `newtype` does not parse.** `newtype Point<t> = Tuple` puts the `<t>`
   in an ERROR node and collects a `ConstrainedType` with the parameters silently dropped.

@@ -66,31 +66,22 @@ let main = () -> i64 => {
 	assertNoMustUseWarnings(t, res)
 }
 
-// **`let _ = expr` does not parse**, so the canonical discard is not available and this
-// test asserted an opt-out that does not exist. It passed because the source did not
-// parse: the truncated AST contained no call to warn about, so "no must-use warnings"
-// held for the wrong reason — a syntax error and a missing diagnostic cancelling out,
-// which is the shape the does-it-parse guard in parseCollectAndCheck now catches.
+// Binding to `_` discards the value deliberately, which is the opt-out the must-use
+// warning itself recommends — `bind it (let _ = ...) to discard it intentionally`.
 //
-// The parser reads a bare `_` in binding position as a *destructuring* pattern and
-// recovers a `data_pattern` with an empty name; `lyrac` then reports "cannot destructure
-// integer literal with a data pattern". Fixing it is a grammar change (todo.md).
-//
-// Kept, inverted, as the record of the gap: flip it back to the opt-out assertion when
-// `let _ =` works. `_ignored` — the named discard below — does work today.
-func TestMustUse_DiscardBindingIsNotYetParseable(t *testing.T) {
+// That advice was impossible to follow until 08/07: a bare `_` in binding position was
+// read as a *destructuring* pattern and recovered as a `data_pattern` with an empty name.
+// This test asserted the opt-out worked and passed for the wrong reason — the source did
+// not parse, so the truncated AST contained no call to warn about. The does-it-parse
+// guard is what surfaced it.
+func TestMustUse_DiscardBindingOptOut(t *testing.T) {
 	src := mustUsePrelude + `
 let f = () -> i64 => {
     let _ = parse("x")
     0
 }`
-	tree, err := parser.Parse(src)
-	if err != nil {
-		t.Fatalf("parse error: %v", err)
-	}
-	if !tree.RootNode().HasError() {
-		t.Fatal("`let _ = …` parses now — restore the discard-opt-out assertion")
-	}
+	res := parseCollectAndCheck(t, src, false)
+	assertNoMustUseWarnings(t, res)
 }
 
 func TestMustUse_NamedDiscardBindingOptOut(t *testing.T) {
@@ -149,5 +140,31 @@ func assertNoMustUseWarnings(t *testing.T, res checkResult) {
 		if e.Code == "lyra-W006" {
 			t.Errorf("unexpected must-use warning: %s", e.Message)
 		}
+	}
+}
+
+// The discard must still *evaluate* — `let _ = f()` is how you call something for its
+// effect and throw the result away, so eliding the call would be a silent behaviour
+// change rather than an optimization.
+func TestMustUse_DiscardBindingStillEvaluates(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let noisy = () -> i64 => 7
+		let f = () -> i64 => {
+			let _ = noisy()
+			0
+		}
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// A wildcard binding is not a name: `_` is a discard, and reading it back is a *syntax*
+// error rather than an undefined-identifier one — `_` is not an expression at all.
+func TestMustUse_DiscardBindingIsNotAName(t *testing.T) {
+	tree, err := parser.Parse(`let f = () -> i64 => { let _ = 5; _ }`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if !tree.RootNode().HasError() {
+		t.Error("`_` is a discard, not a binding — reading it back should not parse")
 	}
 }
