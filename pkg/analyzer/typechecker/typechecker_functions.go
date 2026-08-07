@@ -917,6 +917,23 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// on an integer). Checked last so a user type or trait impl of the same name
 	// always takes priority (see builtins.go).
 	if sig, ok := builtinMethodSignature(objType, methodName); ok {
+		// Pin an untyped literal receiver to its default width. `builtinMethodSignature`
+		// already promotes internally to decide *whether* the method exists, but that
+		// promotion is local to the lookup — the receiver node keeps whatever the literal
+		// inferred as, and the backend reads the node. Before literals became postfix
+		// heads (08/06) no receiver could be a bare literal, so this never came up;
+		// `1.5.floor()` then type-checked and failed to lower with "floor() on non-float
+		// receiver float literal".
+		// Tested by asking whether the receiver *is* an untyped literal, not by
+		// comparing before and after: `types.Type` is an interface over structs that
+		// are not all comparable (a NamedStructType carries slices), so `promoted !=
+		// objType` panics at run time on an ordinary struct receiver.
+		if p, ok := objType.(types.PrimitiveType); ok {
+			switch p.Name {
+			case types.UntypedInt, types.UntypedSignedInt, types.UntypedFloat:
+				tc.typeTable.Set(member.Object, promoteToDefault(objType))
+			}
+		}
 		tc.typeTable.Set(member, sig)
 		// Publish the resolution: a later pass sees only a MemberExpr callee, and the
 		// dotted name it can derive from that (`x.wrapping_mul`) names nothing in any

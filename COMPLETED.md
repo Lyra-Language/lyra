@@ -10,6 +10,63 @@ Newest first.
 ## Dated log
 
 ### 08/06/26
+**A literal is a postfix head**, so `"abc".len()`, `[1, 2, 3].len()`, `1.wrapping_add(2)` and
+`1.5.floor()` parse. `_primary_expr` admitted an identifier, a `parenthesized_expr` and a
+struct literal and **no literal at all**, so every postfix form was unreachable from one —
+while `("abc").len()` and a bound `s.len()` both worked, which is the tell that nothing was
+wrong with the methods. Found the day before, writing the tests for string `len`/`slice`.
+
+It matters more than it reads: UFCS made method syntax the normal way to call, so every
+combinator the standard library gains was unreachable from the literal a reader would
+naturally try it on.
+
+**The change is a partition, not an addition**, and that is the whole difficulty. `expression`
+reaches `_literal` directly *and* `_postfix_expr` (hence `_primary_expr`), so a literal kind
+listed in both is derivable two ways and every operand position becomes an unresolved
+reduce-reduce. Each kind had to move rather than be copied, and the same de-duplication had
+to reach every operand rule listing a literal beside `_postfix_expr`. Three kinds stay behind:
+`tuple_literal` (which is how `Some(42)` already parses), `anonymous_struct_literal` (a bare
+`{ … }` head contests the block), and `array_repeat_init` (nothing wants a method on one).
+
+**Dropping `regex_literal` from `_literal` without adding it anywhere was the one wrong turn**,
+and it is instructive: the regex was then reachable only as a *constructor operand*, so
+`let phone = r"…"` parsed as a `data_constructor_expr` with a `MISSING` constructor name. The
+`prec.right(PREC.LITERAL)` wrapper on `_literal` is what makes a plain literal outrank the
+juxtaposition reading. The corpus caught it immediately; nothing else would have.
+
+Three new conflict entries, all literal analogues of races a bare name has run since 07/16 —
+`('a', 'b')`, `(1, 2)` and `(-1, 2)` are each a lambda parameter list of patterns or an
+anonymous tuple of expressions, decided by the `=>` that may or may not follow. The `_literal`
+precedence wrapper used to settle that statically; routing literals through `_primary_expr` is
+what turns it back into a conflict.
+
+**Cost: −4 states**, and `parser.c` slightly smaller. Removing the duplicate derivations bought
+more than the new heads cost — the opposite of what this region usually does, where
+juxtaposition cost +19%.
+
+Two things fell out that were not the feature:
+
+- **A numeric literal receiver needed pinning to its default width.** `builtinMethodSignature`
+  promotes internally to decide *whether* the method exists, but that promotion is local to the
+  lookup — the receiver node keeps what the literal inferred as, and the backend reads the
+  node. So `1.5.floor()` type-checked and failed to lower with "floor() on non-float receiver
+  float literal". No receiver could be a bare literal before, which is why it had never come
+  up. The first guard written for it compared `promoteToDefault(objType) != objType` and
+  **panicked at run time** — `types.Type` is an interface over structs that are not all
+  comparable, and a `NamedStructType` carries slices. It asks whether the receiver *is* an
+  untyped literal instead.
+- **Three more of the non-parsing test sources surfaced.** The interior-mutation tests wrote
+  `{ b.x = 99  a.x }` — two statements on one line with no separator, invalid since statements
+  gained a terminator on 07/31. They passed because the truncated AST hid it; the new recovery
+  path reads `99  a.x` as a member access on an integer literal and produces an *extra* type
+  error. Fixed at the source. That is three of the fourteen counted on 08/06; the rest are
+  still open (todo.md).
+
+`0 - 200` still parses as a `binary_expr` with a `sub_operator` — the regression this grammar
+region is on record for, and the one whose failure mode is a *program* rather than an error.
+Pinned by corpus and by an execution test.
+
+### 08/06/26
 **String `len`, `slice` and the trim family.** `s.len()` was array-only and there was no
 way to take a substring, so a program could inspect input (`for c in s`, `s[i]`) but never
 carve it up — the gap the todo predicted "the first program that wants to validate input

@@ -460,7 +460,7 @@ func TestTypeCheck_ParamShadowing_Ok(t *testing.T) {
 
 func TestTypeCheck_ExclusiveMut_RefAndMutSameBinding_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, pointStruct+`
-		let both = (a: ref Point, b: mut Point) -> i64 => { b.x = 99  a.x }
+		let both = (a: ref Point, b: mut Point) -> i64 => { b.x = 99; a.x }
 		let run = () -> i64 => {
 			var p = Point { x: 1, y: 2 }
 			both(p, p)
@@ -472,7 +472,7 @@ func TestTypeCheck_ExclusiveMut_RefAndMutSameBinding_Error(t *testing.T) {
 
 func TestTypeCheck_ExclusiveMut_TwoMutSameBinding_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, pointStruct+`
-		let two = (a: mut Point, b: mut Point) -> i64 => { a.x = 10  b.x = 20  a.x }
+		let two = (a: mut Point, b: mut Point) -> i64 => { a.x = 10; b.x = 20; a.x }
 		let run = () -> i64 => {
 			var p = Point { x: 1, y: 2 }
 			two(p, p)
@@ -498,7 +498,7 @@ func TestTypeCheck_ExclusiveMut_TwoRefSameBinding_Ok(t *testing.T) {
 // Distinct bindings are unaffected.
 func TestTypeCheck_ExclusiveMut_DistinctBindings_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, pointStruct+`
-		let both = (a: ref Point, b: mut Point) -> i64 => { b.x = 9  a.x }
+		let both = (a: ref Point, b: mut Point) -> i64 => { b.x = 9; a.x }
 		let run = () -> i64 => {
 			let p = Point { x: 1, y: 2 }
 			var q = Point { x: 3, y: 4 }

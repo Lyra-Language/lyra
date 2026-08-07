@@ -8,6 +8,14 @@
 // lets a program's own files shadow nothing and the standard library live outside the
 // project tree.
 //
+// A module may also be a **directory** of files: `std.prelude` is `std/prelude.lyra`
+// *or* every `*.lyra` directly inside `std/prelude/`. The two forms are the same module
+// — one namespace, one set of keys, one scope — so a module that outgrows a file is
+// split without any of its declarations changing meaning. That is not a convenience:
+// receiver-keyed overloading and prelude shadowing are both per-module, so splitting a
+// grown module into *separate* modules instead would silently change what its names
+// mean. See README.md.
+//
 // Deliberately out of scope, since none of it changes what a module's source looks
 // like: package management, versioning, and separate or incremental compilation. A
 // compile reads every unit it needs in one process and hands them to the collector as

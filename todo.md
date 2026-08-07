@@ -94,16 +94,11 @@ write today:
   It exposed a live `noalloc` hole — a builtin method is charged no effect by all three of
   the purity pass's dispatch ladders, and `slice` is the first that allocates. See
   COMPLETED.md.
-  - **[OPEN] A literal is not a postfix head.** `"abc".len()` does not parse (`missing )`),
-    and neither does `1.wrapping_add(2)` — both verified 08/06 — while binding the value
-    first (`let s = "abc"` … `s.len()`) or parenthesizing it (`("abc").len()`) works.
-    `_primary_expr` admits an identifier, a `parenthesized_expr` and a struct literal, and
-    no literal at all, so every postfix form is unreachable from one. It matters more now
-    that UFCS has made method syntax the normal way to call: every combinator the prelude
-    gains is unreachable from the literal a reader would naturally test it on. The hazard is
-    the usual one for `_primary_expr` — juxtaposition already showed that widening the
-    operand set here tips the parameter-position race — so measure against corpus, not
-    conflict warnings.
+  - **[DONE 08/06] A literal is a postfix head.** `"abc".len()`, `[1, 2, 3].len()` and
+    `1.wrapping_add(2)` parse. It was a *partition* rather than an addition — a literal kind
+    reachable both directly from `expression` and through `_primary_expr` is derivable twice,
+    which is an unresolved reduce-reduce at every operand position — and it **shrank** the
+    parser by 4 states. See COMPLETED.md and `tree-sitter-lyra`'s CLAUDE.md.
   - **[OPEN] No `starts_with`/`ends_with`/`contains`/`split`.** All expressible in the
     prelude now that `len` and `slice` exist, and none written. `split` needs a `[]string`
     return, so it also needs an array-building story beyond a comprehension.
@@ -126,6 +121,13 @@ write today:
   package; some of the 14 are deliberate (`TestStructSeparators_LiteralStillRequiresCommas`
   means to produce a parse error), so the work is to sort them and then add the guard, which
   closes the class rather than the instance.
+
+  **Three were fixed 08/06** — the interior-mutation tests wrote `{ b.x = 99  a.x }`, two
+  statements on one line with no separator, invalid since statements gained a terminator on
+  07/31. They surfaced only because the literal-as-postfix-head change altered how the broken
+  parse *recovers*, turning a hidden truncation into a visible extra type error. That is the
+  argument for the guard rather than for fixing them one at a time: what these sources do
+  today depends on error recovery, so any grammar change can move them, in either direction.
 
 Two closed 08/05, and the second was the reason the first had been stuck. **An
 all-uppercase type name could not be used in a struct literal** — `struct S` declared fine
