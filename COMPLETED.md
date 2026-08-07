@@ -10,6 +10,67 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**A `match` over a tuple scrutinee leaked one reference per call, and fixing it exposed a
+double free in the ref-counting runtime.** This is what turned CI red; the two defects are
+independent and both are pre-existing.
+
+**1. A tuple scrutinee's elements were retained and never dropped.** Both aggregate glue
+walks — `emitRetainValue` and `emitDropValue` — switch on the resolved type and neither had
+a `ParameterizedType` arm, so a tuple holding a `Maybe<string>` walked straight past that
+element. They were symmetric *in being broken*, which is why nothing complained; the element
+is still retained at the **construction** site, where the type arrives already substituted
+through `recordedType`, so only the drop side was actually missing and the imbalance was a
+pure leak.
+
+What makes it ordinary rather than exotic: **a multi-clause function desugars to
+`match (p0, p1) { … }`**, whose scrutinee is a stack tuple over the parameters. So every call
+to the prelude's `unwrap_or` leaked one reference to its receiver's box, and
+`line.unwrap_or("")` in a read loop leaks one box per iteration. A single-scrutinee
+`match m { … }` never did — there is no tuple to build — which is exactly what hid it: the
+construct that leaks looks like pure sugar. `OwnsManaged` had been given this same arm long
+ago, its comment recording that missing it was "a real double free"; the two glue walks are
+the other half of that model and never got one. Hazard 8, in the variant where the copies
+agree and are wrong together.
+
+The ownership pass also had to *mark* the scrutinee tuple for release: a stack aggregate in
+a borrowing position is a temporary whose elements' +1s die with it, and the package doc had
+recorded that as a known limitation ("a stack tuple's [elements] leak, since a stack
+aggregate has no death to hang a drop on"). It does have a death — the end of the statement
+that produced it, where the backend already flushes temporaries.
+
+**2. `drop_fn` could free the box it was called on.** `lyra_rc_release` decremented strong,
+ran the payload's `drop_fn`, and *then* tested the weak count to decide whether to free. But
+that glue runs arbitrary user code, and through a cycle it can drop the last **weak**
+reference to the same box — a `Node` whose child holds `Maybe<weak Node>` back at it.
+`lyra_rc_weak_release` sees weak 0 with strong already 0, frees the memory, and the outer
+release frees it again.
+
+The strong owners now hold **one implicit weak reference**, taken at allocation and dropped
+after `drop_fn` returns, so the count cannot reach zero while the glue is running — Rust's
+`Arc`, for the same reason. `lyra_rc_weak_release` needs no strong check any more: weak
+reaching zero already means every strong owner is gone *and* its glue has finished.
+
+**The order matters, and getting it wrong is instructive.** Landing the drop arm without the
+retain arm is a release with no matching retain — an immediate double free, which
+`TestExec_WeakOptionalField` caught at once. That test had been green *by leaking*: before
+the glue walked a `Maybe<shared T>` field at all, the cycle's fields were never released, so
+the test exercised nothing. A memory-safety test can pass because the code under it does
+nothing.
+
+**On the investigation itself**, since the wrong turns cost more than the fix. The leak was
+first diagnosed as "an owned `Maybe<string>` is never released", from grepping the emitted
+`main` for `lyra_rc_release` — the wrong symbol, because an aggregate releases through
+generated glue. It was also called pre-existing on the strength of a `git stash` that could
+not show that (the first suspect commit was already committed), then un-called on CI history
+alone. What settled it was a worktree bisect against the last green commit (fails 6/6 there)
+and symbolized leak stacks. Byte counts were nondeterministic run to run, so no single
+measurement of them meant anything.
+
+Still unexplained: why CI flipped. The program's IR is byte-identical across the suspect
+commits and the leak reproduces at the last green one, so the trigger is outside the
+compiler — a runner image or glibc change — and it is not confirmed.
+
+### 08/07/26
 **A module may be a directory of files**, and `std/prelude.lyra` became `std/prelude/` — seven
 files split by topic (`maybe`, `result`, `array`, `ordering`, `parse`, `strings`, `rand`), one
 module. `std.prelude` now resolves to `std/prelude.lyra` *or* every `*.lyra` directly inside

@@ -221,6 +221,31 @@ func (l *lowerer) emitDropValue(block *ir.Block, v value.Value, t types.Type) (*
 		return l.emitDropData(block, v, rt)
 	case types.StaticArrayType:
 		return l.emitDropArray(block, v, rt)
+	case types.ParameterizedType:
+		// One instantiation owns what its *substituted* contents own — `Maybe<string>`
+		// releases a string, `Maybe<i64>` nothing — so the drop must be decided against
+		// the substitution. resolveNamedType above only resolves an UnresolvedType, so
+		// a ParameterizedType arrived here still parameterized and matched no case at
+		// all: the glue silently emitted nothing for that field.
+		//
+		// **This is the half of a documented pair that was missing.** `OwnsManaged` was
+		// given exactly this arm (its comment records that missing it was "a real double
+		// free"), and so was retain.go's glue — which is why a tuple holding a
+		// `Maybe<string>` *retained* its element on copy and then dropped nothing,
+		// breaking the retain/drop symmetry this file's header calls the whole ownership
+		// invariant for aggregates. A multi-clause function desugars to
+		// `match (p0, p1) { … }`, whose scrutinee is a stack tuple over the parameters,
+		// so every call to the prelude's `unwrap_or` leaked one reference to its
+		// receiver's box. That is what failed TestExec_ReadLineUnderASan.
+		inst := l.resolveShape(rt)
+		if _, unresolved := inst.(types.ParameterizedType); unresolved {
+			// Unreachable in a well-typed program: needsDrop returned true above, and it
+			// says so only by resolving this same instantiation. Rule 5 — a silent
+			// `return block, nil` here is precisely the leak this case exists to fix.
+			return nil, fmt.Errorf("llvm: cannot drop a value of generic type %s: "+
+				"its instantiation did not resolve", rt)
+		}
+		return l.emitDropValue(block, v, inst)
 	}
 	return block, nil
 }

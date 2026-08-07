@@ -146,6 +146,21 @@ because each was learned from a real failure, and none is local to one package.
    resolved builtin allocates (`MethodTable.SetBuiltinMethod(call, allocates)`), since only
    it still has the receiver's type, and all three ladders read the flag.
 
+   **A sixth landed 08/07, and it is the fifth's twin one layer down.** The backend's two
+   aggregate glue walks — `emitRetainValue` and `emitDropValue` — switch on the resolved
+   type, and *neither* had a `ParameterizedType` arm, so a tuple or struct holding a
+   `Maybe<string>` walked past that element entirely. `OwnsManaged` had been given exactly
+   that arm long before, its comment recording that missing it was "a real double free";
+   these are the other half of the same model. Symmetric-in-being-broken hid it: the element
+   is retained at the *construction* site (where the type arrives substituted via
+   `recordedType`), so only the drop was missing, and the result was a quiet leak — one
+   reference per call to any **multi-clause** function, which desugars to
+   `match (p0, p1) { … }` over a stack tuple. Two lessons beyond "add the arm": the fix must
+   land in **both** walks in one change (drop-without-retain is an instant double free, which
+   `TestExec_WeakOptionalField` caught), and that test had itself been green *by leaking* —
+   before the glue walked a `Maybe<shared T>` field at all, the cycle it builds released
+   nothing. A memory-safety test can pass because the code under it does nothing.
+
    The durable fix for a switch with more than one caller is to stop having more than one
    of it. The type-variable walk was three switches (typechecker `collectTypeVars`, backend
    `mentionsTypeVar`, and the generic-parameter-list check that wanted a third); it is now
@@ -204,6 +219,16 @@ because each was learned from a real failure, and none is local to one package.
    *produces* (the hand-written `match` had the identical hole, and the clause form only
    made it reachable), and be suspicious of any name-keyed analysis downstream of a pass
    that rewrites bindings.
+
+12. **A box's `drop_fn` may free the box it is running on.** `lyra_rc_release` decrements
+   strong, runs the payload's drop glue, then decides whether to free — and that glue is
+   arbitrary user code which, through a cycle, can drop the last **weak** reference to the
+   same box (a `Node` whose child holds `Maybe<weak Node>` back at it). `lyra_rc_weak_release`
+   then frees the memory and the outer release frees it again. The strong owners therefore
+   hold **one implicit weak reference**, taken in `lyra_rc_alloc` and dropped after the glue
+   returns, so the count cannot reach zero mid-drop; Rust's `Arc` does the same, for the same
+   reason. Do not "simplify" that back into a `weak == 0` test — it reads as equivalent and is
+   an ASan-confirmed double free (08/07).
 
 ## Package map
 

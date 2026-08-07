@@ -1051,11 +1051,34 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 
 	case *ast.TupleLiteralExpr:
 		// The aggregate takes ownership of managed elements — transfer. A `shared`
-		// tuple's box drops them via the per-type drop glue (drop.go); a stack tuple's
-		// leak, since a stack aggregate has no death to hang a drop on (see the
-		// package doc).
+		// tuple's box drops them via the per-type drop glue (drop.go).
 		for _, el := range e.Elements {
 			a.expr(el, true)
+		}
+		// A **stack** tuple in a borrowing position is a temporary, and its elements'
+		// +1s die with it — so it needs the same release any other owned producer gets
+		// when its value is discarded (StringConcatExpr above is the model). Without
+		// it the retains minted just above are never matched.
+		//
+		// This is the leak that failed TestExec_ReadLineUnderASan on CI, and it is
+		// reached by ordinary code rather than an exotic one: a **multi-clause function
+		// desugars to `match (p0, p1) { … }`**, so its scrutinee is exactly this — a
+		// stack tuple built at the match site over the parameters. Every call to the
+		// prelude's `unwrap_or` therefore leaked one reference to its receiver's box,
+		// and `line.unwrap_or("")` in a read loop leaks one box per iteration. A
+		// single-scrutinee `match m { … }` never did, because there is no tuple to
+		// build — which is why this hid for so long behind a construct that looks like
+		// pure sugar.
+		//
+		// The package doc called this out as a known limitation ("a stack tuple's
+		// [elements] leak, since a stack aggregate has no death to hang a drop on").
+		// It does have a death: the end of the statement that produced it, which is
+		// where the backend already flushes temporaries and where deepRelease knows how
+		// to walk an aggregate's managed fields. It is only *unowned* positions that
+		// need this — an owning one (a `let`, an element of another aggregate) hands
+		// the +1 on to something whose scope exit releases it.
+		if !needOwned && a.ownsManaged(e) {
+			a.table.ReleaseTemp[e] = true
 		}
 
 	case *ast.StructInstanceExpr:

@@ -99,8 +99,12 @@ func (l *lowerer) ensureRCRuntime() {
 		b := fn.NewBlock("entry")
 		box := b.NewCall(l.malloc, size)
 		counts := b.NewBitCast(box, i64ptr)
-		b.NewStore(one, counts)                        // strong = 1
-		b.NewStore(zero, weakCountPtr(b, box, i64ptr)) // weak = 0
+		b.NewStore(one, counts) // strong = 1
+		// weak = 1, not 0: the strong owners collectively hold **one implicit weak
+		// reference**, dropped by lyra_rc_release after the payload's drop_fn has run.
+		// It is what makes the box's memory survive its own drop glue — see the
+		// re-entrancy note on lyra_rc_release.
+		b.NewStore(one, weakCountPtr(b, box, i64ptr))
 		b.NewRet(box)
 		l.rcAlloc = fn
 	}
@@ -151,12 +155,23 @@ func (l *lowerer) ensureRCRuntime() {
 		callDrop.NewBr(doFree)
 
 		// The value is dead, but its *memory* must survive while any weak reference
-		// can still ask whether it is: free only when the weak count is zero too.
-		// A box that never had a weak reference has weak == 0 from allocation, so
-		// this is the same single free it always was.
-		weak := doFree.NewLoad(lltypes.I64, weakCountPtr(doFree, box, i64ptr))
+		// can still ask whether it is. That is done by **dropping the implicit weak
+		// reference** the strong side took at allocation, rather than by testing the
+		// weak count — and the difference is not cosmetic.
+		//
+		// Testing it here is a re-entrancy bug: `drop_fn` above runs arbitrary user
+		// glue, and that glue can drop the last weak reference to **this same box**
+		// through a cycle — a `Node` whose child holds `Maybe<weak Node>` back at it.
+		// lyra_rc_weak_release then sees weak == 0 with strong already 0 and frees the
+		// memory, and this function frees it a second time on the way out. Holding one
+		// implicit weak for the strong side makes that impossible: while drop_fn runs,
+		// the count cannot reach zero, so nothing can free the box out from under it.
+		// Rust's Arc does exactly this, for exactly this reason.
+		wPtr := doFree.NewBitCast(weakCountPtr(doFree, box, i64ptr), i64ptr)
+		w1 := doFree.NewSub(doFree.NewLoad(lltypes.I64, wPtr), one)
+		doFree.NewStore(w1, wPtr)
 		reallyFree := fn.NewBlock("really_free")
-		doFree.NewCondBr(doFree.NewICmp(enum.IPredEQ, weak, zero), reallyFree, done)
+		doFree.NewCondBr(doFree.NewICmp(enum.IPredEQ, w1, zero), reallyFree, done)
 		reallyFree.NewCall(l.free, box)
 		reallyFree.NewBr(done)
 
@@ -233,9 +248,11 @@ func (l *lowerer) ensureRCRuntime() {
 		wPtr := weakCountPtr(dec, box, i64ptr)
 		w1 := dec.NewSub(dec.NewLoad(lltypes.I64, wPtr), one)
 		dec.NewStore(w1, wPtr)
+		// No strong check: the strong side holds one implicit weak reference of its
+		// own (see lyra_rc_alloc), so weak reaching zero already means every strong
+		// owner is gone *and* its drop glue has finished running.
 		dec.NewCondBr(dec.NewICmp(enum.IPredEQ, w1, zero), maybeFree, done)
-		liveStrong := maybeFree.NewLoad(lltypes.I64, strongPtr)
-		maybeFree.NewCondBr(maybeFree.NewICmp(enum.IPredEQ, liveStrong, zero), doFree, done)
+		maybeFree.NewBr(doFree)
 		doFree.NewCall(l.free, box)
 		doFree.NewBr(done)
 		done.NewRet(nil)

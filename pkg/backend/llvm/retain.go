@@ -166,6 +166,24 @@ func (l *lowerer) emitRetainValue(block *ir.Block, v value.Value, t types.Type) 
 		return l.emitRetainData(block, v, rt)
 	case types.StaticArrayType:
 		return l.emitRetainArray(block, v, rt)
+	case types.ParameterizedType:
+		// The mirror of emitDropValue's arm, and it must be added in the same commit:
+		// this pair is the ownership invariant for aggregates, so a retain without its
+		// drop leaks and a drop without its retain is a double free. Adding the drop
+		// alone crashed TestExec_WeakOptionalField, which is the invariant catching a
+		// half-fix exactly as the header says it should.
+		//
+		// Both switches previously lacked the case, so they were symmetric *in being
+		// broken*: a tuple holding a `Maybe<string>` neither retained nor dropped that
+		// element through its glue. (The element is still retained at the construction
+		// site, where the type arrives already substituted via recordedType — which is
+		// why the leak showed up only on the drop side.)
+		inst := l.resolveShape(rt)
+		if _, unresolved := inst.(types.ParameterizedType); unresolved {
+			return nil, fmt.Errorf("llvm: cannot retain a value of generic type %s: "+
+				"its instantiation did not resolve", rt)
+		}
+		return l.emitRetainValue(block, v, inst)
 	}
 	return block, nil
 }
