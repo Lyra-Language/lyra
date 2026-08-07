@@ -10,6 +10,35 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**A `where`-bound call lowers, so `Show` works end to end.** `describe(7)` and
+`describe(true)` through one generic body now print "an int" and "a bool" — two
+instantiations, two impls, one source function.
+
+The gap was a mismatch in what "resolved" means at two stages. The typechecker resolves a
+bound call **abstractly**, to a trait and a method name, and that is genuinely all it can
+do: the receiver is a type *variable*, and every implementing type type-checks identically
+against the trait's signature. The backend needs a real callee, and by the time it runs it
+has one — a specialization is being lowered, so `l.typeSubst` maps the variable to a
+concrete type.
+
+**The impl matching stays in the typechecker.** The backend could have matched impls
+itself, but `implTargetMatches`, the Self substitution and the trait's own parameter
+bindings are dispatch's job, and a second copy in codegen is exactly the drift
+`Resolution` was introduced to prevent — the same hazard-8 shape that cost a day earlier in
+the week. So the typechecker publishes one concrete resolution per implementing type and
+the backend selects by the substituted receiver type. Keyed by *type* rather than by
+specialization because that is what the backend can compute locally: it holds the
+substitution, not the enclosing specialization's key.
+
+Every implementing type is published, not just the ones some specialization reaches —
+which are unknown until the instantiation set is closed in the driver, a pass later. The
+set is one trait's impls and an unselected candidate costs a table entry, not an emitted
+function.
+
+A receiver that is still a type variable when lowering reaches it gets a hard error naming
+what is missing rather than a guess at which impl was meant.
+
+### 08/07/26
 **`where` bounds mean something.** They were collected and read by nobody but the
 unused-parameter warning, so writing one bought nothing: a generic could be instantiated at a
 type with no impl, which type-checked clean and died in the backend as

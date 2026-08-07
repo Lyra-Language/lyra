@@ -74,11 +74,7 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	// unsupported: the program is well-typed and the bound is satisfied, and the
 	// author would otherwise go looking for a mistake in code that has none.
 	if ref, ok := l.res.MethodTable.GetBound(call); ok {
-		return nil, nil, fmt.Errorf(
-			"llvm: a call dispatched through a `where` bound does not lower yet: %s::%s. "+
-				"The bound is satisfied and the program type-checks; what is missing is "+
-				"resolving the bound to its concrete impl per specialization",
-			ref.Trait, ref.Method)
+		return l.lowerBoundMethodCall(block, call, member, ref)
 	}
 	op, ok := roundingIntrinsicOps[member.Property.Name]
 	if !ok {

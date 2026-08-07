@@ -24,6 +24,9 @@ type MethodTable struct {
 	// nothing else today. Separate from `builtins` rather than a value on it,
 	// because "is a builtin" and "allocates" are asked by different passes.
 	builtinAllocs map[*ast.FunctionCallExpr]bool
+	// boundCandidates[call][concreteType] is the impl a `where`-bound call resolves to
+	// once a specialization fixes the receiver's type variable. See SetBoundCandidates.
+	boundCandidates map[*ast.FunctionCallExpr]map[string]Resolution
 }
 
 // BoundMethodRef names a trait method reached by *abstract* dispatch — a call on
@@ -215,6 +218,38 @@ func (t *MethodTable) SetResolution(call *ast.FunctionCallExpr, r Resolution) {
 }
 
 // GetResolution returns the full dispatch result for a call. Nil-receiver-safe.
+// SetBoundCandidates records, for a call dispatched through a `where` bound, the
+// concrete resolution for **each** type that implements the bound trait, keyed by that
+// type's `String()`.
+//
+// A bound call resolves abstractly at check time — the receiver is a type *variable*,
+// so there is no single impl to name — but the backend lowers one specialization at a
+// time, where the variable has been substituted for a concrete type. It cannot do the
+// matching itself: `implTargetMatches` lives in the typechecker, and a second copy in
+// the backend is the drift this codebase's hazard 8 is about. So the typechecker
+// publishes every candidate and the backend picks the one its substitution names.
+//
+// Keyed by type rather than by specialization because that is what the backend can
+// compute locally: it holds the substitution, not the enclosing specialization's key.
+func (t *MethodTable) SetBoundCandidates(call *ast.FunctionCallExpr, byType map[string]Resolution) {
+	if t == nil || len(byType) == 0 {
+		return
+	}
+	if t.boundCandidates == nil {
+		t.boundCandidates = map[*ast.FunctionCallExpr]map[string]Resolution{}
+	}
+	t.boundCandidates[call] = byType
+}
+
+// BoundCandidate returns the resolution for a bound call at a concrete receiver type.
+func (t *MethodTable) BoundCandidate(call *ast.FunctionCallExpr, concrete string) (Resolution, bool) {
+	if t == nil {
+		return Resolution{}, false
+	}
+	r, ok := t.boundCandidates[call][concrete]
+	return r, ok
+}
+
 func (t *MethodTable) GetResolution(call *ast.FunctionCallExpr) (Resolution, bool) {
 	if t == nil {
 		return Resolution{}, false

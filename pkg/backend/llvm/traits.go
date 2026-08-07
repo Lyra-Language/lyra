@@ -207,3 +207,41 @@ func (l *lowerer) methodOperand(block *ir.Block, operand ast.Expression, params 
 	}
 	return l.lowerExpr(block, operand)
 }
+
+// lowerBoundMethodCall lowers a call dispatched through a `where` bound —
+// `v.show()` where `v: t` and the enclosing declaration says `where t: Show`.
+//
+// The typechecker resolved it *abstractly*, to a trait and a method name, because at
+// check time the receiver is a type variable and every implementing type answers the
+// same. Here it is concrete: a specialization is being lowered, so `l.typeSubst` maps
+// `t` to the type this instantiation fixed it at, and the call must name a real
+// function. The candidate table (MethodTable.SetBoundCandidates) supplies the
+// resolution for that type, so the impl matching stays in the typechecker where
+// dispatch already does it.
+//
+// The receiver's *substituted* type is the key, not the declared one: the declared
+// type is the variable, which names no impl.
+func (l *lowerer) lowerBoundMethodCall(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, ref typetable.BoundMethodRef) (value.Value, *ir.Block, error) {
+	recvT, ok := l.recordedType(member.Object)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no type recorded for the receiver of %s::%s",
+			ref.Trait, ref.Method)
+	}
+	res, ok := l.res.MethodTable.BoundCandidate(call, recvT.String())
+	if !ok {
+		// A bound satisfied through the *enclosing* declaration's bounds rather than by
+		// an impl — the receiver is still a type variable here because this body is
+		// being analyzed generically rather than lowered at an instantiation. Rule 5: a
+		// hard error naming what is missing, never a guess at which impl was meant.
+		return nil, nil, fmt.Errorf(
+			"llvm: cannot lower %s::%s on a receiver of type %s: no impl of %s for it. "+
+				"A bound call lowers only where a specialization has fixed the receiver's "+
+				"type variable to a concrete type",
+			ref.Trait, ref.Method, recvT, ref.Trait)
+	}
+	fn, err := l.traitMethod(res)
+	if err != nil {
+		return nil, nil, err
+	}
+	return l.lowerTraitMethodCall(block, call, member, fn)
+}

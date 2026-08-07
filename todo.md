@@ -201,14 +201,13 @@ lowers; `CLAUDE.md`'s `pkg/backend/llvm` section is the current inventory. Settl
   while every consumer holds only the lambda. A type argument that is itself a *type
   variable* is checked against the enclosing declaration's bounds rather than against any
   impl, which is what lets a bound be forwarded. See COMPLETED.md.
-  - **[OPEN] A bound-dispatched call does not lower.** `v.show()` under `where t: Show`
-    resolves *abstractly* — to a trait and a method name — because the concrete impl is
-    only known once a specialization fixes the parameter, and the backend has no path from
-    that to a callee. It is a hard error naming exactly that (rule 5), so the feature
-    type-checks and cannot yet be built. **This is the last piece before `Show` is usable**,
-    and the natural home is the driver, where the instantiation set is already closed per
-    specialization (`instantiations.go`) — the same place the per-specialization ownership
-    tables are built.
+  - **[DONE 08/07] A bound-dispatched call lowers.** `v.show()` under `where t: Show`
+    resolves *abstractly* at check time — the receiver is a type variable, so there is no
+    single impl to name — and becomes concrete only when a specialization fixes it. The
+    typechecker publishes one resolution per implementing type
+    (`MethodTable.SetBoundCandidates`) and the backend picks by the receiver's
+    *substituted* type, so impl matching stays in the one place that does dispatch. One
+    generic body, two instantiations, two impls called. See COMPLETED.md.
   (A trait-impl method on a generic receiver **does** lower as of 08/03 — see COMPLETED.md
   and `pkg/backend/llvm/README.md`'s trait section. `Maybe<weak T>` parses and lowers as of
   08/03 too; the "does not parse" note that stood here was never true.)

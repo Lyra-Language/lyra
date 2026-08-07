@@ -316,6 +316,13 @@ func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodNam
 		// (joining over the bound trait method's concrete impls) instead of
 		// treating the call as an unverifiable external one.
 		tc.methodTable.SetBound(call, typetable.BoundMethodRef{Trait: traitName, Method: methodName})
+		// Publish one concrete resolution per implementing type, so the backend can pick
+		// the one its specialization names. Done here rather than in the backend because
+		// the matching (implTargetMatches, Self substitution, the trait's own parameter
+		// bindings) is dispatch's job — a second copy in codegen is free to disagree with
+		// the one that type-checked the call, which is the drift Resolution exists to
+		// prevent.
+		tc.publishBoundCandidates(call, traitName, methodName)
 		sig := substituteSelf(tm.Signature, recv)
 		return tc.inferDotCallFromType(traitName+"::"+methodName, sig, call), true
 	}
@@ -550,4 +557,44 @@ func (tc *TypeChecker) checkGenericBounds(calleeName string, lambda *ast.LambdaE
 			}
 		}
 	}
+}
+
+// publishBoundCandidates records the concrete resolution of a `where`-bound call for
+// every type that implements the bound trait (MethodTable.SetBoundCandidates).
+//
+// The abstract resolution above is all the *typechecker* needs — the receiver is a
+// type variable and every implementing type type-checks identically against the
+// trait's signature. The backend needs more: it lowers one specialization at a time,
+// where the variable has become a concrete type and the call must name a real
+// function. Enumerating here is what lets it do that without re-implementing impl
+// matching.
+//
+// Every implementing type is published rather than only the ones some specialization
+// reaches, because which those are is not known until the instantiation set is closed
+// — which happens in the driver, after this pass. The set is small (the impls of one
+// trait) and a candidate nobody selects costs nothing: it is a table entry, not an
+// emitted function.
+func (tc *TypeChecker) publishBoundCandidates(call *ast.FunctionCallExpr, traitName, methodName string) {
+	byType := map[string]typetable.Resolution{}
+	for _, impl := range tc.traitImpls {
+		if impl.TraitName != traitName {
+			continue
+		}
+		target := tc.resolveTypeIfKnown(impl.Type, impl.GetLocation())
+		if target == nil {
+			continue
+		}
+		matches := tc.resolveTraitMethod(target, methodName, traitName)
+		if len(matches) != 1 {
+			// Zero: the impl does not provide this method (checkTraitImpl reports that).
+			// More than one: ambiguous at this type, which the call site reports when it
+			// is reached concretely. Neither is this function's to diagnose.
+			continue
+		}
+		m := matches[0]
+		byType[target.String()] = typetable.Resolution{
+			Impl: m.Impl, Method: m.Method, Signature: m.Signature, Bindings: m.Bindings,
+		}
+	}
+	tc.methodTable.SetBoundCandidates(call, byType)
 }

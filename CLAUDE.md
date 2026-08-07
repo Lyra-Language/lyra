@@ -641,6 +641,16 @@ name — hazard 9's rule. **There were three copies of that dispatch ladder** (`
 `methodEffects`, and the reporting walk in `checkCallPurity`); all three needed the same arm,
 which is hazard 8 again.
 
+**`where` bounds mean something as of 08/07**, in three parts: a binding's bounds are in
+scope for its own body (`tc.genericBounds` was fed only by an *impl's* clause, so a bounded
+call reported "add a `where t: Trait` bound" with the bound already written); an
+unsatisfied bound is `lyra-E036` at the **instantiation**, the only point where the
+question has an answer; and a bound-dispatched call **lowers**, by the typechecker
+publishing one resolution per implementing type (`MethodTable.SetBoundCandidates`) and the
+backend picking by the receiver's substituted type. Impl matching stays in the typechecker
+— a second copy in codegen is the drift `Resolution` exists to prevent. This is what
+unblocks `Show`/`Eq`/`Ord`.
+
 **UFCS landed 08/03**: `m.unwrap_or(0)` resolves to a free function whose first parameter
 is named `self`, by rewriting the call to pass the receiver as its first argument
 (`typechecker_ufcs.go`, and that README's last section). The standard library's combinators
