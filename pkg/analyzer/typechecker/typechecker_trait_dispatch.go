@@ -715,3 +715,53 @@ func (tc *TypeChecker) publishOperatorCandidates(expr ast.Expression, traitName,
 	}
 	tc.methodTable.SetOperatorCandidates(expr, byType)
 }
+
+// warnFloatEqualityAtInstantiation reports `lyra-W008` for a `==`/`!=` inside a generic
+// body whose operands *this instantiation* binds to a float.
+//
+// The warning already fires on a direct `a == b` between floats. It did not survive
+// substitution: `let same<t> = (a: t, b: t) -> bool => a == b` called at `f64` does the
+// same IEEE comparison and answered `false` for `same(0.1 + 0.2, 0.3)` with nothing
+// said. Genericity silently stripped the safety net, which is worse than never having
+// had one — the check looks present and is not.
+//
+// Reported at the **call**, not at the comparison. The comparison is correct where it
+// is written: `t` is not a float there, and the same body is perfectly sensible at every
+// other type. What deserves the warning is *this* instantiation, and the call is the
+// line the author can change.
+func (tc *TypeChecker) warnFloatEqualityAtInstantiation(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr, subst map[string]types.Type) {
+	if lambda == nil || lambda.Body == nil || len(subst) == 0 {
+		return
+	}
+	// At most one per call: a body comparing several float-bound variables says the same
+	// thing about the same call site, and repeating it is noise.
+	reported := false
+	ast.WalkExpr(lambda.Body, nil, func(e ast.Expression) bool {
+		if reported {
+			return false
+		}
+		cmp, ok := e.(*ast.BooleanBinaryOpExpr)
+		if !ok || (cmp.Operator != ast.BooleanBinaryOpEq && cmp.Operator != ast.BooleanBinaryOpNEq) {
+			return true
+		}
+		for _, side := range []ast.Expression{cmp.Left, cmp.Right} {
+			t, found := tc.typeTable.Get(side)
+			if !found {
+				continue
+			}
+			g, isVar := t.(types.GenericType)
+			if !isVar {
+				continue
+			}
+			if bound, ok := subst[g.Name]; ok && isFloatType(bound) {
+				tc.addErrorCode(call.GetLocation(), SeverityWarning, diag.CodeImpreciseFloatEquality,
+					"%s: %s is %s here, and its body compares values of that type with %s — "+
+						"comparing floats this way may give unexpected results due to floating-point precision",
+					calleeName, g.Name, bound, cmp.Operator)
+				reported = true
+				return false
+			}
+		}
+		return true
+	})
+}

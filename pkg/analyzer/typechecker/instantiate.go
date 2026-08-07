@@ -222,6 +222,7 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 	// point at which "does the argument satisfy the bound" is a question with an
 	// answer.
 	tc.checkGenericBounds(calleeName, lambda, call, subst)
+	tc.warnFloatEqualityAtInstantiation(calleeName, lambda, call, subst)
 	tc.instantiations.Set(call, typetable.Instantiation{
 		Name: calleeName, Func: lambda, Disc: tc.instantiationDisc(lambda), Subst: subst,
 	})

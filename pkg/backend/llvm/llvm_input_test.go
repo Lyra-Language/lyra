@@ -371,3 +371,25 @@ func checkWithPrelude(t *testing.T, src string) []string {
 	}
 	return out
 }
+
+// checkWithPreludeDiagnostics is checkWithPrelude including *warnings*. Separate rather
+// than a widening of it, because most callers assert "no errors" and would then have to
+// filter out every advisory diagnostic the compiler ever gains.
+func checkWithPreludeDiagnostics(t *testing.T, src string) []string {
+	t.Helper()
+	dir := t.TempDir()
+	entry := filepath.Join(dir, "app.lyra")
+	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	units, diags := modules.Resolve(entry, []string{dir, repoStdRoot(t)},
+		modules.Options{Prelude: modules.PreludeModule})
+	if len(diags) != 0 {
+		t.Fatalf("resolve: %v", diags)
+	}
+	var out []string
+	for _, d := range driver.AnalyzeUnits(units).Diagnostics {
+		out = append(out, d.Message)
+	}
+	return out
+}

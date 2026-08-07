@@ -899,16 +899,14 @@ Prerequisites, both real bugs found while designing this:
   `impl Show for Box<i64>` overlaps without being identical, and ranking them needs the
   specificity ordering the language deliberately does not have (see receiver-keyed
   overloading), so genuine overlap is left open rather than half-answered.
-- **[OPEN] Structural `==` on an aggregate does not lower.** `a == b` on a struct, data,
-  tuple or array type-checks and then fails with `llvm: comparison of non-integer operands
-  not implemented` — the same rule-5 inversion as the type-name member call and the
-  `where`-bound call. Independent of any trait: structural equality is the *default*, so it
-  has to work.
-- **[OPEN] `lyra-W008` does not survive substitution.** A direct `f64 == f64` warns; the
-  identical comparison reached through a type variable does not, though both do IEEE
-  equality and both answer `false` for `0.1 + 0.2 == 0.3` (verified 08/07). Genericity
-  silently strips the safety net. Fire it at the instantiation, where the bound check now
-  fires.
+- **[DONE 08/07] Structural `==` on an aggregate lowers** — struct, tuple, `data`, inline
+  array, nested and all. A per-type glue function rather than an inlined comparison, for
+  the reason drop.go gives for its own: a `data` value's equality branches on the tag, and
+  a branching *call site* returns a merge block the pending-temporaries machinery does not
+  handle. See COMPLETED.md.
+- **[DONE 08/07] `lyra-W008` survives substitution.** It fires at the *instantiation* —
+  `same(1.0, 2.0)` on a generic whose body compares `t` — and reports at the call, since
+  the comparison is correct where it is written and the call is the line to change.
 
 **[DONE 08/07] The `Eq` override.** `pub trait Eq { eq: (Self, Self) -> bool }`; `==`/`!=`
 stay structural and an impl replaces them for that type. A primitive is never routed

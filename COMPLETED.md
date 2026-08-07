@@ -10,6 +10,43 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**Structural `==` on an aggregate lowers, and the float warning survives substitution** —
+the two `==` bugs found while designing Eq/Ord.
+
+**`a == b` on a struct, tuple, `data` value or inline array** type-checked from the start
+(`areEqualityCompatible`) and the backend refused it from the start: *"comparison of
+non-integer operands not implemented"*. Hazard 5 inverted, and the third instance of that
+shape dug out this week after the type-name member call and the `where`-bound call. It now
+compares field-wise, recursing through nesting and covering every element of a `[N]T`.
+
+**A per-type glue function rather than an inlined comparison**, for the two reasons drop.go
+gives for its own. A `data` value's equality has to branch on the tag, and a branching
+*call site* returns a merge block the pending-temporaries machinery does not handle — the
+fault that made `read_line`'s lowering branchless. Emitting a function keeps the call site
+one instruction and puts the branching inside, where it is nobody else's problem; it also
+means a recursive type's equality reaches itself through a cache entry instead of expanding
+forever.
+
+The field comparisons are ANDed rather than short-circuited. Each is a handful of
+instructions with no side effect and no trap — the string case is a length test and a
+memcmp — so branching past the rest would cost more in blocks than it saves in work, and
+would reintroduce the merge block the design exists to avoid.
+
+**`lyra-W008` did not survive substitution.** A direct `f64 == f64` warned; the identical
+comparison reached through a type variable did not, though both do IEEE equality and both
+answer `false` for `0.1 + 0.2 == 0.3`. Genericity silently stripped the safety net, which is
+worse than never having had one: the check looks present and is not. It now fires at the
+**instantiation**, alongside the `where`-bound check, and reports at the *call* rather than
+at the comparison — the comparison is correct where it is written (`t` is not a float
+there, and the body is sensible at every other type), and the call is the line the author
+can change. At most one per call site, since a body comparing several float-bound variables
+says the same thing about the same call.
+
+That needed a warnings-inclusive test helper: `checkWithPrelude` returns errors only, and
+most callers assert "no errors" and would otherwise have to filter out every advisory
+diagnostic the compiler ever gains. Added beside it rather than widening it.
+
+### 08/07/26
 **Swept the AST for fields nothing reads**, after four collected-and-unread surfaces turned
 up in two days — `wallClock`, the `where` bounds, `@derive`, and operator method names. The
 method: enumerate every exported field of every struct in `pkg/ast`, then grep for a reader

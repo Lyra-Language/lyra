@@ -49,6 +49,7 @@
 //	  random.go           random_seed: the OS-entropy shim (the PRNG is in the prelude)
 //	  clock.go            wall_clock_nanos: the clock_gettime shim
 //	  arithmetic.go       math, comparisons, &&/||, numeric conversions, width coercions
+//	  equality.go         structural == on aggregates: the per-type comparison glue
 //	  rounding.go         x.floor()/.ceil()/.round() via LLVM intrinsics
 //	  trap.go             checked arithmetic and the trap runtime; the diverged() guard
 //	  wrapping.go         the wrapping_*/saturating_* escape hatches
@@ -143,6 +144,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		overflowIntrinsics: map[string]*ir.Func{},
 		panics:             map[string]*ir.Func{},
 		dropFns:            map[string]*ir.Func{},
+		eqFns:              map[string]*ir.Func{},
 		retainFns:          map[string]*ir.Func{},
 		cStrings:           map[string]*ir.Global{},
 		specialized:        map[string]*ir.Func{},
@@ -350,6 +352,10 @@ type lowerer struct {
 	closureCount   int
 	envDropCount   int
 
+	// eqFns caches the per-type structural equality glue (equality.go), keyed the same
+	// way dropFns is — on the base type, so a newtype shares its base's function.
+	eqFns     map[string]*ir.Func
+	eqFnCount int
 	// dropFns caches the per-type recursive drop glue (drop.go), keyed by the
 	// payload type's String(). Module-level, not per-function: one @lyra_drop_T
 	// serves every release of a T. dropFnCount only keeps the symbol names unique.

@@ -145,6 +145,15 @@ func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinary
 	lt, lok := left.Type().(*lltypes.IntType)
 	rt, rok := right.Type().(*lltypes.IntType)
 	if !lok || !rok {
+		// An aggregate — struct, tuple, `data`, inline array — compares **structurally**,
+		// field by field. The typechecker has always accepted this and the backend always
+		// refused it, which is hazard 5 inverted; equality.go builds the per-type glue.
+		// Only `==`/`!=` are structural: ordering an aggregate needs `Ord`, which the
+		// typechecker resolved earlier if it applied.
+		if e.Operator == ast.BooleanBinaryOpEq || e.Operator == ast.BooleanBinaryOpNEq {
+			v, err := l.lowerStructuralEquality(block, e, left, right)
+			return v, block, err
+		}
 		return nil, nil, fmt.Errorf("llvm: comparison of non-integer operands not implemented (%s, %s)", left.Type(), right.Type())
 	}
 	if lt.BitSize != rt.BitSize {
