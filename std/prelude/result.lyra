@@ -1,0 +1,69 @@
+module std.prelude
+
+// `Result` and the combinators over it — the same module as `maybe.lyra`, which is what
+// lets `unwrap_or`, `expect`, `map` and the rest be declared here *as well as* there.
+// Receiver-keyed overloading is per-module, not per-file: two declarations of one name
+// are allowed when both take a `self` whose type heads differ, and `Maybe` beside
+// `Result` is exactly that. See `README.md`.
+//
+// As with `Maybe`, the `@builtin(Result)` marker confers the compiler-known identity that
+// `?` and the canonical-kind checks key off, independently of the spelling.
+
+@builtin(Result)
+pub data Result<t, e> = Ok(t) | Err(e)
+
+pub let is_ok<t,e> = pure noalloc (self: Result<t, e>) -> bool {
+  (Ok _) => true,
+  (Err _) => false,
+}
+
+pub let is_err<t,e> = pure noalloc (self: Result<t, e>) -> bool {
+  (Ok _) => false,
+  (Err _) => true,
+}
+
+pub let unwrap_or<t,e> = pure noalloc (self: Result<t,e>, fallback: t) -> t {
+  (Ok v, _) => v,
+  (Err _, fb) => fb,
+}
+
+pub let unwrap_or_else<t,e> = pure noalloc (self: Result<t,e>, f: () -> t) -> t {
+  (Ok v, _) => v,
+  (Err _, f) => f(),
+}
+
+pub let expect<t,e> = pure noalloc (self: Result<t,e>, msg: string) -> t {
+  (Ok v, _) => v,
+  (Err _, msg) => panic(msg),
+}
+
+pub let unwrap<t,e> = pure noalloc (self: Result<t,e>) -> t => expect(self, "unwrap on an Err")
+
+pub let ok<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<t> {
+  (Ok v) => Some v,
+  (Err _) => None,
+}
+
+pub let err<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<e> {
+  (Ok _) => None,
+  (Err err) => Some err,
+}
+
+pub let map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> u) -> Result<u,e> {
+  (Ok v, f) => Ok(f(v)),
+  (Err err, _) => Err err,
+}
+
+pub let flat_map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> Result<u,e>) -> Result<u,e> {
+  (Ok v, f) => f(v),
+  (Err err, _) => Err err,
+}
+
+// Note the return type: `Maybe<t>`, not `Result<t,e>`. Rejecting an `Ok` would have to
+// invent the `e` to fail with, and only the caller can supply one — so this narrows to a
+// `Maybe` and drops the error rather than fabricating one. `ok_or` is the way back, at
+// the point where the caller does know what the failure means.
+pub let filter<t,e> = pure noalloc (self: Result<t,e>, predicate: (t) -> bool) -> Maybe<t> {
+  (Ok v, pred) => if pred(v) { Some v } else { None },
+  (Err _, _) => None,
+}

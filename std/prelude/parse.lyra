@@ -1,0 +1,68 @@
+module std.prelude
+
+// Parsing — where a program meets input it did not choose, which is why the failures here
+// are `None` rather than traps.
+//
+// Written in Lyra rather than as a compiler builtin, and that division is the rule to
+// follow when adding more: `read_line` *has* to be a builtin, because the line comes from
+// libc and Lyra has no FFI, while parsing the line is ordinary arithmetic over a string.
+// Anything expressible in the language goes here, where it is readable, testable and
+// replaceable; the builtin registry stays whatever is genuinely primitive.
+
+// Parse a base-10 `i64`, with an optional leading `+`/`-`. `None` for anything
+// that is not exactly a number: an empty string, a lone sign, a stray character,
+// surrounding whitespace, or a value outside the i64 range. Strict on purpose —
+// the caller asked whether this *is* a number, and "1abc" is not one.
+//
+// Named for its width rather than being a bare `parse`, because a function's
+// return type cannot be chosen by the context it is called in (todo.md, Pit of
+// Success #5 — the same gap that blocks `checked_*` and the narrowing
+// conversions). Until that exists, `parse` would have exactly one meaning anyway,
+// and this name says which.
+//
+// **It accumulates negatively**, which is the one thing here that looks wrong and
+// is not. The i64 range is asymmetric — there is no `+9223372036854775808` to
+// mirror the minimum — so a magnitude-then-negate parser cannot represent its own
+// most negative input, and would have to reject `-9223372036854775808`, a
+// perfectly good i64. Building the value on the negative side covers the whole
+// range with one code path. (Go's strconv does the same, for the same reason.)
+//
+// The range guard runs *before* each digit is folded in rather than checking the
+// result afterwards, because there is no result to check: arithmetic traps on
+// overflow in this language, so `acc * 10 - d` on a too-long input would abort the
+// program instead of returning the `None` this function exists to return. The
+// limit is the last value that can still be multiplied by ten, and the final digit
+// is bounded separately — by 8 for a negative number and 7 for a positive one,
+// which is exactly the asymmetry described above, applied one digit at a time.
+pub let parse_i64 = pure noalloc (self: string) -> Maybe<i64> => {
+  var acc = 0;
+  var digits = 0;
+  var negative = false;
+  var at_start = true;
+  var bad = false;
+  for c in self {
+    let code = i64(c);
+    if at_start && (code == 43 || code == 45) {
+      negative = code == 45;
+    } else if code < 48 || code > 57 {
+      bad = true;
+    } else {
+      let d = code - 48;
+      let last_digit = if negative { 8 } else { 7 };
+      if acc < -922337203685477580 || (acc == -922337203685477580 && d > last_digit) {
+        bad = true;
+      } else {
+        acc = acc * 10 - d;
+        digits = digits + 1;
+      }
+    }
+    at_start = false;
+  }
+  if bad || digits == 0 {
+    None
+  } else if negative {
+    Some acc
+  } else {
+    Some(-acc)
+  }
+}

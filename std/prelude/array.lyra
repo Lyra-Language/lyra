@@ -1,0 +1,11 @@
+module std.prelude
+
+// Combinators over `[]t`. A third receiver head for `map` and `filter`, alongside the
+// `Maybe` and `Result` ones — receiver-keyed overloading is what makes the three able to
+// share a name, and dispatch on the receiver is what picks between them at a call.
+//
+// Neither is `noalloc`: a comprehension builds a new array.
+
+pub let map<t,u> = pure (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]
+
+pub let filter<t> = pure (self: []t, predicate: (t) -> bool) -> []t => [x in self | predicate(x) | x]

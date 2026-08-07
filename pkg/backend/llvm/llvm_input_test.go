@@ -31,8 +31,8 @@ func repoStdRoot(t *testing.T) string {
 	}
 	// .../lyra/pkg/backend/llvm/llvm_input_test.go → .../lyra
 	root := filepath.Clean(filepath.Join(filepath.Dir(thisFile), "..", "..", ".."))
-	if _, err := os.Stat(filepath.Join(root, "std", "prelude.lyra")); err != nil {
-		t.Fatalf("std/prelude.lyra not found under %s: %v", root, err)
+	if _, err := os.Stat(filepath.Join(root, "std", "prelude")); err != nil {
+		t.Fatalf("std/prelude/ not found under %s: %v", root, err)
 	}
 	return root
 }

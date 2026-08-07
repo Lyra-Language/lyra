@@ -26,6 +26,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
@@ -77,9 +78,35 @@ func Resolve(entryFile string, roots []string, opts Options) ([]Unit, []diag.Dia
 	if !ok {
 		return nil, r.diags
 	}
+	group := r.entryGroup(entry)
 	r.includePrelude(opts, entry)
-	r.visit(entry)
+	r.visit(group)
 	return r.units, r.diags
+}
+
+// entryGroup returns every unit of the entry file's own module — the entry file alone
+// unless it is one file of a multi-file module, in which case its siblings come with it.
+//
+// Without this, compiling `std/prelude/strings.lyra` directly would analyze a *fragment*
+// of the prelude: `Maybe`, `slice` and everything else declared in a sibling file would
+// be undefined, and the "the prelude compiles standalone" property — the whole reason it
+// is an ordinary module — would hold only while it fitted in one file.
+//
+// The test is that the file sits in a directory *named by its own module path*. A file
+// declaring `module app.util` in a directory called `src` is a single-file module that
+// happens to have neighbours, and its neighbours are not its business.
+func (r *resolver) entryGroup(entry Unit) []Unit {
+	dir := filepath.Dir(entry.File)
+	if entry.Path == "" || filepath.Base(dir) != lastSegment(entry.Path) {
+		return []Unit{entry}
+	}
+	units, ok := r.loadDir(dir, entry.Path, ast.Location{}, entry.File)
+	if !ok {
+		return []Unit{entry}
+	}
+	// The entry file is re-read by loadDir; keep that copy rather than both, so the
+	// unit set holds one of each file.
+	return units
 }
 
 // Options configures resolution. The zero value pulls in no prelude, which is what a
@@ -124,22 +151,16 @@ func cleanOverlay(in map[string][]byte) map[string][]byte {
 // directory, which is most of the test suite — must still build. Requiring it would
 // turn "no std/ on this machine" into a compile failure for every program.
 //
-// The prelude does not import itself: when the entry file *is* the prelude, this is
-// skipped, which is what lets the prelude be compiled and tested like any other module.
+// The prelude does not import itself: when the entry file *is* the prelude — or, once
+// the prelude is a directory, is *one file of* it — this is skipped, which is what lets
+// the prelude be compiled and tested like any other module. Comparing module paths
+// rather than file paths is what makes the multi-file case fall out for free.
 func (r *resolver) includePrelude(opts Options, entry Unit) {
 	if opts.Prelude == "" || entry.Path == opts.Prelude {
 		return
 	}
-	rel := filepath.Join(strings.Split(opts.Prelude, ".")...) + Extension
-	for _, root := range r.roots {
-		candidate := filepath.Join(root, rel)
-		if !r.exists(candidate) {
-			continue
-		}
-		if unit, ok := r.load(candidate, opts.Prelude, ast.Location{}, entry.File); ok {
-			r.visit(unit)
-		}
-		return
+	if units, _, ok := r.findModule(opts.Prelude, entry.File, ast.Location{}); ok {
+		r.visit(units)
 	}
 }
 
@@ -172,11 +193,22 @@ func (r *resolver) read(file string) ([]byte, error) {
 	return os.ReadFile(file)
 }
 
-// visit walks u's imports depth-first, emitting each dependency before u itself.
-func (r *resolver) visit(u Unit) {
-	key := u.Path
+// visit walks a module's imports depth-first, emitting each dependency before the
+// module itself.
+//
+// It takes the module's *whole* unit set rather than one file, because dedup, cycle
+// detection and emission are all per-module: a module's files share a namespace, so
+// admitting one of them and not the others would collect a fragment of a module and
+// report its own declarations undefined. The imports of every file are followed — an
+// import binds for the module (`SymbolTable.Imports` is keyed by module path), so which
+// file of a module wrote it does not change what it reaches.
+func (r *resolver) visit(units []Unit) {
+	if len(units) == 0 {
+		return
+	}
+	key := units[0].Path
 	if key == "" {
-		key = u.File
+		key = units[0].File
 	}
 	if r.byPath[key] {
 		return
@@ -185,38 +217,205 @@ func (r *resolver) visit(u Unit) {
 	// initialization semantics defined, "which half of the cycle sees the other" has
 	// no answer a user could predict.
 	if r.onStack[key] {
-		r.errorf(u.File, ast.Location{}, diag.CodeImportCycle,
+		r.errorf(units[0].File, ast.Location{}, diag.CodeImportCycle,
 			"import cycle: %s imports itself, directly or indirectly", key)
 		return
 	}
 	r.onStack[key] = true
-	for _, imp := range importsOf(u) {
-		path := joinPath(imp.Path)
-		dep, ok := r.resolveImport(path, u.File, imp.GetLocation())
-		if !ok {
-			continue
+	for _, u := range units {
+		for _, imp := range importsOf(u) {
+			path := joinPath(imp.Path)
+			dep, ok := r.resolveImport(path, u.File, imp.GetLocation())
+			if !ok {
+				continue
+			}
+			r.visit(dep)
 		}
-		r.visit(dep)
 	}
 	delete(r.onStack, key)
 	r.byPath[key] = true
-	r.units = append(r.units, u)
+	r.units = append(r.units, units...)
 }
 
-// resolveImport finds the file a module path names, searching each root in order.
-func (r *resolver) resolveImport(path, fromFile string, loc ast.Location) (Unit, bool) {
-	rel := filepath.Join(strings.Split(path, ".")...) + Extension
-	var tried []string
-	for _, root := range r.roots {
-		candidate := filepath.Join(root, rel)
-		if r.exists(candidate) {
-			return r.load(candidate, path, loc, fromFile)
-		}
-		tried = append(tried, candidate)
+// resolveImport finds the units a module path names, reporting an unresolvable import.
+func (r *resolver) resolveImport(path, fromFile string, loc ast.Location) ([]Unit, bool) {
+	units, tried, ok := r.findModule(path, fromFile, loc)
+	if ok {
+		return units, true
 	}
 	r.errorf(fromFile, loc, diag.CodeUnresolvedImport,
 		"cannot find module %q — looked for %s", path, strings.Join(tried, ", "))
-	return Unit{}, false
+	return nil, false
+}
+
+// findModule searches the roots in order for a module, in either of its two forms: the
+// file `<root>/std/prelude.lyra`, or the directory `<root>/std/prelude/`. It reports
+// nothing when the module is simply absent — the prelude search depends on that, since a
+// missing standard library must not be an error — and returns the candidates it tried so
+// its caller can say where it looked.
+//
+// **A root offering both forms is an error rather than a silent preference.** Which one
+// wins would decide what half the program's names mean, and a reader looking at
+// `std/prelude/strings.lyra` has no way to tell that `std/prelude.lyra` beside it is
+// quietly the real module. Across *different* roots there is no ambiguity: the earlier
+// root wins, which is the ordinary shadowing every other lookup here does.
+func (r *resolver) findModule(path, fromFile string, loc ast.Location) (units []Unit, tried []string, ok bool) {
+	rel := filepath.Join(strings.Split(path, ".")...)
+	for _, root := range r.roots {
+		file, dir := filepath.Join(root, rel+Extension), filepath.Join(root, rel)
+		hasFile, hasDir := r.exists(file), r.isModuleDir(dir)
+		switch {
+		case hasFile && hasDir:
+			r.errorf(fromFile, loc, diag.CodeUnresolvedImport,
+				"module %q is both %s and %s — a module is one or the other, so delete "+
+					"whichever is not the module (move its declarations into the directory "+
+					"to keep the split)", path, file, dir)
+			return nil, nil, false
+		case hasFile:
+			u, loaded := r.load(file, path, loc, fromFile)
+			// No directory: in the single-file form the header is optional, since the
+			// file's location already says which module it is.
+			if loaded {
+				r.checkHeader(u, path, "")
+			}
+			return []Unit{u}, nil, loaded
+		case hasDir:
+			units, loaded := r.loadDir(dir, path, loc, fromFile)
+			return units, nil, loaded
+		}
+		tried = append(tried, file, dir+string(filepath.Separator))
+	}
+	return nil, tried, false
+}
+
+// loadDir loads every `*.lyra` directly inside a module's directory, in name order.
+//
+// Not recursive, and deliberately: a subdirectory is the *next* module path down
+// (`std/prelude/text/` is `std.prelude.text`), so recursing would swallow a module into
+// its parent and make the two spellings of a name mean the same thing.
+//
+// Every file must declare the module it is in. Membership by location alone would be
+// less to type, but it would also mean a file's own text no longer says what namespace
+// its declarations land in — and this is a namespace where a name may be a receiver
+// overload of one three files away. The header is the thing a reader has, so it is
+// required and checked rather than inferred.
+func (r *resolver) loadDir(dir, path string, loc ast.Location, fromFile string) ([]Unit, bool) {
+	files, err := r.moduleFiles(dir)
+	if err != nil {
+		r.errorf(fromFile, loc, diag.CodeUnresolvedImport, "cannot read %s: %v", dir, err)
+		return nil, false
+	}
+	if len(files) == 0 {
+		r.errorf(fromFile, loc, diag.CodeUnresolvedImport,
+			"module %q is the directory %s, which holds no %s files", path, dir, Extension)
+		return nil, false
+	}
+	var units []Unit
+	ok := true
+	for _, file := range files {
+		u, loaded := r.load(file, path, loc, fromFile)
+		if !loaded {
+			ok = false
+			continue
+		}
+		if !r.checkHeader(u, path, dir) {
+			ok = false
+			continue
+		}
+		units = append(units, u)
+	}
+	return units, ok
+}
+
+// checkHeader reports a file whose `module` declaration disagrees with where it is.
+//
+// The two forms differ in one way, and only one: inside a module *directory* the header
+// is required, because nothing else in the file says which namespace its declarations
+// join — a directory is a set, and silence about membership in a set is ambiguous. A
+// module that is a single file (dir == "") needs no header, since its path is its own
+// location; a header that contradicts that location is still an error, because one of
+// the two is wrong and guessing which is not the compiler's to do.
+func (r *resolver) checkHeader(u Unit, path, dir string) bool {
+	declared := declaredModulePath(u)
+	if declared == path || (dir == "" && declared == "") {
+		return true
+	}
+	// Reported against the offending file, at its top, rather than against the import
+	// that pulled it in: the mistake is in this file, and the importer may be several
+	// modules away with nothing to fix.
+	top := ast.Location{StartLine: 1, StartCol: 1, EndLine: 1, EndCol: 1}
+	if dir == "" {
+		r.errorf(u.File, top, diag.CodeUnresolvedImport,
+			"%s is module %q by its location, but declares module %q",
+			filepath.Base(u.File), path, declared)
+		return false
+	}
+	r.errorf(u.File, top, diag.CodeUnresolvedImport,
+		"%s is part of module %q (it is in %s), so it must begin with `module %s`%s",
+		filepath.Base(u.File), path, dir, path, declaredSuffix(declared))
+	return false
+}
+
+// isModuleDir reports whether a path is a module's directory. An overlaid file counts
+// even when nothing is on disk: an editor may hold a whole module that has never been
+// saved, and reporting it missing is exactly what the overlay exists to prevent.
+func (r *resolver) isModuleDir(dir string) bool {
+	if info, err := os.Stat(dir); err == nil && info.IsDir() {
+		return true
+	}
+	clean := filepath.Clean(dir)
+	for file := range r.overlay {
+		if filepath.Dir(file) == clean && strings.HasSuffix(file, Extension) {
+			return true
+		}
+	}
+	return false
+}
+
+// moduleFiles lists a module directory's own source files, in name order so a compile is
+// reproducible — the emitted unit order feeds diagnostic order, and a directory listing
+// is not ordered on every filesystem. The overlay is merged in, so an editor's unsaved
+// (or never-saved) file counts as a member of the module it declares.
+func (r *resolver) moduleFiles(dir string) ([]string, error) {
+	seen := map[string]bool{}
+	entries, err := os.ReadDir(dir)
+	if err != nil && !os.IsNotExist(err) {
+		return nil, err
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), Extension) {
+			seen[filepath.Join(dir, e.Name())] = true
+		}
+	}
+	for file := range r.overlay {
+		if filepath.Dir(file) == filepath.Clean(dir) && strings.HasSuffix(file, Extension) {
+			seen[file] = true
+		}
+	}
+	files := make([]string, 0, len(seen))
+	for file := range seen {
+		files = append(files, file)
+	}
+	sort.Strings(files)
+	return files, nil
+}
+
+// declaredSuffix names what a misplaced file says instead, when it says anything. A file
+// with no header at all is the commoner mistake and reads better without the clause.
+func declaredSuffix(declared string) string {
+	if declared == "" {
+		return ""
+	}
+	return fmt.Sprintf(" (it declares module %q)", declared)
+}
+
+// lastSegment is the final component of a dotted module path — the directory name a
+// multi-file module lives in.
+func lastSegment(path string) string {
+	if i := strings.LastIndex(path, "."); i >= 0 {
+		return path[i+1:]
+	}
+	return path
 }
 
 // load reads and parses one file.

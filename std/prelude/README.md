@@ -1,0 +1,92 @@
+# `std.prelude` — the implicitly imported module
+
+Implicitly imported into every file, so everything declared here is reachable unqualified and
+without an `import`.
+
+It is an ordinary module — the compiler resolves it through the same search roots as any
+other, and it compiles standalone (it does not import itself). Nothing here is special-cased in
+the compiler, which is what lets it be read, tested and replaced.
+
+## It is one module in several files
+
+Every file in this directory begins with `module std.prelude` and joins **one** namespace: one
+scope, one set of declaration keys, one overload set per name. The header is required and
+checked — `pkg/modules` refuses a file here that declares anything else, or nothing.
+
+That the split is *within* a module rather than into several modules is the whole point, and
+two rules make it so:
+
+- **Receiver-keyed overloading is per-module.** `unwrap_or` for `Maybe` and `unwrap_or` for
+  `Result` may coexist only because they are declared in the same module. In separate modules
+  they would be a cross-module duplicate.
+- **Prelude shadowing is keyed on the prelude module.** A user declaration taking a prelude
+  name warns (`lyra-W012`) and wins locally; that rule asks whether the name belongs to
+  `std.prelude`, not to whichever file holds it.
+
+So a name may move between these files freely, and nothing observable changes. Split by topic,
+not by anything the language can see.
+
+## Four constraints on what may go in it
+
+- **Exports need `pub`.** A declaration without it is private to this module, and a reference
+  from elsewhere is `lyra-E028`.
+
+- **`Maybe` and `Result` are shape-validated** by the `@builtin(…)` attribute that gives them
+  their compiler-known identity: `Maybe` takes one generic parameter with `Some` (one payload)
+  and `None` (none); `Result` takes two with `Ok` (one) and `Err` (one). The names are free —
+  the marker confers the identity, not the spelling — but the arities are not. **The argument
+  is not optional:** a bare `@builtin` collects as no marker at all, and the type then gets its
+  identity only from the fallback that reads the literal name `Maybe`/`Result`, which is
+  precisely the coupling to spelling the marker exists to remove.
+
+- **Write free functions, not trait impls** — and name the receiver `self`, which is what makes
+  `m.unwrap_or(0)` work as well as `unwrap_or(m, 0)` (UFCS, 08/03). The method spelling costs
+  nothing: it is rewritten to the call form before anything downstream sees it.
+
+  A trait impl is the thing to avoid here. It type-checks, and a *generic* one — which every
+  combinator here would be — then fails in the backend, because an impl method's body is not
+  specialized per instantiation ("match on Maybe<t> not implemented yet"). A non-generic impl
+  method does lower; this module has no use for one.
+
+- **A name may be declared twice, if the two take different receivers** — receiver-keyed
+  overloading (08/03). Both declarations must take a `self` parameter and their receiver types
+  must have different *heads*: `Maybe<t>` beside `Result<t,e>` is fine, a second `Maybe<…>` is
+  refused where it is written. That is what lets `unwrap_or` mean both types rather than one of
+  them getting a name the other did not need. Everything else about a redeclaration is
+  unchanged — two functions without receivers are the error they always were. **The two
+  declarations need not be in the same file**, only in the same module, which is why
+  `maybe.lyra` and `result.lyra` can each have their own.
+
+## Shadowing
+
+A name declared here can be shadowed by user code: that warns (`lyra-W012`) and the user's
+declaration wins, so adding a name here cannot break a program that never mentioned it. The
+shadow is confined to the module that declared it — another module still gets the version here
+— and since 08/01 that holds for a **type** or **trait** too, which used to be replaced
+program-wide.
+
+Note what a shadow still means for the module that makes one: the markers here claim the
+canonical kinds, so a user's own same-named `Maybe` is an ordinary type, and `?` on it reports
+"`?` operand must be a Result or Maybe, got Maybe". That no longer reaches a module which never
+mentioned `Maybe` — which is what made it indefensible — but the message is still poor for the
+module that did. See `todo.md`.
+
+## What belongs here rather than in the compiler
+
+Anything expressible in Lyra. `read_line` is a builtin because the line comes from libc and
+Lyra has no FFI; `parse_i64` is written here because it can be. `random_seed()` is a builtin
+because OS entropy is not arithmetic; the generator built on it is `rand.lyra`. The builtin
+registry stays whatever is genuinely primitive, and everything else lives here, where it is
+readable, testable and replaceable.
+
+## The files
+
+| File | What is in it |
+|---|---|
+| `maybe.lyra` | `Maybe` and its combinators |
+| `result.lyra` | `Result` and its combinators |
+| `array.lyra` | `map`/`filter` over `[]t` |
+| `ordering.lyra` | `Ordering`, the result of `<=>` |
+| `parse.lyra` | `parse_i64` |
+| `strings.lyra` | `is_ascii_space`, `trim`/`trim_start`/`trim_end` |
+| `rand.lyra` | `Rng` and the draws built on `random_seed()` |

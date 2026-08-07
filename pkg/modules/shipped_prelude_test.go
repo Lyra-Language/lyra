@@ -19,12 +19,17 @@ import (
 // not type-check, or one whose canonical markers had quietly stopped working, would ship
 // green: every other test either declares its own `Maybe` or has no prelude at all.
 
-// shippedPreludePath returns the repo's std/prelude.lyra, skipping if it is not there.
-// The path is relative because a Go test runs in its own package directory.
+// shippedPreludePath returns the repo's std/prelude/ directory, skipping if it is not
+// there. The path is relative because a Go test runs in its own package directory.
+//
+// A directory since 08/07: the prelude is several files in one module. `path` is what
+// these tests hand to Resolve as an entry, and resolution takes either form — so the
+// only thing that changed at the call sites is that `filepath.Dir(path)` is no longer
+// the root containing `std/`.
 func shippedPreludePath(t *testing.T) (root, path string) {
 	t.Helper()
 	root = filepath.Join("..", "..")
-	path = filepath.Join(root, "std", "prelude.lyra")
+	path = filepath.Join(root, "std", "prelude")
 	if _, err := os.Stat(path); err != nil {
 		t.Skipf("no shipped prelude at %s: %v", path, err)
 	}
@@ -45,21 +50,57 @@ func analyzeWith(t *testing.T, entry string, roots ...string) *driver.Result {
 // The shipped prelude compiles on its own — the property that lets it be treated as an
 // ordinary module. It is also the cheapest possible guard on adding to it: a declaration
 // that does not type-check fails here rather than in whatever program first imports it.
+// Entered at **one** of its files, which is the multi-file half of the same property:
+// compiling `std/prelude/strings.lyra` has to bring its siblings, or the standalone
+// check would only ever see a fragment of the module and report the rest undefined.
 func TestShippedPrelude_ChecksStandalone(t *testing.T) {
-	_, path := shippedPreludePath(t)
-	// Its own directory as the only root: the prelude does not import itself, so
-	// resolution must terminate with exactly one unit.
-	units, diags := modules.Resolve(path, []string{filepath.Dir(path)},
-		modules.Options{Prelude: modules.PreludeModule})
-	if len(diags) != 0 {
-		t.Fatalf("resolve failed: %v", diags)
+	_, dir := shippedPreludePath(t)
+	files := preludeFiles(t, dir)
+	root := filepath.Dir(filepath.Dir(dir)) // the root *containing* std/
+	for _, entry := range files {
+		t.Run(filepath.Base(entry), func(t *testing.T) {
+			units, diags := modules.Resolve(entry, []string{root},
+				modules.Options{Prelude: modules.PreludeModule})
+			if len(diags) != 0 {
+				t.Fatalf("resolve failed: %v", diags)
+			}
+			// Every file of the module, once: the prelude does not import itself, so
+			// entering at one of its files must not pull in a second copy.
+			if len(units) != len(files) {
+				t.Errorf("entering at %s gave %d units; want the module's %d files, each once",
+					filepath.Base(entry), len(units), len(files))
+			}
+			for _, u := range units {
+				if u.Path != modules.PreludeModule {
+					t.Errorf("unit %s came in as module %q; want %q", u.File, u.Path, modules.PreludeModule)
+				}
+			}
+			if errs := driver.AnalyzeUnits(units).Errors(); len(errs) != 0 {
+				t.Errorf("the shipped prelude must type-check on its own; got %v", errs)
+			}
+		})
 	}
-	if len(units) != 1 {
-		t.Errorf("the prelude must not pull in a second copy of itself; got %d units", len(units))
+}
+
+// preludeFiles lists the prelude's source files. It also asserts the split is real —
+// a prelude that collapsed back to one file would make every multi-file assertion here
+// pass vacuously.
+func preludeFiles(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if errs := driver.AnalyzeUnits(units).Errors(); len(errs) != 0 {
-		t.Errorf("the shipped prelude must type-check on its own; got %v", errs)
+	var files []string
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".lyra") {
+			files = append(files, filepath.Join(dir, e.Name()))
+		}
 	}
+	if len(files) < 2 {
+		t.Fatalf("%s holds %d source files; these tests exist to cover the multi-file case", dir, len(files))
+	}
+	return files
 }
 
 // Its names are reachable unqualified, and its `Maybe` is the *canonical* one — `?` is
@@ -114,11 +155,8 @@ let main = () -> u8 => {
 // renames the type, at which point `?` stops resolving. Renaming it here is what makes the
 // marker load-bearing in the test rather than decorative.
 func TestShippedPrelude_BuiltinMarkerIsNameIndependent(t *testing.T) {
-	repo, path := shippedPreludePath(t)
-	source, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	repo, preludeDir := shippedPreludePath(t)
+
 	// Rename the *type* only. The marker keeps naming the kind `Maybe`, so identity can
 	// now come from nothing but the marker.
 	//
@@ -127,20 +165,33 @@ func TestShippedPrelude_BuiltinMarkerIsNameIndependent(t *testing.T) {
 	// which carries no `<`. Listing the positions individually meant the test broke — as
 	// "a renamed type should behave like Maybe" — the moment the prelude grew a function
 	// *returning* a `Maybe`, which is a prelude doing its job, not a regression.
-	renamed := strings.ReplaceAll(string(source), "Maybe<", "Option<")
-	if !strings.Contains(renamed, "data Option<t>") {
-		t.Fatalf("the prelude no longer declares `data Maybe<t>`, which this test rewrites:\n%s", renamed)
+	//
+	// The rewrite runs over **every** file of the prelude, since the declaration and its
+	// uses now live in different ones — rewriting only the file holding `data Maybe<t>`
+	// would leave `parse_i64` returning a type that no longer exists.
+	dir := t.TempDir()
+	var declares, marked bool
+	for _, file := range preludeFiles(t, preludeDir) {
+		source, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		renamed := strings.ReplaceAll(string(source), "Maybe<", "Option<")
+		declares = declares || strings.Contains(renamed, "data Option<t>")
+		marked = marked || strings.Contains(renamed, "@builtin(Maybe)")
+		write(t, filepath.Join(dir, "std", "prelude", filepath.Base(file)), renamed)
+	}
+	if !declares {
+		t.Fatal("the prelude no longer declares `data Maybe<t>`, which this test rewrites")
 	}
 	// Checked separately, and *not* phrased as "this test is out of date": a missing
 	// argument is the regression, so the message has to point at the prelude.
-	if !strings.Contains(renamed, "@builtin(Maybe)") {
-		t.Fatalf("the prelude's Maybe carries no `@builtin(Maybe)` marker — a bare `@builtin` " +
+	if !marked {
+		t.Fatal("the prelude's Maybe carries no `@builtin(Maybe)` marker — a bare `@builtin` " +
 			"collects as no marker at all, leaving canonical identity to come from the literal " +
 			"name, which is what this test exists to prevent")
 	}
 
-	dir := t.TempDir()
-	write(t, filepath.Join(dir, "std", "prelude.lyra"), renamed)
 	write(t, filepath.Join(dir, "app.lyra"), `let mk = (n: i64) -> Option<i64> => Some(n)
 let step = (n: i64) -> Option<i64> => {
   let v = mk(n)?

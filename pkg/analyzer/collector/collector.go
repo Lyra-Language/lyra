@@ -155,11 +155,27 @@ func (c *Collector) exportToGlobal(modulePath string, decl ast.Named, isPublic b
 		_ = c.table.PreludeScope.Define(decl)
 		return
 	}
-	if existing, bound := c.table.GlobalScope.LookupLocal(decl.GetName()); bound && existing == decl {
-		// Already exported. Reachable only for an overload set, which arrives here once
-		// per member — the same set object each time, so this is not the name clash the
-		// error below is for.
-		return
+	if existing, bound := c.table.GlobalScope.LookupLocal(decl.GetName()); bound {
+		if existing == decl {
+			// Already exported. Reachable only for an overload set, which arrives here
+			// once per member — the same set object each time, so this is not the name
+			// clash the error below is for.
+			return
+		}
+		// A set superseding a member of itself. Exports are recorded per *file*, so a
+		// name that only becomes overloaded in a later file of the same module was
+		// already exported as a bare declaration — the first file's — and the set built
+		// when the second file was walked now has to replace it. Within one file the
+		// case above covers it, because the merge has already happened by the time
+		// either member is exported.
+		//
+		// Not a clash: both are the same module's, and the set contains the binding it
+		// is replacing. Reporting it would make a two-file module unable to do what a
+		// one-file module can, which is exactly what splitting a module must not change.
+		if set, isSet := decl.(*ast.OverloadSet); isSet && setContains(set, existing) {
+			c.table.GlobalScope.Symbols[decl.GetName()] = set
+			return
+		}
 	}
 	if err := c.table.GlobalScope.Define(decl); err != nil {
 		// Two modules exporting the same name: a bare reference could mean either, so
@@ -170,6 +186,17 @@ func (c *Collector) exportToGlobal(modulePath string, decl ast.Named, isPublic b
 			Message:  err.Error(),
 		})
 	}
+}
+
+// setContains reports whether an existing binding is one of a set's own members — the
+// test for "this export supersedes that one" rather than clashing with it.
+func setContains(set *ast.OverloadSet, existing ast.Named) bool {
+	for _, m := range set.Members {
+		if ast.Named(m) == existing {
+			return true
+		}
+	}
+	return false
 }
 
 // exportedSymbol is what a top-level binding publishes under its name: the overload set

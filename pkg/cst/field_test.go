@@ -14,17 +14,37 @@ import (
 // the real access pattern.
 var fieldNames = []string{"name", "value", "type", "body", "parameters", "condition"}
 
-func preludeRoot(tb testing.TB) *sitter.Node {
+// preludeRoots parses every file of the shipped prelude. Real source rather than a
+// fixture, because what is being measured is the *shape* of a collector's field
+// accesses, and the whole prelude is the nearest thing to a representative program.
+// All of it, not one file: the prelude became a directory on 08/07, and benchmarking
+// whichever file sorts first would quietly shrink the workload.
+func preludeRoots(tb testing.TB) []*sitter.Node {
 	tb.Helper()
-	src, err := os.ReadFile(filepath.Join("..", "..", "std", "prelude.lyra"))
+	dir := filepath.Join("..", "..", "std", "prelude")
+	entries, err := os.ReadDir(dir)
 	if err != nil {
-		tb.Skipf("no std/prelude.lyra to parse: %v", err)
+		tb.Skipf("no std/prelude/ to parse: %v", err)
 	}
-	tree, err := parser.Parse(string(src))
-	if err != nil {
-		tb.Fatal(err)
+	var roots []*sitter.Node
+	for _, e := range entries {
+		if e.IsDir() || filepath.Ext(e.Name()) != ".lyra" {
+			continue
+		}
+		src, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			tb.Fatal(err)
+		}
+		tree, err := parser.Parse(string(src))
+		if err != nil {
+			tb.Fatal(err)
+		}
+		roots = append(roots, tree.RootNode())
 	}
-	return tree.RootNode()
+	if len(roots) == 0 {
+		tb.Skip("std/prelude/ holds no .lyra files")
+	}
+	return roots
 }
 
 func walkAsking(n *sitter.Node, ask func(*sitter.Node, string) *sitter.Node) int {
@@ -59,7 +79,9 @@ func TestFieldMatchesChildByFieldName(t *testing.T) {
 			check(n.Child(i))
 		}
 	}
-	check(preludeRoot(t))
+	for _, root := range preludeRoots(t) {
+		check(root)
+	}
 }
 
 // The pair this replaced. ChildByFieldName allocates a C string from the Go name,
@@ -68,17 +90,21 @@ func TestFieldMatchesChildByFieldName(t *testing.T) {
 // landed) — it is why the collector, which asks at nearly every node, got ~25%
 // faster end to end.
 func BenchmarkField_ByName(b *testing.B) {
-	root := preludeRoot(b)
+	roots := preludeRoots(b)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		walkAsking(root, (*sitter.Node).ChildByFieldName)
+		for _, root := range roots {
+			walkAsking(root, (*sitter.Node).ChildByFieldName)
+		}
 	}
 }
 
 func BenchmarkField_ByCachedId(b *testing.B) {
-	root := preludeRoot(b)
+	roots := preludeRoots(b)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		walkAsking(root, cst.Field)
+		for _, root := range roots {
+			walkAsking(root, cst.Field)
+		}
 	}
 }

@@ -9,6 +9,65 @@ Newest first.
 
 ## Dated log
 
+### 08/07/26
+**A module may be a directory of files**, and `std/prelude.lyra` became `std/prelude/` — seven
+files split by topic (`maybe`, `result`, `array`, `ordering`, `parse`, `strings`, `rand`), one
+module. `std.prelude` now resolves to `std/prelude.lyra` *or* every `*.lyra` directly inside
+`std/prelude/`; both forms are the same module — one path, one namespace, one scope, one set of
+declaration keys.
+
+**The reason it had to be within a module, rather than into several modules.** The prelude was
+425 lines and growing, and the cheap fix — make `std.strings`, `std.rand`, `std.time` separate
+modules and implicitly import a *list* of them — silently changes what its names mean, in two
+ways this file already records. Receiver-keyed overloading (08/03) is per-module, so
+`unwrap_or` for `Maybe` beside `unwrap_or` for `Result` would become a cross-module duplicate —
+undoing precisely the split the library was rescued from on 08/04. And prelude shadowing is
+keyed on the prelude *module*, so N implicit modules means N sets of bare keys competing, which
+is the land-grab still open in todo.md's Modules section, multiplied. Splitting within a module
+leaves every one of those rules untouched, and generalizes: `std.io` gets to grow the same way.
+
+Five decisions, each a real choice:
+
+- **Not recursive.** A subdirectory is the next module path down (`std/prelude/text/` is
+  `std.prelude.text`), so recursing would swallow a module into its parent and make two
+  spellings of a name mean the same thing.
+- **Every file in a module directory must declare its module.** Membership by location alone
+  is less to type, but then a file's own text no longer says which namespace its declarations
+  join — in a namespace where a name may be a receiver overload of one three files away. It
+  would also cost the property `pkg/modules` opens with: a module's name and its location
+  agree by construction, with no manifest. A *single-file* module still needs no header (its
+  path is its location), and a header contradicting its location is an error either way,
+  because one of the two is wrong and picking which is not the compiler's to do.
+- **Both forms in one root is an error, not a preference.** Which one won would decide what
+  half the program's names mean, and a reader looking at `std/prelude/strings.lyra` has no way
+  to see that `std/prelude.lyra` beside it is quietly the real module. Across different roots
+  the earlier one wins, as everywhere else in resolution.
+- **Name order**, since a directory listing is not ordered on every filesystem and unit order
+  feeds diagnostic order.
+- **The entry file brings its module.** Entering at `std/prelude/strings.lyra` pulls in its
+  siblings. Without it, "the prelude compiles standalone" — the property that makes it an
+  ordinary module rather than a compiler built-in — would have held only while it fitted in
+  one file, and `lyrac check` on one of its files would report the rest of it undefined.
+
+**Almost all of it was in `pkg/modules`**, because the collector was already module-keyed
+rather than file-keyed: `ModuleScopeFor` hands several files of one module the same scope, and
+`SymbolTable.Imports` is keyed by module path. `visit` became module-granular (a unit *group*
+rather than a unit, following the imports of every file), and `resolveImport` split into
+`findModule` + `loadDir`.
+
+**The one thing outside it is a timing variant of hazard 8, and it is worth the space.** Exports
+are recorded per *file* (`recordModuleBindings`), so a name that becomes overloaded only in a
+**later** file of a module had already been exported as a bare declaration, and the set built
+when the second file was walked collided with it: `symbol "area" already defined`. Two
+independent things had kept it invisible. Within one file the merge happens during the walk, so
+by the time either member exports, both export the same set object and the identity guard in
+`exportToGlobal` catches it. And the prelude branch of that same function discards
+duplicate-definition errors outright — so the shipped prelude's `unwrap_or` worked across two
+files while a user module doing the identical thing did not. A rule enforced in one place and
+suppressed in another is not one rule; the fix lets a set supersede a global binding that is
+one of its own members, which is true of both. Found by writing the test for the feature's own
+motivating property rather than by hitting it.
+
 ### 08/06/26
 **A literal is a postfix head**, so `"abc".len()`, `[1, 2, 3].len()`, `1.wrapping_add(2)` and
 `1.5.floor()` parse. `_primary_expr` admitted an identifier, a `parenthesized_expr` and a

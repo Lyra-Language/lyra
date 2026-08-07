@@ -220,7 +220,7 @@ because each was learned from a real failure, and none is local to one package.
 | `pkg/analyzer/typechecker` | Inference and checking; generics; trait dispatch | [README](pkg/analyzer/typechecker/README.md) |
 | `pkg/analyzer/captures` | Each lambda's free variables, for the closure environment | [README](pkg/analyzer/captures/README.md) |
 | `pkg/analyzer/ownership` | Where the backend must retain/release; Perceus | [README](pkg/analyzer/ownership/README.md) |
-| `pkg/modules` | Import resolution, namespacing, the implicit prelude | [README](pkg/modules/README.md) |
+| `pkg/modules` | Import resolution (a module is a file *or* a directory), namespacing, the implicit prelude | [README](pkg/modules/README.md) |
 | `pkg/driver` | The one reusable front-end pipeline | below |
 | `pkg/backend/llvm` | The LLVM IR backend | [README](pkg/backend/llvm/README.md) |
 | `pkg/printer` | Reflection-based AST printer, for golden tests | — |
@@ -427,10 +427,10 @@ only at release — a program can use the prelude with no environment set up at 
 Two details that are easy to get wrong and were:
 
 - **The root is the directory *containing* `std/`, not `std/` itself.** A module path
-  resolves beneath a root, so `std.prelude` is `<root>/std/prelude.lyra`; returning the
-  `std` directory looked for `std/std/prelude.lyra` and silently found no prelude.
+  resolves beneath a root, so `std.prelude` is `<root>/std/prelude/`; returning the
+  `std` directory looked for `std/std/prelude` and silently found no prelude.
 - **`build/std` is a symlink, not a copy.** A copy drifts: you would edit
-  `std/prelude.lyra`, rebuild, and still get the old prelude. Every staleness failure
+  `std/prelude/maybe.lyra`, rebuild, and still get the old prelude. Every staleness failure
   this project has hit — a cached parser object, a cached test binary, a leftover
   compiler — presented as a *behaviour* difference rather than as staleness, which is
   what makes them expensive to diagnose. A real install would copy; development must not.
@@ -445,9 +445,11 @@ cannot land in the source tree unnoticed, and a stale compiler is one `rm -rf bu
 away. The VS Code extension's `lyra.languageServerPath` should point at
 `build/lyra-lsp`.
 
-The standard library's sources live in `std/` and are tracked; `std/prelude.lyra`
-documents the constraints on what may go in it (exports need `pub`, `Maybe`/`Result` are
-shape-validated, and methods do not lower yet so combinators are free functions).
+The standard library's sources live in `std/` and are tracked. The prelude is
+`std/prelude/`, **one module across several files** — `std/prelude/README.md` documents the
+constraints on what may go in it (exports need `pub`, `Maybe`/`Result` are shape-validated,
+combinators are free functions taking `self` rather than trait impls) and why the split is
+within a module rather than into several.
 
 ## Testing
 
@@ -518,11 +520,32 @@ The active areas are the typechecker (match exhaustiveness — see
 `pkg/analyzer/typechecker/README.md`) and the FP/imperative purity work (see
 `pkg/analyzer/checker/README.md`).
 
+**A module may be a directory as of 08/07**: `std.prelude` is `std/prelude.lyra` *or* every
+`*.lyra` inside `std/prelude/`, both being the same module — one path, one namespace, one
+scope. The shipped prelude is now seven files (`std/prelude/`), split by topic.
+
+The equivalence is the point. Receiver-keyed overloading, `pub`, prelude shadowing and
+`SymbolTable.Imports` are all keyed on the **module**, so the alternative for a module that
+outgrows a file — split it into several modules — silently changes what its names mean;
+`unwrap_or` for `Maybe` beside `unwrap_or` for `Result` would have become a cross-module
+duplicate. Splitting within a module leaves every one of those rules alone. `pkg/modules/README.md`
+has the five decisions that shape it (not recursive, headers required and checked, both forms
+in one root is an error, name order, and the entry file brings its module).
+
+It surfaced one bug outside `pkg/modules`, worth remembering as a *timing* variant of hazard 8:
+exports are recorded per **file**, so a name that becomes overloaded only in a later file of a
+module had already been exported as a bare declaration, and the set built when the second file
+was walked collided with it (`symbol "area" already defined`). `exportToGlobal` now lets a set
+supersede a global binding that is one of its own members. Two independent things had hidden
+it — within one file the merge happens before either member exports, so both export the same
+set object; and the prelude branch of that same function discards duplicate-definition errors,
+so the shipped prelude worked while a user module doing the same thing did not.
+
 **Console input landed 08/05**: `read_line() -> Maybe<string>` (`pkg/backend/llvm/input.go`)
 is the program's only input, and the only builtin returning an **owned** managed value —
 which needed `calleeIsOwningBuiltin` in the ownership pass, because the unresolved-callee
 default treats a *result* as borrowed and that direction leaks rather than being leak-safe.
-Its companion `parse_i64` is in `std/prelude.lyra`, **written in Lyra**: the line has to come
+Its companion `parse_i64` is in `std/prelude/parse.lyra`, **written in Lyra**: the line has to come
 from libc and there is no FFI, so input cannot be expressed in the language, while parsing
 can — and anything that can belongs in the prelude rather than the builtin registry. See
 COMPLETED.md, and that backend README's `read_line` section for why the call site must emit
@@ -573,7 +596,7 @@ are refused by `pure`/`det`, a threaded timestamp is ordinary `i64` data.
 **Randomness landed 08/05**, and its shape is the same division of labour as `read_line`:
 `random_seed() -> u64` (`pkg/backend/llvm/random.go`) is the only builtin — one word of OS
 entropy via `getentropy` — while the generator (`Rng`, `next_u64`, `below`, `between`,
-`random_below`) is ordinary Lyra in `std/prelude.lyra`. A PRNG is arithmetic; asking the OS
+`random_below`) is ordinary Lyra in `std/prelude/rand.lyra`. A PRNG is arithmetic; asking the OS
 for entropy is not.
 
 Keeping the **seed** as the primitive is what makes `det` usable with randomness, and it is

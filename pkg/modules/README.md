@@ -18,6 +18,59 @@ going through the collector.
 **Deliberately out of scope**, none of it changing what a module's source looks like: package
 management, versioning, and separate/incremental compilation.
 
+### A module is a file *or* a directory (08/07)
+
+`std.prelude` is `std/prelude.lyra` **or** every `*.lyra` directly inside `std/prelude/`. Both
+forms are the same module — one path, one namespace, one scope, one set of declaration keys —
+so a module that outgrows a file splits without any of its declarations changing meaning.
+
+**That equivalence is the feature, not a convenience.** Several rules are keyed on the
+*module*: receiver-keyed overloading admits two `map`s only within one module, `pub` is exactly
+the module boundary, prelude shadowing asks whether a name belongs to `std.prelude`, and
+`SymbolTable.Imports` is keyed by module path. So the obvious alternative for a grown module —
+split it into several modules — silently changes what its names mean, and for the prelude
+specifically it would have un-done receiver overloading (`unwrap_or` for `Maybe` and for
+`Result` would become a cross-module duplicate) and multiplied the shadowing rule by the number
+of pieces. Splitting *within* a module leaves all of it alone.
+
+Five details, each of which is a decision rather than an implementation accident:
+
+- **Not recursive.** A subdirectory is the next module path down (`std/prelude/text/` is
+  `std.prelude.text`), so recursing would swallow a module into its parent and make two
+  spellings of a name mean the same thing.
+- **Every file must declare its module**, and `checkHeader` enforces it. Membership by location
+  alone would be less to type, but a file's own text would then no longer say which namespace
+  its declarations join — in a namespace where a name may be a receiver overload of one three
+  files away. A *single-file* module needs no header, since its path is its location; a header
+  contradicting that location is still an error, because one of the two is wrong and picking
+  which is not the compiler's to do.
+- **Both forms in one root is an error, not a preference.** Which won would decide what half
+  the program's names mean, and a reader looking at `std/prelude/strings.lyra` has no way to
+  see that `std/prelude.lyra` beside it is quietly the real module. Across *different* roots
+  there is no ambiguity — the earlier root wins, as everywhere else here.
+- **Files are loaded in name order**, because a directory listing is not ordered on every
+  filesystem and unit order feeds diagnostic order.
+- **The entry file brings its module** (`entryGroup`): entering a compile at
+  `std/prelude/strings.lyra` pulls in its siblings, or "the prelude compiles standalone" — the
+  property that makes it an ordinary module — would hold only while it fitted in one file. The
+  test is that the file sits in a directory *named by its own module path*; a file declaring
+  `module app.util` in a directory called `src` is a single-file module that happens to have
+  neighbours.
+
+The overlay reaches into a module directory too (`isModuleDir`, `moduleFiles`), so an editor's
+unsaved or never-saved file counts as a member of the module it declares — the same rule the
+overlay already applied to a single-file module.
+
+**One thing outside this package had to move with it.** Exports are recorded per *file*
+(`collector.recordModuleBindings`), so a name that only becomes overloaded in a later file of a
+module had already been exported as a bare declaration, and the set built when the second file
+was walked collided with it — `symbol "area" already defined`. `exportToGlobal` now lets a set
+supersede a global binding that is one of its own members. Within a single file the case never
+arose, because the merge happens during the walk and both members export the same set object;
+the shipped prelude never hit it either, because the prelude branch of that function discards
+duplicate-definition errors outright. Two independent reasons the bug could not show up before
+a user module spanned files.
+
 ### Roots, and the overlay (`roots.go`)
 `DefaultRoots(entryFile)`, `DefaultOptions()` and `StdRoot()` answer "where does a compile look
 for source?" once, for every front-end consumer. They lived in `cmd/lyrac` until the language
@@ -94,7 +147,9 @@ regardless.
 
 Three rules keep it from being hostile. **A missing prelude is not an error** — the standard
 library is found by searching the roots, and a program compiled where there is none (most of the
-test suite) must still build. **The prelude does not import itself**, so it can be compiled and
+test suite) must still build. **The prelude does not import itself** — compared by *module
+path*, so entering at one file of the multi-file prelude is recognised as being the prelude
+just as entering at a single-file one was — so it can be compiled and
 tested like any other module, and `LYRA_NO_PRELUDE` disables it outright for bootstrapping. And
 **a user declaration may take a prelude name**: it warns (`lyra-W012`) and the local declaration
 wins, rather than erroring the way two user modules' clash does — otherwise every name the

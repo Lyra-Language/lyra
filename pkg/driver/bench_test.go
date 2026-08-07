@@ -47,8 +47,8 @@ func benchUnits(b *testing.B, scale int) []modules.Unit {
 	if err != nil {
 		b.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(repoRoot, "std", "prelude.lyra")); err != nil {
-		b.Skipf("no std/prelude.lyra beside the repo root: %v", err)
+	if _, err := os.Stat(filepath.Join(repoRoot, "std", "prelude")); err != nil {
+		b.Skipf("no std/prelude/ beside the repo root: %v", err)
 	}
 	dir := b.TempDir()
 	app := filepath.Join(dir, "app.lyra")

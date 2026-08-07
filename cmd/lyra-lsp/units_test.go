@@ -26,7 +26,7 @@ func stdRootDir(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "std", "prelude.lyra")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "std", "prelude")); err != nil {
 		t.Skipf("no shipped prelude under %s: %v", root, err)
 	}
 	return root

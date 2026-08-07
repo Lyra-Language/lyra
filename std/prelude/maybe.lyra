@@ -1,0 +1,64 @@
+module std.prelude
+
+// `Maybe` and the combinators over it. `README.md` in this directory has the constraints
+// on what may be added to the prelude, and why this is one module across several files.
+//
+// The `@builtin(Maybe)` marker is what gives the type its compiler-known identity — `?`,
+// exhaustiveness and the canonical-kind checks all key off it rather than off the
+// spelling `Maybe`. Its argument is not optional: a bare `@builtin` collects as no marker
+// at all, leaving identity to a name-matching fallback.
+
+@builtin(Maybe)
+pub data Maybe<t> = None | Some t
+
+pub let unwrap_or<t> = pure noalloc (self: Maybe<t>, fallback: t) -> t {
+  (Some v, _) => v,
+  (None, fb) => fb,
+}
+
+pub let unwrap_or_else<t> = pure noalloc (self: Maybe<t>, f: () -> t) -> t {
+  (Some v, _) => v,
+  (None, f) => f(),
+}
+
+pub let expect<t> = pure noalloc (self: Maybe<t>, msg: string) -> t {
+  (Some v, _) => v,
+  (None, msg) => panic(msg),
+}
+
+pub let unwrap<t> = pure noalloc (self: Maybe<t>) -> t => expect(self, "unwrap on a None")
+
+pub let is_some<t> = pure noalloc (self: Maybe<t>) -> bool {
+  (Some _) => true,
+  (None) => false,
+}
+
+pub let is_none<t> = pure noalloc (self: Maybe<t>) -> bool {
+  (Some _) => false,
+  (None) => true,
+}
+
+pub let ok_or<t,e> = pure noalloc (self: Maybe<t>, err: e) -> Result<t,e> {
+  (Some v, _) => Ok v,
+  (None, err) => Err err,
+}
+
+pub let ok_or_else<t,e> = pure noalloc (self: Maybe<t>, f: () -> e) -> Result<t,e> {
+  (Some v, _) => Ok v,
+  (None, f) => Err(f()),
+}
+
+pub let map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> u) -> Maybe<u> {
+  (Some v, f) => Some(f(v)),
+  (None, _) => None,
+}
+
+pub let flat_map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> Maybe<u>) -> Maybe<u> {
+  (Some v, f) => f(v),
+  (None, _) => None,
+}
+
+pub let filter<t> = pure noalloc (self: Maybe<t>, predicate: (t) -> bool) -> Maybe<t> {
+  (Some v, pred) => if pred(v) { Some v } else { None },
+  (None, _) => None,
+}

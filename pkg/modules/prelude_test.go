@@ -270,7 +270,7 @@ func TestPrelude_ShippedStdlibAnalyzes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := filepath.Join(root, "std", "prelude.lyra")
+	entry := filepath.Join(root, "std", "prelude", "maybe.lyra")
 	if _, err := os.Stat(entry); err != nil {
 		t.Skipf("no shipped prelude at %s: %v", entry, err)
 	}
@@ -291,7 +291,7 @@ func TestPrelude_ReceiverOverloadsResolve(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, "std", "prelude.lyra")); err != nil {
+	if _, err := os.Stat(filepath.Join(root, "std", "prelude")); err != nil {
 		t.Skipf("no shipped prelude: %v", err)
 	}
 	app := buildTree(t, map[string]string{"app.lyra": `

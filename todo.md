@@ -275,7 +275,10 @@ importing the other — reportable as it is now.
 Worth doing before the standard library grows: every name added under `pub` is currently a
 name taken away from anyone who imports that module. It is also the constraint that decides
 where a combinator could live at all, back when the library was split (see the 08/02
- discussion of `map`/`filter`); the whole standard library is one module as of 08/04.
+ discussion of `map`/`filter`); the whole standard library is one module as of 08/04, and
+ still one module as of 08/07 — it is seven *files* now (`std/prelude/`), which is the
+ multi-file-module feature and deliberately not a re-split into several modules, for exactly
+ the reason below.
 
 **Less pressing since UFCS landed 08/03, and not fixed by it.** The combinators are now
 reached as `m.map(f)`, dispatched on the receiver, so the bare name `map` no longer has to
