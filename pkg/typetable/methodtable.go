@@ -27,6 +27,8 @@ type MethodTable struct {
 	// boundCandidates[call][concreteType] is the impl a `where`-bound call resolves to
 	// once a specialization fixes the receiver's type variable. See SetBoundCandidates.
 	boundCandidates map[*ast.FunctionCallExpr]map[string]Resolution
+	// operatorResolutions[expr] is the `Ord` impl a comparison operator dispatches to.
+	operatorResolutions map[ast.Expression]Resolution
 }
 
 // BoundMethodRef names a trait method reached by *abstract* dispatch — a call on
@@ -247,6 +249,33 @@ func (t *MethodTable) BoundCandidate(call *ast.FunctionCallExpr, concrete string
 		return Resolution{}, false
 	}
 	r, ok := t.boundCandidates[call][concrete]
+	return r, ok
+}
+
+// SetOperatorResolution records the impl a comparison *operator* dispatches to —
+// `a <=> b` or `a < b` on a type that implements the prelude's `Ord`.
+//
+// Keyed by the operator expression rather than by a call, because there is no call
+// node: `<=>` is its own AST node, and rewriting it into one would mean replacing a
+// node the parent holds by pointer. Publishing the resolution instead keeps the
+// operator's shape and gives the backend the callee it needs, the same arrangement
+// SetBoundCandidates uses for a bound-dispatched call.
+func (t *MethodTable) SetOperatorResolution(expr ast.Expression, r Resolution) {
+	if t == nil {
+		return
+	}
+	if t.operatorResolutions == nil {
+		t.operatorResolutions = map[ast.Expression]Resolution{}
+	}
+	t.operatorResolutions[expr] = r
+}
+
+// OperatorResolution returns the impl a comparison operator dispatches to.
+func (t *MethodTable) OperatorResolution(expr ast.Expression) (Resolution, bool) {
+	if t == nil {
+		return Resolution{}, false
+	}
+	r, ok := t.operatorResolutions[expr]
 	return r, ok
 }
 

@@ -598,3 +598,45 @@ func (tc *TypeChecker) publishBoundCandidates(call *ast.FunctionCallExpr, traitN
 	}
 	tc.methodTable.SetBoundCandidates(call, byType)
 }
+
+// ordTraitName is the prelude trait that extends comparison beyond the primitives.
+//
+// Recognized by **name and shape** rather than by a marker: the design called for
+// `@builtin(Ord)`, matching `@builtin(Maybe)`, but an attribute does not parse on a
+// trait declaration today, so the marker is a grammar change. Name-and-shape is the
+// fallback `canonical.go` already applies to types — an unmarked, canonically-shaped
+// declaration of the right name — so this is the existing rule extended rather than a
+// new one. See todo.md.
+const ordTraitName = "Ord"
+
+// dispatchOrdCompare accepts a comparison whose operands are ordered by an `Ord` impl
+// rather than by being numeric, recording the resolution for the backend. Reports
+// whether it handled the comparison.
+//
+// Both operands must be the *same* type: ordering is a relation on one type, and
+// admitting a cross-type comparison would need a rule for which side's impl wins.
+// A primitive is never routed here — `1 < 2` stays a machine comparison rather than
+// becoming a call — so an `Ord` impl cannot change what the operators mean on the
+// built-in types.
+func (tc *TypeChecker) dispatchOrdCompare(expr *ast.BooleanBinaryOpExpr, left, right types.Type) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	if types.IsNumeric(left) || isRuneType(left) || types.IsNumeric(right) || isRuneType(right) {
+		return false
+	}
+	if left.String() != right.String() {
+		return false
+	}
+	matches := tc.resolveTraitMethod(left, "compare", ordTraitName)
+	if len(matches) != 1 {
+		return false
+	}
+	tc.methodTable.SetOperatorResolution(expr, typetable.Resolution{
+		Impl:      matches[0].Impl,
+		Method:    matches[0].Method,
+		Signature: matches[0].Signature,
+		Bindings:  matches[0].Bindings,
+	})
+	return true
+}

@@ -15,3 +15,29 @@ module std.prelude
 // and exhaustiveness then insists every case is covered, which is the property the
 // `if`/`else if`/`else` chain it replaces cannot offer.
 pub data Ordering = Less | Equal | Greater
+
+// The trait that extends `<=>` beyond the primitives. A type that implements it can
+// be compared three ways, and — once the relational operators are routed through it —
+// ordered with `<`, `<=`, `>` and `>=`.
+//
+// **One method, deliberately.** Everything else derives from `compare`, so an impl
+// cannot make `<` and `<=>` disagree — the failure mode C++'s separate `operator<`
+// and `operator<=>` and Java's `compareTo`-beside-`equals` both carry. The cost is
+// that a type cannot supply a cheaper `<` than its `compare`; that is a trade worth
+// making while correctness is the scarce thing.
+//
+// **Floats do not implement it, and that is the rule rather than an omission.** NaN
+// is neither less than, equal to nor greater than anything, so a three-way answer has
+// to pick one and every choice is wrong — the same reason `<=>` refuses floats
+// outright. Ordering floats for a sort wants a `total_cmp` (bit-pattern order) that
+// says in its name that it is not the arithmetic ordering.
+//
+// **Recognized by name and shape**, not by a marker: a `pub trait Ord` in the prelude
+// whose single method matches `(Self, Self) -> Ordering`. That mirrors the fallback
+// `canonical.go` already applies to *types* — an unmarked, canonically-shaped
+// declaration of the right name — and is not the marker the design asked for, because
+// an attribute does not parse on a trait declaration today. The marker is the better
+// answer and is a grammar change; see todo.md.
+pub trait Ord {
+  compare: (Self, Self) -> Ordering
+}

@@ -1213,9 +1213,15 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 					"less than, equal to, nor greater than anything; compare with < and == instead")
 			return
 		}
+		// A user type orders through the prelude's `Ord` (ordering.lyra). Checked
+		// before the numeric error, so the message stays right for a type that has no
+		// ordering at all while a type that does simply works.
+		if tc.dispatchOrdCompare(expr, leftType, rightType) {
+			return
+		}
 		if !types.IsNumeric(leftType) || !types.IsNumeric(rightType) {
 			tc.addError(expr.GetLocation(), SeverityError,
-				"operator <=>: operands must be numeric, got %s and %s", leftType, rightType)
+				"operator <=>: operands must be numeric or implement Ord, got %s and %s", leftType, rightType)
 			return
 		}
 		if numericResultType(leftType, rightType) == nil {
@@ -1233,9 +1239,14 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 		if isRuneType(leftType) && isRuneType(rightType) {
 			return
 		}
+		// `<` `<=` `>` `>=` on a user type derive from the same `Ord::compare` `<=>`
+		// uses, so an impl cannot make them disagree — one method, one ordering.
+		if tc.dispatchOrdCompare(expr, leftType, rightType) {
+			return
+		}
 		if !types.IsNumeric(leftType) || !types.IsNumeric(rightType) {
 			tc.addError(expr.GetLocation(), SeverityError,
-				"operator %s: operands must be numeric, got %s and %s", expr.Operator, leftType, rightType)
+				"operator %s: operands must be numeric or implement Ord, got %s and %s", expr.Operator, leftType, rightType)
 			return
 		}
 		if numericResultType(leftType, rightType) == nil {

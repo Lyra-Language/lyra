@@ -10,6 +10,45 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**`Ord` — a user type can be ordered.** `compare: (Self, Self) -> Ordering` in
+`std/prelude/ordering.lyra`, with `<=>` returning it directly and `<` `<=` `>` `>=` derived
+from its tag. Nothing could order a user type before: `<` on a struct was "operands must be
+numeric" and `<=>` was numeric+rune only.
+
+**One method, and the derivation is the point.** An impl supplies `compare` and nothing else,
+so it cannot make `<` and `<=>` disagree — the failure mode C++'s separate
+`operator<`/`operator<=>` and Java's `compareTo`-beside-`equals` both carry. The cost is that
+a type cannot offer a cheaper `<` than its `compare`; worth it while correctness is the
+scarce thing.
+
+**A numeric or rune operand is never routed through it.** `1 < 2` stays a single `icmp`, and
+a deliberately wrong `Ord` impl cannot change what the operators mean on the built-in types —
+there is a test that asserts exactly that, because "an impl changed what `<` does to i64"
+is the kind of thing that would be found much later.
+
+**The tags are looked up by name, not assumed to be 0/1/2.** The prelude declares
+`Less | Equal | Greater` in that order and the derived operators are each one compare against
+the union's tag — so hardcoding the order would make *reordering that declaration* silently
+invert every comparison in every program. A wrong answer, not a build failure, which is the
+category this language spends most of its effort avoiding. They come from the impl's own
+resolved return type.
+
+Two deviations from the decided design, both recorded in todo.md rather than papered over:
+
+- **Recognized by name and shape rather than by `@builtin(Ord)`.** An attribute does not
+  parse on a trait declaration, so the marker is a grammar change plus a trait arm in
+  `canonical.go`, which is entirely type-shaped. Name-and-shape is the fallback that file
+  already applies to *types*, so this extends an existing rule rather than inventing one —
+  but a user's own `trait Ord` in the entry module would be taken for the prelude's.
+- **`Ord: Eq` is not enforced.** The supertrait parses and is collected; whether anything
+  checks it is unverified, and it only matters once `Eq` exists.
+
+The resolution is published on the operator expression (`MethodTable.SetOperatorResolution`)
+rather than desugared into a call, because `<=>` is its own AST node and rewriting it into a
+`FunctionCallExpr` would mean replacing a node the parent holds by pointer. Same arrangement
+the bound-dispatch candidates use.
+
+### 08/07/26
 **A trait may be implemented once per type** (`lyra-E037`). `impl Show for i64` twice drew no
 diagnostic before, and which body a call ran was decided by declaration order.
 

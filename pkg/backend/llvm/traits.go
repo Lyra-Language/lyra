@@ -5,6 +5,9 @@ import (
 	"sort"
 
 	"github.com/llir/llvm/ir"
+	"github.com/llir/llvm/ir/constant"
+	"github.com/llir/llvm/ir/enum"
+	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -244,4 +247,83 @@ func (l *lowerer) lowerBoundMethodCall(block *ir.Block, call *ast.FunctionCallEx
 		return nil, nil, err
 	}
 	return l.lowerTraitMethodCall(block, call, member, fn)
+}
+
+// lowerOrdComparison lowers a comparison operator on a type that implements the
+// prelude's `Ord`: call `compare`, then read the `Ordering` it returns.
+//
+// `<=>` *is* that Ordering, so it is the call and nothing more. The relational
+// operators are derived from it rather than dispatched separately — which is the
+// whole reason `Ord` has one method: an impl cannot make `<` and `<=>` disagree,
+// the failure mode C++'s separate `operator<`/`operator<=>` and Java's
+// `compareTo`-beside-`equals` both carry.
+//
+// The Ordering is a tagged union whose discriminant is its first field, and the
+// prelude declares `Less | Equal | Greater` in that order — so the tag is 0/1/2 and
+// each operator is one `icmp` against it. Reading the tag rather than pattern-matching
+// keeps this branchless, for the reason `<=>`'s primitive lowering is: a branching
+// comparison returns a merge block, which the temp-release machinery does not handle.
+func (l *lowerer) lowerOrdComparison(block *ir.Block, e *ast.BooleanBinaryOpExpr, res typetable.Resolution, left, right value.Value) (value.Value, *ir.Block, error) {
+	fn, err := l.traitMethod(res)
+	if err != nil {
+		return nil, nil, err
+	}
+	ord := block.NewCall(fn, left, right)
+	if e.Operator == ast.BooleanBinaryOpSpaceship {
+		return ord, block, nil
+	}
+	// The variant tags are looked up by *name*, not assumed to be 0/1/2. The prelude
+	// happens to declare `Less | Equal | Greater` in that order, but hardcoding it
+	// would make reordering that declaration silently invert every comparison in every
+	// program — a wrong answer, not a build failure.
+	ordTy, err := l.ordDataType(res)
+	if err != nil {
+		return nil, nil, err
+	}
+	tagOf := func(name string) (*constant.Int, error) {
+		_, idx, ok := findConstructor(ordTy, name)
+		if !ok {
+			return nil, fmt.Errorf("llvm: the Ordering returned by Ord::compare has no %q variant", name)
+		}
+		return constant.NewInt(lltypes.I8, int64(idx)), nil
+	}
+	less, err := tagOf("Less")
+	if err != nil {
+		return nil, nil, err
+	}
+	greater, err := tagOf("Greater")
+	if err != nil {
+		return nil, nil, err
+	}
+	tag := block.NewExtractValue(ord, 0)
+	switch e.Operator {
+	case ast.BooleanBinaryOpLT:
+		return block.NewICmp(enum.IPredEQ, tag, less), block, nil
+	case ast.BooleanBinaryOpGT:
+		return block.NewICmp(enum.IPredEQ, tag, greater), block, nil
+	case ast.BooleanBinaryOpLTE:
+		return block.NewICmp(enum.IPredNE, tag, greater), block, nil
+	case ast.BooleanBinaryOpGTE:
+		return block.NewICmp(enum.IPredNE, tag, less), block, nil
+	}
+	// `==`/`!=` are not routed here: equality is structural and does not go through
+	// `Ord` (todo.md's Eq/Ord design). Reaching this is a resolution recorded for an
+	// operator that should never have had one — rule 5, not a guess.
+	return nil, nil, fmt.Errorf("llvm: operator %s is not derived from Ord::compare", e.Operator)
+}
+
+// ordDataType is the `Ordering` data type an `Ord::compare` returns, taken from the
+// impl's own resolved signature rather than looked up by name — the impl is what the
+// call actually runs, so its return type is the union whose tags are being read.
+func (l *lowerer) ordDataType(res typetable.Resolution) (types.DataType, error) {
+	if res.Signature == nil {
+		return types.DataType{}, fmt.Errorf("llvm: Ord::compare has no resolved signature")
+	}
+	ret := l.resolveNamedType(res.Signature.ReturnType.Type)
+	dt, ok := ret.(types.DataType)
+	if !ok {
+		return types.DataType{}, fmt.Errorf(
+			"llvm: Ord::compare must return the prelude's Ordering, got %s", res.Signature.ReturnType.Type)
+	}
+	return dt, nil
 }

@@ -109,6 +109,15 @@ func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinary
 	if err != nil {
 		return nil, nil, err
 	}
+	// A user type ordered through the prelude's `Ord`: the typechecker published the
+	// impl (MethodTable.SetOperatorResolution) because `<=>` is its own node and has no
+	// call for the ordinary trait path to key on. Checked before the primitive paths,
+	// which it can never shadow — dispatchOrdCompare refuses a numeric or rune operand,
+	// so `1 < 2` stays an `icmp` and an impl cannot change what the operators mean on
+	// the built-in types.
+	if res, ok := l.res.MethodTable.OperatorResolution(e); ok {
+		return l.lowerOrdComparison(block, e, res, left, right)
+	}
 	if _, isFloat := left.Type().(*lltypes.FloatType); isFloat {
 		v, err := l.lowerFloatComparison(block, e.Operator, left, right)
 		return v, block, err

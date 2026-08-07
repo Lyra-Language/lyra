@@ -897,6 +897,24 @@ Prerequisites, both real bugs found while designing this:
 the `Eq` override → the two `==` bugs above. Ord first means the dispatch machinery is
 exercised by something nobody has to migrate to.
 
+**[DONE 08/07] `Ord` lands** (`std/prelude/ordering.lyra`): `compare: (Self, Self) -> Ordering`,
+with `<=>` returning it directly and `<` `<=` `>` `>=` derived from its tag, so an impl
+cannot make them disagree. A numeric or rune operand is never routed through it, so `1 < 2`
+stays an `icmp` and a wrong impl cannot change the built-in types. Floats stay out, `<=>`
+still refuses them. See COMPLETED.md.
+
+- **[OPEN] `Ord` is recognized by name and shape, not by `@builtin(Ord)`.** The design asked
+  for the marker, matching `@builtin(Maybe)`; **an attribute does not parse on a trait
+  declaration**, so the marker is a `tree-sitter-lyra` change (attribute list on
+  `trait_declaration`) plus a `CanonicalKind` on `TraitDeclStmt` and a trait arm in
+  `canonical.go`, which is entirely type-shaped today. Name-and-shape is the fallback
+  `canonical.go` already applies to types, so this is the existing rule extended rather than
+  a new one — but it means a user's own `trait Ord` in the entry module would be taken for
+  the prelude's. Worth closing when the grammar is touched for `Eq`.
+- **[OPEN] `Ord: Eq` is not enforced.** Supertrait syntax parses and the bound is collected
+  onto `TraitDeclStmt.Bounds`; whether anything checks it is unverified. It is what stops
+  `compare` answering `Equal` where equality says false, so it matters once `Eq` exists.
+
 ### Trait machinery
 
 Trait-method lowering landed 07/30: an impl method lowers to a function taking the receiver
