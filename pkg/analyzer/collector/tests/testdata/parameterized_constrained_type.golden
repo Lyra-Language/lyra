@@ -1,0 +1,22 @@
+Program(1 statements) {
+	Statements: {
+		TypeDeclStmt(Point) {
+			GenericParams: {
+				GenericParam(t) {
+					Name: t
+				}
+			}
+			Name: Point
+			Type: {
+				ConstrainedType(Point) {
+					Name: Point
+					Type: {
+						UnresolvedType(Tuple) {
+							Name: Tuple
+						}
+					}
+				}
+			}
+		}
+	}
+}

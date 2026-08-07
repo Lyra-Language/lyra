@@ -135,10 +135,14 @@ write today:
   message (*"bind it (`let _ = ...`) to discard it intentionally"*) and the parser rejected.
   Zero parser states. `_` is still not an expression, so a discard cannot be read back.
 
-- **[OPEN] A generic `newtype` does not parse.** `newtype Point<t> = Tuple` puts the `<t>`
-  in an ERROR node and collects a `ConstrainedType` with the parameters silently dropped.
-  The golden file for it recorded exactly that — a bug documented as intended output,
-  under a test named for the feature. Also a grammar change, also found by the guard.
+- **[DONE 08/07] A generic `newtype` works.** `newtype Boxed<t> = t`, and `Boxed<i64>`
+  behaves as a newtype over `i64` — nominal to the typechecker, transparent to codegen.
+  Three parts: the grammar gained the `generic_parameters` slot every other type
+  declaration had, the collector attaches them, and `resolveType` **expands** a
+  parameterized newtype into its substituted `ConstrainedType`. That last one is the
+  asymmetry worth remembering: a parameterized struct stays a `ParameterizedType` for the
+  instantiation machinery, but a newtype *is* its base plus a name, so it must become a
+  `ConstrainedType` or `StripNewtype` finds nothing and every assignment to it is rejected.
 
 - **[DONE 08/07] The non-parsing test sources are fixed and the class is closed.**
   Both `parseCollectAndCheck` and the collector's golden helper now check

@@ -762,6 +762,21 @@ func (tc *TypeChecker) resolveGenericAggregate(t types.Type, loc ast.Location) t
 		}
 		d.Constructors = ctors
 		return types.WithAllocation(d, p.Allocation)
+	case *types.ConstrainedType:
+		// A generic `newtype` — `newtype Boxed<t> = t`, so `Boxed<i64>`'s base is i64.
+		// The parameters had nowhere to be written until 08/07 (the grammar put them in
+		// an ERROR node), so this arm had nothing to resolve and its absence cost
+		// nothing; with them collected, a missing case here is the difference between
+		// `Boxed<i64>` accepting an i64 and rejecting it.
+		//
+		// The constraints are carried across unsubstituted: a `range(0..<=100)` is a
+		// bound on *values*, not a type, so it means the same thing at every
+		// instantiation.
+		return &types.ConstrainedType{
+			Name:        d.Name,
+			Type:        substituteGenerics(d.Type, subst),
+			Constraints: d.Constraints,
+		}
 	}
 	return t
 }
@@ -1378,6 +1393,16 @@ func (tc *TypeChecker) resolveTypeWith(t types.Type, loc ast.Location, leaf func
 				args[i] = recur(a)
 			}
 			tt.TypeArguments = args
+		}
+		// A parameterized **newtype** expands here, unlike a parameterized struct or
+		// data type which stays a ParameterizedType for the instantiation machinery.
+		// The asymmetry is the point: a newtype *is* its base plus a nominal name, so
+		// `Boxed<i64>` has to become a ConstrainedType over `i64` for the rest of the
+		// compiler to treat it the way it already treats `newtype Plain = i64`. Left
+		// unexpanded, `StripNewtype` finds no ConstrainedType and every assignment to it
+		// is rejected — `cannot assign integer literal to Boxed<i64>`.
+		if expanded, ok := tc.expandParameterizedNewtype(tt, loc); ok {
+			return expanded
 		}
 		return tt
 	case *types.LambdaType:
@@ -3178,4 +3203,32 @@ func (tc *TypeChecker) moduleScopeOf(node ast.AstNode) *symbols.Scope {
 		return nil
 	}
 	return tc.symTable.ModuleScopeFor(tc.symTable.ModuleOfFile[node.GetLocation().File])
+}
+
+// expandParameterizedNewtype turns `Boxed<i64>` into the newtype's ConstrainedType with
+// its base substituted, when the name declares a `newtype`. Reports false for anything
+// else, including an unknown name.
+//
+// The constraints ride along unsubstituted: a `range(0..<=100)` bounds *values*, not
+// types, so it means the same at every instantiation.
+func (tc *TypeChecker) expandParameterizedNewtype(p types.ParameterizedType, loc ast.Location) (types.Type, bool) {
+	decl, ok := tc.symTable.LookupTypeFrom(p.Name, loc)
+	if !ok {
+		return nil, false
+	}
+	ct, ok := decl.Type.(*types.ConstrainedType)
+	if !ok {
+		return nil, false
+	}
+	subst := make(map[string]types.Type, len(decl.GenericParams))
+	for i, gp := range decl.GenericParams {
+		if i < len(p.TypeArguments) {
+			subst[gp.Name] = p.TypeArguments[i]
+		}
+	}
+	return &types.ConstrainedType{
+		Name:        ct.Name,
+		Type:        substituteGenerics(ct.Type, subst),
+		Constraints: ct.Constraints,
+	}, true
 }

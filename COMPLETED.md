@@ -10,6 +10,38 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**A generic `newtype` works** — `newtype Boxed<t> = t`, with `Boxed<i64>` nominal to the
+typechecker and transparent to codegen, exactly as `newtype Plain = i64` already was.
+
+**The grammar failure was quiet rather than loud**, which is why it lasted. `newtype` was
+the one type declaration without a `generic_parameters` slot — struct, data, tuple and
+trait all had one — so the `<t>` landed in an ERROR node *and the declaration still
+collected*, silently becoming `newtype Point = …`. The golden file recorded that drop under
+a test named for the feature: a golden regenerated from a truncated AST bakes the
+truncation in and then reads as a specification. It surfaced when the does-it-parse guard
+reached the golden helper, which is the second gap that guard has paid for.
+
+**Three parts, and the third is the one worth remembering.** The grammar gained the slot
+(+10 states), the collector attaches the parameters — and `resolveType` now **expands** a
+parameterized newtype into its substituted `ConstrainedType`.
+
+That expansion is deliberately asymmetric with every other parameterized type. A
+`Box<i64>` stays a `ParameterizedType`, because the instantiation machinery is what gives
+it a layout and a specialization. A newtype has neither: it *is* its base plus a nominal
+name, so `Boxed<i64>` has to become a `ConstrainedType` over `i64` for the rest of the
+compiler to treat it the way it already treats the non-generic case. Left unexpanded,
+`StripNewtype` finds no `ConstrainedType` and every assignment is rejected —
+`cannot assign integer literal to Boxed<i64>`, which is what the first attempt did after
+the grammar and collector were both already correct.
+
+`resolveGenericAggregate` was missing the same arm and got it too. It is not on the path
+that failed here, but it is the same question asked in the other place, and leaving one of
+two answers wrong is how the drift this codebase keeps recording begins.
+
+The nominal half is pinned by a test: a `Boxed<string>` is still not an `i64`. Transparent
+to codegen, distinct to the typechecker — the whole point of `newtype`.
+
+### 08/07/26
 **`let _ = expr` discards.** A bare `_` in binding position evaluates the value and binds
 nothing — the canonical way to opt out of the must-use rule.
 
