@@ -105,6 +105,24 @@ write today:
 
 ## Known bugs
 
+- **[OPEN] A generic instantiated at a type declared in a named module fails to lower.**
+  `llvm: unknown named type "Tag"` for
+
+  ```lyra
+  module main
+  struct Tag { n: i64 }
+  let idf<t> = (a: t) -> t => a
+  let main = () -> void => { let b = idf(Tag { n: 1 }); println(b.n) }
+  ```
+
+  Remove the `module main` header and it compiles. No traits, no `Eq`, no generics
+  beyond the identity function — the specialization's type argument resolves against the
+  backend's `structTypes` registry under the bare name while a module-scoped declaration
+  is keyed by `declKey` (rule 4, in the one place that still reads a bare name). Found
+  08/07 writing an `Eq` test; verified pre-existing by stashing. It bites every generic
+  over a user type in any program with a module header, which is every multi-module
+  program.
+
 - **[OPEN] A struct literal with every field defaulted cannot be written.** `Person {}` is a
   syntax error — a literal body requires at least one field — so defaults stop being usable
   at exactly the point they are most useful, and the workaround is to name a field you
@@ -893,6 +911,21 @@ Prerequisites, both real bugs found while designing this:
   silently strips the safety net. Fire it at the instantiation, where the bound check now
   fires.
 
+**[DONE 08/07] The `Eq` override.** `pub trait Eq { eq: (Self, Self) -> bool }`; `==`/`!=`
+stay structural and an impl replaces them for that type. A primitive is never routed
+through one, so `1 == 1` stays a machine comparison. An impl reaches through a *generic*
+call too — the operand is a type variable at check time, so candidates are published per
+implementing type and the backend picks by the substituted type, exactly as bound dispatch
+does. Without that, `p == q` used the impl and `same(p, q)` silently used structural
+equality: one operator meaning two things depending on whether it was written inside a
+generic.
+
+**Design correction:** the decided `trait Ord: Eq` is *not* built, and should not be.
+The supertrait made sense under full dispatch; under the override model equality is always
+available structurally, so requiring an `Eq` **impl** of every ordered type would break
+`@derive(Ord)`, which synthesizes none. A type implementing both and letting them disagree
+is a bug the compiler cannot see — the residual cost of equality not being a bound.
+
 **Sequencing:** coherence → `Ord` (real gap, zero migration) → `@derive` consumption →
 the `Eq` override → the two `==` bugs above. Ord first means the dispatch machinery is
 exercised by something nobody has to migrate to.
@@ -925,9 +958,9 @@ still refuses them. See COMPLETED.md.
   - **Declaration order is the ordering**, which is why it is opt-in: reordering a struct's
     fields changes how its values sort, and a type that silently acquired an order nobody
     chose would be worse. Rust makes the same trade.
-- **[OPEN] `Ord: Eq` is not enforced.** Supertrait syntax parses and the bound is collected
-  onto `TraitDeclStmt.Bounds`; whether anything checks it is unverified. It is what stops
-  `compare` answering `Equal` where equality says false, so it matters once `Eq` exists.
+- **[DECIDED 08/07] `Ord: Eq` is deliberately *not* declared** — see the design correction
+  above. Supertrait syntax parses and the bound is collected onto `TraitDeclStmt.Bounds`;
+  whether anything enforces it is still unverified, and no longer on this path.
 
 ### Trait machinery
 

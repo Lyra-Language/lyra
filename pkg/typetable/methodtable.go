@@ -29,6 +29,9 @@ type MethodTable struct {
 	boundCandidates map[*ast.FunctionCallExpr]map[string]Resolution
 	// operatorResolutions[expr] is the `Ord` impl a comparison operator dispatches to.
 	operatorResolutions map[ast.Expression]Resolution
+	// operatorCandidates[expr][concreteType] is the impl an operator dispatches to once
+	// a specialization fixes a type-variable operand. See SetOperatorCandidates.
+	operatorCandidates map[ast.Expression]map[string]Resolution
 }
 
 // BoundMethodRef names a trait method reached by *abstract* dispatch — a call on
@@ -268,6 +271,34 @@ func (t *MethodTable) SetOperatorResolution(expr ast.Expression, r Resolution) {
 		t.operatorResolutions = map[ast.Expression]Resolution{}
 	}
 	t.operatorResolutions[expr] = r
+}
+
+// SetOperatorCandidates is SetBoundCandidates for an *operator*: the resolution for
+// each type implementing the trait, keyed by that type's `String()`, for a comparison
+// whose operands are still a type variable at check time.
+//
+// `a == b` inside a generic body cannot resolve to an impl — `t` names none — but a
+// specialization fixes it, and the impl must win there exactly as it does outside a
+// generic. Without this, `p == q` used a type's `Eq` impl and `same(p, q)` silently
+// used structural equality: one operator meaning two things depending on whether it was
+// written inside a generic.
+func (t *MethodTable) SetOperatorCandidates(expr ast.Expression, byType map[string]Resolution) {
+	if t == nil || len(byType) == 0 {
+		return
+	}
+	if t.operatorCandidates == nil {
+		t.operatorCandidates = map[ast.Expression]map[string]Resolution{}
+	}
+	t.operatorCandidates[expr] = byType
+}
+
+// OperatorCandidate returns the impl an operator dispatches to at a concrete type.
+func (t *MethodTable) OperatorCandidate(expr ast.Expression, concrete string) (Resolution, bool) {
+	if t == nil {
+		return Resolution{}, false
+	}
+	r, ok := t.operatorCandidates[expr][concrete]
+	return r, ok
 }
 
 // OperatorResolution returns the impl a comparison operator dispatches to.

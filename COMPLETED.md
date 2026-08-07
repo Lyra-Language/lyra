@@ -10,6 +10,40 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**The `Eq` override** — `pub trait Eq { eq: (Self, Self) -> bool }`, for the minority of
+types whose equality is not field-wise. `==`/`!=` stay structural; an impl *replaces* them
+for its type rather than enabling them.
+
+That is the opposite of Rust and Swift, and it follows from where this language started
+rather than from taste: unbounded structural equality already worked on every type
+**including a bare type variable**, so requiring a bound would have removed working
+capability to gain ceremony. A primitive is never routed through an impl, so `1 == 1` stays
+a machine comparison and an impl cannot change what equality means on the built-in types —
+the same rule `Ord` follows, with a test that asserts it using a deliberately-false impl.
+
+**The hole worth recording is the generic one.** An operand that is a type *variable* names
+no impl at check time, so the first working version had `p == q` using a type's `Eq` impl
+while `same(p, q)` — the same comparison through a generic — silently used structural
+equality. One operator meaning two things depending on whether it was written inside a
+generic, which is the action-at-a-distance the override model was chosen to avoid. Fixed the
+way bound dispatch was: the typechecker publishes a candidate per implementing type and the
+backend picks by the substituted operand type.
+
+**A design correction, made while building.** The decided design had `trait Ord: Eq`, on the
+reasoning that a supertrait stops `compare` answering `Equal` where equality says false.
+That is wrong under the *override* model and was not built: equality is always available
+structurally, so demanding an `Eq` **impl** of every ordered type would make `@derive(Ord)`
+— which synthesizes none — fail on every type that used it. A type implementing both and
+letting them disagree writes a bug the compiler cannot see; that is the residual cost of
+equality not being a bound, and it is smaller than the cost of the supertrait.
+
+**And a pre-existing bug found by the test that hit it.** A generic instantiated at a struct
+declared in a *named module* fails to lower — `llvm: unknown named type "Tag"` — with no
+traits involved at all (`let idf<t> = (a: t) -> t => a` reproduces it). Verified pre-existing
+by stashing, filed in todo.md, and routed around in the test so a failure there means what it
+says. It bites every generic over a user type in any program with a module header.
+
+### 08/07/26
 **`@derive(Ord)`** — the structural ordering, lexicographic in field-declaration order.
 `@derive(...)` had parsed and been collected onto `TypeDeclStmt.Derives` since the
 attribute existed, and was read by nobody: the same collected-and-unread shape the `where`

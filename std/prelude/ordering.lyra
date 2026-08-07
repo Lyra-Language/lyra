@@ -41,3 +41,28 @@ pub data Ordering = Less | Equal | Greater
 pub trait Ord {
   compare: (Self, Self) -> Ordering
 }
+
+// Equality for the minority of types whose equality is **not** field-wise —
+// case-insensitive text, a struct with a cache field that should not count, a set that
+// compares by contents rather than by layout.
+//
+// **`==` does not require this trait.** Equality is structural by default and works on
+// every type including a bare type variable, so implementing `Eq` *overrides* what
+// `==` already does rather than enabling it. That is the opposite of Rust and Swift,
+// and it follows from where this language started: unbounded structural equality
+// already worked, and requiring a bound would have removed capability to gain
+// ceremony.
+//
+// A primitive is never routed through an impl — `1 == 1` stays a machine comparison —
+// so an `Eq` impl cannot change what equality means on the built-in types.
+//
+// **`Ord` deliberately does not require `Eq`.** The design first had `trait Ord: Eq`,
+// on the reasoning that it stops `compare` answering `Equal` where equality says
+// false. That is wrong here: equality is always available structurally, so demanding an
+// *impl* of it would make `@derive(Ord)` — which synthesizes no `Eq` — fail on every
+// type that used it. A type that implements both and lets them disagree is writing a
+// bug the compiler cannot see; that is the residual cost of equality not being a
+// bound.
+pub trait Eq {
+  eq: (Self, Self) -> bool
+}

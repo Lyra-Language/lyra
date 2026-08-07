@@ -249,8 +249,8 @@ func (l *lowerer) lowerBoundMethodCall(block *ir.Block, call *ast.FunctionCallEx
 	return l.lowerTraitMethodCall(block, call, member, fn)
 }
 
-// lowerOrdComparison lowers a comparison operator on a type that implements the
-// prelude's `Ord`: call `compare`, then read the `Ordering` it returns.
+// lowerOrdComparison lowers a comparison operator that dispatches to a trait impl —
+// `Ord::compare` for the ordering operators, `Eq::eq` for `==`/`!=`.
 //
 // `<=>` *is* that Ordering, so it is the call and nothing more. The relational
 // operators are derived from it rather than dispatched separately — which is the
@@ -267,6 +267,17 @@ func (l *lowerer) lowerOrdComparison(block *ir.Block, e *ast.BooleanBinaryOpExpr
 	fn, err := l.traitMethod(res)
 	if err != nil {
 		return nil, nil, err
+	}
+	// `==`/`!=` dispatch to an `Eq` impl, whose method already answers a bool: `==` is
+	// the call, `!=` its negation. Handled here rather than in a second lowering
+	// because the shape is identical — call the impl, read the answer — and the only
+	// difference is which trait was resolved.
+	if e.Operator == ast.BooleanBinaryOpEq || e.Operator == ast.BooleanBinaryOpNEq {
+		eq := block.NewCall(fn, left, right)
+		if e.Operator == ast.BooleanBinaryOpEq {
+			return eq, block, nil
+		}
+		return block.NewXor(eq, constant.NewInt(lltypes.I1, 1)), block, nil
 	}
 	ord := block.NewCall(fn, left, right)
 	if e.Operator == ast.BooleanBinaryOpSpaceship {
@@ -306,10 +317,9 @@ func (l *lowerer) lowerOrdComparison(block *ir.Block, e *ast.BooleanBinaryOpExpr
 	case ast.BooleanBinaryOpGTE:
 		return block.NewICmp(enum.IPredNE, tag, less), block, nil
 	}
-	// `==`/`!=` are not routed here: equality is structural and does not go through
-	// `Ord` (todo.md's Eq/Ord design). Reaching this is a resolution recorded for an
-	// operator that should never have had one — rule 5, not a guess.
-	return nil, nil, fmt.Errorf("llvm: operator %s is not derived from Ord::compare", e.Operator)
+	// Every operator that can carry a resolution is handled above. Reaching this is a
+	// resolution recorded for one that cannot — rule 5, not a guess.
+	return nil, nil, fmt.Errorf("llvm: operator %s has a trait resolution but no lowering", e.Operator)
 }
 
 // ordDataType is the `Ordering` data type an `Ord::compare` returns, taken from the

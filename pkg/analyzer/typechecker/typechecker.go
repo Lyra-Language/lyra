@@ -1184,6 +1184,12 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 				"operator %s: operands must both be boolean, got %s and %s", expr.Operator, leftType, rightType)
 		}
 	case ast.BooleanBinaryOpEq, ast.BooleanBinaryOpNEq:
+		// A type may *override* structural equality with an `Eq` impl. Checked before
+		// the compatibility test, not after: the impl decides what equality means for
+		// this type, so there is nothing for the structural rule to say about it.
+		if tc.dispatchEq(expr, leftType, rightType) {
+			return
+		}
 		if !areEqualityCompatible(leftType, rightType) {
 			tc.addIncompatibleTypesError(expr, string(expr.Operator), leftType, rightType)
 		} else if isFloatType(leftType) || isFloatType(rightType) {

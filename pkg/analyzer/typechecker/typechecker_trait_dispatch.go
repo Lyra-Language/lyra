@@ -640,3 +640,78 @@ func (tc *TypeChecker) dispatchOrdCompare(expr *ast.BooleanBinaryOpExpr, left, r
 	})
 	return true
 }
+
+// eqTraitName is the prelude trait that *overrides* structural equality.
+const eqTraitName = "Eq"
+
+// dispatchEq accepts an `==`/`!=` whose operands have an `Eq` impl, recording the
+// resolution for the backend. Reports whether it handled the comparison.
+//
+// **The impl overrides rather than enables.** Equality is structural by default and
+// works on every type, including a bare type variable — so unlike `Ord`, which is the
+// only way to order a user type, this exists for the minority whose equality is not
+// field-wise. That is why the check sits in front of the structural rule rather than
+// behind it as a fallback: where an impl exists it is the answer, and the structural
+// rule has nothing to say.
+//
+// Primitives are never routed here, so `1 == 1` stays a machine comparison and an impl
+// cannot change what equality means on the built-in types — the same rule dispatchOrdCompare
+// follows, and for the same reason.
+func (tc *TypeChecker) dispatchEq(expr *ast.BooleanBinaryOpExpr, left, right types.Type) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	if types.IsNumeric(left) || isRuneType(left) || types.IsString(left) || types.IsBoolean(left) {
+		return false
+	}
+	if left.String() != right.String() {
+		return false
+	}
+	// Inside a generic body the operand is a type *variable*, which names no impl. The
+	// specialization will fix it, so publish a candidate per implementing type and let
+	// the backend pick — the arrangement publishBoundCandidates uses for a bound call.
+	// Without this an `Eq` impl applied outside a generic and not inside one.
+	if _, isVar := left.(types.GenericType); isVar {
+		tc.publishOperatorCandidates(expr, eqTraitName, "eq")
+		return false
+	}
+	matches := tc.resolveTraitMethod(left, "eq", eqTraitName)
+	if len(matches) != 1 {
+		return false
+	}
+	tc.methodTable.SetOperatorResolution(expr, typetable.Resolution{
+		Impl:      matches[0].Impl,
+		Method:    matches[0].Method,
+		Signature: matches[0].Signature,
+		Bindings:  matches[0].Bindings,
+	})
+	return true
+}
+
+// publishOperatorCandidates records the impl an operator would dispatch to for each
+// type implementing the trait, for an operand that is still a type variable here.
+//
+// It returns nothing and the caller falls through to the structural rule: at check
+// time a type variable *is* structurally comparable, and the specialization is where
+// the impl becomes findable. The backend consults the candidates first.
+func (tc *TypeChecker) publishOperatorCandidates(expr ast.Expression, traitName, methodName string) {
+	byType := map[string]typetable.Resolution{}
+	for _, impl := range tc.traitImpls {
+		if impl.TraitName != traitName {
+			continue
+		}
+		target := tc.resolveTypeIfKnown(impl.Type, impl.GetLocation())
+		if target == nil {
+			continue
+		}
+		matches := tc.resolveTraitMethod(target, methodName, traitName)
+		if len(matches) != 1 {
+			continue
+		}
+		byType[target.String()] = typetable.Resolution{
+			Impl: matches[0].Impl, Method: matches[0].Method,
+			Signature: matches[0].Signature, Bindings: matches[0].Bindings,
+		}
+	}
+	tc.methodTable.SetOperatorCandidates(expr, byType)
+}
