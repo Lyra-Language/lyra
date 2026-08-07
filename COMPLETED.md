@@ -10,6 +10,33 @@ Newest first.
 ## Dated log
 
 ### 08/06/26
+**`for flag { … }` parses.** The condition field was `alias($.boolean_expr,
+$.for_condition_expr)` and a bare identifier is not a `boolean_expr`, so looping on a bool
+binding had to be spelled `for done == true { … }` — a workaround nobody writes by choice,
+and one that reads as the language not having a while loop. It is `$._bool_operand` now, so
+a name, a call (`for ready(n)`) and a member access (`for cfg.enabled`) all work.
+
+**`$.expression`, matching `if`'s condition, does not generate** — worth recording because
+it is the obvious unification and it fails for a specific reason. A `block` *is* an
+expression, so `for { … }` becomes genuinely ambiguous between "condition and no body" and
+"no condition and a body"; `if` escapes it only because its `then_block` is mandatory.
+`_bool_operand` excludes `block`, so the question never arises.
+
+**It shrank the parser by one state** (7,725 → 7,724, −728 bytes), which is not a typo and
+not luck: `_bool_operand`'s states already existed for the `&&`/`||` operand positions, so
+the wider rule reused them and the narrower one it replaced stopped needing its own. Measured
+before believing it, since this grammar region has a history of surprising costs in the other
+direction.
+
+Two consequences worth keeping. The **`for_condition_expr` alias is gone**, so a comparison
+condition yields a plain `boolean_expr`; it never meant anything (the collector handled it in
+the same `case`) and keeping it would have made the node kind depend on which *form* the
+condition took, which is a trap for a query. And **bool-ness is entirely the typechecker's**
+now — `for n { }` over an integer was a syntax error pointing at the brace and is now
+`for loop condition must be boolean, got i64`, which is the diagnostic that was wanted all
+along.
+
+### 08/06/26
 **A member call on a type name no longer type-checks into a backend crash.**
 `Rng.seeded(42)` passed `lyrac check` with no diagnostic and then failed with
 `llvm: unsupported method call "seeded"`. That is hazard 5 inverted — the backend

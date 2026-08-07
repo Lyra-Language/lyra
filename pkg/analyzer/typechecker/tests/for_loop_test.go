@@ -5,10 +5,11 @@ import (
 )
 
 // ── For loop condition must be bool ──────────────────────────────────────────
-// The Lyra grammar restricts the for loop condition to boolean_expr, so the
-// condition itself is always syntactically boolean. The typechecker validates
-// that the operands of &&/|| are actually bool, catching mistakes like using
-// an i64 or string variable where a bool is required.
+// The grammar admits any `_bool_operand` as of 08/06 — a bare name, a call, a
+// member access, as well as a `boolean_expr` — so bool-ness is entirely the
+// typechecker's to enforce, and `for n { }` over an i64 is a type error rather
+// than a syntax error. It restricted the condition to `boolean_expr` until then,
+// which made `for done { }` unwritable and `for done == true { }` the workaround.
 //
 // A for loop is now checked inside its own scope (checkForLoopExpr enters the
 // scope the collector registered on the loop node), so an init clause's variable
@@ -27,6 +28,48 @@ func TestTypeCheck_ForLoop_BoolVarCondition_NoError(t *testing.T) {
 		for done == false { }
 	`, false)
 	assertNoErrors(t, res)
+}
+
+// The form the widening was for: a bool binding is the condition on its own, with
+// no comparison to spell it. `for done == true { }` was the workaround, and it is
+// not something anyone writes by choice.
+func TestTypeCheck_ForLoop_BareBoolBinding_NoError(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let done: bool = false
+		for done { }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// A call and a member access are conditions too — the operand set is
+// `_bool_operand`, so anything postfix reaches it, and each is checked for
+// bool-ness like any other.
+func TestTypeCheck_ForLoop_BareCallAndMemberConditions_NoError(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		struct Cfg { enabled: bool }
+		let ready = (n: i64) -> bool => n < 3
+		let go = (c: Cfg) -> void => {
+			for ready(1) { }
+			for c.enabled { }
+		}
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// The guard on the widening: admitting a bare operand must not admit a
+// *non-bool* one silently. Each of these was a syntax error before 08/06 and is
+// now a type error naming the type it got, which is the better diagnostic and the
+// reason the check has to be real.
+func TestTypeCheck_ForLoop_BareNonBoolCondition_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let n: i64 = 0
+		let s: string = "hi"
+		for n { }
+		for s { }
+	`, false)
+	assertErrorsAre(t, res,
+		"for loop condition must be boolean, got i64",
+		"for loop condition must be boolean, got string")
 }
 
 func TestTypeCheck_ForLoop_WithInitAndPost_NoError(t *testing.T) {

@@ -46,11 +46,14 @@ write today:
   worked, so only the spelling was missing; the collector erases the bare one into exactly
   that block, and nothing downstream changed. With this and statement arms, the
   read-until-EOF loop is finally the `match` it wanted to be. See COMPLETED.md.
-- **[OPEN] `for flag {}` does not parse.** The condition field is a `boolean_expr`, and a
-  bare identifier is not one — `for done == true {}` is the workaround, which no one would
-  write by choice. Widening the condition to admit a `_bool_operand` is the obvious fix; the
-  hazard is the usual one in this grammar region (todo's juxtaposition notes), so verify
-  against corpus rather than against conflict warnings.
+- **[DONE 08/06] `for flag {}` parses.** The condition is `_bool_operand` now, so a name, a
+  call (`for ready(n)`) and a member access (`for cfg.enabled`) all work, and `for done ==
+  true {}` is no longer the only spelling. `$.expression` — matching `if` — does not
+  generate, because a `block` is an expression and `for { … }` then cannot tell a condition
+  from a body. It **shrank** the parser by one state, since `_bool_operand`'s states already
+  existed for `&&`/`||`. Bool-ness is entirely the typechecker's now, which is the better
+  diagnostic: `for n {}` over an integer was a syntax error and is `lyra-E001` naming the
+  type. See COMPLETED.md and `tree-sitter-lyra`'s CLAUDE.md.
 - **[DONE 08/06] `<=>` lowers**, yielding the prelude's `Ordering`
   (`Less | Equal | Greater`) rather than a bool or Ruby's -1/0/1 — so all three
   outcomes are handled in one exhaustiveness-checked `match`. Integers and runes only:

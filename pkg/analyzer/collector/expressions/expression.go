@@ -69,7 +69,7 @@ func CollectExpression(node *sitter.Node, ctx *collector_ctx.Ctx) ast.Expression
 		return collectAnonymousStructLiteralExpr(node, ctx, loc)
 	case "spread_expr":
 		return collectSpreadExpr(node, ctx, loc)
-	case "boolean_expr", "for_condition_expr":
+	case "boolean_expr":
 		opNode := cst.Field(node, "operator")
 		if opNode != nil && opNode.Kind() == "not" {
 			return collectNotBooleanExpr(node, ctx, loc)
