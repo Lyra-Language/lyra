@@ -377,8 +377,8 @@ func (c *Collector) reclassifyPattern(pat ast.Pattern) ast.Pattern {
 }
 
 // registerTopLevelFunctions populates SymbolTable.Functions (and its
-// PureFuncs subset) for every top-level `let`/`var name = <lambda>` binding.
-// Only top-level bindings are registered here — Functions/PureFuncs are flat
+// for every top-level `let`/`var name = <lambda>` binding.
+// Only top-level bindings are registered here — Functions is a flat
 // maps keyed by name, so a nested same-named binding in a different scope
 // would silently collide; scope-aware resolution for non-top-level functions
 // is handled separately (see checker/purity.go's capture-stack walk).

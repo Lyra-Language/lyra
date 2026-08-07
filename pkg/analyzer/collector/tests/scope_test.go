@@ -325,11 +325,17 @@ func TestScope_LetElseBindsNamesAfterTheStatement(t *testing.T) {
 	}
 }
 
-// --- top-level function registration (Functions / PureFuncs) ---
+// --- top-level function registration (Functions) ---
 
 func TestScope_TopLevelFunctionsRegistered(t *testing.T) {
 	// Every top-level `let`/`var name = <lambda>` binding is registered in
-	// SymbolTable.Functions; PureFuncs holds only the ones declared `pure`.
+	// SymbolTable.Functions.
+	//
+	// It also asserted a `PureFuncs` subset until 08/07, when a sweep for AST fields
+	// nothing reads found that map written and never read — the purity pass its doc
+	// comment named as the consumer had never consulted it. Both the map and these
+	// assertions are gone: a test guarding dead state reports that the state is still
+	// there, which is the opposite of useful.
 	_, table, _, _ := parseAndCollect(t, `
 	let explicitPure = pure (n: i64) -> i64 => n + 1
 	let plain = (n: i64) -> i64 => n + 1`)
@@ -340,16 +346,10 @@ func TestScope_TopLevelFunctionsRegistered(t *testing.T) {
 	if _, ok := table.Functions["plain"]; !ok {
 		t.Error("plain should be registered in Functions")
 	}
-	if _, ok := table.PureFuncs["explicitPure"]; !ok {
-		t.Error("explicitPure should be registered in PureFuncs")
-	}
-	if _, ok := table.PureFuncs["plain"]; ok {
-		t.Error("plain should not be registered in PureFuncs (not declared `pure`)")
-	}
 }
 
 func TestScope_NestedFunctionsNotRegisteredAtTopLevel(t *testing.T) {
-	// Functions/PureFuncs are flat, name-keyed maps scoped to top-level bindings
+	// Functions is a flat, name-keyed map scoped to top-level bindings
 	// only — a nested function (which could collide by name with an unrelated
 	// top-level or sibling binding) is deliberately not registered here.
 	_, table, _, _ := parseAndCollect(t, `

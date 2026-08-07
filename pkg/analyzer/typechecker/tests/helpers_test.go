@@ -5,10 +5,10 @@ import (
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
-	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/printer"
 	"github.com/Lyra-Language/lyra/pkg/typetable"

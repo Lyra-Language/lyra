@@ -122,13 +122,6 @@ type SymbolTable struct {
 	// `.{ X, Y as Z }` binds the listed names directly.
 	Imports map[string][]Import
 
-	// PureFuncs maps the name of each function declared with the `pure`
-	// keyword to its lambda expression. Populated during collection; used
-	// by the purity checker to know which functions are explicitly pure
-	// (and which are implicitly pure by default). PureFuncs is a subset
-	// of Functions.
-	PureFuncs map[string]*ast.LambdaExpr
-
 	// OverloadSets holds the names that are overloaded on their receiver, keyed by
 	// declKey exactly as Functions is. A name appears in one map or the other, never
 	// both — see overload.go for why an overloaded name is kept out of Functions
@@ -144,7 +137,6 @@ func NewSymbolTable() *SymbolTable {
 		Types:        make(map[string]*ast.TypeDeclStmt),
 		Functions:    make(map[string]*ast.LambdaExpr),
 		Traits:       make(map[string]*ast.TraitDeclStmt),
-		PureFuncs:    make(map[string]*ast.LambdaExpr),
 		ModuleOf:     make(map[string]string),
 		ModuleOfFile: make(map[string]string),
 		Imports:      make(map[string][]Import),
@@ -372,7 +364,7 @@ func (st *SymbolTable) defineInDeclaringModule(kind string, node ast.Named) erro
 }
 
 // RegisterFunction adds a function to the symbol table. If node is declared
-// `pure`, it is also recorded in PureFuncs (a subset of Functions).
+// `pure`.
 //
 // A duplicate is an error, as it already is for a type or a trait. It used to
 // overwrite silently, which was harmless while a program was a single file — a
@@ -403,9 +395,6 @@ func (st *SymbolTable) RegisterFunction(name string, node *ast.LambdaExpr) error
 			describeLocation(existing.GetLocation()), overloadRefusal(existing, node))
 	}
 	st.Functions[key] = node
-	if node.IsPure {
-		st.PureFuncs[key] = node
-	}
 	return nil
 }
 

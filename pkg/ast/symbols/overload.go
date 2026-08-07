@@ -168,9 +168,4 @@ func (st *SymbolTable) registerOverloadSet(key string, set *ast.OverloadSet) {
 		st.OverloadSets = make(map[string]*ast.OverloadSet)
 	}
 	st.OverloadSets[key] = set
-	for _, lam := range set.Lambdas() {
-		if lam.IsPure {
-			st.PureFuncs[key] = lam
-		}
-	}
 }

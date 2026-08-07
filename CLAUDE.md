@@ -230,6 +230,25 @@ because each was learned from a real failure, and none is local to one package.
    reason. Do not "simplify" that back into a `weak == 0` test — it reads as equivalent and is
    an ASan-confirmed double free (08/07).
 
+## Sweeping for surfaces nothing reads
+
+Four features turned up in two days that parsed, collected, and were consumed by nobody —
+`wallClock`, a binding's `where` bounds, `@derive`, and operator-named trait methods. Each
+looked implemented and did nothing, which costs more than an absent feature does.
+
+The sweep that finds the AST half: enumerate every exported field of every struct in
+`pkg/ast`, then grep for a reader **outside `pkg/ast`, outside `pkg/printer`, and outside
+tests**. Excluding the printer is the part that matters — it reads every field by
+reflection, so it makes everything look consumed. Excluding the declaring package matters
+too, or a field read only by its own accessors (`SymbolTable.Traits`) reports as dead.
+
+Run 08/07: **119 fields, 3 suspicious, 2 genuine** (`TraitDeclStmt.Bounds`, unenforced
+supertraits; `SymbolTable.PureFuncs`, a map written and never read). The conclusion worth
+keeping is that the AST surface is *not* where this problem lives — the phantoms were in
+effect tables (`builtinEffects`), in glue switches missing a case, and in grammar rules with
+no collector consumer. Those need their own sweeps, and a field-level one will not find
+them.
+
 ## Package map
 
 | Package | What it is | Depth |

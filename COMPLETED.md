@@ -10,6 +10,40 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**Swept the AST for fields nothing reads**, after four collected-and-unread surfaces turned
+up in two days — `wallClock`, the `where` bounds, `@derive`, and operator method names. The
+method: enumerate every exported field of every struct in `pkg/ast`, then grep for a reader
+outside `pkg/ast` itself, outside the reflection-based printer (which reads everything and
+so proves nothing), and outside tests.
+
+**The reassuring half is the result.** Of **119 exported fields, 3 looked suspicious and 2
+were genuine.** `SymbolTable.Traits` was a false positive — read by the `Lookup*` accessors
+that live inside `pkg/ast/symbols`, which the sweep excludes along with the rest of the
+package. So the AST surface is largely clean, and the recurring phantoms were somewhere
+else: effect tables and glue switches, not node fields. That is worth knowing before
+spending more effort here.
+
+The two real ones:
+
+**`TraitDeclStmt.Bounds` — supertraits were never enforced.** `trait B: A` parsed, collected
+and was read by *nobody*, so `impl B for S` compiled with no `A` in sight. A supertrait is
+the promise that lets a `where t: B` bound reach `A`'s methods, and it was a promise the
+compiler did not keep. Now `lyra-E040`, checked where the impl and its trait are both in
+hand. Declaration order does not matter — impls are gathered up front so a call can dispatch
+against one declared later, and there is a test that the same holds here.
+
+**`SymbolTable.PureFuncs` — a map written and never read.** Its doc comment named the purity
+checker as the consumer; the purity checker had never consulted it. Deleted, along with the
+test that asserted it was populated: a test guarding dead state reports that the state is
+still there, which is the opposite of useful.
+
+Also recorded rather than fixed: **`[0; 5]`, the array-repeat literal, is unimplemented.**
+It parses and collects, and the typechecker then says `unknown expression type` — loud, so an
+unimplemented feature rather than a phantom, but the grammar and collector support a form
+nothing downstream does. `ArrayRepeatExpr.Count` has exactly one mention outside `pkg/ast`
+and no consumer.
+
+### 08/07/26
 **Operator-named trait methods are refused where the compiler owns the operator, and
 warned about everywhere else.** `trait Eq { (_==_): (Self, Self) -> bool }` parsed,
 collected, type-checked — and was dispatched by nobody: every consumer filters on

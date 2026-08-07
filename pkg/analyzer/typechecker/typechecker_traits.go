@@ -14,6 +14,25 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 		return
 	}
 
+	// A supertrait is a promise that every implementer of this trait also implements
+	// the ones it names, which is what would let a `where t: B` bound reach `A`'s
+	// methods. Checked here because this is where the impl and its trait are both in
+	// hand; unchecked until 08/07, when a sweep for AST fields nothing reads found
+	// `TraitDeclStmt.Bounds` with no consumer at all — so `trait B: A` parsed and
+	// `impl B for S` compiled with no `A` anywhere.
+	implType := tc.resolveTypeIfKnown(impl.Type, impl.GetLocation())
+	for _, bound := range trait.Bounds {
+		if _, known := tc.symTable.LookupTraitFrom(bound, impl.GetLocation()); !known {
+			// An unknown supertrait is the *declaration's* mistake, reported there.
+			continue
+		}
+		if !tc.typeImplementsTrait(implType, bound) {
+			tc.addErrorCode(impl.GetLocation(), SeverityError, diag.CodeUnsatisfiedSupertrait,
+				"impl of %s for %s: %s requires %s, which %s does not implement",
+				impl.TraitName, implType, impl.TraitName, bound, implType)
+		}
+	}
+
 	// Put the impl's `where` bounds (`t: Show`) in scope for the duration of its
 	// method-body checks, so a call on a value of type `t` can dispatch through
 	// the bound (see dispatchViaGenericBound). Save/restore handles nesting.

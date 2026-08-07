@@ -105,6 +105,13 @@ write today:
 
 ## Known bugs
 
+- **[OPEN] `[0; 5]` — the array-repeat literal — is unimplemented.** It parses and collects
+  (`ast.ArrayRepeatExpr`), and the typechecker then reports `unknown expression type
+  "[0; 5]"`. Loud rather than silent, so it is an unimplemented feature rather than a
+  phantom, but the grammar and collector both support a form nothing downstream does.
+  Found 08/07 by the AST sweep: `ArrayRepeatExpr.Count` has exactly one mention outside
+  `pkg/ast` — the constructor-reclassification walk — and no consumer at all.
+
 - **[DONE 08/07] A generic instantiated at a type declared in a named module lowers.**
   It failed with `llvm: unknown named type` for the identity function over a struct, in any
   program with a `module` header. The specialization path was the one function-lowering
@@ -950,6 +957,9 @@ still refuses them. See COMPLETED.md.
   - **Declaration order is the ordering**, which is why it is opt-in: reordering a struct's
     fields changes how its values sort, and a type that silently acquired an order nobody
     chose would be worse. Rust makes the same trade.
+- **[DONE 08/07] A supertrait is enforced** (`lyra-E040`): `impl B for T` where
+  `trait B: A` requires an `impl A for T`. `TraitDeclStmt.Bounds` was collected and read by
+  nobody, so the promise was never checked — found by the AST sweep below.
 - **[DECIDED 08/07] `Ord: Eq` is deliberately *not* declared** — see the design correction
   above. Supertrait syntax parses and the bound is collected onto `TraitDeclStmt.Bounds`;
   whether anything enforces it is still unverified, and no longer on this path.

@@ -324,6 +324,16 @@ const (
 	// disagree, which is the C++/Java shape.
 	CodeComparisonOperatorMethod = "lyra-E039"
 
+	// CodeUnsatisfiedSupertrait: `impl B for T` where `trait B: A` and `T` has no
+	// impl of `A`. A supertrait is a promise that every `B` is also an `A`, which is
+	// what lets a `where t: B` bound call `A`'s methods.
+	//
+	// `TraitDeclStmt.Bounds` was collected and read by nobody until 08/07, so the
+	// promise was never checked: `trait B: A` parsed, `impl B for S` compiled with no
+	// `A` in sight, and the declaration said something the compiler did not enforce.
+	// Found by sweeping the AST for fields nothing reads.
+	CodeUnsatisfiedSupertrait = "lyra-E040"
+
 	// CodeInertDerive: a `@derive(X)` naming a trait the compiler does not synthesize,
 	// so the attribute does nothing. A warning rather than an error — the derive is not
 	// wrong, the trait simply does not exist yet — but reported, because an attribute
