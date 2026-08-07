@@ -78,6 +78,15 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 	// in a parameter or return position becomes its concrete binding.
 	restore := l.pushTypeSubst(inst.Subst)
 	defer restore()
+	// …and the module, so a named type in that signature resolves under the key it was
+	// registered with. Every other function-lowering path does this (lowerFunction,
+	// defineFunction, the entry point); the specialization path did not, so
+	// `l.currentLoc` was whatever the previous item left behind and a **private**
+	// module-scoped type argument was looked up under its bare name. It is keyed
+	// `<module>::<name>` (rule 4), so the lookup missed and the build failed with
+	// `unknown named type`. A `pub` type has a bare key and worked, which is what made
+	// the bug look like it was about generics rather than about visibility.
+	defer l.enterModuleOf(inst.Func.GetLocation())()
 
 	retType, err := l.lowerType(inst.Func.ReturnType.Type)
 	if err != nil {

@@ -105,23 +105,15 @@ write today:
 
 ## Known bugs
 
-- **[OPEN] A generic instantiated at a type declared in a named module fails to lower.**
-  `llvm: unknown named type "Tag"` for
-
-  ```lyra
-  module main
-  struct Tag { n: i64 }
-  let idf<t> = (a: t) -> t => a
-  let main = () -> void => { let b = idf(Tag { n: 1 }); println(b.n) }
-  ```
-
-  Remove the `module main` header and it compiles. No traits, no `Eq`, no generics
-  beyond the identity function — the specialization's type argument resolves against the
-  backend's `structTypes` registry under the bare name while a module-scoped declaration
-  is keyed by `declKey` (rule 4, in the one place that still reads a bare name). Found
-  08/07 writing an `Eq` test; verified pre-existing by stashing. It bites every generic
-  over a user type in any program with a module header, which is every multi-module
-  program.
+- **[DONE 08/07] A generic instantiated at a type declared in a named module lowers.**
+  It failed with `llvm: unknown named type` for the identity function over a struct, in any
+  program with a `module` header. The specialization path was the one function-lowering
+  path that never called `enterModuleOf`, so `currentLoc` held whatever the previous item
+  left behind and the type argument was looked up under its **bare** name — while a private
+  module-scoped declaration is keyed `<module>::<name>` (rule 4). A `pub` type has a bare
+  key and worked, which is what made it look like a bug about generics rather than about
+  visibility, and why the existing tests missed it: they declare types `pub`, or in no
+  module at all. See COMPLETED.md.
 
 - **[OPEN] A struct literal with every field defaulted cannot be written.** `Person {}` is a
   syntax error — a literal body requires at least one field — so defaults stop being usable

@@ -10,6 +10,36 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**A generic instantiated at a type declared in a named module lowers.** It failed with
+`llvm: unknown named type "Tag"` for as little as
+
+```lyra
+module main
+struct Tag { n: i64 }
+let idf<t> = (a: t) -> t => a
+```
+
+— no traits, no nesting, the identity function. Remove the `module main` header and it
+compiled, which is what made it look like a module bug rather than what it was.
+
+**The specialization path was the one function-lowering path that never called
+`enterModuleOf`.** `lowerFunction`, `defineFunction` and the entry point all set the
+location that lookups are made *from*; `declareSpecialization` did not, so `l.currentLoc`
+held whatever the previously-lowered item left behind. The type argument was then looked up
+under its **bare** name, while a private module-scoped declaration is keyed
+`<module>::<name>` — rule 4, in the one place that still resolved without it.
+
+**A `pub` type has a bare key and worked**, and that is the whole reason this survived: it
+reads as a bug about generics, the failing case looks exotic, and the existing tests declare
+their types `pub` or use no module header at all. The one-line difference between a passing
+and a failing program was a visibility keyword nobody would think to vary.
+
+Found while writing an `Eq` test, which used `module main` because every test in that file
+does. Verified pre-existing by stashing before assuming — a habit worth keeping after being
+wrong about "pre-existing" twice in the same week — then fixed rather than routed around,
+since it bites every generic over a user type in any program with a module header.
+
+### 08/07/26
 **The `Eq` override** — `pub trait Eq { eq: (Self, Self) -> bool }`, for the minority of
 types whose equality is not field-wise. `==`/`!=` stay structural; an impl *replaces* them
 for its type rather than enabling them.

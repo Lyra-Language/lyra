@@ -62,12 +62,8 @@ let main = () -> void => {
 // by the substituted operand type, the arrangement bound dispatch uses.
 func TestExec_EqImplReachesThroughAGenericCall(t *testing.T) {
 	t.Parallel()
-	// No `module main` header: a generic instantiated at a struct declared in a
-	// *named* module fails with `llvm: unknown named type` — a pre-existing bug with
-	// nothing to do with Eq (it reproduces on `let idf<t> = (a: t) -> t => a`), filed
-	// in todo.md. Keeping it out of this test's path so a failure here means what it
-	// says.
 	const src = `
+module main
 struct Tag { text: string }
 impl Eq for Tag {
   eq = (self, other) => self.text.len() == other.text.len()
