@@ -961,10 +961,11 @@ still refuses them. See COMPLETED.md.
     order in UTF-8**, so one memcmp answers what a rune walk would; written in the prelude
     with `s[i]` it would have been O(n²), since indexing is O(i). Not locale-aware: `"Z"`
     sorts before `"a"`, and collation needs tables that belong in a Unicode library.
-  - **[OPEN] A single wildcard cannot stand for a multi-field payload.** `Rect _` parses
-    and type-checks and then fails to lower (`payload pattern for "Rect" not implemented
-    yet`) while the arity-matched `Rect(_, _)` works. Pre-existing; the derive steps around
-    it by generating arity-matched wildcards, but a hand-written match hits it.
+  - **[DONE 08/07] A single wildcard stands for a multi-field payload.** `Rect _` lowers,
+    expanding to one wildcard per field — exact rather than approximate, since a wildcard
+    binds nothing and tests nothing. Binding a whole multi-field payload as one value
+    (`Rect pair`) is still unimplemented and now says so, naming the spelling that works
+    instead of reporting "not implemented" about a form that was.
   - **Declaration order is the ordering**, which is why it is opt-in: reordering a struct's
     fields changes how its values sort, and a type that silently acquired an order nobody
     chose would be worse. Rust makes the same trade.

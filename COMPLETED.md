@@ -10,6 +10,29 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**A bare `_` stands for a whole multi-field payload.** `Rect _`, where
+`Rect(i64, i64)`, parsed and type-checked and then failed to lower — *"payload pattern for
+Rect not implemented yet"* — while the arity-matched `Rect(_, _)` worked. Two spellings of
+the same set of values, and only one of them compiled.
+
+A wildcard binds nothing and tests nothing, so expanding it to one wildcard per field is
+**exact rather than an approximation**: the two forms describe the same values, and the
+expansion makes them lower the same way. Fresh nodes per field rather than the same one
+repeated — nothing keys on a pattern's identity today, but sharing one node across field
+positions is the kind of aliasing that makes a later map-by-pointer quietly wrong.
+
+**Found by writing the data-type derive by hand**, which wants exactly this shape for its
+"self is the earlier variant" arms. The synthesis generates arity-matched wildcards and
+stepped around it, but a hand-written match still hit it — which is why it was recorded as
+a gap rather than left as an implementation detail of the derive.
+
+What is *not* fixed now says what it is: a single **binding** for a multi-field payload
+(`Rect pair`) would bind the payload tuple as one value, which is a real feature and a
+different one. It keeps an error, but one that names the spelling that works rather than
+reporting "not implemented" about a form that was — the old message covered both cases and
+so described neither.
+
+### 08/07/26
 **`string` is ordered** — `"a" < "b"` works, `<=>` answers on strings, and a `data` variant
 or struct field carrying one can `@derive(Ord)`. Until now `<` on two strings was "operands
 must be numeric" and a string payload made a type underivable.

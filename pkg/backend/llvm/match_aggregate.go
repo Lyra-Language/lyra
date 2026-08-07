@@ -739,5 +739,24 @@ func payloadFieldPatterns(p *ast.DataPattern, ctor types.DataTypeConstructor) ([
 	if len(flat) == 1 {
 		return []ast.Pattern{p.Pattern}, nil
 	}
-	return nil, fmt.Errorf("llvm: payload pattern for %q not implemented yet", p.Name)
+	// A bare `_` standing for a whole multi-field payload (`Rect _`) expands to one
+	// wildcard per field. A wildcard binds nothing and tests nothing, so the expansion
+	// is exact rather than an approximation — `Rect _` and `Rect(_, _)` describe the
+	// same set of values, and only the second used to lower.
+	//
+	// Fresh nodes rather than the same one repeated: nothing downstream keys on a
+	// pattern's identity today, but sharing one node across field positions is the kind
+	// of aliasing that makes a later map-by-pointer quietly wrong.
+	if _, isWildcard := p.Pattern.(*ast.WildcardPattern); isWildcard {
+		out := make([]ast.Pattern, len(flat))
+		for i := range out {
+			out[i] = &ast.WildcardPattern{PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: p.GetLocation()}}}
+		}
+		return out, nil
+	}
+	// What is left is a single *binding* for a multi-field payload (`Rect pair`), which
+	// would bind the payload tuple as one value. That is a real feature and not this
+	// one, so it keeps the honest error rather than being guessed at.
+	return nil, fmt.Errorf("llvm: binding a whole multi-field payload as one value (%q) is not implemented yet; "+
+		"name the fields instead, as %s(…)", p.Name, p.Name)
 }
