@@ -10,6 +10,53 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**`where` bounds mean something.** They were collected and read by nobody but the
+unused-parameter warning, so writing one bought nothing: a generic could be instantiated at a
+type with no impl, which type-checked clean and died in the backend as
+`llvm: unsupported method call`. Two halves were missing, and the first is what made the
+second worth having.
+
+**A binding's bounds were never in scope for its own body.** `tc.genericBounds` — what
+`dispatchViaGenericBound` consults — was populated only from an *impl's* `where` clause, so
+
+```lyra
+let describe<t> where t: Show = (v: t) -> string => v.show()
+```
+
+reported *"type parameter t has no method `show`; add a `where t: Trait` bound whose trait
+declares it"*: a diagnostic naming the exact fix the author had already applied. That is the
+worst shape a message can have — it reads as the compiler not believing what is written.
+
+The bounds are lifted onto the `LambdaExpr` by the collector, the same way the leading
+modifiers already are, because they are written on the **binding** (`let f<t> where …`) while
+every consumer downstream holds only the lambda.
+
+**Enforcement is at the instantiation** (`lyra-E036`), because that is the only point where
+the question has an answer: the declaration cannot know what `t` will be, and the backend is
+too late. It reuses `typeImplementsTrait`, which already existed as "the bound-satisfaction
+test for a generic impl's `where` clause" and simply had no second caller — the check was
+written years-of-commits before the thing that needed it. Nearly added a second copy of it
+before noticing, which is the failure mode this codebase's hazard 8 is entirely about.
+
+**A type argument that is itself a type variable is checked against the enclosing scope's
+bounds, not against any impl.** Inside another generic, `describe(x)` binds `t` to `u`, and
+whether that satisfies `Show` is a question about the caller's own `where` clause — there is
+no impl for `u` to find. Getting this wrong in either direction is bad: reject it and a
+correctly forwarded bound becomes an error; accept it blindly and the bound stops meaning
+anything one level in. So a forwarded bound compiles and an unforwarded one is refused with
+the clause to add.
+
+**What this does not yet do is lower.** A bound-dispatched call resolves *abstractly* — to a
+trait and a method name — and the concrete impl is known only once a specialization fixes the
+parameter; the backend has no path from one to the other. It is now a hard error saying
+exactly that, rather than the generic "unsupported method call", because the program is
+well-typed and the bound is satisfied and the author would otherwise go hunting for a mistake
+that is not there. That is rule 5 working as intended rather than the inversion of it fixed
+twice this week: the front end looked carefully and accepted; the backend has not built the
+form. **It is the last piece before `Show` is usable**, and the natural home is the driver,
+where the instantiation set is already closed per specialization.
+
+### 08/07/26
 **A `match` over a tuple scrutinee leaked one reference per call, and fixing it exposed a
 double free in the ref-counting runtime.** This is what turned CI red; the two defects are
 independent and both are pre-existing.

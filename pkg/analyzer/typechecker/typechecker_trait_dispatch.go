@@ -2,9 +2,12 @@ package typechecker
 
 import (
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
@@ -270,7 +273,8 @@ func (tc *TypeChecker) checkImplConstraints(match resolvedTraitMethod, loc ast.L
 }
 
 // typeImplementsTrait reports whether some impl of traitName applies to t — the
-// bound-satisfaction test for a generic impl's `where` clause. It reuses the
+// bound-satisfaction test for a `where` clause, on a generic impl and (since 08/07)
+// on a generic *binding* checked at its instantiation. It reuses the
 // same target-matching used for dispatch (so `i64` satisfies `Ord` via `impl Ord
 // for i64`, and a generic `impl Ord<u> for Box<u>` would satisfy `Box<i64>`).
 // This is a single level: the matched impl's *own* `where` bounds are not
@@ -447,4 +451,103 @@ func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types
 	}
 
 	return lambdaType.ReturnType.Type
+}
+
+// pushGenericBounds puts a declaration's `where` bounds in scope for the duration of
+// its body check and returns the restore. It is the binding-side twin of the impl
+// block in checkTraitImpl, which does the same thing inline for an impl's
+// constraints — both feed dispatchViaGenericBound, and a bound that is in scope for
+// one form and not the other is a bound that means different things depending on
+// where it is written.
+//
+// Save/restore rather than merge, so a nested generic declaration cannot leak its
+// parameters' bounds outward — and so a shadowing parameter of the same name gets its
+// own bounds rather than inheriting the outer ones.
+func (tc *TypeChecker) pushGenericBounds(params []ast.GenericParam) func() {
+	if len(params) == 0 {
+		return func() {}
+	}
+	old := tc.genericBounds
+	next := make(map[string][]string, len(params))
+	for _, p := range params {
+		if len(p.Constraints) > 0 {
+			next[p.Name] = p.Constraints
+		}
+	}
+	if len(next) == 0 {
+		return func() {}
+	}
+	// Inherit the enclosing scope's bounds for parameters this declaration does not
+	// rebind: a method of a generic impl sees both the impl's `t` and its own.
+	for name, bounds := range old {
+		if _, shadowed := next[name]; !shadowed {
+			next[name] = bounds
+		}
+	}
+	tc.genericBounds = next
+	return func() { tc.genericBounds = old }
+}
+
+// checkGenericBounds verifies the solved type arguments of one call against the
+// callee's `where` bounds, and reports each unsatisfied one at the call.
+//
+// This is where a bound stops being decoration. Until 08/07 the bounds were
+// collected and never checked, so `describe(p)` on a `Pt` with no `Show` impl
+// type-checked clean and then failed in the backend with
+// `llvm: unsupported method call "show"` — the same hazard-5 inversion the
+// type-name member call had, and the same fix: refuse it in the front end, where the
+// author can be told which bound failed and on what.
+//
+// A parameter the solve left unbound is skipped rather than reported: the call has
+// already been diagnosed for whatever prevented the solve, and a second error naming
+// a bound on a type nobody knows is noise.
+//
+// **Only a concrete argument is checked.** Inside another generic body, `t` may be
+// solved to a *type variable* — `let via<u> where u: Show = (x: u) -> string =>
+// describe(x)` binds describe's `t` to `u` — and whether that satisfies `Show` is a
+// question about the *enclosing* declaration's bounds, not about any impl. It is
+// satisfied when the enclosing scope bounds that variable by the same trait, which is
+// what tc.genericBounds holds while the body is checked; anything else is left alone
+// rather than guessed, since reporting there would make a correctly-forwarded bound an
+// error.
+func (tc *TypeChecker) checkGenericBounds(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr, subst map[string]types.Type) {
+	if len(lambda.GenericBounds) == 0 {
+		return
+	}
+	// Deterministic order: a call may fail several bounds, and a diagnostic list that
+	// reorders between runs is one nobody can baseline in a test.
+	names := make([]string, 0, len(lambda.GenericBounds))
+	for name := range lambda.GenericBounds {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	for _, param := range names {
+		arg, solved := subst[param]
+		if !solved || arg == nil {
+			continue
+		}
+		concrete := tc.resolveTypeIfKnown(arg, call.GetLocation())
+		for _, traitName := range lambda.GenericBounds[param] {
+			if _, ok := tc.symTable.LookupTraitFrom(traitName, call.GetLocation()); !ok {
+				// An unknown trait in the bound is the declaration's problem, and the
+				// declaration is where it is reported. Silently satisfying the bound
+				// here would turn one error into none.
+				continue
+			}
+			if g, isVar := concrete.(types.GenericType); isVar {
+				if !slices.Contains(tc.genericBounds[g.Name], traitName) {
+					tc.addErrorCode(call.GetLocation(), SeverityError, diag.CodeUnsatisfiedTraitBound,
+						"%s: %s is instantiated at the type parameter %s, which is not bound by %s; add `where %s: %s` to the enclosing declaration",
+						calleeName, param, g.Name, traitName, g.Name, traitName)
+				}
+				continue
+			}
+			if !tc.typeImplementsTrait(concrete, traitName) {
+				tc.addErrorCode(call.GetLocation(), SeverityError, diag.CodeUnsatisfiedTraitBound,
+					"%s: %s is instantiated at %s, which does not implement %s (required by `where %s: %s`)",
+					calleeName, param, concrete, traitName, param, traitName)
+			}
+		}
+	}
 }

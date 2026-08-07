@@ -66,6 +66,20 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	if member.Property.Name == "weak" {
 		return l.lowerWeakDowngrade(block, call, member)
 	}
+	// A call dispatched through a `where` bound (`v.show()` on a bounded type
+	// parameter) resolves *abstractly* in the typechecker — to a trait and a method
+	// name, not to an impl — because the concrete impl is only known once a
+	// specialization fixes the parameter. The backend has no path from that to a
+	// callee yet, so say what is missing rather than reporting the method as
+	// unsupported: the program is well-typed and the bound is satisfied, and the
+	// author would otherwise go looking for a mistake in code that has none.
+	if ref, ok := l.res.MethodTable.GetBound(call); ok {
+		return nil, nil, fmt.Errorf(
+			"llvm: a call dispatched through a `where` bound does not lower yet: %s::%s. "+
+				"The bound is satisfied and the program type-checks; what is missing is "+
+				"resolving the bound to its concrete impl per specialization",
+			ref.Trait, ref.Method)
+	}
 	op, ok := roundingIntrinsicOps[member.Property.Name]
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: unsupported method call %q", member.Property.Name)

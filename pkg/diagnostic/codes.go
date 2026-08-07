@@ -283,6 +283,16 @@ const (
 	// constructors are spelled bare.
 	CodeTypeNameAsValue = "lyra-E035"
 
+	// CodeUnsatisfiedTraitBound: a generic is instantiated at a type that does not
+	// satisfy its `where` bound — `describe(p)` on a `Pt` with no `Show` impl.
+	//
+	// The bounds were collected and never read until 08/07, so writing one bought
+	// nothing: the call type-checked and died in the backend as
+	// `llvm: unsupported method call`. Checked at the *instantiation* because that is
+	// where the type variable first has a concrete type; the declaration cannot know
+	// and the backend is too late.
+	CodeUnsatisfiedTraitBound = "lyra-E036"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

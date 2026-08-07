@@ -284,7 +284,15 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 		if decl.Type != nil {
 			tc.elaborateLambda(decl.Value, decl.Type)
 		}
+		// Put this binding's `where` bounds in scope for its body, exactly as an impl's
+		// are (checkTraitImpl). Without it a bound was collected and then read by
+		// nobody: `let describe<t> where t: Show = (v: t) -> string => v.show()` reported
+		// *"type parameter t has no method `show`; add a `where t: Trait` bound"* with
+		// the bound sitting right there — the diagnostic naming the very fix the author
+		// had already applied.
+		restoreBounds := tc.pushGenericBounds(decl.GenericParams)
 		tc.checkLambdaBody(decl.Name, lambda)
+		restoreBounds()
 		// Record the binding's type. A local `let f = <lambda>` is a closure *value*
 		// — the backend has to know it is one to frame it for release — and the
 		// signature is what an indirect call through `f` is checked and lowered

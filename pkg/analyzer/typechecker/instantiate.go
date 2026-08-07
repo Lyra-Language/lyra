@@ -217,6 +217,11 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 		// concrete-callee propagation site never sees an instantiation to push.
 		tc.propagateLiteralType(arg, params[i])
 	}
+	// Checked after the solve and before the instantiation is recorded: every
+	// variable now has the concrete type this call binds it to, which is the only
+	// point at which "does the argument satisfy the bound" is a question with an
+	// answer.
+	tc.checkGenericBounds(calleeName, lambda, call, subst)
 	tc.instantiations.Set(call, typetable.Instantiation{
 		Name: calleeName, Func: lambda, Disc: tc.instantiationDisc(lambda), Subst: subst,
 	})

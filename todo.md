@@ -191,8 +191,24 @@ lowers; `CLAUDE.md`'s `pkg/backend/llvm` section is the current inventory. Settl
   identical, so `noalloc` is defined against the *release* lowering. Hot-reload note:
   body-only edits keep lambda sets stable; adding/removing a lambda or changing captures
   means a full rebuild even in dev.
-- **[OPEN] Generic types** — `where` bounds on a type parameter are collected but not
-  enforced at the instantiation.
+- **[DONE 08/07] `where` bounds are enforced at the instantiation** (`lyra-E036`), and a
+  binding's bounds are in scope for its own body. Both halves were missing and the first
+  is what made the second worth having: `tc.genericBounds` was populated only from an
+  *impl's* `where` clause, so `let describe<t> where t: Show = (v: t) -> string => v.show()`
+  reported *"type parameter t has no method `show`; add a `where t: Trait` bound"* — naming
+  the fix the author had already applied. The bounds are lifted onto the `LambdaExpr` by the
+  collector, exactly as the leading modifiers are, because they are written on the binding
+  while every consumer holds only the lambda. A type argument that is itself a *type
+  variable* is checked against the enclosing declaration's bounds rather than against any
+  impl, which is what lets a bound be forwarded. See COMPLETED.md.
+  - **[OPEN] A bound-dispatched call does not lower.** `v.show()` under `where t: Show`
+    resolves *abstractly* — to a trait and a method name — because the concrete impl is
+    only known once a specialization fixes the parameter, and the backend has no path from
+    that to a callee. It is a hard error naming exactly that (rule 5), so the feature
+    type-checks and cannot yet be built. **This is the last piece before `Show` is usable**,
+    and the natural home is the driver, where the instantiation set is already closed per
+    specialization (`instantiations.go`) — the same place the per-specialization ownership
+    tables are built.
   (A trait-impl method on a generic receiver **does** lower as of 08/03 — see COMPLETED.md
   and `pkg/backend/llvm/README.md`'s trait section. `Maybe<weak T>` parses and lowers as of
   08/03 too; the "does not parse" note that stood here was never true.)

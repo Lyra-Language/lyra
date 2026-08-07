@@ -85,6 +85,24 @@ func collectIdentifierDeclaration(node *sitter.Node, nameNode *sitter.Node, ctx 
 		}
 	}
 
+	// Lift the declaration's `where` bounds onto the lambda, for the same reason the
+	// modifiers above are lifted: they are written on the *binding* while every
+	// consumer downstream holds only the LambdaExpr. Without this the bounds were
+	// collected onto the declaration and read by nobody but the unused-parameter
+	// warning — `where t: Show` constrained nothing and did not even bring `show`
+	// into scope in the body.
+	if lambda, ok := initExpr.(*ast.LambdaExpr); ok {
+		for _, p := range genericParameters {
+			if len(p.Constraints) == 0 {
+				continue
+			}
+			if lambda.GenericBounds == nil {
+				lambda.GenericBounds = map[string][]string{}
+			}
+			lambda.GenericBounds[p.Name] = p.Constraints
+		}
+	}
+
 	astNode := &ast.VarDeclStmt{
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},
 		BindingKind:   kind,
