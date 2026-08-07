@@ -219,3 +219,47 @@ func (l *lowerer) lowerStringSlice(block *ir.Block, call *ast.FunctionCallExpr, 
 	withPtr := buildBlock.NewInsertValue(constant.NewUndef(strTy), dst, 0)
 	return buildBlock.NewInsertValue(withPtr, nOut, 1), buildBlock, nil
 }
+
+// lowerStringCompareBytes lowers `s.compare_bytes(other)` → a negative, zero or positive
+// i64, memcmp's convention.
+//
+// **Byte order is code-point order in UTF-8**, by design of the encoding: a lower code
+// point always encodes to a byte sequence that compares lower. So one memcmp answers
+// exactly what a rune-by-rune walk would, in O(n) rather than the O(n²) an
+// index-by-index loop in the prelude would cost — `s[i]` is O(i).
+//
+// memcmp over min(la, lb) can read no further than the shorter buffer, so it is safe
+// whatever the lengths; when the common prefix is equal, the *lengths* decide, which is
+// the standard "prefix sorts first" rule ("ab" < "abc").
+func (l *lowerer) lowerStringCompareBytes(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 1 {
+		return nil, nil, fmt.Errorf("llvm: compare_bytes expects 1 argument, got %d", len(call.Arguments))
+	}
+	a, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	b, block, err := l.lowerExpr(block, call.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	if !isStringLLVMType(a.Type()) || !isStringLLVMType(b.Type()) {
+		return nil, nil, fmt.Errorf("llvm: compare_bytes needs two strings (%s, %s)", a.Type(), b.Type())
+	}
+	pa := block.NewExtractValue(a, 0)
+	la := block.NewExtractValue(a, 1)
+	pb := block.NewExtractValue(b, 0)
+	lb := block.NewExtractValue(b, 1)
+
+	aShorter := block.NewICmp(enum.IPredULT, la, lb)
+	n := block.NewSelect(aShorter, la, lb) // min(la, lb) — reads past neither buffer
+	cmp := block.NewSExt(block.NewCall(l.memcmpFunc(), pa, pb, n), lltypes.I64)
+
+	// A non-zero memcmp decides it. Otherwise the common prefix matched and the shorter
+	// string sorts first, so the difference of lengths carries the sign — computed as a
+	// subtraction rather than a branch, keeping the call site branchless for the reason
+	// the rest of this file is.
+	lenDiff := block.NewSub(la, lb)
+	prefixEqual := block.NewICmp(enum.IPredEQ, cmp, constant.NewInt(lltypes.I64, 0))
+	return block.NewSelect(prefixEqual, lenDiff, cmp), block, nil
+}

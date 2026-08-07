@@ -66,3 +66,26 @@ pub trait Ord {
 pub trait Eq {
   eq: (Self, Self) -> bool
 }
+
+// Ordering for `string`, so `"a" < "b"` works and a `data` type carrying a string can
+// `@derive(Ord)`.
+//
+// **Lexicographic by code point**, which is what `compare_bytes` gives: UTF-8 encodes a
+// lower code point as a byte sequence that compares lower, so a byte comparison and a
+// rune-by-rune walk agree. That equivalence is the whole reason the primitive can be a
+// single `memcmp` — written in Lyra with `s[i]` it would be O(n²), since indexing a
+// string is O(i).
+//
+// A shorter string that is a prefix of a longer one sorts first (`"ab" < "abc"`), which
+// falls out of comparing the common prefix and then the lengths.
+//
+// This is **not** a locale-aware or Unicode-collation order: "Z" sorts before "a"
+// because their code points do, and accented characters sort by code point rather than
+// alphabetically. Real collation needs tables and a locale, and belongs in a Unicode
+// library rather than in the ordering `<` reaches for.
+impl Ord for string {
+  compare = (self, other) => {
+    let c = self.compare_bytes(other);
+    if c < 0 { Less } else if c > 0 { Greater } else { Equal }
+  }
+}

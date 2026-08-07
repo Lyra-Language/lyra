@@ -954,12 +954,13 @@ still refuses them. See COMPLETED.md.
     `Greater`; past those three no later arm can see `Ci` on either side, and the last
     constructor needs only the first. That estimate is what had made this look not worth
     building.
-  - **[OPEN] `string` has no `Ord`,** so a variant (or field) with a string payload cannot
-    derive one: `@derive(Ord)` on `data M = B(string)` reports `operands must be numeric or
-    implement Ord, got string and string` against the synthesized body. `<` on two strings
-    is refused for the same reason. An `impl Ord for string` is now expressible in the
-    prelude (`len` + indexing + `<=>` on runes), but indexing is O(i) so the obvious
-    version is O(n²) — the honest options are that, or a `compare` builtin over memcmp.
+  - **[DONE 08/07] `string` has `Ord`.** `"a" < "b"` works and a string payload or field
+    derives. The primitive is `s.compare_bytes(other) -> i64` (memcmp's convention) and the
+    prelude's `impl Ord for string` maps it to `Ordering` — the builtin is the part that
+    cannot be written in Lyra, everything shaped on top of it is. **Byte order is code-point
+    order in UTF-8**, so one memcmp answers what a rune walk would; written in the prelude
+    with `s[i]` it would have been O(n²), since indexing is O(i). Not locale-aware: `"Z"`
+    sorts before `"a"`, and collation needs tables that belong in a Unicode library.
   - **[OPEN] A single wildcard cannot stand for a multi-field payload.** `Rect _` parses
     and type-checks and then fails to lower (`payload pattern for "Rect" not implemented
     yet`) while the arity-matched `Rect(_, _)` works. Pre-existing; the derive steps around

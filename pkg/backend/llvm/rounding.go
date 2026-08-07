@@ -63,6 +63,9 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 			return l.lowerArrayLen(block, call, member)
 		}
 	}
+	if member.Property.Name == "compare_bytes" {
+		return l.lowerStringCompareBytes(block, call, member)
+	}
 	if member.Property.Name == "weak" {
 		return l.lowerWeakDowngrade(block, call, member)
 	}

@@ -89,6 +89,22 @@ func builtinMethodSignature(recv types.Type, name string) (*types.LambdaType, bo
 				Parameters: []types.ParameterType{{Type: i64t}, {Type: i64t}},
 				ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.String}},
 			}, true
+		case "compare_bytes":
+			// The primitive under the prelude's `impl Ord for string`: negative, zero or
+			// positive, memcmp's convention. It returns an `i64` rather than an
+			// `Ordering` so the backend needs no knowledge of a prelude type — the same
+			// division `random_seed` and `read_line` follow, where the builtin is the
+			// part that cannot be written in Lyra and everything shaped on top of it
+			// lives in the prelude.
+			//
+			// **Byte order is code-point order in UTF-8**, by design of the encoding, so
+			// this answers exactly what a rune-by-rune walk would — in one memcmp rather
+			// than O(n) O(i) index operations. That property is why the builtin is
+			// worth having at all.
+			return &types.LambdaType{
+				Parameters: []types.ParameterType{{Type: types.PrimitiveType{Name: types.String}}},
+				ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.Int64}},
+			}, true
 		}
 	}
 	// `x.weak()` on a `shared T` → a non-owning `weak T`. A method rather than new

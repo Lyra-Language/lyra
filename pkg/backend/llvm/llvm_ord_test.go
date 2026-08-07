@@ -98,3 +98,51 @@ let main = () -> void => { println("${go(1.0, 2.0)}") }
 		t.Errorf("the message should say why, got: %s", diags[0])
 	}
 }
+
+// Ordering for `string`, over the `compare_bytes` builtin.
+//
+// **Byte order is code-point order in UTF-8**, by design of the encoding, so one memcmp
+// answers exactly what a rune-by-rune walk would. That equivalence is why the primitive
+// is a builtin at all: written in the prelude with `s[i]` it would be O(n²), since
+// indexing a string is O(i).
+func TestExec_StringOrdering(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  println("${"a" < "b"} ${"b" < "a"} ${"a" <= "a"} ${"Z" < "a"}");
+  // A prefix sorts first, which falls out of comparing the common prefix then lengths.
+  println("${"ab" < "abc"} ${"abc" < "ab"} ${"" < "a"} ${"" < ""}");
+  // Code-point order, not alphabetical: é is U+00E9, above 'e'.
+  println("${"héllo" < "hello"}");
+}
+`
+	want := "true false true true\ntrue false true false\nfalse"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// The case that motivated it: a string payload or field made a type underivable, since
+// `<=>` on two strings had nothing to dispatch to.
+func TestExec_DeriveOrdOverStrings(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+@derive(Ord)
+data Tok = Num(i64) | Word(string) | End
+@derive(Ord)
+struct Person { last: string, first: string }
+let main = () -> void => {
+  println("${Word("apple") < Word("banana")} ${Num(9) < Word("a")} ${Word("z") < End}");
+  let a = Person { last: "Smith", first: "Ann" };
+  let b = Person { last: "Smith", first: "Bob" };
+  let c = Person { last: "Jones", first: "Zoe" };
+  println("${a < b} ${c < a} ${a == a}");
+}
+`
+	want := "true true true\ntrue true true"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}

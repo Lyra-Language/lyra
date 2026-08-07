@@ -10,6 +10,35 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**`string` is ordered** — `"a" < "b"` works, `<=>` answers on strings, and a `data` variant
+or struct field carrying one can `@derive(Ord)`. Until now `<` on two strings was "operands
+must be numeric" and a string payload made a type underivable.
+
+**A `compare_bytes` builtin under a prelude `impl Ord for string`**, which is the same
+division `random_seed` and `read_line` follow: the builtin is only what cannot be written
+in Lyra, and the shaping sits in the prelude. It returns an `i64` on memcmp's convention
+rather than an `Ordering`, so the backend needs no knowledge of a prelude type; the impl
+maps the sign to `Less`/`Equal`/`Greater`.
+
+**The property that makes it a builtin worth having: byte order is code-point order in
+UTF-8.** A lower code point always encodes to a byte sequence that compares lower, by
+design of the encoding — so a single memcmp answers exactly what a rune-by-rune walk would.
+Written in the prelude with `s[i]` the same function is **O(n²)**, because indexing a
+string is O(i); that was the choice recorded when this was deferred, and it is why the
+builtin won.
+
+A shorter string that is a prefix of a longer one sorts first, which falls out of comparing
+the common prefix and then the lengths — computed as a subtraction rather than a branch, so
+the call site stays branchless like the rest of that file. memcmp runs over `min(la, lb)`,
+so it reads past neither buffer whatever the lengths.
+
+**It is deliberately not collation.** `"Z"` sorts before `"a"` because their code points do,
+and accented characters sort by code point rather than alphabetically — `"héllo" < "hello"`
+is *false*, since é is U+00E9. Locale-aware ordering needs tables and a locale and belongs
+in a Unicode library, not in the ordering `<` reaches for. The tests pin that case
+specifically, so a later "fix" toward alphabetical order has to be a deliberate one.
+
+### 08/07/26
 **`@derive(Ord)` on a `data` type** — by constructor declaration order first, then by
 payload. The language cannot read a variant's tag, so the comparison is written as a match
 over the pair of scrutinees.
