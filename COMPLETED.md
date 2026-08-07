@@ -10,6 +10,42 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**`@derive(Ord)` on a `data` type** — by constructor declaration order first, then by
+payload. The language cannot read a variant's tag, so the comparison is written as a match
+over the pair of scrutinees.
+
+**It is 3n arms, not N-squared, and that is why it got built.** The estimate recorded when
+this was deferred assumed every ordered pair of constructors needed an arm. It does not:
+for each constructor in declaration order,
+
+	(Ci(a…), Ci(b…)) => compare the payloads lexicographically
+	(Ci(_…), _)      => Less        // self is the earlier variant
+	(_, Ci(_…))      => Greater     // other is the earlier variant
+
+and once those three are past, no later arm can see `Ci` on either side — so the next
+constructor's three are reached only by values that are neither. The last constructor needs
+only the first arm, since everything else has already been decided. The generated match is
+exhaustive with no warning, which is the check that the reasoning is right.
+
+**Wildcards are arity-matched** (`Rect(_, _)`, never `Rect _`), stepping around a
+pre-existing gap found while writing the target by hand: a *single* wildcard standing for a
+multi-field payload parses and type-checks and then fails to lower — `payload pattern for
+"Rect" not implemented yet` — while the arity-matched form works. Recorded in todo.md,
+since a hand-written match still hits it.
+
+**Writing the target by hand first is what found that**, and it is the second time this week
+the habit paid: the struct derive was built the same way. A synthesis is only as good as the
+source it imitates, and a shape that does not compile when written by hand will not compile
+when generated — but the failure then arrives as a confusing backend error against code
+nobody wrote.
+
+Also surfaced: **`string` has no `Ord`**, so a variant with a string payload cannot derive
+one, and `<` on two strings is refused. An `impl Ord for string` is now expressible in the
+prelude (`len` + indexing + `<=>` on runes) but indexing is O(i), so the obvious version is
+O(n²); the honest choice is between that and a `compare` builtin over memcmp. Left open
+rather than guessed at.
+
+### 08/07/26
 **Structural `==` on an aggregate lowers, and the float warning survives substitution** —
 the two `==` bugs found while designing Eq/Ord.
 

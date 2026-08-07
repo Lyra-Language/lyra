@@ -948,10 +948,22 @@ still refuses them. See COMPLETED.md.
   that field's type), the coherence check refuses a derive beside a hand-written impl for
   free, and the backend lowers it through the path that already exists. `@derive(...)` had
   parsed and been collected onto `TypeDeclStmt.Derives` from the start and read by nobody.
-  - **[OPEN] `@derive(Ord)` on a `data` type.** Refused (`lyra-E038`) with the hand-written
-    fix named. The derived ordering is by constructor order and then payload, and the
-    language has no way to read a tag, so the synthesis is an N-squared match over both
-    scrutinees — worth building, not worth guessing at.
+  - **[DONE 08/07] `@derive(Ord)` on a `data` type** — by constructor declaration order
+    first, then payload. It is **3n arms, not N-squared**: for each constructor in order,
+    `(Ci(a…), Ci(b…))` compares payloads, `(Ci(_…), _)` is `Less` and `(_, Ci(_…))` is
+    `Greater`; past those three no later arm can see `Ci` on either side, and the last
+    constructor needs only the first. That estimate is what had made this look not worth
+    building.
+  - **[OPEN] `string` has no `Ord`,** so a variant (or field) with a string payload cannot
+    derive one: `@derive(Ord)` on `data M = B(string)` reports `operands must be numeric or
+    implement Ord, got string and string` against the synthesized body. `<` on two strings
+    is refused for the same reason. An `impl Ord for string` is now expressible in the
+    prelude (`len` + indexing + `<=>` on runes), but indexing is O(i) so the obvious
+    version is O(n²) — the honest options are that, or a `compare` builtin over memcmp.
+  - **[OPEN] A single wildcard cannot stand for a multi-field payload.** `Rect _` parses
+    and type-checks and then fails to lower (`payload pattern for "Rect" not implemented
+    yet`) while the arity-matched `Rect(_, _)` works. Pre-existing; the derive steps around
+    it by generating arity-matched wildcards, but a hand-written match hits it.
   - **Declaration order is the ordering**, which is why it is opt-in: reordering a struct's
     fields changes how its values sort, and a type that silently acquired an order nobody
     chose would be worse. Rust makes the same trade.

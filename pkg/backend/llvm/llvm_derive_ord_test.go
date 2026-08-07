@@ -76,28 +76,63 @@ let main = () -> void => { println("x") }
 	}
 }
 
-// `@derive(Ord)` on a data type is refused with the fix, rather than going quiet:
-// the derived ordering there is by constructor order and then payload, and the
-// language has no way to read a tag, so the synthesis would be an N-squared match over
-// both scrutinees. Worth building, not worth guessing at.
-//
-// A derive naming a trait that does not exist yet (`@derive(Show)`) is a *warning*
-// instead — it is a no-op, not a mistake, and refusing the program over a feature that
-// has not landed would be worse. Both beat the silence `@derive` had for its whole
-// life, which is the phantom-builtin shape this compiler keeps digging out.
-func TestCheck_DeriveOrdOnADataTypeIsRefused(t *testing.T) {
+// `@derive(Ord)` on a `data` type: by **constructor declaration order first, then by
+// payload**. The language cannot read a variant's tag, so the comparison is a match over
+// the pair — 3n arms rather than n-squared, which is what made it worth synthesizing.
+func TestExec_DeriveOrdOnADataType(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
 @derive(Ord)
-data Color = Red | Green
+data Shape = Circle(i64) | Rect(i64, i64) | Dot
+let main = () -> void => {
+  println("${Circle(1) < Circle(2)} ${Circle(9) < Rect(0, 0)} ${Rect(1, 2) < Rect(1, 3)} ${Dot > Rect(9, 9)}");
+  println("${Circle(2) < Circle(1)} ${Rect(0, 0) < Circle(9)} ${Dot == Dot}");
+}
+`
+	want := "true true true true\nfalse false true"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// The shapes around the edges: an all-nullary enum (no payload comparison at all), a
+// single constructor (the "last constructor needs only one arm" case, which is then the
+// *only* arm), and mixed arities in one type.
+func TestExec_DeriveOrdOnDataTypeEdgeShapes(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+@derive(Ord)
+data Color = Red | Green | Blue
+@derive(Ord)
+data One = Only(i64)
+@derive(Ord)
+data Mixed = A | B(i64) | C(i64, i64)
+let main = () -> void => {
+  println("${Red < Green} ${Green < Blue} ${Blue < Red} ${Red <= Red}");
+  println("${Only(1) < Only(2)} ${Only(2) < Only(1)}");
+  println("${A < B(1)} ${B(1) < B(2)} ${B(9) < C(0, 0)} ${C(1, 1) < C(1, 2)}");
+}
+`
+	want := "true true false true\ntrue false\ntrue true true true"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// A derive naming a trait that does not exist yet is a *warning* — it is a no-op, not a
+// mistake, and refusing the program over a feature that has not landed would be worse.
+// Both beat the silence `@derive` had for its whole life.
+func TestCheck_UnknownDeriveIsANoOpNotAnError(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+@derive(Show)
+struct Ver { v: i64 }
 let main = () -> void => { println("x") }
 `
-	diags := checkWithPrelude(t, src)
-	if len(diags) == 0 {
-		t.Fatal("`@derive(Ord)` on a data type must be reported")
-	}
-	if !strings.Contains(diags[0], "only implemented for structs") {
-		t.Errorf("the message should name the limit and the fix, got: %s", diags[0])
+	if diags := checkWithPrelude(t, src); len(diags) != 0 {
+		t.Errorf("an unimplemented derive must not be an error: %v", diags)
 	}
 }
