@@ -10,6 +10,31 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**A trait may be implemented once per type** (`lyra-E037`). `impl Show for i64` twice drew no
+diagnostic before, and which body a call ran was decided by declaration order.
+
+It looked harmless while a trait only *added* methods — whichever impl won, the call had a
+body — which is presumably why it survived. It stops being harmless the moment a trait
+**overrides** something: the decided `Eq` design has an impl replace structural equality, so
+two impls for one type would make `==` mean two things. That is why this is the first step of
+that work rather than a tidy-up.
+
+It also closed a rule-5 inversion introduced hours earlier the same day.
+`publishBoundCandidates` requires exactly one match before publishing a bound-dispatch
+candidate — correctly refusing to guess — so a duplicated impl published nothing and surfaced
+as a *backend* error at a call site, far from the two declarations that caused it. The
+diagnostic now lands on the second impl and names the first.
+
+**Identical targets only, deliberately.** `impl Show for Box<t>` beside `impl Show for
+Box<i64>` overlaps without being identical, and deciding which is more specific needs the
+specificity ordering this language does not have — the same reasoning that keeps overloading
+receiver-keyed. Exact duplicates are the unambiguous part and the part the `Eq` override
+needs; genuine overlap is left open rather than half-answered.
+
+Reported once per pair rather than per call site: a call-site report names a line that is
+correct, repeats for every call, and leaves the reader hunting for the pair.
+
+### 08/07/26
 **A `where`-bound call lowers, so `Show` works end to end.** `describe(7)` and
 `describe(true)` through one generic body now print "an int" and "a bool" — two
 instantiations, two impls, one source function.

@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -257,4 +258,40 @@ type traitMethodKey struct {
 
 func makeTraitMethodKey(name ast.MethodName) traitMethodKey {
 	return traitMethodKey{Kind: name.Kind, Value: name.Value}
+}
+
+// checkImplCoherence reports a second `impl <Trait> for <Type>` for a trait/type pair
+// that already has one.
+//
+// Run once over the gathered impls rather than at dispatch, so the diagnostic lands on
+// the declaration that caused it and appears once — a call-site report would name a
+// line that is correct, repeat per call, and leave the reader hunting for the pair.
+//
+// **Identical targets only.** `impl Show for Box<t>` beside `impl Show for Box<i64>`
+// *overlaps* without being identical, and deciding which is more specific is the
+// specificity ordering this language deliberately does not have (see the
+// receiver-keyed overloading decision). Rejecting exact duplicates is the part that is
+// unambiguous, and it is what the `Eq` override needs; genuine overlap is left open
+// rather than half-answered.
+//
+// Keyed on the *written* target type rather than a resolved one: this runs before
+// anything is resolved, and two impls whose targets resolve to one type through
+// different aliases is the overlap case above, not this one.
+func (tc *TypeChecker) checkImplCoherence() {
+	type key struct{ trait, target string }
+	first := map[key]*ast.TraitImplStmt{}
+	for _, impl := range tc.traitImpls {
+		if impl.Type == nil {
+			continue
+		}
+		k := key{impl.TraitName, impl.Type.String()}
+		prev, seen := first[k]
+		if !seen {
+			first[k] = impl
+			continue
+		}
+		tc.addErrorCode(impl.GetLocation(), SeverityError, diag.CodeDuplicateTraitImpl,
+			"duplicate impl: %s is already implemented for %s at %s; a trait may be implemented once per type, or which impl a call uses would depend on declaration order",
+			impl.TraitName, impl.Type, prev.GetLocation().Pretty())
+	}
 }

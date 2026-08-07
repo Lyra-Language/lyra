@@ -104,6 +104,9 @@ func (tc *TypeChecker) Check(program *ast.Program) []TypeError {
 			tc.traitImpls = append(tc.traitImpls, impl)
 		}
 	}
+	// Before anything dispatches: two impls of one trait for one type make dispatch
+	// depend on declaration order, which is not a property a program should have.
+	tc.checkImplCoherence()
 	// Check top-level `const`s first, in declaration order, so a later statement —
 	// a function body, or a subsequent const — that references one sees its resolved
 	// type. Lyra has no declare-before-use requirement at the top level (the same

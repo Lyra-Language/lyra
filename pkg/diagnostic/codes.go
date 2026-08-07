@@ -293,6 +293,19 @@ const (
 	// and the backend is too late.
 	CodeUnsatisfiedTraitBound = "lyra-E036"
 
+	// CodeDuplicateTraitImpl: two `impl <Trait> for <Type>` blocks name the same
+	// trait and the same type, so which one a call dispatches to is decided by
+	// declaration order rather than by the program.
+	//
+	// Accepted silently until 08/07, which looked harmless while a trait only *added*
+	// methods: whichever impl won, the call had a body. It stops being harmless the
+	// moment a trait **overrides** something — an `Eq` impl replacing structural
+	// equality means two impls make `==` mean two things. It also already inverted
+	// rule 5: `publishBoundCandidates` requires exactly one match, so a duplicated
+	// impl published no candidate and surfaced as a *backend* error at a call site
+	// far from the two declarations that caused it.
+	CodeDuplicateTraitImpl = "lyra-E037"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

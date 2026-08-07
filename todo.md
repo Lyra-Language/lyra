@@ -830,6 +830,73 @@ marker and not by being spelled `Show`.
 either a convenience or a hole depending on what `Eq` is meant to mean, and is worth
 settling when that trait is designed.
 
+### [DECIDED 08/07] `Eq` and `Ord`
+
+**`==` stays structural; a trait impl overrides it.** Equality already works on scalars,
+strings and — this is the part that decides the design — on a **bare type variable**:
+`let same<t> = (a: t, b: t) -> bool => a == b` compiles and runs, monomorphized per
+instantiation. So a trait is not needed to *make* generic equality possible, and requiring
+one would remove working capability to gain a bound. `Eq` exists for the minority of types
+whose equality is genuinely not field-wise — case-insensitive text, a struct with a cache
+field to ignore.
+
+**`Ord` is the opposite case and must exist.** There is no defensible structural default:
+lexicographic-by-declaration-order is a *choice*, and a footgun, since reordering fields
+would silently change the order. Nothing can order a user type today (`<` on a struct is
+"operands must be numeric") and `<=>` is numeric+rune only.
+
+```lyra
+@builtin(Eq)  trait Eq  { eq: (Self, Self) -> bool }
+@builtin(Ord) trait Ord: Eq { compare: (Self, Self) -> Ordering }
+```
+
+- **Recognized by marker, not by name** — the `@builtin(Maybe)`/`@builtin(Result)`
+  precedent. Keeps `Eq`/`Ord` usable as ordinary names and makes recognition explicit.
+- **One method each.** `!=` is `!eq`; `<` `<=` `>` `>=` are `compare` plus a match on the
+  existing `Ordering`. An impl then cannot make `<` and `<=>` disagree — the failure mode
+  C++ and Java both carry. `Ord: Eq` is what stops `compare` answering `Equal` where `eq`
+  says false; supertrait syntax parses, and whether the bound is *enforced* is unverified.
+- **Floats: `Eq` yes (IEEE, keeping `lyra-W008`), `Ord` no.** Consistent with `<=>` already
+  refusing floats, and it avoids a fourth `unordered` variant that would make every integer
+  three-way match carry a case that cannot occur. `total_cmp` in the prelude (bit-pattern
+  order, Rust's approach) covers sorting. `PartialOrd` deferred until something needs it.
+- **`@derive(Ord)`** drives the structural synthesis — field-wise for structs, tag-then-payload
+  for data. `@derive(...)` already parses and collects onto `TypeDeclStmt.Derives`, and is
+  read by nobody: the same collected-and-unread shape the `where` bounds had before 08/07.
+  Eq needs no derive, being structural by default.
+
+**The override needs a coherence rule**, or `==` means different things in different files —
+the action-at-a-distance this language rejects elsewhere. Two candidates: the `Eq` impl must
+live in the type's own module, or an impl anywhere is program-wide and duplicates are an
+error. The second is simpler and is what the prerequisite below establishes anyway.
+
+Prerequisites, both real bugs found while designing this:
+
+- **[DONE 08/07] Duplicate impls are rejected** (`lyra-E037`), once, at the second impl and
+  naming the first. Accepted silently before, which looked harmless while a trait only
+  *added* methods — whichever impl won, the call had a body — and stops being harmless the
+  moment one **overrides** something. It also closed a rule-5 inversion:
+  `publishBoundCandidates` requires exactly one match, so a duplicated impl published no
+  candidate and surfaced as a *backend* error at a call site far from the two declarations
+  that caused it. **Identical targets only** — `impl Show for Box<t>` beside
+  `impl Show for Box<i64>` overlaps without being identical, and ranking them needs the
+  specificity ordering the language deliberately does not have (see receiver-keyed
+  overloading), so genuine overlap is left open rather than half-answered.
+- **[OPEN] Structural `==` on an aggregate does not lower.** `a == b` on a struct, data,
+  tuple or array type-checks and then fails with `llvm: comparison of non-integer operands
+  not implemented` — the same rule-5 inversion as the type-name member call and the
+  `where`-bound call. Independent of any trait: structural equality is the *default*, so it
+  has to work.
+- **[OPEN] `lyra-W008` does not survive substitution.** A direct `f64 == f64` warns; the
+  identical comparison reached through a type variable does not, though both do IEEE
+  equality and both answer `false` for `0.1 + 0.2 == 0.3` (verified 08/07). Genericity
+  silently strips the safety net. Fire it at the instantiation, where the bound check now
+  fires.
+
+**Sequencing:** coherence → `Ord` (real gap, zero migration) → `@derive` consumption →
+the `Eq` override → the two `==` bugs above. Ord first means the dispatch machinery is
+exercised by something nobody has to migrate to.
+
 ### Trait machinery
 
 Trait-method lowering landed 07/30: an impl method lowers to a function taking the receiver
