@@ -47,6 +47,7 @@
 //	  print.go            print/println, per-type formatting
 //	  input.go            read_line: the stdin shim and its Maybe<string> result
 //	  random.go           random_seed: the OS-entropy shim (the PRNG is in the prelude)
+//	  clock.go            wall_clock_nanos: the clock_gettime shim
 //	  arithmetic.go       math, comparisons, &&/||, numeric conversions, width coercions
 //	  rounding.go         x.floor()/.ceil()/.round() via LLVM intrinsics
 //	  trap.go             checked arithmetic and the trap runtime; the diverged() guard
@@ -258,6 +259,7 @@ type lowerer struct {
 	free        *ir.Func // libc free
 	readLine    *ir.Func // lyra_read_line: one line of stdin into a fresh box (input.go)
 	randomSeed  *ir.Func // lyra_random_seed: one word of OS entropy (random.go)
+	wallClock   *ir.Func // lyra_wall_clock_nanos: nanoseconds since the epoch (clock.go)
 	rcAlloc     *ir.Func // lyra_rc_alloc: malloc a box, rc = 1
 	rcRetain    *ir.Func // lyra_rc_retain: rc += 1 (pinned no-op)
 	rcRelease   *ir.Func // lyra_rc_release: rc -= 1, drop + free at 0 (pinned no-op)

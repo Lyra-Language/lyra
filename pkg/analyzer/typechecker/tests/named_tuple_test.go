@@ -227,10 +227,6 @@ let mk = () -> S => S { v: 1 }`,
 // first.
 func TestIfHeader_NameFollowedByPlainBlock(t *testing.T) {
 	for _, source := range []string{
-		`struct Point {
-  x: i64,
-}
-let n = if Point { 1 } else { 0 }`,
 		`const MAX: bool = true
 let n = if MAX { 1 } else { 0 }`,
 		// And the reading that must survive: a struct literal really *is* the condition's
@@ -243,6 +239,24 @@ let n = if Point { x: 7 }.x > 0 { 1 } else { 0 }`,
 		res := parseCollectAndCheck(t, source, false)
 		assertNoErrors(t, res)
 	}
+
+	// The *type*-name case is the one the grammar fix was about, and it cannot assert
+	// "no errors": a bare type name is not a value, so the condition is ill-typed
+	// whichever way it parses. What distinguishes the two parses is *which* error —
+	// lyra-E035 against `Point` alone means the brace was read as a block and the
+	// condition is the bare name, which is the parse under test. Had precedence
+	// resolved toward the struct literal instead, the complaint would be about the
+	// literal's missing `x` field.
+	//
+	// It asserted no errors until 08/06 and passed, because a bare type name in value
+	// position was inferred as a silent nil — the same silence that let
+	// `Rng.seeded(42)` reach the backend.
+	res := parseCollectAndCheck(t, `struct Point {
+  x: i64,
+}
+let n = if Point { 1 } else { 0 }`, false)
+	assertErrorsAre(t, res,
+		"Point is a type, not a value; Lyra has no associated functions, so there is no Point.something(...) — call the free function directly")
 }
 
 // A call may be the first thing inside parentheses. It could not be until 08/05:

@@ -523,6 +523,24 @@ answer); integers and runes are supported. The lowering is branchless, for the r
 `read_line`'s is: a branching call site returns a merge block, which the temp-release
 machinery does not handle. See `pkg/backend/llvm/README.md`.
 
+**Two phantom builtins closed 08/06.** A **member call on a type name** (`Rng.seeded(42)`)
+type-checked clean and then crashed the backend with `llvm: unsupported method call` — hazard
+5 inverted, and the hole that let `Random.global()` look implemented for months. The silence
+was a rung below the member call: a PascalCase name owning no constructor inferred as a nil
+with no diagnostic, so a plain access (`Rng.field`) and a bare mention (`let x = Rng`) were
+equally quiet and `Nonexistent.make(1)` checked clean. `lyra-E035` now reports it at the
+receiver (`typechecker_typename_value.go`) — one diagnostic at the source rather than one per
+consumer, which is hazard 8's rule. The message says the language has **no type-namespaced
+associated functions**, because that is the state of affairs rather than an unimplemented
+call, and it is why the prelude's constructors are spelled `rng_seeded`.
+
+And **`wall_clock_nanos()`** (`pkg/backend/llvm/clock.go`) replaced `wallClock`, the last
+`builtinEffects` entry with no signature and no lowering. Implemented rather than deleted:
+deleting would have left `EffectTime` a bit nothing in the language could set — the same
+phantom from the other side. It is `clock_gettime` and nothing else, on the `random_seed`
+model, and the effect ladder needed no new machinery — ambient reads carry `EffectTime` and
+are refused by `pure`/`det`, a threaded timestamp is ordinary `i64` data.
+
 **Randomness landed 08/05**, and its shape is the same division of labour as `read_line`:
 `random_seed() -> u64` (`pkg/backend/llvm/random.go`) is the only builtin — one word of OS
 entropy via `getentropy` — while the generator (`Rng`, `next_u64`, `below`, `between`,

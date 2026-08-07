@@ -645,6 +645,13 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 			}
 			return types.PrimitiveType{Name: types.UInt64}
 		}
+		if isBuiltinWallClockFn(ident.Name) {
+			if len(call.Arguments) != 0 {
+				tc.addError(call.GetLocation(), SeverityError,
+					"wall_clock_nanos: expected 0 argument(s), got %d", len(call.Arguments))
+			}
+			return types.PrimitiveType{Name: types.Int64}
+		}
 		// A name that exists but belongs privately to another module gets the
 		// privacy diagnostic rather than "undefined": the distinction between "no
 		// such function" and "not yours to call" is the whole point of the rule.

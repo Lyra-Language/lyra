@@ -88,7 +88,7 @@ func TestDet_AmbientRandom_Violates(t *testing.T) {
 // with the RNG, the message must name the *clock* specifically (the Time bit),
 // not the Input fallback.
 func TestDet_AmbientClock_Violates(t *testing.T) {
-	src := `let stamp = det (n: i64) -> i64 => { wallClock() }`
+	src := `let stamp = det (n: i64) -> i64 => { wall_clock_nanos() }`
 	errs := checkPurity(t, src)
 	assertBoundError(t, errs, "lyra-E016")
 	if !strings.Contains(errs[0].Message, "system clock") {

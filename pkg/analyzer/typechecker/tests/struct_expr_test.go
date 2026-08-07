@@ -2,6 +2,8 @@ package typechecker_test
 
 import (
 	"testing"
+
+	"github.com/Lyra-Language/lyra/pkg/parser"
 )
 
 func TestTypeCheck_StructLiteral_Ok(t *testing.T) {
@@ -48,15 +50,33 @@ func TestTypeCheck_StructLiteralWithDefault_Ok(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-func TestTypeCheck_StructLiteralWithAllDefaults_Ok(t *testing.T) {
-	res := parseCollectAndCheck(t, `
+// A struct literal with *every* field defaulted cannot be written: `Person {}` is a
+// syntax error, because a struct literal's body requires at least one field.
+//
+// This test asserted the opposite and passed, for two compounding reasons worth
+// keeping. parseCollectAndCheck never asks whether the CST holds an error, so a
+// source that does not parse still reaches the typechecker as a truncated AST; and
+// what `Person {}` truncates to is a bare `Person`, which until 08/06 inferred as a
+// silent nil. A syntax error and a missing diagnostic cancelled into a green test for
+// a feature the language does not have.
+//
+// Kept as the record of the gap rather than deleted — flip it to the Ok assertion when
+// the grammar admits an empty literal body (todo.md, Known bugs).
+func TestTypeCheck_StructLiteralWithAllDefaults_NotYetParseable(t *testing.T) {
+	source := `
 		struct Person {
 			name: string = "",
 			age: i64 = 0,
 		}
 		let s = Person {}
-	`, false)
-	assertNoErrors(t, res)
+	`
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if !tree.RootNode().HasError() {
+		t.Fatal("`Person {}` parses now — replace this with the all-defaults Ok assertion")
+	}
 }
 
 func TestTypeCheck_StructLiteralWithDefault_Error(t *testing.T) {

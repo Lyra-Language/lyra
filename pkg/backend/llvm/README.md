@@ -1272,6 +1272,30 @@ supplied. Had the builtin been `random_below`, every draw would be non-determini
 `det` code could not draw at all. None of that is written down as a rule — it falls out of
 bottom-up effect inference over the prelude.
 
+### `wall_clock_nanos` lowers (`clock.go`, 08/06)
+
+**`wall_clock_nanos() -> i64`** is `clock_gettime(CLOCK_REALTIME, …)` and nothing else — the
+same division of labour `random_seed` has: asking the OS what time it is cannot be expressed
+in Lyra, while seconds, elapsed durations and formatting are arithmetic and belong in the
+prelude.
+
+It existed as an entry naming nothing until 08/06 — `wallClock` in `checker/effects.go`'s
+`builtinEffects`, tagged `EffectTime`, with no typechecker signature and no lowering. That is
+the `Random.global()` shape, and implementing it was chosen over deleting the entry because
+deleting would have left `EffectTime` a bit nothing in the language could set.
+
+`struct timespec` is two 64-bit words on both targets, so it is built as `[2 x i64]` rather
+than a named struct, and **CLOCK_REALTIME is 0 on both**. The slot is **zeroed before the
+call**, for the reason `random_seed` writes its `time(NULL)` fallback first: POSIX leaves the
+struct unspecified on failure, so a program ignoring the return value would read
+uninitialized stack to decide a timestamp. The product `sec * 1e9` uses plain `mul`/`add` —
+this is runtime support below the language's checked arithmetic, and no epoch second a
+`clock_gettime` can report overflows it.
+
+The result is an `i64` (signed, because the useful operation on two instants is subtraction)
+— a plain scalar owning nothing, so like `random_seed` there is nothing for the temp
+machinery to do.
+
 ## Emitted symbol names
 
 A top-level user function is emitted as **`lyra.<module>.<name>`** (`userSymbol`), and a generic

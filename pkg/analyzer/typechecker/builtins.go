@@ -175,6 +175,28 @@ func isBuiltinRandomSeedFn(name string) bool {
 	return name == "random_seed"
 }
 
+// isBuiltinWallClockFn reports whether name is the compiler-provided
+// `wall_clock_nanos`. Resolved exactly like print/panic/read_line/random_seed — by
+// name in inferIdentifierCall, after scope resolution misses.
+//
+// `wall_clock_nanos() -> i64` asks the OS what time it is, in nanoseconds since the
+// Unix epoch, and that is all it does. Everything derived from the answer —
+// seconds, elapsed durations, formatting — is arithmetic, so it belongs in the
+// prelude rather than here; same division of labour as `random_seed` beside the
+// prelude's `Rng`, and `read_line` beside `parse_i64`.
+//
+// It carries EffectTime, so `pure` and `det` both refuse it, for the reason
+// `random_seed` carries EffectRand: reading a clock nobody passed in is what makes a
+// computation non-reproducible. A *threaded* timestamp — one taken at the edge of the
+// program and passed down as a parameter — is ordinary `i64` data carrying no effect
+// at all, which is what lets `det` code work with time.
+//
+// See `pkg/backend/llvm/clock.go` for why the name spells its unit, and why the
+// result is signed.
+func isBuiltinWallClockFn(name string) bool {
+	return name == "wall_clock_nanos"
+}
+
 // isPrintableType reports whether print/println can format a value of type t:
 // a string, any integer or float, a bool, or a rune. Each has a backend
 // formatting path (write for strings, snprintf for numbers, "true"/"false" for

@@ -1626,6 +1626,12 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		if dt, ok := tc.findDataTypeByConstructor(e.Constructor); ok {
 			return dt
 		}
+		// Not a constructor, so the collector's reading of this PascalCase name was
+		// wrong — a type, a trait, or a name that does not exist. Say so here rather
+		// than answering a silent nil: every consumer of that nil reported nothing
+		// either, which is how `Rng.seeded(42)` reached the backend. See
+		// typechecker_typename_value.go.
+		tc.reportUnresolvedConstructor(e)
 		return nil
 	case *ast.TupleLiteralExpr:
 		return tc.inferTupleLiteralExpr(e)

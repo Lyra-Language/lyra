@@ -18,21 +18,25 @@ else is in `std/prelude.lyra`. See COMPLETED.md.
 What writing it turned up, roughly in order of how much it costs a program someone wants to
 write today:
 
-- **[OPEN] A member call on a type name type-checks into a backend crash.** `Rng.seeded(42)`
-  and `Foo.bar()` generally pass `lyrac check` with no diagnostic and then fail with
-  `llvm: unsupported method call "seeded"`. This is the hole that made `Random.global()`
-  *look* implemented for so long — it is a front-end gap as much as a missing feature, since
-  rule 5 says the backend refuses forms the front end accepted for a reason, not forms it
-  never looked at. It is why the prelude's constructors are bare (`rng_seeded`) rather than
-  namespaced. Two ways out, and they are different features: reject the call in the
-  typechecker (small, honest, and what rule 5 wants today), or implement **type-namespaced
-  associated functions**, which is the thing the spelling suggests and which `Trait::method`
-  already half-exists for.
-- **[OPEN] `wallClock()` is the remaining entry naming nothing.** Same shape
-  `Random.global()` had before it was replaced: a `builtinEffects` entry tagged `EffectTime`
-  with no typechecker signature and no lowering. Either implement it beside `random_seed`
-  (it is the smaller job — one libc call, no generator) or drop the entry. Leaving it is
-  what let the random one masquerade as built for months.
+- **[DONE 08/06] A member call on a type name is rejected in the typechecker**, rather than
+  type-checking clean and crashing the backend with `llvm: unsupported method call`. The
+  silence was a rung below the member call and so wider than this entry knew: a PascalCase
+  name owning no constructor inferred as a *nil with no diagnostic*, which took a plain
+  access (`Rng.field`) and a bare mention (`let x = Rng`) with it, and let
+  `Nonexistent.make(1)` check clean too. `lyra-E035`, reported at the receiver in three
+  cases — a type, a trait (which gets the `Trait::method(…)` spelling it was reaching for),
+  and a name that is neither. See COMPLETED.md.
+  - **[OPEN] Type-namespaced associated functions** remain the *feature* the spelling
+    suggests, and `Trait::method` already half-exists for it. The diagnostic now says the
+    language does not have them, which is honest and is what rule 5 wanted; building them
+    is a separate decision, not a bug fix.
+- **[DONE 08/06] `wall_clock_nanos()` names something.** `wallClock` was the last
+  `builtinEffects` entry with no signature and no lowering — the `Random.global()` shape,
+  still in place. Implemented rather than deleted, because deleting would have left
+  `EffectTime` a bit nothing in the language could set. It is `clock_gettime` and nothing
+  else, with everything derived from the answer left to the prelude; `pure`/`det` refuse it
+  while a *threaded* timestamp stays ordinary data. Renamed to snake_case, with the unit in
+  the name. See COMPLETED.md.
 - **[DONE 08/06] A `match` arm may end in an assignment** — a `match` used as a
   *statement*, for its effect. The four arm-body sites lowered through `lowerExpr`, which
   requires a block value; they use `lowerBranchValue` now, the same value-optional helper
@@ -86,6 +90,23 @@ write today:
   want both.
 
 ## Known bugs
+
+- **[OPEN] A struct literal with every field defaulted cannot be written.** `Person {}` is a
+  syntax error — a literal body requires at least one field — so defaults stop being usable
+  at exactly the point they are most useful, and the workaround is to name a field you
+  wanted the default for. Found 08/06 by a test that claimed the opposite and passed:
+  `TestTypeCheck_StructLiteralWithAllDefaults_Ok`. It is kept, inverted, so the day the
+  grammar admits an empty body the test fails and says so.
+
+- **[OPEN] 14 typechecker test sources do not parse, and the helper does not care.**
+  `parseCollectAndCheck` checks `parser.Parse`'s error and the collector's, but never
+  `tree.RootNode().HasError()` — so a source with a syntax error reaches the typechecker as
+  a *truncated AST* and an `assertNoErrors` on it asserts nothing about the feature named in
+  the test. That is how the struct-defaults test above stayed green: a syntax error and a
+  missing diagnostic cancelling out. The count comes from adding the guard and running the
+  package; some of the 14 are deliberate (`TestStructSeparators_LiteralStillRequiresCommas`
+  means to produce a parse error), so the work is to sort them and then add the guard, which
+  closes the class rather than the instance.
 
 Two closed 08/05, and the second was the reason the first had been stuck. **An
 all-uppercase type name could not be used in a struct literal** — `struct S` declared fine
@@ -659,10 +680,17 @@ interior assignment, and deep retain-on-copy.
   struct holding *any* generic field (`Maybe<i64>`) failed identically. See COMPLETED.md.
 - **[DECIDED 07/11] Command-line args are ambient, not a `main` parameter.** `main` stays
   parameter-less always (one uniform entry-point shape); args are read through a builtin
-  accessor (`CommandLine.args()`) tagged `EffectInput` — the same ambient-effect pattern as
-  `Random.global()` / `wallClock()`, so it composes with the `pure`/`det` ladder for free,
-  including for a callee other than `main` that wants args. Matches Rust/Go/Zig/Swift over
-  Java/C#. Not implemented; it is a convention recorded to prevent later signature churn.
+  accessor tagged `EffectInput` — the same ambient-effect pattern as `random_seed()` /
+  `wall_clock_nanos()`, so it composes with the `pure`/`det` ladder for free, including for
+  a callee other than `main` that wants args. Matches Rust/Go/Zig/Swift over Java/C#. Not
+  implemented; it is a convention recorded to prevent later signature churn.
+
+  **The spelling this entry proposed — `CommandLine.args()` — is not available**, and both
+  names it cited as precedent have since been replaced by bare ones. A member call on a type
+  name is `lyra-E035` as of 08/06: the language has no type-namespaced associated functions,
+  which is exactly why the prelude's constructors are `rng_seeded` rather than
+  `Rng.seeded`. Whatever this becomes, it is a bare name (`command_line_args()`), or it
+  waits on associated functions being built.
 - **[ROADMAP] (#7) Explicit SIMD** — `simd<T,N>` → LLVM `<N x T>`, for determinism and games.
   Layer 1 is the primitive vector type; layer 2 is a data-parallel map over `pure`/`det`
   component arrays (the auto-parallel payoff). SoA-for-components, distinct from `[N]T`.

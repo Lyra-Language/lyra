@@ -264,6 +264,25 @@ const (
 	// message names the ascending spelling of the same set rather than pointing at a token.
 	CodeDescendingRangeNotIterated = "lyra-E034"
 
+	// CodeTypeNameAsValue: a PascalCase name used in value position that is not a
+	// data constructor — a type (`Rng.seeded(42)`), a trait (`Greet.hello(x)`), or
+	// nothing at all (`Nonexistent.make(1)`).
+	//
+	// The collector reads every PascalCase name in expression position as a nullary
+	// data constructor, since the lexer guarantees it is not a variable; when no
+	// constructor owns it that reading is simply wrong. Answering nil and saying
+	// nothing — which is what happened until 08/06 — let all three forms pass
+	// `lyrac check` and fail in codegen as `llvm: unsupported method call`, the
+	// backend refusing a form the front end never looked at rather than one it
+	// accepted on purpose (hazard 5).
+	//
+	// The type case is the one worth naming precisely: Lyra has **no
+	// type-namespaced associated functions**, so `Rng.seeded(42)` is not an
+	// unimplemented call but a form the language does not have, and the free
+	// function (`rng_seeded`) is the whole answer. That is also why the prelude's
+	// constructors are spelled bare.
+	CodeTypeNameAsValue = "lyra-E035"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

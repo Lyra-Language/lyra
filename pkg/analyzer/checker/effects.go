@@ -8,9 +8,9 @@ package checker
 // PurityEffects mask), `det` (deterministic, via DetEffects), and `noalloc`
 // (via EffectAlloc).
 //
-// EffectMut, the two IO bits, EffectAlloc and EffectRand (via the `random_seed()`
-// builtin) are all detected today; EffectTime has a `wallClock()` table entry that
-// nothing implements yet. IO
+// Every bit is detected today: EffectMut, the two IO bits, EffectAlloc, EffectRand
+// (via the `random_seed()` builtin) and, as of 08/06, EffectTime (via
+// `wall_clock_nanos()`, which until then was a table entry naming nothing). IO
 // is split into two bits because the halves threaten determinism
 // asymmetrically — that asymmetry is exactly what lets `det` be more permissive
 // than `pure`:
@@ -50,7 +50,7 @@ const (
 	// is arithmetic over ordinary data and carries only EffectMut, which is what
 	// lets `det` code use reproducible randomness.
 	EffectRand
-	// EffectTime: reads wall-clock/system time (the ambient `wallClock()`).
+	// EffectTime: reads wall-clock/system time (the ambient `wall_clock_nanos()`).
 	// Non-deterministic, so it breaks `pure` and `det`. A *threaded* tick passed
 	// in as a parameter is ordinary data, not this effect.
 	EffectTime
@@ -181,5 +181,16 @@ var builtinEffects = map[string]Effect{
 	// call that could not be compiled, and a program writing it got a clean `lyrac
 	// check` followed by a backend crash.
 	"random_seed": EffectRand,
-	"wallClock":   EffectTime,
+	// `wall_clock_nanos()` is the Time half of exactly the same arrangement, and it
+	// only became one on 08/06. It sat here as `wallClock` — this table's entry,
+	// tagged EffectTime, with no typechecker signature and no lowering anywhere: the
+	// `Random.global` shape described just above, still in place, a line below the
+	// comment explaining why that shape is a bug. Deleting it was the alternative,
+	// and would have left EffectTime a bit nothing in the language could set, which
+	// is the same phantom seen from the other side.
+	//
+	// The name changed with the implementation: snake_case like every other name in
+	// the language, and the unit spelled out, because a clock returning a bare number
+	// invites a wrong guess that nothing catches. See `backend/llvm/clock.go`.
+	"wall_clock_nanos": EffectTime,
 }

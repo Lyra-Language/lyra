@@ -81,7 +81,7 @@ see `todo.md`. An **unresolvable external call** (no local lambda, builtin, or t
 conversion) conservatively taints `AllEffects` (`PurityEffects | EffectAlloc`) — everything,
 including Alloc, so `noalloc` flags it too (we can't verify it doesn't allocate).
 `builtinEffects`: print/println→Output, read→Input, write→Input|Output, `await`→Input,
-`Random.global()`→Rand, `wallClock()`→Time, **`panic`→None**. Only *ambient* rand/time sources
+`random_seed()`→Rand, `wall_clock_nanos()`→Time, **`panic`→None**. Only *ambient* rand/time sources
 carry the bit — a threaded RNG's `rng.next()` or a passed-in `tick` (reached through a local
 binding) is ordinary `mut`/`own` data, which is what lets `det` permit seeded randomness and
 sim-time. User surface is the `pure`/`det`/`noalloc` ladder — see `todo.md` FP/Imperative #5.

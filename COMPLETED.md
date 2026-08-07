@@ -10,6 +10,84 @@ Newest first.
 ## Dated log
 
 ### 08/06/26
+**A member call on a type name no longer type-checks into a backend crash.**
+`Rng.seeded(42)` passed `lyrac check` with no diagnostic and then failed with
+`llvm: unsupported method call "seeded"`. That is hazard 5 inverted — the backend
+refusing a form the front end had never looked at, rather than one it accepted on
+purpose — and it is the hole that let `Random.global()` *look* implemented for months.
+
+**The silence was one rung below the member call, which is why it was so wide.** The lexer
+guarantees a PascalCase name in expression position is not a variable, so the collector
+reads every one as a nullary data constructor (`None`, `Red`). When no constructor owns the
+name, `inferExprType` answered nil and said nothing — so the receiver was untyped and
+`inferMemberCall` returned nil in turn, also silently. Three surface forms shared the one
+hole: a call (`Rng.seeded(42)`), a plain access (`Rng.field`), and a bare mention
+(`let x = Rng`). `Nonexistent.make(1)` — a name that exists nowhere at all — checked clean
+too, which is the clearest statement of how little was being asked.
+
+Fixed at the source rather than at each consumer (hazard 8), with the message phrased about
+the *name* so it reads correctly in all three positions. `lyra-E035`, in three cases because
+the fix differs: a **type** ("Lyra has no associated functions" — `Rng.seeded(…)` is not an
+unimplemented call but a form the language does not have, and the free function `rng_seeded`
+is the whole answer, which is why the prelude's constructors are spelled bare); a **trait**
+(`Trait::method(…)` *is* a spelling the language has, so the message names it); and a name
+that is neither (undefined).
+
+**Two green tests were resting on that silence, and both were worth more than the fix.**
+`TestIfHeader_NameFollowedByPlainBlock` asserted no errors for
+`if Point { 1 } else { 0 }` — but a bare type name is not a bool whichever way the header
+parses, so the assertion could never have held; it passed because the ill-typed condition
+inferred as nil. It now asserts *which* error, which is the sharper test of the grammar fix
+it was written for: E035 against `Point` alone means the brace was read as a block.
+
+`TestTypeCheck_StructLiteralWithAllDefaults_Ok` was worse, and turned up a real gap: **an
+all-defaults struct literal cannot be written at all.** `Person {}` is a syntax error — a
+literal body needs at least one field — and `parseCollectAndCheck` never asks whether the
+CST holds an error, so the source reached the typechecker as a truncated AST whose value was
+a bare `Person`, which inferred as the same silent nil. A syntax error and a missing
+diagnostic cancelled into a green test for a feature the language does not have. The test is
+kept, inverted, as the record of the gap. Probing the helper with a `HasError` guard found
+**14 sources in that package that do not parse**, some deliberate; auditing them is open
+(todo.md).
+
+### 08/06/26
+**`wall_clock_nanos()` — the last entry naming nothing now names something.** `wallClock`
+sat in `checker/effects.go`'s `builtinEffects` tagged `EffectTime`, with no typechecker
+signature and no lowering anywhere: precisely the `Random.global()` shape, still in place,
+a line below the comment explaining why that shape is a bug.
+
+**Implemented rather than deleted**, which was the other option on the table. Deleting the
+entry would have left `EffectTime` a bit nothing in the language could set — the same
+phantom seen from the other side, and one that reads as a working feature in the effect
+ladder's documentation.
+
+`wall_clock_nanos() -> i64` is `clock_gettime(CLOCK_REALTIME, …)` and nothing else
+(`backend/llvm/clock.go`), the same division of labour `random_seed` has beside the
+prelude's `Rng`: asking the OS what time it is cannot be expressed in Lyra, while seconds,
+elapsed durations and formatting are arithmetic and belong in the prelude. Three decisions
+the old name did not record:
+
+- **snake_case**, like every other name in the language (`random_seed`, `read_line`,
+  `parse_i64`). `wallClock` matched nothing.
+- **The unit is in the name.** A clock returning a bare number invites the reader to guess
+  seconds, millis or nanos, and a wrong guess is silent; Go's `UnixNano` and Zig's
+  `nanoTimestamp` both spell it out.
+- **`i64`, not `u64`.** The useful operation on two instants is subtraction and a difference
+  is signed. Nanoseconds in an i64 run to 2262.
+
+The `timespec` is **zeroed before the call**, for the reason `random_seed` writes its
+`time(NULL)` fallback before calling `getentropy` rather than after a failure test: POSIX
+leaves the struct unspecified on failure, so a program ignoring the return value would be
+reading uninitialized stack to decide a timestamp.
+
+The effect story needed no new machinery, and that is the point of having charged the bit
+in the right place. Ambient `wall_clock_nanos()` carries `EffectTime`, so `pure` and `det`
+both refuse it with a message naming the *clock* rather than the generic input effect; a
+timestamp threaded in as a parameter is ordinary `i64` data carrying nothing, so `det`
+arithmetic over time works untouched. Exactly the split that lets `det` code use a seeded
+`Rng`.
+
+### 08/06/26
 **Tuple match exhaustiveness is a pattern matrix now, so coverage spread across arms
 counts.** The old test asked only "is any one arm irrefutable?", which cannot see this:
 
