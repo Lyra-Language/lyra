@@ -109,6 +109,17 @@ Before this, a call through a parameter hit the unresolvable-callee branch and t
 `AllEffects`, which spread to every caller: **no callback-taking function was callable from
 `pure` code at all**, which is the entire prelude combinator layer.
 
+`callableParams` maps the declared parameter names *and* the names a body-level `match` binds
+them to (`addMatchAliases`). That second half is not an extra: a **multi-clause function is a
+match on its parameters** by the time this runs (`typechecker/multi_clause.go` desugars it, and
+clears `LambdaClauses`), so a clause that renames a parameter — `(self: …, predicate: …)`
+destructured as `(Some v, pred)` — reaches this pass as an arm binding. Without the aliases the
+call through `pred` is an unresolvable callee and the whole function is charged `AllEffects`;
+with them it is the parameter it destructures, and its declared bound is enforced under the new
+name too. Only a *whole-value* binding aliases the argument — the `v` of `Some v` is the
+payload, and charging a call through it against that position would consult the wrong
+parameter's bound. See COMPLETED.md, 08/06, for the prelude breakage that found this.
+
 Two consequences that are the point rather than side effects:
 
 - **An annotation constrains a function's own body.** `pure` on a higher-order function claims

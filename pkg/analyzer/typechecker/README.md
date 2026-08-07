@@ -496,12 +496,27 @@ is a hard **error** — the case set is finite and known, and `_ =>` is always a
 out — while an *open* one (numbers, strings, runes, arrays, tuples, structs) is a **warning**,
 since no arm list can enumerate the domain. Every one of them carries the `lyra-E009` code (the
 warnings defaulted to the generic `lyra-E001` until 07/29), and the backend now traps on the
-fall-through, so the warning is backed by defined runtime behavior rather than UB. A
-**tuple/struct** match counts as exhaustive when any unguarded arm is *irrefutable* — every
-sub-pattern binds rather than tests (`patternIsIrrefutable`/`aggregateMatchIsExhaustive`) — so
-`match pair { (a, b) => … }` is complete and no longer demands an unreachable wildcard; this
-mirrors the backend's `aggPatternTest` returning a nil condition for exactly those patterns. A
-guarded arm never counts (the guard may fail). An **array** match is over *lengths*, so a
+fall-through, so the warning is backed by defined runtime behavior rather than UB. A **struct**
+match counts as exhaustive when any unguarded arm is *irrefutable* — every sub-pattern binds
+rather than tests (`patternIsIrrefutable`/`aggregateMatchIsExhaustive`) — so
+`match p { {x, y} => … }` is complete and no longer demands an unreachable wildcard; this
+mirrors the backend's `aggPatternTest` returning a nil condition for exactly those patterns.
+
+A **tuple** match is checked as a *pattern matrix* instead (`exhaustiveness.go`), because the
+per-arm test cannot see coverage spread across arms: `(Some v, pred) => …, (None, _) => …`
+covers every value while no single arm is irrefutable. That is the shape **every multi-clause
+function desugars to**, so until 08/06 the prelude's own combinators each drew a false
+`lyra-E009` — and a warning that fires on correct code is worse than none, since it trains the
+reader to ignore the class. Checking columns *independently* would be unsound the other way
+(`(Some v, None)` beside `(None, Some x)` covers both constructors in both columns and still
+leaves `(Some, Some)` unmatched), so the check is Maranget's: specialize the matrix by each
+constructor of column 0 and recurse, concluding coverage only from rows that agree on every
+column to the left. Enumerable columns are `data` types and `bool`; anything else is covered
+only by a row binding it whole. A pattern the matrix cannot interpret drops its row, which can
+only make the answer "not exhaustive" — the direction that over-warns, never the one that goes
+quiet on a match that can trap. A guarded arm never counts (the guard may fail).
+
+An **array** match is over *lengths*, so a
 *union* of arms can be exhaustive where no single arm is: `[e1..en]` covers exactly n and
 `[e1..en, ...rest]` covers every length ≥ n, so `[] => …, [h, ...t] => …` — the recursive list
 idiom — is complete and no longer warns. Only arms whose element sub-patterns are all

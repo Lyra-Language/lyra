@@ -55,114 +55,114 @@ module std.prelude
 @builtin(Maybe)
 pub data Maybe<t> = None | Some t
 
-pub let unwrap_or<t> = pure noalloc (self: Maybe<t>, fallback: t) -> t => match self {
-  Some v => v,
-  None => fallback,
+pub let unwrap_or<t> = pure noalloc (self: Maybe<t>, fallback: t) -> t {
+  (Some v, _) => v,
+  (None, fb) => fb,
 }
 
-pub let unwrap_or_else<t> = pure noalloc (self: Maybe<t>, f: () -> t) -> t => match self {
-  Some v => v,
-  None => f(),
+pub let unwrap_or_else<t> = pure noalloc (self: Maybe<t>, f: () -> t) -> t {
+  (Some v, _) => v,
+  (None, f) => f(),
 }
 
-pub let expect<t> = pure noalloc (self: Maybe<t>, msg: string) -> t => match self {
-  Some v => v,
-  None => panic(msg),
+pub let expect<t> = pure noalloc (self: Maybe<t>, msg: string) -> t {
+  (Some v, _) => v,
+  (None, msg) => panic(msg),
 }
 
 pub let unwrap<t> = pure noalloc (self: Maybe<t>) -> t => expect(self, "unwrap on a None")
 
-pub let is_some<t> = pure noalloc (self: Maybe<t>) -> bool => match self {
-  Some _ => true,
-  None => false,
+pub let is_some<t> = pure noalloc (self: Maybe<t>) -> bool {
+  (Some _) => true,
+  (None) => false,
 }
 
-pub let is_none<t> = pure noalloc (self: Maybe<t>) -> bool => match self {
-  Some _ => false,
-  None => true,
+pub let is_none<t> = pure noalloc (self: Maybe<t>) -> bool {
+  (Some _) => false,
+  (None) => true,
 }
 
-pub let ok_or<t,e> = pure noalloc (self: Maybe<t>, err: e) -> Result<t,e> => match self {
-  Some v => Ok v,
-  None => Err err,
+pub let ok_or<t,e> = pure noalloc (self: Maybe<t>, err: e) -> Result<t,e> {
+  (Some v, _) => Ok v,
+  (None, err) => Err err,
 }
 
-pub let ok_or_else<t,e> = pure noalloc (self: Maybe<t>, f: () -> e) -> Result<t,e> => match self {
-  Some v => Ok v,
-  None => Err(f()),
+pub let ok_or_else<t,e> = pure noalloc (self: Maybe<t>, f: () -> e) -> Result<t,e> {
+  (Some v, _) => Ok v,
+  (None, f) => Err(f()),
 }
 
-pub let map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> u) -> Maybe<u> => match self {
-  Some v => Some(f(v)),
-  None => None,
+pub let map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> u) -> Maybe<u> {
+  (Some v, f) => Some(f(v)),
+  (None, _) => None,
 }
 
-pub let flat_map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> Maybe<u>) -> Maybe<u> => match self {
-  Some v => f(v),
-  None => None,
+pub let flat_map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> Maybe<u>) -> Maybe<u> {
+  (Some v, f) => f(v),
+  (None, _) => None,
 }
 
 // `filter` has no `Result` counterpart, and deliberately: rejecting an `Ok` would have to
 // invent the `e` to fail with, which only the caller can supply — that is `ok_or`'s job,
 // not this one's. A name declared once here is an ordinary prelude name, not a set.
-pub let filter<t> = pure noalloc (self: Maybe<t>, predicate: (t) -> bool) -> Maybe<t> => match self {
-  Some v => if predicate(v) { Some v } else { None },
-  None => None,
+pub let filter<t> = pure noalloc (self: Maybe<t>, predicate: (t) -> bool) -> Maybe<t> {
+  (Some v, pred) => if pred(v) { Some v } else { None },
+  (None, _) => None,
 }
 
 @builtin(Result)
 pub data Result<t, e> = Ok(t) | Err(e)
 
-pub let is_ok<t,e> = pure noalloc (self: Result<t, e>) -> bool => match self {
-  Ok _ => true,
-  Err _ => false,
+pub let is_ok<t,e> = pure noalloc (self: Result<t, e>) -> bool {
+  (Ok _) => true,
+  (Err _) => false,
 }
 
-pub let is_err<t,e> = pure noalloc (self: Result<t, e>) -> bool => match self {
-  Ok _ => false,
-  Err _ => true,
+pub let is_err<t,e> = pure noalloc (self: Result<t, e>) -> bool {
+  (Ok _) => false,
+  (Err _) => true,
 }
 
-pub let unwrap_or<t,e> = pure noalloc (self: Result<t,e>, fallback: t) -> t => match self {
-  Ok v => v,
-  Err _ => fallback,
+pub let unwrap_or<t,e> = pure noalloc (self: Result<t,e>, fallback: t) -> t {
+  (Ok v, _) => v,
+  (Err _, fb) => fb,
 }
 
-pub let unwrap_or_else<t,e> = pure noalloc (self: Result<t,e>, f: () -> t) -> t => match self {
-  Ok v => v,
-  Err _ => f(),
+pub let unwrap_or_else<t,e> = pure noalloc (self: Result<t,e>, f: () -> t) -> t {
+  (Ok v, _) => v,
+  (Err _, f) => f(),
 }
 
-pub let expect<t,e> = pure noalloc (self: Result<t,e>, msg: string) -> t => match self {
-  Ok v => v,
-  Err _ => panic(msg),
+pub let expect<t,e> = pure noalloc (self: Result<t,e>, msg: string) -> t {
+  (Ok v, _) => v,
+  (Err _, msg) => panic(msg),
 }
 
 pub let unwrap<t,e> = pure noalloc (self: Result<t,e>) -> t => expect(self, "unwrap on an Err")
 
-pub let ok<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<t> => match self {
-  Ok v => Some v,
-  Err _ => None,
+pub let ok<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<t> {
+  (Ok v) => Some v,
+  (Err _) => None,
 }
 
-pub let err<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<e> => match self {
-  Ok _ => None,
-  Err err => Some err,
+pub let err<t,e> = pure noalloc (self: Result<t,e>) -> Maybe<e> {
+  (Ok _) => None,
+  (Err err) => Some err,
 }
 
-pub let map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> u) -> Result<u,e> => match self {
-  Ok v => Ok(f(v)),
-  Err err => Err err,
+pub let map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> u) -> Result<u,e> {
+  (Ok v, f) => Ok(f(v)),
+  (Err err, _) => Err err,
 }
 
-pub let flat_map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> Result<u,e>) -> Result<u,e> => match self {
-  Ok v => f(v),
-  Err err => Err err,
+pub let flat_map<t,u,e> = pure noalloc (self: Result<t,e>, f: (t) -> Result<u,e>) -> Result<u,e> {
+  (Ok v, f) => f(v),
+  (Err err, _) => Err err,
 }
 
-pub let filter<t,e> = pure noalloc (self: Result<t,e>, predicate: (t) -> bool) -> Maybe<t> => match self {
-  Ok v => if predicate(v) { Some v } else { None },
-  Err _ => None,
+pub let filter<t,e> = pure noalloc (self: Result<t,e>, predicate: (t) -> bool) -> Maybe<t> {
+  (Ok v, pred) => if pred(v) { Some v } else { None },
+  (Err _, _) => None,
 }
 
 pub let map<t,u> = pure (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]

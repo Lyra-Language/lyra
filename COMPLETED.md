@@ -10,6 +10,108 @@ Newest first.
 ## Dated log
 
 ### 08/06/26
+**Tuple match exhaustiveness is a pattern matrix now, so coverage spread across arms
+counts.** The old test asked only "is any one arm irrefutable?", which cannot see this:
+
+```lyra
+match (self, predicate) {
+  (Some v, pred) => …,   // column 0 covers Some
+  (None, _)      => …,   // …and None; column 1 binds in both
+}
+```
+
+Every value is matched, no single arm is irrefutable, so it warned. **That is the shape
+every multi-clause function desugars to**, which is how the prelude ended up emitting
+fourteen false `lyra-E009`s at once. A warning that fires on correct code is worse than no
+warning: it is a standing instruction to ignore the class, and the class also contains
+genuinely non-exhaustive matches that trap at runtime.
+
+**The obvious cheap fix — check each column independently — is unsound**, and that is why
+this is a matrix rather than a loop. `(Some v, None)` beside `(None, Some x)` has both
+constructors in both columns and still leaves `(Some, Some)` unmatched; per-column would
+call it exhaustive and go quiet on a real trap. So the check is Maranget's: specialize the
+matrix by each constructor of column 0 and recurse, concluding coverage only from rows that
+agree on every column to the left. Enumerable columns are `data` types and `bool`; every
+other column is covered only by a row that binds it whole, which keeps `(Some x, 0) => …`
+correctly incomplete.
+
+Everything the matrix cannot interpret **drops its row**, which can only shrink coverage and
+so can only produce a *warning* — the direction that over-warns, never the one that goes
+silent. The old per-arm answer is subsumed: a fully irrefutable arm becomes a row of
+wildcards, which survives every specialization.
+
+Two things fell out worth keeping. Parentheses around a single-field payload collect as a
+one-element `TuplePattern` (`Some (Some x)` and `Some None` reach the checker differently
+spelled), so `unparenthesize` strips it — the type side already did the matching unwrap in
+`FieldTypes`. And rows are copied rather than appended into, since a specialized row's head
+can be a pattern's own `Elements` slice and appending would write the remaining columns into
+the AST.
+
+Structs still use the per-arm test: a struct pattern may list a *subset* of its fields, so
+its columns are not the fixed positional list a tuple's are, and nothing in the language
+reaches the case — the desugaring that made this matter produces a tuple.
+
+### 08/06/26
+**A `match` on a parameter now tells effect analysis that its arm bindings *are* that
+parameter** — so renaming a parameter in a pattern costs nothing. It used to cost
+everything, silently.
+
+The reachable form is the multi-clause function. `desugarClauses` rewrites clauses into
+`match (p0, p1) { … }` before any checker runs, so a clause's parameter list becomes arm
+patterns and `LambdaClauses` is empty by the time purity sees the lambda. `callableParams`
+mapped only the *declared* parameter names, so a body calling a callback through a
+**renamed** binding resolved to nothing and hit the unresolved-callee default —
+`AllEffects`, which is deliberately the worst case for an imported function nobody can
+verify. The function was then reported as both impure and allocating, at the declaration,
+naming a parameter that looked perfectly ordinary:
+
+```lyra
+pub let filter<t> = pure noalloc (self: Maybe<t>, predicate: (t) -> bool) -> Maybe<t> {
+  (Some v, pred) => if pred(v) { Some v } else { None },   // `pred`, not `predicate`
+  (None, _) => None,
+}
+```
+
+That is the prelude's own `filter`, both copies of it, and it took ~25 tests across
+`pkg/modules` and `pkg/backend/llvm` with it — every one reporting the same two
+diagnostics twice, none of them naming the rename. The tell is that the *sibling*
+combinators were fine: `unwrap_or_else`'s `(None, f) => f()` calls its callback too, and
+passed only because that clause happened to reuse the declared name. **Correct analysis
+was contingent on a coincidence of spelling.**
+
+**It was never a clause-form bug**, which is why the fix is not at the clause list. The
+hand-written `=> match (self, predicate) { (Some v, pred) => pred(v), … }` failed
+identically; the desugaring only made the hole reachable from something that reads as a
+plain function head. `addMatchAliases` therefore works on the body's own `MatchExpr`:
+where a scrutinee position is an identifier naming a parameter, an arm's whole-value
+binding at that position is another name for it. Both of clauseScrutinee's shapes are
+covered, since arm patterns mirror them — the bare parameter for a one-parameter function,
+a tuple of them otherwise.
+
+Three limits, each deliberate:
+
+- **Only a whole-value binding aliases the argument.** The `v` of `Some v` names the
+  payload, and charging a call through it against the argument's position would read the
+  *wrong parameter's* declared bound — a misattributed diagnostic, which is worse than the
+  missing one.
+- **Only the body's own match**, not every match in the body. Deeper down, a scrutinee's
+  names sit under bindings this pass would have to track to know whether `f` is still the
+  parameter; being wrong there misattributes rather than misses.
+- **Ambiguity drops the name.** `(a, b) => …` beside `(b, a) => …` gives a name two
+  positions and no single argument to charge against, so it stays unresolvable — which is
+  what all of these were before.
+
+Fixing `callableParams` fixed all four consumers at once, because `lambdaEffects`'
+inference, both reporting sites, and `declaredBound` already funnel through it — so a
+renamed parameter carrying `f: pure () -> t` has its bound enforced under the new name too,
+rather than being laundered into an unconstrained callback.
+
+One diagnostic improved on the way: the callback-argument message named the callee's
+*internal* binding (`impure g argument` for a parameter declared `f`), which for a
+desugared clause is an arm binding the caller cannot see anywhere. It now names the
+parameter as the signature spells it.
+
+### 08/06/26
 **`<=>` lowers, and it yields `Ordering` rather than a bool.** It had parsed and
 type-checked since the grammar had a `spaceship_operator` — as a **bool**, with its
 operands never checked, because the operator appears in no case of

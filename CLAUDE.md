@@ -177,6 +177,21 @@ because each was learned from a real failure, and none is local to one package.
    any later pass runs. Prefer the desugar: one rewrite beats teaching every consumer the
    same offset, and the mistake is invisible in review either way.
 
+11. **A desugaring can rebind a parameter, so a later pass must not assume a body refers
+   to one by its declared name.** `desugarClauses` turns a multi-clause function into
+   `match (p0, p1) { … }`, and a clause is free to name a parameter something else —
+   `(self: …, predicate: …)` destructured as `(Some v, pred)`. Until 08/06 `callableParams`
+   knew only the declared names, so a call through the rename resolved to nothing and took
+   the unresolved-callee default (`AllEffects`), reporting the function as impure *and*
+   allocating. The trap is that it works whenever a clause happens to reuse the declared
+   name — the prelude's `unwrap_or_else` passed and its `filter` did not, for no visible
+   reason — so **correctness was contingent on a coincidence of spelling**, which review
+   cannot see. `addMatchAliases` now maps arm bindings back to the parameter position they
+   destructure. Two general lessons: fix such a thing at the construct the desugaring
+   *produces* (the hand-written `match` had the identical hole, and the clause form only
+   made it reachable), and be suspicious of any name-keyed analysis downstream of a pass
+   that rewrites bindings.
+
 ## Package map
 
 | Package | What it is | Depth |

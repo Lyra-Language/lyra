@@ -70,9 +70,15 @@ func patternIsIrrefutable(pat ast.Pattern) bool {
 	return false
 }
 
-// aggregateMatchIsExhaustive reports whether a match over a tuple or struct
-// scrutinee covers every value: an unguarded catch-all, or any unguarded
-// irrefutable destructuring arm. A guarded arm never counts (its guard may fail).
+// aggregateMatchIsExhaustive reports whether a match over a **struct** scrutinee covers
+// every value: an unguarded catch-all, or any unguarded irrefutable destructuring arm. A
+// guarded arm never counts (its guard may fail).
+//
+// Tuples went through here too until 08/06 and now use the pattern matrix in
+// exhaustiveness.go, which sees coverage spread across arms. Structs could follow, but a
+// struct pattern may list a *subset* of its fields, so its columns are not the fixed
+// positional list a tuple's are — and no code in the language hits the case, since the
+// multi-clause desugaring that made this matter for tuples produces a tuple.
 func aggregateMatchIsExhaustive(arms []ast.MatchArm) bool {
 	for _, arm := range arms {
 		if arm.Guard == nil && patternIsIrrefutable(arm.Pattern) {
@@ -295,7 +301,7 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 		for _, arm := range expr.MatchArms {
 			tc.checkTupleMatchArm(arm.Pattern, tt)
 		}
-		if !aggregateMatchIsExhaustive(expr.MatchArms) {
+		if !tc.tupleMatchIsExhaustive(expr.MatchArms, tt, expr.GetLocation()) {
 			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
 				"match on tuple type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}

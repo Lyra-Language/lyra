@@ -323,11 +323,26 @@ func (s *funcScope) isCallback(name string) bool {
 // callableParams maps a lambda's parameter names to their positions, so a call to
 // one can be recognized inside the body and matched to an argument at a call site.
 //
-// A multi-clause lambda is deliberately excluded: its parameters are per-clause
-// patterns rather than one list, so there is no single index to match an argument
-// against. Those stay conservative (a call through one is an unresolvable callee).
+// **A body that immediately matches on its own parameters contributes the names its arms
+// bind them to**, not just the declared names. `match f { g => g() }` binds `g` to the whole
+// of parameter `f`, so a call through `g` is a call through `f` and costs whatever `f`
+// costs; the same holds per-position for a match over a tuple of parameters.
+//
+// That shape is not a curiosity — it is what every **multi-clause function** becomes.
+// `desugarClauses` (typechecker/multi_clause.go) rewrites clauses into exactly this match
+// before any of this runs, so by the time purity sees it, `LambdaClauses` is empty and a
+// clause's renamed parameter is an arm binding. Until 08/06 this map held only the declared
+// names, so a rename made the call an *unresolvable* callee, charged AllEffects — impure and
+// allocating — with nothing at the declaration to explain either. That broke the prelude's
+// two `filter` combinators (declared `predicate`, destructured as `pred`) and ~25 tests with
+// them. The hand-written match had the same hole; the desugaring only made it reachable from
+// code that reads as a plain function head. See COMPLETED.md, 08/06.
+//
+// Only a *whole-value* binding counts (wholeArgumentAlias): the `v` of `Some v` names the
+// payload, not the argument, and charging a call through it against the argument's position
+// would read the wrong parameter's declared bound.
 func callableParams(lam *ast.LambdaExpr) map[string]int {
-	if lam == nil || len(lam.LambdaClauses) > 0 {
+	if lam == nil {
 		return nil
 	}
 	out := make(map[string]int, len(lam.Parameters))
@@ -336,7 +351,103 @@ func callableParams(lam *ast.LambdaExpr) map[string]int {
 			out[n] = i
 		}
 	}
+	addMatchAliases(lam, out)
 	return out
+}
+
+// addMatchAliases folds the parameter aliases bound by a body-level `match` on the
+// parameters into params.
+//
+// Only the body's *own* match is read, not every match in the body. This is the shape a
+// desugared clause list has and the shape a hand-written equivalent has, and at that
+// position the scrutinee's names still mean the parameters — a match nested deeper sits
+// under bindings this pass would have to track to know whether `f` is still the parameter.
+// Being wrong there is not a missed diagnostic but a misattributed one, so the narrow rule
+// is the sound one.
+func addMatchAliases(lam *ast.LambdaExpr, params map[string]int) {
+	match, ok := lam.Body.(*ast.MatchExpr)
+	if !ok {
+		return
+	}
+	// The scrutinee is the parameter itself for a one-parameter function and a tuple of
+	// them otherwise — clauseScrutinee's two cases, which arm patterns mirror.
+	scrutinees := []ast.Expression{match.Scrutinee}
+	if tuple, isTuple := match.Scrutinee.(*ast.TupleLiteralExpr); isTuple {
+		scrutinees = tuple.Elements
+	}
+	// Which parameter each scrutinee position names; -1 for a position that is any other
+	// expression, whose arm bindings alias no parameter.
+	paramAt := make([]int, len(scrutinees))
+	for i, s := range scrutinees {
+		paramAt[i] = -1
+		if id, isIdent := s.(*ast.IdentifierExpr); isIdent {
+			if idx, isParam := params[id.Name]; isParam {
+				paramAt[i] = idx
+			}
+		}
+	}
+
+	// A name is dropped rather than guessed at when two arms disagree about which position
+	// it names (`(a, b) => …` beside `(b, a) => …`): there is no single argument to charge
+	// a call through it against, so it stays an unresolvable callee — what every one of
+	// these was before.
+	var ambiguous map[string]bool
+	for _, arm := range match.MatchArms {
+		for i, pat := range armPatterns(arm.Pattern, len(scrutinees)) {
+			if paramAt[i] < 0 {
+				continue
+			}
+			n := wholeArgumentAlias(pat)
+			if n == "" {
+				continue
+			}
+			if prev, seen := params[n]; seen && prev != paramAt[i] {
+				if ambiguous == nil {
+					ambiguous = map[string]bool{}
+				}
+				ambiguous[n] = true
+				continue
+			}
+			params[n] = paramAt[i]
+		}
+	}
+	for n := range ambiguous {
+		delete(params, n)
+	}
+}
+
+// armPatterns splits an arm's pattern into one per scrutinee position, or nil when it does
+// not line up with the scrutinee's shape (a wildcard arm over a tuple, say, which binds the
+// whole tuple and so aliases no single parameter).
+func armPatterns(pat ast.Pattern, n int) []ast.Pattern {
+	if n == 1 {
+		return []ast.Pattern{pat}
+	}
+	tuple, ok := pat.(*ast.TuplePattern)
+	if !ok || len(tuple.Elements) != n {
+		return nil
+	}
+	return tuple.Elements
+}
+
+// wholeArgumentAlias returns the name a pattern binds to the *entire* matched value, or ""
+// when it binds no such name. A bare identifier is one; so is the `p` of a `p @ inner`
+// binding pattern. Everything else either binds nothing (`_`, a literal) or binds only
+// pieces of the value (`Some v`, a struct or tuple pattern), and a piece is not the value.
+func wholeArgumentAlias(pat ast.Pattern) string {
+	switch p := pat.(type) {
+	case *ast.IdentifierPattern:
+		if p.Name == "_" {
+			return ""
+		}
+		return p.Name
+	case *ast.BindingPattern:
+		if p.Name == "_" {
+			return ""
+		}
+		return p.Name
+	}
+	return ""
 }
 
 // declaredBound returns the effect bounds written on a parameter's *type*
@@ -846,10 +957,26 @@ func (c *purityChecker) checkCallPurity(sc *funcScope, capture []scopeBindings, 
 		if eff&PurityEffects == 0 {
 			continue
 		}
+		// Name the parameter as the *callee's signature* spells it. cbName is whatever
+		// binding the callee's body called it through, which for a multi-clause function
+		// is an arm binding (`(None, g) => g()` for a parameter declared `f`) — a name
+		// the caller cannot see anywhere and cannot act on.
 		c.report(arg.GetLocation(),
 			"pure function calls %q with an impure %s argument; the callback's effects are this call's",
-			name, cbName)
+			name, declaredParamName(callee, idx, cbName))
 	}
+}
+
+// declaredParamName is how the callee's signature spells parameter idx, falling back to
+// whatever name the caller had when the head does not bind it plainly.
+func declaredParamName(callee *ast.LambdaExpr, idx int, fallback string) string {
+	if callee == nil || idx < 0 || idx >= len(callee.Parameters) {
+		return fallback
+	}
+	if n := callee.Parameters[idx].Pattern.GetName(); n != "" {
+		return n
+	}
+	return fallback
 }
 
 func (c *purityChecker) isImpureCallee(capture []scopeBindings, name string) bool {
