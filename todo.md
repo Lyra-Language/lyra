@@ -129,15 +129,27 @@ write today:
   `TestTypeCheck_StructLiteralWithAllDefaults_Ok`. It is kept, inverted, so the day the
   grammar admits an empty body the test fails and says so.
 
-- **[OPEN] 14 typechecker test sources do not parse, and the helper does not care.**
-  `parseCollectAndCheck` checks `parser.Parse`'s error and the collector's, but never
-  `tree.RootNode().HasError()` — so a source with a syntax error reaches the typechecker as
-  a *truncated AST* and an `assertNoErrors` on it asserts nothing about the feature named in
-  the test. That is how the struct-defaults test above stayed green: a syntax error and a
-  missing diagnostic cancelling out. The count comes from adding the guard and running the
-  package; some of the 14 are deliberate (`TestStructSeparators_LiteralStillRequiresCommas`
-  means to produce a parse error), so the work is to sort them and then add the guard, which
-  closes the class rather than the instance.
+- **[OPEN] `let _ = expr` does not parse**, so the canonical way to discard a must-use
+  result is unavailable. A bare `_` in binding position is read as a *destructuring*
+  pattern and recovers as a `data_pattern` with an empty name, which `lyrac` then reports
+  as "cannot destructure integer literal with a data pattern". The named form
+  (`let _ignored = …`) works. A grammar change; found 08/07 when the does-it-parse guard
+  caught the test that asserted the opt-out *worked*.
+
+- **[OPEN] A generic `newtype` does not parse.** `newtype Point<t> = Tuple` puts the `<t>`
+  in an ERROR node and collects a `ConstrainedType` with the parameters silently dropped.
+  The golden file for it recorded exactly that — a bug documented as intended output,
+  under a test named for the feature. Also a grammar change, also found by the guard.
+
+- **[DONE 08/07] The non-parsing test sources are fixed and the class is closed.**
+  Both `parseCollectAndCheck` and the collector's golden helper now check
+  `tree.RootNode().HasError()`, so a source that does not parse is a test failure rather
+  than a truncated AST every later assertion is vacuous against. Ten sources were mechanical
+  — two statements sharing a line with no separator, invalid since 07/31 — one deliberately
+  tests a parse error and opts out explicitly
+  (`parseCollectAndCheckAllowingSyntaxErrors`), and **three were real bugs the vacuity was
+  hiding**: the all-defaults struct literal, `let _ =`, and the generic `newtype`. Each is
+  kept as an inverted test that fails when the gap closes.
 
   **Three were fixed 08/06** — the interior-mutation tests wrote `{ b.x = 99  a.x }`, two
   statements on one line with no separator, invalid since statements gained a terminator on

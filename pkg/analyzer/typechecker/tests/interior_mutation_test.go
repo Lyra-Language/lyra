@@ -372,14 +372,14 @@ func TestTypeCheck_MutArgument_ScalarLiteral_Ok(t *testing.T) {
 
 func TestTypeCheck_ParamReassign_TypeMismatch_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let f = (n: own i64) -> i64 => { n = "hello"  n }
+		let f = (n: own i64) -> i64 => { n = "hello"; n }
 	`, false)
 	assertErrorsAre(t, res, "n: cannot assign string to i64")
 }
 
 func TestTypeCheck_ParamReassign_BoolToInt_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let f = (n: own i64) -> i64 => { n = true  n }
+		let f = (n: own i64) -> i64 => { n = true; n }
 	`, false)
 	assertErrorsAre(t, res, "n: cannot assign boolean to i64")
 }
@@ -387,7 +387,7 @@ func TestTypeCheck_ParamReassign_BoolToInt_Error(t *testing.T) {
 // The literal-range check now runs on a parameter target too.
 func TestTypeCheck_ParamReassign_LiteralOverflow_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let f = (n: own i8) -> i8 => { n = 9999  n }
+		let f = (n: own i8) -> i8 => { n = 9999; n }
 	`, false)
 	assertErrorsAre(t, res, "n: literal value 9999 overflows i8")
 }
@@ -396,7 +396,7 @@ func TestTypeCheck_ParamReassign_LiteralOverflow_Error(t *testing.T) {
 // completely unreported before.
 func TestTypeCheck_ParamReassign_UndefinedInRHS_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-		let f = (n: own i64) -> i64 => { n = undefinedVar  n }
+		let f = (n: own i64) -> i64 => { n = undefinedVar; n }
 	`, false)
 	assertErrorsAre(t, res, `undefined identifier "undefinedVar"`)
 }
@@ -406,11 +406,11 @@ func TestTypeCheck_ParamReassign_UndefinedInRHS_Error(t *testing.T) {
 // (a reference to the caller's storage).
 func TestTypeCheck_ParamReassign_WellTyped_Ok(t *testing.T) {
 	for _, src := range []string{
-		`let f = (n: own i64) -> i64 => { n = n + 1  n }`,
+		`let f = (n: own i64) -> i64 => { n = n + 1; n }`,
 		`let f = (n: i64, k: own i64) -> i64 => { k = n * 2; k }`,
-		`let f = (n: own i64) -> i64 => { n = 5  n }`,
-		`let f = (n: mut i64) -> i64 => { n = 5  n }`,
-		`let f = (x: own f64) -> f64 => { x = x + 1.5  x }`,
+		`let f = (n: own i64) -> i64 => { n = 5; n }`,
+		`let f = (n: mut i64) -> i64 => { n = 5; n }`,
+		`let f = (x: own f64) -> f64 => { x = x + 1.5; x }`,
 	} {
 		res := parseCollectAndCheck(t, src, false)
 		assertNoErrors(t, res)
@@ -427,9 +427,9 @@ func TestTypeCheck_ParamReassign_WellTyped_Ok(t *testing.T) {
 // most permissive rung, with no syntax for the immutable one.
 func TestTypeCheck_ParamReassign_Borrowed_Error(t *testing.T) {
 	for _, src := range []string{
-		`let f = (n: i64) -> i64 => { n = 5  n }`,
-		`let f = (n: ref i64) -> i64 => { n = 5  n }`,
-		`let f = (s: string) -> string => { s = "a"  s }`,
+		`let f = (n: i64) -> i64 => { n = 5; n }`,
+		`let f = (n: ref i64) -> i64 => { n = 5; n }`,
+		`let f = (s: string) -> string => { s = "a"; s }`,
 		`let f = (n: i64, k: i64) -> i64 => { k = n * 2; k }`,
 	} {
 		res := parseCollectAndCheck(t, src, false)
@@ -442,9 +442,9 @@ func TestTypeCheck_ParamReassign_Borrowed_Error(t *testing.T) {
 // scope for the whole body.
 func TestTypeCheck_ParamShadowing_Ok(t *testing.T) {
 	for _, src := range []string{
-		`let f = (s: string) -> string => { let s = s ++ "!"  s }`,
-		`let f = (n: i64) -> i64 => { let n = n + 1  n }`,
-		`let f = (n: i64) -> i64 => { let n = 5  n }`,
+		`let f = (s: string) -> string => { let s = s ++ "!"; s }`,
+		`let f = (n: i64) -> i64 => { let n = n + 1; n }`,
+		`let f = (n: i64) -> i64 => { let n = 5; n }`,
 	} {
 		res := parseCollectAndCheck(t, src, false)
 		assertNoErrors(t, res)

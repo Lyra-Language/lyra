@@ -1,6 +1,10 @@
 package typechecker_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Lyra-Language/lyra/pkg/parser"
+)
 
 // The must-use rule flags a statement that produces a Result or Maybe and then
 // discards it (no binding, no match, no `?`-propagation). The wording is shared
@@ -62,14 +66,31 @@ let main = () -> i64 => {
 	assertNoMustUseWarnings(t, res)
 }
 
-func TestMustUse_DiscardBindingOptOut(t *testing.T) {
+// **`let _ = expr` does not parse**, so the canonical discard is not available and this
+// test asserted an opt-out that does not exist. It passed because the source did not
+// parse: the truncated AST contained no call to warn about, so "no must-use warnings"
+// held for the wrong reason — a syntax error and a missing diagnostic cancelling out,
+// which is the shape the does-it-parse guard in parseCollectAndCheck now catches.
+//
+// The parser reads a bare `_` in binding position as a *destructuring* pattern and
+// recovers a `data_pattern` with an empty name; `lyrac` then reports "cannot destructure
+// integer literal with a data pattern". Fixing it is a grammar change (todo.md).
+//
+// Kept, inverted, as the record of the gap: flip it back to the opt-out assertion when
+// `let _ =` works. `_ignored` — the named discard below — does work today.
+func TestMustUse_DiscardBindingIsNotYetParseable(t *testing.T) {
 	src := mustUsePrelude + `
-let main = () -> i64 => {
+let f = () -> i64 => {
     let _ = parse("x")
     0
 }`
-	res := parseCollectAndCheck(t, src, false)
-	assertNoMustUseWarnings(t, res)
+	tree, err := parser.Parse(src)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if !tree.RootNode().HasError() {
+		t.Fatal("`let _ = …` parses now — restore the discard-opt-out assertion")
+	}
 }
 
 func TestMustUse_NamedDiscardBindingOptOut(t *testing.T) {

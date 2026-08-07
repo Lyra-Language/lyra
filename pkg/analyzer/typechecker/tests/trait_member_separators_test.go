@@ -121,8 +121,11 @@ let f = (p: { x: i64
 // A struct *literal* is deliberately unchanged: its field list sits inside the
 // literal-vs-block ambiguity, so it is a separate question rather than the same one-word
 // change. Pinned so the distinction is a decision on the record rather than an oversight.
+// A struct *literal*'s fields still require commas, unlike a struct declaration's. This
+// is one of the few tests whose source is *meant* not to parse, so it opts out of the
+// does-it-parse guard explicitly rather than being exempted by accident.
 func TestStructSeparators_LiteralStillRequiresCommas(t *testing.T) {
-	res := parseCollectAndCheck(t, `
+	res := parseCollectAndCheckAllowingSyntaxErrors(t, `
 struct Node { n: i64, tag: string }
 let f = () -> i64 => {
   let x = Node {

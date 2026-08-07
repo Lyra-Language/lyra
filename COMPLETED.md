@@ -10,6 +10,38 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**Every test source parses now, and the class is closed by a guard.** `parseCollectAndCheck`
+and the collector's golden helper both check `tree.RootNode().HasError()`, so a source with
+a syntax error fails the test instead of reaching the typechecker as a *truncated AST* that
+every later assertion is vacuous against.
+
+Of the fourteen counted on 08/06: **ten were mechanical** — two statements sharing a line
+with no separator, invalid since statements gained a terminator on 07/31 — **one
+deliberately tests a parse error** and now opts out explicitly through
+`parseCollectAndCheckAllowingSyntaxErrors`, and **three were real bugs the vacuity was
+hiding**:
+
+- **the all-defaults struct literal** (`Person {}`), found 08/06;
+- **`let _ = expr`**, which does not parse: a bare `_` in binding position is read as a
+  *destructuring* pattern and recovers as a `data_pattern` with an empty name. So the
+  canonical way to discard a must-use result is unavailable — and the test asserting the
+  opt-out *worked* passed because the truncated AST contained no call to warn about. The
+  named form `let _ignored = …` does work;
+- **a generic `newtype`** (`newtype Point<t> = Tuple`), whose `<t>` lands in an ERROR node.
+  Its golden file recorded a `ConstrainedType` with the parameters silently dropped — a bug
+  documented as intended output, under a test named for the feature. A golden regenerated
+  from a truncated AST bakes the truncation in, which is the sharpest argument for guarding
+  the golden helper and not only the typechecker one.
+
+Each of the three is kept as an inverted test that fails when the gap closes, so the fix
+cannot land without someone restoring the real assertion.
+
+**The pattern across all three is the same and worth naming:** a syntax error and a missing
+diagnostic cancel out. Neither alone would have passed; together they read as success. That
+is why the guard is worth more than the ten separator fixes — those were typos, and this is
+a class.
+
+### 08/07/26
 **A bare `_` stands for a whole multi-field payload.** `Rect _`, where
 `Rect(i64, i64)`, parsed and type-checked and then failed to lower — *"payload pattern for
 Rect not implemented yet"* — while the arity-matched `Rect(_, _)` worked. Two spellings of

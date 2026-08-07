@@ -32,6 +32,14 @@ func parseAndCollectFull(t *testing.T, source string, printTree bool) (*ast.Prog
 		p := printer.NewPrinter()
 		p.Print(tree.RootNode())
 	}
+	// A source that does not parse still reaches the collector as a *truncated* AST, and
+	// a golden regenerated from one bakes the truncation in — a file that looks like a
+	// specification and records a bug. That is not hypothetical: the generic-`newtype`
+	// golden did exactly that, under a test named for the feature it was dropping.
+	if tree.RootNode().HasError() {
+		t.Fatalf("source does not parse — a golden built from a truncated AST records the "+
+			"truncation as if it were the intended output:\n%s", source)
+	}
 	c := collector.NewCollector([]byte(source))
 	program, table, scopeTable, errors := c.Collect(tree.RootNode())
 	// Errors only: a *warning* leaves the collected AST exactly as it is, which is

@@ -1,6 +1,10 @@
 package collector_test
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Lyra-Language/lyra/pkg/parser"
+)
 
 func TestCollector_BasicConstrainedTypeWithoutConstraints(t *testing.T) {
 	runGoldenTest(t, `newtype Angle = f64`, "basic_constrained_type_without_constraints")
@@ -46,6 +50,23 @@ func TestCollector_PatternConstrainedType(t *testing.T) {
 	runGoldenTest(t, `newtype HexStr = string where pattern(r"^#(?:[0-9a-fA-F]{3}){1,2}$")`, "pattern_constrained_type")
 }
 
-func TestCollector_ParameterizedConstrainedType(t *testing.T) {
-	runGoldenTest(t, `newtype Point<t> = Tuple`, "parameterized_constrained_type")
+// **A generic `newtype` does not parse.** `newtype Point<t> = Tuple` puts the `<t>` in an
+// ERROR node, and the golden this test used to run recorded a ConstrainedType with the
+// parameters silently dropped — a golden file documenting the bug as if it were the
+// intended output, under a test named for the feature.
+//
+// It passed because the golden helper never asked whether the source parsed: a truncated
+// AST prints just fine, and a golden regenerated from one bakes the truncation in. That
+// helper now checks (08/07), which is what surfaced this.
+//
+// Kept, inverted, as the record of the gap: flip it back to a golden test when a generic
+// newtype parses (todo.md).
+func TestCollector_ParameterizedConstrainedTypeIsNotYetParseable(t *testing.T) {
+	tree, err := parser.Parse(`newtype Point<t> = Tuple`)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if !tree.RootNode().HasError() {
+		t.Fatal("a generic newtype parses now — restore the golden test")
+	}
 }

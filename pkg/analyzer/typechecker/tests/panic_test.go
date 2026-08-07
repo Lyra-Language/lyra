@@ -68,6 +68,6 @@ let f = () -> i64 => panic(21)`, false)
 // There is no syntax for the type, so the reachable form of this is a binding whose
 // value is a panic being used afterwards; the binding itself is legal (and dead).
 func TestPanic_BindingToANeverValueIsLegalButDead(t *testing.T) {
-	res := parseCollectAndCheck(t, `let f = () -> i64 => { let x = panic("boom") 0 }`, false)
+	res := parseCollectAndCheck(t, `let f = () -> i64 => { let x = panic("boom"); 0 }`, false)
 	assertNoErrors(t, res)
 }

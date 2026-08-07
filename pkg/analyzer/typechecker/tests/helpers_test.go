@@ -21,7 +21,34 @@ type checkResult struct {
 	errors    []typechecker.TypeError
 }
 
+// parseCollectAndCheck type-checks a source that is expected to **parse**. A source with
+// a syntax error is a test failure here, not an input.
+//
+// Without that check a source that does not parse still reaches the typechecker as a
+// *truncated* AST, and an `assertNoErrors` on it asserts nothing about the feature named
+// in the test. Fourteen sources in this package were in that state (08/06), and at least
+// two were green while asserting the opposite of the truth — a struct-literal form that
+// does not exist, and a must-use opt-out that does not work. A syntax error and a missing
+// diagnostic cancelling out is not a rare accident; it is what this guard exists to stop.
+//
+// Use parseCollectAndCheckAllowingSyntaxErrors for a test whose source is *meant* to be
+// rejected by the parser.
 func parseCollectAndCheck(t *testing.T, source string, printTree bool) checkResult {
+	t.Helper()
+	tree, err := parser.Parse(source)
+	if err != nil {
+		t.Fatalf("parse error: %v", err)
+	}
+	if tree.RootNode().HasError() {
+		t.Fatalf("source does not parse — a truncated AST makes every assertion below "+
+			"vacuous. Use parseCollectAndCheckAllowingSyntaxErrors if that is the point.\n%s", source)
+	}
+	return parseCollectAndCheckAllowingSyntaxErrors(t, source, printTree)
+}
+
+// parseCollectAndCheckAllowingSyntaxErrors is parseCollectAndCheck without the
+// does-it-parse guard, for the tests that assert a construct is *rejected* by the parser.
+func parseCollectAndCheckAllowingSyntaxErrors(t *testing.T, source string, printTree bool) checkResult {
 	t.Helper()
 	tree, err := parser.Parse(source)
 	// Print tree
