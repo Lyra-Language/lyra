@@ -1674,6 +1674,8 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		return e.GetType()
 	case *ast.ArrayLiteralExpr:
 		return tc.inferArrayLiteralType(e)
+	case *ast.ArrayRepeatExpr:
+		return tc.inferArrayRepeatType(e)
 	case *ast.FunctionCallExpr:
 		if t := tc.inferTypeConversion(e); t != nil {
 			return t
@@ -2122,6 +2124,39 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 	// the array node's type itself (checkVarDecl), but a function return only calls
 	// this — without the re-record the array would lower at its inferred i64 element
 	// width and mismatch a narrower return type (`() -> [3]u8 => [4, 5, 6]`).
+	// The repeat form narrows the same way, through its single value. Written as its
+	// own arm rather than folded into the one below because there is one leaf, not a
+	// list, and the re-record is the same either way.
+	if ar, ok := expr.(*ast.ArrayRepeatExpr); ok {
+		var ctxElem types.Type
+		switch at := concrete.(type) {
+		case types.StaticArrayType:
+			ctxElem = at.ElementType
+		case types.DynamicArrayType:
+			ctxElem = at.ElementType
+		default:
+			return
+		}
+		if ctxElem == nil {
+			return
+		}
+		resolved := tc.resolveType(ctxElem, expr.GetLocation())
+		tc.propagateLiteralType(ar.Value, resolved)
+		tc.checkIntegerLiteralRange("repeated element", ar.Value, resolved)
+		// A *dynamic* context stays dynamic, for the reason the array-literal arm below
+		// gives: the value is used as a dynamic array, and rewriting it to static would
+		// mask a later dynamic→static assignment error. The backend recovers the count
+		// by folding `ar.Count` with the same helper the check used.
+		if _, isDyn := concrete.(types.DynamicArrayType); isDyn {
+			tc.typeTable.Set(expr, types.DynamicArrayType{ElementType: resolved})
+			return
+		}
+		if n, ok := tc.arrayRepeatCount(ar); ok {
+			tc.typeTable.Set(expr, types.StaticArrayType{ElementType: resolved, Size: n})
+		}
+		return
+	}
+
 	if al, ok := expr.(*ast.ArrayLiteralExpr); ok {
 		var ctxElem types.Type
 		switch at := concrete.(type) {

@@ -9,6 +9,56 @@ Newest first.
 
 ## Dated log
 
+### 08/08/26
+**The array-repeat literal, `[v; n]`.** It parsed and collected from the beginning and
+nothing downstream read it — the typechecker reported `unknown expression type "[0; 5]"`
+— which is loud rather than silent, so it was an unimplemented feature rather than a
+phantom. Found 08/07 by the AST sweep, which noticed `ArrayRepeatExpr.Count` had no
+consumer at all.
+
+Three decisions, and the first is the one everything else follows from:
+
+**The value is evaluated once.** `[next(); 3]` is one call, not three, and nothing in the
+syntax would say otherwise — Rust arrives at the same place from the other side, requiring
+`Copy` or a const expression precisely so the question cannot arise. A test asserts it
+through a side effect, since that is the only way the difference is observable.
+
+Evaluating once is what makes the retains necessary: each of the n slots is an **owner**,
+so a managed element takes n-1 retains beyond the reference the value already carries, or
+the array's drop glue releases n times what was retained once. The array literal
+`[s, s, s]` needs none of this — it lowers three separate uses and the ownership pass
+retains each. Verified under LeakSanitizer.
+
+**The count is a compile-time constant by construction, not by a check.** The grammar
+admits only a number literal or a `const_identifier` there, so `[0; n]` for a runtime `n`
+is a syntax error — the right place for the restriction, since the size is part of the
+*type* and a type cannot depend on a value the compiler has not got.
+
+**The typechecker rewrites a `const` count to the literal it folded to**, which is what
+keeps that resolution from becoming everyone's problem. The backend needs the same number
+(a `[]T` context records `[]i64` and drops the size), and without the rewrite codegen
+would need its own const lookup — a second copy of "what does this name mean", living
+where the symbol table is least at hand. Rule 10's advice applied upward, and the shape
+`desugarUFCSCall` already uses for a receiver. The folding itself moved to
+`ast.FoldIntExpr` so the two passes cannot disagree about a length; it was **moved
+verbatim rather than rewritten**, because a fresh implementation drops things like the
+documented `MinInt64 * -1` case, and this one nearly did.
+
+Three arms had to be added elsewhere, all the same hazard in different keys:
+
+- **`lowerDynArrayRepeat`**, because a `[]T` annotation records a dynamic type and the
+  first version had only the fixed-size path — it emitted a `[3 x i64]` bitcast to a
+  pointer, which Apple clang rejects outright. The box allocation is now shared with the
+  literal (`dynArrayBox`); what the two differ about is the loop, which is theirs.
+- **The allocation walk**, which names the allocating *forms* rather than switching on
+  types, so the repeat was not among them: `noalloc … => { let d: []i64 = [0; 3]; … }`
+  type-checked clean while the identical `[1, 2, 3]` was refused. Live for exactly one
+  build. Hazard 8, in a list of syntax rather than in a switch — which is why adding the
+  form everywhere else did not surface it.
+- **The ownership pass**, whose `ArrayLiteralExpr` arm transfers each element; without the
+  matching arm the repeat's value fell to `default` and a managed element's transfer went
+  unrecorded.
+
 ### 08/07/26
 **Two parse gaps that operator overloading turned from curiosities into blockers**, both
 closed by *removing* a path rather than adding one — the parser is 19 states smaller

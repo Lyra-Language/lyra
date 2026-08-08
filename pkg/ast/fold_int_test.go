@@ -1,13 +1,13 @@
-package typechecker
+package ast
 
 import (
 	"math"
 	"testing"
 )
 
-// TestCheckedMulInt64 covers the int64 overflow detection directly, including
+// TestFoldMulInt64 covers the int64 overflow detection directly, including
 // the MinInt64 * -1 edge case that the product/b division check alone misses.
-func TestCheckedMulInt64(t *testing.T) {
+func TestFoldMulInt64(t *testing.T) {
 	tests := []struct {
 		name   string
 		a, b   int64
@@ -27,12 +27,12 @@ func TestCheckedMulInt64(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, ok := checkedMulInt64(tt.a, tt.b)
+			got, ok := foldMulInt64(tt.a, tt.b)
 			if ok != tt.wantOK {
-				t.Fatalf("checkedMulInt64(%d, %d) ok = %v, want %v", tt.a, tt.b, ok, tt.wantOK)
+				t.Fatalf("foldMulInt64(%d, %d) ok = %v, want %v", tt.a, tt.b, ok, tt.wantOK)
 			}
 			if ok && got != tt.want {
-				t.Errorf("checkedMulInt64(%d, %d) = %d, want %d", tt.a, tt.b, got, tt.want)
+				t.Errorf("foldMulInt64(%d, %d) = %d, want %d", tt.a, tt.b, got, tt.want)
 			}
 		})
 	}

@@ -88,7 +88,7 @@ because each was learned from a real failure, and none is local to one package.
 
 8. **A `switch` over AST node kinds or composite types must have a case for every one
    that can hold a child — a missing case is silent and its symptom is remote.** This has
-   bitten seven times, in six different switches, and never looked like what it was:
+   bitten eight times, in seven different switches, and never looked like what it was:
    `mentionsTypeVar` missing `ParameterizedType` (a generic function emitted under its
    bare name, failing in layout); `resolveType` missing `*LambdaType` and
    `ParameterizedType` (assignability rejecting a type against *itself* — "cannot assign
@@ -160,6 +160,17 @@ because each was learned from a real failure, and none is local to one package.
    `TestExec_WeakOptionalField` caught), and that test had itself been green *by leaking* —
    before the glue walked a `Maybe<shared T>` field at all, the cycle it builds released
    nothing. A memory-safety test can pass because the code under it does nothing.
+
+   **An eighth landed 08/08, and it is the "list of syntax, not a switch over types"
+   variant.** The allocation walk in the purity pass names the allocating *forms* —
+   `ArrayLiteralExpr`, `ArrayCompExpr`, `StringConcatExpr` — and `[0; 5]`
+   (`ArrayRepeatExpr`) was not among them when the form was implemented, so
+   `noalloc … => { let d: []i64 = [0; 3]; … }` type-checked clean while the identical
+   `[1, 2, 3]` was refused. It survived adding the new node to the typechecker, the
+   backend, the ownership pass and the reclassification walk, because it is not a switch
+   over *types* and grepping for the type name is what one does. The lesson: when adding an
+   expression kind, also grep for the kind it is a variant **of** — here `ArrayLiteralExpr`,
+   which appeared in five places the new node needed to appear in too.
 
    **A seventh landed 08/07, and its lesson is that a switch can be wrong about a type the
    file above it already classified correctly.** `nominalHead` — the unifier's "is this a

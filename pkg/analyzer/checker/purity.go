@@ -560,6 +560,8 @@ func describeAllocation(ex ast.Expression) string {
 		return "an array comprehension builds a `[]T`"
 	case *ast.ArrayLiteralExpr:
 		return "an array literal builds a `[]T`"
+	case *ast.ArrayRepeatExpr:
+		return "a repeat literal builds a `[]T`"
 	case *ast.StringConcatExpr:
 		return "`++` builds a new string"
 	case *ast.InterpolatedStringExpr:
@@ -2105,11 +2107,18 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 			if alloc.allocates(ex) {
 				noteAlloc(ex)
 			}
-		case *ast.ArrayLiteralExpr:
+		case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr:
 			// `[1, 2, 3]` as a `[]T` allocates its box; the same literal as a fixed
 			// `[3]T` is stack storage and does not. `allocates` reads the type the
 			// typechecker recorded, so the two are told apart by what the literal was
 			// used as rather than by how it was written.
+			//
+			// `[0; 3]` is the same expression with a count instead of a list, and
+			// belongs in the same arm for the same reason. It was left out when the
+			// repeat form landed (08/08) and the gap was live for exactly one build:
+			// `noalloc … => { let d: []i64 = [0; 3]; … }` type-checked clean while the
+			// identical `[1, 2, 3]` was refused — hazard 8, in the arm that names the
+			// forms rather than in a switch over types.
 			if alloc.allocates(ex) {
 				noteAlloc(ex)
 			}
@@ -2257,7 +2266,7 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 			if alloc.allocates(ex) {
 				noteAlloc(ex)
 			}
-		case *ast.ArrayLiteralExpr:
+		case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr:
 			if alloc.allocates(ex) {
 				noteAlloc(ex)
 			}

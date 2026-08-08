@@ -128,12 +128,12 @@ write today:
   the tuple parses everywhere else. A grammar gap in the element-type position, not a
   newtype one. Found 08/07 while writing newtype corpus tests.
 
-- **[OPEN] `[0; 5]` — the array-repeat literal — is unimplemented.** It parses and collects
-  (`ast.ArrayRepeatExpr`), and the typechecker then reports `unknown expression type
-  "[0; 5]"`. Loud rather than silent, so it is an unimplemented feature rather than a
-  phantom, but the grammar and collector both support a form nothing downstream does.
-  Found 08/07 by the AST sweep: `ArrayRepeatExpr.Count` has exactly one mention outside
-  `pkg/ast` — the constructor-reclassification walk — and no consumer at all.
+- **[DONE 08/08] `[0; 5]` — the array-repeat literal — is implemented.** `[v; n]` is
+  `[n]T` in a fixed-size context and a heap `[]T` under a `[]T` annotation, with the value
+  **evaluated once** and n-1 extra retains for a managed element. The count is a
+  compile-time constant by construction (the grammar admits a literal or a
+  `const_identifier`), and the typechecker rewrites a `const` count to the literal it
+  folded to, so no later pass needs a const lookup of its own. See COMPLETED.md.
 
 - **[DONE 08/07] A generic instantiated at a type declared in a named module lowers.**
   It failed with `llvm: unknown named type` for the identity function over a struct, in any

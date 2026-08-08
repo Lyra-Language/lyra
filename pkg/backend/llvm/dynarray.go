@@ -40,29 +40,10 @@ func i64c(n int64) *constant.Int { return constant.NewInt(lltypes.I64, n) }
 // pointer. An empty literal still allocates a (len-0) box, keeping every dynamic
 // array a uniform managed box.
 func (l *lowerer) lowerDynArrayConstruction(block *ir.Block, e *ast.ArrayLiteralExpr, dynType types.DynamicArrayType) (value.Value, *ir.Block, error) {
-	elemLyra := dynType.ElementType
-	if elemLyra == nil {
-		return nil, nil, fmt.Errorf("llvm: dynamic array literal has no element type")
-	}
-	elemLL, err := l.lowerType(elemLyra)
+	box, boxTy, elemLL, err := l.dynArrayBox(block, dynType.ElementType, len(e.Elements))
 	if err != nil {
 		return nil, nil, err
 	}
-	elemSize, elemAlign, ok := SizeAndAlign(l.resolveForLayout(elemLyra))
-	if !ok {
-		return nil, nil, fmt.Errorf("llvm: cannot size dynamic array element type %s", elemLyra)
-	}
-	stride := alignUp(elemSize, elemAlign)
-	n := len(e.Elements)
-
-	l.ensureRCRuntime()
-	boxTy := DynArrayBoxType(elemLL)
-	boxSize := i64c(int64(dynArrayHeaderSize + n*stride))
-	boxI8 := block.NewCall(l.rcAlloc, boxSize) // i8*, rc = 1
-	box := block.NewBitCast(boxI8, lltypes.NewPointer(boxTy))
-
-	// Store the length (field 1).
-	block.NewStore(i64c(int64(n)), dynArrayLenPtr(block, boxTy, box))
 
 	// Store each element into the flexible tail (field 2, index i).
 	for i, elemExpr := range e.Elements {
@@ -77,6 +58,69 @@ func (l *lowerer) lowerDynArrayConstruction(block *ir.Block, e *ast.ArrayLiteral
 		}
 		elemPtr := dynArrayElemPtr(block, boxTy, box, i64c(int64(i)))
 		block.NewStore(v, elemPtr)
+	}
+	return box, block, nil
+}
+
+// dynArrayBox allocates a `[]T` box able to hold n elements and stores the length,
+// returning the box pointer, its LLVM struct type and the element's LLVM type.
+//
+// Shared by the literal and the repeat form rather than copied into each: the box
+// layout, the header size and the stride rounding are the parts a second copy would get
+// subtly wrong, and they are also the parts that change when the representation does.
+// What the two callers do differ about — one value per slot, or one value in every slot
+// — is the loop, which is theirs.
+func (l *lowerer) dynArrayBox(block *ir.Block, elemLyra types.Type, n int) (value.Value, *lltypes.StructType, lltypes.Type, error) {
+	if elemLyra == nil {
+		return nil, nil, nil, fmt.Errorf("llvm: dynamic array has no element type")
+	}
+	elemLL, err := l.lowerType(elemLyra)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	elemSize, elemAlign, ok := SizeAndAlign(l.resolveForLayout(elemLyra))
+	if !ok {
+		return nil, nil, nil, fmt.Errorf("llvm: cannot size dynamic array element type %s", elemLyra)
+	}
+	stride := alignUp(elemSize, elemAlign)
+
+	l.ensureRCRuntime()
+	boxTy := DynArrayBoxType(elemLL)
+	boxSize := i64c(int64(dynArrayHeaderSize + n*stride))
+	boxI8 := block.NewCall(l.rcAlloc, boxSize) // i8*, rc = 1
+	box := block.NewBitCast(boxI8, lltypes.NewPointer(boxTy))
+	block.NewStore(i64c(int64(n)), dynArrayLenPtr(block, boxTy, box))
+	return box, boxTy, elemLL, nil
+}
+
+// lowerDynArrayRepeat builds `[v; n]` in a **dynamic**-array context — the heap
+// counterpart of lowerArrayRepeatExpr's fixed-size path, and it makes the same promise:
+// the value is evaluated once, and each of the n slots is an owner, so a managed element
+// takes n-1 extra retains.
+func (l *lowerer) lowerDynArrayRepeat(block *ir.Block, e *ast.ArrayRepeatExpr, dynType types.DynamicArrayType, n int) (value.Value, *ir.Block, error) {
+	v, block, err := l.lowerExpr(block, e.Value)
+	if err != nil {
+		return nil, nil, err
+	}
+	if diverged(v, block) {
+		return nil, block, nil
+	}
+	box, boxTy, elemLL, err := l.dynArrayBox(block, dynType.ElementType, n)
+	if err != nil {
+		return nil, nil, err
+	}
+	v, err = l.coerceAggregateElem(block, v, elemLL, e.Value)
+	if err != nil {
+		return nil, nil, err
+	}
+	for i := 1; i < n; i++ {
+		block, err = l.emitRetainValue(block, v, dynType.ElementType)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	for i := 0; i < n; i++ {
+		block.NewStore(v, dynArrayElemPtr(block, boxTy, box, i64c(int64(i))))
 	}
 	return box, block, nil
 }

@@ -1096,6 +1096,17 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 			a.expr(el, true)
 		}
 
+	case *ast.ArrayRepeatExpr:
+		// `[v; n]` is the literal above with one element written once, so its value is
+		// transferred exactly the same way. The count is a folded integer literal by
+		// now and owns nothing, so it is not walked.
+		//
+		// The array takes **n** references to that one value, and the backend emits the
+		// n-1 extra retains (lowerArrayRepeatExpr) — this pass only has to record the
+		// transfer of the first, which is what `needOwned` does. Missing this arm sent
+		// the value to `default`, where a managed element's transfer went unrecorded.
+		a.expr(e.Value, true)
+
 	case *ast.ForLoopExpr:
 		// A loop's value is discarded (it's a statement). Walk its parts so managed
 		// reads inside record their retains. Previously the loop hit `default` and its

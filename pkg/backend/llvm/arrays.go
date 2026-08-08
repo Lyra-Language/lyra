@@ -235,3 +235,84 @@ func (l *lowerer) sharedArrayPayloadPtr(block *ir.Block, obj ast.Expression) (va
 	payloadPtr := boxPayloadPtr(block, boxTy, boxVal)
 	return payloadPtr, arrayTy, block, nil
 }
+
+// lowerArrayRepeatExpr lowers `[v; n]` — n copies of one value, as an `[n x T]`.
+//
+// **The value is evaluated once**, which is the only defensible reading and is what the
+// count being a compile-time constant lets us promise: `[next(); 3]` would otherwise be
+// three calls, and nothing in the syntax says so. Rust reaches the same place from the
+// other side, requiring `Copy` or a const expression precisely so the question cannot
+// arise.
+//
+// Evaluating once is what makes the retains necessary. Each slot is an **owner**, so a
+// managed element — a string, a `shared` value, a struct holding one — needs n-1 retains
+// beyond the reference the value already carries, or the array's drop glue releases n
+// times what was retained once. The array literal `[s, s, s]` needs none of this: it
+// lowers three separate uses and the ownership pass retains each.
+//
+// A count of 0 yields an empty array and drops the value on the floor — it is still
+// evaluated, since a program is entitled to whatever the expression does.
+func (l *lowerer) lowerArrayRepeatExpr(block *ir.Block, e *ast.ArrayRepeatExpr) (value.Value, *ir.Block, error) {
+	recorded, ok := l.recordedType(e)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no type recorded for array repeat literal")
+	}
+	// The count is folded here rather than read off the recorded type, because a
+	// *dynamic* context records `[]T` and drops the size. A plain fold suffices: the
+	// typechecker rewrote a `const` count to the literal it folded to, so by now every
+	// count is a literal and this cannot disagree with the size the checker used.
+	n64, ok := ast.FoldIntExpr(e.Count)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: array repeat count is not a compile-time integer")
+	}
+	if dynType, isDyn := recorded.(types.DynamicArrayType); isDyn {
+		return l.lowerDynArrayRepeat(block, e, dynType, int(n64))
+	}
+	arrType, ok := recorded.(types.StaticArrayType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: array repeat lowering not implemented for %s (only fixed-size arrays)", recorded)
+	}
+	stackArrType := types.WithAllocation(arrType, types.Stack).(types.StaticArrayType)
+	llType, err := l.lowerType(stackArrType)
+	if err != nil {
+		return nil, nil, err
+	}
+	arrayTy, ok := llType.(*lltypes.ArrayType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: array type %s did not lower to an LLVM array", arrType)
+	}
+
+	elemVal, block, err := l.lowerExpr(block, e.Value)
+	if err != nil {
+		return nil, nil, err
+	}
+	// `[panic("…"); 3]` — the value diverged, so the array is never built.
+	if diverged(elemVal, block) {
+		return nil, block, nil
+	}
+	elemVal, err = l.coerceAggregateElem(block, elemVal, arrayTy.ElemType, e.Value)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	n := int(arrayTy.Len)
+	// One retain per *additional* owner. Emitted before the aggregate is built so the
+	// count is right whatever the element is; `emitRetainValue` is a no-op for a type
+	// that owns nothing, which is every scalar and therefore the common case.
+	for i := 1; i < n; i++ {
+		block, err = l.emitRetainValue(block, elemVal, arrType.ElementType)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
+	var agg value.Value = constant.NewUndef(arrayTy)
+	for i := 0; i < n; i++ {
+		agg = block.NewInsertValue(agg, elemVal, uint64(i))
+	}
+	if types.AllocationOf(recorded) == types.Shared {
+		boxed, err := l.lowerBoxShared(block, agg, stackArrType)
+		return boxed, block, err
+	}
+	return agg, block, nil
+}

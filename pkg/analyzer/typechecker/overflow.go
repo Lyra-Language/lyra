@@ -23,67 +23,12 @@ import (
 // this check targets) and Lyra's `%`/`%%` semantics shouldn't be guessed here.
 //
 // All other expressions return (0, false).
+// It delegates to `ast.FoldIntExpr`, which is the same walk: the backend needs the
+// identical answer for an array-repeat count, and two copies of constant folding is the
+// kind of divergence that shows up as an array of one length to the checker and another
+// to codegen.
 func extractIntLiteralValue(expr ast.Expression) (int64, bool) {
-	switch e := expr.(type) {
-	case *ast.IntegerLiteralExpr:
-		return e.Value, true
-	case *ast.NegationExpr:
-		if inner, ok := extractIntLiteralValue(e.Operand); ok {
-			// -math.MinInt64 would overflow; in practice the parser can't
-			// produce a positive int64 that large, so this is safe.
-			return -inner, true
-		}
-	case *ast.MathBinaryOpExpr:
-		left, lok := extractIntLiteralValue(e.Left)
-		right, rok := extractIntLiteralValue(e.Right)
-		if !lok || !rok {
-			return 0, false
-		}
-		switch e.Operator {
-		case ast.MathBinaryOpAdd:
-			return checkedAddInt64(left, right)
-		case ast.MathBinaryOpSub:
-			return checkedSubInt64(left, right)
-		case ast.MathBinaryOpMul:
-			return checkedMulInt64(left, right)
-		}
-	}
-	return 0, false
-}
-
-// checkedAddInt64 / checkedSubInt64 / checkedMulInt64 perform the operation in
-// int64, returning ok=false if the result overflows the int64 range.
-func checkedAddInt64(a, b int64) (int64, bool) {
-	sum := a + b
-	if (a > 0 && b > 0 && sum < 0) || (a < 0 && b < 0 && sum >= 0) {
-		return 0, false
-	}
-	return sum, true
-}
-
-func checkedSubInt64(a, b int64) (int64, bool) {
-	diff := a - b
-	if (b < 0 && diff < a) || (b > 0 && diff > a) {
-		return 0, false
-	}
-	return diff, true
-}
-
-func checkedMulInt64(a, b int64) (int64, bool) {
-	if a == 0 || b == 0 {
-		return 0, true
-	}
-	// MinInt64 * -1 overflows, but the product/b check below misses it: the
-	// wrapped product is MinInt64 and MinInt64 / -1 == MinInt64 (two's-complement,
-	// no panic in Go), so product/b == a would wrongly report no overflow.
-	if (a == math.MinInt64 && b == -1) || (b == math.MinInt64 && a == -1) {
-		return 0, false
-	}
-	product := a * b
-	if product/b != a {
-		return 0, false
-	}
-	return product, true
+	return ast.FoldIntExpr(expr)
 }
 
 // integerFitsInType reports whether value is within the valid range for the
