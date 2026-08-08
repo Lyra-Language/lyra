@@ -947,6 +947,41 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		return tc.inferLambdaCallFromType(methodName, sig, call)
 	}
 
+	// A `newtype` is transparent to its base's methods: `newtype Name = string`
+	// supports `len()`, `slice()` and `trim()`, because a Name **is** a string at run
+	// time and the isolation newtype buys is about assignment, not about losing every
+	// operation the base has. Without this a wrapped string is a string you cannot do
+	// anything with, which is not a trade anyone would take.
+	//
+	// Tried *after* everything above rather than by stripping at the top, so a method
+	// written for the newtype itself still wins over the base's — the same
+	// user-code-beats-builtin ordering the rungs above follow.
+	//
+	// The receiver occurrence is re-recorded at the base type, exactly as the untyped
+	// literal promotion below does and for the same reason: the argument check that
+	// follows compares the recorded type against a `self: string` parameter, and the
+	// backend reads the node too (its `recordedType` already strips newtypes, so this
+	// only agrees with what lowering was going to do anyway). It is this *occurrence*
+	// of the receiver, not the binding, so the variable keeps its newtype elsewhere.
+	if base := types.StripNewtype(objType); base != nil {
+		if _, isNewtype := objType.(*types.ConstrainedType); isNewtype {
+			if fn, res := tc.ufcsCandidate(base, methodName, member, call); res != ufcsNoMatch {
+				if res == ufcsRefused {
+					return nil
+				}
+				tc.typeTable.Set(member.Object, base)
+				desugarUFCSCall(member, call)
+				return tc.inferLambdaCall(methodName, fn, call)
+			}
+			if sig, ok := builtinMethodSignature(base, methodName); ok {
+				tc.typeTable.Set(member.Object, base)
+				tc.typeTable.Set(member, sig)
+				tc.methodTable.SetBuiltinMethod(call, builtinMethodAllocates(base, methodName))
+				return tc.inferLambdaCallFromType(methodName, sig, call)
+			}
+		}
+	}
+
 	// A free function of this name that *nearly* matched — one that never opted in, or
 	// one this file has not imported — is the likeliest thing the author meant, so the
 	// "no such member" message says so rather than leaving them hunting for a method.

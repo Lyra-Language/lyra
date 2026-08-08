@@ -278,3 +278,97 @@ let p: Percent = 300
 `, false)
 	assertErrorsAre(t, res, "p: value 300 is outside the range 0..<=100 of Percent")
 }
+
+// ── the base must be structural ──────────────────────────────────────────────
+//
+// `newtype` gives nominal identity to a type that has none. A struct, a `data`
+// type and a *named* tuple already have their own, so wrapping one buys a second
+// name and nothing else — and neither had ever been usable (a struct base could
+// not be constructed by any spelling; a data base crashed the backend).
+
+func TestNewtype_StructBase_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+struct Pt { x: i64, y: i64 }
+newtype WrapS = Pt
+`, false)
+	assertHasErrorContaining(t, res, "Pt is a struct, which already has its own identity")
+}
+
+func TestNewtype_DataBase_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Color = Red | Green
+newtype WrapD = Color
+`, false)
+	assertHasErrorContaining(t, res, "is a `data` type, which already has its own identity")
+}
+
+// An anonymous tuple is refused too, and for the sharper reason: `tuple Rgb(...)`
+// already names a product, so the two differ only in whether the name is a
+// constructor. The message shows the `tuple` line to write.
+func TestNewtype_AnonymousTupleBase_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Rgb = (u8, u8, u8)
+`, false)
+	assertHasErrorContaining(t, res, "write `tuple Rgb(u8, u8, u8)` instead")
+}
+
+func TestNewtype_NamedTupleBase_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+tuple Pair(i64, i64)
+newtype WrapT = Pair
+`, false)
+	assertHasErrorContaining(t, res, "is a named tuple, which already has its own identity")
+}
+
+// A chain is reported at the newtype the author can fix, not at the one below it.
+func TestNewtype_ChainedStructBase_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+struct Pt { x: i64, y: i64 }
+newtype A = Pt
+newtype B = A
+`, false)
+	assertHasErrorContaining(t, res, "is a struct, which already has its own identity")
+}
+
+// The structural bases keep working — this is the feature, not a casualty of it.
+func TestNewtype_StructuralBases_Ok(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Meters = f64
+newtype Name = string
+newtype Grid = [3]i64
+newtype Handle = ^u8
+`, false))
+}
+
+// ── a newtype is transparent to its base's methods ───────────────────────────
+
+func TestNewtype_StringBase_HasStringMethods(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Name = string
+let n: Name = "abc"
+let a = n.len()
+let b = n.slice(0, 2)
+`, true))
+}
+
+// A method written *for* the newtype wins over the base's, matching the
+// user-code-beats-builtin ordering everywhere else.
+func TestNewtype_OwnMethodBeatsBaseMethod(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Name = string
+pub let len = (self: Name) -> string => "mine"
+let n: Name = "abc"
+let a: string = n.len()
+`, true)
+	assertNoErrors(t, res)
+}
+
+// A UFCS function taking the base receives the newtype through the same fallback.
+func TestNewtype_BaseUFCSFunctionReachable(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Meters = f64
+pub let describe = (self: f64) -> string => "float"
+let m: Meters = 1.5
+let d = m.describe()
+`, false))
+}

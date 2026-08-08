@@ -334,6 +334,22 @@ const (
 	// Found by sweeping the AST for fields nothing reads.
 	CodeUnsatisfiedSupertrait = "lyra-E040"
 
+	// CodeNominalNewtypeBase: a `newtype` whose base is a type that already has nominal
+	// identity — a `struct`, a `data` type, or a *named* tuple.
+	//
+	// `newtype` exists to give nominal identity to a **structural** type: `newtype
+	// Meters = f64` makes an f64 that is not interchangeable with other f64s, and
+	// `newtype Rgb = (u8, u8, u8)` does the same for an anonymous tuple. A struct or a
+	// data type is already its own type, so wrapping one buys a second name and nothing
+	// else — and the three nominal declarations are already distinguished on purpose
+	// (todo.md's consistency section), so a fourth way to get a nominal product is the
+	// redundancy that section exists to avoid.
+	//
+	// The evidence agreed before the rule did: a struct-based newtype could not be
+	// constructed by any spelling, and a data-based one type-checked and crashed the
+	// backend. Neither had ever been usable.
+	CodeNominalNewtypeBase = "lyra-E041"
+
 	// CodeInertDerive: a `@derive(X)` naming a trait the compiler does not synthesize,
 	// so the attribute does nothing. A warning rather than an error — the derive is not
 	// wrong, the trait simply does not exist yet — but reported, because an attribute

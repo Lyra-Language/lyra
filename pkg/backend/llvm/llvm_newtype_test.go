@@ -424,3 +424,66 @@ func TestEmit_NewtypeOverStringSharesBaseGlue(t *testing.T) {
 		t.Errorf("expected the string fat pointer as the field representation:\n%s", got)
 	}
 }
+
+// A newtype is **transparent to its base's methods**: a `newtype Name = string`
+// that could not be measured, sliced or trimmed would be a string you cannot do
+// anything with. The base's builtins and its `self:`-taking prelude functions both
+// reach through, and a multi-byte string is used so the rune semantics travel with
+// them rather than degrading to bytes.
+func TestExec_NewtypeOverStringKeepsStringMethods(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+newtype Name = string
+let main = () -> void => {
+  let n: Name = "  héllo  ";
+  println("${n.len()}");
+  println(n.trim());
+  println(n.slice(2, 4));
+}
+`
+	// One call per statement, deliberately: two `slice`/`trim` results in a single
+	// expression are corrupted by a pre-existing temp-lifetime bug (todo.md), which has
+	// nothing to do with newtypes and would make this test fail for the wrong reason.
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "9\nhéllo\nhé" {
+		t.Errorf("newtype string methods = %q; want \"9\\nhéllo\\nhé\"", got)
+	}
+}
+
+// A method *written for* the newtype wins over the base's — the same
+// user-code-beats-builtin ordering every other rung of method resolution follows.
+// Without it the fallback would make a newtype's own methods unreachable, which is
+// worse than not having the fallback at all.
+func TestExec_NewtypeOwnMethodBeatsBaseMethod(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+newtype Name = string
+pub let len = (self: Name) -> i64 => 99
+let main = () -> void => {
+  let n: Name = "abc";
+  println("${n.len()}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "99" {
+		t.Errorf("own method = %q; want \"99\" (the newtype's own len, not the string builtin)", got)
+	}
+}
+
+// An array newtype, end to end: it indexes and measures like its base. The array
+// is the case the nominal-base refusal turns on — a scalar, a string and an array
+// have no other way to be named, where a product does (`tuple`, `struct`, `data`).
+func TestExec_NewtypeOverArray(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+newtype Grid = [3]i64
+let main = () -> void => {
+  let g: Grid = [4, 5, 6];
+  println("${g.len()} ${g[1]}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "3 5" {
+		t.Errorf("array newtype = %q; want \"3 5\"", got)
+	}
+}

@@ -10,6 +10,56 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**A `newtype` base must be structural, and a newtype is transparent to its base's
+methods.** Two halves of one question — what a newtype is *for*, and what you get once
+you have one.
+
+`lyra-E041` refuses a base that already has nominal identity: a `struct`, a `data` type, a
+named tuple, and an **anonymous** tuple. The rule is structural-versus-nominal, not
+scalar-versus-compound: `newtype` exists to give identity to a type that has none
+(`newtype Meters = f64` will not mix with other f64s), and an array earns its place the
+same way — `struct Matrix { cells: [16]f64 }` is a wrapper with a field, not an alias, so
+the newtype is the only route to a nominal array.
+
+**The implementation already agreed with the rule before the rule was written**, which is
+what made the decision easy: a struct base could not be constructed by *any* spelling
+(`let w: W = Pt { … }` and a `-> W` return both rejected), and a data base type-checked and
+then crashed the backend with `data constructor "Red" did not record a data type`. Neither
+had ever been usable, so this refuses two forms rather than removing anything that worked.
+
+The anonymous tuple is the interesting one, because it *did* work. It is refused for a
+sharper reason than the others: `tuple Rgb(u8, u8, u8)` already names a product, so the two
+differ only in whether the name is a constructor — `let c: Rgb = (1, 2, 3)` is rejected for
+the named tuple, `Rgb(1, 2, 3)` for the newtype. Two spellings of "give this product a
+name" is the redundancy the diagnostic exists to remove, so the message shows the `tuple`
+line to write instead of describing the problem.
+
+**The transparency half is what makes the surviving bases worth having.** A
+`newtype Name = string` that could not be measured, sliced or trimmed is a string you can
+do nothing with, so a method call falls back to the base — the builtins and the prelude's
+`self:`-taking functions alike. It is tried *after* every other rung rather than by
+stripping the newtype up front, so a method written for the newtype still wins, matching
+the user-code-beats-builtin ordering everywhere else. The receiver *occurrence* is
+re-recorded at the base type, exactly as the untyped-literal promotion beside it does: the
+argument check that follows compares against a `self: string` parameter, and the backend's
+`recordedType` already strips newtypes, so this only agrees with what lowering was going to
+do anyway.
+
+Making that ordering real needed **hazard 8's seventh instance**: `nominalHead` — the
+unifier's "is this a named type, and which?" — had arms for `ParameterizedType`,
+`NamedStructType`, `DataType` and `UnresolvedType` but not `*ConstrainedType`, though
+`types.HeadName` one layer up says a newtype is nominal and explains why. So
+`receiverAccepts` compared a `Name` receiver against a declared `self: Name` (an
+`UnresolvedType` at that point), fell through to `TypesEqual`, and never matched: a method
+written *for* a newtype was unreachable, while the base's were about to become reachable.
+The fallback would have inverted the precedence it promises, and only in the one case where
+the author had been most explicit.
+
+Two bugs turned up while testing it, both recorded in todo.md and neither caused by this
+work: two `slice()` results in one expression clobber each other (a temporary released
+before the next allocation — `"${s.slice(0,3)} ${s.slice(2,4)}"` prints `hé hé`), and an
+array of anonymous tuples (`[](i64, string)`) does not parse in any position.
+
 **A generic `newtype` works** — `newtype Boxed<t> = t`, with `Boxed<i64>` nominal to the
 typechecker and transparent to codegen, exactly as `newtype Plain = i64` already was.
 

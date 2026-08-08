@@ -3,6 +3,7 @@ package typechecker
 import (
 	"fmt"
 	"reflect"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
@@ -192,6 +193,7 @@ func (tc *TypeChecker) checkTypeDecl(decl *ast.TypeDeclStmt) {
 // declaration. Currently this means compiling every PatternConstraint regex
 // at type-declaration time so users see syntax errors immediately.
 func (tc *TypeChecker) checkConstrainedTypeDecl(decl *ast.TypeDeclStmt, ct *types.ConstrainedType) {
+	tc.checkNewtypeBaseIsStructural(decl, ct)
 	for _, c := range ct.Constraints {
 		pc, ok := c.(*types.PatternConstraint)
 		if !ok {
@@ -3231,4 +3233,72 @@ func (tc *TypeChecker) expandParameterizedNewtype(p types.ParameterizedType, loc
 		Type:        substituteGenerics(ct.Type, subst),
 		Constraints: ct.Constraints,
 	}, true
+}
+
+// checkNewtypeBaseIsStructural refuses a `newtype` whose base already has nominal
+// identity — a struct, a `data` type, or a *named* tuple.
+//
+// The rule is structural-versus-nominal, not scalar-versus-compound. `newtype` exists to
+// give identity to a type that has none: `newtype Meters = f64` makes an f64 that will
+// not mix with other f64s, and `newtype Rgb = (u8, u8, u8)` does the same for an
+// anonymous tuple. An array base earns its place the same way and is the only route to a
+// *transparent* nominal array — `struct Matrix { cells: [16]f64 }` is a wrapper with a
+// field, not an alias.
+//
+// A struct or `data` type is already its own type. Wrapping one yields a second name for
+// an identity that exists, which is redundant with the three nominal declarations the
+// language deliberately keeps distinct (todo.md's consistency section).
+//
+// **The implementation agreed with the rule before the rule was written**, which is the
+// part worth keeping: a struct-based newtype could not be constructed by *any* spelling
+// (`let w: W = Pt { … }` and a `-> W` return both rejected), and a data-based one
+// type-checked and then crashed the backend with `data constructor "Red" did not record a
+// data type`. Neither had ever been usable, so this refuses two forms rather than
+// removing anything that worked.
+func (tc *TypeChecker) checkNewtypeBaseIsStructural(decl *ast.TypeDeclStmt, ct *types.ConstrainedType) {
+	base := tc.resolveTypeIfKnown(ct.Type, decl.GetLocation())
+	// Strip a chain of newtypes: `newtype B = A` over `newtype A = Pt` is the same
+	// mistake one level down, and reporting it at B is where the author can fix it.
+	base = types.StripNewtype(base)
+
+	var kind, alternative string
+	switch b := base.(type) {
+	case types.NamedStructType:
+		kind, alternative = "a struct", "declare the struct itself, or wrap a structural type instead"
+	case types.DataType:
+		kind, alternative = "a `data` type", "declare the `data` type itself — a sum type is already nominal"
+	case types.TupleType:
+		if types.IsAnonymousTupleName(b.Name) {
+			// The one structural base the language already has a dedicated nominal
+			// declaration for. `tuple Rgb(u8, u8, u8)` and `newtype Rgb = (u8, u8, u8)`
+			// differ only in whether the name is a constructor — the named tuple
+			// refuses `let c: Rgb = (1, 2, 3)`, the newtype refuses `Rgb(1, 2, 3)` —
+			// which is two spellings of "give this product a name", the redundancy this
+			// diagnostic exists to remove. A scalar, a string and an array keep the
+			// newtype because nothing else names them: `struct Matrix { cells: [16]f64 }`
+			// is a wrapper with a field, not an alias.
+			tc.addErrorCode(decl.NameLocation, SeverityError, diag.CodeNominalNewtypeBase,
+				"newtype %s: an anonymous tuple is named by declaring a tuple — write `tuple %s%s` instead, "+
+					"which also gives %s a constructor",
+				decl.Name, decl.Name, tupleParamList(b), decl.Name)
+			return
+		}
+		kind, alternative = "a named tuple", "declare the named tuple itself"
+	default:
+		return
+	}
+	tc.addErrorCode(decl.NameLocation, SeverityError, diag.CodeNominalNewtypeBase,
+		"newtype %s: %s is %s, which already has its own identity — a newtype over it adds a second name and nothing else; %s",
+		decl.Name, base, kind, alternative)
+}
+
+// tupleParamList renders a tuple's elements as the parameter list of a `tuple`
+// declaration, so the newtype diagnostic can show the line to write rather than
+// describe it.
+func tupleParamList(t types.TupleType) string {
+	parts := make([]string, 0, len(t.Elements))
+	for _, e := range t.Elements {
+		parts = append(parts, fmt.Sprintf("%s", e))
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
 }

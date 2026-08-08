@@ -88,7 +88,7 @@ because each was learned from a real failure, and none is local to one package.
 
 8. **A `switch` over AST node kinds or composite types must have a case for every one
    that can hold a child — a missing case is silent and its symptom is remote.** This has
-   bitten six times, in five different switches, and never looked like what it was:
+   bitten seven times, in six different switches, and never looked like what it was:
    `mentionsTypeVar` missing `ParameterizedType` (a generic function emitted under its
    bare name, failing in layout); `resolveType` missing `*LambdaType` and
    `ParameterizedType` (assignability rejecting a type against *itself* — "cannot assign
@@ -160,6 +160,18 @@ because each was learned from a real failure, and none is local to one package.
    `TestExec_WeakOptionalField` caught), and that test had itself been green *by leaking* —
    before the glue walked a `Maybe<shared T>` field at all, the cycle it builds released
    nothing. A memory-safety test can pass because the code under it does nothing.
+
+   **A seventh landed 08/07, and its lesson is that a switch can be wrong about a type the
+   file above it already classified correctly.** `nominalHead` — the unifier's "is this a
+   named type, and which?" — had arms for `ParameterizedType`, `NamedStructType`,
+   `DataType` and `UnresolvedType` but not `*ConstrainedType`, while `types.HeadName` one
+   layer up gives a newtype a head *and writes down why*. So `receiverAccepts` compared a
+   `newtype Name = string` receiver against a declared `self: Name` (an `UnresolvedType` at
+   that point), fell through to `TypesEqual`, and never matched — a method written **for** a
+   newtype was silently unreachable. Nothing was reported; the call simply took the next
+   rung, so the symptom was "member access on non-struct type Name" pointing at code that
+   was correct. Grepping for the switches would not have found it either: the two disagree
+   about a case *neither one names*, which is why the durable fix below is to have one.
 
    The durable fix for a switch with more than one caller is to stop having more than one
    of it. The type-variable walk was three switches (typechecker `collectTypeVars`, backend

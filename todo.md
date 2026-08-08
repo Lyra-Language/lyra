@@ -105,6 +105,28 @@ write today:
 
 ## Known bugs
 
+- **[OPEN] Two `slice()` results in one expression clobber each other.** Plain strings,
+  nothing to do with newtypes:
+
+  ```
+  let s = "  héllo  "
+  println("${s.slice(0,3)} ${s.slice(2,4)}")   // "hé hé", want "  h hé"
+  println(s.slice(0,3) ++ "|" ++ s.slice(2,4)) // "    hé", the "|" gone entirely
+  ```
+
+  Bound to `let`s first, both are correct; one `slice` in an expression is correct. So it
+  is the *temporaries*, not the walk — the first result's box looks released before the
+  second allocates, and the second lands on the freed bytes. That is the shape of a
+  use-after-free, and `trim` (prelude Lyra, built on `slice`) inherits it. Found 08/07
+  while testing newtype string methods; run it under `./asan.sh` first, which should name
+  the release site outright.
+
+- **[OPEN] An array of anonymous tuples does not parse.** `[](i64, string)` and
+  `[2](i64, string)` are ERROR nodes in every position — `let xs: [](i64, string) = []`
+  as much as `newtype Pairs = [](i64, string)` — while `[]Named` and `[3]i64` are fine, and
+  the tuple parses everywhere else. A grammar gap in the element-type position, not a
+  newtype one. Found 08/07 while writing newtype corpus tests.
+
 - **[OPEN] `[0; 5]` — the array-repeat literal — is unimplemented.** It parses and collects
   (`ast.ArrayRepeatExpr`), and the typechecker then reports `unknown expression type
   "[0; 5]"`. Loud rather than silent, so it is an unimplemented feature rather than a
@@ -134,6 +156,14 @@ write today:
   binds nothing — the opt-out the must-use warning has always recommended in its own
   message (*"bind it (`let _ = ...`) to discard it intentionally"*) and the parser rejected.
   Zero parser states. `_` is still not an expression, so a discard cannot be read back.
+
+- **[DONE 08/07] A `newtype` base must be structural, and is transparent to its methods.**
+  `lyra-E041` refuses a base that already has nominal identity — a `struct`, a `data` type,
+  a named tuple, and an *anonymous* tuple (which `tuple Name(...)` names, so the two would
+  be two spellings of one thing). Scalars, `string`, arrays, raw pointers and function
+  types keep working: nothing else names them. And a newtype now reaches its base's methods
+  — `newtype Name = string` supports `len`/`slice`/`trim` — tried after every other rung,
+  so a method written *for* the newtype still wins. See COMPLETED.md.
 
 - **[DONE 08/07] A generic `newtype` works.** `newtype Boxed<t> = t`, and `Boxed<i64>`
   behaves as a newtype over `i64` — nominal to the typechecker, transparent to codegen.
