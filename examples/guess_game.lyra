@@ -8,15 +8,18 @@ let main = () => {
       Some input => {
         match input.parse_i64() {
           Some guess => {
-            if guess < 1 || guess > 100 {
-              println("My integer is between 1 and 100. Try again.")
-              continue
-            } else {
-              guess_count += 1
-              match guess <=> secret {
-                Less    => println("Too low!"),
-                Greater => println("Too high!"),
-                Equal   => { println("You guessed it!"); break },
+            match guess {
+              1..<=100 => {
+                guess_count += 1
+                match guess <=> secret {
+                  Less    => println("Too low!"),
+                  Greater => println("Too high!"),
+                  Equal   => { println("You guessed it!"); break },
+                }
+              },
+              _ => {
+                println("My integer is between 1 and 100. Try again.")
+                continue
               }
             }
           },
