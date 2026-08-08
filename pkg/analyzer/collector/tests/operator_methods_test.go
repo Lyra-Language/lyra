@@ -87,26 +87,46 @@ func TestOperatorMethod_TheImplIsReportedToo(t *testing.T) {
 	}
 }
 
-// Arithmetic keeps the syntax — it has no canonical trait and no other design on the
-// table, and `(_-_)` is load-bearing for a recorded hazard (`Empty - 1` parses as
-// `Empty(-1)`, which only bites a data type overloading `-`). It warns rather than
-// compiling silently to nothing.
-func TestOperatorMethod_ArithmeticWarnsRatherThanRefusing(t *testing.T) {
+// Arithmetic **dispatches** as of 08/07, so it draws nothing at all: `a + b` on a type
+// with a `(_+_)` impl calls it. This test inverted on that day — it used to assert the
+// W015 warning, which was the holding position while nothing consumed the syntax.
+func TestOperatorMethod_ArithmeticIsDispatchedAndSilent(t *testing.T) {
 	ds := diagnosticsOf(t, `
 	trait Arith {
 		(_+_): (Self, Self) -> Self,
-		(_*_): (Self, Self) -> Self
+		(_*_): (Self, Self) -> Self,
+		(_&_): (Self, Self) -> Self,
+		(-_): (Self) -> Self,
+		(~_): (Self) -> Self
 	}
 	`)
-	if hasCode(ds, diag.CodeComparisonOperatorMethod) {
-		t.Fatalf("arithmetic operator methods must not be refused: %v", ds)
+	if len(ds) != 0 {
+		t.Errorf("a dispatched operator method must draw no diagnostic, got: %v", ds)
 	}
-	if !hasCode(ds, diag.CodeInertOperatorMethod) {
-		t.Errorf("an operator method nothing dispatches to must say so: %v", ds)
-	}
-	for _, d := range ds {
-		if d.Severity == diag.SeverityError {
-			t.Errorf("arithmetic operator methods must not be an error: %v", d)
+}
+
+// The inert group still warns, and each says *why* — the reasons differ, and "nothing
+// calls it" left the author unable to tell "wait for it" from "this can never work".
+func TestOperatorMethod_InertOperatorsWarnWithTheirReason(t *testing.T) {
+	for _, tc := range []struct{ decl, want string }{
+		{"(_&&_): (Self, Self) -> Self", "short-circuit"},
+		{"(_**_): (Self, Self) -> Self", "no `**` operator"},
+		{"(!_): (Self) -> Self", "boolean negation"},
+		{"(_++): (Self) -> Self", "no suffix"},
+	} {
+		ds := diagnosticsOf(t, "\n\ttrait T { "+tc.decl+" }\n\t")
+		if !hasCode(ds, diag.CodeInertOperatorMethod) {
+			t.Errorf("%s: expected the inert warning, got: %v", tc.decl, ds)
+			continue
+		}
+		found := false
+		for _, d := range ds {
+			if strings.Contains(d.Message, tc.want) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: the warning must say why (%q), got: %v", tc.decl, tc.want, ds)
 		}
 	}
 }

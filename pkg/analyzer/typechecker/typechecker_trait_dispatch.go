@@ -33,9 +33,10 @@ type resolvedTraitMethod struct {
 // same method name for the same type) — the caller decides what to do with
 // len(matches) > 1.
 //
-// Only identifier-named methods participate (operator-overload methods like
-// `(_==_)` are invoked through the operator itself, never through `.name()`
-// or `TraitName::name()` syntax, so they're never a candidate here).
+// Only identifier-named methods participate here: an operator-overload method like
+// `(_+_)` is invoked through the operator itself, never through `.name()` or
+// `TraitName::name()` syntax. The operator's own dispatch goes through
+// resolveTraitMethodNamed, which is this function keyed on the full name.
 //
 // A generic impl (`impl<t> Show for Box<t>`) matches when its target *unifies*
 // with the receiver — its own `<t,…>` parameters act as wildcards binding to
@@ -47,6 +48,17 @@ type resolvedTraitMethod struct {
 // A method that returns the impl's element type (`Container<e>.get -> e`) is not
 // yet fully instantiated — trait-type-parameter binding is a separate feature.
 func (tc *TypeChecker) resolveTraitMethod(receiverType types.Type, methodName string, requiredTrait string) []resolvedTraitMethod {
+	return tc.resolveTraitMethodNamed(receiverType, ast.NewMethodNameIdentifier(methodName), requiredTrait)
+}
+
+// resolveTraitMethodNamed is resolveTraitMethod keyed on a full MethodName rather
+// than an identifier, which is what lets an **operator** find its impl: `a + b`
+// asks for the binary `+` method on a's type, exactly as `a.show()` asks for the
+// identifier `show`. Everything else — impl matching, Self substitution, trait
+// type-parameter binding — is the same work, and deliberately not a second copy of
+// it: the two dispatch paths differing would be a divergence nobody would see until
+// a generic impl behaved differently under an operator than under a call.
+func (tc *TypeChecker) resolveTraitMethodNamed(receiverType types.Type, methodName ast.MethodName, requiredTrait string) []resolvedTraitMethod {
 	var matches []resolvedTraitMethod
 	for _, impl := range tc.traitImpls {
 		if requiredTrait != "" && impl.TraitName != requiredTrait {
@@ -73,10 +85,10 @@ func (tc *TypeChecker) resolveTraitMethod(receiverType types.Type, methodName st
 		}
 		for i := range impl.Methods {
 			m := &impl.Methods[i]
-			if m.Name.Kind != ast.MethodNameKindIdentifier || m.Name.Value != methodName {
+			if m.Name != methodName {
 				continue
 			}
-			traitMethod := findTraitMethod(trait, methodName)
+			traitMethod := findTraitMethodNamed(trait, methodName)
 			if traitMethod == nil {
 				// Not declared in the trait (the "extraneous method" case
 				// checkTraitImpl already warns about) — not dispatchable.
@@ -341,8 +353,16 @@ func (tc *TypeChecker) dispatchViaGenericBound(recv types.GenericType, methodNam
 }
 
 func findTraitMethod(trait *ast.TraitDeclStmt, methodName string) *ast.TraitMethod {
+	return findTraitMethodNamed(trait, ast.NewMethodNameIdentifier(methodName))
+}
+
+// findTraitMethodNamed is the same lookup keyed on a full MethodName, so an
+// operator-named method (`(_+_)`) is found by the operator that invokes it. Kind is
+// part of the key: prefix `-` and binary `-` share a spelling and are different
+// methods.
+func findTraitMethodNamed(trait *ast.TraitDeclStmt, name ast.MethodName) *ast.TraitMethod {
 	for i := range trait.Methods {
-		if trait.Methods[i].Name.Kind == ast.MethodNameKindIdentifier && trait.Methods[i].Name.Value == methodName {
+		if trait.Methods[i].Name == name {
 			return &trait.Methods[i]
 		}
 	}

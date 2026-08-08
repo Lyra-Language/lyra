@@ -350,6 +350,18 @@ const (
 	// backend. Neither had ever been usable.
 	CodeNominalNewtypeBase = "lyra-E041"
 
+	// CodeOperatorNotOverloaded: an overloadable operator applied to an operand whose
+	// type is a **type parameter**, so the impl it would dispatch to is not known
+	// where the operator is written.
+	//
+	// `==` has no such problem — equality is structural, so a type variable is
+	// comparable and the specialization only *overrides* that. Arithmetic has no
+	// structural fallback: there is nothing `a + b` can mean for an unknown `t`. The
+	// message says so directly rather than letting the operand reach the built-in
+	// numeric rule, which would report "operands must be numeric" — true of a type
+	// parameter, and no help at all.
+	CodeOperatorNotOverloaded = "lyra-E042"
+
 	// CodeInertDerive: a `@derive(X)` naming a trait the compiler does not synthesize,
 	// so the attribute does nothing. A warning rather than an error — the derive is not
 	// wrong, the trait simply does not exist yet — but reported, because an attribute

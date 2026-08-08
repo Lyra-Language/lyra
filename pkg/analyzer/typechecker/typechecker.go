@@ -938,6 +938,25 @@ func (tc *TypeChecker) resolveAssignTarget(name string, loc ast.Location) (assig
 	return assignTarget{effective, true}, true
 }
 
+// assignTargetType is the declared type of an assignment target, and **reports
+// nothing** — the quiet half of resolveAssignTarget, for a caller that needs the type
+// in order to decide *which* rules apply and would otherwise trigger that function's
+// diagnostics a second time.
+func (tc *TypeChecker) assignTargetType(name string) types.Type {
+	if paramType, ok := tc.paramTypes[name]; ok {
+		return paramType
+	}
+	sym, ok := tc.scope.Lookup(name)
+	if !ok {
+		return nil
+	}
+	decl, ok := sym.(*ast.VarDeclStmt)
+	if !ok {
+		return nil
+	}
+	return tc.effectiveType(decl)
+}
+
 // checkAssignedValue infers value and verifies it can be stored in a binding of
 // type target, reporting an assignability or allocation-flavor mismatch. Returns
 // target on success and nil on any failure. Shared by the variable and parameter
@@ -1144,8 +1163,51 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 		return
 	}
 
+	// `x += y` is `x = x + y`, so an overloaded `+` has to reach it — a working
+	// `a + b` beside an `a += b` that crashes the backend is the first thing anyone
+	// tries. Checked before checkAssignToBinding, whose assignability rule is the
+	// wrong question here: an impl may take a *different* type on the right
+	// (`(Self, i64) -> Self` scales a vector by a scalar), which assignability would
+	// refuse, and it would equally *accept* two structs with no impl at all — which
+	// is how `a += b` on two structs type-checked clean and then failed to lower
+	// (rule 5 inverted, and pre-existing).
+	if binOp, isBin := expr.Operator.BinaryOp(); isBin {
+		// The target's type only — not resolveAssignTarget, which *reports* (immutable
+		// binding, borrowed parameter). Asking it here and again through
+		// checkAssignToBinding below would print each of those twice.
+		if target := tc.assignTargetType(expr.Left.Name); target != nil {
+			if result, handled := tc.dispatchCompoundOperator(expr, binOp, target); handled {
+				// The result is stored back into the target, so it must fit. Reported
+				// here rather than left to the store, which is the backend's problem by
+				// then; and it is a real possibility, since an impl's return type is
+				// whatever the trait declared and need not be Self.
+				if result != nil && !isAssignable(result, target) {
+					tc.addError(expr.GetLocation(), SeverityError,
+						"operator %s: the impl yields %s, which cannot be stored back into %s (%s)",
+						expr.Operator, result, expr.Left.Name, target)
+				}
+				// Mutability is still the assignment's own rule, and dispatch says
+				// nothing about it — so ask, and let it report.
+				tc.resolveAssignTarget(expr.Left.Name, expr.GetLocation())
+				return
+			}
+		}
+	}
+
 	effective := tc.checkAssignToBinding(expr.Left.Name, expr.Right, expr.GetLocation())
 	if effective == nil {
+		return
+	}
+	// No impl, so this is built-in arithmetic and the operands must be numeric.
+	// `checkAssignToBinding` alone cannot say that: it asks whether the right side is
+	// assignable to the left, which two structs of the same type satisfy — so
+	// `a += b` on two `Vec2`s type-checked clean and failed to lower with "type not
+	// found for *ast.StructInstanceExpr" (rule 5 inverted). The binary spelling
+	// `a = a + b` always reported it; only the compound one did not.
+	if _, isBin := expr.Operator.BinaryOp(); isBin && !types.IsNumeric(effective) {
+		tc.addError(expr.GetLocation(), SeverityError,
+			"operator %s: operands must be numeric, got %s — or implement `(_%s_)` for %s",
+			expr.Operator, effective, strings.TrimSuffix(string(expr.Operator), "="), effective)
 		return
 	}
 	// A bitwise compound assignment carries the binary operator's integers-only
@@ -1894,6 +1956,14 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 		return nil
 	}
 
+	// A user type may give the operator a meaning, through a trait method named for it
+	// (`(_+_)`). Tried before the numeric rule and never *instead* of it: dispatch
+	// refuses a primitive receiver outright, so `1 + 1` is a machine add whatever impls
+	// a program declares. See typechecker_operator_overload.go.
+	if result, handled := tc.dispatchBinaryOperator(expr, left, right); handled {
+		return result
+	}
+
 	if !types.IsNumeric(left) || !types.IsNumeric(right) {
 		tc.addError(expr.GetLocation(), SeverityError,
 			"operator %s: operands must be numeric, got %s and %s", expr.Operator, left, right)
@@ -2366,6 +2436,9 @@ func (tc *TypeChecker) inferBitwiseNotExpr(expr *ast.BitwiseNotExpr) types.Type 
 	if operandType == nil {
 		return nil
 	}
+	if result, handled := tc.dispatchUnaryOperator(expr, "~", operandType); handled {
+		return result
+	}
 	if !isIntegerOperand(operandType) {
 		tc.addError(expr.GetLocation(), SeverityError,
 			"operator ~: operand must be an integer, got %s", operandType)
@@ -2396,6 +2469,11 @@ func (tc *TypeChecker) inferNegationExpr(expr *ast.NegationExpr) types.Type {
 	operandType := tc.inferExprType(expr.Operand)
 	if operandType == nil {
 		return nil
+	}
+	// A user type may define prefix `-` as `(-_)`. Kind, not spelling, tells it from
+	// binary `-`: a type may implement either without the other.
+	if result, handled := tc.dispatchUnaryOperator(expr, "-", operandType); handled {
+		return result
 	}
 	if !types.IsNumeric(operandType) {
 		tc.addError(expr.GetLocation(), SeverityError,

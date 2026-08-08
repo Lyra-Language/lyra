@@ -150,8 +150,15 @@ func (tc *TypeChecker) checkTraitImplMethodBody(methodName string, implMethod as
 		if traitSig.Parameters[i].Type == nil {
 			continue
 		}
+		// **Resolved**, like the return type below. The two used to disagree — the
+		// return was resolved and the parameters were not — so `same = (self) => self`
+		// against `(Self) -> Self` compared an UnresolvedType against a
+		// NamedStructType and failed with `expected Vec2, got Vec2`. A method returning
+		// its own receiver is an ordinary thing to write, and the error named the same
+		// type twice, which is the signature of exactly this asymmetry.
+		paramType := tc.resolveTypeIfKnown(traitSig.Parameters[i].Type, pat.GetLocation())
 		if ip, ok := pat.(*ast.IdentifierPattern); ok {
-			tc.paramTypes[ip.Name] = traitSig.Parameters[i].Type
+			tc.paramTypes[ip.Name] = paramType
 			continue
 		}
 		// A destructuring parameter — `total = ({ x, y }) => x + y`. Its names come
@@ -160,7 +167,7 @@ func (tc *TypeChecker) checkTraitImplMethodBody(methodName string, implMethod as
 		// an impl method and in a plain lambda. The impl writes no annotation of its
 		// own (the trait's signature supplies it), which is what makes this reachable
 		// where an unannotated destructured parameter on a free function is not.
-		tc.walkDestructuredPattern(pat, traitSig.Parameters[i].Type, func(name string, typ types.Type) {
+		tc.walkDestructuredPattern(pat, paramType, func(name string, typ types.Type) {
 			tc.paramTypes[name] = typ
 		})
 	}

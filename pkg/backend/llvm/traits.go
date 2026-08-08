@@ -337,3 +337,25 @@ func (l *lowerer) ordDataType(res typetable.Resolution) (types.DataType, error) 
 	}
 	return dt, nil
 }
+
+// lowerOperatorImplCall emits the call an overloaded arithmetic or bitwise operator
+// dispatches to: `a + b` becomes the impl's `(_+_)` with the operands as arguments,
+// receiver first.
+//
+// It is this short because an operator method *is* an ordinary trait method — same
+// emitted function, same argument order, same specialization key. The only thing the
+// operator adds is that the resolution arrives through the TypeTable rather than
+// through a call node, which is what `SetOperatorResolution` exists for.
+//
+// Unlike `lowerOrdComparison` there is nothing to interpret afterwards: `Ord` returns
+// an `Ordering` that four of the five operators have to read a tag out of, whereas an
+// arithmetic impl's return value *is* the expression's value, whatever its type.
+func (l *lowerer) lowerOperatorImplCall(block *ir.Block, res typetable.Resolution, operands ...value.Value) (value.Value, *ir.Block, error) {
+	fn, err := l.traitMethod(res)
+	if err != nil {
+		return nil, nil, err
+	}
+	args := make([]value.Value, len(operands))
+	copy(args, operands)
+	return block.NewCall(fn, args...), block, nil
+}

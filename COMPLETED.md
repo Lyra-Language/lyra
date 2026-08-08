@@ -10,6 +10,80 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**Arithmetic operator overloading**, and the deletion of the holding position that stood
+in for it. `a + b` on a user type resolves to a trait method named `(_+_)`, exactly as
+`a.show()` resolves to one named `show`:
+
+```
+trait Add { (_+_): (Self, Self) -> Self }
+impl Add for Vec2 { (_+_) = (self, o) => Vec2 { x: self.x + o.x, y: self.y + o.y } }
+```
+
+Ten binary operators (`+ - * / % << >> & | ~`), the prefix `-` and `~`, and every
+compound assignment built on them.
+
+**The dispatch key is the method name, not a trait the compiler knows**, which is the
+one real design decision here and the opposite of what `Eq`/`Ord` do. Those two *are*
+the comparison operators: `<` and `<=>` must agree, so one trait has to own them and a
+second mechanism would be a coherence question with no answer. Arithmetic carries no
+such invariant — `+` on a matrix and `+` on a duration are unrelated operations — so
+insisting they come from one blessed trait buys nothing and costs the author a name they
+did not choose. Two traits providing one operator for one type is an ambiguity, reported
+where the operator is written, which is the same answer the identifier path gives.
+
+**A primitive is never routed through an impl.** `1 + 1` is a machine add whatever a
+program declares, asserted with a deliberately wrong `impl Add for i64` that would
+return 999 if it were ever reached — the rule `dispatchEq` and `dispatchOrdCompare`
+already follow. Arithmetic a library can redefine is arithmetic no reader can trust.
+
+The resolution is **one function**, not two: `resolveTraitMethodNamed` is the existing
+identifier lookup keyed on a full `MethodName` rather than a string, with the old
+`resolveTraitMethod` as a wrapper. Generic impls, Self substitution, trait
+type-parameter binding and `where` bounds therefore behave identically under an operator
+and under a call, rather than being a second copy that agrees until it doesn't.
+
+Three things had to be fixed to ship it, and two were pre-existing:
+
+- **The purity pass could not see an operator's impl at all.** A `pure` function using
+  an overloaded `+` whose impl printed type-checked clean — and so did one comparing
+  through an `Ord::compare` that printed, which had been true since `Ord` landed that
+  morning. The three effect ladders (hazard 8's third instance, and its fifth) all ask
+  "what does this expression call?", and an operator answers where a `FunctionCallExpr`
+  would. `operatorImplEffect` is one function called from all of them, keyed on the
+  *resolution* rather than on which operator it is — which is what makes it fix the
+  comparison half as well as the arithmetic one.
+- **`a += b` with no impl type-checked and then failed to lower.** `checkAssignToBinding`
+  asks whether the right side is assignable to the left, which two structs of one type
+  satisfy, so the compound form accepted what `a = a + b` had always reported (rule 5
+  inverted). Now `+=` dispatches — it is `x = x + y`, and a working `a + b` beside a
+  crashing `a += b` is the first thing anyone would hit — and the no-impl case reports.
+- **A trait-impl method could not return its own receiver.** `same = (self) => self`
+  against `(Self) -> Self` failed with `expected Vec2, got Vec2`, because the return type
+  was resolved and the parameter types were not. Naming the same type twice is the
+  signature of exactly that asymmetry.
+
+**What is left, and why each is left.** `&&`/`||` cannot be overloaded at all: a call
+evaluates its arguments, and not evaluating the right operand is the entire content of
+those two operators. `!` is boolean negation and the language has no user truthiness.
+`**` is a method spelling with no operator, and its mirror image `%%` is an operator
+with no spelling — both grammar gaps, recorded. The suffix `_++`/`_--` name operators
+the language does not have. Each of these still warns, but now with *its own* reason:
+"nothing dispatches to it" left an author unable to tell "wait for it" from "this can
+never work".
+
+An operand that is a **type parameter** is refused with a message naming both readings,
+because the author meant one of them and the compiler cannot tell which: built-in
+arithmetic needs a numeric type, and an overloaded `+` needs a concrete type to find its
+impl. `==` has no such problem — equality is structural, so a type variable is
+comparable and an impl only overrides that. Routing an operator through a `where` bound
+is the open follow-on.
+
+Two grammar gaps surfaced while testing and are recorded rather than fixed:
+`C(1) + C(2)` does not parse (a constructor call cannot be a math operator's left
+operand, though `f(1) + f(2)` can), and neither does `(a + b).x` (a parenthesized binary
+expression cannot be a postfix head). Both have workarounds — bind first — and both are
+the first thing a user of this feature would write.
+
 **Two `slice()` results in one expression clobbered each other**, and the fix is to stop
 asking a proxy question:
 

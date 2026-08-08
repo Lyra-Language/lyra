@@ -242,6 +242,32 @@ because each was learned from a real failure, and none is local to one package.
    reason. Do not "simplify" that back into a `weak == 0` test — it reads as equivalent and is
    an ASan-confirmed double free (08/07).
 
+## Operators that dispatch
+
+Three groups, and which one an operator is in is a design decision rather than an
+implementation state:
+
+- **The comparisons are the compiler's.** `==`/`!=` are structural, overridden by the
+  prelude's `Eq`; `<`/`<=`/`>`/`>=`/`<=>` all derive from `Ord::compare`. A `(_==_)`
+  method name is refused (`lyra-E039`), because a second mechanism would be a coherence
+  question with no answer and declaring them one at a time is how `<` comes to disagree
+  with `<=>`.
+- **Arithmetic and bitwise are the author's** (08/07). `+ - * / % << >> & | ~`, prefix
+  `-` and `~`, and the compound assignments dispatch to a trait method named for the
+  operator — keyed on the **method name**, with the trait whatever the author declared.
+  `+` on a matrix and `+` on a duration share no invariant, so nothing is bought by
+  insisting they come from one trait; two traits providing one operator for one type is
+  an ambiguity reported at the operator.
+- **The rest are inert, each for its own reason**, and the warning says which
+  (`lyra-W015`): `&&`/`||` cannot short-circuit through a call, `!` is boolean negation,
+  `**` is a spelling with no operator, the suffix forms name operators that do not exist.
+
+Two rules hold across all of it. **A primitive is never routed through an impl** — `1 + 1`
+is a machine add whatever a program declares — and the resolution is `resolveTraitMethodNamed`,
+the *same* function the identifier path uses with a full `MethodName` key, so an operator and
+a `.method()` call cannot come to disagree about generic impls or `where` bounds. An operator
+is a call, so the purity ladders charge it as one (`operatorImplEffect`).
+
 ## Sweeping for surfaces nothing reads
 
 Four features turned up in two days that parsed, collected, and were consumed by nobody —

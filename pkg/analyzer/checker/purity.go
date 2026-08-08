@@ -647,6 +647,17 @@ func (c *purityChecker) checkInteriorMutation(sc *funcScope, target ast.Expressi
 // function's own parameter declares one strong enough to satisfy it.
 func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, enclosing *ast.LambdaExpr) func(ast.Expression) bool {
 	return func(expr ast.Expression) bool {
+		// An overloaded operator is a call to a trait impl method, so a `pure` function
+		// using one is as impure as the impl. Reported by naming the *operator*, since
+		// that is what the author wrote — the method name `(_+_)` would send them
+		// looking for a call that is not there.
+		if sc != nil {
+			if eff, method := operatorImplEffect(expr, c.methodTable, c.impureMethods); eff&PurityEffects != 0 {
+				c.report(expr.GetLocation(),
+					"pure function uses an operator that dispatches to non-pure trait method %q",
+					method.Name.GetName())
+			}
+		}
 		switch e := expr.(type) {
 		case *ast.LambdaExpr:
 			// `det`/`noalloc` are enforced against this lambda's full inferred
@@ -2001,6 +2012,11 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 		return true
 	}
 	onExpr := func(e ast.Expression) bool {
+		// An overloaded operator is a call to a trait impl method; charge it as one.
+		// Before the switch, since the operator nodes appear in it for other reasons.
+		if eff, _ := operatorImplEffect(e, methodTable, impureMethods); eff != EffectNone {
+			found |= eff
+		}
 		switch ex := e.(type) {
 		case *ast.LambdaExpr:
 			return false // nested lambda: separate boundary
@@ -2168,6 +2184,11 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 		return true
 	}
 	onExpr := func(e ast.Expression) bool {
+		// An overloaded operator is a call to a trait impl method; charge it as one.
+		// Before the switch, since the operator nodes appear in it for other reasons.
+		if eff, _ := operatorImplEffect(e, methodTable, impureMethods); eff != EffectNone {
+			found |= eff
+		}
 		switch ex := e.(type) {
 		case *ast.LambdaExpr:
 			return false // nested lambda: separate boundary
@@ -2290,4 +2311,35 @@ func calleeName(fn ast.Expression) string {
 		return f.Property.Name
 	}
 	return ""
+}
+
+// operatorImplEffect is the effect of an **overloaded operator** — `a + b` on a type
+// with a `(_+_)` impl is a call to that impl's method, and costs whatever the method
+// costs.
+//
+// It exists as one function called from four places rather than four arms, because the
+// four places are the same question asked four times (hazard 8's third instance, and
+// its fifth): the two effect-inference walks, the reporting walk, and the trait-method
+// walk all ask "what does this expression call?", and an operator answers where a
+// FunctionCallExpr would.
+//
+// **It closes the hole `Eq`/`Ord` opened first.** A comparison operator has dispatched
+// to an impl since 08/07, and none of the ladders looked, so `let f = pure (a: T, b: T)
+// -> bool => a < b` type-checked with an `Ord::compare` that printed. Arithmetic would
+// have added a second instance of that; this fixes both, which is why it keys on the
+// resolution rather than on the operator.
+func operatorImplEffect(e ast.Expression, methodTable *typetable.MethodTable, impureMethods map[*ast.TraitMethodImpl]Effect) (Effect, *ast.TraitMethodImpl) {
+	switch e.(type) {
+	case *ast.MathBinaryOpExpr, *ast.NegationExpr, *ast.BitwiseNotExpr,
+		*ast.BooleanBinaryOpExpr, *ast.MathAssignOpExpr:
+		// MathAssignOpExpr belongs here for the same reason it reuses the binary
+		// operator's type rules: `x += y` is `x = x + y`, so it calls the same impl.
+	default:
+		return EffectNone, nil
+	}
+	res, ok := methodTable.OperatorResolution(e)
+	if !ok || res.Method == nil {
+		return EffectNone, nil
+	}
+	return impureMethods[res.Method], res.Method
 }

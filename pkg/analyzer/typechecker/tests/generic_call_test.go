@@ -84,7 +84,11 @@ func TestGeneric_ArithmeticOnUnboundedVariableRejected(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 let double = (x: t) -> t => x + x
 `, false)
-	assertErrorsAre(t, res, "operator +: operands must be numeric, got t and t")
+	// The message names both readings since 08/07, when `+` became overloadable: the
+	// author meant built-in arithmetic or an impl, and a type parameter is neither.
+	assertErrorsAre(t, res,
+		"operator +: t is a type parameter — built-in arithmetic needs a numeric type, "+
+			"and an overloaded `+` needs a concrete operand type to find its impl")
 }
 
 // assertErrorContainsGeneric asserts some error mentions want, without pinning the

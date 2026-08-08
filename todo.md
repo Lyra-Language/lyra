@@ -105,28 +105,6 @@ write today:
 
 ## Known bugs
 
-- **[OPEN] Two `slice()` results in one expression clobber each other.** Plain strings,
-  nothing to do with newtypes:
-
-  ```
-  let s = "  héllo  "
-  println("${s.slice(0,3)} ${s.slice(2,4)}")   // "hé hé", want "  h hé"
-  println(s.slice(0,3) ++ "|" ++ s.slice(2,4)) // "    hé", the "|" gone entirely
-  ```
-
-  Bound to `let`s first, both are correct; one `slice` in an expression is correct. So it
-  is the *temporaries*, not the walk — the first result's box looks released before the
-  second allocates, and the second lands on the freed bytes. That is the shape of a
-  use-after-free, and `trim` (prelude Lyra, built on `slice`) inherits it. Found 08/07
-  while testing newtype string methods; run it under `./asan.sh` first, which should name
-  the release site outright.
-
-- **[OPEN] An array of anonymous tuples does not parse.** `[](i64, string)` and
-  `[2](i64, string)` are ERROR nodes in every position — `let xs: [](i64, string) = []`
-  as much as `newtype Pairs = [](i64, string)` — while `[]Named` and `[3]i64` are fine, and
-  the tuple parses everywhere else. A grammar gap in the element-type position, not a
-  newtype one. Found 08/07 while writing newtype corpus tests.
-
 - **[DONE 08/07] Two `slice()` results in one expression no longer clobber each other.**
   `println("${s.slice(0,2)} ${s.slice(2,4)}")` printed `cd cd`: the first result was
   released before the second allocated, so the second allocation landed on the freed bytes.
@@ -135,6 +113,26 @@ write today:
   while every other block was a conditional branch. `slice`, `read_line` and `<=>` branch
   *unconditionally*, so their continuation blocks broke it. It asks dominance now, which is
   the question it always meant. See COMPLETED.md.
+
+- **[OPEN] A constructor call cannot be the left operand of a math operator.**
+  `C(1) + C(2)` is a syntax error (`unexpected "C(1) +"`) for a `data` constructor or a
+  named tuple, while `f(1) + f(2)` on an ordinary function is fine and `C(1) == C(2)`
+  parses. Binding first or parenthesizing works, so it is a precedence gap in the
+  constructor-application area rather than a missing form. It cost little until operator
+  overloading, which is what surfaced it (08/07): `Cents(150) + Cents(275)` is the first
+  thing anyone writes against a `data` type with a `(_+_)`.
+
+- **[OPEN] A parenthesized binary expression cannot be a postfix head.** `(a + b).x` is
+  a syntax error, as is `(1 + 2).wrapping_add(1)`, while `(a).x` parses. The
+  literal-as-postfix-head change (08/06) covered literals; a parenthesized *expression*
+  is the remaining hole, and it is the natural way to use the result of an overloaded
+  operator without naming it.
+
+- **[OPEN] An array of anonymous tuples does not parse.** `[](i64, string)` and
+  `[2](i64, string)` are ERROR nodes in every position — `let xs: [](i64, string) = []`
+  as much as `newtype Pairs = [](i64, string)` — while `[]Named` and `[3]i64` are fine, and
+  the tuple parses everywhere else. A grammar gap in the element-type position, not a
+  newtype one. Found 08/07 while writing newtype corpus tests.
 
 - **[OPEN] `[0; 5]` — the array-repeat literal — is unimplemented.** It parses and collects
   (`ast.ArrayRepeatExpr`), and the typechecker then reports `unknown expression type
@@ -165,6 +163,20 @@ write today:
   binds nothing — the opt-out the must-use warning has always recommended in its own
   message (*"bind it (`let _ = ...`) to discard it intentionally"*) and the parser rejected.
   Zero parser states. `_` is still not an expression, so a discard cannot be read back.
+
+- **[DONE 08/07] A trait-impl method may return its own receiver.**
+  `same = (self) => self` against `(Self) -> Self` failed with **`expected Vec2, got
+  Vec2`** — the return type was resolved and the parameter types were not, so
+  assignability compared an `UnresolvedType` against a `NamedStructType`. Naming the same
+  type twice is the signature of exactly that asymmetry, and it is hazard 8's shape
+  without a switch: two sides of one question, only one of them resolved. Found 08/07 by
+  an operator-overload test, since `(_+_) = (self, o) => self` is an ordinary impl.
+
+- **[DONE 08/07] `a += b` with no impl is reported rather than crashing the backend.**
+  `checkAssignToBinding` asks whether the right side is *assignable* to the left, which
+  two structs of one type satisfy — so the compound form type-checked clean and failed to
+  lower with "type not found for *ast.StructInstanceExpr", while `a = a + b` always
+  reported it. Rule 5 inverted, pre-existing, and found while giving `+=` its dispatch.
 
 - **[DONE 08/07] A `newtype` base must be structural, and is transparent to its methods.**
   `lyra-E041` refuses a base that already has nominal identity — a `struct`, a `data` type,
@@ -1052,11 +1064,14 @@ days, after `wallClock`, the `where` bounds and `@derive`.
   type overloading `-`). Removing the syntax would discard the only plan; keeping it silent
   is what this project keeps paying for.
 
-- **[OPEN] Implement the arithmetic half, or delete it.** The warning is a holding
-  position, not an answer. If operator overloading is wanted, the dispatch is the same
-  machinery `Eq`/`Ord` now use, keyed on a trait the compiler need not know by name; if it
-  is not, the twenty reserved spellings should leave the grammar and take their parser
-  states with them.
+- **[DONE 08/07] The arithmetic half is implemented.** Ten binary operators
+  (`+ - * / % << >> & | ~`), the prefix `-` and `~`, and the compound assignments,
+  dispatch to a trait method named for the operator — keyed on the **method name**, with
+  the trait whatever the author declared, since `+` on a matrix and `+` on a duration
+  share no invariant the way `<` and `<=>` do. Everything left warns with the *reason* it
+  is inert: `&&`/`||` cannot short-circuit through a call, `!` is boolean negation, `**`
+  is a spelling with no operator, and the suffix forms name operators the language does
+  not have. See COMPLETED.md.
 
 ### Trait machinery
 
