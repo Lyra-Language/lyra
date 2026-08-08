@@ -163,15 +163,18 @@ func (l *lowerer) ensureReadLineRuntime(dt types.DataType, someC types.DataTypeC
 // The null test and the two union constructions all live inside the shim, so this
 // returns the same block it was given. An earlier version branched here and
 // returned a *merge* block, which was silently wrong in a way worth recording:
-// flushStmtTemps releases a temporary either at the end of the statement (when the
-// temp was produced in the statement's start block) or otherwise *in its own
-// production block* — the latter because a temp produced inside a branch is
-// undefined on the path not taken. A merge block is neither case, so the owned
-// `Maybe<string>` was released in the merge block, i.e. before the `match` that
-// consumed it ever ran its switch: a use-after-free that printed a line of blanks
-// instead of the input. Keeping the call a single instruction makes an owned
-// builtin result behave exactly like an ordinary function call, which is the
-// property the temp machinery is written against.
+// flushStmtTemps released a temporary at the end of the statement only when the temp
+// was produced in the statement's start block, and otherwise *in its own production
+// block* — the latter because a temp produced inside a branch is undefined on the
+// path not taken. A merge block is neither case, so the owned `Maybe<string>` was
+// released in the merge block, i.e. before the `match` that consumed it ever ran its
+// switch: a use-after-free that printed a line of blanks instead of the input.
+//
+// That flush asks **dominance** now (08/07, llvm.go), so a merge block would no
+// longer break it — the same proxy went on to bite `slice`, whose continuation block
+// is unconditional. The call stays a single instruction anyway, because an owned
+// builtin result behaving exactly like an ordinary function call is the cheaper thing
+// to reason about than one that is merely handled correctly.
 //
 // The `Maybe` is read back from the typechecker's recorded type rather than
 // constructed here, so the backend's union agrees with the front end's type,

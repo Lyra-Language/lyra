@@ -215,3 +215,48 @@ let main = () -> void => { println(clean(" a ")) }
 		}
 	})
 }
+
+// Two `slice` results in one expression, which is the shape that broke: `slice`
+// branches (a bounds trap and a decode loop), so it ends in a *continuation* block,
+// and flushStmtTemps used to release any temp not produced in the statement's start
+// block right there — i.e. before the rest of the statement ran. The first result was
+// freed before the second allocated, and the second allocation landed on the freed
+// bytes, so both halves printed the second slice: `cd cd`. Fixed 08/07 by asking
+// dominance rather than block identity (llvm.go).
+//
+// Three forms, because the corruption showed up differently in each: interpolation
+// dropped the first value, `++` also lost the literal between them, and mixing in a
+// `trim` (prelude Lyra over the same builtin) inherited it.
+func TestExec_TwoSlicesInOneExpression(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  let s = "abcdef";
+  println("${s.slice(0,2)} ${s.slice(2,4)}");
+  println(s.slice(0,2) ++ "|" ++ s.slice(2,4));
+  println("${s.slice(0,2)} ${s.slice(2,4)} ${s.slice(4,6)}");
+}
+`
+	want := "ab cd\nab|cd\nab cd ef"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("two slices in one expression =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// The same defect reached through the prelude: `trim` is ordinary Lyra built on
+// `slice`, so a `trim` beside a `slice` in one interpolation was corrupted too — and
+// this is the form a user would actually write.
+func TestExec_TrimBesideSliceInOneInterpolation(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  let s = "  héllo  ";
+  println("${s.len()} ${s.trim()} ${s.slice(2, 4)}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "9 héllo hé" {
+		t.Errorf("trim beside slice = %q; want \"9 héllo hé\"", got)
+	}
+}

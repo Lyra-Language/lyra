@@ -127,6 +127,15 @@ write today:
   the tuple parses everywhere else. A grammar gap in the element-type position, not a
   newtype one. Found 08/07 while writing newtype corpus tests.
 
+- **[DONE 08/07] Two `slice()` results in one expression no longer clobber each other.**
+  `println("${s.slice(0,2)} ${s.slice(2,4)}")` printed `cd cd`: the first result was
+  released before the second allocated, so the second allocation landed on the freed bytes.
+  `flushStmtTemps` chose a temp's release block by asking whether it was produced in the
+  statement's *start* block — a proxy for "was it produced unconditionally" that held only
+  while every other block was a conditional branch. `slice`, `read_line` and `<=>` branch
+  *unconditionally*, so their continuation blocks broke it. It asks dominance now, which is
+  the question it always meant. See COMPLETED.md.
+
 - **[OPEN] `[0; 5]` — the array-repeat literal — is unimplemented.** It parses and collects
   (`ast.ArrayRepeatExpr`), and the typechecker then reports `unknown expression type
   "[0; 5]"`. Loud rather than silent, so it is an unimplemented feature rather than a

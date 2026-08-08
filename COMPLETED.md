@@ -10,6 +10,49 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**Two `slice()` results in one expression clobbered each other**, and the fix is to stop
+asking a proxy question:
+
+```
+let s = "abcdef"
+println("${s.slice(0,2)} ${s.slice(2,4)}")     // "cd cd", want "ab cd"
+println(s.slice(0,2) ++ "|" ++ s.slice(2,4))   // "cdcd" — even the "|" gone
+```
+
+A use-after-free, and the IR named it outright: the first slice's box was released **in
+its own build block**, before the second slice ran, so the second `lyra_rc_alloc` handed
+back the same memory and both fat pointers described the second result.
+
+`flushStmtTemps` picks the block a statement's owned temporaries are released in, and it
+chose by asking `p.block == start` — release at the statement's end block if the temp was
+produced in its start block, otherwise release it where it was produced. The comment said
+what that was standing in for: a temp produced *elsewhere* is one produced "inside a branch
+of the expression (an `&&`/`||` right operand, a match-arm body)", which may not have run,
+so releasing it at the end block would touch an undefined value.
+
+**That proxy was exactly right until a lowering branched unconditionally.** `slice` does —
+a bounds trap and a decode loop — and so do `read_line` and `<=>`; each ends in a
+continuation block every path reaches. Their temps are not conditional at all, but they are
+not in the start block either, so they were released at the point they were produced, which
+is *before the rest of the statement*. One slice per expression was fine, which is why it
+shipped; `let`-binding first was fine too, which is why it read as an interpolation bug.
+
+The fix is to ask the real question — does the production block **dominate** the end block
+— which is the same answer for both of the old cases and the right one for the new. The
+tree is built lazily, so an ordinary statement still costs nothing.
+
+Computing dominance here is sound for precisely the reason `dominators.go` says it is *not*
+sound for `resolveExitReleases`: `end` is the block lowering continues into, so it never
+becomes the target of a later edge, and nothing added afterwards can create a path to it
+that bypasses a block dominating it today. A jump's target, by contrast, is fixed before
+the CFG that reaches it exists.
+
+The general lesson is the one hazard 8 keeps teaching in a different key. This was not a
+missing case in a switch; it was a **proxy for a property**, correct on every input that
+existed when it was written, silently wrong the moment a new kind of block appeared. Both
+failure modes are invisible in review, and both are found by asking what the code is
+actually trying to know.
+
 **A `newtype` base must be structural, and a newtype is transparent to its base's
 methods.** Two halves of one question — what a newtype is *for*, and what you get once
 you have one.

@@ -459,28 +459,59 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 
 // flushStmtTemps releases this statement scope's managed temporaries (those at or
 // above pendingBase), then truncates the pending list back to pendingBase. The
-// release block is chosen so it always follows every use of the temporary:
-//   - a temp produced in the statement's *start* block (start) is released at `end`
-//     (the block control ends in after the whole statement). The start block
-//     dominates end, so the value is live there — this is what lets a temp used as
-//     an *earlier* call argument survive until the call, even when a *later*
-//     argument contains a branch that moves control into a different (merge) block
-//     before the call. Releasing it in the start block (the old behavior) freed it
+// release block is chosen so it always follows every use of the temporary, and the
+// question that decides it is **dominance**: a temp is released at `end` (the block
+// control ends in after the whole statement) exactly when its production block
+// dominates `end`, and in its own block otherwise.
+//
+//   - **Dominating.** The value is defined on every path that reaches `end`, so it is
+//     live there. This is what lets a temp used as an *earlier* call argument survive
+//     until the call even when a *later* argument branches, moving control into a
+//     different block before the call. Releasing it at its production block freed it
 //     before the call → a use-after-free.
-//   - a temp produced anywhere else — inside a branch of the expression (an
-//     `&&`/`||` right operand, a match-arm body) — is released in its own block,
-//     the only block guaranteed to have produced it and where it is consumed;
-//     releasing it in `end` would touch an undefined value on the path the branch
-//     didn't take.
+//   - **Not dominating** — produced inside a branch of the expression (an `&&`/`||`
+//     right operand, a match-arm body). Its own block is the only one guaranteed to
+//     have produced it; releasing it at `end` would touch an undefined value on the
+//     path the branch didn't take.
+//
+// **It used to ask `p.block == start` instead**, which is the same test only while
+// "not the start block" means "conditional". That stopped being true when lowerings
+// that branch *unconditionally* arrived — `slice`, `read_line`, `<=>` — each of which
+// ends in a continuation block every path reaches. Their temps were released at that
+// continuation block, i.e. before the rest of the statement ran, so two `slice` calls
+// in one expression freed the first result before allocating the second and the second
+// allocation landed on the freed bytes: `"${s.slice(0,2)} ${s.slice(2,4)}"` printed
+// `cd cd` (08/07). A proxy for the real question held right up until a new kind of
+// block existed, and then failed silently.
+//
+// Computing dominance *here* — against a CFG the rest of the function has not been
+// built into yet — is sound for the reason it is not sound for `resolveExitReleases`
+// (see dominators.go): `end` is the block lowering *continues into*, so it never
+// becomes the target of a later edge. Nothing added afterwards can create a path to
+// `end` that bypasses a block dominating it today. The tree is built lazily, only when
+// some temp was produced in a third block, which is the uncommon case.
 //
 // start/end nil (the flushTemps wrapper, used by early exits) releases everything at
-// its production block — no temp's block equals nil, so the first case never fires.
+// its production block — there is no statement-end block to move anything to.
 func (l *lowerer) flushStmtTemps(start, end *ir.Block) error {
+	var dt *domTree
 	for i := l.pendingBase; i < len(l.pendingReleases); i++ {
 		p := l.pendingReleases[i]
 		blk := p.block
-		if p.block == start {
+		switch {
+		case end == nil || p.block == end:
+			// Nowhere to move it to, or already there.
+		case p.block == start:
+			// The common case, and one dominance would also answer — kept as a test so
+			// the ordinary statement never builds a tree.
 			blk = end
+		default:
+			if dt == nil {
+				dt = newDomTree(end.Parent)
+			}
+			if dt.dominates(p.block, end) {
+				blk = end
+			}
 		}
 		if err := l.deepRelease(blk, p.val, p.ty); err != nil {
 			return err

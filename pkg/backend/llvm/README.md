@@ -211,8 +211,9 @@ operator on `BooleanBinaryOpExpr` whose result is not `i1`, so it leaves
 the tag — and two `select`s plus an `insertvalue` on an undef union produce it. The payload
 blob is left undef, which DATA_LAYOUT.md already specifies for a nullary variant. No new
 blocks, so the call site returns the block it was given: a branching call site returns a
-*merge* block, which is neither case `flushStmtTemps` handles, and that is the bug
-`read_line` hit. `Ordering` owns nothing so it could not bite here, and the shape is pinned
+*merge* block, which the old `flushStmtTemps` handled as though it were conditional, and
+that is the bug `read_line` hit (its dominance test since 08/07 gets the merge block right,
+but keeping the lowering branchless is still the cheaper shape). `Ordering` owns nothing so it could not bite here, and the shape is pinned
 by a test on the emitted IR anyway.
 
 Two things that would each be a silent wrong answer rather than a crash: the predicates
@@ -1107,11 +1108,15 @@ are **fused** (stage 2, no scope-exit release / no sentinel): a transfer removes
 from its frame at the move (`retireManagedSlot`); a drop is emitted by `dropLastUsesInStmt`
 after the statement, in the post-dominating end block. A copy chain `a → b → c` compiles to one
 allocation and one release. A non-last owning use retains (dups); an owned temporary is released
-after its statement, each in a block that follows all of its uses (`flushStmtTemps`): a temp
-built in an `&&`/`if` branch is freed there (dominating its uses), while a temp produced on the
-statement's *start* block — an earlier call argument, say — is freed at the statement-*end*
-block, so it survives a later argument whose branch moves control onward before the call
-(releasing it in its production block was a use-after-free); temps of an enclosing statement
+after its statement, each in a block that follows all of its uses (`flushStmtTemps`): the test
+is **dominance** — a temp whose production block dominates the statement-*end* block is freed
+there, so it survives a later argument whose branch moves control onward before the call
+(releasing it in its production block was a use-after-free), while a temp built in an
+`&&`/`if` branch does *not* dominate the end block and is freed in its own, the only block
+that produced it. That test used to be `p.block == start`, a proxy that held only while every
+other block was conditional; `slice`/`read_line`/`<=>` branch unconditionally, so their
+continuation blocks broke it and two `slice`s in one expression freed the first result before
+allocating the second (08/07); temps of an enclosing statement
 still in flight are protected by `pendingBase`; an `if`/`match` is one merged owned value
 released once at the phi. `own` string params are released by the callee; bare/`ref`/`mut` are
 borrows. The same machinery frees **`shared` values** (`IsManaged` covers them; retain/release
@@ -1220,15 +1225,15 @@ load-bearing:
   so what comes back is an ordinary owned heap string that release and drop glue already
   understand — no scratch buffer, no copy, and no "string that came from input" special case.
 - **It returns the `Maybe` union itself**, doing the null test and both constructions
-  internally, so the *call site emits no branches*. That is not tidiness. `flushStmtTemps`
-  releases a temporary at the statement's end block when the temp was produced in the
-  statement's start block, and otherwise **in its own production block** (because a temp
-  produced inside a branch is undefined on the other path). A merge block is neither case, so
-  an earlier version that branched at the call site and returned a merge block had the owned
-  `Maybe<string>` released *in that merge block* — before the `match` consuming it ran its
-  switch. It printed a line of blanks instead of the input. Keeping the call one instruction
-  makes an owned builtin result behave exactly like an ordinary function call, which is what
-  the temp machinery is written against.
+  internally, so the *call site emits no branches*. That was not tidiness: `flushStmtTemps`
+  used to release a temporary at the statement's end block only when it was produced in the
+  statement's *start* block, and otherwise **in its own production block** (a temp produced
+  inside a branch is undefined on the other path). A merge block is neither, so an earlier
+  version that branched at the call site had the owned `Maybe<string>` released *in that merge
+  block* — before the `match` consuming it ran its switch, printing a line of blanks instead
+  of the input. That flush asks dominance now (08/07), so a merge block would no longer break
+  it; the branchless call is kept because an owned builtin result behaving exactly like an
+  ordinary function call is the cheaper thing to reason about.
 
 The line terminator is consumed and not returned, and a trailing `\r` goes with it. EOF with
 bytes already read is a final unterminated line; EOF with nothing read is `None` — which is

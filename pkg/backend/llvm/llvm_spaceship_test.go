@@ -95,11 +95,12 @@ let main = () -> u8 => match 'a' <=> 'z' {
 //
 // That is asserted on the emitted IR rather than left to the behavioural tests
 // because it is a property with a history: a call site that branches returns a
-// *merge* block, and flushStmtTemps releases an owned temporary either at the
+// *merge* block, and flushStmtTemps used to release an owned temporary either at the
 // statement's end block or in its own production block — a merge block being
 // neither. That is what made `read_line` free its string before the `match` read it
-// (input.go). `Ordering` owns nothing, so the bug could not bite here, but the
-// shape is the one to keep.
+// (input.go), and later what made two `slice`s in one expression clobber each other.
+// That flush asks dominance now, so `Ordering` — which owns nothing — was never at
+// risk either way, but the branchless shape is still the one to keep.
 func TestEmit_SpaceshipIsBranchless(t *testing.T) {
 	t.Parallel()
 	const src = `
