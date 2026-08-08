@@ -97,15 +97,31 @@ func TestAnalyze_LargeU64Literal_RejectsSignedTarget(t *testing.T) {
 	}
 }
 
-// TestAnalyze_HugeIntLiteral_NoPanic: a literal beyond even u64 range is a clean
-// error, not a crash.
+// TestAnalyze_HugeIntLiteral_NoPanic: a literal beyond even **128-bit** range is a
+// clean error, not a crash.
+//
+// The boundary moved on 08/08, when literals grew past 64 bits: the value this test
+// used to carry (10^26) is now an ordinary `i128` literal, so the case has to be
+// re-picked to still be out of range. The property under test is unchanged — an
+// unrepresentable literal must produce a diagnostic and a placeholder node rather than a
+// typed nil that crashes a later pass.
 func TestAnalyze_HugeIntLiteral_NoPanic(t *testing.T) {
-	res := Analyze([]byte("let x = 99999999999999999999999999\nlet main = () -> u8 => 0\n"))
+	huge := strings.Repeat("9", 40) // ~10^40, past u128's 3.4e38
+	res := Analyze([]byte("let x = " + huge + "\nlet main = () -> u8 => 0\n"))
 	if !res.HasErrors() {
 		t.Fatal("expected an out-of-range diagnostic")
 	}
 	if !hasMessageContaining(res, "too large to represent") {
 		t.Fatalf("expected a too-large message, got: %v", res.Diagnostics)
+	}
+}
+
+// The other side of that boundary: a literal that fits 128 bits is accepted, which is
+// what the change was for.
+func TestAnalyze_WideIntLiteralIsAccepted(t *testing.T) {
+	res := Analyze([]byte("let x: i128 = 170141183460469231731687303715884105727\nlet main = () -> u8 => 0\n"))
+	for _, d := range res.Errors() {
+		t.Errorf("expected no error for an i128-max literal, got: %v", d)
 	}
 }
 

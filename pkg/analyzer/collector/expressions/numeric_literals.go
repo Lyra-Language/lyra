@@ -2,6 +2,7 @@ package expressions
 
 import (
 	"errors"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -52,14 +53,29 @@ func collectIntegerLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc as
 				Unsigned: true,
 			}
 		}
-		// Beyond u64 (or otherwise unparseable): emit a clear diagnostic and fall
+		// Beyond u64 but within 128 bits: a **wide** literal, whose only valid types
+		// are `i128`/`u128`. Stored as a big.Int because neither 64-bit field can
+		// hold it; every consumer that must be right about the magnitude reads
+		// BigValue, and Int64 answers ok=false so one that cannot be does not
+		// silently read 0.
+		if errors.Is(err, strconv.ErrRange) {
+			if wide, ok := new(big.Int).SetString(valueStringToParse, int(base)); ok &&
+				wide.Sign() >= 0 && wide.Cmp(ast.Uint128Max) <= 0 {
+				return &ast.IntegerLiteralExpr{
+					ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
+					Base:     base,
+					Wide:     wide,
+				}
+			}
+		}
+		// Beyond 128 bits (or otherwise unparseable): emit a clear diagnostic and fall
 		// back to a placeholder literal (Value 0), never nil — a nil child would
 		// enter the AST as a typed-nil expression and crash a later pass (e.g.
 		// propagateLiteralType) that dereferences it. The error keeps the program
 		// from compiling, so the placeholder value is inert.
 		if errors.Is(err, strconv.ErrRange) {
 			ctx.AddError(node, diag.SeverityError,
-				"integer literal %s is too large to represent (exceeds the 64-bit range)", valueStringWithoutUnderscores)
+				"integer literal %s is too large to represent (exceeds the 128-bit range)", valueStringWithoutUnderscores)
 		} else {
 			ctx.AddError(node, diag.SeverityError, "invalid integer literal %s", valueStringWithoutUnderscores)
 		}

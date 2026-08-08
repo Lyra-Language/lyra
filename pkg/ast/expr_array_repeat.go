@@ -46,7 +46,12 @@ func FoldIntExprWith(expr Expression, constInit func(name string) (Expression, b
 func foldInt(expr Expression, constInit func(name string) (Expression, bool), seen map[string]bool) (int64, bool) {
 	switch e := expr.(type) {
 	case *IntegerLiteralExpr:
-		return e.Value, true
+		// Int64 rather than Value: a **wide** (>64-bit) literal answers ok=false, so a
+		// consumer that folds in int64 declines instead of silently reading 0. Folding
+		// 128-bit constants would need 128-bit arithmetic throughout; the places that
+		// call this — an array-repeat count, the overflow checks — are all int64
+		// questions, so declining is the right answer rather than a limitation.
+		return e.Int64()
 	case *IdentifierExpr:
 		if constInit == nil {
 			return 0, false

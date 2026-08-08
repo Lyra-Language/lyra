@@ -2229,6 +2229,16 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 		// overflow error at a decl/reassign site, or a width mismatch in the
 		// backend) instead of miscompiling. This also keeps propagation from
 		// double-reporting the overflow that checkIntegerLiteralRange already owns.
+		// A **wide** literal narrows only to a 128-bit type — the only widths that can
+		// hold it — and recording that is what makes the backend emit the constant at
+		// i128/u128 rather than at the i64 default. A narrower context is left alone
+		// here and reported by checkIntegerLiteralRange, which owns the message.
+		if e.IsWide() {
+			if cp.Name == types.Int128 || cp.Name == types.UInt128 {
+				tc.typeTable.Set(e, cp)
+			}
+			return
+		}
 		if !integerFitsInType(e.Value, cp.Name) {
 			return
 		}
@@ -2260,7 +2270,7 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 		// proper-width operand in arithmetic. Narrow the operand leaf directly:
 		// the backend's `sub 0, 2^(bits-1)` yields the min bit pattern at that
 		// width, and checkIntegerLiteralRange has already accepted the value.
-		if lit, ok := e.Operand.(*ast.IntegerLiteralExpr); ok && !lit.Unsigned && tc.currentTypeIsUntyped(lit) {
+		if lit, ok := e.Operand.(*ast.IntegerLiteralExpr); ok && !lit.Unsigned && !lit.IsWide() && tc.currentTypeIsUntyped(lit) {
 			if mag, isMin := signedTypeMinMagnitude(cp.Name); isMin && lit.Value == mag {
 				tc.typeTable.Set(lit, cp)
 				return
@@ -2777,7 +2787,7 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 func (tc *TypeChecker) resolveConstantInt(expr ast.Expression) (int64, bool) {
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
-		return e.Value, true
+		return e.Int64()
 	case *ast.NegationExpr:
 		// So a constant negative index (`arr[-1]`) folds too — the array bounds
 		// check needs it to validate the `[-size, size)` range at compile time.

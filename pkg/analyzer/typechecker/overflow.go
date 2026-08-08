@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"math"
+	"math/big"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -100,6 +101,24 @@ func (tc *TypeChecker) checkIntegerLiteralRange(varName string, expr ast.Express
 	if !ok || !isAnyConcreteInt(toP.Name) {
 		return
 	}
+	// A **wide** literal does not fold to an int64, so it is range-checked against the
+	// target's bounds in big.Int arithmetic instead. Without this a 128-bit magnitude
+	// assigned to a `u8` would pass unchecked — it stays untyped where both 128-bit
+	// types could hold it, so assignability has nothing to object to either.
+	if wide, ok := wideLiteralMagnitude(expr); ok {
+		if !bigFitsInType(wide, toP.Name) {
+			if tc.overflowReported[expr] {
+				return
+			}
+			if tc.overflowReported == nil {
+				tc.overflowReported = map[ast.Expression]bool{}
+			}
+			tc.overflowReported[expr] = true
+			tc.addError(expr.GetLocation(), SeverityError,
+				"%s: literal value %s overflows %s", varName, wide, toP.Name)
+		}
+		return
+	}
 	value, isLiteral := extractIntLiteralValue(expr)
 	if !isLiteral {
 		return
@@ -119,4 +138,72 @@ func (tc *TypeChecker) checkIntegerLiteralRange(varName string, expr ast.Express
 		tc.addError(expr.GetLocation(), SeverityError,
 			"%s: literal value %d overflows %s", varName, value, toP.Name)
 	}
+}
+
+// wideLiteralMagnitude is the magnitude of a >64-bit literal, optionally negated —
+// the two shapes a 128-bit constant can take in source, since a literal is always
+// written non-negative and a leading `-` is its own node.
+func wideLiteralMagnitude(expr ast.Expression) (*big.Int, bool) {
+	switch e := expr.(type) {
+	case *ast.IntegerLiteralExpr:
+		if e.IsWide() {
+			return e.BigValue(), true
+		}
+	case *ast.NegationExpr:
+		if inner, ok := e.Operand.(*ast.IntegerLiteralExpr); ok && inner.IsWide() {
+			return new(big.Int).Neg(inner.BigValue()), true
+		}
+	}
+	return nil, false
+}
+
+// bigFitsInType is integerFitsInType for a magnitude that does not fit an int64 — the
+// same question at 128-bit precision.
+//
+// It is a *second* function rather than a widening of the first because the first is on
+// the hot path for every ordinary literal and has an int64 in hand; this one is reached
+// only by a literal that already needed a big.Int to exist. They must agree, which is
+// why the bounds here are computed rather than written out.
+func bigFitsInType(v *big.Int, name types.PrimitiveTypeName) bool {
+	bits, signed, ok := intWidthOf(name)
+	if !ok {
+		return true
+	}
+	if signed {
+		max := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(bits-1)), big.NewInt(1))
+		min := new(big.Int).Neg(new(big.Int).Lsh(big.NewInt(1), uint(bits-1)))
+		return v.Cmp(min) >= 0 && v.Cmp(max) <= 0
+	}
+	if v.Sign() < 0 {
+		return false
+	}
+	max := new(big.Int).Sub(new(big.Int).Lsh(big.NewInt(1), uint(bits)), big.NewInt(1))
+	return v.Cmp(max) <= 0
+}
+
+// intWidthOf gives an integer type's bit width and signedness.
+func intWidthOf(name types.PrimitiveTypeName) (bits int, signed bool, ok bool) {
+	switch name {
+	case types.Int8:
+		return 8, true, true
+	case types.Int16:
+		return 16, true, true
+	case types.Int32:
+		return 32, true, true
+	case types.Int64:
+		return 64, true, true
+	case types.Int128:
+		return 128, true, true
+	case types.UInt8:
+		return 8, false, true
+	case types.UInt16:
+		return 16, false, true
+	case types.UInt32:
+		return 32, false, true
+	case types.UInt64:
+		return 64, false, true
+	case types.UInt128:
+		return 128, false, true
+	}
+	return 0, false, false
 }

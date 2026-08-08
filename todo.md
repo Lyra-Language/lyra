@@ -871,15 +871,16 @@ nothing in common in cost or fit.
 Types, checked arithmetic, division via the builtins library, `match`, conversions and
 `print` all landed. One gap remains:
 
-- **[OPEN] >64-bit literals.** `IntegerLiteralExpr.Value` is a Go `int64` and
-  `numeric_literals.go` parses via `strconv.ParseInt(…, 64)`, so a true `i128` literal
-  cannot be written — a 128-bit constant is reached today via arithmetic or an `i128(x)`
-  conversion. Closing it means widening the literal node to a `big.Int` or hi/lo pair, which
-  threads through the collector, the printer and golden output, and every `Value`/`Unsigned`
-  reader. **And with it:** compile-time folding is `int64`-bound
-  (`typechecker/overflow.go`'s `extractIntLiteralValue`), so correct `i128` folding needs
-  128-bit constant arithmetic. The value-range pass needs no change — it already widens
-  `i128`/`u128` to ⊤, which is sound.
+- **[DONE 08/08] >64-bit literals.** A 128-bit constant can be *written*:
+  `let mx: i128 = 170141183460469231731687303715884105727`. The magnitude lives in a
+  `Wide *big.Int` on the literal node, nil for everything that fits 64 bits — so no golden
+  output changed and every existing `.Value` reader stayed correct for existing inputs.
+  See COMPLETED.md.
+  - **[OPEN] Compile-time folding is still `int64`-bound.** `ast.FoldIntExpr` answers
+    ok=false for a wide literal rather than folding it, which is the *sound* direction —
+    the array-repeat count and the overflow checks are all int64 questions — but it means
+    `const BIG = 2 * 85070591730234615865843651857942052864` does not fold. Correct
+    128-bit folding needs 128-bit constant arithmetic throughout.
 
 ## Traits
 

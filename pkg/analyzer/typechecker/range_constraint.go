@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -137,7 +138,8 @@ func extractFloatLiteralValue(expr ast.Expression) (float64, bool) {
 	case *ast.FloatLiteralExpr:
 		return e.Value, true
 	case *ast.IntegerLiteralExpr:
-		return float64(e.Value), true
+		f, _ := new(big.Float).SetInt(e.BigValue()).Float64()
+		return f, true
 	case *ast.NegationExpr:
 		if inner, ok := extractFloatLiteralValue(e.Operand); ok {
 			return -inner, true

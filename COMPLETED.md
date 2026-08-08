@@ -10,6 +10,43 @@ Newest first.
 ## Dated log
 
 ### 08/08/26
+**Integer literals past 64 bits.** `let mx: i128 = 170141183460469231731687303715884105727`
+is writable; before, a 128-bit constant had to be reached through arithmetic or an
+`i128(x)` conversion, on a type the language otherwise supports fully.
+
+The magnitude lives in a **`Wide *big.Int`** on the literal node, nil for every literal
+that fits 64 bits. That choice is what kept the change small in the ways that matter: the
+reflection printer omits nil fields, so no golden output moved, and every existing
+`.Value` reader stayed correct for every input it had ever seen.
+
+**The parse was the easy half; the readers were the work.** A dozen places take `.Value`
+off an integer literal, and for a wide one that field is 0 — so the first end-to-end run
+printed `0` for i128's maximum, silently. Each site had to be visited and given the
+answer that is *conservative* for it:
+
+- `Int64()` returns **ok=false** for a wide literal, which is the enforcement point: a
+  consumer that folds in int64 declines instead of reading the zero. `ast.FoldIntExpr`,
+  the value-range pass's `patternBound`, and `resolveConstantInt` all go through it.
+- The value-range pass treats a wide literal as **untracked (⊤)**, like a large-u64 bit
+  pattern. Reading 0 there would have been worse than wrong — it could have *proved away*
+  an overflow trap.
+- The **backend** sets `constant.Int.X` directly, since llir's constant is a big.Int
+  underneath; the int64 constructor is what emitted 0. The match-pattern path had its own
+  `strconv.ParseInt(…, 64)` and failed with a message about strconv rather than about the
+  program.
+- `isLiteralZero` folds through the same helper, so a wide *divisor* is no longer reported
+  as a division by zero — which it would have been, `Value` being 0.
+
+**One design decision needed correcting mid-flight.** A wide literal first reported a
+*concrete* `i128`, on the reasoning that a large-u64 literal reports a concrete u64. But
+u64 is the only type that can hold a large-u64 magnitude, whereas a 65-to-127-bit
+magnitude fits **both** i128 and u128 — so committing to i128 made
+`let b: u128 = 73786976294838206464` fail, which a test caught. It stays *untyped* where
+both could hold it and names `u128` only above i128's range. That in turn is why
+`checkIntegerLiteralRange` had to learn big magnitudes: an untyped literal has nothing for
+assignability to object to, so without a 128-bit-aware range check a
+`let x: u8 = <10^38>` would have passed unchecked.
+
 **An array of anonymous tuples parses.** `[](i64, string)` and `[3](i64, i64)` were
 syntax errors while `[]Pair` and `[3]i64` were fine, so the workaround was to name the
 tuple — which is the one thing an anonymous tuple exists not to require.

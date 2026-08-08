@@ -113,7 +113,7 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	// memory); a `shared` array is a box pointer, so gep+load through the payload. A
 	// large-unsigned literal used as an index is nonsensical — fall to the runtime
 	// path, which bounds-checks it.
-	if lit, ok := e.Index.(*ast.IntegerLiteralExpr); ok && !lit.Unsigned {
+	if lit, ok := e.Index.(*ast.IntegerLiteralExpr); ok && !lit.Unsigned && !lit.IsWide() {
 		if !isShared {
 			arr, block, err := l.lowerExpr(block, e.Object)
 			if err != nil {

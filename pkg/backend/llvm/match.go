@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -248,11 +249,16 @@ func (l *lowerer) scalarMatchTest(block *ir.Block, scrut value.Value, pattern as
 			}
 			return block.NewICmp(enum.IPredEQ, scrut, constant.NewInt(intTy, bit)), nil
 		}
-		n, err := strconv.ParseInt(s, 0, 64)
-		if err != nil {
-			return nil, fmt.Errorf("llvm: invalid integer literal pattern %q: %v", s, err)
+		// Parsed as a big.Int rather than an int64: a 128-bit scrutinee may be matched
+		// against a 128-bit literal, which is exactly the case an int64 parse rejects
+		// with a message about strconv rather than about the program.
+		n, ok := new(big.Int).SetString(s, 0)
+		if !ok {
+			return nil, fmt.Errorf("llvm: invalid integer literal pattern %q", s)
 		}
-		return block.NewICmp(enum.IPredEQ, scrut, constant.NewInt(intTy, n)), nil
+		c := constant.NewInt(intTy, 0)
+		c.X = n
+		return block.NewICmp(enum.IPredEQ, scrut, c), nil
 	case *ast.RangePattern:
 		// An open bound (`0..`, `..<10`) *omits* its comparison rather than
 		// clamping to the type's limit. An absent bound means exactly the type's
@@ -309,10 +315,17 @@ func (l *lowerer) scalarMatchTest(block *ir.Block, scrut value.Value, pattern as
 func constIntFromExpr(e ast.Expression, ty *lltypes.IntType) (value.Value, bool) {
 	switch v := e.(type) {
 	case *ast.IntegerLiteralExpr:
-		return constant.NewInt(ty, v.Value), true
+		// Set the big.Int rather than going through the int64 constructor, so a
+		// >64-bit bound is the constant it says rather than 0 (llir's constant.Int is
+		// a big.Int underneath).
+		c := constant.NewInt(ty, 0)
+		c.X = v.BigValue()
+		return c, true
 	case *ast.NegationExpr:
 		if inner, ok := v.Operand.(*ast.IntegerLiteralExpr); ok {
-			return constant.NewInt(ty, -inner.Value), true
+			c := constant.NewInt(ty, 0)
+			c.X = new(big.Int).Neg(inner.BigValue())
+			return c, true
 		}
 	}
 	return nil, false
@@ -382,13 +395,15 @@ func constFloatFromExpr(e ast.Expression, ty *lltypes.FloatType) (value.Value, b
 	case *ast.FloatLiteralExpr:
 		return constant.NewFloat(ty, v.Value), true
 	case *ast.IntegerLiteralExpr:
-		return constant.NewFloat(ty, float64(v.Value)), true
+		f, _ := new(big.Float).SetInt(v.BigValue()).Float64()
+		return constant.NewFloat(ty, f), true
 	case *ast.NegationExpr:
 		switch inner := v.Operand.(type) {
 		case *ast.FloatLiteralExpr:
 			return constant.NewFloat(ty, -inner.Value), true
 		case *ast.IntegerLiteralExpr:
-			return constant.NewFloat(ty, -float64(inner.Value)), true
+			f, _ := new(big.Float).SetInt(inner.BigValue()).Float64()
+			return constant.NewFloat(ty, -f), true
 		}
 	}
 	return nil, false

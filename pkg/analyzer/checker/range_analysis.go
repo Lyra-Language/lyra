@@ -319,8 +319,11 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 		return interval{}, false, st
 
 	case *ast.IntegerLiteralExpr:
-		if v.Unsigned {
-			return interval{}, false, st // large-u64 bit pattern, not tracked
+		if v.Unsigned || v.IsWide() {
+			// A large-u64 bit pattern or a >64-bit literal: neither fits the int64
+			// interval this pass tracks, and ⊤ (untracked) is the sound answer —
+			// reading Value would record 0 and could then *prove away* a trap.
+			return interval{}, false, st
 		}
 		if literalAdaptedToFloat(c.tt, v) {
 			// An int literal adapted to a float context (`let a: f64 = 5` records
@@ -699,10 +702,12 @@ func patternInterval(p ast.Pattern) (lo, hi int64, ok bool) {
 func patternBound(e ast.Expression) (int64, bool) {
 	switch v := e.(type) {
 	case *ast.IntegerLiteralExpr:
-		return v.Value, true
+		return v.Int64()
 	case *ast.NegationExpr:
 		if inner, ok := v.Operand.(*ast.IntegerLiteralExpr); ok {
-			return -inner.Value, true
+			if n, ok := inner.Int64(); ok {
+				return -n, true
+			}
 		}
 	}
 	return 0, false
@@ -1008,7 +1013,7 @@ func narrow(cur interval, op ast.BooleanBinaryOp, k interval) interval {
 func (c *rangeChecker) pureInterval(st rangeEnv, e ast.Expression) (interval, bool) {
 	switch v := e.(type) {
 	case *ast.IntegerLiteralExpr:
-		if v.Unsigned {
+		if v.Unsigned || v.IsWide() {
 			return interval{}, false
 		}
 		return interval{v.Value, v.Value}, true

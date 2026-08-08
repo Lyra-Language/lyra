@@ -81,6 +81,7 @@ package llvm
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -622,7 +623,19 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 			if e.Unsigned {
 				v = float64(uint64(e.Value))
 			}
+			if e.IsWide() {
+				v, _ = new(big.Float).SetInt(e.BigValue()).Float64()
+			}
 			return constant.NewFloat(ft, v), block, nil
+		}
+		// A **wide** literal (>64 bits, so i128/u128 only) carries its magnitude as a
+		// big.Int; `Value` is 0 and means nothing. llir's constant.Int is a big.Int
+		// underneath, so the constant is exact — set it rather than going through the
+		// int64 constructor, which is what silently emitted 0.
+		if e.IsWide() {
+			c := constant.NewInt(l.literalIntType(e), 0)
+			c.X = e.BigValue()
+			return c, block, nil
 		}
 		return constant.NewInt(l.literalIntType(e), e.Value), block, nil
 	case *ast.FloatLiteralExpr:
