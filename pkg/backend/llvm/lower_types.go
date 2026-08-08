@@ -189,6 +189,17 @@ func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 		}
 		v.Fields = fields
 		return v
+	case types.AnonymousStructType:
+		// The same walk. SizeAndAlign already had an arm for this type, so without the
+		// resolution here a field naming a declared type would reach it unresolved and
+		// fail to size — the halves of one question, which is hazard 8's shape.
+		fields := make([]types.StructField, len(v.Fields))
+		for i, f := range v.Fields {
+			f.Type = l.resolveForLayout(f.Type)
+			fields[i] = f
+		}
+		v.Fields = fields
+		return v
 	case types.TupleType:
 		elems := make([]types.Type, len(v.Elements))
 		for i, e := range v.Elements {
@@ -409,6 +420,13 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		return l.lookupNamedType(t.Name)
 	case types.NamedStructType:
 		return l.lookupNamedType(t.Name)
+	case types.AnonymousStructType:
+		// Structural, exactly like an anonymous tuple: there is no declaration to have
+		// registered a named type, so the LLVM struct is built from the fields on the
+		// spot. Field **order is the type's**, which is what makes two values of the
+		// same anonymous struct interchangeable however their literals were written —
+		// the construction site reorders to match (lowerAnonymousStructInstanceExpr).
+		return l.lowerAnonymousStructType(t)
 	case types.DataType:
 		// A `data` value resolves to its registered tagged-union struct.
 		return l.lookupNamedType(t.Name)
@@ -462,6 +480,21 @@ func (l *lowerer) lookupNamedType(name string) (lltypes.Type, error) {
 // declaration to register against, and LLVM struct types are structural, so a
 // fresh NewStruct is the whole representation — two anonymous tuples of the same
 // shape lower to equal (interchangeable) LLVM types.
+// lowerAnonymousStructType builds the LLVM struct for an anonymous struct, in the
+// type's own field order. The anonymous tuple's twin below, and deliberately beside it:
+// both are the structural aggregates that have no declaration to look up.
+func (l *lowerer) lowerAnonymousStructType(t types.AnonymousStructType) (*lltypes.StructType, error) {
+	fields := make([]lltypes.Type, len(t.Fields))
+	for i, f := range t.Fields {
+		ft, err := l.lowerType(f.Type)
+		if err != nil {
+			return nil, err
+		}
+		fields[i] = ft
+	}
+	return lltypes.NewStruct(fields...), nil
+}
+
 func (l *lowerer) lowerAnonymousTupleType(t types.TupleType) (*lltypes.StructType, error) {
 	fields := make([]lltypes.Type, len(t.Elements))
 	for i, elem := range t.Elements {

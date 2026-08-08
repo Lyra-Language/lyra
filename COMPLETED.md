@@ -47,6 +47,35 @@ both could hold it and names `u128` only above i128's range. That in turn is why
 assignability to object to, so without a 128-bit-aware range check a
 `let x: u8 = <10^38>` would have passed unchecked.
 
+**The anonymous struct lowers**, so it is a usable value rather than a shape the checker
+knows about. Six arms, in five walks, all of them the same omission:
+
+- `lowerType` and `resolveForLayout` — structural, built from the fields on the spot,
+  exactly as the anonymous *tuple* beside them is;
+- construction, which places fields **by name in the type's order**. That is the one
+  thing this path does that the named one does not have to: an anonymous struct's
+  identity is its fields, so `{ y: "s", x: 1 }` and `{ x: 1, y: "s" }` are the same
+  value, where a named struct's declaration fixes one order for every literal of it;
+- field access, reading the same order back;
+- `OwnsManaged`, `emitRetainValue` and `emitDropValue` — the retain/drop pair added in
+  one change, as hazard 8's sixth instance insists.
+
+**The arm that mattered was none of those.** The ownership pass's own expression walk had
+`*ast.StructInstanceExpr` and not the anonymous one, so a struct literal's field values
+were walked as *unowned* — and a temporary transferred into the struct
+(`{ m: "a" ++ "b" }`) was released at the end of its own statement while the struct kept
+the pointer. A use-after-free, and **neither ASan nor LeakSanitizer reported it**: the
+freed bytes were simply not reused in between.
+
+That is worth recording precisely, because it is the inverse of the lesson already in
+CLAUDE.md ("a memory-safety test can pass because the code under it does nothing"). Here
+the test exercised real code and the sanitizers were genuinely quiet — a leak check is
+evidence, not proof, and the arm was found by *reading* the walk against its sibling
+rather than by running anything. The first draft of the managed-field test was worse than
+useless in the same way: it bound the string first (`let s = …; { m: s }`), so the
+binding's own scope-exit release balanced the books whether the struct's glue existed or
+not, and it passed with the arms deleted.
+
 **An anonymous struct is assignable to itself.** `let a: { x: i64 } = { x: 1 }` reported
 **"cannot assign struct to struct"** — a type refused against itself, with the message
 naming the same thing twice.

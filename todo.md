@@ -135,14 +135,13 @@ write today:
   by name, an untyped field narrows to the annotation, and `String()` now renders the
   fields so a genuine mismatch is readable. See COMPLETED.md.
 
-- **[OPEN] The backend does not lower an anonymous struct at all.** With assignability
-  fixed, `let a: { x: i64 } = { x: 1 }` type-checks and then fails with
-  `expression lowering not implemented for *ast.AnonymousStructInstanceExpr` (and
-  `unknown type: struct` wherever the type reaches layout). The front-end bug above was
-  masking this: a value that could not be *assigned* never got far enough to be lowered.
-  `lowerType`, construction, member access and the retain/drop glue all need an arm —
-  `equality.go` and `layout.go` already have one, so the shape is known. Rule 5 is
-  holding (the errors are loud), but the type is unusable end to end until this lands.
+- **[DONE 08/08] The anonymous struct lowers.** Construction (fields placed **by name**,
+  in the type's order, since a literal may write them in any order), field access,
+  `lowerType`, `resolveForLayout`, and all four ownership walks — `OwnsManaged`,
+  `emitRetainValue`, `emitDropValue` and the ownership pass's *transfer* arm. That last
+  one was the one that mattered: without it a temporary transferred into the struct was
+  released at the end of its own statement while the struct kept the pointer, which is a
+  use-after-free that **neither ASan nor LeakSanitizer reported**. See COMPLETED.md.
 
 - **[DONE 08/08] `[0; 5]` — the array-repeat literal — is implemented.** `[v; n]` is
   `[n]T` in a fixed-size context and a heap `[]T` under a `[]T` annotation, with the value

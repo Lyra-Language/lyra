@@ -230,6 +230,13 @@ func OwnsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) 
 		return slices.ContainsFunc(v.Fields, func(f types.StructField) bool {
 			return OwnsManaged(f.Type, symTable, loc)
 		})
+	case types.AnonymousStructType:
+		// The third half of the retain/drop model (see emitDropValue's arm): this is
+		// what decides whether a value needs the glue at all, so missing it here means
+		// the other two are never asked.
+		return slices.ContainsFunc(v.Fields, func(f types.StructField) bool {
+			return OwnsManaged(f.Type, symTable, loc)
+		})
 	case types.TupleType:
 		return slices.ContainsFunc(v.Elements, func(e types.Type) bool {
 			return OwnsManaged(e, symTable, loc)
@@ -1082,6 +1089,18 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		}
 
 	case *ast.StructInstanceExpr:
+		for i := range e.Fields {
+			a.expr(e.Fields[i].Value, true)
+		}
+
+	case *ast.AnonymousStructInstanceExpr:
+		// The same transfer, and the arm that matters most of the three this type
+		// needed: without it the field values fell to the default walk as *unowned*, so
+		// a temporary transferred into the struct (`{ m: "a" ++ "b" }`) was released at
+		// the end of its own statement while the struct kept the pointer. That is a
+		// use-after-free rather than the leak the missing retain/drop glue would cause,
+		// and neither ASan nor LeakSanitizer reported it — the freed bytes simply were
+		// not reused in between, which is exactly what makes this class expensive.
 		for i := range e.Fields {
 			a.expr(e.Fields[i].Value, true)
 		}

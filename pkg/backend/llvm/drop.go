@@ -215,6 +215,13 @@ func (l *lowerer) emitDropValue(block *ir.Block, v value.Value, t types.Type) (*
 	switch rt := resolved.(type) {
 	case types.NamedStructType:
 		return l.emitDropFields(block, v, fieldTypesOf(rt))
+	case types.AnonymousStructType:
+		// Added with emitRetainValue's arm in one change, which the header of that
+		// function and hazard 8's sixth instance both insist on: a drop without its
+		// retain is an instant double free, and a retain without its drop is the quiet
+		// leak this pair exists to prevent. `{ m: string }` had neither until 08/08,
+		// so an anonymous struct's managed field leaked one reference per value.
+		return l.emitDropFields(block, v, anonFieldTypesOf(rt))
 	case types.TupleType:
 		return l.emitDropFields(block, v, rt.Elements)
 	case types.DataType:
@@ -285,6 +292,17 @@ func (l *lowerer) emitDropFields(block *ir.Block, v value.Value, fieldTypes []ty
 
 // fieldTypesOf is a struct's field types in declaration order — the extractvalue
 // index order, matching lowerStructDef.
+// anonFieldTypesOf is fieldTypesOf for the structural struct. Two functions rather
+// than one generic over both because the two field slices are separate types; what
+// matters is that every walk uses the same one, in the type's own field order.
+func anonFieldTypesOf(st types.AnonymousStructType) []types.Type {
+	out := make([]types.Type, len(st.Fields))
+	for i, f := range st.Fields {
+		out[i] = f.Type
+	}
+	return out
+}
+
 func fieldTypesOf(st types.NamedStructType) []types.Type {
 	out := make([]types.Type, len(st.Fields))
 	for i, f := range st.Fields {

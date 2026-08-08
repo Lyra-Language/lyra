@@ -214,6 +214,12 @@ func (l *lowerer) namedStructFields(t types.Type) ([]types.StructField, bool) {
 	switch s := t.(type) {
 	case types.NamedStructType:
 		return s.Fields, true
+	case types.AnonymousStructType:
+		// Field access reads a *position*, and for an anonymous struct the type's own
+		// field order is that position — the same order lowerAnonymousStructType builds
+		// the LLVM struct in and lowerAnonymousStructInstanceExpr places values in. One
+		// order, established by the type, so the three cannot disagree.
+		return s.Fields, true
 	case types.UnresolvedType:
 		if decl, ok := l.lookupTypeDecl(s.Name); ok {
 			if ns, ok := decl.Type.(types.NamedStructType); ok {
@@ -461,4 +467,69 @@ func (l *lowerer) coerceAggregateElem(block *ir.Block, v value.Value, dst lltype
 		return coerceIntWidth(block, v, signed, dstInt), nil
 	}
 	return nil, fmt.Errorf("llvm: aggregate element type mismatch: cannot store %s into %s", v.Type(), dst)
+}
+
+// lowerAnonymousStructInstanceExpr builds `{ x: 1, y: "s" }`.
+//
+// The one thing it does that the named path does not have to: **fields are placed by
+// name, in the recorded type's order**, because an anonymous struct's identity is its
+// fields and a literal may write them in any order — `{ y: "s", x: 1 }` is the same
+// value. The named path can index positionally because the declaration fixes the order
+// for every literal of that type; here the *annotation* fixes it, and the literal is
+// free to disagree.
+func (l *lowerer) lowerAnonymousStructInstanceExpr(block *ir.Block, e *ast.AnonymousStructInstanceExpr) (value.Value, *ir.Block, error) {
+	if e.BaseStruct != nil {
+		return nil, nil, fmt.Errorf("llvm: anonymous struct record-update syntax not implemented yet")
+	}
+	recorded, ok := l.recordedType(e)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no type recorded for anonymous struct")
+	}
+	structType, ok := recorded.(types.AnonymousStructType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: anonymous struct lowering not implemented for %s", recorded)
+	}
+	stackType, ok := types.WithAllocation(structType, types.Stack).(types.AnonymousStructType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: anonymous struct did not survive allocation stripping")
+	}
+	llType, err := l.lowerType(stackType)
+	if err != nil {
+		return nil, nil, err
+	}
+	structTy, ok := llType.(*lltypes.StructType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: anonymous struct %s did not lower to a struct", structType)
+	}
+
+	valueByName := make(map[string]ast.Expression, len(e.Fields))
+	for _, f := range e.Fields {
+		valueByName[f.Name] = f.Value
+	}
+
+	var agg value.Value = constant.NewUndef(structTy)
+	for i, declField := range structType.Fields {
+		valExpr, ok := valueByName[declField.Name]
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: anonymous struct field %q has no value", declField.Name)
+		}
+		var v value.Value
+		v, block, err = l.lowerExpr(block, valExpr)
+		if err != nil {
+			return nil, nil, err
+		}
+		if diverged(v, block) {
+			return nil, block, nil
+		}
+		v, err = l.coerceAggregateElem(block, v, structTy.Fields[i], valExpr)
+		if err != nil {
+			return nil, nil, err
+		}
+		agg = block.NewInsertValue(agg, v, uint64(i))
+	}
+	if types.AllocationOf(recorded) == types.Shared {
+		boxed, err := l.lowerBoxShared(block, agg, stackType)
+		return boxed, block, err
+	}
+	return agg, block, nil
 }

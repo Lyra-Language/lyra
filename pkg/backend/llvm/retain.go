@@ -160,6 +160,10 @@ func (l *lowerer) emitRetainValue(block *ir.Block, v value.Value, t types.Type) 
 	switch rt := resolved.(type) {
 	case types.NamedStructType:
 		return l.emitRetainFields(block, v, fieldTypesOf(rt))
+	case types.AnonymousStructType:
+		// The mirror of emitDropValue's arm; see the note there for why the two land
+		// together.
+		return l.emitRetainFields(block, v, anonFieldTypesOf(rt))
 	case types.TupleType:
 		return l.emitRetainFields(block, v, rt.Elements)
 	case types.DataType:
