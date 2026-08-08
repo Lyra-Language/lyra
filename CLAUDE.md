@@ -268,7 +268,9 @@ implementation state:
   operator — keyed on the **method name**, with the trait whatever the author declared.
   `+` on a matrix and `+` on a duration share no invariant, so nothing is bought by
   insisting they come from one trait; two traits providing one operator for one type is
-  an ambiguity reported at the operator.
+  an ambiguity reported at the operator. An operand that is a **type parameter** resolves
+  through a `where` bound (08/08), the same abstract dispatch a bound `.method()` call
+  takes.
 - **The rest are inert, each for its own reason**, and the warning says which
   (`lyra-W015`): `&&`/`||` cannot short-circuit through a call, `!` is boolean negation,
   `**` is a spelling with no operator, the suffix forms name operators that do not exist.

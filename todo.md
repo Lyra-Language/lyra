@@ -1041,6 +1041,12 @@ days, after `wallClock`, the `where` bounds and `@derive`.
   type overloading `-`). Removing the syntax would discard the only plan; keeping it silent
   is what this project keeps paying for.
 
+- **[DONE 08/08] An operator dispatches through a `where` bound.** `a + b` where `a: t`
+  and `t: Add` resolves against the trait's declared signature, records the abstract
+  resolution for the purity join, and publishes one concrete resolution per implementing
+  type for the specialization to pick — the three steps a bound *call* has taken since
+  08/07, for a node that is not a call. See COMPLETED.md.
+
 - **[DONE 08/07] The arithmetic half is implemented.** Ten binary operators
   (`+ - * / % << >> & | ~`), the prefix `-` and `~`, and the compound assignments,
   dispatch to a trait method named for the operator — keyed on the **method name**, with

@@ -359,3 +359,19 @@ func (l *lowerer) lowerOperatorImplCall(block *ir.Block, res typetable.Resolutio
 	copy(args, operands)
 	return block.NewCall(fn, args...), block, nil
 }
+
+// operatorCandidate finds the impl an operator dispatches to when the typechecker could
+// not name one — the receiver was a type *variable* there, and only this specialization
+// fixes it.
+//
+// The key is the receiver's **substituted** type, which is what `recordedType` gives
+// inside a specialization. It is a separate step from `OperatorResolution` rather than a
+// fallback inside it, because the two answer different questions: one is "which impl did
+// the checker pick", the other "which impl does this instantiation name".
+func (l *lowerer) operatorCandidate(expr ast.Expression, receiver ast.Expression) (typetable.Resolution, bool) {
+	recv, ok := l.recordedType(receiver)
+	if !ok {
+		return typetable.Resolution{}, false
+	}
+	return l.res.MethodTable.OperatorCandidate(expr, recv.String())
+}

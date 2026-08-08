@@ -213,3 +213,56 @@ let main = () -> void => {
 		t.Errorf("got %q; want \"425\\n2 6\"", got)
 	}
 }
+
+// An operator whose operand is a **type parameter**, resolved through a `where` bound
+// (08/08). This is `dispatchViaGenericBound` for a node that is not a call: the
+// typechecker checks against the trait's declared signature and publishes one resolution
+// per implementing type, and the specialization picks by the substituted operand type —
+// exactly what a bound-dispatched `.method()` call has done since 08/07.
+func TestExec_OperatorThroughAWhereBound(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+struct Vec2 { x: i64 }
+struct Money { c: i64 }
+trait Add { (_+_): (Self, Self) -> Self }
+impl Add for Vec2 { (_+_) = (self, o) => Vec2 { x: self.x + o.x } }
+impl Add for Money { (_+_) = (self, o) => Money { c: self.c + o.c } }
+let total<t> where t: Add = (a: t, b: t) -> t => a + b
+let main = () -> void => {
+  println("${total(Vec2 { x: 1 }, Vec2 { x: 2 }).x} ${total(Money { c: 5 }, Money { c: 6 }).c}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "3 11" {
+		t.Errorf("bound-dispatched operator = %q; want \"3 11\"", got)
+	}
+}
+
+// The prefix and compound-assignment forms take the same route. The compound one is the
+// case that needed the typechecker to record the *target's* type on the left node: a
+// compound assignment never infers its own left-hand side, so nothing else put a type
+// there and the backend had no substituted receiver to look the candidate up by.
+func TestExec_OperatorThroughABoundPrefixAndCompound(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+struct Vec2 { x: i64 }
+trait Add { (_+_): (Self, Self) -> Self }
+impl Add for Vec2 { (_+_) = (self, o) => Vec2 { x: self.x + o.x } }
+trait Neg { (-_): (Self) -> Self }
+impl Neg for Vec2 { (-_) = (self) => Vec2 { x: 0 - self.x } }
+let flip<t> where t: Neg = (a: t) -> t => -a
+let triple<t> where t: Add = (a: t) -> t => a + a + a
+let accum<t> where t: Add = (a: t, b: t) -> t => {
+  var acc = a;
+  acc += b;
+  acc
+}
+let main = () -> void => {
+  println("${flip(Vec2 { x: 7 }).x} ${triple(Vec2 { x: 3 }).x} ${accum(Vec2 { x: 4 }, Vec2 { x: 5 }).x}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "-7 9 9" {
+		t.Errorf("bound prefix/compound = %q; want \"-7 9 9\"", got)
+	}
+}

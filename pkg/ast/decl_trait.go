@@ -71,6 +71,26 @@ func (m MethodName) GetName() string {
 	return m.Value
 }
 
+// Key is the string that identifies this method within its trait, for a map keyed by
+// name alone (`typetable.BoundMethodRef.Method`, the purity pass's impl groups).
+//
+// An identifier is its own key. An **operator** is spelled the way it is declared —
+// `(_-_)` for binary, `(-_)` for prefix, `(_--)` for suffix — because kind is part of a
+// method's identity: prefix `-` and binary `-` share a spelling and are different
+// methods, so keying on `Value` alone would merge two groups and let one operator's
+// effects be charged to the other.
+func (m MethodName) Key() string {
+	switch m.Kind {
+	case MethodNameKindBinary:
+		return "(_" + m.Value + "_)"
+	case MethodNameKindPrefix:
+		return "(" + m.Value + "_)"
+	case MethodNameKindSuffix:
+		return "(_" + m.Value + ")"
+	}
+	return m.Value
+}
+
 type PrefixOperator string
 
 const (

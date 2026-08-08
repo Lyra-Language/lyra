@@ -81,6 +81,12 @@ func (tc *TypeChecker) dispatchCompoundOperator(expr *ast.MathAssignOpExpr, binO
 	if target == nil || !overloadableBinaryOperators[binOp] {
 		return nil, false
 	}
+	// Record the target's type on the left node. A compound assignment never infers its
+	// own left-hand side — it resolves the binding instead — so nothing else puts a type
+	// there, and the backend needs one: that is how it recovers the *substituted*
+	// receiver type when the operator resolved through a bound and only the
+	// specialization names the impl.
+	tc.typeTable.Set(&expr.Left, target)
 	name := ast.MethodName{Kind: ast.MethodNameKindBinary, Value: string(binOp)}
 	return tc.dispatchOperator(expr, name, target, []types.Type{tc.inferExprType(expr.Right)},
 		[]ast.Expression{expr.Right}, string(expr.Operator))
@@ -115,15 +121,18 @@ func (tc *TypeChecker) dispatchOperator(
 	if types.IsNumeric(base) || isRuneType(base) || types.IsBoolean(base) || types.IsString(base) {
 		return nil, false
 	}
-	if _, isVar := recv.(types.GenericType); isVar {
-		// A type variable names no impl, and unlike `==` there is no structural rule to
-		// fall back on. The message names *both* readings, because the author meant one
-		// of them and the compiler cannot tell which: the old "operands must be numeric"
-		// was true of a type parameter and said nothing about what to do next.
+	if g, isVar := recv.(types.GenericType); isVar {
+		if result, ok := tc.dispatchOperatorViaBound(expr, name, g, args, argExprs, opText); ok {
+			return result, true
+		}
+		// No bound provides it, and unlike `==` there is no structural rule to fall back
+		// on. The message names *both* readings, because the author meant one of them and
+		// the compiler cannot tell which: the old "operands must be numeric" was true of a
+		// type parameter and said nothing about what to do next.
 		tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeOperatorNotOverloaded,
 			"operator %s: %s is a type parameter — built-in arithmetic needs a numeric type, "+
-				"and an overloaded `%s` needs a concrete operand type to find its impl",
-			opText, recv, opText)
+				"and an overloaded `%s` needs a `where %s: Trait` bound whose trait declares `(_%s_)`",
+			opText, recv, opText, g.Name, opText)
 		return nil, true
 	}
 
@@ -188,4 +197,71 @@ func (tc *TypeChecker) dispatchOperator(
 	}
 	tc.typeTable.Set(expr, result)
 	return result, true
+}
+
+// dispatchOperatorViaBound resolves an operator whose receiver is a bare type parameter,
+// through the `where` bounds in scope: `let sum<t> where t: Add = (a: t, b: t) -> t => a + b`.
+//
+// This is `dispatchViaGenericBound` for a node that is not a call, and it is deliberately
+// the same three steps in the same order — check against the trait's declared signature,
+// record the abstract resolution for the purity pass, publish one concrete resolution per
+// implementing type for the backend. Abstract dispatch has no single impl to name, so
+// **both** of the last two are needed: the first keeps a `pure` function from silently
+// admitting an impure impl, the second is how the specialization finds the impl it wants.
+//
+// The bound is checked at the instantiation by the machinery that already exists
+// (lyra-E036), so nothing here has to ask whether `t` really implements the trait — only
+// what the trait says the operator does.
+func (tc *TypeChecker) dispatchOperatorViaBound(
+	expr ast.Expression, name ast.MethodName, g types.GenericType,
+	args []types.Type, argExprs []ast.Expression, opText string,
+) (types.Type, bool) {
+	for _, traitName := range tc.genericBounds[g.Name] {
+		trait, ok := tc.symTable.LookupTraitFrom(traitName, expr.GetLocation())
+		if !ok {
+			continue
+		}
+		tm := findTraitMethodNamed(trait, name)
+		if tm == nil || tm.Signature == nil {
+			continue
+		}
+		// Self is the type *parameter* here, not a concrete type: inside the body `t` is
+		// what the operands are, and the signature has to speak in those terms for the
+		// operand check below to mean anything.
+		sig := substituteSelf(tm.Signature, g)
+		want := len(args) + 1
+		if len(sig.Parameters) != want {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"operator %s: %s declares `%s` with %d parameter(s); an operator taking %d operand(s) needs %d (the receiver is the first)",
+				opText, traitName, name.Value, len(sig.Parameters), len(args), want)
+			return nil, true
+		}
+		for i, arg := range args {
+			param := sig.Parameters[i+1].Type
+			if arg == nil || param == nil {
+				continue
+			}
+			tc.propagateLiteralType(argExprs[i], param)
+			if got, ok := tc.typeTable.Get(argExprs[i]); ok {
+				arg = got
+			}
+			if !isAssignable(arg, param) {
+				tc.addError(argExprs[i].GetLocation(), SeverityError,
+					"operator %s: %s's `%s` takes %s on the right, got %s",
+					opText, traitName, name.Value, param, arg)
+				return nil, true
+			}
+		}
+		tc.methodTable.SetOperatorBound(expr, typetable.BoundMethodRef{Trait: traitName, Method: name.Key()})
+		tc.methodTable.SetOperatorCandidates(expr, tc.boundCandidatesByType(traitName, name))
+		result := sig.ReturnType.Type
+		if result == nil {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"operator %s: %s's `%s` declares no return type", opText, traitName, name.Value)
+			return nil, true
+		}
+		tc.typeTable.Set(expr, result)
+		return result, true
+	}
+	return nil, false
 }

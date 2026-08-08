@@ -303,6 +303,15 @@ func (l *lowerer) lowerMathBinaryOpExpr(block *ir.Block, e *ast.MathBinaryOpExpr
 	if res, ok := l.res.MethodTable.OperatorResolution(e); ok {
 		return l.lowerOperatorImplCall(block, res, left, right)
 	}
+	// The operand was a type *variable* at check time — `a + b` inside
+	// `let sum<t> where t: Add` — so no single impl could be named then. This
+	// specialization has fixed it, and the lookup is by the **substituted** operand type,
+	// which is what recordedType hands back inside a specialization. The comparison
+	// operators have taken exactly this fallback since `Eq` landed; without it an impl
+	// would apply outside a generic and not inside one.
+	if res, ok := l.operatorCandidate(e, e.Left); ok {
+		return l.lowerOperatorImplCall(block, res, left, right)
+	}
 	if _, isFloat := left.Type().(*lltypes.FloatType); isFloat {
 		v, err := l.applyFloatMathOp(block, e.Operator, left, right)
 		return v, block, err
@@ -487,6 +496,9 @@ func (l *lowerer) lowerBitwiseNotExpr(block *ir.Block, e *ast.BitwiseNotExpr) (v
 	if res, ok := l.res.MethodTable.OperatorResolution(e); ok {
 		return l.lowerOperatorImplCall(block, res, operand)
 	}
+	if res, ok := l.operatorCandidate(e, e.Operand); ok {
+		return l.lowerOperatorImplCall(block, res, operand)
+	}
 	intTy, ok := operand.Type().(*lltypes.IntType)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: `~` on a non-integer operand (%s)", operand.Type())
@@ -588,7 +600,11 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 	// An overloaded operator: `a += b` calls the same `(_+_)` impl `a + b` does and
 	// stores the answer back. The load/store shape is the compound assignment's own —
 	// only the middle step changes.
-	if res, ok := l.res.MethodTable.OperatorResolution(e); ok {
+	res, ok := l.res.MethodTable.OperatorResolution(e)
+	if !ok {
+		res, ok = l.operatorCandidate(e, &e.Left)
+	}
+	if ok {
 		result, block, err := l.lowerOperatorImplCall(block, res, cur, rhs)
 		if err != nil {
 			return nil, nil, err
@@ -621,6 +637,9 @@ func (l *lowerer) lowerNegationExpr(block *ir.Block, e *ast.NegationExpr) (value
 		return nil, nil, err
 	}
 	if res, ok := l.res.MethodTable.OperatorResolution(e); ok {
+		return l.lowerOperatorImplCall(block, res, operand)
+	}
+	if res, ok := l.operatorCandidate(e, e.Operand); ok {
 		return l.lowerOperatorImplCall(block, res, operand)
 	}
 	// Branch on the already-lowered value's own LLVM type rather than a

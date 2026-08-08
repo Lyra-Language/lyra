@@ -32,6 +32,9 @@ type MethodTable struct {
 	// operatorCandidates[expr][concreteType] is the impl an operator dispatches to once
 	// a specialization fixes a type-variable operand. See SetOperatorCandidates.
 	operatorCandidates map[ast.Expression]map[string]Resolution
+	// operatorBounds records an operator resolved through a `where` bound (no single
+	// impl); the purity pass joins over the trait method's impls. See SetOperatorBound.
+	operatorBounds map[ast.Expression]BoundMethodRef
 }
 
 // BoundMethodRef names a trait method reached by *abstract* dispatch — a call on
@@ -299,6 +302,32 @@ func (t *MethodTable) OperatorCandidate(expr ast.Expression, concrete string) (R
 	}
 	r, ok := t.operatorCandidates[expr][concrete]
 	return r, ok
+}
+
+// SetOperatorBound records that an *operator* resolved through a `where` bound rather
+// than to a concrete impl — `a + b` inside `let sum<t> where t: Add`.
+//
+// It is `SetBound`'s twin for a node that is not a call. The purity pass needs it for the
+// same reason: there is no single impl to charge, so the effect is the join over every
+// impl of the bound trait method, and without the record the operator would be charged
+// nothing at all.
+func (t *MethodTable) SetOperatorBound(expr ast.Expression, ref BoundMethodRef) {
+	if t == nil {
+		return
+	}
+	if t.operatorBounds == nil {
+		t.operatorBounds = map[ast.Expression]BoundMethodRef{}
+	}
+	t.operatorBounds[expr] = ref
+}
+
+// OperatorBound is nil-receiver-safe, mirroring GetBound.
+func (t *MethodTable) OperatorBound(expr ast.Expression) (BoundMethodRef, bool) {
+	if t == nil {
+		return BoundMethodRef{}, false
+	}
+	ref, ok := t.operatorBounds[expr]
+	return ref, ok
 }
 
 // OperatorResolution returns the impl a comparison operator dispatches to.

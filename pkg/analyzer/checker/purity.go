@@ -654,10 +654,10 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, encl
 		// that is what the author wrote — the method name `(_+_)` would send them
 		// looking for a call that is not there.
 		if sc != nil {
-			if eff, method := operatorImplEffect(expr, c.methodTable, c.impureMethods); eff&PurityEffects != 0 {
+			if eff, method := operatorImplEffect(expr, c.methodTable, c.impureMethods, c.boundGroups); eff&PurityEffects != 0 {
 				c.report(expr.GetLocation(),
 					"pure function uses an operator that dispatches to non-pure trait method %q",
-					method.Name.GetName())
+					method)
 			}
 		}
 		switch e := expr.(type) {
@@ -1806,10 +1806,19 @@ func traitMethodDecl(traitDecls map[string]*ast.TraitDeclStmt, traitName string,
 	return nil
 }
 
-// collectTraitMethodGroups groups every identifier-named trait-impl method by the
-// (trait, method-name) it implements. A call resolved abstractly through a bound
-// (`t: Show` → `Show::show`) dispatches, at instantiation, to one of the impls in
-// the matching group; its effect is the join over the group (below).
+// collectTraitMethodGroups groups every trait-impl method by the (trait, method-name) it
+// implements. A call resolved abstractly through a bound (`t: Show` → `Show::show`)
+// dispatches, at instantiation, to one of the impls in the matching group; its effect is
+// the join over the group (below).
+//
+// **Operator-named methods are included**, keyed by `MethodName.Key` so prefix `-` and
+// binary `-` land in different groups. They were filtered out until 08/08, back when
+// nothing dispatched to them; once an *operator* could resolve through a bound
+// (`a + b` under `where t: Add`) the filter meant the join ran over an empty group and
+// answered EffectNone — so a `pure` function using a bound operator whose impl printed
+// type-checked clean. The same shape as the identifier filter removed from
+// resolveTraitMethod a day earlier, and the same lesson: a filter written when a kind
+// could not occur becomes a silent hole the day it can.
 func collectTraitMethodGroups(program *ast.Program) map[typetable.BoundMethodRef][]*ast.TraitMethodImpl {
 	groups := map[typetable.BoundMethodRef][]*ast.TraitMethodImpl{}
 	for _, node := range program.Statements {
@@ -1819,10 +1828,8 @@ func collectTraitMethodGroups(program *ast.Program) map[typetable.BoundMethodRef
 		}
 		for i := range impl.Methods {
 			m := &impl.Methods[i]
-			if m.Name.Kind == ast.MethodNameKindIdentifier {
-				key := typetable.BoundMethodRef{Trait: impl.TraitName, Method: m.Name.Value}
-				groups[key] = append(groups[key], m)
-			}
+			key := typetable.BoundMethodRef{Trait: impl.TraitName, Method: m.Name.Key()}
+			groups[key] = append(groups[key], m)
 		}
 	}
 	return groups
@@ -2016,7 +2023,7 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 	onExpr := func(e ast.Expression) bool {
 		// An overloaded operator is a call to a trait impl method; charge it as one.
 		// Before the switch, since the operator nodes appear in it for other reasons.
-		if eff, _ := operatorImplEffect(e, methodTable, impureMethods); eff != EffectNone {
+		if eff, _ := operatorImplEffect(e, methodTable, impureMethods, boundGroups); eff != EffectNone {
 			found |= eff
 		}
 		switch ex := e.(type) {
@@ -2195,7 +2202,7 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 	onExpr := func(e ast.Expression) bool {
 		// An overloaded operator is a call to a trait impl method; charge it as one.
 		// Before the switch, since the operator nodes appear in it for other reasons.
-		if eff, _ := operatorImplEffect(e, methodTable, impureMethods); eff != EffectNone {
+		if eff, _ := operatorImplEffect(e, methodTable, impureMethods, boundGroups); eff != EffectNone {
 			found |= eff
 		}
 		switch ex := e.(type) {
@@ -2337,18 +2344,24 @@ func calleeName(fn ast.Expression) string {
 // -> bool => a < b` type-checked with an `Ord::compare` that printed. Arithmetic would
 // have added a second instance of that; this fixes both, which is why it keys on the
 // resolution rather than on the operator.
-func operatorImplEffect(e ast.Expression, methodTable *typetable.MethodTable, impureMethods map[*ast.TraitMethodImpl]Effect) (Effect, *ast.TraitMethodImpl) {
+func operatorImplEffect(e ast.Expression, methodTable *typetable.MethodTable, impureMethods map[*ast.TraitMethodImpl]Effect, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl) (Effect, string) {
 	switch e.(type) {
 	case *ast.MathBinaryOpExpr, *ast.NegationExpr, *ast.BitwiseNotExpr,
 		*ast.BooleanBinaryOpExpr, *ast.MathAssignOpExpr:
 		// MathAssignOpExpr belongs here for the same reason it reuses the binary
 		// operator's type rules: `x += y` is `x = x + y`, so it calls the same impl.
 	default:
-		return EffectNone, nil
+		return EffectNone, ""
 	}
-	res, ok := methodTable.OperatorResolution(e)
-	if !ok || res.Method == nil {
-		return EffectNone, nil
+	if res, ok := methodTable.OperatorResolution(e); ok && res.Method != nil {
+		return impureMethods[res.Method], res.Method.Name.GetName()
 	}
-	return impureMethods[res.Method], res.Method
+	// An operator resolved through a `where` bound names no single impl, so the effect
+	// is the join over every impl of that trait method — the same rule a bound *call*
+	// follows, and the same reason: the bound admits any of them, so a `pure` caller is
+	// only safe if all of them are.
+	if ref, ok := methodTable.OperatorBound(e); ok {
+		return boundCallEffect(ref, boundGroups, impureMethods), ref.Method
+	}
+	return EffectNone, ""
 }

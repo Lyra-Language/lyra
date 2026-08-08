@@ -10,6 +10,45 @@ Newest first.
 ## Dated log
 
 ### 08/08/26
+**An operator dispatches through a `where` bound.**
+
+```
+let total<t> where t: Add = (a: t, b: t) -> t => a + b
+```
+
+This is `dispatchViaGenericBound` for a node that is not a call, and deliberately the same
+three steps in the same order: check the operands against the trait's declared signature
+(Self bound to the type *parameter*, since that is what the operands are inside the body),
+record the abstract resolution so the purity pass can account for it, and publish one
+concrete resolution per implementing type so the specialization can pick the one it names.
+Abstract dispatch has no single impl, so the last two are not alternatives — the first
+keeps a `pure` function from silently admitting an impure impl, the second is how the
+backend finds anything at all.
+
+Three things had to be added, and two were holes rather than features:
+
+- **The compound form had no receiver type to look up by.** `acc += b` under a bound
+  failed to lower with "type not found for *ast.IdentifierExpr": a compound assignment
+  never infers its own left-hand side — it resolves the binding — so nothing had put a
+  type on that node, and the backend recovers the *substituted* receiver type from
+  exactly there. The typechecker records it now.
+- **The purity join ran over an empty group.** `collectTraitMethodGroups` built its
+  (trait, method) → impls index from **identifier-named** methods only, a filter written
+  when nothing dispatched to an operator method. So a `pure` function using a bound
+  operator whose impl printed type-checked clean — the join answered EffectNone because
+  there was nothing to join. Same shape as the identifier filter removed from
+  `resolveTraitMethod` the day before, and the same lesson: **a filter written when a kind
+  could not occur becomes a silent hole the day it can.**
+- **The group key had to distinguish kind.** `BoundMethodRef.Method` is a string, and
+  prefix `-` and binary `-` share a spelling, so keying on the operator text alone would
+  merge two groups and charge one operator's effects to the other. `ast.MethodName.Key`
+  spells an operator the way it is declared — `(_-_)`, `(-_)`, `(_--)` — so identity
+  survives the flattening to a string.
+
+The diagnostic for an unbound operand changed with it: it used to say an overloaded `+`
+"needs a concrete operand type to find its impl", which stopped being true, and now points
+at the bound.
+
 **`Show` — a value whose type is a type parameter can be formatted.** `"${v}"` and
 `println(v)` work inside a generic with a `where t: Show` bound:
 
@@ -207,12 +246,11 @@ the language does not have. Each of these still warns, but now with *its own* re
 "nothing dispatches to it" left an author unable to tell "wait for it" from "this can
 never work".
 
-An operand that is a **type parameter** is refused with a message naming both readings,
-because the author meant one of them and the compiler cannot tell which: built-in
-arithmetic needs a numeric type, and an overloaded `+` needs a concrete type to find its
-impl. `==` has no such problem — equality is structural, so a type variable is
-comparable and an impl only overrides that. Routing an operator through a `where` bound
-is the open follow-on.
+An operand that is a **type parameter** was refused here and resolves through a `where`
+bound as of the next day; with no bound declaring the operator the message names both
+readings, because the author meant one of them and the compiler cannot tell which. `==`
+has no such problem — equality is structural, so a type variable is comparable and an impl
+only overrides that.
 
 Two grammar gaps surfaced while testing and are recorded rather than fixed:
 `C(1) + C(2)` does not parse (a constructor call cannot be a math operator's left

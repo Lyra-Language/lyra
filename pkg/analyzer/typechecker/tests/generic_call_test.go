@@ -85,10 +85,11 @@ func TestGeneric_ArithmeticOnUnboundedVariableRejected(t *testing.T) {
 let double = (x: t) -> t => x + x
 `, false)
 	// The message names both readings since 08/07, when `+` became overloadable: the
-	// author meant built-in arithmetic or an impl, and a type parameter is neither.
+	// author meant built-in arithmetic or an impl, and a type parameter is neither. Since
+	// 08/08 the second half points at the bound, which is now the way to get there.
 	assertErrorsAre(t, res,
 		"operator +: t is a type parameter — built-in arithmetic needs a numeric type, "+
-			"and an overloaded `+` needs a concrete operand type to find its impl")
+			"and an overloaded `+` needs a `where t: Trait` bound whose trait declares `(_+_)`")
 }
 
 // assertErrorContainsGeneric asserts some error mentions want, without pinning the

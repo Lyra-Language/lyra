@@ -87,3 +87,34 @@ impl Ord for Ver {
 let less = pure (a: Ver, b: Ver) -> bool => a < b`
 	assertBoundError(t, checkPurity(t, src), "lyra-E007")
 }
+
+// An operator resolved through a `where` bound names no single impl, so its effect is the
+// join over every impl of that trait method — the rule a bound *call* already followed.
+//
+// This did not work when the bound dispatch first landed: the impl groups the join reads
+// were built from **identifier-named** methods only, a filter written when nothing
+// dispatched to an operator method. The join therefore ran over an empty group and
+// answered "pure", so a `pure` function using a bound operator whose impl printed
+// type-checked clean.
+func TestOperatorPurity_ImpureImplBehindABound_Flagged(t *testing.T) {
+	src := `
+struct Vec2 { x: i64 }
+trait Add { (_+_): (Self, Self) -> Self }
+impl Add for Vec2 {
+    (_+_) = (self, o) => {
+        println("side effect")
+        Vec2 { x: self.x + o.x }
+    }
+}
+let total<t> where t: Add = pure (a: t, b: t) -> t => a + b`
+	assertBoundError(t, checkPurity(t, src), "lyra-E007")
+}
+
+func TestOperatorPurity_PureImplBehindABound_Ok(t *testing.T) {
+	src := `
+struct Vec2 { x: i64 }
+trait Add { (_+_): (Self, Self) -> Self }
+impl Add for Vec2 { (_+_) = (self, o) => Vec2 { x: self.x + o.x } }
+let total<t> where t: Add = pure (a: t, b: t) -> t => a + b`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}

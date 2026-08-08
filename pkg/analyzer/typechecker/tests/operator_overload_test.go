@@ -166,3 +166,49 @@ impl Add for Box<t> { (_+_) = (self, o) => self }
 let sum = (a: Box<i64>, b: Box<i64>) -> Box<i64> => a + b
 `, false))
 }
+
+// ── an operator through a `where` bound (08/08) ──────────────────────────────
+
+const addTrait = `
+struct Vec2 { x: i64 }
+trait Add { (_+_): (Self, Self) -> Self }
+impl Add for Vec2 { (_+_) = (self, o) => Vec2 { x: self.x + o.x } }
+`
+
+func TestOperator_ThroughAWhereBound(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, addTrait+`
+let total<t> where t: Add = (a: t, b: t) -> t => a + b
+let ok = total(Vec2 { x: 1 }, Vec2 { x: 2 })
+`, false))
+}
+
+// A bound whose trait does not declare the operator is not enough, and the message says
+// what to add rather than restating that a type parameter is not numeric.
+func TestOperator_BoundWithoutTheOperatorIsRejected(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+trait Sized { size: (Self) -> i64 }
+let f<t> where t: Sized = (a: t, b: t) -> t => a + b
+`, false)
+	assertHasErrorContaining(t, res, "needs a `where t: Trait` bound whose trait declares `(_+_)`")
+}
+
+// The bound is enforced at the instantiation by the machinery that already existed, so
+// nothing in operator dispatch has to re-ask whether `t` implements the trait.
+func TestOperator_BoundUnsatisfiedAtInstantiation(t *testing.T) {
+	res := parseCollectAndCheck(t, addTrait+`
+struct Other { y: i64 }
+let total<t> where t: Add = (a: t, b: t) -> t => a + b
+let bad = total(Other { y: 1 }, Other { y: 2 })
+`, false)
+	assertHasErrorContaining(t, res, "does not implement Add (required by `where t: Add`)")
+}
+
+// The operand is checked against the trait's declared signature with Self bound to the
+// type *parameter* — so a mixed-operand trait still constrains the right-hand side.
+func TestOperator_BoundChecksTheRightOperandAgainstTheSignature(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+trait Scale { (_*_): (Self, i64) -> Self }
+let twice<t> where t: Scale = (a: t, b: t) -> t => a * b
+`, false)
+	assertHasErrorContaining(t, res, "takes i64 on the right, got t")
+}

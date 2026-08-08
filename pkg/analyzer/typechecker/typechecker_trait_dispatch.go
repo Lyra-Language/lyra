@@ -606,6 +606,15 @@ func (tc *TypeChecker) checkGenericBounds(calleeName string, lambda *ast.LambdaE
 // trait) and a candidate nobody selects costs nothing: it is a table entry, not an
 // emitted function.
 func (tc *TypeChecker) publishBoundCandidates(call *ast.FunctionCallExpr, traitName, methodName string) {
+	tc.methodTable.SetBoundCandidates(call,
+		tc.boundCandidatesByType(traitName, ast.NewMethodNameIdentifier(methodName)))
+}
+
+// boundCandidatesByType is the map itself: one resolution per implementing type, keyed by
+// the type's string. Shared by the call form above and by the *operator* form
+// (dispatchOperatorViaBound), which publishes into the operator-candidate table instead —
+// the same question asked for a different kind of node, so the same answer.
+func (tc *TypeChecker) boundCandidatesByType(traitName string, methodName ast.MethodName) map[string]typetable.Resolution {
 	byType := map[string]typetable.Resolution{}
 	for _, impl := range tc.traitImpls {
 		if impl.TraitName != traitName {
@@ -615,7 +624,7 @@ func (tc *TypeChecker) publishBoundCandidates(call *ast.FunctionCallExpr, traitN
 		if target == nil {
 			continue
 		}
-		matches := tc.resolveTraitMethod(target, methodName, traitName)
+		matches := tc.resolveTraitMethodNamed(target, methodName, traitName)
 		if len(matches) != 1 {
 			// Zero: the impl does not provide this method (checkTraitImpl reports that).
 			// More than one: ambiguous at this type, which the call site reports when it
@@ -627,7 +636,7 @@ func (tc *TypeChecker) publishBoundCandidates(call *ast.FunctionCallExpr, traitN
 			Impl: m.Impl, Method: m.Method, Signature: m.Signature, Bindings: m.Bindings,
 		}
 	}
-	tc.methodTable.SetBoundCandidates(call, byType)
+	return byType
 }
 
 // ordTraitName is the prelude trait that extends comparison beyond the primitives.
