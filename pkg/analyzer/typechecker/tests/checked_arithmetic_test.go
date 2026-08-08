@@ -75,3 +75,42 @@ func TestChecked_TypeChecksAgainstTheAmbientMaybe(t *testing.T) {
 let bad = i32(1).checked_add(2)
 `, false))
 }
+
+// ── 128-bit constant folding (08/08) ─────────────────────────────────────────
+//
+// Folding is arbitrary precision now. It was int64-bound, so an expression whose value
+// exceeded that range simply declined to fold — and a declined fold is a *silent* one:
+// the range check had nothing to check, and `let d: u8 = 10^20 + 1` reached the backend,
+// where the operand had already been narrowed to a width it does not fit and the result
+// was invalid IR.
+
+func TestFolding_WideExpressionAgainstANarrowTarget(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let d: u8 = 100000000000000000000 + 1
+`, false)
+	assertHasErrorContaining(t, res, "literal value 100000000000000000001 overflows u8")
+}
+
+// The same for i64, which is the case that shows the old bound was the *folder's* rather
+// than the language's: the target is an ordinary width and the value is simply too big.
+func TestFolding_WideExpressionAgainstI64(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let d: i64 = 100000000000000000000 + 1
+`, false)
+	assertHasErrorContaining(t, res, "overflows i64")
+}
+
+// Both operands fit an int64 and their product does not — the case arbitrary precision
+// exists for, since an int64 walk cannot represent the answer even though every leaf is
+// representable.
+func TestFolding_ProductThatEscapesInt64(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+let d: i128 = 10000000000 * 10000000000
+`, false))
+}
+
+func TestFolding_WideExpressionFittingItsTarget(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+let d: i128 = 100000000000000000000 + 1
+`, false))
+}

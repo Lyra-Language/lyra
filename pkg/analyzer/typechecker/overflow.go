@@ -101,11 +101,18 @@ func (tc *TypeChecker) checkIntegerLiteralRange(varName string, expr ast.Express
 	if !ok || !isAnyConcreteInt(toP.Name) {
 		return
 	}
-	// A **wide** literal does not fold to an int64, so it is range-checked against the
+	// A **wide** constant does not fold to an int64, so it is range-checked against the
 	// target's bounds in big.Int arithmetic instead. Without this a 128-bit magnitude
 	// assigned to a `u8` would pass unchecked — it stays untyped where both 128-bit
 	// types could hold it, so assignability has nothing to object to either.
-	if wide, ok := wideLiteralMagnitude(expr); ok {
+	//
+	// It folds the whole *expression*, not just a bare literal: `10^20 + 1` has no int64
+	// to fold through, so until 08/08 the int64 walk declined and the value reached the
+	// backend unchecked — as invalid IR, since the operand had already been narrowed to
+	// a width it does not fit. The bare-literal case was caught and the arithmetic one
+	// was not, which is the sort of gap that reads as "the check works" until it does
+	// not.
+	if wide, ok := ast.FoldBigExpr(expr, nil); ok && !wide.IsInt64() {
 		if !bigFitsInType(wide, toP.Name) {
 			if tc.overflowReported[expr] {
 				return

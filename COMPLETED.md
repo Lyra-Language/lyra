@@ -47,6 +47,36 @@ both could hold it and names `u128` only above i128's range. That in turn is why
 assignability to object to, so without a 128-bit-aware range check a
 `let x: u8 = <10^38>` would have passed unchecked.
 
+**Compile-time folding is arbitrary precision.** It was `int64`-bound, which sounded like
+a missing feature and was a **silent check**: a fold that declines reports nothing, so
+
+```
+let d: u8 = 100000000000000000000 + 1
+```
+
+passed the range check — there was no int64 for the walk to fold through — and reached
+the backend, where the operand had already been narrowed to `u8` and the result was
+invalid IR (`llvm.sadd.with.overflow.i64` called with an `i8`). The *bare* literal case
+was caught and the arithmetic one was not, which reads as "the check works" right up
+until it does not.
+
+`ast.FoldBigExpr` does the same walk in `big.Int`, and `FoldIntExpr` **narrows at the
+end**. That ordering is the whole design: a consumer that cannot handle more than an
+int64 — the array-repeat count, the existing overflow checks — still gets ok=false rather
+than a wrapped value, while the range check gets the true magnitude to report. The case
+that only arbitrary precision reaches is the one where every leaf is representable and
+the answer is not: `10000000000 * 10000000000` against an `i128`.
+
+A 2^512 ceiling refuses a pathological chain rather than doing arbitrary-precision work
+mid-compile. Nothing writable approaches it — literals are at most 128 bits and folding
+is `+ - *` over a handful of them — and refusing loses a diagnostic, never correctness.
+
+The int64 walk's `checkedAddInt64`/`checkedSubInt64`/`checkedMulInt64` are gone with it,
+including the multiply's `MinInt64 * -1` special case: at arbitrary precision the true
+value is 2^63, which simply does not fit, so the edge disappears rather than being
+handled. Its test moved to the property that survives — that `FoldIntExpr` answers
+ok=false for exactly the results an int64 cannot hold.
+
 **The anonymous struct lowers**, so it is a usable value rather than a shape the checker
 knows about. Six arms, in five walks, all of them the same omission:
 

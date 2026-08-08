@@ -884,11 +884,12 @@ Types, checked arithmetic, division via the builtins library, `match`, conversio
   `Wide *big.Int` on the literal node, nil for everything that fits 64 bits — so no golden
   output changed and every existing `.Value` reader stayed correct for existing inputs.
   See COMPLETED.md.
-  - **[OPEN] Compile-time folding is still `int64`-bound.** `ast.FoldIntExpr` answers
-    ok=false for a wide literal rather than folding it, which is the *sound* direction —
-    the array-repeat count and the overflow checks are all int64 questions — but it means
-    `const BIG = 2 * 85070591730234615865843651857942052864` does not fold. Correct
-    128-bit folding needs 128-bit constant arithmetic throughout.
+  - **[DONE 08/08] Compile-time folding is arbitrary precision.** `ast.FoldBigExpr` folds
+    in `big.Int` and `FoldIntExpr` narrows at the end, so a consumer that needs an int64
+    still gets ok=false rather than a wrapped value while the range check gets the true
+    magnitude. It was not merely incomplete: a *declined* fold is a silent one, so
+    `let d: u8 = 10^20 + 1` reached the backend unchecked and emitted invalid IR. See
+    COMPLETED.md.
 
 ## Traits
 

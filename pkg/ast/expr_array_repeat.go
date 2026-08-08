@@ -2,7 +2,7 @@ package ast
 
 import (
 	"fmt"
-	"math"
+	"math/big"
 )
 
 type ArrayRepeatExpr struct {
@@ -27,7 +27,86 @@ func (a *ArrayRepeatExpr) GetName() string {
 // divergence that shows up as a program whose array is one length to the checker and
 // another to codegen.
 func FoldIntExpr(expr Expression) (int64, bool) {
-	return foldInt(expr, nil, nil)
+	big, ok := FoldBigExpr(expr, nil)
+	if !ok || !big.IsInt64() {
+		return 0, false
+	}
+	return big.Int64(), true
+}
+
+// FoldBigExpr folds expr at **arbitrary precision**, which is what a 128-bit constant
+// needs: `10^20 + 1` has no int64 to fold through, so the int64 walk declined and
+// `let d: u8 = 10^20 + 1` reached the backend unchecked — as invalid IR, since the
+// operand had been narrowed to a width it does not fit.
+//
+// Folding wide and *narrowing at the end* is the arrangement that keeps both callers
+// honest: FoldIntExpr above answers only when the result genuinely fits an int64, so a
+// consumer that cannot handle more still gets ok=false rather than a wrapped value,
+// while the range check gets the true magnitude to report.
+//
+// `constInit` resolves a `const` reference, as in FoldIntExprWith; nil declines names.
+func FoldBigExpr(expr Expression, constInit func(name string) (Expression, bool)) (*big.Int, bool) {
+	return foldBig(expr, constInit, nil)
+}
+
+// foldBigLimit caps an intermediate's magnitude at 2^512. Nothing a program can write
+// approaches it — literals are at most 128 bits and folding is `+ - *` over a handful of
+// them — so it is a guard against a pathological chain turning a compile into an
+// arbitrary-precision workout, not a semantic bound. A value beyond it is refused rather
+// than folded, which loses only the diagnostic, never correctness.
+var foldBigLimit = new(big.Int).Lsh(big.NewInt(1), 512)
+
+func foldBig(expr Expression, constInit func(name string) (Expression, bool), seen map[string]bool) (*big.Int, bool) {
+	switch e := expr.(type) {
+	case *IntegerLiteralExpr:
+		return e.BigValue(), true
+	case *IdentifierExpr:
+		if constInit == nil {
+			return nil, false
+		}
+		if seen[e.Name] {
+			return nil, false // a const defined in terms of itself
+		}
+		init, ok := constInit(e.Name)
+		if !ok {
+			return nil, false
+		}
+		if seen == nil {
+			seen = map[string]bool{}
+		}
+		seen[e.Name] = true
+		return foldBig(init, constInit, seen)
+	case *NegationExpr:
+		if inner, ok := foldBig(e.Operand, constInit, seen); ok {
+			return new(big.Int).Neg(inner), true
+		}
+	case *MathBinaryOpExpr:
+		left, lok := foldBig(e.Left, constInit, seen)
+		right, rok := foldBig(e.Right, constInit, seen)
+		if !lok || !rok {
+			return nil, false
+		}
+		var out *big.Int
+		switch e.Operator {
+		case MathBinaryOpAdd:
+			out = new(big.Int).Add(left, right)
+		case MathBinaryOpSub:
+			out = new(big.Int).Sub(left, right)
+		case MathBinaryOpMul:
+			out = new(big.Int).Mul(left, right)
+		default:
+			// Division and the remainders are not folded, for the reason the int64 walk
+			// gave: they cannot increase magnitude, so they cannot cause the overflow
+			// this is looking for, and Lyra's two remainder operators should not be
+			// guessed at here.
+			return nil, false
+		}
+		if new(big.Int).Abs(out).Cmp(foldBigLimit) > 0 {
+			return nil, false
+		}
+		return out, true
+	}
+	return nil, false
 }
 
 // FoldIntExprWith is FoldIntExpr with **constant references resolved**: `constInit` maps
@@ -40,91 +119,11 @@ func FoldIntExpr(expr Expression) (int64, bool) {
 // they report. A repeat count is the opposite: the grammar admits a `const_identifier`
 // precisely so a size can be named.
 func FoldIntExprWith(expr Expression, constInit func(name string) (Expression, bool)) (int64, bool) {
-	return foldInt(expr, constInit, nil)
-}
-
-func foldInt(expr Expression, constInit func(name string) (Expression, bool), seen map[string]bool) (int64, bool) {
-	switch e := expr.(type) {
-	case *IntegerLiteralExpr:
-		// Int64 rather than Value: a **wide** (>64-bit) literal answers ok=false, so a
-		// consumer that folds in int64 declines instead of silently reading 0. Folding
-		// 128-bit constants would need 128-bit arithmetic throughout; the places that
-		// call this — an array-repeat count, the overflow checks — are all int64
-		// questions, so declining is the right answer rather than a limitation.
-		return e.Int64()
-	case *IdentifierExpr:
-		if constInit == nil {
-			return 0, false
-		}
-		if seen[e.Name] {
-			return 0, false // a const defined in terms of itself
-		}
-		init, ok := constInit(e.Name)
-		if !ok {
-			return 0, false
-		}
-		if seen == nil {
-			seen = map[string]bool{}
-		}
-		seen[e.Name] = true
-		return foldInt(init, constInit, seen)
-	case *NegationExpr:
-		if inner, ok := foldInt(e.Operand, constInit, seen); ok {
-			return -inner, true
-		}
-	case *MathBinaryOpExpr:
-		left, lok := foldInt(e.Left, constInit, seen)
-		right, rok := foldInt(e.Right, constInit, seen)
-		if !lok || !rok {
-			return 0, false
-		}
-		switch e.Operator {
-		case MathBinaryOpAdd:
-			return foldAddInt64(left, right)
-		case MathBinaryOpSub:
-			return foldSubInt64(left, right)
-		case MathBinaryOpMul:
-			return foldMulInt64(left, right)
-		}
-	}
-	return 0, false
-}
-
-// foldAddInt64 / foldSubInt64 / foldMulInt64 perform the operation in int64, returning
-// ok=false if the result overflows the int64 range. Moved here verbatim from the
-// typechecker (08/08) rather than rewritten — the multiply's MinInt64 case below is
-// exactly the sort of thing a fresh implementation drops.
-func foldAddInt64(a, b int64) (int64, bool) {
-	sum := a + b
-	if (a > 0 && b > 0 && sum < 0) || (a < 0 && b < 0 && sum >= 0) {
+	big, ok := FoldBigExpr(expr, constInit)
+	if !ok || !big.IsInt64() {
 		return 0, false
 	}
-	return sum, true
-}
-
-func foldSubInt64(a, b int64) (int64, bool) {
-	diff := a - b
-	if (b < 0 && diff < a) || (b > 0 && diff > a) {
-		return 0, false
-	}
-	return diff, true
-}
-
-func foldMulInt64(a, b int64) (int64, bool) {
-	if a == 0 || b == 0 {
-		return 0, true
-	}
-	// MinInt64 * -1 overflows, but the product/b check below misses it: the
-	// wrapped product is MinInt64 and MinInt64 / -1 == MinInt64 (two's-complement,
-	// no panic in Go), so product/b == a would wrongly report no overflow.
-	if (a == math.MinInt64 && b == -1) || (b == math.MinInt64 && a == -1) {
-		return 0, false
-	}
-	product := a * b
-	if product/b != a {
-		return 0, false
-	}
-	return product, true
+	return big.Int64(), true
 }
 
 // ArrayRepeatCount folds a repeat literal's count. The grammar admits a number literal
