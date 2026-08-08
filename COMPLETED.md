@@ -47,6 +47,36 @@ both could hold it and names `u128` only above i128's range. That in turn is why
 assignability to object to, so without a 128-bit-aware range check a
 `let x: u8 = <10^38>` would have passed unchecked.
 
+**An anonymous struct is assignable to itself.** `let a: { x: i64 } = { x: 1 }` reported
+**"cannot assign struct to struct"** — a type refused against itself, with the message
+naming the same thing twice.
+
+The cause is hazard 8 in the form that keeps recurring: a list of aggregate forms with
+one missing. `isAssignable` has an anonymous *tuple* arm that recurses element-wise, so
+an untyped element widens to the annotation; it had no anonymous *struct* arm, so a
+struct literal fell through to `TypesEqual`, which compares field types **exactly**. A
+literal's field types come from its own leaves — `{ x: 1 }` is `{ x: untyped_int }` — so
+it could never equal `{ x: i64 }`. A *named* struct was never affected, because
+`inferStructInstanceExpr` narrows each field against the declaration; the anonymous one
+has no declaration, and the annotation is its only source of a width.
+
+The arm matches by **name** rather than position, which is the one thing distinguishing
+it from the tuple rule, and `firstAllocationMismatch` got the same treatment for the same
+reason: an allocation flavor buried in a field is as much a mismatch as one in an element.
+
+`AnonymousStructType.String()` renders its fields now. Every one of them printed as the
+bare word `struct`, so a *genuine* mismatch read exactly like the self-rejection this
+fixed — `cannot assign { x: string } to { x: i64 }` is the same diagnostic doing its job.
+
+**It was masking a larger gap**, which is the part worth carrying forward: with
+assignability fixed, the same program reaches the backend and fails with
+`expression lowering not implemented for *ast.AnonymousStructInstanceExpr`. The backend
+never lowered an anonymous struct at all — `equality.go` and `layout.go` have arms,
+`lowerType` and construction do not — because a value that could not be assigned never
+got far enough to need one. Rule 5 is holding, and the type is unusable end to end until
+that lands; it is recorded open rather than folded into this, being a feature rather than
+a bug.
+
 **An array of anonymous tuples parses.** `[](i64, string)` and `[3](i64, i64)` were
 syntax errors while `[]Pair` and `[3]i64` were fine, so the workaround was to name the
 tuple — which is the one thing an anonymous tuple exists not to require.

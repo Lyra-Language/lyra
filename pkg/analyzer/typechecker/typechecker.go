@@ -2085,6 +2085,43 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 	// that would otherwise reject it. Needed because an anonymous tuple literal's
 	// elements are left untyped by inferTupleLiteralExpr precisely so a
 	// surrounding annotation / data-ctor / struct field can narrow them here.
+	// The same for an **anonymous struct literal**, matched by field *name* rather than
+	// by position — the one difference from the tuple arm above, and the reason it is a
+	// separate one.
+	//
+	// Its absence was not a narrowing inconvenience, it made the type unusable: an
+	// anonymous struct literal's field types come from its own leaves, so `{ x: 1 }`
+	// carried `{ x: untyped_int }` and `let a: { x: i64 } = { x: 1 }` reported
+	// **"cannot assign struct to struct"** — a type refused against itself, with the
+	// message naming the same thing twice. A *named* struct never hit it because
+	// inferStructInstanceExpr narrows each field against the declaration; the anonymous
+	// one has no declaration, so the annotation reaching it here is the only source of a
+	// width. Fixed 08/08; hazard 8, in a list of aggregate forms with one missing.
+	if asl, ok := expr.(*ast.AnonymousStructInstanceExpr); ok {
+		ast_, ok := concrete.(types.AnonymousStructType)
+		if !ok {
+			return
+		}
+		byName := make(map[string]types.Type, len(ast_.Fields))
+		for _, f := range ast_.Fields {
+			byName[f.Name] = f.Type
+		}
+		for i := range asl.Fields {
+			f := &asl.Fields[i]
+			want, found := byName[f.Name]
+			if !found || f.Value == nil {
+				continue
+			}
+			resolved := tc.resolveType(want, expr.GetLocation())
+			tc.propagateLiteralType(f.Value, resolved)
+			tc.checkIntegerLiteralRange("field "+f.Name, f.Value, resolved)
+		}
+		// Re-record with the context's field types, so the value the backend lowers has
+		// the shape the annotation asked for rather than the one its leaves inferred.
+		tc.typeTable.Set(expr, ast_)
+		return
+	}
+
 	if tl, ok := expr.(*ast.TupleLiteralExpr); ok {
 		tt, ok := concrete.(types.TupleType)
 		if !ok || len(tt.Elements) != len(tl.Elements) {

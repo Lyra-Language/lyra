@@ -127,13 +127,22 @@ write today:
   **anonymous tuple, the raw pointer and the anonymous struct had never been added**. All
   three are in now, which made the parser 3 states *smaller*. See COMPLETED.md.
 
-- **[OPEN] An anonymous struct is not assignable to itself.** `let a: { x: i64 } = { x: 1 }`
-  reports **"cannot assign struct to struct"**, and so does every position that compares
-  two of them (`([{ x: i64 }], i64)`, `[2]{ x: i64 }`). Naming the same type twice is the
-  self-rejection signature of hazard 8's family — two `AnonymousStructType`s that print
-  alike are not `TypesEqual`. Long-standing and independent of arrays; found 08/08 when
-  `[]{ x: i64 }` became parseable and hit the same wall one layer down. The anonymous
-  struct is effectively unusable as a value until this is fixed.
+- **[DONE 08/08] An anonymous struct is assignable to itself.** `isAssignable` had no
+  anonymous-struct arm, so `{ x: 1 }` (whose field is `untyped_int`) fell through to
+  `TypesEqual`, which compares field types *exactly*, and reported "cannot assign struct
+  to struct". The anonymous *tuple* arm directly above it is the same rule and had been
+  there all along — hazard 8, in a list of aggregate forms with one missing. Fields match
+  by name, an untyped field narrows to the annotation, and `String()` now renders the
+  fields so a genuine mismatch is readable. See COMPLETED.md.
+
+- **[OPEN] The backend does not lower an anonymous struct at all.** With assignability
+  fixed, `let a: { x: i64 } = { x: 1 }` type-checks and then fails with
+  `expression lowering not implemented for *ast.AnonymousStructInstanceExpr` (and
+  `unknown type: struct` wherever the type reaches layout). The front-end bug above was
+  masking this: a value that could not be *assigned* never got far enough to be lowered.
+  `lowerType`, construction, member access and the retain/drop glue all need an arm —
+  `equality.go` and `layout.go` already have one, so the shape is known. Rule 5 is
+  holding (the errors are loud), but the type is unusable end to end until this lands.
 
 - **[DONE 08/08] `[0; 5]` — the array-repeat literal — is implemented.** `[v; n]` is
   `[n]T` in a fixed-size context and a heap `[]T` under a `[]T` annotation, with the value

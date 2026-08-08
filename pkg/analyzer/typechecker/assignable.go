@@ -119,6 +119,40 @@ func isAssignable(from, to types.Type) bool {
 		}
 	}
 
+	// An **anonymous struct** matches field-by-field by *name*, recursing so an
+	// untyped literal field widens exactly as a tuple element does. Named structs are
+	// nominal and handled by TypesEqual above; this is the structural one.
+	//
+	// Its absence made the type unusable rather than merely awkward: an anonymous
+	// struct literal's field types come from its own leaves, so `{ x: 1 }` is
+	// `{ x: untyped_int }` and `let a: { x: i64 } = { x: 1 }` fell through to
+	// TypesEqual — which compares field types *exactly* — and reported **"cannot
+	// assign struct to struct"**, a type refused against itself with the message
+	// naming the same thing twice. Fixed 08/08. Hazard 8, in a list of aggregate forms
+	// with one missing: the anonymous *tuple* arm directly above is the same rule, and
+	// it had been there all along.
+	if fromS, ok := from.(types.AnonymousStructType); ok {
+		if toS, ok := to.(types.AnonymousStructType); ok && len(fromS.Fields) == len(toS.Fields) {
+			for _, tf := range toS.Fields {
+				found := false
+				for _, ff := range fromS.Fields {
+					if ff.Name != tf.Name {
+						continue
+					}
+					if !isAssignable(ff.Type, tf.Type) {
+						return false
+					}
+					found = true
+					break
+				}
+				if !found {
+					return false
+				}
+			}
+			return true
+		}
+	}
+
 	fromP, fromIsPrim := from.(types.PrimitiveType)
 	toP, toIsPrim := to.(types.PrimitiveType)
 	if !fromIsPrim || !toIsPrim {
@@ -186,6 +220,23 @@ func firstAllocationMismatch(from, to types.Type) (types.AllocationModifier, typ
 			for i := range f.Elements {
 				if fa, ta, ok := firstAllocationMismatch(f.Elements[i], t.Elements[i]); ok {
 					return fa, ta, true
+				}
+			}
+		}
+	case types.AnonymousStructType:
+		// By name, like the assignability rule above — and present for the same reason
+		// the tuple arm is: an allocation flavor buried in a field is as much a
+		// mismatch as one in an element.
+		if t, ok := to.(types.AnonymousStructType); ok {
+			for _, tf := range t.Fields {
+				for _, ff := range f.Fields {
+					if ff.Name != tf.Name {
+						continue
+					}
+					if fa, ta, ok := firstAllocationMismatch(ff.Type, tf.Type); ok {
+						return fa, ta, true
+					}
+					break
 				}
 			}
 		}
