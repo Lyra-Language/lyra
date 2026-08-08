@@ -10,6 +10,48 @@ Newest first.
 ## Dated log
 
 ### 08/08/26
+**`checked_*` — overflow as a value.** `checked_add`, `checked_sub`, `checked_mul` and
+`checked_div`, each `(self: T, other: T) -> Maybe<T>` on any concrete integer width,
+answering `None` where the operation would have overflowed.
+
+That completes the set trapping-by-default was for. `+` traps, which is the right answer
+when the author has not thought about it; `wrapping_*` says "modular arithmetic is what I
+meant"; `saturating_*` says "clamp"; and `checked_*` says "I will handle it", handing back
+a `Maybe` the caller has to open. Rust's split is the same, for the same reason.
+
+**The blocker in the backlog was not real.** The entry said this shares the unresolved
+"return type from context" problem with the narrowing conversions — it does not: the
+*receiver* fixes the width, so `i32(x).checked_add(y)` returns `Maybe<i32>` with nothing
+to infer. The narrowing conversions have that problem because they take no argument to
+read a width from.
+
+**`checked_div` is in the set although division cannot overflow** in the intrinsic sense.
+Its two failures — a zero divisor, and `INT_MIN / -1`, whose true quotient is INT_MAX+1 —
+are exactly the two cases `/` traps on, so the name means the same thing there as it does
+for the other three: the operation the operator would have refused, as a value. It is
+arguably the most useful of the four, since a zero divisor is the overflow case that
+usually comes from data rather than from a bug.
+
+Two implementation notes worth keeping:
+
+- **The lowering is branchless.** The with-overflow intrinsic already hands back
+  `{ result, overflowed }`, so the union is two `buildDataValue`s and a `select`. Division
+  has no such intrinsic, so the divisor is replaced by 1 on the failing paths and the
+  meaningless quotient discarded by the same select — substituting rather than branching
+  is what keeps LLVM from ever executing an undefined division. The `None` arm's payload
+  is left as that meaningless value rather than zeroed: a nullary variant's payload blob
+  is *undef* by DATA_LAYOUT.md, so selecting a zero would cost an instruction to establish
+  something no correct program can read.
+- **The Maybe is the canonical one**, resolved through `canonicalTypeName` — the same
+  accessor `read_line` uses — so a program whose Maybe is named something else gets its own
+  type back. With no Maybe declared at all the ambient fallback names the bare kind, the
+  call type-checks, and the backend reports it loudly ("checked_add() must return a Maybe,
+  got Maybe<i32>"). That is the arrangement `read_line` already has and is rule 5 working;
+  a test pins it so the front end's silence is a recorded decision rather than an oversight.
+
+`builtinMethodSignature` became a method on the typechecker to reach that accessor, which
+is the only structural change: everything else is a registry entry and a lowering.
+
 **`@builtin(Ord)` and `@builtin(Eq)` — the comparison traits are known by identity, not
 by spelling.**
 

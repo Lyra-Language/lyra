@@ -658,9 +658,15 @@ Trap-on-overflow covers all integer arithmetic, `wrapping_*`/`saturating_*` are 
 escape hatches, and the value-range pass both diagnoses definite faults (`lyra-E020`–`E023`,
 `W011`) and elides the traps it can prove unnecessary. That backlog is clear.
 
-- **[OPEN] `checked_*`** — returns `Maybe<T>`. It was blocked on a prelude; the prelude
-  landed 07/30 and generic types 07/29, so it is unblocked. Shares the unresolved
-  return-type-from-context problem with #5's narrowing conversions.
+- **[DONE 08/08] `checked_*`** — `checked_add`/`checked_sub`/`checked_mul`/`checked_div`,
+  each `(self: T, other: T) -> Maybe<T>` on any concrete integer width. It turned out
+  **not** to share #5's return-type-from-context problem: the receiver fixes the width, so
+  the return type is determined rather than inferred from context. `checked_div` is in the
+  set because its two failures — a zero divisor and `INT_MIN / -1` — are exactly the two
+  cases `/` traps on. Branchless. See COMPLETED.md.
+  - **[OPEN] No `checked_rem`.** Lyra has *two* remainder operators (`%` and `%%`), so
+    the name would have to say which, and `checked_rem`/`checked_mod` is a naming decision
+    rather than a lowering one — the guard is the same select `checked_div` uses.
 - **[DONE 08/02] Bitwise and shift operators** — `& | ~ << >>`, prefix `~`, and the five
   compound assignments. An out-of-range shift amount traps
   (`lyra_panic_shift_overflow`), which is the same call div-by-zero makes and for the

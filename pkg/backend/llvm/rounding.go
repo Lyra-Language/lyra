@@ -44,6 +44,9 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	if m, ok := intOverflowMethods[member.Property.Name]; ok {
 		return l.lowerIntOverflowMethod(block, call, member, m)
 	}
+	if op, ok := checkedIntOps[member.Property.Name]; ok {
+		return l.lowerCheckedIntMethod(block, call, member, op)
+	}
 	// `len` is two methods sharing a name, told apart by the receiver: an array's is
 	// an O(1) field read, a string's an O(n) rune walk (string_methods.go). Dispatch
 	// on the recorded receiver type rather than on the lowered value, so an

@@ -1,6 +1,9 @@
 package typechecker
 
-import "github.com/Lyra-Language/lyra/pkg/types"
+import (
+	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
+)
 
 // Builtin (compiler-provided) methods available on primitive receivers, e.g.
 // `x.wrapping_add(y)` on integers. They are consulted during member-call
@@ -29,6 +32,29 @@ var intBinaryOps = map[string]bool{
 	"saturating_mul": true,
 }
 
+// checkedIntBinaryOps are the third member of that family, and the one that answers
+// rather than deciding: `(self: T, other: T) -> Maybe<T>`, `None` where the operation
+// would overflow.
+//
+// The three cover the three sensible reactions to overflow, and having all three is the
+// point of trapping by default: `+` traps, which is the safe answer when the author has
+// not thought about it; `wrapping_*` says "modular arithmetic is what I meant";
+// `saturating_*` says "clamp"; and `checked_*` says "I will handle it", handing back a
+// `Maybe` the caller must open. Rust's split is the same, for the same reason.
+//
+// `checked_div` is in the set although division cannot *overflow* in the intrinsic
+// sense: its two failures — a zero divisor, and `INT_MIN / -1` — are exactly the two
+// cases `/` traps on, so the name means the same thing (the operation the operator
+// would have refused, as a value). It is arguably the most useful of the four, since a
+// zero divisor is the overflow case that most often comes from data rather than from a
+// bug.
+var checkedIntBinaryOps = map[string]string{
+	"checked_add": "add",
+	"checked_sub": "sub",
+	"checked_mul": "mul",
+	"checked_div": "div",
+}
+
 // floatRoundingOps are the explicit float→int rounding builtins — the escape
 // hatch the numeric-conversion error (`inferTypeConversion`) points to, since
 // `i64(x)` on a float is rejected as lossy. Each takes no arguments and
@@ -52,7 +78,7 @@ var floatRoundingOps = map[string]bool{
 //
 // An untyped-literal receiver is promoted to its default (e.g. `5.wrapping_add`
 // treats 5 as i64), mirroring how an unannotated literal binding is typed.
-func builtinMethodSignature(recv types.Type, name string) (*types.LambdaType, bool) {
+func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc ast.Location) (*types.LambdaType, bool) {
 	// Array length: `xs.len()` on a fixed-size or dynamic array → i64 element count,
 	// no arguments. (i64, not u64, so it composes with signed index arithmetic — a
 	// negative index counts from the end.)
@@ -135,6 +161,28 @@ func builtinMethodSignature(recv types.Type, name string) (*types.LambdaType, bo
 		return &types.LambdaType{
 			Parameters: []types.ParameterType{{Type: recv}}, // the second operand
 			ReturnType: types.ReturnType{Type: recv},
+		}, true
+	}
+	if _, isChecked := checkedIntBinaryOps[name]; isChecked {
+		if !isAnyConcreteInt(p.Name) {
+			return nil, false
+		}
+		// The result is a `Maybe<T>` of the **canonical** Maybe, resolved through the
+		// same accessor `read_line` uses — the marker confers that identity, so a
+		// program whose Maybe is named something else still gets its own type back.
+		// With no canonical Maybe at all there is nothing to return, so the method
+		// simply does not exist; the call then reports "no such method" rather than
+		// naming a type the program does not have.
+		maybeName, ok := tc.canonicalTypeName("Maybe", loc)
+		if !ok {
+			return nil, false
+		}
+		return &types.LambdaType{
+			Parameters: []types.ParameterType{{Type: recv}},
+			ReturnType: types.ReturnType{Type: types.ParameterizedType{
+				Name:          maybeName,
+				TypeArguments: []types.Type{recv},
+			}},
 		}, true
 	}
 	if floatRoundingOps[name] {

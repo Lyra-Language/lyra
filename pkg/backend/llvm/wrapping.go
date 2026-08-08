@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -10,6 +11,7 @@ import (
 	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // The explicit escape hatches from checked-by-default arithmetic (trap.go):
@@ -143,4 +145,118 @@ func (l *lowerer) emitSaturatingMul(block *ir.Block, left, right value.Value, si
 	productNeg := block.NewXor(aNeg, bNeg)
 	bound := block.NewSelect(productNeg, intMinConst(intTy), intMaxConst(intTy))
 	return block.NewSelect(overflowed, bound, product), block, nil
+}
+
+// checkedIntOps are the `checked_*` family: the operation's result as `Some(v)`, or
+// `None` where it would have overflowed. `div` is not an intrinsic op — its two
+// failures are a zero divisor and `INT_MIN / -1`, the two cases `/` traps on — so it is
+// handled separately below.
+var checkedIntOps = map[string]string{
+	"checked_add": "add",
+	"checked_sub": "sub",
+	"checked_mul": "mul",
+	"checked_div": "div",
+}
+
+// lowerCheckedIntMethod lowers `x.checked_add(y)` and friends to a `Maybe<T>`.
+//
+// **Branchless**, which is worth the small effort: the with-overflow intrinsic already
+// hands back `{ result, overflowed }`, so the union is two `select`s and an insert. A
+// branching call site returns a merge block, and while `flushStmtTemps` handles that
+// correctly since 08/08, an owned builtin result that behaves exactly like an ordinary
+// value is still the cheaper thing to reason about — the rule `read_line` and `<=>`
+// both follow.
+//
+// The payload of the `None` arm is left as the (meaningless) wrapped result rather than
+// zeroed. That is not laziness: a nullary variant's payload blob is *undef* by
+// DATA_LAYOUT.md, so nothing may read it, and selecting a zero would cost an
+// instruction to establish a value no correct program can observe.
+func (l *lowerer) lowerCheckedIntMethod(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, op string) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 1 {
+		return nil, nil, fmt.Errorf("llvm: %s() expects 1 argument, got %d", member.Property.Name, len(call.Arguments))
+	}
+	recorded, ok := l.recordedType(call)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: %s() call has no recorded type", member.Property.Name)
+	}
+	dt, ok := recorded.(types.DataType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: %s() must return a Maybe, got %s", member.Property.Name, recorded)
+	}
+	someC, someTag, hasSome := findConstructor(dt, "Some")
+	noneC, noneTag, hasNone := findConstructor(dt, "None")
+	if !hasSome || !hasNone {
+		return nil, nil, fmt.Errorf("llvm: %s()'s return type %q is not a canonical Maybe", member.Property.Name, dt.Name)
+	}
+
+	signed, err := l.getIntSignedness(member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	left, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	intTy, ok := left.Type().(*lltypes.IntType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: %s() on a non-integer receiver (%s)", member.Property.Name, left.Type())
+	}
+	right, block, err := l.lowerExpr(block, call.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	right = coerceIntWidth(block, right, signed, intTy)
+
+	var result value.Value
+	var failed value.Value
+	if op == "div" {
+		result, failed = l.emitCheckedDiv(block, left, right, signed, intTy)
+	} else {
+		fn, err := l.overflowIntrinsic(op, signed, intTy)
+		if err != nil {
+			return nil, nil, err
+		}
+		pair := block.NewCall(fn, left, right)
+		result = block.NewExtractValue(pair, 0)
+		failed = block.NewExtractValue(pair, 1)
+	}
+
+	some, err := l.buildDataValue(block, dt, someTag, someC, []value.Value{result})
+	if err != nil {
+		return nil, nil, err
+	}
+	none, err := l.buildDataValue(block, dt, noneTag, noneC, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	return block.NewSelect(failed, none, some), block, nil
+}
+
+// emitCheckedDiv computes `left / right` without ever executing an undefined division,
+// and reports whether the division was refused.
+//
+// LLVM's `sdiv`/`udiv` are **undefined behaviour** on a zero divisor, and signed
+// division is undefined on `INT_MIN / -1` as well — the same two cases `/` traps on. So
+// the divisor is replaced by 1 on those paths and the (meaningless) quotient discarded
+// by the caller's select. Substituting rather than branching is what keeps the whole
+// lowering branchless; the cost is one extra select on a path that was going to compute
+// a division anyway.
+func (l *lowerer) emitCheckedDiv(block *ir.Block, left, right value.Value, signed bool, intTy *lltypes.IntType) (result, failed value.Value) {
+	zero := constant.NewInt(intTy, 0)
+	failed = block.NewICmp(enum.IPredEQ, right, zero)
+	if signed {
+		// INT_MIN / -1 has no representable quotient: its true value is INT_MAX+1.
+		minVal := constant.NewInt(intTy, 0)
+		minVal.X = new(big.Int).Lsh(big.NewInt(1), uint(intTy.BitSize-1))
+		minVal.X.Neg(minVal.X)
+		negOne := constant.NewInt(intTy, -1)
+		isMin := block.NewICmp(enum.IPredEQ, left, minVal)
+		isNegOne := block.NewICmp(enum.IPredEQ, right, negOne)
+		failed = block.NewOr(failed, block.NewAnd(isMin, isNegOne))
+	}
+	safe := block.NewSelect(failed, constant.NewInt(intTy, 1), right)
+	if signed {
+		return block.NewSDiv(left, safe), failed
+	}
+	return block.NewUDiv(left, safe), failed
 }

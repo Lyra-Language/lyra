@@ -929,7 +929,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// A compiler-provided method on a primitive receiver (e.g. `x.wrapping_add(y)`
 	// on an integer). Checked last so a user type or trait impl of the same name
 	// always takes priority (see builtins.go).
-	if sig, ok := builtinMethodSignature(objType, methodName); ok {
+	if sig, ok := tc.builtinMethodSignature(objType, methodName, member.GetLocation()); ok {
 		// Pin an untyped literal receiver to its default width. `builtinMethodSignature`
 		// already promotes internally to decide *whether* the method exists, but that
 		// promotion is local to the lookup — the receiver node keeps whatever the literal
@@ -986,7 +986,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 				desugarUFCSCall(member, call)
 				return tc.inferLambdaCall(methodName, fn, call)
 			}
-			if sig, ok := builtinMethodSignature(base, methodName); ok {
+			if sig, ok := tc.builtinMethodSignature(base, methodName, member.GetLocation()); ok {
 				tc.typeTable.Set(member.Object, base)
 				tc.typeTable.Set(member, sig)
 				tc.methodTable.SetBuiltinMethod(call, builtinMethodAllocates(base, methodName))
