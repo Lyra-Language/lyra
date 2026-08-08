@@ -10,6 +10,59 @@ Newest first.
 ## Dated log
 
 ### 08/08/26
+**`@builtin(Ord)` and `@builtin(Eq)` — the comparison traits are known by identity, not
+by spelling.**
+
+The compiler *owns* the operators that dispatch to these two: `<`/`<=`/`>`/`>=`/`<=>` all
+derive from `Ord::compare`, and `==`/`!=` are overridden by `Eq::eq`. It therefore has to
+find those traits, and until now it found them **by name** — a `trait Ord` with the right
+shape. So a program declaring its own `trait Ord` had that trait silently taken for the
+prelude's:
+
+```
+trait Ord { compare: (Self, Self) -> i64 }   // an ordinary trait, or so the author thinks
+impl Ord for Ver { compare = (self, other) => 99 }
+Ver { v: 1 } < Ver { v: 2 }
+// llvm: Ord::compare must return the prelude's Ordering, got i64
+```
+
+That message is the *backend* catching a front-end mistake — rule 5 doing its job, at the
+point where nothing can be said about the actual error. The marker moves the question
+forward: the prelude's traits carry `@builtin(Ord)`/`@builtin(Eq)`, the collector stamps
+`CanonicalKind`, and a user's `trait Ord` is left an ordinary trait whose `compare` is
+callable by name and whose existence changes nothing about `<`.
+
+**The half that is easy to get wrong is the filter.** Stamping the declaration is not
+enough, because impl matching took a trait *name*: with the prelude's trait still called
+`Ord`, `resolveTraitMethod(recv, "compare", "Ord")` matched the user's `impl Ord for Ver`
+just as before — the marker had changed which declaration was canonical without changing
+what was compared to it. `canonicalTraitMatches` resolves each candidate impl's trait as
+that impl's own file sees it and keeps only those whose declaration **is** the canonical
+one. Identity, resolved through the accessor, is rule 4 applied to a question the rule was
+written for.
+
+Everything that writes the name down follows the stamp too: `@derive(Ord)` synthesizes an
+`impl <canonical name> for X`, so a renamed canonical trait gets a valid impl rather than
+one naming a trait that does not exist, and `lyra-E039`'s "implement Ord instead" names
+the actual trait.
+
+**The fallback is what makes this carry no migration.** With no marker claiming a kind
+anywhere, an unmarked correctly-shaped trait of that name is still stamped — so a snippet
+with no prelude that declares its own `trait Ord` keeps working exactly as it did. What
+the marker adds is that once a kind *is* claimed, the bare name stops being load-bearing.
+
+The shape gate asks only that the trait declare the method the compiler will call
+(`compare`/`eq`, two parameters). The **return** type is deliberately not gated: the
+backend already reads `Ordering` off the matched impl's own signature by name rather than
+assuming it, so re-deriving it here would be a second answer to a settled question — and
+one that runs before the type it needs is resolved.
+
+The diagnostic gained a clause for the shadowing case, because the rule being right does
+not make the message readable: an author who wrote `impl Ord for Ver` and is told "Ver
+must implement Ord" is being shown the answer as the problem. The collector's
+`ShadowedCanonical` stamp is what lets it say which of the two mistakes was made — the
+same trick `?` uses for a shadowed `Maybe`, for the same reason.
+
 **An operator dispatches through a `where` bound.**
 
 ```

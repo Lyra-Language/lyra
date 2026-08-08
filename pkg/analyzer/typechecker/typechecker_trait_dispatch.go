@@ -639,15 +639,54 @@ func (tc *TypeChecker) boundCandidatesByType(traitName string, methodName ast.Me
 	return byType
 }
 
-// ordTraitName is the prelude trait that extends comparison beyond the primitives.
+// ordTraitName is the kind of the trait that extends comparison beyond the primitives.
 //
-// Recognized by **name and shape** rather than by a marker: the design called for
-// `@builtin(Ord)`, matching `@builtin(Maybe)`, but an attribute does not parse on a
-// trait declaration today, so the marker is a grammar change. Name-and-shape is the
-// fallback `canonical.go` already applies to types — an unmarked, canonically-shaped
-// declaration of the right name — so this is the existing rule extended rather than a
-// new one. See todo.md.
+// It is a **kind, not a spelling**, as of 08/08: the prelude marks its trait
+// `@builtin(Ord)`, and `canonicalTraitDecl` resolves the kind to whichever declaration
+// carries it. Before the marker the name *was* the identity, so a program's own
+// `trait Ord` in the entry module was silently taken for the prelude's — see the
+// canonical pass in the collector for the two rules (marker wins; an unmarked,
+// correctly-shaped trait of that name is the fallback when nothing claims the kind).
 const ordTraitName = "Ord"
+
+// canonicalTraitDecl is the declaration carrying kind ("Ord"/"Eq"), or nil.
+func (tc *TypeChecker) canonicalTraitDecl(kind string) *ast.TraitDeclStmt {
+	if tc.symTable == nil {
+		return nil
+	}
+	for _, decl := range tc.symTable.Traits {
+		if decl != nil && decl.CanonicalKind == kind {
+			return decl
+		}
+	}
+	return nil
+}
+
+// canonicalTraitMatches resolves recv's impls of methodName and keeps only those whose
+// trait **is** the canonical one for kind.
+//
+// The identity check is the point, and filtering by *name* is what it replaces. An impl
+// says `impl Ord for Ver`, and `Ord` there resolves as the impl's own file sees it — so
+// with a user `trait Ord` in scope, a by-name filter matched the user's impl against the
+// prelude's kind and handed the backend a `compare` returning i64. It failed with
+// "Ord::compare must return the prelude's Ordering", which is the backend catching a
+// front-end mistake (rule 5) rather than the front end declining to dispatch.
+//
+// With no canonical declaration at all — a snippet with no prelude — the name is all
+// there is, so the filter falls back to it and behaves as it always did.
+func (tc *TypeChecker) canonicalTraitMatches(recv types.Type, methodName, kind string) []resolvedTraitMethod {
+	canonical := tc.canonicalTraitDecl(kind)
+	if canonical == nil {
+		return tc.resolveTraitMethod(recv, methodName, kind)
+	}
+	var kept []resolvedTraitMethod
+	for _, m := range tc.resolveTraitMethod(recv, methodName, canonical.Name) {
+		if decl, ok := tc.symTable.LookupTraitFrom(m.Impl.TraitName, m.Impl.GetLocation()); ok && decl == canonical {
+			kept = append(kept, m)
+		}
+	}
+	return kept
+}
 
 // dispatchOrdCompare accepts a comparison whose operands are ordered by an `Ord` impl
 // rather than by being numeric, recording the resolution for the backend. Reports
@@ -668,7 +707,7 @@ func (tc *TypeChecker) dispatchOrdCompare(expr *ast.BooleanBinaryOpExpr, left, r
 	if left.String() != right.String() {
 		return false
 	}
-	matches := tc.resolveTraitMethod(left, "compare", ordTraitName)
+	matches := tc.canonicalTraitMatches(left, "compare", ordTraitName)
 	if len(matches) != 1 {
 		return false
 	}
@@ -712,10 +751,14 @@ func (tc *TypeChecker) dispatchEq(expr *ast.BooleanBinaryOpExpr, left, right typ
 	// the backend pick — the arrangement publishBoundCandidates uses for a bound call.
 	// Without this an `Eq` impl applied outside a generic and not inside one.
 	if _, isVar := left.(types.GenericType); isVar {
-		tc.publishOperatorCandidates(expr, eqTraitName, "eq")
+		eqTrait := eqTraitName
+		if d := tc.canonicalTraitDecl(eqTraitName); d != nil {
+			eqTrait = d.Name
+		}
+		tc.publishOperatorCandidates(expr, eqTrait, "eq")
 		return false
 	}
-	matches := tc.resolveTraitMethod(left, "eq", eqTraitName)
+	matches := tc.canonicalTraitMatches(left, "eq", eqTraitName)
 	if len(matches) != 1 {
 		return false
 	}
@@ -804,4 +847,25 @@ func (tc *TypeChecker) warnFloatEqualityAtInstantiation(calleeName string, lambd
 		}
 		return true
 	})
+}
+
+// shadowedOrdHint adds a clause to the "must implement Ord" message when the program
+// declares its **own** trait named `Ord`, shadowing the canonical one.
+//
+// Without it that message reads as a contradiction: the author wrote `impl Ord for Ver`
+// and is told Ver must implement Ord. The declaration is the answer, and the
+// `ShadowedCanonical` stamp the collector already leaves is what lets the diagnostic
+// say so — the same trick `?` uses for a shadowed `Maybe`, and the same reason: a rule
+// that is right can still produce a message that names the answer as the problem.
+func (tc *TypeChecker) shadowedOrdHint() string {
+	if tc.symTable == nil {
+		return ""
+	}
+	for _, decl := range tc.symTable.Traits {
+		if decl != nil && decl.ShadowedCanonical == ordTraitName {
+			return " (this program declares its own `trait Ord`, which is an ordinary trait — " +
+				"the one comparison dispatches through is the prelude's `@builtin(Ord)`)"
+		}
+	}
+	return ""
 }

@@ -36,7 +36,10 @@ func collectDerives(attrList *sitter.Node, ctx *collector_ctx.Ctx) []string {
 // compiler-known type. Returns "" when no `@builtin` attribute is present. Only
 // the first argument is used — `@builtin` names one kind. The request is
 // validated and resolved later by the canonical-type pass.
-func collectBuiltin(attrList *sitter.Node, ctx *collector_ctx.Ctx) string {
+// Exported as CollectBuiltin because the *trait* collector needs the identical
+// reading (`@builtin(Ord)`), and one attribute reader is the point: two would be
+// free to disagree about which argument counts.
+func CollectBuiltin(attrList *sitter.Node, ctx *collector_ctx.Ctx) string {
 	for i := uint(0); i < attrList.ChildCount(); i++ {
 		child := attrList.Child(i)
 		if child.Kind() != "attribute" {

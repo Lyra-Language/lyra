@@ -111,9 +111,9 @@ func (c *Collector) reportOperatorMethod(name ast.MethodName, loc ast.Location, 
 		return
 	}
 	if name.Kind == ast.MethodNameKindBinary && comparisonOperatorMethods[name.Value] {
-		trait, method := "Ord", "compare"
+		trait, method := c.canonicalTraitName("Ord"), "compare"
 		if name.Value == "==" || name.Value == "!=" {
-			trait, method = "Eq", "eq"
+			trait, method = c.canonicalTraitName("Eq"), "eq"
 		}
 		c.addDeriveDiagnostic(loc, diag.SeverityError, diag.CodeComparisonOperatorMethod,
 			"%s: `(_%s_)` cannot be a method name — the compiler owns %s; implement `%s` with its `%s` method instead",

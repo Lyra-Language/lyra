@@ -12,6 +12,23 @@ type TraitDeclStmt struct {
 	Bounds        []string
 	Methods       []TraitMethod
 	IsPublic      bool
+	// Builtin is the kind named by a `@builtin(X)` attribute, before validation —
+	// the *request*. Empty when unmarked. Resolved into CanonicalKind by the
+	// collector's canonical pass, which is where the shape gate and the
+	// duplicate-claim rule live.
+	Builtin string
+	// CanonicalKind is the compiler-known trait this declaration *is*, once
+	// resolved: "Ord" (the trait `<`/`<=`/`>`/`>=`/`<=>` derive from) or "Eq"
+	// (the override for `==`). Empty for an ordinary trait.
+	//
+	// It exists for the same reason TypeDeclStmt's does: the compiler has to know
+	// these two by identity rather than by spelling, or a user's own `trait Ord`
+	// is silently taken for the prelude's.
+	CanonicalKind string
+	// ShadowedCanonical records that this trait has a canonical kind's *name* while
+	// a marker elsewhere claims that kind — so a diagnostic can say which of the two
+	// mistakes was made. Mirrors TypeDeclStmt.ShadowedCanonical.
+	ShadowedCanonical string
 }
 
 func (t *TraitDeclStmt) statementNode() {}

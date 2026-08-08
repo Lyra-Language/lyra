@@ -92,7 +92,7 @@ func (c *Collector) deriveOrdImpl(decl *ast.TypeDeclStmt) *ast.TraitImplStmt {
 	other := &ast.IdentifierPattern{PatternBase: ast.PatternBase{AstBase: ast.AstBase{Location: loc}}, Name: "other"}
 	return &ast.TraitImplStmt{
 		AstBase:   ast.AstBase{Location: loc},
-		TraitName: deriveOrd,
+		TraitName: c.canonicalTraitName(deriveOrd),
 		Type:      types.UnresolvedType{Name: decl.Name},
 		Methods: []ast.TraitMethodImpl{{
 			Name: ast.MethodName{Kind: ast.MethodNameKindIdentifier, Value: "compare"},
@@ -239,7 +239,7 @@ func (c *Collector) deriveOrdImplForData(decl *ast.TypeDeclStmt, dt types.DataTy
 	other := &ast.IdentifierPattern{PatternBase: patBase(loc), Name: "other"}
 	return &ast.TraitImplStmt{
 		AstBase:   ast.AstBase{Location: loc},
-		TraitName: deriveOrd,
+		TraitName: c.canonicalTraitName(deriveOrd),
 		Type:      types.UnresolvedType{Name: decl.Name},
 		Methods: []ast.TraitMethodImpl{{
 			Name: ast.MethodName{Kind: ast.MethodNameKindIdentifier, Value: "compare"},

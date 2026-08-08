@@ -181,3 +181,142 @@ func (c *Collector) addCanonicalError(loc ast.Location, format string, args ...a
 		Code:     diag.CodeMalformedBuiltin,
 	})
 }
+
+// canonicalTraitKinds are the compiler-known **traits**. Unlike Result/Maybe, which
+// the compiler knows because control flow (`?`, `??`, must-use) is written against
+// them, these two are known because the compiler *owns the operators that dispatch to
+// them*: `<`/`<=`/`>`/`>=`/`<=>` all derive from Ord's `compare`, and `==`/`!=` are
+// overridden by Eq's `eq`.
+//
+// That ownership is why the marker matters more here than it looks. Arithmetic
+// operator overloading (08/07) deliberately keys on the *method name* and lets the
+// author pick the trait, because `+` on a matrix and `+` on a duration share no
+// invariant. Comparison cannot do that — `<` and `<=>` must agree, so one trait owns
+// them — and a trait the compiler must find by identity is exactly what `@builtin`
+// is for.
+var canonicalTraitKinds = []string{"Ord", "Eq"}
+
+// canonicalTraitShape is the method a kind's trait must declare: its name and its
+// parameter count. Both are (Self, Self) — two parameters, the receiver first.
+//
+// The **return** type is deliberately not gated. `Ord::compare` yields the prelude's
+// `Ordering`, but that is a `data` type resolved later, and the backend already reads
+// it off the matched impl's own signature by name (`ordDataType`, `findConstructor`)
+// rather than assuming it — so re-deriving it here would be a second answer to a
+// settled question, and one that runs before the type it needs is resolved.
+func canonicalTraitShape(kind string) (method string, params int) {
+	switch kind {
+	case "Ord":
+		return "compare", 2
+	case "Eq":
+		return "eq", 2
+	}
+	return "", 0
+}
+
+// matchesCanonicalTraitShape reports whether decl declares the kind's method with the
+// right arity. Extra methods are allowed: what the compiler needs is that `compare`
+// (or `eq`) is there and callable, not that the trait declares nothing else.
+func matchesCanonicalTraitShape(decl *ast.TraitDeclStmt, kind string) bool {
+	method, params := canonicalTraitShape(kind)
+	if method == "" {
+		return false
+	}
+	for i := range decl.Methods {
+		m := &decl.Methods[i]
+		if m.Name.Kind != ast.MethodNameKindIdentifier || m.Name.Value != method {
+			continue
+		}
+		return m.Signature != nil && len(m.Signature.Parameters) == params
+	}
+	return false
+}
+
+// resolveCanonicalTraits is resolveCanonicalTypes for traits, and follows the same two
+// rules in the same order: an explicit `@builtin(Ord)` marker confers the identity
+// whatever the trait is *called*, and with no marker anywhere for a kind, a trait
+// literally named "Ord"/"Eq" with the right shape is stamped.
+//
+// The fallback is what the compiler did *only* before 08/08, and keeping it is what
+// makes this change carry no migration: a program that declares its own `trait Ord`
+// and no prelude still gets comparison dispatch. What the marker adds is that the
+// prelude's claim is explicit, so a user's own `trait Ord` in the entry module is left
+// an ordinary trait instead of silently becoming the one `<` dispatches through.
+func (c *Collector) resolveCanonicalTraits() {
+	marked := map[string][]*ast.TraitDeclStmt{}
+	for _, stmt := range c.ast.Statements {
+		td, ok := stmt.(*ast.TraitDeclStmt)
+		if !ok || td.Builtin == "" {
+			continue
+		}
+		marked[td.Builtin] = append(marked[td.Builtin], td)
+	}
+
+	known := map[string]bool{}
+	for _, k := range canonicalTraitKinds {
+		known[k] = true
+	}
+	for kind, decls := range marked {
+		if known[kind] {
+			continue
+		}
+		for _, d := range decls {
+			c.addCanonicalError(d.NameLocation,
+				"unknown `@builtin` trait %q; expected one of Ord, Eq", kind)
+		}
+	}
+
+	for _, kind := range canonicalTraitKinds {
+		decls := marked[kind]
+		if len(decls) == 0 {
+			if d, ok := c.table.Traits[kind]; ok && d.Builtin == "" && matchesCanonicalTraitShape(d, kind) {
+				d.CanonicalKind = kind
+			}
+			continue
+		}
+		// A same-named *unmarked* trait is not the canonical one, and saying so is the
+		// whole point of the marker. Recorded rather than reported, so a later
+		// diagnostic can explain a comparison that did not dispatch.
+		for _, stmt := range c.ast.Statements {
+			d, ok := stmt.(*ast.TraitDeclStmt)
+			if !ok || d.Name != kind || d.Builtin != "" {
+				continue
+			}
+			d.ShadowedCanonical = kind
+		}
+		var chosen *ast.TraitDeclStmt
+		for _, d := range decls {
+			method, params := canonicalTraitShape(kind)
+			if !matchesCanonicalTraitShape(d, kind) {
+				c.addCanonicalError(d.NameLocation,
+					"`@builtin(%s)` requires a `%s` method taking %d parameters, but %q does not declare one",
+					kind, method, params, d.Name)
+				continue
+			}
+			if chosen == nil {
+				chosen = d
+				d.CanonicalKind = kind
+			} else {
+				c.addCanonicalError(d.NameLocation,
+					"duplicate `@builtin(%s)`: %q is already the canonical %s", kind, chosen.Name, kind)
+			}
+		}
+	}
+}
+
+// canonicalTraitName is the *declared* name of the trait carrying kind, for a consumer
+// that has to write the name down rather than merely find it — `@derive(Ord)`
+// synthesizes an `impl <name> for X`, and naming the kind would produce an impl of a
+// trait that does not exist when the canonical Ord is called something else.
+//
+// Falls back to the kind, which is right for a program with no such trait at all: the
+// synthesized impl then names an undeclared trait and is reported as one, rather than
+// being silently dropped.
+func (c *Collector) canonicalTraitName(kind string) string {
+	for _, decl := range c.table.Traits {
+		if decl != nil && decl.CanonicalKind == kind {
+			return decl.Name
+		}
+	}
+	return kind
+}

@@ -32,12 +32,14 @@ pub data Ordering = Less | Equal | Greater
 // outright. Ordering floats for a sort wants a `total_cmp` (bit-pattern order) that
 // says in its name that it is not the arithmetic ordering.
 //
-// **Recognized by name and shape**, not by a marker: a `pub trait Ord` in the prelude
-// whose single method matches `(Self, Self) -> Ordering`. That mirrors the fallback
-// `canonical.go` already applies to *types* — an unmarked, canonically-shaped
-// declaration of the right name — and is not the marker the design asked for, because
-// an attribute does not parse on a trait declaration today. The marker is the better
-// answer and is a grammar change; see todo.md.
+// **Recognized by the `@builtin(Ord)` marker** (08/08), exactly as `Maybe`/`Result` are:
+// the marker confers the identity, so the *name* is free and a program's own `trait Ord`
+// is an ordinary trait rather than silently becoming the one `<` dispatches through.
+// Before the marker the name was the identity, which is the shadowing hazard it removes.
+//
+// A trait named `Ord` with the right shape is still recognized when *no* marker claims
+// the kind anywhere, so a program with no prelude keeps working unchanged.
+@builtin(Ord)
 pub trait Ord {
   compare: (Self, Self) -> Ordering
 }
@@ -63,6 +65,7 @@ pub trait Ord {
 // type that used it. A type that implements both and lets them disagree is writing a
 // bug the compiler cannot see; that is the residual cost of equality not being a
 // bound.
+@builtin(Eq)
 pub trait Eq {
   eq: (Self, Self) -> bool
 }

@@ -976,14 +976,13 @@ cannot make them disagree. A numeric or rune operand is never routed through it,
 stays an `icmp` and a wrong impl cannot change the built-in types. Floats stay out, `<=>`
 still refuses them. See COMPLETED.md.
 
-- **[OPEN] `Ord` is recognized by name and shape, not by `@builtin(Ord)`.** The design asked
-  for the marker, matching `@builtin(Maybe)`; **an attribute does not parse on a trait
-  declaration**, so the marker is a `tree-sitter-lyra` change (attribute list on
-  `trait_declaration`) plus a `CanonicalKind` on `TraitDeclStmt` and a trait arm in
-  `canonical.go`, which is entirely type-shaped today. Name-and-shape is the fallback
-  `canonical.go` already applies to types, so this is the existing rule extended rather than
-  a new one — but it means a user's own `trait Ord` in the entry module would be taken for
-  the prelude's. Worth closing when the grammar is touched for `Eq`.
+- **[DONE 08/08] `Ord` and `Eq` are recognized by `@builtin(…)`.** An attribute list
+  parses on a trait declaration, `TraitDeclStmt` carries `Builtin`/`CanonicalKind`, and
+  the collector's canonical pass gained a trait half following the type half's two rules
+  (marker wins; an unmarked, correctly-shaped trait of that name is the fallback when
+  nothing claims the kind). A program's own `trait Ord` is now an ordinary trait.
+  Dispatch filters by the resolved **declaration**, not the name — filtering by name is
+  what let the shadow through in the first place. See COMPLETED.md.
 - **[DONE 08/07] `@derive(Ord)` synthesizes the structural ordering** — lexicographic in
   field-declaration order, built as an ordinary `ast.TraitImplStmt` and appended to the
   program by the collector. Nothing downstream learns derives exist: the typechecker checks

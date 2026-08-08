@@ -5,6 +5,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/collector_ctx"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/expressions"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector/typedecls"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/cst"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -12,6 +13,14 @@ import (
 )
 
 func CollectTraitDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.TraitDeclStmt {
+	// `@builtin(Ord)` / `@builtin(Eq)`. Only the *request* is read here; whether it
+	// is honored is the canonical pass's question, since that needs the whole
+	// program (the shape gate, and whether another declaration already claimed the
+	// kind).
+	builtin := ""
+	if attrList := cst.Field(node, "attributes"); attrList != nil {
+		builtin = typedecls.CollectBuiltin(attrList, ctx)
+	}
 	visibilityNode := cst.Field(node, "visibility")
 	isPublic := visibilityNode != nil
 	nameNode, ok := ctx.MustField(node, "name")
@@ -50,6 +59,7 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Tra
 		Bounds:        bounds,
 		Methods:       methods,
 		IsPublic:      isPublic,
+		Builtin:       builtin,
 	}
 	if err := ctx.RegisterTrait(stmt); err != nil {
 		ctx.AddError(node, diag.SeverityError, "failed to register trait %q: %v", name, err)

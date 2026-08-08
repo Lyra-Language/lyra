@@ -262,7 +262,10 @@ implementation state:
   prelude's `Eq`; `<`/`<=`/`>`/`>=`/`<=>` all derive from `Ord::compare`. A `(_==_)`
   method name is refused (`lyra-E039`), because a second mechanism would be a coherence
   question with no answer and declaring them one at a time is how `<` comes to disagree
-  with `<=>`.
+  with `<=>`. Both traits are found by **`@builtin(Ord)`/`@builtin(Eq)`** (08/08), not by
+  the spelling — and dispatch filters candidate impls by the resolved *declaration*, since
+  filtering by name is exactly what let a user's own `trait Ord` be taken for the
+  prelude's.
 - **Arithmetic and bitwise are the author's** (08/07). `+ - * / % << >> & | ~`, prefix
   `-` and `~`, and the compound assignments dispatch to a trait method named for the
   operator — keyed on the **method name**, with the trait whatever the author declared.

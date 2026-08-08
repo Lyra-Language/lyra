@@ -39,6 +39,13 @@ not by anything the language can see.
   identity only from the fallback that reads the literal name `Maybe`/`Result`, which is
   precisely the coupling to spelling the marker exists to remove.
 
+  **`Ord` and `Eq` are marked the same way** (08/08), and for a sharper reason: the compiler
+  owns the operators that dispatch to them, so it has to *find* them. The gate here is that
+  the trait declares the method the compiler will call (`compare`/`eq`, two parameters); the
+  return type is left to the impl, since the backend reads `Ordering` off the matched impl's
+  own signature rather than assuming it. Before the marker the name was the identity, so a
+  program's own `trait Ord` was silently taken for this one.
+
 - **Write free functions, not trait impls** — and name the receiver `self`, which is what makes
   `m.unwrap_or(0)` work as well as `unwrap_or(m, 0)` (UFCS, 08/03). The method spelling costs
   nothing: it is rewritten to the call form before anything downstream sees it.

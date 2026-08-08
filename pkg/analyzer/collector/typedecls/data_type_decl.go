@@ -23,7 +23,7 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 		switch child.Kind() {
 		case "attribute_list":
 			derives = collectDerives(child, ctx)
-			builtin = collectBuiltin(child, ctx)
+			builtin = CollectBuiltin(child, ctx)
 		case "data_type_name":
 			name = ctx.NodeText(child)
 			nameLoc = ctx.NodeLocation(child)

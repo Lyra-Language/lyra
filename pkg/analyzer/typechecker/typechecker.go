@@ -1306,7 +1306,8 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 		}
 		if !types.IsNumeric(leftType) || !types.IsNumeric(rightType) {
 			tc.addError(expr.GetLocation(), SeverityError,
-				"operator <=>: operands must be numeric or implement Ord, got %s and %s", leftType, rightType)
+				"operator <=>: operands must be numeric or implement Ord%s, got %s and %s",
+				tc.shadowedOrdHint(), leftType, rightType)
 			return
 		}
 		if numericResultType(leftType, rightType) == nil {
@@ -1331,7 +1332,8 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 		}
 		if !types.IsNumeric(leftType) || !types.IsNumeric(rightType) {
 			tc.addError(expr.GetLocation(), SeverityError,
-				"operator %s: operands must be numeric or implement Ord, got %s and %s", expr.Operator, leftType, rightType)
+				"operator %s: operands must be numeric or implement Ord%s, got %s and %s",
+				expr.Operator, tc.shadowedOrdHint(), leftType, rightType)
 			return
 		}
 		if numericResultType(leftType, rightType) == nil {
