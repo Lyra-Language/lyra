@@ -177,3 +177,39 @@ let main = () -> void => {
 		t.Errorf("generic impl = %q; want \"2\"", got)
 	}
 }
+
+// The two forms an overloaded operator makes people write, and which did not parse
+// until 08/07 — both grammar gaps rather than dispatch ones, and both found by writing
+// the tests above.
+//
+//   - `Cents(150) + Cents(275)`: a constructor call could not be a math operand.
+//     `tuple_literal` lives in `_literal`, which `_math_operand` does not reach, so the
+//     parse died at the operator even though `f(1) + f(2)` was fine.
+//   - `(a + b).x`: a parenthesized *binary* expression could not be a postfix head. It
+//     parses as `group`, which was reachable only from `_math_expr`; `(a).x` worked
+//     because a non-math parenthesis is a `parenthesized_expr`, which is a primary.
+//
+// Both fixes made the parser **smaller** (7730 → 7711 states), because each removed a
+// duplicate path rather than adding one.
+func TestExec_OperatorOnConstructorCallsAndParenthesizedResults(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+data Money = Cents(i64)
+trait Add { (_+_): (Self, Self) -> Self }
+impl Add for Money {
+  (_+_) = (self, o) => match (self, o) { (Cents a, Cents b) => Cents(a + b) }
+}
+struct Vec2 { x: i64, y: i64 }
+trait AddV { (_+_): (Self, Self) -> Self }
+impl AddV for Vec2 { (_+_) = (self, o) => Vec2 { x: self.x + o.x, y: self.y + o.y } }
+let main = () -> void => {
+  match Cents(150) + Cents(275) { Cents(n) => println("${n}") };
+  let a = Vec2 { x: 1, y: 2 };
+  println("${(a + a).x} ${(1 + 2).wrapping_add(3)}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "425\n2 6" {
+		t.Errorf("got %q; want \"425\\n2 6\"", got)
+	}
+}

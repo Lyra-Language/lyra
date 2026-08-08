@@ -114,19 +114,13 @@ write today:
   *unconditionally*, so their continuation blocks broke it. It asks dominance now, which is
   the question it always meant. See COMPLETED.md.
 
-- **[OPEN] A constructor call cannot be the left operand of a math operator.**
-  `C(1) + C(2)` is a syntax error (`unexpected "C(1) +"`) for a `data` constructor or a
-  named tuple, while `f(1) + f(2)` on an ordinary function is fine and `C(1) == C(2)`
-  parses. Binding first or parenthesizing works, so it is a precedence gap in the
-  constructor-application area rather than a missing form. It cost little until operator
-  overloading, which is what surfaced it (08/07): `Cents(150) + Cents(275)` is the first
-  thing anyone writes against a `data` type with a `(_+_)`.
-
-- **[OPEN] A parenthesized binary expression cannot be a postfix head.** `(a + b).x` is
-  a syntax error, as is `(1 + 2).wrapping_add(1)`, while `(a).x` parses. The
-  literal-as-postfix-head change (08/06) covered literals; a parenthesized *expression*
-  is the remaining hole, and it is the natural way to use the result of an overloaded
-  operator without naming it.
+- **[DONE 08/07] A constructor call is a math operand, and a parenthesized expression is
+  a postfix head.** `Cents(150) + Cents(275)` and `(a + b).x` both parse. Neither was a
+  dispatch problem: `tuple_literal` lives in `_literal`, which `_math_operand` never
+  reached, and a parenthesized *binary* expression is a `group`, which was reachable only
+  from `_math_expr` and so was not a `_primary_expr`. Both fixes **removed** a path
+  rather than adding one, and the parser got smaller (7730 → 7711 states). See
+  COMPLETED.md.
 
 - **[OPEN] An array of anonymous tuples does not parse.** `[](i64, string)` and
   `[2](i64, string)` are ERROR nodes in every position — `let xs: [](i64, string) = []`

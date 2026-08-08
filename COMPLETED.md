@@ -10,6 +10,43 @@ Newest first.
 ## Dated log
 
 ### 08/07/26
+**Two parse gaps that operator overloading turned from curiosities into blockers**, both
+closed by *removing* a path rather than adding one — the parser is 19 states smaller
+(7730 → 7711).
+
+```
+Cents(150) + Cents(275)   // was: syntax error: unexpected "Cents(150) +"
+(a + b).x                 // was: syntax error: unexpected ".x"
+```
+
+Neither was about the operator; both were about which rule a form is reachable from.
+
+**A constructor call could not be a math operand.** `Cents(1)` parses as a
+`tuple_literal`, which lives in `_literal` — and `_math_operand` is
+`_postfix_expr | _math_expr | address_of_expr`, which never reaches it. So `f(1) + f(2)`
+was fine (a `call_expr` is a postfix form) and `Cents(1) + Cents(2)` died at the
+operator. `tuple_literal` cannot simply move into `_primary_expr` — the note there says
+why: `Some(42)` would then have a second reading as a call of `user_defined_type_name`,
+which is a reduce-reduce at every operand position. Adding it to `_math_operand`
+specifically gives it the one position it was missing.
+
+**A parenthesized binary expression could not be a postfix head.** `(x)` is a
+`parenthesized_expr`, which *is* a `_primary_expr`, so `(x).f` always worked. `(x + y)`
+is a `group` — a separate rule, `( _math_expr )` at its own precedence — reachable only
+from `_math_expr`, so it could never head a member access, an index, or a call.
+`(1 + 2).wrapping_add(3)` failed for the same reason, so this predated overloading and
+the 08/06 literal-as-postfix-head work simply had not covered it.
+
+The fix is the interesting half. Adding `group` to `_primary_expr` *alongside* its
+`_math_expr` arm is an unresolved conflict — tree-sitter says so outright, since `group`
+would then be derivable two ways at every operand. So the arm was **removed** instead:
+`group` is now reachable only as a primary, and every math operand still finds it through
+`_postfix_expr`. One path to one node, which is the same discipline the Go side applies
+to a switch with two callers.
+
+Both are pinned by corpus cases and by a behavioural test that runs the two forms an
+author would actually write against a `data` type with a `(_+_)`.
+
 **Arithmetic operator overloading**, and the deletion of the holding position that stood
 in for it. `a + b` on a user type resolves to a trait method named `(_+_)`, exactly as
 `a.show()` resolves to one named `show`:
