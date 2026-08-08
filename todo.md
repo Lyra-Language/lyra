@@ -122,11 +122,18 @@ write today:
   rather than adding one, and the parser got smaller (7730 → 7711 states). See
   COMPLETED.md.
 
-- **[OPEN] An array of anonymous tuples does not parse.** `[](i64, string)` and
-  `[2](i64, string)` are ERROR nodes in every position — `let xs: [](i64, string) = []`
-  as much as `newtype Pairs = [](i64, string)` — while `[]Named` and `[3]i64` are fine, and
-  the tuple parses everywhere else. A grammar gap in the element-type position, not a
-  newtype one. Found 08/07 while writing newtype corpus tests.
+- **[DONE 08/08] An array of anonymous tuples parses.** The grammar's `_non_allocated_type`
+  — the element-type rule — was `type` minus the modifier forms and minus `void`, and the
+  **anonymous tuple, the raw pointer and the anonymous struct had never been added**. All
+  three are in now, which made the parser 3 states *smaller*. See COMPLETED.md.
+
+- **[OPEN] An anonymous struct is not assignable to itself.** `let a: { x: i64 } = { x: 1 }`
+  reports **"cannot assign struct to struct"**, and so does every position that compares
+  two of them (`([{ x: i64 }], i64)`, `[2]{ x: i64 }`). Naming the same type twice is the
+  self-rejection signature of hazard 8's family — two `AnonymousStructType`s that print
+  alike are not `TypesEqual`. Long-standing and independent of arrays; found 08/08 when
+  `[]{ x: i64 }` became parseable and hit the same wall one layer down. The anonymous
+  struct is effectively unusable as a value until this is fixed.
 
 - **[DONE 08/08] `[0; 5]` — the array-repeat literal — is implemented.** `[v; n]` is
   `[n]T` in a fixed-size context and a heap `[]T` under a `[]T` annotation, with the value

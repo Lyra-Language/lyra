@@ -10,6 +10,31 @@ Newest first.
 ## Dated log
 
 ### 08/08/26
+**An array of anonymous tuples parses.** `[](i64, string)` and `[3](i64, i64)` were
+syntax errors while `[]Pair` and `[3]i64` were fine, so the workaround was to name the
+tuple — which is the one thing an anonymous tuple exists not to require.
+
+The cause was an omission rather than a decision. The grammar's element-type rule,
+`_non_allocated_type`, is `type` minus the two modifier forms (added back by its callers
+where they are meaningful) and minus `void_type`; the **anonymous tuple, the raw pointer
+and the anonymous struct had simply never been listed**. That rule feeds the array
+element, the pointee and the weak target, so one missing entry made three types
+unwritable in every one of those positions. Adding all three made the parser 3 states
+*smaller* (7789 → 7786).
+
+Two things it surfaced, neither caused by it:
+
+- **`[]void` parses**, despite the rule's comment claiming the `void_type` exclusion
+  prevents it — `void` lexes as a lowercase `generic_type`, i.e. a type *variable* with
+  that name, so the exclusion is real but the sentence it justifies is not.
+- **An anonymous struct is not assignable to itself.** `let a: { x: i64 } = { x: 1 }`
+  reports "cannot assign struct to struct" — the plainest self-rejection there is, and
+  hazard 8's family again. It is long-standing and has nothing to do with arrays; making
+  `[]{ x: i64 }` parseable just walked into it one layer down. Recorded as open, and it
+  means that element type parses today and still cannot be constructed. The raw-pointer
+  element is in the same position for a different reason: there is no `nil` to build one
+  with.
+
 **A concrete type with a `Show` impl prints directly**, not only through a bounded
 generic. `println(pt)` and `"${pt}"` work for any type with a `show`.
 
