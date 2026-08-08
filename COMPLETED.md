@@ -10,6 +10,47 @@ Newest first.
 ## Dated log
 
 ### 08/08/26
+**A concrete type with a `Show` impl prints directly**, not only through a bounded
+generic. `println(pt)` and `"${pt}"` work for any type with a `show`.
+
+The argument was the inconsistency rather than anything new: the *same* impl already
+rendered a `Pt` through `describe(pt)` under a `where t: Show` bound, and `println(pt)`
+was refused. One value, one impl, two answers — and the one that worked was the indirect
+one. Mechanically it is the same desugar keyed on `resolveTraitMethod` instead of the
+bound.
+
+**The coherence question answered itself.** Extending it means `print` can call user code,
+which is what made this worth deciding rather than assuming — the comparison operators and
+arithmetic answered that question in opposite directions. But the alternative here was
+never "print calls no user code": the bounded-generic path already did. It was "print
+calls user code only when laundered through a generic", which is a rule with nothing to
+recommend it. The rewrite produces an ordinary call, so the purity ladders charge it and a
+`pure` function printing through an impure `show` is refused.
+
+**It needed a guard, and finding that is the part worth recording.** With the concrete
+case dispatching,
+
+```
+impl Show for Pt { show = (self) => "${self}" }
+```
+
+compiles into infinite recursion — `${self}` is now a call to the `show` being defined. It
+built cleanly and died with SIGSEGV in under three seconds. That is the exact trap the
+prelude sets by example: its scalar impls are *literally* `show = (self) => "${self}"`, so
+copying that line for a struct is the first thing an author does.
+
+`showApplies` now refuses to rewrite an operand into the method it is inside, and the
+diagnostic names the fix rather than falling back to the printable-type message — which
+would have been actively misleading, telling an author looking at a showable type that it
+is not showable. The guard is **direct** self-recursion only: a `show` that renders a
+different type whose own `show` comes back is ordinary mutual recursion, no more the
+compiler's business than any other cycle. The direct case is the one that is *implicit* —
+the author wrote `${self}`, not `self.show()`.
+
+The primitive rule matters more here than anywhere else, and is asserted end to end: the
+prelude's own `impl Show for i64` is `"${self}"`, so routing an i64 through it would be
+infinite recursion inside the standard library.
+
 **`checked_*` — overflow as a value.** `checked_add`, `checked_sub`, `checked_mul` and
 `checked_div`, each `(self: T, other: T) -> Maybe<T>` on any concrete integer width,
 answering `None` where the operation would have overflowed.

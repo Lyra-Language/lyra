@@ -84,3 +84,76 @@ let describe<t> where t: Sized = (v: t) -> string => "value ${v}"
 `, false)
 	assertHasErrorContaining(t, res, "add `where t: Show`")
 }
+
+// ── a concrete type with a Show impl (08/08) ─────────────────────────────────
+
+// The inconsistency this closes: the *same* impl already rendered a value through a
+// `where t: Show` bound, and `println(pt)` was refused. One value, one impl, two
+// answers — and the one that worked was the indirect one.
+func TestShow_ConcreteImplIsPrintable(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+trait Show { show: (Self) -> string }
+struct Pt { x: i64, y: i64 }
+impl Show for Pt { show = (self) => "pt" }
+let a: string = "${Pt { x: 1, y: 2 }}"
+let b = println(Pt { x: 1, y: 2 })
+`, false))
+}
+
+// A concrete type with **no** impl keeps the printable-type message, which is the right
+// one for it: the fix there is a conversion or an impl, not a bound.
+func TestShow_ConcreteWithoutAnImplKeepsItsMessage(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+struct Pt { x: i64 }
+let a = "${Pt { x: 1 }}"
+`, false)
+	assertHasErrorContaining(t, res, "expected a string, an integer, a float, bool, or rune")
+}
+
+// **A primitive is never routed through an impl**, which matters more here than
+// anywhere: the prelude's own `impl Show for i64` is `"${self}"`, so routing an i64
+// through it would be infinite recursion in the standard library.
+func TestShow_PrimitivesKeepTheirBuiltInFormatter(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+trait Show { show: (Self) -> string }
+impl Show for i64 { show = (self) => "${self}" }
+let a: string = "${42}"
+`, false))
+}
+
+// The trap the concrete case creates, and the reason it needs a guard: `impl Show for Pt
+// { show = (self) => "${self}" }` is exactly what the prelude's scalar impls say, so it
+// is the first thing an author writes — and it would call `show` again. It compiled and
+// stack-overflowed before this check existed.
+func TestShow_SelfRecursiveImplIsRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+trait Show { show: (Self) -> string }
+struct Pt { x: i64 }
+impl Show for Pt { show = (self) => "${self}" }
+`, false)
+	assertHasErrorContaining(t, res, "this is Pt's own `show`, so the value would be rendered by calling it again")
+}
+
+// Rendering the *fields* is the fix the message names, and it must stay legal — the
+// guard is about the receiver, not about the impl body being unable to interpolate.
+func TestShow_ImplMayInterpolateItsFields(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+trait Show { show: (Self) -> string }
+struct Pt { x: i64, y: i64 }
+impl Show for Pt { show = (self) => "(${self.x}, ${self.y})" }
+`, false))
+}
+
+// The guard is scoped to `show`: another method of the same impl may print the receiver,
+// because doing so does not call itself.
+func TestShow_AnotherMethodMayPrintTheReceiver(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+trait Show { show: (Self) -> string }
+trait Dump { dump: (Self) -> string, show: (Self) -> string }
+struct Pt { x: i64 }
+impl Dump for Pt {
+  show = (self) => "pt"
+  dump = (self) => "${self}"
+}
+`, false))
+}

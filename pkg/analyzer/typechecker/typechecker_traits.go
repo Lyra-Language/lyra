@@ -124,7 +124,13 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 		// Type-check the body: verify it against the declared return type, and
 		// register any method calls inside in tc.methodTable (which lets
 		// inferImpurity's fixpoint track method-to-method call chains — FP/Imperative #3).
+		// Record which method of which type is being checked, so the `show` desugar can
+		// refuse to rewrite `${self}` into a call to the very method it is inside. See
+		// showApplies.
+		prevMethod, prevType := tc.currentImplMethod, tc.currentImplType
+		tc.currentImplMethod, tc.currentImplType = implMethod.Name, implType
 		tc.checkTraitImplMethodBody(implMethod.Name.GetName(), implMethod, traitSig)
+		tc.currentImplMethod, tc.currentImplType = prevMethod, prevType
 	}
 }
 

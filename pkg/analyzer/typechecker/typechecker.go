@@ -14,25 +14,30 @@ import (
 )
 
 type TypeChecker struct {
-	symTable       *symbols.SymbolTable
-	scopeTable     *symbols.ScopeTable
-	typeTable      *typetable.TypeTable
-	methodTable    *typetable.MethodTable
-	scope          *symbols.Scope
-	errors         []TypeError
-	paramTypes     map[string]types.Type         // non-nil only while checking a function body
-	paramMods      map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
-	patternBound   map[string]bool               // names in paramTypes that came from a *pattern* (match arm, if-let), not a parameter
-	resolvedTypes  map[string]types.Type         // cache for resolveType to avoid duplicate "unknown type" errors
-	enclosingRet   *types.ReturnType             // declared return type of the lambda body currently being checked; nil at top level
-	traitImpls     []*ast.TraitImplStmt          // every impl block in the program, collected up front by Check; see resolveTraitMethod
-	genericBounds  map[string][]string           // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
-	currentVarDecl *ast.VarDeclStmt              // the var decl whose initializer is currently being inferred; lets a self-reference in a rebind's initializer resolve to VarDeclStmt.Shadows (the prior binding) instead of itself
-	instantiations *typetable.InstantiationTable // generic call site -> the specialization it resolves to (instantiate.go); the backend monomorphizes from it
-	inferring      map[ast.Expression]bool       // expression nodes whose inference is on the stack right now; the cycle guard in inferExprType
-	resolvingTypes map[string]bool               // type names whose resolution is on the stack right now; the alias-cycle guard in resolveType
-	ufcsModules    map[string]map[string]bool    // file -> modules it reached through a UFCS call; see UFCSModules
-	defaultedCtors map[ast.Expression]bool       // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
+	symTable      *symbols.SymbolTable
+	scopeTable    *symbols.ScopeTable
+	typeTable     *typetable.TypeTable
+	methodTable   *typetable.MethodTable
+	scope         *symbols.Scope
+	errors        []TypeError
+	paramTypes    map[string]types.Type         // non-nil only while checking a function body
+	paramMods     map[string]types.TypeModifier // ref/mut/own modifier per parameter, alongside paramTypes
+	patternBound  map[string]bool               // names in paramTypes that came from a *pattern* (match arm, if-let), not a parameter
+	resolvedTypes map[string]types.Type         // cache for resolveType to avoid duplicate "unknown type" errors
+	enclosingRet  *types.ReturnType             // declared return type of the lambda body currently being checked; nil at top level
+	traitImpls    []*ast.TraitImplStmt          // every impl block in the program, collected up front by Check; see resolveTraitMethod
+	genericBounds map[string][]string           // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
+	// currentImplMethod/currentImplType name the trait-impl method whose body is being
+	// checked, or the zero values outside one. Read by showApplies, which must not
+	// rewrite `${self}` inside `show` into a call to that same `show`.
+	currentImplMethod ast.MethodName
+	currentImplType   types.Type
+	currentVarDecl    *ast.VarDeclStmt              // the var decl whose initializer is currently being inferred; lets a self-reference in a rebind's initializer resolve to VarDeclStmt.Shadows (the prior binding) instead of itself
+	instantiations    *typetable.InstantiationTable // generic call site -> the specialization it resolves to (instantiate.go); the backend monomorphizes from it
+	inferring         map[ast.Expression]bool       // expression nodes whose inference is on the stack right now; the cycle guard in inferExprType
+	resolvingTypes    map[string]bool               // type names whose resolution is on the stack right now; the alias-cycle guard in resolveType
+	ufcsModules       map[string]map[string]bool    // file -> modules it reached through a UFCS call; see UFCSModules
+	defaultedCtors    map[ast.Expression]bool       // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
 	// overflowReported guards checkIntegerLiteralRange: a leaf can be narrowed by more
 	// than one context on the way down, and one too-large literal is one mistake.
 	overflowReported map[ast.Expression]bool
@@ -2450,6 +2455,10 @@ func (tc *TypeChecker) inferInterpolatedStringExpr(e *ast.InterpolatedStringExpr
 		if !isPrintableType(segType) {
 			if g, isVar := segType.(types.GenericType); isVar {
 				tc.reportUnshowableTypeParameter(seg, g, "interpolate")
+				continue
+			}
+			if tc.inShowImplFor(segType) {
+				tc.reportShowSelfRecursion(seg, segType, "interpolate")
 				continue
 			}
 			tc.addError(seg.GetLocation(), SeverityError,

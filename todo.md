@@ -889,12 +889,13 @@ trait is recognized by its **method**, not by its name, so a program may define 
 the same rule arithmetic operator overloading follows, and why no `@builtin(Show)` marker
 is needed for this. See COMPLETED.md.
 
-- **[OPEN] A concrete type with a `Show` impl still cannot be printed directly.**
-  `println(pt)` for a `Pt` with an `impl Show for Pt` is refused by the printable-type
-  rule; only a *type parameter* takes the rewrite. Extending it is the same desugar keyed
-  on `resolveTraitMethod` instead of the bound, and the question it raises first is whether
-  `print` should silently call user code on a concrete type — which is the coherence
-  question the comparison operators answered one way and arithmetic the other.
+- **[DONE 08/08] A concrete type with a `Show` impl prints directly.** Same desugar, keyed
+  on `resolveTraitMethod` instead of the bound. The coherence question answered itself: the
+  alternative was not "print calls no user code" — the bounded-generic path already did —
+  but "print calls user code only when laundered through a generic". A **self-recursion
+  guard** came with it, because `impl Show for Pt { show = (self) => "${self}" }` is what
+  the prelude's scalar impls say and would now call itself; it compiled and
+  stack-overflowed. See COMPLETED.md.
 
 ### [DECIDED 08/07] `Eq` and `Ord`
 

@@ -105,3 +105,43 @@ let main = () -> void => {
 		t.Errorf("scalar impls =\n%q\nwant\n%q", got, want)
 	}
 }
+
+// A **concrete** type with a `Show` impl prints directly (08/08), not only through a
+// bounded generic. The rewrite is the same one the type-parameter case takes, keyed on
+// `resolveTraitMethod` instead of the bound.
+func TestExec_ShowOnAConcreteType(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+struct Pt { x: i64, y: i64 }
+impl Show for Pt { show = (self) => "(${self.x}, ${self.y})" }
+let describe<t> where t: Show = (v: t) -> string => "via generic: ${v}"
+let main = () -> void => {
+  println(describe(Pt { x: 1, y: 2 }));
+  println(Pt { x: 3, y: 4 });
+  println("inline ${Pt { x: 5, y: 6 }}");
+}
+`
+	want := "via generic: (1, 2)\n(3, 4)\ninline (5, 6)"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("concrete Show =\n%q\nwant\n%q", got, want)
+	}
+}
+
+// The primitives keep their built-in formatter, which matters more here than anywhere:
+// the prelude's own `impl Show for i64` is `"${self}"`, so routing an i64 through it
+// would be infinite recursion inside the standard library. Asserted end to end because
+// the failure mode is a stack overflow rather than a wrong answer.
+func TestExec_ShowDoesNotRoutePrimitivesThroughTheirImpls(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  println("${42} ${1.5} ${true} ${'z'} ${"s"}");
+  println(7);
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "42 1.5 true z s\n7" {
+		t.Errorf("primitive formatting = %q; want \"42 1.5 true z s\\n7\"", got)
+	}
+}

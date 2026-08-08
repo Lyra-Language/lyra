@@ -41,8 +41,7 @@ const showTraitSuggestion = "Show"
 // ok=false means the operand is not a bound type parameter and the caller should apply its
 // ordinary rule — which for a *concrete* type is the printable-type check, unchanged.
 func (tc *TypeChecker) desugarShowOperand(operand ast.Expression, operandType types.Type) (ast.Expression, types.Type, bool) {
-	g, isVar := operandType.(types.GenericType)
-	if !isVar || !tc.boundProvidesShow(g, operand) {
+	if !tc.showApplies(operand, operandType) {
 		return nil, nil, false
 	}
 	call := &ast.FunctionCallExpr{
@@ -59,6 +58,68 @@ func (tc *TypeChecker) desugarShowOperand(operand ast.Expression, operandType ty
 	// Checked as the call it now is, which is what records the bound resolution and the
 	// per-implementing-type candidates the backend picks from.
 	return call, tc.inferExprType(call), true
+}
+
+// showApplies reports whether the operand should be rendered through `show` rather than
+// by a built-in formatter. Two cases reach it, and the order of the tests is the design:
+//
+//  1. **A printable type never does.** `print` picks a formatter per concrete type for
+//     string, the integers, the floats, `bool` and `rune`, and that stays true whatever
+//     impls a program declares — the same rule arithmetic and the comparisons follow, and
+//     for the same reason: a language where a library can change how an `i64` prints is
+//     one whose output no reader can predict.
+//  2. **A type parameter** needs a bound declaring `show`; a **concrete** type needs an
+//     impl providing it.
+//
+// The concrete case was left out when `Show` landed (08/08) and added the same day, on
+// the strength of the inconsistency rather than a new argument: the *same* impl already
+// rendered a `Pt` through `describe(pt)` under a `where t: Show` bound, and `println(pt)`
+// was refused. One value, one impl, two answers — and the one that worked was the
+// indirect one.
+//
+// It does mean `print` can call user code, which is the coherence question the operators
+// answered in opposite directions. It is answered "yes" here because the alternative is
+// not "print calls no user code" — the bounded-generic path already did — but "print
+// calls user code only when laundered through a generic", which is a rule with nothing
+// to recommend it. The call the rewrite produces is an ordinary one, so the purity
+// ladders charge it and a `pure` function printing through an impure `show` is refused.
+func (tc *TypeChecker) showApplies(operand ast.Expression, operandType types.Type) bool {
+	if isPrintableType(operandType) {
+		return false
+	}
+	if g, isVar := operandType.(types.GenericType); isVar {
+		return tc.boundProvidesShow(g, operand)
+	}
+	// **Never rewrite into the method being defined.** `impl Show for Pt { show = (self)
+	// => "${self}" }` is the first thing an author writes, because it is exactly what the
+	// prelude's scalar impls say — and with the concrete case dispatching, that
+	// interpolation would call `show` again. It compiled and stack-overflowed (SIGSEGV),
+	// which is the "looks like it works" failure this project refuses; it is caught here
+	// instead, with a message that names the fix.
+	//
+	// Direct self-recursion only. A `show` that renders a *different* type whose own
+	// `show` comes back is ordinary mutual recursion, and no more the compiler's business
+	// than any other cycle; the direct case is the one that is *implicit* — the author
+	// wrote `${self}`, not `self.show()`.
+	if tc.inShowImplFor(operandType) {
+		return false
+	}
+	// Any trait providing `show` for this type. Ambiguity between two of them is not
+	// reported here: the rewrite produces an ordinary `.show()` call, and the identifier
+	// dispatch path reports it there — one message rather than two for one mistake.
+	return len(tc.resolveTraitMethod(operandType, showMethodName, "")) > 0
+}
+
+// inShowImplFor reports whether the body being checked is the `show` of an impl for
+// operandType — i.e. whether rewriting this operand would call the method it is inside.
+func (tc *TypeChecker) inShowImplFor(operandType types.Type) bool {
+	if tc.currentImplType == nil || tc.currentImplMethod.Kind != ast.MethodNameKindIdentifier {
+		return false
+	}
+	if tc.currentImplMethod.Value != showMethodName {
+		return false
+	}
+	return types.TypesEqual(tc.currentImplType, operandType)
 }
 
 // boundProvidesShow reports whether any trait bounding g in scope declares `show`.
@@ -88,4 +149,17 @@ func (tc *TypeChecker) reportUnshowableTypeParameter(operand ast.Expression, g t
 		"cannot %s a value of type %s: a type parameter has no representation to format — "+
 			"add `where %s: %s` so the value can be rendered",
 		verb, g.Name, g.Name, showTraitSuggestion)
+}
+
+// reportShowSelfRecursion is the diagnostic for `${self}` (or `println(self)`) inside the
+// `show` that would render it.
+//
+// It exists because the generic printable-type message is actively misleading here: the
+// author is looking at a type that *is* showable, being told it is not. What they need to
+// know is that this particular occurrence would call the method they are writing.
+func (tc *TypeChecker) reportShowSelfRecursion(operand ast.Expression, t types.Type, verb string) {
+	tc.addError(operand.GetLocation(), SeverityError,
+		"cannot %s a value of type %s here: this is %s's own `%s`, so the value would be "+
+			"rendered by calling it again — render the fields instead",
+		verb, t, t, showMethodName)
 }
