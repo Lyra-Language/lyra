@@ -10,6 +10,55 @@ Newest first.
 ## Dated log
 
 ### 08/08/26
+**`Show` — a value whose type is a type parameter can be formatted.** `"${v}"` and
+`println(v)` work inside a generic with a `where t: Show` bound:
+
+```
+let describe<t> where t: Show = (v: t) -> string => "value ${v}"
+```
+
+The gap was found the day the prelude's `expect` was written (08/04): the natural draft
+reports what it got, `panic("expected ${value}")`, and none of it was expressible. `print`
+and interpolation pick a formatter per *concrete* type, and a `t` has no representation, so
+there was nothing to pick.
+
+**The whole trait is ordinary Lyra**, which is the part worth recording. `"${self}"` on a
+concrete primitive is exactly the formatter `print` already picks, so
+`impl Show for i64 { show = (self) => "${self}" }` needs no compiler support at all — the
+prelude gained a file and the builtin registry gained nothing. Same division of labour as
+`parse_i64`, `trim` and the PRNG: anything expressible in the language belongs in the
+prelude, where it is readable, testable and replaceable. (`string`'s impl returns the value
+rather than interpolating it — `"${s}"` would copy the bytes into a fresh box for no
+reason, and this is the one place that cost would be paid on every rendering of every
+string.)
+
+**The mechanism is a desugar, not a second formatting path.** Where the operand's type is a
+type variable bound by a trait declaring `show`, it is rewritten to `operand.show()` before
+anything downstream sees it. That is an ordinary bound-dispatched call, which has resolved
+and lowered since 08/07 — so the backend learned nothing new, and `print`'s printable-type
+rule is exactly as strict as it was, since the rewritten operand is a `string`. The shape
+UFCS uses for a receiver, and what rule 10 recommends generally: one rewrite beats teaching
+every later pass what a `t` in print position means.
+
+**The trait is recognized by its method, not by its name.** The rewrite looks for an
+in-scope bound whose trait declares `show`, so a user's own `trait Render { show: … }`
+works identically and nothing keys on the spelling `Show`. That is the same decision
+arithmetic operator overloading made a day earlier, and it is why this needed no
+`@builtin(Show)` marker — the open item asking for one is about `Ord`, which the compiler
+*does* have to know by name because it owns the comparison operators.
+
+The diagnostic changed with it. An unbound type parameter used to draw "expected a string,
+an integer, a float, bool, or rune", which is true of a `t` and no help at all — the author
+cannot make a type parameter into one of those. It now names the thing they can do:
+
+```
+cannot interpolate a value of type t: a type parameter has no representation to format
+— add `where t: Show` so the value can be rendered
+```
+
+A *concrete* unprintable type still gets the old message, which is the right one for it:
+the fix there is a conversion or an impl, not a bound.
+
 **The array-repeat literal, `[v; n]`.** It parsed and collected from the beginning and
 nothing downstream read it — the typechecker reported `unknown expression type "[0; 5]"`
 — which is loud rather than silent, so it was an unimplemented feature rather than a

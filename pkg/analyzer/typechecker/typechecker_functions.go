@@ -744,7 +744,20 @@ func (tc *TypeChecker) inferPrintCall(name string, call *ast.FunctionCallExpr) t
 	if argType == nil {
 		return types.VoidType{}
 	}
+	// The same rewrite interpolation applies: a type parameter bound by a `show` trait
+	// becomes `arg.show()`, which is a string and prints like any other.
+	if rewritten, rewrittenType, ok := tc.desugarShowOperand(arg, argType); ok {
+		call.Arguments[0] = rewritten
+		arg, argType = rewritten, rewrittenType
+		if argType == nil {
+			return types.VoidType{}
+		}
+	}
 	if !isPrintableType(argType) {
+		if g, isVar := argType.(types.GenericType); isVar {
+			tc.reportUnshowableTypeParameter(arg, g, "print")
+			return types.VoidType{}
+		}
 		tc.addError(arg.GetLocation(), SeverityError,
 			"%s: cannot print a value of type %s (expected a string, an integer, a float, bool, or rune)",
 			name, argType)

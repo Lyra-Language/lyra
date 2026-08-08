@@ -2430,12 +2430,26 @@ func (tc *TypeChecker) inferStringConcatExpr(expr *ast.StringConcatExpr) types.T
 // expression is always a `string`.
 func (tc *TypeChecker) inferInterpolatedStringExpr(e *ast.InterpolatedStringExpr) types.Type {
 	str := types.PrimitiveType{Name: types.String}
-	for _, seg := range e.Segments {
+	for i, seg := range e.Segments {
 		segType := tc.inferExprType(seg)
 		if segType == nil {
 			continue // a failure already reported in the segment; check the rest
 		}
+		// A type parameter bound by a `show` trait is rewritten to `seg.show()` — see
+		// typechecker_show.go. The segment then *is* a string, so the printable check
+		// below is unchanged and the backend sees an ordinary bound-dispatched call.
+		if rewritten, rewrittenType, ok := tc.desugarShowOperand(seg, segType); ok {
+			e.Segments[i] = rewritten
+			seg, segType = rewritten, rewrittenType
+			if segType == nil {
+				continue
+			}
+		}
 		if !isPrintableType(segType) {
+			if g, isVar := segType.(types.GenericType); isVar {
+				tc.reportUnshowableTypeParameter(seg, g, "interpolate")
+				continue
+			}
 			tc.addError(seg.GetLocation(), SeverityError,
 				"cannot interpolate a value of type %s (expected a string, an integer, a float, bool, or rune)",
 				segType)

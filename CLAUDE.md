@@ -719,6 +719,17 @@ backend picking by the receiver's substituted type. Impl matching stays in the t
 — a second copy in codegen is the drift `Resolution` exists to prevent. This is what
 unblocks `Show`/`Eq`/`Ord`.
 
+**`Show` landed 08/08**, closing the "no value of a generic type can be formatted" gap:
+`"${v}"` and `println(v)` work under a `where t: Show` bound. The trait and an impl for
+every printable scalar are **ordinary Lyra** in `std/prelude/show.lyra` — `"${self}"` on a
+concrete primitive is the formatter `print` already picks, so no builtin was added — and
+the compiler's half is a *desugar* (`typechecker_show.go`): the operand is rewritten to
+`v.show()`, which is the bound dispatch that already existed, so the backend learned
+nothing new. The trait is recognized by its **method**, not by its name, so a user's own
+`trait Render { show: … }` works identically; that is why this needed no `@builtin(Show)`
+marker, unlike `Ord`, which the compiler must know by name because it owns the comparison
+operators.
+
 **UFCS landed 08/03**: `m.unwrap_or(0)` resolves to a free function whose first parameter
 is named `self`, by rewriting the call to pass the receiver as its first argument
 (`typechecker_ufcs.go`, and that README's last section). The standard library's combinators

@@ -870,42 +870,25 @@ Types, checked arithmetic, division via the builtins library, `match`, conversio
 
 ## Traits
 
-### [OPEN] `Show` — no value of a generic type can be formatted
+### [DONE 08/08] `Show` — a bounded type parameter can be formatted
 
-There is no way to render a value whose type is a **type variable**. Interpolation and
-`print` are checked against `isPrintableType` — string, the integers, the floats, `bool`,
-`rune` — because those are exactly the types the backend has a formatter for, and it picks
-one per *concrete* type rather than through any signature. A `t` has no representation, so
-there is nothing to pick:
+`"${v}"` and `println(v)` work on a value whose type is a type parameter, given a
+`where t: Show` bound. The prelude ships the trait and an impl for every printable scalar,
+all of it **ordinary Lyra** — `"${self}"` on a concrete primitive is exactly the formatter
+`print` already picks, so no builtin was added.
 
-```
-lyra-E001: cannot interpolate a value of type t (expected a string, an integer, a float, bool, or rune)
-```
+The mechanism is a **desugar**: the operand is rewritten to `v.show()` before anything
+downstream sees it, which is bound dispatch (landed 08/07) and needed no backend work. The
+trait is recognized by its **method**, not by its name, so a program may define its own —
+the same rule arithmetic operator overloading follows, and why no `@builtin(Show)` marker
+is needed for this. See COMPLETED.md.
 
-Found by writing the prelude's `expect` (08/04). The natural first draft reports what it
-got — `panic("expected ${value}, got ${v}")` — and none of it is expressible. The shipped
-signature takes the message as a `string` instead, which moves the formatting to the caller,
-who has the concrete type; that is the conventional shape anyway (it is Rust's `expect`), so
-the gap cost nothing there. It will cost something the first time a combinator genuinely
-needs to describe its own payload — `assert_eq` is the obvious one, and it needs `Eq` too.
-
-What it takes, and why it is more than declaring a trait:
-
-- a `Show` trait in the prelude, with impls for each printable primitive;
-- **`where` bounds enforced at instantiation**, which is its own open item above — they are
-  collected today and not checked, so `where t: Show` would not actually constrain anything;
-- interpolation and `print` routed through bound dispatch when the operand's type is a
-  variable, rather than through the fixed printable set.
-
-Worth deciding alongside `Eq`/`Ord` rather than alone: they share the "core traits the
-compiler knows by name" question, which is the same one `@builtin(Maybe)`/`@builtin(Result)`
-already answer for types — a marker conferring identity, so the trait is recognised by the
-marker and not by being spelled `Show`.
-
-**Not a blocker for equality, oddly.** `!=` on a bare type variable type-checks today
-(verified 08/04), so a combinator *can* compare its payload without any bound — which is
-either a convenience or a hole depending on what `Eq` is meant to mean, and is worth
-settling when that trait is designed.
+- **[OPEN] A concrete type with a `Show` impl still cannot be printed directly.**
+  `println(pt)` for a `Pt` with an `impl Show for Pt` is refused by the printable-type
+  rule; only a *type parameter* takes the rewrite. Extending it is the same desugar keyed
+  on `resolveTraitMethod` instead of the bound, and the question it raises first is whether
+  `print` should silently call user code on a concrete type — which is the coherence
+  question the comparison operators answered one way and arithmetic the other.
 
 ### [DECIDED 08/07] `Eq` and `Ord`
 

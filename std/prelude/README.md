@@ -87,6 +87,7 @@ readable, testable and replaceable.
 | `result.lyra` | `Result` and its combinators |
 | `array.lyra` | `map`/`filter` over `[]t` |
 | `ordering.lyra` | `Ordering`, the result of `<=>` |
+| `show.lyra` | `Show`, so a bounded type parameter can be formatted |
 | `parse.lyra` | `parse_i64` |
 | `strings.lyra` | `is_ascii_space`, `trim`/`trim_start`/`trim_end` |
 | `rand.lyra` | `Rng` and the draws built on `random_seed()` |
