@@ -113,13 +113,62 @@ write today:
     find the offset, so it stays O(n). The byte builtin is O(m) with no decoding —
     19.9 ms → 19 µs on that case. Byte-level answers the rune question exactly, because
     UTF-8 is prefix-free and self-synchronizing. See COMPLETED.md.
-  - **[OPEN] No `contains`/`split`.** Both are a loop over `compare_bytes_at` now, so the
-    primitive they were waiting on exists. `split` needs a `[]string` return, so it also
-    needs an array-building story beyond a comprehension — and a **byte-offset** slice,
-    since `slice` is rune-indexed and a search yields byte positions. That third piece is
-    the one that is not yet there.
+  - **[DONE 08/08] `index`/`contains`.** `index(needle, offset = 0) -> Maybe<i64>` is a
+    naive scan calling `compare_bytes_at` at each byte position, with `contains` one line
+    on top. Both `offset` and the result are **rune** indices, so the answer feeds straight
+    into `slice`; the scan is byte-level, reconciled by carrying a byte cursor alongside
+    the rune counter (`utf8_len` on a rune) rather than converting afterwards, which
+    nothing in the language could do. Scanning at byte positions needs no boundary check —
+    a lead byte can never equal a continuation byte, so a match only lands on a rune
+    boundary.
+
+    Naive rather than Rabin–Karp deliberately: RK replaces a libc memcmp with
+    byte-at-a-time arithmetic in Lyra (the thing measured three orders of magnitude slower
+    when `starts_with` was written that way), and buys only an *expected* bound, its worst
+    case being O(n·m) too. A real guarantee wants a `memmem` builtin (glibc's is Two-Way,
+    O(n+m), constant space), not an algorithm written in the prelude.
+
+    A negative `offset` is `None`, and **not** a from-the-end position even though `s[-1]`
+    now is: an offset here is a resumption point for a scan, and "resume at k going
+    forward" has no negative reading. Python's `str.find` counts its `start` from the end
+    and is a known confusion for it.
+  - **[DONE 08/08] A negative string index and negative `slice` bounds.** `s[-1]` is the
+    last rune and `s.slice(1, -1)` drops it, matching arrays. Not sugar: the k-th rune from
+    the end is a byte walk over continuation bytes that decodes nothing, where
+    `s[s.len() - 1]` is two full O(n) decode walks — 34272 µs against 18 µs. The comment
+    saying it "would require a full rune count first" is what had kept it closed. One
+    shared `lyra_str_rune_offset` now answers "where does rune k begin" for both callers,
+    which had carried the same forward walk twice. See COMPLETED.md.
+  - **[OPEN] No `split`.** The search primitive exists now (`index`), so what is left is
+    the *output*: a `[]string` return needs an array-building story beyond a comprehension.
+    A byte-offset slice would also help — `slice` is rune-indexed, so a split loop pays
+    O(n) per part to re-find a position `index` already knew in bytes — but it is an
+    efficiency want rather than a blocker now that `index` returns rune indices.
 
 ## Known bugs
+
+- **[DONE 08/08] A `return` nested inside an `if`, a loop or a match arm is type-checked.**
+  It was not, at all: `checkBlockReturn` walks the body block's own statements, and a nested
+  `return` reaches `checkNode`, which had no case for it. So its value was never compared
+  against the declared return type — a nested `return "nope"` from a `-> Maybe<i64>` function
+  was accepted silently — and, more consequentially, never *given* that type as context, so a
+  data constructor in an early return reached the backend uninstantiated and died with
+  `no type recorded for data constructor "None"`. Rule 5 inverted.
+
+  **Scalars hid it**, which is why guard clauses looked like they worked: `return 7` lowers
+  from the literal's own intrinsic type and needs no context. Only a value whose type is
+  *decided* by its context notices that the context never arrived — so the idiom this blocked
+  was exactly the common one, an early `return None`, and it is why `parse_i64` is written as
+  one long tail if/else. Found writing the prelude's `index`. The fix routes through the
+  existing `checkReturnValue` with the `enclosingRet` context that was already there and
+  maintained, so a nested return gets the same assignability check, literal-width propagation
+  and allocation stamping the top-level ones always had.
+
+  - **[OPEN] A return-position literal is not range-checked.** `() -> u8 => 300` is accepted,
+    and so is `return 300` in the same function. Noticed while testing the above and
+    unrelated to it — it is true of *every* return position, including the ones that were
+    always checked, so it is a gap in `checkReturnValue` rather than in the routing.
+
 
 - **[DONE 08/07] Two `slice()` results in one expression no longer clobber each other.**
   `println("${s.slice(0,2)} ${s.slice(2,4)}")` printed `cd cd`: the first result was
@@ -611,6 +660,113 @@ allocates nothing — so the walk asks it of the construction cases only. See CO
   `noalloc` is defined against the *release* lowering in the first place. Settle that before
   charging a closure.
 
+## Lazy sequences — `gen` and `Seq<t>`
+
+**[IDEA]** `xs.filter(p).map(f)` allocates an intermediate `[]t` per stage, because both
+combinators in `std/prelude/array.lyra` are eager. The fix is a lazy sequence — and the
+shape it should take is one the language already half-committed to.
+
+**`gen`, `yield` and `yield from` already parse.** `gen_modifier` is a lambda modifier
+(`tree-sitter-lyra/include/expressions/functions/lambda.js`), the collector sets
+`LambdaExpr.IsGenerator` (`collector/expressions/lambda_expr.go`, `declarations/var_decl.go`),
+and `lyra-E006` already polices a `yield` outside a generator body
+(`checker/yield_outside_generator.go`). What is missing is one rung — the typechecker:
+
+```
+$ lyrac check t.lyra
+t.lyra:3:5: error [lyra-E001]: unknown expression type "yield_expr"
+```
+
+That is verbatim the state `array_comp_expr` was in before 08/04, in the same words. This is
+the same kind of phantom the sweep above is for, one rung short of the ones it found.
+
+**The design.** A `Seq<t>` is what a `gen` call evaluates to, and every combinator is then
+ordinary Lyra in the prelude — no trait, no adapter structs, no associated types:
+
+```
+pub let map<t,u> = pure gen (self: Seq<t>, f: (t) -> u) -> Seq<u> => {
+  for x in self { yield f(x) }
+}
+
+pub let filter<t> = pure gen (self: Seq<t>, p: (t) -> bool) -> Seq<t> => {
+  for x in self { if p(x) { yield x } }
+}
+```
+
+**There is no `collect`, because the language already has one and it is brackets.**
+`for y in xs.filter(p).map(f) { … }` allocates nothing; `[y in xs.filter(p).map(f) | y]`
+materializes, and `noalloc` charges exactly the brackets. 08/04's "a comprehension is the
+only way to build an array" survives intact. This is the one place the design is *better*
+than Rust's rather than a copy of it: `.collect::<Vec<_>>()` exists because Rust has no
+distinguished materialization syntax, and Lyra does.
+
+`[]t` keeps its own `map`/`filter` as one-line forwarders returning a `Seq` — a different
+receiver head from `Seq`, so receiver-keyed overloading already permits both declarations.
+
+### Why a `gen` function rather than an `Iterator` trait
+
+Three reasons, none of them taste:
+
+- **The prelude rule.** "Anything expressible in Lyra belongs in the prelude"
+  (`std/prelude/README.md`). A `gen` function makes `filter` a three-line prelude entry. An
+  `Iterator` trait makes it expressible only *after* building trait dispatch over generic
+  adapter structs and something standing in for associated types — and the prelude README
+  already records that a **generic** trait impl is the thing to avoid writing there.
+- **The effect system would poison it.** Effect polymorphism is precise for a callback
+  arriving as a parameter and conservative (`AllEffects`) for one "reached through anything
+  but a parameter or a binding — a struct field, a call result, an array element" (see the
+  Functional/imperative blend section). An adapter struct stores its closure in a **field**,
+  so `xs.iter().map(f)` would infer impure and `pure noalloc` code — the code that most wants
+  fusion — could not call it. A `gen` function takes `f` as a parameter, which is the case
+  07/31 already handles exactly.
+- **It is the source-driver abstraction, generalized.** 08/04: "A source now drives its own
+  loop rather than answering 'the value at index i'." There are three drivers (array, range,
+  string) and they are hard-coded at `isIterableType` /
+  `typechecker_control_flow.go`'s `checkForInLoopExpr`. `Seq` is a fourth — and the only one
+  a user can write. `for-in` and the comprehension both gain it from one source driver.
+
+### Lowering — push first, state machine only if forced
+
+- **[IDEA] Stage 1: inline the generator into its consumer.** A `Seq` is only ever consumed
+  by `for-in` or a comprehension, and both consume it in a single loop, so `for x in g(a) { B }`
+  can lower as g's body with each `yield e` rewritten to `let x = e; B`. Internal iteration:
+  no coroutines, no state machine, no suspension, no heap. **The chain fuses into one loop by
+  construction rather than by an optimizer**, which is the whole point of the entry. Buys
+  `map`, `filter`, `flat_map`, `take`, `take_while`, `enumerate`, `chain`, `scan`, and
+  infinite sequences.
+- **[OPEN] What stage 1 must refuse, loudly.** `zip` (two producers interleaved needs pull),
+  and a `Seq` stored in a binding and consumed somewhere that is not statically a loop.
+- **[IDEA] Stage 2: state-machine transformation** (Rust async / C# iterators / Kotlin) for
+  whatever stage 1's refusals turn out to cost. Worth noting the machinery lands *in the
+  compiler*, so the language still never grows associated types and the prelude functions do
+  not change — which is the argument for stage 1 not being a throwaway.
+
+### Open decisions and prerequisites
+
+- **[OPEN] Iterating a `Seq` needs nothing new; *collecting* one needs a grow op.** The
+  comprehension allocates capacity up front — "the capacity bounds the loop by construction"
+  — and a `Seq` has no length to compute it from. That is the dynamic-array **growth**
+  already open under (#5). Same blocker `split` sits behind, which is the other half of the
+  argument: as a `Seq<string>` it is not blocked at all.
+- **[OPEN] The return annotation's spelling.** `-> Seq<u>` (recommended) says what the
+  function returns and gives `yield` something to check against; `-> u` annotates the element
+  and reads like a normal return while meaning something else. Pick before anything is
+  written down.
+- **[OPEN] Whether `[]t`'s combinators become lazy.** Receiver-keyed overloading forbids two
+  `map`s on one head, so a `[]t` `map` is *either* `-> []u` or `-> Seq<u>`, not both. Lazy is
+  the coherent choice given the entry's premise, and it deletes `array.lyra`'s two eager
+  combinators; the cost is that a side-effecting callback runs when the brackets do.
+- **A word collides.** "Generator" already means the `x in xs` clause of a comprehension in
+  the section above. Whatever the docs settle on, these are not the same thing.
+
+**What not to do:** recognize `map`/`filter` chains by `@builtin` marker and rewrite them into
+a comprehension. It is the cheapest thing on the table and it has a syntactic cliff — hoisting
+one stage into a `let` silently loses the fusion, with no diagnostic. That is GHC's
+rewrite-rule unpredictability, and the opposite of refusing loudly.
+
+**It also unblocks the `0..` idea below**, which names "a lazy/infinite iterator" as its
+prerequisite. This is that.
+
 ## Ranges
 
 The three range grammars were unified 08/01 (`rangeBounds`, one `range_end_operator`,
@@ -640,7 +796,7 @@ The three range grammars were unified 08/01 (`rangeBounds`, one `range_end_opera
 - **[IDEA] Open-ended expression ranges** (`0..`), which need a lazy/infinite iterator. The
   pattern and constraint spellings have open bounds; the expression one deliberately does
   not, and that asymmetry is documented in `tree-sitter-lyra`'s `rangeBounds` rather than
-  left to be rediscovered.
+  left to be rediscovered. The iterator it is waiting on is the `gen`/`Seq` section above.
 
 ## Language design — Pit of Success
 

@@ -238,6 +238,7 @@ type lowerer struct {
 	snprintf        *ir.Func              // libc snprintf, declared lazily on first numeric print
 	fmtRune         *ir.Func              // lyra_rune_to_utf8, defined lazily on first rune print
 	utf8Decode      *ir.Func              // lyra_utf8_decode, defined lazily on first string for-in
+	strRuneOffset   *ir.Func              // lyra_str_rune_offset, defined lazily on first string index/slice
 	fmtI128         *ir.Func              // lyra_i128_to_str, defined lazily on first i128/u128 print
 	mulOverflowI128 *ir.Func              // lyra_i128_mul_overflow, defined lazily (compiler-rt's __muloti4 is not linkable on Linux)
 	newlineByte     *ir.Global            // interned "\n" byte, for println's trailing newline

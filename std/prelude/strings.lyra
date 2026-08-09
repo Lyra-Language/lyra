@@ -95,3 +95,68 @@ pub let starts_with = pure noalloc (self: string, other: string) -> bool =>
 // for a range that does not exist.
 pub let ends_with = pure noalloc (self: string, other: string) -> bool =>
   self.compare_bytes_at(self.byte_len() - other.byte_len(), other) == 0
+
+// The number of bytes this rune encodes to in UTF-8, from the code point alone —
+// 1 below U+0080, 2 below U+0800, 3 below U+10000, 4 above.
+//
+// It is what lets `index` below keep a byte cursor while walking runes, which is the
+// whole trick that makes the scan linear: `s[i]` is O(i), so advancing by index would
+// make the walk quadratic, while `for c in s` decodes each rune exactly once and this
+// turns each one into the step the byte cursor needs.
+pub let utf8_len = pure noalloc (self: rune) -> i64 => {
+  let cp = i64(self);
+  if cp < 128 { 1 } else if cp < 2048 { 2 } else if cp < 65536 { 3 } else { 4 }
+}
+
+// The rune index of the first occurrence of `needle` at or after `offset`, or `None`.
+//
+// **Both `offset` and the result are rune indices**, like `s[i]`, `len()` and `slice`
+// — so the answer can be handed straight to `slice` without a conversion that would be
+// silently wrong on the first non-ASCII input. The *scan* underneath is byte-level, and
+// the two are reconciled by carrying a byte cursor alongside the rune counter rather
+// than converting afterwards, which nothing in the language could do anyway.
+//
+// **Scanning at byte positions is rune-correct**, and needs no boundary check: a
+// well-formed needle begins with a lead byte, and a lead byte can never equal a
+// continuation byte, so a match can only land on a rune boundary. Same
+// self-synchronizing property `starts_with` leans on.
+//
+// A naive scan, deliberately: each candidate is rejected by one `compare_bytes_at`,
+// which is libc's memcmp, and on real text the first byte rejects nearly all of them.
+// O(n·m) worst case, O(n) in practice. Rabin–Karp would replace that memcmp with
+// byte-at-a-time arithmetic in Lyra — the thing measured at three orders of magnitude
+// slower when `starts_with` was written that way — and buys only an *expected* bound,
+// its worst case being O(n·m) too. If this ever needs a real guarantee, the answer is
+// a `memmem` builtin (glibc's is Two-Way: O(n+m), constant space), not an algorithm
+// written here.
+//
+// A **negative offset is `None`**, and deliberately *not* a position counted from the
+// end even though `s[-1]` and `s.slice(-3, -1)` are (08/08). An offset here is a
+// resumption point for a scan, not an index: `index(needle, k)` means "resume at k and
+// keep going forward", and there is no reading of a negative k that continues to the
+// end of the string. Python's `str.find` does count its `start` from the end and it is a
+// well-known source of confusion for exactly that reason.
+pub let index = pure noalloc (self: string, needle: string, offset: i64 = 0) -> Maybe<i64> => {
+  if offset < 0 {
+    return None
+  }
+  var rune_i = 0;
+  var byte_i = 0;
+  for c in self {
+    if rune_i >= offset && self.compare_bytes_at(byte_i, needle) == 0 {
+      return Some(rune_i)
+    }
+    byte_i = byte_i + c.utf8_len();
+    rune_i = rune_i + 1;
+  }
+  // The end position, checked after the loop because a `for-in` does not visit it.
+  // Only an empty needle can match there, and it must: `"".index("")` and
+  // `s.index("", s.len())` are `Some`, which is what will make `split` on an empty
+  // separator terminate rather than run off the end.
+  if rune_i >= offset && self.compare_bytes_at(byte_i, needle) == 0 {
+    return Some(rune_i)
+  }
+  None
+}
+
+pub let contains = pure noalloc (self: string, needle: string) -> bool => self.index(needle).is_some()

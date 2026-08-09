@@ -83,7 +83,9 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 	prevRet := tc.enclosingRet
 	ret := lambda.ReturnType
 	tc.enclosingRet = &ret
-	defer func() { tc.enclosingRet = prevRet }()
+	prevName := tc.enclosingFuncName
+	tc.enclosingFuncName = funcName
+	defer func() { tc.enclosingRet, tc.enclosingFuncName = prevRet, prevName }()
 	// Always enter the param scope: withParamScope resolves every parameter
 	// type annotation via resolveType, emitting "unknown type" for any name
 	// that has no declaration. This must happen even when there is no return
@@ -1118,4 +1120,41 @@ func (tc *TypeChecker) checkExclusiveMutableBorrow(calleeName string, lambda *as
 			return
 		}
 	}
+}
+
+// checkReturnStmt checks a `return` that is **not** one of the body block's own
+// statements — one nested inside an `if`, a loop, or a match arm.
+//
+// checkBlockReturn handles only the returns it can see in `block.Statements`; a
+// nested one arrives here through checkNode, and until 08/08 nothing handled it at
+// all. Its value was therefore never checked against the declared return type and,
+// more consequentially, never given that type as *context* — so a data constructor in
+// an early return had no expected type to instantiate against, and the backend failed
+// with `no type recorded for data constructor "None"` (or `for tuple literal`, for
+// `Some(v)`) on a program the front end had checked clean. Rule 5 inverted.
+//
+// **Scalars hid it**, which is why a guard clause looked like it worked: `return 7`
+// lowers from the literal's own intrinsic type, needing no context at all. Only a
+// value whose type is *decided* by its context — a constructor of a generic type —
+// notices that the context never arrived. The idiom this blocked is the ordinary one:
+// a guard clause returning `None`, which is how the prelude's own `index` wanted to be
+// written and is why `parse_i64` had been written as one long tail if/else instead.
+//
+// It goes through checkReturnValue like every other return position, so a nested
+// return gets the same assignability check, literal-width propagation and allocation
+// stamping the top-level ones have always had — the single definition that function's
+// doc comment exists to preserve.
+func (tc *TypeChecker) checkReturnStmt(s *ast.ReturnStmt) {
+	if s == nil || s.Value == nil {
+		return // a bare `return`; void compatibility is not checked yet
+	}
+	if tc.enclosingRet == nil {
+		// A `return` outside any function, already reported by
+		// checker.CheckReturnOutsideFunction. Infer anyway so the value's own type is
+		// recorded and later passes see a typed expression rather than a hole.
+		tc.inferExprType(s.Value)
+		return
+	}
+	tc.checkReturnValue(tc.enclosingFuncName, s.Value, s.GetLocation(),
+		tc.enclosingRet.Type, isOwnedReturn(tc.enclosingRet.TypeModifier))
 }

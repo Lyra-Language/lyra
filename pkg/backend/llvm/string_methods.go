@@ -97,8 +97,20 @@ func (l *lowerer) lowerStringLen(block *ir.Block, call *ast.FunctionCallExpr, me
 // is indistinguishable from a correct empty slice. `start == end` is fine and yields
 // "" — the empty range is the one every loop terminates on.
 //
-// One walk, not two: it records the byte offsets of `start` and `end` as it passes
-// them, so the cost is O(end) rather than O(start) + O(end).
+// **Either bound may be negative** (08/08), counting from the end as an array index
+// does — `s.slice(1, -1)` drops the last rune. A negative bound is resolved by the
+// backward byte walk in strRuneOffsetFunc, so it costs O(|bound|) with no decoding,
+// and the ordering test is applied to the resolved *offsets* rather than to the written
+// bounds — otherwise `1 > -1` would reject a perfectly ordinary interval. Rune index to
+// byte offset is monotonic, so the two comparisons ask the same question.
+//
+// It resolves each bound with its own call, where it used to record both offsets in one
+// pass and so cost O(end) rather than O(start) + O(end). That single walk is what a
+// negative bound cannot be expressed in: it advances a rune counter forward, and there
+// is no value of that counter which means "third from the end". Sharing one definition
+// of where a rune begins is also what keeps this and `s[i]` from drifting (rule 8) —
+// they carried the same forward walk twice. The doubled decode is bounded by a function
+// that already allocates and copies, which is why it is the right side of that trade.
 func (l *lowerer) lowerStringSlice(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
 	if len(call.Arguments) != 2 {
 		return nil, nil, fmt.Errorf("llvm: slice() expects 2 arguments, got %d", len(call.Arguments))
@@ -128,85 +140,38 @@ func (l *lowerer) lowerStringSlice(block *ir.Block, call *ast.FunctionCallExpr, 
 	end := coerceIntWidth(block, endV, endSigned, lltypes.I64)
 
 	fn := block.Parent
-	entry := fn.Blocks[0]
-	biSlot := entry.NewAlloca(lltypes.I64)       // byte cursor
-	riSlot := entry.NewAlloca(lltypes.I64)       // rune cursor
-	startOffSlot := entry.NewAlloca(lltypes.I64) // byte offset of rune `start`
-	endOffSlot := entry.NewAlloca(lltypes.I64)   // byte offset of rune `end`
-	seenStart := entry.NewAlloca(lltypes.I1)
-	seenEnd := entry.NewAlloca(lltypes.I1)
-	cpSlot := entry.NewAlloca(lltypes.I32) // decode out-param, discarded
-
 	zero := constant.NewInt(lltypes.I64, 0)
-	block.NewStore(zero, biSlot)
-	block.NewStore(zero, riSlot)
-	block.NewStore(zero, startOffSlot)
-	block.NewStore(zero, endOffSlot)
-	block.NewStore(constant.NewInt(lltypes.I1, 0), seenStart)
-	block.NewStore(constant.NewInt(lltypes.I1, 0), seenEnd)
+	yes := constant.NewInt(lltypes.I1, 1)
 
 	trapBlock := fn.NewBlock("")
 	trapBlock.NewCall(l.panicStringSliceOOBFunc())
 	trapBlock.NewUnreachable()
 
-	// `start > end` is a caller bug, not an empty slice. Checked before the walk, so
-	// an inverted range traps even when both bounds are individually in range.
+	// Each bound is resolved to a byte offset independently, allowEnd set because the
+	// exclusive end may name the position one past the last rune (`s.slice(n, n)` is
+	// the empty string, not a trap). -1 is "no such rune".
+	offsets := l.strRuneOffsetFunc()
+	startOff := block.NewCall(offsets, data, byteLen, start, yes)
+	endOff := block.NewCall(offsets, data, byteLen, end, yes)
+
+	// One test for all three ways this can be wrong: either bound out of range, or an
+	// inverted range. **Ordering is compared on the resolved offsets, not on the
+	// written bounds**, which is what admits a mixed range like `s.slice(1, -1)` —
+	// numerically 1 > -1, and in the string a perfectly ordinary interval. The mapping
+	// from rune index to byte offset is monotonic, so comparing offsets asks exactly
+	// what comparing rune indices would.
 	//
-	// Signed compare: the arguments are i64 and a negative bound must reach the trap
-	// rather than wrap to a huge unsigned value and merely fail to be found.
-	orderOK := fn.NewBlock("")
-	block.NewCondBr(block.NewICmp(enum.IPredSLE, start, end), orderOK, trapBlock)
-	negOK := fn.NewBlock("")
-	orderOK.NewCondBr(orderOK.NewICmp(enum.IPredSGE, start, zero), negOK, trapBlock)
+	// `start > end` stays a trap rather than an empty string: an inverted range is a
+	// caller bug, and the "" it would otherwise yield is indistinguishable from a
+	// correct empty slice. `start == end` is fine and yields "".
+	badStart := block.NewICmp(enum.IPredSLT, startOff, zero)
+	badEnd := block.NewICmp(enum.IPredSLT, endOff, zero)
+	inverted := block.NewICmp(enum.IPredSGT, startOff, endOff)
+	bad := block.NewOr(block.NewOr(badStart, badEnd), inverted)
 
-	condBlock := fn.NewBlock("")
-	bodyBlock := fn.NewBlock("")
-	doneBlock := fn.NewBlock("")
-	negOK.NewBr(condBlock)
-
-	// The walk stops as soon as the end offset is known, so slicing the head of a
-	// long string does not traverse its tail.
-	bi := condBlock.NewLoad(lltypes.I64, biSlot)
-	more := condBlock.NewICmp(enum.IPredULT, bi, byteLen)
-	notDone := condBlock.NewXor(condBlock.NewLoad(lltypes.I1, seenEnd), constant.NewInt(lltypes.I1, 1))
-	condBlock.NewCondBr(condBlock.NewAnd(more, notDone), bodyBlock, doneBlock)
-
-	// Record the byte offset the moment the rune cursor reaches each bound. Both are
-	// tested before decoding, so `end == rune count` records the offset one past the
-	// last rune (the byte length) on the iteration that fails the `more` test — which
-	// is why the same check is repeated in doneBlock below.
-	riB := bodyBlock.NewLoad(lltypes.I64, riSlot)
-	biB := bodyBlock.NewLoad(lltypes.I64, biSlot)
-	atStart := bodyBlock.NewICmp(enum.IPredEQ, riB, start)
-	bodyBlock.NewStore(bodyBlock.NewSelect(atStart, biB, bodyBlock.NewLoad(lltypes.I64, startOffSlot)), startOffSlot)
-	bodyBlock.NewStore(bodyBlock.NewOr(bodyBlock.NewLoad(lltypes.I1, seenStart), atStart), seenStart)
-	atEnd := bodyBlock.NewICmp(enum.IPredEQ, riB, end)
-	bodyBlock.NewStore(bodyBlock.NewSelect(atEnd, biB, bodyBlock.NewLoad(lltypes.I64, endOffSlot)), endOffSlot)
-	bodyBlock.NewStore(bodyBlock.NewOr(bodyBlock.NewLoad(lltypes.I1, seenEnd), atEnd), seenEnd)
-
-	nBytes := bodyBlock.NewCall(l.utf8DecodeFunc(), data, biB, cpSlot)
-	bodyBlock.NewStore(bodyBlock.NewAdd(biB, nBytes), biSlot)
-	bodyBlock.NewStore(bodyBlock.NewAdd(riB, constant.NewInt(lltypes.I64, 1)), riSlot)
-	bodyBlock.NewBr(condBlock)
-
-	// A bound equal to the rune count lands here rather than in the loop: the cursor
-	// reaches it exactly as the bytes run out. Both bounds get the same treatment, so
-	// `s.slice(n, n)` on a string of n runes is the empty string rather than a trap.
-	riEnd := doneBlock.NewLoad(lltypes.I64, riSlot)
-	biEnd := doneBlock.NewLoad(lltypes.I64, biSlot)
-	atStartEnd := doneBlock.NewICmp(enum.IPredEQ, riEnd, start)
-	doneBlock.NewStore(doneBlock.NewSelect(atStartEnd, biEnd, doneBlock.NewLoad(lltypes.I64, startOffSlot)), startOffSlot)
-	sawStart := doneBlock.NewOr(doneBlock.NewLoad(lltypes.I1, seenStart), atStartEnd)
-	atEndEnd := doneBlock.NewICmp(enum.IPredEQ, riEnd, end)
-	doneBlock.NewStore(doneBlock.NewSelect(atEndEnd, biEnd, doneBlock.NewLoad(lltypes.I64, endOffSlot)), endOffSlot)
-	sawEnd := doneBlock.NewOr(doneBlock.NewLoad(lltypes.I1, seenEnd), atEndEnd)
-
-	// A bound the walk never reached is past the end of the string.
 	buildBlock := fn.NewBlock("")
-	doneBlock.NewCondBr(doneBlock.NewAnd(sawStart, sawEnd), buildBlock, trapBlock)
+	block.NewCondBr(bad, trapBlock, buildBlock)
 
-	startOff := buildBlock.NewLoad(lltypes.I64, startOffSlot)
-	endOff := buildBlock.NewLoad(lltypes.I64, endOffSlot)
 	nOut := buildBlock.NewSub(endOff, startOff)
 
 	// A fresh box, exactly as `++` builds one (lowerStringConcat), so the result is an

@@ -10,6 +10,56 @@ Newest first.
 ## Dated log
 
 ### 08/08/26
+**Negative indices on strings, for `s[i]` and `s.slice(a, b)`.** `s[-1]` is the last rune
+and `s.slice(1, -1)` drops it, which is the rule arrays already had.
+
+**The reason to do it is not consistency, and the old comment is the reason it had not been
+done.** `lowerStringIndex` recorded that a from-the-end form "would require a full rune
+count first" — plausible, and false. Finding the k-th rune from the end is a **byte** walk
+that steps back over continuation bytes (`10xxxxxx`) until it lands on a lead byte,
+well-defined precisely because UTF-8 is self-synchronizing — the property `starts_with` and
+`index` already lean on — and it **decodes nothing**. So it is O(k) in byte tests, where the
+spelling it replaces is two full O(n) decode walks (`len()`, then `s[i]` at O(i)):
+
+| reading the last rune of a 2000-rune string, 2000 reps | |
+|---|---|
+| `s[s.len() - 1]` | 34272 µs |
+| `s[-1]` | **18 µs** |
+
+So this removes an O(n) tax that had no workaround rather than adding a second spelling for
+something already cheap — the opposite of the array case, where `xs[-1]` and `xs[size-1]`
+cost the same.
+
+**One definition, `lyra_str_rune_offset(data, byteLen, idx, allowEnd) -> i64`**, returning a
+byte offset or -1. `s[i]` and `slice` had carried the same forward walk twice, which is why a
+negative bound could not have been added to one without being added to the other by hand
+(rule 8) — and folding them made `lowerStringIndex` shorter than before the feature. Two
+details worth keeping:
+
+- **It returns -1 instead of trapping**, so each caller raises the panic that fits it. The
+  string-index and string-slice traps say different things, and a shared helper that trapped
+  would have had to pick one.
+- **`allowEnd` is the difference between an index and a bound.** `idx == runeCount` has a
+  byte offset (the byte length) and slice needs it — an exclusive end, and `s.slice(n, n)` is
+  "" — while `s[n]` must stay out of bounds. A negative index never reaches that case, since
+  stepping back at least one rune always lands strictly inside.
+
+**Two things in `slice` changed shape.** Its ordering test now compares the resolved *byte
+offsets* rather than the written bounds, which is what admits `slice(1, -1)`: as written,
+`1 > -1` would trap on an ordinary interval, and the rune-to-byte mapping is monotonic so the
+two comparisons ask the same question. And it resolves each bound with its own call, giving
+O(start) + O(end) where the old single pass was O(end). That pass is exactly what a negative
+bound cannot be expressed in — it advances a rune counter forward, and no value of that
+counter means "third from the end" — and the doubled decode sits inside a function that
+already allocates and copies.
+
+**`index`'s negative `offset` stays `None`, and now says why.** It had been justified by
+strings having no from-the-end index, which this retires. The reason that survives is
+different: an offset there is a *resumption point for a scan*, not an index — "resume at k
+and keep going forward" has no reading for a negative k — and Python's `str.find`, which does
+count its `start` from the end, is a well-known confusion for that reason.
+
+### 08/08/26
 **`starts_with` / `ends_with`, and the two byte-level primitives under them.** The prelude
 gains both as one-liners; the compiler gains `s.byte_len()` (O(1) — the fat pointer's own
 length field) and `s.compare_bytes_at(offset, other)` (memcmp at a byte offset). Both

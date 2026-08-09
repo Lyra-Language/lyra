@@ -398,3 +398,159 @@ let main = () -> void => { println("${at_end("ab", "b")}") }
 		t.Errorf("byte_len/compare_bytes_at allocate nothing; noalloc must accept them; got: %v", diags)
 	}
 }
+
+// `index` / `contains`, ordinary Lyra in the prelude over `compare_bytes_at`.
+//
+// **The offsets it returns are rune indices**, so the answer can be handed straight to
+// `slice`; the scan underneath is byte-level, reconciled by carrying a byte cursor
+// alongside the rune counter rather than converting afterwards. The multi-byte rows are
+// what separate the two: in "日本語" the last rune is at index 2 and byte 6, so a
+// byte-leaking implementation answers 6.
+//
+// The empty-needle rows matter more than they look. `index("")` is the position itself,
+// including at the very end (`s.index("", s.len())` is `Some(len)`, checked after the
+// loop because a `for-in` does not visit that position) — which is what will make a
+// `split` on an empty separator terminate rather than run off the end.
+func TestExec_StringIndexAndContains(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let at = (s: string, n: string, o: i64) -> i64 => s.index(n, o).unwrap_or(-1)
+let main = () -> void => {
+  // found at 2 / 0 / 4, absent, needle longer than haystack
+  println("${at("hello", "ll", 0)} ${at("hello", "h", 0)} ${at("hello", "o", 0)} ${at("hello", "z", 0)} ${at("hello", "hellooo", 0)}");
+  // the offset, and overlapping occurrences: "banana" has "na" at 2 and 4
+  println("${at("banana", "na", 0)} ${at("banana", "na", 3)} ${at("banana", "na", 5)} ${at("banana", "ana", 2)}");
+  // empty needle at a position, at the end, past the end; empty haystack; negative offset
+  println("${at("hello", "", 0)} ${at("hello", "", 5)} ${at("hello", "", 6)} ${at("", "", 0)} ${at("", "x", 0)} ${at("hello", "l", -1)}");
+  // rune indices, not byte offsets
+  println("${at("héllo", "llo", 0)} ${at("héllo", "é", 0)} ${at("héllo", "o", 0)} ${at("日本語", "語", 0)} ${at("日本語", "本語", 0)} ${at("日本語", "日語", 0)}");
+  // the answer feeds straight into slice, which is the reason it is a rune index
+  let s = "héllo wörld";
+  println("[${s.slice(s.index("wörld").unwrap_or(0), s.len())}]");
+  println("${"hello".contains("ell")} ${"hello".contains("xyz")} ${"日本語".contains("本")}");
+}
+`
+	want := "2 0 4 -1 -1\n2 4 -1 3\n0 5 -1 0 -1 -1\n2 1 4 2 1 -1\n[wörld]\ntrue false true"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("index/contains:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// The prelude's `index` is written with guard-clause `return`s inside an `if` and a
+// `for-in` — the idiom that did not lower until the nested-return fix (08/08), and the
+// reason `parse_i64` beside it is one long tail if/else instead. Pinned here as well as
+// in the typechecker tests because this is the path that actually failed: the front end
+// passed and the backend died with `no type recorded for data constructor "None"`.
+func TestExec_EarlyReturnOfAConstructorLowers(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let first_over = (xs: [4]i64, limit: i64) -> Maybe<i64> => {
+  if limit < 0 { return None }
+  for var i = 0; i < 4; i+=1 {
+    if xs[i] > limit { return Some(xs[i]) }
+  }
+  None
+}
+let main = () -> void => {
+  let xs = [3, 9, 4, 12];
+  println("${first_over(xs, 5).unwrap_or(-1)} ${first_over(xs, 20).unwrap_or(-1)} ${first_over(xs, -1).unwrap_or(-1)}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "9 -1 -1" {
+		t.Errorf("early return of a constructor: got %q, want \"9 -1 -1\"", got)
+	}
+}
+
+// A negative string index counts from the end, `s[-1]` being the last rune — the rule
+// arrays already had, arriving for strings on 08/08.
+//
+// The multi-byte rows are the ones that matter: a byte-offset implementation would
+// answer with a continuation byte rather than a rune, so "日本語"[-1] is the test that
+// the backward walk lands on a lead byte. It skips continuation bytes without decoding,
+// which is well-defined only because UTF-8 is self-synchronizing.
+func TestExec_NegativeStringIndex(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  let s = "héllo";
+  println("${s[0]}${s[1]}${s[4]}|${s[-1]}${s[-2]}${s[-5]}");
+  let j = "日本語";
+  println("${j[-1]}${j[-2]}${j[-3]}|${j[0]}${j[2]}");
+}
+`
+	want := "héo|olh\n語本日|日語"
+	out, _ := buildAndRunCapture(t, src)
+	if got := strings.TrimSpace(out); got != want {
+		t.Errorf("negative string index:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// Out of range in *either* direction still traps, and with the string trap rather than
+// the array one. `s[-n]` is the first rune and `s[-n-1]` is past the front; the end
+// position `s[n]` is not an index, which is what allowEnd=false buys (slice, which does
+// admit it, is the other caller).
+func TestExec_NegativeStringIndexOutOfRangeTraps(t *testing.T) {
+	t.Parallel()
+	for _, expr := range []string{"s[5]", "s[-6]", "s[99]", "s[-99]"} {
+		t.Run(expr, func(t *testing.T) {
+			t.Parallel()
+			src := "\nmodule main\nlet main = () -> void => {\n  let s = \"héllo\";\n  println(\"${" + expr + "}\");\n}\n"
+			stderr, code := buildAndRunPanic(t, src)
+			if code != trapExitCode {
+				t.Errorf("%s exited %d; want %d (the trap)", expr, code, trapExitCode)
+			}
+			if !strings.Contains(stderr, "string index out of bounds") {
+				t.Errorf("%s wrote %q; want the string-index trap", expr, stderr)
+			}
+		})
+	}
+}
+
+// Negative `slice` bounds, including a **mixed** range like `slice(1, -1)` — which is
+// the case that pins the ordering test being applied to the resolved byte offsets
+// rather than to the written bounds. Compared as written, `1 > -1` would trap on a
+// perfectly ordinary interval.
+//
+// `slice(-n, -n)` is the empty string, not a trap: an empty range is what every loop
+// terminates on, and it is only `start > end` that is a caller bug.
+func TestExec_NegativeStringSliceBounds(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  let s = "héllo";
+  println("[${s.slice(0, 5)}][${s.slice(1, 3)}][${s.slice(0, 0)}][${s.slice(5, 5)}]");
+  println("[${s.slice(1, -1)}][${s.slice(-3, -1)}][${s.slice(-5, 2)}][${s.slice(-1, 5)}][${s.slice(-5, -5)}]");
+  let j = "日本語です";
+  println("[${j.slice(-2, 5)}][${j.slice(0, -2)}][${j.slice(-3, -1)}]");
+}
+`
+	want := "[héllo][él][][]\n[éll][ll][hé][o][]\n[です][日本語][語で]"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("negative slice bounds:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// An inverted range traps whichever way it is spelled, and so does a bound past either
+// end. `slice(-1, -3)` is the negative spelling of `slice(4, 2)`, and must not quietly
+// yield "" — the empty string it would produce is indistinguishable from a correct
+// empty slice.
+func TestExec_NegativeStringSliceOutOfRangeTraps(t *testing.T) {
+	t.Parallel()
+	for _, expr := range []string{"s.slice(3, 1)", "s.slice(-1, -3)", "s.slice(0, 6)", "s.slice(-6, 2)", "s.slice(6, 6)"} {
+		t.Run(expr, func(t *testing.T) {
+			t.Parallel()
+			src := "\nmodule main\nlet main = () -> void => {\n  let s = \"héllo\";\n  println(\"[${" + expr + "}]\");\n}\n"
+			stderr, code := buildAndRunPanic(t, src)
+			if code != trapExitCode {
+				t.Errorf("%s exited %d; want %d (the trap)", expr, code, trapExitCode)
+			}
+			if !strings.Contains(stderr, "string slice out of range") {
+				t.Errorf("%s wrote %q; want the string-slice trap", expr, stderr)
+			}
+		})
+	}
+}

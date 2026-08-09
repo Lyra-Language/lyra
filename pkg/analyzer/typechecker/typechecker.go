@@ -25,8 +25,13 @@ type TypeChecker struct {
 	patternBound  map[string]bool               // names in paramTypes that came from a *pattern* (match arm, if-let), not a parameter
 	resolvedTypes map[string]types.Type         // cache for resolveType to avoid duplicate "unknown type" errors
 	enclosingRet  *types.ReturnType             // declared return type of the lambda body currently being checked; nil at top level
-	traitImpls    []*ast.TraitImplStmt          // every impl block in the program, collected up front by Check; see resolveTraitMethod
-	genericBounds map[string][]string           // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
+	// enclosingFuncName names that same lambda, for the diagnostic checkReturnValue
+	// builds. It rides alongside enclosingRet rather than being looked up, because by
+	// the time a *nested* return is reached the only thing that still knows which
+	// function this is, is the frame that set the return type.
+	enclosingFuncName string
+	traitImpls        []*ast.TraitImplStmt // every impl block in the program, collected up front by Check; see resolveTraitMethod
+	genericBounds     map[string][]string  // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
 	// currentImplMethod/currentImplType name the trait-impl method whose body is being
 	// checked, or the zero values outside one. Read by showApplies, which must not
 	// rewrite `${self}` inside `show` into a call to that same `show`.
@@ -163,6 +168,8 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 		tc.checkVarReassignment(n)
 	case *ast.ExpressionStmt:
 		tc.checkExpressionStmt(n)
+	case *ast.ReturnStmt:
+		tc.checkReturnStmt(n)
 	case *ast.DerefAssignmentStmt:
 		tc.checkDerefAssignment(n)
 	case *ast.LValueAssignmentStmt:

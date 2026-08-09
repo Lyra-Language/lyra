@@ -183,7 +183,9 @@ func (tc *TypeChecker) checkTraitImplMethodBody(methodName string, implMethod as
 	prevRet := tc.enclosingRet
 	ret := traitSig.ReturnType
 	tc.enclosingRet = &ret
-	defer func() { tc.enclosingRet = prevRet }()
+	prevName := tc.enclosingFuncName
+	tc.enclosingFuncName = methodName
+	defer func() { tc.enclosingRet, tc.enclosingFuncName = prevRet, prevName }()
 
 	body := implMethod.Clause.Body
 	declaredReturn := tc.resolveTypeIfKnown(traitSig.ReturnType.Type, body.GetLocation())

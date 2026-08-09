@@ -54,14 +54,21 @@ func (l *lowerer) stringBox(block *ir.Block, str value.Value) value.Value {
 // stringBox above. A literal's box is pinned, so the runtime no-ops on it.)
 
 // lowerStringIndex lowers `s[i]` on a string → the i-th **rune** (code point).
-// Because a string is UTF-8, runes aren't randomly addressable: this walks from the
-// front, decoding one rune per step, until it has skipped `i` of them, then yields
-// that rune. It is therefore O(i) — for a full traversal, prefer `for c in s`. The
-// index is a rune index, not a byte offset; running off the end before reaching `i`
-// (which includes any negative index, since the rune counter only ever grows) traps
-// out-of-bounds (its own trap, not the array one — a string index is a rune index
-// and pointing the reader at an array is a wrong turn). There is no from-the-end
-// (negative) form for a string — that would require a full rune count first.
+//
+// Because a string is UTF-8, runes aren't randomly addressable, so the position comes
+// from strRuneOffsetFunc and this decodes the one rune there. A non-negative `i` costs
+// O(i) — for a full traversal, prefer `for c in s`.
+//
+// **A negative index counts from the end** (08/08), `s[-1]` being the last rune, which
+// is the array rule. It is not merely consistency: the backward walk skips continuation
+// bytes without decoding, so `s[-1]` is a few byte tests where the spelling it replaces,
+// `s[s.len() - 1]`, is two full O(n) decode walks. The comment here used to say a
+// from-the-end form "would require a full rune count first", which is the thing that
+// turned out not to be true.
+//
+// Out of range in either direction traps — its own trap, not the array one, since a
+// string index is a rune index and pointing the reader at an array is a wrong turn.
+// The end *position* is not a valid index (allowEnd is false), unlike in slice.
 func (l *lowerer) lowerStringIndex(block *ir.Block, e *ast.IndexExpr) (value.Value, *ir.Block, error) {
 	str, block, err := l.lowerExpr(block, e.Object)
 	if err != nil {
@@ -78,41 +85,19 @@ func (l *lowerer) lowerStringIndex(block *ir.Block, e *ast.IndexExpr) (value.Val
 	}
 	signed, _ := l.getIntSignedness(e.Index)
 	target := coerceIntWidth(block, idx, signed, lltypes.I64) // the wanted rune index
-	decode := l.utf8DecodeFunc()
+
+	off := block.NewCall(l.strRuneOffsetFunc(), data, length, target, constant.NewInt(lltypes.I1, 0))
 
 	fn := block.Parent
-	entry := fn.Blocks[0]
-	biSlot := entry.NewAlloca(lltypes.I64) // byte index
-	riSlot := entry.NewAlloca(lltypes.I64) // rune index
-	cpSlot := entry.NewAlloca(lltypes.I32) // decode out-param
-	block.NewStore(constant.NewInt(lltypes.I64, 0), biSlot)
-	block.NewStore(constant.NewInt(lltypes.I64, 0), riSlot)
-
-	condBlock := fn.NewBlock("")
-	bodyBlock := fn.NewBlock("")
-	advBlock := fn.NewBlock("")
 	foundBlock := fn.NewBlock("")
 	trapBlock := fn.NewBlock("")
-	block.NewBr(condBlock)
-
-	// Ran out of bytes before reaching rune `i` → out of bounds.
-	bi := condBlock.NewLoad(lltypes.I64, biSlot)
-	condBlock.NewCondBr(condBlock.NewICmp(enum.IPredULT, bi, length), bodyBlock, trapBlock)
+	block.NewCondBr(block.NewICmp(enum.IPredSLT, off, constant.NewInt(lltypes.I64, 0)), trapBlock, foundBlock)
 
 	trapBlock.NewCall(l.panicStringIndexOOBFunc())
 	trapBlock.NewUnreachable()
 
-	// Decode the rune at the current byte index; if its rune index is the target,
-	// we're done — otherwise advance.
-	biB := bodyBlock.NewLoad(lltypes.I64, biSlot)
-	ri := bodyBlock.NewLoad(lltypes.I64, riSlot)
-	n := bodyBlock.NewCall(decode, data, biB, cpSlot)
-	bodyBlock.NewCondBr(bodyBlock.NewICmp(enum.IPredEQ, ri, target), foundBlock, advBlock)
-
-	advBlock.NewStore(advBlock.NewAdd(ri, constant.NewInt(lltypes.I64, 1)), riSlot)
-	advBlock.NewStore(advBlock.NewAdd(biB, n), biSlot)
-	advBlock.NewBr(condBlock)
-
+	cpSlot := fn.Blocks[0].NewAlloca(lltypes.I32) // decode out-param
+	foundBlock.NewCall(l.utf8DecodeFunc(), data, off, cpSlot)
 	return foundBlock.NewLoad(lltypes.I32, cpSlot), foundBlock, nil
 }
 
@@ -368,4 +353,124 @@ func isStringLLVMType(t lltypes.Type) bool {
 	}
 	lenTy, ok := st.Fields[1].(*lltypes.IntType)
 	return ok && lenTy.BitSize == 64
+}
+
+// strRuneOffsetFunc lazily defines
+// `i64 @lyra_str_rune_offset(i8* data, i64 byteLen, i64 idx, i1 allowEnd)`: the **byte**
+// offset at which rune `idx` starts, or -1 when there is no such rune.
+//
+// It is the one definition of "where does rune k begin", and both `s[i]` and
+// `s.slice(a, b)` go through it. Each used to carry its own forward walk — the same
+// question answered twice, which is the drift hazard the compiler's rule 8 is about, and
+// which is why a negative bound could not be added to one without being added to the
+// other by hand.
+//
+// **A negative `idx` counts from the end** (-1 is the last rune), matching array
+// indexing. That direction is not the same algorithm run backwards: it is a *byte* walk
+// that skips continuation bytes (`10xxxxxx`) until it lands on a lead byte, which is
+// well-defined precisely because UTF-8 is self-synchronizing — the property
+// `starts_with` and `index` already lean on. So it costs O(|idx|) runes with **no
+// decoding at all**, where the forward walk decodes every rune it passes. That is what
+// makes this worth having rather than merely consistent: `s[-1]` is a handful of byte
+// tests, while the spelling it replaces, `s[s.len() - 1]`, is two full O(n) decode walks
+// — an O(n) tax on "the last character" that had no workaround.
+//
+// `allowEnd` admits `idx == runeCount`, whose offset is the byte length. `slice` needs
+// it (an exclusive end, and `s.slice(n, n)` is the empty string) and indexing must not
+// have it (`s[n]` is out of bounds). A negative `idx` never reaches that case, since
+// stepping back at least one rune always lands strictly inside.
+//
+// Out of range returns -1 rather than trapping, so the *caller* raises the panic that
+// fits it — the string-index trap and the string-slice trap say different things, and a
+// shared helper that trapped would have to pick one.
+func (l *lowerer) strRuneOffsetFunc() *ir.Func {
+	if l.strRuneOffset != nil {
+		return l.strRuneOffset
+	}
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	data := ir.NewParam("data", i8ptr)
+	byteLen := ir.NewParam("byteLen", lltypes.I64)
+	idx := ir.NewParam("idx", lltypes.I64)
+	allowEnd := ir.NewParam("allowEnd", lltypes.I1)
+	fn := l.module.NewFunc("lyra_str_rune_offset", lltypes.I64, data, byteLen, idx, allowEnd)
+	l.strRuneOffset = fn
+
+	zero := constant.NewInt(lltypes.I64, 0)
+	one := constant.NewInt(lltypes.I64, 1)
+
+	entry := fn.NewBlock("entry")
+	fwdInit := fn.NewBlock("fwd")
+	fwdCond := fn.NewBlock("fwdCond")
+	fwdMore := fn.NewBlock("fwdMore")
+	fwdStep := fn.NewBlock("fwdStep")
+	fwdFound := fn.NewBlock("fwdFound")
+	fwdAtEnd := fn.NewBlock("fwdAtEnd")
+	backInit := fn.NewBlock("back")
+	backCond := fn.NewBlock("backCond")
+	backMore := fn.NewBlock("backMore")
+	backStep := fn.NewBlock("backStep")
+	skipCond := fn.NewBlock("skipCond")
+	skipTest := fn.NewBlock("skipTest")
+	skipBody := fn.NewBlock("skipBody")
+	backNext := fn.NewBlock("backNext")
+	retOK := fn.NewBlock("ok")
+	oor := fn.NewBlock("oor")
+
+	// biSlot is the byte cursor throughout; nSlot is the rune counter on the way
+	// forward and the number of runes still to step back on the way back.
+	biSlot := entry.NewAlloca(lltypes.I64)
+	nSlot := entry.NewAlloca(lltypes.I64)
+	cpSlot := entry.NewAlloca(lltypes.I32) // decode out-param, discarded here
+	entry.NewCondBr(entry.NewICmp(enum.IPredSLT, idx, zero), backInit, fwdInit)
+
+	// Forward: decode rune by rune until the counter reaches idx.
+	fwdInit.NewStore(zero, biSlot)
+	fwdInit.NewStore(zero, nSlot)
+	fwdInit.NewBr(fwdCond)
+
+	fwdCond.NewCondBr(fwdCond.NewICmp(enum.IPredEQ, fwdCond.NewLoad(lltypes.I64, nSlot), idx), fwdFound, fwdMore)
+	// Out of bytes before reaching idx: there is no such rune.
+	fwdMore.NewCondBr(fwdMore.NewICmp(enum.IPredULT, fwdMore.NewLoad(lltypes.I64, biSlot), byteLen), fwdStep, oor)
+	{
+		bi := fwdStep.NewLoad(lltypes.I64, biSlot)
+		n := fwdStep.NewCall(l.utf8DecodeFunc(), data, bi, cpSlot)
+		fwdStep.NewStore(fwdStep.NewAdd(bi, n), biSlot)
+		fwdStep.NewStore(fwdStep.NewAdd(fwdStep.NewLoad(lltypes.I64, nSlot), one), nSlot)
+		fwdStep.NewBr(fwdCond)
+	}
+	// The cursor reached idx. Strictly inside the bytes it names a rune; exactly at the
+	// end it names the end *position*, which only slice may ask for.
+	fwdFound.NewCondBr(fwdFound.NewICmp(enum.IPredULT, fwdFound.NewLoad(lltypes.I64, biSlot), byteLen), retOK, fwdAtEnd)
+	fwdAtEnd.NewCondBr(allowEnd, retOK, oor)
+
+	// Backward: step back one rune at a time from the end, skipping continuation bytes.
+	// No decoding — the lead-byte test is the whole of it.
+	backInit.NewStore(backInit.NewSub(zero, idx), nSlot)
+	backInit.NewStore(byteLen, biSlot)
+	backInit.NewBr(backCond)
+
+	backCond.NewCondBr(backCond.NewICmp(enum.IPredEQ, backCond.NewLoad(lltypes.I64, nSlot), zero), retOK, backMore)
+	// Already at the front with runes left to step: idx reaches past the string.
+	backMore.NewCondBr(backMore.NewICmp(enum.IPredEQ, backMore.NewLoad(lltypes.I64, biSlot), zero), oor, backStep)
+	backStep.NewStore(backStep.NewSub(backStep.NewLoad(lltypes.I64, biSlot), one), biSlot)
+	backStep.NewBr(skipCond)
+
+	// `bi > 0 && isContinuation(data[bi])`, split across two blocks so the byte load
+	// happens only when the cursor is in bounds.
+	skipCond.NewCondBr(skipCond.NewICmp(enum.IPredUGT, skipCond.NewLoad(lltypes.I64, biSlot), zero), skipTest, backNext)
+	{
+		bi := skipTest.NewLoad(lltypes.I64, biSlot)
+		b := skipTest.NewZExt(skipTest.NewLoad(lltypes.I8, skipTest.NewGetElementPtr(lltypes.I8, data, bi)), lltypes.I32)
+		isCont := skipTest.NewICmp(enum.IPredEQ,
+			skipTest.NewAnd(b, constant.NewInt(lltypes.I32, 0xC0)), constant.NewInt(lltypes.I32, 0x80))
+		skipTest.NewCondBr(isCont, skipBody, backNext)
+	}
+	skipBody.NewStore(skipBody.NewSub(skipBody.NewLoad(lltypes.I64, biSlot), one), biSlot)
+	skipBody.NewBr(skipCond)
+	backNext.NewStore(backNext.NewSub(backNext.NewLoad(lltypes.I64, nSlot), one), nSlot)
+	backNext.NewBr(backCond)
+
+	retOK.NewRet(retOK.NewLoad(lltypes.I64, biSlot))
+	oor.NewRet(constant.NewInt(lltypes.I64, -1))
+	return fn
 }

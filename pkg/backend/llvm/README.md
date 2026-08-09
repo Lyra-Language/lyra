@@ -683,11 +683,35 @@ verified the root binding is mutable (`var`/`let mut`/`mut`/`own`).
 ### String indexing
 
 **String indexing** `s[i]` → the i-th **rune** lowers (`lowerStringIndex`, `strings.go`): a
-string is UTF-8, so runes aren't randomly addressable — it walks from the front decoding one
-rune per step (via `lyra_utf8_decode`) until it has skipped `i`, then yields that rune. O(i)
-(prefer `for c in s` for a full traversal); running off the end before reaching `i` — which
-includes any negative index, since there is no from-the-end form for a string — traps
-out-of-bounds. Also deferred: growth (no grow op exists yet), and `match` on a `shared` array.
+string is UTF-8, so runes aren't randomly addressable — the position comes from
+`lyra_str_rune_offset` and this decodes the one rune there. A non-negative `i` costs O(i)
+(prefer `for c in s` for a full traversal); out of range traps out-of-bounds, with the string
+trap rather than the array one. Also deferred: growth (no grow op exists yet), and `match` on
+a `shared` array.
+
+**A negative index counts from the end** (08/08), `s[-1]` being the last rune — the array
+rule, and `s.slice(start, end)` takes negative bounds the same way (`s.slice(1, -1)` drops
+the last rune). This README used to record that a from-the-end form "would require a full
+rune count first", which is the claim that turned out to be false and is the reason it is
+worth having: finding the k-th rune from the end is a **byte** walk that skips continuation
+bytes (`10xxxxxx`) until it reaches a lead byte — well-defined because UTF-8 is
+self-synchronizing, and costing O(k) with *no decoding*. So it is not sugar over an existing
+spelling, it removes an O(n) tax that had no workaround: `s[s.len() - 1]` is two full decode
+walks (`len()` is O(n), then `s[i]` is O(i)), measured at **34272 µs against 18 µs** for
+`s[-1]` over 2000 reads of a 2000-rune string.
+
+`lyra_str_rune_offset(data, byteLen, idx, allowEnd)` (`strRuneOffsetFunc`) is the one
+definition of "where does rune k begin", returning a byte offset or -1. Both callers used to
+carry their own copy of the forward walk — the same question answered twice, which is why a
+negative bound could not be added to one without being added to the other by hand (rule 8).
+It returns -1 rather than trapping so each caller raises the panic that fits it, the index
+and slice traps saying different things. `allowEnd` admits `idx == runeCount`, whose offset
+is the byte length: slice needs it (an exclusive end, and `s.slice(n, n)` is "") and indexing
+must not have it. Two consequences for `slice`: it resolves each bound with its own call, so
+it is O(start) + O(end) where the old single pass was O(end) — that pass advanced a rune
+counter forward and no value of it means "third from the end" — and the ordering check
+compares the resolved *offsets*, since comparing the written bounds would reject
+`slice(1, -1)` on `1 > -1`.
 
 ### Byte-level string primitives
 
