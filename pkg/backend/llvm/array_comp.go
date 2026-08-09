@@ -99,11 +99,11 @@ func (l *lowerer) lowerArrayComp(block *ir.Block, e *ast.ArrayCompExpr) (value.V
 		capacity = block.NewMul(capacity, src.capacity)
 	}
 
-	l.ensureRCRuntime()
 	boxTy := DynArrayBoxType(elemLL)
-	byteLen := block.NewAdd(i64c(int64(dynArrayHeaderSize)), block.NewMul(capacity, i64c(int64(stride))))
-	boxI8 := block.NewCall(l.rcAlloc, byteLen) // i8*, rc = 1
-	box := block.NewBitCast(boxI8, lltypes.NewPointer(boxTy))
+	// Length 0 for now: the count is only known once the guards have run, and is stored
+	// at the end. The buffer is sized at the capacity, which is the over-allocation this
+	// file's header comment explains.
+	box := l.dynArrayAlloc(block, boxTy, elemLL, i64c(0), capacity, int64(stride))
 
 	fn := block.Parent
 	entry := fn.Blocks[0]

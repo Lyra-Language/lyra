@@ -14,22 +14,31 @@ import (
 )
 
 // A dynamic array `[]T` is a heap-boxed, ref-counted value: a `ptr` to
-// `{ i64 rc, i64 len, [0 x T] }` — the refcount, the element count, then the
-// elements. Modelling it as a single box pointer (rather than a `{ data, len }`
-// fat pointer) means it reuses the shared-value managed machinery unchanged: the
-// value *is* a pointer, so managedBox / retain / release act on it directly, and
-// the ownership pass frees it like any managed value (IsManaged covers `[]T`). The
-// `[0 x T]` tail is a flexible array member GEP'd past its declared length; the real
-// storage is sized at allocation from the element count. Every `[]T` — even empty —
-// is a real box, so retain/release stay uniform (no null special case).
+// `{ i64 rc, i64 weak, i64 len, i64 cap, T* elems }` — the refcount header, the element
+// count, the buffer's capacity, and a pointer to the elements. Modelling it as a single
+// box pointer (rather than a `{ data, len }` fat pointer) means it reuses the
+// shared-value managed machinery unchanged: the value *is* a pointer, so managedBox /
+// retain / release act on it directly, and the ownership pass frees it like any managed
+// value (IsManaged covers `[]T`). Every `[]T` — even empty — is a real box, so
+// retain/release stay uniform (no null special case).
+//
+// **The elements are in their own buffer, and that indirection is what makes `[]T`
+// growable** (08/09). They used to sit inline in a `[0 x T]` tail: one allocation and
+// one less load per access, and impossible to grow — a `[]T` value is the box pointer,
+// so elements that moved would move the box and leave every other binding holding a
+// dangling one. Aliasing is observable (`let b = a; a[0] = 9` reads through `b`), so
+// that is a use-after-free rather than a choice about semantics. With the elements
+// behind a pointer the box address never changes, so every alias sees a `push` — the
+// same reference semantics `[]T` already had for element assignment. The cost is one
+// load per element access, which is what every growable reference container pays.
 //
 // Covers construction from a literal, indexing (bounds-checked against the runtime
-// len, negative-from-end), by-value flow through let/params/returns, and — via
-// dynArrayDropFn — *managed* element types (`[]string`, `[][]T`): the box's drop
-// glue loops over the runtime len and releases each element (the elements transfer
-// their reference into the box at construction, like a tuple/struct's fields).
-// Deferred, loud errors: iteration (`for x in xs`), `match` on `[]T`, `.len()`, and
-// growth (no grow operation exists in the language yet).
+// len, negative-from-end), iteration, `.len()`, `push`, by-value flow through
+// let/params/returns, and — via dynArrayDropFn — *managed* element types (`[]string`,
+// `[][]T`): the box's drop glue loops over the runtime len releasing each element, then
+// frees the buffer (the elements transfer their reference into the box at construction
+// and at push, like a tuple/struct's fields). Deferred, loud error: `match` on a
+// `shared` array.
 
 // i32c / i64c are small constant helpers for the many GEP indices below.
 func i32c(n int64) *constant.Int { return constant.NewInt(lltypes.I32, n) }
@@ -84,13 +93,29 @@ func (l *lowerer) dynArrayBox(block *ir.Block, elemLyra types.Type, n int) (valu
 	}
 	stride := alignUp(elemSize, elemAlign)
 
-	l.ensureRCRuntime()
 	boxTy := DynArrayBoxType(elemLL)
-	boxSize := i64c(int64(dynArrayHeaderSize + n*stride))
-	boxI8 := block.NewCall(l.rcAlloc, boxSize) // i8*, rc = 1
-	box := block.NewBitCast(boxI8, lltypes.NewPointer(boxTy))
-	block.NewStore(i64c(int64(n)), dynArrayLenPtr(block, boxTy, box))
+	box := l.dynArrayAlloc(block, boxTy, elemLL, i64c(int64(n)), i64c(int64(n)), int64(stride))
 	return box, boxTy, elemLL, nil
+}
+
+// dynArrayAlloc allocates a `[]T` box and its element buffer, storing the length, the
+// capacity and the buffer pointer. It is the one place that knows a dynamic array is two
+// allocations rather than one, so the three construction sites — a literal, a
+// comprehension, and a match's rest-binding tail — cannot disagree about it.
+//
+// The box is a *fixed* size now; only the buffer scales with the count. `malloc(0)` for
+// an empty array is deliberate rather than a null: it returns a pointer `free` accepts,
+// so the drop glue needs no null case, and `realloc` grows it like any other. Every
+// `[]T` is still a real box, so retain/release stay uniform.
+func (l *lowerer) dynArrayAlloc(block *ir.Block, boxTy *lltypes.StructType, elemLL lltypes.Type, length, capacity value.Value, stride int64) value.Value {
+	l.ensureRCRuntime()
+	boxI8 := block.NewCall(l.rcAlloc, i64c(int64(dynArrayBoxSize))) // i8*, rc = 1
+	box := block.NewBitCast(boxI8, lltypes.NewPointer(boxTy))
+	block.NewStore(length, dynArrayLenPtr(block, boxTy, box))
+	block.NewStore(capacity, dynArrayCapPtr(block, boxTy, box))
+	buf := block.NewCall(l.malloc, block.NewMul(capacity, i64c(stride)))
+	block.NewStore(block.NewBitCast(buf, lltypes.NewPointer(elemLL)), dynArrayElemsPtr(block, boxTy, box))
+	return box
 }
 
 // lowerDynArrayRepeat builds `[v; n]` in a **dynamic**-array context — the heap
@@ -210,43 +235,147 @@ func (l *lowerer) lowerArrayLen(block *ir.Block, call *ast.FunctionCallExpr, mem
 // the body, so a `[]` whose element type reaches itself terminates).
 func (l *lowerer) dynArrayDropFn(dyn types.DynamicArrayType) (value.Value, error) {
 	elemLyra := dyn.ElementType
-	if !l.needsDrop(elemLyra) {
-		return nullDropFn(), nil
-	}
+	// **Always a drop function now, even for `[]i64`.** The elements live in their own
+	// malloc'd buffer, so releasing the box has to free that buffer whatever the element
+	// type is; returning nullDropFn for a scalar element — which was right while the
+	// elements were inline and freed with the box — would leak the buffer of every
+	// dynamic array of scalars in the program. The element loop below is what is
+	// conditional on needsDrop, not the function.
 	key := dyn.String()
 	if fn, ok := l.dropFns[key]; ok {
 		return constant.NewBitCast(fn, lltypes.NewPointer(lltypes.I8)), nil
 	}
+	l.ensureRCRuntime() // the body calls free; the glue may be built before any allocation
 	elemLL, err := l.lowerType(elemLyra)
 	if err != nil {
 		return nil, err
 	}
-	payloadTy := lltypes.NewStruct(lltypes.I64, lltypes.NewArray(0, elemLL)) // { len, [0 x T] }
+	elemPtrTy := lltypes.NewPointer(elemLL)
+	// The payload past the refcount header: { len, cap, T* }.
+	payloadTy := lltypes.NewStruct(lltypes.I64, lltypes.I64, elemPtrTy)
 	fn := l.module.NewFunc(l.dropFnName(key), lltypes.Void, ir.NewParam("payload", lltypes.NewPointer(lltypes.I8)))
 	l.dropFns[key] = fn // cache before building the body
 
 	entry := fn.NewBlock("entry")
 	p := entry.NewBitCast(fn.Params[0], lltypes.NewPointer(payloadTy))
-	length := entry.NewLoad(lltypes.I64, entry.NewGetElementPtr(payloadTy, p, i32c(0), i32c(0)))
-	iSlot := entry.NewAlloca(lltypes.I64)
-	entry.NewStore(i64c(0), iSlot)
-
-	cond := fn.NewBlock("loopcond")
-	body := fn.NewBlock("loopbody")
+	elems := entry.NewLoad(elemPtrTy, entry.NewGetElementPtr(payloadTy, p, i32c(0), i32c(2)))
 	exit := fn.NewBlock("exit")
-	entry.NewBr(cond)
 
-	cond.NewCondBr(cond.NewICmp(enum.IPredSLT, cond.NewLoad(lltypes.I64, iSlot), length), body, exit)
+	if !l.needsDrop(elemLyra) {
+		// Nothing to release per element; the buffer still has to go.
+		entry.NewBr(exit)
+	} else {
+		length := entry.NewLoad(lltypes.I64, entry.NewGetElementPtr(payloadTy, p, i32c(0), i32c(0)))
+		iSlot := entry.NewAlloca(lltypes.I64)
+		entry.NewStore(i64c(0), iSlot)
 
-	i := body.NewLoad(lltypes.I64, iSlot)
-	elem := body.NewLoad(elemLL, body.NewGetElementPtr(payloadTy, p, i32c(0), i32c(1), i))
-	end, err := l.emitDropValue(body, elem, elemLyra) // may branch (a `data` element)
-	if err != nil {
-		return nil, err
+		cond := fn.NewBlock("loopcond")
+		body := fn.NewBlock("loopbody")
+		entry.NewBr(cond)
+
+		cond.NewCondBr(cond.NewICmp(enum.IPredSLT, cond.NewLoad(lltypes.I64, iSlot), length), body, exit)
+
+		i := body.NewLoad(lltypes.I64, iSlot)
+		elem := body.NewLoad(elemLL, body.NewGetElementPtr(elemLL, elems, i))
+		end, err := l.emitDropValue(body, elem, elemLyra) // may branch (a `data` element)
+		if err != nil {
+			return nil, err
+		}
+		end.NewStore(end.NewAdd(i, i64c(1)), iSlot)
+		end.NewBr(cond)
 	}
-	end.NewStore(end.NewAdd(i, i64c(1)), iSlot)
-	end.NewBr(cond)
 
+	// **After** the elements, never before: an element's own release may read through
+	// the buffer it is stored in.
+	exit.NewCall(l.free, exit.NewBitCast(elems, lltypes.NewPointer(lltypes.I8)))
 	exit.NewRet(nil)
 	return constant.NewBitCast(fn, lltypes.NewPointer(lltypes.I8)), nil
+}
+
+// lowerDynArrayPush lowers `xs.push(v)`: grow the buffer if it is full, store the
+// element at index len, and bump len. Yields void.
+//
+// **The box never moves**, which is the whole reason the elements live behind a pointer
+// (layout.go). A `[]T` value *is* the box pointer, so a growth that relocated the box
+// would leave every other binding holding a dangling one — and aliasing is observable
+// (`let b = a; a[0] = 9` reads through `b`), so that is a use-after-free rather than a
+// choice about semantics. Growing the buffer instead means every alias sees the push,
+// which is the reference semantics `[]T` already had for element assignment.
+//
+// **Amortized doubling**, from a floor of 4: `realloc` is called on a full buffer only,
+// so n pushes cost O(n) copying rather than O(n²). The floor keeps a push-in-a-loop from
+// reallocating on its first few iterations, which is where a from-empty array spends
+// its worst relative cost. `realloc(p, n)` on the `malloc(0)` an empty array carries is
+// well-defined and behaves as `malloc(n)`, so there is no empty special case.
+//
+// The element **transfers** into the box: a managed value pushed here is owned by the
+// array from now on, exactly as an element written by a literal is, and the box's drop
+// glue releases it over the runtime length. That is why nothing is retained at this site
+// — the ownership pass sees a use whose value moves into a container.
+func (l *lowerer) lowerDynArrayPush(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, dynType types.DynamicArrayType) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 1 {
+		return nil, nil, fmt.Errorf("llvm: push() expects 1 argument, got %d", len(call.Arguments))
+	}
+	elemLyra := dynType.ElementType
+	elemLL, err := l.lowerType(elemLyra)
+	if err != nil {
+		return nil, nil, err
+	}
+	elemSize, elemAlign, ok := SizeAndAlign(l.resolveForLayout(elemLyra))
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: cannot size dynamic array element type %s", elemLyra)
+	}
+	stride := int64(alignUp(elemSize, elemAlign))
+
+	box, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	v, block, err := l.lowerExpr(block, call.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	v, err = l.coerceAggregateElem(block, v, elemLL, call.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+
+	boxTy := DynArrayBoxType(elemLL)
+	elemPtrTy := lltypes.NewPointer(elemLL)
+	length := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
+	capacity := block.NewLoad(lltypes.I64, dynArrayCapPtr(block, boxTy, box))
+
+	fn := block.Parent
+	growBlock := fn.NewBlock("")
+	storeBlock := fn.NewBlock("")
+	block.NewCondBr(block.NewICmp(enum.IPredSLT, length, capacity), storeBlock, growBlock)
+
+	// cap == 0 -> 4, else cap * 2. Computed with a select so the growth path stays one
+	// basic block.
+	doubled := growBlock.NewMul(capacity, i64c(2))
+	tooSmall := growBlock.NewICmp(enum.IPredSLT, doubled, i64c(4))
+	newCap := growBlock.NewSelect(tooSmall, i64c(4), doubled)
+	oldBuf := growBlock.NewLoad(elemPtrTy, dynArrayElemsPtr(growBlock, boxTy, box))
+	newBuf := growBlock.NewCall(l.reallocFunc(),
+		growBlock.NewBitCast(oldBuf, lltypes.NewPointer(lltypes.I8)),
+		growBlock.NewMul(newCap, i64c(stride)))
+	growBlock.NewStore(growBlock.NewBitCast(newBuf, elemPtrTy), dynArrayElemsPtr(growBlock, boxTy, box))
+	growBlock.NewStore(newCap, dynArrayCapPtr(growBlock, boxTy, box))
+	growBlock.NewBr(storeBlock)
+
+	// Re-read the buffer through dynArrayElemPtr rather than threading a phi: the growth
+	// path stored the new pointer into the box, so one load answers for both paths.
+	storeBlock.NewStore(v, dynArrayElemPtr(storeBlock, boxTy, box, length))
+	storeBlock.NewStore(storeBlock.NewAdd(length, i64c(1)), dynArrayLenPtr(storeBlock, boxTy, box))
+	return nil, storeBlock, nil
+}
+
+// reallocFunc lazily declares libc's `i8* @realloc(i8*, i64)`, cached on the lowerer
+// beside malloc and free.
+func (l *lowerer) reallocFunc() *ir.Func {
+	if l.realloc == nil {
+		i8ptr := lltypes.NewPointer(lltypes.I8)
+		l.realloc = l.module.NewFunc("realloc", i8ptr, ir.NewParam("", i8ptr), ir.NewParam("", lltypes.I64))
+	}
+	return l.realloc
 }

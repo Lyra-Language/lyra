@@ -142,11 +142,21 @@ const (
 )
 
 // Dynamic-array box field indices, past the shared header: a `[]T` box is
-// `{ strong, weak, len, [0 x T] }`, so its payload (at boxPayloadField) is the
-// `{ len, [0 x T] }` pair the per-element drop glue receives.
+// `{ strong, weak, len, cap, T* }`, so its payload (at boxPayloadField) is the
+// `{ len, cap, T* }` triple the drop glue receives.
+//
+// **The elements live in a separate buffer, and that indirection is what makes `[]T`
+// growable.** They used to sit inline in a `[0 x T]` tail, which is one allocation and
+// one less load per access — and cannot grow: a `[]T` *value* is the box pointer, so
+// moving the elements moves the box, and every other binding holding that pointer is
+// left dangling. Aliasing is observable (`let b = a; a[0] = 9` is visible through `b`),
+// so that is a use-after-free rather than a semantic choice. With the elements behind a
+// pointer the box address never changes, so every alias sees a `push` — which is the
+// reference semantics `[]T` already had for element assignment.
 const (
 	dynArrayLenField   = boxPayloadField     // i64: the element count
-	dynArrayElemsField = boxPayloadField + 1 // [0 x T]: the flexible element tail
+	dynArrayCapField   = boxPayloadField + 1 // i64: elements the buffer can hold
+	dynArrayElemsField = boxPayloadField + 2 // T*: the element buffer (malloc'd, may be null at cap 0)
 )
 
 // SharedBoxType returns the llir type of a ref-counted box wrapping payload:
@@ -180,29 +190,43 @@ func boxPayloadPtr(block *ir.Block, boxTy *lltypes.StructType, box value.Value) 
 	return block.NewGetElementPtr(boxTy, box, i32c(0), i32c(boxPayloadField))
 }
 
-// dynArrayHeaderSize is the byte offset of a dynamic array box's first element:
-// the box header plus the i64 length. Elements start here, at an offset aligned
-// for any element alignment ≤ 8 (Lyra's maximum).
-const dynArrayHeaderSize = rcHeaderSize + 8
+// dynArrayBoxSize is a `[]T` box in bytes, and unlike the old inline layout it does
+// not depend on the element count: the header, the length, the capacity and the buffer
+// pointer. The elements are elsewhere.
+const dynArrayBoxSize = rcHeaderSize + 8 + 8 + 8
 
 // DynArrayBoxType returns the box layout of a dynamic array `[]T`:
-// `{ i64 strong, i64 weak, i64 len, [0 x T] }` — the box header, the element count,
-// then a flexible array of elements (the `[0 x T]` tail is GEP'd past its declared
-// length; the real element storage is sized at allocation from the count). A `[]T`
-// value is a `ptr` to this box, so it reuses the shared-value refcount machinery
-// unchanged: the header is at the same offset for every box kind. See dynarray.go.
+// `{ i64 strong, i64 weak, i64 len, i64 cap, T* elems }` — the box header, the element
+// count, the buffer's capacity, and a pointer to the elements. A `[]T` value is a `ptr`
+// to this box, so it reuses the shared-value refcount machinery unchanged: the header is
+// at the same offset for every box kind. See dynarray.go.
 func DynArrayBoxType(elem lltypes.Type) *lltypes.StructType {
-	return lltypes.NewStruct(lltypes.I64, lltypes.I64, lltypes.I64, lltypes.NewArray(0, elem))
+	return lltypes.NewStruct(lltypes.I64, lltypes.I64, lltypes.I64, lltypes.I64, lltypes.NewPointer(elem))
 }
 
-// dynArrayLenPtr / dynArrayElemPtr GEP to a dynamic array box's length field and
-// to one of its elements.
+// dynArrayLenPtr / dynArrayCapPtr / dynArrayElemsPtr GEP to a dynamic array box's
+// scalar fields; dynArrayElemPtr goes one step further to an element.
 func dynArrayLenPtr(block *ir.Block, boxTy *lltypes.StructType, box value.Value) value.Value {
 	return block.NewGetElementPtr(boxTy, box, i32c(0), i32c(dynArrayLenField))
 }
 
+func dynArrayCapPtr(block *ir.Block, boxTy *lltypes.StructType, box value.Value) value.Value {
+	return block.NewGetElementPtr(boxTy, box, i32c(0), i32c(dynArrayCapField))
+}
+
+func dynArrayElemsPtr(block *ir.Block, boxTy *lltypes.StructType, box value.Value) value.Value {
+	return block.NewGetElementPtr(boxTy, box, i32c(0), i32c(dynArrayElemsField))
+}
+
+// dynArrayElemPtr GEPs to element `idx`. It costs a **load** the inline layout did not:
+// the buffer pointer has to be read out of the box before it can be indexed. That is the
+// standing price of growability, and it is the same one every growable reference
+// container pays. LLVM hoists the load out of a read-only loop; a loop containing a
+// `push` is the case it cannot, since the push may store a new buffer pointer.
 func dynArrayElemPtr(block *ir.Block, boxTy *lltypes.StructType, box, idx value.Value) value.Value {
-	return block.NewGetElementPtr(boxTy, box, i32c(0), i32c(dynArrayElemsField), idx)
+	elemTy := boxTy.Fields[dynArrayElemsField].(*lltypes.PointerType).ElemType
+	elems := block.NewLoad(lltypes.NewPointer(elemTy), dynArrayElemsPtr(block, boxTy, box))
+	return block.NewGetElementPtr(elemTy, elems, idx)
 }
 
 // TagType returns the smallest unsigned integer type that holds numVariants

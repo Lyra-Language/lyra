@@ -297,13 +297,9 @@ func (l *lowerer) bindTailSubArray(block *ir.Block, name string, box, length val
 	srcTy := DynArrayBoxType(elemLL)
 	fn := block.Parent
 
-	l.ensureRCRuntime()
 	// tailLen = length - fixedCount (>= 0: the length test above already passed).
 	tailLen := block.NewSub(length, i64c(fixedCount))
-	byteSize := block.NewAdd(i64c(int64(dynArrayHeaderSize)), block.NewMul(tailLen, i64c(stride)))
-	tailI8 := block.NewCall(l.rcAlloc, byteSize) // rc = 1
-	tail := block.NewBitCast(tailI8, lltypes.NewPointer(srcTy))
-	block.NewStore(tailLen, dynArrayLenPtr(block, srcTy, tail))
+	tail := l.dynArrayAlloc(block, srcTy, elemLL, tailLen, tailLen, stride)
 
 	// Copy loop: tail[i] = src[fixedCount + i], for i in [0, tailLen).
 	idx := fn.Blocks[0].NewAlloca(lltypes.I64)

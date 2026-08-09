@@ -1205,6 +1205,9 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	// function shadows the name (lam == nil) — matching the typechecker/backend
 	// resolution order.
 	builtinBorrows := lam == nil && calleeIsBorrowingBuiltin(e)
+	// …and its mirror on the other side: a builtin *method* whose argument is stored
+	// into the receiver rather than read through it. See calleeIsTransferringBuiltin.
+	builtinTransfers := lam == nil && calleeIsTransferringBuiltin(e)
 	// A `.`-call's modes live on the trait's declared signature — an impl binds patterns,
 	// not typed parameters — and the receiver is signature parameter 0 while the arguments
 	// start at 1. Getting that offset wrong would read each argument's mode from the
@@ -1226,6 +1229,11 @@ func (a *analyzer) call(e *ast.FunctionCallExpr, needOwned bool) {
 	for i, arg := range e.Arguments {
 		argOwns := true // conservative default: transfer (leak-safe) for an unknown callee
 		switch {
+		// Ahead of calleeType, which would otherwise answer for these: the typechecker
+		// records a *builtin* method's signature on the MemberExpr, and its parameters
+		// carry no written mode — which reads as a borrow, the wrong direction here.
+		case builtinTransfers:
+			argOwns = true
 		case lam != nil:
 			argOwns = i < len(lam.Parameters) && paramOwnsArgument(lam.Parameters[i].TypeModifier)
 		case methodSig != nil:
@@ -1338,6 +1346,32 @@ func calleeIsBorrowingBuiltin(e *ast.FunctionCallExpr) bool {
 		return true
 	}
 	return false
+}
+
+// calleeIsTransferringBuiltin reports whether e is a call to a compiler-provided
+// **method** that takes ownership of an argument — `xs.push(v)`, which stores v into
+// the array's buffer.
+//
+// It exists because the two general answers are both wrong here. The conservative
+// default for an unknown callee is transfer, which would be right — but a builtin method
+// is not unknown: the typechecker records its signature on the MemberExpr, so `calleeType`
+// answers first, and a builtin signature carries no written `own`/`ref`/`mut`, which reads
+// as a borrow. The argument would then be released after the call while the array kept the
+// pointer, which is a use-after-free rather than a leak (`s.push("a" ++ "b")` printed
+// garbage before this).
+//
+// The alternative was to write `own` on push's parameter in builtinMethodSignature. That
+// would reach this pass correctly and *also* engage the use-after-move check, which is a
+// different claim: an owning position takes a +1, it does not consume the caller's
+// binding, and `xs.push(s); println(s)` is fine — the pass simply retains when the push is
+// not s's last use. Keeping the two apart is why this is a hook rather than a mode, and it
+// mirrors calleeIsBorrowingBuiltin, which exists for the same reason on the other side.
+func calleeIsTransferringBuiltin(e *ast.FunctionCallExpr) bool {
+	member, ok := e.Function.(*ast.MemberExpr)
+	if !ok {
+		return false
+	}
+	return member.Property.Name == "push"
 }
 
 // calleeIsOwningBuiltin reports whether e is a direct call to a compiler-provided

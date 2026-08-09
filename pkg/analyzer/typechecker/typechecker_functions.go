@@ -963,6 +963,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		// receiver's type still in hand: `slice` is a string method and nothing else,
 		// but a consumer testing the bare name would have to take that on faith.
 		tc.methodTable.SetBuiltinMethod(call, builtinMethodAllocates(objType, methodName))
+		tc.checkBuiltinMutatesReceiver(objType, methodName, member)
 		return tc.inferLambdaCallFromType(methodName, sig, call)
 	}
 
@@ -1157,4 +1158,41 @@ func (tc *TypeChecker) checkReturnStmt(s *ast.ReturnStmt) {
 	}
 	tc.checkReturnValue(tc.enclosingFuncName, s.Value, s.GetLocation(),
 		tc.enclosingRet.Type, isOwnedReturn(tc.enclosingRet.TypeModifier))
+}
+
+// checkBuiltinMutatesReceiver enforces the mutability rule for a builtin method that
+// writes through its receiver — `xs.push(v)` today.
+//
+// It asks rootBindingIsMutable, the same predicate `xs[i] = v` goes through, because
+// push *is* interior mutation with a different spelling: a plain `let` is deeply
+// immutable, and the two forms disagreeing about that would be a hole the reader could
+// not see. The message is the assignment one for the same reason — the rule is one rule.
+//
+// Only an identifier-rooted receiver is checked. A push onto a temporary
+// (`f().push(1)`) mutates something with no binding to be immutable, which is useless
+// rather than unsound, and there is no name to report against.
+func (tc *TypeChecker) checkBuiltinMutatesReceiver(recv types.Type, name string, member *ast.MemberExpr) {
+	if name != "push" {
+		return
+	}
+	if _, isDyn := recv.(types.DynamicArrayType); !isDyn {
+		return
+	}
+	root := rootIdentifier(member.Object)
+	if root == nil || tc.rootBindingIsMutable(root) {
+		return
+	}
+	if root.IsConst {
+		tc.addImmutableBindingError(root.GetLocation(), root.Name, ast.BindingConst)
+		return
+	}
+	if mod, ok := tc.paramMods[root.Name]; ok {
+		tc.addParamImmutableError(root.GetLocation(), root.Name, mod)
+		return
+	}
+	if sym, ok := tc.scope.Lookup(root.Name); ok {
+		if decl, ok := sym.(*ast.VarDeclStmt); ok {
+			tc.addInteriorImmutableError(root.GetLocation(), root.Name, decl.BindingKind)
+		}
+	}
 }

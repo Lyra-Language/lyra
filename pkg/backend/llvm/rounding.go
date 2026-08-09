@@ -66,6 +66,17 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 			return l.lowerArrayLen(block, call, member)
 		}
 	}
+	if member.Property.Name == "push" {
+		recvT, ok := l.recordedType(member.Object)
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: no type recorded for push() receiver")
+		}
+		dyn, ok := l.resolveForLayout(recvT).(types.DynamicArrayType)
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: push() on a non-dynamic-array receiver (%s)", recvT)
+		}
+		return l.lowerDynArrayPush(block, call, member, dyn)
+	}
 	if member.Property.Name == "compare_bytes" {
 		return l.lowerStringCompareBytes(block, call, member)
 	}

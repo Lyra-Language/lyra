@@ -100,6 +100,13 @@ let main = () -> u8 => {
 
 // The box is heap-allocated and freed exactly once: the IR shows lyra_rc_alloc for
 // the array box and allocations balance releases (no leak / double free).
+//
+// The layout pinned here is `{ strong, weak, len, cap, T* }` — the elements live in a
+// separate malloc'd buffer rather than an inline `[0 x T]` tail. That indirection is
+// what makes `[]T` growable: a `[]T` value is the box pointer, so elements that moved
+// would move the box and dangle every alias, and aliasing is observable. The `malloc`
+// and its matching `free` (in the box's drop glue) are part of the shape, which is why
+// the conservation check below counts rc_alloc/rc_release rather than raw allocations.
 func TestEmit_DynArray_IR(t *testing.T) {
 	t.Parallel()
 	src := `let main = () -> u8 => {
@@ -113,7 +120,8 @@ func TestEmit_DynArray_IR(t *testing.T) {
 	}
 	for _, want := range []string{
 		"call i8* @lyra_rc_alloc",
-		"{ i64, i64, i64, [0 x i8] }",
+		"{ i64, i64, i64, i64, i8* }",
+		"call i8* @malloc",
 		"call void @lyra_rc_release",
 	} {
 		if !strings.Contains(got, want) {
@@ -295,5 +303,136 @@ func TestExec_DynArray_AliasRetainASan(t *testing.T) {
 	}
 	if allocs+retains != releases {
 		t.Errorf("conservation: %d allocs + %d retains != %d releases (leak or double free)\n%s", allocs, retains, releases, ir)
+	}
+}
+
+// `xs.push(v)` — the growth operation. Growing from an empty array exercises every
+// branch of the amortized doubling: cap 0 → 4 → 8 → 16, so the realloc path runs three
+// times across ten pushes and the store-only path runs the other seven.
+func TestExec_DynArrayPushGrows(t *testing.T) {
+	t.Parallel()
+	src := `let main = () -> u8 => {
+  var xs: []i64 = []
+  for var i = 0; i < 10; i+=1 { xs.push(i * i) }
+  var sum = 0
+  for x in xs { sum = sum + x }
+  u8((xs.len() * 100 + sum) %% 256)
+}
+`
+	// 10 elements, sum of squares 0..9 = 285; (1000 + 285) % 256 = 5.
+	if got := buildAndRun(t, src); got != 5 {
+		t.Errorf("push growth: exit %d, want 5 (len 10, sum 285)", got)
+	}
+}
+
+// **Every alias sees the push**, which is the property the whole representation change
+// exists to preserve. A `[]T` value is the box pointer, so growth that moved the box
+// would leave `b` pointing at freed memory; the elements live behind an indirection
+// precisely so it cannot. This is the same reference semantics `xs[i] = v` already had —
+// `let b = a; a[0] = 9` reads through `b` — so a push that `b` could not see would have
+// been the odd one out.
+func TestExec_DynArrayPushIsVisibleThroughAnAlias(t *testing.T) {
+	t.Parallel()
+	src := `let main = () -> u8 => {
+  var a: []i64 = [7]
+  let b = a
+  a.push(35)
+  u8(b.len() * 10 + b[1])
+}
+`
+	if got := buildAndRun(t, src); got != 55 {
+		t.Errorf("alias after push: exit %d, want 55 (b.len 2, b[1] 35)", got)
+	}
+}
+
+// A **managed** element pushed transfers its reference into the array, and the box's
+// drop glue releases it over the runtime length.
+//
+// The heap string is the case that broke: the typechecker records a builtin method's
+// signature on the MemberExpr, so the ownership pass read the argument's mode off a
+// signature carrying no written `own` — which means *borrow* — and released the
+// temporary after the call while the array kept the pointer. It printed garbage rather
+// than leaking. A literal survived it (a literal interns as a pinned box, so its release
+// is a no-op), which is exactly the kind of coincidence that makes a memory bug look like
+// it works.
+//
+// The last row is the other half: pushing a *binding* must not consume it. An owning
+// position takes a +1, it does not move the caller's value, so `t` is still readable.
+func TestExec_DynArrayPushManagedElements(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  var s: []string = []
+  s.push("b" ++ "!")
+  s.push("alpha")
+  let t = "kept" ++ "?"
+  s.push(t)
+  println("${t}")
+  for x in s { println("[${x}]") }
+}
+`
+	want := "kept?\n[b!]\n[alpha]\n[kept?]"
+	out, _ := buildAndRunCapture(t, src)
+	if got := strings.TrimSpace(out); got != want {
+		t.Errorf("managed push:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// Pushing onto an array of arrays: the element is itself a box, so this exercises the
+// drop glue recursing through a buffer it also has to free.
+func TestExec_DynArrayPushNestedArrays(t *testing.T) {
+	t.Parallel()
+	src := `let main = () -> u8 => {
+  var rows: [][]i64 = []
+  for var i = 0; i < 4; i+=1 {
+    var row: []i64 = []
+    row.push(i)
+    row.push(i * 2)
+    rows.push(row)
+  }
+  var sum = 0
+  for r in rows { for v in r { sum = sum + v } }
+  u8(rows.len() * 10 + sum)
+}
+`
+	// rows 4; sum = (0+0)+(1+2)+(2+4)+(3+6) = 18; 40 + 18 = 58.
+	if got := buildAndRun(t, src); got != 58 {
+		t.Errorf("nested push: exit %d, want 58", got)
+	}
+}
+
+// push is interior mutation with a different spelling, so it takes the same mutability
+// rule — and, deliberately, the same diagnostic. A plain `let` is deeply immutable.
+func TestCheck_PushNeedsAMutableReceiver(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  let xs: []i64 = [1]
+  xs.push(2)
+}
+`
+	diags := checkWithPrelude(t, src)
+	if len(diags) == 0 {
+		t.Fatal("push onto a `let` binding must be refused, as `xs[0] = v` is")
+	}
+	if !strings.Contains(diags[0], "deeply immutable") {
+		t.Errorf("expected the interior-immutability diagnostic; got: %s", diags[0])
+	}
+}
+
+// `noalloc` refuses push. It does not allocate on every call — amortized doubling means
+// most pushes are a store — but the bound is a static promise about what a function may
+// do, not a statistical one.
+func TestCheck_PushIsRefusedByNoalloc(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let add = pure noalloc (xs: mut []i64, v: i64) -> void => { xs.push(v) }
+let main = () -> void => { var a: []i64 = []; add(a, 1) }
+`
+	if diags := checkWithPrelude(t, src); len(diags) == 0 {
+		t.Fatal("push can grow the buffer, so `noalloc` must refuse it")
 	}
 }

@@ -87,6 +87,25 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 			ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.Int64}},
 		}, true
 	}
+	// `xs.push(v)` — the growth operation, on a **dynamic** array only. A `[N]T` has
+	// its size in its type, so growing one would change what type it is.
+	//
+	// It returns void and mutates in place rather than returning a new array, because
+	// `[]T` already has reference semantics: `let b = a; a[0] = 9` is visible through
+	// `b`, so a `push` that produced a new value would be the odd one out — and the
+	// representation makes the in-place reading the only sound one anyway (the box
+	// pointer is the value, so the elements sit behind an indirection precisely so that
+	// growth cannot move it out from under an alias).
+	//
+	// The receiver must permit interior mutation, checked at the call site by the same
+	// predicate `a[0] = v` uses — a plain `let` is deeply immutable, and push is
+	// interior mutation with a different spelling.
+	if dyn, ok := recv.(types.DynamicArrayType); ok && name == "push" {
+		return &types.LambdaType{
+			Parameters: []types.ParameterType{{Type: dyn.ElementType}},
+			ReturnType: types.ReturnType{Type: types.VoidType{}},
+		}, true
+	}
 	// String methods, both **rune-indexed**, which is not a fresh decision: `s[i]`
 	// already yields the i-th *code point* and `for c in s` already walks code
 	// points, so a byte-based length would make `for i in 0..<s.len() { s[i] }` —
@@ -296,7 +315,19 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 // parameter exists to prevent; it was live for as long as it took to write the
 // prelude's `trim`.
 func builtinMethodAllocates(recv types.Type, name string) bool {
-	return name == "slice" && types.IsString(recv)
+	if name == "slice" && types.IsString(recv) {
+		return true
+	}
+	// `push` grows the element buffer when it is full. It does not allocate on *every*
+	// call — amortized doubling means most pushes are a store — but `noalloc` is a
+	// static promise about what a function may do, not a statistical one, so a call
+	// that can allocate counts.
+	if name == "push" {
+		if _, isDyn := recv.(types.DynamicArrayType); isDyn {
+			return true
+		}
+	}
+	return false
 }
 
 // isBuiltinPrintFn reports whether name is one of the compiler-provided output

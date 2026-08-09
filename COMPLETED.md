@@ -9,6 +9,75 @@ Newest first.
 
 ## Dated log
 
+### 08/09/26
+**`xs.push(v)` — the dynamic-array growth operation, and the representation change it
+required.**
+
+**The blocker was never the operation, it was the layout.** A `[]T` was a single box —
+`ptr → { rc, weak, len, [0 x T] }` — with the elements *inline*, and a `[]T` **value is
+that box pointer**. So growing meant moving the elements, which meant moving the box,
+which leaves every other binding holding a dangling pointer. That is not a semantics
+question one could decide either way: aliasing is already observable, verified before
+touching anything —
+
+```lyra
+var a: []i64 = [1, 2, 3]
+let b = a
+a[0] = 99          // b[0] is 99
+```
+
+— so a relocating push is a use-after-free.
+
+**So the elements moved behind a pointer**: `{ rc, weak, len, cap, T* elems }`. The box
+address never changes, only the buffer is `realloc`'d, and every alias sees the push —
+which is the reference semantics `[]T` already had for element assignment. **The cost is
+one extra load on every element access, language-wide and permanent.** LLVM hoists it out
+of a read-only loop but not out of one containing a push. That is what every growable
+reference container pays, and it is why the alternative — leaving `[]T` alone and adding a
+separate growable type — was rejected: `[]T` is *already* heap-allocated and
+reference-semantic, so it is the vector and was merely missing an operation; a second type
+would be two things at the same point on the design axis, the redundancy the consistency
+section settled against for `data`/`struct`/`tuple`.
+
+Three things fell out of the layout change that were not obvious going in:
+
+- **Every `[]T` needs drop glue now, including `[]i64`.** `dynArrayDropFn` returned
+  `nullDropFn` when the element type owned nothing managed — correct while the elements
+  were freed with the box, and a leak of the buffer of every scalar dynamic array in the
+  program once they are not. The element *loop* is what is conditional on `needsDrop`, not
+  the function.
+- **The buffer is freed after the elements, never before**: an element's own release may
+  read through the buffer it is stored in.
+- **`malloc(0)` for an empty array rather than a null.** It returns a pointer `free`
+  accepts and `realloc` grows, so neither the drop glue nor push needs an empty case.
+
+**The ownership bug is the one worth remembering.** A pushed managed value must transfer
+into the array, and the conservative default for an unknown callee is exactly that — but a
+builtin method is not unknown: the typechecker records its signature on the `MemberExpr`,
+so `calleeType` answers first, and a builtin signature carries no written `own`/`ref`/`mut`,
+which reads as a **borrow**. The temporary was released after the call while the array kept
+the pointer. `s.push("b" ++ "!")` printed garbage; `s.push("alpha")` was fine, because a
+literal interns as a pinned box whose release is a no-op — the coincidence that makes a
+memory bug look like working code.
+
+The fix is `calleeIsTransferringBuiltin`, mirroring the `calleeIsBorrowingBuiltin` that
+already existed for `print`. Writing `own` on push's parameter would also have reached the
+ownership pass, and was rejected for claiming something stronger: an owning position takes
+a +1, it does not consume the caller's binding, and `xs.push(t); println(t)` is fine — the
+pass simply retains when the push is not `t`'s last use. Keeping "transfers" and "consumes"
+apart is why this is a hook rather than a mode.
+
+Smaller decisions: amortized doubling from a floor of 4, so n pushes cost O(n) copying;
+`push` returns void and mutates in place, since a value-returning push would be the odd one
+out beside `xs[i] = v`; the receiver must permit interior mutation, checked by the same
+`rootBindingIsMutable` predicate and reported with the same diagnostic, because push *is*
+interior mutation with a different spelling; and `noalloc` refuses it, because the bound is
+a static promise about what a function may do rather than a statistical one.
+
+Verified under ASan **and** LeakSanitizer on Linux: growth from empty across the realloc
+path, aliasing, `[]string` with heap elements, and `[][]i64` where the drop glue recurses
+through a buffer it also has to free.
+
 ### 08/08/26
 **`s.byte_offset(i) -> Maybe<i64>`** — the rune→byte conversion, and the last piece the
 byte-level string set was missing.

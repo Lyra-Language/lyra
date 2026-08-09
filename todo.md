@@ -145,14 +145,15 @@ write today:
     composing without a `match` because `compare_bytes_at` is total. It maps *positions*,
     so the end position is `Some(byte_len)` rather than `None` (slice's rule, not `s[i]`'s,
     since a bound may name the end). Exposes the walk `s[i]` and `slice` already shared.
-  - **[OPEN] No `split`.** Everything it needs to *search* exists — `index` for positions,
-    `byte_offset` + `compare_bytes_at` for an allocation-free "separator at rune i". What
-    is left is the **output**: a `[]string` return, and with no growth op the element count
-    has to fall out of a comprehension's survivor count, so the shape is a comprehension
-    over positions `0..<=n` guarded on "a part starts here" rather than a loop that
-    appends. Traps to expect: `0..<=n` not `0..<n` (a trailing separator leaves an empty
-    final part starting at n), a bare boolean guard losing to bitwise `|`, and an empty
-    separator degenerating (Python raises; Lyra needs a deliberate answer).
+  - **[OPEN] No `split`.** Everything it needs now exists: `index` for positions,
+    `byte_offset` + `compare_bytes_at` for an allocation-free "separator at rune i", and
+    `push` (08/09) for the output. **The grow op is what changes its shape** — it can be
+    the obvious loop (find, cut, advance, push) rather than a comprehension over positions
+    `0..<=n` guarded on "a part starts here", which was the workaround forced by a
+    comprehension sizing its output from its *input*: k+1 parts from n runes meant
+    allocating O(n) to hold O(k), permanently, since the box is never shrunk. One trap
+    survives the change: an empty separator degenerates (Python raises; Lyra needs a
+    deliberate answer).
 
 ## Known bugs
 
@@ -600,8 +601,8 @@ collects, type-checks and lowers. The grammar had them from the start; nothing e
 the expression reported `unknown expression type "array_comp_expr"`.
 
 They matter beyond convenience: **a comprehension is the only way to build an array.** There
-is no growth operation, and a spread in an array literal (`[0, ...xs]`) parses but is not
-collected, so before this the prelude could not have a `map` for `[]t` at all — the natural
+was no growth operation until 08/09 (`push`), and a spread in an array literal
+(`[0, ...xs]`) parses but is still not collected, so before this the prelude could not have a `map` for `[]t` at all — the natural
 recursive `[head, ...tail]` formulation needs both of the missing pieces. `map` for arrays
 is now one line in `std/prelude.lyra`, and a third receiver head beside `Maybe` and
 `Result`.
@@ -702,15 +703,70 @@ pub let filter<t> = pure gen (self: Seq<t>, p: (t) -> bool) -> Seq<t> => {
 }
 ```
 
-**There is no `collect`, because the language already has one and it is brackets.**
-`for y in xs.filter(p).map(f) { … }` allocates nothing; `[y in xs.filter(p).map(f) | y]`
-materializes, and `noalloc` charges exactly the brackets. 08/04's "a comprehension is the
-only way to build an array" survives intact. This is the one place the design is *better*
-than Rust's rather than a copy of it: `.collect::<Vec<_>>()` exists because Rust has no
-distinguished materialization syntax, and Lyra does.
+**Collect is not a compiler feature, because the language already has one and it is
+brackets.** `for y in s.filter(p).map(f) { … }` allocates nothing;
+`[y in s.filter(p).map(f) | y]` materializes, and `noalloc` charges exactly the brackets.
+08/04's "a comprehension is the only way to build an array" survives intact. This is the one
+place the design is *better* than Rust's rather than a copy of it: `.collect::<Vec<_>>()`
+exists because Rust has no distinguished materialization syntax, and Lyra does.
 
-`[]t` keeps its own `map`/`filter` as one-line forwarders returning a `Seq` — a different
-receiver head from `Seq`, so receiver-keyed overloading already permits both declarations.
+**So there are two *primitive* consumers — `for-in` and the comprehension — and everything
+else is a prelude one-liner over them.** A chain ends in a terminal the ordinary way:
+
+```
+pub let to_array<t> = pure (self: Seq<t>) -> []t => [x in self | x]
+
+pub let sum = pure (self: Seq<i64>) -> i64 => {
+  var total = 0
+  for x in self { total += x }
+  total
+}
+```
+
+`to_array` rather than `collect`, naming the result for the reason `seq()` names the value.
+Only it inherits the grow-op prerequisite below; `sum`/`fold`/`any`/`count`/`first` need
+nothing. The split is the project's usual one — the brackets are the primitive, the names
+over them are prelude Lyra, exactly as `read_line` is to `parse_i64`.
+
+### Both maps, and the head rule is what gives them
+
+**`[]t` keeps its eager `map`/`filter` exactly as they are, and `xs.seq()` enters the lazy
+world.** The programmer picks; neither is a mode the other has to be reasoned about through:
+
+```
+xs.map(f)                      // eager  -> []u, one allocation, f runs here
+xs.seq().filter(p).map(f)      // lazy   -> Seq<u>, fused, f runs at the consumer
+```
+
+**This costs no new machinery, because `[]t` and `Seq<t>` are different receiver heads.**
+Receiver-keyed overloading permits both `map`s in one module for exactly the reason it
+permits `unwrap_or` for `Maybe` beside `unwrap_or` for `Result` — one axis, checked once at
+the declaration. The alternative considered first, making `[]t`'s `map` *return* a `Seq`, is
+the one thing the head rule forbids: two `map`s on one head, so lazy would have had to
+replace eager rather than join it.
+
+Three things follow, and each is a reason to prefer this over lazy-by-default:
+
+- **`seq()` is the only new name.** The combinator vocabulary is written once, on the `Seq`
+  head, and every future addition lands there. The eager side stays the two comprehensions
+  it already is — which also keeps it clear of the grow-op prerequisite below, since a
+  comprehension over `[]t` still knows its capacity.
+- **Deferred side effects become opt-in and visible.** `f` running at the consumer rather
+  than at the call is the one genuinely surprising consequence of laziness — an unconsumed
+  `xs.map(log_it)` runs zero times, and `xs.map(g).filter(p)` interleaves `g` and `p`
+  instead of running all of each. Combinator callbacks deliberately carry no effect bound
+  (see Functional/imperative blend), so an impure `f` is legal and nothing would warn.
+  With `seq()` in the source, the reader has been told.
+- **It is Rust's `.iter()` without Rust's reason for three of them.** `iter`/`iter_mut`/
+  `into_iter` exist to say which borrow you are taking; Lyra's refcounting answers that
+  already, so one spelling suffices and the usual ceremony objection mostly does not apply.
+
+**[DECIDED 08/09] The spelling is `seq()`.** It names the type it produces, which is the
+convention the prelude's constructors already follow (`rng_seeded` → `Rng`). `lazy()` was
+the alternative and reads better in a chain, but it names a *strategy* rather than a value,
+so `xs.lazy()` says what the compiler will do while `xs.seq()` says what you now hold — and
+the second is the thing the type annotation, the diagnostics and the receiver head will all
+have to agree about anyway.
 
 ### Why a `gen` function rather than an `Iterator` trait
 
@@ -743,8 +799,22 @@ Three reasons, none of them taste:
   construction rather than by an optimizer**, which is the whole point of the entry. Buys
   `map`, `filter`, `flat_map`, `take`, `take_while`, `enumerate`, `chain`, `scan`, and
   infinite sequences.
+- **[OPEN] A terminal puts the loop behind a call boundary, and stage 1 has to get through
+  it.** `s.sum()` has its `for-in` inside `sum`, so the generator is not statically visible
+  to the loop consuming it — and terminals are the *normal* way to end a chain, so this is
+  not an edge case. Two ways out, and the choice is a type-system commitment rather than an
+  optimization detail:
+  - **Inline the terminal at the call site first**, after which the `for-in` is local again
+    and the stage-1 rewrite applies unchanged. `Seq<t>` stays opaque — one type parameter,
+    readable wherever it appears. **Recommended**, and it makes the terminal's inlining an
+    ordinary pass rather than something the language has to promise.
+  - **Put the chain shape in the type**, Rust-style (`Map<Filter<ArraySeq<i64>>>`). Fusion
+    then crosses any call boundary for free. The cost is paid everywhere else: every
+    diagnostic naming a sequence becomes unreadable, and every function taking one needs a
+    bound or a type parameter.
 - **[OPEN] What stage 1 must refuse, loudly.** `zip` (two producers interleaved needs pull),
-  and a `Seq` stored in a binding and consumed somewhere that is not statically a loop.
+  and a `Seq` reaching a consumer that cannot be inlined through — which under the first
+  option above is the general form of the previous bullet.
 - **[IDEA] Stage 2: state-machine transformation** (Rust async / C# iterators / Kotlin) for
   whatever stage 1's refusals turn out to cost. Worth noting the machinery lands *in the
   compiler*, so the language still never grows associated types and the prelude functions do
@@ -752,7 +822,9 @@ Three reasons, none of them taste:
 
 ### Open decisions and prerequisites
 
-- **[OPEN] Iterating a `Seq` needs nothing new; *collecting* one needs a grow op.** The
+- **[PARTIAL] Iterating a `Seq` needs nothing new; *collecting* one needs a grow op** —
+  which landed 08/09 as `xs.push(v)`, so what remains here is the `Seq` side rather than
+  the missing primitive. The
   comprehension allocates capacity up front — "the capacity bounds the loop by construction"
   — and a `Seq` has no length to compute it from. That is the dynamic-array **growth**
   already open under (#5). Same blocker `split` sits behind, which is the other half of the
@@ -761,10 +833,15 @@ Three reasons, none of them taste:
   function returns and gives `yield` something to check against; `-> u` annotates the element
   and reads like a normal return while meaning something else. Pick before anything is
   written down.
-- **[OPEN] Whether `[]t`'s combinators become lazy.** Receiver-keyed overloading forbids two
-  `map`s on one head, so a `[]t` `map` is *either* `-> []u` or `-> Seq<u>`, not both. Lazy is
-  the coherent choice given the entry's premise, and it deletes `array.lyra`'s two eager
-  combinators; the cost is that a side-effecting callback runs when the brackets do.
+- **[IDEA] Implicit `Seq` → `[]t`, considered and not taken.** One `map`, returning a `Seq`,
+  materializing wherever context wants an array (`let ys: []i64 = xs.map(f)`) — with a real
+  Lyra precedent, since `[1, 2, 3]` is already `[3]T` or `[]T` "told apart by what the
+  literal is used as". Rejected because the precedent does not reach: that is one syntactic
+  *form* reading its annotation, not a value coercing in every position it flows through. It
+  would put an allocation somewhere `noalloc` charges nothing (allocation is charged by form
+  and by representation — a coercion is neither), and make *when a side effect runs* a
+  product of inference rather than of something written down. Worth revisiting only if
+  `seq()` proves to be noise in practice.
 - **A word collides.** "Generator" already means the `x in xs` clause of a comprehension in
   the section above. Whatever the docs settle on, these are not the same thing.
 
@@ -978,9 +1055,16 @@ interior assignment, and deep retain-on-copy.
 - **[OPEN] (#5) Allocation, remaining pieces:** a `shared` construction in a bare
   argument/return position is not stamped with its flavor (only annotated bindings and
   `shared` payload args are); a *nested* `shared data` sub-pattern — destructuring a tail
-  through its own box — errors loudly; dynamic-array **growth** (no grow op exists in the
-  language yet); construction-site `shared T {…}` syntax; implicit-alloc / escape analysis;
-  atomic refcounts (deferred to the job system).
+  through its own box — errors loudly; construction-site `shared T {…}` syntax;
+  implicit-alloc / escape analysis; atomic refcounts (deferred to the job system).
+  - **[DONE 08/09] Dynamic-array growth.** `xs.push(v)`, amortized doubling. It needed a
+    **representation change**: the elements were inline in the box (`{rc, weak, len,
+    [0 x T]}`) and a `[]T` value *is* the box pointer, so growth would move the box and
+    dangle every alias — and aliasing is observable, so that is a use-after-free rather
+    than a semantics choice. They now sit behind a pointer (`{rc, weak, len, cap, T*}`),
+    which costs one load per element access language-wide and is what every growable
+    reference container pays. See COMPLETED.md, including the ownership bug where a
+    builtin method's recorded signature made a pushed temporary read as *borrowed*.
 - **[DONE 08/03] An array element carries an allocation or `weak` modifier** —
   `[]shared Node`, `[3]weak Observer`, `[16]stack Vec3`. A `tree-sitter-lyra` change only
   (`_element_type`); **nothing in this repo needed changing**, because the checking had been
