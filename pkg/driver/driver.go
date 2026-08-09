@@ -12,6 +12,7 @@ package driver
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
@@ -125,6 +126,9 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	// a prelude module set later would leave every type registered before it unable to
 	// tell a prelude name from a user one.
 	c.SetPreludeModule(preludeOf(units))
+	// Likewise before the walk: a declaration that takes a name an imported module
+	// exports is keyed apart from it, and a type is keyed as it is registered.
+	c.SetImports(modules.ImportGraph(units))
 	for _, u := range units {
 		before := len(res.Diagnostics)
 		res.Diagnostics = append(res.Diagnostics, collectParseErrors(u.Root, u.Source)...)
@@ -133,7 +137,7 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	}
 	program, symTable, scopeTable, collectorErrors := c.Finish()
 	res.Program, res.SymbolTable, res.ScopeTable = program, symTable, scopeTable
-	res.Diagnostics = append(res.Diagnostics, preludeShadowWarnings(symTable)...)
+	res.Diagnostics = append(res.Diagnostics, shadowWarnings(symTable)...)
 	for _, rawErr := range collectorErrors {
 		if ce, ok := rawErr.(diag.Diagnostic); ok {
 			res.Diagnostics = append(res.Diagnostics, ce)
@@ -395,24 +399,50 @@ func preludeOf(units []modules.Unit) string {
 	return ""
 }
 
-// preludeShadowWarnings turns each user declaration that took a prelude name into a
-// warning. A warning rather than an error: the prelude is implicitly in scope, so
-// rejecting a clash would make every name it exports permanently unusable, and adding
-// one later would break programs that never mentioned it.
-func preludeShadowWarnings(symTable *symbols.SymbolTable) []diag.Diagnostic {
+// shadowWarnings turns each user declaration that took a name reaching it from elsewhere
+// into a warning. A warning rather than an error, for both sources: the prelude is
+// implicitly in scope, so rejecting a clash would make every name it exports permanently
+// unusable and adding one later would break programs that never mentioned it — and an
+// *imported* name is the same bargain made deliberately, so punishing it harder than the
+// implicit case is backwards.
+//
+// The two differ only in what the message can offer. The prelude has no qualifier to
+// point at, being reachable precisely because nothing names it; an imported module does,
+// so the warning names the spelling that still reaches the shadowed declaration.
+func shadowWarnings(symTable *symbols.SymbolTable) []diag.Diagnostic {
 	if symTable == nil {
 		return nil
 	}
-	out := make([]diag.Diagnostic, 0, len(symTable.ShadowedPrelude))
-	for _, s := range symTable.ShadowedPrelude {
-		out = append(out, diag.Diagnostic{
+	out := make([]diag.Diagnostic, 0, len(symTable.Shadowed))
+	for _, s := range symTable.Shadowed {
+		d := diag.Diagnostic{
 			Location: s.Loc,
 			Severity: diag.SeverityWarning,
 			Code:     diag.CodePreludeShadowed,
 			Message: fmt.Sprintf(
 				"%s shadows the prelude's %s — this declaration wins; rename it if that was not intended",
 				s.Name, s.Name),
-		})
+		}
+		if s.Source != "" {
+			d.Code = diag.CodeImportShadowed
+			d.Message = fmt.Sprintf(
+				"%s shadows the %s imported from module %q — this declaration wins;"+
+					" reach the imported one as `%s.%s`",
+				s.Name, s.Name, s.Source, lastSegment(s.Source), s.Name)
+		}
+		out = append(out, d)
 	}
 	return out
+}
+
+// lastSegment is the namespace a plain `import a.b` binds — the name the shadowing
+// module writes to reach past its own declaration. An `as` alias would rename it, and
+// this does not chase that: the hint is a spelling to try, and getting it from the
+// import list would mean threading the referencing file through a warning built from a
+// declaration.
+func lastSegment(module string) string {
+	if idx := strings.LastIndex(module, "."); idx >= 0 {
+		return module[idx+1:]
+	}
+	return module
 }

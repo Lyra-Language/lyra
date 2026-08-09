@@ -276,6 +276,23 @@ func (c *Collector) SetPreludeModule(path string) {
 	c.table.PreludeModule = path
 }
 
+// SetImports hands over the whole import graph before the first file is walked, for the
+// same reason SetPreludeModule is called there: a declaration taking a name an imported
+// module exports is keyed apart from it (symbols.declKeyIn), and a type is registered
+// under that key *during* the walk.
+//
+// Assembling the graph file by file as each is walked would work for a single-file
+// module and quietly fail for the rest: a module whose `import` sits in its second file
+// would key the first file's types as though nothing were imported, and the key a lookup
+// computes afterwards — with the graph complete — would miss them. The graph is known
+// before collection anyway, since resolving it is what produced the units.
+func (c *Collector) SetImports(graph map[string][]string) {
+	if graph == nil {
+		return
+	}
+	c.table.ImportedModules = graph
+}
+
 // Finish runs the whole-program passes and returns the merged result.
 func (c *Collector) Finish() (*ast.Program, *symbols.SymbolTable, *symbols.ScopeTable, []error) {
 	c.registerTopLevelFunctions()

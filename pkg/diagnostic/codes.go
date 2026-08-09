@@ -378,6 +378,19 @@ const (
 	// outright (lyra-E039).
 	CodeInertOperatorMethod = "lyra-W015"
 
+	// CodeImportShadowed: a declaration takes a name a module this one imports
+	// exports. The declaration wins and the imported one stays reachable through its
+	// namespace (`seq.map`).
+	//
+	// This was a hard error until 08/08 — `import util.seq` plus an ordinary
+	// `let map = …` simply would not compile — which read as "the module you imported
+	// owns that name and your program may not have one". The comparison is what made
+	// it wrong rather than merely strict: the *prelude*, whose names you never asked
+	// for, took the soft path (W012) and let the user's declaration win, so the
+	// explicit act was punished and the implicit one forgiven. One rule now, and this
+	// is W012's sibling for the half that can name a qualifier to reach past itself.
+	CodeImportShadowed = "lyra-W016"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

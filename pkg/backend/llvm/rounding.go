@@ -132,11 +132,21 @@ func (l *lowerer) roundingIntrinsicFunc(op, suffix string, fT *lltypes.FloatType
 // namespaceCallee resolves `alias.name(…)` to the emitted function, when alias names an
 // imported module rather than a value.
 //
-// The membership check mirrors the typechecker's: names are program-wide unique today
-// (a cross-module duplicate is rejected), so a bare lookup would happily resolve
+// The membership check mirrors the typechecker's: a bare lookup would happily resolve
 // `math.thing` to some *other* module's `thing`. Rejecting here as well means the
 // backend cannot emit a call the front end did not sanction, which is the standing rule
 // that it errors rather than guessing.
+//
+// **Both halves of it ask about a module, and both used to ask about a name.** The
+// membership test went through DeclaringModule, a last-writer-wins map, and the callee
+// came out of l.funcs under the bare name. That was sound only while a top-level name
+// was program-wide unique — the premise a module's own declaration of an imported name
+// retires (08/08). With it gone, a file declaring its own `tally` beside
+// `import util.seq` made `seq.tally(…)` fail *in the backend*, with
+// `unsupported method call`, on a program the front end had checked clean: DeclaringModule
+// answered with the entry file's declaration, the membership test rejected the call, and
+// it fell out of this path entirely. Both now go through the module, and the key is taken
+// from the **declaration** resolved rather than from the name.
 // It returns the callee's parameter list alongside the function, because that is what the
 // argument coercion in lowerDirectCall reads — and for a specialization the parameters
 // come from the instantiation rather than from the generic declaration.
@@ -154,7 +164,7 @@ func (l *lowerer) namespaceCallee(member *ast.MemberExpr, call *ast.FunctionCall
 		return nil, nil, false
 	}
 	name := member.Property.Name
-	if st.DeclaringModule(name) != imp.Path {
+	if !st.ModuleDeclares(imp.Path, name) {
 		return nil, nil, false
 	}
 	// A *generic* callee resolves to the specialization the typechecker solved for this
@@ -166,13 +176,16 @@ func (l *lowerer) namespaceCallee(member *ast.MemberExpr, call *ast.FunctionCall
 	if fn, params, ok := l.specializedFuncFor(call); ok {
 		return fn, params, true
 	}
-	fn, ok := l.funcs[name]
+	lam, ok := st.LookupFunctionIn(imp.Path, name)
 	if !ok {
 		return nil, nil, false
 	}
-	var params []ast.Parameter
-	if lam, ok := st.LookupFunction(name); ok {
-		params = lam.Parameters
+	// Keyed from the *declaration's* own location, not from the call's: funcKey resolves
+	// a name as the file at that location sees it, and the asking file is precisely the
+	// one that may have declared its own.
+	fn, ok := l.funcs[l.funcKey(name, lam.GetLocation())]
+	if !ok {
+		return nil, nil, false
 	}
-	return fn, params, true
+	return fn, lam.Parameters, true
 }

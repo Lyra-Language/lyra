@@ -103,8 +103,21 @@ type SymbolTable struct {
 	// PreludeModule is the implicitly-imported module's path, letting registration
 	// tell "this name is already taken by the prelude" (allowed, warned) apart from a
 	// genuine clash between two user modules (an error).
-	PreludeModule   string
-	ShadowedPrelude []ShadowedName
+	PreludeModule string
+
+	// Shadowed records every declaration that took a name arriving from somewhere else
+	// — the prelude, or a module this one imports. Both are warnings, never errors:
+	// see shadowsAmbient.
+	Shadowed []ShadowedName
+
+	// ImportedModules maps a module to the module paths its files import. It is the
+	// import graph, handed over before the first file is walked (SetImports) because
+	// a type's key is computed *during* the walk and depends on it.
+	//
+	// Deliberately not derived from Imports below: that map is filled in per file as
+	// each is walked, so a declaration in the first file of a multi-file module would
+	// be keyed before the file carrying the `import` had been seen.
+	ImportedModules map[string][]string
 
 	// PreludeNames is the set of names the prelude declares. Kept separately from
 	// ModuleOf, which is last-writer-wins: when a user module declares a name the
@@ -143,6 +156,8 @@ func NewSymbolTable() *SymbolTable {
 		ModuleScopes: make(map[string]*Scope),
 		PreludeNames: make(map[string]bool),
 		OverloadSets: make(map[string]*ast.OverloadSet),
+
+		ImportedModules: make(map[string][]string),
 	}
 	st.CurrentScope = st.ModuleScopeFor("")
 	return st
@@ -313,13 +328,14 @@ func (st *SymbolTable) PopScope() {
 // collector.exportToGlobal alongside `pub` bindings — one rule, one place — and only a
 // `pub` one crosses. Defining every type globally is what made a private type compete
 // for a program-wide name, so two modules could not each declare a `Point`.
+// The shadow is noted **after** the define, not before: the import half of the question
+// asks whether this module declares the name, which is true only once the declaration is
+// in its scope. The prelude half never depended on the scope, so nothing moved for it.
 func (st *SymbolTable) RegisterType(node *ast.TypeDeclStmt) error {
-	if st.takesPreludeName(node.Name, node.GetLocation()) {
-		st.noteShadowed(node.Name, node.GetLocation())
-	}
 	if err := st.defineInDeclaringModule("type", node); err != nil {
 		return err
 	}
+	st.noteAmbientShadow(node.Name, node.GetLocation())
 	st.Types[st.declKey(node.Name, node.GetLocation())] = node
 	return nil
 }
@@ -328,12 +344,10 @@ func (st *SymbolTable) RegisterType(node *ast.TypeDeclStmt) error {
 // Returns an error if a trait with the same name is already registered in the same
 // module; see RegisterType for why the module scope is written first.
 func (st *SymbolTable) RegisterTrait(node *ast.TraitDeclStmt) error {
-	if st.takesPreludeName(node.Name, node.GetLocation()) {
-		st.noteShadowed(node.Name, node.GetLocation())
-	}
 	if err := st.defineInDeclaringModule("trait", node); err != nil {
 		return err
 	}
+	st.noteAmbientShadow(node.Name, node.GetLocation())
 	st.Traits[st.declKey(node.Name, node.GetLocation())] = node
 	return nil
 }
@@ -373,9 +387,7 @@ func (st *SymbolTable) defineInDeclaringModule(kind string, node ast.Named) erro
 // calling whichever happened to be registered last. A silently wrong program, chosen by
 // collection order.
 func (st *SymbolTable) RegisterFunction(name string, node *ast.LambdaExpr) error {
-	if st.takesPreludeName(name, node.GetLocation()) {
-		st.noteShadowed(name, node.GetLocation())
-	}
+	st.noteAmbientShadow(name, node.GetLocation())
 	// An **overloaded** name is registered as its whole set, once, and kept out of
 	// Functions entirely (overload.go). The scope decided the name was overloaded, back
 	// when the two declarations met during the walk; this only mirrors the result, so
@@ -458,11 +470,12 @@ func (st *SymbolTable) declKey(name string, loc ast.Location) string {
 }
 
 func (st *SymbolTable) declKeyIn(module, name string) string {
-	// A declaration that took a prelude name is qualified whatever its visibility and
-	// whichever module made it — including the entry module, which otherwise keeps the
-	// bare key. The prelude keeps the bare key, so every module that did *not* shadow
-	// the name still finds the prelude's declaration under it.
-	if st.shadowsPrelude(module, name) {
+	// A declaration that took an *ambient* name — the prelude's, or one arriving
+	// through an import — is qualified whatever its visibility and whichever module
+	// made it, including the entry module, which otherwise keeps the bare key. The
+	// module the name came from keeps the bare key, so every module that did *not*
+	// shadow it still finds that declaration under it.
+	if st.shadowsAmbient(module, name) {
 		return qualifiedName(module, name)
 	}
 	if module == "" {
@@ -510,9 +523,24 @@ func qualifiedName(module, name string) string {
 	return module + "::" + name
 }
 
+// shadowsAmbient reports whether module declares its own `name` over one that reaches
+// it from elsewhere — the prelude's, or one exported by a module it imports. Both are
+// the case a warning is issued for, and the reason the declaration needs a key of its
+// own.
+//
+// **They are one rule and were two.** A prelude name was shadowable and an imported one
+// was not, so `import util.seq` (which exports a `map`) plus a perfectly ordinary
+// `let map = …` was a hard error while the same declaration over the prelude's `map`
+// merely warned — the explicit act punished and the implicit one forgiven, and a user's
+// only reading of it was that importing a module forbids them a name they can see no
+// reason to lose. Qualifying the local declaration is what `shadowsPrelude` already did
+// for the softer half; this is the same key, asked of a wider set of sources.
+func (st *SymbolTable) shadowsAmbient(module, name string) bool {
+	return st.shadowsPrelude(module, name) || st.shadowsImport(module, name)
+}
+
 // shadowsPrelude reports whether module declares its own `name` over one the prelude
-// exports — the case a warning is issued for, and the reason the declaration needs a
-// key of its own.
+// exports.
 //
 // It asks the module's *scope*, not ModuleOf: that map is last-writer-wins, so it
 // forgets the prelude ever had the name the moment a user module takes it.
@@ -521,6 +549,42 @@ func (st *SymbolTable) shadowsPrelude(module, name string) bool {
 		return false
 	}
 	return st.PreludeNames[name] && st.ModuleDeclares(module, name)
+}
+
+// shadowsImport reports whether module declares its own `name` over one exported by a
+// module it imports.
+//
+// The answer must be **stable** between the moment a declaration is keyed and every
+// later lookup, since a key computed one way and read the other simply misses. Both
+// halves are: ModuleDeclares is true from the moment the declaration lands in its own
+// module's scope, which RegisterType/RegisterTrait do before computing the key and
+// recordModuleBindings does before Finish registers a function; ModuleExports asks the
+// *imported* module's scope, and Resolve returns units in dependency order, so that
+// module was walked first. ImportedModules is the one that could not be assembled as
+// the walk went (see SetImports).
+func (st *SymbolTable) shadowsImport(module, name string) bool {
+	if st == nil || !st.ModuleDeclares(module, name) {
+		return false
+	}
+	for _, imported := range st.ImportedModules[module] {
+		if imported != module && st.ModuleExports(imported, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// ModuleExports reports whether module declares name at its top level *and* exports it.
+//
+// The visibility half is what separates this from ModuleDeclares: a private name never
+// reached the importer, so declaring one of your own shadows nothing.
+func (st *SymbolTable) ModuleExports(module, name string) bool {
+	scope := st.moduleScope(module)
+	if scope == nil {
+		return false
+	}
+	sym, ok := scope.LookupLocal(name)
+	return ok && declIsPublic(sym)
 }
 
 // describeLocation renders a location for an "already defined" message, naming the file
@@ -663,10 +727,42 @@ func (st *SymbolTable) BindingOf(name string) (*ast.VarDeclStmt, bool) {
 	return decl, ok
 }
 
-// ShadowedName records a user declaration that took a name the prelude exports.
+// BindingIn is BindingOf asked of a **named** module — the binding half of LookupTypeIn
+// and LookupTraitIn, and what a namespace reference (`seq.map`) needs.
+//
+// BindingOf cannot answer it. It finds the module through ModuleOf, which is
+// last-writer-wins, so once two modules may each declare a `map` it reports on whichever
+// was collected last: `seq.map` looked up the *entry* file's binding, found no `pub`, and
+// reported the imported module's exported function as private to itself. That is hazard
+// 4's rule — a `pub` check must ask about the declaration a reference resolved to — and
+// the by-name form was simply unreachable while an imported name forbade a local one.
+//
+// It falls back to BindingOf, so a caller with no module in hand is no worse off than
+// before.
+func (st *SymbolTable) BindingIn(module, name string) (*ast.VarDeclStmt, bool) {
+	if st == nil {
+		return nil, false
+	}
+	if scope := st.moduleScope(module); scope != nil {
+		if sym, found := scope.LookupLocal(name); found {
+			if decl, isVar := sym.(*ast.VarDeclStmt); isVar {
+				return decl, true
+			}
+		}
+	}
+	return st.BindingOf(name)
+}
+
+// ShadowedName records a user declaration that took a name reaching it from elsewhere.
+//
+// Source is the module the name came from — an imported module's path, or "" for the
+// prelude. It is what lets the warning name a qualifier the reader can actually type
+// (`seq.map`), which the prelude case has nothing to offer: the prelude is reachable
+// precisely because nothing names it.
 type ShadowedName struct {
-	Name string
-	Loc  ast.Location
+	Name   string
+	Loc    ast.Location
+	Source string
 }
 
 // takesPreludeName reports whether name is currently held by the prelude and the module
@@ -712,7 +808,34 @@ func (st *SymbolTable) takesPreludeName(name string, loc ast.Location) bool {
 // and the two coexist exactly as a shadowing *binding* and the prelude's already did —
 // each module reaching the one it should, through the same key function.
 func (st *SymbolTable) noteShadowed(name string, loc ast.Location) {
-	st.ShadowedPrelude = append(st.ShadowedPrelude, ShadowedName{Name: name, Loc: loc})
+	st.Shadowed = append(st.Shadowed, ShadowedName{Name: name, Loc: loc})
+}
+
+// noteAmbientShadow records the warning for a declaration that took a name reaching it
+// from elsewhere, whichever source it came from.
+//
+// The prelude half asks takesPreludeName rather than shadowsPrelude, because a *type* is
+// registered before its own scope entry exists and the two questions differ exactly
+// there. The import half has no such wrinkle — every caller has already defined the
+// declaration in its module scope by the time it gets here — so it asks the same
+// predicate declKeyIn does, which is what keeps "was it warned about" and "was it keyed
+// apart" from being able to disagree.
+func (st *SymbolTable) noteAmbientShadow(name string, loc ast.Location) {
+	if st == nil {
+		return
+	}
+	if st.takesPreludeName(name, loc) {
+		st.noteShadowed(name, loc)
+		return
+	}
+	module := st.ModuleOfFile[loc.File]
+	for _, imported := range st.ImportedModules[module] {
+		if imported != module && st.ModuleExports(imported, name) && st.ModuleDeclares(module, name) {
+			st.Shadowed = append(st.Shadowed,
+				ShadowedName{Name: name, Loc: loc, Source: imported})
+			return
+		}
+	}
 }
 
 // ModuleScopeFor returns the scope holding a module's top-level declarations,

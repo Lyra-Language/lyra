@@ -10,6 +10,74 @@ Newest first.
 ## Dated log
 
 ### 08/08/26
+**An import no longer makes an ordinary name unusable.** `import util.seq` (which exports a
+`map`) plus a perfectly ordinary `let map = (n: i64) -> i64 => n + 1` was a hard error —
+*function "map" is already defined at …/util/seq.lyra* — so a program had to choose between
+importing a module and declaring a name it happened to export.
+
+**The comparison is what made it wrong rather than merely strict.** The prelude — the names
+you never asked for — took the *soft* path: the user's declaration warned (`lyra-W012`) and
+won, with the prelude's still reachable. The names you deliberately imported took the hard
+one. The explicit act punished and the implicit one forgiven, and the only reading a user
+could take from the error is that the library owns `map` and their program may not have one.
+
+It is one rule now. `shadowsPrelude` became **`shadowsAmbient`**: a module's own top-level
+declaration of a name reaching it from *either* source is keyed `<module>::<name>`, the
+source keeps the bare key, and the declaration warns (`lyra-W016`, W012's sibling with a
+namespace to point at) instead of erroring. So the local declaration wins every bare
+reference in that module, the shadowed one is reached as `seq.map`, and no other module is
+affected. Nothing was invented — this is the key `declKeyIn` had been computing for the
+prelude, asked of a wider set of sources, which is why the change is small enough to state
+in one predicate.
+
+**What stays an error, on purpose:** two modules exporting one name. A bare reference from a
+third module could mean either and neither has a local declaration obviously meant to win, so
+there is nothing for a shadowing rule to prefer — `exportToGlobal`'s check is untouched. That
+includes a module `pub`-exporting a name it also imports, which is a second claim on the
+program-wide name wearing an import; resolving *that* needs option (b) from `todo.md`
+(qualified `pub` keys, bare lookups consulting the importing module's bindings), because the
+answer depends on who is asking. Nothing shipped needs it.
+
+**The one ordering constraint, and why `ImportGraph` exists.** A type's key is computed
+*during* the walk, so the import graph must be complete before the first file is walked —
+`Collector.SetImports`, called beside `SetPreludeModule`, whose own comment had already
+recorded the identical trap. Assembling the graph per file as each is walked works for a
+single-file module and quietly fails for the rest: a module whose `import` sits in its second
+file would key the first file's types as though nothing were imported, and every later lookup
+— with the graph complete — would compute a key that misses them. The other two inputs need
+no such help, and it is worth knowing which: `ModuleDeclares` is true from the moment a
+declaration lands in its own module's scope (which `RegisterType` does *before* computing the
+key, and `recordModuleBindings` does before `Finish` registers a function), and
+`ModuleExports` asks the *imported* module, which `Resolve` returns in dependency order.
+
+**It surfaced two live bugs, both hazard 4's by-name form — a module question answered from a
+name — and both already reachable without this feature.** Shadowing a *prelude* name has
+qualified the shadowing declaration's key since 07/30, so a program that did that *and* then
+called into a module through a namespace hit both; nothing did both at once, so nothing found
+them. Verified on the commit before this change: `seq.map(20)` beside a local `let map`
+reported `map is private to module "util.seq"`.
+
+- **The `pub` check on a namespace member read the wrong module's binding.** `visibilityIn`
+  falls through to `BindingOf(name)` for a function, since `pub` lives on the binding rather
+  than the lambda — and `BindingOf` finds the module through `ModuleOf`, which is
+  last-writer-wins. So `seq.map` looked up the *entry* file's `map`, found no `pub`, and
+  reported an exported function as private to its own module. The fix is `BindingIn(module,
+  name)`, the binding half of the `LookupTypeIn`/`LookupTraitIn` the same function had been
+  using two lines above; its doc comment already explained why those are `In` forms.
+- **The backend could not lower the namespace call at all.** `namespaceCallee` tested
+  membership with `DeclaringModule` and took the callee out of `l.funcs[name]`, both sound
+  only under the premise its own comment stated — "names are program-wide unique today". With
+  a shadow in play the membership test rejected the call, it fell out of the path entirely,
+  and the build died with `llvm: unsupported method call` on a program the front end had
+  checked clean: rule 5 inverted. It asks `ModuleDeclares` now, and keys from the location of
+  the **declaration it resolved to** rather than from the call's — the asking file being
+  precisely the one that may have declared its own.
+
+The behavioural half is pinned by an exec test rather than a type-check one, because "the
+local declaration wins" is a codegen claim too: 30 from the local function plus 400 from the
+imported one, so either half resolving to the other gives a different number rather than a
+failure to build.
+
 **Integer literals past 64 bits.** `let mx: i128 = 170141183460469231731687303715884105727`
 is writable; before, a 128-bit constant had to be reached through arithmetic or an
 `i128(x)` conversion, on a type the language otherwise supports fully.

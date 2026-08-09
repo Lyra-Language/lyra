@@ -31,8 +31,13 @@ was collected last), and the message names the other file.
 
 **All three maps are keyed by `declKey`**, not by bare name: a declaration keeps its own name
 when it is `pub` (or in the entry module), and gets `<module>::<name>` when it is **private**,
-or when it takes a name the prelude exports — whatever its visibility, so the prelude keeps the
-bare key for every module that did not shadow it. That is one rule for bindings, types and
+or when it takes a name that reaches it from elsewhere — the prelude's, or one exported by a
+module it imports (`shadowsAmbient`) — whatever its visibility, so the source keeps the bare
+key for every module that did not shadow it. The imported half joined the prelude's on 08/08;
+before that an imported name could not be shadowed at all, and declaring your own was a hard
+error while the same declaration over a prelude name merely warned. `ImportedModules` is what
+the import half reads, and it is handed over before the first file is walked (`SetImports`)
+because a type is keyed as it is registered, mid-walk. That is one rule for bindings, types and
 traits (`FunctionKey` and `TypeKey` are two names for it), because "whose declaration is this"
 does not depend on what kind of declaration it is, and a second copy of the rule is exactly the
 drift hazard 4 warns about. Types and traits joined it on 08/01; before that their namespace
@@ -50,6 +55,12 @@ Which accessor a site wants is therefore **not a style choice**:
   such member" for a name the module really does declare.
 - `LookupType` / `LookupTrait` / `LookupFunction(name)` — the bare key only, i.e. a name that is
   program-wide. Correct for a caller that genuinely has no asking position.
+
+`BindingIn(module, name)` is the same `In` form for the **binding** a function's `pub` lives
+on, and exists for the same reason: its by-name sibling `BindingOf` finds the module through
+last-writer-wins `ModuleOf`, so once two modules may each declare a `map` it answers about
+whichever was collected last — which reported an imported module's exported function as
+private to itself (08/08).
 
 A private declaration lands only in its own module's scope, so privacy is **structural** rather
 than a post-lookup check — a reference from elsewhere does not find it. The cost is the message:

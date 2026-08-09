@@ -61,8 +61,9 @@ because each was learned from a real failure, and none is local to one package.
    cannot drift apart.
 
    **All three maps are keyed by `declKey`** — bare when a declaration is `pub` or in the
-   entry module, `<module>::<name>` when private or when it takes a prelude name — so
-   *which* accessor you use is a correctness question, not a style one. Prefer
+   entry module, `<module>::<name>` when private or when it takes a name reaching it from
+   elsewhere (the prelude's, or one exported by a module it imports — `shadowsAmbient`,
+   08/08) — so *which* accessor you use is a correctness question, not a style one. Prefer
    `LookupTypeFrom`/`LookupTraitFrom`/`LookupFunctionFrom(name, loc)`, which resolve as the
    file at `loc` sees it; bare `LookupType(name)` answers only for a program-wide name, and
    asking it from inside a module that declares its own returns *another* module's
@@ -72,6 +73,19 @@ because each was learned from a real failure, and none is local to one package.
    reference *resolved to* (`declVisibility`), never look one up by name — `DeclaringModule`
    is last-writer-wins, and reported a module's own type as private to another module that
    happened to declare the same name.
+
+   **The by-name form keeps coming back wherever a module is not in hand**, and two more
+   were found 08/08 when a module became able to declare its own version of an imported
+   name: `visibilityIn` fell through to `BindingOf(name)` — a `pub` check routed through
+   `ModuleOf` after all — and reported an *exported* function as private to its own module
+   (`BindingIn(module, name)` is the fix, the binding half of `LookupTypeIn`); and the
+   backend's `namespaceCallee` tested membership with `DeclaringModule` and read
+   `l.funcs[name]`, so `seq.map(…)` fell out of the path and died as
+   `llvm: unsupported method call` on a program the front end had checked clean. Both had
+   been reachable since 07/30 by shadowing a *prelude* name and then calling through a
+   namespace; nothing did both at once. When a premise like "a top-level name is
+   program-wide unique" is written into a comment, it is a bug waiting for the feature that
+   retires it.
 
 5. **The backend errors loudly rather than emitting wrong code.** A form that does not lower
    yet is a hard error, never a guess — including where it must repeat a check the front end

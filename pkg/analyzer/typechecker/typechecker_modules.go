@@ -114,8 +114,11 @@ func (tc *TypeChecker) visibilityIn(module, name string) visibility {
 		return visibility{name, module, decl.IsPublic, true}
 	}
 	// A function's `pub` lives on its *binding*, not on the lambda, so it is read from
-	// the declaring statement rather than from SymbolTable.Functions.
-	if decl, ok := tc.symTable.BindingOf(name); ok {
+	// the declaring statement rather than from SymbolTable.Functions — and from the
+	// binding *this module* made, for the reason the two lookups above are `In` forms.
+	// BindingOf finds the module through a last-writer-wins map, so it answered `seq.map`
+	// with the entry file's own `map` and called an exported function private.
+	if decl, ok := tc.symTable.BindingIn(module, name); ok {
 		return visibility{name, module, decl.IsPublic, true}
 	}
 	return v

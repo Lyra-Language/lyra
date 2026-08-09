@@ -348,52 +348,49 @@ the backend's `structTypes` registry with them. Two modules may each declare a p
 - Out of scope by decision, none of it changing what a module's source looks like: package
   management, versioning, separate/incremental compilation.
 
-**An import can make an ordinary name unusable, and the prelude cannot.** A `pub`
-declaration takes the *bare* program-wide key whichever module made it (`declKeyIn`,
-`pkg/ast/symbols/table.go`), so importing a module claims every name it exports. `import
-util.seq` (which exports a `map`) plus a perfectly ordinary
-`let map = (n: i64) -> i64 => n + 1` is a hard error:
+**[DONE 08/08] An import can no longer make an ordinary name unusable.** `import util.seq`
+(which exports a `map`) plus a perfectly ordinary `let map = (n: i64) -> i64 => n + 1` was a
+hard error — *function "map" is already defined at …/util/seq.lyra* — while the identical
+declaration over the **prelude's** `map` merely warned and won. The explicit act punished
+and the implicit one forgiven; a user's only read of it was that the library owns `map` and
+their program may not have one.
 
-```
-shadow.lyra:3:1: error: function "map" is already defined at .../util/seq.lyra:3:20-6:2
-```
+Option **(a)**, as scoped above: `shadowsPrelude` became `shadowsAmbient`, so a module's own
+declaration of a name reaching it from *either* source — the prelude, or a module it imports
+— is keyed `<module>::<name>` and warns (`lyra-W016`) instead of erroring. The local
+declaration wins every bare reference in that module, the shadowed one stays reachable
+through the namespace the import already binds (`seq.map`), and no other module is affected.
+A genuine second claim on the program-wide name — two modules exporting one name — is still
+an error, which is what (a) was chosen to preserve.
 
-The example used to be `import std.maybe`, which is no longer a module — the standard
-library is one module as of 08/04. The bug is unchanged; only the illustration had to move
-to a user module, and that it *can* is the point.
+The import graph is handed to the collector **before the first file is walked**
+(`modules.ImportGraph` / `Collector.SetImports`), beside the prelude path and for the same
+reason: a type's key is computed during the walk, so a graph assembled file by file would
+key the first file of a multi-file module as though its second file's `import` did not
+exist. See COMPLETED.md, including the two by-name bugs it surfaced — a namespace member's
+`pub` check reading the wrong module's binding, and the backend failing to lower the
+namespace call at all.
 
-The comparison is what makes it wrong rather than merely strict. The **prelude** — the names
-you never asked for — takes the *soft* path: `let unwrap_or = …` warns (`lyra-W012`) and the
-user's declaration wins. The names you deliberately imported take the hard one. That is
-backwards on both counts: the explicit act is punished, and the implicit one forgiven. A
-user's read of that error is that the standard library owns `map` and their program may not
-have one, which is not a rule this language means to have.
+**Still open, and the reason (b) has not gone away entirely.** A module that is *itself*
+`pub`-exporting a name it also imports re-claims the program-wide name, and that is still
+reported (`symbol "map" already defined`). Resolving it needs (b) — qualified `pub` keys
+plus bare lookups consulting the importing module's bindings — because the answer depends on
+who is asking, which a program-wide key cannot express. Nothing shipped needs it.
 
-The mechanism to fix it already exists and is keyed too narrowly: `shadowsPrelude` qualifies
-the shadowing declaration and leaves the bare key to the prelude, which is exactly the
-"local declaration wins, the other stays reachable" rule wanted here. Two shapes to weigh —
-(a) generalize that to any imported module, so a local declaration always wins and the
-imported one is reached through its namespace (`seq.map(…)`), which is a form the language
-supports for every module; or (b) qualify `pub` keys outright and
-teach the bare lookups to consult the importing module's bindings. (a) is a smaller change
-and keeps a genuine *cross-module* duplicate — two modules both exporting `map`, neither
-importing the other — reportable as it is now.
+Worth having done before the standard library grew: every name added under `pub` used to be
+a name taken away from anyone who imports that module. It was also the constraint that
+decided where a combinator could live at all, back when the library was split (see the 08/02
+discussion of `map`/`filter`); the whole standard library is one module as of 08/04, and
+still one module as of 08/07 — it is seven *files* now (`std/prelude/`), which is the
+multi-file-module feature and deliberately not a re-split into several modules, for exactly
+the reason below.
 
-Worth doing before the standard library grows: every name added under `pub` is currently a
-name taken away from anyone who imports that module. It is also the constraint that decides
-where a combinator could live at all, back when the library was split (see the 08/02
- discussion of `map`/`filter`); the whole standard library is one module as of 08/04, and
- still one module as of 08/07 — it is seven *files* now (`std/prelude/`), which is the
- multi-file-module feature and deliberately not a re-split into several modules, for exactly
- the reason below.
-
-**Less pressing since UFCS landed 08/03, and not fixed by it.** The combinators are now
-reached as `m.map(f)`, dispatched on the receiver, so the bare name `map` no longer has to
-mean one type's version — which was the reason this decided where `map` could live. The
-collision itself is untouched: importing a module still claims every top-level name it
-exports, so a program that imports one still may not declare its own. What changed is that
-the workaround (don't import it) now costs less, which is exactly the kind of relief that
-lets a real bug sit for a year. The fix is still (a) or (b) above.
+**It was less pressing since UFCS landed 08/03, and was not fixed by it.** The combinators
+are reached as `m.map(f)`, dispatched on the receiver, so the bare name `map` no longer has
+to mean one type's version — which was the reason this decided where `map` could live. The
+collision itself was untouched: importing a module still claimed every top-level name it
+exported. What changed is that the workaround (don't import it) cost less, which is exactly
+the kind of relief that lets a real bug sit for a year.
 
 **Receiver-keyed overloading (08/03) removed the other half of the pressure, and again did
 not fix this.** Two `self` functions of one name may now be *declared* in one module when
@@ -429,11 +426,11 @@ calls that were errors change meaning. A plain (non-receiver) function whose fir
 does not fit is still an ordinary argument-type error, since dispatching there would turn a
 typo into a call to something else. See COMPLETED.md.
 
-**What (a)/(b) is still for.** Names with **no receiver** cannot be disambiguated this way
-at all — two modules exporting a plain `helper` still collide on the bare key, and an
-imported `pub` name still forbids the importer its own. That is the original bug, untouched:
-receiver dispatch fixes the names that have something to dispatch on, and the key-level fix
-is what settles the rest.
+**What (a)/(b) was for.** Names with **no receiver** cannot be disambiguated by dispatch at
+all, which is why the key-level fix was the one that settled the rest. (a) landed 08/08: an
+imported `pub` name no longer forbids the importer its own. Two modules exporting a plain
+`helper` still collide on the bare key, which is the half deliberately kept — neither has a
+local declaration obviously meant to win, so there is nothing for a shadowing rule to prefer.
 
 The LSP resolves a document's whole import graph as of 08/02 (see COMPLETED.md), which leaves
 two editor features single-file where the program no longer is:

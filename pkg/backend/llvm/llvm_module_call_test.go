@@ -136,3 +136,45 @@ pub let run = () -> i64 => {
 		t.Errorf("expected 42 — the private callee's `mut` write should reach the caller's Box, got %d", got)
 	}
 }
+
+// A file may declare its own version of a name an imported module exports; the local one
+// wins a bare call and the imported one is still reached through its namespace. This
+// exercises both from the backend's side, where each half was resolved *by name*: the
+// membership test through DeclaringModule (last-writer-wins, so it answered with the
+// entry file's declaration and rejected the call) and the callee through `l.funcs[name]`
+// (which holds the imported one under a key the bare name no longer computes).
+//
+// The result separates the two: 3 * 10 = 30 from the local `scale`, 4 * 100 = 400 from
+// the imported one, and 430 % 256 = 174 as an exit code. Either half resolving to the
+// other function gives a different number rather than a failure to build.
+func TestExec_LocalDeclarationShadowsImportedName(t *testing.T) {
+	t.Parallel()
+	got := buildAndRunModules(t, map[string]string{
+		"util/scale.lyra": "module util.scale\npub let amplify = (n: i64) -> i64 => n * 100",
+		"app.lyra": `import util.scale
+let amplify = (n: i64) -> i64 => n * 10
+let main = () -> u8 => u8((amplify(3) + scale.amplify(4)) %% 256)`,
+	})
+	if got != 174 {
+		t.Errorf("exit code: got %d, want 174 (30 from the local amplify, 400 from the imported one)", got)
+	}
+}
+
+// The same, for a name the **prelude** exports. This path was already broken before a
+// local declaration over an *imported* name was allowed — a prelude shadow has qualified
+// the shadowing declaration's key since 07/30, so `l.funcs[name]` missed here too — but
+// it took a program that shadowed a prelude name *and* called into a module through a
+// namespace, which nothing did. Pinned separately because the two shadow sources reach
+// the same key rule by different routes.
+func TestExec_PreludeShadowDoesNotBreakANamespaceCall(t *testing.T) {
+	t.Parallel()
+	got := buildAndRunModules(t, map[string]string{
+		"util/seq.lyra": "module util.seq\npub let count = (n: i64) -> i64 => n * 100",
+		"app.lyra": `import util.seq
+let print = (n: i64) -> i64 => n * 10
+let main = () -> u8 => u8((print(3) + seq.count(2)) %% 256)`,
+	})
+	if got != 230 {
+		t.Errorf("exit code: got %d, want 230", got)
+	}
+}

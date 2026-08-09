@@ -156,6 +156,57 @@ wins, rather than erroring the way two user modules' clash does — otherwise ev
 prelude exports would be permanently unusable, and adding one later would break programs that
 never mentioned it.
 
+**An imported name is shadowable on exactly the same terms** (08/08). `import util.seq`
+(which exports a `map`) plus an ordinary `let map = …` used to be a hard error — *function
+"map" is already defined at …/util/seq.lyra* — while the identical declaration over the
+**prelude's** `map` merely warned and won. The explicit act punished and the implicit one
+forgiven, and the only reading a user could take from it is that importing a module forbids
+them a name, which is not a rule this language means to have.
+
+It is one rule now, `shadowsAmbient`: a module's own top-level declaration of a name
+reaching it from elsewhere — the prelude's, or one exported by a module it imports — is
+keyed `<module>::<name>`, the source keeps the bare key, and the declaration warns
+(`lyra-W016`, W012's sibling) rather than erroring. So the local declaration wins every
+bare reference in that module, the shadowed one is still reached through the namespace the
+import already binds (`seq.map`), and no other module is affected. Nothing new was
+invented: this is the key `shadowsPrelude` had been computing for the softer half, asked of
+a wider set of sources.
+
+What stays an error is a **second claim on the program-wide name**: two modules exporting
+one name, whether or not one imports the other, since a bare reference from a third module
+could mean either and neither has a local declaration obviously meant to win. That is
+`exportToGlobal`'s check, untouched. Names with no receiver are also still the reason the
+key-level fix matters at all — receiver dispatch (08/03–08/04) disambiguates the names that
+have something to dispatch on, and this settles the rest.
+
+One ordering constraint comes with it, and it is why `ImportGraph` exists. A type's key is
+computed **during** the walk, so the graph has to be complete before the first file is
+walked (`Collector.SetImports`, called beside `SetPreludeModule` for the same reason).
+Assembling it per file as each is walked works for a single-file module and quietly fails
+for the rest: a module whose `import` sits in its second file would key the first file's
+types as though nothing were imported, and every later lookup — with the graph complete —
+would compute a key that misses them. The other two inputs need no such help:
+`ModuleDeclares` is true from the moment a declaration lands in its own module's scope, and
+`ModuleExports` asks the *imported* module, which `Resolve` returns in dependency order.
+
+It surfaced two live bugs that a prelude shadow could already reach and nothing had, both
+the by-name form of hazard 4 — a module question answered from a name:
+
+- **The `pub` check on a namespace member read the wrong binding.** `visibilityIn` fell
+  through to `BindingOf(name)`, which finds the module through last-writer-wins `ModuleOf`,
+  so `seq.map` looked up the *entry* file's `map`, found no `pub`, and reported an exported
+  function as *private to its own module*. `BindingIn(module, name)` is the binding half of
+  `LookupTypeIn`/`LookupTraitIn`, which the same function had been using two lines above.
+- **The backend could not lower the namespace call at all.** `namespaceCallee` tested
+  membership with `DeclaringModule` and took the callee from `l.funcs[name]`, both sound
+  only while a top-level name was program-wide unique. With a shadow in play the membership
+  test rejected the call and it fell through to `llvm: unsupported method call` — a backend
+  failure on a program the front end had checked clean, which is rule 5 inverted. It asks
+  `ModuleDeclares` and keys from the **declaration** it resolved to.
+
+Both were reachable before 08/08 by shadowing a *prelude* name and then calling into a
+module through a namespace; nothing did both at once, so nothing found them.
+
 **A shadow reaches exactly as far as the module that declared it** (07/30). The prelude's
 exported *bindings* live in **`SymbolTable.PreludeScope`**, which sits **between** every module
 scope and the global one, so a lookup runs module → prelude → global. That middle position is
