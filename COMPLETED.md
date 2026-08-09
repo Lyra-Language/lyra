@@ -10,6 +10,46 @@ Newest first.
 ## Dated log
 
 ### 08/08/26
+**`s.byte_offset(i) -> Maybe<i64>`** — the rune→byte conversion, and the last piece the
+byte-level string set was missing.
+
+Nothing in the language could perform it. `compare_bytes_at` answers "does `sep` occur at
+byte offset b" and is the cheap primitive, but everything the *language* hands you is a rune
+index — `index` returns one, `slice` takes them, `s[i]` uses them — so the fast test had no
+argument to be given. A prelude `split` could ask "does `sep` occur at rune i" only by
+allocating (`slice(i - m, i) == sep`, a fresh string per position tested) or by scanning to
+the end of the string whenever the answer was no (`index(sep, i - m) == i - m`). Either makes
+split quadratic; this makes it one memcmp.
+
+The composition is the point, and it needs no `match`:
+
+```lyra
+let occurs_at = pure noalloc (self: string, sep: string, i: i64) -> bool =>
+  self.compare_bytes_at(self.byte_offset(i).unwrap_or(-1), sep) == 0
+```
+
+That reads this way **because `compare_bytes_at` is total** — `unwrap_or(-1)` hands it an
+offset it already answers negative for. Making it total rather than trapping was decided for
+its own reasons on the same day; this is the second thing that decision bought, and the test
+pinning the pair is deliberately written as the idiom rather than as two separate assertions,
+so a later trap or a different out-of-range answer breaks *here* rather than in whatever
+prelude function next reaches for it.
+
+Two decisions:
+
+- **It maps positions, not elements**, so the end position (`i` == the rune count) is
+  `Some(byte_len)` rather than `None`. That is `slice`'s rule, not `s[i]`'s, and the
+  asymmetry with the trapping `s[n]` is deliberate: this exists to convert *bounds*, and
+  `s.slice(a, n)` is an ordinary slice, so `n` must have an answer. A negative `i` counts
+  from the end, as everything else does since earlier the same day.
+- **`Maybe<i64>` rather than -1**, for the reason the prelude's own functions return one — and
+  it costs nothing, a Maybe of a scalar being an inline union, so it stays `noalloc`.
+  Branchless, built the way `checked_*` builds its Maybe.
+
+No new walk: it exposes `lyra_str_rune_offset`, which `s[i]` and `slice` already shared, so
+there are now three callers of one definition rather than a third copy of the same question.
+
+### 08/08/26
 **Negative indices on strings, for `s[i]` and `s.slice(a, b)`.** `s[-1]` is the last rune
 and `s.slice(1, -1)` drops it, which is the rule arrays already had.
 

@@ -554,3 +554,63 @@ func TestExec_NegativeStringSliceOutOfRangeTraps(t *testing.T) {
 		})
 	}
 }
+
+// `s.byte_offset(i)` — the rune→byte conversion, which the language has no other way to
+// perform. The multi-byte rows are the whole point: in "héllo" rune 2 is byte 3, so an
+// implementation that confused the two would pass on ASCII and fail here.
+//
+// **The end position is `Some`, not `None`** (rune count → byte length), which is
+// slice's rule rather than indexing's: this converts *bounds*, and `s.slice(a, n)` is an
+// ordinary slice, so `n` must have an answer. The asymmetry with `s[n]`, which traps, is
+// deliberate. A negative index counts from the end like everywhere else.
+func TestExec_StringByteOffset(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let off = (s: string, i: i64) -> i64 => s.byte_offset(i).unwrap_or(-1)
+let main = () -> void => {
+  let s = "héllo";
+  // runes h é l l o start at bytes 0 1 3 4 5; byte_len is 6, so rune 5 is the end
+  // position and rune 6 does not exist. Note the row skips rune 3.
+  println("${off(s, 0)} ${off(s, 1)} ${off(s, 2)} ${off(s, 4)} ${off(s, 5)} ${off(s, 6)}");
+  println("${off(s, -1)} ${off(s, -5)} ${off(s, -6)}");
+  let j = "日本語";
+  println("${off(j, 1)} ${off(j, 3)} ${off(j, -1)} ${off("", 0)} ${off("", 1)}");
+}
+`
+	want := "0 1 3 5 6 -1\n5 0 -1\n3 9 6 0 -1"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("byte_offset:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// The composition byte_offset exists for: "does `sep` occur at rune i", allocation-free.
+//
+// It reads without a `match` only because `compare_bytes_at` is **total** — `unwrap_or(-1)`
+// hands it an offset it already answers negative for. That is the payoff for having made
+// it total rather than trapping, and this test is what pins the two staying compatible:
+// if either grew a trap or a different out-of-range answer, the idiom would break here
+// rather than in whatever prelude function next reaches for it.
+//
+// `pure noalloc` on the helper is part of the assertion. A prefix test that allocated
+// could not be used from the code that most wants one.
+func TestExec_ByteOffsetComposesWithCompareBytesAt(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let occurs_at = pure noalloc (self: string, sep: string, i: i64) -> bool =>
+  self.compare_bytes_at(self.byte_offset(i).unwrap_or(-1), sep) == 0
+let show = (b: bool) -> string => if b { "T" } else { "F" }
+let main = () -> void => {
+  let t = "a,bb,c";
+  // separators sit at runes 1 and 4; 0 and 5 are not, and 99 is off the end
+  println("${show(occurs_at(t, ",", 0))}${show(occurs_at(t, ",", 1))}${show(occurs_at(t, ",", 4))}${show(occurs_at(t, ",", 5))}${show(occurs_at(t, ",", 99))}");
+  // a multi-rune needle at a multi-byte offset, and the same needle one rune early
+  println("${show(occurs_at("héllo", "llo", 2))}${show(occurs_at("héllo", "llo", 1))}${show(occurs_at("héllo", "é", 1))}");
+}
+`
+	want := "FTTFF\nTFT"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("byte_offset + compare_bytes_at:\n%s\nwant:\n%s", got, want)
+	}
+}

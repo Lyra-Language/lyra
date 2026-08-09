@@ -700,8 +700,22 @@ spelling, it removes an O(n) tax that had no workaround: `s[s.len() - 1]` is two
 walks (`len()` is O(n), then `s[i]` is O(i)), measured at **34272 µs against 18 µs** for
 `s[-1]` over 2000 reads of a 2000-rune string.
 
+**`s.byte_offset(i) -> Maybe<i64>`** (`lowerStringByteOffset`) exposes that same walk to
+Lyra as the rune→byte conversion the language otherwise cannot perform. It is what makes
+"does `sep` occur at rune i" cheap —
+`s.compare_bytes_at(s.byte_offset(i).unwrap_or(-1), sep) == 0` — and the two compose
+without a `match` precisely because `compare_bytes_at` is **total**: `unwrap_or(-1)` hands
+it an offset it already answers negative for, which is the payoff for having made it total
+rather than trapping. It maps *positions*, so `allowEnd` is set and the end position is
+`Some(byte_len)` rather than `None` — slice's rule rather than indexing's, since a bound
+may name the end (`s.slice(a, n)`), and the asymmetry with the trapping `s[n]` is
+deliberate. Branchless, built the way `checked_*` builds its Maybe. Without it, a prelude
+`split` could only ask that question by allocating (`slice(i-m, i) == sep`) or by scanning
+to the end of the string (`index(sep, i-m) == i-m`), either of which makes it quadratic.
+
 `lyra_str_rune_offset(data, byteLen, idx, allowEnd)` (`strRuneOffsetFunc`) is the one
-definition of "where does rune k begin", returning a byte offset or -1. Both callers used to
+definition of "where does rune k begin", returning a byte offset or -1, and all three
+callers go through it. Both callers used to
 carry their own copy of the forward walk — the same question answered twice, which is why a
 negative bound could not be added to one without being added to the other by hand (rule 8).
 It returns -1 rather than trapping so each caller raises the panic that fits it, the index

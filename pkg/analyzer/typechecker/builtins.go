@@ -145,6 +145,40 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 			return &types.LambdaType{
 				ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.Int64}},
 			}, true
+		case "byte_offset":
+			// The byte offset at which rune `i` starts — the rune→byte conversion that
+			// `compare_bytes_at` needs and that nothing else could supply, since byte
+			// offsets are not otherwise derivable from inside the language.
+			//
+			// It is what makes "does `sep` occur at rune i" cheap:
+			// `s.compare_bytes_at(s.byte_offset(i).unwrap_or(-1), sep) == 0`. The two
+			// compose without a `match` precisely because `compare_bytes_at` is total —
+			// `unwrap_or(-1)` hands it an offset it already answers negative for — which
+			// is the payoff for having made it total rather than trapping.
+			//
+			// **It maps positions, not elements**, so the end position (`i` == the rune
+			// count) is `Some(byte_len)` rather than `None`. That is deliberately
+			// `slice`'s rule rather than `s[i]`'s: this exists to convert *bounds*, and a
+			// bound may name the end — `s.slice(a, n)` is ordinary, so `byte_offset(n)`
+			// must have an answer. A negative `i` counts from the end, as it does
+			// everywhere else since 08/08.
+			//
+			// `Maybe<i64>`, not -1, for the reason the prelude's own functions return one;
+			// a Maybe of a scalar is an inline union, so it stays `noalloc`. Resolved
+			// through the canonical-Maybe accessor `read_line` and `checked_*` use, so a
+			// program whose Maybe is named something else gets its own type back.
+			maybeName, ok := tc.canonicalTypeName("Maybe", loc)
+			if !ok {
+				return nil, false
+			}
+			i64t := types.PrimitiveType{Name: types.Int64}
+			return &types.LambdaType{
+				Parameters: []types.ParameterType{{Type: i64t}},
+				ReturnType: types.ReturnType{Type: types.ParameterizedType{
+					Name:          maybeName,
+					TypeArguments: []types.Type{i64t},
+				}},
+			}, true
 		case "compare_bytes_at":
 			// `compare_bytes` at a byte offset: compares `other`'s bytes against the
 			// bytes of `self` starting at `offset`, memcmp's convention, so

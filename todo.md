@@ -139,11 +139,20 @@ write today:
     saying it "would require a full rune count first" is what had kept it closed. One
     shared `lyra_str_rune_offset` now answers "where does rune k begin" for both callers,
     which had carried the same forward walk twice. See COMPLETED.md.
-  - **[OPEN] No `split`.** The search primitive exists now (`index`), so what is left is
-    the *output*: a `[]string` return needs an array-building story beyond a comprehension.
-    A byte-offset slice would also help — `slice` is rune-indexed, so a split loop pays
-    O(n) per part to re-find a position `index` already knew in bytes — but it is an
-    efficiency want rather than a blocker now that `index` returns rune indices.
+  - **[DONE 08/08] `s.byte_offset(i) -> Maybe<i64>`**, the rune→byte conversion nothing
+    else in the language could perform. It is what makes "does `sep` occur at rune i"
+    allocation-free — `s.compare_bytes_at(s.byte_offset(i).unwrap_or(-1), sep) == 0`,
+    composing without a `match` because `compare_bytes_at` is total. It maps *positions*,
+    so the end position is `Some(byte_len)` rather than `None` (slice's rule, not `s[i]`'s,
+    since a bound may name the end). Exposes the walk `s[i]` and `slice` already shared.
+  - **[OPEN] No `split`.** Everything it needs to *search* exists — `index` for positions,
+    `byte_offset` + `compare_bytes_at` for an allocation-free "separator at rune i". What
+    is left is the **output**: a `[]string` return, and with no growth op the element count
+    has to fall out of a comprehension's survivor count, so the shape is a comprehension
+    over positions `0..<=n` guarded on "a part starts here" rather than a loop that
+    appends. Traps to expect: `0..<=n` not `0..<n` (a trailing separator leaves an empty
+    final part starting at n), a bare boolean guard losing to bitwise `|`, and an empty
+    separator degenerating (Python raises; Lyra needs a deliberate answer).
 
 ## Known bugs
 

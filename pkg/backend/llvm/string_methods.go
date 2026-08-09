@@ -10,6 +10,7 @@ import (
 	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // The string methods `s.len()` and `s.slice(start, end)` (08/06).
@@ -318,4 +319,66 @@ func (l *lowerer) lowerStringCompareBytesAt(block *ir.Block, call *ast.FunctionC
 	tail := block.NewSelect(inRange, block.NewSub(n, otherLen), constant.NewInt(lltypes.I64, -1))
 	prefixEqual := block.NewICmp(enum.IPredEQ, cmp, zero)
 	return block.NewSelect(prefixEqual, tail, cmp), block, nil
+}
+
+// lowerStringByteOffset lowers `s.byte_offset(i)` → `Some(byteOffset)` for rune `i`, or
+// `None` when there is no such position.
+//
+// It exposes strRuneOffsetFunc — the helper `s[i]` and `slice` already share — as the
+// rune→byte conversion the language otherwise has no way to perform. `allowEnd` is set,
+// so the end position answers `Some(byte_len)`: this converts *bounds*, and `s.slice(a,
+// n)` is an ordinary slice, so `n` must have an answer. That is slice's rule rather than
+// indexing's, and the asymmetry with `s[n]` (which traps) is the point rather than an
+// oversight.
+//
+// Branchless, built the way `checked_*` builds its Maybe: both arms are constructed and
+// a select picks, rather than branching to two blocks and joining — a call site that
+// ends in a merge block is not a case flushStmtTemps handles. `Maybe<i64>` is an inline
+// union, so nothing here allocates and `noalloc` accepts it.
+func (l *lowerer) lowerStringByteOffset(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 1 {
+		return nil, nil, fmt.Errorf("llvm: byte_offset() expects 1 argument, got %d", len(call.Arguments))
+	}
+	recorded, ok := l.recordedType(call)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: byte_offset() call has no recorded type")
+	}
+	dt, ok := recorded.(types.DataType)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: byte_offset() must return a Maybe, got %s", recorded)
+	}
+	someC, someTag, hasSome := findConstructor(dt, "Some")
+	noneC, noneTag, hasNone := findConstructor(dt, "None")
+	if !hasSome || !hasNone {
+		return nil, nil, fmt.Errorf("llvm: byte_offset()'s return type %q is not a canonical Maybe", dt.Name)
+	}
+
+	str, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !isStringLLVMType(str.Type()) {
+		return nil, nil, fmt.Errorf("llvm: string byte_offset() receiver did not lower to a string (%s)", str.Type())
+	}
+	idxV, block, err := l.lowerExpr(block, call.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	idxSigned, _ := l.getIntSignedness(call.Arguments[0])
+	idx := coerceIntWidth(block, idxV, idxSigned, lltypes.I64)
+
+	data := block.NewExtractValue(str, 0)
+	byteLen := block.NewExtractValue(str, 1)
+	off := block.NewCall(l.strRuneOffsetFunc(), data, byteLen, idx, constant.NewInt(lltypes.I1, 1))
+	missing := block.NewICmp(enum.IPredSLT, off, constant.NewInt(lltypes.I64, 0))
+
+	some, err := l.buildDataValue(block, dt, someTag, someC, []value.Value{off})
+	if err != nil {
+		return nil, nil, err
+	}
+	none, err := l.buildDataValue(block, dt, noneTag, noneC, nil)
+	if err != nil {
+		return nil, nil, err
+	}
+	return block.NewSelect(missing, none, some), block, nil
 }

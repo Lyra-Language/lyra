@@ -75,6 +75,9 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	if member.Property.Name == "byte_len" {
 		return l.lowerStringByteLen(block, call, member)
 	}
+	if member.Property.Name == "byte_offset" {
+		return l.lowerStringByteOffset(block, call, member)
+	}
 	if member.Property.Name == "weak" {
 		return l.lowerWeakDowngrade(block, call, member)
 	}

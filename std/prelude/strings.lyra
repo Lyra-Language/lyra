@@ -146,8 +146,8 @@ pub let index = pure noalloc (self: string, needle: string, offset: i64 = 0) -> 
     if rune_i >= offset && self.compare_bytes_at(byte_i, needle) == 0 {
       return Some(rune_i)
     }
-    byte_i = byte_i + c.utf8_len();
-    rune_i = rune_i + 1;
+    byte_i += c.utf8_len();
+    rune_i += 1;
   }
   // The end position, checked after the loop because a `for-in` does not visit it.
   // Only an empty needle can match there, and it must: `"".index("")` and
