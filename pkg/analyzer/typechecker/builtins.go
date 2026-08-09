@@ -131,6 +131,53 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 				Parameters: []types.ParameterType{{Type: types.PrimitiveType{Name: types.String}}},
 				ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.Int64}},
 			}, true
+		case "byte_len":
+			// The **representation's** length, in bytes, O(1) — the fat pointer's own
+			// field (STRING_LAYOUT.md), where `len()` is an O(n) rune count.
+			//
+			// Exposing it is a deliberate crack in "rune-indexed is the language, bytes
+			// are the representation", and it is narrow on purpose: it exists so
+			// `compare_bytes_at` below has an offset to be given, and the unit is in the
+			// name for the reason `wall_clock_nanos` puts its unit there — a length that
+			// does not say which one invites the guess that fails silently on the first
+			// non-ASCII input. **`len()` remains what ordinary code wants**: it is the
+			// one that agrees with `s[i]` and `for c in s`.
+			return &types.LambdaType{
+				ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.Int64}},
+			}, true
+		case "compare_bytes_at":
+			// `compare_bytes` at a byte offset: compares `other`'s bytes against the
+			// bytes of `self` starting at `offset`, memcmp's convention, so
+			// `s.compare_bytes_at(0, p) == 0` is "p is a prefix of s".
+			//
+			// **It compares exactly `other`'s length**, which is what separates it from
+			// `compare_bytes` and is the whole point: comparing the *rest* of `self`
+			// would make a prefix test come out non-zero because `self` is longer.
+			// Where `self` has fewer bytes than that — including an out-of-range offset
+			// — the answer is negative, the short-operand-sorts-first rule the sibling
+			// already follows. Note the order those two rules apply in, which is
+			// memcmp's and is easy to guess backwards: **a byte mismatch decides before
+			// any shortfall**, so `"hello".compare_bytes_at(4, "lo")` is *positive*
+			// ('o' > 'l') rather than negative for the missing byte. Short-sorts-first
+			// only settles a range that matched as far as it went. Every predicate built
+			// on this asks `== 0`, where the distinction cannot arise.
+			//
+			// It is the primitive the prelude's `starts_with`/`ends_with` are one line
+			// each on top of, and `contains`/`split` will be a loop over. That division
+			// is the standing one: a memcmp at an offset cannot be written in Lyra
+			// (byte offsets are not addressable from the language), and the predicates
+			// built on it are ordinary code.
+			//
+			// **Rune-correct despite being byte-level**, which is why it can carry a
+			// language-level predicate at all: UTF-8 is prefix-free and
+			// self-synchronizing, so for well-formed strings a byte-prefix is exactly a
+			// rune-prefix and a byte-suffix exactly a rune-suffix. Every Lyra string is
+			// well-formed by construction.
+			i64t := types.PrimitiveType{Name: types.Int64}
+			return &types.LambdaType{
+				Parameters: []types.ParameterType{{Type: i64t}, {Type: types.PrimitiveType{Name: types.String}}},
+				ReturnType: types.ReturnType{Type: i64t},
+			}, true
 		}
 	}
 	// `x.weak()` on a `shared T` → a non-owning `weak T`. A method rather than new

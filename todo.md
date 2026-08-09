@@ -99,9 +99,25 @@ write today:
     reachable both directly from `expression` and through `_primary_expr` is derivable twice,
     which is an unresolved reduce-reduce at every operand position — and it **shrank** the
     parser by 4 states. See COMPLETED.md and `tree-sitter-lyra`'s CLAUDE.md.
-  - **[OPEN] No `starts_with`/`ends_with`/`contains`/`split`.** All expressible in the
-    prelude now that `len` and `slice` exist, and none written. `split` needs a `[]string`
-    return, so it also needs an array-building story beyond a comprehension.
+  - **[DONE 08/08] `starts_with`/`ends_with`.** One line each in the prelude over two new
+    builtins — `s.byte_len()` (O(1)) and `s.compare_bytes_at(offset, other)` (memcmp at a
+    byte offset, comparing exactly `other`'s length, so `== 0` is a prefix test). Both are
+    `pure noalloc`.
+
+    **Written rune-indexed first, which is the obvious way and is quadratic.** `s[i]` is
+    O(i), so a prefix test was O(m²) and a suffix test O(n·m) — and both paid an O(n)
+    `len()` before comparing anything, so `s.starts_with("--")` on a 2000-rune string
+    decoded all 2000 runes to answer a question about two bytes; measured, the length calls
+    alone were 99.7% of it. `slice` + `compare_bytes` fixes the quadratic term and is the
+    wrong trade: it allocates, so `noalloc` refuses it, and `slice` still walks runes to
+    find the offset, so it stays O(n). The byte builtin is O(m) with no decoding —
+    19.9 ms → 19 µs on that case. Byte-level answers the rune question exactly, because
+    UTF-8 is prefix-free and self-synchronizing. See COMPLETED.md.
+  - **[OPEN] No `contains`/`split`.** Both are a loop over `compare_bytes_at` now, so the
+    primitive they were waiting on exists. `split` needs a `[]string` return, so it also
+    needs an array-building story beyond a comprehension — and a **byte-offset** slice,
+    since `slice` is rune-indexed and a search yields byte positions. That third piece is
+    the one that is not yet there.
 
 ## Known bugs
 

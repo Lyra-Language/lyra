@@ -65,3 +65,33 @@ pub let trim = pure (self: string) -> string => {
   }
   self.slice(i, end)
 }
+
+// Prefix and suffix tests.
+//
+// **Byte-level, and that is not an approximation.** UTF-8 is prefix-free and
+// self-synchronizing, so for well-formed strings a byte-prefix is exactly a
+// rune-prefix and a byte-suffix exactly a rune-suffix — every Lyra string is
+// well-formed, so one memcmp answers the language-level question. This is the same
+// property `impl Ord for string` leans on: byte order is code-point order.
+//
+// The rune-indexed version these replaced was O(m²) for a prefix and O(n·m) for a
+// suffix, because `s[i]` is O(i) — and it paid an O(n) `len()` before comparing
+// anything, so `s.starts_with("--")` on a 2000-rune string decoded the whole string
+// to answer a question about its first two bytes. Measured, the length calls alone
+// were 99.7% of it. These are O(m) with no decoding at all.
+//
+// Both are `pure noalloc` — no `slice`, so nothing is copied — which is what makes
+// them usable from the code that most wants a cheap prefix test.
+pub let starts_with = pure noalloc (self: string, other: string) -> bool =>
+  self.compare_bytes_at(0, other) == 0
+
+// The suffix test is the prefix test **offset**, and that is the whole of it: the
+// comparison must start where the suffix would, not at 0. Comparing `self[i]` against
+// `other[i]` is a prefix test whichever direction the loop runs — which is what
+// `ends_with` first did, so `"hello".ends_with("lo")` was false and
+// `"hello".ends_with("he")` was true, each answering the other one's question.
+//
+// A negative offset needs no guard: `compare_bytes_at` is total, and answers negative
+// for a range that does not exist.
+pub let ends_with = pure noalloc (self: string, other: string) -> bool =>
+  self.compare_bytes_at(self.byte_len() - other.byte_len(), other) == 0

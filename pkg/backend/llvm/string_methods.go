@@ -263,3 +263,94 @@ func (l *lowerer) lowerStringCompareBytes(block *ir.Block, call *ast.FunctionCal
 	prefixEqual := block.NewICmp(enum.IPredEQ, cmp, constant.NewInt(lltypes.I64, 0))
 	return block.NewSelect(prefixEqual, lenDiff, cmp), block, nil
 }
+
+// lowerStringByteLen lowers `s.byte_len()` → the fat pointer's own length field, as
+// an i64. O(1), where `len()` is an O(n) rune walk.
+//
+// The one string method that reads the representation rather than the language. It
+// exists so compare_bytes_at has an offset to be given; see builtins.go for why that
+// crack is worth opening and why it is this narrow.
+func (l *lowerer) lowerStringByteLen(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 0 {
+		return nil, nil, fmt.Errorf("llvm: byte_len() expects 0 arguments, got %d", len(call.Arguments))
+	}
+	str, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !isStringLLVMType(str.Type()) {
+		return nil, nil, fmt.Errorf("llvm: string byte_len() receiver did not lower to a string (%s)", str.Type())
+	}
+	return block.NewExtractValue(str, 1), block, nil
+}
+
+// lowerStringCompareBytesAt lowers `s.compare_bytes_at(offset, other)` → a negative,
+// zero or positive i64: memcmp of **exactly `other`'s bytes** against the bytes of s
+// starting at byte `offset`.
+//
+// Comparing `other`'s length rather than the rest of `s` is what makes it a *prefix*
+// test rather than an equality test — `"hello".compare_bytes_at(0, "he")` is 0, where
+// the sibling `compare_bytes` would answer positive because `s` is longer. That is the
+// only semantic difference between the two, and it is the reason this exists.
+//
+// **Branchless, and total.** Every out-of-range case is folded into selects rather
+// than a trap or a branch: the offset is clamped before it reaches the GEP, the memcmp
+// length is clamped to what s actually has, and a shortfall (or an offset that was out
+// of range at all) forces a negative result — short sorts first, the rule compare_bytes
+// already follows. Branchless is not a micro-optimization here: a call site that ends
+// in a merge block is not a case flushStmtTemps handles, which is the bug that made two
+// `slice` results in one interpolation clobber each other (08/07), and it is why
+// read_line and `<=>` are branchless too. A trap would also be the wrong answer for a
+// predicate the prelude guards anyway.
+func (l *lowerer) lowerStringCompareBytesAt(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 2 {
+		return nil, nil, fmt.Errorf("llvm: compare_bytes_at expects 2 arguments, got %d", len(call.Arguments))
+	}
+	self, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	offV, block, err := l.lowerExpr(block, call.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	offSigned, _ := l.getIntSignedness(call.Arguments[0])
+	offset := coerceIntWidth(block, offV, offSigned, lltypes.I64)
+
+	other, block, err := l.lowerExpr(block, call.Arguments[1])
+	if err != nil {
+		return nil, nil, err
+	}
+	if !isStringLLVMType(self.Type()) || !isStringLLVMType(other.Type()) {
+		return nil, nil, fmt.Errorf("llvm: compare_bytes_at needs two strings (%s, %s)", self.Type(), other.Type())
+	}
+
+	data := block.NewExtractValue(self, 0)
+	byteLen := block.NewExtractValue(self, 1)
+	otherData := block.NewExtractValue(other, 0)
+	otherLen := block.NewExtractValue(other, 1)
+
+	zero := constant.NewInt(lltypes.I64, 0)
+	// 0 <= offset <= byteLen. An offset *equal* to the length is in range and names the
+	// empty tail, which is what `"".ends_with("")` and `s.ends_with(s)` need.
+	inRange := block.NewAnd(
+		block.NewICmp(enum.IPredSGE, offset, zero),
+		block.NewICmp(enum.IPredSLE, offset, byteLen),
+	)
+	// Clamped *before* the GEP, so an out-of-range offset never forms a wild pointer —
+	// the result is corrected below rather than by not computing it.
+	base := block.NewSelect(inRange, offset, zero)
+	avail := block.NewSub(byteLen, base) // >= 0 by the clamp
+
+	shorter := block.NewICmp(enum.IPredULT, avail, otherLen)
+	n := block.NewSelect(shorter, avail, otherLen) // read past neither buffer
+	p := block.NewGetElementPtr(lltypes.I8, data, base)
+	cmp := block.NewSExt(block.NewCall(l.memcmpFunc(), p, otherData, n), lltypes.I64)
+
+	// The bytes that were there matched. `n - otherLen` is 0 when all of `other` was
+	// compared and negative when `self` ran short; an offset that was out of range is
+	// negative for the same reason — there was no such range to match.
+	tail := block.NewSelect(inRange, block.NewSub(n, otherLen), constant.NewInt(lltypes.I64, -1))
+	prefixEqual := block.NewICmp(enum.IPredEQ, cmp, zero)
+	return block.NewSelect(prefixEqual, tail, cmp), block, nil
+}

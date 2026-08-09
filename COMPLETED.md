@@ -10,6 +10,72 @@ Newest first.
 ## Dated log
 
 ### 08/08/26
+**`starts_with` / `ends_with`, and the two byte-level primitives under them.** The prelude
+gains both as one-liners; the compiler gains `s.byte_len()` (O(1) — the fat pointer's own
+length field) and `s.compare_bytes_at(offset, other)` (memcmp at a byte offset). Both
+predicates are `pure noalloc`.
+
+**Written rune-indexed first, and that version is quadratic — which is the point of the
+entry.** `s[i]` is O(i), so the natural loop is O(m²) for a prefix and O(n·m) for a suffix.
+Worse, both paid an O(n) `len()` *before* comparing anything, so `s.starts_with("--")` on a
+2000-rune string decoded all 2000 runes to answer a question about its first two bytes.
+Isolated, that guard was **99.7%** of the cost: 19395 µs against 62 µs for the comparison it
+was guarding.
+
+The obvious repair — `self.slice(0, n).compare_bytes(other) == 0` — is faster and is the
+wrong trade. It fixes the quadratic term (113 ms → 1.9 ms for a 400-rune needle) but
+**allocates**, so `noalloc` refuses it, and `slice` still walks runes to find the byte
+offset, so it stays O(n): on the short-needle case it won by only 1.3x, because both
+implementations were walking the whole haystack for the length.
+
+**Neither is the right shape, and the measurement is what says so.** A prefix test needs no
+rune decoding at all. UTF-8 is prefix-free and self-synchronizing, so for a well-formed
+string — which every Lyra string is — a byte-prefix is exactly a rune-prefix and a
+byte-suffix exactly a rune-suffix. This is the same property `impl Ord for string` already
+leans on to answer a rune-ordering question with one memcmp, and the same division of labour
+`random_seed` and `read_line` follow: a memcmp at a byte offset cannot be written in Lyra
+(byte offsets are not addressable from the language), the predicates on top of it are
+ordinary code.
+
+| case | rune loop | slice+compare_bytes | byte builtin |
+|---|---|---|---|
+| 2-rune needle, 2000-rune haystack, 2000 reps | 19884 µs | 14977 µs | **19 µs** |
+| 2-rune needle, 30-rune haystack, 2000 reps | 289 µs | 317 µs | **18 µs** |
+| 400-rune needle, 2000-rune haystack, 300 reps | 111887 µs | 1845 µs | **4 µs** |
+
+Three decisions worth keeping:
+
+- **`compare_bytes_at` compares exactly `other`'s length**, not the rest of `self`. That is
+  the only semantic difference from `compare_bytes` and it is the whole reason it exists:
+  comparing the remainder would make `"hello".compare_bytes_at(0, "he")` *positive* (self is
+  longer), so `== 0` would be an equality test rather than a prefix test.
+- **Total and branchless.** Every out-of-range case folds into a select — the offset is
+  clamped before it reaches the GEP, the memcmp length is clamped to what `self` has, and a
+  shortfall or an out-of-range offset forces a negative. No trap, so the prelude needs no
+  guard (`ends_with` passes a possibly-negative offset straight in); branchless because a
+  call site ending in a merge block is not a case `flushStmtTemps` handles, which is what
+  made two `slice` results in one interpolation clobber each other on 08/07.
+- **`byte_len()` is a deliberate, narrow crack** in "runes are the language, bytes are the
+  representation". It exists so `compare_bytes_at` has an offset to be given, and the unit is
+  in the name for the reason `wall_clock_nanos` puts its unit there. `len()` stays what
+  ordinary code wants — it is the one that agrees with `s[i]` and `for c in s`.
+
+One rule is easy to guess backwards, and both hand-written expectations for it were wrong the
+first time: **a byte mismatch decides before a shortfall**, memcmp's own order. So
+`"hello".compare_bytes_at(4, "lo")` is positive (`'o' > 'l'`) rather than negative for the
+byte that is missing; short-sorts-first settles only a range that matched as far as it went.
+Every predicate built on this asks `== 0`, where the distinction cannot arise — which is why
+it is a comment and a test rather than a redesign.
+
+**`ends_with` was wrong when first written, and the shape of the bug is worth recording**: it
+was `starts_with` with the loop running backwards, indexing `self[i]` against `other[i]` —
+a *prefix* comparison whichever direction the loop runs, since reversing the order of the
+comparisons does not change which bytes are compared. So `"hello".ends_with("lo")` was false
+and `"hello".ends_with("he")` was true, each answering the question the other one asked. It
+looked right on the two cases that do not distinguish a prefix from a suffix (`s.ends_with(s)`
+and a needle matching neither end), which is why the tests pair a prefix with a suffix of the
+same string on every row.
+
 **An import no longer makes an ordinary name unusable.** `import util.seq` (which exports a
 `map`) plus a perfectly ordinary `let map = (n: i64) -> i64 => n + 1` was a hard error —
 *function "map" is already defined at …/util/seq.lyra* — so a program had to choose between

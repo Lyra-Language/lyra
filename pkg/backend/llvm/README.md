@@ -689,6 +689,42 @@ rune per step (via `lyra_utf8_decode`) until it has skipped `i`, then yields tha
 includes any negative index, since there is no from-the-end form for a string — traps
 out-of-bounds. Also deferred: growth (no grow op exists yet), and `match` on a `shared` array.
 
+### Byte-level string primitives
+
+**`s.byte_len()`** (`lowerStringByteLen`) is the fat pointer's own length field, O(1), where
+`len()` is an O(n) rune walk. **`s.compare_bytes_at(offset, other)`**
+(`lowerStringCompareBytesAt`) is `compare_bytes` at a byte offset, comparing **exactly
+`other`'s length** rather than the rest of `s` — which is what makes `== 0` a *prefix* test
+instead of an equality test, and is the only semantic difference between the two.
+
+They are the primitives the prelude's `starts_with`/`ends_with` are one line each on top of
+(and `contains`/`split` will be a loop over). **Byte-level is not an approximation:** UTF-8
+is prefix-free and self-synchronizing, so for a well-formed string a byte-prefix is exactly a
+rune-prefix and a byte-suffix exactly a rune-suffix — the same property `impl Ord for string`
+leans on when it answers a rune question with one memcmp. Exposing a byte length is a
+deliberate, narrow crack in "runes are the language, bytes are the representation"; `len()`
+remains what ordinary code wants, because it is the one that agrees with `s[i]`.
+
+The reason they exist is measured rather than assumed. The rune-indexed prelude versions were
+O(m²) for a prefix and O(n·m) for a suffix (`s[i]` is O(i)), and paid an O(n) `len()` before
+comparing anything — so `s.starts_with("--")` on a 2000-rune string decoded the whole string
+to answer a question about two bytes, with the length calls alone measuring **99.7%** of the
+cost. Building on `slice` + `compare_bytes` instead fixes the quadratic term but allocates
+(losing `noalloc`) and is still O(n), since `slice` walks runes to find the offset. These are
+O(m) with no decoding and no allocation: 19.9 ms → 19 µs on that case, 112 ms → 4 µs for a
+400-rune needle.
+
+`compare_bytes_at` is **branchless and total**. Every out-of-range case folds into a select —
+the offset is clamped before it reaches the GEP, the memcmp length is clamped to what `s`
+actually has, and a shortfall (or an offset that was out of range at all) forces a negative
+result. No trap, so no caller has to guard; branchless for the reason `read_line` and `<=>`
+are, since a call site ending in a merge block is not a case `flushStmtTemps` handles. One
+ordering rule is easy to guess backwards: **a byte mismatch decides before a shortfall**
+(memcmp's own order), so `"hello".compare_bytes_at(4, "lo")` is *positive* — `'o' > 'l'` —
+rather than negative for the missing byte. Short-sorts-first settles only a range that matched
+as far as it went, and every predicate built on this asks `== 0`, where the distinction cannot
+arise.
+
 ### Struct-field assignment
 
 **Struct-field assignment** `p.x = v` (nested `p.a.b = v`) and **arbitrary mixed paths** —

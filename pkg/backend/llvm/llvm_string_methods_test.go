@@ -260,3 +260,141 @@ let main = () -> void => {
 		t.Errorf("trim beside slice = %q; want \"9 héllo hé\"", got)
 	}
 }
+
+// starts_with / ends_with, ordinary Lyra in the prelude over the same rune indexing
+// `trim` uses, so this exercises the shipped source rather than a pasted copy.
+//
+// The cases are chosen around the one that was wrong: `ends_with` was written as
+// `starts_with` with the loop running backwards, indexing `self[i]` against
+// `other[i]`, which is a *prefix* test whichever direction it runs. So
+// `"hello".ends_with("lo")` was false and `"hello".ends_with("he")` was true — each
+// answering the question the other one asked, which is why a test comparing only
+// against one of them would have passed. Every row below pairs a prefix with a
+// suffix of the same string for that reason.
+func TestExec_StartsWithEndsWith(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let show = (b: bool) -> string => if b { "T" } else { "F" }
+let main = () -> void => {
+  let s = "hello";
+  // prefix: he hello lo x ""     suffix: lo hello he x ""
+  println("${show(s.starts_with("he"))}${show(s.starts_with("hello"))}${show(s.starts_with("lo"))}${show(s.starts_with("x"))}${show(s.starts_with(""))}");
+  println("${show(s.ends_with("lo"))}${show(s.ends_with("hello"))}${show(s.ends_with("he"))}${show(s.ends_with("x"))}${show(s.ends_with(""))}");
+  // an empty receiver, and a needle longer than the haystack
+  println("${show("".starts_with(""))}${show("".ends_with(""))}${show("".starts_with("x"))}${show("".ends_with("x"))}${show("hi".starts_with("hiya"))}${show("hi".ends_with("hiya"))}");
+  // overlapping suffixes, where an off-by-one in the offset shows up
+  println("${show("banana".ends_with("na"))}${show("banana".ends_with("ana"))}${show("banana".ends_with("nan"))}");
+}
+`
+	want := "TTFFT\nTTFFT\nTTFFFF\nTTF"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("starts_with/ends_with results:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// Multi-byte input, which is the case rune indexing exists for. A byte-offset
+// implementation would answer these wrongly rather than crashing: `"日本語"` is nine
+// bytes and three runes, so a suffix of length 2 starts at rune 1 and byte 3.
+func TestExec_StartsWithEndsWithNonASCII(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let show = (b: bool) -> string => if b { "T" } else { "F" }
+let main = () -> void => {
+  println("${show("héllo".starts_with("hé"))}${show("héllo".ends_with("llo"))}${show("héllo".ends_with("é"))}");
+  println("${show("naïve".ends_with("ïve"))}${show("日本語".starts_with("日本"))}${show("日本語".ends_with("本語"))}${show("日本語".ends_with("日語"))}");
+}
+`
+	want := "TTF\nTTTF"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("non-ASCII prefix/suffix results:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// Both are `pure noalloc`, unlike the trim family beside them. That is a real
+// difference rather than a spare annotation: they compare runes in place and never
+// reach `slice`, so a `noalloc` caller — the code that most wants a cheap prefix
+// test — can use them. Pinned because the bound is invisible until something
+// silently starts allocating.
+func TestCheck_StartsWithIsNoalloc(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let is_flag = pure noalloc (s: string) -> bool => s.starts_with("--") || s.ends_with("!")
+let main = () -> void => { println("${is_flag("--x")}") }
+`
+	if diags := checkWithPrelude(t, src); len(diags) != 0 {
+		t.Errorf("starts_with/ends_with allocate nothing, so noalloc must accept them; got: %v", diags)
+	}
+}
+
+// `byte_len()` — the representation's length, against `len()`'s rune count. The two
+// agree only on ASCII, which is exactly why the unit is in the name.
+func TestExec_StringByteLen(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  println("${"hello".byte_len()} ${"hello".len()}");
+  println("${"héllo".byte_len()} ${"héllo".len()}");
+  println("${"日本語".byte_len()} ${"日本語".len()}");
+  println("${"".byte_len()} ${"".len()}");
+}
+`
+	want := "5 5\n6 5\n9 3\n0 0"
+	out, _ := buildAndRunCapture(t, src)
+	if got := strings.TrimSpace(out); got != want {
+		t.Errorf("byte_len/len:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// `compare_bytes_at(offset, other)` is **total**: every out-of-range offset and every
+// short range folds into a select rather than a trap or a branch, so there is no input
+// the prelude has to guard against. The cases below are the ones that decide whether
+// the clamping is right, printed as signs since only the sign is specified.
+//
+// Two of them are the rule that is easy to guess backwards, and both were written
+// wrongly the first time they were tested by hand: a byte **mismatch decides before a
+// shortfall** (memcmp's order), so a short range whose first byte is greater answers
+// positive, and short-sorts-first settles only a range that matched as far as it went.
+func TestExec_StringCompareBytesAtIsTotal(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let sign = (n: i64) -> string => if n < 0 { "-" } else { if n > 0 { "+" } else { "0" } }
+let main = () -> void => {
+  let s = "hello";
+  // in range: prefix, whole, empty needle, suffix at an offset, the empty tail
+  println("${sign(s.compare_bytes_at(0, "he"))}${sign(s.compare_bytes_at(0, "hello"))}${sign(s.compare_bytes_at(0, ""))}${sign(s.compare_bytes_at(3, "lo"))}${sign(s.compare_bytes_at(5, ""))}");
+  // mismatch decides first ("el" vs "he"; "o" vs "lo"), then shortfall ("o" vs "ox")
+  println("${sign(s.compare_bytes_at(1, "he"))}${sign(s.compare_bytes_at(4, "lo"))}${sign(s.compare_bytes_at(4, "ox"))}");
+  // out of range every way: needle too long, offset past the end, negative offset
+  println("${sign(s.compare_bytes_at(0, "helloo"))}${sign(s.compare_bytes_at(6, ""))}${sign(s.compare_bytes_at(99, "x"))}${sign(s.compare_bytes_at(-1, "h"))}${sign(s.compare_bytes_at(-99, "h"))}");
+  // an empty receiver, and multi-byte offsets ("日本語" is 9 bytes; "本語" starts at 3)
+  println("${sign("".compare_bytes_at(0, ""))}${sign("".compare_bytes_at(0, "x"))}${sign("日本語".compare_bytes_at(3, "本語"))}${sign("日本語".compare_bytes_at(0, "日本"))}");
+}
+`
+	want := "00000\n-+-\n-----\n0-00"
+	out, _ := buildAndRunCapture(t, src)
+	if got := strings.TrimSpace(out); got != want {
+		t.Errorf("compare_bytes_at:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// Both new builtins allocate nothing and decode nothing, so `pure noalloc` accepts
+// them — which is what lets the prelude's prefix tests keep that bound while being
+// one memcmp each. `slice` is the string builtin that does allocate, and the test
+// above pins that it is still refused.
+func TestCheck_ByteBuiltinsAreNoalloc(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let at_end = pure noalloc (s: string, p: string) -> bool =>
+  s.compare_bytes_at(s.byte_len() - p.byte_len(), p) == 0
+let main = () -> void => { println("${at_end("ab", "b")}") }
+`
+	if diags := checkWithPrelude(t, src); len(diags) != 0 {
+		t.Errorf("byte_len/compare_bytes_at allocate nothing; noalloc must accept them; got: %v", diags)
+	}
+}
