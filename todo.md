@@ -802,16 +802,29 @@ Three reasons, none of them taste:
 - **[OPEN] A terminal puts the loop behind a call boundary, and stage 1 has to get through
   it.** `s.sum()` has its `for-in` inside `sum`, so the generator is not statically visible
   to the loop consuming it — and terminals are the *normal* way to end a chain, so this is
-  not an edge case. Two ways out, and the choice is a type-system commitment rather than an
-  optimization detail:
-  - **Inline the terminal at the call site first**, after which the `for-in` is local again
-    and the stage-1 rewrite applies unchanged. `Seq<t>` stays opaque — one type parameter,
-    readable wherever it appears. **Recommended**, and it makes the terminal's inlining an
-    ordinary pass rather than something the language has to promise.
-  - **Put the chain shape in the type**, Rust-style (`Map<Filter<ArraySeq<i64>>>`). Fusion
-    then crosses any call boundary for free. The cost is paid everywhere else: every
-    diagnostic naming a sequence becomes unreadable, and every function taking one needs a
-    bound or a type parameter.
+  not an edge case. The question underneath is **whether the element type is the whole
+  type** — whether `xs.seq()`, `xs.seq().filter(p)` and `xs.seq().filter(p).map(f).take(3)`
+  are all `Seq<i64>`, or whether the construction is recorded in the type the way Rust's
+  `Map<Filter<slice::Iter<'_, i64>, {closure}>, {closure}>` records it. That decides the
+  fusion, because specialization is keyed on types: a chain-shaped type monomorphizes `sum`
+  once per chain, and each specialization knows whose code sits on the other side of its
+  `for-in`, so it can inline it.
+  - **Keep the element type as the whole type, and inline the terminal at the call site.**
+    These are three-line functions; inline first and the `for-in` is local again, so the
+    stage-1 rewrite applies unchanged — fusion driven by what is *syntactically visible*
+    where the inlining happens rather than by monomorphization. Where that does not happen,
+    the loop degrades to a real pull through the boxed `{fn, env}` closure representation
+    (`pkg/backend/llvm/closures.go`): an indirect call per element, but still O(1)
+    allocations rather than O(n). **Recommended.**
+  - **Put the chain shape in the type**, Rust-style. Fusion then crosses any call boundary
+    for free, and the cost is paid everywhere else. Two are obvious — every diagnostic
+    naming a sequence becomes unreadable, and two `if` branches yielding different chains
+    have different types, which Rust answers with `Box<dyn Iterator>` or `impl Trait` and
+    Lyra has neither of. **The third is what settles it: there is then no way to *write
+    down* "a sequence of i64" as a parameter type**, so abstracting over the chain types
+    needs a trait — which drags the `Iterator` trait back in, with the closure-in-a-field
+    effect hole that was the second argument against it above. The two options are not
+    symmetric.
 - **[OPEN] What stage 1 must refuse, loudly.** `zip` (two producers interleaved needs pull),
   and a `Seq` reaching a consumer that cannot be inlined through — which under the first
   option above is the general form of the previous bullet.
