@@ -109,7 +109,17 @@ pub let utf8_len = pure noalloc (self: rune) -> i64 => {
 }
 
 pub trait Needle {
-  found_at: (Self, string, i64) -> Maybe<i64>
+  // Where this needle first occurs in `haystack` at or after `offset`: the rune index
+  // the match starts at, and how many runes it spans.
+  //
+  // **A span rather than a position**, so a needle whose match length varies — a
+  // predicate matching a run, a pattern with alternatives — can report it. The two
+  // implementations here are fixed-width (1 for a rune, its own length for a string) and
+  // would be served by a position plus a separate length method; returning the pair keeps
+  // that from being baked into the trait, which is Rust's Searcher shape and the reason
+  // to have it. `split` is the caller that needs the length: after a match it must step
+  // *past* the separator.
+  found_at: (Self, string, i64) -> Maybe<(i64, i64)>
 }
 
 impl Needle for rune {
@@ -120,7 +130,7 @@ impl Needle for rune {
     var rune_i = 0;
     for c in haystack {
       if rune_i >= offset && c == needle {
-        return Some(rune_i)
+        return Some((rune_i, 1))
       }
       rune_i += 1;
     }
@@ -137,7 +147,7 @@ impl Needle for string {
     var byte_i = 0;
     for c in haystack {
       if rune_i >= offset && haystack.compare_bytes_at(byte_i, needle) == 0 {
-        return Some(rune_i)
+        return Some((rune_i, needle.len()))
       }
       byte_i += c.utf8_len();
       rune_i += 1;
@@ -147,14 +157,29 @@ impl Needle for string {
     // `s.index("", s.len())` are `Some`, which is what will make `split` on an empty
     // separator terminate rather than run off the end.
     if rune_i >= offset && haystack.compare_bytes_at(byte_i, needle) == 0 {
-      return Some(rune_i)
+      return Some((rune_i, needle.len()))
     }
     None
   }
 }
 
 pub let index<t> where t: Needle = pure noalloc(self: string, needle: t, offset: i64 = 0) -> Maybe<i64> =>
-  needle.found_at(self, offset)
+  match needle.found_at(self, offset) {
+    None => None,
+    Some((idx, _)) => Some(idx)
+  }
 
 pub let contains<t> where t: Needle = pure noalloc(self: string, needle: t, offset: i64 = 0) -> bool =>
   self.index(needle, offset).is_some()
+
+pub let split<t> where t: Needle = pure(self: string, sep: t) -> []string => {
+  var parts: []string = [];
+  var start = 0;
+  for {
+    match sep.found_at(self, start) {
+      Some((at, span)) => { parts.push(self.slice(start, at)); start = at + span; },
+      None => { parts.push(self.slice(start, self.len())); break; },
+    }
+  }
+  parts
+}

@@ -720,3 +720,38 @@ let main = () -> void => { println("${is_path("a/b")}") }
 		t.Errorf("index<rune>/contains<rune> allocate nothing; noalloc must accept them; got: %v", diags)
 	}
 }
+
+// `split`, generic over the needle through `Needle`.
+//
+// The rows are chosen around the four ways a split goes wrong, each of which this got
+// wrong once: the **trailing** part after the last separator must be emitted (the `None`
+// arm does work, it does not merely end the loop); **empty parts** are meaningful, so a
+// leading, doubled or trailing separator yields `""` rather than being skipped; a
+// haystack with **no separator at all** is one part, not zero; and the step past a match
+// comes from **that match's span**, not from a length measured once — which is what
+// `"a::b::c"` on `"::"` pins, since a one-rune step would yield `['a',':b',':c']`.
+//
+// A rune needle and a string needle run the same rows, since the point of the trait is
+// that split does not know which it has.
+func TestExec_StringSplit(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let show = (xs: []string) -> string => {
+  var o = "";
+  for p in xs { o = o ++ "[" ++ p ++ "]" }
+  o
+}
+let main = () -> void => {
+  println("${show("a,b,c".split(','))} ${show("a,b,c".split(","))}");
+  println("${show("a::b::c".split("::"))}");
+  println("${show("a,,b".split(','))} ${show(",a,".split(','))}");
+  println("${show("abc".split(','))} ${show("".split(','))} ${show("a,b".split("xy"))}");
+  println("${show("日,本".split(','))}");
+}
+`
+	want := "[a][b][c] [a][b][c]\n[a][b][c]\n[a][][b] [][a][]\n[abc] [] [a,b]\n[日][本]"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("split:\n%s\nwant:\n%s", got, want)
+	}
+}

@@ -163,15 +163,26 @@ write today:
     composing without a `match` because `compare_bytes_at` is total. It maps *positions*,
     so the end position is `Some(byte_len)` rather than `None` (slice's rule, not `s[i]`'s,
     since a bound may name the end). Exposes the walk `s[i]` and `slice` already shared.
-  - **[OPEN] No `split`.** Everything it needs now exists: `index` for positions,
-    `byte_offset` + `compare_bytes_at` for an allocation-free "separator at rune i", and
-    `push` (08/09) for the output. **The grow op is what changes its shape** — it can be
-    the obvious loop (find, cut, advance, push) rather than a comprehension over positions
-    `0..<=n` guarded on "a part starts here", which was the workaround forced by a
-    comprehension sizing its output from its *input*: k+1 parts from n runes meant
-    allocating O(n) to hold O(k), permanently, since the box is never shrunk. One trap
-    survives the change: an empty separator degenerates (Python raises; Lyra needs a
-    deliberate answer).
+  - **[DONE 08/09] `split`**, generic over the needle through `Needle`. **The grow op is
+    what settled its shape**: the obvious loop (find, cut, advance, push) rather than a
+    comprehension over positions `0..<=n` guarded on "a part starts here", which was the
+    workaround forced by a comprehension sizing its output from its *input* — k+1 parts
+    from n runes meant allocating O(n) to hold O(k), permanently, since the box is never
+    shrunk.
+
+    The step past a match comes from **that match's span**, which is what `found_at`
+    returning `Maybe<(i64, i64)>` is for and what a variable-length needle will need.
+    Four things went wrong on the way, none of which a happy-path test catches: the
+    trailing part after the last separator must be emitted (the `None` arm does work
+    rather than merely ending the loop), empty parts are meaningful (`",a,"` is three
+    parts), a haystack with no separator is one part rather than zero, and a step fixed
+    from the first match loses `"a::b::c"` on `"::"`.
+  - **[OPEN] `split` on an empty separator loops forever.** A zero-span match never
+    advances the cursor, so `"abc".split("")` runs until killed (verified). Python raises
+    `ValueError`; splitting into individual runes is the other common answer. The choice
+    belongs to `split` rather than to `Needle`, since a zero-length match is meaningful
+    to `index`/`contains` — `"".index("")` is `Some(0)`, which is what makes a search for
+    an empty needle terminate.
 
 ## Known bugs
 
