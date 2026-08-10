@@ -72,6 +72,9 @@ build flags:
   -o <path>     write the executable here (default: the source path without .lyra)
   --emit-llvm   stop after emitting <name>.ll; do not link an executable
   --keep-ll     keep the emitted <name>.ll beside the executable
+  -O<level>     optimization level passed to the C compiler (default: -O2).
+                -O0 for the fastest build; -Os for size. No debug info is emitted
+                at any level, so -O0 buys build time rather than debuggability.
   --cc <path>   C compiler used to assemble and link (default: $LYRA_CC, else clang)
 
 run flags:
@@ -88,6 +91,16 @@ type buildOptions struct {
 	emitOnly bool   // --emit-llvm: write the .ll and stop
 	keepLL   bool   // --keep-ll: keep the .ll as well as the executable
 	cc       string // C compiler override
+
+	// opt is the optimization level handed to the C compiler, as clang spells it
+	// ("-O2"). It defaults to -O2 rather than to clang's own -O0 default: this
+	// compiler emits **no debug info**, so the usual reason to ship unoptimized —
+	// being able to step through the source — buys nothing here, while -O0 costs
+	// around 3x on ordinary code. Measured on a string-scan workload: 15925us at
+	// -O0 against 5087us at -O2, and an arithmetic loop the optimizer can close
+	// disappears entirely. The whole backend behavioural suite passes at -O1, -O2,
+	// -O3 and -Os, so this is not resting on -O2 happening to be gentle.
+	opt string
 
 	// ephemeral is `run`: every artifact is a temp file, so nothing may be
 	// written into the source tree — not even the IR that a failed link
@@ -126,6 +139,12 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 			o.emitOnly = true
 		case arg == "--keep-ll":
 			o.keepLL = true
+		case isOptFlag(arg):
+			// Spelled the way clang spells it, and passed through unexamined
+			// beyond that: the C compiler is the authority on which levels it
+			// has, so a level this does not know about is its error to report,
+			// with its own wording, rather than one to duplicate here.
+			o.opt = arg
 		case strings.HasPrefix(arg, "-"):
 			fmt.Fprintf(os.Stderr, "lyrac: unknown flag %q\n", arg)
 			return o, false
@@ -135,6 +154,9 @@ func parseBuildArgs(cmd string, args []string) (buildOptions, bool) {
 		default:
 			o.path = arg
 		}
+	}
+	if o.opt == "" {
+		o.opt = "-O2"
 	}
 	if o.path == "" {
 		return o, false
@@ -302,7 +324,7 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 
 	if o.emitOnly {
 		fmt.Printf("%s: wrote %s (%s backend)\n", o.path, llPath, be.Name())
-		fmt.Printf("  compile with: clang %s -lm -o %s\n", llPath, exePath(o))
+		fmt.Printf("  compile with: clang %s %s -lm -o %s\n", o.opt, llPath, exePath(o))
 		return llPath, 0
 	}
 
@@ -320,7 +342,7 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 				}
 			}
 			fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
-			fmt.Fprintf(os.Stderr, "  wrote %s; compile it with: clang %s -lm -o %s\n", llPath, llPath, exePath(o))
+			fmt.Fprintf(os.Stderr, "  wrote %s; compile it with: clang %s %s -lm -o %s\n", llPath, o.opt, llPath, exePath(o))
 			return "", 1
 		}
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
@@ -331,7 +353,7 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 	// -lm links libm for the float intrinsics (floor/ceil/round, fmod). It is
 	// passed unconditionally: harmless for a program that needs none of them,
 	// and matching what the backend's behavioural tests compile with.
-	cmd := exec.Command(cc, llPath, "-lm", "-o", exe)
+	cmd := exec.Command(cc, o.opt, llPath, "-lm", "-o", exe)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %s failed to compile the emitted IR: %v\n%s", cc, err, out)
 		return "", 1
@@ -410,4 +432,16 @@ func severityLabel(s diag.Severity) string {
 	default:
 		return "error"
 	}
+}
+
+// isOptFlag reports whether arg is a clang optimization-level flag: -O followed by
+// anything, which covers -O0..-O3 plus -Os, -Oz and -Ofast without this having to
+// track which of them a given clang accepts.
+//
+// The permissive match is deliberate. Enumerating the levels here would mean a
+// second, staler copy of the C compiler's own list — and the failure mode of
+// getting it wrong is refusing a level that works, which is worse than passing one
+// through and letting clang say what it thinks.
+func isOptFlag(arg string) bool {
+	return strings.HasPrefix(arg, "-O") && len(arg) > 2
 }

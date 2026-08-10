@@ -494,8 +494,23 @@ lyrac build prog.lyra                 # -> ./prog, no IR left behind
 lyrac build -o build/prog prog.lyra   # executable elsewhere
 lyrac build --keep-ll prog.lyra       # executable *and* prog.ll
 lyrac build --emit-llvm prog.lyra     # prog.ll only; the one build needing no C compiler
+lyrac build -O0 prog.lyra             # optimization level; default -O2
 lyrac build --cc /path/to/clang …     # else $LYRA_CC, else clang on PATH
 ```
+
+**The default is `-O2`, not clang's `-O0`** (08/09), and the reason is that this
+compiler does not face the usual tradeoff: it emits **no debug info at any level**, so
+shipping unoptimized buys no debuggability — only build time. Measured, `-O0` costs
+about 3x on ordinary code (a string scan: 15925 µs against 5087 µs; an arithmetic loop
+the optimizer can close disappears entirely) for roughly 50 ms of extra link time on a
+2000-line module. The whole backend behavioural suite passes at `-O1`, `-O2`, `-O3` and
+`-Os`, so the default does not rest on `-O2` happening to be gentle on this IR.
+
+The level is matched loosely (`-O` plus anything) and passed through unexamined, so
+`-Os`/`-Oz`/`-Ofast` work and an unknown one is clang's error to report in its own
+words rather than a staler copy of clang's list kept here. Both "compile it with"
+hints — the `--emit-llvm` one and the missing-compiler fallback — carry the level, or
+they would describe a different build than the one they stand in for.
 
 The compiler must accept a `.ll` as input, so plain `cc` is deliberately not a fallback — gcc
 would reject the IR with a confusing error instead of a clear one. When none is found the

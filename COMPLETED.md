@@ -10,6 +10,48 @@ Newest first.
 ## Dated log
 
 ### 08/09/26
+**`lyrac` links at `-O2` by default**, where it had passed no `-O` flag at all and so
+shipped everything at clang's `-O0`. A `-O<level>` flag overrides it.
+
+**The usual argument for `-O0` does not apply here, and that is the whole decision.**
+Defaulting to unoptimized buys debuggability — except this backend emits **no debug
+info at any level**, so there is nothing to step through either way. What `-O0` actually
+bought was build time, against a large and permanent runtime cost.
+
+Measured, on the workloads that motivated looking:
+
+| | -O0 | -O2 |
+|---|---|---|
+| string scan (`index` / `index_rune` over 4001 runes) | 15925 µs | 5087 µs |
+| arithmetic loop, 20M iterations | 22391 µs | ~0 (closed by the optimizer) |
+| link time, 2091-line module | 0.049 s | 0.103 s |
+
+So roughly 3x on ordinary code, and complete elimination where the optimizer can close
+a loop, for about 50 ms of link time. `-O1` captures most of it; `-O3` adds little over
+`-O2`; the conventional default is the right one.
+
+**It came out of a different question.** Comparing a `Needle`-trait `index` against the
+direct one showed the trait 4x slower — which looked like an argument against the trait
+until the same comparison at `-O2` put it at 6%. The dispatch cost was an artifact of
+the build, not a property of the design, and every performance number measured in the
+prelude before this — `starts_with`, `byte_offset`, the Rabin–Karp discussion — was
+taken against unoptimized code. That is the more useful finding than the flag.
+
+**The safety check is the part worth keeping.** Optimization exercises undefined
+behaviour far harder than `-O0` does, and this project has a history of IR faults that
+only stricter conditions surface (Debian's typed pointers, which is what `asan.sh`
+exists for). The whole backend behavioural suite — refcounting, weak references,
+generics, strings, arrays, the ASan tests — passes at `-O1`, `-O2`, `-O3` **and** `-Os`.
+The default is not resting on `-O2` happening to be gentle.
+
+Two smaller decisions: the level is matched as `-O` plus anything and passed through
+unexamined, so `-Os`/`-Oz`/`-Ofast` work and an unknown level is clang's error to report
+in its own words rather than a second, staler copy of clang's list; and both
+"compile it with" hints — `--emit-llvm`'s and the missing-compiler fallback's — carry
+the level, since a hint naming a different build than the one it stands in for is worse
+than no hint.
+
+### 08/09/26
 **`xs.push(v)` — the dynamic-array growth operation, and the representation change it
 required.**
 
