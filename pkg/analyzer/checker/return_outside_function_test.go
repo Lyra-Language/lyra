@@ -149,3 +149,61 @@ func TestReturn_Diag_ErrorMessage(t *testing.T) {
 		t.Errorf("error message = %q, want %q", errs[0].Message, want)
 	}
 }
+
+// A trait-impl method body is a function body, so a `return` inside one is fine.
+//
+// It was not: this checker counts function depth by LambdaExpr, and a trait method's
+// body hangs off `TraitImplStmt.Methods[i].Clause.Body` without being wrapped in one.
+// walk.go descends into it with the *same* visitors, so the body was walked at the
+// enclosing depth — 0 for a top-level `impl` — and every `return` in it was reported as
+// being outside a function body. Ordinary code that could not be written; the workaround
+// was to phrase the whole body as a single tail expression, which is why nothing in the
+// prelude had tripped it until `trait Needle` was written with guard clauses.
+func TestReturn_NoDiag_InsideTraitImplMethod(t *testing.T) {
+	source := `
+trait Finder {
+  find: (Self, i64) -> i64
+}
+impl Finder for i64 {
+  find = (self, limit) => {
+    if limit < 0 {
+      return 0
+    }
+    if self > limit {
+      return limit
+    }
+    self
+  }
+}
+`
+	assertNoReturnErrors(t, parseCollectAndCheckReturn(t, source))
+}
+
+// The same for a trait's **default** method body, which walk.go descends into
+// identically. Nothing uses the form yet, so it would have failed the same way whenever
+// something first did.
+func TestReturn_NoDiag_InsideTraitDefaultMethod(t *testing.T) {
+	source := `
+trait Describe {
+  describe: (Self) -> i64
+  size: (Self) -> i64 = (self) => {
+    if true {
+      return 1
+    }
+    0
+  }
+}
+`
+	assertNoReturnErrors(t, parseCollectAndCheckReturn(t, source))
+}
+
+// The depth is still a depth: a `return` at the top level of an `impl` block — outside
+// any method — has no function to return from, so opening a scope for method bodies must
+// not open one for the impl itself.
+func TestReturn_Diag_AtTopLevelIsStillReported(t *testing.T) {
+	source := `
+let x = 1
+return x
+`
+	assertReturnErrorCount(t, parseCollectAndCheckReturn(t, source), 1)
+}

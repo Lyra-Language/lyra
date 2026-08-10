@@ -10,6 +10,33 @@ Newest first.
 ## Dated log
 
 ### 08/09/26
+**A `return` inside a trait-impl method is legal**, and was reported as
+`lyra-E003: return statement outside of a function body`.
+
+`CheckReturnOutsideFunction` counts function depth by **LambdaExpr**, and a trait method's
+body hangs off `TraitImplStmt.Methods[i].Clause.Body` without being wrapped in one.
+`walk.go` descends into it with the *same* visitors, so the body was walked at the
+enclosing depth — 0 for a top-level `impl` — and every `return` in it was reported.
+
+It is the nested-return bug from the day before, one level out: one question — *am I
+inside a function?* — and a body form that only one of the two ways of answering it knows
+about. The reason it sat undiscovered is that every impl the prelude shipped was a single
+tail expression; guard clauses in a trait method are what first needed it, which is to say
+the feature was unreachable rather than merely awkward.
+
+The fix opens a function scope for `TraitImplStmt` method bodies the way the existing
+`exprVisitor` already does for lambdas, and stops the generic descent. Trait **default**
+method bodies got the same treatment — `walk.go` descends into those identically, so they
+would have failed the same way the first time anyone used the form. The regression tests
+include a top-level `return` that must *still* be reported, since the failure mode of this
+kind of fix is opening a scope for the enclosing statement rather than for the body.
+
+Found by writing `trait Needle`, which folds `index_rune`/`contains_rune` into a single
+`index`/`contains` generic over the needle. Two claims made against that design earlier the
+same day were wrong and are corrected in `todo.md`: the trait method *can* carry the byte
+cursor, and its dispatch costs 6% rather than 4x once the build is not `-O0`.
+
+### 08/09/26
 **`lyrac` links at `-O2` by default**, where it had passed no `-O` flag at all and so
 shipped everything at clang's `-O0`. A `-O<level>` flag overrides it.
 

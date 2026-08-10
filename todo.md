@@ -113,14 +113,24 @@ write today:
     find the offset, so it stays O(n). The byte builtin is O(m) with no decoding —
     19.9 ms → 19 µs on that case. Byte-level answers the rune question exactly, because
     UTF-8 is prefix-free and self-synchronizing. See COMPLETED.md.
-  - **[DONE 08/09] `index_rune`/`contains_rune`**, the single-code-point search. A
-    separate name because `index(self: string, needle: string)` and a rune-needle version
-    share the receiver head `string`, and receiver-keyed overloading needs the heads to
-    *differ*. Not a special case of `index` either: `for c in self` already decodes one
-    rune per step, so the needle compares against what the walk produces — no memcmp, no
-    byte cursor. Folding the two behind a `Needle` trait is open and is the better end
-    state; measured, the trait dispatch costs 6% at `-O2` (it looked like 4x at `-O0`,
-    which is what turned up the optimization default).
+  - **[DONE 08/09] A rune needle, through `pub trait Needle`.** `index`/`contains` are
+    generic over the needle rather than duplicated per needle type: `found_at` is
+    implemented for `rune` (compare what `for c in s` decodes) and for `string` (memcmp at
+    a byte offset), so neither path is pessimized. It replaced `index_rune`/`contains_rune`,
+    which existed because both would take a `string` receiver and receiver-keyed
+    overloading needs the heads to *differ*.
+
+    Two things were measured wrong on the way and are worth remembering. The objection
+    that a trait method could not carry the byte cursor is false — pass the cursor *and*
+    the decoded rune, and each impl ignores what it does not need. And the dispatch cost
+    that then looked decisive (4x) was 6% at `-O2`; the gap was `lyrac` linking at `-O0`,
+    which is what turned up the optimization default.
+
+    The trait is `pub`, so the payoff is real: user code implements `Needle` for its own
+    type and gets both functions. The default `offset` sits on the generic wrappers because
+    it is the only place the grammar admits one — a trait signature's `parameter_type` has
+    no default slot, and an impl method's parameters are *patterns*, which carry neither a
+    type nor a default.
   - **[DONE 08/08] `index`/`contains`.** `index(needle, offset = 0) -> Maybe<i64>` is a
     naive scan calling `compare_bytes_at` at each byte position, with `contains` one line
     on top. Both `offset` and the result are **rune** indices, so the answer feeds straight

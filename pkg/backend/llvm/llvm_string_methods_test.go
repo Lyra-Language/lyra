@@ -615,10 +615,7 @@ let main = () -> void => {
 	}
 }
 
-// `index_rune` / `contains_rune` — the single-code-point search, a separate name because
-// `index(self: string, needle: string)` and a rune-needle version share the receiver head
-// `string`, and receiver-keyed overloading requires the heads to differ (Lyra has no
-// argument-type overloading, decided 08/04).
+// `index<rune>` / `contains<rune>` — the single-code-point search
 //
 // It is not a special case of `index`: `for c in self` already decodes one rune per step,
 // so the needle is compared against what the walk produces — no memcmp, no byte cursor.
@@ -632,7 +629,7 @@ func TestExec_StringIndexRune(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-let at = (s: string, c: rune, o: i64) -> i64 => s.index_rune(c, o).unwrap_or(-1)
+let at = (s: string, c: rune, o: i64) -> i64 => s.index(c, o).unwrap_or(-1)
 let main = () -> void => {
   // found at 2 / 0 / 4, absent
   println("${at("hello", 'l', 0)} ${at("hello", 'h', 0)} ${at("hello", 'o', 0)} ${at("hello", 'z', 0)}");
@@ -644,12 +641,11 @@ let main = () -> void => {
 `
 	want := "2 0 4 -1\n3 -1 -1 -1 -1\n1 4 2 0"
 	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
-		t.Errorf("index_rune:\n%s\nwant:\n%s", got, want)
+		t.Errorf("index<rune>:\n%s\nwant:\n%s", got, want)
 	}
 }
 
-// `contains_rune` — the containment half, `index_rune(...).is_some()`.
-//
+// contains<rune>()
 // The rows that earn their place are the last two. UTF-8 encodes 'â' (U+00E2) as C3 A2 and
 // '€' (U+20AC) as E2 82 AC, so the *code point* 0xE2 is byte-equal to '€'s leading byte;
 // likewise '¬' (U+00AC) against '€'s trailing AC. An implementation that compared a rune's
@@ -664,21 +660,21 @@ module main
 let show = (b: bool) -> string => if b { "T" } else { "F" }
 let main = () -> void => {
   // first rune, interior, last rune, absent, repeated, empty receiver
-  println("${show("hello".contains_rune('h'))}${show("hello".contains_rune('l'))}${show("hello".contains_rune('o'))}${show("hello".contains_rune('z'))}${show("".contains_rune('x'))}");
+  println("${show("hello".contains('h'))}${show("hello".contains('l'))}${show("hello".contains('o'))}${show("hello".contains('z'))}${show("".contains('x'))}");
   // multi-byte haystack and needle, including a needle that is the whole string
-  println("${show("héllo".contains_rune('é'))}${show("héllo".contains_rune('z'))}${show("日本語".contains_rune('本'))}${show("日本語".contains_rune('中'))}${show("€".contains_rune('€'))}");
+  println("${show("héllo".contains('é'))}${show("héllo".contains('z'))}${show("日本語".contains('本'))}${show("日本語".contains('中'))}${show("€".contains('€'))}");
   // byte collisions: 0xE2 is '€'s first byte and 'â's code point; 0xAC is '€'s last byte
   // and '¬'s code point. Both must be false.
-  println("${show("€".contains_rune('â'))}${show("€".contains_rune('¬'))}${show("â".contains_rune('â'))}");
+  println("${show("€".contains('â'))}${show("€".contains('¬'))}${show("â".contains('â'))}");
 }
 `
 	want := "TTTFF\nTFTFT\nFFT"
 	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
-		t.Errorf("contains_rune:\n%s\nwant:\n%s", got, want)
+		t.Errorf("contains<rune>:\n%s\nwant:\n%s", got, want)
 	}
 }
 
-// contains_rune is defined as index_rune(...).is_some(), and the two must not drift: a
+// contains<rune> is defined as index<rune>(...).is_some(), and the two must not drift: a
 // containment test that disagreed with the search it is built on would be worse than
 // either being wrong alone. Checked as a property over a haystack rather than as fixed
 // pairs, so it covers the runes actually present as well as ones that are not.
@@ -693,19 +689,19 @@ let main = () -> void => {
   // every rune of s, which must all be found
   for c in s {
     checked += 1;
-    if s.contains_rune(c) != s.index_rune(c).is_some() { disagreements += 1 }
+    if s.contains(c) != s.index(c).is_some() { disagreements += 1 }
   }
   // and a handful that are not in it
   for c in "zqx€" {
     checked += 1;
-    if s.contains_rune(c) != s.index_rune(c).is_some() { disagreements += 1 }
-    if s.contains_rune(c) { disagreements += 1 }
+    if s.contains(c) != s.index(c).is_some() { disagreements += 1 }
+    if s.contains(c) { disagreements += 1 }
   }
   println("${checked} ${disagreements}");
 }
 `
 	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "12 0" {
-		t.Errorf("contains_rune vs index_rune: got %q, want \"12 0\"", got)
+		t.Errorf("contains<rune> vs index<rune>: got %q, want \"12 0\"", got)
 	}
 }
 
@@ -717,10 +713,10 @@ func TestCheck_RuneSearchIsNoalloc(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
-let is_path = pure noalloc (s: string) -> bool => s.contains_rune('/') || s.index_rune(':').is_some()
+let is_path = pure noalloc (s: string) -> bool => s.contains('/') || s.index(':').is_some()
 let main = () -> void => { println("${is_path("a/b")}") }
 `
 	if diags := checkWithPrelude(t, src); len(diags) != 0 {
-		t.Errorf("index_rune/contains_rune allocate nothing; noalloc must accept them; got: %v", diags)
+		t.Errorf("index<rune>/contains<rune> allocate nothing; noalloc must accept them; got: %v", diags)
 	}
 }
