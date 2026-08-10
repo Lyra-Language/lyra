@@ -214,7 +214,10 @@ func (l *lowerer) resolveForLayout(t types.Type) types.Type {
 			for j, p := range c.Params {
 				params[j] = l.resolveForLayout(p)
 			}
-			ctors[i] = types.DataTypeConstructor{Name: c.Name, Params: params}
+			// Packed carries through: it is a property of the *declaration*, and
+			// dropping it here would make FieldTypes stop unwrapping a positional
+			// payload the moment the type reached layout.
+			ctors[i] = types.DataTypeConstructor{Name: c.Name, Params: params, Packed: c.Packed}
 		}
 		v.Constructors = ctors
 		return v

@@ -1331,6 +1331,45 @@ still refuses them. See COMPLETED.md.
 - **[DONE 08/07] A supertrait is enforced** (`lyra-E040`): `impl B for T` where
   `trait B: A` requires an `impl A for T`. `TraitDeclStmt.Bounds` was collected and read by
   nobody, so the promise was never checked — found by the AST sweep below.
+  - **[OPEN] A supertrait's methods are not in scope through a subtrait bound.** The
+    bound is *enforced* — `impl Nd for T` requires `impl Len for T` — and then
+    `where t: Nd` still cannot call `t.l()`: *"type parameter t has no method `l`; add a
+    `where t: Trait` bound whose trait declares it"*. So a supertrait today promises a
+    thing exists and gives the one place that needs it no way to reach it, which is the
+    half of the feature people actually write supertraits for.
+
+    **The receiver's concreteness is what decides it**, not the supertrait: a concrete
+    `n.l()` resolves fine, because ordinary dispatch finds the `impl Len for i64` by the
+    receiver's type. Only the *bound* path fails.
+
+    Why is specific: `tc.genericBounds[param]` holds the literal trait names from the
+    `where` clause (`typechecker_traits.go`, one write), and the four sites that read it
+    — bound dispatch, the generic-argument check, operator overloading and `Show` —
+    iterate that list directly. None walks the named traits' own `TraitDeclStmt.Bounds`,
+    which is the field E040 already reads for enforcement. So the fix is a **transitive
+    closure at the one point genericBounds is populated**, after which all four readers
+    get it for free — the shape hazard 8 recommends over teaching four consumers the same
+    rule.
+
+    The workaround is to name both (`where t: Nd + Len`), which works: multiple bounds
+    are supported in both spellings (`A + B` and `A, B`). It is also what makes this
+    merely awkward rather than blocking — and why it can wait.
+
+    Found 08/09 while weighing a `Length` trait beside `Needle`. It is the reason
+    `trait Needle: Length` would not have helped: the bound would be enforced and
+    `split` still could not call the method.
+- **[OPEN] A trait *default method* is never dispatched to.** `trait G { name: …
+  twice: (Self) -> i64 = (self) => self.name() * 2 }` parses, collects, and calling
+  `n.twice()` on a type with an `impl G` reports *"i64 has no method `twice`"*. An impl
+  cannot override one either, since nothing looks for it.
+
+  Independent of the supertrait gap above — it reproduces with no supertrait in sight —
+  and the **fifth** instance of the shape this file keeps cataloguing: a surface that
+  parses, collects, and is read by nobody, after `wallClock`, the `where` bounds,
+  `@derive` and the operator-named methods. `walk.go` descends into
+  `TraitDeclStmt.Methods[i].DefaultMethod.Body` and the return checker gives it a
+  function scope (08/09), so the body is *walked* and checked — it simply cannot be
+  called. Found 08/09 alongside the supertrait gap.
 - **[DECIDED 08/07] `Ord: Eq` is deliberately *not* declared** — see the design correction
   above. Supertrait syntax parses and the bound is collected onto `TraitDeclStmt.Bounds`;
   whether anything enforces it is still unverified, and no longer on this path.

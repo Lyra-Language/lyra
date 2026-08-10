@@ -43,6 +43,21 @@ func (t TupleType) GetName() string {
 	return fmt.Sprintf("%s(%s)", name, strings.Join(elementNames, ", "))
 }
 
+// String renders a **named** tuple as its bare name and an anonymous one structurally.
+//
+// The split matters because String is what gets mangled into a specialization's symbol
+// (`typetable.TypeSymbol`). A named tuple is nominal — `TypesEqual`'s TupleType case
+// says so — but rendering it with its elements made one instantiation reachable under
+// two names: `Maybe<Pos>` came out `Maybe$Pos` where `Pos` was still an UnresolvedType
+// and `Maybe$Pos_i64__i64_` where it had been resolved, so a function returning one
+// emitted `ret %Maybe$Pos_i64__i64_ %9` against a declared `%"Maybe$Pos"` result and
+// clang rejected the module. Its name is its identity, exactly as a struct's is.
+//
+// The anonymous case keeps its elements, since they *are* its identity, and its
+// rendering is unchanged.
 func (t TupleType) String() string {
+	if !IsAnonymousTupleName(t.Name) {
+		return t.Name
+	}
 	return t.GetName()
 }

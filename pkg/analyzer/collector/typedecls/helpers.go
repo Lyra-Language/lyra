@@ -65,6 +65,14 @@ func collectDataConstructor(node *sitter.Node, ctx *collector_ctx.Ctx) (string, 
 			continue
 		}
 		if node.FieldNameForChild(uint32(i)) == "param" {
+			// A parenthesized payload — `Rect(i64, i64)`, and `Circle(i64)` too — is a
+			// *single* anonymous_tuple_type child, which is the packed positional list
+			// FieldTypes unwraps. A bare payload (`Some t`) is not, and must not be
+			// unwrapped once `t` is substituted to a tuple. The CST is the only place
+			// that still knows the difference.
+			if child.Kind() == "anonymous_tuple_type" {
+				ctor.Packed = true
+			}
 			ctor.Params = append(ctor.Params, ctx.ParseType(child))
 		}
 	}

@@ -277,3 +277,95 @@ func TestExec_ScreamingCaseConstructors(t *testing.T) {
 		})
 	}
 }
+
+// A generic data type instantiated at a **tuple** — `Maybe<(i64, i64)>` — is
+// constructible, returnable and destructurable.
+//
+// It was none of those. The collector packs a *declared* positional payload into one
+// anonymous tuple (`Rect(i64, i64)` → `Params = [TupleType{i64, i64}]`, and `Circle(i64)`
+// likewise), and `FieldTypes` unwrapped any lone anonymous-tuple param back into that
+// list. After substitution `Some t`[t := (i64, i64)] is byte-for-byte the same shape, so
+// it was unwrapped too: the backend read `Some` as taking two arguments while the
+// typechecker read it as taking one, and **no spelling satisfied both** — `Some((7, 2))`
+// was rejected by the backend, `Some(7, 2)` by the typechecker. The type simply could not
+// be used.
+//
+// Only the declaration can tell the two apart, so the collector records it
+// (`DataTypeConstructor.Packed`) and FieldTypes unwraps only a packed param.
+func TestExec_GenericDataInstantiatedAtATuple(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+data Opt<t> = Nil | One t
+let mk = (n: i64) -> Opt<(i64, i64)> => One((n, n * 2))
+let fst = (o: Opt<(i64, i64)>) -> i64 => match o { Nil => -1, One((a, _)) => a }
+let snd = (o: Opt<(i64, i64)>) -> i64 => match o { Nil => -1, One((_, b)) => b }
+let main = () -> void => {
+  println("${fst(mk(7))} ${snd(mk(7))} ${fst(Nil)}");
+}
+`
+	out, _ := buildAndRunCapture(t, src)
+	if got := strings.TrimSpace(out); got != "7 14 -1" {
+		t.Errorf("generic data at a tuple: got %q, want \"7 14 -1\"", got)
+	}
+}
+
+// The other half of that fix, and the one it could plausibly have broken: a **declared**
+// positional payload must still flatten. `Rect(i64, i64)` is constructed with two
+// arguments and matched with two sub-patterns, and `Circle(i64)` — packed even though it
+// has one field — with one. If `Packed` were not set, or not carried through the
+// backend's rebuild of a constructor in `resolveForLayout`, these break instead.
+func TestExec_DeclaredPositionalPayloadStillFlattens(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+data Shape = Rect(i64, i64) | Circle(i64) | Empty
+let area = (s: Shape) -> i64 => match s {
+  Rect(w, h) => w * h,
+  Circle(r) => r * r * 3,
+  Empty => 0,
+}
+let main = () -> void => {
+  println("${area(Rect(3, 4))} ${area(Circle(5))} ${area(Empty)}");
+}
+`
+	out, _ := buildAndRunCapture(t, src)
+	if got := strings.TrimSpace(out); got != "12 75 0" {
+		t.Errorf("declared positional payload: got %q, want \"12 75 0\"", got)
+	}
+}
+
+// A generic data type instantiated at a **named** tuple, returned across a function
+// boundary and from a trait method.
+//
+// `TupleType.String()` rendered a named tuple with its elements (`Pos(i64, i64)`), and
+// that string is mangled into a specialization's symbol (`typetable.TypeSymbol`). So one
+// instantiation was reachable under two names — `Maybe$Pos` where `Pos` was still an
+// UnresolvedType, `Opt$Pos_i64__i64_` where it had been resolved — and a function
+// returning one emitted `ret %Opt$Pos_i64__i64_` against a declared `%"Opt$Pos"`
+// result, which clang rejects outright.
+//
+// A named tuple is nominal (TypesEqual's TupleType case says so), so its String is now
+// its name. **Return position is what the test has to exercise**: building one at a call
+// site or in a `let` worked throughout, because neither crosses a boundary where the
+// declared type and the value's type are mangled independently.
+func TestExec_GenericDataInstantiatedAtANamedTuple(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+tuple Pos(i64, i64)
+data Opt<t> = Nil | One t
+trait Locate { at: (Self) -> Opt<Pos> }
+impl Locate for i64 { at = (self) => One(Pos(self, self + 1)) }
+let mk = (n: i64) -> Opt<Pos> => One(Pos(n, n * 2))
+let first = (m: Opt<Pos>) -> i64 => match m { Nil => -1, One(p) => p.0 }
+let viaBound<t> where t: Locate = (v: t) -> i64 => match v.at() { Nil => -1, One(p) => p.1 }
+let main = () -> void => {
+  println("${first(mk(7))} ${first(Nil)} ${viaBound(9)}");
+}
+`
+	out, _ := buildAndRunCapture(t, src)
+	if got := strings.TrimSpace(out); got != "7 -1 10" {
+		t.Errorf("generic data at a named tuple: got %q, want \"7 -1 10\"", got)
+	}
+}
