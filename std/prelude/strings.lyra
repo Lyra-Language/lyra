@@ -108,6 +108,37 @@ pub let utf8_len = pure noalloc (self: rune) -> i64 => {
   if cp < 128 { 1 } else if cp < 2048 { 2 } else if cp < 65536 { 3 } else { 4 }
 }
 
+// The rune index of the first occurrence of `needle` at or after `offset`, or `None`,
+// where `needle` is a single rune.
+//
+// **Simpler than the string form below, not a special case of it.** `for c in self`
+// already decodes one rune per step, so the needle is compared against what the walk
+// produces — no memcmp, no byte cursor, and no `utf8_len` to advance one. Routing this
+// through `index` instead (`self.index("${needle}")`) would allocate a string per call to
+// ask a question about one code point, which is what a rune type exists to avoid.
+//
+// It carries no end-position check, and that asymmetry is the point rather than an
+// omission: an empty *string* needle matches at the position one past the last rune,
+// which is why `index` re-tests after its loop. A rune needle cannot — there is no rune
+// there — so the loop is the whole search.
+//
+// A **negative offset is `None`** for the reason it is in `index`: an offset is a
+// resumption point for a scan, not an index, so `s[-1]`'s from-the-end reading has no
+// counterpart here.
+pub let index_rune = pure noalloc (self: string, needle: rune, offset: i64 = 0) -> Maybe<i64> => {
+  if offset < 0 {
+    return None
+  }
+  var rune_i = 0;
+  for c in self {
+    if rune_i >= offset && c == needle {
+      return Some(rune_i)
+    }
+    rune_i += 1;
+  }
+  None
+}
+
 // The rune index of the first occurrence of `needle` at or after `offset`, or `None`.
 //
 // **Both `offset` and the result are rune indices**, like `s[i]`, `len()` and `slice`
@@ -159,4 +190,5 @@ pub let index = pure noalloc (self: string, needle: string, offset: i64 = 0) -> 
   None
 }
 
+pub let contains_rune = pure noalloc (self: string, needle: rune) -> bool => self.index_rune(needle).is_some()
 pub let contains = pure noalloc (self: string, needle: string) -> bool => self.index(needle).is_some()

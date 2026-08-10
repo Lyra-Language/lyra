@@ -614,3 +614,113 @@ let main = () -> void => {
 		t.Errorf("byte_offset + compare_bytes_at:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// `index_rune` / `contains_rune` — the single-code-point search, a separate name because
+// `index(self: string, needle: string)` and a rune-needle version share the receiver head
+// `string`, and receiver-keyed overloading requires the heads to differ (Lyra has no
+// argument-type overloading, decided 08/04).
+//
+// It is not a special case of `index`: `for c in self` already decodes one rune per step,
+// so the needle is compared against what the walk produces — no memcmp, no byte cursor.
+// Routing it through `index` as `self.index("${needle}")` would allocate a string per call
+// to ask about one code point.
+//
+// The multi-byte rows are the ones that matter: 'é' is at rune 1 of "héllo" and byte 1,
+// but '語' is at rune 2 of "日本語" and byte 6, so a byte-leaking implementation passes the
+// first and fails the second.
+func TestExec_StringIndexRune(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let at = (s: string, c: rune, o: i64) -> i64 => s.index_rune(c, o).unwrap_or(-1)
+let main = () -> void => {
+  // found at 2 / 0 / 4, absent
+  println("${at("hello", 'l', 0)} ${at("hello", 'h', 0)} ${at("hello", 'o', 0)} ${at("hello", 'z', 0)}");
+  // the offset resumes the scan; past the end, and a negative offset, are None
+  println("${at("hello", 'l', 3)} ${at("hello", 'l', 4)} ${at("hello", 'h', 5)} ${at("", 'x', 0)} ${at("hello", 'l', -1)}");
+  // rune indices, not byte offsets
+  println("${at("héllo", 'é', 0)} ${at("héllo", 'o', 0)} ${at("日本語", '語', 0)} ${at("日本語", '日', 0)}");
+}
+`
+	want := "2 0 4 -1\n3 -1 -1 -1 -1\n1 4 2 0"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("index_rune:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// `contains_rune` — the containment half, `index_rune(...).is_some()`.
+//
+// The rows that earn their place are the last two. UTF-8 encodes 'â' (U+00E2) as C3 A2 and
+// '€' (U+20AC) as E2 82 AC, so the *code point* 0xE2 is byte-equal to '€'s leading byte;
+// likewise '¬' (U+00AC) against '€'s trailing AC. An implementation that compared a rune's
+// numeric value against the haystack's raw bytes — the obvious "optimization" of a search
+// that is already byte-level everywhere else in this file — answers true for both. Comparing
+// *decoded* runes is what makes them false, and nothing about the ASCII cases above would
+// notice the difference.
+func TestExec_StringContainsRune(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let show = (b: bool) -> string => if b { "T" } else { "F" }
+let main = () -> void => {
+  // first rune, interior, last rune, absent, repeated, empty receiver
+  println("${show("hello".contains_rune('h'))}${show("hello".contains_rune('l'))}${show("hello".contains_rune('o'))}${show("hello".contains_rune('z'))}${show("".contains_rune('x'))}");
+  // multi-byte haystack and needle, including a needle that is the whole string
+  println("${show("héllo".contains_rune('é'))}${show("héllo".contains_rune('z'))}${show("日本語".contains_rune('本'))}${show("日本語".contains_rune('中'))}${show("€".contains_rune('€'))}");
+  // byte collisions: 0xE2 is '€'s first byte and 'â's code point; 0xAC is '€'s last byte
+  // and '¬'s code point. Both must be false.
+  println("${show("€".contains_rune('â'))}${show("€".contains_rune('¬'))}${show("â".contains_rune('â'))}");
+}
+`
+	want := "TTTFF\nTFTFT\nFFT"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("contains_rune:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// contains_rune is defined as index_rune(...).is_some(), and the two must not drift: a
+// containment test that disagreed with the search it is built on would be worse than
+// either being wrong alone. Checked as a property over a haystack rather than as fixed
+// pairs, so it covers the runes actually present as well as ones that are not.
+func TestExec_ContainsRuneAgreesWithIndexRune(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  let s = "héllo 日本";
+  var disagreements = 0;
+  var checked = 0;
+  // every rune of s, which must all be found
+  for c in s {
+    checked += 1;
+    if s.contains_rune(c) != s.index_rune(c).is_some() { disagreements += 1 }
+  }
+  // and a handful that are not in it
+  for c in "zqx€" {
+    checked += 1;
+    if s.contains_rune(c) != s.index_rune(c).is_some() { disagreements += 1 }
+    if s.contains_rune(c) { disagreements += 1 }
+  }
+  println("${checked} ${disagreements}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "12 0" {
+		t.Errorf("contains_rune vs index_rune: got %q, want \"12 0\"", got)
+	}
+}
+
+// Both are `pure noalloc`: the walk decodes runes it already has and never calls `slice`,
+// so a containment test is usable from the code that most wants one. Pinned because the
+// bound is invisible until something silently starts allocating — the shape that let
+// `trim` reach `slice` from inside a `noalloc` function.
+func TestCheck_RuneSearchIsNoalloc(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let is_path = pure noalloc (s: string) -> bool => s.contains_rune('/') || s.index_rune(':').is_some()
+let main = () -> void => { println("${is_path("a/b")}") }
+`
+	if diags := checkWithPrelude(t, src); len(diags) != 0 {
+		t.Errorf("index_rune/contains_rune allocate nothing; noalloc must accept them; got: %v", diags)
+	}
+}
