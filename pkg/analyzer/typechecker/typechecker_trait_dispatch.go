@@ -429,7 +429,7 @@ func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types
 		// have matched against in the first place.
 		tc.addError(call.GetLocation(), SeverityError,
 			"%s: method has no receiver parameter", calleeName)
-		return lambdaType.ReturnType.Type
+		return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type, call.GetLocation())
 	}
 	rest := lambdaType.Parameters[1:]
 	required := 0
@@ -450,7 +450,7 @@ func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types
 				"%s: expected %d to %d argument(s), got %d",
 				calleeName, required, total, got)
 		}
-		return lambdaType.ReturnType.Type
+		return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type, call.GetLocation())
 	}
 
 	for i, arg := range call.Arguments {
@@ -488,7 +488,14 @@ func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types
 		}
 	}
 
-	return lambdaType.ReturnType.Type
+	// Resolved for the same reason the parameters above are — the comment there records
+	// the parameter half of this fix landing first and this half being missed, which is
+	// hazard 8's return-position asymmetry to the letter. Raw, a bound call's result
+	// carried `Opt<(Idx, Len)>` against a caller's resolved `Opt<(i64, i64)>` (a type
+	// alias), and a struct return rejected itself as "expected Maybe<Hit>, got
+	// Maybe<Hit>". The quiet twin: an unknown name in the signature is the trait
+	// declaration's error, already reported once.
+	return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type, call.GetLocation())
 }
 
 // pushGenericBounds puts a declaration's `where` bounds in scope for the duration of

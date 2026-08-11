@@ -51,6 +51,26 @@ func collectTypeVars(t types.Type, vars map[string]bool) {
 	types.CollectTypeVars(t, vars)
 }
 
+// resolveDeclaredParam is a parameter's annotation as unification must see it: type
+// aliases expanded, everything else as written. `offset: Index = 0` for
+// `type Index = i64` otherwise reaches unifyGenericTarget as an UnresolvedType, fails
+// against the argument's resolved i64, and the whole call reports "cannot infer type
+// variable t" — blaming a variable the alias had nothing to do with.
+//
+// Resolved from the **declaration's own location**, not the call's, because that is
+// where the annotation was written: an alias private to the declaring module (the
+// prelude's, say) is not visible from the calling module at all, and resolving from
+// the call site would silently fail for exactly the calls this exists to fix. The
+// quiet twin, since a genuinely unknown name in a signature is the signature pass's
+// error to report, once.
+func (tc *TypeChecker) resolveDeclaredParam(lambda *ast.LambdaExpr, i int) types.Type {
+	declared := lambda.Parameters[i].Type
+	if declared == nil {
+		return nil
+	}
+	return tc.resolveTypeIfKnown(declared, lambda.GetLocation())
+}
+
 // solveTypeVars unifies each parameter's declared type against its argument's
 // inferred type, returning the substitution. ok is false when a variable cannot be
 // solved — either the shapes don't match, or the same variable is bound
@@ -79,7 +99,7 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 		if i >= len(lambda.Parameters) {
 			break
 		}
-		declared := lambda.Parameters[i].Type
+		declared := tc.resolveDeclaredParam(lambda, i)
 		if declared == nil {
 			continue
 		}
@@ -96,7 +116,7 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 		}
 	}
 	for _, i := range deferred {
-		declared := lambda.Parameters[i].Type
+		declared := tc.resolveDeclaredParam(lambda, i)
 		// Substitute what the other arguments settled, so `() -> t` becomes `() -> i64`
 		// and the lambda has something concrete to be elaborated against.
 		tc.elaborateLambda(call.Arguments[i], substituteGenerics(declared, subst))
@@ -160,12 +180,19 @@ func (tc *TypeChecker) solveDataTypeVars(decl *ast.TypeDeclStmt, declaredFields 
 // instantiateSignature substitutes a solved binding set through a function's
 // signature, giving the concrete parameter types and return type a call site is
 // checked against.
-func instantiateSignature(lambda *ast.LambdaExpr, subst map[string]types.Type) ([]types.Type, types.Type) {
+// A method rather than the free function it was, because the annotations must be
+// **resolved before they are substituted**: `offset: Index = 0` for `type Index = i64`
+// otherwise reaches the argument check as an UnresolvedType and rejects a plain i64
+// ("argument 3: cannot assign i64 to Index") — the same raw-annotation read
+// solveTypeVars had, one consumer further down. Resolved from the declaration's own
+// location, where the annotation was written and where a private alias is visible.
+func (tc *TypeChecker) instantiateSignature(lambda *ast.LambdaExpr, subst map[string]types.Type) ([]types.Type, types.Type) {
 	params := make([]types.Type, len(lambda.Parameters))
-	for i, p := range lambda.Parameters {
-		params[i] = substituteGenerics(p.Type, subst)
+	for i := range lambda.Parameters {
+		params[i] = substituteGenerics(tc.resolveDeclaredParam(lambda, i), subst)
 	}
-	return params, substituteGenerics(lambda.ReturnType.Type, subst)
+	ret := tc.resolveTypeIfKnown(lambda.ReturnType.Type, lambda.GetLocation())
+	return params, substituteGenerics(ret, subst)
 }
 
 // inferGenericCall checks a call to a generic function: solve its type variables
@@ -187,7 +214,7 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 			"%s: cannot infer %s from these arguments", calleeName, typeVarList(vars))
 		return nil
 	}
-	params, ret := instantiateSignature(lambda, subst)
+	params, ret := tc.instantiateSignature(lambda, subst)
 	for i, arg := range call.Arguments {
 		// Now that every variable is solved, a lambda argument's remaining blanks are
 		// concrete: `(t) -> u` has become `(i64) -> i64`. The deferred pass above could

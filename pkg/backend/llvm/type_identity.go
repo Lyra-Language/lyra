@@ -83,7 +83,31 @@ func (l *lowerer) lookupTypeDecl(name string) (*ast.TypeDeclStmt, bool) {
 // mangled, already unique, and unlike a plain declaration there is no separate "readable"
 // spelling to preserve.
 func (l *lowerer) instantiationSymbol(p types.ParameterizedType) string {
-	symbol := typetable.TypeSymbol(p.Name, p.TypeArguments)
+	// The arguments are **resolved** before they are mangled, because a type alias is
+	// transparent: `type Idx = i64` does not name a type of its own, so `Maybe<Idx>` and
+	// `Maybe<i64>` are one instantiation and must produce one symbol. Left unresolved, a
+	// declared return type mangled as `Maybe$Idx` while the value constructed for it
+	// mangled as `Maybe$i64`, and the function emitted `ret %Maybe$i64` against a declared
+	// `%"Maybe$Idx"` result — which clang rejects outright.
+	//
+	// This is the named-tuple rendering bug arriving from the opposite direction: there a
+	// *nominal* type was being expanded into its elements when it should have stayed its
+	// name, here a *transparent* one was staying its name when it should have been
+	// expanded.
+	//
+	// **resolveForLayout, not resolveNamedType**, because the alias can sit anywhere in
+	// the argument, not only at its head: `Maybe<(Idx, Len)>` failed identically one
+	// level in, the alias surviving inside the tuple that the top-level resolver never
+	// enters. resolveForLayout is the walk that already recurses through every composite,
+	// and it collapsing a newtype to its base — the reason it first looked like the wrong
+	// tool — is *correct here*: a newtype is nominal to the typechecker and transparent
+	// to codegen (todo.md, generic newtypes), so two instantiations that share a layout
+	// sharing a symbol is the truth of the matter, not a conflation.
+	args := make([]types.Type, len(p.TypeArguments))
+	for i, a := range p.TypeArguments {
+		args[i] = l.resolveForLayout(a)
+	}
+	symbol := typetable.TypeSymbol(p.Name, args)
 	key := l.typeKey(p.Name)
 	if key == p.Name {
 		return symbol

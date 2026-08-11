@@ -369,3 +369,94 @@ let main = () -> void => {
 		t.Errorf("generic data at a named tuple: got %q, want \"7 -1 10\"", got)
 	}
 }
+
+// A generic type instantiated at a **type alias** is the same instantiation as one at the
+// alias's target, and emits one symbol for both.
+//
+// `instantiationSymbol` mangled `ParameterizedType.TypeArguments` as written, so a
+// declared `Maybe<Idx>` came out `Maybe$Idx` while the value constructed for it came out
+// `Maybe$i64` — one instantiation under two names, and the function emitted
+// `ret %Maybe$i64` against a declared `%"Maybe$Idx"` result, which clang rejects.
+//
+// It is the named-tuple rendering bug from the other direction: there a *nominal* type was
+// expanded into its elements when it should have stayed its name, here a *transparent* one
+// stayed its name when it should have been expanded. Both now ask resolveNamedType, which
+// already draws that line, rather than each carrying its own rule.
+//
+// The last line is the point of the test rather than a bonus: an alias is not a type of
+// its own, so `a` and `b` below must resolve to a single emitted layout.
+func TestExec_GenericInstantiatedAtATypeAlias(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+type Idx = i64
+data Opt<t> = Nil | One t
+let viaAlias = (n: i64) -> Opt<Idx> => One(n)
+let viaConcrete = (n: i64) -> Opt<i64> => One(n)
+let get = (o: Opt<i64>) -> i64 => match o { Nil => -1, One(v) => v }
+let main = () -> void => {
+  println("${get(viaAlias(4))} ${get(viaConcrete(5))} ${get(Nil)}");
+}
+`
+	out, _ := buildAndRunCapture(t, src)
+	if got := strings.TrimSpace(out); got != "4 5 -1" {
+		t.Errorf("generic at a type alias: got %q, want \"4 5 -1\"", got)
+	}
+}
+
+// A type alias is transparent **everywhere**, not only at the head of a generic
+// argument. This shape — an aliased tuple inside a generic, used through a trait method
+// with guard-clause returns and a defaulted aliased parameter — is the prelude's
+// `Needle` with the names changed, and it tripped four separate raw-annotation readers,
+// each of which resolved nothing and so compared `Idx` against `i64`:
+//
+//   - checkReturnStmt read tc.enclosingRet as *written*, so a nested `return
+//     Some((n, 1))` was rejected against `Maybe<(Idx, Len)>` while the identical tail
+//     expression passed — the declared/stored asymmetry both set sites share;
+//   - solveTypeVars unified the raw `offset: Idx` against a resolved i64 argument and
+//     blamed the type variable ("cannot infer t from these arguments");
+//   - instantiateSignature rebuilt the checked signature from the raw annotations, so
+//     the argument check rejected what inference had just accepted ("argument 3: cannot
+//     assign i64 to Idx");
+//   - instantiationSymbol mangled the argument as written, so the declared return
+//     emitted `%"Opt$..Idx.."` against a value built as `%"Opt$..i64.."` and clang
+//     rejected the module — which is why resolveForLayout (recursive, and correct to
+//     collapse newtypes: they are transparent to codegen) resolves the argument first.
+//
+// One test rather than four because the readers fail serially: each fix exposes the
+// next, and the composed shape is the only spelling that proves all of them at once.
+func TestExec_TypeAliasIsTransparentInGenerics(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+type Idx = i64
+type Len = i64
+data Opt<t> = Nil | One t
+trait Finder {
+  find: (Self, i64) -> Opt<(Idx, Len)>
+}
+impl Finder for i64 {
+  find = (self, limit) => {
+    if limit < 0 {
+      return Nil
+    }
+    if self > limit {
+      return One((self, 1))
+    }
+    Nil
+  }
+}
+let locate<t> where t: Finder = (v: t, limit: Idx = 0) -> Opt<(Idx, Len)> => v.find(limit)
+let start = (o: Opt<(i64, i64)>) -> i64 => match o { Nil => -1, One((a, _)) => a }
+let main = () -> void => {
+  let n = 9;
+  // defaulted aliased param, explicit arg, guard-clause Nil, and the alias/concrete
+  // instantiations unifying (locate returns Opt<(Idx, Len)>, start takes Opt<(i64, i64)>)
+  println("${start(locate(n))} ${start(locate(n, 20))} ${start(locate(n, -1))}");
+}
+`
+	out, _ := buildAndRunCapture(t, src)
+	if got := strings.TrimSpace(out); got != "9 -1 -1" {
+		t.Errorf("alias transparency: got %q, want \"9 -1 -1\"", got)
+	}
+}

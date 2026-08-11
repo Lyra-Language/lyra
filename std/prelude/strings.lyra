@@ -108,6 +108,9 @@ pub let utf8_len = pure noalloc (self: rune) -> i64 => {
   if cp < 128 { 1 } else if cp < 2048 { 2 } else if cp < 65536 { 3 } else { 4 }
 }
 
+pub type Index = i64
+pub type Length = i64
+
 pub trait Needle {
   // Where this needle first occurs in `haystack` at or after `offset`: the rune index
   // the match starts at, and how many runes it spans.
@@ -119,7 +122,7 @@ pub trait Needle {
   // that from being baked into the trait, which is Rust's Searcher shape and the reason
   // to have it. `split` is the caller that needs the length: after a match it must step
   // *past* the separator.
-  found_at: (Self, string, i64) -> Maybe<(i64, i64)>
+  found_at: (Self, string, Index) -> Maybe<(Index, Length)>
 }
 
 impl Needle for rune {
@@ -163,13 +166,13 @@ impl Needle for string {
   }
 }
 
-pub let index<t> where t: Needle = pure noalloc(self: string, needle: t, offset: i64 = 0) -> Maybe<i64> =>
+pub let index<t> where t: Needle = pure noalloc(self: string, needle: t, offset: Index = 0) -> Maybe<Index> =>
   match needle.found_at(self, offset) {
     None => None,
     Some((idx, _)) => Some(idx)
   }
 
-pub let contains<t> where t: Needle = pure noalloc(self: string, needle: t, offset: i64 = 0) -> bool =>
+pub let contains<t> where t: Needle = pure noalloc(self: string, needle: t, offset: Index = 0) -> bool =>
   self.index(needle, offset).is_some()
 
 pub let split<t> where t: Needle = pure(self: string, sep: t) -> []string => {

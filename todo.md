@@ -177,6 +177,29 @@ write today:
     rather than merely ending the loop), empty parts are meaningful (`",a,"` is three
     parts), a haystack with no separator is one part rather than zero, and a step fixed
     from the first match loses `"a::b::c"` on `"::"`.
+  - **[DONE 08/09] A type alias is transparent inside a generic argument** — nested in a
+    tuple, as a defaulted parameter, through a trait method with guard-clause returns.
+    `Maybe<(Index, Length)>` for `type Index = i64` is one instantiation with
+    `Maybe<(i64, i64)>`, everywhere.
+
+    **Five raw-annotation readers, failing serially** — each fix exposed the next, which
+    is why the regression test is one composed shape rather than five cases:
+    `checkReturnStmt` read `enclosingRet` as written (both set sites fill it before
+    their own resolution runs), `solveTypeVars` unified the raw annotation and blamed
+    the type variable, `instantiateSignature` rebuilt the checked signature raw so the
+    argument check rejected what inference had accepted, `inferDotCallFromType` returned
+    the trait signature's return type raw at all three exits — its own comment records
+    the *parameter* half of that fix landing earlier, hazard 8's return-position
+    asymmetry to the letter — and the backend's `instantiationSymbol` mangled the
+    argument as written.
+
+    Fixing the last one corrected an earlier claim of this file's: `resolveForLayout`
+    is the *right* tool for symbol mangling, not the wrong one, because collapsing a
+    newtype is correct there — a newtype is nominal to the typechecker and transparent
+    to codegen, so two instantiations sharing a layout sharing a symbol is the truth of
+    the matter. The `inferDotCallFromType` fix also closed the third bug from the
+    `found_at` redesign: `Maybe<UserStruct>` returned from a trait method rejecting
+    itself ("expected Maybe<Hit>, got Maybe<Hit>").
   - **[OPEN] `split` on an empty separator loops forever.** A zero-span match never
     advances the cursor, so `"abc".split("")` runs until killed (verified). Python raises
     `ValueError`; splitting into individual runes is the other common answer. The choice

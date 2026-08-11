@@ -1156,8 +1156,17 @@ func (tc *TypeChecker) checkReturnStmt(s *ast.ReturnStmt) {
 		tc.inferExprType(s.Value)
 		return
 	}
+	// Resolved at use, because enclosingRet stores the return type **as written** —
+	// both set sites fill it before their own resolution runs. Every other return
+	// position checks against a resolved type, and the drift showed exactly where the
+	// twin paths differ: `-> Maybe<(Idx, Len)>` for `type Idx = i64` accepted a tail
+	// `Some((n, 1))` and rejected the same value from a nested return, "expected
+	// Maybe<AnonymousTuple(Idx, Len)>, got Maybe<AnonymousTuple(i64, i64)>". The quiet
+	// twin, since an unknown name in the annotation was already reported by the
+	// signature pass and must not be reported twice.
+	declared := tc.resolveTypeIfKnown(tc.enclosingRet.Type, s.GetLocation())
 	tc.checkReturnValue(tc.enclosingFuncName, s.Value, s.GetLocation(),
-		tc.enclosingRet.Type, isOwnedReturn(tc.enclosingRet.TypeModifier))
+		declared, isOwnedReturn(tc.enclosingRet.TypeModifier))
 }
 
 // checkBuiltinMutatesReceiver enforces the mutability rule for a builtin method that
