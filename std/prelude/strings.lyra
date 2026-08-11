@@ -175,12 +175,41 @@ pub let index<t> where t: Needle = pure noalloc(self: string, needle: t, offset:
 pub let contains<t> where t: Needle = pure noalloc(self: string, needle: t, offset: Index = 0) -> bool =>
   self.index(needle, offset).is_some()
 
+// The string's runes, one element each.
+//
+// This is what "split on an empty separator" actually means, stated as what it returns
+// rather than smuggled through a degenerate argument — the Go spelling
+// (`strings.Split(s, "")`) is the implicit version of this function, and `split` below
+// refuses it and names this one instead. `[]rune`, not `[]string`: a caller who wants
+// characters wants code points, and a box per character would buy nothing.
+pub let to_runes = pure (self: string) -> []rune => {
+  var out: []rune = [];
+  for c in self { out.push(c) }
+  out
+}
+
 pub let split<t> where t: Needle = pure(self: string, sep: t) -> []string => {
   var parts: []string = [];
   var start = 0;
   for {
     match sep.found_at(self, start) {
-      Some((at, span)) => { parts.push(self.slice(start, at)); start = at + span; },
+      Some((at, span)) => {
+        // A zero-span match can never advance the cursor, so it is not a question this
+        // loop can answer — an empty separator would sit here forever. A trap rather
+        // than a Maybe, on `slice`'s reasoning about its inverted range: this is a
+        // caller bug, not an answer, and the empty result a soft path would hand back
+        // is indistinguishable from a real one. A rune separator cannot be empty, so
+        // the common call never pays for the check it cannot fail.
+        //
+        // The guard lives here and not in Needle because a zero-length match is
+        // *legitimate* to `found_at`: `"".index("")` answering `Some((0, 0))` is what
+        // makes a search for an empty needle terminate.
+        if span == 0 {
+          panic("split: empty separator; to split a string into its runes, use to_runes()")
+        }
+        parts.push(self.slice(start, at));
+        start = at + span;
+      },
       None => { parts.push(self.slice(start, self.len())); break; },
     }
   }

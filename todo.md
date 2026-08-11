@@ -200,12 +200,23 @@ write today:
     the matter. The `inferDotCallFromType` fix also closed the third bug from the
     `found_at` redesign: `Maybe<UserStruct>` returned from a trait method rejecting
     itself ("expected Maybe<Hit>, got Maybe<Hit>").
-  - **[OPEN] `split` on an empty separator loops forever.** A zero-span match never
-    advances the cursor, so `"abc".split("")` runs until killed (verified). Python raises
-    `ValueError`; splitting into individual runes is the other common answer. The choice
-    belongs to `split` rather than to `Needle`, since a zero-length match is meaningful
-    to `index`/`contains` — `"".index("")` is `Some(0)`, which is what makes a search for
-    an empty needle terminate.
+  - **[DONE 08/09] `split` on an empty separator traps**, naming the fix:
+    *"split: empty separator; to split a string into its runes, use to_runes()"* — and
+    `to_runes() -> []rune` exists, four lines over `for c in s` and `push`. It is what
+    "split on empty" actually means, stated as what it returns rather than smuggled
+    through a degenerate argument (Go's `strings.Split(s, "")`); `[]rune` rather than
+    `[]string`, since a caller who wants characters wants code points, not a box per
+    character.
+
+    **A trap rather than a `Maybe<[]string]>`, and the reasoning is `slice`'s about its
+    inverted range**: an empty separator is a caller bug, not a question with a
+    None-shaped answer, and the empty result a soft path would return is
+    indistinguishable from a real one. A rune separator *cannot* be empty, so the common
+    call would have paid the unwrap for an impossibility — and `panic` is EffectNone, so
+    `split` stays `pure`. Python raises here for the same reason. The guard lives in
+    `split` (`span == 0` at match time), not in `Needle`: a zero-length match stays
+    legitimate for `found_at`, since `"".index("")` answering `Some((0, 0))` is what
+    makes a search for an empty needle terminate.
 
 ## Known bugs
 

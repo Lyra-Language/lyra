@@ -1,8 +1,14 @@
 package llvm
 
 import (
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Lyra-Language/lyra/pkg/driver"
+	"github.com/Lyra-Language/lyra/pkg/modules"
 )
 
 // `s.len()` and `s.slice(a, b)` (string_methods.go) and the prelude's trim family
@@ -753,5 +759,97 @@ let main = () -> void => {
 	want := "[a][b][c] [a][b][c]\n[a][b][c]\n[a][][b] [][a][]\n[abc] [] [a,b]\n[日][本]"
 	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
 		t.Errorf("split:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// buildAndRunPanicWithPrelude is buildAndRunPanic for a program that needs the shipped
+// prelude — buildAndRunWithPrelude's pipeline with the panic harness's capture, since a
+// trap's evidence is stderr and the exit code, which the stdout-only helper discards.
+func buildAndRunPanicWithPrelude(t *testing.T, src string) (string, int) {
+	t.Helper()
+	clang := lookClang(t)
+
+	dir := t.TempDir()
+	entry := filepath.Join(dir, "app.lyra")
+	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	roots := []string{dir, repoStdRoot(t)}
+	units, diags := modules.Resolve(entry, roots, modules.Options{Prelude: modules.PreludeModule})
+	if len(diags) != 0 {
+		t.Fatalf("resolve: %v", diags)
+	}
+	res := driver.AnalyzeUnits(units)
+	if res.HasErrors() {
+		t.Fatalf("unexpected analysis errors: %v", res.Errors())
+	}
+	ep, epDiags := driver.ResolveEntryPoint(res)
+	if ep == nil {
+		t.Fatalf("no entry point: %v", epDiags)
+	}
+	ir, err := New().Emit(res, ep)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	cmd := exec.Command(compileCached(t, clang, string(ir)))
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	code := 0
+	if runErr != nil {
+		ee, isExit := runErr.(*exec.ExitError)
+		if !isExit {
+			t.Fatalf("running the binary failed: %v", runErr)
+		}
+		code = ee.ExitCode()
+	}
+	return stderr.String(), code
+}
+
+// `to_runes` — the string's runes as an array, and the explicit spelling of "split on
+// an empty separator". `[]rune` rather than `[]string`, so a caller gets code points
+// without a box per character.
+func TestExec_StringToRunes(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  let rs = "héllo".to_runes();
+  println("${rs.len()} ${rs[0]} ${rs[1]} ${rs[-1]}");
+  println("${"".to_runes().len()} ${"日本語".to_runes()[1]}");
+}
+`
+	want := "5 h é o\n0 本"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("to_runes:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// `split` on an empty separator **traps**, naming `to_runes` as the fix.
+//
+// A zero-span match can never advance the cursor, so before the guard this looped
+// forever (verified — killed after 1000 parts). A trap rather than a `Maybe`, on
+// `slice`'s reasoning about its inverted range: an empty separator is a caller bug, not
+// a question with a None-shaped answer, and the empty result a soft path would return is
+// indistinguishable from a real one — while a rune separator cannot be empty, so the
+// common call would have paid the unwrap for an impossibility. Python raises here too.
+//
+// The guard lives in `split`, not `Needle`: a zero-length match stays legitimate for
+// `found_at`, since `"".index("")` answering `Some((0, 0))` is what makes a search for
+// an empty needle terminate — pinned by the empty-needle rows of the `index` test.
+func TestExec_SplitEmptySeparatorTraps(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  println("${"abc".split("").len()}");
+}
+`
+	stderr, code := buildAndRunPanicWithPrelude(t, src)
+	if code != trapExitCode {
+		t.Errorf("empty-separator split exited %d; want %d (the trap)", code, trapExitCode)
+	}
+	if !strings.Contains(stderr, "empty separator") || !strings.Contains(stderr, "to_runes") {
+		t.Errorf("the trap should name the bug and the fix; got %q", stderr)
 	}
 }
