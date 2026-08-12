@@ -274,8 +274,19 @@ let main = () -> void => {
 // so `impl Add for Cents` parsed, collected, and was silently inert. This is the
 // opt-in path lyra-E043 points at now that the overflow-arithmetic builtins no longer
 // reach through the wrapper, so the impl body demonstrates the whole loop: read the
-// operands into the base (one-step documented assignability), do wrapping arithmetic
-// there, and return through `-> Self`'s construction-assignability.
+// operands into the base (one-step read-out), do wrapping arithmetic there, and hand
+// the result back as a `Cents` — the tail is annotated rather than left as the base's
+// i64, since a newtype whose `+` yields its base would defeat the point of declaring
+// it. There is no `Cents(150)` constructor spelling to write instead: a scalar newtype
+// is constructed by assignment, and the call form reports "not a tuple type".
+//
+// **The chain is what makes this an assertion rather than a spelling.** Both
+// directions of newtype assignability are legal, so a `let total: Cents` annotation
+// alone proves nothing — an i64 result would satisfy it by construction. `x + y + x`
+// does prove it: the second `+` needs a `Cents` on its left, and the same program with
+// the trait declared `-> i64` is rejected with "operands must be numeric, got i64 and
+// Cents". The final read-out into i64 is only there because `println` refuses a
+// newtype (an `impl Show for Cents` is the other way, tested in the typechecker).
 func TestExec_OperatorOnScalarNewtype(t *testing.T) {
 	t.Parallel()
 	const src = `
@@ -286,17 +297,21 @@ impl Add for Cents {
   (_+_) = (self, o) => {
     let a: i64 = self
     let b: i64 = o
-    a.wrapping_add(b)
+    let sum: Cents = a.wrapping_add(b)
+    sum
   }
 }
 let main = () -> void => {
   let x: Cents = 150
   let y: Cents = 275
-  let sum: i64 = x + y
-  println(sum)
+  let total: Cents = x + y
+  let chained: Cents = x + y + x
+  let raw: i64 = total
+  let rawChained: i64 = chained
+  println("${raw} ${rawChained}")
 }
 `
-	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "425" {
-		t.Errorf("newtype + = %q; want \"425\"", got)
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "425 575" {
+		t.Errorf("newtype + = %q; want \"425 575\"", got)
 	}
 }

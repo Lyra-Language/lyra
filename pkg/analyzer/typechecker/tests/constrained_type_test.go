@@ -447,6 +447,12 @@ let c = raw.wrapping_add(5)
 // both sides — the numeric rule refused the nominal type and the guard refused the
 // base — so `impl Add for Cents` was silently inert. Fixed alongside E043 (08/12);
 // `impl Add for i64` staying inert is pinned by operator_overload_test.go.
+//
+// The impl yields a `Cents`, not the base it computed in — a newtype whose `+` hands
+// back an i64 would defeat the point of declaring it — and the chained `x + y + x` is
+// what pins that: the second `+` needs a Cents on its left, where an i64 result is
+// refused ("operands must be numeric, got i64 and Cents"). A `let sum: Cents`
+// annotation alone would not pin it, since base → newtype is assignable anyway.
 func TestNewtype_OperatorImplDispatches(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
 newtype Cents = i64
@@ -455,11 +461,12 @@ impl Add for Cents {
   (_+_) = (self, o) => {
     let a: i64 = self
     let b: i64 = o
-    a.wrapping_add(b)
+    let sum: Cents = a.wrapping_add(b)
+    sum
   }
 }
 let x: Cents = 150
 let y: Cents = 275
-let sum: i64 = x + y
+let total: Cents = x + y + x
 `, false))
 }
