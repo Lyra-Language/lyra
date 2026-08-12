@@ -126,6 +126,17 @@ const (
 	// definite-only, compile-time check like the literal integer range check.
 	CodeRangeConstraintViolation = "lyra-E023"
 
+	// CodeValuesConstraintViolation: a compile-time literal assigned to a newtype with
+	// a `values(...)` constraint is not one of them (`newtype Status = i32 where
+	// values(200, 404, 500)` given `302`). The literal-union analogue of E023.
+	//
+	// Nothing enforced this until 08/12 — the constraint was collected, its shape
+	// validated, and then read by nobody, so `values(...)` was a declaration the
+	// compiler acknowledged and ignored. That is this project's recurring
+	// collected-and-unread shape in the one place where being checked is the
+	// declaration's entire purpose.
+	CodeValuesConstraintViolation = "lyra-E045"
+
 	// CodeCapturedAssignment: a lambda assigns to a binding it captured from an
 	// enclosing scope. A closure captures **by value** — the copy is taken when the
 	// closure is created, so it can outlive the frame the original lives in — which

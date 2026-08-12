@@ -46,6 +46,11 @@ type TypeChecker struct {
 	// overflowReported guards checkIntegerLiteralRange: a leaf can be narrowed by more
 	// than one context on the way down, and one too-large literal is one mistake.
 	overflowReported map[ast.Expression]bool
+	// constraintReported is that same guard for checkNewtypeConstraints, and it is
+	// needed for the same reason one layer up: the check now rides propagateLiteralType,
+	// which a generic call site reaches more than once for one argument (against the
+	// declared signature and again against the instantiated one).
+	constraintReported map[ast.Expression]bool
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
@@ -362,13 +367,10 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	}
 
 	// Check that the literal value fits within the annotated integer type's range.
+	// (The *newtype* constraint checks are not here: they ride propagateLiteralType
+	// below, so they reach every position a newtype context flows to rather than only
+	// a binding — see checkNewtypeConstraints.)
 	tc.checkIntegerLiteralRange(decl.Name, decl.Value, resolvedDeclType)
-
-	// Validate string literals against any pattern constraints on the declared type.
-	tc.checkPatternConstraints(decl.Name, decl.Value, resolvedDeclType)
-
-	// Validate numeric constants against any range constraints on the declared type.
-	tc.checkRangeConstraints(decl.Name, decl.Value, resolvedDeclType)
 
 	// Store the annotation type — this is the effective type the expression is used as.
 	// e.g. literal 42 annotated as i32 should be recorded as i32, not the untyped int.
@@ -810,14 +812,12 @@ func structFieldTypes(t types.Type) map[string]types.Type {
 }
 
 // checkPatternConstraints tests a string-literal value against every
-// PatternConstraint on the declared type.  Non-string values and non-pattern
+// PatternConstraint on the newtype.  Non-string values and non-pattern
 // constraints are silently skipped — this is purely an extra check layered on
-// top of the ordinary type-assignability check.
-func (tc *TypeChecker) checkPatternConstraints(name string, value ast.Expression, declType types.Type) {
-	ct, ok := declType.(*types.ConstrainedType)
-	if !ok {
-		return
-	}
+// top of the ordinary type-assignability check. Reached through
+// checkNewtypeConstraints, which is what gets it applied in argument, return and
+// element position rather than only at a binding.
+func (tc *TypeChecker) checkPatternConstraints(value ast.Expression, ct *types.ConstrainedType) {
 	strLit, ok := value.(*ast.StringLiteralExpr)
 	if !ok {
 		return // only checkable at compile time for string literals
@@ -838,9 +838,12 @@ func (tc *TypeChecker) checkPatternConstraints(name string, value ast.Expression
 			continue // DFA capacity exceeded — don't block the user
 		}
 		if !matched {
+			// pc.Pattern carries its own `r"…"` delimiters (regexPatternBody strips them
+			// for compilation), so the format string must not add a second pair — it did,
+			// and the message read `pattern constraint r"r"^#[0-9a-f]{6}$""`.
 			tc.addError(value.GetLocation(), SeverityError,
-				"%s: value %q does not satisfy pattern constraint r\"%s\"",
-				name, strLit.Value, pc.Pattern)
+				"value %q does not satisfy pattern constraint %s of %s",
+				strLit.Value, pc.Pattern, ct.Name)
 		}
 	}
 }
@@ -996,9 +999,8 @@ func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {
 		return
 	}
 	// Check that the literal value fits within the variable's integer type's range.
+	// (Newtype constraints ride propagateLiteralType below — see checkNewtypeConstraints.)
 	tc.checkIntegerLiteralRange(stmt.Name, stmt.Value, effective)
-	// Enforce any range constraint on the target's newtype.
-	tc.checkRangeConstraints(stmt.Name, stmt.Value, effective)
 	// Record the variable's width on untyped literal leaves of the RHS (`x = x + 1`
 	// where x: i8 lowers `1` as i8), matching an annotated let binding.
 	tc.propagateLiteralType(stmt.Value, effective)
@@ -1063,7 +1065,11 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 		return
 	}
 	tc.checkIntegerLiteralRange(stmt.Target.GetName(), stmt.Value, targetType)
-	tc.checkRangeConstraints(stmt.Target.GetName(), stmt.Value, targetType)
+	// Called directly rather than via propagateLiteralType, because this path — an
+	// assignment through a member/index target — does no literal propagation at all.
+	// Whether it *should* is a separate question (the other two assignment paths do);
+	// leaving that alone keeps this change to the constraint check it is about.
+	tc.checkNewtypeConstraints(stmt.Value, targetType)
 }
 
 // rootIdentifier walks a member/index path back to the identifier it is rooted
@@ -2079,7 +2085,13 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 	// lowers the arithmetic at the i64 default, then truncates on the way out —
 	// `let s: Small = 200 + 100` would silently produce 44 where the same
 	// expression against a bare u8 traps.
+	// This is also where every newtype *constraint* is enforced, and it is here rather
+	// than at the assignment sites because this is the one point a newtype context
+	// reaches a value in *all* the positions it can arrive from — an annotation, an
+	// argument, a return, an array element. Attached to the two assignment sites, as it
+	// was until 08/12, `let p: Percent = 150` was checked and `show_it(150)` was not.
 	if ct, ok := concrete.(*types.ConstrainedType); ok {
+		tc.checkNewtypeConstraints(expr, ct)
 		tc.propagateLiteralType(expr, tc.resolveTypeIfKnown(ct.Type, expr.GetLocation()))
 		return
 	}

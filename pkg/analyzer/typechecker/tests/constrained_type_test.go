@@ -51,13 +51,13 @@ func TestConstrainedType_PrecisionConstraintNoErrors(t *testing.T) {
 func TestRangeConstraint_IntAboveInclusiveEnd(t *testing.T) {
 	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
 let p: Percent = 150`, false)
-	assertErrorsAre(t, res, "p: value 150 is outside the range 0..<=100 of Percent")
+	assertErrorsAre(t, res, "value 150 is outside the range 0..<=100 of Percent")
 }
 
 func TestRangeConstraint_IntBelowStart(t *testing.T) {
 	res := parseCollectAndCheck(t, `newtype Grade = i32 where range(1..<=5)
 let g: Grade = 0`, false)
-	assertErrorsAre(t, res, "g: value 0 is outside the range 1..<=5 of Grade")
+	assertErrorsAre(t, res, "value 0 is outside the range 1..<=5 of Grade")
 }
 
 func TestRangeConstraint_IntInRange_NoError(t *testing.T) {
@@ -70,7 +70,7 @@ let p: Percent = 50`, false)
 func TestRangeConstraint_ExclusiveEndBoundary(t *testing.T) {
 	res := parseCollectAndCheck(t, `newtype Angle = i32 where range(0..<360)
 let a: Angle = 360`, false)
-	assertErrorsAre(t, res, "a: value 360 is outside the range 0..<360 of Angle")
+	assertErrorsAre(t, res, "value 360 is outside the range 0..<360 of Angle")
 }
 
 func TestRangeConstraint_ExclusiveEndInRange_NoError(t *testing.T) {
@@ -83,26 +83,26 @@ let a: Angle = 359`, false)
 func TestRangeConstraint_OpenLowerBound(t *testing.T) {
 	res := parseCollectAndCheck(t, `newtype NonNeg = i32 where range(0..)
 let n: NonNeg = -5`, false)
-	assertErrorsAre(t, res, "n: value -5 is outside the range 0.. of NonNeg")
+	assertErrorsAre(t, res, "value -5 is outside the range 0.. of NonNeg")
 }
 
 func TestRangeConstraint_OpenUpperBound(t *testing.T) {
 	res := parseCollectAndCheck(t, `newtype Small = i32 where range(..<=100)
 let s: Small = 150`, false)
-	assertErrorsAre(t, res, "s: value 150 is outside the range ..<=100 of Small")
+	assertErrorsAre(t, res, "value 150 is outside the range ..<=100 of Small")
 }
 
 // A negative start via a negated-literal bound.
 func TestRangeConstraint_NegativeStart(t *testing.T) {
 	res := parseCollectAndCheck(t, `newtype Temp = i32 where range(-40..<=50)
 let t2: Temp = -50`, false)
-	assertErrorsAre(t, res, "t2: value -50 is outside the range -40..<=50 of Temp")
+	assertErrorsAre(t, res, "value -50 is outside the range -40..<=50 of Temp")
 }
 
 func TestRangeConstraint_FloatAboveRange(t *testing.T) {
 	res := parseCollectAndCheck(t, `newtype Ratio = f64 where range(0..<=1)
 let r: Ratio = 1.5`, false)
-	assertErrorsAre(t, res, "r: value 1.5 is outside the range 0..<=1 of Ratio")
+	assertErrorsAre(t, res, "value 1.5 is outside the range 0..<=1 of Ratio")
 }
 
 func TestRangeConstraint_FloatInRange_NoError(t *testing.T) {
@@ -127,7 +127,95 @@ let f = () -> u8 => {
 	p = 200
 	0
 }`, false)
-	assertErrorsAre(t, res, "p: value 200 is outside the range 0..<=100 of Percent")
+	assertErrorsAre(t, res, "value 200 is outside the range 0..<=100 of Percent")
+}
+
+// ── the constraint follows the type, not the binding (08/12) ─────────────────
+//
+// The three constraint checks used to be called from the assignment sites only, so
+// `let p: Percent = 150` was caught and the *same literal* reaching the *same newtype*
+// through an argument, a return or an array element was not — silently, in the feature
+// whose entire purpose is to be checked. They ride propagateLiteralType now, which is
+// the one point a newtype context reaches a value in every position it can arrive from.
+//
+// Each of these asserts the *exact* error set, so a duplicate report would fail them
+// too — the guard that matters, since a leaf can be narrowed by more than one context.
+
+func TestConstraint_CheckedInArgumentPosition(t *testing.T) {
+	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+let show_it = (p: Percent) -> i64 => 1
+let x = show_it(150)`, false)
+	assertErrorsAre(t, res, "value 150 is outside the range 0..<=100 of Percent")
+}
+
+func TestConstraint_CheckedInReturnPosition(t *testing.T) {
+	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+let make = () -> Percent => 150`, false)
+	assertErrorsAre(t, res, "value 150 is outside the range 0..<=100 of Percent")
+}
+
+func TestConstraint_CheckedInArrayElementPosition(t *testing.T) {
+	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+let xs: []Percent = [10, 150, 20]`, false)
+	assertErrorsAre(t, res, "value 150 is outside the range 0..<=100 of Percent")
+}
+
+// A pattern constraint travels the same path, so it is no longer annotation-only either.
+func TestConstraint_PatternCheckedInArgumentPosition(t *testing.T) {
+	res := parseCollectAndCheck(t, `newtype Hex = string where pattern(r"^#[0-9a-fA-F]{6}$")
+let paint = (c: Hex) -> i64 => 1
+let x = paint("nope")`, true)
+	assertErrorsAre(t, res,
+		`value "nope" does not satisfy pattern constraint r"^#[0-9a-fA-F]{6}$" of Hex`)
+}
+
+// The pattern message used to wrap an already-delimited pattern in a second `r"…"`,
+// reading `pattern constraint r"r"^#…$""`. Pinned by the assertion above and here.
+func TestConstraint_PatternMessageIsNotDoubleQuoted(t *testing.T) {
+	res := parseCollectAndCheck(t, `newtype Hex = string where pattern(r"^#[0-9a-fA-F]{6}$")
+let h: Hex = "nope"`, true)
+	assertErrorsAre(t, res,
+		`value "nope" does not satisfy pattern constraint r"^#[0-9a-fA-F]{6}$" of Hex`)
+}
+
+// ── values(...) is enforced (lyra-E045) ──────────────────────────────────────
+//
+// Nothing read LiteralUnionConstraint until 08/12: the constraint was collected, its
+// shape validated, and then ignored, so `let s: Status = 302` compiled clean. The
+// collected-and-unread shape, in the one place where being checked is the whole point
+// of writing the declaration.
+
+func TestValuesConstraint_ViolationReported(t *testing.T) {
+	res := parseCollectAndCheck(t, `newtype Status = i32 where values(200, 404, 500)
+let s: Status = 302`, false)
+	assertErrorsAre(t, res, "value 302 is not one of the values allowed by Status (200, 404, 500)")
+}
+
+func TestValuesConstraint_AllowedValueOk(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `newtype Status = i32 where values(200, 404, 500)
+let s: Status = 404`, false))
+}
+
+// It rides the same path, so it reaches an argument too.
+func TestValuesConstraint_CheckedInArgumentPosition(t *testing.T) {
+	res := parseCollectAndCheck(t, `newtype Status = i32 where values(200, 404, 500)
+let handle = (s: Status) -> i64 => 1
+let x = handle(302)`, false)
+	assertErrorsAre(t, res, "value 302 is not one of the values allowed by Status (200, 404, 500)")
+}
+
+// A string union compares by value, not by source spelling.
+func TestValuesConstraint_StringUnion(t *testing.T) {
+	res := parseCollectAndCheck(t, `newtype Mode = string where values("r", "w")
+let m: Mode = "x"`, true)
+	assertErrorsAre(t, res, `value "x" is not one of the values allowed by Mode ("r", "w")`)
+}
+
+// A non-constant is skipped, as everywhere else in this file — definite-only, so
+// never a false positive.
+func TestValuesConstraint_NonConstantSkipped(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `newtype Status = i32 where values(200, 404, 500)
+let f = (x: i32) -> Status => x`, false))
 }
 
 // ── nominal isolation ─────────────────────────────────────────────────────────
@@ -276,7 +364,7 @@ func TestNewtype_RangeConstraintOwnsTheReport(t *testing.T) {
 newtype Percent = u8 where range(0..<=100)
 let p: Percent = 300
 `, false)
-	assertErrorsAre(t, res, "p: value 300 is outside the range 0..<=100 of Percent")
+	assertErrorsAre(t, res, "value 300 is outside the range 0..<=100 of Percent")
 }
 
 // ── the base must be structural ──────────────────────────────────────────────
