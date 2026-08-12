@@ -156,7 +156,7 @@ func TestExec_NewtypeArithmeticUsesBaseWidth(t *testing.T) {
 		// The value reaches u8 through a call, so it is not a foldable constant —
 		// the check that fires is the emitted trap, not the typechecker's.
 		src := `newtype Small = u8
-		 let widen = (n: u8) -> Small => n
+		 let widen = (n: u8) -> Small => Small(n)
 		 let main = () -> u8 => {
 		   let a: Small = widen(200)
 		   let x: u8 = a
@@ -205,7 +205,7 @@ func TestExec_NewtypeOverString(t *testing.T) {
 			// back out to `string` and printed.
 			"built and returned as a newtype",
 			`newtype Email = string
-			 let mk = (a: string, b: string) -> Email => a ++ "@" ++ b
+			 let mk = (a: string, b: string) -> Email => Email(a ++ "@" ++ b)
 			 let main = () -> u8 => {
 			   let e: Email = mk("user", "host")
 			   let s: string = e
@@ -222,7 +222,7 @@ func TestExec_NewtypeOverString(t *testing.T) {
 			`newtype Email = string
 			 struct User { name: Email, age: u8 }
 			 let main = () -> u8 => {
-			   let n: Email = "a" ++ "b"
+			   let n: Email = Email("a" ++ "b")
 			   let u = User { name: n, age: 7 }
 			   let copy = u
 			   let s: string = copy.name
@@ -237,7 +237,7 @@ func TestExec_NewtypeOverString(t *testing.T) {
 			"as a dynamic-array element",
 			`newtype Email = string
 			 let main = () -> u8 => {
-			   let es: []Email = ["a" ++ "1", "b" ++ "2"]
+			   let es: []Email = [Email("a" ++ "1"), Email("b" ++ "2")]
 			   let s: string = es[1]
 			   println(s)
 			   0
@@ -272,7 +272,7 @@ func TestExec_NewtypeOverString_ASan(t *testing.T) {
 	src := `newtype Email = string
 	 struct User { name: Email, age: u8 }
 	 let main = () -> u8 => {
-	   let n: Email = "a" ++ "b"
+	   let n: Email = Email("a" ++ "b")
 	   let u = User { name: n, age: 7 }
 	   let copy = u
 	   let s: string = copy.name
@@ -324,8 +324,8 @@ func TestExec_NewtypeManagedAssignment(t *testing.T) {
 			"struct field", `newtype Email = string
 			 struct User { name: Email, age: u8 }
 			 let main = () -> u8 => {
-			   var u = User { name: "a" ++ "b", age: 1 }
-			   u.name = "c" ++ "d"
+			   var u = User { name: Email("a" ++ "b"), age: 1 }
+			   u.name = Email("c" ++ "d")
 			   let s: string = u.name
 			   println(s)
 			   0
@@ -335,8 +335,8 @@ func TestExec_NewtypeManagedAssignment(t *testing.T) {
 		{
 			"dynamic-array element", `newtype Email = string
 			 let main = () -> u8 => {
-			   var xs: []Email = ["a" ++ "b", "c" ++ "d"]
-			   xs[0] = "e" ++ "f"
+			   var xs: []Email = [Email("a" ++ "b"), Email("c" ++ "d")]
+			   xs[0] = Email("e" ++ "f")
 			   let s: string = xs[0]
 			   println(s)
 			   0
@@ -409,7 +409,7 @@ func TestEmit_NewtypeOverStringSharesBaseGlue(t *testing.T) {
 	got, err := emitSource(t, `newtype Email = string
 	 struct User { name: Email, age: u8 }
 	 let main = () -> u8 => {
-	   let n: Email = "a" ++ "b"
+	   let n: Email = Email("a" ++ "b")
 	   let u = User { name: n, age: 7 }
 	   let copy = u
 	   if copy.name == "ab" { 0 } else { 1 }

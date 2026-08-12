@@ -341,6 +341,18 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 		}
 		return c.typeIntervalIn(v, st)
 
+	case *ast.TupleLiteralExpr:
+		// A newtype construction (`Percent(x)`) has exactly its operand's interval: the
+		// wrapper is nominal, so at runtime the two are the same value. Tracking through
+		// it is what keeps this pass's flow-sensitive constraint check working now that
+		// a typed value must be constructed rather than assigned (lyra-E046) — without
+		// it, `let p: Percent = Percent(x)` became untracked and a provable violation
+		// stopped being reported, which would have made the stricter rule a net loss.
+		if inner, _, ok := c.newtypeConstruction(v); ok {
+			return c.eval(st, inner)
+		}
+		return interval{}, false, st
+
 	case *ast.NegationExpr:
 		inner, tracked, after := c.eval(st, v.Operand)
 		st = after
@@ -1097,15 +1109,11 @@ func (c *rangeChecker) checkConstraintViolation(valueExpr ast.Expression, iv int
 	if c.silent {
 		return
 	}
-	if _, isID := valueExpr.(*ast.IdentifierExpr); !isID {
-		return
-	}
-	t, ok := c.tt.Get(valueExpr)
+	value, ct, ok := c.constrainedTarget(valueExpr)
 	if !ok {
 		return
 	}
-	ct, ok := t.(*types.ConstrainedType)
-	if !ok {
+	if _, isID := value.(*ast.IdentifierExpr); !isID {
 		return
 	}
 	for _, con := range ct.Constraints {
@@ -1121,6 +1129,53 @@ func (c *rangeChecker) checkConstraintViolation(valueExpr ast.Expression, iv int
 			return
 		}
 	}
+}
+
+// constrainedTarget answers "which value is being constrained, and by what constraint"
+// for the two spellings that put a value into a range-constrained newtype:
+//
+//   - the annotated form `let p: Percent = x`, where the typechecker stamps `Percent`
+//     onto `x` itself (checkVarDecl), so value and type are the same node;
+//   - the constructor `Percent(x)`, where the newtype is recorded on the *construction*
+//     and the value is its operand.
+//
+// Splitting them here rather than at the caller keeps the identifier guard (and the
+// report) written once. The identifier guard has to test the **operand** in the second
+// case: `Percent(150)` is a constant the typechecker already folds and reports, and
+// checking the construction node instead would report it twice.
+func (c *rangeChecker) constrainedTarget(valueExpr ast.Expression) (ast.Expression, *types.ConstrainedType, bool) {
+	if tl, ok := valueExpr.(*ast.TupleLiteralExpr); ok {
+		inner, ct, ok := c.newtypeConstruction(tl)
+		return inner, ct, ok
+	}
+	t, ok := c.tt.Get(valueExpr)
+	if !ok {
+		return nil, nil, false
+	}
+	ct, ok := t.(*types.ConstrainedType)
+	if !ok {
+		return nil, nil, false
+	}
+	return valueExpr, ct, true
+}
+
+// newtypeConstruction reports whether tl is a newtype construction — a one-operand
+// named-tuple literal whose recorded type is a ConstrainedType — and returns the
+// operand and that type. A newtype constructor shares the tuple-literal node, so this
+// is how the two are told apart everywhere this pass meets one.
+func (c *rangeChecker) newtypeConstruction(tl *ast.TupleLiteralExpr) (ast.Expression, *types.ConstrainedType, bool) {
+	if len(tl.Elements) != 1 {
+		return nil, nil, false
+	}
+	t, ok := c.tt.Get(tl)
+	if !ok {
+		return nil, nil, false
+	}
+	ct, ok := t.(*types.ConstrainedType)
+	if !ok {
+		return nil, nil, false
+	}
+	return tl.Elements[0], ct, true
 }
 
 // foldConstraintRange folds a RangeConstraint's bounds to an inclusive [lo, hi]

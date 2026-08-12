@@ -1,6 +1,102 @@
 package typechecker
 
-import "github.com/Lyra-Language/lyra/pkg/types"
+import (
+	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
+	"github.com/Lyra-Language/lyra/pkg/types"
+)
+
+// checkImplicitNewtypeConversion enforces the rule that gives a newtype its meaning at
+// a boundary: **an untyped literal may become a newtype implicitly; a value that
+// already has a type may not** (lyra-E046, 08/12). `let c: Cents = 150` is fine;
+// `take(plain_i64)` against `(c: Cents)` is not, and `Cents(x)` is how it is said.
+//
+// The distinction is not convenience, it is provenance. A literal has no unit yet — 150
+// is not "150 of something else" — so adopting it costs nothing and reads as what the
+// author meant. A *typed* value came from somewhere, and that somewhere is exactly
+// where a unit mixup lives: before this, `let plain: i64 = 150` followed by
+// `take(plain)` compiled silently, so a newtype declared a distinction the compiler then
+// declined to enforce at any call boundary. It is Ada's rule for its derived types
+// (`M : Meters := 3.0` is legal, `M := F` for a Float F is not, `Meters(F)` is the
+// conversion), and Ada is the language that has taken this problem most seriously.
+//
+// It is checked here — from propagateLiteralType's newtype arm, and the one assignment
+// path that does no propagation — rather than inside isAssignable, for two reasons.
+// isAssignable sees only *types*, and the rule needs the expression: a string or bool
+// literal has the same type as a variable holding one (there is no `untyped_string`),
+// so the literal half of the rule is not expressible at the type level. And the newtype
+// arm is already the single point every position a newtype context can arrive at flows
+// through — the same reason the constraint checks live there.
+// `from` is passed rather than read back off the value node, because one caller has
+// already overwritten it: checkVarDecl records the *annotation* on its value before
+// narrowing (so propagateOperandType's guard re-descends), which would leave this
+// reading `Cents` where the source was an `i64` and concluding nothing was being
+// converted. That is exactly the case the rule exists for, and it silently passed until
+// the from-type became a parameter.
+func (tc *TypeChecker) checkImplicitNewtypeConversion(value ast.Expression, from types.Type, ct *types.ConstrainedType) {
+	if from == nil {
+		return // nothing inferred — an error is already reported, don't invent a second
+	}
+	switch {
+	case types.TypesEqual(from, ct):
+		return // already this newtype: nothing is being converted
+	case isNewtypeConversionExempt(from):
+		return
+	case isUntypedLiteralType(from), isSyntacticLiteral(value):
+		return // a literal has no provenance to lose
+	}
+	tc.addErrorCode(value.GetLocation(), SeverityError, diag.CodeImplicitNewtypeConversion,
+		"cannot use %s as %s implicitly: %s is a distinct type over %s, so the conversion must be written — `%s(...)`",
+		from, ct.Name, ct.Name, ct.Type, ct.Name)
+}
+
+// isNewtypeConversionExempt covers the source types the rule has nothing to say about:
+// another newtype (isAssignable already refuses that pair, and reporting here too would
+// double up), `never` (a `panic(…)` reaches no assignment), and a bare type variable
+// (inside a generic body there is no concrete source type to judge, and the
+// instantiation is where the question has an answer).
+func isNewtypeConversionExempt(from types.Type) bool {
+	switch from.(type) {
+	case *types.ConstrainedType, types.NeverType, types.GenericType:
+		return true
+	}
+	return false
+}
+
+// isUntypedLiteralType reports whether t is one of the internal literal types — the
+// types a numeric literal carries until a context fixes its width. They are precisely
+// "a constant with no provenance", which is why they are the numeric half of the rule:
+// constant arithmetic (`100 + 50`) stays untyped too, so it is covered without this
+// having to walk the expression.
+func isUntypedLiteralType(t types.Type) bool {
+	p, ok := t.(types.PrimitiveType)
+	if !ok {
+		return false
+	}
+	return p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt || p.Name == types.UntypedFloat
+}
+
+// isSyntacticLiteral is the other half, for the literals the *type* system cannot
+// identify: a string, bool or rune literal has the same type as a variable holding one,
+// so only the syntax says it is a constant. An array literal counts when every element
+// does, which is what lets `newtype Row = []i64` take `[1, 2, 3]`.
+func isSyntacticLiteral(expr ast.Expression) bool {
+	switch e := expr.(type) {
+	case *ast.StringLiteralExpr, *ast.BooleanLiteralExpr, *ast.CharacterLiteralExpr,
+		*ast.IntegerLiteralExpr, *ast.FloatLiteralExpr:
+		return true
+	case *ast.NegationExpr:
+		return isSyntacticLiteral(e.Operand)
+	case *ast.ArrayLiteralExpr:
+		for _, el := range e.Elements {
+			if !isSyntacticLiteral(el) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
 
 // isAssignable reports whether a value of type from can be assigned to a slot of type to.
 //

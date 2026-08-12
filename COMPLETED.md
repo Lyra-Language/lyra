@@ -10,6 +10,99 @@ Newest first.
 ## Dated log
 
 ### 08/12/26
+**A newtype means something at a boundary**, in three changes that answer one question:
+where may a value become a newtype, and what is checked when it does. Sequenced so each
+was independently reviewable — a bug fix, then an addition, then the rule that needed
+both.
+
+**1. A constraint is checked wherever the type flows, not only at a binding.**
+`range(...)`/`pattern(...)` were called from the two assignment sites, so
+`let p: Percent = 150` was caught while the same literal reaching the same newtype
+through an **argument** (`show_it(150)`), a **return** (`-> Percent => 150`) or an
+**array element** (`let xs: []Percent = [10, 150]`) was not. Silently — in the feature
+whose entire purpose is to be checked. They ride `propagateLiteralType`'s newtype arm
+now, the one point a newtype context reaches a value in every position it can arrive
+from; that is hazard 8's rule (one predicate on the path the type already travels)
+rather than the same check re-attached at each consumer. The two cases anyone tries
+first — an annotation, and a variable the value-range pass independently proves — both
+worked, which is why the hole was invisible.
+
+`values(...)` is enforced for the first time (`lyra-E045`). It was collected, its shape
+validated, and read by nobody, so `let s: Status = 302` against `values(200, 404, 500)`
+compiled clean: the collected-and-unread shape again, in the one place where being
+checked is the whole point of writing the declaration.
+
+Two smaller things rode along. The pattern message wrapped an already-delimited pattern
+in a second `r"…"` (`pattern constraint r"r"^#…$""`). And the range message no longer
+leads with a binding name — most positions it now covers have none to give, the
+diagnostic's location *is* the literal, and the value-range pass's sibling message
+already read that way.
+
+**2. A newtype has a constructor.** `Cents(150)`, and the juxtaposed `Cents 150` for
+free, since the collector erases that spelling into the same node. It is a compile-time
+assertion about which type a value has, not a wrapper: a newtype is nominal to the
+typechecker and transparent to codegen, so it lowers to **its operand and nothing
+else**. The backend arm reads the *raw* recorded type, because `recordedType` strips
+newtypes — through it a `Cents(150)` looks like an i64 recorded on a tuple literal.
+
+The operand is checked against the **base**, not the newtype, which is what keeps the
+constructor meaningful under (3): construction is exactly the act of turning a base
+value into a newtype value. Constraints are enforced through it for free by propagating
+the newtype onto the operand, so `Percent(150)` gets the same report the annotation
+does. `lyra-E044` — which had spent an hour meaning "a newtype has *no* constructor" —
+now covers what is still malformed: the wrong operand count, an operand the base cannot
+hold, and a generic newtype (whose base is a type variable, with nothing to check
+against until the parameters are bound).
+
+**3. A typed value needs the constructor; a literal does not** (`lyra-E046`). This is
+the rule the other two were for. Until now base → newtype was assignable everywhere, so
+`let plain: i64 = 150` followed by `take(plain)` against `(c: Cents)` compiled silently
+— a newtype declared a distinction the compiler then declined to enforce at any
+boundary, which also made `lyra-E043` narrower than its own rationale, since the same
+laundering was available through any user-written function.
+
+**The line is provenance, not convenience.** A literal has no unit yet — `150` is not
+"150 of something else" — so adopting it costs nothing and reads as what the author
+meant; a *typed* value came from somewhere, and that somewhere is where a unit mixup
+lives. It is Ada's rule for derived types, for the same reason: `M : Meters := 3.0` is
+legal, `M := F` for a `Float` F is not, `Meters(F)` is the conversion. Keeping literals
+implicit is what makes the strict half affordable — `let xs: []Percent = [10, 20, 30]`
+needs no ceremony, which was the standing objection to requiring constructors
+everywhere.
+
+It is enforced from the same newtype arm as (1), and it needs **both** halves of the
+source: `isUntypedLiteralType` for numerics (where `untyped_int` already means
+"constant with no provenance", so constant arithmetic is covered without walking the
+expression) and `isSyntacticLiteral` for the rest, because a string or bool literal has
+the same type as a variable holding one — there is no `untyped_string`. That is also
+why the rule cannot live in `isAssignable`, which sees only types.
+
+Three things it deliberately does not touch: reading *out* (`let raw: i64 = c`) stays
+implicit, since there is no field accessor and refusing it would make a newtype
+write-only; a value that is already the newtype is not a conversion; and a *different*
+newtype keeps its own distinctness error rather than doubling up.
+
+**Two bugs found by building it, both of the kind only a test catches.** The check
+initially read the source type back off the value node — and `checkVarDecl` records the
+*annotation* there before narrowing, so it saw `Cents` where the source was an `i64` and
+concluded nothing was being converted. The binding position, the most obvious case in
+the feature, silently passed; the from-type is a parameter now.
+
+And the migration exposed a real regression in the **value-range pass**: written through
+the constructor, `let p: Percent = Percent(y)` reported nothing where `let p: Percent =
+y` had reported a definite violation, because a construction evaluated to ⊤ (untracked).
+That would have made the stricter rule a *net loss* for constraint checking — the
+opposite of the point. A newtype construction now evaluates to exactly its operand's
+interval (the wrapper is nominal, so at runtime they are one value), and the identifier
+guard tests the construction's **operand**, so a constructed *constant* stays the
+typechecker's to report rather than being reported twice.
+
+Migration was 14 call sites across the test suite and **nothing in `std/`**, which
+declares no newtypes — the reason to do this now rather than later. Several read better
+for it: an operator impl's `Cents(a.wrapping_add(b))` says what it does where
+`let sum: Cents = a.wrapping_add(b)` relied on a silent conversion.
+
+### 08/12/26
 **The overflow-arithmetic builtins stop at a newtype's wrapper (`lyra-E043`), and the
 operator impl they defer to dispatches on a scalar newtype for the first time.** Two
 halves of one repair, and the second was found because the first's diagnostic

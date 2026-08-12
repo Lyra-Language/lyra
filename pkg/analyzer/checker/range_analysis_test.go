@@ -472,12 +472,21 @@ func TestRange_Match_CatchAll_NoDiag(t *testing.T) {
 // The flow-sensitive twin of the typechecker's constant-value RangeConstraint
 // check: a non-constant value proven entirely outside a range-constrained
 // newtype's range is an error.
+//
+// Both are written through the constructor since 08/12, because a typed value no
+// longer converts implicitly (lyra-E046) — and that makes them the regression test
+// for this pass seeing *through* a newtype construction. It did not at first: a
+// construction evaluated to ⊤ (untracked), so `let p: Percent = Percent(y)` reported
+// nothing where `let p: Percent = y` had reported a definite violation, which would
+// have made the stricter conversion rule a net loss for constraint checking. The
+// wrapper is nominal, so a construction now evaluates to exactly its operand's
+// interval.
 
 // A variable refined past the constraint's range is a definite violation.
 func TestRange_Constraint_RefinedVar(t *testing.T) {
 	onlyDiag(t, `
 		newtype Percent = u8 where range(0..<=100)
-		let f = (x: u8) -> u8 => if x > 100 { let p: Percent = x
+		let f = (x: u8) -> u8 => if x > 100 { let p: Percent = Percent(x)
 			0
 		} else { 0 }
 		let main = () -> u8 => 0
@@ -491,7 +500,7 @@ func TestRange_Constraint_ConstPropagatedBinding(t *testing.T) {
 		newtype Percent = u8 where range(0..<=100)
 		let f = () -> u8 => {
 			let y: u8 = 150
-			let p: Percent = y
+			let p: Percent = Percent(y)
 			0
 		}
 		let main = () -> u8 => 0
@@ -504,7 +513,7 @@ func TestRange_Constraint_ConstPropagatedBinding(t *testing.T) {
 func TestRange_Constraint_RefinedInRange_NoDiag(t *testing.T) {
 	noDiag(t, `
 		newtype Percent = u8 where range(0..<=100)
-		let f = (x: u8) -> u8 => if x < 50 { let p: Percent = x
+		let f = (x: u8) -> u8 => if x < 50 { let p: Percent = Percent(x)
 			0
 		} else { 0 }
 		let main = () -> u8 => 0
@@ -517,7 +526,7 @@ func TestRange_Constraint_PossibleNotDefinite_NoDiag(t *testing.T) {
 	noDiag(t, `
 		newtype Percent = u8 where range(0..<=100)
 		let f = (x: u8) -> u8 => {
-			let p: Percent = x
+			let p: Percent = Percent(x)
 			0
 		}
 		let main = () -> u8 => 0
@@ -917,4 +926,19 @@ func TestRange_Safety_ForInRangeIndexInBounds(t *testing.T) {
 	if !safety.IndexInBounds(idx) {
 		t.Error("a for-in range counter i ∈ [0,2] indexing a size-3 array should be marked in-bounds")
 	}
+}
+
+// A *constant* through the constructor stays the typechecker's to report, not this
+// pass's — `Percent(150)` is folded there. The identifier guard tests the
+// construction's **operand** for exactly this reason: testing the construction node
+// would have reported it here too, and one out-of-range value is one mistake.
+func TestRange_Constraint_ConstructedConstantNotDoubleReported(t *testing.T) {
+	noDiag(t, `
+		newtype Percent = u8 where range(0..<=100)
+		let f = () -> u8 => {
+			let p: Percent = Percent(50)
+			0
+		}
+		let main = () -> u8 => 0
+	`)
 }

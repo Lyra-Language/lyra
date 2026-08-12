@@ -372,6 +372,15 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// a binding — see checkNewtypeConstraints.)
 	tc.checkIntegerLiteralRange(decl.Name, decl.Value, resolvedDeclType)
 
+	// The implicit-conversion rule is checked *here*, before the annotation is recorded
+	// on the value below — after that the value node reads as the newtype and the check
+	// (which rides propagateLiteralType for every other position) would see nothing
+	// being converted. The later call through propagation is harmless for exactly that
+	// reason: it finds them equal and returns.
+	if ct, isNewtype := resolvedDeclType.(*types.ConstrainedType); isNewtype {
+		tc.checkImplicitNewtypeConversion(decl.Value, inferredType, ct)
+	}
+
 	// Store the annotation type — this is the effective type the expression is used as.
 	// e.g. literal 42 annotated as i32 should be recorded as i32, not the untyped int.
 	tc.typeTable.Set(decl.Value, resolvedDeclType)
@@ -1068,7 +1077,10 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	// Called directly rather than via propagateLiteralType, because this path — an
 	// assignment through a member/index target — does no literal propagation at all.
 	// Whether it *should* is a separate question (the other two assignment paths do);
-	// leaving that alone keeps this change to the constraint check it is about.
+	// leaving that alone keeps this change to the checks it is about.
+	if ct, ok := targetType.(*types.ConstrainedType); ok {
+		tc.checkImplicitNewtypeConversion(stmt.Value, valueType, ct)
+	}
 	tc.checkNewtypeConstraints(stmt.Value, targetType)
 }
 
@@ -2091,6 +2103,9 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 	// argument, a return, an array element. Attached to the two assignment sites, as it
 	// was until 08/12, `let p: Percent = 150` was checked and `show_it(150)` was not.
 	if ct, ok := concrete.(*types.ConstrainedType); ok {
+		if from, ok := tc.typeTable.Get(expr); ok {
+			tc.checkImplicitNewtypeConversion(expr, from, ct)
+		}
 		tc.checkNewtypeConstraints(expr, ct)
 		tc.propagateLiteralType(expr, tc.resolveTypeIfKnown(ct.Type, expr.GetLocation()))
 		return
@@ -2781,9 +2796,12 @@ func (tc *TypeChecker) inferNewtypeConstruction(expr *ast.TupleLiteralExpr, name
 			"cannot construct %s from %s: its base is %s", name, got, base)
 		return nil
 	}
-	// Propagate the *newtype*, not the base: the newtype arm checks the constraints and
-	// then recurses to the base, so one call does both.
-	tc.propagateLiteralType(operand, ct)
+	// The two halves are called separately rather than by propagating `ct` (whose arm
+	// would do both), because that arm also enforces the *implicit* conversion rule —
+	// and a constructor is the explicit form, so routing through it would have
+	// `Cents(x)` refuse the very operand it exists to accept.
+	tc.checkNewtypeConstraints(operand, ct)
+	tc.propagateLiteralType(operand, base)
 	tc.typeTable.Set(expr, ct)
 	return ct
 }

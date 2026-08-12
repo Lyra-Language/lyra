@@ -280,31 +280,35 @@ write today:
   `lyra-E044` now says so rather than reporting "not a tuple type" — which is the
   question below.
 
-- **[OPEN] Should a `newtype` have a constructor?** `Cents(150)` and `Cents 150` are
-  refused (`lyra-E044`, 08/12); a newtype value is made by annotation, since a value
-  satisfying the base is assignable to the newtype. The diagnostic is right under
-  today's rules, and the design question it names is open.
+- **[DONE 08/12] A newtype means something at a boundary**, in three parts. A
+  constraint is now checked **wherever the type flows** rather than only at a binding —
+  argument, return and array-element positions were silently unchecked — and
+  `values(...)` is enforced at all for the first time (`lyra-E045`). A newtype has a
+  **constructor**: `Cents(150)`, and `Cents 150` free with it, lowering to its operand
+  and nothing else. And a **typed value now needs that constructor** (`lyra-E046`)
+  while an untyped literal still converts implicitly — Ada's rule, because a literal
+  has no unit yet and a typed value's provenance is where a unit mixup lives. So
+  `take(plain_i64)` against `(c: Cents)` is an error, `let xs: []Percent = [10, 20]`
+  still is not, and E043 became a case of a general rule instead of a lone patch at one
+  boundary. See COMPLETED.md, including the two bugs building it turned up — the check
+  reading a from-type the annotation had already overwritten, and the value-range pass
+  losing sight of a violation written through the constructor.
 
-  **The spelling is the small half.** Adding `Cents(150)` while implicit construction
-  stays gives a *third* way to say what annotation already says — juxtaposition comes
-  along free, since both reach the same collector path — with no new guarantee, and it
-  costs `lyra-E041`'s rationale, which refuses a newtype over an anonymous tuple
-  precisely because the two "differ only in whether the name is a constructor".
-
-  **The half worth deciding is whether construction should be explicit**, because today
-  the barrier is not enforced at any boundary: `take(plain_i64)` against
-  `(c: Cents)` compiles silently, so a newtype does not prevent the unit mixup it is
-  named for — which also makes E043's "mixed operand" framing narrower than it sounds,
-  since the same laundering is available through any user-written function. Requiring
-  the constructor is what would let base → newtype be refused. Three things recommend
-  it: E043 becomes a case of a general rule rather than a lone patch; a newtype
-  constructor then behaves exactly like a data constructor (`Some(42)`/`Some 42`),
-  a rule the language already has; and the migration is **free right now** — the
-  standard library declares no newtypes at all, so the cost is test churn and only
-  grows from here. The honest cost is literal ergonomics in aggregates
-  (`[Cents(1), Cents(2)]`), which is the noise Rust charges for the same guarantee.
-  Decide the read-out direction with it: `i64(c)` is refused too, so both directions
-  are annotation-only today.
+  - **[OPEN] The read-out direction is still implicit.** `let raw: i64 = c` needs no
+    ceremony, and `i64(c)` is refused ("cannot convert Cents to i64"), so the two
+    directions are now asymmetric in both spelling and strictness. That asymmetry is
+    deliberate as far as it goes — there is no field accessor, so refusing the implicit
+    read-out would make a newtype write-only, and the target type is written right
+    there — but it does mean `f(cents)` against `(x: i64)` silently discards the unit,
+    which is the same shape as the hole E046 just closed. Ada requires `Integer(M)`
+    here too. Wants deciding with the conversion spelling: if `i64(c)` worked, refusing
+    the implicit form would cost nothing but keystrokes.
+  - **[OPEN] A generic newtype cannot be constructed by call.** `Boxed(5)` is
+    `lyra-E044` — the base is a type variable, so there is nothing to check the operand
+    against until the parameters are bound. The annotation form works
+    (`let b: Boxed<i64> = 5`), so this is a gap rather than a blocker; closing it means
+    solving the parameters from the operand, which is ordinary inference the tuple path
+    already does for named tuples.
 
   Still open beneath it, smaller than it was: `println(c)` refuses a newtype over a
   printable scalar, so transparency covers arithmetic-adjacent methods and not the one

@@ -297,7 +297,7 @@ impl Add for Cents {
   (_+_) = (self, o) => {
     let a: i64 = self
     let b: i64 = o
-    let sum: Cents = a.wrapping_add(b)
+    let sum: Cents = Cents(a.wrapping_add(b))
     sum
   }
 }

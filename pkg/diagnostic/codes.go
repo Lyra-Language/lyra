@@ -137,6 +137,24 @@ const (
 	// declaration's entire purpose.
 	CodeValuesConstraintViolation = "lyra-E045"
 
+	// CodeImplicitNewtypeConversion: a value that already has a type used where a
+	// newtype over that base is expected, without writing the conversion —
+	// `take(plain_i64)` against `(c: Cents)`. An untyped *literal* is still adopted
+	// implicitly (`let c: Cents = 150`); a typed value needs `Cents(x)`.
+	//
+	// The line is provenance, not convenience. A literal has no unit yet, so adopting
+	// it costs nothing; a typed value came from somewhere, and that somewhere is where
+	// a unit mixup lives. Until 08/12 base → newtype was assignable everywhere, so a
+	// newtype declared a distinction the compiler then declined to enforce at any call
+	// boundary — which also made lyra-E043 (the overflow-arithmetic refusal) narrower
+	// than its own rationale, since the same laundering was available through any
+	// user-written function.
+	//
+	// Ada's rule for derived types, and for its reason: `M : Meters := 3.0` is legal
+	// because the literal is universal, `M := F` for a Float F is not, and `Meters(F)`
+	// is the conversion.
+	CodeImplicitNewtypeConversion = "lyra-E046"
+
 	// CodeCapturedAssignment: a lambda assigns to a binding it captured from an
 	// enclosing scope. A closure captures **by value** — the copy is taken when the
 	// closure is created, so it can outlive the frame the original lives in — which

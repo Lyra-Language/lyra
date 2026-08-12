@@ -244,7 +244,7 @@ func TestOwnership_RetainIndexIntoBinding(t *testing.T) {
 func TestOwnership_NewtypeOverStringIsManaged(t *testing.T) {
 	newtyped := analyze(t, `newtype Email = string
 	 let main = () -> u8 => {
-	   let a: Email = "x" ++ "y"
+	   let a: Email = Email("x" ++ "y")
 	   let b: Email = a
 	   let s: string = b
 	   if s == "xy" { 1 } else { 0 }
@@ -265,7 +265,7 @@ func TestOwnership_NewtypeStringFieldOwnsManaged(t *testing.T) {
 	c := analyze(t, `newtype Email = string
 	 struct User { name: Email, age: u8 }
 	 let main = () -> u8 => {
-	   let n: Email = "a" ++ "b"
+	   let n: Email = Email("a" ++ "b")
 	   let u = User { name: n, age: 7 }
 	   let copy = u
 	   if copy.name == "ab" { 1 } else { 0 }

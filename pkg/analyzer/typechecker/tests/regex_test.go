@@ -122,7 +122,7 @@ func TestTypeCheck_PatternConstraint_NonLiteralNotChecked_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 newtype Digits = string where pattern(r"[0-9]+")
 let s = "123"
-let d: Digits = s
+let d: Digits = Digits(s)
 `, false)
 	assertNoErrors(t, res)
 }

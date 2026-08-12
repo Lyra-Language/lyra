@@ -220,7 +220,7 @@ let main = () -> u8 => u8(f(5))`,
 			// string's is — a name is not a place to lose a reference.
 			"newtype over string in a branch", `newtype Email = string
 let main = () -> u8 => {
-  let e: Email = "a" ++ "b"
+  let e: Email = Email("a" ++ "b")
   let s: string = e
   if s == "ab" { 0 } else { 1 }
 }`,

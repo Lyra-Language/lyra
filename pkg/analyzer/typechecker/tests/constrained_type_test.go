@@ -111,11 +111,13 @@ let r: Ratio = 0.5`, false)
 	assertNoErrors(t, res)
 }
 
-// A non-constant value is not checked at compile time (a future flow-sensitive
-// pass / the runtime owns it) — no false positive.
+// A non-constant value is not checked at compile time (the value-range pass / the
+// runtime owns it) — no false positive. Written through the constructor because a
+// typed value no longer converts implicitly (lyra-E046); the two rules meet here, and
+// the point survives: `Percent(x)` for a runtime x is accepted and unchecked.
 func TestRangeConstraint_NonConstant_NoError(t *testing.T) {
 	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
-let f = (x: u8) -> Percent => x`, false)
+let f = (x: u8) -> Percent => Percent(x)`, false)
 	assertNoErrors(t, res)
 }
 
@@ -215,7 +217,7 @@ let m: Mode = "x"`, true)
 // never a false positive.
 func TestValuesConstraint_NonConstantSkipped(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `newtype Status = i32 where values(200, 404, 500)
-let f = (x: i32) -> Status => x`, false))
+let f = (x: i32) -> Status => Status(x)`, false))
 }
 
 // ── nominal isolation ─────────────────────────────────────────────────────────
@@ -551,6 +553,131 @@ let p = Point(1, 2)
 `, false))
 }
 
+// ── a typed value needs the constructor; a literal does not (lyra-E046) ──────
+//
+// The rule that gives a newtype its meaning at a boundary. Until 08/12 base → newtype
+// was assignable everywhere, so `let plain: i64 = 150` followed by `take(plain)`
+// compiled silently and a newtype declared a distinction the compiler then declined to
+// enforce anywhere it mattered.
+//
+// The line is provenance, not convenience: a literal has no unit yet, a typed value came
+// from somewhere, and that somewhere is where a unit mixup lives. Ada's rule for derived
+// types, for the same reason.
+
+func TestImplicitNewtype_TypedValueRefusedAtCall(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+let take = (c: Cents) -> i64 => 0
+let plain: i64 = 150
+let x = take(plain)
+`, false)
+	assertErrorsAre(t, res,
+		"cannot use i64 as Cents implicitly: Cents is a distinct type over i64, so the conversion must be written — `Cents(...)`")
+}
+
+func TestImplicitNewtype_TypedValueRefusedAtBinding(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+let plain: i64 = 150
+let c: Cents = plain
+`, false)
+	assertErrorsAre(t, res,
+		"cannot use i64 as Cents implicitly: Cents is a distinct type over i64, so the conversion must be written — `Cents(...)`")
+}
+
+func TestImplicitNewtype_TypedValueRefusedAtReturn(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+let widen = (n: i64) -> Cents => n
+`, false)
+	assertErrorsAre(t, res,
+		"cannot use i64 as Cents implicitly: Cents is a distinct type over i64, so the conversion must be written — `Cents(...)`")
+}
+
+// The constructor is the way through, and it is accepted in every one of those spots.
+func TestImplicitNewtype_ConstructorIsTheWayThrough(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Cents = i64
+let take = (c: Cents) -> i64 => 0
+let widen = (n: i64) -> Cents => Cents(n)
+let plain: i64 = 150
+let c: Cents = Cents(plain)
+let x = take(Cents(plain))
+`, false))
+}
+
+// An untyped literal still converts implicitly — the whole point of drawing the line
+// here rather than requiring the constructor everywhere. Constant arithmetic is covered
+// by the same clause, because the sum of two untyped literals is still untyped.
+func TestImplicitNewtype_LiteralsStillImplicit(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Cents = i64
+let take = (c: Cents) -> i64 => 0
+let a: Cents = 150
+let b: Cents = 100 + 50
+let c: Cents = -5
+let x = take(200)
+let make = () -> Cents => 999
+`, false))
+}
+
+// The literals the *type* system cannot identify — a string or bool literal has the
+// same type as a variable holding one, so only the syntax says it is a constant. This
+// is why the rule reads the expression and not just the type.
+func TestImplicitNewtype_NonNumericLiteralsStillImplicit(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Name = string
+newtype Flag = bool
+newtype Row = []i64
+let n: Name = "abc"
+let f: Flag = true
+let r: Row = [1, 2, 3]
+`, true))
+}
+
+// A *computed* string is not a literal, so it needs the constructor even though a
+// string literal does not. That asymmetry is the rule working, not an edge: `a ++ b`
+// has provenance in a way `"abc"` does not.
+func TestImplicitNewtype_ComputedStringNeedsTheConstructor(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Email = string
+let mk = (a: string, b: string) -> Email => a ++ b
+`, true)
+	assertErrorsAre(t, res,
+		"cannot use string as Email implicitly: Email is a distinct type over string, so the conversion must be written — `Email(...)`")
+}
+
+// Reading *out* is unchanged: newtype → base stays implicit. There is no field
+// accessor, so refusing it would make a newtype write-only, and the target type is
+// written right there — the direction that loses a unit is the one that is loud.
+func TestImplicitNewtype_ReadOutStillImplicit(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Cents = i64
+let c: Cents = 150
+let raw: i64 = c
+`, false))
+}
+
+// A value that is already the newtype is not a conversion at all.
+func TestImplicitNewtype_SameNewtypeUnaffected(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Cents = i64
+let a: Cents = 150
+let b: Cents = a
+`, false))
+}
+
+// Two newtypes over one base still report the *distinctness* error rather than this
+// one — the rule exempts a ConstrainedType source so the two do not double up.
+func TestImplicitNewtype_DistinctNewtypeKeepsItsOwnError(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Meters = i64
+newtype Feet = i64
+let convert = (m: Meters) -> Feet => m
+`, false)
+	assertErrorsAre(t, res, "convert: return type mismatch: expected Feet, got Meters")
+}
+
 // ── the overflow-arithmetic family stops at the wrapper (lyra-E043) ──────────
 //
 // Arithmetic on a newtype is opt-in: `Cents + Cents` is refused until the type has
@@ -639,7 +766,7 @@ impl Add for Cents {
   (_+_) = (self, o) => {
     let a: i64 = self
     let b: i64 = o
-    let sum: Cents = a.wrapping_add(b)
+    let sum: Cents = Cents(a.wrapping_add(b))
     sum
   }
 }
