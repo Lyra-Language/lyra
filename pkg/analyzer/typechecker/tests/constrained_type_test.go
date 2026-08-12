@@ -373,6 +373,47 @@ let d = m.describe()
 `, false))
 }
 
+// ── a newtype has no constructor call (lyra-E044) ────────────────────────────
+//
+// `Cents(150)` parses as a named-tuple literal, so it used to report "Cents: not a
+// tuple type" — true, useless, and naming a concept the author did not write. The
+// language constructs a newtype by *annotation*, since a value satisfying the base is
+// assignable to the newtype, and the message now says so. Same fix lyra-E035 applied
+// to `Rng.seeded(42)`: name what the language has rather than what the parse was.
+//
+// Whether newtypes *should* have constructors is open (todo.md) — the spelling alone
+// would be a third way to say what annotation already says, and is only worth adding
+// as part of making construction explicit. These pin today's rules, not that decision.
+
+func TestNewtype_ConstructorCallRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+let c = Cents(150)
+`, false)
+	assertErrorsAre(t, res,
+		"Cents is a newtype over i64 and has no constructor: write the i64 value where a Cents is expected (`let x: Cents = ...`, a parameter, or a return), which is how a Cents is made")
+}
+
+// The juxtaposed spelling reaches the same collector path, so it gets the same message
+// rather than falling through to the tuple one.
+func TestNewtype_JuxtaposedConstructorRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+let c = Cents 150
+`, false)
+	assertErrorsAre(t, res,
+		"Cents is a newtype over i64 and has no constructor: write the i64 value where a Cents is expected (`let x: Cents = ...`, a parameter, or a return), which is how a Cents is made")
+}
+
+// A genuine named tuple is untouched — the new arm keys on the *declaration* being a
+// newtype, not on the literal's shape.
+func TestNamedTuple_StillConstructs(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+tuple Point(i64, i64)
+let p = Point(1, 2)
+`, false))
+}
+
 // ── the overflow-arithmetic family stops at the wrapper (lyra-E043) ──────────
 //
 // Arithmetic on a newtype is opt-in: `Cents + Cents` is refused until the type has

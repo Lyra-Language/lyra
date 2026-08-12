@@ -385,6 +385,26 @@ const (
 	// disagree with every other parameter).
 	CodeNewtypeArithmeticOptIn = "lyra-E043"
 
+	// CodeNewtypeConstructorCall: a `newtype` name applied to an argument —
+	// `Cents(150)`, or its juxtaposed twin `Cents 150`. The language has no newtype
+	// constructor: a newtype value is made by *annotation*, since a value satisfying
+	// the base is assignable to the newtype (assignable.go's construction rule).
+	//
+	// Reported for the reason lyra-E035 is: the form parses, so the author gets a
+	// message either way, and the one they got named the implementation rather than
+	// the language — a newtype constructor call parses as a `tuple_literal`, so the
+	// error was "Cents: not a tuple type", which is true, useless, and mentions a
+	// concept the author did not write. Naming the spelling that works is the same fix
+	// E035 applied to `Rng.seeded(42)`.
+	//
+	// Whether newtypes *should* have constructors is an open design question
+	// (todo.md): the spelling alone would be a third way to say what annotation
+	// already says, and is only worth adding as part of making construction explicit —
+	// which is what would let implicit base → newtype conversion be refused, and would
+	// make the barrier mean something at a call boundary. This diagnostic is correct
+	// under today's rules and is not a placeholder for that decision.
+	CodeNewtypeConstructorCall = "lyra-E044"
+
 	// CodeInertDerive: a `@derive(X)` naming a trait the compiler does not synthesize,
 	// so the attribute does nothing. A warning rather than an error — the derive is not
 	// wrong, the trait simply does not exist yet — but reported, because an attribute

@@ -55,11 +55,36 @@ type and the guard refused the base, leaving `impl Add for Cents` parsed, collec
 and silently inert (the collected-and-unread shape again, one resolution step further
 along). The guard now tests the receiver unstripped: a `ConstrainedType` is not a
 `PrimitiveType`, so a newtype proceeds to impl lookup while `impl Add for i64` stays
-inert exactly as before (`TestOperator_PrimitivesKeepTheirBuiltInMeaning`). The
-operator section's own `Cents(150) + Cents(275)` example dispatches for the first
-time; end-to-end, an impl body reads its operands into the base, does wrapping
-arithmetic there, and returns through `-> Self`'s construction-assignability
+inert exactly as before (`TestOperator_PrimitivesKeepTheirBuiltInMeaning`). Two
+`Cents`-annotated bindings add for the first time; end-to-end, an impl body reads its
+operands into the base, does wrapping arithmetic there, and hands back a `Cents`,
+with the caller's `x + y + x` pinning the return type — a `let total: Cents`
+annotation would not, since base → newtype is assignable anyway
 (`TestExec_OperatorOnScalarNewtype`).
+
+**A correction to this entry as first written**, which claimed the operator section's
+`Cents(150) + Cents(275)` example "dispatches for the first time". It does not: a
+newtype has **no constructor call**, so that exact program does not compile. The 08/07
+entry the example comes from is about a *parse* — a constructor call as a math operand
+— and its behavioural test uses a `data` type, so it is correct as written; this entry
+borrowed the spelling and asserted something stronger about a form the language does
+not have. The wrong claim was live for about an hour, in this file and in todo.md.
+
+**And the gap it exposed is now reported properly** (`lyra-E044`). `Cents(150)` parses
+as a named-tuple literal, so it had been failing with *"Cents: not a tuple type"* —
+true, useless, and naming a concept the author did not write. It now says a newtype has
+no constructor and names how one is made (`let x: Cents = ...`), which is exactly the
+fix lyra-E035 applied to `Rng.seeded(42)`: say what the language has rather than what
+the parse was. The juxtaposed `Cents 150` reaches the same collector path and so gets
+the same message; a genuine `tuple Point(i64, i64)` is untouched, since the new arm
+keys on the declaration being a newtype rather than on the literal's shape.
+
+Whether a newtype *should* have a constructor is left open in todo.md, with the finding
+that decides it recorded there: implicit base → newtype conversion is unenforced at
+every boundary today (`take(plain_i64)` against `(c: Cents)` compiles silently), so the
+constructor is only worth adding as the half of a change that makes construction
+explicit — and the standard library declares no newtypes, so that change is as cheap
+now as it will ever be.
 
 Printing remained the honest residue: `println(c)` on a newtype still refuses (the
 formatter is picked per concrete type), and `impl Show for Cents` already works —

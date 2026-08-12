@@ -2736,6 +2736,20 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 	}
 	declType, ok := decl.Type.(types.TupleType)
 	if !ok {
+		// A newtype applied to an argument — `Cents(150)`, or the juxtaposed `Cents 150`,
+		// which reaches here through the same collector path. The language has no newtype
+		// constructor: a value satisfying the base is assignable *to* the newtype, so
+		// annotation is how one is made. Reported by name here rather than left to the
+		// generic message below, which said "not a tuple type" — true (this is the
+		// named-tuple literal path), useless, and naming a concept the author did not
+		// write. Same fix lyra-E035 applied to `Rng.seeded(42)`: say what the language
+		// has. Whether a constructor *should* exist is open (todo.md).
+		if ct, isNewtype := decl.Type.(*types.ConstrainedType); isNewtype {
+			tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNewtypeConstructorCall,
+				"%s is a newtype over %s and has no constructor: write the %s value where a %s is expected (`let x: %s = ...`, a parameter, or a return), which is how a %s is made",
+				name, ct.Type, ct.Type, name, name, name)
+			return nil
+		}
 		tc.addError(expr.GetLocation(), SeverityError, "%s: not a tuple type", name)
 		return nil
 	}

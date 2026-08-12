@@ -270,8 +270,41 @@ write today:
   newtype-stripped its receiver before refusing scalars, so a scalar newtype was
   operator-dead from *both* sides (the numeric rule refused the nominal type, the guard
   refused the base). The guard now tests the receiver unstripped; `impl Add for i64`
-  stays inert, which is what the guard is for. `Cents(150) + Cents(275)`, the operator
-  section's own example, dispatches for the first time. See COMPLETED.md.
+  stays inert, which is what the guard is for. Two `Cents`-annotated bindings now add,
+  and chain — `x + y + x` needs the result to be a `Cents`, which is what pins it. See
+  COMPLETED.md.
+
+  Note the operator section's example is spelled `Cents(150) + Cents(275)`, which is
+  **not** how a newtype is written: that section is about a *parse* (a constructor call
+  as a math operand) and its test uses a `data` type. A newtype has no constructor —
+  `lyra-E044` now says so rather than reporting "not a tuple type" — which is the
+  question below.
+
+- **[OPEN] Should a `newtype` have a constructor?** `Cents(150)` and `Cents 150` are
+  refused (`lyra-E044`, 08/12); a newtype value is made by annotation, since a value
+  satisfying the base is assignable to the newtype. The diagnostic is right under
+  today's rules, and the design question it names is open.
+
+  **The spelling is the small half.** Adding `Cents(150)` while implicit construction
+  stays gives a *third* way to say what annotation already says — juxtaposition comes
+  along free, since both reach the same collector path — with no new guarantee, and it
+  costs `lyra-E041`'s rationale, which refuses a newtype over an anonymous tuple
+  precisely because the two "differ only in whether the name is a constructor".
+
+  **The half worth deciding is whether construction should be explicit**, because today
+  the barrier is not enforced at any boundary: `take(plain_i64)` against
+  `(c: Cents)` compiles silently, so a newtype does not prevent the unit mixup it is
+  named for — which also makes E043's "mixed operand" framing narrower than it sounds,
+  since the same laundering is available through any user-written function. Requiring
+  the constructor is what would let base → newtype be refused. Three things recommend
+  it: E043 becomes a case of a general rule rather than a lone patch; a newtype
+  constructor then behaves exactly like a data constructor (`Some(42)`/`Some 42`),
+  a rule the language already has; and the migration is **free right now** — the
+  standard library declares no newtypes at all, so the cost is test churn and only
+  grows from here. The honest cost is literal ergonomics in aggregates
+  (`[Cents(1), Cents(2)]`), which is the noise Rust charges for the same guarantee.
+  Decide the read-out direction with it: `i64(c)` is refused too, so both directions
+  are annotation-only today.
 
   Still open beneath it, smaller than it was: `println(c)` refuses a newtype over a
   printable scalar, so transparency covers arithmetic-adjacent methods and not the one
