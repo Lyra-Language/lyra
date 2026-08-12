@@ -473,9 +473,13 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 //
 // The counter width is the first concrete-integer bound's type (else i64), matching
 // the typechecker's iterableElementType; the bounds and step are coerced to it. The
-// increment is a plain (wrapping) add — a range whose end is the counter type's max
-// with an inclusive `..<=` therefore loops forever (the increment wraps past it), the
-// one edge to keep in mind. There is no two-variable form over a range.
+// advance is guarded rather than a plain add (see the inc block below): a step that
+// would cross the end bound exits the loop instead of wrapping at the type's edge, so
+// `for i in 0..<=hi` terminates when hi is the counter type's max — until 08/12 the
+// increment wrapped past it and the loop ran forever, a silent infinite loop in the
+// language whose arithmetic traps on exactly that wrap. A step of zero or less that is
+// only known at run time traps for the same reason (the constant form is refused at
+// check time). There is no two-variable form over a range.
 func (l *lowerer) lowerForInRange(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
 	// The loop variable (and a C-style init's counter) belongs to the loop, not to
 	// whatever follows it: scope its binding here so it cannot outlive the loop or
@@ -519,6 +523,26 @@ func (l *lowerer) lowerForInRange(block *ir.Block, e *ast.ForInLoopExpr) (value.
 		if step, block, err = coerce(block, rng.Step); err != nil {
 			return nil, nil, err
 		}
+		// A non-positive step never advances, so the loop below would spin forever —
+		// silently, which is the answer this language exists to rule out. The rule is
+		// the one a shift amount already rides: provable at check time → compile error
+		// (types.InvalidStepReason refuses a constant zero or negative step), only
+		// knowable at run time → trap. A non-positive *constant* reaching this far is a
+		// front-end failure, reported loudly rather than guarded around (rule 5).
+		if ci, isConst := step.(*constant.Int); isConst {
+			if ci.X.Sign() <= 0 {
+				return nil, nil, fmt.Errorf("llvm: a non-positive constant range step (%s) survived the typechecker", ci.X)
+			}
+		} else {
+			var bad value.Value
+			if signed {
+				bad = block.NewICmp(enum.IPredSLE, step, constant.NewInt(iType, 0))
+			} else {
+				// An unsigned step cannot be negative; zero is the only bad value.
+				bad = block.NewICmp(enum.IPredEQ, step, constant.NewInt(iType, 0))
+			}
+			block = l.emitTrapIf(block, bad, l.panicRangeStepFunc())
+		}
 	}
 
 	fn := block.Parent
@@ -551,15 +575,41 @@ func (l *lowerer) lowerForInRange(block *ir.Block, e *ast.ForInLoopExpr) (value.
 		bodyEnd.NewBr(incBlock)
 	}
 
+	// The advance is guarded: the counter moves only when it can move by `step` and
+	// stay inside the range, and the loop exits otherwise — an unguarded add wraps at
+	// the type's edge, which turned `for i in 0..<=hi` with hi at the type's max into
+	// a silent infinite loop (255 → 0 over u8), and a large step did the same to an
+	// *exclusive* end by leaping the bound entirely (`0..<250:100` over u8: 200 + 100
+	// wraps to 44, still under 250).
+	//
+	// `dist` is the distance to the end bound measured along the iteration direction.
+	// The cond block has already held, so the counter is on the range's side of the
+	// end and the raw two's-complement difference *is* that distance; the comparison
+	// is unsigned at every counter type, because a signed subtraction could itself
+	// overflow (end = MAX, i = MIN spans the whole domain). An exclusive end continues
+	// on step < dist — the next value must land strictly inside — and an inclusive
+	// one on step <= dist, since it may land on the end itself.
 	iv2 := incBlock.NewLoad(iType, iSlot)
-	// Plain (wrapping) advance, subtracting for a descending range. The step is a
-	// magnitude — its direction is the operator's, not the value's.
-	if types.RangeDescends(rng.EndOperator) {
-		incBlock.NewStore(incBlock.NewSub(iv2, step), iSlot)
+	descending := types.RangeDescends(rng.EndOperator)
+	var dist value.Value
+	if descending {
+		dist = incBlock.NewSub(iv2, end)
 	} else {
-		incBlock.NewStore(incBlock.NewAdd(iv2, step), iSlot)
+		dist = incBlock.NewSub(end, iv2)
 	}
-	incBlock.NewBr(condBlock)
+	contPred := enum.IPredULE
+	if types.RangeExcludesEnd(rng.EndOperator) {
+		contPred = enum.IPredULT
+	}
+	advBlock := fn.NewBlock("")
+	incBlock.NewCondBr(incBlock.NewICmp(contPred, step, dist), advBlock, exitBlock)
+	// The step is a magnitude — its direction is the operator's, not the value's.
+	if descending {
+		advBlock.NewStore(advBlock.NewSub(iv2, step), iSlot)
+	} else {
+		advBlock.NewStore(advBlock.NewAdd(iv2, step), iSlot)
+	}
+	advBlock.NewBr(condBlock)
 
 	return nil, exitBlock, nil
 }

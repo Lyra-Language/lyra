@@ -317,10 +317,12 @@ func (l *lowerer) lowerCompSource(block *ir.Block, gen *ast.Generator) (compSour
 // a wrong answer. Deriving the count once and driving the loop from it means the two cannot
 // disagree, whatever the bounds and step turn out to be at run time.
 //
-// A non-positive step yields a count of zero — an empty array — instead of the runaway a
-// re-testing loop would produce (`for i in 1..<10` with step -1 never terminates today).
-// The division is guarded against a zero divisor for the same reason: `sdiv` by zero is
-// undefined, and undefined is not an acceptable answer to a degenerate range.
+// A non-positive step yields a count of zero — an empty array. That answer diverges from
+// `for-in`, which traps on a runtime non-positive step (08/12): here the count is computed
+// up front, so "never advances" has a defined size, where a re-testing loop's only
+// alternatives are a trap or the runaway it used to be. The division is guarded against a
+// zero divisor for the same reason: `sdiv` by zero is undefined, and undefined is not an
+// acceptable answer to a degenerate range.
 func (l *lowerer) rangeSource(block *ir.Block, gen *ast.Generator) (compSource, *ir.Block, error) {
 	rng, ok := gen.Value.(*ast.RangeExpr)
 	if !ok {

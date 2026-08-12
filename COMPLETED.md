@@ -9,6 +9,66 @@ Newest first.
 
 ## Dated log
 
+### 08/12/26
+**A `for-in` range can no longer loop forever.** Two silent infinite loops in the counter
+lowering, both closed in `lowerForInRange` (`pkg/backend/llvm/control_flow.go`), both found
+by auditing the language against its own trap-on-overflow thesis rather than by hitting
+them — and the finding underneath is about *where they lived*: neither was in `todo.md`.
+The first was documented only as a code comment calling itself "the one edge to keep in
+mind", which is the C attitude toward wrap this language defines itself against; the
+second was documented nowhere.
+
+**The wrap at the type's edge.** The advance was a plain add, so `for i in 0..<=hi` with
+`hi: u8 = 255` incremented 255 to 0 and re-entered the range — forever, silently, in the
+language whose `+` traps on exactly that wrap. A large step did the same to an *exclusive*
+end by leaping it: `0..<250:100` over u8 is 0, 100, 200, then 200 + 100 = 44, still under
+250. The advance is now guarded — the counter moves only when it can move by `step` and
+stay inside the range:
+
+- `dist` is the distance to the end bound **along the iteration direction** (`end - i`
+  ascending, `i - end` descending), as a raw two's-complement subtraction compared
+  **unsigned** at every counter type. The cond block has already held, so the counter is on
+  the range's side of the end and the raw difference *is* the distance; a signed
+  subtraction could itself overflow (`end = MAX, i = MIN` spans the whole domain — the
+  full-domain `lo..<=hi` over i8 is a test case).
+- An exclusive end continues on `step < dist` (the next value must land strictly inside),
+  an inclusive one on `step <= dist` (it may land on the end). The landing-exactly case
+  then exits on the next check with `dist = 0`, and a step that *skips* the end exits the
+  same way — the guard is one rule, not an equality special case (`0..<=255:2` over u8 is
+  the test: it never lands on 255 and must still terminate).
+
+**An exit, not a trap** — the one place the thesis does *not* want a trap: visiting the
+type's own max is what the author asked for, and nothing in what they wrote overflows;
+the wrap was the lowering's artifact, not the program's arithmetic. The comprehension had
+been given exactly this treatment on 08/04 ("the capacity bounds the loop by
+construction"); the `for-in` half was simply never filed, and the stale note beside the
+comprehension entry — "a backwards `for-in` range still loops forever" — turned out to
+describe a bug that *had* been fixed (descending operators made `5..<1` an empty ascending
+range in both forms) while standing in for the two that hadn't.
+
+**The runtime step.** `types.InvalidStepReason` refuses a constant zero or negative step —
+and only ever sees constants, so `for i in 0..<10:n` with `n` computed as 0 at run time
+compiled clean and spun. It now rides the ladder a shift amount rides, for the recorded
+reason ("the alternative is a silently target-shaped answer"): provable → compile error,
+otherwise → a runtime check that traps (`lyra: range step must be positive`, exit 101,
+`lyra_panic_range_step` on the shared `panicFunc` machinery). The check is emitted only
+for a non-constant step — a constant already passed the typechecker, and a non-positive
+constant reaching the backend is reported loudly as the front-end failure it would be
+(rule 5) rather than guarded around. Unsigned counters test only `== 0`, since their step
+cannot be negative.
+
+**One deliberate divergence, recorded on both sides:** a comprehension answers the same
+degenerate step with an **empty array**, not a trap — its count is computed up front, so
+"never advances" has a defined size there, where a re-testing loop's only alternatives are
+a trap or the runaway it used to be. `rangeSource`'s comment and the trap's own doc
+comment each point at the other.
+
+Tests: `TestExec_ForInRangeEdgeTermination` (inclusive end at the u8 max, the full i8
+domain min-to-max, a stepped inclusive end that skips the max, a large step over an
+exclusive end, descending onto the unsigned min, and a positive runtime step that must
+*not* trap) and `TestExec_ForInRangeRuntimeStepTraps` (zero and negative runtime steps,
+asserting the message and exit 101), in `llvm_forin_range_test.go`.
+
 ### 08/09/26
 **A `return` inside a trait-impl method is legal**, and was reported as
 `lyra-E003: return statement outside of a function body`.

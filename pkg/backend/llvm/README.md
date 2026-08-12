@@ -656,8 +656,11 @@ leaves `Value` empty and `Key` is the element). A **numeric range** iterable `fo
 START..<END` (also `..<=` inclusive, and an optional `:step`) lowers to a counter loop
 (`lowerForInRange`: `i = START; while i </<= END { body; i += step }`) — the counter *is* the
 loop variable, its width the first concrete-integer bound's type (else i64, matching
-`iterableElementType`), with a plain (wrapping) increment (so an inclusive `..<=` to the counter
-type's max loops forever — the one edge). A **string** iterable `for c in s` walks the string's
+`iterableElementType`). The advance is **guarded** (08/12): the counter moves only when it can
+move by `step` and stay inside the range, so an inclusive `..<=` to the counter type's max
+terminates after visiting it instead of wrapping past it and looping forever, and a large step
+cannot leap an exclusive end back into range. A **runtime** step of zero or less traps
+(`lyra_panic_range_step`) on the shift-amount ladder — a constant one is refused at check time. A **string** iterable `for c in s` walks the string's
 **runes** — UTF-8 decoded (`lowerForInString` + the `lyra_utf8_decode` runtime shim, the inverse
 of `lyra_rune_to_utf8`): `bi = 0; while bi < byteLen { c = decode(data, bi); body; bi += n }`,
 advancing the byte index by each rune's decoded byte count (so a multibyte character counts

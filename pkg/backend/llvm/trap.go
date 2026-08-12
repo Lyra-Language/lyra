@@ -44,6 +44,7 @@ const (
 	stringSliceOOBTrapMessage = "lyra: string slice out of range\n"
 	matchFailedTrapMessage    = "lyra: match not exhaustive\n"
 	shiftOverflowTrapMessage  = "lyra: shift amount out of range\n"
+	rangeStepTrapMessage      = "lyra: range step must be positive\n"
 	// The user message and its newline follow this at run time, so unlike the four
 	// above it carries neither.
 	panicPrefixMessage = "lyra: panic: "
@@ -113,6 +114,17 @@ func (l *lowerer) panicMatchFailedFunc() *ir.Func {
 // what the fixed-width primitives exist to rule out.
 func (l *lowerer) panicShiftOverflowFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_shift_overflow", shiftOverflowTrapMessage)
+}
+
+// panicRangeStepFunc is the trap for a for-in range whose *runtime* step is zero or
+// negative — a step that never advances, so the loop would spin forever. It rides the
+// ladder a shift amount rides: a constant is refused at check time
+// (types.InvalidStepReason), and a value only knowable at run time gets the same rule
+// as this trap, because the alternative is a silent infinite loop. A comprehension
+// answers the same degenerate step with an empty array instead — its count is computed
+// up front, so "never advances" has a defined size there (see rangeSource).
+func (l *lowerer) panicRangeStepFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_range_step", rangeStepTrapMessage)
 }
 
 // panicMessageFunc lazily emits the trap behind a user-written `panic(msg)`:

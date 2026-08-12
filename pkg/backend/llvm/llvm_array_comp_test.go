@@ -196,8 +196,11 @@ func TestExec_ArrayCompRangeBounds(t *testing.T) {
 
 // A range that yields nothing — an empty span, or one running backwards — is an empty
 // array, not a runaway. The count is clamped at zero and the loop is driven by it, so a
-// degenerate range cannot outrun the box it was sized for. (A backwards `for-in` range
-// loops forever today; a comprehension deliberately does not inherit that.)
+// degenerate range cannot outrun the box it was sized for. (A backwards range runs zero
+// times in `for-in` too — `5..<1` is an ascending range that happens to be empty — so
+// the two forms agree; what a comprehension answers differently is a *runtime*
+// non-positive step, an empty array where `for-in` traps, because a count computed up
+// front gives "never advances" a defined size.)
 func TestExec_ArrayCompDegenerateRangeIsEmpty(t *testing.T) {
 	t.Parallel()
 	got := buildAndRun(t, `

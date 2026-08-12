@@ -220,6 +220,50 @@ write today:
 
 ## Known bugs
 
+- **[DONE 08/12] A `for-in` range can no longer loop forever.** Two silent infinite loops,
+  both found by auditing the language against its own trap-on-overflow thesis, and neither
+  was in this file — the first lived only in a code comment calling itself "the one edge to
+  keep in mind", which is the C attitude toward wrap the language exists to reject.
+
+  **The inclusive end at the counter type's max.** `for i in 0..<=hi` with `hi: u8 = 255`
+  incremented 255 to 0 with a plain add and re-entered the range, forever — and a large
+  step did the same to an *exclusive* end by leaping it (`0..<250:100` over u8: 200 + 100
+  wraps to 44, still under 250). The advance is now guarded: the counter moves only when it
+  can move by `step` and stay inside the range, measured as an **unsigned** distance to the
+  end (the cond already held, so the raw two's-complement difference is the distance, and a
+  signed subtraction could itself overflow across the full domain). The fix is an exit, not
+  a trap — visiting the type's own max is what the author asked for and nothing in what
+  they wrote overflows. The comprehension had been given exactly this treatment on 08/04
+  ("the capacity bounds the loop by construction"); the `for-in` half was never filed.
+
+  **A runtime non-positive step.** `types.InvalidStepReason` refuses a constant zero or
+  negative step and only ever sees constants, so `0..<10:n` with `n` computed as 0 compiled
+  clean and spun. It now rides the ladder a shift amount rides — provable → compile error,
+  otherwise → trap (`lyra: range step must be positive`, exit 101) — and for the same
+  recorded reason: the alternative is a silent wrong answer. One deliberate divergence: a
+  comprehension answers the same degenerate step with an **empty array**, because its count
+  is computed up front and "never advances" has a defined size there. See COMPLETED.md.
+
+- **[OPEN] Builtin arithmetic methods bypass a newtype's nominal identity.** With
+  `newtype Cents = i64` and no impls, `a + b` on two `Cents` is refused (correct — opting
+  into arithmetic is what an operator impl is for), while `a.wrapping_add(b)` compiles, and
+  so does `a.wrapping_add(plain_i64)` — a **mixed** operand, the thing the newtype exists
+  to prevent — with the `i64` result assignable as either type. Verified 08/12.
+
+  The two rules compose badly and each is defended alone: "a primitive is never routed
+  through an impl" keeps `+` off user code, and method transparency ("a wrapped string you
+  can do nothing with is not a trade anyone would take") was argued for `len`/`slice`/
+  `trim` — but it sweeps in `wrapping_*`/`saturating_*`/`checked_*`, so the *checked*
+  spelling honors the barrier and the explicitly-unchecked escape hatches ignore it. A pit
+  of success inverted: the safe spelling is the one refused. The fix wants a decision, not
+  just a patch: either the arithmetic builtins require the same opt-in the operators do
+  (sharpest; a `newtype` wanting them writes operator impls or converts), or at minimum the
+  **argument** must match the receiver's newtype rather than its base, so the barrier holds
+  at the boundary even where the method leaks through. Related, found the same way:
+  `println(c)` refuses a newtype over a printable scalar, so transparency covers the
+  methods that *undermine* the wrapper and not the one harmless thing a wrapper's user
+  asks for daily.
+
 - **[DONE 08/08] A `return` nested inside an `if`, a loop or a match arm is type-checked.**
   It was not, at all: `checkBlockReturn` walks the body block's own statements, and a nested
   `return` reaches `checkNode`, which had no case for it. So its value was never compared
@@ -690,9 +734,14 @@ writing past the box is memory corruption rather than a wrong answer. An array's
 length; a string's is its **byte** length, which bounds the rune count because no encoded
 rune is shorter than a byte; a range's is computed up front and the loop then runs exactly
 that many times, so a degenerate range (`5..<1`, a non-positive step) yields an empty array
-instead of racing past the allocation. Note that a backwards `for-in` range still loops
-forever — a comprehension deliberately does not inherit that, because here it would be
-unsafe rather than merely wrong.
+instead of racing past the allocation. (The note that stood here — "a backwards `for-in`
+range still loops forever" — went stale the day descending operators landed and was verified
+false 08/12: `5..<1` runs zero times in `for-in` too, since direction is the operator's and
+the loop predicate matches it. The `for-in` runaways that *were* real — the inclusive end at
+the counter type's max, and a runtime non-positive step — are fixed as of 08/12; see Known
+bugs. The one residual divergence is deliberate: a runtime non-positive step is an empty
+array here and a trap in `for-in`, because a count computed up front gives "never advances"
+a defined size.)
 
 Still open, each refused loudly rather than approximated:
 
@@ -728,10 +777,21 @@ allocates nothing — so the walk asks it of the construction cases only. See CO
   rather than listing every allocating form. An allocation arriving through a **callee**
   keeps the form-listing wording — the call is in this body and the allocation is not, so
   pointing at the call would name a line that does not allocate. See COMPLETED.md.
-- **[OPEN] Escaping closures.** Boxed in the dev lowering, free under Lambda Set
-  Specialization — so what `noalloc` should say depends on the tier, which is the reason
-  `noalloc` is defined against the *release* lowering in the first place. Settle that before
-  charging a closure.
+- **[OPEN] Closures — and today the bound silently does not bind for them at all.**
+  Verified 08/12: a `noalloc` function containing a capturing lambda checks clean while its
+  emitted body calls `lyra_rc_alloc` for the environment on **every invocation**. That is
+  the `slice` hole of 08/06 again — "a bound that silently stops binding, which is worse
+  than no bound" — and the defense on file does not survive being said plainly: `noalloc`
+  is defined against the *release* lowering (Lambda Set Specialization), and LSS is not
+  built, so the bound is specified against a compiler that does not exist while the one
+  that does violates it on every closure. Two honest states exist and this is neither:
+  charge closures as allocating (over-refusal is the direction every other conservative
+  default in the effect system errs, and it stays sound if LSS later makes some free — a
+  bound that loosens is a compatible change, one that tightens is not), or refuse a closure
+  under `noalloc` with a message naming LSS. The open design question — what `noalloc`
+  should ultimately say for a closure LSS *would* unbox — is real and stays open; it is not
+  a reason for the interim to be silent acceptance. Escaping closures allocate under
+  **both** tiers, so charging at least those is not even ahead of the design.
 
 ## Lazy sequences — `gen` and `Seq<t>`
 
