@@ -23,6 +23,24 @@ import (
 // not a TupleType — that's a positional variant, routed to lowerDataConstruction
 // (the tagged union, DATA_LAYOUT.md).
 func (l *lowerer) lowerTupleLiteralExpr(block *ir.Block, e *ast.TupleLiteralExpr) (value.Value, *ir.Block, error) {
+	// A newtype constructor (`Cents(150)`) shares this node, and lowers to **its operand
+	// and nothing else**: a newtype is nominal to the typechecker and transparent to
+	// codegen (StripNewtype's own comment), so there is no wrapper to build — the
+	// constructor is a compile-time assertion about which type an existing value has.
+	//
+	// The check reads the *raw* recorded type, because `recordedType` strips newtypes:
+	// through it a `Cents(150)` looks like an i64 recorded on a tuple literal, which
+	// falls off the end of this function as "tuple literal lowering not implemented for
+	// i64". The typechecker has already narrowed the operand to the base's width, so
+	// lowering it is the whole job.
+	if raw, ok := l.res.TypeTable.Get(e); ok {
+		if _, isNewtype := l.applyTypeSubst(raw).(*types.ConstrainedType); isNewtype {
+			if len(e.Elements) != 1 {
+				return nil, nil, fmt.Errorf("llvm: a newtype construction has %d operands, want 1", len(e.Elements))
+			}
+			return l.lowerExpr(block, e.Elements[0])
+		}
+	}
 	recorded, ok := l.recordedType(e)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for tuple literal")

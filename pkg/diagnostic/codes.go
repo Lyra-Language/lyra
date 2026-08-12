@@ -396,24 +396,21 @@ const (
 	// disagree with every other parameter).
 	CodeNewtypeArithmeticOptIn = "lyra-E043"
 
-	// CodeNewtypeConstructorCall: a `newtype` name applied to an argument —
-	// `Cents(150)`, or its juxtaposed twin `Cents 150`. The language has no newtype
-	// constructor: a newtype value is made by *annotation*, since a value satisfying
-	// the base is assignable to the newtype (assignable.go's construction rule).
+	// CodeNewtypeConstructorCall: a malformed `newtype` construction — `Cents(150)`, or
+	// its juxtaposed twin `Cents 150`, written with the wrong operand count, with an
+	// operand the base cannot hold, or on a *generic* newtype (whose base is a type
+	// variable, so there is nothing to check against until the parameters are bound).
 	//
-	// Reported for the reason lyra-E035 is: the form parses, so the author gets a
-	// message either way, and the one they got named the implementation rather than
-	// the language — a newtype constructor call parses as a `tuple_literal`, so the
-	// error was "Cents: not a tuple type", which is true, useless, and mentions a
-	// concept the author did not write. Naming the spelling that works is the same fix
-	// E035 applied to `Rng.seeded(42)`.
+	// A newtype takes exactly one operand because it names exactly one base, and that
+	// operand is checked against the **base** rather than against the newtype:
+	// construction is precisely the act of turning a base value into a newtype value,
+	// so requiring the operand to already be one would make the constructor useless.
 	//
-	// Whether newtypes *should* have constructors is an open design question
-	// (todo.md): the spelling alone would be a third way to say what annotation
-	// already says, and is only worth adding as part of making construction explicit —
-	// which is what would let implicit base → newtype conversion be refused, and would
-	// make the barrier mean something at a call boundary. This diagnostic is correct
-	// under today's rules and is not a placeholder for that decision.
+	// This code first existed, for about an hour on 08/12, to say a newtype had *no*
+	// constructor — which was true then, and before that the same program reported
+	// "Cents: not a tuple type" (a newtype construction parses as a `tuple_literal`),
+	// naming the parse rather than the language. Constructors landed the same day, so
+	// the code now covers what is still malformed rather than the form itself.
 	CodeNewtypeConstructorCall = "lyra-E044"
 
 	// CodeInertDerive: a `@derive(X)` naming a trait the compiler does not synthesize,

@@ -461,39 +461,88 @@ let d = m.describe()
 `, false))
 }
 
-// ── a newtype has no constructor call (lyra-E044) ────────────────────────────
+// ── a newtype has a constructor (08/12) ──────────────────────────────────────
 //
-// `Cents(150)` parses as a named-tuple literal, so it used to report "Cents: not a
-// tuple type" — true, useless, and naming a concept the author did not write. The
-// language constructs a newtype by *annotation*, since a value satisfying the base is
-// assignable to the newtype, and the message now says so. Same fix lyra-E035 applied
-// to `Rng.seeded(42)`: name what the language has rather than what the parse was.
+// `Cents(150)` constructs, and so does the juxtaposed `Cents 150` — the collector
+// erases that spelling into this same node, so both forms cost one arm. It is a
+// compile-time assertion about which type a value has, not a wrapper: a newtype is
+// nominal to the typechecker and transparent to codegen, so it lowers to its operand
+// and nothing else.
 //
-// Whether newtypes *should* have constructors is open (todo.md) — the spelling alone
-// would be a third way to say what annotation already says, and is only worth adding
-// as part of making construction explicit. These pin today's rules, not that decision.
+// Until 08/12 this was `lyra-E044`, "a newtype has no constructor", after a shorter
+// period reporting "Cents: not a tuple type" — which named the parse rather than the
+// language. E044 now covers what is still malformed: the wrong operand count, an
+// operand the base cannot hold, and a generic newtype.
 
-func TestNewtype_ConstructorCallRefused(t *testing.T) {
-	res := parseCollectAndCheck(t, `
+func TestNewtype_ConstructorCall(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
 newtype Cents = i64
 let c = Cents(150)
-`, false)
-	assertErrorsAre(t, res,
-		"Cents is a newtype over i64 and has no constructor: write the i64 value where a Cents is expected (`let x: Cents = ...`, a parameter, or a return), which is how a Cents is made")
+let raw: i64 = c
+`, false))
 }
 
-// The juxtaposed spelling reaches the same collector path, so it gets the same message
-// rather than falling through to the tuple one.
-func TestNewtype_JuxtaposedConstructorRefused(t *testing.T) {
-	res := parseCollectAndCheck(t, `
+// The juxtaposed spelling reaches the same collector path, so it works for free.
+func TestNewtype_JuxtaposedConstructor(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
 newtype Cents = i64
 let c = Cents 150
-`, false)
-	assertErrorsAre(t, res,
-		"Cents is a newtype over i64 and has no constructor: write the i64 value where a Cents is expected (`let x: Cents = ...`, a parameter, or a return), which is how a Cents is made")
+let raw: i64 = c
+`, false))
 }
 
-// A genuine named tuple is untouched — the new arm keys on the *declaration* being a
+// The constructor's whole point is a position with no annotation to infer from, and
+// the result is nominally a Cents rather than its base — pinned by a *second* newtype
+// over the same base refusing it.
+func TestNewtype_ConstructorYieldsTheNewtype(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+newtype Feet = i64
+let takesFeet = (f: Feet) -> i64 => 0
+let x = takesFeet(Cents(150))
+`, false)
+	assertErrorsAre(t, res, "takesFeet: argument 1 (f): cannot assign Cents to Feet")
+}
+
+// A newtype names exactly one base, so it takes exactly one operand.
+func TestNewtype_ConstructorArity(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+let c = Cents(1, 2)
+`, false)
+	assertErrorsAre(t, res, "Cents is a newtype over i64, so it takes exactly one operand, not 2")
+}
+
+// The operand is checked against the base.
+func TestNewtype_ConstructorOperandMustFitTheBase(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+let c = Cents("hi")
+`, true)
+	assertErrorsAre(t, res, "cannot construct Cents from string: its base is i64")
+}
+
+// Constraints are enforced *through* the constructor, because it propagates the
+// newtype onto its operand rather than the base — so this is the same report
+// `let p: Percent = 150` gets, from one predicate.
+func TestNewtype_ConstructorEnforcesConstraints(t *testing.T) {
+	res := parseCollectAndCheck(t, `newtype Percent = u8 where range(0..<=100)
+let p = Percent(150)`, false)
+	assertErrorsAre(t, res, "value 150 is outside the range 0..<=100 of Percent")
+}
+
+// A generic newtype's base is a type variable, so there is nothing to check the
+// operand against yet. Refused loudly rather than guessed; the annotation form works.
+func TestNewtype_GenericConstructorRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Boxed<t> = t
+let b = Boxed(5)
+`, false)
+	assertErrorsAre(t, res,
+		"Boxed is a generic newtype, which cannot be constructed by call yet — annotate instead (`let x: Boxed<...> = ...`)")
+}
+
+// A genuine named tuple is untouched — the arm keys on the *declaration* being a
 // newtype, not on the literal's shape.
 func TestNamedTuple_StillConstructs(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `

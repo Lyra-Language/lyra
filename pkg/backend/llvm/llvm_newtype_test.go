@@ -487,3 +487,38 @@ let main = () -> void => {
 		t.Errorf("array newtype = %q; want \"3 5\"", got)
 	}
 }
+
+// A newtype constructor lowers to its operand and nothing else (08/12). There is no
+// wrapper at runtime — a newtype is nominal to the typechecker and transparent to
+// codegen — so `Cents(150)` is a compile-time assertion about which type a value has,
+// and the emitted code is what the bare literal would emit.
+//
+// Both spellings are exercised because the collector erases the juxtaposed one into the
+// same node, and the constructor is used in the position that motivated having it at
+// all: one with no annotation to infer from. The u8 case pins the width — the operand
+// is narrowed to the *base*, so a constructor over a u8 newtype lowers its literal at
+// u8 rather than at the i64 default, which is what a wrapper-free lowering has to get
+// right for the arithmetic below it to be u8 arithmetic.
+func TestExec_NewtypeConstructorLowers(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+newtype Cents = i64
+newtype Small = u8
+let take = (c: Cents) -> i64 => {
+  let r: i64 = c
+  r
+}
+let main = () -> void => {
+  let a = Cents(150)
+  let b = Cents 275
+  let s = Small(200)
+  let sv: u8 = s
+  let wrapped: u8 = sv.wrapping_add(100)
+  println("${take(a) + take(b)} ${wrapped}")
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "425 44" {
+		t.Errorf("newtype construction = %q; want \"425 44\"", got)
+	}
+}

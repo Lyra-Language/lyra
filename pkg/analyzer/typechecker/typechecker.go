@@ -2732,6 +2732,62 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 	return tc.inferNamedTupleLiteralExpr(expr, name)
 }
 
+// inferNewtypeConstruction type-checks a newtype constructor call — `Cents(150)`, and
+// the juxtaposed `Cents 150` the collector erases into the same node.
+//
+// **A newtype takes exactly one operand**, because it names exactly one base. That is
+// the whole shape of the feature: `Cents(150)` says "this i64 is a Cents" and nothing
+// else, which is why it needs no declaration of its own the way a named tuple's
+// positional fields do.
+//
+// The operand is checked against the **base**, not against the newtype. That matters
+// beyond pedantry: construction is precisely the act of turning a base value into a
+// newtype value, so requiring the operand to already *be* a Cents would make the
+// constructor useless — and it is what keeps the constructor working when implicit
+// base → newtype assignment is refused, since the two questions are then different
+// ones.
+//
+// Constraints are enforced through the constructor for free, by propagating the
+// *newtype* onto the operand: propagateLiteralType's newtype arm runs
+// checkNewtypeConstraints and then narrows the leaves to the base width, so
+// `Percent(150)` is caught exactly as `let p: Percent = 150` is, and `Cents(150)` over
+// a u8 base lowers its literal at u8.
+func (tc *TypeChecker) inferNewtypeConstruction(expr *ast.TupleLiteralExpr, name string, ct *types.ConstrainedType, generic bool) types.Type {
+	if generic {
+		// A generic newtype's base is a type variable, so there is nothing to check the
+		// operand against until the parameters are bound, and recording an unsubstituted
+		// base would hand the backend a type variable to lower. Refused loudly rather
+		// than guessed (rule 5); the annotation form still works, since resolveType
+		// expands a parameterized newtype into its substituted base.
+		tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNewtypeConstructorCall,
+			"%s is a generic newtype, which cannot be constructed by call yet — annotate instead (`let x: %s<...> = ...`)",
+			name, name)
+		return nil
+	}
+	if len(expr.Elements) != 1 {
+		tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNewtypeConstructorCall,
+			"%s is a newtype over %s, so it takes exactly one operand, not %d",
+			name, ct.Type, len(expr.Elements))
+		return nil
+	}
+	operand := expr.Elements[0]
+	got := tc.inferExprType(operand)
+	if got == nil {
+		return nil
+	}
+	base := tc.resolveType(ct.Type, expr.GetLocation())
+	if !isAssignable(got, base) {
+		tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNewtypeConstructorCall,
+			"cannot construct %s from %s: its base is %s", name, got, base)
+		return nil
+	}
+	// Propagate the *newtype*, not the base: the newtype arm checks the constraints and
+	// then recurses to the base, so one call does both.
+	tc.propagateLiteralType(operand, ct)
+	tc.typeTable.Set(expr, ct)
+	return ct
+}
+
 // inferNamedTupleLiteralExpr type-checks a named-tuple literal (`Point(3, 4)`).
 // A named tuple is nominal (Pit-of-Success #8, todo.md: "positional nominal"),
 // matching NamedStructType — so, mirroring inferStructInstanceExpr for structs,
@@ -2748,19 +2804,11 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 	}
 	declType, ok := decl.Type.(types.TupleType)
 	if !ok {
-		// A newtype applied to an argument — `Cents(150)`, or the juxtaposed `Cents 150`,
-		// which reaches here through the same collector path. The language has no newtype
-		// constructor: a value satisfying the base is assignable *to* the newtype, so
-		// annotation is how one is made. Reported by name here rather than left to the
-		// generic message below, which said "not a tuple type" — true (this is the
-		// named-tuple literal path), useless, and naming a concept the author did not
-		// write. Same fix lyra-E035 applied to `Rng.seeded(42)`: say what the language
-		// has. Whether a constructor *should* exist is open (todo.md).
+		// A newtype applied to an operand — `Cents(150)`, or the juxtaposed `Cents 150`,
+		// which reaches here through the same collector path (the collector erases the
+		// juxtaposed spelling into this same node, so both forms cost one arm).
 		if ct, isNewtype := decl.Type.(*types.ConstrainedType); isNewtype {
-			tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNewtypeConstructorCall,
-				"%s is a newtype over %s and has no constructor: write the %s value where a %s is expected (`let x: %s = ...`, a parameter, or a return), which is how a %s is made",
-				name, ct.Type, ct.Type, name, name, name)
-			return nil
+			return tc.inferNewtypeConstruction(expr, name, ct, len(decl.GenericParams) > 0)
 		}
 		tc.addError(expr.GetLocation(), SeverityError, "%s: not a tuple type", name)
 		return nil
