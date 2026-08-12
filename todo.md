@@ -244,25 +244,40 @@ write today:
   comprehension answers the same degenerate step with an **empty array**, because its count
   is computed up front and "never advances" has a defined size there. See COMPLETED.md.
 
-- **[OPEN] Builtin arithmetic methods bypass a newtype's nominal identity.** With
-  `newtype Cents = i64` and no impls, `a + b` on two `Cents` is refused (correct — opting
-  into arithmetic is what an operator impl is for), while `a.wrapping_add(b)` compiles, and
-  so does `a.wrapping_add(plain_i64)` — a **mixed** operand, the thing the newtype exists
-  to prevent — with the `i64` result assignable as either type. Verified 08/12.
+- **[DONE 08/12] Builtin arithmetic methods no longer bypass a newtype's nominal
+  identity** (`lyra-E043`), and the opt-in path they are refused in favour of actually
+  works now. With `newtype Cents = i64` and no impls, `a + b` was refused (correct —
+  opting into arithmetic is what an operator impl is for) while `a.wrapping_add(b)`
+  compiled, and so did `a.wrapping_add(plain_i64)` — a **mixed** operand, the thing the
+  newtype exists to prevent — because the transparency fallback re-tried the builtin at
+  the base. The whole overflow-arithmetic family (`wrapping_*`/`saturating_*`/
+  `checked_*`) now stops at the wrapper: those methods are the *operators'* escape
+  hatches, so reaching them through the fallback handed out exactly the arithmetic the
+  operator rule withholds. Transparency itself is untouched — `len`/`slice`/`trim` on a
+  wrapped string, `floor` on a wrapped float (a conversion's alternative, not an
+  operator's) — and it reversed a recorded decision, the `checked_*` test that argued
+  "a wrapped integer you cannot do arithmetic on is not a trade anyone would take"
+  without noticing the operators were already making that trade.
 
-  The two rules compose badly and each is defended alone: "a primitive is never routed
-  through an impl" keeps `+` off user code, and method transparency ("a wrapped string you
-  can do nothing with is not a trade anyone would take") was argued for `len`/`slice`/
-  `trim` — but it sweeps in `wrapping_*`/`saturating_*`/`checked_*`, so the *checked*
-  spelling honors the barrier and the explicitly-unchecked escape hatches ignore it. A pit
-  of success inverted: the safe spelling is the one refused. The fix wants a decision, not
-  just a patch: either the arithmetic builtins require the same opt-in the operators do
-  (sharpest; a `newtype` wanting them writes operator impls or converts), or at minimum the
-  **argument** must match the receiver's newtype rather than its base, so the barrier holds
-  at the boundary even where the method leaks through. Related, found the same way:
-  `println(c)` refuses a newtype over a printable scalar, so transparency covers the
-  methods that *undermine* the wrapper and not the one harmless thing a wrapper's user
-  asks for daily.
+  **The sharper option won because the other one dissolved on contact with the
+  assignability rules.** "Require the argument to match the receiver's newtype" cannot
+  be enforced: base → newtype is assignable *by construction* (assignable.go's own
+  comment), so a `Cents` parameter accepts a plain `i64` everywhere in the language,
+  and strictness only here would disagree with every other parameter.
+
+  **Found on the way: `impl Add for Cents` was silently inert.** The E043 message names
+  an operator impl as the opt-in, and it did not work — the dispatch guard
+  newtype-stripped its receiver before refusing scalars, so a scalar newtype was
+  operator-dead from *both* sides (the numeric rule refused the nominal type, the guard
+  refused the base). The guard now tests the receiver unstripped; `impl Add for i64`
+  stays inert, which is what the guard is for. `Cents(150) + Cents(275)`, the operator
+  section's own example, dispatches for the first time. See COMPLETED.md.
+
+  Still open beneath it, smaller than it was: `println(c)` refuses a newtype over a
+  printable scalar, so transparency covers arithmetic-adjacent methods and not the one
+  harmless thing a wrapper's user asks for daily. A `show` impl per newtype works
+  today; whether print should reach the base formatter uninvited is a design question
+  (it is the one place transparency would *erase* the name the newtype exists to carry).
 
 - **[DONE 08/08] A `return` nested inside an `if`, a loop or a match arm is type-checked.**
   It was not, at all: `checkBlockReturn` walks the body block's own statements, and a nested

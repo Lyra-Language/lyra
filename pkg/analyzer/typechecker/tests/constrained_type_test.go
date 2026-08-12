@@ -372,3 +372,94 @@ let m: Meters = 1.5
 let d = m.describe()
 `, false))
 }
+
+// ── the overflow-arithmetic family stops at the wrapper (lyra-E043) ──────────
+//
+// Arithmetic on a newtype is opt-in: `Cents + Cents` is refused until the type has
+// an operator impl, and `wrapping_*`/`saturating_*`/`checked_*` are those operators'
+// escape hatches — so reaching them through the transparency fallback handed out
+// exactly the arithmetic the operator rule withholds. The sharpest case was the
+// mixed operand: the base-typed parameter accepted `cents.wrapping_add(plain_i64)`,
+// the silent unit-mixup a newtype exists to prevent, while the checked `+` refused
+// even two Cents. Found by the 08/12 audit; both spellings now require the same
+// explicitness.
+
+func TestNewtype_WrappingArithmeticRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+let a: Cents = 150
+let b: Cents = 275
+let c = a.wrapping_add(b)
+`, false)
+	assertErrorsAre(t, res,
+		"arithmetic on a newtype is opt-in: Cents is nominal over i64, so \"wrapping_add\" does not reach through the wrapper — give Cents an operator impl, or read the value into its base (`let raw: i64 = ...`) and operate there")
+}
+
+// The mixed operand — the case the bypass made silently legal.
+func TestNewtype_MixedOperandArithmeticRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+let a: Cents = 150
+let plain: i64 = 5
+let c = a.wrapping_add(plain)
+`, false)
+	assertErrorsAre(t, res,
+		"arithmetic on a newtype is opt-in: Cents is nominal over i64, so \"wrapping_add\" does not reach through the wrapper — give Cents an operator impl, or read the value into its base (`let raw: i64 = ...`) and operate there")
+}
+
+// checked_* is the third member of the family and is refused the same way.
+func TestNewtype_CheckedArithmeticRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+let a: Cents = 150
+let b: Cents = 275
+let c = a.checked_add(b)
+`, true)
+	assertErrorsAre(t, res,
+		"arithmetic on a newtype is opt-in: Cents is nominal over i64, so \"checked_add\" does not reach through the wrapper — give Cents an operator impl, or read the value into its base (`let raw: i64 = ...`) and operate there")
+}
+
+// The refusal is exactly the overflow-arithmetic family. The float rounding ops are
+// `i64(x)`'s alternative rather than an operator's, so they stay transparent — as do
+// the string methods the transparency rule was argued for in the first place.
+func TestNewtype_FloatRoundingStaysTransparent(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Meters = f64
+let m: Meters = 1.5
+let f = m.floor()
+`, false))
+}
+
+// The read-out escape the E043 message names: one-step newtype → base assignment is
+// documented assignability, and the base value then has the whole family.
+func TestNewtype_BaseReadoutReachesArithmetic(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Cents = i64
+let a: Cents = 150
+let raw: i64 = a
+let c = raw.wrapping_add(5)
+`, false))
+}
+
+// The other path the E043 message names must actually exist: an operator impl on a
+// scalar newtype dispatches. The dispatch guard used to newtype-strip its receiver
+// before refusing scalar receivers, which made a scalar newtype operator-dead from
+// both sides — the numeric rule refused the nominal type and the guard refused the
+// base — so `impl Add for Cents` was silently inert. Fixed alongside E043 (08/12);
+// `impl Add for i64` staying inert is pinned by operator_overload_test.go.
+func TestNewtype_OperatorImplDispatches(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Cents = i64
+trait Add { (_+_): (Self, Self) -> Self }
+impl Add for Cents {
+  (_+_) = (self, o) => {
+    let a: i64 = self
+    let b: i64 = o
+    a.wrapping_add(b)
+  }
+}
+let x: Cents = 150
+let y: Cents = 275
+let sum: i64 = x + y
+`, false))
+}

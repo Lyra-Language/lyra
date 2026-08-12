@@ -266,3 +266,37 @@ let main = () -> void => {
 		t.Errorf("bound prefix/compound = %q; want \"-7 9 9\"", got)
 	}
 }
+
+// An operator impl on a *scalar newtype* dispatches (08/12). The dispatch guard used
+// to strip the newtype before refusing scalar receivers, which made a scalar newtype
+// operator-dead from both sides — the built-in numeric rule refused the nominal type
+// ("operands must be numeric, got Cents and Cents") and the guard refused the base —
+// so `impl Add for Cents` parsed, collected, and was silently inert. This is the
+// opt-in path lyra-E043 points at now that the overflow-arithmetic builtins no longer
+// reach through the wrapper, so the impl body demonstrates the whole loop: read the
+// operands into the base (one-step documented assignability), do wrapping arithmetic
+// there, and return through `-> Self`'s construction-assignability.
+func TestExec_OperatorOnScalarNewtype(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+newtype Cents = i64
+trait Add { (_+_): (Self, Self) -> Self }
+impl Add for Cents {
+  (_+_) = (self, o) => {
+    let a: i64 = self
+    let b: i64 = o
+    a.wrapping_add(b)
+  }
+}
+let main = () -> void => {
+  let x: Cents = 150
+  let y: Cents = 275
+  let sum: i64 = x + y
+  println(sum)
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "425" {
+		t.Errorf("newtype + = %q; want \"425\"", got)
+	}
+}

@@ -10,6 +10,69 @@ Newest first.
 ## Dated log
 
 ### 08/12/26
+**The overflow-arithmetic builtins stop at a newtype's wrapper (`lyra-E043`), and the
+operator impl they defer to dispatches on a scalar newtype for the first time.** Two
+halves of one repair, and the second was found because the first's diagnostic
+recommended it.
+
+**The bypass.** With `newtype Cents = i64` and no impls, `a + b` was refused ("operands
+must be numeric, got Cents and Cents" — the opt-in working) while `a.wrapping_add(b)`
+compiled — and so did `a.wrapping_add(plain_i64)`, a **mixed** operand, with the result
+assignable as either type. The transparency fallback (a newtype reaches its base's
+methods, argued for `len`/`slice`/`trim` on a wrapped string) re-tried the builtin
+registry at the base, and the registry's signatures are base-typed — so the *checked*
+spelling honored the nominal barrier while the explicitly-unchecked escape hatches
+ignored it, mixed operands included. A pit of success inverted.
+
+**The rule now:** `wrapping_*`/`saturating_*`/`checked_*` are refused on a newtype
+receiver, with the message naming both explicit paths through — an operator impl, or
+reading the value into the base (`let raw: i64 = c`, one step, documented
+assignability). The refusal is exactly the overflow-arithmetic family, because that
+family is the *operators'* escape hatches and the operators are opt-in for a newtype;
+the float rounding ops (`floor`/`ceil`/`round`) stay transparent, being `i64(x)`'s
+alternative rather than an operator's, and the string methods stay transparent, being
+what transparency was argued for.
+
+**Why not "make the argument match the newtype" instead** — the softer option
+dissolved on contact with the assignability rules. Base → newtype is assignable *by
+construction* (assignable.go: "a value satisfying the base is assignable to a
+newtype"), so a `Cents`-typed parameter accepts a plain `i64` everywhere in the
+language, and enforcing strictness only inside the builtin registry would disagree
+with every other parameter while pretending to a guarantee assignment does not make.
+
+**It reverses a recorded decision, knowingly.** `TestChecked_ReachableThroughANewtype`
+pinned the bypass with the argument "a wrapped integer you cannot do arithmetic on is
+not a trade anyone would take" — written without noticing the operator half was
+already making exactly that trade, and that the fallback accepted a mixed operand the
+checked `+` refused. The test is kept, inverted, with the reversal's reasoning in
+place.
+
+**The guard bug the diagnostic flushed out.** The E043 message says "give Cents an
+operator impl" — and it did not work: `dispatchOperator`'s primitive guard
+newtype-stripped its receiver before refusing scalar receivers, so a scalar newtype
+was operator-dead from *both* sides — the built-in numeric rule refused the nominal
+type and the guard refused the base, leaving `impl Add for Cents` parsed, collected,
+and silently inert (the collected-and-unread shape again, one resolution step further
+along). The guard now tests the receiver unstripped: a `ConstrainedType` is not a
+`PrimitiveType`, so a newtype proceeds to impl lookup while `impl Add for i64` stays
+inert exactly as before (`TestOperator_PrimitivesKeepTheirBuiltInMeaning`). The
+operator section's own `Cents(150) + Cents(275)` example dispatches for the first
+time; end-to-end, an impl body reads its operands into the base, does wrapping
+arithmetic there, and returns through `-> Self`'s construction-assignability
+(`TestExec_OperatorOnScalarNewtype`).
+
+Printing remained the honest residue: `println(c)` on a newtype still refuses (the
+formatter is picked per concrete type), and `impl Show for Cents` already works —
+verified — which is arguably the right shape anyway, since print is the one place
+transparency would *erase* the name the newtype exists to carry rather than merely
+reach past it. Recorded as open in todo.md.
+
+Tests: the `lyra-E043` block in `constrained_type_test.go` (refusal for wrapping and
+checked, the mixed operand, float rounding and string transparency preserved, both
+recommended escape paths compiling), the inverted
+`TestChecked_NotReachableThroughANewtype`, and `TestExec_OperatorOnScalarNewtype`.
+
+### 08/12/26
 **A `for-in` range can no longer loop forever.** Two silent infinite loops in the counter
 lowering, both closed in `lowerForInRange` (`pkg/backend/llvm/control_flow.go`), both found
 by auditing the language against its own trap-on-overflow thesis rather than by hitting

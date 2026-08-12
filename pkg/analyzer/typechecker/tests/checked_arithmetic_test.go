@@ -49,15 +49,24 @@ let a: Maybe<u8> = u8(200).checked_mul(2)
 `, false))
 }
 
-// A newtype over an integer reaches it through the base-method fallback, like every
-// other builtin — a wrapped integer you cannot do arithmetic on is not a trade anyone
-// would take.
-func TestChecked_ReachableThroughANewtype(t *testing.T) {
-	assertNoErrors(t, parseCollectAndCheck(t, canonicalMaybe+`
+// A newtype does NOT reach checked arithmetic through the base-method fallback
+// (lyra-E043) — a deliberate reversal (08/12) of what this test used to pin. The old
+// comment argued "a wrapped integer you cannot do arithmetic on is not a trade anyone
+// would take", and missed that the operator half was already making exactly that
+// trade: `Count + Count` is refused until the type has an operator impl, so the
+// fallback handed out through methods the arithmetic the operators withheld — and
+// accepted a mixed operand (`n.checked_add(plain_i64)`) doing it, since the
+// signature's parameter is the base. Nor is the wrapped integer left with nothing:
+// `let raw: i64 = n` is one step (documented assignability), and an operator impl is
+// the opt-in. Refusal details and the full reasoning: constrained_type_test.go's
+// lyra-E043 section, and COMPLETED.md 08/12.
+func TestChecked_NotReachableThroughANewtype(t *testing.T) {
+	res := parseCollectAndCheck(t, canonicalMaybe+`
 newtype Count = i64
 let n: Count = 5
 let a: Maybe<i64> = n.checked_add(1)
-`, false))
+`, false)
+	assertHasErrorContaining(t, res, "arithmetic on a newtype is opt-in")
 }
 
 // With **no** Maybe declared anywhere, the signature still resolves: `canonicalTypeName`

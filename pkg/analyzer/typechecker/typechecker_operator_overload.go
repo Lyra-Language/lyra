@@ -117,8 +117,17 @@ func (tc *TypeChecker) dispatchOperator(
 	// A built-in scalar keeps its built-in operator. Checked before the lookup rather
 	// than after, so an impl written for `i64` is inert instead of intermittently
 	// winning — the same rule the comparison operators follow.
-	base := types.StripNewtype(recv)
-	if types.IsNumeric(base) || isRuneType(base) || types.IsBoolean(base) || types.IsString(base) {
+	//
+	// The receiver is deliberately NOT newtype-stripped here (08/12). A newtype over a
+	// scalar is not the scalar: the built-in numeric rule refuses it ("operands must be
+	// numeric, got Cents and Cents"), which is the opt-in working — so the impl lookup
+	// is exactly where a newtype must be allowed to proceed. Stripping first made a
+	// scalar newtype operator-dead from *both* sides: no machine arithmetic (the
+	// numeric rule sees the nominal type) and no impl either (this guard saw the base
+	// and bailed), so `impl Add for Cents` parsed, collected, and was silently inert —
+	// found 08/12 when lyra-E043 began naming an operator impl as the opt-in path for
+	// newtype arithmetic, and the recommended path did not work.
+	if types.IsNumeric(recv) || isRuneType(recv) || types.IsBoolean(recv) || types.IsString(recv) {
 		return nil, false
 	}
 	if g, isVar := recv.(types.GenericType); isVar {

@@ -293,7 +293,13 @@ implementation state:
   `**` is a spelling with no operator, the suffix forms name operators that do not exist.
 
 Two rules hold across all of it. **A primitive is never routed through an impl** — `1 + 1`
-is a machine add whatever a program declares — and the resolution is `resolveTraitMethodNamed`,
+is a machine add whatever a program declares — where "primitive" is the receiver
+**unstripped** (08/12): a newtype over a scalar is not the scalar, so `impl Add for Cents`
+dispatches while `impl Add for i64` stays inert. (The guard used to strip first, which made
+a scalar newtype operator-dead from both sides — no machine ops and no impl — silently.
+Beside it, the overflow-arithmetic builtins are refused on a newtype receiver, `lyra-E043`:
+they are the operators' escape hatches, so the method fallback must not hand out what the
+operator rule withholds.) And the resolution is `resolveTraitMethodNamed`,
 the *same* function the identifier path uses with a full `MethodName` key, so an operator and
 a `.method()` call cannot come to disagree about generic impls or `where` bounds. An operator
 is a call, so the purity ladders charge it as one (`operatorImplEffect`).

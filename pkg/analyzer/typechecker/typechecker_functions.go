@@ -5,6 +5,7 @@ import (
 	"maps"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -994,6 +995,23 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 				return tc.inferLambdaCall(methodName, fn, call)
 			}
 			if sig, ok := tc.builtinMethodSignature(base, methodName, member.GetLocation()); ok {
+				// The overflow-arithmetic family stops at the wrapper (lyra-E043).
+				// Arithmetic on a newtype is opt-in — `Cents + Cents` is refused until
+				// the type has an operator impl — and `wrapping_*`/`saturating_*`/
+				// `checked_*` are those operators' escape hatches, so reaching them
+				// through the fallback handed out exactly the arithmetic the operator
+				// rule withholds. Worse than an inconsistency: the base-typed parameter
+				// accepted a *mixed* operand (`cents.wrapping_add(plain_i64)`), the
+				// silent unit-mixup a newtype exists to prevent, while the checked `+`
+				// refused even two Cents. The message names both explicit paths through;
+				// see CodeNewtypeArithmeticOptIn for why "make the argument match the
+				// newtype" was not one of them.
+				if isOverflowArithBuiltin(methodName) {
+					tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeNewtypeArithmeticOptIn,
+						"arithmetic on a newtype is opt-in: %s is nominal over %s, so %q does not reach through the wrapper — give %s an operator impl, or read the value into its base (`let raw: %s = ...`) and operate there",
+						objType, base, methodName, objType, base)
+					return nil
+				}
 				tc.typeTable.Set(member.Object, base)
 				tc.typeTable.Set(member, sig)
 				tc.methodTable.SetBuiltinMethod(call, builtinMethodAllocates(base, methodName))

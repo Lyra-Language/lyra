@@ -362,6 +362,29 @@ const (
 	// parameter, and no help at all.
 	CodeOperatorNotOverloaded = "lyra-E042"
 
+	// CodeNewtypeArithmeticOptIn: an integer overflow-arithmetic builtin
+	// (`wrapping_*`/`saturating_*`/`checked_*`) called on a `newtype` receiver.
+	//
+	// Arithmetic on a newtype is opt-in: `Cents + Cents` is refused until the type
+	// has an operator impl, because a nominal type's arithmetic is its own to define.
+	// The overflow-arithmetic methods are those operators' escape hatches, so letting
+	// them reach the base through method transparency handed out exactly the
+	// arithmetic the operator rule withholds — and worse, since the base-typed
+	// parameter accepted a *mixed* operand (`cents.wrapping_add(plain_i64)`), the one
+	// silent unit-mixup a newtype exists to prevent. The safe spelling refused while
+	// the unchecked one was accepted — a pit of success inverted (found 08/12).
+	//
+	// Method transparency itself stays: it was argued for `len`/`slice`/`trim` on a
+	// wrapped string and remains right there — none of those is an operator's escape
+	// hatch. The refusal is exactly the overflow-arithmetic family, and the message
+	// names both explicit paths through: an operator impl, or reading the value into
+	// its base (`let raw: i64 = c` — one-step read-out is documented assignability,
+	// which is also why "require the argument to match the newtype" was not the fix:
+	// base → newtype is assignable *by construction*, so a Cents parameter accepts a
+	// plain i64 everywhere in the language, and enforcing strictness only here would
+	// disagree with every other parameter).
+	CodeNewtypeArithmeticOptIn = "lyra-E043"
+
 	// CodeInertDerive: a `@derive(X)` naming a trait the compiler does not synthesize,
 	// so the attribute does nothing. A warning rather than an error — the derive is not
 	// wrong, the trait simply does not exist yet — but reported, because an attribute

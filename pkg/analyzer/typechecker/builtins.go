@@ -55,6 +55,22 @@ var checkedIntBinaryOps = map[string]string{
 	"checked_div": "div",
 }
 
+// isOverflowArithBuiltin reports whether name is one of the integer
+// overflow-arithmetic builtins — the union of the two maps above. This is the set
+// the newtype method fallback refuses (lyra-E043): these methods are the escape
+// hatches of the operators a newtype must opt into, so reaching them through the
+// wrapper would hand out the arithmetic the operator rule withholds, mixed
+// operands included. The float rounding ops are deliberately not in the set —
+// they are `i64(x)`'s alternative, not an operator's, and a conversion already
+// flows by the ordinary value rules.
+func isOverflowArithBuiltin(name string) bool {
+	if intBinaryOps[name] {
+		return true
+	}
+	_, ok := checkedIntBinaryOps[name]
+	return ok
+}
+
 // floatRoundingOps are the explicit float→int rounding builtins — the escape
 // hatch the numeric-conversion error (`inferTypeConversion`) points to, since
 // `i64(x)` on a float is rejected as lossy. Each takes no arguments and
