@@ -304,6 +304,20 @@ language-level rules are in the workspace `CLAUDE.md`; what matters inside this 
   call is a callee `desugarUFCSCall` synthesized, so it has no recorded type — and that
   is the spelling the whole standard library is written for, so it is the spelling whose
   documentation most has to show. That position renders the doc with no signature block.
+- **`lyrac doc` renders it** (`pkg/docgen`, `cmd/lyrac/doc.go`) — one Markdown page per
+  module, with Starlight frontmatter, into `-o` (default `./docs`). The package is split
+  so `Collect` builds a model and `RenderMarkdown` renders one: a second renderer is a
+  new function beside it, not a second AST traversal that can disagree about what a
+  module contains. See that package's header for the rest.
+- **A signature is re-rendered from the AST, in *source* syntax** (`docgen/signature.go`).
+  `Type.GetName()`/`String()` are for diagnostics, where a type is described; a page is
+  read as the code to write, and the two disagree — `DynamicArray<string>` for
+  `[]string`, `boolean` for `bool`, and `GetName()` on a `ParameterizedType` dropping the
+  arguments entirely, so `Maybe<t>` renders as the wrong type `Maybe`. Anything not
+  special-cased falls through to `String()`. **`TestSignature_RoundTripsThroughTheParser`
+  is the guard that matters**: every generated signature is fed back through the parser,
+  which is what caught `(mut self: Rng)` — the modifier binds to the type, after the
+  colon — a spelling that looks entirely plausible on a page and does not compile.
 - **The prelude is the coverage guard** (`pkg/analyzer/collector/tests/prelude_docs_test.go`).
   It collects the real `std/prelude` as the multi-file module it is and asserts every
   declaration is documented, the members are, the `# Panics` sections are on exactly the
@@ -384,6 +398,7 @@ them.
 | `pkg/modules` | Import resolution (a module is a file *or* a directory), namespacing, the implicit prelude | [README](pkg/modules/README.md) |
 | `pkg/driver` | The one reusable front-end pipeline | below |
 | `pkg/backend/llvm` | The LLVM IR backend | [README](pkg/backend/llvm/README.md) |
+| `pkg/docgen` | AST → per-module documentation; the Markdown renderer | below |
 | `pkg/printer` | Reflection-based AST printer, for golden tests | — |
 | `cmd/lyra-lsp` | LSP server over stdio | below |
 | `cmd/lyrac` | Compiler CLI (`check` / `build`) | below |
@@ -484,6 +499,31 @@ generator implements: `Name() string` and `Emit(res *driver.Result, entry *drive
 ([]byte, error)`. `Emit` is called by `cmd/lyrac` only after analysis is error-free and the
 entry point resolves, so an implementation may assume a well-typed program.
 
+### `pkg/docgen`
+
+`Collect(res, opts) []Module` builds the documentation model; `RenderMarkdown(m) []byte`
+renders one module as a Starlight page. Backing `lyrac doc`.
+
+The split is the design: nothing about Markdown reaches the model, so a terminal `go
+doc` view or a JSON dump is a new renderer beside this one rather than a second walk of
+the AST that can disagree with it about what a module contains.
+
+Two rules hold here and are easy to break:
+
+- **Signatures are re-rendered from the AST, in source syntax.** Not sliced from the
+  source text — a declaration's span runs to the end of its *body* — and not
+  `Type.GetName()`, which is the diagnostic spelling. The page is read as the code to
+  write, so a name on it that the parser rejects is a broken promise, and the mismatches
+  are individually small: `DynamicArray<string>`/`[]string`, `boolean`/`bool`,
+  `AnonymousTuple(a, b)`/`(a, b)`, and `ParameterizedType.GetName()` returning `Maybe`
+  for `Maybe<t>` — a type that exists and is the wrong one.
+- **A doc body is shifted before it is embedded.** A doc comment is written standalone,
+  so its `# Panics` is an h1; nested under a declaration on a page that breaks the
+  outline and every table of contents built from it. `ast.ShiftHeadings` and
+  `ast.TagBareFences` both go through `ast.walkDocLines`, the single fence tracker, so
+  no consumer can come to a different conclusion about whether a `#` line is a heading
+  or a comment inside an example.
+
 ### `pkg/printer`
 
 Reflection-based AST printer used only in tests. `printer.PrintAST(program)` walks exported
@@ -526,10 +566,11 @@ Logs to `/tmp/lyra-lsp.log`. Build with `go build ./cmd/lyra-lsp`.
 
 ### `cmd/lyrac`
 
-Compiler CLI, built on `pkg/driver`. Three subcommands: `lyrac check <file.lyra>` (parse +
+Compiler CLI, built on `pkg/driver`. Three subcommands (four): `lyrac check <file.lyra>` (parse +
 typecheck, print diagnostics, exit 1 on any error), `lyrac build <file.lyra>` (check, resolve
 the entry point via `driver.ResolveEntryPoint`, hand the typed program to the backend, link an
-executable) and `lyrac run <file.lyra>` (build into a temp directory and execute it).
+executable), `lyrac run <file.lyra>` (build into a temp directory and execute it) and
+`lyrac doc <file.lyra>` (render the module's documentation as Markdown).
 Diagnostics print as `path:line:col: severity[code]: message` (the `line:col` is omitted for a
 program-level error with no location, e.g. a missing `main`).
 
@@ -581,6 +622,31 @@ keep:
 `ephemeral` also suppresses the missing-compiler `.ll` fallback above: `run` promised to
 leave nothing behind, and the temp path it would name is deleted by the time the message is
 read. `-o`/`--emit-llvm`/`--keep-ll` are refused for `run` rather than ignored.
+
+`doc` (08/13) renders one Markdown page per module into `-o` (default `./docs`), with
+Starlight frontmatter so it drops into `lyra-website/src/content/docs/reference/`. Four
+flags: `--private` includes unexported declarations, `--deps` follows imports, `--prelude`
+adds the standard library (implies `--deps`), `--strict` exits non-zero on a gap.
+
+Four decisions in it, each of which had an obvious wrong answer:
+
+- **It refuses a program that does not type-check.** A signature is rendered from resolved
+  types, so documenting a broken program prints `?` where a type failed to resolve and
+  publishes it as though it were the API.
+- **An undocumented public declaration is listed anyway**, with its signature. Dropping it
+  makes the page silently misrepresent the module's surface, which is worse than a gap you
+  can see. Coverage prints on *every* run, not only under `--strict`.
+- **The prelude needs its own opt-in even under `--deps`**, because it is implicitly
+  imported by everything — otherwise every project's docs contain a copy of the standard
+  library. It is still documented when it *is* the entry module, which is how the standard
+  library's own page is generated.
+- **An impl's methods are not counted as gaps.** The contract lives on the trait, where a
+  doc is required; an impl method's doc says what *this* implementation does differently,
+  so for most impls having none is correct rather than missing.
+
+The pages are `std-prelude.md`, not `std.prelude.md`: a site generator derives a URL slug
+from the file name and strips dots, so the dotted form publishes at `/reference/stdprelude/`.
+The page's title is still the real dotted path.
 
 Codegen is pre-release but no longer minimal —
 closures, generics, strings, arrays, `match`, traits, `?` and Perceus all lower; that

@@ -7,6 +7,7 @@ The AST nodes serve as the source of truth - the symbol table just indexes them.
 */
 
 import (
+	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
@@ -120,7 +121,28 @@ func (c *Collector) AddFile(root *sitter.Node, source []byte, file, modulePath s
 // and a golden file both see it without either having to reach into the table.
 func (c *Collector) collectModuleDoc(root *sitter.Node, modulePath string) {
 	c.fileModuleDoc = c.ctx.ModuleDocFor(root)
-	c.table.AddModuleDoc(modulePath, c.fileModuleDoc)
+	c.table.AddModuleDoc(modulePath, c.fileModuleDoc, leadsModule(c.ctx.File, modulePath))
+}
+
+// leadsModule reports whether this file's header should open its module's documentation:
+// a file named for the module's last path segment (`prelude.lyra` in `std/prelude/`).
+//
+// A multi-file module's Summary is the first paragraph of the joined text, so without a
+// designated lead it is whichever file the walk reached first — alphabetical, which is a
+// fact about the filesystem rather than about the module. The convention gives an author
+// one obvious place to put the opening paragraph, and costs nothing when no such file
+// exists: the join order is unchanged.
+//
+// The single-file forms need no rule. `std/prelude.lyra` is the module's only file, and
+// a file declaring no module has nothing to lead.
+func leadsModule(file, modulePath string) bool {
+	if file == "" || modulePath == "" {
+		return false
+	}
+	segments := strings.Split(modulePath, ".")
+	last := segments[len(segments)-1]
+	base := filepath.Base(file)
+	return strings.TrimSuffix(base, filepath.Ext(base)) == last
 }
 
 // recordModuleBindings notes which module owns each top-level name this file declared,

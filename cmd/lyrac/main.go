@@ -53,6 +53,13 @@ func run(args []string) int {
 			return 2
 		}
 		return runProgram(opts)
+	case "doc":
+		opts, ok := parseDocArgs(rest)
+		if !ok {
+			usage()
+			return 2
+		}
+		return doc(opts)
 	default:
 		fmt.Fprintf(os.Stderr, "lyrac: unknown command %q\n", cmd)
 		usage()
@@ -67,6 +74,7 @@ commands:
   check   parse and type-check a source file, reporting diagnostics
   build   check, then compile to a native executable
   run     build to a temporary location and execute it
+  doc     render the module's documentation as Markdown, one page per module
 
 build flags:
   -o <path>     write the executable here (default: the source path without .lyra)
@@ -79,6 +87,15 @@ build flags:
 
 run flags:
   --cc <path>   as above; run leaves no executable or IR behind
+
+doc flags:
+  -o <dir>      write the pages here (default: ./docs)
+  --private     also document declarations without `+"`pub`"+`
+  --deps        also document the modules this one imports
+  --prelude     also document the prelude (implies --deps). Off by default: the
+                prelude is imported by everything, so every project's docs would
+                otherwise contain a copy of the standard library
+  --strict      exit non-zero if any documented declaration has no `+"`///`"+` block
 `)
 }
 

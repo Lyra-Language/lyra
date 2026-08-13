@@ -179,15 +179,55 @@ func docSummary(text string) string {
 	return strings.Join(out, " ")
 }
 
-// docSections splits text on its `#` headings. A heading inside a fenced code block is
-// not a heading — `# comment` is not Lyra, but a fence may hold any language, and a
-// shell or Python example's comment starting a phantom "Errors" section would be a
-// silent misclassification rather than a visible one.
+// DocLineKind classifies a line of a doc comment body.
+type DocLineKind int
+
+const (
+	// DocLinePlain is prose, a list item, or anything inside a fence.
+	DocLinePlain DocLineKind = iota
+	// DocLineHeading starts with `#` and is not inside a fenced code block.
+	DocLineHeading
+	// DocLineFenceOpen begins a fenced code block.
+	DocLineFenceOpen
+	// DocLineFenceClose ends one.
+	DocLineFenceClose
+)
+
+// walkDocLines calls fn for each line of text with what that line is.
+//
+// The fence tracking has exactly one home because two copies would drift, and the way
+// they would drift is silent: a `#` line inside a fence is a comment in whatever
+// language the fence holds, and treating it as a heading misclassifies a section — or,
+// for a renderer, restructures a page — with nothing to notice. Every consumer here
+// (section parsing, heading shifting, fence tagging) needs the same answer to the same
+// question about the same line.
+func walkDocLines(text string, fn func(line, trimmed string, kind DocLineKind)) {
+	inFence := false
+	for line := range strings.SplitSeq(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			if inFence {
+				inFence = false
+				fn(line, trimmed, DocLineFenceClose)
+			} else {
+				inFence = true
+				fn(line, trimmed, DocLineFenceOpen)
+			}
+			continue
+		}
+		if !inFence && strings.HasPrefix(trimmed, "#") {
+			fn(line, trimmed, DocLineHeading)
+			continue
+		}
+		fn(line, trimmed, DocLinePlain)
+	}
+}
+
+// docSections splits text on its `#` headings.
 func docSections(text string) []DocSection {
 	var sections []DocSection
 	var current *DocSection
 	var body []string
-	inFence := false
 
 	flush := func() {
 		if current != nil {
@@ -197,23 +237,76 @@ func docSections(text string) []DocSection {
 		body = nil
 	}
 
-	for line := range strings.SplitSeq(text, "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			inFence = !inFence
-		}
-		if !inFence && strings.HasPrefix(trimmed, "#") {
+	walkDocLines(text, func(line, trimmed string, kind DocLineKind) {
+		if kind == DocLineHeading {
 			flush()
 			title := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
 			current = &DocSection{Kind: recognizedSections[strings.ToLower(title)], Title: title}
-			continue
+			return
 		}
 		if current != nil {
 			body = append(body, line)
 		}
-	}
+	})
 	flush()
 	return sections
+}
+
+// TagBareFences returns text with a language tag added to every fenced code block that
+// has none.
+//
+// **An untagged fence in a Lyra doc comment is Lyra**, the same rule rustdoc applies to
+// its own. It is written bare because an author documenting Lyra in Lyra has no reason
+// to say so, and a renderer that takes it literally produces an unhighlighted block on
+// every page — the most common code block in the standard library's documentation being
+// the one that looks least like code. A fence that *does* carry a tag is left alone, so
+// a shell transcript or a diff still says what it is.
+func TagBareFences(text, lang string) string {
+	var out []string
+	walkDocLines(text, func(line, trimmed string, kind DocLineKind) {
+		// Only an opening fence takes a tag: text after a *closing* fence is not an
+		// info string, and adding one there produces a fence that never closes.
+		if kind == DocLineFenceOpen && isBareFence(trimmed) {
+			out = append(out, line+lang)
+			return
+		}
+		out = append(out, line)
+	})
+	return strings.Join(out, "\n")
+}
+
+// isBareFence reports whether a fence line carries no info string — the delimiter run
+// and nothing else.
+func isBareFence(trimmed string) bool {
+	delim := trimmed[:1]
+	return strings.TrimLeft(trimmed, delim) == ""
+}
+
+// ShiftHeadings returns text with every heading demoted by `by` levels.
+//
+// A doc comment is written as a standalone document, so its `# Panics` is a top-level
+// heading — but a generated page nests it under the declaration's own heading, where an
+// `<h1>` in the middle of the page breaks the outline and every table-of-contents built
+// from it. Shifting is what lets the same comment read correctly on its own (in hover)
+// and nested (on a page).
+//
+// Markdown has no heading past level 6, so a shift that would overflow clamps there
+// rather than emitting `#######`, which renders as literal hashes.
+func ShiftHeadings(text string, by int) string {
+	if by <= 0 {
+		return text
+	}
+	var out []string
+	walkDocLines(text, func(line, trimmed string, kind DocLineKind) {
+		if kind != DocLineHeading {
+			out = append(out, line)
+			return
+		}
+		level := len(trimmed) - len(strings.TrimLeft(trimmed, "#"))
+		shifted := min(level+by, 6)
+		out = append(out, strings.Repeat("#", shifted)+strings.TrimLeft(trimmed, "#"))
+	})
+	return strings.Join(out, "\n")
 }
 
 // Section returns the first section of the given kind, and whether there was one.

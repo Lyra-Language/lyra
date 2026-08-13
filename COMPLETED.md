@@ -10,6 +10,71 @@ Newest first.
 ## Dated log
 
 ### 08/13/26
+**`lyrac doc` — the standard library's reference page is now generated.** One Markdown
+page per module with Starlight frontmatter, dropped straight into
+`lyra-website/src/content/docs/reference/`. `pkg/docgen` splits `Collect` (a model from
+the AST) from `RenderMarkdown` (one module as a page), so a terminal or JSON renderer is
+a function beside the existing one rather than a second AST walk that can disagree with
+it about what a module contains.
+
+**The hard part was not the Markdown — it was that a signature has to be Lyra.** A page is
+read as the code to write, so a name on it the parser rejects is a broken promise, and the
+compiler's own type rendering is written for *diagnostics*, where a type is described. The
+two disagree in ways that are individually small:
+
+| `GetName()` | source | |
+|---|---|---|
+| `DynamicArray<string>` | `[]string` | `DynamicArray` is not a word in Lyra |
+| `boolean` | `bool` | there is no `boolean` keyword |
+| `AnonymousTuple(i64, u8)` | `(i64, u8)` | |
+| `integer literal` | `i64` | a phrase for a sentence, not a type |
+| `Maybe` | `Maybe<t>` | **drops the arguments — a type that exists and is the wrong one** |
+
+`docgen.typeName` renders source syntax and falls through to `String()` for the cases
+where the two agree. What made that tractable is
+`TestSignature_RoundTripsThroughTheParser`, which feeds every generated signature back
+through the real parser — and which caught the one no amount of reading would have:
+`(mut self: Rng)`. The borrow modifier binds to the **type**, after the colon
+(`self: mut Rng`); the other order is a syntax error and looks entirely plausible on a
+page. Four of 72 prelude signatures did not parse before that test existed.
+
+Four decisions, each with an obvious wrong answer:
+
+- **It refuses a program that does not type-check.** Signatures come from resolved types,
+  so documenting a broken program prints `?` where resolution failed and publishes it as
+  the API.
+- **An undocumented public declaration is listed anyway**, with its signature — dropping
+  it makes the page silently misrepresent the module's surface, which is worse than a
+  visible gap. Coverage prints on *every* run, not only under `--strict`.
+- **The prelude needs its own opt-in even under `--deps`**, since it is implicitly
+  imported by everything; otherwise every project's docs contain a copy of the standard
+  library. It is still documented when it *is* the entry module.
+- **An impl's methods are not counted as gaps.** The contract lives on the trait, where a
+  doc is required; an impl method's doc says what *this* implementation does differently,
+  so having none is usually correct rather than missing.
+
+**Two rendering rules that only show up once a doc is nested in a page.** A doc comment is
+written standalone, so its `# Panics` is an h1 — in the middle of a page that breaks the
+outline and every table of contents built from it, so bodies are shifted by their depth.
+And an untagged fence in a Lyra doc comment is Lyra (rustdoc's rule), which matters because
+it is the most common code block in the standard library and the one an author has no
+reason to tag; untagged, every example on the page renders unhighlighted. Both go through
+`ast.walkDocLines`, the single fence tracker, so no consumer can disagree about whether a
+`#` line is a heading or a comment inside an example.
+
+**It also retired the module-summary wart recorded below.** A multi-file module's summary
+was its *first file's*, alphabetically — so the standard library described itself as
+"Combinators over `[]t`." from `array.lyra`, which is now the page's `description` and
+therefore visible. `leadsModule` puts the file named for the module's last path segment
+first, and `std/prelude/prelude.lyra` exists to hold the opening paragraph and declares
+nothing. A module that does not want one adds no file and the join order is unchanged.
+
+Pages are `std-prelude.md` rather than `std.prelude.md`: a site generator derives its URL
+slug from the file name and strips dots, so the dotted form publishes at
+`/reference/stdprelude/`. Verified end to end — the site builds, and the page renders with
+its sidebar entry, its table of contents, and `# Panics` and `# Examples` as real
+subsections.
+
 **Documentation comments mean something.** `///` was lexed as its own token and listed
 in `extras` from early on, with corpus tests for it on a declaration and on a struct
 field — and *nothing* consumed it. The collector skipped it with every other extra
@@ -136,6 +201,10 @@ Known wart, latent for now: a multi-file module's `Summary` is its **first file'
 `std.prelude` summarizes as `Combinators over []t.` from `array.lyra` sorting first.
 Nothing reads a module summary yet. A generator wanting a real lead would need either a
 designated lead file or per-topic sections.
+
+**(Fixed the same day, by the generator that stopped it being latent** — the summary
+became the page's `description`. `leadsModule` designates the file named for the module's
+last path segment; see the `lyrac doc` entry above.**)**
 
 **Regex matching at run time — without a regex engine in the runtime.** `lyra-E052`
 and `lyra-E054` both recorded the same absence: the runtime is hand-written shims and

@@ -1,0 +1,22 @@
+module std.prelude
+//! The standard library's implicitly imported module.
+//!
+//! Everything declared here is reachable unqualified and without an `import`, from every
+//! file. It is an ordinary module for all that — resolved through the same search roots
+//! as any other, written in Lyra, and replaceable: a program that declares its own
+//! version of a name here shadows it, with a warning, and nothing else is affected.
+//!
+//! The module is one namespace across several files, split by topic. A name may move
+//! between them freely; nothing observable depends on which file a declaration is in.
+
+// This file exists to hold the module's opening paragraph and declares nothing.
+//
+// The lead is a *convention with a rule behind it*: a module's summary is the first
+// paragraph of its files' `//!` headers joined, and the collector puts the file named
+// for the module's last path segment first (`leadsModule`). Without it the summary was
+// whichever file sorted first — alphabetically `array.lyra`, so the standard library
+// described itself as "Combinators over []t."
+//
+// A module that outgrows one file and wants a real opening paragraph adds a file named
+// after itself. A module that does not care adds nothing, and the join order is
+// unchanged.

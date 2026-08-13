@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
+	"github.com/Lyra-Language/lyra/pkg/parser"
 )
 
 // docOfStatement pulls the Doc off whichever documentable statement kind this is.
@@ -262,4 +265,61 @@ let x = 1
 		}
 	}
 	t.Fatal("no module declaration collected")
+}
+
+// A multi-file module's summary is the first paragraph of its files' `//!` headers
+// joined, so which file leads decides how the module describes itself. Without a rule
+// that is whichever file the walk reached first — a fact about the filesystem. A file
+// named for the module's last path segment leads.
+func TestDocComment_ModuleDocLedByTheFileNamedForTheModule(t *testing.T) {
+	files := []struct{ file, src string }{
+		// Deliberately walked in an order where the lead is not first.
+		{"/tmp/m/array.lyra", "module demo.util\n//! Arrays.\n"},
+		{"/tmp/m/util.lyra", "module demo.util\n//! The utility module.\n"},
+		{"/tmp/m/zzz.lyra", "module demo.util\n//! Odds and ends.\n"},
+	}
+	table := collectFilesIntoModule(t, "demo.util", files)
+
+	doc := table.ModuleDocs["demo.util"]
+	if doc == nil {
+		t.Fatal("no module documentation collected")
+	}
+	if want := "The utility module."; doc.Summary != want {
+		t.Errorf("Summary = %q, want %q — util.lyra should lead", doc.Summary, want)
+	}
+	// Leading reorders; it never drops. The other files' text is still there.
+	for _, want := range []string{"Arrays.", "Odds and ends."} {
+		if !strings.Contains(doc.Text, want) {
+			t.Errorf("the join lost %q:\n%s", want, doc.Text)
+		}
+	}
+}
+
+// With no file named for the module, the join order is unchanged — the convention costs
+// nothing when nobody uses it.
+func TestDocComment_ModuleDocKeepsWalkOrderWithoutALeadFile(t *testing.T) {
+	files := []struct{ file, src string }{
+		{"/tmp/m/array.lyra", "module demo.util\n//! Arrays.\n"},
+		{"/tmp/m/zzz.lyra", "module demo.util\n//! Odds and ends.\n"},
+	}
+	table := collectFilesIntoModule(t, "demo.util", files)
+	if want := "Arrays."; table.ModuleDocs["demo.util"].Summary != want {
+		t.Errorf("Summary = %q, want %q (walk order)", table.ModuleDocs["demo.util"].Summary, want)
+	}
+}
+
+// collectFilesIntoModule walks several in-memory files as one module and returns the
+// resulting symbol table.
+func collectFilesIntoModule(t *testing.T, modulePath string, files []struct{ file, src string }) *symbols.SymbolTable {
+	t.Helper()
+	c := collector.NewCollector(nil)
+	for _, f := range files {
+		tree, err := parser.Parse(f.src)
+		if err != nil {
+			t.Fatalf("parsing %s: %v", f.file, err)
+		}
+		c.AddFile(tree.RootNode(), []byte(f.src), f.file, modulePath)
+	}
+	_, table, _, _ := c.Finish()
+	return table
 }

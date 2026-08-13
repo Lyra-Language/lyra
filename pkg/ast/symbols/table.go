@@ -174,19 +174,30 @@ func NewSymbolTable() *SymbolTable {
 }
 
 // AddModuleDoc records a file's `//!` header against its module, joining it to whatever
-// an earlier file of the same module contributed.
+// another file of the same module contributed.
 //
-// Joining rather than replacing is the only choice that does not lose text: a
-// directory module's files are walked in a fixed order, and picking one file's header
-// would silently discard every other file's. Two paragraphs are separated by a blank
-// line so the result is still valid Markdown.
-func (s *SymbolTable) AddModuleDoc(modulePath string, doc *ast.Doc) {
+// Joining rather than replacing is the only choice that does not lose text: a directory
+// module's files are walked in a fixed order, and picking one file's header would
+// silently discard every other file's. Two paragraphs are separated by a blank line so
+// the result is still valid Markdown.
+//
+// `lead` puts this file's header **first**, ahead of anything already recorded. It is
+// how a multi-file module gets a real opening paragraph: the joined text's first
+// paragraph is the module's Summary, and that would otherwise be whichever file the
+// walk happened to reach first — for the prelude, alphabetically `array.lyra`, so the
+// standard library summarized as "Combinators over []t." The caller decides what
+// qualifies (pkg/modules: a file named for the module's last path segment).
+func (s *SymbolTable) AddModuleDoc(modulePath string, doc *ast.Doc, lead bool) {
 	if doc == nil {
 		return
 	}
 	existing, ok := s.ModuleDocs[modulePath]
 	if !ok {
 		s.ModuleDocs[modulePath] = doc
+		return
+	}
+	if lead {
+		s.ModuleDocs[modulePath] = ast.JoinDocs(doc, existing)
 		return
 	}
 	s.ModuleDocs[modulePath] = ast.JoinDocs(existing, doc)

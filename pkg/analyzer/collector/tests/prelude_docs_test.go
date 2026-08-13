@@ -161,9 +161,13 @@ func TestPrelude_PanicsSectionsAreClassified(t *testing.T) {
 	}
 }
 
-// The module's own documentation is every file's `//!` header joined. It has to survive
-// the join as usable Markdown, and its summary has to come from the first file rather
-// than from whichever one happened to be walked last.
+// The module's own documentation is every file's `//!` header joined, led by the file
+// named for the module.
+//
+// The summary is the joined text's first paragraph, so without a designated lead it is
+// whichever file the walk reached first — alphabetically `array.lyra`, which made the
+// standard library describe itself as "Combinators over []t." `prelude.lyra` exists to
+// hold the opening paragraph, and `leadsModule` is what puts it first.
 func TestPrelude_ModuleDocIsJoinedAcrossFiles(t *testing.T) {
 	_, table, _ := collectPrelude(t)
 
@@ -171,14 +175,10 @@ func TestPrelude_ModuleDocIsJoinedAcrossFiles(t *testing.T) {
 	if doc == nil {
 		t.Fatal("the prelude module has no documentation")
 	}
-	if doc.Summary == "" {
-		t.Error("the joined module doc has no summary")
+	if want := "The standard library's implicitly imported module."; doc.Summary != want {
+		t.Errorf("Summary = %q, want %q (prelude.lyra leads)", doc.Summary, want)
 	}
-	// Files are walked in sorted order, so array.lyra's header leads.
-	if want := "Combinators over `[]t`."; doc.Summary != want {
-		t.Errorf("Summary = %q, want %q (the first file's header)", doc.Summary, want)
-	}
-	// Every file contributed: eight headers, joined with a blank line between each.
+	// Every file contributed, joined with a blank line between each.
 	for _, fragment := range []string{
 		"Combinators over `[]t`.",
 		"a value that may be absent",
