@@ -138,7 +138,7 @@ func (tc *TypeChecker) checkLambdaBody(funcName string, lambda *ast.LambdaExpr) 
 		if !isVoid {
 			for _, clause := range lambda.LambdaClauses {
 				clauseType := tc.inferExprType(clause.Body)
-				if declaredReturn != nil && clauseType != nil && !isAssignable(clauseType, declaredReturn) {
+				if declaredReturn != nil && clauseType != nil && !tc.assignableValue(clause.Body, clauseType, declaredReturn) {
 					tc.addError(clause.Body.GetLocation(), SeverityError,
 						"%s: return type mismatch: expected %s, got %s",
 						funcName, declaredReturn, clauseType)
@@ -354,7 +354,7 @@ func (tc *TypeChecker) checkReturnValue(funcName string, value ast.Expression, l
 	if reported || declaredReturn == nil || valueType == nil {
 		return
 	}
-	if !isAssignable(valueType, declaredReturn) {
+	if !tc.assignableValue(value, valueType, declaredReturn) {
 		tc.addError(loc, SeverityError,
 			"%s: return type mismatch: expected %s, got %s", funcName, declaredReturn, valueType)
 		return
@@ -461,7 +461,7 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 		if reported {
 			continue // already named the offending value
 		}
-		if !isAssignable(argType, resolvedParamType) {
+		if !tc.assignableValue(arg, argType, resolvedParamType) {
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d (%s): cannot assign %s to %s",
 				calleeName, i+1, paramName, argType, param.Type)
@@ -530,7 +530,7 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 		if argType == nil {
 			continue
 		}
-		if !isAssignable(argType, param.Type) {
+		if !tc.assignableValue(arg, argType, param.Type) {
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d: cannot assign %s to %s",
 				calleeName, i+1, argType, param.Type)

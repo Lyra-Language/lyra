@@ -468,7 +468,7 @@ func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types
 		// "cannot assign Cell to Cell" — the same shape the free-function path fixed when
 		// declared return types started resolving.
 		paramType := tc.resolveType(param.Type, arg.GetLocation())
-		if !isAssignable(argType, paramType) {
+		if !tc.assignableValue(arg, argType, paramType) {
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d: cannot assign %s to %s",
 				calleeName, i+1, argType, paramType)

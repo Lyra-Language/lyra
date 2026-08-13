@@ -227,33 +227,41 @@ write today:
 
 ## Known bugs
 
-- **[OPEN — memory unsafety] A fixed-array *binding* is accepted by a `[]T`
-  parameter and the program segfaults.**
+- **[DONE 08/13] A fixed-array *binding* no longer takes a `[]T` slot** — it
+  segfaulted.
 
   ```
   let take = (xs: []i64) -> i64 => xs[0]
   let ys: [3]i64 = [1, 2, 3]
-  take(ys)      // checks clean; segfaults at run time
+  take(ys)      // checked clean; segfaulted at run time
   ```
 
-  `[N]T` is stack storage and `[]T` is a ref-counted box, so the callee indexes
-  through a pointer that is really the array's first element. Found 08/13 while
-  fixing generic inference on array-literal arguments; it is the *non-generic* path
-  and predates that work.
+  `[N]T` is stack storage and `[]T` a ref-counted box, so the callee indexed through
+  a pointer that was really the array's first element. **The cause is this audit's
+  recurring shape**: `isAssignable`'s rule said in its own comment "a static array
+  **literal** is assignable to a dynamic array" and then tested only the *type*, so
+  every `[N]T` value passed. The comment named the right rule.
 
-  **The cause is the shape this audit keeps turning up**: `isAssignable`'s rule says
-  in its own comment "a static array **literal** is assignable to a dynamic array"
-  and then tests only the *type*, so every `[N]T` value passes, binding or not. For a
-  literal the rule is not even needed — the literal is *built* as a box when its
-  context says `[]T`, which is why `take([1, 2, 3])` works — so the rule's whole
-  observable effect is the case it was never meant to allow.
+  The two claims are now separate. `isAssignable` (types only) refuses it;
+  `assignableValue` adds the one widening that depends on **what the expression is**,
+  and is used at the ~14 sites where a value is checked against a type — binding,
+  reassignment, argument, return, clause body, struct field, aggregate element,
+  generic and trait-dispatch arguments. Removing the type-level rule first and
+  reading the failures is what produced that list: *every* failure was a literal,
+  which is the evidence literals were its only legitimate use.
 
-  The fix is to delete the type-level static→dynamic rule and confirm the literal
-  path still works through propagation (it should: the literal's recorded type
-  becomes `[]T` before assignability is consulted). It is left open because that rule
-  is consulted from everywhere and the change wants its own verification pass, not
-  because the diagnosis is uncertain. The generic path deliberately does **not**
-  accept the binding — see `arrayLiteralAsDeclared` — so this is not spreading.
+  **The allowance walks the expression alongside the type**, which nesting forces:
+  `[[1, 2], [3, 4]]` and `[y1, y2]` (two `[2]i64` bindings) have the *same* type,
+  `[2][2]i64`, so only the expressions separate the legal case from the crashing one.
+  It looks through a newtype target (`newtype Row = []i64` takes a literal) and into
+  a tuple literal (`() -> (i64, []i64) => (1, [2, 3])`), and the tuple arm re-checks
+  the *name* so it cannot become a second path past nominal typing — it briefly was,
+  accepting a `Point` into a `Vector` slot until the suite caught it.
+
+  What it deliberately does **not** do is convert a built array: there is no implicit
+  copy from stack storage into a box, because that is a hidden allocation in a
+  language that makes allocation explicit (and `noalloc` would have to charge it). A
+  binding that must be dynamic is declared dynamic. See COMPLETED.md.
 
 - **[OPEN] A float literal is not narrowed to the operand's width in a comparison**,
   and the result does not build. `let x: f32 = 0.1` then `x == 0.1` emits

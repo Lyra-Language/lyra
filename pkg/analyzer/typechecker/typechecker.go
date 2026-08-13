@@ -404,7 +404,7 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	if reportedByContext {
 		return // the propagation named the offending value
 	}
-	if !isAssignable(inferredType, resolvedDeclType) {
+	if !tc.assignableValue(decl.Value, inferredType, resolvedDeclType) {
 		tc.typeTable.Set(decl.Value, inferredType)
 		tc.addError(decl.GetLocation(), SeverityError,
 			"%s: cannot assign %s to %s", decl.Name, inferredType, decl.Type)
@@ -497,7 +497,7 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 	// If there's a whole-expression type annotation, verify assignability.
 	if decl.Type != nil {
 		resolvedDeclType := tc.resolveType(decl.Type, decl.Location)
-		if !isAssignable(inferredType, resolvedDeclType) {
+		if !tc.assignableValue(decl.Value, inferredType, resolvedDeclType) {
 			tc.addError(decl.GetLocation(), SeverityError,
 				"cannot assign %s to %s", inferredType, decl.Type)
 			return
@@ -1042,7 +1042,7 @@ func (tc *TypeChecker) checkAssignedValue(name string, value ast.Expression, tar
 	if rhsType == nil {
 		return nil
 	}
-	if !isAssignable(rhsType, target) {
+	if !tc.assignableValue(value, rhsType, target) {
 		tc.addError(loc, SeverityError,
 			"%s: cannot assign %s to %s", name, rhsType, target)
 		return nil
@@ -1151,7 +1151,7 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	if targetType == nil || valueType == nil {
 		return
 	}
-	if !isAssignable(valueType, targetType) {
+	if !tc.assignableValue(stmt.Value, valueType, targetType) {
 		tc.addError(stmt.GetLocation(), SeverityError,
 			"cannot assign %s to %s", valueType, targetType)
 		return
@@ -2619,11 +2619,15 @@ func isLiteralZero(expr ast.Expression) bool {
 // element type is nil, which signals an unresolved/empty array.
 //
 // Whether the containing variable is static or dynamic is determined by the
-// annotation type on the VarDeclStmt, not by the literal itself. isAssignable
-// allows a StaticArrayType to widen into a DynamicArrayType so that:
+// annotation type on the VarDeclStmt, not by the literal itself. `assignableValue`
+// lets a *literal's* StaticArrayType take a DynamicArrayType slot so that:
 //
-//	let xs: []int = [1, 2, 3]   // OK — StaticArrayType{int,3} → DynamicArrayType{int}
+//	let xs: []int = [1, 2, 3]   // OK — the literal is built as a box
 //	let xs: [3]int = [1, 2, 3]  // OK — exact match
+//
+// That allowance belongs to the **expression**, not to the type: a `[3]int` binding
+// reaching a `[]int` slot is stack storage read as a ref-counted box, and it
+// segfaulted while `isAssignable` carried the rule (08/13).
 func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.Type {
 	var elemType types.Type
 	for _, el := range expr.Elements {
@@ -3078,7 +3082,7 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 			continue
 		}
 		expected := tc.resolveType(declaredElem, elemExpr.GetLocation())
-		if !isAssignable(actual, expected) {
+		if !tc.assignableValue(elemExpr, actual, expected) {
 			// Deferred to the context when the elements alone did not pin every
 			// parameter down: the binding this element implies may be the *wrong*
 			// one (`Pair<t, u>(t, t)` built as `Pair(40, "x")` solves `t = i64` from
@@ -3307,7 +3311,7 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		// inferred NamedStructType of a nested struct literal (`Point{...}`).
 		expected = tc.resolveType(expected, f.Value.GetLocation())
 		actual := tc.resolveType(tc.inferExprType(f.Value), f.Value.GetLocation())
-		if actual != nil && !isAssignable(actual, expected) {
+		if actual != nil && !tc.assignableValue(f.Value, actual, expected) {
 			tc.addError(f.Value.GetLocation(), SeverityError, "%s.%s: cannot assign %s to %s", expr.Name, name, actual, expected)
 		} else if actual != nil {
 			// Assignable: push the declared field width onto an untyped literal

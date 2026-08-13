@@ -404,9 +404,30 @@ off the declaration is enough to unify; propagation then runs against the substi
 **Only a literal is adapted, and that is a memory rule.** A `[N]T` *binding* is stack
 storage where `[]T` is a ref-counted box, so accepting one for the other is a
 misinterpretation of memory — which the non-generic path does today, via `isAssignable`'s
-static→dynamic rule whose comment says "literal" while its code tests only the type, and
-the program segfaults (open, `todo.md`). Generic calls refuse the binding, and a test
-pins that refusal.
+static→dynamic rule — **fixed the same day**, see below. Generic calls refuse the binding
+too, and a test pins that refusal.
+
+**`isAssignable` vs `assignableValue`** (08/13). `isAssignable` answers about *types*
+alone. `assignableValue` is it plus the one widening that depends on **what the
+expression is**: an array literal is *built* in whichever shape its context asks for, so
+`[1, 2, 3]` satisfies a `[]T` slot as readily as a `[3]T` one. Every site checking a
+value against a type uses the second; a site holding only two types uses the first and
+correctly refuses a static array where a dynamic one belongs.
+
+The split is a memory rule, not a tidiness one. `[N]T` is stack storage and `[]T` a
+ref-counted box, so a `[3]i64` **binding** reaching a `[]i64` slot is a
+misinterpretation of memory — it segfaulted — while a *literal* has not been built yet.
+One type-level rule served both until 08/13, with a comment reading "a static array
+*literal*" above code that tested only `StaticArrayType`. Deleting that rule and reading
+the suite's failures is what established the boundary: every failure was a literal.
+
+The allowance **walks the expression alongside the type**, because nesting demands it —
+`[[1, 2], [3, 4]]` and `[y1, y2]` (two `[2]i64` bindings) share the type `[2][2]i64`, so
+only the expressions separate the legal case from the crashing one. It descends through
+array literals and their elements, the repeat form, a newtype target, and a tuple
+literal's elements; the tuple arm re-checks the tuple's *name*, since a nominal check
+must not have a second path around it. It never converts a *built* array: an implicit
+stack→box copy would be a hidden allocation, which this language does not do.
 
 **Monomorphization** (`backend/llvm/monomorphize.go`): one emitted function per distinct
 instantiation (`identity$i64`, `identity$boolean`), keyed by the instantiation's stable `Key()`

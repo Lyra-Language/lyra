@@ -10,6 +10,59 @@ Newest first.
 ## Dated log
 
 ### 08/13/26
+**A fixed-array *binding* no longer takes a `[]T` slot — it segfaulted.** Found the
+same day while deciding how wide to make the generic-inference fix below, and it is
+the entry that pair exists to justify: the narrow fix was chosen *because* probing
+turned this up first.
+
+```
+let take = (xs: []i64) -> i64 => xs[0]
+let ys: [3]i64 = [1, 2, 3]
+take(ys)      // checked clean; segfaulted
+```
+
+`[N]T` is stack storage and `[]T` is a ref-counted box, so the callee indexed through
+a pointer that was really the array's first element. **The cause is the shape this
+audit keeps finding**: `isAssignable`'s rule carried the comment "a static array
+*literal* is assignable to a dynamic array" directly above code that tested only the
+*type*, so every `[N]T` value passed, binding included. The comment had the rule
+right; nothing enforced the word "literal".
+
+The two claims are now separate functions. `isAssignable` answers about types alone
+and refuses the widening; `assignableValue` adds the one allowance that depends on
+**what the expression is**, and is used at the fourteen sites where a value is
+checked against a type — binding, reassignment, l-value assignment, argument, return,
+clause body, struct field, aggregate element, and the generic and trait-dispatch
+argument paths. **The list came from measurement rather than from reading**: deleting
+the type-level rule and running the suite reported exactly which paths depended on
+it, and *every* failure was a literal case. That is the evidence that literals were
+its only legitimate use, which no amount of grepping would have established.
+
+**The allowance walks the expression alongside the type, and nesting is what forces
+that.** `[[1, 2], [3, 4]]` and `[y1, y2]` — where those are `[2]i64` bindings — have
+the *same* type, `[2][2]i64`. A type-level recursion cannot tell the legal case from
+the crashing one; only the expressions can, so the walk descends through array
+literals and their elements, the repeat form's value, a newtype target (`newtype Row
+= []i64` accepts a literal, being its base at run time), and a tuple literal's
+elements (`() -> (i64, []i64) => (1, [2, 3])` — the tuple is not itself malleable but
+what it contains is).
+
+One correction the suite caught immediately, worth recording because it is the risk
+inherent in adding a second path: the tuple arm was at first a way *past* the name
+check, accepting a `Point` into a `Vector` slot and an anonymous literal into a named
+slot. A tuple is nominal when it has a name; the arm exists only to let an array
+literal inside one take its shape, so it now re-checks the name before recursing.
+Widening machinery that bypasses an existing check is the classic way a fix becomes
+a bug.
+
+What this deliberately does **not** do is convert a built array. There is no implicit
+copy from stack storage into a heap box, because that is a hidden allocation in a
+language whose whole posture on allocation is explicitness — `noalloc` would have to
+charge it, and the copy would be invisible at the call site. A binding that must be
+dynamic is declared dynamic. Tests: `static_to_dynamic_array_test.go`, covering both
+directions plus the nested-bindings case and the nominal-tuple guard. ASan clean on
+macOS and Linux.
+
 **A generic `[]t` parameter solves `t` from an array-literal argument — and the
 narrowness of the fix is the interesting part.** `first_of([1, 2, 3])` against
 `(xs: []t)` reported *"cannot infer type variable t from these arguments"*, while the

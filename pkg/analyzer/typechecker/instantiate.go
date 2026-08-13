@@ -276,7 +276,7 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 		if reported {
 			continue // already named the offending value
 		}
-		if !isAssignable(argType, params[i]) {
+		if !tc.assignableValue(arg, argType, params[i]) {
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d: cannot assign %s to %s", calleeName, i+1, argType, params[i])
 			continue

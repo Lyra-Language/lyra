@@ -176,7 +176,7 @@ func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, e
 		// annotation was rejected wholesale before any narrowing happened.
 		tc.checkIntegerLiteralRange(ctor, elem, expected)
 		actual := tc.inferExprType(elem)
-		if actual != nil && !isAssignable(actual, expected) {
+		if actual != nil && !tc.assignableValue(elem, actual, expected) {
 			tc.addError(elem.GetLocation(), SeverityError,
 				"%s: cannot assign %s to %s", ctor, actual, expected)
 			return true // leave the node bare: a wrong payload must not lower as this instantiation
@@ -332,7 +332,7 @@ func (tc *TypeChecker) stampAggregate(node ast.Expression, values []ast.Expressi
 		tc.propagateLiteralType(v, expected)
 		tc.propagateInstantiation(v, expected) // a nested partly solved construction
 		actual := tc.inferExprType(v)
-		if actual != nil && !isAssignable(actual, expected) {
+		if actual != nil && !tc.assignableValue(v, actual, expected) {
 			where := inst.Name
 			if i < len(names) && names[i] != "" {
 				where = inst.Name + "." + names[i]

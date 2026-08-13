@@ -140,6 +140,132 @@ func isIndexableForFromEnd(t types.Type) bool {
 	return types.IsString(t)
 }
 
+// assignableValue is isAssignable plus the one widening that depends on **what the
+// expression is** rather than on what its type is: an array literal is *built* in
+// the shape its context asks for, so `[1, 2, 3]` satisfies a `[]T` slot as readily
+// as a `[3]T` one. Use it wherever an expression is being checked against a type; a
+// site holding only two types must use isAssignable and will (correctly) refuse a
+// static array where a dynamic one belongs.
+//
+// The split exists because those two cases are not the same claim. `[N]T` is stack
+// storage and `[]T` a ref-counted box, so a `[3]i64` **binding** reaching a `[]i64`
+// slot is a misinterpretation of memory — the segfault this fixes (08/13) — while a
+// *literal* has not been built yet and can be built either way. Until then one
+// type-level rule served both, with a comment that said "literal" and code that said
+// `StaticArrayType`; the binding case was never intended and was memory-unsafe.
+//
+// Note what this does **not** do: it never converts a built array. There is no
+// implicit copy from stack storage into a box, because that would be a hidden
+// allocation in a language that makes allocation explicit (and `noalloc` would have
+// to charge it). A binding that must be dynamic is declared dynamic.
+func (tc *TypeChecker) assignableValue(expr ast.Expression, from, to types.Type) bool {
+	if isAssignable(from, to) {
+		return true
+	}
+	return tc.literalTakesShape(expr, from, to)
+}
+
+// literalTakesShape asks whether expr can be *built* as `to`, given that its own
+// inferred type is `from`. It walks the expression and the target type together,
+// which is what keeps the allowance exact: only a literal, and only where a literal
+// actually sits.
+//
+// The walk matters because arrays nest inside other literals. `let xs: [][]i64 =
+// [[1, 2], [3, 4]]` reaches here as a static array of static arrays against a
+// dynamic array of dynamic arrays, and each level is a literal whose shape its
+// context chooses — but `[ys1, ys2]` for the same annotation, with `[2]i64`
+// bindings inside, is the original memory fault one level down and must still be
+// refused. A type-level recursion could not tell those apart, since both are
+// `[2][2]i64`.
+func (tc *TypeChecker) literalTakesShape(expr ast.Expression, from, to types.Type) bool {
+	// A newtype over an array is its base at run time, so `newtype Row = []i64`
+	// accepts the literal its base accepts. The constraint itself is checked
+	// elsewhere; this is only about representation.
+	if toCT, ok := to.(*types.ConstrainedType); ok {
+		return tc.literalTakesShape(expr, from, tc.resolveTypeIfKnown(toCT.Type, expr.GetLocation()))
+	}
+	switch e := expr.(type) {
+	case *ast.ArrayLiteralExpr:
+		toDyn, fromSA, ok := arrayWideningPair(from, to)
+		if !ok {
+			return false
+		}
+		if fromSA.ElementType == nil {
+			return true // the empty literal names no elements to disagree about
+		}
+		for _, el := range e.Elements {
+			if !tc.elementTakesShape(el, toDyn.ElementType) {
+				return false
+			}
+		}
+		return true
+
+	case *ast.ArrayRepeatExpr:
+		toDyn, _, ok := arrayWideningPair(from, to)
+		if !ok {
+			return false
+		}
+		return tc.elementTakesShape(e.Value, toDyn.ElementType)
+
+	case *ast.TupleLiteralExpr:
+		// A tuple literal is not itself malleable, but it *contains* elements that
+		// are: `() -> (Box<Pt>, []Pt) => (b, [p])` is a tuple whose second element is
+		// an array literal taking its shape from the return type.
+		fromT, okFrom := from.(types.TupleType)
+		toT, okTo := to.(types.TupleType)
+		if !okFrom || !okTo || len(e.Elements) != len(toT.Elements) || len(fromT.Elements) != len(toT.Elements) {
+			return false
+		}
+		// **Names must already agree.** A tuple is nominal when it has one, and
+		// isAssignable settles that question; this arm exists only to let an array
+		// literal *inside* a tuple take its shape, so it must not become a second
+		// path past the name check — which it was, until it started accepting a
+		// `Point` into a `Vector` slot and an anonymous literal into a named one.
+		if fromT.Name != toT.Name {
+			return false
+		}
+		for i, el := range e.Elements {
+			if isAssignable(fromT.Elements[i], toT.Elements[i]) {
+				continue
+			}
+			if !tc.literalTakesShape(el, fromT.Elements[i], toT.Elements[i]) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
+}
+
+// elementTakesShape checks one element of an array literal against the target's
+// element type, allowing the same literal widening one level down.
+//
+// The element's own inferred type is read back from the type table rather than
+// threaded in, because the containing literal's `from` carries a *merged* element
+// type (branchCommonType over all elements) which can be less precise than any one
+// element's.
+func (tc *TypeChecker) elementTakesShape(el ast.Expression, want types.Type) bool {
+	got := tc.inferExprType(el)
+	if got == nil {
+		return true // its own inference already reported; don't pile on
+	}
+	return tc.assignableValue(el, got, want)
+}
+
+// arrayWideningPair recognizes the one shape this allowance is about — a static
+// array being asked to become a dynamic one — returning both halves.
+func arrayWideningPair(from, to types.Type) (types.DynamicArrayType, types.StaticArrayType, bool) {
+	toDyn, ok := to.(types.DynamicArrayType)
+	if !ok {
+		return types.DynamicArrayType{}, types.StaticArrayType{}, false
+	}
+	fromSA, ok := from.(types.StaticArrayType)
+	if !ok {
+		return types.DynamicArrayType{}, types.StaticArrayType{}, false
+	}
+	return toDyn, fromSA, true
+}
+
 // ordinal renders 1 → "1st", 2 → "2nd", 3 → "3rd", n → "nth", for the
 // negative-index error's "use `.from_end(2)` for the 2nd value from the end".
 func ordinal(n int64) string {
@@ -301,22 +427,31 @@ func isAssignable(from, to types.Type) bool {
 	if fromIsCT {
 		return isAssignable(fromCT.Type, to)
 	}
-	// A static array literal is assignable to a dynamic array with a compatible
-	// element type. This mirrors how `let xs: []int = [1, 2, 3]` should work:
-	// the literal produces StaticArrayType{int,3} which widens to DynamicArrayType{int}.
+	// **A static array does NOT widen to a dynamic one here.** `[N]T` is stack
+	// storage and `[]T` is a ref-counted box, so treating one as the other is a
+	// misinterpretation of memory rather than a widening: the callee indexes through
+	// a pointer that is really the array's first element, and the program segfaults.
+	// That is what this rule did until 08/13 — its comment said "a static array
+	// *literal* is assignable to a dynamic array" while its code tested only the
+	// *type*, so every `[N]T` value passed, binding included:
+	//
+	//	let take = (xs: []i64) -> i64 => xs[0]
+	//	let ys: [3]i64 = [1, 2, 3]
+	//	take(ys)   // checked clean; segfaulted
+	//
+	// The comment named the right rule. An array **literal** really is malleable —
+	// it is *built* in whichever shape its context asks for — but that is a fact
+	// about the expression, not about its type, so it lives in assignableValue
+	// where the expression is in hand. Removing it from here broke only literal
+	// cases, which is the evidence that literals were its sole legitimate use.
 	if fromSA, ok := from.(types.StaticArrayType); ok {
-		// An empty array literal [] (Size==0, ElementType==nil) is assignable to
-		// any array type — the element type is vacuously satisfied.
+		// An empty array literal `[]` (Size==0, ElementType==nil) still matches a
+		// static array of any size — it names no elements to disagree about. The
+		// dynamic half of this moved to assignableValue with the rest.
 		if fromSA.ElementType == nil {
-			switch to := to.(type) {
-			case types.DynamicArrayType:
-				return true
-			case types.StaticArrayType:
+			if to, ok := to.(types.StaticArrayType); ok {
 				return fromSA.Size == to.Size
 			}
-		}
-		if toDyn, ok := to.(types.DynamicArrayType); ok {
-			return isAssignable(fromSA.ElementType, toDyn.ElementType)
 		}
 		// StaticArrayType → StaticArrayType: sizes must match, elements must be assignable.
 		if toSA, ok := to.(types.StaticArrayType); ok {
