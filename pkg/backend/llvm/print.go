@@ -44,6 +44,139 @@ func (l *lowerer) snprintfFunc() *ir.Func {
 	return l.snprintf
 }
 
+// floatStrBufBytes sizes the stack buffer a formatted float is written into. The
+// longest output is a 17-significant-digit f64 in exponent form with a sign on
+// both the number and the exponent — `-1.2345678901234567e-308`, 24 bytes — so 32
+// leaves room and keeps the alloca a round number. snprintf is given this size and
+// truncates rather than overruns even if that reasoning is ever wrong.
+const floatStrBufBytes = 32
+
+// strtodFunc lazily declares libc's `double @strtod(i8* nptr, i8** endptr)`. It is
+// what makes the formatter below a *round-trip* check rather than a guess: the only
+// way to know a decimal string denotes the same float is to parse it back.
+func (l *lowerer) strtodFunc() *ir.Func {
+	if l.strtod == nil {
+		i8ptr := lltypes.NewPointer(lltypes.I8)
+		l.strtod = l.module.NewFunc("strtod", lltypes.Double,
+			ir.NewParam("", i8ptr), ir.NewParam("", lltypes.NewPointer(i8ptr)))
+	}
+	return l.strtod
+}
+
+// floatPrecisionLadder gives the significant-digit counts to try for a float
+// width, lowest first, and the LLVM type to narrow back to when checking whether a
+// candidate round-trips.
+//
+// The high end of each ladder is the width's round-trip guarantee (IEEE-754's
+// "decimal digits needed to distinguish all values"): 17 for binary64, 9 for
+// binary32, 5 for binary16. So the last rung *always* succeeds and the loop always
+// terminates with a faithful answer.
+//
+// The low end is where a search would otherwise waste iterations. `%g` strips
+// trailing zeros, so asking for 15 significant digits of 0.1 already yields `0.1`
+// rather than `0.100000000000000` — the first rung is normally the answer, and a
+// value that genuinely needs more digits costs at most two more libc round trips.
+func floatPrecisionLadder(name types.PrimitiveTypeName) ([]int64, lltypes.Type, error) {
+	switch name {
+	// An untyped float literal defaults to f64 (the language's rule), and one can
+	// reach print with its type still untyped — `println(0.1 + 0.2)` never meets a
+	// context that pins a width.
+	case types.Float64, types.UntypedFloat:
+		return []int64{15, 16, 17}, lltypes.Double, nil
+	case types.Float32:
+		return []int64{6, 7, 8, 9}, lltypes.Float, nil
+	case types.Float16:
+		return []int64{3, 4, 5}, lltypes.Half, nil
+	}
+	return nil, nil, fmt.Errorf("llvm: no float formatter for %s", name)
+}
+
+// floatToStrFunc defines (once per printed float width) a formatter that writes the
+// **shortest of its ladder's renderings that reads back as the same value**, and
+// returns the byte length. One function per width rather than one taking the width
+// as a parameter, so each bakes in its own precision ladder and narrowing with no
+// runtime dispatch; only the widths a program actually prints are emitted.
+//
+// Until 08/13 printing a float was one `snprintf("%g")`, whose default is **six**
+// significant digits — so `println(0.1 + 0.2)` printed `0.3`, `1.0 / 3.0` printed
+// `0.333333`, and `1234567890.0` printed `1.23457e+09`. Every one of those is a
+// different number from the one the program held, printed without a hint that
+// anything was dropped, which is the silent-wrongness this language exists to
+// refuse. Reading a printed value back is the ordinary way to move data between
+// programs, and it was not safe to do.
+//
+// The loop is the classic printf-based construction: render at increasing
+// precision, `strtod` the result, and stop at the first that comes back equal.
+// **The comparison is at the value's own width**, which is why an f32's ladder
+// narrows to `float` before comparing — 0.1f32 widened to double is
+// 0.10000000149011612, so a check performed as double would reject `0.1` and print
+// all of it. A NaN never compares equal, so it simply runs to the last rung and
+// prints libc's `nan`; infinities round-trip immediately as `inf`.
+//
+// It is shortest *within the ladder*, not provably minimal — a value whose true
+// minimum is 14 digits prints 15. The genuinely minimal algorithms (Ryu, Grisu)
+// are a few hundred lines of hand-written IR here, and what actually mattered was
+// that a printed float denote the value that was printed; that is now exact.
+func (l *lowerer) floatToStrFunc(name types.PrimitiveTypeName) (*ir.Func, error) {
+	if fn, ok := l.fmtFloat[string(name)]; ok {
+		return fn, nil
+	}
+	ladder, narrowTy, err := floatPrecisionLadder(name)
+	if err != nil {
+		return nil, err
+	}
+
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	val := ir.NewParam("val", lltypes.Double)
+	out := ir.NewParam("out", i8ptr)
+	fn := l.module.NewFunc("lyra_"+string(name)+"_to_str", lltypes.I64, val, out)
+
+	entry := fn.NewBlock("entry")
+	// endptr is required by strtod's signature; the parsed value is all we want.
+	endptr := entry.NewAlloca(i8ptr)
+	// The original, narrowed once to the value's own width — the thing each
+	// candidate must match.
+	want := narrowFromDouble(entry, val, narrowTy)
+
+	// One block per rung: render, parse back, and either stop or fall through to the
+	// next. The final rung has nowhere to fall through to — its precision is the
+	// width's round-trip guarantee, so it is correct by construction and taken
+	// unconditionally.
+	done := fn.NewBlock("done")
+	lengths := make([]*ir.Incoming, 0, len(ladder))
+	cur := entry
+	for i, prec := range ladder {
+		n := cur.NewCall(l.snprintfFunc(), out, constant.NewInt(lltypes.I64, floatStrBufBytes),
+			l.cString("%.*g"), constant.NewInt(lltypes.I32, prec), val)
+		length := cur.NewSExt(n, lltypes.I64)
+		lengths = append(lengths, ir.NewIncoming(length, cur))
+
+		if i == len(ladder)-1 {
+			cur.NewBr(done)
+			break
+		}
+		parsed := cur.NewCall(l.strtodFunc(), out, endptr)
+		got := narrowFromDouble(cur, parsed, narrowTy)
+		next := fn.NewBlock("")
+		cur.NewCondBr(cur.NewFCmp(enum.FPredOEQ, got, want), done, next)
+		cur = next
+	}
+
+	done.NewRet(done.NewPhi(lengths...))
+	l.fmtFloat[string(name)] = fn
+	return fn, nil
+}
+
+// narrowFromDouble converts a double back to to, or returns it unchanged when to
+// *is* double. Used to compare a candidate rendering against the original at the
+// value's own width rather than at the width varargs promoted it to.
+func narrowFromDouble(block *ir.Block, v value.Value, to lltypes.Type) value.Value {
+	if to.Equal(lltypes.Double) {
+		return v
+	}
+	return block.NewFPTrunc(v, to)
+}
+
 // cString interns a NUL-terminated byte string as a private immutable global and
 // returns an i8* to its first byte, caching by content so repeated formats
 // (`"%lld"`) share one global.
@@ -257,12 +390,18 @@ func (l *lowerer) formatForPrint(block *ir.Block, val value.Value, argType types
 		return dataPtr, length, nil
 
 	case isFloat:
-		buf := entry.NewAlloca(lltypes.NewArray(32, lltypes.I8))
-		dataPtr := block.NewGetElementPtr(lltypes.NewArray(32, lltypes.I8), buf,
+		buf := entry.NewAlloca(lltypes.NewArray(floatStrBufBytes, lltypes.I8))
+		dataPtr := block.NewGetElementPtr(lltypes.NewArray(floatStrBufBytes, lltypes.I8), buf,
 			constant.NewInt(lltypes.I64, 0), constant.NewInt(lltypes.I64, 0))
-		promoted := coerceFloatWidth(block, val, lltypes.Double) // varargs pass double
-		n := block.NewCall(l.snprintfFunc(), dataPtr, constant.NewInt(lltypes.I64, 32), l.cString("%g"), promoted)
-		return dataPtr, block.NewSExt(n, lltypes.I64), nil
+		// Widened to double because that is what a vararg float becomes anyway, and
+		// because every f16/f32 is exactly representable as one — so the formatter
+		// can do its round-trip check against the *original* width without loss.
+		promoted := coerceFloatWidth(block, val, lltypes.Double)
+		fn, err := l.floatToStrFunc(prim.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+		return dataPtr, block.NewCall(fn, promoted, dataPtr), nil
 
 	case prim.Name == types.Int128 || prim.Name == types.UInt128:
 		// No printf length modifier reaches 128 bits, so a hand-written base-10

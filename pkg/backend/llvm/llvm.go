@@ -148,6 +148,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		eqFns:              map[string]*ir.Func{},
 		retainFns:          map[string]*ir.Func{},
 		cStrings:           map[string]*ir.Global{},
+		fmtFloat:           map[string]*ir.Func{},
 		specialized:        map[string]*ir.Func{},
 		specializedParams:  map[string][]ast.Parameter{},
 		closures:           map[*ast.LambdaExpr]*ir.Func{},
@@ -242,6 +243,8 @@ type lowerer struct {
 	utf8Count       *ir.Func              // lyra_utf8_count, defined lazily (read_line / interpolation rune counts)
 	realloc         *ir.Func              // libc realloc, declared lazily on first dynamic-array push
 	fmtI128         *ir.Func              // lyra_i128_to_str, defined lazily on first i128/u128 print
+	strtod          *ir.Func              // libc strtod, declared lazily (the float formatter's round-trip check)
+	fmtFloat        map[string]*ir.Func   // lyra_f{16,32,64}_to_str, one per printed float width
 	mulOverflowI128 *ir.Func              // lyra_i128_mul_overflow, defined lazily (compiler-rt's __muloti4 is not linkable on Linux)
 	newlineByte     *ir.Global            // interned "\n" byte, for println's trailing newline
 	cStrings        map[string]*ir.Global // interned NUL-terminated C strings (snprintf formats, bool text)
@@ -629,7 +632,7 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 			if e.IsWide() {
 				v, _ = new(big.Float).SetInt(e.BigValue()).Float64()
 			}
-			return constant.NewFloat(ft, v), block, nil
+			return floatConst(ft, v), block, nil
 		}
 		// A **wide** literal (>64 bits, so i128/u128 only) carries its magnitude as a
 		// big.Int; `Value` is 0 and means nothing. llir's constant.Int is a big.Int
@@ -642,7 +645,7 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		}
 		return constant.NewInt(l.literalIntType(e), e.Value), block, nil
 	case *ast.FloatLiteralExpr:
-		return constant.NewFloat(l.literalFloatType(e), e.Value), block, nil
+		return floatConst(l.literalFloatType(e), e.Value), block, nil
 	case *ast.CharacterLiteralExpr:
 		// A rune is a Unicode code point, represented as i32.
 		return constant.NewInt(lltypes.I32, int64(e.Value)), block, nil

@@ -10,6 +10,63 @@ Newest first.
 ## Dated log
 
 ### 08/13/26
+**A printed float reads back as the same value — and making it so immediately exposed
+a shipped correctness bug the old printer had been hiding.** Two fixes, and the
+relationship between them is the entry's point.
+
+Printing a float was one `snprintf("%g")`. `%g`'s default precision is **six
+significant digits**, so `println(0.1 + 0.2)` printed `0.3`, `1.0 / 3.0` printed
+`0.333333`, `3.14159265358979` printed `3.14159`, and `1234567890.0` printed
+`1.23457e+09`. Each is a different number from the one the program held, printed with
+no indication that anything was dropped — the silent wrongness this language exists to
+refuse, in the one operation whose whole job is to report a value faithfully. Reading
+printed output back is how data moves between programs, and it was not safe to do.
+
+`lyra_f{16,32,64}_to_str` (one emitted per width a program actually prints) is the
+classic printf-based shortest construction: render at increasing precision, `strtod`
+the candidate, stop at the first that comes back equal. The top of each ladder is the
+width's IEEE round-trip guarantee — 17 digits for binary64, 9 for binary32, 5 for
+binary16 — so the last rung always succeeds and the loop always terminates with a
+faithful answer. The bottom rung is chosen so the common case costs one iteration:
+`%g` strips trailing zeros, so 15 significant digits of 0.1 is already `0.1`.
+
+**The round-trip comparison is made at the value's own width**, which is the detail to
+keep. An f32 is widened to double to be passed (varargs, and every f32 is exactly a
+double), so a check performed *as* a double would compare against 0.10000000149011612
+and reject `0.1`, printing all nine digits for every f32. Narrowing the parsed
+candidate back to `float` before comparing is what keeps a narrow float's output
+narrow. NaN never compares equal, so it runs to the last rung and prints libc's `nan`;
+infinities round-trip immediately.
+
+It is shortest *within the ladder* rather than provably minimal — a value whose true
+minimum is 14 digits prints 15. Ryu and Grisu are the algorithms that do better and
+are several hundred lines of hand-written IR here; what actually mattered was that a
+printed float denote the value that was printed, and that is now exact.
+
+**Then the faithful printer found the second bug in its first run.** `let x: f32 = 0.1`
+printed `0.099999994`. That was not a printing fault: the emitted constant really was
+`float 0x3FB9999980000000`, one ULP below 0.1f32 (`0x3FB99999A0000000`). llir's
+`constant.NewFloat` stores the float64 and **truncates** the mantissa when it emits a
+narrower type instead of rounding to nearest, so the program held a number its own
+source did not name — and it shipped. `floatConst` rounds to the target width in Go
+before constructing, after which the value is exactly representable and llir's
+truncation has nothing left to remove; every float literal now goes through it.
+
+The two are worth recording together because the first concealed the second: at six
+significant digits the wrong constant and the right one both printed `0.1`, and no
+test could have told them apart through output. **A lossy printer does not merely lose
+detail, it hides other faults** — which is a better argument for round-tripping output
+than the ones usually given for it.
+
+Two adjacent findings came out of the same session and are left open in `todo.md`
+rather than folded in: a float literal is **not narrowed to the operand's width in a
+comparison**, so `let x: f32 = 0.1` then `x == 0.1` emits a double constant into a
+`float` compare and clang rejects the module (loud, pre-existing, and a
+literal-propagation issue rather than a float-formatting one); and an inexact **f16
+literal makes llir log a "please submit a bug report" line** on an otherwise correct
+build. Tests: `llvm_float_print_test.go`. ASan clean on macOS and on Linux, where the
+older clang's typed pointers also check the new `strtod` declaration.
+
 **The regex-value phantom is closed (`lyra-E052`), in two positions — the audit named
 one and probing found its twin.** A regex literal used as a **value**
 (`let re = r"[a-z]+"`) inferred the built-in `regex` type and then died in the backend

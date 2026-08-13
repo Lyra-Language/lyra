@@ -769,6 +769,30 @@ func coerceIntWidth(block *ir.Block, v value.Value, srcSigned bool, dst *lltypes
 	}
 }
 
+// floatConst builds a float constant of type ty, **rounding v to ty's precision
+// first**. Always use it instead of constant.NewFloat for a value that came from a
+// float64, which is every float literal in the language.
+//
+// llir stores the float64 as-is and narrows by *truncating* the mantissa when it
+// emits, rather than rounding to nearest. For an f32 that is a real
+// silent-wrongness bug and it shipped: `let x: f32 = 0.1` emitted
+// `float 0x3FB9999980000000` where 0.1f32 is `0x3FB99999A0000000` — one ULP low, so
+// the program held a number one ULP away from the one its source named (08/13).
+// Rounding here in Go makes the value exactly representable at ty, after which
+// llir's truncation has nothing left to remove and emits the same bits either way.
+//
+// **It was invisible until floats printed faithfully.** The old `%g` printer showed
+// six significant digits, so the wrong constant printed as `0.1` and the right one
+// printed as `0.1`; the shortest-round-trip printer prints `0.099999994` and the bug
+// has nowhere to hide. That is the argument for round-tripping output in general —
+// a lossy printer does not merely lose detail, it conceals other faults.
+func floatConst(ty *lltypes.FloatType, v float64) *constant.Float {
+	if ty.Equal(lltypes.Float) {
+		v = float64(float32(v))
+	}
+	return constant.NewFloat(ty, v)
+}
+
 // coerceFloatWidth adapts an already-lowered float value to the destination float
 // type (fptrunc to narrow, fpext to widen, identity when equal) — the float
 // analogue of coerceIntWidth. In a well-typed program the widths already match

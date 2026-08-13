@@ -1295,16 +1295,37 @@ bytes (`formatForPrint`) and writes them to stdout via a lazily-declared libc `w
 len)`; `println` appends a second `write` of one interned `"\n"` byte. Formatting per type:
 **string** → the fat pointer's own `{data,len}` (no copy); **int** → libc `snprintf`
 `"%lld"`/`"%llu"` (by signedness, widened to i64) into an entry-block stack buffer; **float** →
-`snprintf` `"%g"` (promoted to double); **bool** → a pointer/length `select` between interned
+`lyra_f{16,32,64}_to_str`, the shortest-round-trip formatter below; **bool** → a pointer/length `select` between interned
 `"true"`/`"false"`; **rune** → UTF-8 encoded into a 4-byte buffer by the lazily-defined runtime
 `lyra_rune_to_utf8` (1–4 bytes by magnitude, no surrogate check — matching rune's
 unvalidated-code-point contract). snprintf formats into memory (not stdio), so numeric output
 stays in program order with the raw string/bool/rune writes. `print` returns void — its value is
 discarded — and the ownership pass treats it as **borrowing** its argument
 (`calleeIsBorrowingBuiltin`), so a heap temporary argument (`print("a" ++ b)`) is released after
-the call rather than leaked. Aggregates aren't printable (no Show/Display trait yet); float
-formatting is first-cut `%g` (so `1.0` prints as `1`, and shortest-round-trip is a future
-refinement). `layout.go` provides the llir type toolkit — `LLVMPrimitive`, `IsSignedInt`,
+the call rather than leaked. Aggregates aren't printable (no Show/Display trait yet).
+
+**A printed float reads back as the same value** (08/13). It was `snprintf("%g")` until
+then — six significant digits, so `0.1 + 0.2` printed `0.3` and `1234567890.0` printed
+`1.23457e+09`, each a different number from the one held, with nothing to say so.
+`floatToStrFunc` emits one formatter per printed width that renders at increasing
+precision and `strtod`s each candidate, stopping at the first that comes back equal; the
+ladder's top rung is the width's IEEE round-trip guarantee (17/9/5 significant digits),
+so it always terminates faithfully, and `%g`'s trailing-zero stripping means the bottom
+rung usually answers in one iteration. **The comparison is at the value's own width** —
+an f32 candidate narrows back to `float` first, because 0.1f32 widened to a double is
+0.10000000149011612 and a double-width check would print all of it. Shortest within the
+ladder, not provably minimal; Ryu is the upgrade.
+
+Two things depend on that being right. `floatConst` (arithmetic.go) **rounds** a literal
+to its target width before handing it to llir, which otherwise truncates the mantissa
+when emitting a narrower type — `let x: f32 = 0.1` shipped as `0x3FB9999980000000`, one
+ULP below 0.1f32, so the program held a number its source did not name. That bug was
+invisible while printing was lossy (both constants printed `0.1` at six digits), which is
+the case for round-tripping output in general: a lossy printer hides other faults. And a
+float literal is still **not** narrowed in a *comparison*, so `x == 0.1` against an f32
+emits a double constant into a `float` compare and clang rejects it — open, see `todo.md`.
+
+`layout.go` provides the llir type toolkit — `LLVMPrimitive`, `IsSignedInt`,
 `IsNumericConversionTarget`, `SharedBoxType`, `TagType`, `DataUnionType` (all returning `llir`
 `types.Type`) and the `SizeAndAlign` datalayout engine — that `lowerType` dispatches over. The
 builtin overflow-arithmetic methods (`typechecker/builtins.go`), the `stack`/`shared`

@@ -349,7 +349,7 @@ func (l *lowerer) floatScalarMatchTest(block *ir.Block, scrut value.Value, patte
 		if err != nil {
 			return nil, fmt.Errorf("llvm: invalid float literal pattern %q: %v", s, err)
 		}
-		return block.NewFCmp(enum.FPredOEQ, scrut, constant.NewFloat(floatTy, f)), nil
+		return block.NewFCmp(enum.FPredOEQ, scrut, floatConst(floatTy, f)), nil
 	case *ast.RangePattern:
 		// Open bounds as in the integer path above. Note this keeps the ordered
 		// predicates on both sides, so a NaN scrutinee still fails an open range —
@@ -393,17 +393,17 @@ func (l *lowerer) floatScalarMatchTest(block *ir.Block, scrut value.Value, patte
 func constFloatFromExpr(e ast.Expression, ty *lltypes.FloatType) (value.Value, bool) {
 	switch v := e.(type) {
 	case *ast.FloatLiteralExpr:
-		return constant.NewFloat(ty, v.Value), true
+		return floatConst(ty, v.Value), true
 	case *ast.IntegerLiteralExpr:
 		f, _ := new(big.Float).SetInt(v.BigValue()).Float64()
-		return constant.NewFloat(ty, f), true
+		return floatConst(ty, f), true
 	case *ast.NegationExpr:
 		switch inner := v.Operand.(type) {
 		case *ast.FloatLiteralExpr:
-			return constant.NewFloat(ty, -inner.Value), true
+			return floatConst(ty, -inner.Value), true
 		case *ast.IntegerLiteralExpr:
 			f, _ := new(big.Float).SetInt(inner.BigValue()).Float64()
-			return constant.NewFloat(ty, -f), true
+			return floatConst(ty, -f), true
 		}
 	}
 	return nil, false

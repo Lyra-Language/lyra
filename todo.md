@@ -227,6 +227,37 @@ write today:
 
 ## Known bugs
 
+- **[OPEN] A float literal is not narrowed to the operand's width in a comparison**,
+  and the result does not build. `let x: f32 = 0.1` then `x == 0.1` emits
+  `fcmp oeq float %1, 0x3FB999999999999A` — a **double** constant in a `float`
+  compare — which clang rejects outright (`floating point constant invalid for
+  type`). Found 08/13 while testing the float-printing fix; it predates that work and
+  is unaffected by it (the constant is emitted at double, where `floatConst` is the
+  identity).
+
+  The intent is clear and already half-built: `checkBooleanBinaryOpExpr` calls
+  `propagateLiteralType(expr.Right, effective)`, which is what makes the integer
+  analogue work (`let x: u8 = 200` then `x == 200`), so the literal is *supposed* to
+  take the operand's width. Something between that call and the backend's
+  `literalFloatType` is not recording it for floats. Two things to settle when fixing:
+  whether the propagation is missing or merely unrecorded, and whether the backend's
+  comparison should *also* reconcile widths defensively with the existing
+  `coerceFloatWidth` — `lowerFloatComparison`'s doc says it takes "two already-lowered
+  **same-type** float values" and nothing enforces that. It fails loudly rather than
+  silently, which is why it is recorded rather than patched around.
+
+- **[OPEN] `f16` literals log an llir "please submit a bug report" line on a normal
+  build.** `let a: f16 = 0.1` prints `unable to represent floating-point constant 0.1
+  of type half exactly; please submit a bug report to llir/llvm with this error
+  message` to stderr, and then builds and runs correctly — the emitted constant
+  (`half 0xH2E66` = 0.0999755859375) *is* the correctly rounded half. So this is
+  noise, not wrongness: llir logs whenever a half constant is inexact, which is most
+  of them. Fixing it means rounding the value to a representable half in Go before
+  handing it to llir (`floatConst`'s `Half` arm, which does not exist because Go has
+  no float16 — it needs a hand-written round-to-nearest-even with subnormal and
+  overflow cases). Worth doing for a compiler that should not tell its users to file
+  bugs against a library they did not choose; not worth doing carelessly.
+
 - **[OPEN] A `where` constraint is enforced only where the value is *provable*.**
   Found while probing the regex phantom (08/13), and it is about `range(…)` as much
   as `pattern(…)` — the two behave alike, so this is one gap, not a regex one. Both
@@ -257,6 +288,38 @@ write today:
   constraint kinds may not get the same answer. Until it is decided, the honest fix is
   narrower: say in the docs that constraints are compile-time-only, since the current
   wording promises more than the compiler delivers.
+
+- **[DONE 08/13] A printed float reads back as the same value**, and a narrow float
+  constant is rounded rather than truncated — two bugs, the second hidden by the
+  first. Printing was one `snprintf("%g")`, whose default is **six** significant
+  digits, so `println(0.1 + 0.2)` printed `0.3`, `1.0 / 3.0` printed `0.333333`,
+  `3.14159265358979` printed `3.14159`, and `1234567890.0` printed `1.23457e+09`.
+  Every one is a different number from the one the program held, printed with nothing
+  to say so — and reading a printed value back is the ordinary way to move data
+  between programs.
+
+  The formatter (`lyra_f{16,32,64}_to_str`, one emitted per printed width) renders at
+  increasing precision and `strtod`s each candidate, stopping at the first that comes
+  back equal. The ladder's top rung is the width's IEEE round-trip guarantee (17 / 9 /
+  5 significant digits), so it always terminates with a faithful answer; the bottom
+  rung is where `%g`'s trailing-zero stripping usually lands it in one iteration.
+  **The comparison is made at the value's own width** — an f32 narrows back to `float`
+  before comparing, since 0.1f32 widened to a double is 0.10000000149011612 and a
+  double-width check would reject `0.1` and print all of that. Shortest *within the
+  ladder*, not provably minimal (Ryu is the upgrade path); what mattered was that a
+  printed float denote the value printed.
+
+  **Then the faithful printer immediately exposed a shipped correctness bug**:
+  `let x: f32 = 0.1` was emitting `float 0x3FB9999980000000`, one ULP below 0.1f32
+  (`0x3FB99999A0000000`), because llir stores the float64 and *truncates* the mantissa
+  on emission instead of rounding to nearest. The program held a number its source did
+  not name. `floatConst` rounds to the target width in Go first, after which llir's
+  truncation has nothing left to remove. It was invisible for as long as printing was
+  lossy — at six digits the wrong constant and the right one both printed `0.1` — which
+  is the general argument: **a lossy printer does not merely lose detail, it conceals
+  other faults.** Two adjacent findings are recorded above (a float literal is not
+  narrowed in a comparison, and f16 literals log an llir bug-report line). ASan clean
+  on macOS and Linux. See COMPLETED.md.
 
 - **[DONE 08/13] The regex-value phantom is closed** (`lyra-E052`), in **two**
   positions — the audit named the expression one and probing turned up its twin. A

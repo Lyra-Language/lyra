@@ -113,7 +113,8 @@ func TestExec_Print(t *testing.T) {
 }
 
 // Non-string print formatting: integers (snprintf %lld/%llu by signedness),
-// floats (%g), bool ("true"/"false"), and runes (UTF-8 encoded). Numeric
+// floats (shortest round-trip, see TestExec_PrintFloatRoundTrips), bool
+// ("true"/"false"), and runes (UTF-8 encoded). Numeric
 // formatting goes through snprintf-into-memory + write, so it stays in program
 // order with the raw writes that string/bool/rune print use.
 func TestExec_PrintFormatting(t *testing.T) {
