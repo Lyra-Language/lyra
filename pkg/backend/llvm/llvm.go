@@ -244,6 +244,7 @@ type lowerer struct {
 	realloc         *ir.Func              // libc realloc, declared lazily on first dynamic-array push
 	fmtI128         *ir.Func              // lyra_i128_to_str, defined lazily on first i128/u128 print
 	strtod          *ir.Func              // libc strtod, declared lazily (the float formatter's round-trip check)
+	fmod            *ir.Func              // libc fmod, declared lazily (a float `step(...)` constraint check)
 	fmtFloat        map[string]*ir.Func   // lyra_f{16,32,64}_to_str, one per printed float width
 	mulOverflowI128 *ir.Func              // lyra_i128_mul_overflow, defined lazily (compiler-rt's __muloti4 is not linkable on Linux)
 	newlineByte     *ir.Global            // interned "\n" byte, for println's trailing newline
@@ -429,6 +430,18 @@ func (l *lowerer) lowerExpr(block *ir.Block, expr ast.Expression) (value.Value, 
 	v, end, err := l.lowerExprDispatch(block, expr)
 	if err != nil {
 		return nil, nil, err
+	}
+	// A newtype's `where` constraints, checked here because this is where the value
+	// exists. The typechecker recorded only the sites it could *not* settle
+	// statically (constraint_check.go), so a literal costs nothing and a runtime
+	// value costs one compare-and-branch — the second rung of the same ladder
+	// arithmetic overflow and range steps already ride.
+	if v != nil {
+		if ct, needed := l.res.ConstraintChecks.Get(expr); needed {
+			if end, err = l.emitConstraintChecks(end, v, ct); err != nil {
+				return nil, nil, err
+			}
+		}
 	}
 	// The gate is the *Lyra* type, not the LLVM one, and it is the deep question
 	// ("does this value own any refcounted reference?") rather than "is this value

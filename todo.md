@@ -310,7 +310,37 @@ write today:
   llir, so this promotes a transitive dependency to a direct one rather than adding
   anything. The emitted value is unchanged (0.1 stays `0xH2E66`), which the test pins.
 
-- **[OPEN] A `where` constraint is enforced only where the value is *provable*.**
+- **[DONE 08/13] A `where` constraint is enforced at run time**, so the ladder has its
+  second rung. `range(...)`, `values(...)` and `step(...)` now trap on a value that
+  violates them; `pattern(...)` refuses a value it cannot read. Details in
+  COMPLETED.md; what follows is the decision record, since three of the four parts
+  were choices rather than fixes.
+
+  - **The typechecker publishes the sites, the backend emits the checks**
+    (`typetable.ConstraintTable`). Only the typechecker knows what it managed to
+    prove, so a **foldable constant is never recorded** — it was already decided, a
+    bad one being a compile error and a good one needing nothing. The cost is one
+    compare-and-branch exactly where the compiler could not do better, which is what
+    arithmetic overflow already pays.
+  - **`step(...)` became real.** It had been collected, validated for well-formedness
+    and read by nothing, so `range(0..<360), step(15)` accepted 7. The grid is
+    measured from the range's start (`start, start+step, …`, the meaning
+    `types/step.go` already fixed for both spellings), so `range(5..<=95), step(10)`
+    accepts 15 and refuses 10.
+  - **`pattern(...)` refuses what it cannot read** (`lyra-E054`) rather than admitting
+    it. It cannot have a runtime check without a regex engine, which `lyra-E052`
+    records the absence of, so the two honest options were refuse or admit — and
+    admitting is what let `Digits("abc")` build and print `abc`. A literal still
+    works. The cost is that a pattern-constrained newtype cannot be built from runtime
+    data until there is an engine; that is a feature waiting on the engine rather than
+    a rule.
+  - **One construction is one check.** `Percent(n)` reaches the checker twice — as the
+    constructor's operand and again as the constructor node once the context
+    propagates the newtype onto it — which emitted the range test twice and reported
+    E054 twice. The constructor is a `TupleLiteralExpr` rather than a call (it is the
+    named-tuple node), which is why the first guard against this matched nothing.
+
+- **[SUPERSEDED 08/13 — see above] A `where` constraint is enforced only where the value is *provable*.**
   Found while probing the regex phantom (08/13), and it is about `range(…)` as much
   as `pattern(…)` — the two behave alike, so this is one gap, not a regex one. Both
   catch a literal and anything the value-range pass can pin to an interval, and both

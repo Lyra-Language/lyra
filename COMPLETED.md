@@ -10,6 +10,71 @@ Newest first.
 ## Dated log
 
 ### 08/13/26
+**A `where` constraint is enforced at run time — the ladder's second rung, which
+constraints did not have.** A constraint caught a literal, and whatever the
+value-range pass could pin to an interval, and silently accepted everything else:
+
+```
+newtype Percent = u8 where range(0..<=100)
+let mk = (n: u8) -> Percent => Percent(n)
+mk(200)      // built, ran, printed 200
+```
+
+That is the exact shape the language refuses everywhere else — provable → compile
+error, otherwise → trap — missing its second half in the one construct whose entire
+purpose is to be checked. And the values a constrained newtype meets at run time are
+the ones from outside the program (parsed input, computed results), which is where a
+range or unit mistake actually lives. `range`, `values` and `step` now trap;
+`pattern` refuses what it cannot read.
+
+**The typechecker publishes the sites; the backend emits the checks**
+(`typetable.ConstraintTable`, `pkg/backend/llvm/constraint_check.go`). Only the
+typechecker knows which values it verified, so having codegen re-derive "is this a
+construction, and is it provable" would be the same answer computed twice — the rule
+the method, callee and instantiation tables already follow. The practical consequence
+is that **a foldable constant is never recorded**: it was decided at compile time in
+either direction, so a literal construction emits no check at all and the cost falls
+exactly where the compiler could not do better. That is one compare-and-branch, which
+is what overflow-checked arithmetic already costs, and the optimizer folds away the
+ones provable by other means.
+
+**`step(...)` became a real constraint.** It had been collected, validated for
+well-formedness — `types/step.go` refuses a zero step and a fractional step over an
+integer domain — and then read by nothing at all, so `range(0..<360), step(15)`
+accepted 7. That file's own comment had recorded the gap as a known asymmetry, which
+is the collected-and-unread shape this project keeps digging out. The grid is measured
+from the **range's start**, since the meaning already fixed for both spellings is
+"start, start+step, start+2\*step, …": `range(5..<=95), step(10)` accepts 15 and
+refuses 10, and a step with no range anchors at zero. Integers use `srem`/`urem` by
+signedness and floats use `fmod`, and the compile-time and runtime rungs share the
+same origin rule — they must agree, or a value would pass one and fail the other.
+
+**`pattern(...)` refuses rather than admits** (`lyra-E054`). It cannot join the others:
+testing a regex at run time needs an engine in the runtime, and `lyra-E052` records
+why there is none. That left two honest options for a value the compiler cannot read,
+and admitting it is what made `Digits("abc")` build and print `abc` while the type's
+declaration says it cannot hold that. Refusing keeps the guarantee whole; the cost is
+that such a newtype cannot be built from runtime data until an engine exists, which is
+a feature waiting on the engine rather than a rule. A literal still works, checked
+where it is written.
+
+Two details worth keeping. The integer comparisons are **signedness-correct**
+(ULT/UGT for an unsigned base), which matters more here than usual because a
+constraint's whole job is to be exact about a boundary. And **one construction is one
+check**: `Percent(n)` reaches the checker twice — as the constructor's operand, and
+again as the constructor node once the enclosing context propagates the newtype onto
+it — which emitted the range test twice (four traps for one construction) and reported
+E054 twice for one `Digits(s)`. The guard against that initially matched nothing,
+because a newtype constructor is a **`TupleLiteralExpr`**, not a `FunctionCallExpr`:
+`Percent(n)` parses as the same named-tuple node `tuple Rgb(u8, u8, u8)` constructs
+with. "Constructor" reads like "call" everywhere else, which is exactly why it is
+written down at the guard.
+
+Tests: `llvm_constraint_trap_test.go` (exec: range with boundaries and an exclusive
+end, values, step including the offset grid, floats, plus IR pins that a constant
+construction emits no check and a runtime one emits exactly one per bound) and
+`step_constraint_test.go`. ASan clean on macOS and Linux.
+
 **An `f16` literal no longer makes llir print a bug-report demand.** `let a: f16 =
 0.1` logged *"unable to represent floating-point constant 0.1 of type half exactly;
 please submit a bug report to llir/llvm"* on a build that was entirely correct — llir

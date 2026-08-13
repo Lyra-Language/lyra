@@ -53,15 +53,20 @@ type TypeChecker struct {
 	constraintReported map[ast.Expression]bool
 	// readoutReported is the same guard again, for checkImplicitNewtypeReadout.
 	readoutReported map[ast.Expression]bool
+	// constraintChecks holds the newtype-constraint checks the backend must emit at
+	// run time — the sites the compile-time checks could not settle. Published rather
+	// than re-derived, since only this pass knows what it managed to prove.
+	constraintChecks *typetable.ConstraintTable
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
 	return &TypeChecker{
-		symTable:       symTable,
-		scopeTable:     scopeTable,
-		typeTable:      typeTable,
-		methodTable:    typetable.NewMethodTable(),
-		instantiations: typetable.NewInstantiationTable(),
+		symTable:         symTable,
+		scopeTable:       scopeTable,
+		typeTable:        typeTable,
+		methodTable:      typetable.NewMethodTable(),
+		instantiations:   typetable.NewInstantiationTable(),
+		constraintChecks: typetable.NewConstraintTable(),
 		// The entry module's scope, not the global one: top-level declarations live in
 		// their module's scope now, and checkInModule swaps in the right one per
 		// statement — this is only the starting point.
@@ -96,6 +101,12 @@ func (tc *TypeChecker) UFCSModules() map[string]map[string]bool {
 // site's solved type-variable bindings. The backend monomorphizes from it.
 func (tc *TypeChecker) Instantiations() *typetable.InstantiationTable {
 	return tc.instantiations
+}
+
+// ConstraintChecks returns the newtype-constraint checks the backend must emit at
+// run time — the construction sites this pass could not settle statically.
+func (tc *TypeChecker) ConstraintChecks() *typetable.ConstraintTable {
+	return tc.constraintChecks
 }
 
 // enterScope temporarily sets tc.scope to the scope recorded for node,
@@ -880,7 +891,23 @@ func structFieldTypes(t types.Type) map[string]types.Type {
 func (tc *TypeChecker) checkPatternConstraints(value ast.Expression, ct *types.ConstrainedType) {
 	strLit, ok := value.(*ast.StringLiteralExpr)
 	if !ok {
-		return // only checkable at compile time for string literals
+		// **A value the compiler cannot read is refused, not admitted** (lyra-E054,
+		// 08/13). `range`, `values` and `step` gained runtime traps that day, so a
+		// value they cannot settle statically is checked where it lands; `pattern`
+		// cannot join them, because testing a regex at run time needs an engine in the
+		// runtime and there is none (lyra-E052 records why). That leaves two honest
+		// options for a non-literal — refuse it, or let it through unchecked — and
+		// letting it through is what made `Digits("abc")` build and print `abc` while
+		// the type's whole declaration says it cannot. Refusing keeps the guarantee
+		// whole and costs the ability to build one of these from runtime data, which
+		// is a feature waiting on the engine rather than a rule.
+		if pc, isPattern := firstPatternConstraint(ct); isPattern {
+			tc.addErrorCode(value.GetLocation(), SeverityError, diag.CodePatternValueNotProvable,
+				"cannot build %s from a value the compiler cannot read: its pattern constraint %s "+
+					"is checked at compile time and Lyra has no runtime regex engine yet — "+
+					"use a string literal", ct.Name, pc.Pattern)
+		}
+		return
 	}
 	for _, c := range ct.Constraints {
 		pc, ok := c.(*types.PatternConstraint)
@@ -906,6 +933,17 @@ func (tc *TypeChecker) checkPatternConstraints(value ast.Expression, ct *types.C
 				strLit.Value, pc.Pattern, ct.Name)
 		}
 	}
+}
+
+// firstPatternConstraint returns the newtype's first `pattern(...)` constraint, if
+// it declares one.
+func firstPatternConstraint(ct *types.ConstrainedType) (*types.PatternConstraint, bool) {
+	for _, c := range ct.Constraints {
+		if pc, ok := c.(*types.PatternConstraint); ok {
+			return pc, true
+		}
+	}
+	return nil, false
 }
 
 // checkAssignToBinding verifies that value can be assigned to the existing

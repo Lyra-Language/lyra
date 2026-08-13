@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"fmt"
+	"math"
 	"math/big"
 	"strings"
 
@@ -50,6 +51,16 @@ func (tc *TypeChecker) checkNewtypeConstraints(value ast.Expression, declType ty
 	if tc.constraintReported[value] {
 		return
 	}
+	// **A constructor call is not a second construction.** `Percent(n)` reaches here
+	// twice — once as the constructor's own operand (`n`), and again as the call node
+	// when the enclosing context propagates the newtype onto it — and the two are one
+	// value entering one newtype. Checking both emitted the runtime check twice (four
+	// traps for one `Percent(n)`) and reported lyra-E054 twice for one `Digits(s)`.
+	// The operand is the one to keep: it is where the value actually crosses into the
+	// newtype, and it is the node every other position has too.
+	if isNewtypeConstructorCall(value, ct) {
+		return
+	}
 	if tc.constraintReported == nil {
 		tc.constraintReported = map[ast.Expression]bool{}
 	}
@@ -62,17 +73,90 @@ func (tc *TypeChecker) checkNewtypeConstraints(value ast.Expression, declType ty
 		return
 	}
 	for _, c := range ct.Constraints {
-		rc, ok := c.(*types.RangeConstraint)
-		if !ok {
-			continue
-		}
-		switch {
-		case isAnyConcreteInt(base.Name):
-			tc.checkIntRange(ct.Name, value, rc)
-		case isFloatType(base):
-			tc.checkFloatRange(ct.Name, value, rc)
+		switch con := c.(type) {
+		case *types.RangeConstraint:
+			switch {
+			case isAnyConcreteInt(base.Name):
+				tc.checkIntRange(ct.Name, value, con)
+			case isFloatType(base):
+				tc.checkFloatRange(ct.Name, value, con)
+			}
+		case *types.StepConstraint:
+			tc.checkStep(ct, value, con, base)
 		}
 	}
+	tc.scheduleRuntimeConstraintCheck(value, ct, base)
+}
+
+// scheduleRuntimeConstraintCheck records value for a **run-time** constraint check
+// when the checks above could not settle it — the second rung of the language's own
+// ladder, which `where` constraints did not have until 08/13.
+//
+// Everything above is definite-only: it fires for a foldable constant and stays
+// silent otherwise, which is right for a *compile-time* answer and was the whole
+// enforcement story. So a value the compiler could not see through — a parameter, a
+// parsed number, anything computed — entered a constrained newtype unchecked, and
+// `mk(200)` on a `Percent = u8 where range(0..<=100)` ran and printed 200. Those are
+// precisely the values worth checking: a literal is written by the author, while a
+// runtime value came from outside.
+//
+// A **foldable constant is not recorded**, because it was already decided above: a
+// bad one is a compile error and a good one needs nothing. So the check costs a
+// branch exactly where the compiler could not do better, and the optimizer folds
+// away the ones that are provable but not foldable here.
+//
+// `pattern(...)` is deliberately not part of this — matching one needs a regex engine
+// in the runtime, which `lyra-E052` records the absence of, so a non-provable value
+// is *refused* instead (checkPatternConstraints).
+func (tc *TypeChecker) scheduleRuntimeConstraintCheck(value ast.Expression, ct *types.ConstrainedType, base types.PrimitiveType) {
+	if !isAnyConcreteInt(base.Name) && !isFloatType(base) {
+		return // a runtime check exists only for the numeric constraint kinds
+	}
+	if !hasRuntimeCheckableConstraint(ct) {
+		return
+	}
+	if constraintValueIsFoldable(value, base) {
+		return // settled at compile time, in either direction
+	}
+	tc.constraintChecks.Require(value, ct)
+}
+
+// isNewtypeConstructorCall reports whether value is `Name(x)` for this very newtype —
+// the explicit constructor, whose operand carries the constraint check.
+//
+// It is a **TupleLiteralExpr**, not a FunctionCallExpr: `Percent(n)` parses as a
+// named tuple literal, which is the same node `tuple Rgb(u8, u8, u8)` constructs
+// with (see inferNewtypeConstruction, and the parenthesised-operand note in the
+// workspace CLAUDE.md). Testing for a call matched nothing and left the duplicate in
+// place — worth stating here, since "constructor" reads like "call" everywhere else.
+func isNewtypeConstructorCall(value ast.Expression, ct *types.ConstrainedType) bool {
+	tup, ok := value.(*ast.TupleLiteralExpr)
+	return ok && tup.Name == ct.Name && len(tup.Elements) == 1
+}
+
+// hasRuntimeCheckableConstraint reports whether ct declares a constraint the backend
+// can test — `range`, `values` or `step`. A newtype with only `pattern` (or with no
+// constraints at all) schedules nothing.
+func hasRuntimeCheckableConstraint(ct *types.ConstrainedType) bool {
+	for _, c := range ct.Constraints {
+		switch c.(type) {
+		case *types.RangeConstraint, *types.LiteralUnionConstraint, *types.StepConstraint:
+			return true
+		}
+	}
+	return false
+}
+
+// constraintValueIsFoldable reports whether the compile-time checks could evaluate
+// value — the same question they each ask, asked once, so "was this already decided?"
+// cannot drift from "did that check run?".
+func constraintValueIsFoldable(value ast.Expression, base types.PrimitiveType) bool {
+	if isFloatType(base) {
+		_, ok := extractFloatLiteralValue(value)
+		return ok
+	}
+	_, ok := extractIntLiteralValue(value)
+	return ok
 }
 
 // checkLiteralUnionConstraints tests a literal against a `values(...)` constraint
@@ -141,6 +225,85 @@ func literalConstantText(expr ast.Expression) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// checkStep tests a compile-time constant against a `step(...)` constraint, whose
+// meaning `types/step.go` already fixed for both spellings: **the values covered are
+// start, start+step, start+2\*step, …**. So the test is that the value sits on the
+// grid, `(v - start) % step == 0`, with `start` taken from the newtype's own
+// `range(...)` when it declares one and 0 otherwise — the natural origin for "a
+// multiple of step" when no range names a first value.
+//
+// **Nothing read StepConstraint until 08/13.** `step(15)` was collected, validated for
+// well-formedness (zero and fractional-over-integer steps refused) and then enforced
+// against no value at all, so `newtype CompassHeading = i64 where range(0..<360),
+// step(15)` accepted 7. That is the collected-and-unread shape this project keeps
+// digging out, and `types/step.go`'s own comment recorded it as a known asymmetry.
+//
+// Floats use exact arithmetic — `math.Mod` — which is what the constraint literally
+// says. A step the base cannot represent exactly (`step(0.1)` on an f32) will
+// therefore reject values that look like multiples of it; that is the constraint the
+// author wrote rather than a defect here, and `range(0..<=100), step(0.25)` (the
+// documented example) is exact.
+func (tc *TypeChecker) checkStep(ct *types.ConstrainedType, value ast.Expression, sc *types.StepConstraint, base types.PrimitiveType) {
+	switch {
+	case isAnyConcreteInt(base.Name):
+		step, ok := foldConstraintInt(sc.Value)
+		if !ok || step == 0 {
+			return // an unfoldable or degenerate step; the collector reports the latter
+		}
+		v, ok := extractIntLiteralValue(value)
+		if !ok {
+			return
+		}
+		start, _ := constraintGridOrigin(ct)
+		if (v-start)%step != 0 {
+			tc.reportStepViolation(ct.Name, fmt.Sprintf("%d", v), value, sc, start)
+		}
+	case isFloatType(base):
+		step, ok := foldConstraintFloat(sc.Value)
+		if !ok || step == 0 {
+			return
+		}
+		v, ok := extractFloatLiteralValue(value)
+		if !ok {
+			return
+		}
+		_, startF := constraintGridOrigin(ct)
+		if math.Mod(v-startF, step) != 0 {
+			tc.reportStepViolation(ct.Name, fmt.Sprintf("%g", v), value, sc, 0)
+		}
+	}
+}
+
+// constraintGridOrigin is the value a `step(...)` grid is measured from: the start of
+// the newtype's `range(...)` when it declares one with a foldable start, and 0
+// otherwise. Both flavors are returned because the caller knows which base it is on.
+func constraintGridOrigin(ct *types.ConstrainedType) (int64, float64) {
+	for _, c := range ct.Constraints {
+		rc, ok := c.(*types.RangeConstraint)
+		if !ok || rc.Start == nil {
+			continue
+		}
+		if i, ok := foldConstraintInt(rc.Start); ok {
+			f, _ := foldConstraintFloat(rc.Start)
+			return i, f
+		}
+		if f, ok := foldConstraintFloat(rc.Start); ok {
+			return 0, f
+		}
+	}
+	return 0, 0
+}
+
+func (tc *TypeChecker) reportStepViolation(typeName, valueStr string, value ast.Expression, sc *types.StepConstraint, start int64) {
+	from := ""
+	if start != 0 {
+		from = fmt.Sprintf(" from %d", start)
+	}
+	tc.addErrorCode(value.GetLocation(), SeverityError, diag.CodeStepConstraintViolation,
+		"value %s is not a multiple of the step %s%s of %s",
+		valueStr, sc.Value.GetName(), from, typeName)
 }
 
 // hasRangeConstraint reports whether a newtype declares any range(...) constraint.

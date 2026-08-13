@@ -502,6 +502,32 @@ const (
 	CodeUnusedParameter = "lyra-W005"
 	CodeUnusedResult    = "lyra-W006"
 
+	// CodeStepConstraintViolation: a compile-time constant that is not on the grid a
+	// newtype's `step(...)` describes — `start, start+step, start+2*step, …`, with
+	// `start` from its `range(...)` when it declares one and 0 otherwise. So
+	// `newtype CompassHeading = i64 where range(0..<360), step(15)` refuses 7.
+	//
+	// Nothing read StepConstraint until 08/13: the constraint was collected and
+	// validated for well-formedness (types/step.go refuses a zero step, and a
+	// fractional step over an integer domain) and then enforced against no value at
+	// all — the collected-and-unread shape, with its own comment recording it as a
+	// known asymmetry. A runtime value gets the trap that `range` and `values` do.
+	CodeStepConstraintViolation = "lyra-E053"
+
+	// CodePatternValueNotProvable: a value that is not a compile-time string literal
+	// assigned to a newtype carrying a `pattern(...)` constraint.
+	//
+	// The other constraint kinds gained runtime traps on 08/13, closing the gap where
+	// a value the compiler could not see through entered a constrained newtype
+	// unchecked. `pattern` cannot follow, because testing one at run time needs a
+	// regex engine in the runtime and there is none (lyra-E052 records why: the
+	// runtime is hand-written C with no FFI, and the compiler's own regexp runs at
+	// compile time and cannot ship). So the value is **refused** rather than silently
+	// admitted — the choice between failing loudly and passing quietly, made the way
+	// the rest of the language makes it. A literal still works, since that is checked
+	// where it is written.
+	CodePatternValueNotProvable = "lyra-E054"
+
 	// CodeRegexValuesNotImplemented: a regex literal used as a **value**
 	// (`let re = r"[a-z]+"`) or as a **match pattern**
 	// (`match s { r"^[0-9]+$" => … }`). Both type-checked clean and then died in the

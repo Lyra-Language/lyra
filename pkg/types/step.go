@@ -17,10 +17,13 @@ import "math"
 // nothing else, while the constraint step was collected and validated by nothing
 // at all. Both now ask the same question here.
 //
-// Note the asymmetry that remains, deliberately: a step *constraint* is not yet
-// enforced against values at run time (no pass reads StepConstraint), so
-// `step(0.25)` documents and validates but does not yet reject 0.3. That is a
-// separate feature from the two spellings agreeing on what a legal step is.
+// **The asymmetry this comment used to record is gone (08/13):** a step constraint is
+// enforced now, against a compile-time constant (`lyra-E053`) and against a runtime
+// value (a trap), so `step(0.25)` rejects 0.3 rather than merely documenting it. It
+// had been collected and validated here and read by no pass at all, which made the
+// well-formedness rules below the whole of its effect. The grid is measured from the
+// range's start — "start, start+step, …" as stated above — so `range(5..<=95),
+// step(10)` covers 15 and not 10.
 
 // InvalidStepReason returns a human-readable reason a constant range step is not
 // well formed, or "" when it is fine. integerDomain says whether the range's

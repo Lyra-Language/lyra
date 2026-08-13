@@ -41,7 +41,11 @@ type Result struct {
 	// Instantiations are the generic specializations the program uses (each call
 	// site's solved type variables); the backend emits one function per distinct set.
 	Instantiations *typetable.InstantiationTable
-	Ownership      *ownership.Table
+	// ConstraintChecks are the newtype-constraint checks the backend emits at run time:
+	// the construction sites the typechecker could not settle statically (08/13). Only it
+	// knows what it proved, so it publishes them rather than having codegen re-derive it.
+	ConstraintChecks *typetable.ConstraintTable
+	Ownership        *ownership.Table
 	// OwnershipBySpec holds a *separate* ownership table per generic specialization,
 	// keyed by the instantiation's Key(). A generic body's decisions turn on whether
 	// its values are reference-counted, which is a property of the type *argument* —
@@ -197,6 +201,7 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	res.TypeTable = tt
 	res.MethodTable = tc.MethodTable()
 	res.Instantiations = tc.Instantiations()
+	res.ConstraintChecks = tc.ConstraintChecks()
 
 	// Capture analysis: each lambda's free variables, which the backend copies
 	// into a closure environment. It reads the TypeTable for each captured

@@ -45,6 +45,7 @@ const (
 	matchFailedTrapMessage    = "lyra: match not exhaustive\n"
 	shiftOverflowTrapMessage  = "lyra: shift amount out of range\n"
 	rangeStepTrapMessage      = "lyra: range step must be positive\n"
+	constraintTrapMessage     = "lyra: value violates its newtype's constraint\n"
 	// The user message and its newline follow this at run time, so unlike the four
 	// above it carries neither.
 	panicPrefixMessage = "lyra: panic: "
@@ -125,6 +126,25 @@ func (l *lowerer) panicShiftOverflowFunc() *ir.Func {
 // up front, so "never advances" has a defined size there (see rangeSource).
 func (l *lowerer) panicRangeStepFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_range_step", rangeStepTrapMessage)
+}
+
+// panicConstraintFunc is the trap for a value that reaches a constrained newtype
+// without satisfying its `range`/`values`/`step` constraint — the second rung of the
+// ladder those constraints did not have until 08/13.
+//
+// A constraint was a compile-time assertion and nothing else: it caught a literal and
+// silently admitted everything else, so `Percent(n)` with a runtime `n` of 200 built,
+// ran and printed 200 on a `range(0..<=100)`. That is the shape the language rejects
+// everywhere else — provable → compile error, otherwise → trap — and the values a
+// constrained newtype sees at run time (parsed input, computed results) are exactly
+// the ones a range mistake lives in.
+//
+// One trap for all three constraint kinds rather than one each: the message names
+// what happened, and the *location* is the construction, which is what a reader
+// needs. Splitting them would multiply runtime strings to distinguish cases the
+// source already distinguishes.
+func (l *lowerer) panicConstraintFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_constraint", constraintTrapMessage)
 }
 
 // panicMessageFunc lazily emits the trap behind a user-written `panic(msg)`:

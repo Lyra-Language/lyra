@@ -115,15 +115,34 @@ let x: NonEmpty = ""
 	}
 }
 
-func TestTypeCheck_PatternConstraint_NonLiteralNotChecked_Ok(t *testing.T) {
-	// When the assigned value is not a string literal (e.g., a variable), the
-	// pattern constraint cannot be verified statically — no error expected.
+// A value that is not a string literal is **refused** (lyra-E054, 08/13), where it
+// used to be silently admitted — this test asserted exactly that admission.
+//
+// `range`, `values` and `step` gained runtime traps the same day, so a value they
+// cannot settle statically is checked where it lands. `pattern` cannot join them:
+// testing a regex at run time needs an engine in the runtime and there is none
+// (lyra-E052 records why). That leaves two honest options for a non-literal, and
+// letting it through is what made `Digits("abc")` build and print `abc` while the
+// type's declaration says it cannot hold that. Refusing keeps the guarantee whole
+// and costs the ability to build one of these from runtime data — a feature waiting
+// on the engine rather than a rule.
+func TestTypeCheck_PatternConstraint_NonLiteralRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 newtype Digits = string where pattern(r"[0-9]+")
 let s = "123"
 let d: Digits = Digits(s)
 `, false)
-	assertNoErrors(t, res)
+	assertHasErrorContaining(t, res,
+		`cannot build Digits from a value the compiler cannot read: its pattern constraint r"[0-9]+" is checked at compile time`)
+}
+
+// A literal still works, since that is checked where it is written — the refusal is
+// about what the compiler cannot read, not about the constraint being unusable.
+func TestTypeCheck_PatternConstraint_LiteralStillWorks(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Digits = string where pattern(r"[0-9]+")
+let d: Digits = "123"
+`, false))
 }
 
 func TestTypeCheck_PatternConstraint_StringAssignableToBase_Ok(t *testing.T) {
