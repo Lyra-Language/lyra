@@ -73,11 +73,15 @@ what does. The two predicates stay separate for that reason; one covering both w
 gated on the `TypeTable` anyway, even though it never reads one, so the AST-only
 `InferredEffects` keeps its all-or-nothing contract instead of reporting strings alone.
 
-`CheckPurity` is threaded the `TypeTable` for this; the AST-only `InferredEffects` helper has no
-`TypeTable` and so never sets `EffectAlloc`. A `shared` construction in a return/argument
-position (flavor not yet recorded on the construction node), implicit allocation from
-**escaping closures**, and precise arena escape are deferred to a future layout/escape pass —
-see `todo.md`. An **unresolvable external call** (no local lambda, builtin, or type
+`CheckPurity` is threaded the `TypeTable` and the **captures table** for this; the AST-only
+`InferredEffects` helper has neither and so never sets `EffectAlloc`. A **closure
+construction is charged by capture** (08/12): a nested lambda that captures heap-boxes its
+environment per construction and sets `EffectAlloc`, while a capture-free one is the
+backend's shared pinned static and stays free — exact against the shipped lowering, and a
+rule Lambda Set Specialization can only loosen (see the closure-lowering entry in
+`todo.md`). A `shared` construction in a return/argument position (flavor not yet recorded
+on the construction node) and precise arena escape are deferred to a future layout/escape
+pass — see `todo.md`. An **unresolvable external call** (no local lambda, builtin, or type
 conversion) conservatively taints `AllEffects` (`PurityEffects | EffectAlloc`) — everything,
 including Alloc, so `noalloc` flags it too (we can't verify it doesn't allocate).
 `builtinEffects`: print/println→Output, read→Input, write→Input|Output, `await`→Input,

@@ -3,6 +3,7 @@ package checker_test
 import (
 	"testing"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
@@ -27,7 +28,10 @@ func checkPurity(t *testing.T, source string) []checker.PurityError {
 	tt := typetable.New()
 	tc := typechecker.New(symTable, scopeTable, tt)
 	tc.Check(program)
-	return checker.CheckPurity(program, scopeTable, tt, tc.MethodTable())
+	// Captures before purity, as the driver orders them: a closure construction's
+	// allocation charge is keyed on whether it captures.
+	caps := captures.Analyze(program, symTable, tt)
+	return checker.CheckPurity(program, scopeTable, tt, tc.MethodTable(), caps)
 }
 
 func assertPurityCount(t *testing.T, errs []checker.PurityError, want int) {

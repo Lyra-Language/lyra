@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
@@ -65,7 +66,7 @@ func (e PurityError) Error() string {
 //   - bottom-up purity *inference* for methods — today only an explicit
 //     `pure` marker on the method itself is trusted; an unannotated method is
 //     always treated as potentially impure, unlike a free function
-func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable, methodTable *typetable.MethodTable) []PurityError {
+func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable, methodTable *typetable.MethodTable, caps *captures.Table) []PurityError {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
 	frames := newScopeFrames(program, scopeTable)
 	boundGroups := collectTraitMethodGroups(program)
@@ -73,7 +74,10 @@ func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable
 	signatures := collectMethodSignatures(program, traitDecls)
 	// Bound rather than built inline: the inference fills in the allocation *sites* as it
 	// goes, and `lyra-E016` reads them back to point at the offending expression.
-	alloc := buildAllocContext(program, typeTable)
+	// The captures table is here so a *closure construction* can be charged exactly:
+	// a nested lambda that captures allocates its environment box, one that does not
+	// is the shared pinned static (closures.go's emptyEnv) and stays free.
+	alloc := buildAllocContext(program, typeTable, caps)
 	impureLambdas, impureMethods, callbacks, methodCallbacks := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, methodTable, boundGroups, alloc, frames, signatures)
 	c := &purityChecker{
 		methodCallbacks: methodCallbacks,
@@ -190,7 +194,7 @@ func InferredEffects(program *ast.Program, scopeTable *symbols.ScopeTable) map[s
 	// The third result is the per-lambda callback set; this helper reports each
 	// function's *base* effect, which is what a caller asking "what does this function
 	// itself do" wants — the callback contribution is per call site by construction.
-	impure, _, _, _ := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, nil, collectTraitMethodGroups(program), buildAllocContext(program, nil), frames, collectMethodSignatures(program, collectTraitDecls(program)))
+	impure, _, _, _ := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, nil, collectTraitMethodGroups(program), buildAllocContext(program, nil, nil), frames, collectMethodSignatures(program, collectTraitDecls(program)))
 	result := make(map[string]Effect, len(base[0].functions))
 	for name, lam := range base[0].functions {
 		result[name] = impure[lam]
@@ -568,6 +572,8 @@ func describeAllocation(ex ast.Expression) string {
 		return "a `${…}` interpolation builds a new string"
 	case *ast.StructInstanceExpr, *ast.TupleLiteralExpr, *ast.DataConstructorExpr:
 		return "a `shared`-typed value is constructed"
+	case *ast.LambdaExpr:
+		return "a closure captures its environment into a heap box"
 	}
 	return "a value is heap-allocated"
 }
@@ -1065,7 +1071,7 @@ func (c *purityChecker) checkBoundedEffects(isDet, isNoAlloc bool, effects Effec
 				describeAllocation(allocSite), allocSite.GetLocation().Pretty())
 		} else {
 			c.reportCode(diag.CodeEffectBoundViolation, loc,
-				"`noalloc` function heap-allocates by calling something that allocates; a `noalloc` function must not allocate. Allocating forms are a `shared`-typed construction, a dynamic array (`[]T`, including a comprehension), and a newly built string (`++`, interpolation, or `slice`)")
+				"`noalloc` function heap-allocates by calling something that allocates; a `noalloc` function must not allocate. Allocating forms are a `shared`-typed construction, a dynamic array (`[]T`, including a comprehension), a newly built string (`++`, interpolation, or `slice`), and a closure that captures")
 		}
 	}
 }
@@ -1404,6 +1410,14 @@ type allocContext struct {
 	// points that run without a typechecker pass (InferredEffects) — alloc
 	// detection is then disabled, matching that entry point's limited contract.
 	typeTable *typetable.TypeTable
+	// captures answers whether a nested lambda captures anything, which is exactly
+	// whether constructing it allocates: a capturing closure heap-boxes its
+	// environment per construction (closures.go's buildEnv), a capture-free one is
+	// the shared pinned static (emptyEnv) and costs nothing — under the dev lowering
+	// *and* under Lambda Set Specialization, so the exemption is not a bet on the
+	// release tier. nil for entry points without a captures pass (InferredEffects) —
+	// closure charging is then disabled, like the rest of alloc detection there.
+	captures *captures.Table
 	// discharged holds construction exprs lexically inside a `with`-arena
 	// block, whose allocation goes into the arena rather than escaping.
 	discharged map[ast.Expression]bool
@@ -1507,6 +1521,27 @@ func (a *allocContext) allocatesByForm(expr ast.Expression) bool {
 	return false
 }
 
+// closureAllocates reports whether constructing the nested lambda e heap-allocates:
+// true exactly when it captures, since a capturing closure's environment is a fresh
+// ref-counted box per construction while a capture-free one shares a pinned static.
+//
+// This closed the audit finding that `noalloc` silently did not bind for closures
+// (08/12): a `noalloc` function containing a capturing lambda checked clean while
+// its emitted body called `lyra_rc_alloc` on every invocation — the `slice` hole's
+// shape again, a bound that silently stops binding. The old position ("`noalloc` is
+// defined against the *release* lowering") deferred the charge until Lambda Set
+// Specialization; but LSS is not built, and the capture split makes the deferral
+// unnecessary anyway — a capture-free closure is free under both tiers, and a
+// capturing one that *escapes* allocates under both too. If LSS later makes a
+// non-escaping capturing closure free, relaxing this is a compatible loosening;
+// today's charge is what the shipped compiler actually does.
+func (a *allocContext) closureAllocates(e *ast.LambdaExpr, expr ast.Expression) bool {
+	if a == nil || a.captures == nil || a.discharged[expr] {
+		return false
+	}
+	return len(a.captures.Of(e)) > 0
+}
+
 // heapRepresented reports whether a value of t lives in a heap box.
 //
 // Two ways to be one, and they are genuinely different questions. A `shared` **flavor** is
@@ -1531,9 +1566,10 @@ func heapRepresented(t types.Type) bool {
 // buildAllocContext records the TypeTable (for reading each construction's
 // resolved flavor) and marks construction expressions enclosed in a `with`-arena
 // block as discharged. typeTable may be nil (see allocContext.typeTable).
-func buildAllocContext(program *ast.Program, typeTable *typetable.TypeTable) *allocContext {
+func buildAllocContext(program *ast.Program, typeTable *typetable.TypeTable, caps *captures.Table) *allocContext {
 	a := &allocContext{
 		typeTable:   typeTable,
+		captures:    caps,
 		discharged:  map[ast.Expression]bool{},
 		lambdaSites: map[*ast.LambdaExpr]ast.Expression{},
 		methodSites: map[*ast.TraitMethodImpl]ast.Expression{},
@@ -2028,7 +2064,17 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 		}
 		switch ex := e.(type) {
 		case *ast.LambdaExpr:
-			return false // nested lambda: separate boundary
+			// A nested lambda is a separate boundary — its body's effects are its
+			// own, charged where it is called — but its *construction* happens here,
+			// and a capturing one heap-boxes its environment (closureAllocates has
+			// the reasoning; a capture-free one is a shared pinned static and stays
+			// free). This was the audit's `noalloc` hole: with no charge here, a
+			// `noalloc` function building a capturing closure checked clean while
+			// calling `lyra_rc_alloc` on every invocation.
+			if alloc.closureAllocates(ex, ex) {
+				noteAlloc(ex)
+			}
+			return false
 		case *ast.IdentifierExpr:
 			// Reading captured mutable state is non-deterministic. (An assignment
 			// target also visits its root as an IdentifierExpr, but those nodes are
@@ -2207,7 +2253,14 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 		}
 		switch ex := e.(type) {
 		case *ast.LambdaExpr:
-			return false // nested lambda: separate boundary
+			// A separate boundary, but a capturing construction heap-boxes its
+			// environment here — the same charge as lambdaEffects's copy of this
+			// arm, for the reason the builtin-method case below spells out about
+			// the two ladders staying in step.
+			if alloc.closureAllocates(ex, ex) {
+				noteAlloc(ex)
+			}
+			return false
 		case *ast.IdentifierExpr:
 			if !locals[ex.Name] && capturedMutable(bodyCapture, ex.Name) {
 				found |= EffectMut

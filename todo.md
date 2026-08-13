@@ -527,7 +527,12 @@ lowers; `CLAUDE.md`'s `pkg/backend/llvm` section is the current inventory. Settl
 - **[PARTIAL] Closure lowering is tiered** — dev = uniform boxed closures (landed), release
   = **Lambda Set Specialization** (PLDI 2023). LSS is still to build, gated on the generics
   monomorphizer as decided: one specializer, two parameter axes. The tiers are semantically
-  identical, so `noalloc` is defined against the *release* lowering. Hot-reload note:
+  identical. `noalloc` charges what ships (08/12): a **capturing** closure construction
+  allocates its environment box and is refused, a capture-free one is a pinned static and
+  is free — true under both tiers, so LSS's arrival can only *loosen* the rule (a
+  non-escaping capturing closure could become free), never tighten it. The old doctrine —
+  "`noalloc` is defined against the *release* lowering" — deferred the charge to a
+  compiler that did not exist, and is retired. Hot-reload note:
   body-only edits keep lambda sets stable; adding/removing a lambda or changing captures
   means a full rebuild even in dev.
 - **[DONE 08/07] `where` bounds are enforced at the instantiation** (`lyra-E036`), and a
@@ -842,21 +847,22 @@ allocates nothing — so the walk asks it of the construction cases only. See CO
   rather than listing every allocating form. An allocation arriving through a **callee**
   keeps the form-listing wording — the call is in this body and the allocation is not, so
   pointing at the call would name a line that does not allocate. See COMPLETED.md.
-- **[OPEN] Closures — and today the bound silently does not bind for them at all.**
-  Verified 08/12: a `noalloc` function containing a capturing lambda checks clean while its
-  emitted body calls `lyra_rc_alloc` for the environment on **every invocation**. That is
-  the `slice` hole of 08/06 again — "a bound that silently stops binding, which is worse
-  than no bound" — and the defense on file does not survive being said plainly: `noalloc`
-  is defined against the *release* lowering (Lambda Set Specialization), and LSS is not
-  built, so the bound is specified against a compiler that does not exist while the one
-  that does violates it on every closure. Two honest states exist and this is neither:
-  charge closures as allocating (over-refusal is the direction every other conservative
-  default in the effect system errs, and it stays sound if LSS later makes some free — a
-  bound that loosens is a compatible change, one that tightens is not), or refuse a closure
-  under `noalloc` with a message naming LSS. The open design question — what `noalloc`
-  should ultimately say for a closure LSS *would* unbox — is real and stays open; it is not
-  a reason for the interim to be silent acceptance. Escaping closures allocate under
-  **both** tiers, so charging at least those is not even ahead of the design.
+- **[DONE 08/12] Closures are charged, by capture.** The audit's last finding: a
+  `noalloc` function containing a capturing lambda checked clean while its emitted body
+  called `lyra_rc_alloc` for the environment on **every invocation** — the `slice` hole
+  of 08/06 again, a bound that silently stopped binding, defended by defining `noalloc`
+  against a release lowering (LSS) that is not built. The charge is now exact rather
+  than conservative: a nested lambda that **captures** heap-boxes its environment per
+  construction and is refused (`lyra-E016` names it — "a closure captures its
+  environment into a heap box"), while a capture-free one is the shared pinned static
+  (`emptyEnv`, the string-literal device) and stays free — under the dev lowering *and*
+  under LSS, so the exemption is not a bet on the release tier. Receiving and calling a
+  callback parameter stays free (the prelude's combinators live on that shape), a
+  top-level function passed by name is capture-free, and the charge travels through
+  inference, so an unannotated closure-maker refuses its `noalloc` callers. The captures
+  pass moved ahead of purity in the driver to answer the capture question; the residual
+  LSS decision is only ever a **loosening** (a non-escaping capturing closure could
+  become free), which is the compatible direction. See COMPLETED.md.
 
 ## Lazy sequences — `gen` and `Seq<t>`
 

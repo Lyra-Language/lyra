@@ -193,8 +193,17 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	res.MethodTable = tc.MethodTable()
 	res.Instantiations = tc.Instantiations()
 
-	// Purity must run after typechecking — it consumes the resolved MethodTable.
-	for _, e := range checker.CheckPurity(program, scopeTable, tt, tc.MethodTable()) {
+	// Capture analysis: each lambda's free variables, which the backend copies
+	// into a closure environment. It reads the TypeTable for each captured
+	// binding's type, so it runs after typechecking — and *before* purity as of
+	// 08/12, because whether constructing a nested lambda allocates is exactly
+	// whether it captures (a capturing closure heap-boxes its environment; a
+	// capture-free one shares a pinned static), and `noalloc` has to charge that.
+	res.Captures = captures.Analyze(program, symTable, tt)
+
+	// Purity must run after typechecking — it consumes the resolved MethodTable —
+	// and after captures, which is how it knows a closure construction's cost.
+	for _, e := range checker.CheckPurity(program, scopeTable, tt, tc.MethodTable(), res.Captures) {
 		res.err(e.Location, e.Code, e.Message)
 	}
 
@@ -249,13 +258,9 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 		res.OwnershipByMethod[r.SpecKey()] = ownership.AnalyzeLambda(lam, symTable, tt, r.Bindings, res.MethodTable)
 	}
 
-	// Capture analysis: each lambda's free variables, which the backend copies
-	// into a closure environment. It reads the TypeTable for each captured
-	// binding's type, so it too runs after typechecking.
-	res.Captures = captures.Analyze(program, symTable, tt)
-
 	// Writing to a captured binding cannot reach the enclosing one (captures are
-	// by value), so it is rejected rather than silently dropped.
+	// by value), so it is rejected rather than silently dropped. (The captures
+	// table itself is built earlier, before purity — see above.)
 	res.Diagnostics = append(res.Diagnostics, checker.CheckCapturedAssignment(program, res.Captures)...)
 
 	// Post-typecheck checker passes that already return diag.Diagnostic (they

@@ -10,6 +10,42 @@ Newest first.
 ## Dated log
 
 ### 08/12/26
+**`noalloc` charges closures — by capture** (`lyra-E016`), closing the last finding of
+the morning's audit. A `noalloc` function containing a capturing lambda had checked
+clean while its emitted body called `lyra_rc_alloc` for the environment on every
+invocation: the `slice` hole of 08/06 in a new coat — a bound that silently stopped
+binding — defended by a doctrine ("`noalloc` is defined against the *release*
+lowering") that deferred the charge to a Lambda Set Specialization lowering that is
+not built.
+
+**The charge is exact, not conservative, because the backend already draws the line.**
+A nested lambda that captures heap-boxes its environment per construction
+(`buildEnv` → `rcAllocPayload`); a capture-free one is the shared **pinned static**
+(`emptyEnv` — "a plain function used as a value costs no allocation", the
+string-literal device). So the rule is: charge exactly the capturing constructions.
+That split also retires the LSS deferral on its own terms — a capture-free closure is
+free under *both* tiers, an escaping capturing one allocates under both, and the one
+case LSS would change (a non-escaping capturing closure) can only make the rule
+**looser**, which is the compatible direction. What ships is charged for what it does.
+
+Mechanically: the captures pass moved ahead of purity in the driver (it needs only the
+TypeTable, so the reorder cost nothing), `CheckPurity` takes the captures table, and
+the charge lives in the existing nested-lambda boundary arm of both effect walks —
+which already `return false` there, confirming the model this rides on: a nested
+lambda's *body* is a separate boundary charged at its call sites, and the construction
+is the only thing that happens *here*. The `lyra-E016` site report names it ("a
+closure captures its environment into a heap box at 2:13"), and the callee-path form
+list gained "a closure that captures".
+
+What stays free is as load-bearing as what is charged, and each is pinned: a callback
+*parameter* received and called (the prelude's combinators are `pure noalloc` on
+exactly that shape — the whole suite compiling the prelude is the regression test), a
+top-level function passed by name (capture-free by construction), and a capture-free
+nested helper. The charge travels through inference, so an unannotated closure-maker
+refuses its `noalloc` callers at the call; the trait-method copy of the walk charges
+identically (hazard 8's standing pair, pinned separately).
+
+### 08/12/26
 **A generic newtype constructs by call.** `Boxed(5)` is `Boxed<i64>`, and the whole
 change is one arm learning to use machinery that already existed: the parameters are
 solved from the operand by `solveDataTypeVars` — the named-tuple/data-constructor
