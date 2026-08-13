@@ -10,6 +10,56 @@ Newest first.
 ## Dated log
 
 ### 08/13/26
+**A generic `[]t` parameter solves `t` from an array-literal argument — and the
+narrowness of the fix is the interesting part.** `first_of([1, 2, 3])` against
+`(xs: []t)` reported *"cannot infer type variable t from these arguments"*, while the
+same call with a `[]i64` binding worked and a `[3]t` parameter took the same literal
+happily. So the diagnostic named the wrong problem: `t` is plainly `i64`, and the
+literal was the only obstacle.
+
+The cause is a genuine chicken-and-egg rather than a missing case. An array literal is
+the one expression whose *representation* its context chooses — `[1, 2, 3]` is a fixed
+`[3]T` or a heap-allocated `[]T` "told apart by what the literal is used as" — and the
+mechanism for that is propagating the target type onto the literal. At a generic call
+the target is `[]t` and `t` is what is being solved, so propagation has nothing
+concrete to push. The literal therefore inferred `[3]i64`, and `unifyGenericTarget`'s
+`DynamicArrayType` arm accepts only a `DynamicArrayType`. `arrayLiteralAsDeclared`
+reads the *shape* off the declaration instead (a `[]…` parameter means "this literal
+will be built as a box", whatever `t` turns out to be), which is all unification needs;
+the ordinary propagation then runs against the substituted `[]i64` and records the
+literal as dynamic.
+
+**The fix deliberately adapts only a literal, and probing is what established that it
+must.** The obvious generalization — let any `[N]X` unify with `[]t` — would have
+imported a live memory fault, because the non-generic path already does exactly that
+and the resulting program **segfaults**:
+
+```
+let take = (xs: []i64) -> i64 => xs[0]
+let ys: [3]i64 = [1, 2, 3]
+take(ys)      // checks clean; segfaults
+```
+
+`[N]T` is stack storage, `[]T` is a ref-counted box, and the callee indexes through a
+pointer that is really the array's first element. The cause is this audit's recurring
+shape one more time: `isAssignable`'s rule says in its own comment "a static array
+**literal** is assignable to a dynamic array" and then tests only the *type*, so every
+`[N]T` value passes. For a literal the rule is not even load-bearing — the literal is
+*built* as a box when its context says so — so the rule's whole observable effect is
+the case it was never meant to allow. That is recorded in `todo.md` rather than fixed
+here: the diagnosis is not in doubt, but the rule is consulted from everywhere and
+deserves its own verification pass. A test pins the generic path's refusal of the
+binding, so fixing the open bug will be a deliberate act rather than something a silent
+test invites.
+
+Verified by *running* the compiled programs — solving the variable is only half the
+claim, the other half being that the literal is built as a box the callee can index —
+including string elements under ASan, where a stack array reinterpreted as a box would
+show up as a refcount fault rather than a wrong number. Only the outermost level is
+adapted; a nested `[][]t` taking `[[1, 2]]` stays unsolved rather than guessed at,
+since the inner elements need not be literals and the same memory question applies one
+level down. Tests: `llvm_generic_array_arg_test.go`, `generic_array_arg_test.go`.
+
 **A printed float reads back as the same value — and making it so immediately exposed
 a shipped correctness bug the old printer had been hiding.** Two fixes, and the
 relationship between them is the entry's point.

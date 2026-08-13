@@ -227,6 +227,34 @@ write today:
 
 ## Known bugs
 
+- **[OPEN — memory unsafety] A fixed-array *binding* is accepted by a `[]T`
+  parameter and the program segfaults.**
+
+  ```
+  let take = (xs: []i64) -> i64 => xs[0]
+  let ys: [3]i64 = [1, 2, 3]
+  take(ys)      // checks clean; segfaults at run time
+  ```
+
+  `[N]T` is stack storage and `[]T` is a ref-counted box, so the callee indexes
+  through a pointer that is really the array's first element. Found 08/13 while
+  fixing generic inference on array-literal arguments; it is the *non-generic* path
+  and predates that work.
+
+  **The cause is the shape this audit keeps turning up**: `isAssignable`'s rule says
+  in its own comment "a static array **literal** is assignable to a dynamic array"
+  and then tests only the *type*, so every `[N]T` value passes, binding or not. For a
+  literal the rule is not even needed — the literal is *built* as a box when its
+  context says `[]T`, which is why `take([1, 2, 3])` works — so the rule's whole
+  observable effect is the case it was never meant to allow.
+
+  The fix is to delete the type-level static→dynamic rule and confirm the literal
+  path still works through propagation (it should: the literal's recorded type
+  becomes `[]T` before assignability is consulted). It is left open because that rule
+  is consulted from everywhere and the change wants its own verification pass, not
+  because the diagnosis is uncertain. The generic path deliberately does **not**
+  accept the binding — see `arrayLiteralAsDeclared` — so this is not spreading.
+
 - **[OPEN] A float literal is not narrowed to the operand's width in a comparison**,
   and the result does not build. `let x: f32 = 0.1` then `x == 0.1` emits
   `fcmp oeq float %1, 0x3FB999999999999A` — a **double** constant in a `float`
@@ -288,6 +316,29 @@ write today:
   constraint kinds may not get the same answer. Until it is decided, the honest fix is
   narrower: say in the docs that constraints are compile-time-only, since the current
   wording promises more than the compiler delivers.
+
+- **[DONE 08/13] A generic `[]t` parameter solves `t` from an array literal.**
+  `first_of([1, 2, 3])` against `(xs: []t)` reported *"cannot infer type variable t
+  from these arguments"* while the identical call with a `[]i64` binding worked, and
+  so did a `[3]t` parameter — so the literal was the only thing between a legal call
+  and a diagnostic naming the wrong problem.
+
+  An array literal is the one expression whose *representation* is chosen by its
+  context (`[1, 2, 3]` is a fixed `[3]T` or a heap `[]T` "told apart by what the
+  literal is used as"), and the mechanism for that — propagating the target type onto
+  the literal — cannot run at a generic call, because the target is `[]t` and `t` is
+  precisely what is being solved. `arrayLiteralAsDeclared` reads the shape off the
+  *declaration* instead, which is all unification needs; the ordinary propagation then
+  runs against the substituted `[]i64` and records the literal as dynamic, so the
+  callee gets a real box. Verified by running the compiled programs (including string
+  elements under ASan), not only by checking them.
+
+  **Only a literal is adapted, and that is the safety rule rather than a shortcut** —
+  see the segfault entry above. A `[N]T` *binding* is stack storage, so accepting one
+  where a box is expected is a misinterpretation of memory; the generic path refuses
+  it, and a test pins that refusal so the open bug is not silently imported here.
+  Only the outermost level is adapted: a nested `[][]t` from `[[1, 2]]` stays
+  unsolved rather than guessed at. See COMPLETED.md.
 
 - **[DONE 08/13] A printed float reads back as the same value**, and a narrow float
   constant is rounded rather than truncated — two bugs, the second hidden by the

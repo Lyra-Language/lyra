@@ -390,6 +390,24 @@ appearing only in the *return* type is reported at the call rather than discover
 lowering. Arity is checked first, since a missing argument is exactly a variable with nothing to
 bind it.
 
+An **array literal** argument gets its shape from the declaration
+(`arrayLiteralAsDeclared`, 08/13), because it is the one expression whose
+*representation* its context chooses — `[1, 2, 3]` is a fixed `[3]T` or a heap `[]T` by
+what it is used as — and the usual way to make that choice, propagating the target onto
+the literal, has nothing concrete to push when the target is `[]t` and `t` is what is
+being solved. So the literal inferred `[3]i64`, the unifier's `DynamicArrayType` arm
+accepted only a `DynamicArrayType`, and `first_of([1, 2, 3])` reported "cannot infer
+type variable t" although the same call with a `[]i64` binding worked. Reading the shape
+off the declaration is enough to unify; propagation then runs against the substituted
+`[]i64` and records the literal as dynamic.
+
+**Only a literal is adapted, and that is a memory rule.** A `[N]T` *binding* is stack
+storage where `[]T` is a ref-counted box, so accepting one for the other is a
+misinterpretation of memory — which the non-generic path does today, via `isAssignable`'s
+static→dynamic rule whose comment says "literal" while its code tests only the type, and
+the program segfaults (open, `todo.md`). Generic calls refuse the binding, and a test
+pins that refusal.
+
 **Monomorphization** (`backend/llvm/monomorphize.go`): one emitted function per distinct
 instantiation (`identity$i64`, `identity$boolean`), keyed by the instantiation's stable `Key()`
 so two call sites solving to the same bindings share one function; the bare generic name is

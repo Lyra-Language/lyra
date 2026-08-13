@@ -111,7 +111,7 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 		if argType == nil {
 			return nil, false
 		}
-		if !unifyGenericTarget(declared, promoteToDefault(argType), vars, subst) {
+		if !unifyGenericTarget(declared, arrayLiteralAsDeclared(arg, declared, promoteToDefault(argType)), vars, subst) {
 			return nil, false
 		}
 	}
@@ -138,6 +138,52 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 		}
 	}
 	return subst, true
+}
+
+// arrayLiteralAsDeclared reads an **array literal** argument's type the way the
+// parameter it is being passed to will build it: as `[]T` when the parameter is a
+// dynamic array, rather than the `[N]T` the literal infers on its own.
+//
+// This is the one place a Lyra expression's *representation* is chosen by its
+// context — `[1, 2, 3]` is a fixed `[3]T` or a heap-allocated `[]T` "told apart by
+// what the literal is used as" — and everywhere else the choice is made by
+// propagating the target type onto the literal. That cannot happen here: the target
+// is `[]t` and `t` is precisely what is being solved. So the shape is read off the
+// declaration instead, which is enough to unify, and the ordinary propagation then
+// runs against the substituted `[]i64` and records the literal as dynamic.
+//
+// Without it, `first_of([1, 2, 3])` against `(xs: []t)` reported *"cannot infer type
+// variable t from these arguments"* while the identical call with a `[]i64` binding
+// worked, and so did a `[3]t` parameter (08/13). The literal was the only thing
+// standing between a legal call and a diagnostic that named the wrong problem.
+//
+// **Only a literal is adapted, and that is a safety rule rather than a scoping
+// convenience.** A fixed-array *variable* is stack storage while `[]T` is a
+// ref-counted box, so passing one where the other is expected is a
+// misinterpretation of memory, not a widening — and the non-generic path does
+// exactly that today: `take(ys)` with `ys: [3]i64` against `(xs: []i64)` checks
+// clean and **segfaults** (see todo.md; the assignability rule's own comment says
+// "literal" while its code tests only the type). Adapting every static array here
+// would import that fault into generic calls; adapting only the literal leaves the
+// generic path refusing what it cannot yet do safely.
+//
+// Only the outermost level is adapted. A nested `[][]t` taking `[[1, 2]]` is left
+// unsolved rather than guessed at, since the inner elements are not necessarily
+// literals and the same memory question applies one level down.
+func arrayLiteralAsDeclared(arg ast.Expression, declared, argType types.Type) types.Type {
+	switch arg.(type) {
+	case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr:
+	default:
+		return argType
+	}
+	if _, wantsDynamic := declared.(types.DynamicArrayType); !wantsDynamic {
+		return argType
+	}
+	static, ok := argType.(types.StaticArrayType)
+	if !ok {
+		return argType
+	}
+	return types.DynamicArrayType{ElementType: static.ElementType}
 }
 
 // solveDataTypeVars solves a generic `data` type's parameters from the arguments
