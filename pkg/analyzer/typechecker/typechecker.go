@@ -1066,15 +1066,50 @@ func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {
 	tc.propagateLiteralType(stmt.Value, effective)
 }
 
-// checkDerefAssignment handles the grammar's representation of const reassignment.
-// When the parser sees `X = val` where X is a const identifier, it emits a
-// DerefAssignmentStmt with a DerefExpr wrapping the const IdentifierExpr.
+// checkDerefAssignment handles the two statements that share this node. The
+// grammar reuses it for **const reassignment**: `X = val` where X is a const
+// identifier parses as a DerefAssignmentStmt wrapping the const IdentifierExpr,
+// and that is the mistake to report. Anything else is a genuine pointer write
+// (`p^ = v`), which is lyra-E051 — raw pointers are not implemented.
+//
+// The const case keeps precedence, so `X = val` reads as the assignment error it
+// is rather than as a pointer operation the author never wrote. The pointer case
+// has to be reported *here*: `WalkStmt` descends into the target's operand rather
+// than the DerefExpr itself, so a pointer write is the one raw-pointer form that
+// never reaches inferExprType's DerefExpr arm — before 08/13 it drew only E011's
+// "requires an `unsafe` block", and with that advice withdrawn it would otherwise
+// have gone silent until the backend.
 func (tc *TypeChecker) checkDerefAssignment(stmt *ast.DerefAssignmentStmt) {
-	ident, ok := stmt.Target.Operand.(*ast.IdentifierExpr)
-	if !ok || !ident.IsConst {
+	if ident, ok := stmt.Target.Operand.(*ast.IdentifierExpr); ok && ident.IsConst {
+		tc.addImmutableBindingError(stmt.Target.Operand.GetLocation(), ident.Name, ast.BindingConst)
 		return
 	}
-	tc.addImmutableBindingError(stmt.Target.Operand.GetLocation(), ident.Name, ast.BindingConst)
+	tc.reportRawPointersUnimplemented(stmt, "writing through a raw pointer", nil)
+}
+
+// reportRawPointersUnimplemented refuses a raw-pointer or `unsafe` construct
+// (lyra-E051) and returns nil, the "no type" every unresolvable expression
+// returns. what names the construct, so one message serves all four forms.
+//
+// The whole surface exists except the two ends: `^T` is a real type
+// (types.RawPointerType unifies, substitutes, heads, and a newtype may wrap one),
+// the grammar and collector build the nodes, and E011's unsafe-context policy is
+// written and tested — but nothing infers these expressions and nothing lowers
+// them. Until 08/13 that showed up as the typechecker's default arm,
+// `unknown expression type "address_of_expr"`, which reads like an internal error
+// rather than an unbuilt feature; and E011 fired alongside it recommending an
+// `unsafe` block, which was *itself* an unknown expression. The compiler's advice
+// could not be followed, which is what made this worse than an inert surface.
+//
+// body, when non-nil, is still checked (an `unsafe` block's statements), so the
+// refusal does not hide every ordinary mistake inside the block behind one error.
+func (tc *TypeChecker) reportRawPointersUnimplemented(node ast.AstNode, what string, body *ast.BlockExpr) types.Type {
+	tc.addErrorCode(node.GetLocation(), SeverityError, diag.CodeRawPointersNotImplemented,
+		"%s is not implemented: Lyra has no raw-pointer operations yet", what)
+	if body != nil {
+		tc.inferExprType(body)
+	}
+	return nil
 }
 
 // checkLValueAssignment type-checks an interior-mutation statement
@@ -1799,6 +1834,12 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		return tc.checkIfExpr(e, true)
 	case *ast.MatchExpr:
 		return tc.checkMatchExpr(e)
+	case *ast.UnsafeBlockExpr:
+		return tc.reportRawPointersUnimplemented(e, "an `unsafe` block", &e.Body)
+	case *ast.AddressOfExpr:
+		return tc.reportRawPointersUnimplemented(e, "taking a raw pointer with `&`", nil)
+	case *ast.DerefExpr:
+		return tc.reportRawPointersUnimplemented(e, "dereferencing a raw pointer with `^`", nil)
 	case *ast.MathBinaryOpExpr:
 		return tc.inferMathBinaryExpr(e)
 	case *ast.MathAssignOpExpr:

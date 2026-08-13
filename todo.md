@@ -227,6 +227,35 @@ write today:
 
 ## Known bugs
 
+- **[DONE 08/13] The raw-pointer / `unsafe` phantom is closed** (`lyra-E051`), and its
+  distinguishing feature was that **the compiler's own advice could not be followed**.
+  `&x` drew `lyra-E011` — "taking a raw pointer with `&` requires an `unsafe` block or
+  function" — and `unsafe { … }` was itself `unknown expression type "unsafe_block"`,
+  so doing exactly as instructed produced a different error. `&x` also double-reported
+  (E011 *and* E001 at one location), and a pointer *write* got only the misleading
+  advice, since `WalkStmt` descends into a deref-assignment's operand rather than the
+  `DerefExpr`, so it never reached the typechecker's default arm at all.
+
+  This surface is much further along than the arena one: `^T` is a real type
+  (`types.RawPointerType` unifies, substitutes and heads; a newtype may wrap one; it
+  is a legal array element), the grammar and collector build every node, and E011's
+  policy checker — a raw-pointer op or a call to an `unsafe` function needs an
+  enclosing `unsafe` block or function, and unsafe-ness does **not** leak across a
+  lambda boundary — is correct and has ten passing tests. Only the two ends are
+  missing: nothing infers these expressions and nothing lowers them.
+
+  So all four forms (`&x`, `p^`, `p^ = v`, `unsafe { … }`) are refused at the
+  expression, in the register of "not implemented" rather than an internal-sounding
+  "unknown expression type", and **E011 is no longer reported** (`driver.go` keeps the
+  call site as a comment): its policy is right for the day pointers work, and until
+  then it can only send a reader somewhere that does not exist. The checker and its
+  tests stay, exercised directly rather than through the driver. A `^T` *annotation*
+  still resolves — only the operations are gone — which is why the diagnostic names
+  them rather than the type. **No soundness hole here**, unlike the arena discharge:
+  all four standalone passes that special-case `UnsafeBlockExpr` descend into the
+  body rather than skipping it. One test inverted: `ptr^ = 42` asserted *no errors*,
+  which was the phantom in miniature. See COMPLETED.md.
+
 - **[DONE 08/13] The `with`-arena phantom is closed** (`lyra-E050`). Arenas were
   designed early — grammar, collector, a reserved runtime shim (`lyra_arena_alloc`),
   the `PinnedRC` box sentinel — and never implemented. Three findings in one, and the

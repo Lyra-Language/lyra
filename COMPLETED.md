@@ -10,6 +10,53 @@ Newest first.
 ## Dated log
 
 ### 08/13/26
+**The raw-pointer / `unsafe` phantom is closed (`lyra-E051`), and what set it apart
+is that the compiler's own advice was impossible to follow.** `&x` reported
+`lyra-E011` — "taking a raw pointer with `&` requires an `unsafe` block or function" —
+and `unsafe { … }` was itself `unknown expression type "unsafe_block"`. Doing exactly
+what the diagnostic said produced a different error. Two smaller faults sat beside it:
+`&x` double-reported (E011 *and* E001 at the same location), and a pointer **write**
+drew only the misleading advice, because `WalkStmt` descends into a deref
+assignment's *operand* rather than the `DerefExpr` node — so `p^ = v` was the one raw
+pointer form that never reached the typechecker's default arm, and type-checked clean.
+
+**This surface is far more built than the arena one, which is what made "refuse it"
+the harder call.** `^T` is a real type — `types.RawPointerType` unifies, substitutes
+and heads, a newtype may wrap one, it is a legal array element — the grammar and
+collector build every node, and E011's policy checker is genuinely good: a
+raw-pointer op or a call to an `unsafe` function needs an enclosing `unsafe` block or
+function, and unsafe-ness does **not** leak across a lambda boundary (a safe closure
+inside an `unsafe` block is its own safe context), with ten tests. What is missing is
+only the two ends: nothing infers these expressions, nothing lowers them.
+
+Refusing still wins, for the same reason it did for arenas: implementing raw pointers
+is a project, not a fix — `&x` needs its operand forced into memory (Lyra values are
+largely SSA), and a `&` to a managed value drives straight through the reference
+counting the ownership pass owns. Getting that wrong is memory unsafety in a language
+whose thesis is the opposite. So all four forms are refused at the expression, in the
+register of "not implemented" rather than one that reads like an internal error.
+
+**E011 is no longer reported**, and that is the deliberate part. `driver.go` keeps the
+call site as a comment explaining why; the checker and its tests stay and are
+exercised directly. Its policy is exactly right for the day pointers work — it is not
+wrong, it is *premature*, and a correct policy that directs the reader to an unbuilt
+construct is worse than none. Wiring it back is one line the day E051 comes out.
+
+Two details worth keeping. A `^T` **annotation still resolves** (`(p: ^i64) -> i64` is
+not itself an error), which is why the diagnostic names the operations rather than the
+type — the type system's half was never the phantom. And `DerefAssignmentStmt` is
+**overloaded**: the grammar reuses it for const reassignment (`X = val` where X is a
+const identifier parses as a deref-assignment wrapping the const), so the const case
+keeps precedence and only a genuine pointer write reports E051 — otherwise a plain
+assignment to a constant would report as a pointer operation the author never wrote.
+
+Unlike the arena discharge, **there was no soundness hole**: all four standalone
+passes that special-case `UnsafeBlockExpr` (shadowing, unused variables, unreachable
+code, use-before-declaration) recurse into the body rather than skipping it. This
+phantom was inert and misleading, not unsound. Tests: `raw_pointer_test.go`, plus the
+inversion of `TestDerefAssignment_NonConstTargetOK` — which asserted `ptr^ = 42`
+produced *no errors*, the phantom in miniature.
+
 **The `with`-arena phantom is closed (`lyra-E050`) — and it had teeth, which is
 what separated it from an inert surface.** Arenas were designed early (grammar,
 collector, the reserved `lyra_arena_alloc` shim, the `PinnedRC` sentinel that makes

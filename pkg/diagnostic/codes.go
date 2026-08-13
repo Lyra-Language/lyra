@@ -502,6 +502,26 @@ const (
 	CodeUnusedParameter = "lyra-W005"
 	CodeUnusedResult    = "lyra-W006"
 
+	// CodeRawPointersNotImplemented: a raw-pointer operation (`&x`, `p^`, a write
+	// `p^ = v`) or an `unsafe { … }` block. The type system carries `^T`
+	// (types.RawPointerType unifies, substitutes and heads, and a newtype may wrap
+	// one), the grammar and collector build the nodes, and lyra-E011's
+	// unsafe-context policy checker is written and tested — but nothing infers
+	// these expressions and nothing lowers them, so every one of them died in the
+	// typechecker's default arm as `unknown expression type "address_of_expr"`.
+	//
+	// Refused at the expression since 08/13, on the lyra-E035/E050 reasoning: a
+	// construct that cannot mean anything is refused where it is written, in the
+	// register of "not implemented" rather than an internal-sounding "unknown
+	// expression type". What made this one worse than an inert surface is that the
+	// compiler's own advice was impossible to follow — E011 told the user a raw
+	// pointer "requires an `unsafe` block or function", and `unsafe { … }` was
+	// itself an unknown expression, so following the instruction produced a
+	// different error. E011 is not reported while this is (see driver.go); it is
+	// the right policy for the day pointers work, and until then it can only send
+	// a reader somewhere that does not exist.
+	CodeRawPointersNotImplemented = "lyra-E051"
+
 	// CodeArenaNotImplemented: a `with <handle> = <arena> { … }` statement. Arena
 	// allocation was designed early — the grammar, the collector, a reserved runtime
 	// shim (`lyra_arena_alloc`) and the `PinnedRC` sentinel are all in place — and

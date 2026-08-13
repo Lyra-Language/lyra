@@ -166,9 +166,14 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	for _, e := range checker.CheckYieldOutsideGenerator(program) {
 		res.err(e.Location, e.Code, e.Message)
 	}
-	for _, e := range checker.CheckUnsafeOutsideUnsafe(program) {
-		res.err(e.Location, e.Code, e.Message)
-	}
+	// checker.CheckUnsafeOutsideUnsafe (lyra-E011) is deliberately **not** run:
+	// raw pointers and `unsafe` blocks are unimplemented and refused at the
+	// expression instead (lyra-E051, 08/13). Its policy — a raw-pointer op or a
+	// call to an `unsafe` function needs an enclosing `unsafe` block or function,
+	// which does not leak across a lambda boundary — is correct and stays tested
+	// against the function directly; what it cannot do while pointers do not work
+	// is give advice, because it told the reader to write an `unsafe` block that
+	// was itself an unknown expression. Wire it back in the day E051 comes out.
 	for _, e := range checker.CheckRecursiveTypes(program) {
 		res.err(e.Location, e.Code, e.Message)
 	}
