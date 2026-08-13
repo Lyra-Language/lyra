@@ -116,6 +116,13 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail 
 		case *ast.ReturnStmt:
 			block, err = l.lowerReturn(block, s)
 			v = nil
+		case *ast.WithStmt:
+			// Arenas are unimplemented and the typechecker refuses `with` (lyra-E050),
+			// so a build never reaches this — an arm of its own only so the message
+			// names the diagnostic instead of reading as a lowering merely pending.
+			// See the E050 comment for what the phantom cost.
+			return nil, nil, fmt.Errorf(
+				"llvm: `with` (arena allocation) is not implemented — see lyra-E050")
 		default:
 			return nil, nil, fmt.Errorf("llvm: block statement lowering not implemented for %T", stmt)
 		}

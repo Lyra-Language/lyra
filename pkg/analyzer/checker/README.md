@@ -45,9 +45,8 @@ function may allocate) and **`DetEffects = Input|Rand|Time`** (⊆ PurityEffects
 `det`; `det` forbids only the non-determinism sources, permitting Mut/Alloc/Output — the
 input-vs-output IO split is what lets `det` allow logging). `EffectAlloc` detection
 (`purity.go`'s `allocContext`/`buildAllocContext`): a value-**producing** expression whose
-recorded `TypeTable` type is **heap-represented**, *unless* lexically inside a `with`-arena
-block (a hard-coded discharge — Lyra has no general effect handlers). Two ways to be
-heap-represented, and they are different questions (`heapRepresented`):
+recorded `TypeTable` type is **heap-represented**. Two ways to be heap-represented, and
+they are different questions (`heapRepresented`):
 
 - a **`shared` flavor** — a use-site property, so an annotated binding
   `let n: shared Node = Node{…}` records the flavor onto the construction via `checkVarDecl`
@@ -80,8 +79,22 @@ environment per construction and sets `EffectAlloc`, while a capture-free one is
 backend's shared pinned static and stays free — exact against the shipped lowering, and a
 rule Lambda Set Specialization can only loosen (see the closure-lowering entry in
 `todo.md`). A `shared` construction in a return/argument position (flavor not yet recorded
-on the construction node) and precise arena escape are deferred to a future layout/escape
-pass — see `todo.md`. An **unresolvable external call** (no local lambda, builtin, or type
+on the construction node) is deferred to a future layout/escape pass — see `todo.md`.
+
+**There used to be a `with`-arena discharge here, and removing it (08/13) is the reason
+to read this paragraph.** Every expression lexically inside a `with` body was marked
+discharged and all three allocation predicates consulted the mark, so wrapping a `shared`
+construction in `with a = 42 { … }` switched `noalloc` off — for a statement that has no
+lowering, whose arena expression nothing type-checked, and whose canonical `Arena.new(…)`
+spelling had been unspellable since `lyra-E035`. That is the `slice` hole's shape a third
+time: a bound that silently stops binding. `with` is refused outright now (`lyra-E050`).
+Deleting the discharge was **half** the fix — allocation is a use-site property this pass
+reads off the `TypeTable`, so a body the typechecker never visited is one whose `shared`
+constructions are invisible here regardless; the typechecker checks `with` bodies now,
+which needed `WithStmt.Body` to become a `*BlockExpr` (see the E050 entry in
+`COMPLETED.md`). If arenas are built, the discharge returns **with an escape analysis** —
+a `shared` value built inside a block and returned out escapes, and "everything lexically
+inside" was always the approximation standing in for that analysis. An **unresolvable external call** (no local lambda, builtin, or type
 conversion) conservatively taints `AllEffects` (`PurityEffects | EffectAlloc`) — everything,
 including Alloc, so `noalloc` flags it too (we can't verify it doesn't allocate).
 `builtinEffects`: print/println→Output, read→Input, write→Input|Output, `await`→Input,

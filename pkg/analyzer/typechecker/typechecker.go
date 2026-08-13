@@ -185,7 +185,55 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 		tc.checkBooleanBinaryOpExpr(n)
 	case *ast.TraitImplStmt:
 		tc.checkTraitImpl(n)
+	case *ast.WithStmt:
+		tc.checkWithStmt(n)
 	}
+}
+
+// checkWithStmt refuses a `with`-arena statement: arenas are not implemented
+// (lyra-E050). The grammar, the collector, a reserved runtime shim and the
+// `PinnedRC` box sentinel all exist; nothing type-checks the arena expression and
+// nothing lowers the statement.
+//
+// **This case's absence was the phantom.** With no arm here the arena expression
+// was never inferred, so `with a = 42 { … }` was as acceptable as
+// `with a = Arena.new(1024)` — and the latter escaped lyra-E035 (no associated
+// functions) only because nothing looked at it. The body was checked, since it is
+// reached as an ordinary block, which is what made the whole thing read as a
+// working feature right up to `llvm: block statement lowering not implemented`.
+//
+// The **arena expression** is checked after the report — it is the half that was
+// never checked at all, and checking it is what makes `with a = 42` and
+// `with a = Arena.new(1024)` stop being equally acceptable. `Arena.new(…)`, the
+// spelling every doc and the old discharge test used, turns out to be doubly
+// unreachable: there is no `Arena` type declared anywhere, and Lyra has had no
+// type-namespaced associated functions since 08/06 (lyra-E035). Nothing said so
+// because nothing inferred it.
+//
+// **The body is checked too, and that is not just for its own diagnostics.**
+// Allocation is a use-site property the typechecker *records* — the purity pass
+// reads each construction's resolved flavor off the TypeTable — so a body nothing
+// infers is a body whose `shared` constructions `noalloc` cannot see. That was the
+// second layer of the same hole, underneath the arena discharge: removing the
+// discharge alone still left `noalloc` blind inside a `with` block, because the
+// types were never recorded. Checking the body is what actually closes it.
+//
+// Both run inside the scope the collector recorded for the statement, which is
+// where the handle (`with a = …`) is registered, above the body block's own child
+// scope. Checking from the enclosing scope instead reports every mention of the
+// handle as undefined.
+func (tc *TypeChecker) checkWithStmt(w *ast.WithStmt) {
+	tc.addErrorCode(w.GetLocation(), SeverityError, diag.CodeArenaNotImplemented,
+		"arena allocation is not implemented, so `with` cannot be used yet — "+
+			"allocate normally (a `shared` value is reference-counted)")
+	tc.enterScope(w, func() {
+		if w.Arena != nil {
+			tc.inferExprType(w.Arena)
+		}
+		if w.Body != nil {
+			tc.inferExprType(w.Body)
+		}
+	})
 }
 
 func (tc *TypeChecker) checkTypeDecl(decl *ast.TypeDeclStmt) {

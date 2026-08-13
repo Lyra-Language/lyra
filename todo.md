@@ -227,6 +227,40 @@ write today:
 
 ## Known bugs
 
+- **[DONE 08/13] The `with`-arena phantom is closed** (`lyra-E050`). Arenas were
+  designed early — grammar, collector, a reserved runtime shim (`lyra_arena_alloc`),
+  the `PinnedRC` box sentinel — and never implemented. Three findings in one, and the
+  middle one is why this outranked "inert surface":
+
+  1. **Nothing type-checked the arena expression.** `checkNode` had no `WithStmt` arm,
+     so `with a = 42` was as acceptable as `with a = Arena.new(1024)` — and the
+     canonical spelling turns out to be doubly unreachable (no `Arena` type is
+     declared anywhere, and `Type.method(…)` has been `lyra-E035` since 08/06). The
+     phantom's own documented syntax could not have worked; nothing said so because
+     nothing looked.
+  2. **The purity pass *discharged* every allocation lexically inside a `with` body**,
+     so wrapping a `shared` construction in `with a = 42 { … }` silently switched
+     `noalloc` off — into an allocator that does not exist. A bound that quietly stops
+     binding is worse than no bound (the `slice` and closure findings' lesson), and
+     this was the statement's only observable effect.
+  3. **Nothing lowered it** — `llvm: block statement lowering not implemented`.
+
+  `with` is now refused at the statement (the E035 precedent: one diagnostic at the
+  source, and a construct that cannot mean anything is refused where it is written),
+  the discharge is deleted, and the arena expression and body are both checked.
+
+  **The body check needed `WithStmt.Body` to become a `*BlockExpr`**, and that was the
+  hole's second layer: held by value, its address was never the pointer the ScopeTable
+  keyed the body's scope under, so checking it reported every name declared inside as
+  undefined — and so nothing checked it. But allocation is a use-site property the
+  *typechecker records*, so an unchecked body is one whose `shared` constructions
+  `noalloc` cannot see: deleting the discharge alone left `noalloc` still blind inside
+  a `with` block. Every other statement holding a block already used a pointer. If
+  arenas are ever built, the discharge comes back **with an escape analysis** — the old
+  note already conceded a `shared` value built inside a block and returned out
+  escapes, and "everything lexically inside" was the approximation standing in for
+  that analysis. See COMPLETED.md.
+
 - **[DONE 08/13] `??` lowers.** It had type-checked and failed to lower since it was
   collected — the 07/30 `?` shape, found by the second audit sweep. It is `?`'s
   value-position sibling and lowers as the same match in disguise

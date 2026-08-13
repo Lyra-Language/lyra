@@ -86,7 +86,7 @@ func (c *Collector) rewriteCtorStmt(stmt ast.Statement) {
 		s.Value = c.rewriteCtorExpr(s.Value)
 	case *ast.WithStmt:
 		s.Arena = c.rewriteCtorExpr(s.Arena)
-		c.rewriteCtorBlock(&s.Body)
+		c.rewriteCtorBlock(s.Body)
 	case *ast.IfDestructuringStmt:
 		s.DestructuringStatement.Value = c.rewriteCtorExpr(s.DestructuringStatement.Value)
 		c.rewriteCtorBlock(s.Then)

@@ -10,6 +10,60 @@ Newest first.
 ## Dated log
 
 ### 08/13/26
+**The `with`-arena phantom is closed (`lyra-E050`) — and it had teeth, which is
+what separated it from an inert surface.** Arenas were designed early (grammar,
+collector, the reserved `lyra_arena_alloc` shim, the `PinnedRC` sentinel that makes
+retain/release no-op on an arena-owned box) and never implemented. The audit's second
+sweep found three things wrong at once:
+
+- **Nothing type-checked the arena expression.** `checkNode` had no `WithStmt` arm at
+  all, so `with a = 42 { … }` type-checked exactly as well as
+  `with a = Arena.new(1024) { … }`. The canonical spelling is in fact doubly
+  unreachable — no `Arena` type is declared anywhere, and `Type.method(…)` has been
+  `lyra-E035` since 08/06 — so the feature's own documented syntax could not have
+  worked for a week. Nothing reported it because nothing inferred it.
+- **The purity pass discharged the block's allocations**, which was the only
+  observable thing `with` did. `buildAllocContext` marked every expression lexically
+  inside a `with` body, and all three allocation predicates consulted the mark, so
+  `noalloc … => with a = 42 { let n: shared Node = … }` checked clean while the
+  identical code outside the block was `lyra-E016`. A bound that silently stops
+  binding — the `slice` hole's shape and the closure hole's shape, a third time — and
+  here it discharged into an allocator that does not exist.
+- **Nothing lowered it**: `llvm: block statement lowering not implemented`.
+
+The fix follows the 08/06 precedent for `Rng.seeded` rather than the one for
+`wallClock`: **refuse it at the source**, because implementing arenas is a project
+(a real allocator, handle lifetimes, and an escape analysis) and, unlike
+`EffectTime`, deleting the discharge orphans nothing — `noalloc` works fine without
+arenas. `with` is `lyra-E050` at the statement, the discharge is gone, and the arena
+expression and body are both checked now.
+
+**The body check is the part worth remembering, because removing the discharge alone
+did not close the hole.** `WithStmt.Body` was a `BlockExpr` held **by value**, so
+`&w.Body` — the address of the struct's own copy — was never the `*BlockExpr` the
+ScopeTable keyed the body's scope under. Checking the body therefore reported every
+name declared inside it as undefined, which is why nothing checked it. But allocation
+is a *use-site* property the **typechecker records** (the purity pass reads each
+construction's resolved flavor off the TypeTable), so an unchecked body is one whose
+`shared` constructions `noalloc` cannot see at all: with the discharge deleted and the
+body still unchecked, the probe reported the `${…}` interpolation and missed the
+`shared Node` entirely. Making `Body` a `*BlockExpr` — which every other
+block-holding statement already was; this one was the outlier — fixed both halves at
+once, and the suite caught the intermediate state, which is the evidence the two
+layers were independent.
+
+Kept deliberately: the conservative reading that an arena handle is interior-mutable
+(`declaredMutability`, `arenaScopes`). It is unreachable from a buildable program but
+the purity pass still runs on one that has errors, and it makes purity *stricter* —
+the opposite direction from the discharge. If arenas are built, the discharge returns
+**with an escape analysis**, not without one: the old note already conceded that a
+`shared` value built inside a `with` block and returned out still escapes, and
+"everything lexically inside is discharged" was the approximation standing in for the
+analysis nobody wrote. Tests: `with_arena_test.go` (refusal, both grammar forms, the
+body still checked, no false undefined, the unspellable canonical form) and
+`TestNoAlloc_ArenaDoesNotDischarge` — the inversion of the test that had pinned the
+unsound behavior.
+
 **`??` lowers — `?`'s value-position sibling, and the same match in disguise.** It had
 type-checked and failed to lower since it was collected (the 07/30 `?` shape: a
 front-end surface with no backend, `llvm: expression lowering not implemented`), which

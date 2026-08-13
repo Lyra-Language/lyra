@@ -502,6 +502,26 @@ const (
 	CodeUnusedParameter = "lyra-W005"
 	CodeUnusedResult    = "lyra-W006"
 
+	// CodeArenaNotImplemented: a `with <handle> = <arena> { … }` statement. Arena
+	// allocation was designed early — the grammar, the collector, a reserved runtime
+	// shim (`lyra_arena_alloc`) and the `PinnedRC` sentinel are all in place — and
+	// never implemented: nothing type-checks the arena expression and nothing lowers
+	// the statement.
+	//
+	// It is refused at the statement (08/13) rather than left to the backend's
+	// "lowering not implemented", on the lyra-E035 reasoning: one diagnostic at the
+	// source beats one per consumer, and a construct that cannot mean anything is
+	// refused where it is written. The stronger reason here is that the phantom was
+	// not merely inert — the purity pass *discharged* every allocation lexically
+	// inside a `with` body, so wrapping a `shared` construction in
+	// `with a = 42 { … }` silently turned off lyra-E016 and `noalloc` stopped
+	// binding. A bound that quietly stops binding is worse than no bound (the
+	// pkg/backend/llvm README's fifth hazard-8 instance, in the other direction), and
+	// the arena expression was never checked at all — `with a = 42` was as acceptable
+	// as `with a = Arena.new(1024)`, which itself only escaped lyra-E035 because
+	// nothing looked at it.
+	CodeArenaNotImplemented = "lyra-E050"
+
 	// CodeNonOptionalCoalescing: the left operand of `??` is not a Maybe<T>, so
 	// it can never be null and the coalescing is pointless — the default is dead
 	// code that reads as a handled case. A warning until 08/13 (as lyra-W007, the

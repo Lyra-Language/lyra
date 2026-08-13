@@ -1109,7 +1109,9 @@ func nondeterminismDescription(e Effect) string {
 type scopeFrames struct {
 	scopeTable *symbols.ScopeTable
 	// arenaScopes are the `with`-block scopes whose sole binding (the arena
-	// handle) must read as interior-mutable despite being a plain `let`.
+	// handle) must read as interior-mutable despite being a plain `let`. Reachable
+	// only from a program that already fails to check (lyra-E050 refuses `with`);
+	// kept for the reason declaredMutability's WithStmt case is.
 	arenaScopes map[*symbols.Scope]bool
 	// forInScopes are `for … in` loop scopes whose own symbols (the key/value
 	// loop variables) are skipped — the AST walk never collected them.
@@ -1297,6 +1299,12 @@ func declaredMutability(stmt ast.Statement) map[string]bool {
 		// The arena handle is a local owned binding; it's a stateful allocator, so
 		// treat its interior as mutable (a nested pure lambda reading the captured
 		// arena is still non-deterministic).
+		//
+		// `with` is refused outright since 08/13 (lyra-E050, arenas unimplemented),
+		// so this is unreachable from a *buildable* program — kept because the purity
+		// pass still runs on a program that has errors, and this is the conservative
+		// reading (it makes purity stricter). The arena *discharge*, which was the
+		// unsound direction, is gone; see buildAllocContext.
 		return map[string]bool{s.Name: true}
 	}
 	return nil
@@ -1418,9 +1426,6 @@ type allocContext struct {
 	// release tier. nil for entry points without a captures pass (InferredEffects) —
 	// closure charging is then disabled, like the rest of alloc detection there.
 	captures *captures.Table
-	// discharged holds construction exprs lexically inside a `with`-arena
-	// block, whose allocation goes into the arena rather than escaping.
-	discharged map[ast.Expression]bool
 	// lambdaSites / methodSites record the **first** expression found to allocate in
 	// each callable, so `lyra-E016` can point at it instead of listing every form the
 	// language can allocate with.
@@ -1472,7 +1477,7 @@ func (a *allocContext) table() *typetable.TypeTable {
 }
 
 // allocates reports whether a value-*producing* expr heap-allocates: its recorded type is
-// heap-represented, and it is not discharged into an enclosing arena.
+// heap-represented.
 //
 // The question is about **representation, not flavor**. Until 08/04 this asked only whether
 // the flavor was `shared`, which is the right question for a construction — allocation is a
@@ -1487,7 +1492,7 @@ func (a *allocContext) table() *typetable.TypeTable {
 // `case`s in lambdaEffects/methodEffects). Asking `heapRepresented` of every expression
 // would charge every mention of an array to its function.
 func (a *allocContext) allocates(expr ast.Expression) bool {
-	if a == nil || a.typeTable == nil || a.discharged[expr] {
+	if a == nil || a.typeTable == nil {
 		return false
 	}
 	t, ok := a.typeTable.Get(expr)
@@ -1511,7 +1516,7 @@ func (a *allocContext) allocates(expr ast.Expression) bool {
 // find strings but not `shared` values or arrays would make its answer partial in a way a
 // caller cannot detect, which is worse than the documented nothing.
 func (a *allocContext) allocatesByForm(expr ast.Expression) bool {
-	if a == nil || a.typeTable == nil || a.discharged[expr] {
+	if a == nil || a.typeTable == nil {
 		return false
 	}
 	switch expr.(type) {
@@ -1535,8 +1540,8 @@ func (a *allocContext) allocatesByForm(expr ast.Expression) bool {
 // capturing one that *escapes* allocates under both too. If LSS later makes a
 // non-escaping capturing closure free, relaxing this is a compatible loosening;
 // today's charge is what the shipped compiler actually does.
-func (a *allocContext) closureAllocates(e *ast.LambdaExpr, expr ast.Expression) bool {
-	if a == nil || a.captures == nil || a.discharged[expr] {
+func (a *allocContext) closureAllocates(e *ast.LambdaExpr) bool {
+	if a == nil || a.captures == nil {
 		return false
 	}
 	return len(a.captures.Of(e)) > 0
@@ -1564,37 +1569,30 @@ func heapRepresented(t types.Type) bool {
 }
 
 // buildAllocContext records the TypeTable (for reading each construction's
-// resolved flavor) and marks construction expressions enclosed in a `with`-arena
-// block as discharged. typeTable may be nil (see allocContext.typeTable).
+// resolved flavor) and the captures table. typeTable may be nil (see
+// allocContext.typeTable).
+//
+// **It used to discharge arenas, and that was the phantom's teeth** (removed
+// 08/13, lyra-E050). Every expression lexically inside a `with` body was marked
+// discharged and every allocation predicate consulted the mark, so wrapping a
+// `shared` construction in `with a = 42 { … }` silently turned lyra-E016 off and
+// `noalloc` stopped binding — for a statement that has no lowering and whose
+// arena expression nothing type-checked. A bound that quietly stops binding is
+// worse than no bound, and this one was discharged into an allocator that does
+// not exist.
+//
+// If arenas are built, the discharge comes back **with an escape analysis, not
+// without one**: the old note conceded that a `shared` value built inside a
+// `with` block and returned out still escapes, and treating everything lexically
+// inside as discharged was already the approximation standing in for that
+// analysis.
 func buildAllocContext(program *ast.Program, typeTable *typetable.TypeTable, caps *captures.Table) *allocContext {
-	a := &allocContext{
+	return &allocContext{
 		typeTable:   typeTable,
 		captures:    caps,
-		discharged:  map[ast.Expression]bool{},
 		lambdaSites: map[*ast.LambdaExpr]ast.Expression{},
 		methodSites: map[*ast.TraitMethodImpl]ast.Expression{},
 	}
-	// Mark every expression lexically inside a `with`-arena body as discharged.
-	// WithStmt is a *statement*, so it is caught in the onStmt callback; the
-	// outer walk descends through the whole program (including into lambda
-	// bodies, via the walker's stmt/expr mutual recursion), so a construction's
-	// pointer marked here is the same object the effect walk later visits,
-	// making set membership exact.
-	markInsideArenas := func(stmt ast.Statement) bool {
-		if w, ok := stmt.(*ast.WithStmt); ok {
-			ast.WalkExpr(&w.Body, nil, func(inner ast.Expression) bool {
-				a.discharged[inner] = true
-				return true
-			})
-		}
-		return true
-	}
-	for _, node := range program.Statements {
-		if stmt, ok := node.(ast.Statement); ok {
-			ast.WalkStmt(stmt, markInsideArenas, nil)
-		}
-	}
-	return a
 }
 
 // topLevelFunctions maps each top-level `let`/`var name = <lambda>` binding to
@@ -2071,7 +2069,7 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 			// free). This was the audit's `noalloc` hole: with no charge here, a
 			// `noalloc` function building a capturing closure checked clean while
 			// calling `lyra_rc_alloc` on every invocation.
-			if alloc.closureAllocates(ex, ex) {
+			if alloc.closureAllocates(ex) {
 				noteAlloc(ex)
 			}
 			return false
@@ -2257,7 +2255,7 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 			// environment here — the same charge as lambdaEffects's copy of this
 			// arm, for the reason the builtin-method case below spells out about
 			// the two ladders staying in step.
-			if alloc.closureAllocates(ex, ex) {
+			if alloc.closureAllocates(ex) {
 				noteAlloc(ex)
 			}
 			return false

@@ -48,8 +48,10 @@ func walkStmtChildren(stmt Statement, onStmt func(Statement) bool, onExpr func(E
 		WalkExpr(s.Value, onStmt, onExpr)
 	case *WithStmt:
 		WalkExpr(s.Arena, onStmt, onExpr)
-		for _, inner := range s.Body.Statements {
-			WalkStmt(inner, onStmt, onExpr)
+		if s.Body != nil {
+			for _, inner := range s.Body.Statements {
+				WalkStmt(inner, onStmt, onExpr)
+			}
 		}
 	case *IfDestructuringStmt:
 		WalkExpr(s.DestructuringStatement.Value, onStmt, onExpr)

@@ -48,7 +48,7 @@ func CollectWithStatement(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.WithSt
 		AstBase: ast.AstBase{Location: ctx.NodeLocation(node)},
 		Name:    name,
 		Arena:   arena,
-		Body:    *bodyBlock,
+		Body:    bodyBlock,
 	}
 	// The with-binding (`with a = Arena.new(...)`) lives in this scope, above the
 	// body block's own child scope.

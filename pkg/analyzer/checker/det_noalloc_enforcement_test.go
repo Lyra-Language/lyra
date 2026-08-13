@@ -158,9 +158,19 @@ let make = noalloc (n: i64) -> i64 => { helper(n) }`
 	assertBoundError(t, checkPurity(t, src), "lyra-E016")
 }
 
-// A `shared` construction lexically inside a `with`-arena block is discharged,
-// so a `noalloc` function may build into an arena.
-func TestNoAlloc_ArenaDischarged_Ok(t *testing.T) {
+// A `with`-arena block does NOT discharge the allocations inside it — the exact
+// inversion of what this test asserted until 08/13, and the reason the phantom
+// had teeth (lyra-E050).
+//
+// The discharge was the only thing `with` ever did, and it did it for an
+// allocator that does not exist: nothing lowers the statement and nothing even
+// type-checked the arena expression (`with a = 42` was as acceptable as
+// `with a = Arena.new(64)`). So wrapping a `shared` construction in a `with`
+// block silently turned lyra-E016 off — a bound that quietly stops binding,
+// which this suite's own `slice` and closure findings established is worse than
+// no bound at all. `with` is refused outright now; the allocation inside one is
+// charged like any other.
+func TestNoAlloc_ArenaDoesNotDischarge(t *testing.T) {
 	src := `
 struct Node { v: i64 }
 let make = noalloc (x: i64) -> i64 => {
@@ -169,7 +179,7 @@ let make = noalloc (x: i64) -> i64 => {
         x
     }
 }`
-	assertPurityCount(t, checkPurity(t, src), 0)
+	assertBoundError(t, checkPurity(t, src), "lyra-E016")
 }
 
 // `noalloc` is a resource axis: output and mutation don't allocate, so a
