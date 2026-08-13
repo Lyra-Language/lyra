@@ -502,6 +502,28 @@ const (
 	CodeUnusedParameter = "lyra-W005"
 	CodeUnusedResult    = "lyra-W006"
 
+	// CodeRegexValuesNotImplemented: a regex literal used as a **value**
+	// (`let re = r"[a-z]+"`) or as a **match pattern**
+	// (`match s { r"^[0-9]+$" => … }`). Both type-checked clean and then died in the
+	// backend — `expression lowering not implemented for *ast.RegexLiteralExpr`, and
+	// `match pattern *ast.RegexPattern not implemented … (regex patterns deferred)`.
+	//
+	// Refused since 08/13, on the lyra-E035/E050/E051 reasoning. A regex *value*
+	// needs a regex engine in the runtime, and Lyra's runtime is hand-written C
+	// shims with no FFI — the `regexp` this compiler uses to validate patterns runs
+	// at compile time and cannot ship into the compiled program. So this is a
+	// project, not a fix, and the `regex` primitive type existed only to type the
+	// literal: nothing else read it, and `regex` is not even a spellable annotation
+	// (a lowercase type name parses as a type *variable*, so `(re: regex)` declared
+	// one named `regex`).
+	//
+	// **`where pattern(r"…")` on a newtype is unaffected and keeps working**, which
+	// is why this refuses the two value positions rather than the literal syntax:
+	// a constraint stores the pattern's *source text* and compiles it at
+	// type-check time, so it never produces a value of type `regex` and never needs
+	// a runtime engine.
+	CodeRegexValuesNotImplemented = "lyra-E052"
+
 	// CodeRawPointersNotImplemented: a raw-pointer operation (`&x`, `p^`, a write
 	// `p^ = v`) or an `unsafe { … }` block. The type system carries `^T`
 	// (types.RawPointerType unifies, substitutes and heads, and a newtype may wrap

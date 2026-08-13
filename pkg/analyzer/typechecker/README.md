@@ -348,6 +348,21 @@ one mistake). Before 07/29 it skipped a `*ConstrainedType` outright, so an *unco
 newtype — the common `newtype Meters = i64` shape — had no range check at all and an
 out-of-range constant reached codegen to be silently truncated into the base's width.
 
+"Compile-time, definite-only" above is the literal truth and worth reading as a
+*limit*: a value nothing can prove — an opaque parameter, `Percent(n)` inside
+`(n: u8) -> Percent` — is accepted unchecked by both constraint kinds, so `mk(200)`
+builds and runs. Whether a constructor should instead emit a runtime check and trap is
+open (`todo.md`, Known bugs); the workspace CLAUDE.md read as a stronger promise until
+08/13.
+
+A regex literal is a constraint's argument and **nothing else** as of 08/13: a regex
+*value* and a regex *match pattern* are both `lyra-E052` (unimplemented — a runtime
+engine is what they need, and the runtime is C shims with no FFI). Only
+`PatternConstraint` consumes regex now, exactly as described above, and it is
+unaffected because it never produces a value. Syntax validation lives here alone for
+the same reason — reporting a malformed pattern *and* "not implemented" on a construct
+with no meaning is one mistake twice.
+
 Files split by concern: `typechecker.go` (core + var decls + expressions),
 `typechecker_control_flow.go` (if/match), `typechecker_functions.go` (lambda/call/member-call
 dispatch), `typechecker_trait_dispatch.go` (trait-method resolution), `typechecker_traits.go`

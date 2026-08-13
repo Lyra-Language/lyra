@@ -1854,13 +1854,23 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 	case *ast.StringConcatExpr:
 		return tc.inferStringConcatExpr(e)
 	case *ast.RegexLiteralExpr:
-		// Validate regex syntax at compile time; the type of a regex literal
-		// is the built-in `regex` type.
-		if _, err := regex.Compile(e.Pattern); err != nil {
-			tc.addError(e.GetLocation(), SeverityError,
-				`invalid regex literal r"%s": %s`, e.Pattern, err)
-		}
-		return types.PrimitiveType{Name: types.Regex}
+		// A regex *value* is not implemented (lyra-E052). This used to validate the
+		// pattern's syntax and hand back the built-in `regex` type — a type nothing
+		// else in the compiler read, and which no annotation can even name (a
+		// lowercase type name parses as a type *variable*, so `(re: regex)` declares
+		// one called `regex`). The value then died in the backend as
+		// `expression lowering not implemented`.
+		//
+		// The syntax validation goes with it *here* rather than being reported
+		// alongside the refusal: the construct has no meaning at all, so a second
+		// error about the pattern's contents is the E011-and-E001 double report
+		// again. It stays exactly where it does real work — `where pattern(r"…")`,
+		// which compiles the pattern at type-check time (checkConstrainedTypeDecl)
+		// and is unaffected by any of this.
+		tc.addErrorCode(e.GetLocation(), SeverityError, diag.CodeRegexValuesNotImplemented,
+			"a regex value is not implemented: a regex literal can only be used in a "+
+				"`where pattern(...)` constraint")
+		return nil
 	case *ast.InterpolatedStringExpr:
 		return tc.inferInterpolatedStringExpr(e)
 	case *ast.DataConstructorExpr:

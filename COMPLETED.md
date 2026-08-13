@@ -10,6 +10,55 @@ Newest first.
 ## Dated log
 
 ### 08/13/26
+**The regex-value phantom is closed (`lyra-E052`), in two positions — the audit named
+one and probing found its twin.** A regex literal used as a **value**
+(`let re = r"[a-z]+"`) inferred the built-in `regex` type and then died in the backend
+(`expression lowering not implemented for *ast.RegexLiteralExpr`); a regex **match
+pattern** (`match s { r"^[0-9]+$" => … }`) type-checked clean and died as
+`match pattern *ast.RegexPattern not implemented … (regex patterns deferred)`. The
+second is the more interesting find, because a string scrutinee was the *only* place a
+regex pattern was accepted — `checkDataMatchArm`, the rune arm and the numeric arm all
+refused it already — so the language was refusing the construct in three positions and
+silently taking it in the fourth.
+
+Refused rather than built, for the reason the runtime dictates: a regex **value** needs
+a regex engine, and Lyra's runtime is hand-written C shims with no FFI. The `regexp`
+this compiler uses to validate patterns runs at *compile* time and cannot ship into the
+compiled program, so "make the literal lower" is a project with a dependency the
+language does not have.
+
+The `regex` primitive type turned out to have exactly **one** consumer — the literal's
+own inference — and it is not even spellable: a lowercase type name parses as a type
+*variable*, so `(re: regex)` declares one named `regex` and behaves identically to
+`(re: zzzz)`. That is worth recording because it is the opposite of `^T` in the E051
+entry above, where the type genuinely lived in the type system (unify, substitute,
+newtype base, array element) and only the operations were missing. Here the type was
+part of the phantom.
+
+**`where pattern(r"…")` is untouched and still works**, verified end to end (a valid
+value builds and runs; an invalid literal is still rejected). That is why the refusal
+lands on the two value positions rather than on the literal *syntax*: a constraint
+stores the pattern's source text and compiles it at type-check time, so it never
+produces a value of type `regex` and never needs a runtime engine. Compile-time syntax
+validation left the two refused positions along with them — reporting `invalid regex
+pattern` beside "not implemented" is one mistake reported twice, the E011-and-E001
+fault this series has been removing — and stays exactly where it does real work.
+
+Six tests inverted, all of which had pinned the acceptance
+(`..._RegexPattern_Ok`, `..._MixedLiteralAndRegex_Ok`, `..._RegexLiteralExpr_Valid_Ok`
+and the two invalid-pattern ones). One was kept as a *pair* rather than replaced:
+regex arms never made a string match exhaustive on their own, and they still do not, so
+the arms are now rejected **and** the match still asks for a catch-all — a refusal that
+also silenced the exhaustiveness analysis would hide a second mistake behind the first.
+
+**A separate finding came out of the probing and is left open in `todo.md`**: a `where`
+constraint — `range(…)` as much as `pattern(…)` — is enforced only where the value is
+*provable*. `Percent(n)` and `Digits(s)` inside a function whose parameter is opaque
+pass straight through, so `mk(200)` builds, runs and prints 200. Whether a constraint
+is a compile-time assertion or a runtime trap is a language decision (and for `pattern`
+the runtime answer needs the very engine E052 says does not exist), so it is recorded
+rather than patched.
+
 **The raw-pointer / `unsafe` phantom is closed (`lyra-E051`), and what set it apart
 is that the compiler's own advice was impossible to follow.** `&x` reported
 `lyra-E011` — "taking a raw pointer with `&` requires an `unsafe` block or function" —

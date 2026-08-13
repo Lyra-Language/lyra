@@ -227,6 +227,63 @@ write today:
 
 ## Known bugs
 
+- **[OPEN] A `where` constraint is enforced only where the value is *provable*.**
+  Found while probing the regex phantom (08/13), and it is about `range(…)` as much
+  as `pattern(…)` — the two behave alike, so this is one gap, not a regex one. Both
+  catch a literal and anything the value-range pass can pin to an interval, and both
+  **silently accept everything else**:
+
+  ```
+  newtype Percent = u8 where range(0..<=100)
+  newtype Digits  = string where pattern(r"^[0-9]+$")
+
+  let mk  = (n: u8) -> Percent    => Percent(n)     // no diagnostic
+  let mkd = (s: string) -> Digits => Digits(s)      // no diagnostic
+  mk(200)      // builds, runs, prints 200
+  mkd("abc")   // builds, runs, prints abc
+  ```
+
+  Inside `mk`, `n` is an opaque parameter, so nothing can prove anything and the
+  constructor passes it straight through. The docs say constraints are "checked
+  wherever the newtype flows … and through the constructor too", which is true of the
+  *provable* cases and reads as a guarantee.
+
+  **The decision is whether a constraint is a compile-time assertion or a runtime
+  one**, and it is a real language call rather than a bug to patch: enforcing at
+  runtime means the constructor emits a check and traps (the trap-over-silently-wrong
+  ladder's usual answer, and what `range` already does for arithmetic), which costs a
+  branch per construction — and for `pattern` it costs **a regex engine in the
+  runtime**, which is exactly what lyra-E052 says Lyra does not have. So the two
+  constraint kinds may not get the same answer. Until it is decided, the honest fix is
+  narrower: say in the docs that constraints are compile-time-only, since the current
+  wording promises more than the compiler delivers.
+
+- **[DONE 08/13] The regex-value phantom is closed** (`lyra-E052`), in **two**
+  positions — the audit named the expression one and probing turned up its twin. A
+  regex literal as a *value* (`let re = r"[a-z]+"`) inferred the built-in `regex`
+  type and died in the backend as `expression lowering not implemented`; a regex
+  *match pattern* (`match s { r"^[0-9]+$" => … }`) type-checked clean and died as
+  `regex patterns deferred`. A string scrutinee was the only place the pattern form
+  was accepted at all — every other scrutinee kind already refused it — so the two
+  halves are now consistent instead of one being refused and the other silently taken.
+
+  The `regex` primitive type had exactly **one** consumer, the literal's own
+  inference, and is not even a spellable annotation: a lowercase type name parses as
+  a type *variable*, so `(re: regex)` declares one named `regex` and behaves
+  identically to `(re: zzzz)`. Implementing this is a project rather than a fix — a
+  regex *value* needs an engine in the runtime, and the runtime is hand-written C
+  with no FFI; the `regexp` the compiler uses to validate patterns runs at compile
+  time and cannot ship into the program.
+
+  **`where pattern(r"…")` is untouched and keeps working**, which is why the refusal
+  is on the two value positions rather than on the literal syntax: a constraint
+  stores the pattern's *source text* and compiles it at type-check time, so it never
+  produces a `regex` value and never needs a runtime engine. Compile-time syntax
+  validation moved out of the two refused positions with them — a second error about
+  a malformed pattern's contents, on a construct that has no meaning at all, is the
+  E011-and-E001 double report again — and stays where it does real work. Six tests
+  inverted; the constraint suite is unchanged and still passes. See COMPLETED.md.
+
 - **[DONE 08/13] The raw-pointer / `unsafe` phantom is closed** (`lyra-E051`), and its
   distinguishing feature was that **the compiler's own advice could not be followed**.
   `&x` drew `lyra-E011` — "taking a raw pointer with `&` requires an `unsafe` block or

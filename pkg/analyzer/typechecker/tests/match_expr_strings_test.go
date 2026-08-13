@@ -110,7 +110,15 @@ func TestTypeCheck_StringMatchExpr_GuardedCatchallOnly_Warning(t *testing.T) {
 
 // ── regex patterns ─────────────────────────────────────────────────────────
 
-func TestTypeCheck_StringMatchExpr_RegexPattern_Ok(t *testing.T) {
+// A string scrutinee was the one place a regex pattern was accepted; every other
+// scrutinee kind already refused it. Accepted and then not lowered — the build
+// died with `match pattern *ast.RegexPattern not implemented for a string
+// scrutinee (only string literals; regex patterns deferred)` — so it is refused
+// at the arm since 08/13 (lyra-E052). These four tests asserted the acceptance.
+const regexPatternRefused = "matching on a regex pattern is not implemented: " +
+	"a regex literal can only be used in a `where pattern(...)` constraint"
+
+func TestTypeCheck_StringMatchExpr_RegexPattern_Refused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let foo = "abc123"
   match foo {
@@ -119,12 +127,16 @@ func TestTypeCheck_StringMatchExpr_RegexPattern_Ok(t *testing.T) {
     _ => "ok",
   }
 	`, false)
-	assertNoErrors(t, res)
+	// One report per arm: each is its own mistake to remove.
+	assertErrorsAre(t, res, regexPatternRefused, regexPatternRefused)
 }
 
-func TestTypeCheck_StringMatchExpr_RegexOnlyNoWildcard_Warning(t *testing.T) {
-	// Regex arms never make a string match exhaustive on their own — even if
-	// they collectively cover everything, we don't try to prove it.
+func TestTypeCheck_StringMatchExpr_RegexOnlyNoWildcard_StillNotExhaustive(t *testing.T) {
+	// Regex arms never made a string match exhaustive on their own — even if they
+	// collectively cover everything, we don't try to prove it — and that is
+	// unchanged by the refusal: the arms are rejected *and* the match still wants
+	// a catch-all. Worth keeping as a pair, since a refusal that also silenced the
+	// exhaustiveness analysis would hide a second mistake behind the first.
 	res := parseCollectAndCheck(t, `
   let foo = "abc"
   match foo {
@@ -132,11 +144,13 @@ func TestTypeCheck_StringMatchExpr_RegexOnlyNoWildcard_Warning(t *testing.T) {
     r"[a-z]+" => "ok",
   }
 	`, false)
-	assertWarningsAre(t, res,
+	// assertErrorsAre matches the full diagnostic set in order, warnings included.
+	assertErrorsAre(t, res, regexPatternRefused, regexPatternRefused,
 		"match on string type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 }
 
-func TestTypeCheck_StringMatchExpr_MixedLiteralAndRegex_Ok(t *testing.T) {
+func TestTypeCheck_StringMatchExpr_MixedLiteralAndRegex_OnlyRegexRefused(t *testing.T) {
+	// The string-literal arm is untouched — only the regex arm is refused.
 	res := parseCollectAndCheck(t, `
   let foo = "hello"
   match foo {
@@ -145,12 +159,16 @@ func TestTypeCheck_StringMatchExpr_MixedLiteralAndRegex_Ok(t *testing.T) {
     _ => "ok",
   }
 	`, false)
-	assertNoErrors(t, res)
+	assertErrorsAre(t, res, regexPatternRefused)
 }
 
-func TestTypeCheck_StringMatchExpr_InvalidRegex_Error(t *testing.T) {
-	// Lazy quantifiers are rejected by the engine; the typechecker should
-	// surface that error at compile time rather than waiting until runtime.
+func TestTypeCheck_StringMatchExpr_InvalidRegex_RefusedNotValidated(t *testing.T) {
+	// A *malformed* regex in pattern position now draws the refusal rather than
+	// `invalid regex pattern`, and that is deliberate: the construct has no
+	// meaning at all, so a second error about the pattern's contents would be a
+	// double report on one mistake. Compile-time syntax validation stays exactly
+	// where it does real work — `where pattern(r"…")`, which is unaffected (see
+	// TestTypeCheck_PatternConstraint_InvalidPattern_Error in regex_test.go).
 	res := parseCollectAndCheck(t, `
   let foo = "hello"
   match foo {
@@ -158,19 +176,7 @@ func TestTypeCheck_StringMatchExpr_InvalidRegex_Error(t *testing.T) {
     _ => "ok",
   }
 	`, false)
-	if len(res.errors) == 0 {
-		t.Fatalf("expected an error for an invalid regex pattern, got none")
-	}
-	found := false
-	for _, e := range res.errors {
-		if e.Message != "" && containsSubstring(e.Message, "invalid regex pattern") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected an error mentioning 'invalid regex pattern', got: %+v", res.errors)
-	}
+	assertErrorsAre(t, res, regexPatternRefused)
 }
 
 // containsSubstring is a tiny stand-in for strings.Contains to keep the test

@@ -10,7 +10,6 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
-	"github.com/Lyra-Language/lyra/pkg/regex"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -733,12 +732,16 @@ func (tc *TypeChecker) checkStringMatchArm(pattern ast.Pattern) {
 	case *ast.WildcardPattern, *ast.IdentifierPattern:
 		return
 	case *ast.RegexPattern:
-		// Validate the regex itself at compile time so users learn about
-		// syntax errors at type-check time rather than at runtime.
-		if _, err := regex.Compile(p.Pattern); err != nil {
-			tc.addError(p.GetLocation(), SeverityError,
-				`invalid regex pattern r"%s": %s`, p.Pattern, err.Error())
-		}
+		// A string scrutinee is the one place a regex pattern was *accepted* — every
+		// other scrutinee kind already refuses it a few functions up. It was accepted
+		// and then not lowered: `match pattern *ast.RegexPattern not implemented for a
+		// string scrutinee (only string literals; regex patterns deferred)`. Refused
+		// here since 08/13 (lyra-E052) so the failure lands at the arm rather than at
+		// the build, for the same reason a regex *value* is — matching one needs a
+		// regex engine in a runtime that is hand-written C with no FFI.
+		tc.addErrorCode(p.GetLocation(), SeverityError, diag.CodeRegexValuesNotImplemented,
+			"matching on a regex pattern is not implemented: a regex literal can only be "+
+				"used in a `where pattern(...)` constraint")
 	case *ast.BindingPattern:
 		tc.checkStringMatchArm(p.Pattern)
 	case *ast.LiteralPattern:

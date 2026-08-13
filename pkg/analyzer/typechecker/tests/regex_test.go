@@ -2,41 +2,40 @@ package typechecker_test
 
 import "testing"
 
-// ── RegexLiteralExpr: type inference and compile-time validation ────────────
+// ── RegexLiteralExpr: refused as a value (lyra-E052, 08/13) ────────────────
+//
+// A regex literal used as a *value* inferred the built-in `regex` type and then
+// died in the backend (`expression lowering not implemented`). `regex` was a type
+// nothing else in the compiler read, and one no annotation can even name — a
+// lowercase type name parses as a type *variable*, so `(re: regex)` declares one
+// called `regex`. A regex value would need an engine in the runtime, which is
+// hand-written C with no FFI; the `regexp` used below runs at compile time and
+// cannot ship into the program.
+//
+// The `where pattern(r"…")` constraint is untouched and keeps working — it stores
+// the pattern's source text and compiles it at type-check time, never producing a
+// value — which is what the rest of this file covers.
 
-func TestTypeCheck_RegexLiteralExpr_Valid_Ok(t *testing.T) {
-	// A well-formed regex literal should infer the built-in `regex` type with
-	// no type errors.
+const regexValueRefused = "a regex value is not implemented: " +
+	"a regex literal can only be used in a `where pattern(...)` constraint"
+
+func TestTypeCheck_RegexLiteralExpr_Refused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 let phone = r"[2-9][0-9]{2} [2-9][0-9]{2} [0-9]{4}$"
 `, false)
-	assertNoErrors(t, res)
+	assertErrorsAre(t, res, regexValueRefused)
 }
 
-func TestTypeCheck_RegexLiteralExpr_InvalidPattern_Error(t *testing.T) {
-	// Lazy quantifiers are rejected by the engine; the error should surface
-	// at compile time when the literal is inferred.
-	res := parseCollectAndCheck(t, `let x = r"a*?b"`, false)
-	if len(res.errors) == 0 {
-		t.Fatalf("expected a compile-time error for invalid regex literal, got none")
-	}
-	found := false
-	for _, e := range res.errors {
-		if containsSubstring(e.Message, "invalid regex literal") {
-			found = true
-			break
-		}
-	}
-	if !found {
-		t.Errorf("expected error mentioning 'invalid regex literal', got: %+v", res.errors)
-	}
+// A malformed pattern in value position draws the refusal rather than
+// `invalid regex literal`: the construct has no meaning, so a second error about
+// its contents would be a double report on one mistake. Syntax validation stays
+// where it does real work — see TestTypeCheck_PatternConstraint_InvalidPattern_Error.
+func TestTypeCheck_RegexLiteralExpr_InvalidPattern_RefusedNotValidated(t *testing.T) {
+	assertErrorsAre(t, parseCollectAndCheck(t, `let x = r"a*?b"`, false), regexValueRefused)
 }
 
-func TestTypeCheck_RegexLiteralExpr_UnterminatedClass_Error(t *testing.T) {
-	res := parseCollectAndCheck(t, `let x = r"[abc"`, false)
-	if len(res.errors) == 0 {
-		t.Fatalf("expected a compile-time error for malformed regex literal, got none")
-	}
+func TestTypeCheck_RegexLiteralExpr_UnterminatedClass_Refused(t *testing.T) {
+	assertErrorsAre(t, parseCollectAndCheck(t, `let x = r"[abc"`, false), regexValueRefused)
 }
 
 // ── PatternConstraint on type declarations ──────────────────────────────────
