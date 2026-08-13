@@ -42,10 +42,12 @@ func TestExec_ArrayElementAssignment(t *testing.T) {
 			8,
 		},
 		{
-			"fixed-size: negative index from the end",
+			// An assignment target takes no from_end form, so the end-relative write
+			// is spelled through len() — a negative target index traps (08/12).
+			"fixed-size: last element via len()-1",
 			`let main = () -> u8 => {
   var xs: [3]u8 = [1, 2, 3]
-  xs[-1] = 9
+  xs[xs.len() - 1] = 9
   xs[2]
 }`,
 			9,

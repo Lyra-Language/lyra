@@ -146,17 +146,22 @@ write today:
     case being O(n·m) too. A real guarantee wants a `memmem` builtin (glibc's is Two-Way,
     O(n+m), constant space), not an algorithm written in the prelude.
 
-    A negative `offset` is `None`, and **not** a from-the-end position even though `s[-1]`
-    now is: an offset here is a resumption point for a scan, and "resume at k going
-    forward" has no negative reading. Python's `str.find` counts its `start` from the end
-    and is a known confusion for it.
-  - **[DONE 08/08] A negative string index and negative `slice` bounds.** `s[-1]` is the
-    last rune and `s.slice(1, -1)` drops it, matching arrays. Not sugar: the k-th rune from
-    the end is a byte walk over continuation bytes that decodes nothing, where
-    `s[s.len() - 1]` is two full O(n) decode walks — 34272 µs against 18 µs. The comment
-    saying it "would require a full rune count first" is what had kept it closed. One
-    shared `lyra_str_rune_offset` now answers "where does rune k begin" for both callers,
-    which had carried the same forward walk twice. See COMPLETED.md.
+    A negative `offset` is `None`: an offset here is a resumption point for a scan, and
+    "resume at k going forward" has no negative reading. Python's `str.find` counts its
+    `start` from the end and is a known confusion for it. (This entry originally
+    contrasted that with `s[-1]`, which *did* read from the end at the time; since 08/12
+    the two agree — negatives are refused everywhere, and the tension this note recorded
+    is gone.)
+  - **[SUPERSEDED 08/12 — see the from_end entry in Known bugs] Negative string
+    indexing and negative `slice` bounds** landed 08/08 (`s[-1]`, `s.slice(1, -1)`) and
+    were removed four days later: the audit's sharpest design finding was that they
+    handed the most common off-by-one a valid read of the wrong element, in the language
+    whose thesis is trap-over-silently-wrong. What this entry got *right* — the k-th rune
+    from the end is a byte walk over continuation bytes that decodes nothing, where
+    `s[s.len() - 1]` is two full O(n) decode walks (34272 µs against 18 µs) — survives
+    intact in `from_end(k)`, which lowers to the same walk; the mistake was spelling an
+    end-relative *operation* as a dual meaning of the index domain. The shared
+    `lyra_str_rune_offset` and its backward branch remain, as from_end's implementation.
   - **[DONE 08/08] `s.byte_offset(i) -> Maybe<i64>`**, the rune→byte conversion nothing
     else in the language could perform. It is what makes "does `sep` occur at rune i"
     allocation-free — `s.compare_bytes_at(s.byte_offset(i).unwrap_or(-1), sep) == 0`,
@@ -219,6 +224,31 @@ write today:
     makes a search for an empty needle terminate.
 
 ## Known bugs
+
+- **[DONE 08/12] Negative indexing is gone; `from_end(k)` is the end-relative
+  accessor.** On strings and arrays alike, 1-based (`from_end(1)` is the last), a
+  builtin like the index it mirrors, `pure noalloc` for free. The audit's design
+  finding, acted on: an index that underflowed past zero — the most common off-by-one
+  there is — got a valid read of the wrong element, which is the silently-wrong answer
+  this language's whole thesis exists to rule out. The removal follows the standing
+  ladder: a *provable* negative (a literal, a folded constant) is a compile error
+  naming the from_end spelling with the right ordinal; a runtime one hits the bounds
+  trap, which got *cheaper* — the from-the-end `select` adjustment is gone from all
+  three index lowerings, leaving the single unsigned compare. The value-range pass got
+  sharper too: any provably-negative index is now definite `lyra-E022`, where
+  `[-size, -1]` used to be a valid read it had to let through.
+
+  **The performance defense survives in full**, which is what made the old design
+  merely wrong rather than a trade: `from_end` lowers to the exact backward byte walk
+  `s[-k]` lowered to (`lyra_str_rune_offset`'s negative branch is now its private
+  contract — every surface caller must reject a negative *before* the call, or the
+  value would silently mean from-the-end again). Re-measured after the change: 2 µs
+  against 6082 µs per 2000 last-rune reads on an ~1800-rune string. `slice`'s negative
+  bounds went with it — same complexity class positionally, since slice already walks
+  and copies — and `byte_offset`'s negative position is `None`, now *agreeing* with
+  `index`'s negative offset instead of standing in recorded tension with it. What has
+  no replacement spelling: an index-assignment target (`xs[i] = v` end-relative), which
+  is `xs[xs.len() - 1] = v` — O(1) on arrays, the only place it exists. See COMPLETED.md.
 
 - **[DONE 08/12] A `for-in` range can no longer loop forever.** Two silent infinite loops,
   both found by auditing the language against its own trap-on-overflow thesis, and neither

@@ -377,11 +377,12 @@ func (l *lowerer) lvalueBoxPtr(block *ir.Block, objExpr ast.Expression, objType 
 	return block.NewLoad(boxPtrTy, loc.ptr), block, nil
 }
 
-// boundsCheckedIndex lowers the index of `e` and returns the from-the-end-adjusted,
-// bounds-trapped i64 offset (a negative index counts from the end; out-of-range
-// traps via lyra_panic_index_out_of_bounds). Unlike the read path it does not consult
-// the value-range analysis's IndexInBounds — an assignment target isn't marked — so
-// the check is always emitted.
+// boundsCheckedIndex lowers the index of `e` and returns the bounds-trapped i64
+// offset — one unsigned compare against size, [0, size), with a negative caught by
+// its sign-extension (out-of-range traps via lyra_panic_index_out_of_bounds; the
+// negative-counts-from-the-end reading was removed 08/12). Unlike the read path it
+// does not consult the value-range analysis's IndexInBounds — an assignment target
+// isn't marked — so the check is always emitted.
 func (l *lowerer) boundsCheckedIndex(block *ir.Block, e *ast.IndexExpr, size value.Value) (value.Value, *ir.Block, error) {
 	idx, block, err := l.lowerExpr(block, e.Index)
 	if err != nil {
@@ -389,9 +390,7 @@ func (l *lowerer) boundsCheckedIndex(block *ir.Block, e *ast.IndexExpr, size val
 	}
 	signed, _ := l.getIntSignedness(e.Index)
 	idx64 := coerceIntWidth(block, idx, signed, lltypes.I64)
-	neg := block.NewICmp(enum.IPredSLT, idx64, constant.NewInt(lltypes.I64, 0))
-	adjusted := block.NewSelect(neg, block.NewAdd(idx64, size), idx64)
-	oob := block.NewICmp(enum.IPredUGE, adjusted, size)
+	oob := block.NewICmp(enum.IPredUGE, idx64, size)
 	block = l.emitTrapIf(block, oob, l.panicIndexOOBFunc())
-	return adjusted, block, nil
+	return idx64, block, nil
 }

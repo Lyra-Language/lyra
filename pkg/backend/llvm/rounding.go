@@ -66,6 +66,18 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 			return l.lowerArrayLen(block, call, member)
 		}
 	}
+	// `from_end` is two methods sharing a name, told apart exactly as `len` is: a
+	// string's is the backward byte walk, an array's is `len - k` with one check.
+	if member.Property.Name == "from_end" {
+		recvT, ok := l.recordedType(member.Object)
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: no type recorded for from_end() receiver")
+		}
+		if types.IsString(recvT) {
+			return l.lowerStringFromEnd(block, call, member)
+		}
+		return l.lowerArrayFromEnd(block, call, member, recvT)
+	}
 	if member.Property.Name == "push" {
 		recvT, ok := l.recordedType(member.Object)
 		if !ok {

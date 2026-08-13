@@ -517,12 +517,12 @@ inline-record data constructor (records the owning `DataType`).
 `lowerType` gained the `StaticArrayType` → `[N x <elem>]` case), and `xs[i]` reads an element
 (`lowerIndexExpr`): a compile-time-constant index is a bare `extractvalue` (the typechecker
 already range-checked it), while a **runtime index is bounds-checked** — the index widens to i64
-by its signedness, a **negative index counts from the end** (Python-style: `i < 0` → `i + size`,
-so `-1` is the last element and `-size` the first, via a `select`), then an unsigned `>= size`
-compare on the adjusted value (which catches both `i >= size` and `i < -size`, since an
-out-of-range negative stays negative → large unsigned) branches to a new
+by its signedness, then a single unsigned `>= size` compare (valid range [0, size); a negative
+sign-extends to a large unsigned value, so one compare catches both ends) branches to the
 `lyra_panic_index_out_of_bounds` trap (Pit-of-Success, like checked arithmetic) before a
-`getelementptr`+`load`. A constant index (positive or negative) is range-checked at compile time
+`getelementptr`+`load`. A negative index **traps** — it counted from the end until 08/12;
+`xs.from_end(k)` is the explicit end-relative accessor now (`lowerArrayFromEnd`: the element
+at `len - k`, the same one-compare trick on `len - k >= len`). A constant index is range-checked at compile time
 against `[-size, size)` (`resolveConstantInt` folds a `NegationExpr`). A local/param array is
 indexed through its own alloca (no copy, `arrayLValue`); any other array *value* is materialized
 into a temp first. Arrays flow through `let`/params/args and **returns** (`emitReturn` gained an
@@ -692,12 +692,14 @@ string is UTF-8, so runes aren't randomly addressable — the position comes fro
 trap rather than the array one. Also deferred: growth (no grow op exists yet), and `match` on
 a `shared` array.
 
-**A negative index counts from the end** (08/08), `s[-1]` being the last rune — the array
-rule, and `s.slice(start, end)` takes negative bounds the same way (`s.slice(1, -1)` drops
-the last rune). This README used to record that a from-the-end form "would require a full
-rune count first", which is the claim that turned out to be false and is the reason it is
-worth having: finding the k-th rune from the end is a **byte** walk that skips continuation
-bytes (`10xxxxxx`) until it reaches a lead byte — well-defined because UTF-8 is
+**A negative index traps, and `s.from_end(k)` is the end-relative accessor** (08/12; a
+negative counted from the end from 08/08 until then, and `slice` took negative bounds the
+same way — both removed, because the most common off-by-one got a valid read of the wrong
+element in a trap-over-silent-wrongness language). The accessor keeps the whole performance
+story (measured after the change: `from_end(1)` ×2000 on an ~1800-rune string is 2 µs where
+`s[s.len() - 1]` ×2000 is 6082 µs): finding the k-th rune from the end is a **byte** walk
+that skips continuation bytes (`10xxxxxx`) until it reaches a lead byte — well-defined
+because UTF-8 is
 self-synchronizing, and costing O(k) with *no decoding*. So it is not sugar over an existing
 spelling, it removes an O(n) tax that had no workaround: `s[s.len() - 1]` is two full decode
 walks (`len()` is O(n), then `s[i]` is O(i)), measured at **34272 µs against 18 µs** for

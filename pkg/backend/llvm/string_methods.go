@@ -98,12 +98,11 @@ func (l *lowerer) lowerStringLen(block *ir.Block, call *ast.FunctionCallExpr, me
 // is indistinguishable from a correct empty slice. `start == end` is fine and yields
 // "" — the empty range is the one every loop terminates on.
 //
-// **Either bound may be negative** (08/08), counting from the end as an array index
-// does — `s.slice(1, -1)` drops the last rune. A negative bound is resolved by the
-// backward byte walk in strRuneOffsetFunc, so it costs O(|bound|) with no decoding,
-// and the ordering test is applied to the resolved *offsets* rather than to the written
-// bounds — otherwise `1 > -1` would reject a perfectly ordinary interval. Rune index to
-// byte offset is monotonic, so the two comparisons ask the same question.
+// **A negative bound traps** (08/12; it counted from the end from 08/08 until
+// negative indexing was removed language-wide). The positional spelling
+// `s.slice(1, s.len() - 1)` costs one extra O(n) count against a function that
+// already walks and copies — same complexity class, unlike the indexing case, which
+// is why `from_end` has no slice-bound counterpart.
 //
 // It resolves each bound with its own call, where it used to record both offsets in one
 // pass and so cost O(end) rather than O(start) + O(end). That single walk is what a
@@ -155,20 +154,23 @@ func (l *lowerer) lowerStringSlice(block *ir.Block, call *ast.FunctionCallExpr, 
 	startOff := block.NewCall(offsets, data, byteLen, start, yes)
 	endOff := block.NewCall(offsets, data, byteLen, end, yes)
 
-	// One test for all three ways this can be wrong: either bound out of range, or an
-	// inverted range. **Ordering is compared on the resolved offsets, not on the
-	// written bounds**, which is what admits a mixed range like `s.slice(1, -1)` —
-	// numerically 1 > -1, and in the string a perfectly ordinary interval. The mapping
-	// from rune index to byte offset is monotonic, so comparing offsets asks exactly
-	// what comparing rune indices would.
-	//
-	// `start > end` stays a trap rather than an empty string: an inverted range is a
-	// caller bug, and the "" it would otherwise yield is indistinguishable from a
-	// correct empty slice. `start == end` is fine and yields "".
+	// One test for all the ways this can be wrong: a negative bound, either bound out
+	// of range, or an inverted range. **A negative bound traps as of 08/12** — it
+	// counted from the end (`s.slice(1, -1)` dropped the last rune) until negative
+	// indexing was removed language-wide; the written test must catch it *before* the
+	// helper's answer is trusted, because a negative bound resolves through the
+	// helper's backward walk to a perfectly valid offset (that walk is `from_end`'s
+	// internal contract now). The positional spelling costs nothing here:
+	// `s.slice(1, s.len() - 1)` adds one O(n) count to a function that already walks
+	// and copies. `start > end` stays a trap rather than an empty string: an inverted
+	// range is a caller bug, and the "" it would otherwise yield is indistinguishable
+	// from a correct empty slice. `start == end` is fine and yields "".
+	negStart := block.NewICmp(enum.IPredSLT, start, zero)
+	negEnd := block.NewICmp(enum.IPredSLT, end, zero)
 	badStart := block.NewICmp(enum.IPredSLT, startOff, zero)
 	badEnd := block.NewICmp(enum.IPredSLT, endOff, zero)
 	inverted := block.NewICmp(enum.IPredSGT, startOff, endOff)
-	bad := block.NewOr(block.NewOr(badStart, badEnd), inverted)
+	bad := block.NewOr(block.NewOr(block.NewOr(negStart, negEnd), block.NewOr(badStart, badEnd)), inverted)
 
 	buildBlock := fn.NewBlock("")
 	block.NewCondBr(bad, trapBlock, buildBlock)
@@ -184,6 +186,57 @@ func (l *lowerer) lowerStringSlice(block *ir.Block, call *ast.FunctionCallExpr, 
 	strTy := StringLLVMType()
 	withPtr := buildBlock.NewInsertValue(constant.NewUndef(strTy), dst, 0)
 	return buildBlock.NewInsertValue(withPtr, nOut, 1), buildBlock, nil
+}
+
+// lowerStringFromEnd lowers `s.from_end(k)` → the k-th rune from the end, 1-based:
+// `from_end(1)` is the last rune. This is the explicit spelling that replaced the
+// negative index (08/12), and it lowers to exactly what `s[-k]` lowered to: the
+// **backward byte walk** in strRuneOffsetFunc, which skips continuation bytes without
+// decoding — O(k) byte tests, where the positional spelling `s[s.len() - k]` is two
+// full O(n) decode walks. Negating the operand into the helper's signed contract is
+// the whole translation; the helper is unchanged, its negative-idx branch now being
+// this method's private encoding rather than a language feature.
+//
+// `k < 1` traps here — the helper cannot be handed it, because 0 and the negatives
+// map onto its *forward* contract and would silently index from the front. `k` past
+// the first rune comes back -1 from the walk and traps the same way. Both are the
+// string-index trap: from_end is an index in different clothes.
+func (l *lowerer) lowerStringFromEnd(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 1 {
+		return nil, nil, fmt.Errorf("llvm: from_end() expects 1 argument, got %d", len(call.Arguments))
+	}
+	str, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !isStringLLVMType(str.Type()) {
+		return nil, nil, fmt.Errorf("llvm: string from_end() receiver did not lower to a string (%s)", str.Type())
+	}
+	kV, block, err := l.lowerExpr(block, call.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	kSigned, _ := l.getIntSignedness(call.Arguments[0])
+	k := coerceIntWidth(block, kV, kSigned, lltypes.I64)
+
+	one := constant.NewInt(lltypes.I64, 1)
+	block = l.emitTrapIf(block, block.NewICmp(enum.IPredSLT, k, one), l.panicStringIndexOOBFunc())
+
+	data := block.NewExtractValue(str, 0)
+	byteLen := block.NewExtractValue(str, 1)
+	target := block.NewSub(constant.NewInt(lltypes.I64, 0), k)
+	off := block.NewCall(l.strRuneOffsetFunc(), data, byteLen, target, constant.NewInt(lltypes.I1, 0))
+
+	fn := block.Parent
+	foundBlock := fn.NewBlock("")
+	trapBlock := fn.NewBlock("")
+	block.NewCondBr(block.NewICmp(enum.IPredSLT, off, constant.NewInt(lltypes.I64, 0)), trapBlock, foundBlock)
+	trapBlock.NewCall(l.panicStringIndexOOBFunc())
+	trapBlock.NewUnreachable()
+
+	cpSlot := fn.Blocks[0].NewAlloca(lltypes.I32)
+	foundBlock.NewCall(l.utf8DecodeFunc(), data, off, cpSlot)
+	return foundBlock.NewLoad(lltypes.I32, cpSlot), foundBlock, nil
 }
 
 // lowerStringCompareBytes lowers `s.compare_bytes(other)` → a negative, zero or positive
@@ -370,7 +423,13 @@ func (l *lowerer) lowerStringByteOffset(block *ir.Block, call *ast.FunctionCallE
 	data := block.NewExtractValue(str, 0)
 	byteLen := block.NewExtractValue(str, 1)
 	off := block.NewCall(l.strRuneOffsetFunc(), data, byteLen, idx, constant.NewInt(lltypes.I1, 1))
-	missing := block.NewICmp(enum.IPredSLT, off, constant.NewInt(lltypes.I64, 0))
+	// A negative position is `None` as of 08/12 (it counted from the end before) —
+	// folded in *before* trusting the helper's answer, since a negative idx resolves
+	// through its backward walk to a valid offset (that walk is `from_end`'s internal
+	// contract now). None rather than a trap, matching `index`'s negative offset:
+	// this returns a Maybe, so the no-such-position answer has a shape.
+	negIdx := block.NewICmp(enum.IPredSLT, idx, constant.NewInt(lltypes.I64, 0))
+	missing := block.NewOr(negIdx, block.NewICmp(enum.IPredSLT, off, constant.NewInt(lltypes.I64, 0)))
 
 	some, err := l.buildDataValue(block, dt, someTag, someC, []value.Value{off})
 	if err != nil {

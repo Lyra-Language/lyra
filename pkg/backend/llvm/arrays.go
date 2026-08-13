@@ -155,23 +155,20 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	size := constant.NewInt(lltypes.I64, int64(arrType.Size))
 
 	// The value-range analysis may have proved 0 <= i < size (res.RangeSafety): then
-	// the index is non-negative *and* in range, so both the from-the-end adjustment
-	// and the bounds trap are dead — emit the bare gep+load. Otherwise:
-	// a negative index counts from the end (Python-style): `i < 0` becomes
-	// `i + size`, so -1 is the last element and -size is the first. After this
-	// adjustment a valid index is in [0, size); an out-of-range one (i < -size, or
-	// i >= size) leaves `adjusted` negative or >= size, and the single *unsigned*
-	// `>= size` compare catches both (a negative sign-extends to a large unsigned).
-	var adjusted value.Value = idx64
+	// the bounds trap is dead — emit the bare gep+load. Otherwise a single *unsigned*
+	// `>= size` compare is the whole check: a valid index is in [0, size), and a
+	// negative one sign-extends to a large unsigned value, so the same compare
+	// catches both ends. (A negative index used to count from the end here, resolved
+	// by a select before this compare; that reading was removed 08/12 — the most
+	// common off-by-one got a valid read of the wrong element instead of a trap —
+	// and `xs.from_end(k)` is the explicit spelling now.)
 	if !l.res.RangeSafety.IndexInBounds(e) {
-		neg := block.NewICmp(enum.IPredSLT, idx64, constant.NewInt(lltypes.I64, 0))
-		adjusted = block.NewSelect(neg, block.NewAdd(idx64, size), idx64)
-		oob := block.NewICmp(enum.IPredUGE, adjusted, size)
+		oob := block.NewICmp(enum.IPredUGE, idx64, size)
 		block = l.emitTrapIf(block, oob, l.panicIndexOOBFunc())
 	}
 
-	// getelementptr [N x T], [N x T]* arrPtr, i64 0, i64 adjusted  →  T*
-	elemPtr := block.NewGetElementPtr(arrayTy, arrPtr, constant.NewInt(lltypes.I64, 0), adjusted)
+	// getelementptr [N x T], [N x T]* arrPtr, i64 0, i64 idx64  →  T*
+	elemPtr := block.NewGetElementPtr(arrayTy, arrPtr, constant.NewInt(lltypes.I64, 0), idx64)
 	return block.NewLoad(arrayTy.ElemType, elemPtr), block, nil
 }
 

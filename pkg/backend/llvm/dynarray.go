@@ -151,8 +151,8 @@ func (l *lowerer) lowerDynArrayRepeat(block *ir.Block, e *ast.ArrayRepeatExpr, d
 }
 
 // lowerDynArrayIndex lowers `xs[i]` on a dynamic array: load the runtime length
-// from the box, bounds-check the (possibly negative, counting-from-the-end) index
-// against it, then GEP+load the element. Unlike a fixed-size array there is no
+// from the box, bounds-check the index against it ([0, len); a negative traps), then
+// GEP+load the element. Unlike a fixed-size array there is no
 // compile-time size, so the bounds check is always emitted (the value-range pass
 // doesn't track dynamic lengths).
 func (l *lowerer) lowerDynArrayIndex(block *ir.Block, e *ast.IndexExpr, dynType types.DynamicArrayType) (value.Value, *ir.Block, error) {
@@ -172,17 +172,17 @@ func (l *lowerer) lowerDynArrayIndex(block *ir.Block, e *ast.IndexExpr, dynType 
 	if err != nil {
 		return nil, nil, err
 	}
-	// Widen the index to i64 by its own signedness (a negative signed index stays
-	// negative through the sign-extend), then apply the same negative-from-end +
-	// unsigned-`>=`-bound trap as a fixed-size array, but against the runtime length.
+	// Widen the index to i64 by its own signedness, then the fixed-size array's
+	// single unsigned bound compare against the runtime length — [0, len), with a
+	// negative index caught by the same compare via its sign-extension. (The
+	// negative-counts-from-the-end reading was removed 08/12; `xs.from_end(k)` is
+	// the explicit spelling.)
 	signed, _ := l.getIntSignedness(e.Index)
 	idx64 := coerceIntWidth(block, idx, signed, lltypes.I64)
-	neg := block.NewICmp(enum.IPredSLT, idx64, i64c(0))
-	adjusted := block.NewSelect(neg, block.NewAdd(idx64, length), idx64)
-	oob := block.NewICmp(enum.IPredUGE, adjusted, length)
+	oob := block.NewICmp(enum.IPredUGE, idx64, length)
 	block = l.emitTrapIf(block, oob, l.panicIndexOOBFunc())
 
-	elemPtr := dynArrayElemPtr(block, boxTy, box, adjusted)
+	elemPtr := dynArrayElemPtr(block, boxTy, box, idx64)
 	return block.NewLoad(elemLL, elemPtr), block, nil
 }
 
@@ -221,6 +221,69 @@ func (l *lowerer) lowerArrayLen(block *ir.Block, call *ast.FunctionCallExpr, mem
 		return length, block, nil
 	}
 	return nil, nil, fmt.Errorf("llvm: len() on non-array receiver %s not implemented", recvT)
+}
+
+// lowerArrayFromEnd lowers `xs.from_end(k)` → the k-th element from the end, 1-based
+// (`from_end(1)` is the last). The explicit spelling that replaced the negative index
+// (08/12): the element is at `len - k`, and the single unsigned compare
+// `len - k >= len` catches every bad k at once — `k < 1` wraps the subtraction to or
+// past `len`, `k > len` wraps it negative and so to a huge unsigned — which is the
+// same one-compare trick the index paths use for [0, len).
+func (l *lowerer) lowerArrayFromEnd(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, recvT types.Type) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 1 {
+		return nil, nil, fmt.Errorf("llvm: from_end() expects 1 argument, got %d", len(call.Arguments))
+	}
+	lowerK := func(b *ir.Block) (value.Value, *ir.Block, error) {
+		kV, b, err := l.lowerExpr(b, call.Arguments[0])
+		if err != nil {
+			return nil, nil, err
+		}
+		kSigned, _ := l.getIntSignedness(call.Arguments[0])
+		return coerceIntWidth(b, kV, kSigned, lltypes.I64), b, nil
+	}
+	switch it := recvT.(type) {
+	case types.StaticArrayType:
+		var arrPtr value.Value
+		var arrayTy *lltypes.ArrayType
+		var err error
+		if types.AllocationOf(recvT) == types.Shared {
+			arrPtr, arrayTy, block, err = l.sharedArrayPayloadPtr(block, member.Object)
+		} else {
+			arrPtr, arrayTy, block, err = l.arrayLValue(block, member.Object)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		k, block, err := lowerK(block)
+		if err != nil {
+			return nil, nil, err
+		}
+		size := i64c(int64(it.Size))
+		idx := block.NewSub(size, k)
+		block = l.emitTrapIf(block, block.NewICmp(enum.IPredUGE, idx, size), l.panicIndexOOBFunc())
+		elemPtr := block.NewGetElementPtr(arrayTy, arrPtr, i64c(0), idx)
+		return block.NewLoad(arrayTy.ElemType, elemPtr), block, nil
+	case types.DynamicArrayType:
+		elem, err := l.lowerType(it.ElementType)
+		if err != nil {
+			return nil, nil, err
+		}
+		boxTy := DynArrayBoxType(elem)
+		box, block, err := l.lowerExpr(block, member.Object)
+		if err != nil {
+			return nil, nil, err
+		}
+		length := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
+		k, block, err := lowerK(block)
+		if err != nil {
+			return nil, nil, err
+		}
+		idx := block.NewSub(length, k)
+		block = l.emitTrapIf(block, block.NewICmp(enum.IPredUGE, idx, length), l.panicIndexOOBFunc())
+		elemPtr := dynArrayElemPtr(block, boxTy, box, idx)
+		return block.NewLoad(elem, elemPtr), block, nil
+	}
+	return nil, nil, fmt.Errorf("llvm: from_end() on non-array receiver %s not implemented", recvT)
 }
 
 // dynArrayDropFn returns the drop_fn to pass when releasing a `[]T` box: null when

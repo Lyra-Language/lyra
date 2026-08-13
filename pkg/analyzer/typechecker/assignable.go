@@ -1,6 +1,8 @@
 package typechecker
 
 import (
+	"fmt"
+
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -124,6 +126,34 @@ func readoutSpelling(base types.Type) (string, bool) {
 		return string(p.Name), true
 	}
 	return "", false
+}
+
+// isIndexableForFromEnd reports whether t is a type whose `[i]` index refuses a
+// negative and whose `from_end(k)` exists — an array (either kind) or a string. The
+// negative-index error names `from_end` only for these, so a type with neither
+// spelling gets the ordinary index diagnostics instead of a hint it cannot take.
+func isIndexableForFromEnd(t types.Type) bool {
+	switch t.(type) {
+	case types.StaticArrayType, types.DynamicArrayType:
+		return true
+	}
+	return types.IsString(t)
+}
+
+// ordinal renders 1 → "1st", 2 → "2nd", 3 → "3rd", n → "nth", for the
+// negative-index error's "use `.from_end(2)` for the 2nd value from the end".
+func ordinal(n int64) string {
+	switch {
+	case n%100 >= 11 && n%100 <= 13:
+		return fmt.Sprintf("%dth", n)
+	case n%10 == 1:
+		return fmt.Sprintf("%dst", n)
+	case n%10 == 2:
+		return fmt.Sprintf("%dnd", n)
+	case n%10 == 3:
+		return fmt.Sprintf("%drd", n)
+	}
+	return fmt.Sprintf("%dth", n)
 }
 
 // identityConversionTargetByName maps the two conversion targets that are not

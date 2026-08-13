@@ -79,8 +79,11 @@ func TestExec_ArrayBoundsCheck(t *testing.T) {
 	}{
 		{"index past the end", `let at = (xs: [3]u8, i: i64) -> u8 => xs[i]
 		 let main = () -> u8 => at([10, 20, 30], 5)`},
-		{"negative index past the start", `let at = (xs: [3]u8, i: i64) -> u8 => xs[i]
-		 let main = () -> u8 => at([10, 20, 30], -4)`},
+		// A negative runtime index traps as of 08/12 — it counted from the end
+		// before, which handed the most common off-by-one a valid read of the
+		// wrong element. This pins the semantics *change*, not just a bound.
+		{"negative index traps", `let at = (xs: [3]u8, i: i64) -> u8 => xs[i]
+		 let main = () -> u8 => at([10, 20, 30], -1)`},
 	}
 	for _, c := range trap {
 		t.Run("", func(t *testing.T) {
@@ -91,15 +94,15 @@ func TestExec_ArrayBoundsCheck(t *testing.T) {
 		})
 	}
 
-	// The in-bounds boundaries (last positive index and -size) do not trap.
+	// The in-bounds boundaries (the last index, and the first via from_end) do not trap.
 	for _, c := range []struct {
 		src  string
 		want int
 	}{
 		{`let at = (xs: [3]u8, i: i64) -> u8 => xs[i]
 		  let main = () -> u8 => at([7, 8, 9], 2)`, 9},
-		{`let at = (xs: [3]u8, i: i64) -> u8 => xs[i]
-		  let main = () -> u8 => at([7, 8, 9], -3)`, 7},
+		{`let at = (xs: [3]u8, k: i64) -> u8 => xs.from_end(k)
+		  let main = () -> u8 => at([7, 8, 9], 3)`, 7},
 	} {
 		if got := buildAndRun(t, c.src); got != c.want {
 			t.Errorf("boundary index: exited %d, want %d", got, c.want)
@@ -107,27 +110,32 @@ func TestExec_ArrayBoundsCheck(t *testing.T) {
 	}
 }
 
-// A negative index counts from the end (Python-style): -1 is the last element,
-// -2 the second-to-last, down to -size for the first. Works for a runtime index
-// (through a param) and a constant one (a `-1` literal is a NegationExpr, so it
-// takes the runtime path — the typechecker range-checks a constant negative).
-func TestExec_NegativeArrayIndex(t *testing.T) {
+// `xs.from_end(k)` — the k-th element from the end, 1-based: from_end(1) is the last,
+// down to from_end(size) for the first. The explicit spelling that replaced the
+// negative index (08/12): `xs[-k]` used to mean the same thing and now traps. Works
+// for a runtime k (through a param) and a constant one; out of range in either
+// direction (k < 1, k > size) traps like the index it mirrors.
+func TestExec_ArrayFromEnd(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name string
 		src  string
 		want int
 	}{
-		{"runtime -1 is the last element", `let at = (xs: [4]u8, i: i64) -> u8 => xs[i]
-		 let main = () -> u8 => at([10, 20, 30, 40], -1)`, 40},
-		{"runtime -2 is second-to-last", `let at = (xs: [4]u8, i: i64) -> u8 => xs[i]
-		 let main = () -> u8 => at([10, 20, 30, 40], -2)`, 30},
-		{"runtime -size is the first element", `let at = (xs: [4]u8, i: i64) -> u8 => xs[i]
-		 let main = () -> u8 => at([10, 20, 30, 40], -4)`, 10},
-		{"constant -1 literal", `let main = () -> u8 => {
+		{"from_end(1) is the last element", `let at = (xs: [4]u8, k: i64) -> u8 => xs.from_end(k)
+		 let main = () -> u8 => at([10, 20, 30, 40], 1)`, 40},
+		{"from_end(2) is second-to-last", `let at = (xs: [4]u8, k: i64) -> u8 => xs.from_end(k)
+		 let main = () -> u8 => at([10, 20, 30, 40], 2)`, 30},
+		{"from_end(size) is the first element", `let at = (xs: [4]u8, k: i64) -> u8 => xs.from_end(k)
+		 let main = () -> u8 => at([10, 20, 30, 40], 4)`, 10},
+		{"constant from_end on a binding", `let main = () -> u8 => {
 		   let xs: [3]u8 = [10, 20, 30]
-		   xs[-1]
+		   xs.from_end(1)
 		 }`, 30},
+		{"from_end(0) traps", `let at = (xs: [3]u8, k: i64) -> u8 => xs.from_end(k)
+		 let main = () -> u8 => at([10, 20, 30], 0)`, trapExitCode},
+		{"from_end past the start traps", `let at = (xs: [3]u8, k: i64) -> u8 => xs.from_end(k)
+		 let main = () -> u8 => at([10, 20, 30], 4)`, trapExitCode},
 	}
 	for _, c := range cases {
 		t.Run("", func(t *testing.T) {

@@ -96,12 +96,45 @@ var floatRoundingOps = map[string]bool{
 // treats 5 as i64), mirroring how an unannotated literal binding is typed.
 func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc ast.Location) (*types.LambdaType, bool) {
 	// Array length: `xs.len()` on a fixed-size or dynamic array → i64 element count,
-	// no arguments. (i64, not u64, so it composes with signed index arithmetic — a
-	// negative index counts from the end.)
+	// no arguments. (i64, not u64, so `xs[i - 1]`-style signed index arithmetic
+	// composes without a conversion at every use.)
 	if name == "len" && types.IsArray(recv) {
 		return &types.LambdaType{
 			ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.Int64}},
 		}, true
+	}
+	// `xs.from_end(k)` / `s.from_end(k)` — the k-th value from the end, 1-based:
+	// `from_end(1)` is the last element (rune), `from_end(2)` the one before it.
+	// This is the explicit spelling that replaced the negative index (08/12): `s[-1]`
+	// used to mean the same thing, and the audit's objection was that it made the
+	// most common off-by-one — an index underflowing past zero — a *valid read of
+	// the wrong element* instead of a trap, in the language whose thesis is
+	// trap-over-silently-wrong. The accessor keeps the performance the negative
+	// spelling was justified by: on a string it is the same backward byte walk
+	// (O(k) with no decoding, where `s[s.len() - 1]` is two full decode walks), and
+	// on an array it is `len - k` with one bounds check. 1-based because "the 1st
+	// from the end" is how the phrase reads — and it maps exactly onto the `-1`/`-2`
+	// it replaced. Out of range (k < 1, or k > len) traps, like the index it mirrors.
+	if name == "from_end" {
+		i64t := types.PrimitiveType{Name: types.Int64}
+		switch r := recv.(type) {
+		case types.StaticArrayType:
+			return &types.LambdaType{
+				Parameters: []types.ParameterType{{Type: i64t}},
+				ReturnType: types.ReturnType{Type: r.ElementType},
+			}, true
+		case types.DynamicArrayType:
+			return &types.LambdaType{
+				Parameters: []types.ParameterType{{Type: i64t}},
+				ReturnType: types.ReturnType{Type: r.ElementType},
+			}, true
+		}
+		if types.IsString(recv) {
+			return &types.LambdaType{
+				Parameters: []types.ParameterType{{Type: i64t}},
+				ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.Rune}},
+			}, true
+		}
 	}
 	// `xs.push(v)` — the growth operation, on a **dynamic** array only. A `[N]T` has
 	// its size in its type, so growing one would change what type it is.
@@ -195,8 +228,9 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 			// count) is `Some(byte_len)` rather than `None`. That is deliberately
 			// `slice`'s rule rather than `s[i]`'s: this exists to convert *bounds*, and a
 			// bound may name the end — `s.slice(a, n)` is ordinary, so `byte_offset(n)`
-			// must have an answer. A negative `i` counts from the end, as it does
-			// everywhere else since 08/08.
+			// must have an answer. A negative `i` is `None` (08/12; it counted from
+			// the end before): positions are non-negative, and None matches `index`'s
+			// negative offset — a Maybe gives the no-such-position answer a shape.
 			//
 			// `Maybe<i64>`, not -1, for the reason the prelude's own functions return one;
 			// a Maybe of a scalar is an inline union, so it stays `noalloc`. Resolved

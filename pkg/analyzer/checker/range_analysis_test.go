@@ -244,6 +244,17 @@ func TestRange_IndexOOB_NegativeRefinement(t *testing.T) {
 	`, diag.CodeIndexOutOfBounds)
 }
 
+// The check got *sharper* when negative indexing was removed (08/12): any provably
+// negative index is now a definite trap, where `[-3, -1]` used to be a valid
+// from-the-end read this pass had to let through. `if i < 0 { xs[i] }` is the refined
+// off-by-one — the exact bug class the removal was for, caught at compile time.
+func TestRange_IndexOOB_AnyNegativeRefinement(t *testing.T) {
+	onlyDiag(t, `
+		let f = (xs: [3]u8, i: i64) -> u8 => if i < 0 { xs[i] } else { 0 }
+		let main = () -> u8 => 0
+	`, diag.CodeIndexOutOfBounds)
+}
+
 // ── no false out-of-bounds ───────────────────────────────────────────────────
 
 // A full-range index *can* be out of bounds but need not be — a merely *possible*

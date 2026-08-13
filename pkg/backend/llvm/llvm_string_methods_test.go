@@ -476,34 +476,38 @@ let main = () -> void => {
 // answer with a continuation byte rather than a rune, so "日本語"[-1] is the test that
 // the backward walk lands on a lead byte. It skips continuation bytes without decoding,
 // which is well-defined only because UTF-8 is self-synchronizing.
-func TestExec_NegativeStringIndex(t *testing.T) {
+func TestExec_StringFromEnd(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
 let main = () -> void => {
   let s = "héllo";
-  println("${s[0]}${s[1]}${s[4]}|${s[-1]}${s[-2]}${s[-5]}");
+  println("${s[0]}${s[1]}${s[4]}|${s.from_end(1)}${s.from_end(2)}${s.from_end(5)}");
   let j = "日本語";
-  println("${j[-1]}${j[-2]}${j[-3]}|${j[0]}${j[2]}");
+  println("${j.from_end(1)}${j.from_end(2)}${j.from_end(3)}|${j[0]}${j[2]}");
 }
 `
 	want := "héo|olh\n語本日|日語"
 	out, _ := buildAndRunCapture(t, src)
 	if got := strings.TrimSpace(out); got != want {
-		t.Errorf("negative string index:\n%s\nwant:\n%s", got, want)
+		t.Errorf("string from_end:\n%s\nwant:\n%s", got, want)
 	}
 }
 
-// Out of range in *either* direction still traps, and with the string trap rather than
-// the array one. `s[-n]` is the first rune and `s[-n-1]` is past the front; the end
-// position `s[n]` is not an index, which is what allowEnd=false buys (slice, which does
-// admit it, is the other caller).
-func TestExec_NegativeStringIndexOutOfRangeTraps(t *testing.T) {
+// Out of range traps in every direction, with the string trap rather than the array
+// one: past the end, a **negative index** (which counted from the end until 08/12 —
+// this pins the semantics change), `from_end(0)` ("the zeroth from the end" is
+// nothing), and `from_end` past the front. The end position `s[n]` is not an index,
+// which is what allowEnd=false buys (slice, which does admit it, is the other caller).
+func TestExec_StringIndexOutOfRangeTraps(t *testing.T) {
 	t.Parallel()
-	for _, expr := range []string{"s[5]", "s[-6]", "s[99]", "s[-99]"} {
+	// The negative rows route through a parameter, because a *constant* negative is
+	// now the typechecker's to refuse (naming from_end) and would never reach the
+	// runtime trap this test is about.
+	for _, expr := range []string{"s[5]", "at(s, -1)", "at(s, -99)", "s.from_end(0)", "s.from_end(6)", "s.from_end(99)"} {
 		t.Run(expr, func(t *testing.T) {
 			t.Parallel()
-			src := "\nmodule main\nlet main = () -> void => {\n  let s = \"héllo\";\n  println(\"${" + expr + "}\");\n}\n"
+			src := "\nmodule main\nlet at = (x: string, i: i64) -> rune => x[i]\nlet main = () -> void => {\n  let s = \"héllo\";\n  println(\"${" + expr + "}\");\n}\n"
 			stderr, code := buildAndRunPanic(t, src)
 			if code != trapExitCode {
 				t.Errorf("%s exited %d; want %d (the trap)", expr, code, trapExitCode)
@@ -515,38 +519,35 @@ func TestExec_NegativeStringIndexOutOfRangeTraps(t *testing.T) {
 	}
 }
 
-// Negative `slice` bounds, including a **mixed** range like `slice(1, -1)` — which is
-// the case that pins the ordering test being applied to the resolved byte offsets
-// rather than to the written bounds. Compared as written, `1 > -1` would trap on a
-// perfectly ordinary interval.
-//
-// `slice(-n, -n)` is the empty string, not a trap: an empty range is what every loop
-// terminates on, and it is only `start > end` that is a caller bug.
-func TestExec_NegativeStringSliceBounds(t *testing.T) {
+// End-relative slicing is spelled through `len()` since 08/12 — a negative bound
+// traps (it counted from the end before). The positional spelling costs nothing
+// here: `slice` already walks and copies, so one O(n) count is the same complexity
+// class, which is why `from_end` has no slice-bound counterpart.
+func TestExec_StringSliceEndRelative(t *testing.T) {
 	t.Parallel()
 	const src = `
 module main
 let main = () -> void => {
   let s = "héllo";
   println("[${s.slice(0, 5)}][${s.slice(1, 3)}][${s.slice(0, 0)}][${s.slice(5, 5)}]");
-  println("[${s.slice(1, -1)}][${s.slice(-3, -1)}][${s.slice(-5, 2)}][${s.slice(-1, 5)}][${s.slice(-5, -5)}]");
+  println("[${s.slice(1, s.len() - 1)}][${s.slice(s.len() - 3, s.len() - 1)}]");
   let j = "日本語です";
-  println("[${j.slice(-2, 5)}][${j.slice(0, -2)}][${j.slice(-3, -1)}]");
+  println("[${j.slice(j.len() - 2, 5)}][${j.slice(0, j.len() - 2)}]");
 }
 `
-	want := "[héllo][él][][]\n[éll][ll][hé][o][]\n[です][日本語][語で]"
+	want := "[héllo][él][][]\n[éll][ll]\n[です][日本語]"
 	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
-		t.Errorf("negative slice bounds:\n%s\nwant:\n%s", got, want)
+		t.Errorf("end-relative slice:\n%s\nwant:\n%s", got, want)
 	}
 }
 
-// An inverted range traps whichever way it is spelled, and so does a bound past either
-// end. `slice(-1, -3)` is the negative spelling of `slice(4, 2)`, and must not quietly
-// yield "" — the empty string it would produce is indistinguishable from a correct
-// empty slice.
+// An inverted range traps, a bound past either end traps — and so does a **negative**
+// bound (08/12; it counted from the end before, and this pins the change). The
+// negative rows must trap *before* the helper's backward walk could resolve them to a
+// valid offset, which is exactly what the guard on the written bounds is for.
 func TestExec_NegativeStringSliceOutOfRangeTraps(t *testing.T) {
 	t.Parallel()
-	for _, expr := range []string{"s.slice(3, 1)", "s.slice(-1, -3)", "s.slice(0, 6)", "s.slice(-6, 2)", "s.slice(6, 6)"} {
+	for _, expr := range []string{"s.slice(3, 1)", "s.slice(1, -1)", "s.slice(-1, 5)", "s.slice(-3, -1)", "s.slice(0, 6)", "s.slice(6, 6)"} {
 		t.Run(expr, func(t *testing.T) {
 			t.Parallel()
 			src := "\nmodule main\nlet main = () -> void => {\n  let s = \"héllo\";\n  println(\"[${" + expr + "}]\");\n}\n"
@@ -568,7 +569,9 @@ func TestExec_NegativeStringSliceOutOfRangeTraps(t *testing.T) {
 // **The end position is `Some`, not `None`** (rune count → byte length), which is
 // slice's rule rather than indexing's: this converts *bounds*, and `s.slice(a, n)` is an
 // ordinary slice, so `n` must have an answer. The asymmetry with `s[n]`, which traps, is
-// deliberate. A negative index counts from the end like everywhere else.
+// deliberate. A **negative** position is `None` as of 08/12 (it counted from the end
+// before) — positions are non-negative, and None matches `index`'s negative offset,
+// since a Maybe gives the no-such-position answer a shape.
 func TestExec_StringByteOffset(t *testing.T) {
 	t.Parallel()
 	const src = `
@@ -584,7 +587,7 @@ let main = () -> void => {
   println("${off(j, 1)} ${off(j, 3)} ${off(j, -1)} ${off("", 0)} ${off("", 1)}");
 }
 `
-	want := "0 1 3 5 6 -1\n5 0 -1\n3 9 6 0 -1"
+	want := "0 1 3 5 6 -1\n-1 -1 -1\n3 9 -1 0 -1"
 	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
 		t.Errorf("byte_offset:\n%s\nwant:\n%s", got, want)
 	}
@@ -815,7 +818,7 @@ func TestExec_StringToRunes(t *testing.T) {
 module main
 let main = () -> void => {
   let rs = "héllo".to_runes();
-  println("${rs.len()} ${rs[0]} ${rs[1]} ${rs[-1]}");
+  println("${rs.len()} ${rs[0]} ${rs[1]} ${rs.from_end(1)}");
   println("${"".to_runes().len()} ${"日本語".to_runes()[1]}");
 }
 `

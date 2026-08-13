@@ -107,7 +107,7 @@ func CheckIntegerRanges(program *ast.Program, tt *typetable.TypeTable) ([]diag.D
 //   - noDivOverflow — signed division that can't be INT_MIN/-1, plus every unsigned
 //     division (drops the signed-division overflow check).
 //   - inBounds — `xs[i]` whose index is provably within [0, size) (drops the array
-//     bounds check and the negative-index adjustment).
+//     bounds check).
 //   - noShiftOverflow — `<<`/`>>` (and their compound forms) whose count is provably
 //     within [0, width) (drops the shift-amount check).
 type SafetyTable struct {
@@ -141,7 +141,7 @@ func (t *SafetyTable) NoDivZero(e ast.Expression) bool { return t.has(t.noDivZer
 func (t *SafetyTable) NoDivOverflow(e ast.Expression) bool { return t.has(t.noDivOverflow, e) }
 
 // IndexInBounds reports whether e is an index whose value is provably within
-// [0, size) — so both the bounds trap and the negative-index adjustment drop.
+// [0, size) — so the bounds trap drops.
 func (t *SafetyTable) IndexInBounds(e ast.Expression) bool { return t.has(t.inBounds, e) }
 
 // NoShiftOverflow reports whether e is a shift whose count is provably within
@@ -1276,16 +1276,17 @@ func (c *rangeChecker) checkDivision(e, typeExpr, divisorExpr ast.Expression, di
 	}
 }
 
-// evalIndex analyzes an array index `xs[i]` two ways from the index range (a
-// negative index counts from the end, so the valid range is `[-size, size)`):
+// evalIndex analyzes an array index `xs[i]` two ways from the index range (the
+// valid range is `[0, size)` — a negative index traps as of 08/12, having counted
+// from the end before, which made this check *sharper*: what used to be a valid
+// from-the-end read is now a definite trap the analysis can prove):
 //
-//   - **Elision.** An index provably within `[0, size)` is in range *and*
-//     non-negative, so both the bounds trap and the from-the-end adjustment are
-//     unnecessary — marked `inBounds`. A negative-but-valid index (`[-size,-1]`) is
-//     left to the runtime check; only the common non-negative case is elided.
+//   - **Elision.** An index provably within `[0, size)` is in range, so the bounds
+//     trap is unnecessary — marked `inBounds`.
 //   - **Diagnostic (lyra-E022).** A *non-singleton* index range entirely outside
-//     `[-size, size)` is a definite out-of-bounds — a guaranteed runtime trap,
-//     reported at compile time (the error-reporting twin of the elision). The
+//     `[0, size)` — including one provably negative, the refined off-by-one
+//     (`if i < 0 { xs[i] }`) — is a definite out-of-bounds: a guaranteed runtime
+//     trap, reported at compile time (the error-reporting twin of the elision). The
 //     non-singleton requirement is what keeps it from double-reporting the
 //     typechecker's own constant-index check (`inferIndexExpr`/`resolveConstantInt`):
 //     that check only resolves a *single* constant index, so whenever it would fire
@@ -1306,10 +1307,10 @@ func (c *rangeChecker) evalIndex(st rangeEnv, v *ast.IndexExpr) (interval, bool,
 			switch {
 			case idx.lo >= 0 && idx.hi < size:
 				c.safe.inBounds[v] = true
-			case idx.lo < idx.hi && (idx.lo >= size || idx.hi < -size):
+			case idx.lo < idx.hi && (idx.lo >= size || idx.hi < 0):
 				c.report(v, diag.SeverityError, diag.CodeIndexOutOfBounds,
-					fmt.Sprintf("this index is always out of bounds: it is always in [%s, %s], outside the valid range [-%d, %d) for a size-%d array",
-						fmtBound(idx.lo), fmtBound(idx.hi), size, size, size))
+					fmt.Sprintf("this index is always out of bounds: it is always in [%s, %s], outside the valid range [0, %d) for a size-%d array",
+						fmtBound(idx.lo), fmtBound(idx.hi), size, size))
 			}
 		}
 	}

@@ -3015,8 +3015,9 @@ func (tc *TypeChecker) resolveConstantInt(expr ast.Expression) (int64, bool) {
 	case *ast.IntegerLiteralExpr:
 		return e.Int64()
 	case *ast.NegationExpr:
-		// So a constant negative index (`arr[-1]`) folds too — the array bounds
-		// check needs it to validate the `[-size, size)` range at compile time.
+		// So a constant negative index (`arr[-1]`) folds too — which is how the
+		// index check can refuse it at compile time and name `from_end` (a negative
+		// index no longer counts from the end as of 08/12).
 		if v, ok := tc.resolveConstantInt(e.Operand); ok {
 			return -v, true
 		}
@@ -3049,16 +3050,33 @@ func (tc *TypeChecker) inferIndexExpr(expr *ast.IndexExpr) types.Type {
 		return nil
 	}
 
+	// A negative index is refused wherever it is provable, naming the spelling that
+	// replaced it (08/12). It used to count from the end, Python-style, and that was
+	// the audit's sharpest design finding: in the language whose thesis is
+	// trap-over-silently-wrong, an index that underflows past zero — the most common
+	// off-by-one there is — got a *valid read of the wrong element* instead of a
+	// trap. `from_end(k)` is the explicit end-relative accessor now, and it keeps the
+	// backward-walk performance the negative spelling was justified by. Provable →
+	// compile error here; a runtime negative → the bounds trap, which the backends'
+	// single unsigned compare catches for free.
+	if idx, ok := tc.resolveConstantInt(expr.Index); ok && idx < 0 {
+		if isIndexableForFromEnd(objectType) {
+			tc.addError(expr.GetLocation(), SeverityError,
+				"index %d is negative — an index does not count from the end; use `.from_end(%d)` for the %s value from the end",
+				idx, -idx, ordinal(-idx))
+			return nil
+		}
+	}
+
 	switch t := objectType.(type) {
 	case types.StaticArrayType:
-		// A negative index counts from the end (`arr[-1]` is the last element), so
-		// the valid range is [-size, size). A constant index outside it is a
-		// compile-time error; a runtime index is bounds-checked in the backend.
+		// A constant index outside [0, size) is a compile-time error; a runtime
+		// index is bounds-checked in the backend.
 		if idx, ok := tc.resolveConstantInt(expr.Index); ok {
-			if idx < -int64(t.Size) || idx >= int64(t.Size) {
+			if idx >= int64(t.Size) {
 				tc.addError(expr.GetLocation(), SeverityError,
-					"index %d out of range for array of size %d (valid indices are %d to %d)",
-					idx, t.Size, -t.Size, t.Size-1)
+					"index %d out of range for array of size %d (valid indices are 0 to %d)",
+					idx, t.Size, t.Size-1)
 				return nil
 			}
 		}

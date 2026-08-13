@@ -52,23 +52,54 @@ func TestIndexExpr_StaticArray_LiteralInBounds_Ok(t *testing.T) {
 	assertNoErrors(t, res)
 }
 
-// A negative index counts from the end, so `[-size, -1]` is in range.
-func TestIndexExpr_StaticArray_NegativeInBounds_Ok(t *testing.T) {
+// A constant negative index is refused, naming the spelling that replaced it
+// (08/12). It counted from the end until then — which handed the most common
+// off-by-one, an index underflowing past zero, a valid read of the wrong element in
+// the language whose thesis is trap-over-silently-wrong. Provable → compile error
+// here; a runtime negative → the bounds trap.
+func TestIndexExpr_StaticArray_NegativeIndexRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let xs: [3]i64 = [1, 2, 3]
 		let a = xs[-1]
-		let b = xs[-3]
 	`, false)
-	assertNoErrors(t, res)
+	assertErrorsAre(t, res,
+		"index -1 is negative — an index does not count from the end; use `.from_end(1)` for the 1st value from the end")
 }
 
-// A constant index below -size is still out of range (the negation folds).
-func TestIndexExpr_StaticArray_NegativeOutOfBounds_Error(t *testing.T) {
+// The hint's ordinal follows the magnitude, and a folded constant (`let i = -2`)
+// is refused the same way a literal is.
+func TestIndexExpr_StaticArray_NegativeConstBindingRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let xs: [3]i64 = [1, 2, 3]
-		let y = xs[-4]
+		let i: i64 = -2
+		let a = xs[i]
 	`, false)
-	assertErrorsAre(t, res, "index -4 out of range for array of size 3 (valid indices are -3 to 2)")
+	assertErrorsAre(t, res,
+		"index -2 is negative — an index does not count from the end; use `.from_end(2)` for the 2nd value from the end")
+}
+
+// A string index gets the same refusal — the rule is the indexable surface's, not
+// one container's.
+func TestIndexExpr_String_NegativeIndexRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let s = "abc"
+		let c = s[-1]
+	`, false)
+	assertErrorsAre(t, res,
+		"index -1 is negative — an index does not count from the end; use `.from_end(1)` for the 1st value from the end")
+}
+
+// from_end type-checks on all three receivers, with the element (rune) result type.
+func TestIndexExpr_FromEndTypes(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let xs: [3]i32 = [1, 2, 3]
+		let a: i32 = xs.from_end(1)
+		let ds: []string = ["x", "y"]
+		let b: string = ds.from_end(2)
+		let s = "abc"
+		let c: rune = s.from_end(1)
+	`, true)
+	assertNoErrors(t, res)
 }
 
 func TestIndexExpr_StaticArray_LiteralOutOfBounds_Error(t *testing.T) {
@@ -76,7 +107,7 @@ func TestIndexExpr_StaticArray_LiteralOutOfBounds_Error(t *testing.T) {
 		let xs: [3]i64 = [1, 2, 3]
 		let y = xs[3]
 	`, false)
-	assertErrorsAre(t, res, "index 3 out of range for array of size 3 (valid indices are -3 to 2)")
+	assertErrorsAre(t, res, "index 3 out of range for array of size 3 (valid indices are 0 to 2)")
 }
 
 func TestIndexExpr_StaticArray_ElementType_Ok(t *testing.T) {
@@ -111,7 +142,7 @@ func TestIndexExpr_StaticArray_ConstLetIndex_OutOfBounds_Error(t *testing.T) {
 		let i: i64 = 10
 		let y = xs[i]
 	`, false)
-	assertErrorsAre(t, res, "index 10 out of range for array of size 3 (valid indices are -3 to 2)")
+	assertErrorsAre(t, res, "index 10 out of range for array of size 3 (valid indices are 0 to 2)")
 }
 
 func TestIndexExpr_StaticArray_ConstLetIndex_InBounds_Ok(t *testing.T) {

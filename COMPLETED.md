@@ -10,6 +10,54 @@ Newest first.
 ## Dated log
 
 ### 08/12/26
+**Negative indexing is removed; `from_end(k)` is the end-relative accessor** — the one
+audit finding that was a deliberate design rather than an implementation gap, reversed
+four days after it landed. `s[-1]`/`xs[-1]` counted from the end (08/08, Python's rule),
+and the objection was the design's own thesis: overflow traps, narrowing errors, shifts
+trap, `split("")` traps — and an index underflowing past zero, the most common
+off-by-one in existence, got a *valid read of the wrong element*. The 08/08 defense
+measured the operation (34272 µs → 18 µs for the last rune) and concluded the spelling;
+the correction keeps the operation and fixes the spelling.
+
+**`from_end(k)`**, on strings and arrays alike, 1-based — "the 1st from the end" is how
+the phrase reads, and it maps exactly onto the `-1`/`-2` it replaced. A builtin like the
+index it mirrors (`pure noalloc` for free). On a string it lowers to the *same* backward
+byte walk `s[-k]` lowered to: `lyra_str_rune_offset`'s negative branch is unchanged and
+is now the method's **private contract** — which flips its hazard polarity, since every
+caller handing the helper a surface index must now reject a negative first or the value
+silently means from-the-end again (the string-index lowering grew exactly that guard).
+Re-measured after the change: `from_end(1)` ×2000 on an ~1800-rune string is **2 µs**
+where `s[s.len() - 1]` ×2000 is **6082 µs** — the win the accessor was obliged to keep.
+On an array it is `len - k` behind one unsigned compare (`len - k >= len` catches k < 1
+and k > len at once, the same trick the index paths use).
+
+**The removal follows the standing ladder** — provable → compile error, otherwise →
+trap. A constant negative index (literal or folded `let`) is refused in `inferIndexExpr`
+naming the fix with the right ordinal ("use `.from_end(2)` for the 2nd value from the
+end"); a runtime negative hits the bounds trap, which got *cheaper*: the from-the-end
+`select` adjustment is deleted from all three index lowerings (fixed, dynamic, lvalue),
+leaving the single unsigned compare whose sign-extension trick already caught negatives.
+The value-range pass got **sharper**, not just adjusted: `[0, size)` is the whole valid
+range now, so any provably-negative index — `if i < 0 { xs[i] }`, the refined
+off-by-one itself — is definite `lyra-E022`, where `[-size, -1]` used to be a valid
+from-the-end read the analysis had to let through.
+
+The satellites went with it, each to its own answer: `slice`'s negative bounds trap
+(the positional `s.slice(1, s.len() - 1)` is the same complexity class, since slice
+already walks and copies — which is why from_end has no slice-bound counterpart), and
+`byte_offset`'s negative position is `None` — now *agreeing* with `index`'s negative
+offset, whose entry had recorded the disagreement as a live tension. An
+index-assignment target has no end-relative form; `xs[xs.len() - 1] = v` is O(1) on
+arrays, the only place assignment exists.
+
+Tests migrated rather than deleted where they pinned semantics: the negative-index
+exec tests became from_end tests with the same multi-byte fixtures ("日本語" still pins
+the walk landing on lead bytes), and each family keeps one *negative-traps* case
+pinning the change itself. The prelude used no negative indexing anywhere — the
+feature was four days old — which is the "migrate before the library grows" argument
+in its purest form.
+
+### 08/12/26
 **`noalloc` charges closures — by capture** (`lyra-E016`), closing the last finding of
 the morning's audit. A `noalloc` function containing a capturing lambda had checked
 clean while its emitted body called `lyra_rc_alloc` for the environment on every

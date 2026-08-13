@@ -60,11 +60,12 @@ let main = () -> u8 => {
 			25,
 		},
 		{
-			// A negative constant index counts from the end (Python-style), through the box.
-			"negative index from end",
+			// The end-relative read goes through the box the same way — from_end on a
+			// `shared` fixed array reaches its payload rather than an inline alloca.
+			"from_end through the box",
 			`let main = () -> u8 => {
   let xs: shared [3]u8 = [1, 2, 3]
-  xs[-1]
+  xs.from_end(1)
 }`,
 			3,
 		},

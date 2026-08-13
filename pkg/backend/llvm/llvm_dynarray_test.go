@@ -28,10 +28,10 @@ func TestExec_DynArray(t *testing.T) {
 			20,
 		},
 		{
-			"index the last via negative",
+			"the last element via from_end",
 			`let main = () -> u8 => {
   let xs: []u8 = [1, 2, 3]
-  xs[-1]
+  xs.from_end(1)
 }`,
 			3,
 		},

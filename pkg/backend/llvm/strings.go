@@ -56,19 +56,21 @@ func (l *lowerer) stringBox(block *ir.Block, str value.Value) value.Value {
 // lowerStringIndex lowers `s[i]` on a string → the i-th **rune** (code point).
 //
 // Because a string is UTF-8, runes aren't randomly addressable, so the position comes
-// from strRuneOffsetFunc and this decodes the one rune there. A non-negative `i` costs
-// O(i) — for a full traversal, prefer `for c in s`.
+// from strRuneOffsetFunc and this decodes the one rune there. `i` costs O(i) — for a
+// full traversal, prefer `for c in s`.
 //
-// **A negative index counts from the end** (08/08), `s[-1]` being the last rune, which
-// is the array rule. It is not merely consistency: the backward walk skips continuation
-// bytes without decoding, so `s[-1]` is a few byte tests where the spelling it replaces,
-// `s[s.len() - 1]`, is two full O(n) decode walks. The comment here used to say a
-// from-the-end form "would require a full rune count first", which is the thing that
-// turned out not to be true.
+// **A negative index traps** (08/12). It counted from the end from 08/08 until then,
+// which the audit called the design's sharpest self-contradiction: in the language
+// whose thesis is trap-over-silently-wrong, the most common off-by-one — an index
+// underflowing past zero — got a valid read of the wrong element. The performance
+// that justified it (a backward byte walk instead of two full decode walks) lives on
+// in `s.from_end(k)`, the explicit spelling; strRuneOffsetFunc's negative-idx
+// encoding is now that method's internal contract, so the guard here must reject a
+// negative *before* the call or it would silently mean from-the-end again.
 //
-// Out of range in either direction traps — its own trap, not the array one, since a
-// string index is a rune index and pointing the reader at an array is a wrong turn.
-// The end *position* is not a valid index (allowEnd is false), unlike in slice.
+// Out of range traps — its own trap, not the array one, since a string index is a
+// rune index and pointing the reader at an array is a wrong turn. The end *position*
+// is not a valid index (allowEnd is false), unlike in slice.
 func (l *lowerer) lowerStringIndex(block *ir.Block, e *ast.IndexExpr) (value.Value, *ir.Block, error) {
 	str, block, err := l.lowerExpr(block, e.Object)
 	if err != nil {
@@ -85,6 +87,9 @@ func (l *lowerer) lowerStringIndex(block *ir.Block, e *ast.IndexExpr) (value.Val
 	}
 	signed, _ := l.getIntSignedness(e.Index)
 	target := coerceIntWidth(block, idx, signed, lltypes.I64) // the wanted rune index
+
+	negIdx := block.NewICmp(enum.IPredSLT, target, constant.NewInt(lltypes.I64, 0))
+	block = l.emitTrapIf(block, negIdx, l.panicStringIndexOOBFunc())
 
 	off := block.NewCall(l.strRuneOffsetFunc(), data, length, target, constant.NewInt(lltypes.I1, 0))
 
@@ -365,15 +370,18 @@ func isStringLLVMType(t lltypes.Type) bool {
 // which is why a negative bound could not be added to one without being added to the
 // other by hand.
 //
-// **A negative `idx` counts from the end** (-1 is the last rune), matching array
-// indexing. That direction is not the same algorithm run backwards: it is a *byte* walk
-// that skips continuation bytes (`10xxxxxx`) until it lands on a lead byte, which is
-// well-defined precisely because UTF-8 is self-synchronizing — the property
-// `starts_with` and `index` already lean on. So it costs O(|idx|) runes with **no
-// decoding at all**, where the forward walk decodes every rune it passes. That is what
-// makes this worth having rather than merely consistent: `s[-1]` is a handful of byte
-// tests, while the spelling it replaces, `s[s.len() - 1]`, is two full O(n) decode walks
-// — an O(n) tax on "the last character" that had no workaround.
+// **A negative `idx` walks backward from the end** (-1 is the last rune) — which as
+// of 08/12 is an *internal contract*, not a language feature: `s[-1]` is refused at
+// the surface (negative indexing was removed — the most common off-by-one got a valid
+// read of the wrong element), and the sole caller of the negative branch is
+// `s.from_end(k)`, which passes -k. The branch itself is why from_end is cheap: it is
+// a *byte* walk that skips continuation bytes (`10xxxxxx`) until it lands on a lead
+// byte, well-defined precisely because UTF-8 is self-synchronizing — the property
+// `starts_with` and `index` already lean on. So it costs O(k) runes with **no decoding
+// at all**, where the positional spelling `s[s.len() - k]` is two full O(n) decode
+// walks — the O(n) tax the accessor exists to remove. Every caller that hands this a
+// *surface* index must therefore reject a negative before the call, or the value would
+// silently mean from-the-end again.
 //
 // `allowEnd` admits `idx == runeCount`, whose offset is the byte length. `slice` needs
 // it (an exclusive end, and `s.slice(n, n)` is the empty string) and indexing must not

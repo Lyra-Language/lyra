@@ -110,10 +110,12 @@ const (
 	// twin of the bounds-trap *elision* (which fires when the index is provably in
 	// bounds); symmetric with lyra-E020/E021 and flow-sensitive the same way
 	// (`if i >= size { xs[i] }` catches the refined index). Reported only for a
-	// *non-singleton* index range entirely outside `[-size, size)` (a negative index
-	// counts from the end): a single constant index is already the typechecker's own
-	// range check (inferIndexExpr / resolveConstantInt), and a non-singleton range
-	// guarantees that check didn't fire, so there is no double report. Only a
+	// *non-singleton* index range entirely outside `[0, size)` — including one
+	// provably negative, since a negative index traps as of 08/12 (it counted from
+	// the end before, so what used to be a valid from-the-end read is now a definite
+	// trap this check proves): a single constant index is already the typechecker's
+	// own range check (inferIndexExpr / resolveConstantInt), and a non-singleton
+	// range guarantees that check didn't fire, so there is no double report. Only a
 	// *definite* OOB is reported; a merely *possible* one is left to the runtime trap.
 	CodeIndexOutOfBounds = "lyra-E022"
 
