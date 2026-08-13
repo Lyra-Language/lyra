@@ -227,6 +227,22 @@ write today:
 
 ## Known bugs
 
+- **[DONE 08/13] `??` lowers.** It had type-checked and failed to lower since it was
+  collected — the 07/30 `?` shape, found by the second audit sweep. It is `?`'s
+  value-position sibling and lowers as the same match in disguise
+  (`match a { Some(v) => v, None => b }`, `null_coalescing.go`), with everything that
+  made `?` hard removed: nothing leaves the expression, so no rebuild at another type,
+  no early return, both arms into one phi. The default is **lazy** — an arm, so
+  `m ?? panic("missing")` diverges only on the None path. Ownership follows the match
+  rules (scrutinee borrowed, default arm conditional and coerced to owned, merged value
+  a uniformly-owned temp); the Some payload has no node of its own to mark, so its +1
+  is emitted in the lowering directly, `?`'s failure-rewrap arrangement. The
+  typechecker also propagates the unified type onto an untyped default (the phi needs
+  the arms to agree: `?? 7` on a `Maybe<u8>` lowers at u8) and range-checks it
+  (`?? 300` is refused — the 08/13 literal rule). A non-Maybe left operand keeps its
+  W007 warning at check time and is a loud backend refusal at build time, naming the
+  fix. ASan on both paths, macOS and Linux. See COMPLETED.md.
+
 - **[DONE 08/13] A pattern literal is value-checked against the type it is compared
   to** (`lyra-E048`), and a return-position literal joined the decl sites — the
   truncation family the second audit sweep found, and its worst member was a

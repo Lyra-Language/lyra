@@ -1495,6 +1495,12 @@ func (tc *TypeChecker) inferNullCoalescingExpr(expr *ast.NullCoalescingExpr) typ
 			payload, defType)
 		return nil
 	}
+	// The default is an ordinary value position against the unified type: an untyped
+	// literal narrows to it (`m ?? 0` on a Maybe<u8> lowers the 0 at u8, which the
+	// backend's phi requires), and one that cannot hold its value is refused rather
+	// than truncated — the same pair of calls every decl site makes.
+	tc.checkIntegerLiteralRange("`??` default", expr.Default, common)
+	tc.propagateLiteralType(expr.Default, common)
 	return common
 }
 

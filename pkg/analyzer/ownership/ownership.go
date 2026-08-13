@@ -961,6 +961,23 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 			a.table.Retain[e] = true
 		}
 
+	case *ast.NullCoalescingExpr:
+		// `a ?? b` is a two-armed match in disguise (`match a { Some(v) => v,
+		// None => b }`, null_coalescing.go) and follows the MatchExpr rules exactly:
+		// the optional is borrowed as a scrutinee, the default is a conditional arm
+		// coerced to owned, and the merged value is a uniformly-owned temporary the
+		// enclosing statement releases once. The Some arm's payload has no node of
+		// its own to mark, so the backend emits its +1 directly — the same
+		// arrangement as `?`'s failure rewrap (the TryExpr case above).
+		a.expr(e.Optional, false)
+		savedCond := a.conditional
+		a.conditional = true
+		a.expr(e.Default, true)
+		a.conditional = savedCond
+		if !needOwned {
+			a.markMergeTemp(e)
+		}
+
 	case *ast.FunctionCallExpr:
 		// A type conversion is its operand at run time — the identity forms
 		// (`string(e)`, the lyra-E047 read-out spelling) return the operand's own

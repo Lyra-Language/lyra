@@ -44,3 +44,25 @@ func TestTypeCheck_NullCoalescing_IntLiteralLeft_Warning(t *testing.T) {
 	`, false)
 	assertWarningsAre(t, res, "left operand of `??` is never null: expected a Maybe<T>, got integer literal")
 }
+
+// ── The default is a value position against the unified type ─────────────────
+//
+// An untyped default narrows to the payload's width (the backend's phi requires
+// the arms to agree), and one that cannot hold its value is refused rather than
+// truncated — the same rule as every other value position (08/13).
+
+func TestTypeCheck_NullCoalescing_UntypedDefaultNarrows(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let get = (s: string) -> Maybe<u8> => { get(s) }
+		let z = get("k") ?? 7
+	`, false)
+	assertNoErrors(t, res)
+}
+
+func TestTypeCheck_NullCoalescing_DefaultTooWideRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let get = (s: string) -> Maybe<u8> => { get(s) }
+		let z = get("k") ?? 300
+	`, false)
+	assertErrorsAre(t, res, "`??` default: literal value 300 overflows u8")
+}

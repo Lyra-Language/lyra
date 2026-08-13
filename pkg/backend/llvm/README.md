@@ -156,6 +156,29 @@ produced inside a conditional sub-expression (an `&&` right operand, a match arm
 dominated by that block, and releasing it would touch a value undefined on the path the
 branch did not take; those still leak, the safe direction.
 
+### `??` lowers (08/13)
+
+`null_coalescing.go`. `a ?? b` is `?`'s value-position sibling — the same match in
+disguise (`match a { Some(v) => v, None => b }`) with everything that made `?` a hard
+lowering removed: nothing leaves the expression, so there is no rebuild at another type,
+no early return, and both arms feed one phi under the ordinary merge rules. It had
+type-checked and failed to lower since it was collected — the 07/30 `?` shape.
+
+The default is **lazy** — an arm, not an operand — which is what makes
+`m ?? panic("missing")` meaningful and rules out lowering both sides eagerly and
+selecting. Ownership follows the match rules exactly (ownership.go's NullCoalescingExpr
+case): optional borrowed as a scrutinee, default a conditional arm coerced to owned by
+its own node's marks, merged value a uniformly-owned temp released once by the enclosing
+statement's flush. The Some payload is the one value with no node of its own to mark, so
+its +1 (deepRetain, duplicate-never-move) is emitted in the lowering directly — `?`'s
+failure-rewrap arrangement. The typechecker's half is `propagateLiteralType` on the
+default against the unified type, because the phi requires the arms to agree
+(`m ?? 7` on a `Maybe<u8>` lowers the 7 at u8; `?? 300` is refused).
+
+A left operand that is not a canonical Maybe warned at check time (`lyra-W007`, with
+recovery) and has no meaning to lower; the backend refuses it loudly (rule 5) rather
+than inventing one, naming the warning and the fix (delete the `??`).
+
 `break`/`continue` leaked the same way and are fixed differently, because the producing
 block dominates a `break` without being its predecessor — no block-equality test reaches it.
 See **Exit releases** below.

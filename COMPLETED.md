@@ -10,6 +10,44 @@ Newest first.
 ## Dated log
 
 ### 08/13/26
+**`??` lowers — `?`'s value-position sibling, and the same match in disguise.** It had
+type-checked and failed to lower since it was collected (the 07/30 `?` shape: a
+front-end surface with no backend, `llvm: expression lowering not implemented`), which
+the second audit sweep flagged as finding 2. The lowering
+(`null_coalescing.go`) is `match a { Some(v) => v, None => b }` with everything that
+made `?` a hard lowering removed — nothing leaves the expression, so there is no
+rebuild at the enclosing return type, no early return, and both arms feed one phi
+under the ordinary merge rules the dominance-based temp flush already handles.
+
+Three design points worth the record:
+
+- **The default is lazy, and that is why this is a branch, not a select.** It is an
+  arm, evaluated only on the None path — `m ?? panic("missing")` is the spelling that
+  proves it (the exec test pins both directions: Some never runs the panic, None
+  traps). A diverging default seals its block and feeds the phi nothing.
+- **Ownership is the match rules verbatim** (ownership.go's `NullCoalescingExpr` case,
+  placed beside `TryExpr`): the optional is borrowed as a scrutinee, the default is a
+  conditional arm coerced to owned by its own node's marks, and the merged value is a
+  uniformly-owned temporary the enclosing statement releases once. The Some payload is
+  the one value with no AST node of its own to mark, so its +1 (duplicate-never-move —
+  the scrutinee still owns and drops its copy) is emitted in the lowering directly,
+  exactly `?`'s failure-rewrap arrangement. Verified by ASan plus the retain/release
+  conservation check on both paths, macOS and Linux (typed-pointer clang).
+- **The typechecker gained the one call the phi forced**: `propagateLiteralType` on
+  the default against the unified type — `m ?? 7` on a `Maybe<u8>` must lower the 7
+  at u8 or the phi's incomings disagree (invalid IR, loud but wrong) — and with it
+  `checkIntegerLiteralRange`, so `m ?? 300` on a `Maybe<u8>` is refused: the default
+  is an ordinary value position under the same-day literal rule.
+
+A left operand that is not a canonical Maybe can never be null; the typechecker warns
+(`lyra-W007`) and recovers so the mistake does not cascade, and the backend now
+refuses it loudly at build time (rule 5 — there is no meaning to lower, and inventing
+one, e.g. "just evaluate the left", would need its own ownership analysis for a
+construct whose only correct fix is deleting the `??`). Tests:
+`llvm_null_coalescing_test.go` (exec: payload/default/computed/chained, laziness both
+ways, managed ASan, untyped-narrowing), `null_coalescing_test.go` (the two new
+typechecker rules).
+
 **A pattern literal is value-checked against the type it is compared to
 (`lyra-E048`), and return-position literals joined the decl sites.** The second
 audit sweep's headline finding, and unlike most dead-arm bugs it was a

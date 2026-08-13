@@ -727,6 +727,8 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		return l.lowerMatch(block, e)
 	case *ast.TryExpr:
 		return l.lowerTryExpr(block, e)
+	case *ast.NullCoalescingExpr:
+		return l.lowerNullCoalescing(block, e)
 	case *ast.LambdaExpr:
 		return l.lowerLambdaExpr(block, e)
 	}
