@@ -10,6 +10,29 @@ Newest first.
 ## Dated log
 
 ### 08/13/26
+**An `f16` literal no longer makes llir print a bug-report demand.** `let a: f16 =
+0.1` logged *"unable to represent floating-point constant 0.1 of type half exactly;
+please submit a bug report to llir/llvm"* on a build that was entirely correct — llir
+warns for any inexact half, which is nearly all of them, and then emits the correctly
+rounded value regardless. Noise rather than wrongness, but a compiler telling its
+users to file bugs against a library they never chose is a bad look for the language,
+not for llir.
+
+`floatConst` gained a `Half` arm that pre-rounds the value, so what llir receives is
+already exactly representable and its exactness test finds nothing to report. **The
+rounding goes through `binary16.NewFromFloat64` — llir's own conversion, the same one
+`Float.Ident()` calls when it emits a half.** That was the point of the fix rather
+than an implementation detail: Go has no float16, so the alternative was a
+hand-written round-to-nearest-even with subnormal and overflow cases, and a rounding
+routine that disagreed with the library consuming it would turn a cosmetic problem
+into a correctness one. Routing through the same function makes agreement structural
+instead of tested-for. `binary16` was already in the module graph through llir, so
+this promotes a transitive dependency to a direct one and adds nothing new.
+
+The emitted value is unchanged — 0.1 as an f16 is 0.0999755859375, emitted `0xH2E66`
+before and after — which is exactly what the test asserts, since the whole claim is
+that only the noise went away.
+
 **A float literal in a comparison takes the operand's width, and `lyra-E012` names
 the fix instead of the mechanism.** Two small ones, and the first is a good specimen
 of a bug hiding inside a control-flow shape rather than inside any statement.

@@ -293,17 +293,22 @@ write today:
   the backend's `literalFloatType` already reads the recorded type. One link in a
   chain that was otherwise complete. See COMPLETED.md.
 
-- **[OPEN] `f16` literals log an llir "please submit a bug report" line on a normal
-  build.** `let a: f16 = 0.1` prints `unable to represent floating-point constant 0.1
-  of type half exactly; please submit a bug report to llir/llvm with this error
-  message` to stderr, and then builds and runs correctly — the emitted constant
-  (`half 0xH2E66` = 0.0999755859375) *is* the correctly rounded half. So this is
-  noise, not wrongness: llir logs whenever a half constant is inexact, which is most
-  of them. Fixing it means rounding the value to a representable half in Go before
-  handing it to llir (`floatConst`'s `Half` arm, which does not exist because Go has
-  no float16 — it needs a hand-written round-to-nearest-even with subnormal and
-  overflow cases). Worth doing for a compiler that should not tell its users to file
-  bugs against a library they did not choose; not worth doing carelessly.
+- **[DONE 08/13] `f16` literals no longer log an llir "please submit a bug report"
+  line.** `let a: f16 = 0.1` printed `unable to represent floating-point constant 0.1
+  of type half exactly; please submit a bug report to llir/llvm` on an otherwise
+  correct build — llir logs for *any* inexact half, which is most of them, and then
+  emits the correctly rounded value anyway. Noise, not wrongness, but a compiler
+  should not tell its users to file bugs against a library they did not choose.
+
+  `floatConst` gained a `Half` arm that pre-rounds, so the value handed to llir is
+  exactly representable and its exactness test has nothing to report. **The rounding
+  goes through `binary16.NewFromFloat64` — llir's own conversion, the one
+  `Float.Ident()` calls** — rather than being hand-written: Go has no float16, and a
+  hand-rolled round-to-nearest-even with subnormal and overflow cases could disagree
+  with the library it feeds, which is the one thing a rounding fix must not do.
+  Agreement is structural this way. `binary16` was already in the module graph via
+  llir, so this promotes a transitive dependency to a direct one rather than adding
+  anything. The emitted value is unchanged (0.1 stays `0xH2E66`), which the test pins.
 
 - **[OPEN] A `where` constraint is enforced only where the value is *provable*.**
   Found while probing the regex phantom (08/13), and it is about `range(…)` as much

@@ -2,7 +2,10 @@ package llvm
 
 import (
 	"fmt"
+	"math"
 	"math/big"
+
+	"github.com/mewmew/float/binary16"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -786,9 +789,31 @@ func coerceIntWidth(block *ir.Block, v value.Value, srcSigned bool, dst *lltypes
 // printed as `0.1`; the shortest-round-trip printer prints `0.099999994` and the bug
 // has nowhere to hide. That is the argument for round-tripping output in general —
 // a lossy printer does not merely lose detail, it conceals other faults.
+// For `half` the same rounding is done through **llir's own** binary16 conversion
+// rather than by hand. Go has no float16, so the alternative was a hand-written
+// round-to-nearest-even with subnormal and overflow cases — code that could disagree
+// with the library it feeds, which is the one thing a rounding fix must not do.
+// Going through `binary16` makes agreement structural: it is the very function
+// `Float.Ident()` calls when it emits a half.
+//
+// It also silences a log line. llir warns — "unable to represent floating-point
+// constant 0.1 of type half exactly; please submit a bug report to llir/llvm" — for
+// *any* inexact half, which is most of them, and then emits the correctly rounded
+// value anyway. So `let x: f16 = 0.1` printed a bug-report demand on a perfectly
+// good build (08/13). Pre-rounding makes the value exactly representable, so llir's
+// exactness test passes and it has nothing to report.
 func floatConst(ty *lltypes.FloatType, v float64) *constant.Float {
-	if ty.Equal(lltypes.Float) {
+	switch {
+	case ty.Equal(lltypes.Float):
 		v = float64(float32(v))
+	case ty.Equal(lltypes.Half):
+		// A non-finite value has no rounding to do and no exactness to lose; llir
+		// prints those from its own NaN/Inf paths.
+		if !math.IsNaN(v) && !math.IsInf(v, 0) {
+			h, _ := binary16.NewFromFloat64(v)
+			rounded, _ := h.Float64()
+			v = rounded
+		}
 	}
 	return constant.NewFloat(ty, v)
 }

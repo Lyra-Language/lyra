@@ -131,6 +131,39 @@ func TestEmit_NarrowFloatConstantIsRoundedNotTruncated(t *testing.T) {
 	}
 }
 
+// An f16 literal is rounded through llir's own binary16 conversion, which keeps the
+// value identical and stops llir logging. It warns — "unable to represent
+// floating-point constant 0.1 of type half exactly; please submit a bug report to
+// llir/llvm" — for *any* inexact half, which is most of them, and then emits the
+// correctly rounded value anyway; so a good build printed a bug-report demand for a
+// library the user did not choose. Pre-rounding makes the value exactly
+// representable, so llir's exactness test passes and it has nothing to report.
+//
+// The rounding goes through binary16 rather than being hand-written (Go has no
+// float16) so it cannot disagree with the library it feeds: it is the same function
+// llir's own `Float.Ident()` calls. The value is unchanged — 0.1 as an f16 is
+// 0.0999755859375, emitted as 0xH2E66 before and after — which is what this pins.
+func TestEmit_HalfConstantIsPreRounded(t *testing.T) {
+	t.Parallel()
+	ir, err := emitSource(t, `let main = () -> void => {
+		  let a: f16 = 0.1
+		  let b: f16 = 1.5
+		  println(a)
+		  println(b)
+		}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The correctly rounded half for 0.1, unchanged by the pre-rounding.
+	if !strings.Contains(ir, "0xH2E66") {
+		t.Errorf("expected f16 0.1 to emit as 0xH2E66:\n%s", ir)
+	}
+	// An exactly-representable half still emits in decimal form.
+	if !strings.Contains(ir, "half 1.5") {
+		t.Errorf("expected f16 1.5 to emit exactly:\n%s", ir)
+	}
+}
+
 // NOTE: `let x: f32 = 0.1; x == 0.1` cannot be tested here because it does not
 // build — the literal in a comparison is not narrowed to the operand's width, so
 // the backend emits `fcmp oeq float %1, 0x3FB999999999999A` (a double constant in

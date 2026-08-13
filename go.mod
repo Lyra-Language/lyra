@@ -5,11 +5,11 @@ go 1.25.4
 require (
 	github.com/Lyra-Language/tree-sitter-lyra v0.0.0
 	github.com/llir/llvm v0.3.6
+	github.com/mewmew/float v0.0.0-20201204173432-505706aa38fa
 	github.com/tree-sitter/go-tree-sitter v0.25.0
 )
 
 require (
-	github.com/mewmew/float v0.0.0-20201204173432-505706aa38fa // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	golang.org/x/mod v0.4.2 // indirect
 	golang.org/x/sys v0.0.0-20210510120138-977fb7262007 // indirect
