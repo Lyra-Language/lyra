@@ -25,7 +25,7 @@ func TestExec_Newtype(t *testing.T) {
 			`newtype Percent = u8 where range(0..<=100)
 			 let main = () -> u8 => {
 			   let p: Percent = 42
-			   let raw: u8 = p
+			   let raw = u8(p)
 			   raw
 			 }`,
 			42,
@@ -41,7 +41,7 @@ func TestExec_Newtype(t *testing.T) {
 			 let main = () -> u8 => {
 			   let p: Percent = 42
 			   let q: Percent = bump(p)
-			   let raw: u8 = q
+			   let raw = u8(q)
 			   raw
 			 }`,
 			42,
@@ -53,7 +53,7 @@ func TestExec_Newtype(t *testing.T) {
 			 let main = () -> u8 => {
 			   let a: Meters = 5
 			   let b: Meters = a
-			   let d: i64 = b
+			   let d = i64(b)
 			   u8(d)
 			 }`,
 			5,
@@ -67,7 +67,7 @@ func TestExec_Newtype(t *testing.T) {
 			 struct Trip { dist: Meters, legs: u8 }
 			 let main = () -> u8 => {
 			   let t = Trip { dist: 5, legs: 2 }
-			   let d: i64 = t.dist
+			   let d = i64(t.dist)
 			   u8(d)
 			 }`,
 			5,
@@ -77,7 +77,7 @@ func TestExec_Newtype(t *testing.T) {
 			`newtype Meters = i64
 			 let main = () -> u8 => {
 			   let xs: [3]Meters = [1, 2, 3]
-			   let d: i64 = xs[1]
+			   let d = i64(xs[1])
 			   u8(d)
 			 }`,
 			2,
@@ -87,7 +87,7 @@ func TestExec_Newtype(t *testing.T) {
 			`newtype Meters = i64
 			 let main = () -> u8 => {
 			   let xs: []Meters = [10, 20, 30]
-			   let d: i64 = xs[2]
+			   let d = i64(xs[2])
 			   u8(d)
 			 }`,
 			30,
@@ -110,7 +110,7 @@ func TestExec_Newtype(t *testing.T) {
 			`newtype Flag = bool
 			 let main = () -> u8 => {
 			   let f: Flag = true
-			   let b: bool = f
+			   let b = bool(f)
 			   if b { 3 } else { 4 }
 			 }`,
 			3,
@@ -122,7 +122,7 @@ func TestExec_Newtype(t *testing.T) {
 			`newtype Delta = i64
 			 let main = () -> u8 => {
 			   let d: Delta = -5
-			   let x: i64 = d
+			   let x = i64(d)
 			   u8(x + 10)
 			 }`,
 			5,
@@ -159,7 +159,7 @@ func TestExec_NewtypeArithmeticUsesBaseWidth(t *testing.T) {
 		 let widen = (n: u8) -> Small => Small(n)
 		 let main = () -> u8 => {
 		   let a: Small = widen(200)
-		   let x: u8 = a
+		   let x = u8(a)
 		   let y: u8 = x + 100
 		   y
 		 }`
@@ -174,7 +174,7 @@ func TestExec_NewtypeArithmeticUsesBaseWidth(t *testing.T) {
 		got, err := emitSource(t, `newtype Percent = u8 where range(0..<=100)
 		 let main = () -> u8 => {
 		   let p: Percent = 40 + 2
-		   let raw: u8 = p
+		   let raw = u8(p)
 		   raw
 		 }`)
 		if err != nil {
@@ -208,7 +208,7 @@ func TestExec_NewtypeOverString(t *testing.T) {
 			 let mk = (a: string, b: string) -> Email => Email(a ++ "@" ++ b)
 			 let main = () -> u8 => {
 			   let e: Email = mk("user", "host")
-			   let s: string = e
+			   let s = string(e)
 			   println(s)
 			   0
 			 }`,
@@ -225,7 +225,7 @@ func TestExec_NewtypeOverString(t *testing.T) {
 			   let n: Email = Email("a" ++ "b")
 			   let u = User { name: n, age: 7 }
 			   let copy = u
-			   let s: string = copy.name
+			   let s = string(copy.name)
 			   println(s)
 			   0
 			 }`,
@@ -238,7 +238,7 @@ func TestExec_NewtypeOverString(t *testing.T) {
 			`newtype Email = string
 			 let main = () -> u8 => {
 			   let es: []Email = [Email("a" ++ "1"), Email("b" ++ "2")]
-			   let s: string = es[1]
+			   let s = string(es[1])
 			   println(s)
 			   0
 			 }`,
@@ -275,7 +275,7 @@ func TestExec_NewtypeOverString_ASan(t *testing.T) {
 	   let n: Email = Email("a" ++ "b")
 	   let u = User { name: n, age: 7 }
 	   let copy = u
-	   let s: string = copy.name
+	   let s = string(copy.name)
 	   if s == "ab" { 0 } else { 1 }
 	 }`
 	if got := buildAndRunASan(t, clang, src); got != 0 {
@@ -326,7 +326,7 @@ func TestExec_NewtypeManagedAssignment(t *testing.T) {
 			 let main = () -> u8 => {
 			   var u = User { name: Email("a" ++ "b"), age: 1 }
 			   u.name = Email("c" ++ "d")
-			   let s: string = u.name
+			   let s = string(u.name)
 			   println(s)
 			   0
 			 }`,
@@ -337,7 +337,7 @@ func TestExec_NewtypeManagedAssignment(t *testing.T) {
 			 let main = () -> u8 => {
 			   var xs: []Email = [Email("a" ++ "b"), Email("c" ++ "d")]
 			   xs[0] = Email("e" ++ "f")
-			   let s: string = xs[0]
+			   let s = string(xs[0])
 			   println(s)
 			   0
 			 }`,
@@ -382,7 +382,7 @@ func TestEmit_NewtypeIsTransparent(t *testing.T) {
 	 let bump = (p: Percent) -> Percent => p
 	 let main = () -> u8 => {
 	   let p: Percent = 42
-	   let raw: u8 = bump(p)
+	   let raw = u8(bump(p))
 	   raw
 	 }`)
 	if err != nil {
@@ -506,14 +506,14 @@ module main
 newtype Cents = i64
 newtype Small = u8
 let take = (c: Cents) -> i64 => {
-  let r: i64 = c
+  let r = i64(c)
   r
 }
 let main = () -> void => {
   let a = Cents(150)
   let b = Cents 275
   let s = Small(200)
-  let sv: u8 = s
+  let sv = u8(s)
   let wrapped: u8 = sv.wrapping_add(100)
   println("${take(a) + take(b)} ${wrapped}")
 }

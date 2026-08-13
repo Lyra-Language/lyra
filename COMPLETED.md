@@ -10,6 +10,55 @@ Newest first.
 ## Dated log
 
 ### 08/12/26
+**The newtype read-out is explicit too** (`lyra-E047`), completing the boundary work
+below: Ada's rule now holds in both directions, and the same-day sequencing is why the
+migration stayed cheap — the test suite had just been through the inbound flip.
+
+**The spelling is the base's name applied** — `i64(c)`, the constructor's mirror, an
+identity at runtime just as the constructor is. Three pieces made it exist:
+conversions **look through a newtype on their operand** (so `i64(c)` is the identity
+conversion `i64(x)` always was, and `u8(cents)` is admitted or refused exactly as
+`u8(plain_i64)`); `string(...)` and `bool(...)` joined the conversion set as
+**identity-only** targets, since string/bool bases otherwise had no spelling (no
+stringification, no truthiness — an operand that is not the target after the strip is
+refused, and no grammar change was needed: both already parsed as calls and died as
+"undefined function"); and the backend returns the operand unchanged when source
+equals target after its own strip.
+
+**The refusal** (`checkImplicitNewtypeReadout`) is E046's mirror on the same
+propagation path, with two structural differences. There is no literal half — a
+newtype value is never a literal, so the refusal is unconditional where it applies.
+And it applies only where the base is **nameable**: a newtype over an array or a
+function type keeps its implicit read-out, because refusing with no spelling to offer
+would make it write-only — pinned as the documented limit, so a future spelling knows
+what to flip. The walk needed one new distinction: below the newtype arm the
+propagation carries the *base*, so a `viaNewtype` flag rides the value-position chain
+to keep `let c2: Cents = c` — one newtype on both sides — from reading as a read-out.
+
+**Three passes had to learn that the transparent forms are their operand**, and each
+lesson was earned rather than guessed:
+
+- **Ownership.** `let s = string(copy.name)` routed through the unresolved-callee
+  defaults and bound the same box with neither a retain nor a matching release — the
+  ASan conservation count (`allocs + retains == releases`) caught it the day the
+  spelling arrived, which is that test's whole argument. A conversion call and a
+  newtype construction are now analyzed as their operand standing in that position,
+  needOwned and all, matching what the backend emits.
+- **Purity.** The conversion list was a fourth copy of "is this callee a
+  conversion?", and it had **already drifted**: no `rune`, so `rune(n)` — the explicit
+  spelling for building a code point, in exactly the classification arithmetic `pure`
+  code writes — fell to the unresolved-callee default and was charged as impure. All
+  four copies (typechecker, purity, ownership, backend) now delegate to one
+  `types.ConversionTargetName`, hazard 8's durable fix.
+- **Value-range** had been taught the constructor in the previous change; the
+  conversion side arrives untracked (⊤), which is sound.
+
+The E043 message now names `i64(...)` as the escape it had been spelling as an
+annotated binding, and assignable.go's newtype comments record the layering: the
+type-level rules answer "could this flow at all", the expression-level checks answer
+"must the author write it down".
+
+### 08/12/26
 **A newtype means something at a boundary**, in three changes that answer one question:
 where may a value become a newtype, and what is checked when it does. Sequenced so each
 was independently reviewable — a bug fix, then an addition, then the rule that needed

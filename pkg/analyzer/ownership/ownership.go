@@ -962,6 +962,21 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		}
 
 	case *ast.FunctionCallExpr:
+		// A type conversion is its operand at run time — the identity forms
+		// (`string(e)`, the lyra-E047 read-out spelling) return the operand's own
+		// box, and the numeric forms carry no managed value at all — so it is
+		// analyzed as the operand standing in this position, needOwned and all.
+		// Routed through a.call instead, the unresolved-callee defaults applied:
+		// `let s = string(copy.name)` bound the same box with neither a retain nor
+		// a matching release, and the conservation count in
+		// TestExec_NewtypeOverString_ASan caught the imbalance the day the spelling
+		// was introduced.
+		if id, ok := e.Function.(*ast.IdentifierExpr); ok && len(e.Arguments) == 1 {
+			if _, isConv := types.ConversionTargetName(id.Name); isConv {
+				a.expr(e.Arguments[0], needOwned)
+				return
+			}
+		}
 		a.call(e, needOwned)
 
 	case *ast.BlockExpr:
@@ -1057,6 +1072,17 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		a.expr(e.Operand, false)
 
 	case *ast.TupleLiteralExpr:
+		// A newtype construction shares this node and is **not** an aggregate: the
+		// backend forwards its one operand unchanged (aggregates.go), so it is
+		// analyzed as the operand standing in this position — the conversion call's
+		// rule above, for the constructor that mirrors it. The aggregate arm below
+		// would instead transfer the operand into a tuple that is never built.
+		if t, ok := a.typeOf(e); ok {
+			if _, isCT := t.(*types.ConstrainedType); isCT && len(e.Elements) == 1 {
+				a.expr(e.Elements[0], needOwned)
+				return
+			}
+		}
 		// The aggregate takes ownership of managed elements — transfer. A `shared`
 		// tuple's box drops them via the per-type drop glue (drop.go).
 		for _, el := range e.Elements {

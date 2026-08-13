@@ -84,6 +84,13 @@ func IsNumericConversionTarget(name types.PrimitiveTypeName) bool {
 	}
 }
 
+// conversionTargetName is types.ConversionTargetName — the one shared answer to
+// "is this callee a conversion?", kept as a local name so call sites read the same
+// as before it was hoisted.
+func conversionTargetName(callee string) (types.PrimitiveTypeName, bool) {
+	return types.ConversionTargetName(callee)
+}
+
 // IsSignedInt reports whether name is a signed integer type. LLVM's integer
 // types carry no signedness (i8 alone doesn't say signed-or-unsigned) —
 // signedness lives in the *operation*, not the type — so LLVMPrimitive can't

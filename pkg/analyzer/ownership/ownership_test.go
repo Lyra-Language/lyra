@@ -246,7 +246,7 @@ func TestOwnership_NewtypeOverStringIsManaged(t *testing.T) {
 	 let main = () -> u8 => {
 	   let a: Email = Email("x" ++ "y")
 	   let b: Email = a
-	   let s: string = b
+	   let s = string(b)
 	   if s == "xy" { 1 } else { 0 }
 	 }`)
 	if newtyped.transfers == 0 {

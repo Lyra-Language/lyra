@@ -705,6 +705,16 @@ func (l *lowerer) lowerNumericConversion(block *ir.Block, call *ast.FunctionCall
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: type not found for %T", call.Arguments[0])
 	}
+	// An identity conversion is the operand, unchanged. This is what the newtype
+	// read-out lowers to — `i64(c)` on a `Cents = i64`, `string(e)` on an
+	// `Email = string` — since recordedType strips the newtype, the source *is* the
+	// target here, and the conversion exists to change the type the checker sees,
+	// not the value. Checked before the numeric paths so the non-numeric identity
+	// targets (string, bool) never reach machinery that has no representation for
+	// them.
+	if srcP.Name == targetName {
+		return arg, block, nil
+	}
 	dstLL, ok := LLVMPrimitive(targetName)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no LLVM representation for %q", targetName)

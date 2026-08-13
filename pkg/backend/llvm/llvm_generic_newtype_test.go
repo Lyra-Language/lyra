@@ -22,9 +22,9 @@ newtype Boxed<t> = t
 newtype Plain = i64
 let main = () -> void => {
   let b: Boxed<i64> = 5;
-  let raw: i64 = b;
+  let raw = i64(b);
   let p: Plain = 7;
-  let praw: i64 = p;
+  let praw = i64(p);
   println("${raw + praw}");
 }
 `
@@ -42,8 +42,8 @@ newtype Tagged<t> = t
 let main = () -> void => {
   let n: Tagged<i64> = 41;
   let s: Tagged<string> = "hi";
-  let rn: i64 = n;
-  let rs: string = s;
+  let rn = i64(n);
+  let rs = string(s);
   println("${rn + 1} ${rs}");
 }
 `

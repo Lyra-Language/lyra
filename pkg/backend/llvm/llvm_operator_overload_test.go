@@ -295,8 +295,8 @@ newtype Cents = i64
 trait Add { (_+_): (Self, Self) -> Self }
 impl Add for Cents {
   (_+_) = (self, o) => {
-    let a: i64 = self
-    let b: i64 = o
+    let a = i64(self)
+    let b = i64(o)
     let sum: Cents = Cents(a.wrapping_add(b))
     sum
   }
@@ -306,8 +306,8 @@ let main = () -> void => {
   let y: Cents = 275
   let total: Cents = x + y
   let chained: Cents = x + y + x
-  let raw: i64 = total
-  let rawChained: i64 = chained
+  let raw = i64(total)
+  let rawChained = i64(chained)
   println("${raw} ${rawChained}")
 }
 `

@@ -221,7 +221,7 @@ let main = () -> u8 => u8(f(5))`,
 			"newtype over string in a branch", `newtype Email = string
 let main = () -> u8 => {
   let e: Email = Email("a" ++ "b")
-  let s: string = e
+  let s = string(e)
   if s == "ab" { 0 } else { 1 }
 }`,
 		},

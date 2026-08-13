@@ -51,6 +51,8 @@ type TypeChecker struct {
 	// which a generic call site reaches more than once for one argument (against the
 	// declared signature and again against the instantiated one).
 	constraintReported map[ast.Expression]bool
+	// readoutReported is the same guard again, for checkImplicitNewtypeReadout.
+	readoutReported map[ast.Expression]bool
 }
 
 func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable) *TypeChecker {
@@ -372,14 +374,15 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// a binding — see checkNewtypeConstraints.)
 	tc.checkIntegerLiteralRange(decl.Name, decl.Value, resolvedDeclType)
 
-	// The implicit-conversion rule is checked *here*, before the annotation is recorded
-	// on the value below — after that the value node reads as the newtype and the check
-	// (which rides propagateLiteralType for every other position) would see nothing
-	// being converted. The later call through propagation is harmless for exactly that
-	// reason: it finds them equal and returns.
+	// The implicit-conversion rules are checked *here*, before the annotation is
+	// recorded on the value below — after that the value node reads as the annotation
+	// and the checks (which ride propagateLiteralType for every other position) would
+	// see nothing being converted, in either direction. The later calls through
+	// propagation are harmless for exactly that reason.
 	if ct, isNewtype := resolvedDeclType.(*types.ConstrainedType); isNewtype {
 		tc.checkImplicitNewtypeConversion(decl.Value, inferredType, ct)
 	}
+	tc.checkImplicitNewtypeReadout(decl.Value, inferredType, resolvedDeclType)
 
 	// Store the annotation type — this is the effective type the expression is used as.
 	// e.g. literal 42 annotated as i32 should be recorded as i32, not the untyped int.
@@ -1081,6 +1084,7 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	if ct, ok := targetType.(*types.ConstrainedType); ok {
 		tc.checkImplicitNewtypeConversion(stmt.Value, valueType, ct)
 	}
+	tc.checkImplicitNewtypeReadout(stmt.Value, valueType, targetType)
 	tc.checkNewtypeConstraints(stmt.Value, targetType)
 }
 
@@ -1899,15 +1903,19 @@ func promoteToDefault(t types.Type) types.Type {
 }
 
 // inferTypeConversion handles calls of the form `TypeName(expr)` where TypeName
-// is a concrete numeric primitive. Returns nil for ordinary function calls.
+// is a concrete numeric primitive — or `string`/`bool`, the two identity-only
+// targets that exist as the newtype read-out spelling. Returns nil for ordinary
+// function calls.
 func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Type {
 	ident, ok := call.Function.(*ast.IdentifierExpr)
 	if !ok {
 		return nil
 	}
-	targetType, ok := numericPrimitiveByName(ident.Name)
-	if !ok {
-		return nil
+	targetType, isNumericTarget := numericPrimitiveByName(ident.Name)
+	if !isNumericTarget {
+		if targetType, ok = identityConversionTargetByName(ident.Name); !ok {
+			return nil
+		}
 	}
 	if len(call.Arguments) != 1 {
 		tc.addError(call.GetLocation(), SeverityError,
@@ -1916,6 +1924,30 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 	}
 	argType := tc.inferExprType(call.Arguments[0])
 	if argType == nil {
+		return targetType
+	}
+	// A conversion looks through a newtype on its operand (08/12): `i64(c)` for
+	// `newtype Cents = i64` is the read-out spelling lyra-E047 requires — an identity
+	// at runtime, exactly as the constructor is in the other direction — and a
+	// non-identity target behaves as it would on the bare base, so `u8(cents)` is
+	// admitted or refused by the same rules as `u8(plain_i64)`. Resolved as it strips,
+	// since a chained newtype's base is stored as a name.
+	for {
+		ct, isCT := argType.(*types.ConstrainedType)
+		if !isCT {
+			break
+		}
+		argType = tc.resolveTypeIfKnown(ct.Type, call.GetLocation())
+	}
+	// The identity-only targets: `string(x)` and `bool(x)` read a newtype over them
+	// back out, and do nothing else — no stringification, no truthiness. Anything
+	// whose stripped type is not already the target is refused, naming that.
+	if !isNumericTarget {
+		if !types.TypesEqual(argType, targetType) {
+			tc.addError(call.GetLocation(), SeverityError,
+				"cannot convert %s to %s: `%s(...)` only reads a value of that type — or a newtype over it — back out",
+				argType, ident.Name, ident.Name)
+		}
 		return targetType
 	}
 	// `rune` converts to and from the *integer* types, and only those: a code point
@@ -2091,6 +2123,19 @@ func (tc *TypeChecker) propagateOperandType(operand ast.Expression, result types
 // resolved concrete numeric primitive; a nil or non-primitive concrete is a
 // no-op, as is a leaf that is already concretely typed.
 func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.Type) {
+	tc.propagateLiteral(expr, concrete, false)
+}
+
+// propagateLiteral is propagateLiteralType's body. viaNewtype records that the
+// context arrived by stripping a newtype: below the newtype arm the walk carries the
+// *base* (a leaf can only be narrowed to a primitive), but the true context is still
+// the newtype — so the implicit-read-out check (lyra-E047) must not fire there, or
+// `let c2: Cents = c` would report "cannot use Cents as i64" about an assignment
+// whose two sides are one newtype. The flag rides the value-position chain (match/if
+// arms, block tails, arithmetic operands: the same value in the same context) and
+// resets through the aggregate arms, whose element recursions are genuinely new
+// contexts.
+func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type, viaNewtype bool) {
 	// A newtype context propagates its *base*: `newtype Percent = u8` is nominal
 	// only, so `let p: Percent = 40 + 2` must narrow its leaves to u8 exactly as an
 	// annotated u8 would. Without this the leaves stay untyped and the backend
@@ -2107,7 +2152,7 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 			tc.checkImplicitNewtypeConversion(expr, from, ct)
 		}
 		tc.checkNewtypeConstraints(expr, ct)
-		tc.propagateLiteralType(expr, tc.resolveTypeIfKnown(ct.Type, expr.GetLocation()))
+		tc.propagateLiteral(expr, tc.resolveTypeIfKnown(ct.Type, expr.GetLocation()), true)
 		return
 	}
 
@@ -2320,16 +2365,16 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 		}
 		tc.typeTable.Set(e, cp)
 	case *ast.MathBinaryOpExpr:
-		tc.propagateLiteralType(e.Left, concrete)
+		tc.propagateLiteral(e.Left, concrete, viaNewtype)
 		// A shift is width-preserving on the *left* only: its right operand is a
 		// count with its own type, so pushing the shifted value's width onto it
 		// would narrow an unrelated leaf (and, for a small signed target, fail the
 		// fits-check and leave it untyped for no reason).
 		if !e.Operator.IsShift() {
-			tc.propagateLiteralType(e.Right, concrete)
+			tc.propagateLiteral(e.Right, concrete, viaNewtype)
 		}
 	case *ast.BitwiseNotExpr:
-		tc.propagateLiteralType(e.Operand, concrete)
+		tc.propagateLiteral(e.Operand, concrete, viaNewtype)
 	case *ast.NegationExpr:
 		// A negated integer literal whose *negation* is exactly the signed
 		// target's minimum (i8 -128, i16 -32768, i32 -2147483648) must narrow to
@@ -2347,24 +2392,24 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 				return
 			}
 		}
-		tc.propagateLiteralType(e.Operand, concrete)
+		tc.propagateLiteral(e.Operand, concrete, viaNewtype)
 	case *ast.MatchExpr:
 		// A match/if is a value made of its arm/branch bodies, so a context width
 		// pushes through to each of them (the match-arm/branch context site) — and
 		// if the whole expression was left untyped (all arms were untyped literals),
 		// it now takes the concrete width too.
 		for _, arm := range e.MatchArms {
-			tc.propagateLiteralType(arm.Body, concrete)
+			tc.propagateLiteral(arm.Body, concrete, viaNewtype)
 		}
 		if tc.currentTypeIsUntyped(e) {
 			tc.typeTable.Set(e, cp)
 		}
 	case *ast.IfExpr:
 		if e.Then != nil {
-			tc.propagateLiteralType(e.Then, concrete)
+			tc.propagateLiteral(e.Then, concrete, viaNewtype)
 		}
 		if e.Else != nil {
-			tc.propagateLiteralType(e.Else, concrete)
+			tc.propagateLiteral(e.Else, concrete, viaNewtype)
 		}
 		if tc.currentTypeIsUntyped(e) {
 			tc.typeTable.Set(e, cp)
@@ -2373,11 +2418,23 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 		// A block's value is its last statement, when that's an expression.
 		if n := len(e.Statements); n > 0 {
 			if es, ok := e.Statements[n-1].(*ast.ExpressionStmt); ok {
-				tc.propagateLiteralType(es.Expression, concrete)
+				tc.propagateLiteral(es.Expression, concrete, viaNewtype)
 			}
 		}
 		if tc.currentTypeIsUntyped(e) {
 			tc.typeTable.Set(e, cp)
+		}
+	default:
+		// A terminal node — one the walk does not descend into: an identifier, a
+		// call, a member or index read. This is where a newtype meets a base-typed
+		// context as a settled value rather than as a narrowable literal, so it is
+		// where the implicit read-out is refused (lyra-E047) — unless the base
+		// context was derived by the newtype arm above, in which case the true
+		// context is the newtype itself and nothing is being read out.
+		if !viaNewtype {
+			if from, ok := tc.typeTable.Get(expr); ok {
+				tc.checkImplicitNewtypeReadout(expr, from, concrete)
+			}
 		}
 	}
 }

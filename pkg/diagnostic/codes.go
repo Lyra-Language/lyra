@@ -155,6 +155,23 @@ const (
 	// is the conversion.
 	CodeImplicitNewtypeConversion = "lyra-E046"
 
+	// CodeImplicitNewtypeReadout: a newtype value used where its *base* is expected,
+	// without writing the conversion — `f(cents)` against `(x: i64)`,
+	// `let raw: i64 = c`. The read-out spelling is the base's own name applied:
+	// `i64(c)`, `string(e)`, `bool(f)` — the mirror of the constructor, and an
+	// identity at runtime just as the constructor is.
+	//
+	// E046's mirror, closing the same hole in the other direction: reading out
+	// silently discards the name the newtype carries, and a discarded unit at a call
+	// boundary is the mixup the type exists to prevent. Unlike E046 there is no
+	// literal exemption — a newtype value is never a literal — so the refusal is
+	// unconditional where it applies. It applies only where the base is *nameable*
+	// (a primitive, string, bool, rune): a newtype over an array or a function type
+	// keeps its implicit read-out, because refusing with no spelling to offer would
+	// make it write-only. Ada is the precedent in both directions: `Meters(F)` in,
+	// `Integer(M)` out.
+	CodeImplicitNewtypeReadout = "lyra-E047"
+
 	// CodeCapturedAssignment: a lambda assigns to a binding it captured from an
 	// enclosing scope. A closure captures **by value** — the copy is taken when the
 	// closure is created, so it can outlive the frame the original lives in — which
@@ -406,12 +423,9 @@ const (
 	// Method transparency itself stays: it was argued for `len`/`slice`/`trim` on a
 	// wrapped string and remains right there — none of those is an operator's escape
 	// hatch. The refusal is exactly the overflow-arithmetic family, and the message
-	// names both explicit paths through: an operator impl, or reading the value into
-	// its base (`let raw: i64 = c` — one-step read-out is documented assignability,
-	// which is also why "require the argument to match the newtype" was not the fix:
-	// base → newtype is assignable *by construction*, so a Cents parameter accepts a
-	// plain i64 everywhere in the language, and enforcing strictness only here would
-	// disagree with every other parameter).
+	// names both explicit paths through: an operator impl, or converting to the base
+	// (`i64(c)` — the E047 read-out spelling; the message said `let raw: i64 = ...`
+	// for the few hours the read-out was still implicit).
 	CodeNewtypeArithmeticOptIn = "lyra-E043"
 
 	// CodeNewtypeConstructorCall: a malformed `newtype` construction — `Cents(150)`, or

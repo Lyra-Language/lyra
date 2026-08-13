@@ -2294,18 +2294,20 @@ func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas m
 	return found, foundCallbacks
 }
 
-// isTypeConversionCall reports whether name is a numeric primitive type name
-// used as a type-conversion call (e.g. `i32(x)`, `f64(val)`). These are always
-// pure — they don't allocate, observe external state, or mutate anything — so
-// they must not be treated as impure even though they have no lambda binding.
+// isTypeConversionCall reports whether name is a type name used as a
+// type-conversion call (e.g. `i32(x)`, `string(e)`). These are always pure — they
+// don't allocate (the identity forms return their operand's own box), observe
+// external state, or mutate anything — so they must not be treated as impure even
+// though they have no lambda binding.
+//
+// Delegated to the shared answer (08/12) rather than keeping a list here, because
+// the list had already drifted: it was missing `rune`, so `rune(n)` — the explicit
+// spelling for building a code point, in exactly the classification arithmetic
+// `pure` code writes — was charged the unresolved-callee default and reported as
+// impure. The hazard-8 shape, in the fourth copy of one question.
 func isTypeConversionCall(name string) bool {
-	switch name {
-	case "i8", "i16", "i32", "i64", "i128",
-		"u8", "u16", "u32", "u64", "u128",
-		"f16", "f32", "f64":
-		return true
-	}
-	return false
+	_, ok := types.ConversionTargetName(name)
+	return ok
 }
 
 // calleeName renders a call target as a dotted name ("foo", "fmt.println",

@@ -1008,7 +1008,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 				// newtype" was not one of them.
 				if isOverflowArithBuiltin(methodName) {
 					tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeNewtypeArithmeticOptIn,
-						"arithmetic on a newtype is opt-in: %s is nominal over %s, so %q does not reach through the wrapper — give %s an operator impl, or read the value into its base (`let raw: %s = ...`) and operate there",
+						"arithmetic on a newtype is opt-in: %s is nominal over %s, so %q does not reach through the wrapper — give %s an operator impl, or convert to its base (`%s(...)`) and operate there",
 						objType, base, methodName, objType, base)
 					return nil
 				}

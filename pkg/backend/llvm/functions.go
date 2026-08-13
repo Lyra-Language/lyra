@@ -412,8 +412,11 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 	if _, isLocal := l.locals[ident.Name]; isLocal {
 		return l.lowerCallThroughValue(block, e)
 	}
-	// A type-name callee is a numeric conversion (`i32(x)`), not a function call.
-	if targetName := types.PrimitiveTypeName(ident.Name); IsNumericConversionTarget(targetName) {
+	// A type-name callee is a conversion (`i32(x)`), not a function call. `string`
+	// and `bool` are the two non-numeric targets — identity-only, the newtype
+	// read-out spelling (lyra-E047) — and `bool`'s keyword is not its internal type
+	// name, so the mapping goes through conversionTargetName rather than a cast.
+	if targetName, isConversion := conversionTargetName(ident.Name); isConversion {
 		return l.lowerNumericConversion(block, e, targetName)
 	}
 	// A call to a *generic* function resolves to the specialization the typechecker

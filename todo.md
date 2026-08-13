@@ -294,15 +294,22 @@ write today:
   reading a from-type the annotation had already overwritten, and the value-range pass
   losing sight of a violation written through the constructor.
 
-  - **[OPEN] The read-out direction is still implicit.** `let raw: i64 = c` needs no
-    ceremony, and `i64(c)` is refused ("cannot convert Cents to i64"), so the two
-    directions are now asymmetric in both spelling and strictness. That asymmetry is
-    deliberate as far as it goes — there is no field accessor, so refusing the implicit
-    read-out would make a newtype write-only, and the target type is written right
-    there — but it does mean `f(cents)` against `(x: i64)` silently discards the unit,
-    which is the same shape as the hole E046 just closed. Ada requires `Integer(M)`
-    here too. Wants deciding with the conversion spelling: if `i64(c)` worked, refusing
-    the implicit form would cost nothing but keystrokes.
+  - **[DONE 08/12] The read-out direction is explicit too** (`lyra-E047`). Conversions
+    look through a newtype on their operand, so `i64(c)` reads a `Cents` out (and
+    `u8(cents)` behaves exactly as `u8(plain_i64)`); `string(...)`/`bool(...)` exist
+    as identity-only targets so string and bool bases have the spelling; and the
+    implicit form is refused wherever the base is *nameable* — `f(cents)` against
+    `(x: i64)` was the same silent unit-discard E046 closed inbound, and Ada requires
+    `Integer(M)` here too. A base the conversion cannot name (an array, a function
+    type) keeps its implicit read-out rather than becoming write-only — pinned as the
+    documented limit. Three passes needed to learn the transparent forms are their
+    operand: the ownership pass (the ASan conservation test caught `string(e)`
+    binding a box with neither retain nor matching release the day the spelling
+    arrived), the value-range pass (the constructor, in the previous change), and
+    purity — whose conversion list had **already drifted**: it was missing `rune`, so
+    `rune(n)` in `pure` code was charged the unresolved-callee default. The four
+    copies of "is this callee a conversion?" are now one, `types.ConversionTargetName`.
+    See COMPLETED.md.
   - **[OPEN] A generic newtype cannot be constructed by call.** `Boxed(5)` is
     `lyra-E044` — the base is a type variable, so there is nothing to check the operand
     against until the parameters are bound. The annotation form works

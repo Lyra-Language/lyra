@@ -133,7 +133,7 @@ func TestTypeCheck_PatternConstraint_StringAssignableToBase_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 newtype Digits = string where pattern(r"[0-9]+")
 let d: Digits = "42"
-let s: string = d
+let s = string(d)
 `, false)
 	assertNoErrors(t, res)
 }

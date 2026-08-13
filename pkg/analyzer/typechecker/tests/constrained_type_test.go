@@ -247,13 +247,16 @@ let m: Meters = 5
 `, false))
 }
 
-// Reading the value back out still works — there is no `.0` accessor, so
-// blocking this would make a newtype write-only.
+// Reading the value back out is the base-name conversion (08/12): `i64(m)`, the
+// constructor's mirror and an identity at runtime just as the constructor is. There
+// is no `.0` accessor, so this spelling existing is what lets the *implicit* form be
+// refused (lyra-E047) without making a newtype write-only.
 func TestNewtype_ToBase_Ok(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
 newtype Meters = i64
 let m: Meters = 5
-let raw: i64 = m
+let raw = i64(m)
+let sum = raw + 1
 `, false))
 }
 
@@ -291,7 +294,7 @@ func TestNewtype_ThroughCallReturn_Ok(t *testing.T) {
 newtype Meters = i64
 let mk = () -> Meters => 5
 let m: Meters = mk()
-let raw: i64 = m
+let raw = i64(m)
 `, false))
 }
 
@@ -310,7 +313,7 @@ func TestNewtype_ReadFromStructField_Ok(t *testing.T) {
 newtype Meters = i64
 struct Trip { dist: Meters }
 let t = Trip { dist: 5 }
-let d: i64 = t.dist
+let d = i64(t.dist)
 `, false))
 }
 
@@ -480,7 +483,7 @@ func TestNewtype_ConstructorCall(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
 newtype Cents = i64
 let c = Cents(150)
-let raw: i64 = c
+let raw = i64(c)
 `, false))
 }
 
@@ -489,7 +492,7 @@ func TestNewtype_JuxtaposedConstructor(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
 newtype Cents = i64
 let c = Cents 150
-let raw: i64 = c
+let raw = i64(c)
 `, false))
 }
 
@@ -647,14 +650,90 @@ let mk = (a: string, b: string) -> Email => a ++ b
 		"cannot use string as Email implicitly: Email is a distinct type over string, so the conversion must be written — `Email(...)`")
 }
 
-// Reading *out* is unchanged: newtype → base stays implicit. There is no field
-// accessor, so refusing it would make a newtype write-only, and the target type is
-// written right there — the direction that loses a unit is the one that is loud.
-func TestImplicitNewtype_ReadOutStillImplicit(t *testing.T) {
-	assertNoErrors(t, parseCollectAndCheck(t, `
+// ── reading out needs the conversion too (lyra-E047) ─────────────────────────
+//
+// E046's mirror, closed the same day it was left open: `let raw: i64 = c` and
+// `f(cents)` against `(x: i64)` silently discarded the name the newtype carries,
+// which is the same unit-mixup shape in the other direction. The spelling is the
+// base's own name applied — `i64(c)`, `string(e)` — the constructor's mirror, and
+// an identity at runtime just as the constructor is. Unlike E046 there is no
+// literal half: a newtype value is never a literal, so the refusal is
+// unconditional where the base is nameable.
+
+func TestImplicitReadout_RefusedAtBinding(t *testing.T) {
+	res := parseCollectAndCheck(t, `
 newtype Cents = i64
 let c: Cents = 150
 let raw: i64 = c
+`, false)
+	assertErrorsAre(t, res,
+		"cannot use Cents as i64 implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `i64(...)`")
+}
+
+func TestImplicitReadout_RefusedAtCall(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+let take = (x: i64) -> i64 => x
+let c: Cents = 150
+let r = take(c)
+`, false)
+	assertErrorsAre(t, res,
+		"cannot use Cents as i64 implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `i64(...)`")
+}
+
+func TestImplicitReadout_RefusedAtReturn(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Cents = i64
+let unwrap = (c: Cents) -> i64 => c
+`, false)
+	assertErrorsAre(t, res,
+		"cannot use Cents as i64 implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `i64(...)`")
+}
+
+// The conversion is the way through, in every one of those spots — and for a string
+// base the spelling is `string(...)`, which exists exactly for this.
+func TestImplicitReadout_ConversionIsTheWayThrough(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Cents = i64
+newtype Email = string
+let take = (x: i64) -> i64 => x
+let c: Cents = 150
+let raw = i64(c)
+let r = take(i64(c))
+let unwrap = (c2: Cents) -> i64 => i64(c2)
+let e: Email = "x@y"
+let s = string(e)
+`, true))
+}
+
+// `string(...)` and `bool(...)` are identity-only: there is no stringification and
+// no truthiness, so an operand that is not the target (after the newtype strip) is
+// refused, naming that.
+func TestIdentityConversion_RefusesNonIdentity(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let s = string(42)
+`, true)
+	assertErrorsAre(t, res,
+		"cannot convert integer literal to string: `string(...)` only reads a value of that type — or a newtype over it — back out")
+}
+
+// A newtype over a base the conversion cannot *name* — an array, here — keeps its
+// implicit read-out: refusing with no spelling to offer would make it write-only.
+// The documented limit, pinned so a future spelling knows what to flip.
+func TestImplicitReadout_UnnameableBaseStaysImplicit(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Row = []i64
+let r: Row = [1, 2, 3]
+let base: []i64 = r
+`, true))
+}
+
+// A same-newtype flow is not a read-out, including through match/if arms — the walk
+// carries the base below a newtype context, and must not mistake that for one.
+func TestImplicitReadout_SameNewtypeThroughArms(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Cents = i64
+let pick = (b: bool, c: Cents) -> Cents => if b { c } else { 1 }
 `, false))
 }
 
@@ -697,7 +776,7 @@ let b: Cents = 275
 let c = a.wrapping_add(b)
 `, false)
 	assertErrorsAre(t, res,
-		"arithmetic on a newtype is opt-in: Cents is nominal over i64, so \"wrapping_add\" does not reach through the wrapper — give Cents an operator impl, or read the value into its base (`let raw: i64 = ...`) and operate there")
+		"arithmetic on a newtype is opt-in: Cents is nominal over i64, so \"wrapping_add\" does not reach through the wrapper — give Cents an operator impl, or convert to its base (`i64(...)`) and operate there")
 }
 
 // The mixed operand — the case the bypass made silently legal.
@@ -709,7 +788,7 @@ let plain: i64 = 5
 let c = a.wrapping_add(plain)
 `, false)
 	assertErrorsAre(t, res,
-		"arithmetic on a newtype is opt-in: Cents is nominal over i64, so \"wrapping_add\" does not reach through the wrapper — give Cents an operator impl, or read the value into its base (`let raw: i64 = ...`) and operate there")
+		"arithmetic on a newtype is opt-in: Cents is nominal over i64, so \"wrapping_add\" does not reach through the wrapper — give Cents an operator impl, or convert to its base (`i64(...)`) and operate there")
 }
 
 // checked_* is the third member of the family and is refused the same way.
@@ -721,7 +800,7 @@ let b: Cents = 275
 let c = a.checked_add(b)
 `, true)
 	assertErrorsAre(t, res,
-		"arithmetic on a newtype is opt-in: Cents is nominal over i64, so \"checked_add\" does not reach through the wrapper — give Cents an operator impl, or read the value into its base (`let raw: i64 = ...`) and operate there")
+		"arithmetic on a newtype is opt-in: Cents is nominal over i64, so \"checked_add\" does not reach through the wrapper — give Cents an operator impl, or convert to its base (`i64(...)`) and operate there")
 }
 
 // The refusal is exactly the overflow-arithmetic family. The float rounding ops are
@@ -741,7 +820,7 @@ func TestNewtype_BaseReadoutReachesArithmetic(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
 newtype Cents = i64
 let a: Cents = 150
-let raw: i64 = a
+let raw = i64(a)
 let c = raw.wrapping_add(5)
 `, false))
 }
@@ -764,8 +843,8 @@ newtype Cents = i64
 trait Add { (_+_): (Self, Self) -> Self }
 impl Add for Cents {
   (_+_) = (self, o) => {
-    let a: i64 = self
-    let b: i64 = o
+    let a = i64(self)
+    let b = i64(o)
     let sum: Cents = Cents(a.wrapping_add(b))
     sum
   }

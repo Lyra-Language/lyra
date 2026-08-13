@@ -50,6 +50,97 @@ func (tc *TypeChecker) checkImplicitNewtypeConversion(value ast.Expression, from
 		from, ct.Name, ct.Name, ct.Type, ct.Name)
 }
 
+// checkImplicitNewtypeReadout is checkImplicitNewtypeConversion's mirror (lyra-E047,
+// 08/12): a newtype value used where its **base** is expected must write the
+// conversion — `i64(c)`, `string(e)` — where it used to flow implicitly. Reading out
+// discards the name the newtype carries, and a silent discard at a call boundary is
+// the same unit-mixup shape E046 closed on the way in; Ada requires `Integer(M)` in
+// this direction for the same reason it requires `Meters(F)` in the other.
+//
+// Two deliberate limits. There is no literal half — a newtype value is never a
+// literal, so the refusal is unconditional where it applies. And it applies only when
+// the base is a type the conversion spelling can *name* — a primitive, `string`,
+// `bool`, `rune` — because refusing with no spelling to offer would make the newtype
+// write-only. A newtype over an array or a function type keeps its implicit read-out,
+// which is the grammar's limit and is documented as such (todo.md).
+//
+// Like its mirror, it fires only when the flow is otherwise legal: a base that is not
+// assignable to the target at all is the ordinary mismatch's to report, and a
+// newtype-to-newtype pair is the distinctness rule's.
+func (tc *TypeChecker) checkImplicitNewtypeReadout(value ast.Expression, from, to types.Type) {
+	if from == nil || to == nil {
+		return
+	}
+	from = tc.resolveTypeIfKnown(from, value.GetLocation())
+	ct, ok := from.(*types.ConstrainedType)
+	if !ok {
+		return
+	}
+	if _, toCT := to.(*types.ConstrainedType); toCT {
+		return
+	}
+	// Chained newtypes read out under the innermost base's name; resolve as we strip,
+	// since a base written as a name is stored unresolved.
+	base := types.Type(ct)
+	for {
+		inner, isCT := base.(*types.ConstrainedType)
+		if !isCT {
+			break
+		}
+		base = tc.resolveTypeIfKnown(inner.Type, value.GetLocation())
+	}
+	spelling, ok := readoutSpelling(base)
+	if !ok {
+		return
+	}
+	if !isAssignable(base, to) {
+		return
+	}
+	if tc.readoutReported[value] {
+		return
+	}
+	if tc.readoutReported == nil {
+		tc.readoutReported = map[ast.Expression]bool{}
+	}
+	tc.readoutReported[value] = true
+	tc.addErrorCode(value.GetLocation(), SeverityError, diag.CodeImplicitNewtypeReadout,
+		"cannot use %s as %s implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `%s(...)`",
+		ct.Name, to, spelling)
+}
+
+// readoutSpelling names the conversion that reads a newtype over base back out —
+// the source keyword, which for bool is not the internal type name ("boolean").
+// A base with no spelling (an array, a tuple, a function type) answers false, and
+// the read-out rule does not apply to it.
+func readoutSpelling(base types.Type) (string, bool) {
+	p, ok := base.(types.PrimitiveType)
+	if !ok {
+		return "", false
+	}
+	switch {
+	case p.Name == types.Boolean:
+		return "bool", true
+	case isAnyConcreteInt(p.Name) || isAnyConcreteFloat(p.Name) || p.Name == types.Rune || p.Name == types.String:
+		return string(p.Name), true
+	}
+	return "", false
+}
+
+// identityConversionTargetByName maps the two conversion targets that are not
+// numeric: `string(x)` and `bool(x)`. They exist solely as the read-out spelling for
+// a newtype over them (lyra-E047's fix), so inferTypeConversion admits them
+// identity-only — there is no stringification and no truthiness, and an operand that
+// is not the target (after the newtype strip) is refused.
+func identityConversionTargetByName(name string) (types.Type, bool) {
+	switch name {
+	case "string":
+		return types.PrimitiveType{Name: types.String}, true
+	case "bool":
+		return types.PrimitiveType{Name: types.Boolean}, true
+	}
+	return nil, false
+}
+
 // isNewtypeConversionExempt covers the source types the rule has nothing to say about:
 // another newtype (isAssignable already refuses that pair, and reporting here too would
 // double up), `never` (a `panic(…)` reaches no assignment), and a bare type variable
@@ -149,13 +240,20 @@ func isAssignable(from, to types.Type) bool {
 		return true
 	}
 	// Two *different* newtypes never interconvert, even over the same base. Each
-	// rule below is individually right — a value satisfying the base is assignable
-	// *to* a newtype (construction), and a newtype value is assignable to its base
-	// (there is no field accessor, so this is the only way to read it) — but
-	// chaining them made every newtype over a common base mutually assignable:
-	// `Meters` → `i64` → `Feet` type-checked silently, which is precisely the
-	// mixup a newtype exists to prevent. Rejecting the pair here keeps both
-	// single-step rules intact.
+	// rule below is individually right at the *type* level — a value satisfying the
+	// base is assignable *to* a newtype, and a newtype value is assignable to its
+	// base — but chaining them made every newtype over a common base mutually
+	// assignable: `Meters` → `i64` → `Feet` type-checked silently, which is
+	// precisely the mixup a newtype exists to prevent. Rejecting the pair here
+	// keeps both single-step rules intact.
+	//
+	// Both single steps are further gated at the **expression** level (08/12),
+	// which this type-level function cannot see: base → newtype is implicit only
+	// for a literal (checkImplicitNewtypeConversion, lyra-E046 — a typed value
+	// needs the constructor), and newtype → base needs the base-name conversion
+	// wherever one exists (checkImplicitNewtypeReadout, lyra-E047 — `i64(c)`).
+	// The rules here answer "could this flow at all"; those answer "must the
+	// author write it down".
 	fromCT, fromIsCT := from.(*types.ConstrainedType)
 	toCT, toIsCT := to.(*types.ConstrainedType)
 	if fromIsCT && toIsCT && fromCT.Name != toCT.Name {
