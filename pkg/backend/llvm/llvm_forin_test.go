@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"os/exec"
+	"strings"
 	"testing"
 )
 
@@ -205,15 +206,28 @@ let main = () -> u8 => {
 	}
 }
 
-// The two-variable form over a string (`for i, c in s`) is deferred — the
-// index/rune pairing isn't defined. (Arrays, ranges, and single-var string all lower.)
-func TestEmit_ForIn_Deferred(t *testing.T) {
+// The two-variable form over a string — `for i, c in s`, the rune index alongside
+// the rune, one linear walk (08/12). This is the indexed traversal that replaces
+// `for i in 0..<s.len() { s[i] }`, whose every `s[i]` decodes from the start (O(n²))
+// — the loop the docs used to hold up as what rune-count `len` protects. The index
+// is a rune counter, not the byte cursor, which the multi-byte fixture pins: over
+// "日本語" the indices must read 0, 1, 2, not 0, 3, 6.
+func TestExec_ForInStringTwoVariable(t *testing.T) {
 	t.Parallel()
-	src := `let main = () -> void => {
-  for i, c in "hello" { println(c) }
+	const src = `
+module main
+let main = () -> void => {
+  var out = ""
+  for i, c in "日本語" {
+    out = out ++ "${i}:${c} "
+  }
+  for i, c in "" {
+    out = out ++ "unreachable"
+  }
+  println(out.trim())
 }
 `
-	if _, err := emitSource(t, src); err == nil {
-		t.Errorf("expected a loud error for a two-variable for-in over a string (deferred):\n%s", src)
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "0:日 1:本 2:語" {
+		t.Errorf("two-variable string for-in = %q; want \"0:日 1:本 2:語\"", got)
 	}
 }

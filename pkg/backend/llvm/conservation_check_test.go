@@ -216,7 +216,7 @@ func (t *boxTracker) scanCall(block *ir.Block, call *ir.InstCall, note func(valu
 	case "lyra_rc_retain":
 		// Neutral: adds a reference, doesn't discharge one. The extra reference is a
 		// balance question (what the counting test covers), not a path question.
-	case "memcpy", "memcmp", "write", "snprintf":
+	case "memcpy", "memcmp", "write", "snprintf", "lyra_utf8_count":
 		// Read/write the *bytes*; they neither store the pointer nor free it.
 	default:
 		// Any other callee may take ownership — including the per-type drop glue,

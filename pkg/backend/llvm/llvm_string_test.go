@@ -287,7 +287,7 @@ func TestEmit_StringLiteralIsPinnedBox(t *testing.T) {
 }
 
 // TestEmit_StringIR pins the representation: a private constant for the bytes,
-// the { i8*, i64 } fat pointer, and a memcmp call for equality.
+// the { i8*, i64, i64 } fat pointer, and a memcmp call for equality.
 func TestEmit_StringIR(t *testing.T) {
 	t.Parallel()
 	got, err := emitSource(t, `let eq = (a: string, b: string) -> bool => a == b
@@ -295,7 +295,7 @@ func TestEmit_StringIR(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"private", "@memcmp", "{ i8*, i64 }"} {
+	for _, want := range []string{"private", "@memcmp", "{ i8*, i64, i64 }"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("string IR missing %q:\n%s", want, got)
 		}

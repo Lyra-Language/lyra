@@ -23,20 +23,21 @@ import (
 // remains a *byte* count (STRING_LAYOUT.md): that is the representation, and this is
 // the language.
 //
-// The cost is that `len()` is **O(n)** where the array one is O(1). It is the honest
-// price of agreeing with the index, and `for c in s` is still the way to traverse a
-// string without paying a walk per element — which is what the prelude's `parse_i64`
-// does and what the trim family does.
+// `len()` is **O(1)** as of 08/12 — the rune count rides the fat pointer
+// (StringLLVMType), maintained arithmetically at each construction. It counted with
+// a decode walk before, which the audit flagged as the design's last standing
+// tension: the docs defended rune-count len by endorsing the indexed loop, whose
+// `len()` calls alone once measured 99.7% of `starts_with`'s cost. The linear
+// indexed traversal is `for i, c in s`; `s[i]` in a loop still decodes from the
+// start each time and is the spelling to avoid.
 //
-// Both walk with `lyra_utf8_decode` (strings.go), the same decoder the index and the
-// for-in loop use. Byte-length bounds every loop here by construction — no encoded
+// `slice` walks with `lyra_utf8_decode` (strings.go), the same decoder the index and
+// the for-in loop use. Byte-length bounds every loop here by construction — no encoded
 // rune is shorter than one byte, so a rune counter can never outrun the bytes — which
 // is the same rule that bounds an array comprehension over a string (array_comp.go).
 
-// lowerStringLen lowers `s.len()` → the number of runes in s, as an i64.
-//
-// A plain decode-and-count walk. It cannot trap: an empty string yields 0, and the
-// loop is bounded by the byte length.
+// lowerStringLen lowers `s.len()` → the rune count: the fat pointer's third field,
+// one extractvalue, exactly as the array `len` is a field read of its box.
 func (l *lowerer) lowerStringLen(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
 	if len(call.Arguments) != 0 {
 		return nil, nil, fmt.Errorf("llvm: len() expects 0 arguments, got %d", len(call.Arguments))
@@ -48,34 +49,7 @@ func (l *lowerer) lowerStringLen(block *ir.Block, call *ast.FunctionCallExpr, me
 	if !isStringLLVMType(str.Type()) {
 		return nil, nil, fmt.Errorf("llvm: string len() receiver did not lower to a string (%s)", str.Type())
 	}
-	data := block.NewExtractValue(str, 0)
-	byteLen := block.NewExtractValue(str, 1)
-	decode := l.utf8DecodeFunc()
-
-	fn := block.Parent
-	entry := fn.Blocks[0]
-	biSlot := entry.NewAlloca(lltypes.I64) // byte cursor
-	nSlot := entry.NewAlloca(lltypes.I64)  // runes seen
-	cpSlot := entry.NewAlloca(lltypes.I32) // decode out-param, discarded
-	block.NewStore(constant.NewInt(lltypes.I64, 0), biSlot)
-	block.NewStore(constant.NewInt(lltypes.I64, 0), nSlot)
-
-	condBlock := fn.NewBlock("")
-	bodyBlock := fn.NewBlock("")
-	doneBlock := fn.NewBlock("")
-	block.NewBr(condBlock)
-
-	bi := condBlock.NewLoad(lltypes.I64, biSlot)
-	condBlock.NewCondBr(condBlock.NewICmp(enum.IPredULT, bi, byteLen), bodyBlock, doneBlock)
-
-	biB := bodyBlock.NewLoad(lltypes.I64, biSlot)
-	n := bodyBlock.NewCall(decode, data, biB, cpSlot)
-	bodyBlock.NewStore(bodyBlock.NewAdd(biB, n), biSlot)
-	count := bodyBlock.NewLoad(lltypes.I64, nSlot)
-	bodyBlock.NewStore(bodyBlock.NewAdd(count, constant.NewInt(lltypes.I64, 1)), nSlot)
-	bodyBlock.NewBr(condBlock)
-
-	return doneBlock.NewLoad(lltypes.I64, nSlot), doneBlock, nil
+	return block.NewExtractValue(str, 2), block, nil
 }
 
 // lowerStringSlice lowers `s.slice(start, end)` → the half-open rune range
@@ -185,7 +159,10 @@ func (l *lowerer) lowerStringSlice(block *ir.Block, call *ast.FunctionCallExpr, 
 
 	strTy := StringLLVMType()
 	withPtr := buildBlock.NewInsertValue(constant.NewUndef(strTy), dst, 0)
-	return buildBlock.NewInsertValue(withPtr, nOut, 1), buildBlock, nil
+	withLen := buildBlock.NewInsertValue(withPtr, nOut, 1)
+	// The bounds *are* rune indices, so the result's rune count is their difference —
+	// no bytes need looking at, the same arithmetic ledger `++` keeps.
+	return buildBlock.NewInsertValue(withLen, buildBlock.NewSub(end, start), 2), buildBlock, nil
 }
 
 // lowerStringFromEnd lowers `s.from_end(k)` → the k-th rune from the end, 1-based:

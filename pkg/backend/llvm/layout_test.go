@@ -24,9 +24,9 @@ func TestLLVMPrimitive(t *testing.T) {
 			t.Errorf("LLVMPrimitive(%s) = %v,%v; want %q", name, got, ok, want)
 		}
 	}
-	// A string lowers to the fat-pointer struct { i8*, i64 } (STRING_LAYOUT.md).
-	if got, ok := LLVMPrimitive(types.String); !ok || got.String() != "{ i8*, i64 }" {
-		t.Errorf("LLVMPrimitive(string) = %v,%v; want %q", got, ok, "{ i8*, i64 }")
+	// A string lowers to the fat-pointer struct { i8*, i64, i64 } (STRING_LAYOUT.md).
+	if got, ok := LLVMPrimitive(types.String); !ok || got.String() != "{ i8*, i64, i64 }" {
+		t.Errorf("LLVMPrimitive(string) = %v,%v; want %q", got, ok, "{ i8*, i64, i64 }")
 	}
 }
 
@@ -122,9 +122,10 @@ func TestSizeAndAlign_StaticArray(t *testing.T) {
 
 func TestSizeAndAlign_String(t *testing.T) {
 	t.Parallel()
-	// A string is a fat pointer { i8*, i64 }: two pointer-sized words.
-	if s, a, ok := SizeAndAlign(prim(types.String)); !ok || s != 16 || a != 8 {
-		t.Errorf("SizeAndAlign(string) = %d,%d,%v; want 16,8,true", s, a, ok)
+	// A string is a fat pointer { i8*, i64, i64 }: three pointer-sized words — data,
+	// byte length, and the rune count that makes len() O(1) (08/12).
+	if s, a, ok := SizeAndAlign(prim(types.String)); !ok || s != 24 || a != 8 {
+		t.Errorf("SizeAndAlign(string) = %d,%d,%v; want 24,8,true", s, a, ok)
 	}
 }
 

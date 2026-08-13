@@ -10,6 +10,49 @@ Newest first.
 ## Dated log
 
 ### 08/12/26
+**`s.len()` is O(1) — the rune count rides the fat pointer — and `for i, c in s` is
+the indexed traversal.** The audit's last standing tension, and the subtlest of its
+findings: not a wrong answer anywhere, but a *defense* that endorsed what the design's
+own performance model condemned. `len()` had to count runes (it agrees with `s[i]` and
+`for c in s`), and the docs justified that by holding up `for i in 0..<s.len() { s[i] }`
+as the loop being protected — a loop whose every `s[i]` decodes from the start (O(n²)),
+and whose `len()` calls alone measured 99.7% of `starts_with`'s cost when the prelude
+fell into exactly this trap on 08/08.
+
+**The string is `{ptr, byte_len, rune_count}` now** (STRING_LAYOUT.md; 24 bytes,
+was 16; the count appended as field 2, so every field-0/1 consumer kept its index).
+What makes the field affordable is that construction almost always knows the count
+**arithmetically**: a literal counts at compile time (`utf8.RuneCountInString`), `++`
+adds its operands' counts (concatenation cannot split a rune), `slice` subtracts its
+rune bounds (they *are* rune indices). Only the two byte-sourced producers pay a scan —
+read_line's libc buffer and interpolation's formatted segments — via `lyra_utf8_count`,
+a lead-byte counter ((b & 0xC0) != 0x80, no decoding) over bytes they just produced,
+cache-hot beside the allocation. Five construction sites total, and the hazard of the
+design is a sixth that forgets the field — a silently wrong `len()` — so the **count
+ledger** (`TestExec_StringRuneCountAgreesEverywhere`) recounts every producer's answer
+with a `for c in s` walk, and an IR pin asserts len() contains no decode loop.
+Measured: 100k `len()` calls on an 18000-rune string, **0 µs**. The exec suite passed
+unchanged on the first full run after the layout change — the shape pins (`{ i8*, i64 }`
+texts, the 16-byte size) were the only casualties, which is the evidence the five
+sites were the complete set.
+
+**`for i, c in s`** — the deferred index/rune pairing — lowers as a rune counter
+beside the byte cursor: one linear walk, the array convention (first name the index,
+second the element). The typechecker needed *nothing* — `bindForInLoopVars` had been
+generic over iterables all along, and only the backend's loud deferral stood in the
+way. This is the form the docs now hold up where they used to hold up the quadratic
+loop; `s[i]` in a loop remains legal, remains O(i) per access, and the docs now say
+that instead of endorsing it. The multi-byte fixture pins the index being a *rune*
+counter: over "日本語" the pairs read 0:日 1:本 2:語, not 0/3/6.
+
+One test-infrastructure lesson rode along: the conservation tracker treats an unknown
+callee as an escape (correct — a callee may take ownership), so handing the fresh
+box's payload to `lyra_utf8_count` made interpolation's allocation invisible to the
+path check, and the corpus guard ("this program no longer exercises the check") caught
+the *test* going vacuous — the exact failure mode that guard exists for. The counter
+joined memcpy/memcmp on the reads-bytes-only list.
+
+### 08/12/26
 **Negative indexing is removed; `from_end(k)` is the end-relative accessor** — the one
 audit finding that was a deliberate design rather than an implementation gap, reversed
 four days after it landed. `s[-1]`/`xs[-1]` counted from the end (08/08, Python's rule),

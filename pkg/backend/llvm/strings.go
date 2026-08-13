@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -36,7 +37,58 @@ func (l *lowerer) lowerStringConstant(block *ir.Block, content string) value.Val
 	dataPtr := constant.NewGetElementPtr(boxTy, g, zero, constant.NewInt(lltypes.I32, boxPayloadField), zero)
 	strTy := StringLLVMType()
 	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dataPtr, 0)
-	return block.NewInsertValue(withPtr, constant.NewInt(lltypes.I64, int64(len(bytes))), 1)
+	withLen := block.NewInsertValue(withPtr, constant.NewInt(lltypes.I64, int64(len(bytes))), 1)
+	// The rune count is a compile-time fact for a literal — the one construction
+	// where it is literally free.
+	return block.NewInsertValue(withLen, constant.NewInt(lltypes.I64, int64(utf8.RuneCountInString(content))), 2)
+}
+
+// utf8CountFunc lazily defines `i64 @lyra_utf8_count(i8* data, i64 byteLen)` — the
+// number of runes in a byte range, counted as the non-continuation bytes
+// (`(b & 0xC0) != 0x80`): every rune contributes exactly one lead byte, so one pass
+// with no decoding answers it. This is the fallback for the two string producers
+// whose bytes arrive from outside the fat-pointer world (read_line's libc buffer,
+// interpolation's formatted segments); every other construction derives its count
+// arithmetically (StringLLVMType has the ledger).
+func (l *lowerer) utf8CountFunc() *ir.Func {
+	if l.utf8Count != nil {
+		return l.utf8Count
+	}
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	data := ir.NewParam("data", i8ptr)
+	byteLen := ir.NewParam("byteLen", lltypes.I64)
+	fn := l.module.NewFunc("lyra_utf8_count", lltypes.I64, data, byteLen)
+	l.utf8Count = fn
+
+	zero := constant.NewInt(lltypes.I64, 0)
+	one := constant.NewInt(lltypes.I64, 1)
+
+	entry := fn.NewBlock("entry")
+	cond := fn.NewBlock("cond")
+	body := fn.NewBlock("body")
+	done := fn.NewBlock("done")
+
+	iSlot := entry.NewAlloca(lltypes.I64)
+	nSlot := entry.NewAlloca(lltypes.I64)
+	entry.NewStore(zero, iSlot)
+	entry.NewStore(zero, nSlot)
+	entry.NewBr(cond)
+
+	i := cond.NewLoad(lltypes.I64, iSlot)
+	cond.NewCondBr(cond.NewICmp(enum.IPredULT, i, byteLen), body, done)
+
+	iB := body.NewLoad(lltypes.I64, iSlot)
+	b := body.NewLoad(lltypes.I8, body.NewGetElementPtr(lltypes.I8, data, iB))
+	isCont := body.NewICmp(enum.IPredEQ,
+		body.NewAnd(b, constant.NewInt(lltypes.I8, -64)), // 0xC0
+		constant.NewInt(lltypes.I8, -128))                // 0x80
+	n := body.NewLoad(lltypes.I64, nSlot)
+	body.NewStore(body.NewSelect(isCont, n, body.NewAdd(n, one)), nSlot)
+	body.NewStore(body.NewAdd(iB, one), iSlot)
+	body.NewBr(cond)
+
+	done.NewRet(done.NewLoad(lltypes.I64, nSlot))
+	return fn
 }
 
 // stringBox recovers the ref-counted box pointer from a string fat pointer. The
@@ -237,6 +289,10 @@ func (l *lowerer) lowerStringConcat(block *ir.Block, e *ast.StringConcatExpr) (v
 	dataB := block.NewExtractValue(right, 0)
 	lenB := block.NewExtractValue(right, 1)
 	total := block.NewAdd(lenA, lenB)
+	// The result's rune count is the operands' sum — concatenation cannot split or
+	// merge a rune, so no bytes need looking at. This additivity is most of why the
+	// count can afford to ride the value (StringLLVMType).
+	count := block.NewAdd(block.NewExtractValue(left, 2), block.NewExtractValue(right, 2))
 
 	_, dst := l.rcAllocPayload(block, total)
 	memcpy := l.memcpyFunc()
@@ -246,7 +302,8 @@ func (l *lowerer) lowerStringConcat(block *ir.Block, e *ast.StringConcatExpr) (v
 
 	strTy := StringLLVMType()
 	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dst, 0)
-	return block.NewInsertValue(withPtr, total, 1), block, nil
+	withLen := block.NewInsertValue(withPtr, total, 1)
+	return block.NewInsertValue(withLen, count, 2), block, nil
 }
 
 // lowerInterpolatedString lowers a `"… ${expr} …"` to a heap string. It's the
@@ -298,9 +355,15 @@ func (l *lowerer) lowerInterpolatedString(block *ir.Block, e *ast.InterpolatedSt
 		offset = block.NewAdd(offset, s.length)
 	}
 
+	// Formatted segments arrive as raw (data, length) pairs — a number's snprintf
+	// buffer carries no rune count — so the result's count is one linear pass over
+	// the bytes just copied, cache-hot and dwarfed by the allocation beside it.
+	count := block.NewCall(l.utf8CountFunc(), dst, total)
+
 	strTy := StringLLVMType()
 	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dst, 0)
-	return block.NewInsertValue(withPtr, total, 1), block, nil
+	withLen := block.NewInsertValue(withPtr, total, 1)
+	return block.NewInsertValue(withLen, count, 2), block, nil
 }
 
 // lowerStringEquality builds the i1 "are these two strings equal?" test,
@@ -339,13 +402,13 @@ func (l *lowerer) lowerStringComparison(block *ir.Block, op ast.BooleanBinaryOp,
 }
 
 // isStringLLVMType reports whether t is the fat-pointer string representation
-// { i8*, i64 } (see StringLLVMType). Used to route comparisons and match tests to
-// the string path. A user aggregate can't spell this shape in surface syntax, and
+// { i8*, i64, i64 } (see StringLLVMType). Used to route comparisons and match tests
+// to the string path. A user aggregate can't spell this shape in surface syntax, and
 // a struct/tuple scrutinee is dispatched before the scalar path anyway, so there's
 // no ambiguity in practice.
 func isStringLLVMType(t lltypes.Type) bool {
 	st, ok := t.(*lltypes.StructType)
-	if !ok || len(st.Fields) != 2 {
+	if !ok || len(st.Fields) != 3 {
 		return false
 	}
 	ptr, ok := st.Fields[0].(*lltypes.PointerType)

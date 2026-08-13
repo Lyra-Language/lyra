@@ -149,7 +149,10 @@ func (l *lowerer) ensureReadLineRuntime(dt types.DataType, someC types.DataTypeC
 	payload := done.NewGetElementPtr(lltypes.I8, doneBox, constant.NewInt(lltypes.I64, rcHeaderSize))
 	strTy := StringLLVMType()
 	withPtr := done.NewInsertValue(constant.NewUndef(strTy), payload, 0)
-	str := done.NewInsertValue(withPtr, doneLen, 1)
+	withLen := done.NewInsertValue(withPtr, doneLen, 1)
+	// The bytes came from libc, so the rune count needs the one linear pass no
+	// arithmetic can replace — negligible beside the read it annotates.
+	str := done.NewInsertValue(withLen, done.NewCall(l.utf8CountFunc(), payload, doneLen), 2)
 	someVal, err := l.buildDataValue(done, dt, someTag, someC, []value.Value{str})
 	if err != nil {
 		return nil, err

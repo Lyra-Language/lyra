@@ -86,7 +86,9 @@ write today:
   produces (`break` with a value is not implemented). The message also stopped blaming
   recursion outright: a tail `if`/`match` used for effect still trips it and is not
   recursive.
-- **[DONE 08/06] String length, slicing and trimming.** `s.len()` (rune count, O(n)) and
+- **[DONE 08/06] String length, slicing and trimming.** `s.len()` (rune count — O(n)
+  when this landed; **O(1)** since 08/12, when the count began riding the fat pointer:
+  see Known bugs) and
   `s.slice(start, end)` (half-open rune range, allocating) are builtins;
   `trim`/`trim_start`/`trim_end` are ordinary Lyra in the prelude. Bytes-vs-runes was not
   an open question once looked at: `s[i]` and `for c in s` already walked code points, so a
@@ -224,6 +226,32 @@ write today:
     makes a search for an empty needle terminate.
 
 ## Known bugs
+
+- **[DONE 08/12] `s.len()` is O(1), and `for i, c in s` is the indexed traversal** —
+  the audit's last standing tension resolved. The tension was not that len counted
+  runes (it must — it agrees with `s[i]` and `for c in s`) but that it counted them
+  with a walk, and that the docs *defended* that by endorsing
+  `for i in 0..<s.len() { s[i] }` — a loop whose every `s[i]` decodes from the start
+  (O(n²)) and whose `len()` calls alone once measured 99.7% of `starts_with`'s cost
+  when the prelude fell into exactly this trap.
+
+  Two halves. The **rune count rides the fat pointer** (`{ptr, byte_len, rune_count}`,
+  STRING_LAYOUT.md), so `len()` is a field read; construction maintains it
+  arithmetically — a literal counts at compile time, `++` adds, `slice` subtracts its
+  rune bounds — and only the two byte-sourced producers (read_line, interpolation's
+  formatted segments) pay one linear `lyra_utf8_count` pass over bytes they just
+  produced. Five construction sites, a count-ledger test
+  (`TestExec_StringRuneCountAgreesEverywhere`) that recounts every producer's answer,
+  and an IR pin that len() contains no decode loop. Measured: 100k len() calls on an
+  18000-rune string, 0 µs. The cost is a 24-byte fat pointer (was 16).
+
+  And the **two-variable `for i, c in s`** — the deferred index/rune pairing — lowers:
+  a rune counter beside the byte cursor, one linear walk, the array convention (first
+  name the index, second the element). It needed no typechecker change at all
+  (`bindForInLoopVars` was already generic; only the backend refused), and it is what
+  the docs now hold up where they used to hold up the quadratic loop. `s[i]` in a loop
+  remains legal and remains O(i) per access — the docs say so instead of endorsing it.
+  See COMPLETED.md.
 
 - **[DONE 08/12] Negative indexing is gone; `from_end(k)` is the end-relative
   accessor.** On strings and arrays alike, 1-based (`from_end(1)` is the last), a

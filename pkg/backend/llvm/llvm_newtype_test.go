@@ -420,7 +420,7 @@ func TestEmit_NewtypeOverStringSharesBaseGlue(t *testing.T) {
 	if strings.Contains(got, "Email") {
 		t.Errorf("glue should be keyed on the base type, not the newtype name:\n%s", got)
 	}
-	if !strings.Contains(got, "{ i8*, i64 }") {
+	if !strings.Contains(got, "{ i8*, i64, i64 }") {
 		t.Errorf("expected the string fat pointer as the field representation:\n%s", got)
 	}
 }

@@ -55,11 +55,22 @@ func LLVMPrimitive(name types.PrimitiveTypeName) (lltypes.Type, bool) {
 }
 
 // StringLLVMType is the LLVM representation of a Lyra `string`: an immutable "fat
-// pointer" { i8* data, i64 len } — a pointer to the UTF-8 bytes plus a byte
-// length (not NUL-terminated). Literals point into a global constant; a future
-// heap string (concatenation) points into a ref-counted box. See STRING_LAYOUT.md.
+// pointer" { i8* data, i64 byte_len, i64 rune_count } — a pointer to the UTF-8
+// bytes (not NUL-terminated), the byte length, and the rune count. Literals point
+// into a global constant; a heap string (concatenation, slice, read_line) points
+// into a ref-counted box. See STRING_LAYOUT.md.
+//
+// The rune count rides the value as of 08/12, which is what makes `s.len()` a
+// field read instead of an O(n) decode walk — the audit's last standing tension
+// (the docs defended rune-count len by endorsing `for i in 0..<s.len() { s[i] }`,
+// a loop whose len calls alone once measured 99.7% of `starts_with`'s cost).
+// Construction almost always knows the count for free: a literal counts at compile
+// time, `++` adds, `slice` subtracts its rune bounds, and only byte sources
+// (read_line, interpolation's mixed segments) pay one linear count over bytes they
+// just produced. The count is appended as field 2, so every field-0/1 consumer
+// kept its index.
 func StringLLVMType() *lltypes.StructType {
-	return lltypes.NewStruct(lltypes.NewPointer(lltypes.I8), lltypes.I64)
+	return lltypes.NewStruct(lltypes.NewPointer(lltypes.I8), lltypes.I64, lltypes.I64)
 }
 
 // IsNumericConversionTarget reports whether name is one of the eleven
@@ -317,8 +328,9 @@ func primitiveSizeAndAlign(name types.PrimitiveTypeName) (int, int, bool) {
 	case types.Int128, types.UInt128:
 		return 16, 16, true // i128 is 16/16 on the mainstream 64-bit ABI
 	case types.String:
-		// Fat pointer { i8*, i64 }: two pointer-sized words. See StringLLVMType.
-		return pointerSize * 2, pointerSize, true
+		// Fat pointer { i8*, i64, i64 }: three pointer-sized words (data, byte
+		// length, rune count). See StringLLVMType.
+		return pointerSize * 3, pointerSize, true
 	}
 	return 0, 0, false
 }

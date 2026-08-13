@@ -677,16 +677,18 @@ func (l *lowerer) rangeIntType(rng *ast.RangeExpr) (*lltypes.IntType, bool) {
 // the body block, which dominates the continue/increment block, so advancing by it
 // is valid on both the fall-through and `continue` paths.
 //
-// Deferred, loud error: a two-variable form over a string (`for i, c in s` — the
-// index/rune pairing isn't defined yet).
+// The two-variable form `for i, c in s` (08/12) binds the **rune index** alongside
+// the rune — a counter incremented with the byte cursor, so the pair costs the same
+// single linear walk. This is the indexed traversal that replaces
+// `for i in 0..<s.len() { s[i] }`, whose every `s[i]` decodes from the start (O(n²))
+// — the loop the docs used to hold up as what rune-count `len` protects, and the
+// audit's last standing tension. The convention matches arrays: first name is the
+// index, second the element.
 func (l *lowerer) lowerForInString(block *ir.Block, e *ast.ForInLoopExpr) (value.Value, *ir.Block, error) {
 	// The loop variable (and a C-style init's counter) belongs to the loop, not to
 	// whatever follows it: scope its binding here so it cannot outlive the loop or
 	// permanently shadow an outer binding of the same name.
 	defer l.pushLocalScope()()
-	if e.Value != "" {
-		return nil, nil, fmt.Errorf("llvm: `for i, c in <string>` (an index/rune pair over a string) is not implemented yet")
-	}
 	str, block, err := l.lowerExpr(block, e.Iterable)
 	if err != nil {
 		return nil, nil, err
@@ -704,7 +706,18 @@ func (l *lowerer) lowerForInString(block *ir.Block, e *ast.ForInLoopExpr) (value
 	cSlot := entry.NewAlloca(lltypes.I32)  // the rune loop variable
 	cpSlot := entry.NewAlloca(lltypes.I32) // decode out-param
 	block.NewStore(constant.NewInt(lltypes.I64, 0), biSlot)
-	l.locals[e.Key] = cSlot // the rune value (immutable, non-managed — no ownership)
+	runeVar := e.Key
+	var riSlot value.Value
+	if e.Value != "" {
+		// Two-variable form: Key is the rune index, Value the rune (the array
+		// convention). The index is its own counter — the byte cursor cannot stand
+		// in for it, since a multi-byte rune advances the bytes by more than one.
+		riSlot = entry.NewAlloca(lltypes.I64)
+		block.NewStore(constant.NewInt(lltypes.I64, 0), riSlot)
+		l.locals[e.Key] = riSlot
+		runeVar = e.Value
+	}
+	l.locals[runeVar] = cSlot // the rune value (immutable, non-managed — no ownership)
 
 	condBlock := fn.NewBlock("")
 	bodyBlock := fn.NewBlock("")
@@ -731,6 +744,10 @@ func (l *lowerer) lowerForInString(block *ir.Block, e *ast.ForInLoopExpr) (value
 
 	biI := incBlock.NewLoad(lltypes.I64, biSlot)
 	incBlock.NewStore(incBlock.NewAdd(biI, n), biSlot) // advance by the decoded byte count
+	if riSlot != nil {
+		ri := incBlock.NewLoad(lltypes.I64, riSlot)
+		incBlock.NewStore(incBlock.NewAdd(ri, constant.NewInt(lltypes.I64, 1)), riSlot)
+	}
 	incBlock.NewBr(condBlock)
 
 	return nil, exitBlock, nil

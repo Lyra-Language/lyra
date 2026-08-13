@@ -856,3 +856,50 @@ let main = () -> void => {
 		t.Errorf("the trap should name the bug and the fix; got %q", stderr)
 	}
 }
+
+// `len()` is a field read (08/12) — the rune count rides the fat pointer, maintained
+// at construction. Pinned on the IR: a function that only calls len() must contain no
+// decode loop, which is the O(1) claim in checkable form.
+func TestEmit_StringLenIsAFieldRead(t *testing.T) {
+	t.Parallel()
+	got, err := emitSource(t, `let n = (s: string) -> i64 => s.len()
+let main = () -> u8 => u8(n("ab"))
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "lyra_utf8_decode") {
+		t.Errorf("len() should be a field read, not a decode walk:\n%s", got)
+	}
+}
+
+// The count ledger: every string producer's recorded rune count must agree with a
+// manual recount. This is the conservation test for the new field — a construction
+// site that forgets it (or gets its arithmetic wrong) fails here rather than as a
+// remote wrong answer in whatever calls len() next. Multi-byte fixtures throughout,
+// since an ASCII count and a byte length are indistinguishable.
+func TestExec_StringRuneCountAgreesEverywhere(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let recount = (s: string) -> i64 => {
+  var n: i64 = 0
+  for c in s { n += 1 }
+  n
+}
+let check = (s: string) -> string => if s.len() == recount(s) { "T" } else { "F" }
+let main = () -> void => {
+  let lit = "héllo日本"
+  let cat = lit ++ "語" ++ ""
+  let sub = cat.slice(2, 7)
+  let interp = "n=${42} c=${'é'} s=${sub}"
+  let trimmed = "  héé  ".trim()
+  let parts = "日,本,語".split(",")
+  println("${check(lit)}${check("")}${check(cat)}${check(sub)}${check(interp)}${check(trimmed)}${check(parts[0])}${check(parts.from_end(1))}")
+}
+`
+	want := "TTTTTTTT"
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
+		t.Errorf("rune-count ledger = %q; want %q", got, want)
+	}
+}

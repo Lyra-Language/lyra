@@ -8,18 +8,26 @@ How Lyra `string` lowers to LLVM. ALLOCATION.md lists the string representation 
 A `string` is an **immutable fat pointer**:
 
 ```llvm
-{ i8* data, i64 len }   ; StringLLVMType()
+{ i8* data, i64 byte_len, i64 rune_count }   ; StringLLVMType()
 ```
 
 - **`data`** — a pointer to the first UTF-8 byte. **Not** NUL-terminated (the
   length is carried explicitly), so embedded NULs are fine and the bytes can point
   into read-only memory shared with other strings.
-- **`len`** — the length in **bytes** (`i64`), not code points. O(1) `.len`; code
-  points / grapheme counts are a library concern over the bytes.
+- **`byte_len`** — the length in **bytes** (`i64`). `s.byte_len()` reads it.
+- **`rune_count`** — the length in **code points** (`i64`), added 08/12 so that
+  `s.len()` — which is rune-indexed, agreeing with `s[i]` and `for c in s` — is a
+  field read rather than an O(n) decode walk. Maintained **arithmetically** at each
+  construction: a literal counts at compile time, `++` adds its operands' counts,
+  `slice` subtracts its rune bounds; only byte-sourced producers (read_line,
+  interpolation's formatted segments) pay one `lyra_utf8_count` pass — a lead-byte
+  counter, no decoding — over bytes they just produced. **Every construction site
+  must fill the field**; a missed one is a silently wrong `len()`, which is what
+  `TestExec_StringRuneCountAgreesEverywhere` (the count ledger) exists to catch.
 
-Passed and returned **by value** (16 bytes = two words) — like a small tuple, so a
+Passed and returned **by value** (24 bytes = three words) — like a small tuple, so a
 `let`-bound string round-trips through `alloca`/`store`/`load` and mem2reg promotes
-it. `SizeAndAlign(string) = 16, 8`.
+it. `SizeAndAlign(string) = 24, 8`.
 
 ### Why a fat pointer (not `i8*` / not a length-prefixed heap object)
 

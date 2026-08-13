@@ -48,7 +48,8 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 		return l.lowerCheckedIntMethod(block, call, member, op)
 	}
 	// `len` is two methods sharing a name, told apart by the receiver: an array's is
-	// an O(1) field read, a string's an O(n) rune walk (string_methods.go). Dispatch
+	// a field read of its box, a string's of its fat pointer (string_methods.go);
+	// both O(1) since the rune count began riding the value (08/12). Dispatch
 	// on the recorded receiver type rather than on the lowered value, so an
 	// unrecorded receiver is an error here instead of silently taking the array path.
 	if member.Property.Name == "len" || member.Property.Name == "slice" {

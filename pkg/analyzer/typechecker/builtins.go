@@ -162,9 +162,11 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 	// fat pointer's `len` field stays bytes (STRING_LAYOUT.md); that is the
 	// representation, and this is the language.
 	//
-	//   - `len() -> i64` is the rune count, so it is **O(n)** rather than the O(1)
-	//     the array version is. That is the price of agreeing with the index, and
-	//     `for c in s` remains the way to traverse without paying it per element.
+	//   - `len() -> i64` is the rune count — **O(1)** as of 08/12, a field read of
+	//     the count the fat pointer carries (STRING_LAYOUT.md), so agreeing with the
+	//     index no longer costs a walk. `for c in s` (or `for i, c in s` with the
+	//     index) remains the way to traverse; `s[i]` in a loop still decodes from
+	//     the start each time.
 	//   - `slice(start, end) -> string` is the half-open rune range `[start, end)`,
 	//     matching `..<` and array indexing. It **allocates**, so `noalloc` refuses
 	//     it — see lowerStringSlice for why a borrowed slice is not on offer.
@@ -201,7 +203,8 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 			}, true
 		case "byte_len":
 			// The **representation's** length, in bytes, O(1) — the fat pointer's own
-			// field (STRING_LAYOUT.md), where `len()` is an O(n) rune count.
+			// field (STRING_LAYOUT.md); `len()` is the rune-count field beside it,
+			// O(1) too as of 08/12.
 			//
 			// Exposing it is a deliberate crack in "rune-indexed is the language, bytes
 			// are the representation", and it is narrow on purpose: it exists so

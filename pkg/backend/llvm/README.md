@@ -735,7 +735,7 @@ compares the resolved *offsets*, since comparing the written bounds would reject
 ### Byte-level string primitives
 
 **`s.byte_len()`** (`lowerStringByteLen`) is the fat pointer's own length field, O(1), where
-`len()` is an O(n) rune walk. **`s.compare_bytes_at(offset, other)`**
+`len()` is the rune-count field beside it (both O(1) since 08/12). **`s.compare_bytes_at(offset, other)`**
 (`lowerStringCompareBytesAt`) is `compare_bytes` at a byte offset, comparing **exactly
 `other`'s length** rather than the rest of `s` — which is what makes `== 0` a *prefix* test
 instead of an equality test, and is the only semantic difference between the two.
