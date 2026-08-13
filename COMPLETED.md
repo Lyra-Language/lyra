@@ -10,6 +10,133 @@ Newest first.
 ## Dated log
 
 ### 08/13/26
+**Documentation comments mean something.** `///` was lexed as its own token and listed
+in `extras` from early on, with corpus tests for it on a declaration and on a struct
+field — and *nothing* consumed it. The collector skipped it with every other extra
+(`block_expr.go` names `doc_comment` in the child it drops), no AST node had a field for
+it, and hover rendered a type and nothing else. It is the shape this file records under
+"surfaces nothing reads": parsed, tested, and inert, which costs more than an absent
+feature because it looks finished.
+
+`///` now documents the declaration below it, `//!` the module the file belongs to, and
+the six attachment sites are exactly the declarations — top-level binding, `type`,
+`trait`, `impl`, plus struct fields, data constructors, trait method signatures and impl
+methods. The body is Markdown with three recognized headings (`# Examples`, `# Panics`,
+`# Errors`). Four decisions are worth the space:
+
+- **Docs attach to declarations, not to types.** A field's doc lives in
+  `TypeDeclStmt.MemberDocs`, not in `types.StructField`. `TypesEqual` compares fields
+  name-by-name so a prose field would in fact have been safe today — but a `types.Type`
+  is shared, substituted and compared structurally, and prose on one is a thing that
+  quietly stops being true. It also settles the anonymous-struct question by
+  construction: `CollectStructFields` is shared with the anonymous form, so the docs
+  pass is a *separate* walk that only the named-declaration collectors call, and no site
+  has to remember to ask which kind of struct it is in.
+- **A stray doc warns** (`lyra-W017`) rather than being discarded. Discarding is the
+  failure this language spends its budget avoiding: the author writes the documentation,
+  the generator never emits it, nothing says so. Attachment is strict adjacency for the
+  same reason — attaching across a blank line makes the last comment in a file silently
+  become the docs of whatever is appended after it. It is a post-pass over the tree, not
+  a check at each site, because whether a `///` was claimed is only knowable once every
+  collector that might have claimed it has run.
+- **`//!` for the module**, not a `///` above the `module` line, because a module is a
+  file *or a directory* (08/07). A directory module has no single header to sit above,
+  and its files each want to say something about the module they join; the headers are
+  joined in file order under `SymbolTable.ModuleDocs`.
+- **No `@param`/`@returns`.** The signature is in the AST; a tag restating it is a
+  second copy to drift, and the one thing it could add is a sentence in the body.
+
+**Two placement rules in the CST cost more than the feature did**, and both fail the same
+way — they document every member except one, which is a rule with an invisible exception:
+
+1. **An extra before a node's first token attaches to the *enclosing* node.** So in a
+   trait body the second method's doc is a sibling of its `trait_method`, and the
+   **first** one is a sibling of `trait_methods` itself, because the `{` belongs to
+   `trait_declaration`. `prevSibling` climbs out of a node it begins, guarded on
+   `parent.StartByte() == node.StartByte()`. `struct_type_body` includes its own `{`, so
+   a struct's fields never take that path.
+2. **A separator token can sit between the doc and its node.** The `|` in the
+   leading-bar `data` style is an anonymous sibling of the constructor, so a plain walk
+   stopped on it — documenting the first constructor and no other, in the style most
+   people write. A non-comment sibling is skipped only on the documented node's *own*
+   row, and only before any comment has been collected, so the exception cannot reach
+   across a line.
+
+**And it surfaced a scanner bug that predated it by two weeks.** A comment on a line of
+its own ended the statement, so a continuation line could not be commented at all:
+
+```lyra
+data Dir =
+  North
+  // Towards the bottom of the map.
+  | South     // `| South` left over as a statement of its own
+```
+
+`scan_newline`'s switch had no `/` case, so a comment fell to `default` and the
+terminator fired — while the grammar's notes asserted a `/` case existed and returned
+false. Every continuation token was affected (`.`, `|`, `else`, `where`) and a plain `//`
+broke it identically; documenting a `data` constructor is simply the first thing that
+makes anyone write a comment there. The scanner now skips whole-line comments before
+testing for a continuation, which is safe in both directions: on a continuation it
+returns false and tree-sitter re-lexes from the token start, so the comment still becomes
+an ordinary extra node — which the doc collector depends on — and on a terminator
+`mark_end` has already fixed the token's end before the comment.
+
+**Grammar cost: zero new parse states** (7,786 → 7,786), `parser.c` +631 KB (+4.4%).
+Comments are extras, so they add lex-table entries in every state rather than parse
+states. Attributed: `inner_doc_comment` plus tightening `doc_comment` is +257 KB, and the
+other +374 KB buys the rule that **`////` is an ordinary comment**. That rung is not
+optional — tree-sitter compares token precedence before match length, so without
+`comment` outbidding at `prec(2)` a `////////` section rule lexes as the doc comment
+`///` plus a stray `/////`, and a divider above a declaration silently becomes its
+documentation.
+
+Docs render in LSP hover, under the type — hover is read at a glance, and a long block
+above the signature pushes the signature out of a fixed-height popup. `resolveDoc`
+mirrors `resolveDefinition` case for case on purpose: "which declaration does this
+expression name?" already had an answer in that package, and a second walk answering it
+differently is how hover comes to show one symbol's docs above another symbol's type.
+
+`lyrac doc` does not exist yet. This is the representation it will read.
+
+**The prelude is documented, and documenting it changed two things.** All 72 top-level
+declarations and 29 members across the eight files carry `///` blocks, and each file's
+`//!` header contributes a paragraph to `std.prelude`'s own documentation.
+`prelude_docs_test.go` collects the real sources as the multi-file module they are and
+asserts the coverage, the members, the `# Panics` sections and the join — because
+**`lyrac check` will not catch a detached doc**: W017 is a warning, so a shell loop
+testing the exit code reports every file clean. That is exactly how the one real mistake
+in the prelude survived a first pass, and the test is what found it.
+
+That mistake is the convention worth recording: **an implementation note goes *above* the
+doc block, never between it and the declaration.** The prelude's existing `//` comments
+are dense design rationale sitting immediately above each function, so the natural edit is
+to add the `///` block above *them* — which detaches it. The docs and the rationale also
+turn out to want different homes: `///` is the caller's contract (what it returns, when it
+traps, what it costs), `//` is why the code is the way it is (why `parse_i64` accumulates
+negatively, why `below` rejects the top bucket). Several entries kept both.
+
+Two changes fell out of writing them:
+
+- **`//!` may sit directly under the `module` line**, not only at the top of the file.
+  Every prelude file opens with `module std.prelude`, so the top-of-file rule — inherited
+  from Rust, which has no module header — put the documentation *above* the line naming
+  the thing it documents, and made the natural spelling warn. The header region now admits
+  the module declaration once, as the first statement; a `//!` further down is still
+  stray.
+- **Hover must not bail on a missing type.** `desugarUFCSCall` rewrites `s.trim()` into
+  `trim(s)` with a callee synthesized at the method name's location, and that node has no
+  recorded type — so hovering a *method name* answered nothing, which is the spelling the
+  entire standard library is written for. Hovering the receiver and a bare call both
+  worked, which is why it read as "hover works". That position now renders the
+  documentation with no signature block above it; every position that already resolved a
+  type is untouched.
+
+Known wart, latent for now: a multi-file module's `Summary` is its **first file's**, so
+`std.prelude` summarizes as `Combinators over []t.` from `array.lyra` sorting first.
+Nothing reads a module summary yet. A generator wanting a real lead would need either a
+designated lead file or per-topic sections.
+
 **Regex matching at run time — without a regex engine in the runtime.** `lyra-E052`
 and `lyra-E054` both recorded the same absence: the runtime is hand-written shims and
 libc with no FFI, the compiler's own `regexp` runs at compile time and cannot ship, so

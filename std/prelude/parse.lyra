@@ -1,24 +1,14 @@
 module std.prelude
+//! Parsing text into values.
+//!
+//! This is where a program meets input it did not choose, which is why the failures here
+//! are `Maybe` rather than traps: a malformed line is data, not a bug.
 
-// Parsing — where a program meets input it did not choose, which is why the failures here
-// are `None` rather than traps.
-//
 // Written in Lyra rather than as a compiler builtin, and that division is the rule to
 // follow when adding more: `read_line` *has* to be a builtin, because the line comes from
 // libc and Lyra has no FFI, while parsing the line is ordinary arithmetic over a string.
 // Anything expressible in the language goes here, where it is readable, testable and
 // replaceable; the builtin registry stays whatever is genuinely primitive.
-
-// Parse a base-10 `i64`, with an optional leading `+`/`-`. `None` for anything
-// that is not exactly a number: an empty string, a lone sign, a stray character,
-// surrounding whitespace, or a value outside the i64 range. Strict on purpose —
-// the caller asked whether this *is* a number, and "1abc" is not one.
-//
-// Named for its width rather than being a bare `parse`, because a function's
-// return type cannot be chosen by the context it is called in (todo.md, Pit of
-// Success #5 — the same gap that blocks `checked_*` and the narrowing
-// conversions). Until that exists, `parse` would have exactly one meaning anyway,
-// and this name says which.
 //
 // **It accumulates negatively**, which is the one thing here that looks wrong and
 // is not. The i64 range is asymmetric — there is no `+9223372036854775808` to
@@ -34,6 +24,29 @@ module std.prelude
 // limit is the last value that can still be multiplied by ten, and the final digit
 // is bounded separately — by 8 for a negative number and 7 for a positive one,
 // which is exactly the asymmetry described above, applied one digit at a time.
+
+/// Parses a base-10 `i64`, with an optional leading `+` or `-`.
+///
+/// **Strict**: `None` for anything that is not exactly a number — an empty string, a lone
+/// sign, a stray character, surrounding whitespace, or a value outside the i64 range. The
+/// caller asked whether this *is* a number, and `"1abc"` is not one. Call `trim` first if
+/// the input may be padded.
+///
+/// An out-of-range value is `None` rather than a trap, which is what arithmetic would
+/// give: parsing is exactly the boundary where a number too large is the input's problem
+/// and not the program's.
+///
+/// Named for its width rather than being a bare `parse`, because a function's return type
+/// cannot be chosen by the context it is called in.
+///
+/// # Examples
+///
+/// ```
+/// println("42".parse_i64().unwrap_or(0))        // 42
+/// println("-7".parse_i64().unwrap_or(0))        // -7
+/// println(" 42".parse_i64().unwrap_or(0))       // 0 — leading space is not a number
+/// println("1abc".parse_i64().unwrap_or(0))      // 0 — trailing garbage
+/// ```
 pub let parse_i64 = pure noalloc (self: string) -> Maybe<i64> => {
   var acc = 0;
   var digits = 0;

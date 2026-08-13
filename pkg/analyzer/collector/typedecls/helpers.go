@@ -44,6 +44,56 @@ func CollectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Stru
 	return fields
 }
 
+// CollectMemberDocs returns the `///` blocks on a declaration body's members, keyed by
+// member name — a struct's fields (`struct_member`) or a data type's constructors
+// (`data_type_constructor`), whichever the body holds.
+//
+// It is a pass of its own rather than a field added to CollectStructFields, and that is
+// the point: CollectStructFields is shared with the **anonymous** struct type, which is
+// a type and not a declaration, and so has no member to hang documentation on. Only the
+// named-declaration collectors call this, so the rule "documentation attaches to
+// declarations" holds by construction instead of by a check somewhere remembering to
+// ask which kind of struct it is in.
+func CollectMemberDocs(node *sitter.Node, ctx *collector_ctx.Ctx) map[string]*ast.Doc {
+	var docs map[string]*ast.Doc
+	for i := uint(0); i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		var nameNode *sitter.Node
+		switch child.Kind() {
+		case "struct_member":
+			nameNode = cst.Field(child, "field_name")
+		case "data_type_constructor":
+			nameNode = child.ChildByFieldName("name")
+			if nameNode == nil {
+				// The constructor's name is not a labelled field, so fall
+				// back to finding it by kind (see the field-labels rule in
+				// the grammar's CLAUDE.md — this is one of the sites it
+				// describes).
+				for j := uint(0); j < child.ChildCount(); j++ {
+					if child.Child(j).Kind() == "data_type_constructor_name" {
+						nameNode = child.Child(j)
+						break
+					}
+				}
+			}
+		default:
+			continue
+		}
+		if nameNode == nil {
+			continue
+		}
+		doc := ctx.DocFor(child)
+		if doc == nil {
+			continue
+		}
+		if docs == nil {
+			docs = make(map[string]*ast.Doc)
+		}
+		docs[ctx.NodeText(nameNode)] = doc
+	}
+	return docs
+}
+
 // collectDataConstructor parses a data_type_constructor node. Each payload
 // argument is a "param"-field child (the grammar's repeat1(field('param',
 // ...)) — see data_type.js), so params are picked out by field name rather

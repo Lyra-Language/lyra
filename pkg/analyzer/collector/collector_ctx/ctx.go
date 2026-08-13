@@ -70,6 +70,10 @@ type Ctx struct {
 	Module     string
 	errors     *[]error
 	ScopeTable *symbols.ScopeTable
+	// claimedDocs holds the start byte of every doc comment that attached to
+	// something, so ReportStrayDocs can report the rest. It is reset per file, since
+	// a start byte identifies a node only within the source it was parsed from.
+	claimedDocs map[uint]bool
 	Collector
 }
 

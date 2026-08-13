@@ -1,55 +1,84 @@
 module std.prelude
+//! `Show` — rendering a value as text from code that does not know the value's type.
 
-// Rendering a value as text, for code that does not know the value's type.
-//
-// **The gap this closes.** `print` and `"${…}"` pick a formatter per *concrete* type, so
-// a value whose type is a **type parameter** could not be rendered at all: a `t` has no
+// **The gap this closes.** `print` and `"${…}"` pick a formatter per *concrete* type, so a
+// value whose type is a **type parameter** could not be rendered at all: a `t` has no
 // representation, and there is nothing to pick. The prelude's own `expect` hit this the
 // day it was written — the natural draft reports what it got, `panic("expected ${value}")`,
-// and none of it was expressible. With `Show`, a bounded generic can describe its own
-// payload:
-//
-//   let dump<t> where t: Show = (v: t) -> string => "got ${v}"
-//
-// **A bound is what makes it work, and interpolation reads it.** Inside such a function
-// `"${v}"` is rewritten to `v.show()` before anything downstream sees it, so the whole
-// feature is the bound dispatch that already existed plus this trait. Without a bound the
-// diagnostic says so and names this trait.
+// and none of it was expressible.
 //
 // **The trait is recognized by its method, not by its name.** The rewrite looks for an
 // in-scope bound whose trait declares `show`, so a program may define its own and the
 // compiler is none the wiser — the same rule arithmetic operator overloading follows. The
 // name `Show` is what the *message* suggests, because this is the one the prelude ships.
+
+/// Types that can be rendered as text.
+///
+/// A `where t: Show` bound is what lets a generic function format its own payload:
+/// inside such a function `"${v}"` is rewritten to `v.show()`, so interpolation and
+/// `println` work on a bare type parameter. Without a bound the diagnostic says so and
+/// names this trait.
+///
+/// A concrete type with a `show` impl prints the same way — `println(pt)` and `"${pt}"`
+/// both reach it.
+///
+/// # Examples
+///
+/// ```
+/// let dump<t> where t: Show = (v: t) -> string => "got ${v}"
+/// ```
 pub trait Show {
+  /// `self` rendered as text.
+  ///
+  /// It may not interpolate `self` in an impl *for* the type it is implemented on —
+  /// `impl Show for Pt { show = (self) => "${self}" }` is refused rather than compiled
+  /// into infinite recursion. Interpolate the fields instead.
   show: (Self) -> string
 }
 
-// The impls for the printable scalars, and they are **ordinary Lyra**: `"${self}"` on a
-// concrete primitive is exactly the formatter `print` already picks, so nothing here is a
-// builtin. That is the same division of labour `parse_i64` and `trim` follow — anything
-// expressible in the language belongs in the prelude, where it is readable, testable and
-// replaceable, and the builtin registry keeps only what is genuinely primitive.
-//
-// `string`'s impl returns the value rather than interpolating it: `"${s}"` would copy the
-// bytes into a fresh box for no reason, and `show` is the one place that cost would be
-// paid on every rendering of every string.
+// The impls below are **ordinary Lyra**: `"${self}"` on a concrete primitive is exactly
+// the formatter `print` already picks, so nothing here is a builtin. That is the same
+// division of labour `parse_i64` and `trim` follow — anything expressible in the language
+// belongs in the prelude, where it is readable, testable and replaceable, and the builtin
+// registry keeps only what is genuinely primitive.
+
+/// A string shows as itself.
+///
+/// It returns the value rather than interpolating it: `"${s}"` would copy the bytes into
+/// a fresh box for no reason, and `show` is the one place that cost would be paid on
+/// every rendering of every string.
 impl Show for string { show = (self) => self }
 
+/// Shows as `true` or `false`.
 impl Show for bool { show = (self) => "${self}" }
+/// Shows as the character itself, not as its code point.
 impl Show for rune { show = (self) => "${self}" }
 
+/// Shows in base 10, with a leading `-` when negative.
 impl Show for i8 { show = (self) => "${self}" }
+/// Shows in base 10, with a leading `-` when negative.
 impl Show for i16 { show = (self) => "${self}" }
+/// Shows in base 10, with a leading `-` when negative.
 impl Show for i32 { show = (self) => "${self}" }
+/// Shows in base 10, with a leading `-` when negative.
 impl Show for i64 { show = (self) => "${self}" }
+/// Shows in base 10, with a leading `-` when negative.
 impl Show for i128 { show = (self) => "${self}" }
 
+/// Shows in base 10.
 impl Show for u8 { show = (self) => "${self}" }
+/// Shows in base 10.
 impl Show for u16 { show = (self) => "${self}" }
+/// Shows in base 10.
 impl Show for u32 { show = (self) => "${self}" }
+/// Shows in base 10.
 impl Show for u64 { show = (self) => "${self}" }
+/// Shows in base 10.
 impl Show for u128 { show = (self) => "${self}" }
 
+/// Shows in decimal notation.
 impl Show for f16 { show = (self) => "${self}" }
+/// Shows in decimal notation.
 impl Show for f32 { show = (self) => "${self}" }
+/// Shows in decimal notation.
 impl Show for f64 { show = (self) => "${self}" }

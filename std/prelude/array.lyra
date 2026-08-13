@@ -1,11 +1,32 @@
 module std.prelude
+//! Combinators over `[]t`.
 
-// Combinators over `[]t`. A third receiver head for `map` and `filter`, alongside the
-// `Maybe` and `Result` ones — receiver-keyed overloading is what makes the three able to
-// share a name, and dispatch on the receiver is what picks between them at a call.
+// A third receiver head for `map` and `filter`, alongside the `Maybe` and `Result` ones —
+// receiver-keyed overloading is what makes the three able to share a name, and dispatch on
+// the receiver is what picks between them at a call.
 //
 // Neither is `noalloc`: a comprehension builds a new array.
 
+/// A new array holding `f` applied to each element, in order.
+///
+/// Allocates the result, so this is not `noalloc`. The comprehension `[f(x) for x in xs]`
+/// is the same thing written inline.
+///
+/// # Examples
+///
+/// ```
+/// let doubled = [1, 2, 3].map((n) => n * 2)   // [2, 4, 6]
+/// ```
 pub let map<t,u> = pure (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]
 
+/// A new array of the elements satisfying `predicate`, in order.
+///
+/// Allocates the result. An array where nothing matches is empty, never `None` — absence
+/// of matches is not an error.
+///
+/// # Examples
+///
+/// ```
+/// let evens = [1, 2, 3, 4].filter((n) => n %% 2 == 0)   // [2, 4]
+/// ```
 pub let filter<t> = pure (self: []t, predicate: (t) -> bool) -> []t => [x in self | predicate(x) | x]

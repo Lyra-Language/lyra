@@ -1,37 +1,38 @@
 module std.prelude
+//! Comparison: `Ordering`, the `Ord` and `Eq` traits, and the ordering of `string`.
 
-// The result of a three-way comparison (`a <=> b`). A sum type rather than the
-// -1/0/1 integer Ruby and Perl return: an integer invites `if (a <=> b) == -1`,
-// which is strictly worse than `a < b` and would leave the operator with no reason
-// to exist. Named variants make the one thing `<=>` is *for* — handling all three
-// outcomes in one place — the natural way to write it:
-//
-//   match guess <=> secret {
-//     Less    => println("Too low!"),
-//     Greater => println("Too high!"),
-//     Equal   => println("You got it!"),
-//   }
-//
-// and exhaustiveness then insists every case is covered, which is the property the
-// `if`/`else if`/`else` chain it replaces cannot offer.
-pub data Ordering = Less | Equal | Greater
+// Note on the layout of this file, which holds for the whole prelude: an implementation
+// note written as `//` goes *above* the `///` block, never between it and the
+// declaration. Attachment is adjacency, so an ordinary comment in between detaches the
+// documentation — and says so, via lyra-W017.
 
-// The trait that extends `<=>` beyond the primitives. A type that implements it can
-// be compared three ways, and — once the relational operators are routed through it —
-// ordered with `<`, `<=`, `>` and `>=`.
-//
-// **One method, deliberately.** Everything else derives from `compare`, so an impl
-// cannot make `<` and `<=>` disagree — the failure mode C++'s separate `operator<`
-// and `operator<=>` and Java's `compareTo`-beside-`equals` both carry. The cost is
-// that a type cannot supply a cheaper `<` than its `compare`; that is a trade worth
-// making while correctness is the scarce thing.
-//
-// **Floats do not implement it, and that is the rule rather than an omission.** NaN
-// is neither less than, equal to nor greater than anything, so a three-way answer has
-// to pick one and every choice is wrong — the same reason `<=>` refuses floats
-// outright. Ordering floats for a sort wants a `total_cmp` (bit-pattern order) that
-// says in its name that it is not the arithmetic ordering.
-//
+// A sum type rather than the -1/0/1 integer Ruby and Perl return: an integer invites
+// `if (a <=> b) == -1`, which is strictly worse than `a < b` and would leave the operator
+// with no reason to exist.
+
+/// The result of a three-way comparison (`a <=> b`).
+///
+/// Handling all three outcomes in one place is what `<=>` is for, and exhaustiveness then
+/// insists every case is covered — the property the `if`/`else if`/`else` chain it
+/// replaces cannot offer.
+///
+/// # Examples
+///
+/// ```
+/// match guess <=> secret {
+///   Less    => println("Too low!"),
+///   Greater => println("Too high!"),
+///   Equal   => println("You got it!"),
+/// }
+/// ```
+pub data Ordering =
+  /// The left operand sorts before the right.
+  Less
+  /// The two operands compare equal.
+  | Equal
+  /// The left operand sorts after the right.
+  | Greater
+
 // **Recognized by the `@builtin(Ord)` marker** (08/08), exactly as `Maybe`/`Result` are:
 // the marker confers the identity, so the *name* is free and a program's own `trait Ord`
 // is an ordinary trait rather than silently becoming the one `<` dispatches through.
@@ -39,54 +40,78 @@ pub data Ordering = Less | Equal | Greater
 //
 // A trait named `Ord` with the right shape is still recognized when *no* marker claims
 // the kind anywhere, so a program with no prelude keeps working unchanged.
+
+/// Types that can be ordered.
+///
+/// Implementing it gives a type `<=>`, and — once the relational operators are routed
+/// through it — `<`, `<=`, `>` and `>=`. `@derive(Ord)` writes the field-wise
+/// implementation for you.
+///
+/// **Floats do not implement it, and that is the rule rather than an omission.** NaN is
+/// neither less than, equal to nor greater than anything, so a three-way answer would
+/// have to pick one and every choice is wrong — the same reason `<=>` refuses floats
+/// outright. Sorting floats wants a `total_cmp` (bit-pattern order) whose name says it is
+/// not the arithmetic ordering.
+///
+/// # Examples
+///
+/// ```
+/// impl Ord for Version {
+///   compare = (self, other) => self.major <=> other.major
+/// }
+/// ```
 @builtin(Ord)
 pub trait Ord {
+  /// How `self` sorts against `other`: `Less`, `Equal` or `Greater`.
+  ///
+  /// **The only method, deliberately.** Every relational operator derives from it, so an
+  /// implementation cannot make `<` and `<=>` disagree — the failure mode C++'s separate
+  /// `operator<` and `operator<=>`, and Java's `compareTo` beside `equals`, both carry.
+  /// The cost is that a type cannot supply a `<` cheaper than its `compare`; that is a
+  /// trade worth making while correctness is the scarce thing.
   compare: (Self, Self) -> Ordering
 }
 
-// Equality for the minority of types whose equality is **not** field-wise —
-// case-insensitive text, a struct with a cache field that should not count, a set that
-// compares by contents rather than by layout.
-//
-// **`==` does not require this trait.** Equality is structural by default and works on
-// every type including a bare type variable, so implementing `Eq` *overrides* what
-// `==` already does rather than enabling it. That is the opposite of Rust and Swift,
-// and it follows from where this language started: unbounded structural equality
-// already worked, and requiring a bound would have removed capability to gain
-// ceremony.
-//
-// A primitive is never routed through an impl — `1 == 1` stays a machine comparison —
-// so an `Eq` impl cannot change what equality means on the built-in types.
-//
-// **`Ord` deliberately does not require `Eq`.** The design first had `trait Ord: Eq`,
-// on the reasoning that it stops `compare` answering `Equal` where equality says
-// false. That is wrong here: equality is always available structurally, so demanding an
-// *impl* of it would make `@derive(Ord)` — which synthesizes no `Eq` — fail on every
-// type that used it. A type that implements both and lets them disagree is writing a
-// bug the compiler cannot see; that is the residual cost of equality not being a
-// bound.
+// **`Ord` deliberately does not require `Eq`.** The design first had `trait Ord: Eq`, on
+// the reasoning that it stops `compare` answering `Equal` where equality says false. That
+// is wrong here: equality is always available structurally, so demanding an *impl* of it
+// would make `@derive(Ord)` — which synthesizes no `Eq` — fail on every type that used
+// it. A type that implements both and lets them disagree is writing a bug the compiler
+// cannot see; that is the residual cost of equality not being a bound.
+
+/// Types whose equality is **not** field-wise.
+///
+/// **`==` does not require this trait.** Equality is structural by default and works on
+/// every type including a bare type variable, so an `Eq` impl *overrides* what `==`
+/// already does rather than enabling it — the opposite of Rust and Swift. Implement it
+/// for the minority of types that need it: case-insensitive text, a struct with a cache
+/// field that should not count, a set that compares by contents rather than by layout.
+///
+/// A primitive is never routed through an impl — `1 == 1` stays a machine comparison — so
+/// an `Eq` impl cannot change equality on the built-in types.
 @builtin(Eq)
 pub trait Eq {
+  /// Whether `self` and `other` are equal, replacing the structural comparison `==` would
+  /// otherwise make.
   eq: (Self, Self) -> bool
 }
 
-// Ordering for `string`, so `"a" < "b"` works and a `data` type carrying a string can
-// `@derive(Ord)`.
-//
-// **Lexicographic by code point**, which is what `compare_bytes` gives: UTF-8 encodes a
-// lower code point as a byte sequence that compares lower, so a byte comparison and a
-// rune-by-rune walk agree. That equivalence is the whole reason the primitive can be a
-// single `memcmp` — written in Lyra with `s[i]` it would be O(n²), since indexing a
-// string is O(i).
-//
-// A shorter string that is a prefix of a longer one sorts first (`"ab" < "abc"`), which
-// falls out of comparing the common prefix and then the lengths.
-//
-// This is **not** a locale-aware or Unicode-collation order: "Z" sorts before "a"
-// because their code points do, and accented characters sort by code point rather than
-// alphabetically. Real collation needs tables and a locale, and belongs in a Unicode
-// library rather than in the ordering `<` reaches for.
+/// Ordering for `string`, so `"a" < "b"` works and a `data` type carrying a string can
+/// `@derive(Ord)`.
+///
+/// **Lexicographic by code point.** A shorter string that is a prefix of a longer one
+/// sorts first (`"ab" < "abc"`), which falls out of comparing the common prefix and then
+/// the lengths.
+///
+/// This is **not** a locale-aware or Unicode-collation order: `"Z"` sorts before `"a"`
+/// because their code points do, and accented characters sort by code point rather than
+/// alphabetically. Real collation needs tables and a locale, and belongs in a Unicode
+/// library rather than in the ordering `<` reaches for.
 impl Ord for string {
+  /// Compares byte by byte, which **is** the code-point order: UTF-8 encodes a lower code
+  /// point as a byte sequence that compares lower, so a `memcmp` and a rune-by-rune walk
+  /// agree. That equivalence is why this can be one primitive call — written in Lyra with
+  /// `s[i]` it would be O(n²), since indexing a string is O(i).
   compare = (self, other) => {
     let c = self.compare_bytes(other);
     if c < 0 { Less } else if c > 0 { Greater } else { Equal }

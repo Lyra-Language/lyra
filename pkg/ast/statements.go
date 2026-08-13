@@ -52,6 +52,27 @@ type TypeDeclStmt struct {
 	// advice.
 	ShadowedCanonical     string
 	ShapeMatchesCanonical bool
+	// Doc is the `///` comment block immediately above the declaration, nil if
+	// undocumented.
+	Doc *Doc
+	// MemberDocs holds the docs on this declaration's *members* — a struct's fields
+	// and a data type's constructors — keyed by member name.
+	//
+	// They live here, on the declaration, rather than on types.StructField and
+	// types.DataTypeConstructor, because documentation attaches to declarations and
+	// not to types (see the ast.Doc header). The practical half of that: a
+	// TypeDeclStmt is what a doc generator walks and what the symbol table hands
+	// back, while a types.Type is shared, substituted and compared structurally.
+	MemberDocs map[string]*Doc `print:"-"`
+}
+
+// MemberDoc returns the doc on the named field or constructor, nil if there is none.
+// Reading through a helper keeps every consumer off a possibly-nil map.
+func (t *TypeDeclStmt) MemberDoc(name string) *Doc {
+	if t == nil || t.MemberDocs == nil {
+		return nil
+	}
+	return t.MemberDocs[name]
 }
 
 func (t *TypeDeclStmt) statementNode() {}
@@ -115,6 +136,10 @@ type VarDeclStmt struct {
 	// declaration. nil for a first binding. `print:"-"`: excluded from golden
 	// output (it would recurse into the prior decl).
 	Shadows *VarDeclStmt `print:"-"`
+	// Doc is the `///` comment block immediately above the declaration, nil if
+	// undocumented. Only a *top-level* binding is documented — a local `let` gets
+	// the stray-doc warning instead, since nothing renders it.
+	Doc *Doc
 }
 
 func (v *VarDeclStmt) statementNode() {}

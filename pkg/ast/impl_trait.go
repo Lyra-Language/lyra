@@ -16,6 +16,10 @@ type TraitImplStmt struct {
 	Type        types.Type
 	Constraints []TraitImplConstraint
 	Methods     []TraitMethodImpl
+	// Doc is the `///` comment block above the `impl`, nil if undocumented — for
+	// what this *particular* implementation does differently, the trait's own doc
+	// covering what every implementation must do.
+	Doc *Doc
 }
 
 func (t *TraitImplStmt) statementNode() {}
@@ -33,6 +37,8 @@ type TraitMethodImpl struct {
 	IsDet     bool
 	IsNoAlloc bool
 	Clause    LambdaClause
+	// Doc is the `///` comment block above this method inside the impl.
+	Doc *Doc
 }
 
 func (t *TraitMethodImpl) GetName() string { return t.Name.GetName() }

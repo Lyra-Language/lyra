@@ -103,7 +103,9 @@ func collectTraitMethodImpls(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Tr
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
 		if child.Kind() == "trait_method_implementation" {
-			methods = append(methods, collectTraitMethodImpl(child, ctx))
+			method := collectTraitMethodImpl(child, ctx)
+			method.Doc = ctx.DocFor(child)
+			methods = append(methods, method)
 		}
 	}
 	return methods

@@ -267,6 +267,49 @@ because each was learned from a real failure, and none is local to one package.
    reason. Do not "simplify" that back into a `weak == 0` test — it reads as equivalent and is
    an ASan-confirmed double free (08/07).
 
+## Documentation comments (08/13)
+
+`///` documents the declaration below it, `//!` the module the file belongs to. The
+language-level rules are in the workspace `CLAUDE.md`; what matters inside this project:
+
+- **`ast.Doc`** (`pkg/ast/doc.go`) holds the Markdown body, the first-paragraph
+  `Summary`, and the `#`-heading `Sections` with `# Examples`/`# Panics`/`# Errors`
+  classified. `NewDoc` returns **nil** for an empty comment, so "documented with
+  nothing" is not a state any consumer has to handle.
+- **Docs attach to declarations, not to types.** A struct field's doc is in
+  `TypeDeclStmt.MemberDocs` (read it through `MemberDoc(name)`), never in
+  `types.StructField` — `pkg/types` knows nothing about documentation, and an anonymous
+  struct's field cannot carry one. If you add a documentable declaration, the Doc field
+  goes on the AST node.
+- **Attachment is `ctx.DocFor(node)`** (`collector_ctx/docs.go`), one helper for every
+  site, because a doc comment is an `extra` and so is a *sibling* of what it documents
+  at whatever level of the tree that lives. Top-level declarations are stamped in
+  `walkProgram`'s `attachDoc` — that loop *is* the set of top-level declarations, so
+  "only a top-level binding is documentable" holds with no per-site test. Members call
+  `DocFor` at their own sites.
+- **Two CST placement rules `DocFor` exists to absorb**, both of which fail by
+  documenting every member except one: an extra before a node's first token attaches to
+  the *enclosing* node (so the first method in a `trait`/`impl` body sits one level up —
+  `prevSibling` climbs out of a node it begins), and a separator token may sit between
+  the doc and its node (the `|` of the leading-bar `data` style). Pinned by the
+  `IncludingTheFirst` tests in `pkg/analyzer/collector/tests/doc_comment_test.go`.
+- **A doc that attaches to nothing is `lyra-W017`**, reported by `ctx.ReportStrayDocs`
+  as a post-pass over the file's tree — after the walk, because whether a `///` was
+  claimed is only knowable once every collector that might have claimed it has run. The
+  claim set is keyed by start byte and reset per file (`ctx.ResetDocs`).
+- **LSP hover** renders the doc under the type (`cmd/lyra-lsp/hoverdoc.go`).
+  `resolveDoc` mirrors `resolveDefinition` case for case; keep them in step, or hover
+  shows one symbol's docs above another symbol's type. **A typeless expression may still
+  be documented** and `Hover` must not bail on the type alone: the method name of a UFCS
+  call is a callee `desugarUFCSCall` synthesized, so it has no recorded type — and that
+  is the spelling the whole standard library is written for, so it is the spelling whose
+  documentation most has to show. That position renders the doc with no signature block.
+- **The prelude is the coverage guard** (`pkg/analyzer/collector/tests/prelude_docs_test.go`).
+  It collects the real `std/prelude` as the multi-file module it is and asserts every
+  declaration is documented, the members are, the `# Panics` sections are on exactly the
+  functions that trap, and the module doc joins across files. `lyrac check` alone will
+  *not* catch a detached doc — W017 is a warning, so the exit code stays 0.
+
 ## Operators that dispatch
 
 Three groups, and which one an operator is in is a design decision rather than an

@@ -1,63 +1,130 @@
 module std.prelude
+//! `Maybe<t>` — a value that may be absent — and the combinators over it.
+//!
+//! `Maybe` is how a function says "there may be no answer" without a sentinel: there is
+//! no null, and `-1`-means-nothing is a convention the type system cannot check. The
+//! compiler knows this type, so `?` propagates a `None` and a `match` over it is checked
+//! for exhaustiveness.
 
-// `Maybe` and the combinators over it. `README.md` in this directory has the constraints
-// on what may be added to the prelude, and why this is one module across several files.
+// `README.md` in this directory has the constraints on what may be added to the prelude,
+// and why this is one module across several files.
 //
 // The `@builtin(Maybe)` marker is what gives the type its compiler-known identity — `?`,
 // exhaustiveness and the canonical-kind checks all key off it rather than off the
 // spelling `Maybe`. Its argument is not optional: a bare `@builtin` collects as no marker
 // at all, leaving identity to a name-matching fallback.
 
+/// An optional value: either `Some` payload or `None`.
+///
+/// # Examples
+///
+/// ```
+/// let found: Maybe<i64> = Some 42
+/// println(found.unwrap_or(0))    // 42
+/// println(None.unwrap_or(0))     // 0
+/// ```
 @builtin(Maybe)
-pub data Maybe<t> = None | Some t
+pub data Maybe<t> =
+  /// No value.
+  None
+  /// A value is present.
+  | Some t
 
+/// The contained value, or `fallback` if there is none.
+///
+/// `fallback` is evaluated whether or not it is used, being an ordinary argument. Use
+/// `unwrap_or_else` when producing it is expensive.
 pub let unwrap_or<t> = pure noalloc (self: Maybe<t>, fallback: t) -> t {
   (Some v, _) => v,
   (None, fb) => fb,
 }
 
+/// The contained value, or the result of calling `f` if there is none.
+///
+/// The lazy `unwrap_or`: `f` runs only on the `None` branch.
 pub let unwrap_or_else<t> = pure noalloc (self: Maybe<t>, f: () -> t) -> t {
   (Some v, _) => v,
   (None, f) => f(),
 }
 
+/// The contained value, trapping with `msg` if there is none.
+///
+/// Prefer this to `unwrap` wherever you can say what you expected — the message is the
+/// only thing the reader of a crash gets.
+///
+/// # Panics
+///
+/// Traps with `msg` when `self` is `None`.
 pub let expect<t> = pure noalloc (self: Maybe<t>, msg: string) -> t {
   (Some v, _) => v,
   (None, msg) => panic(msg),
 }
 
+/// The contained value, trapping if there is none.
+///
+/// # Panics
+///
+/// Traps with `unwrap on a None` when `self` is `None`. `expect` takes a message that
+/// says what was expected, which is worth the few extra characters.
 pub let unwrap<t> = pure noalloc (self: Maybe<t>) -> t => expect(self, "unwrap on a None")
 
+/// Whether a value is present.
 pub let is_some<t> = pure noalloc (self: Maybe<t>) -> bool {
   (Some _) => true,
   (None) => false,
 }
 
+/// Whether no value is present.
 pub let is_none<t> = pure noalloc (self: Maybe<t>) -> bool {
   (Some _) => false,
   (None) => true,
 }
 
+/// This `Maybe` as a `Result`, using `err` as the error for a `None`.
+///
+/// The bridge from "there was no value" to "here is why", at the point where the caller
+/// knows what the absence meant. `err` is evaluated whether or not it is used.
 pub let ok_or<t,e> = pure noalloc (self: Maybe<t>, err: e) -> Result<t,e> {
   (Some v, _) => Ok v,
   (None, err) => Err err,
 }
 
+/// This `Maybe` as a `Result`, calling `f` for the error of a `None`.
+///
+/// The lazy `ok_or`: `f` runs only when there is no value.
 pub let ok_or_else<t,e> = pure noalloc (self: Maybe<t>, f: () -> e) -> Result<t,e> {
   (Some v, _) => Ok v,
   (None, f) => Err(f()),
 }
 
+/// Applies `f` to the contained value, if there is one.
+///
+/// `None` passes through untouched, so a chain of `map`s runs only as far as the first
+/// absent value.
+///
+/// # Examples
+///
+/// ```
+/// let doubled = Some(21).map((n) => n * 2)   // Some 42
+/// ```
 pub let map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> u) -> Maybe<u> {
   (Some v, f) => Some(f(v)),
   (None, _) => None,
 }
 
+/// Applies `f` to the contained value and returns its result, without nesting.
+///
+/// `map` with a `Maybe`-returning `f` would give `Maybe<Maybe<u>>`; this flattens it,
+/// which is what chaining fallible steps needs.
 pub let flat_map<t,u> = pure noalloc (self: Maybe<t>, f: (t) -> Maybe<u>) -> Maybe<u> {
   (Some v, f) => f(v),
   (None, _) => None,
 }
 
+/// Keeps the contained value only if it satisfies `predicate`.
+///
+/// A `Some` failing the predicate becomes `None`; a `None` stays `None` and `predicate`
+/// is not called.
 pub let filter<t> = pure noalloc (self: Maybe<t>, predicate: (t) -> bool) -> Maybe<t> {
   (Some v, pred) => if pred(v) { Some v } else { None },
   (None, _) => None,

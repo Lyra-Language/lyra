@@ -105,6 +105,15 @@ type SymbolTable struct {
 	// genuine clash between two user modules (an error).
 	PreludeModule string
 
+	// ModuleDocs holds each module's `//!` header documentation, keyed by module path.
+	//
+	// Keyed by module rather than by file because a module is a file *or a directory*
+	// (08/07): a directory module's several files may each say something about the
+	// module they join, and a reader of the generated docs wants one page per module,
+	// not one per file. The entry file of a single-file program has module path "",
+	// which is a key like any other.
+	ModuleDocs map[string]*ast.Doc
+
 	// Shadowed records every declaration that took a name arriving from somewhere else
 	// — the prelude, or a module this one imports. Both are warnings, never errors:
 	// see shadowsAmbient.
@@ -156,11 +165,31 @@ func NewSymbolTable() *SymbolTable {
 		ModuleScopes: make(map[string]*Scope),
 		PreludeNames: make(map[string]bool),
 		OverloadSets: make(map[string]*ast.OverloadSet),
+		ModuleDocs:   make(map[string]*ast.Doc),
 
 		ImportedModules: make(map[string][]string),
 	}
 	st.CurrentScope = st.ModuleScopeFor("")
 	return st
+}
+
+// AddModuleDoc records a file's `//!` header against its module, joining it to whatever
+// an earlier file of the same module contributed.
+//
+// Joining rather than replacing is the only choice that does not lose text: a
+// directory module's files are walked in a fixed order, and picking one file's header
+// would silently discard every other file's. Two paragraphs are separated by a blank
+// line so the result is still valid Markdown.
+func (s *SymbolTable) AddModuleDoc(modulePath string, doc *ast.Doc) {
+	if doc == nil {
+		return
+	}
+	existing, ok := s.ModuleDocs[modulePath]
+	if !ok {
+		s.ModuleDocs[modulePath] = doc
+		return
+	}
+	s.ModuleDocs[modulePath] = ast.JoinDocs(existing, doc)
 }
 
 // LookupType, LookupTrait and LookupFunction are the **only** ways a pass should

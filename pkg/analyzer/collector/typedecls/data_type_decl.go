@@ -16,6 +16,9 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 	var constructors []types.DataTypeConstructor
 	var derives []string
 	var builtin string
+	// A data type's constructors sit directly under the declaration node rather than
+	// in a body node of their own, so the docs pass runs over the declaration itself.
+	memberDocs := CollectMemberDocs(node, ctx)
 	isPublic := cst.Field(node, "visibility") != nil
 
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -44,9 +47,10 @@ func collectDataTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 			Name:         name,
 			Constructors: constructors,
 		},
-		IsPublic: isPublic,
-		Derives:  derives,
-		Builtin:  builtin,
+		IsPublic:   isPublic,
+		Derives:    derives,
+		Builtin:    builtin,
+		MemberDocs: memberDocs,
 	}
 
 	if err := ctx.RegisterType(astNode); err != nil {

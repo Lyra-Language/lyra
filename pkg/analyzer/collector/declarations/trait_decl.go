@@ -72,7 +72,13 @@ func collectMethods(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.TraitMethod
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
 		if child.Kind() == "trait_method" {
-			methods = append(methods, collectTraitMethodDeclaration(child, ctx))
+			method := collectTraitMethodDeclaration(child, ctx)
+			// Attached here rather than inside collectTraitMethodDeclaration
+			// because that function returns a zero TraitMethod on four error
+			// paths, and a doc read before them would be claimed and then
+			// dropped — the comment would neither attach nor warn.
+			method.Doc = ctx.DocFor(child)
+			methods = append(methods, method)
 		}
 	}
 	return methods

@@ -41,6 +41,11 @@ type Collector struct {
 	ast        *ast.Program
 	errors     []error
 	ctx        *collector_ctx.Ctx
+	// fileModuleDoc is the `//!` header of the file currently being walked, held so
+	// the file's own `module` statement can carry a copy. The table's entry is the
+	// *module's* documentation and may already hold a sibling file's, which is not
+	// what this header says.
+	fileModuleDoc *ast.Doc
 }
 
 func NewCollector(source []byte) *Collector {
@@ -89,9 +94,33 @@ func (c *Collector) AddFile(root *sitter.Node, source []byte, file, modulePath s
 	outer := c.table.CurrentScope
 	c.table.CurrentScope = c.table.ModuleScopeFor(modulePath)
 	before := len(c.ast.Statements)
+	// The claim set is per file: it keys doc comments by start byte, which identifies
+	// a node only within the source it was parsed from.
+	c.ctx.ResetDocs()
+	c.collectModuleDoc(root, modulePath)
 	c.walkProgram(root)
+	// After the walk, so every collector that could have claimed a doc comment has
+	// had its chance. Whether a `///` documents something is not knowable at the
+	// comment itself.
+	c.ctx.ReportStrayDocs(root)
 	c.table.CurrentScope = outer
 	c.recordModuleBindings(modulePath, c.ast.Statements[before:])
+}
+
+// collectModuleDoc records the file's `//!` header against its module.
+//
+// It is recorded on the *symbol table*, keyed by module path, rather than only on the
+// `module` statement, because a module is a file **or a directory**: a directory module
+// has several files and no single header, and the entry file of a single-file program
+// has no `module` line at all. Docs from several files of one module are joined in the
+// order the files are walked, which is the order `pkg/modules` sorts them — so the text
+// is stable across runs rather than dependent on directory iteration.
+//
+// The `module` statement also gets a copy when there is one, so hover over the header
+// and a golden file both see it without either having to reach into the table.
+func (c *Collector) collectModuleDoc(root *sitter.Node, modulePath string) {
+	c.fileModuleDoc = c.ctx.ModuleDocFor(root)
+	c.table.AddModuleDoc(modulePath, c.fileModuleDoc)
 }
 
 // recordModuleBindings notes which module owns each top-level name this file declared,
@@ -435,8 +464,38 @@ func (c *Collector) walkProgram(node *sitter.Node) {
 		// sub-function returns a concrete nil pointer (e.g. nil *ast.ExpressionStmt)
 		// which Go wraps into a non-nil ast.Statement interface value.
 		if stmt != nil && !isTypedNil(stmt) {
+			c.attachDoc(child, stmt)
 			c.ast.Statements = append(c.ast.Statements, stmt)
 		}
+	}
+}
+
+// attachDoc stamps the `///` block above a *top-level* declaration onto it.
+//
+// It lives here, in the program walk, rather than in each declaration's own collector,
+// and that placement is the rule rather than a convenience: only a top-level declaration
+// is documentable, and this loop is exactly the set of top-level declarations. A local
+// `let` inside a block never reaches it, so a doc comment on one falls through to the
+// stray-doc warning with no per-site "am I at the top level?" test to get wrong.
+//
+// Members are the other half and cannot be done here — a struct's field and a trait's
+// method are collected inside their declaration — so they call ctx.DocFor at their own
+// sites. Anything with a Doc field is one of the two.
+func (c *Collector) attachDoc(node *sitter.Node, stmt ast.Statement) {
+	switch s := stmt.(type) {
+	case *ast.VarDeclStmt:
+		s.Doc = c.ctx.DocFor(node)
+	case *ast.TypeDeclStmt:
+		s.Doc = c.ctx.DocFor(node)
+	case *ast.TraitDeclStmt:
+		s.Doc = c.ctx.DocFor(node)
+	case *ast.TraitImplStmt:
+		s.Doc = c.ctx.DocFor(node)
+	case *ast.ModuleDeclStmt:
+		// The module header's documentation is the file's `//!` block, gathered
+		// before the walk — not a `///` above the `module` line, which documents
+		// nothing and is reported as stray.
+		s.Doc = c.fileModuleDoc
 	}
 }
 

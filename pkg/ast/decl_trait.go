@@ -29,6 +29,8 @@ type TraitDeclStmt struct {
 	// a marker elsewhere claims that kind — so a diagnostic can say which of the two
 	// mistakes was made. Mirrors TypeDeclStmt.ShadowedCanonical.
 	ShadowedCanonical string
+	// Doc is the `///` comment block above the trait declaration, nil if undocumented.
+	Doc *Doc
 }
 
 func (t *TraitDeclStmt) statementNode() {}
@@ -46,6 +48,10 @@ type TraitMethod struct {
 	IsPure    bool
 	IsDet     bool
 	IsNoAlloc bool
+	// Doc is the `///` comment block above the method's signature in the trait.
+	// This is the *contract's* documentation — what any implementation must do —
+	// which is why an impl's own method carries a separate one.
+	Doc *Doc
 }
 
 func (t *TraitMethod) GetName() string {

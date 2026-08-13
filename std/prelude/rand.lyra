@@ -1,7 +1,10 @@
 module std.prelude
+//! Random number generation.
+//!
+//! A seeded `Rng` is `det`-legal and reproducible; the ambient `random_*` helpers seed
+//! themselves from the OS and are not. **None of it is suitable for anything
+//! security-sensitive** — see `next_u64`.
 
-// Randomness.
-//
 // The generator lives here, in Lyra, and only the *seed* is a compiler builtin
 // (`random_seed()`, one word of OS entropy). A PRNG is arithmetic, and arithmetic
 // is expressible; asking the operating system for entropy is not. Same division
@@ -16,21 +19,34 @@ module std.prelude
 // drawing from a seed you were given is, and asking for a seed you were not is
 // not.
 
-pub struct Rng { state: u64 }
+/// A pseudo-random number generator.
+///
+/// Build one with `rng_seeded` (reproducible) or `rng_from_entropy` (different each run),
+/// then draw with `next_u64`, `below` or `between`. Drawing mutates the generator, so it
+/// must be held in a `var` or behind a `mut` parameter.
+///
+/// # Examples
+///
+/// ```
+/// var rng = rng_seeded(42);
+/// println(rng.below(6) + 1)      // a die roll, the same one every run
+/// ```
+pub struct Rng {
+  /// The generator's internal state. Never zero — xorshift maps 0 to 0, so a
+  /// zero-stated generator emits zero forever, which `rng_seeded` is what prevents.
+  state: u64
+}
 
-// xorshift64*, which is chosen for being *legible* rather than for being the best
-// generator known: three shift/xor steps and a multiply, all of it visible in five
-// lines, with no tables and no magic beyond the constants. It passes the usual
-// smoke tests for non-cryptographic use and is entirely adequate for a game, a
-// shuffle or a sampled test.
-//
-// It is **not suitable for anything security-sensitive** — the state is recoverable
-// from a couple of outputs. That is a property of the algorithm, not of the seed:
-// seeding from `random_seed()` does not make it a CSPRNG, and a real one belongs
-// behind its own name so the choice is visible at the call site.
-//
-// The state must never be zero: xorshift maps 0 to 0, so a zero-seeded generator
-// emits zero forever. `rng_seeded` is what guarantees that, not this function.
+/// The next raw 64-bit draw, advancing the generator.
+///
+/// Every bit is usable. For a bounded draw use `below` or `between` rather than taking a
+/// remainder of this, which is not uniform.
+///
+/// **Not suitable for anything security-sensitive.** The algorithm is xorshift64*, chosen
+/// for being *legible* — three shift/xor steps and a multiply, no tables — and its state
+/// is recoverable from a couple of outputs. That is a property of the algorithm and not
+/// of the seed: seeding from `random_seed()` does not make it a CSPRNG. It is entirely
+/// adequate for a game, a shuffle or a sampled test.
 pub let next_u64 = det noalloc (self: mut Rng) -> u64 => {
   var x = self.state;
   x = x ~ (x >> 12);
@@ -40,42 +56,48 @@ pub let next_u64 = det noalloc (self: mut Rng) -> u64 => {
   x.wrapping_mul(2685821657736338717)
 }
 
-// A generator from an explicit seed — reproducible, and `det`-legal, so a
-// simulation or a test can fix its randomness and get the same run every time.
-//
-// Seed 0 is redirected rather than rejected: zero is a perfectly natural thing to
-// write, it is the one value xorshift cannot survive (the state is a fixed point,
-// so every draw would be 0), and a `panic` on it would be a trap for the one caller
-// who wanted the simplest possible seed. The substitute is xorshift64's usual
-// default seed.
-//
-// Bare rather than `Rng.seeded`, because the language has no type-namespaced
-// associated functions — `Rng.seeded(42)` is `lyra-E035`.
+/// A generator from an explicit seed — reproducible, so a simulation or a test gets the
+/// same run every time.
+///
+/// This is the `det`-legal constructor: it asks for no entropy, so code under a `det`
+/// bound can use it and thread the generator through.
+///
+/// Seed 0 is redirected to xorshift64's usual default seed rather than rejected. Zero is a
+/// natural thing to write, it is the one value the algorithm cannot survive (the state is
+/// a fixed point, so every draw would be 0), and trapping on it would punish the caller
+/// who wanted the simplest possible seed.
+///
+/// Bare rather than `Rng.seeded`, because the language has no type-namespaced associated
+/// functions — `Rng.seeded(42)` is `lyra-E035`.
 pub let rng_seeded = pure noalloc (seed: u64) -> Rng =>
   if seed == 0 { Rng { state: 88172645463325252 } } else { Rng { state: seed } }
 
-// A generator seeded from the operating system — a different sequence each run.
-// This is the one that carries `EffectRand`, because it is where a seed nobody
-// supplied enters the program.
+/// A generator seeded from the operating system — a different sequence each run.
+///
+/// This is where a seed nobody supplied enters the program, so it carries `EffectRand` and
+/// `pure`/`det` code refuses it. Use `rng_seeded` there.
 pub let rng_from_entropy = () -> Rng => rng_seeded(random_seed())
 
-// A uniform draw from `0..<bound`, **without modulo bias**.
-//
-// The naive `next_u64() %% bound` is not uniform: 2^64 values do not divide evenly
-// into `bound` buckets, so the low residues get one extra value each. The bias is
-// tiny for a small bound and total for a large one, which is the worst shape for a
-// bug — it never shows up in the case you test.
-//
-// So the top partial bucket is rejected and redrawn. `m - k` is the largest value
-// that still lands in a whole bucket, computed as `m - ((m %% bound) + 1) %% bound`
-// — the `+ 1` cannot overflow, since `m %% bound < bound <= m`, and the subtraction
-// cannot either. Note `~u64(0)` for the u64 maximum: it is not writable as a
-// literal (`IntegerLiteralExpr.Value` is an i64), which is the open >64-bit-literal
-// gap, and complementing zero is the spelling that does not need it.
-//
-// The loop is expected to run once. It redraws with probability at most
-// `bound / 2^64`, which for any bound a program actually passes is far below the
-// chance of the machine failing mid-draw.
+/// A uniform draw from `0..<bound` — zero up to but not including `bound`.
+///
+/// **Without modulo bias.** The naive `next_u64() %% bound` is not uniform: 2^64 values do
+/// not divide evenly into `bound` buckets, so the low residues get one extra value each.
+/// The bias is tiny for a small bound and total for a large one, which is the worst shape
+/// for a bug — it never shows up in the case you test. This rejects the top partial bucket
+/// and redraws instead; the redraw happens with probability at most `bound / 2^64`, so the
+/// loop is expected to run once.
+///
+/// # Panics
+///
+/// Traps when `bound` is zero or negative — there is no value to return from an empty
+/// range, and a `Maybe` here would burden every correct call site.
+///
+/// # Examples
+///
+/// ```
+/// var rng = rng_seeded(42);
+/// let index = rng.below(xs.len())    // always a valid index into a non-empty xs
+/// ```
 pub let below = det noalloc (self: mut Rng, bound: i64) -> i64 => {
   if bound <= 0 { panic("Rng.below: bound must be positive") }
   let b = u64(bound);
@@ -86,30 +108,44 @@ pub let below = det noalloc (self: mut Rng, bound: i64) -> i64 => {
   i64(x %% b)
 }
 
-// A uniform draw from `lo..<=hi`, inclusive at both ends — the form a range of
-// choices is usually described in ("a number between 0 and 100"). Inclusive
-// because that is what the words mean; `below` is there when a half-open count is
-// what is wanted.
+/// A uniform draw from `lo..<=hi`, **inclusive at both ends**.
+///
+/// Inclusive because that is what "a number between 0 and 100" means; `below` is there
+/// when a half-open count is what is wanted.
+///
+/// # Panics
+///
+/// Traps when `hi` is below `lo`.
 pub let between = det noalloc (self: mut Rng, lo: i64, hi: i64) -> i64 => {
   if hi < lo { panic("Rng.between: the high bound is below the low one") }
   lo + self.below(hi - lo + 1)
 }
 
-// The ambient one-liner: a single uniform draw from `0..<bound`, seeded from the
-// OS. Carries `EffectRand` (it reaches `random_seed`), so it is refused in `pure`
-// and `det` code — reach for `rng_seeded` there and thread the generator.
-//
-// Each call seeds a *fresh* generator, which is why there is no hidden global
-// state anywhere in this module. It costs one entropy call per draw, which is the
-// right trade for a convenience function drawn a handful of times; a loop drawing
-// many values should hold an `Rng` and call `below`, which is also the version that
-// can be made reproducible.
+/// One uniform draw from `0..<bound`, seeded from the OS.
+///
+/// The ambient convenience form. It carries `EffectRand`, so `pure` and `det` code refuse
+/// it — hold an `Rng` from `rng_seeded` there.
+///
+/// Each call seeds a *fresh* generator, so there is no hidden global state anywhere in
+/// this module; the cost is one entropy call per draw. A loop drawing many values should
+/// hold an `Rng` and call `below`, which is also the version that can be made
+/// reproducible.
+///
+/// # Panics
+///
+/// Traps when `bound` is zero or negative, as `below` does.
 pub let random_below = (bound: i64) -> i64 => {
   var rng = rng_from_entropy();
   rng.below(bound)
 }
 
-// The ambient counterpart of `between` — inclusive at both ends.
+/// One uniform draw from `lo..<=hi`, inclusive at both ends, seeded from the OS.
+///
+/// The ambient counterpart of `between`, with the same caveats as `random_below`.
+///
+/// # Panics
+///
+/// Traps when `hi` is below `lo`.
 pub let random_between = (lo: i64, hi: i64) -> i64 => {
   var rng = rng_from_entropy();
   rng.between(lo, hi)

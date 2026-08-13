@@ -64,6 +64,33 @@ not by anything the language can see.
   declarations need not be in the same file**, only in the same module, which is why
   `maybe.lyra` and `result.lyra` can each have their own.
 
+## Documentation
+
+Every declaration here carries a `///` block, and each file's `//!` header contributes a
+paragraph to the module's own documentation. `pkg/analyzer/collector/tests/prelude_docs_test.go`
+enforces both against the real sources — an undocumented export in the prelude is the one
+gap every user of the language sees.
+
+Three conventions, the first of which is a rule and not a preference:
+
+- **An implementation note (`//`) goes *above* the `///` block, never between it and the
+  declaration.** Attachment is adjacency, so a comment in between detaches the
+  documentation. It warns (`lyra-W017`) rather than failing silently — but note that a
+  warning leaves `lyrac check` exiting 0, so the test above is what actually catches it.
+
+- **`///` is the contract; `//` is the reasoning.** What a caller needs to know — what it
+  returns, when it traps, what it costs — goes in the doc block. Why the code is written
+  the way it is (why `parse_i64` accumulates negatively, why `below` rejects the top
+  bucket) stays an ordinary comment: it is for whoever edits this file, not for whoever
+  calls it. Several entries here have both, and the split is worth preserving.
+
+- **Anything that traps needs a `# Panics` section.** A trap is invisible in a signature,
+  so the doc is the only place it can be stated. `# Errors` is the sibling for a
+  `Result`-returning function, and the two are deliberately different sections.
+
+`# Examples` blocks are prose. **Nothing compiles them**, so they can rot; keep them short
+and obvious until a doctest runner exists.
+
 ## Shadowing
 
 A name declared here can be shadowed by user code: that warns (`lyra-W012`) and the user's

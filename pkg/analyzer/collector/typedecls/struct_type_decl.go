@@ -15,6 +15,7 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *as
 	var genericParams []ast.GenericParam
 	var fields []types.StructField
 	var derives []string
+	var memberDocs map[string]*ast.Doc
 	isPublic := cst.Field(node, "visibility") != nil
 
 	for i := uint(0); i < node.ChildCount(); i++ {
@@ -29,6 +30,7 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *as
 			genericParams = ctx.CollectGenericParams(child)
 		case "struct_type_body":
 			fields = CollectStructFields(child, ctx)
+			memberDocs = CollectMemberDocs(child, ctx)
 		}
 	}
 
@@ -41,8 +43,9 @@ func collectStructTypeDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *as
 			Name:   name,
 			Fields: fields,
 		},
-		IsPublic: isPublic,
-		Derives:  derives,
+		IsPublic:   isPublic,
+		Derives:    derives,
+		MemberDocs: memberDocs,
 	}
 
 	if err := ctx.RegisterType(astNode); err != nil {

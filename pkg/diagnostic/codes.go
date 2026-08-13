@@ -495,6 +495,17 @@ const (
 	// is W012's sibling for the half that can name a qualifier to reach past itself.
 	CodeImportShadowed = "lyra-W016"
 
+	// CodeStrayDocComment: a `///` block that documents nothing (a blank line or an
+	// expression between it and the next declaration, or nothing after it at all), or
+	// a `//!` outside a file's header region.
+	//
+	// Discarding it silently is the failure this language exists to avoid: the author
+	// writes documentation, the generator never emits it, and nothing anywhere says
+	// so. A warning rather than an error because a doc block above a temporarily
+	// commented-out declaration is an ordinary state to be in for a minute, and
+	// breaking the build over prose is not a trade worth making.
+	CodeStrayDocComment = "lyra-W017"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

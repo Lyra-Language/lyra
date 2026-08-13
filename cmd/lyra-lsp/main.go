@@ -384,12 +384,29 @@ func (h *Handler) Hover(_ context.Context, params *lsp.HoverParams) (result *lsp
 		return nil, nil
 	}
 
+	doc := resolveDoc(expr, line, col, analysis)
+
+	// A typeless expression may still be documented, and the case that matters is the
+	// **method name of a UFCS call**. `desugarUFCSCall` rewrites `s.trim()` into
+	// `trim(s)` with a synthesized callee at the method name's own location, and that
+	// synthesized node never gets a recorded type — so bailing on the type alone made
+	// hovering a method name answer nothing at all. That is the spelling the standard
+	// library is written for, so it is the spelling whose documentation must show.
+	//
+	// Returning the doc without a signature is strictly better than the nil this
+	// replaces, and cannot regress anything: every position that resolved a type before
+	// still takes the branch below.
 	typ, ok := analysis.typeTable.Get(expr)
 	if !ok {
-		return nil, nil
+		if doc == nil {
+			return nil, nil
+		}
+		return &lsp.Hover{
+			Contents: lsp.MarkupContent{Kind: lsp.Markdown, Value: doc.Text},
+		}, nil
 	}
 
-	content := hoverContent(expr, typ)
+	content := renderHover(hoverContent(expr, typ), doc)
 	return &lsp.Hover{
 		Contents: lsp.MarkupContent{Kind: lsp.Markdown, Value: content},
 	}, nil
