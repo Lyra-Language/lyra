@@ -523,6 +523,20 @@ idiom — is complete and no longer warns. Only arms whose element sub-patterns 
 irrefutable contribute (a `[1, ...rest]` matches just the arrays starting with 1, so it proves
 nothing about coverage), and without an open-ended arm infinitely many lengths are unmatched.
 
+Two rules sit beside the kind checks (both 08/13). **Kind dispatch strips a newtype to its
+base** (`types.StripNewtype` in `checkMatchExpr`) — a newtype scrutinee used to match *no*
+kind branch, so its arms went unpoliced and its match untested for exhaustiveness, silently;
+the data/tuple/struct branches keep the unstripped type, which `lyra-E041` (no newtype over
+nominal types) makes sufficient. And **every arm's integer literals are value-checked against
+the type they are compared to** (`pattern_literals.go`, `lyra-E048`) *before* kind dispatch —
+width and newtype range constraint both — because patterns lower at the scrutinee's width, so
+an unchecked `300` on a u8 was not a dead arm but a live arm for 44. That walk is a
+conservative mirror of `walkDestructuredPattern`'s pairing, deliberately separate:
+`withPatternBindings` runs the real walk with errors discarded, which is exactly where these
+reports must not vanish. An exclusive range end checks its bound minus one (`0..<256` on u8
+is the full range); anything the mirror cannot pair is skipped, so a miss degrades to a lost
+diagnostic, never a false one.
+
 ## Generic aggregate inference
 
 A generic struct's type arguments are solved from its field *values* by `unifyGenericTarget`

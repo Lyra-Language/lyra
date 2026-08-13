@@ -248,7 +248,22 @@ func (tc *TypeChecker) withPatternBindings(pattern ast.Pattern, scrutineeType ty
 
 func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 	scrutineeType := tc.inferExprType(expr.Scrutinee)
-	if types.IsBoolean(scrutineeType) {
+	// Every integer literal a pattern carries is value-checked against the type it
+	// will be compared to — bare, range bounds, and payload sub-patterns alike
+	// (lyra-E048, pattern_literals.go). Before this, a pattern literal was checked
+	// for kind and never for value, and the backend lowered it at the scrutinee's
+	// width: `300` on a u8 matched 44.
+	for _, arm := range expr.MatchArms {
+		tc.checkPatternLiterals(arm.Pattern, scrutineeType)
+	}
+	// The per-kind checks and exhaustiveness dispatch on the newtype's *base*
+	// (08/13): a `Percent` scrutinee is a u8 match — the backend already dispatches
+	// on the base, and the constraint half is checkPatternLiterals's above. Until
+	// this strip, a newtype scrutinee matched NONE of the branches below, so its
+	// arms got no kind policing and no exhaustiveness check at all — the audit's
+	// dispatch-skip sub-finding.
+	kindType := types.StripNewtype(scrutineeType)
+	if types.IsBoolean(kindType) {
 		for _, arm := range expr.MatchArms {
 			tc.checkBoolMatchArm(arm.Pattern)
 		}
@@ -256,15 +271,15 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNonExhaustiveMatch,
 				"match on bool is not exhaustive: add arms for both `true` and `false`, or a wildcard `_ => ...`")
 		}
-	} else if types.IsNumeric(scrutineeType) {
+	} else if types.IsNumeric(kindType) {
 		for _, arm := range expr.MatchArms {
-			tc.checkNumericMatchArm(arm.Pattern, scrutineeType)
+			tc.checkNumericMatchArm(arm.Pattern, kindType)
 		}
-		if !tc.isNumericMatchExhaustive(expr.MatchArms, scrutineeType) {
+		if !tc.isNumericMatchExhaustive(expr.MatchArms, kindType) {
 			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
 				"match on numeric type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
-	} else if types.IsString(scrutineeType) {
+	} else if types.IsString(kindType) {
 		for _, arm := range expr.MatchArms {
 			tc.checkStringMatchArm(arm.Pattern)
 		}
@@ -272,7 +287,7 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
 				"match on string type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
-	} else if isRuneType(scrutineeType) {
+	} else if isRuneType(kindType) {
 		for _, arm := range expr.MatchArms {
 			tc.checkRuneMatchArm(arm.Pattern)
 		}
@@ -280,11 +295,11 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
 				"match on rune type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
-	} else if types.IsArray(scrutineeType) {
+	} else if types.IsArray(kindType) {
 		for _, arm := range expr.MatchArms {
-			tc.checkArrayMatchArm(arm.Pattern, scrutineeType)
+			tc.checkArrayMatchArm(arm.Pattern, kindType)
 		}
-		if !arrayMatchIsExhaustive(expr.MatchArms, scrutineeType) {
+		if !arrayMatchIsExhaustive(expr.MatchArms, kindType) {
 			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
 				"match on array type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
 		}
@@ -972,8 +987,11 @@ func numericMatchIsExhaustive(arms []ast.MatchArm) bool {
 }
 
 func (tc *TypeChecker) checkNumericMatchArm(pattern ast.Pattern, scrutineeType types.Type) {
-	// RangePattern needs no check: the grammar restricts both start and end to
-	// number literals, so numeric bounds are guaranteed by the parser.
+	// This checks *kind* only (an int literal where an int belongs). The *value* —
+	// does 300 fit a u8, is 200 inside Percent's range — is checkPatternLiterals's
+	// (lyra-E048), which runs for every arm before the kind dispatch; a RangePattern's
+	// bounds are number literals by grammar, so kind needs nothing here and value is
+	// checked there.
 	switch p := pattern.(type) {
 	case *ast.RegexPattern:
 		tc.addError(p.GetLocation(), SeverityError,

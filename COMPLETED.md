@@ -9,6 +9,66 @@ Newest first.
 
 ## Dated log
 
+### 08/13/26
+**A pattern literal is value-checked against the type it is compared to
+(`lyra-E048`), and return-position literals joined the decl sites.** The second
+audit sweep's headline finding, and unlike most dead-arm bugs it was a
+**miscompile**: the backend lowers a pattern constant at the scrutinee's width, so
+`match x { 300 => … }` on a u8 did not fail to match — it **matched 44**. `-1`
+matched 255 (the negative-indexing bug's spirit in pattern position, found hours
+after 08/12 removed it from indexing), `Some(300)` on a `Maybe<u8>` matched
+`Some(44)` through the payload, and range-pattern bounds were equally unchecked. A
+wrong value in a pattern is worse than in an expression: it redirects control flow.
+Every one of these positions holds a compile-time constant by grammar, so the
+standing ladder ("provable → compile error, otherwise → trap") collapses to its
+first rung — there is no runtime half to build. Rust draws the same line ("range
+endpoint is out of range" on `200..=300u8`), for the same reason: an out-of-range
+bound is a bug in what the author wrote, not a clamp request.
+
+**The shape of the fix is a conservative mirror, and why it must be one is the
+interesting part.** The pairing of sub-pattern to sub-type already exists —
+`walkDestructuredPattern` — but `withPatternBindings` runs that walk with its
+errors *discarded* (deliberately: the per-kind arm checks own those reports),
+which is exactly where a value-check's reports must not vanish. So
+`pattern_literals.go` re-walks the pairing (binding, tuple, array, struct, and the
+three data-payload shapes `bindDataPatternPayload` pairs), sharing the shape
+helpers where they exist, and **skips silently anything it does not recognize** —
+the authoritative shape errors live elsewhere, so a miss here degrades to a lost
+diagnostic, never a false one. At the leaf, two flavors of impossible: the value
+does not fit the base width, or it is outside a newtype's range constraint
+(`pattern 200 is outside the range 0..<=100 of Percent, so this arm can never
+match`) — the latter through `intOutsideRangeConstraint`, `checkIntRange`'s
+judgment extracted into a shared predicate so pattern and expression positions
+cannot come to disagree about one constraint (hazard 8's rule).
+
+**One deliberate grace: an exclusive range end checks its bound minus one.**
+`0..<256` on a u8 is exactly `0..<=255` — the full range, which the exhaustiveness
+analysis already reads it as — so what must fit is the last *included* value. The
+suite caught this immediately (`TestTypeCheck_NumericMatch_U8_ExclusiveRange_Ok`
+failed on the first draft, which checked the bound itself), which is the
+one-past-the-end convention `slice`'s end and `byte_offset(n)` already carry.
+`0..<257` is refused; the grace is exactly one.
+
+**Two adjacent holes closed in the same change.** A **newtype scrutinee** matched
+none of `checkMatchExpr`'s kind branches — not numeric, not bool, not string — so
+its match skipped *all* arm policing and exhaustiveness analysis, silently. Kind
+dispatch now strips to the base type (`types.StripNewtype`); the data/tuple/struct
+branches keep the unstripped type, which `lyra-E041` (no newtype over nominal
+types) makes sufficient. And the **return-position gap open since 08/08** —
+`() -> u8 => 300` compiled and returned 44 — is this same family in expression
+position: `propagateLiteralType` deliberately leaves an unfitting literal untyped
+for a downstream site to report, and a return has no downstream. `checkReturnValue`
+now makes the same `checkIntegerLiteralRange` call every decl site makes, covering
+the expression-body and nested-`return` forms alike.
+
+**One test migrated, and its migration is evidence of consistency rather than
+churn**: `TestExec_TraitMethodNarrowsToItsDeclaredReturn` computed `200 + 100` in a
+`-> u8` return to pin trap-parity between trait methods and free functions — and a
+*constant* overflowing expression in return position is now a compile error (decl
+sites always refused exactly that expression; returns joined them). It pins the
+same parity with runtime operands now. Tests:
+`pkg/analyzer/typechecker/tests/pattern_range_test.go`.
+
 ### 08/12/26
 **`s.len()` is O(1) — the rune count rides the fat pointer — and `for i, c in s` is
 the indexed traversal.** The audit's last standing tension, and the subtlest of its

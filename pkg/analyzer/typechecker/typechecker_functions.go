@@ -359,6 +359,13 @@ func (tc *TypeChecker) checkReturnValue(funcName string, value ast.Expression, l
 			"%s: return type mismatch: expected %s, got %s", funcName, declaredReturn, valueType)
 		return
 	}
+	// A literal return value must fit the declared width — `() -> u8 => 300` had
+	// been accepted and returned 44 (tracked open since 08/08; fixed with the
+	// pattern-truncation family, 08/13, being its expression-position sibling).
+	// The propagation below deliberately leaves an unfitting literal untyped,
+	// expecting a *downstream* site to report it — and a return has no downstream,
+	// so this is the same call the decl/reassign sites make, with the same dedup.
+	tc.checkIntegerLiteralRange(funcName, value, declaredReturn)
 	tc.propagateLiteralType(value, declaredReturn)
 	tc.propagateAllocation(value, types.AllocationOf(declaredReturn))
 	if ownedReturn {

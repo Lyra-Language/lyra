@@ -227,6 +227,38 @@ write today:
 
 ## Known bugs
 
+- **[DONE 08/13] A pattern literal is value-checked against the type it is compared
+  to** (`lyra-E048`), and a return-position literal joined the decl sites — the
+  truncation family the second audit sweep found, and its worst member was a
+  miscompile rather than a dead arm: patterns lower at the scrutinee's width, so
+  `match x { 300 => … }` on a u8 **matched 44**, `-1` matched 255 (the negative-
+  indexing bug's spirit reborn in pattern position, hours after it was removed from
+  indexing), `Some(300)` on a `Maybe<u8>` matched `Some(44)`, and range bounds were
+  equally unchecked. Everything in these positions is a compile-time constant by
+  grammar, so the standing ladder collapses to its first rung: provable → compile
+  error, no runtime half. Rust draws the same line ("range endpoint is out of range").
+
+  The walk (`pattern_literals.go`) is a **conservative mirror** of
+  `walkDestructuredPattern`'s pairing — it cannot live inside that walk because
+  `withPatternBindings` runs it with errors *discarded* — recursing through binding,
+  tuple, array, struct and data-payload patterns to reach every integer literal, and
+  checking two flavors at the leaf: base width, and a newtype's range constraint
+  (`pattern 200 is outside the range 0..<=100 of Percent`), through the shared
+  `intOutsideRangeConstraint` predicate so pattern and expression positions cannot
+  disagree about one constraint. An **exclusive range end checks its bound minus
+  one** — `0..<256` on a u8 is exactly the full range, as the exhaustiveness
+  analysis already reads it, so the one-past-the-end spelling stays legal and
+  `0..<257` does not. Two adjacent holes closed in the same change: a **newtype
+  scrutinee** matched none of `checkMatchExpr`'s kind branches, so its arms skipped
+  *all* match policing (kind dispatch now strips to the base; the nominal branches
+  keep the unstripped type, which E041 makes sufficient); and the long-open
+  return-position gap below — `() -> u8 => 300` compiled and returned 44 —
+  is the same family in expression position, fixed by giving `checkReturnValue` the
+  same `checkIntegerLiteralRange` call every decl site makes. One test migrated:
+  the trait-method narrowing exec test computed `200 + 100` in a `-> u8` return,
+  which is now (correctly) a compile error, so it pins trap-parity with runtime
+  operands instead. See COMPLETED.md.
+
 - **[DONE 08/12] `s.len()` is O(1), and `for i, c in s` is the indexed traversal** —
   the audit's last standing tension resolved. The tension was not that len counted
   runes (it must — it agrees with `s[i]` and `for c in s`) but that it counted them
@@ -404,10 +436,12 @@ write today:
   maintained, so a nested return gets the same assignability check, literal-width propagation
   and allocation stamping the top-level ones always had.
 
-  - **[OPEN] A return-position literal is not range-checked.** `() -> u8 => 300` is accepted,
-    and so is `return 300` in the same function. Noticed while testing the above and
-    unrelated to it — it is true of *every* return position, including the ones that were
-    always checked, so it is a gap in `checkReturnValue` rather than in the routing.
+  - **[DONE 08/13] A return-position literal is range-checked.** `() -> u8 => 300` and
+    `return 300` were accepted (and returned 44) — true of *every* return position,
+    including the ones that were always checked, so it was a gap in `checkReturnValue`
+    rather than in the routing. Fixed with the pattern-literal family (the E048 entry
+    in Known bugs): `checkReturnValue` now makes the same `checkIntegerLiteralRange`
+    call every decl site makes.
 
 
 - **[DONE 08/07] Two `slice()` results in one expression no longer clobber each other.**

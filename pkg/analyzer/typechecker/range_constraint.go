@@ -161,23 +161,10 @@ func (tc *TypeChecker) checkIntRange(typeName string, value ast.Expression, rc *
 	if !ok {
 		return // not a compile-time integer constant
 	}
-	belowStart := false
-	if rc.Start != nil {
-		if lo, ok := foldConstraintInt(rc.Start); ok && v < lo {
-			belowStart = true
-		}
-	}
-	aboveEnd := false
-	if rc.End != nil {
-		if hi, ok := foldConstraintInt(rc.End); ok {
-			if rc.Comparator == "<" {
-				aboveEnd = v >= hi // exclusive end (..<)
-			} else {
-				aboveEnd = v > hi // inclusive end (..<=)
-			}
-		}
-	}
-	if belowStart || aboveEnd {
+	// The judgment itself is intOutsideRangeConstraint (pattern_literals.go), shared
+	// with the pattern check so an expression and a pattern cannot disagree about
+	// one constraint.
+	if intOutsideRangeConstraint(v, rc) {
 		tc.reportRangeViolation(typeName, fmt.Sprintf("%d", v), value, rc)
 	}
 }

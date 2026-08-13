@@ -174,6 +174,21 @@ const (
 	// `Integer(M)` out.
 	CodeImplicitNewtypeReadout = "lyra-E047"
 
+	// CodePatternOutOfRange: an integer literal in a match pattern — bare, a range
+	// bound, or inside a data/tuple/struct/array sub-pattern — whose value the
+	// scrutinee's type cannot hold (`300` on a u8, `-1` on any unsigned), or that a
+	// newtype's range constraint excludes (`200` on `Percent = u8 where
+	// range(0..<=100)`). The arm can never match, so it is an error, not a warning.
+	//
+	// Until 08/13 these were not merely dead: the backend lowered the constant at
+	// the scrutinee's width, so `match x { 300 => … }` on a u8 **matched 44** and
+	// `{ -1 => … }` matched 255 — a silent wrong *branch*, found by the audit's
+	// second sweep hours after negative indexing was removed for making the same
+	// off-by-one silently mean a value at the other end. Every value here is a
+	// compile-time constant by grammar, so the provable→error rung is the whole
+	// ladder; Rust refuses the same bounds ("range endpoint is out of range").
+	CodePatternOutOfRange = "lyra-E048"
+
 	// CodeCapturedAssignment: a lambda assigns to a binding it captured from an
 	// enclosing scope. A closure captures **by value** — the copy is taken when the
 	// closure is created, so it can outlive the frame the original lives in — which

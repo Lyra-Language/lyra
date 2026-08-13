@@ -181,15 +181,19 @@ func TestEmit_TraitMethodSymbolIsQualified(t *testing.T) {
 // assertion — same expression, same declared return, one answer.
 func TestExec_TraitMethodNarrowsToItsDeclaredReturn(t *testing.T) {
 	t.Parallel()
-	const traitSrc = `struct Pt { x: i64 }
+	// Runtime operands, not `200 + 100`: a *constant* overflowing expression in
+	// return position is a compile error now (08/13, alongside the pattern-literal
+	// family — decl sites always refused it, and returns joined them), so the
+	// trap-parity this test exists to pin needs values the fold cannot see.
+	const traitSrc = `struct Pt { x: u8 }
 	 trait Small { get: (Self) -> u8 }
-	 impl Small for Pt { get = (self) => 200 + 100 }
+	 impl Small for Pt { get = (self) => self.x + 100 }
 	 let main = () -> u8 => {
-	   let p = Pt { x: 1 }
+	   let p = Pt { x: 200 }
 	   p.get()
 	 }`
-	const freeSrc = `let get = () -> u8 => 200 + 100
-	 let main = () -> u8 => get()`
+	const freeSrc = `let get = (x: u8) -> u8 => x + 100
+	 let main = () -> u8 => get(200)`
 
 	traitStderr, traitCode := buildAndRunPanic(t, traitSrc)
 	freeStderr, freeCode := buildAndRunPanic(t, freeSrc)
