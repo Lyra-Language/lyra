@@ -39,11 +39,17 @@ Three design points worth the record:
   `checkIntegerLiteralRange`, so `m ?? 300` on a `Maybe<u8>` is refused: the default
   is an ordinary value position under the same-day literal rule.
 
-A left operand that is not a canonical Maybe can never be null; the typechecker warns
-(`lyra-W007`) and recovers so the mistake does not cascade, and the backend now
-refuses it loudly at build time (rule 5 — there is no meaning to lower, and inventing
-one, e.g. "just evaluate the left", would need its own ownership analysis for a
-construct whose only correct fix is deleting the `??`). Tests:
+A left operand that is not a canonical Maybe can never be null, and that is now a
+**hard error** (`lyra-E049` — it had warned as lyra-W007 since the operator landed,
+and was promoted the same day the operator started lowering, at the user's call): the
+`??` can never fire, so the default is dead code that reads as a handled case, and a
+construct that cannot mean anything is refused where it is written — the E034
+(directionless descending range) and E035 (type-name call) reasoning. The recovery
+stays (the left type is treated as the payload, so one dead `??` does not cascade),
+and the backend keeps its own loud refusal as a broken-guarantee defense (rule 5 —
+there is no meaning to lower, and inventing one, e.g. "just evaluate the left", would
+need its own ownership analysis for a construct whose only correct fix is deleting
+the `??`). Tests:
 `llvm_null_coalescing_test.go` (exec: payload/default/computed/chained, laziness both
 ways, managed ASan, untyped-narrowing), `null_coalescing_test.go` (the two new
 typechecker rules).

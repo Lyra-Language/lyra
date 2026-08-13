@@ -175,9 +175,10 @@ failure-rewrap arrangement. The typechecker's half is `propagateLiteralType` on 
 default against the unified type, because the phi requires the arms to agree
 (`m ?? 7` on a `Maybe<u8>` lowers the 7 at u8; `?? 300` is refused).
 
-A left operand that is not a canonical Maybe warned at check time (`lyra-W007`, with
-recovery) and has no meaning to lower; the backend refuses it loudly (rule 5) rather
-than inventing one, naming the warning and the fix (delete the `??`).
+A left operand that is not a canonical Maybe is refused at check time (`lyra-E049`;
+a warning as lyra-W007 until 08/13), so a build never reaches the backend with one —
+the backend's own loud refusal (rule 5) survives as a broken-guarantee defense, the
+same posture as `?`'s shape checks.
 
 `break`/`continue` leaked the same way and are fixed differently, because the producing
 block dominates a `break` without being its predecessor — no block-equality test reaches it.

@@ -38,19 +38,19 @@ func (l *lowerer) lowerNullCoalescing(block *ir.Block, e *ast.NullCoalescingExpr
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for the left operand of `??`")
 	}
-	// A left operand that is not a Maybe can never be null. The typechecker warned
-	// (lyra-W007) and recovered so one mistake would not cascade, but there is no
-	// meaning here to lower — refusing loudly beats inventing one (rule 5), and the
-	// fix is deleting the `??`.
+	// A left operand that is not a Maybe can never be null, and the typechecker
+	// refuses it (lyra-E049) — so a build never reaches this path, and hitting it
+	// means that guarantee broke. Refused loudly rather than given an invented
+	// meaning (rule 5), the same defensive posture as try.go's shape checks.
 	opDt, ok := l.resolveDataType(opT)
 	if !ok {
 		return nil, nil, fmt.Errorf(
-			"llvm: `??` on a %s, which can never be null — remove the `??` (lyra-W007)", opT)
+			"llvm: `??` on a %s, which can never be null — remove the `??` (lyra-E049)", opT)
 	}
 	shape, err := canonicalTryShape(opDt)
 	if err != nil || shape.kind != "Maybe" {
 		return nil, nil, fmt.Errorf(
-			"llvm: `??` on a %s, which can never be null — remove the `??` (lyra-W007)", opT)
+			"llvm: `??` on a %s, which can never be null — remove the `??` (lyra-E049)", opT)
 	}
 	fieldTypes := shape.success.FieldTypes()
 	if len(fieldTypes) != 1 {

@@ -25,24 +25,26 @@ func TestTypeCheck_NullCoalescing_IncompatiblePayload_Error(t *testing.T) {
 	assertErrorsAre(t, res, "null coalescing operands have incompatible types: left is i64, right is string")
 }
 
-// A non-optional left operand can never be null: the `??` is pointless and is
-// reported as a warning.
-func TestTypeCheck_NullCoalescing_NonOptionalLeft_Warning(t *testing.T) {
+// A non-optional left operand can never be null: the `??` is pointless — the
+// default is dead code that reads as a handled case — and is refused
+// (lyra-E049; a warning until 08/13). The recovery still treats the left type
+// as the payload, so no cascade follows the one report.
+func TestTypeCheck_NullCoalescing_NonOptionalLeft_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let x: i64 = 0
 		let y: i64 = 1
 		let z = x ?? y
 	`, false)
-	assertWarningsAre(t, res, "left operand of `??` is never null: expected a Maybe<T>, got i64")
+	assertErrorsAre(t, res, "left operand of `??` is never null: expected a Maybe<T>, got i64 — remove the `??`")
 }
 
 // An int literal left operand is likewise never null.
-func TestTypeCheck_NullCoalescing_IntLiteralLeft_Warning(t *testing.T) {
+func TestTypeCheck_NullCoalescing_IntLiteralLeft_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 		let b: i64 = 7
 		let z = 42 ?? b
 	`, false)
-	assertWarningsAre(t, res, "left operand of `??` is never null: expected a Maybe<T>, got integer literal")
+	assertErrorsAre(t, res, "left operand of `??` is never null: expected a Maybe<T>, got integer literal — remove the `??`")
 }
 
 // ── The default is a value position against the unified type ─────────────────

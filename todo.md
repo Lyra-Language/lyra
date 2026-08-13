@@ -239,9 +239,13 @@ write today:
   is emitted in the lowering directly, `?`'s failure-rewrap arrangement. The
   typechecker also propagates the unified type onto an untyped default (the phi needs
   the arms to agree: `?? 7` on a `Maybe<u8>` lowers at u8) and range-checks it
-  (`?? 300` is refused — the 08/13 literal rule). A non-Maybe left operand keeps its
-  W007 warning at check time and is a loud backend refusal at build time, naming the
-  fix. ASan on both paths, macOS and Linux. See COMPLETED.md.
+  (`?? 300` is refused — the 08/13 literal rule). A non-Maybe left operand is a hard
+  error (`lyra-E049`; it had warned as lyra-W007 since the operator landed, and became
+  an error the same day the operator started lowering): the `??` can never fire, so
+  the default is dead code that reads as a handled case, and a construct that cannot
+  mean anything is refused where it is written — the E034/E035 reasoning. The backend
+  keeps its own loud refusal as a broken-guarantee defense. ASan on both paths, macOS
+  and Linux. See COMPLETED.md.
 
 - **[DONE 08/13] A pattern literal is value-checked against the type it is compared
   to** (`lyra-E048`), and a return-position literal joined the decl sites — the

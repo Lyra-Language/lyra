@@ -1464,9 +1464,10 @@ func (tc *TypeChecker) checkForLoopExpr(expr *ast.ForLoopExpr) {
 // ambient property of every type, so `??` unwraps the optional. The result is
 // the payload T unified with the default operand via branchCommonType.
 //
-// A non-optional left operand can never be null, which makes the `??` pointless;
-// it is reported as a warning (lyra-W007). We still recover by treating the left
-// type as the payload so one such mistake does not cascade into spurious
+// A non-optional left operand can never be null, which makes the `??` pointless —
+// the default is dead code that reads as a handled case; it is an error
+// (lyra-E049; a warning until 08/13). We still recover by treating the left type
+// as the payload so one such mistake does not cascade into spurious
 // incompatible-type errors.
 func (tc *TypeChecker) inferNullCoalescingExpr(expr *ast.NullCoalescingExpr) types.Type {
 	optType := tc.inferExprType(expr.Optional)
@@ -1483,9 +1484,9 @@ func (tc *TypeChecker) inferNullCoalescingExpr(expr *ast.NullCoalescingExpr) typ
 	if kind, t, _, ok := tc.resultOrMaybeKind(optType, expr.Optional.GetLocation()); ok && kind == "Maybe" {
 		payload = t
 	} else {
-		tc.addErrorCode(expr.Optional.GetLocation(), SeverityWarning,
+		tc.addErrorCode(expr.Optional.GetLocation(), SeverityError,
 			diag.CodeNonOptionalCoalescing,
-			"left operand of `??` is never null: expected a Maybe<T>, got %s", optType)
+			"left operand of `??` is never null: expected a Maybe<T>, got %s — remove the `??`", optType)
 	}
 
 	common, ok := branchCommonType(payload, defType)

@@ -503,8 +503,14 @@ const (
 	CodeUnusedResult    = "lyra-W006"
 
 	// CodeNonOptionalCoalescing: the left operand of `??` is not a Maybe<T>, so
-	// it can never be null and the coalescing is pointless.
-	CodeNonOptionalCoalescing = "lyra-W007"
+	// it can never be null and the coalescing is pointless — the default is dead
+	// code that reads as a handled case. A warning until 08/13 (as lyra-W007, the
+	// slot below, now retired); an error since, on the E034/E035 reasoning: a
+	// construct that cannot mean anything is refused where it is written, not
+	// compiled around. The typechecker still recovers by treating the left type
+	// as the payload, so one dead `??` does not cascade into spurious
+	// incompatible-type errors downstream.
+	CodeNonOptionalCoalescing = "lyra-E049"
 
 	// CodeImpreciseFloatEquality: an exact floating-point equality test — the
 	// `==`/`!=` operator on floats, or a float literal `match` pattern (which
