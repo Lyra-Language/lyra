@@ -263,24 +263,35 @@ write today:
   language that makes allocation explicit (and `noalloc` would have to charge it). A
   binding that must be dynamic is declared dynamic. See COMPLETED.md.
 
-- **[OPEN] A float literal is not narrowed to the operand's width in a comparison**,
-  and the result does not build. `let x: f32 = 0.1` then `x == 0.1` emits
+- **[DONE 08/13] A float literal in a comparison takes the operand's width**, and the
+  program builds again. `let x: f32 = 0.1` then `x == 0.1` emitted
   `fcmp oeq float %1, 0x3FB999999999999A` — a **double** constant in a `float`
-  compare — which clang rejects outright (`floating point constant invalid for
-  type`). Found 08/13 while testing the float-printing fix; it predates that work and
-  is unaffected by it (the constant is emitted at double, where `floatConst` is the
-  identity).
+  compare — which clang rejected outright.
 
-  The intent is clear and already half-built: `checkBooleanBinaryOpExpr` calls
-  `propagateLiteralType(expr.Right, effective)`, which is what makes the integer
-  analogue work (`let x: u8 = 200` then `x == 200`), so the literal is *supposed* to
-  take the operand's width. Something between that call and the backend's
-  `literalFloatType` is not recording it for floats. Two things to settle when fixing:
-  whether the propagation is missing or merely unrecorded, and whether the backend's
-  comparison should *also* reconcile widths defensively with the existing
-  `coerceFloatWidth` — `lowerFloatComparison`'s doc says it takes "two already-lowered
-  **same-type** float values" and nothing enforces that. It fails loudly rather than
-  silently, which is why it is recorded rather than patched around.
+  **The cause was an `else if`.** In `checkBooleanBinaryOpExpr`'s `==`/`!=` arm the
+  float-imprecision warning (`lyra-W008`) sat where `propagateComparisonWidth`
+  belonged:
+
+  ```go
+  } else if isFloatType(leftType) || isFloatType(rightType) {
+      …warn about precision…            // and return, never propagating
+  } else {
+      tc.propagateComparisonWidth(…)
+  }
+  ```
+
+  So the operators the warning was *about* were exactly the ones whose width never
+  propagated — a warning about floating-point precision that stopped the program
+  compiling at all. The warning is advice, so it is emitted *alongside* the
+  propagation now. The relational operators (`<`, `<=`, `>`, `>=`) never had the bug,
+  their branch propagating unconditionally, which is why `x < 0.1` always worked and
+  `x == 0.1` never did — a difference with no reason behind it, which is what an
+  `else if` doing double duty looks like from the outside.
+
+  Nothing else needed changing: `numericResultType` already answered
+  `untyped_float + f32 → f32`, `propagateLiteralType` already had its float arm, and
+  the backend's `literalFloatType` already reads the recorded type. One link in a
+  chain that was otherwise complete. See COMPLETED.md.
 
 - **[OPEN] `f16` literals log an llir "please submit a bug report" line on a normal
   build.** `let a: f16 = 0.1` prints `unable to represent floating-point constant 0.1

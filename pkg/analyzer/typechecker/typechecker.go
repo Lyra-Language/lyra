@@ -342,7 +342,7 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// A `const` must be evaluable at compile time: reject any initializer that
 	// isn't a literal, another constant, or an expression built purely from those.
 	if decl.BindingKind == ast.BindingConst {
-		tc.checkConstInitializer(decl.Value)
+		tc.checkConstInitializer(decl.Name, decl.Value)
 	}
 
 	// Lambda values (function declarations) are handled separately.
@@ -1388,10 +1388,19 @@ func (tc *TypeChecker) checkBooleanBinaryOpExpr(expr *ast.BooleanBinaryOpExpr) {
 		}
 		if !areEqualityCompatible(leftType, rightType) {
 			tc.addIncompatibleTypesError(expr, string(expr.Operator), leftType, rightType)
-		} else if isFloatType(leftType) || isFloatType(rightType) {
-			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeImpreciseFloatEquality,
-				"operator %s: comparing float values with == or != may give unexpected results due to floating-point precision", expr.Operator)
 		} else {
+			// The float warning is *advice*, so it is emitted alongside the width
+			// propagation rather than instead of it. It sat on an `else if` until
+			// 08/13, which skipped propagation for exactly the comparisons it warned
+			// about: `let x: f32 = 0.1` then `x == 0.1` left the literal at the f64
+			// default, the backend emitted `fcmp oeq float %1, <double constant>`, and
+			// **clang rejected the module** — a warning about precision that stopped
+			// the program compiling at all. The relational operators never had it,
+			// since their branch propagates unconditionally.
+			if isFloatType(leftType) || isFloatType(rightType) {
+				tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeImpreciseFloatEquality,
+					"operator %s: comparing float values with == or != may give unexpected results due to floating-point precision", expr.Operator)
+			}
 			tc.propagateComparisonWidth(expr, leftType, rightType)
 		}
 	case ast.BooleanBinaryOpSpaceship:

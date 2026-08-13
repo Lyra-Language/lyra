@@ -3,6 +3,7 @@ package typechecker
 import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // checkConstInitializer verifies that a `const` binding's initializer is a
@@ -18,12 +19,41 @@ import (
 // an interpolated string, a member/index access, etc. — is rejected with
 // lyra-E012. The check reports the first (outermost) offending sub-expression so
 // the author is pointed at the part that isn't constant.
-func (tc *TypeChecker) checkConstInitializer(expr ast.Expression) {
-	if offender, ok := tc.firstNonConstant(expr); !ok {
-		tc.addErrorCode(offender.GetLocation(), SeverityError, diag.CodeNonConstantConstInitializer,
-			"`const` initializer must be a compile-time constant: %s is not constant",
-			describeNonConstant(offender))
+func (tc *TypeChecker) checkConstInitializer(name string, expr ast.Expression) {
+	offender, ok := tc.firstNonConstant(expr)
+	if ok {
+		return
 	}
+	// A **conversion** gets the fix rather than the category. `const A = u8(200)`
+	// is a reasonable thing to write and was reported as "a function call is not
+	// constant" — true of the mechanism (a conversion is spelled as a call) and
+	// useless as advice, since it names neither what was wrong nor what to do. The
+	// type belongs in an annotation, which *is* supported: `const A: u8 = 200`.
+	if target, isConv := conversionTargetOf(offender); isConv {
+		tc.addErrorCode(offender.GetLocation(), SeverityError, diag.CodeNonConstantConstInitializer,
+			"`const` initializer must be a compile-time constant: a conversion is not constant — "+
+				"write the type as an annotation instead: `const %s: %s = ...`", name, target)
+		return
+	}
+	tc.addErrorCode(offender.GetLocation(), SeverityError, diag.CodeNonConstantConstInitializer,
+		"`const` initializer must be a compile-time constant: %s is not constant",
+		describeNonConstant(offender))
+}
+
+// conversionTargetOf reports the primitive a call converts to, when the call is a
+// conversion (`u8(x)`, `string(x)`) rather than an ordinary call. It asks
+// types.ConversionTargetName — the one shared answer to "is this callee a
+// conversion?", so this cannot drift from the conversion rules themselves.
+func conversionTargetOf(expr ast.Expression) (types.PrimitiveTypeName, bool) {
+	call, ok := expr.(*ast.FunctionCallExpr)
+	if !ok || len(call.Arguments) != 1 {
+		return "", false
+	}
+	id, ok := call.Function.(*ast.IdentifierExpr)
+	if !ok {
+		return "", false
+	}
+	return types.ConversionTargetName(id.Name)
 }
 
 // firstNonConstant walks expr and returns the first sub-expression that is not a

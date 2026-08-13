@@ -1322,8 +1322,12 @@ when emitting a narrower type — `let x: f32 = 0.1` shipped as `0x3FB9999980000
 ULP below 0.1f32, so the program held a number its source did not name. That bug was
 invisible while printing was lossy (both constants printed `0.1` at six digits), which is
 the case for round-tripping output in general: a lossy printer hides other faults. And a
-float literal is still **not** narrowed in a *comparison*, so `x == 0.1` against an f32
-emits a double constant into a `float` compare and clang rejects it — open, see `todo.md`.
+float literal in a *comparison* takes the operand's width (also 08/13): `x == 0.1` against
+an f32 emitted a **double** constant into a `float` compare and clang rejected the module,
+because the imprecision warning sat on an `else if` where the width propagation belonged —
+so the operators it warned about were exactly the ones that never propagated. Both fixes
+meet in one constant: `float 0x3FB99999A0000000` is the right type from the second and the
+right value from the first.
 
 `layout.go` provides the llir type toolkit — `LLVMPrimitive`, `IsSignedInt`,
 `IsNumericConversionTarget`, `SharedBoxType`, `TagType`, `DataUnionType` (all returning `llir`

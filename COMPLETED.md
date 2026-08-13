@@ -10,6 +10,49 @@ Newest first.
 ## Dated log
 
 ### 08/13/26
+**A float literal in a comparison takes the operand's width, and `lyra-E012` names
+the fix instead of the mechanism.** Two small ones, and the first is a good specimen
+of a bug hiding inside a control-flow shape rather than inside any statement.
+
+`let x: f32 = 0.1` then `x == 0.1` emitted `fcmp oeq float %1, 0x3FB999999999999A` —
+a **double** constant in a `float` compare — and clang rejected the module. Every
+link in the chain was already correct: `numericResultType` answers
+`untyped_float + f32 → f32`, `propagateLiteralType` has a float arm, and the
+backend's `literalFloatType` reads the recorded type. The break was an `else if`:
+
+```go
+} else if isFloatType(leftType) || isFloatType(rightType) {
+    …warn that float ==/!= is precision-sensitive…   // and return
+} else {
+    tc.propagateComparisonWidth(…)
+}
+```
+
+The imprecision warning sat *where the propagation belonged*, so the operators the
+warning was about were precisely the ones whose width never propagated — a warning
+about floating-point precision that stopped the program compiling. The warning is
+advice, not an alternative to doing the work, so it is emitted alongside the
+propagation now. The relational operators never had the bug, their branch
+propagating unconditionally; that `x < 0.1` worked and `x == 0.1` did not was a
+difference with no reason behind it, which is what an `else if` doing double duty
+looks like from outside. The emitted constant is now `float 0x3FB99999A0000000` —
+the right *type* from this fix and the right *value* from the same day's
+`floatConst` rounding, which is why the IR test pins both.
+
+**`lyra-E012`** reported `const A = u8(200)` as "a function call is not constant".
+True of the mechanism — a conversion is spelled as a call — and useless as advice,
+naming neither what was wrong nor what to do. It now says a *conversion* is not
+constant and shows the spelling that works: `const A: u8 = ...`, with the const's own
+name and the conversion's target filled in. The rule itself is right and unchanged;
+an annotated const is the supported way to write a typed constant, and probing
+confirmed `const A: u8 = 200` compiles and runs. An ordinary call keeps the ordinary
+message, since no annotation would rescue it. The conversion is recognized through
+`types.ConversionTargetName`, the same shared answer the newtype and ownership work
+uses, so this cannot drift from the conversion rules themselves.
+
+Tests: `llvm_float_compare_test.go` (exec, plus the IR pin) and four additions to
+`const_initializer_test.go`.
+
 **A fixed-array *binding* no longer takes a `[]T` slot — it segfaulted.** Found the
 same day while deciding how wide to make the generic-inference fix below, and it is
 the entry that pair exists to justify: the narrow fix was chosen *because* probing
