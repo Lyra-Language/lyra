@@ -1,6 +1,7 @@
 package typechecker
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -277,23 +278,13 @@ func (tc *TypeChecker) checkConstrainedTypeDecl(decl *ast.TypeDeclStmt, ct *type
 		if !ok {
 			continue
 		}
-		body := regexPatternBody(pc.Pattern)
+		body := pc.Body()
 		if _, err := regex.Compile(body); err != nil {
 			tc.addError(decl.GetLocation(), SeverityError,
 				"type %s: invalid pattern constraint %s: %s",
 				ct.Name, pc.Pattern, err)
 		}
 	}
-}
-
-// regexPatternBody strips the r"…" delimiters from a PatternConstraint.Pattern
-// value.  The grammar stores the full regex-literal text (e.g. r"[0-9]+");
-// regex.Compile expects just the inner body ([0-9]+).
-func regexPatternBody(p string) string {
-	if len(p) >= 3 && p[:2] == `r"` && p[len(p)-1] == '"' {
-		return p[2 : len(p)-1]
-	}
-	return p // already stripped or bare pattern string
 }
 
 func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
@@ -891,21 +882,29 @@ func structFieldTypes(t types.Type) map[string]types.Type {
 func (tc *TypeChecker) checkPatternConstraints(value ast.Expression, ct *types.ConstrainedType) {
 	strLit, ok := value.(*ast.StringLiteralExpr)
 	if !ok {
-		// **A value the compiler cannot read is refused, not admitted** (lyra-E054,
-		// 08/13). `range`, `values` and `step` gained runtime traps that day, so a
-		// value they cannot settle statically is checked where it lands; `pattern`
-		// cannot join them, because testing a regex at run time needs an engine in the
-		// runtime and there is none (lyra-E052 records why). That leaves two honest
-		// options for a non-literal — refuse it, or let it through unchecked — and
-		// letting it through is what made `Digits("abc")` build and print `abc` while
-		// the type's whole declaration says it cannot. Refusing keeps the guarantee
-		// whole and costs the ability to build one of these from runtime data, which
-		// is a feature waiting on the engine rather than a rule.
+		// **A value the compiler cannot read is matched at run time** as of 08/13,
+		// against the DFA the backend compiles from this very pattern — so a
+		// non-literal is ordinary code now, not a refusal. It was refused for one day,
+		// when `range`/`values`/`step` gained traps and `pattern` had no way to join
+		// them; building the matcher removed the reason.
+		//
+		// What is still refused is a pattern that **cannot be compiled to a table**
+		// (lyra-E054): a lookbehind, whose gate depends on text preceding the input, or
+		// a DFA too large to emit. Those are properties of the pattern rather than of
+		// the value, so the report names the pattern — and refusing beats matching by
+		// some other rule, since the compile-time and run-time answers for one
+		// constraint must agree.
 		if pc, isPattern := firstPatternConstraint(ct); isPattern {
-			tc.addErrorCode(value.GetLocation(), SeverityError, diag.CodePatternValueNotProvable,
-				"cannot build %s from a value the compiler cannot read: its pattern constraint %s "+
-					"is checked at compile time and Lyra has no runtime regex engine yet — "+
-					"use a string literal", ct.Name, pc.Pattern)
+			if _, err := regex.CompileMatcher(pc.Body(), regex.MaxTableStates); err != nil {
+				if errors.Is(err, regex.ErrUncompilablePattern) {
+					tc.addErrorCode(value.GetLocation(), SeverityError, diag.CodePatternValueNotProvable,
+						"cannot build %s from a value the compiler cannot read: its pattern constraint %s "+
+							"cannot be compiled to a runtime matcher (%v) — use a string literal",
+						ct.Name, pc.Pattern, err)
+				}
+				// A pattern that does not *parse* is reported at the declaration; no
+				// second report here.
+			}
 		}
 		return
 	}
@@ -914,7 +913,7 @@ func (tc *TypeChecker) checkPatternConstraints(value ast.Expression, ct *types.C
 		if !ok {
 			continue
 		}
-		re, err := regex.Compile(regexPatternBody(pc.Pattern))
+		re, err := regex.Compile(pc.Body())
 		if err != nil {
 			// The broken regex is already reported at the type declaration site;
 			// don't double-report here.
@@ -925,7 +924,7 @@ func (tc *TypeChecker) checkPatternConstraints(value ast.Expression, ct *types.C
 			continue // DFA capacity exceeded — don't block the user
 		}
 		if !matched {
-			// pc.Pattern carries its own `r"…"` delimiters (regexPatternBody strips them
+			// pc.Pattern carries its own `r"…"` delimiters (pc.Body() strips them
 			// for compilation), so the format string must not add a second pair — it did,
 			// and the message read `pattern constraint r"r"^#[0-9a-f]{6}$""`.
 			tc.addError(value.GetLocation(), SeverityError,

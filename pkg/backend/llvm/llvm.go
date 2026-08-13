@@ -77,6 +77,10 @@
 //	  weak.go             weak references as opaque box pointers
 //	  dominators.go       dominator info over a finished function, for exit releases
 //	  runtime.go          the ref-counted heap runtime, emitted lazily
+//
+//	Constraints
+//	  constraint_check.go a newtype's `where` constraints, checked at run time
+//	  regex_match.go      the DFA tables + driver a `pattern(...)` constraint matches with
 package llvm
 
 import (
@@ -149,6 +153,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		retainFns:          map[string]*ir.Func{},
 		cStrings:           map[string]*ir.Global{},
 		fmtFloat:           map[string]*ir.Func{},
+		regexTables:        map[string]*regexTables{},
 		specialized:        map[string]*ir.Func{},
 		specializedParams:  map[string][]ast.Parameter{},
 		closures:           map[*ast.LambdaExpr]*ir.Func{},
@@ -232,23 +237,25 @@ type lowerer struct {
 	// item (a type definition, a function body) rather than threaded, because the
 	// resolved types reaching lowerType carry no location of their own.
 	currentLoc      ast.Location
-	strLitCount     int                   // counter for unique string-literal global names
-	memcmp          *ir.Func              // libc memcmp, declared lazily on first string comparison
-	memcpy          *ir.Func              // libc memcpy, declared lazily on first string concatenation
-	write           *ir.Func              // libc write, declared lazily on first print/println
-	snprintf        *ir.Func              // libc snprintf, declared lazily on first numeric print
-	fmtRune         *ir.Func              // lyra_rune_to_utf8, defined lazily on first rune print
-	utf8Decode      *ir.Func              // lyra_utf8_decode, defined lazily on first string for-in
-	strRuneOffset   *ir.Func              // lyra_str_rune_offset, defined lazily on first string index/slice
-	utf8Count       *ir.Func              // lyra_utf8_count, defined lazily (read_line / interpolation rune counts)
-	realloc         *ir.Func              // libc realloc, declared lazily on first dynamic-array push
-	fmtI128         *ir.Func              // lyra_i128_to_str, defined lazily on first i128/u128 print
-	strtod          *ir.Func              // libc strtod, declared lazily (the float formatter's round-trip check)
-	fmod            *ir.Func              // libc fmod, declared lazily (a float `step(...)` constraint check)
-	fmtFloat        map[string]*ir.Func   // lyra_f{16,32,64}_to_str, one per printed float width
-	mulOverflowI128 *ir.Func              // lyra_i128_mul_overflow, defined lazily (compiler-rt's __muloti4 is not linkable on Linux)
-	newlineByte     *ir.Global            // interned "\n" byte, for println's trailing newline
-	cStrings        map[string]*ir.Global // interned NUL-terminated C strings (snprintf formats, bool text)
+	strLitCount     int                     // counter for unique string-literal global names
+	memcmp          *ir.Func                // libc memcmp, declared lazily on first string comparison
+	memcpy          *ir.Func                // libc memcpy, declared lazily on first string concatenation
+	write           *ir.Func                // libc write, declared lazily on first print/println
+	snprintf        *ir.Func                // libc snprintf, declared lazily on first numeric print
+	fmtRune         *ir.Func                // lyra_rune_to_utf8, defined lazily on first rune print
+	utf8Decode      *ir.Func                // lyra_utf8_decode, defined lazily on first string for-in
+	strRuneOffset   *ir.Func                // lyra_str_rune_offset, defined lazily on first string index/slice
+	utf8Count       *ir.Func                // lyra_utf8_count, defined lazily (read_line / interpolation rune counts)
+	realloc         *ir.Func                // libc realloc, declared lazily on first dynamic-array push
+	fmtI128         *ir.Func                // lyra_i128_to_str, defined lazily on first i128/u128 print
+	strtod          *ir.Func                // libc strtod, declared lazily (the float formatter's round-trip check)
+	fmod            *ir.Func                // libc fmod, declared lazily (a float `step(...)` constraint check)
+	regexMatch      *ir.Func                // lyra_regex_match, the shared DFA driver (regex_match.go)
+	regexTables     map[string]*regexTables // compiled pattern -> its constant tables, one per distinct pattern
+	fmtFloat        map[string]*ir.Func     // lyra_f{16,32,64}_to_str, one per printed float width
+	mulOverflowI128 *ir.Func                // lyra_i128_mul_overflow, defined lazily (compiler-rt's __muloti4 is not linkable on Linux)
+	newlineByte     *ir.Global              // interned "\n" byte, for println's trailing newline
+	cStrings        map[string]*ir.Global   // interned NUL-terminated C strings (snprintf formats, bool text)
 
 	// roundingIntrinsics caches lazily-declared llvm.{floor,ceil,round}.<width>
 	// intrinsics (rounding.go), keyed by full intrinsic name.

@@ -10,6 +10,65 @@ Newest first.
 ## Dated log
 
 ### 08/13/26
+**Regex matching at run time — without a regex engine in the runtime.** `lyra-E052`
+and `lyra-E054` both recorded the same absence: the runtime is hand-written shims and
+libc with no FFI, the compiler's own `regexp` runs at compile time and cannot ship, so
+nothing could match a pattern against a value the compiler had not already read. That
+is why a `pattern(...)` constrained newtype could only be built from a literal.
+
+**The way out is that a pattern never needs compiling at run time.** A `where
+pattern(r"…")` constraint is part of a *type*, and `r"…"` is a literal — so the
+pattern is always known while compiling. The engine can therefore run at compile time
+and only its **answer** need ship. What ships is two constant tables and a loop.
+
+`pkg/regex` already had a derivative-based lazy DFA; `regex.Matcher` flattens it into
+`Trans[state*256+byte]` plus a per-state accept array, with the beginning- and
+end-of-text boundaries **folded in** so the emitted loop never has to know boundaries
+exist. The backend emits those as private constant globals (one set per distinct
+pattern, cached by pattern text) and one shared `lyra_regex_match` driver walks them.
+Matching is O(n) with no backtracking and no allocation, which is what a DFA buys —
+and a trap is `EffectNone`, so `pure noalloc` code can construct a constrained newtype
+freely.
+
+**The hard part was agreement, and it was attacked before any IR existed.** The
+compile-time and run-time answers for one pattern must be identical — a value passing
+one and failing the other is worse than either — and the boundary handling is where
+they could most easily diverge. `MultiLine` is on by default, so `^`/`$` fire at every
+`\n`, and `IsMatch` deliberately omits the trailing beginning-of-line after the input's
+final byte. Rather than re-derive that, `stepByte` mirrors `IsMatch`'s sequence of
+calls exactly and the trailing newline gets its **own column** (`NewlineLast`), so the
+difference lives in the table rather than in logic that could drift. Then
+`matcher_test.go` checks the table against the engine over a corpus of patterns × inputs
+— curated newline cases, exhaustive 1–3 byte strings over an adversarial alphabet, and
+all 256 byte values — rather than against hand-written expectations, which would only
+have tested my reading of the patterns. It passed on the first run, which is the
+evidence the mirroring approach was right.
+
+`llvm_regex_test.go` then closes the remaining link by running **compiled programs**
+against the engine for 31 pattern/input pairs: a Go test can check the table, but only
+a compiled program can check that the IR implements it. Engine → table → emitted loop,
+each step compared to the one before.
+
+Two properties worth keeping. **A literal costs nothing**: it was matched at compile
+time, so no table, no driver and no call are emitted — verified by an IR test, and the
+same rule the numeric constraints follow. And **one pattern is one table** however many
+places use it; the tables are the large part of this feature, so sharing them is what
+keeps it affordable. Measured: `^[0-9]+$` is 3 states (3 KB), a realistic email pattern
+8 states (8 KB), the whole program a 36 KB binary.
+
+What is still refused (`lyra-E054`, now naming the *pattern* rather than the value) is a
+pattern that cannot become a table: a **lookbehind**, whose gate depends on text
+preceding the input and which a flat byte table cannot represent, and a DFA beyond
+`regex.MaxTableStates`. The cap lives in `pkg/regex` because two users must not disagree
+about it — the typechecker asks whether a pattern will compile, and the backend then
+compiles it, so a different cap on each side would accept what could not be emitted. For
+the same reason `PatternConstraint.Body()` (stripping the `r"…"` delimiters) moved onto
+the type: the typechecker and the backend compile the *same* pattern, and a difference in
+what they strip would be a difference in what they match.
+
+`lyra-E052` — a regex as a first-class **value** — is unchanged and still refused. This
+gives constraint checking a runtime implementation, not the language a `Regex` type.
+
 **A `where` constraint is enforced at run time — the ladder's second rung, which
 constraints did not have.** A constraint caught a literal, and whatever the
 value-range pass could pin to an interval, and silently accepted everything else:

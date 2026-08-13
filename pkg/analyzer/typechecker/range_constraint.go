@@ -109,6 +109,18 @@ func (tc *TypeChecker) checkNewtypeConstraints(value ast.Expression, declType ty
 // in the runtime, which `lyra-E052` records the absence of, so a non-provable value
 // is *refused* instead (checkPatternConstraints).
 func (tc *TypeChecker) scheduleRuntimeConstraintCheck(value ast.Expression, ct *types.ConstrainedType, base types.PrimitiveType) {
+	// A **string** base carries `pattern(...)`, checked at run time by the DFA the
+	// backend compiles from the pattern (08/13). A string *literal* was already
+	// matched above, so only a value the compiler could not read is scheduled.
+	if base.Name == types.String {
+		if _, isLiteral := value.(*ast.StringLiteralExpr); isLiteral {
+			return
+		}
+		if _, hasPattern := firstPatternConstraint(ct); hasPattern {
+			tc.constraintChecks.Require(value, ct)
+		}
+		return
+	}
 	if !isAnyConcreteInt(base.Name) && !isFloatType(base) {
 		return // a runtime check exists only for the numeric constraint kinds
 	}

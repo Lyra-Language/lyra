@@ -47,6 +47,23 @@ func (l *lowerer) emitConstraintChecks(block *ir.Block, val value.Value, ct *typ
 	if !ok {
 		return block, nil
 	}
+	// A **string** base carries `pattern(...)`, matched by the DFA compiled from the
+	// pattern at compile time (regex_match.go). Handled before the numeric widths
+	// because it shares none of their machinery.
+	if base.Name == types.String {
+		for _, c := range ct.Constraints {
+			pc, ok := c.(*types.PatternConstraint)
+			if !ok {
+				continue
+			}
+			var err error
+			if block, err = l.emitPatternCheck(block, val, pc.Body()); err != nil {
+				return nil, err
+			}
+		}
+		return block, nil
+	}
+
 	signed := IsSignedInt(base.Name)
 	isFloat := isFloatPrimitive(base.Name)
 	if !isFloat && !isAnyConcreteIntName(base.Name) {

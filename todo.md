@@ -310,6 +310,31 @@ write today:
   llir, so this promotes a transitive dependency to a direct one rather than adding
   anything. The emitted value is unchanged (0.1 stays `0xH2E66`), which the test pins.
 
+- **[DONE 08/13] Regex matching at run time**, which lifts the one-day-old restriction
+  that a `pattern(...)` newtype could only be built from a literal. There is still no
+  regex engine in the runtime, and there does not need to be: a constraint's pattern is
+  part of a *type*, so it is known while compiling. `pkg/regex` runs then, its lazy DFA
+  is flattened (`regex.Matcher`) into `Trans[state*256+byte]` with the text boundaries
+  folded in, the tables become private constant globals, and one shared
+  `lyra_regex_match` driver walks them — O(n), no backtracking, no allocation, and a
+  trap is `EffectNone` so `pure noalloc` code may construct one.
+
+  **Agreement was the risk and was attacked first.** `MultiLine` is on by default, so
+  `^`/`$` fire at every `\n` and `IsMatch` omits the trailing beginning-of-line after
+  the final byte; `stepByte` mirrors that call sequence rather than re-deriving it, and
+  the trailing newline gets its own column so the difference lives in the table. The
+  table is then checked against the engine over a corpus (curated newline cases,
+  exhaustive short strings, all 256 byte values), and compiled programs are checked
+  against the engine for 31 pairs — a Go test can verify the table, but only a running
+  program verifies that the IR implements it.
+
+  A **literal still costs nothing** (no table, no driver, no call — IR-pinned), and one
+  pattern emits one table however many places use it. Measured: 3 KB for `^[0-9]+$`,
+  8 KB for a realistic email pattern. Still refused: a lookbehind (its gate depends on
+  text before the input) and a DFA past `regex.MaxTableStates` — both properties of the
+  pattern, so lyra-E054 now names the pattern rather than the value. `lyra-E052`, a
+  regex as a first-class *value*, is unchanged. See COMPLETED.md.
+
 - **[DONE 08/13] A `where` constraint is enforced at run time**, so the ladder has its
   second rung. `range(...)`, `values(...)` and `step(...)` now trap on a value that
   violates them; `pattern(...)` refuses a value it cannot read. Details in

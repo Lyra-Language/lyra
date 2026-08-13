@@ -179,10 +179,28 @@ func (s *StepConstraint) GetName() string {
 }
 
 type PatternConstraint struct {
+	// Pattern is the constraint's **source text, delimiters included** — `r"[0-9]+"`
+	// rather than `[0-9]+` — because a diagnostic quotes it back the way it was
+	// written. Body() is the form a regex engine takes.
 	Pattern string
 }
 
 func (p *PatternConstraint) constraintNode() {}
+
+// Body strips the `r"…"` delimiters, giving the pattern a regex engine compiles.
+//
+// It lives on the type because two places need it and they must not drift: the
+// typechecker compiles the pattern to check a string literal, and the backend
+// compiles the *same* pattern into the DFA tables it emits for the runtime check
+// (08/13). Those are the two rungs of one constraint, so a difference in what they
+// strip would be a difference in what they match.
+func (p *PatternConstraint) Body() string {
+	s := p.Pattern
+	if len(s) >= 3 && s[:2] == `r"` && s[len(s)-1] == '"' {
+		return s[2 : len(s)-1]
+	}
+	return s // already stripped, or a bare pattern string
+}
 
 func (p *PatternConstraint) GetName() string {
 	return fmt.Sprintf("pattern(%s)", p.Pattern)

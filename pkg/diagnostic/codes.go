@@ -514,18 +514,26 @@ const (
 	// known asymmetry. A runtime value gets the trap that `range` and `values` do.
 	CodeStepConstraintViolation = "lyra-E053"
 
-	// CodePatternValueNotProvable: a value that is not a compile-time string literal
-	// assigned to a newtype carrying a `pattern(...)` constraint.
+	// CodePatternValueNotProvable: a newtype whose `pattern(...)` constraint **cannot
+	// be compiled to a runtime matcher**, constructed from a value that is not a
+	// compile-time string literal.
 	//
-	// The other constraint kinds gained runtime traps on 08/13, closing the gap where
-	// a value the compiler could not see through entered a constrained newtype
-	// unchecked. `pattern` cannot follow, because testing one at run time needs a
-	// regex engine in the runtime and there is none (lyra-E052 records why: the
-	// runtime is hand-written C with no FFI, and the compiler's own regexp runs at
-	// compile time and cannot ship). So the value is **refused** rather than silently
-	// admitted — the choice between failing loudly and passing quietly, made the way
-	// the rest of the language makes it. A literal still works, since that is checked
-	// where it is written.
+	// It is a property of the pattern, not of the value, so the message names the
+	// pattern. Two shapes qualify: a **lookbehind**, whose gate depends on text
+	// preceding the input and which a flat byte table cannot represent, and a DFA
+	// larger than regex.MaxTableStates, which would emit a table bigger than the
+	// program using it.
+	//
+	// **This was briefly much broader.** For one day it refused *every* non-literal,
+	// because the other constraint kinds had gained runtime traps and `pattern` could
+	// not follow — matching one needed a regex engine the runtime does not have. What
+	// removed the reason is that a pattern never needs compiling at run time: a
+	// constraint's pattern is part of a type, so pkg/regex runs at compile time and
+	// ships only its answer, as DFA tables the emitted driver walks (regex_match.go).
+	// Refusing the rest is still right, and for the same reason it was right then: the
+	// compile-time and run-time answers for one constraint must agree, so a pattern
+	// that cannot be matched the same way twice is refused rather than matched by some
+	// other rule.
 	CodePatternValueNotProvable = "lyra-E054"
 
 	// CodeRegexValuesNotImplemented: a regex literal used as a **value**

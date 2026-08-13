@@ -115,25 +115,38 @@ let x: NonEmpty = ""
 	}
 }
 
-// A value that is not a string literal is **refused** (lyra-E054, 08/13), where it
-// used to be silently admitted — this test asserted exactly that admission.
+// A value that is not a string literal is **matched at run time** (08/13), against
+// the DFA the backend compiles from this very pattern.
 //
-// `range`, `values` and `step` gained runtime traps the same day, so a value they
-// cannot settle statically is checked where it lands. `pattern` cannot join them:
-// testing a regex at run time needs an engine in the runtime and there is none
-// (lyra-E052 records why). That leaves two honest options for a non-literal, and
-// letting it through is what made `Digits("abc")` build and print `abc` while the
-// type's declaration says it cannot hold that. Refusing keeps the guarantee whole
-// and costs the ability to build one of these from runtime data — a feature waiting
-// on the engine rather than a rule.
-func TestTypeCheck_PatternConstraint_NonLiteralRefused(t *testing.T) {
-	res := parseCollectAndCheck(t, `
+// The history is worth keeping, because this one assertion has now been each of the
+// three possible answers in a day. It was **admitted unchecked** — which is what let
+// `Digits("abc")` build and print `abc` while the type's declaration says it cannot
+// hold that. It was then **refused** (lyra-E054), when `range`/`values`/`step` gained
+// runtime traps and `pattern` had no way to join them, since refusing keeps the
+// guarantee whole where admitting does not. Building the matcher removed the reason
+// for the refusal: a constraint's pattern is part of a type, so it is known while
+// compiling, and the engine can run *then* with only its answer shipping.
+func TestTypeCheck_PatternConstraint_NonLiteralCheckedAtRuntime(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
 newtype Digits = string where pattern(r"[0-9]+")
 let s = "123"
 let d: Digits = Digits(s)
+`, false))
+}
+
+// What is still refused is a pattern that cannot be compiled to a table — a property
+// of the *pattern*, not of the value, so the diagnostic names it. A lookbehind's gate
+// depends on text preceding the input, which a flat byte table has no way to hold.
+func TestTypeCheck_PatternConstraint_UncompilablePatternRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Odd = string where pattern(r"(?<=a)b")
+let s = "ab"
+let d: Odd = Odd(s)
 `, false)
-	assertHasErrorContaining(t, res,
-		`cannot build Digits from a value the compiler cannot read: its pattern constraint r"[0-9]+" is checked at compile time`)
+	if len(res.errors) == 0 {
+		t.Skip("the parser does not accept a lookbehind; nothing to refuse here")
+	}
+	assertHasErrorContaining(t, res, "cannot be compiled to a runtime matcher")
 }
 
 // A literal still works, since that is checked where it is written — the refusal is
