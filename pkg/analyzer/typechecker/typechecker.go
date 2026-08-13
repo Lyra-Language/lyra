@@ -2824,18 +2824,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 // checkNewtypeConstraints and then narrows the leaves to the base width, so
 // `Percent(150)` is caught exactly as `let p: Percent = 150` is, and `Cents(150)` over
 // a u8 base lowers its literal at u8.
-func (tc *TypeChecker) inferNewtypeConstruction(expr *ast.TupleLiteralExpr, name string, ct *types.ConstrainedType, generic bool) types.Type {
-	if generic {
-		// A generic newtype's base is a type variable, so there is nothing to check the
-		// operand against until the parameters are bound, and recording an unsubstituted
-		// base would hand the backend a type variable to lower. Refused loudly rather
-		// than guessed (rule 5); the annotation form still works, since resolveType
-		// expands a parameterized newtype into its substituted base.
-		tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNewtypeConstructorCall,
-			"%s is a generic newtype, which cannot be constructed by call yet — annotate instead (`let x: %s<...> = ...`)",
-			name, name)
-		return nil
-	}
+func (tc *TypeChecker) inferNewtypeConstruction(expr *ast.TupleLiteralExpr, name string, ct *types.ConstrainedType, decl *ast.TypeDeclStmt) types.Type {
 	if len(expr.Elements) != 1 {
 		tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNewtypeConstructorCall,
 			"%s is a newtype over %s, so it takes exactly one operand, not %d",
@@ -2843,6 +2832,50 @@ func (tc *TypeChecker) inferNewtypeConstruction(expr *ast.TupleLiteralExpr, name
 		return nil
 	}
 	operand := expr.Elements[0]
+
+	// A *generic* newtype's parameters are bound before anything else can be checked:
+	// by an explicit turbofish (`Boxed<i64>(5)`), or solved from the operand — the same
+	// ladder a named tuple's instantiation takes, sharing its solver, so `Boxed(5)` is
+	// `Boxed<i64>` exactly as `Some(5)` is `Maybe<i64>` (an untyped operand promotes to
+	// its default; a narrower instantiation is reached by saying so, `Boxed(u8(5))`).
+	// The bound parameters then resolve through the same expansion the annotation form
+	// uses, so everything downstream sees the substituted ConstrainedType it already
+	// knows. Until 08/12 this arm was refused outright ("annotate instead") — the base
+	// is a type variable, so there was nothing to check the operand against — but that
+	// was a missing solver, not a missing answer.
+	if len(decl.GenericParams) > 0 {
+		var args []types.Type
+		switch {
+		case len(expr.GenericArguments) == len(decl.GenericParams):
+			args = expr.GenericArguments
+		case len(expr.GenericArguments) == 0:
+			subst := tc.solveDataTypeVars(decl, []types.Type{ct.Type}, []ast.Expression{operand})
+			for _, gp := range decl.GenericParams {
+				bound, ok := subst[gp.Name]
+				if !ok {
+					// A parameter the base never mentions (`newtype Weird<t> = i64`)
+					// cannot be solved from any operand; only the turbofish can bind it.
+					tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNewtypeConstructorCall,
+						"%s: cannot infer %s from the operand — write the type arguments (`%s<...>(...)`)",
+						name, gp.Name, name)
+					return nil
+				}
+				args = append(args, bound)
+			}
+		default:
+			tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNewtypeConstructorCall,
+				"%s: expected %d generic argument(s), got %d", name, len(decl.GenericParams), len(expr.GenericArguments))
+			return nil
+		}
+		resolved := tc.resolveType(types.ParameterizedType{Name: name, TypeArguments: args}, expr.GetLocation())
+		inst, ok := resolved.(*types.ConstrainedType)
+		if !ok {
+			// resolveType reports its own errors (an unknown argument type, say); an
+			// expansion that is not a newtype past them would be a front-end bug.
+			return nil
+		}
+		ct = inst
+	}
 	got := tc.inferExprType(operand)
 	if got == nil {
 		return nil
@@ -2883,7 +2916,7 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 		// which reaches here through the same collector path (the collector erases the
 		// juxtaposed spelling into this same node, so both forms cost one arm).
 		if ct, isNewtype := decl.Type.(*types.ConstrainedType); isNewtype {
-			return tc.inferNewtypeConstruction(expr, name, ct, len(decl.GenericParams) > 0)
+			return tc.inferNewtypeConstruction(expr, name, ct, decl)
 		}
 		tc.addError(expr.GetLocation(), SeverityError, "%s: not a tuple type", name)
 		return nil

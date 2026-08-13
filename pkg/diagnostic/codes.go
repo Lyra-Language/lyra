@@ -430,8 +430,12 @@ const (
 
 	// CodeNewtypeConstructorCall: a malformed `newtype` construction — `Cents(150)`, or
 	// its juxtaposed twin `Cents 150`, written with the wrong operand count, with an
-	// operand the base cannot hold, or on a *generic* newtype (whose base is a type
-	// variable, so there is nothing to check against until the parameters are bound).
+	// operand the base cannot hold, with the wrong number of turbofish arguments, or
+	// on a generic newtype whose parameter the operand cannot solve (`newtype
+	// Weird<t> = i64` — only the `::<>` turbofish can bind a parameter the base never
+	// mentions). A solvable generic constructs by call (`Boxed(5)` is `Boxed<i64>`,
+	// the named-tuple solver); for its first few hours this arm refused every generic
+	// newtype outright, which was a missing solver rather than a missing answer.
 	//
 	// A newtype takes exactly one operand because it names exactly one base, and that
 	// operand is checked against the **base** rather than against the newtype:

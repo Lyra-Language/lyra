@@ -70,3 +70,25 @@ let main = () -> void => {
 		t.Error("a Boxed<string> is not an i64 — the nominal distinction must survive")
 	}
 }
+
+// A generic newtype constructs by call (08/12), and lowers to its operand exactly as
+// a concrete one does — the parameters are solved from the operand (or bound by the
+// `::<>` turbofish), the bound set resolves through the same expansion the annotation
+// form uses, and the backend sees the substituted ConstrainedType it already knows.
+// Two instantiations in one body pin that the solving is per-call, not per-name.
+func TestExec_GenericNewtypeConstructorLowers(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+newtype Boxed<t> = t
+let main = () -> void => {
+  let a = Boxed(41)
+  let s = Boxed("hi")
+  let c = Boxed::<u8>(200)
+  println("${i64(a) + 1} ${string(s)} ${u8(c)}")
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "42 hi 200" {
+		t.Errorf("generic newtype construction = %q; want \"42 hi 200\"", got)
+	}
+}

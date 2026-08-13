@@ -536,15 +536,57 @@ let p = Percent(150)`, false)
 	assertErrorsAre(t, res, "value 150 is outside the range 0..<=100 of Percent")
 }
 
-// A generic newtype's base is a type variable, so there is nothing to check the
-// operand against yet. Refused loudly rather than guessed; the annotation form works.
-func TestNewtype_GenericConstructorRefused(t *testing.T) {
+// A *generic* newtype constructs by call (08/12): the parameters are solved from the
+// operand through the same solver a named tuple's instantiation uses, so `Boxed(5)`
+// is `Boxed<i64>` exactly as `Some(5)` is `Maybe<i64>` — the untyped operand promotes
+// to its default, and a narrower instantiation is reached by saying so
+// (`Boxed(u8(7))`). This arm was refused outright at first ("annotate instead"): the
+// base is a type variable with nothing to check the operand against — which was a
+// missing solver, not a missing answer.
+func TestNewtype_GenericConstructorSolves(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Boxed<t> = t
+let a = Boxed(5)
+let ra = i64(a)
+let b = Boxed("hi")
+let rb = string(b)
+let c = Boxed(u8(7))
+let rc = u8(c)
+`, true))
+}
+
+// The turbofish binds the parameters explicitly — `::<>`, the spelling the grammar
+// has for a constructor's type arguments.
+func TestNewtype_GenericConstructorTurbofish(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Boxed<t> = t
+let c = Boxed::<u8>(200)
+let rc = u8(c)
+`, false))
+}
+
+// The solved result is nominal, exactly as a concrete newtype's construction is —
+// solving the parameter must not weaken the identity it parameterizes.
+func TestNewtype_GenericConstructorResultIsNominal(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 newtype Boxed<t> = t
+let takes = (n: i64) -> i64 => n
 let b = Boxed(5)
+let x = takes(b)
 `, false)
 	assertErrorsAre(t, res,
-		"Boxed is a generic newtype, which cannot be constructed by call yet — annotate instead (`let x: Boxed<...> = ...`)")
+		"cannot use Boxed as i64 implicitly: reading a newtype out discards the name it carries, so the conversion must be written — `i64(...)`")
+}
+
+// A parameter the base never mentions cannot be solved from any operand — only the
+// turbofish can bind it, and the message says so.
+func TestNewtype_GenericConstructorUnsolvableParam(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Weird<t> = i64
+let w = Weird(5)
+`, false)
+	assertErrorsAre(t, res,
+		"Weird: cannot infer t from the operand — write the type arguments (`Weird<...>(...)`)")
 }
 
 // A genuine named tuple is untouched — the arm keys on the *declaration* being a

@@ -310,12 +310,18 @@ write today:
     `rune(n)` in `pure` code was charged the unresolved-callee default. The four
     copies of "is this callee a conversion?" are now one, `types.ConversionTargetName`.
     See COMPLETED.md.
-  - **[OPEN] A generic newtype cannot be constructed by call.** `Boxed(5)` is
-    `lyra-E044` — the base is a type variable, so there is nothing to check the operand
-    against until the parameters are bound. The annotation form works
-    (`let b: Boxed<i64> = 5`), so this is a gap rather than a blocker; closing it means
-    solving the parameters from the operand, which is ordinary inference the tuple path
-    already does for named tuples.
+  - **[DONE 08/12] A generic newtype constructs by call.** `Boxed(5)` is `Boxed<i64>`,
+    solved from the operand through the named-tuple solver (`solveDataTypeVars`, with
+    the base as the one declared field), and `Boxed::<u8>(200)` binds the parameters
+    explicitly — the same turbofish/solve ladder a named tuple's instantiation takes.
+    The bound set resolves through the same expansion the annotation form uses, so
+    everything downstream sees the substituted ConstrainedType it already knew, the
+    solved result is fully nominal (E047 fires on its implicit read-out), and the
+    backend needed nothing. What E044 still refuses here is a parameter the operand
+    cannot solve (`newtype Weird<t> = i64` — only the turbofish can bind a parameter
+    the base never mentions), naming that spelling. The refusal this replaces had
+    called itself "cannot be constructed by call *yet*" — a missing solver, not a
+    missing answer.
 
   Still open beneath it, smaller than it was: `println(c)` refuses a newtype over a
   printable scalar, so transparency covers arithmetic-adjacent methods and not the one

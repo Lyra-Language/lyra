@@ -10,6 +10,28 @@ Newest first.
 ## Dated log
 
 ### 08/12/26
+**A generic newtype constructs by call.** `Boxed(5)` is `Boxed<i64>`, and the whole
+change is one arm learning to use machinery that already existed: the parameters are
+solved from the operand by `solveDataTypeVars` — the named-tuple/data-constructor
+solver, handed the newtype's base as its one declared field — or bound explicitly by
+the `::<>` turbofish, the same ladder `inferNamedTupleLiteralExpr` runs. The bound set
+then resolves through `ParameterizedType`, the same expansion the annotation form
+(`let b: Boxed<i64> = 5`) has always taken, so everything downstream — the E046/E047
+checks, constraint enforcement, the ownership pass-through, the backend's
+forward-the-operand lowering — sees the substituted ConstrainedType it already knew.
+No backend change; the solved result is fully nominal (its implicit read-out is
+E047, pinned).
+
+An untyped operand promotes to its default (`Boxed(5)` is `Boxed<i64>`, exactly as
+`Some(5)` is `Maybe<i64>`), and a narrower instantiation is reached by saying so —
+`Boxed(u8(7))`. What `lyra-E044` still refuses is a parameter the operand cannot
+solve: `newtype Weird<t> = i64` mentions `t` nowhere in its base, so only the
+turbofish can bind it, and the message names that spelling. The blanket refusal this
+replaces had called itself "cannot be constructed by call *yet*" — accurate about the
+state, wrong about the reason, which was a missing solver rather than a missing
+answer.
+
+### 08/12/26
 **The newtype read-out is explicit too** (`lyra-E047`), completing the boundary work
 below: Ada's rule now holds in both directions, and the same-day sequencing is why the
 migration stayed cheap — the test suite had just been through the inbound flip.
