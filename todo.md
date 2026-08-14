@@ -2115,6 +2115,44 @@ should — "Complex<string> does not implement Arithmetic" is useless without "b
 `string` does not") and whether this subsumes the umbrella-impl question above, since a
 bound that verifies constraints is most of what requiring the impl was buying.
 
+### [OPEN] An out-of-range float→int conversion is silently wrong
+
+`floor`/`ceil`/`round` do not check their result's range, and the answers are not merely
+imprecise — they are arbitrary:
+
+```lyra
+let huge: f64 = 1.0e20
+let n: i64 = huge.floor()     // 0
+let neg: f64 = -1.0e20
+let m: i64 = neg.floor()      // 0
+```
+
+Zero, for both. That is LLVM's `fptosi` on an out-of-range operand, which is poison —
+so the value is whatever the optimizer leaves behind, and `-O0` and `-O2` are free to
+disagree. A NaN converts the same way.
+
+**This is the language's own thesis inverted.** Integer arithmetic traps on overflow, an
+array index traps out of bounds, a shift amount traps out of range, and a `newtype`
+constraint traps at construction — and then the one conversion that cannot represent its
+input quietly answers 0. Found 08/14 writing `to_fixed`, whose first draft printed
+`9223372036854775807.9223372036854775807` for `1.0e20` and looked plausible doing it.
+
+`std/prelude/format.lyra` guards its own call explicitly, which is the workaround and not
+the fix: every other caller of `floor`/`ceil`/`round` is still exposed.
+
+The fix is a range check before the conversion, trapping like the rest of the ladder — a
+compare against the target width's bounds plus a NaN test, which is what Rust's
+`as`-with-saturation and Zig's `@intFromFloat` both spend. Three things to decide with it:
+
+- **Trap or saturate.** Rust saturates (`as` is total), Zig traps in safe builds. This
+  language traps everywhere else, so trapping is the consistent answer — but saturation is
+  defensible for a *rendering* path, which is where the need showed up.
+- **Where the check goes.** In the backend's conversion lowering, so it covers every
+  caller — not in the prelude, where only the callers who thought about it are covered.
+- **Whether the value-range pass can elide it.** A float bounded by construction (a
+  normalized coordinate, a clamped value) needs no check, and the pass already elides
+  provable array-bounds and division checks.
+
 ### [OPEN] Return-type-directed dispatch — reopen when `From`/`Into` wants it
 
 **Lyra dispatches on a receiver, and nothing else.** A trait method with no receiver

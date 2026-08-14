@@ -10,6 +10,47 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**`to_fixed` — a float rendered with a chosen number of decimal places**
+(`std/prelude/format.lyra`), because `print` deliberately has no precision knob and a
+status line needs one.
+
+The built-in formatter writes the *shortest rendering that reads back as the same value*,
+which is the right default for inspecting a number and the wrong one for a column of them:
+`1.0 / 3.0` needs seventeen digits to round-trip, so it prints them, and a small magnitude
+switches to scientific notation (`1.234e-06`). `zoom.to_fixed(4)` gives `0.3333` and never
+switches notation.
+
+Written in Lyra on the `parse_i64` rule — it is arithmetic over an integer and a string.
+The one non-obvious choice is that the **whole and fractional parts are scaled
+separately**: multiplying the whole value by `10^places` overflows i64 for anything past
+about 9.2e18/10^places, so splitting first bounds the multiplication by `10^places`
+however large the number is.
+
+**Its first draft printed a confident wrong answer, and that is the finding worth keeping.**
+`1.0e20.to_fixed(2)` rendered as `9223372036854775807.9223372036854775807`, because
+`(1.0e20).floor()` does not trap — it answers **0**, LLVM's `fptosi` on an out-of-range
+operand being poison. So the language that traps on integer overflow, out-of-bounds
+indexing, out-of-range shifts and violated newtype constraints quietly returns zero from
+the one conversion that cannot represent its input. `to_fixed` guards its own call and the
+underlying hole is filed in `todo.md`; the guard is written as a negated `<` so a NaN takes
+the same branch, every comparison with one being false.
+
+**A method now resolves on a bare literal receiver**, which the feature needed and which
+turned out to be a gap of its own. `builtinMethodSignature` promotes an untyped literal
+internally, so `1.5.floor()` has worked since literals became postfix heads (08/06) — but
+trait dispatch and UFCS run *first* and saw `untyped_float`, matching no impl and no
+`self: f64` parameter. Every prelude function over a float was therefore unreachable from
+the literal a reader would naturally try it on: `(2.5).abs()` and `(1.0 / 3.0).to_fixed(4)`
+reported *"float literal has no method"* while the identical call on a `let`-bound `f64`
+worked. The receiver is pinned to its default width once, before all three paths, and the
+builtin path's local promotion is gone — it was the reason only one path could see through
+a literal.
+
+It is the same gap the 08/06 grammar change closed one layer up. That change made a literal
+a postfix *head* so `"abc".len()` would parse; this one makes the thing it parses into
+resolve.
+
+### 08/14/26
 **`Signed` in the prelude, and `Complex` prints `1 - 2i`.** The formatter had no way to
 choose the sign, so a negative imaginary part read `1 + -2i`.
 

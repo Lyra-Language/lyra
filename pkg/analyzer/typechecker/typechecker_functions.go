@@ -881,6 +881,29 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		return nil
 	}
 	objType = tc.resolveType(objType, member.Object.GetLocation())
+
+	// **An untyped literal receiver is pinned to its default width here**, before any of
+	// the three resolution paths below, because all three need a concrete type and only
+	// one of them used to promote.
+	//
+	// `builtinMethodSignature` promotes internally, so `1.5.floor()` has worked since
+	// literals became postfix heads (08/06) — but trait dispatch and UFCS run *first* and
+	// saw `untyped_float`, which matches no impl and no `self: f64` parameter. So every
+	// prelude function over a float was unreachable from the literal a reader would
+	// naturally try it on: `(2.5).abs()` and `(1.0 / 3.0).to_fixed(4)` both reported
+	// *"float literal has no method"* while the identical call on a `let`-bound `f64`
+	// worked. That is the same gap the 08/06 grammar change closed one layer up, left
+	// open in the layer below it.
+	//
+	// The node is pinned, not just the local: the backend reads the receiver's recorded
+	// type, and a literal left untyped there fails to lower.
+	if p, ok := objType.(types.PrimitiveType); ok {
+		switch p.Name {
+		case types.UntypedInt, types.UntypedSignedInt, types.UntypedFloat:
+			objType = promoteToDefault(objType)
+			tc.typeTable.Set(member.Object, objType)
+		}
+	}
 	methodName := member.Property.Name
 
 	// A struct field holding a lambda is looked up on the (generic-substituted)
@@ -944,23 +967,9 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// on an integer). Checked last so a user type or trait impl of the same name
 	// always takes priority (see builtins.go).
 	if sig, ok := tc.builtinMethodSignature(objType, methodName, member.GetLocation()); ok {
-		// Pin an untyped literal receiver to its default width. `builtinMethodSignature`
-		// already promotes internally to decide *whether* the method exists, but that
-		// promotion is local to the lookup — the receiver node keeps whatever the literal
-		// inferred as, and the backend reads the node. Before literals became postfix
-		// heads (08/06) no receiver could be a bare literal, so this never came up;
-		// `1.5.floor()` then type-checked and failed to lower with "floor() on non-float
-		// receiver float literal".
-		// Tested by asking whether the receiver *is* an untyped literal, not by
-		// comparing before and after: `types.Type` is an interface over structs that
-		// are not all comparable (a NamedStructType carries slices), so `promoted !=
-		// objType` panics at run time on an ordinary struct receiver.
-		if p, ok := objType.(types.PrimitiveType); ok {
-			switch p.Name {
-			case types.UntypedInt, types.UntypedSignedInt, types.UntypedFloat:
-				tc.typeTable.Set(member.Object, promoteToDefault(objType))
-			}
-		}
+		// The receiver was already pinned to its default width above, before any of the
+		// three resolution paths ran — it used to happen here, which is why only the
+		// builtin path could see through an untyped literal.
 		tc.typeTable.Set(member, sig)
 		// Publish the resolution: a later pass sees only a MemberExpr callee, and the
 		// dotted name it can derive from that (`x.wrapping_mul`) names nothing in any

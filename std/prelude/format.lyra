@@ -1,0 +1,92 @@
+module std.prelude
+//! Rendering a number as text with a chosen shape.
+
+// **`print` and `"${…}"` deliberately have no precision knob**, and this is the answer
+// rather than a flag on them. The built-in float formatter writes the *shortest rendering
+// that reads back as the same value* — `0.1` stays `0.1`, and `1.0 / 3.0` needs all
+// seventeen digits to round-trip, so it prints them. That is the right default for a
+// value being inspected, and the wrong one for a column of numbers: a status line wants
+// `-0.7436`, not `-0.74360000000000004`.
+//
+// Written in Lyra rather than as a builtin, on the `parse_i64` rule: the formatter is
+// arithmetic over an integer and a string, and anything expressible in the language
+// belongs here where it is readable and replaceable.
+//
+// **The whole and fractional parts are scaled separately**, which is the one choice here
+// that is not obvious. Multiplying the whole value by `10^places` overflows i64 for
+// anything past about 9.2e18 / 10^places — so `1234.5678.to_fixed(15)` would trap on a
+// value it can perfectly well render. Splitting first bounds the multiplication by
+// `10^places` regardless of how large the number is.
+
+/// `self` rendered with exactly `places` digits after the decimal point.
+///
+/// Rounds half away from zero, and pads with trailing zeros so a column lines up:
+/// `0.5.to_fixed(3)` is `0.500`, not `0.5`. With `places` of 0 there is no decimal point.
+///
+/// **Never scientific notation**, unlike the default float rendering, which switches to it
+/// for very large and very small magnitudes. That switch is what makes the default
+/// unusable for a status line; a fixed rendering of a tiny value is `0.0000` rather than
+/// `1.234e-06`, which is the honest answer at four places.
+///
+/// Only `f64`, which is the type an untyped float literal defaults to. An `f32` converts
+/// first — `f64(x).to_fixed(2)`.
+///
+/// # Examples
+///
+/// ```
+/// let zoom = 1.0 / 3.0
+/// println("zoom ${zoom.to_fixed(4)}")   // zoom 0.3333
+/// ```
+///
+/// # Panics
+///
+/// Traps on a negative `places`, which is a caller's mistake rather than a value this can
+/// render — the same reasoning `slice` applies to an inverted range.
+///
+/// Traps on a magnitude at or beyond 2^63, and on a NaN. The whole part is carried as an
+/// integer, and a float that large has no fractional precision left to render anyway — but
+/// the trap is explicit rather than inherited: converting an out-of-range float to an
+/// integer does *not* check, so without the guard both cases print a confident wrong
+/// number (`1.0e20` renders as `9223372036854775807.9223372036854775807`).
+pub let to_fixed = pure (self: f64, places: i64) -> string => {
+  if places < 0 {
+    panic("to_fixed: places must not be negative")
+  }
+  let negative = self < 0.0
+  let magnitude = self.abs()
+
+  // **Guarded rather than left to the conversion**, because the conversion does not
+  // check: `(1.0e20).floor()` answers 0 today, and a NaN answers 0 too, so an unguarded
+  // formatter prints a confident wrong number for both. Written as a negated `<` so a
+  // NaN takes the branch — every comparison with one is false, including this one.
+  if !(magnitude < 9223372036854775808.0) {
+    panic("to_fixed: the value is too large to render, or is not a number")
+  }
+
+  var scale = 1
+  for i in 0..<places {
+    scale *= 10
+  }
+
+  // floor before scaling, so the multiplication below is bounded by `scale` however
+  // large the value is.
+  let truncated: i64 = magnitude.floor()
+  let scaled: i64 = ((magnitude - f64(truncated)) * f64(scale)).round()
+
+  // A fraction that rounds up to a whole unit carries: 0.999 at two places scales to
+  // 100, which is `1.00` and not `0.100`.
+  let carried = scaled == scale
+  let whole = if carried { truncated + 1 } else { truncated }
+  let fraction = if carried { 0 } else { scaled }
+
+  let sign = if negative { "-" } else { "" }
+  if places == 0 {
+    sign ++ "${whole}"
+  } else {
+    var digits = "${fraction}"
+    for i in 0..<(places - digits.len()) {
+      digits = "0" ++ digits
+    }
+    sign ++ "${whole}" ++ "." ++ digits
+  }
+}

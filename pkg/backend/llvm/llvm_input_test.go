@@ -47,6 +47,25 @@ func repoStdRoot(t *testing.T) string {
 // readable, replaceable Lyra. Testing the real file is what keeps that honest.
 func buildAndRunWithPrelude(t *testing.T, src, input string) string {
 	t.Helper()
+	cmd := exec.Command(preludeBinary(t, src))
+	cmd.Stdin = strings.NewReader(input)
+	out, err := cmd.Output()
+	if err != nil {
+		if _, isExit := err.(*exec.ExitError); !isExit {
+			t.Fatalf("running the binary failed: %v", err)
+		}
+	}
+	return string(out)
+}
+
+// preludeBinary compiles src against the real prelude and returns the executable's path.
+//
+// Split out of buildAndRunWithPrelude so a test that needs the *trap* rather than the
+// output can have it: a panic writes to stderr and exits 101, and the stdout-only runner
+// above sees an empty string either way — which would make a trap test pass on a program
+// that printed nothing for any other reason.
+func preludeBinary(t *testing.T, src string) string {
+	t.Helper()
 	clang := lookClang(t)
 
 	dir := t.TempDir()
@@ -72,15 +91,7 @@ func buildAndRunWithPrelude(t *testing.T, src, input string) string {
 		t.Fatalf("emit: %v", err)
 	}
 
-	cmd := exec.Command(compileCached(t, clang, string(ir)))
-	cmd.Stdin = strings.NewReader(input)
-	out, err := cmd.Output()
-	if err != nil {
-		if _, isExit := err.(*exec.ExitError); !isExit {
-			t.Fatalf("running the binary failed: %v", err)
-		}
-	}
-	return string(out)
+	return compileCached(t, clang, string(ir))
 }
 
 // read_line's contract, one case per thing that can come off a stream. The EOF
