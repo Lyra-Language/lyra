@@ -10,6 +10,38 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**`Signed` in the prelude, and `Complex` prints `1 - 2i`.** The formatter had no way to
+choose the sign, so a negative imaginary part read `1 + -2i`.
+
+**The conventional fix does not work here, and finding out why is the useful part.** Both
+`Zero` and `Default` are `() -> Self` — no receiver — and Lyra dispatches on a receiver and
+nothing else: `let n: i64 = Zero::zero()` reports *"expected a receiver argument"*, with the
+annotation sitting right there. Picking an impl from the expected type is
+return-type-directed dispatch, which the language does not have and which `lyra-E035`
+already declines from the other side. So the question was never "Zero or Default" — it was
+receiver dispatch versus return-type dispatch, and only one of them exists.
+
+`Signed` asks a *value* about itself instead: `is_negative` and `abs`, both receiver
+methods, both dispatching through machinery that already works. `abs` is in the trait
+because the formatter needs it — printing `1 - 2i` means rendering the magnitude, and
+without it the branch produces `1 - -2i`, which is worse than what it replaced.
+
+Two decisions worth keeping:
+
+- **Unsigned integers implement it**, answering `false` and returning `self`. The answers
+  are constant, which reads oddly against the name — but excluding them would make every
+  generic bounded by `Signed` silently drop half the numeric widths, and a formatter that
+  works for `i32` and not `u32` is the worse trade.
+- **`abs` documents its trap.** A signed integer at its minimum has a magnitude one larger
+  than the type's maximum, so `abs` overflows there for the same reason `-x` does.
+
+The general cost of having no return-type dispatch is recorded in `todo.md` rather than
+worked around further: there is no way to name the additive identity of a generic numeric
+type, so a generic `sum` has no seed. The trigger to build the mechanism is `From`/`Into`,
+where no receiver formulation exists at all — a conversion is inherently directed by what it
+produces — and it brings `Zero`, `One` and `Default` with it when it lands.
+
+### 08/14/26
 **A generic impl is selectable as a candidate.** One cause behind three symptoms: a bound
 dispatch to an operator, a bound dispatch to a method, and a nested generic impl all failed
 in the backend with internal messages naming an AST node.

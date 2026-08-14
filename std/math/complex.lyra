@@ -77,12 +77,17 @@ impl Div for Complex<t> where t: Arithmetic {
 /// `Complex<t>` supports all four arithmetic operators.
 impl Arithmetic for Complex<t> where t: Arithmetic {}
 
-/// Rendered as `re + imi` — for example `1 + 2i`.
+/// Rendered as `re + imi`, or `re - imi` when the imaginary part is negative — `1 + 2i`
+/// and `1 - 2i` rather than `1 + -2i`.
 ///
-/// **A negative imaginary part reads `1 + -2i`**, not `1 - 2i`. Choosing the sign means
-/// comparing `im` against zero, and there is no way to *name* zero at a generic numeric
-/// type: it would need a `Zero` trait, or a `Default`, and the standard library has
-/// neither. Formatting a concrete `Complex<f64>` by hand is the workaround.
-impl Show for Complex<t> where t: Show {
-  show = (self) => "${self.re} + ${self.im}i"
+/// The sign comes from `Signed`, whose two methods both take a receiver. A `Zero` trait
+/// would be the conventional way to ask this and does not work here: `zero: () -> Self` has
+/// no receiver to dispatch on, and picking an impl from the expected type is
+/// return-type-directed dispatch, which Lyra does not have.
+impl Show for Complex<t> where t: Show + Signed {
+  show = (self) => if self.im.is_negative() {
+    "${self.re} - ${self.im.abs()}i"
+  } else {
+    "${self.re} + ${self.im}i"
+  }
 }

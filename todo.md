@@ -2115,6 +2115,42 @@ should — "Complex<string> does not implement Arithmetic" is useless without "b
 `string` does not") and whether this subsumes the umbrella-impl question above, since a
 bound that verifies constraints is most of what requiring the impl was buying.
 
+### [OPEN] Return-type-directed dispatch — reopen when `From`/`Into` wants it
+
+**Lyra dispatches on a receiver, and nothing else.** A trait method with no receiver
+cannot be resolved: `trait Zero { zero: () -> Self }` with `let n: i64 = Zero::zero()`
+reports *"Zero::zero: expected a receiver argument"*, and the annotation sitting right
+there does not help — choosing an impl from the *expected* type is a different mechanism.
+
+That is a design statement rather than a gap, and `lyra-E035` already says so from the
+other side: the language has no type-namespaced associated functions, which is why the
+prelude's constructors are bare (`rng_seeded`, not `Rng.seeded`).
+
+**What it costs, concretely** (08/14): the conventional `Zero`/`One`/`Default` traits are
+unwritable, because every one of them is `() -> Self`. The workaround is a receiver —
+`Signed`'s `is_negative`/`abs` ask a *value* about itself, which is what `Complex`'s
+formatter needed and is arguably clearer. It is a real workaround though: there is no way
+to name the additive identity of a generic numeric type, so a generic `sum` has no seed and
+must take one.
+
+**The trigger to reopen this is `From`/`Into`, not another numeric trait.** A conversion is
+inherently return-type-directed — `let x: Meters = From::from(3.0)` picks the impl by what
+is being produced — and there is no receiver formulation that saves it, unlike a sign test.
+So the day conversions are wanted is the day the mechanism has to exist, and it brings
+`Zero`, `One`, `Default` and `parse::<T>()`-shaped APIs with it.
+
+Three things to settle then, and they are why this is a feature rather than a fix:
+
+- **Where the expected type comes from.** An annotation is easy; an argument position or a
+  return position needs inference to flow *inward*, which the checker does for literal
+  widths and not for impl selection.
+- **What happens when it is absent.** `Zero::zero()` as a statement has no expected type,
+  so it is either an error or needs a turbofish (`Zero::<i64>::zero()`), and the grammar
+  already has `::<` for exactly this shape.
+- **How it interacts with lyra-E035.** Either that diagnostic softens, or associated
+  functions stay absent and only *trait* methods gain the mechanism — the narrower
+  reading, and probably the right one.
+
 ### [DONE 08/14] A generic impl was never selectable as a candidate
 
 **One cause, three symptoms**, and the diagnosis in the original report below was too

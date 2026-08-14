@@ -257,3 +257,101 @@ impl Mul for f64 { (_*_) = (self, o) => self * o }
 impl Div for f64 { (_/_) = (self, o) => self / o }
 /// `f64` supports all four arithmetic operators.
 impl Arithmetic for f64 {}
+
+
+/// Types whose values can be asked whether they are negative.
+///
+/// Two receiver methods rather than a `zero` constant, because Lyra dispatches on a
+/// **receiver**: a `zero: () -> Self` has nothing to pick an impl by, and choosing one from
+/// the expected type is return-type-directed dispatch, which the language does not have
+/// (`Zero::zero()` reports *"expected a receiver argument"*). Asking a value about itself
+/// is the shape that fits, and it is all a sign test needs.
+///
+/// **Unsigned integers implement it too**, answering `false` and returning `self`. The
+/// answers are constant there, but excluding them would make every generic bounded by this
+/// trait silently drop half the numeric widths — a formatter that works for `i32` and not
+/// `u32` is a worse trade than an impl whose answer never varies.
+///
+/// # Examples
+///
+/// ```
+/// let sign_of<t> where t: Signed = (v: t) -> string => if v.is_negative() { "-" } else { "+" }
+/// ```
+pub trait Signed {
+  /// Whether `self` is less than zero. Always `false` for an unsigned type.
+  is_negative: (Self) -> bool,
+  /// `self` without its sign.
+  ///
+  /// # Panics
+  ///
+  /// Traps for a signed integer at its minimum, whose magnitude is one larger than the
+  /// maximum the type can hold — the same overflow `-x` traps on, since that is what this
+  /// is. Unsigned and float types cannot reach it.
+  abs: (Self) -> Self,
+}
+
+/// `i8` is negative below zero.
+impl Signed for i8 {
+  is_negative = (self) => self < 0
+  abs = (self) => if self.is_negative() { -self } else { self }
+}
+/// `i16` is negative below zero.
+impl Signed for i16 {
+  is_negative = (self) => self < 0
+  abs = (self) => if self.is_negative() { -self } else { self }
+}
+/// `i32` is negative below zero.
+impl Signed for i32 {
+  is_negative = (self) => self < 0
+  abs = (self) => if self.is_negative() { -self } else { self }
+}
+/// `i64` is negative below zero.
+impl Signed for i64 {
+  is_negative = (self) => self < 0
+  abs = (self) => if self.is_negative() { -self } else { self }
+}
+/// `i128` is negative below zero.
+impl Signed for i128 {
+  is_negative = (self) => self < 0
+  abs = (self) => if self.is_negative() { -self } else { self }
+}
+/// `u8` is unsigned, so it is never negative and `abs` is the identity.
+impl Signed for u8 {
+  is_negative = (self) => false
+  abs = (self) => self
+}
+/// `u16` is unsigned, so it is never negative and `abs` is the identity.
+impl Signed for u16 {
+  is_negative = (self) => false
+  abs = (self) => self
+}
+/// `u32` is unsigned, so it is never negative and `abs` is the identity.
+impl Signed for u32 {
+  is_negative = (self) => false
+  abs = (self) => self
+}
+/// `u64` is unsigned, so it is never negative and `abs` is the identity.
+impl Signed for u64 {
+  is_negative = (self) => false
+  abs = (self) => self
+}
+/// `u128` is unsigned, so it is never negative and `abs` is the identity.
+impl Signed for u128 {
+  is_negative = (self) => false
+  abs = (self) => self
+}
+/// `f16` is negative below zero. A NaN answers `false`, as every comparison with one does.
+impl Signed for f16 {
+  is_negative = (self) => self < 0.0
+  abs = (self) => if self.is_negative() { -self } else { self }
+}
+/// `f32` is negative below zero. A NaN answers `false`, as every comparison with one does.
+impl Signed for f32 {
+  is_negative = (self) => self < 0.0
+  abs = (self) => if self.is_negative() { -self } else { self }
+}
+/// `f64` is negative below zero. A NaN answers `false`, as every comparison with one does.
+impl Signed for f64 {
+  is_negative = (self) => self < 0.0
+  abs = (self) => if self.is_negative() { -self } else { self }
+}
