@@ -508,7 +508,7 @@ func (tc *TypeChecker) inferDotCallFromType(calleeName string, lambdaType *types
 // Save/restore rather than merge, so a nested generic declaration cannot leak its
 // parameters' bounds outward — and so a shadowing parameter of the same name gets its
 // own bounds rather than inheriting the outer ones.
-func (tc *TypeChecker) pushGenericBounds(params []ast.GenericParam) func() {
+func (tc *TypeChecker) pushGenericBounds(params []ast.GenericParam, loc ast.Location) func() {
 	if len(params) == 0 {
 		return func() {}
 	}
@@ -516,7 +516,7 @@ func (tc *TypeChecker) pushGenericBounds(params []ast.GenericParam) func() {
 	next := make(map[string][]string, len(params))
 	for _, p := range params {
 		if len(p.Constraints) > 0 {
-			next[p.Name] = p.Constraints
+			next[p.Name] = tc.closeOverSupertraits(p.Constraints, loc)
 		}
 	}
 	if len(next) == 0 {
@@ -531,6 +531,51 @@ func (tc *TypeChecker) pushGenericBounds(params []ast.GenericParam) func() {
 	}
 	tc.genericBounds = next
 	return func() { tc.genericBounds = old }
+}
+
+// closeOverSupertraits returns `declared` plus every trait reachable from it through
+// supertrait edges (`trait B: A`), in a deterministic order — the declared bounds
+// first, then what they drag in.
+//
+// This is what makes a supertrait mean anything at a **use** site. checkTraitImpl
+// enforces the promise on every impl (`impl B for T` requires an `impl A for T`), so a
+// `where t: B` bound may rely on it: `v.foo()` must reach A's method, and forwarding `v`
+// to a callee bounded `where u: A` must satisfy that bound. Both were refused before
+// 08/14, the second while telling the author to add a bound `B` already guarantees.
+//
+// Expanding **here** — at the one place a bound set enters scope — rather than at each
+// of the four readers is hazard 8's rule: dispatchViaGenericBound, the operator path,
+// the `Show` desugar and checkGenericBounds' type-variable arm all ask "what is `t`
+// bounded by?", and four copies of the answer are four chances to drift. A fifth reader
+// gets this for free.
+//
+// Cycle-safe by a visited set rather than by assuming a DAG: `trait A: B` alongside
+// `trait B: A` is legal and merely means the two are always implemented together, which
+// is exactly what checkTraitImpl then requires of every implementer.
+func (tc *TypeChecker) closeOverSupertraits(declared []string, loc ast.Location) []string {
+	if len(declared) == 0 {
+		return declared
+	}
+	seen := make(map[string]bool, len(declared))
+	closed := make([]string, 0, len(declared))
+	queue := append([]string(nil), declared...)
+	for len(queue) > 0 {
+		name := queue[0]
+		queue = queue[1:]
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		closed = append(closed, name)
+		trait, ok := tc.symTable.LookupTraitFrom(name, loc)
+		if !ok {
+			// An unknown trait in a bound is the declaration's own error and is
+			// reported there; contributing nothing here keeps that the only one.
+			continue
+		}
+		queue = append(queue, trait.Bounds...)
+	}
+	return closed
 }
 
 // checkGenericBounds verifies the solved type arguments of one call against the

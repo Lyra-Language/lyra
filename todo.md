@@ -1833,7 +1833,8 @@ would silently change the order. Nothing can order a user type today (`<` on a s
 - **One method each.** `!=` is `!eq`; `<` `<=` `>` `>=` are `compare` plus a match on the
   existing `Ordering`. An impl then cannot make `<` and `<=>` disagree — the failure mode
   C++ and Java both carry. `Ord: Eq` is what stops `compare` answering `Equal` where `eq`
-  says false; supertrait syntax parses, and whether the bound is *enforced* is unverified.
+  says false; the supertrait is enforced (`lyra-E040`, 08/07) and its methods are reachable
+  through a bound (08/14), so that mechanism is no longer the open question here.
 - **Floats: `Eq` yes (IEEE, keeping `lyra-W008`), `Ord` no.** Consistent with `<=>` already
   refusing floats, and it avoids a fourth `unordered` variant that would make every integer
   three-way match carry a case that cannot occur. `total_cmp` in the prelude (bit-pattern
@@ -1932,33 +1933,38 @@ still refuses them. See COMPLETED.md.
 - **[DONE 08/07] A supertrait is enforced** (`lyra-E040`): `impl B for T` where
   `trait B: A` requires an `impl A for T`. `TraitDeclStmt.Bounds` was collected and read by
   nobody, so the promise was never checked — found by the AST sweep below.
-  - **[OPEN] A supertrait's methods are not in scope through a subtrait bound.** The
-    bound is *enforced* — `impl Nd for T` requires `impl Len for T` — and then
-    `where t: Nd` still cannot call `t.l()`: *"type parameter t has no method `l`; add a
-    `where t: Trait` bound whose trait declares it"*. So a supertrait today promises a
-    thing exists and gives the one place that needs it no way to reach it, which is the
+  - **[DONE 08/14] A supertrait's methods are in scope through a subtrait bound.** The
+    bound had been *enforced* since 08/07 — `impl Nd for T` requires `impl Len for T` —
+    and then `where t: Nd` still could not call `t.l()`: *"type parameter t has no method
+    `l`; add a `where t: Trait` bound whose trait declares it"*. So a supertrait promised
+    a thing exists and gave the one place that needs it no way to reach it, which is the
     half of the feature people actually write supertraits for.
 
-    **The receiver's concreteness is what decides it**, not the supertrait: a concrete
-    `n.l()` resolves fine, because ordinary dispatch finds the `impl Len for i64` by the
-    receiver's type. Only the *bound* path fails.
+    Fixed as this entry predicted: `closeOverSupertraits` (`typechecker_trait_dispatch.go`)
+    takes the transitive closure at the **two** points a bound set enters scope —
+    `pushGenericBounds` for a binding, `checkTraitImpl` for an impl — and all four readers
+    (bound dispatch, the generic-argument check, operator overloading, `Show`) got it for
+    free, which is hazard 8's shape. Two write sites rather than the one this entry
+    guessed, and they are twins by `pushGenericBounds`'s own comment: a bound reaching
+    `A`'s methods when written on a binding and not on an impl would mean different things
+    depending on where it is written.
 
-    Why is specific: `tc.genericBounds[param]` holds the literal trait names from the
-    `where` clause (`typechecker_traits.go`, one write), and the four sites that read it
-    — bound dispatch, the generic-argument check, operator overloading and `Show` —
-    iterate that list directly. None walks the named traits' own `TraitDeclStmt.Bounds`,
-    which is the field E040 already reads for enforcement. So the fix is a **transitive
-    closure at the one point genericBounds is populated**, after which all four readers
-    get it for free — the shape hazard 8 recommends over teaching four consumers the same
-    rule.
+    Two things the fix had to get right beyond the closure. **Forwarding** is the second
+    half — passing a `where u: B` value to a callee bounded `where t: A` — and its old
+    diagnostic asked the author to add `where u: A`, a bound `B` already guarantees.
+    And the walk carries a **visited set**: `trait A: B` alongside `trait B: A` is legal
+    (it means the two are always implemented together, which is exactly what E040 then
+    requires of every implementer), so assuming a DAG hangs the typechecker — a failure
+    that reads as a frozen editor rather than as a compiler bug.
 
-    The workaround is to name both (`where t: Nd + Len`), which works: multiple bounds
-    are supported in both spellings (`A + B` and `A, B`). It is also what makes this
-    merely awkward rather than blocking — and why it can wait.
+    Nothing was needed in the backend: dispatch publishes candidates for the trait that
+    *declares* the method, so a supertrait call resolves to that trait's impls like any
+    other. `TestExec_BoundDispatchReachesASupertraitMethod` pins it anyway — "resolves
+    abstractly" and "calls the right function" are different claims.
 
     Found 08/09 while weighing a `Length` trait beside `Needle`. It is the reason
     `trait Needle: Length` would not have helped: the bound would be enforced and
-    `split` still could not call the method.
+    `split` still could not call the method. That option is now open.
 - **[OPEN] A trait *default method* is never dispatched to.** `trait G { name: …
   twice: (Self) -> i64 = (self) => self.name() * 2 }` parses, collects, and calling
   `n.twice()` on a type with an `impl G` reports *"i64 has no method `twice`"*. An impl
@@ -1972,8 +1978,47 @@ still refuses them. See COMPLETED.md.
   function scope (08/09), so the body is *walked* and checked — it simply cannot be
   called. Found 08/09 alongside the supertrait gap.
 - **[DECIDED 08/07] `Ord: Eq` is deliberately *not* declared** — see the design correction
-  above. Supertrait syntax parses and the bound is collected onto `TraitDeclStmt.Bounds`;
-  whether anything enforces it is still unverified, and no longer on this path.
+  above. The mechanism is real as of 08/14 (enforced 08/07, reachable through a bound
+  today); this stays a decision about `Ord`, not a gap in supertraits.
+
+### [DONE 08/14] A trait with no methods of its own parses
+
+`trait Arithmetic: Add + Sub + Mul + Div` — with or without a `{}` — and the
+`impl Arithmetic for Vec2 {}` beside it. `memberList` is built on `commaSep1`, whose
+non-emptiness was deliberate; its comment said so in as many words: *"which is what makes
+`trait C {}` a syntax error rather than a trait with no methods"*. Right when a method-less
+trait meant nothing, and supertraits are exactly what stopped that being true.
+
+The fix makes the **body** optional (braces and all), not the member list: the list is
+absent rather than empty, so `trait C { , }` is still an error. `impl_methods` had been
+optional the whole time, so only the declaration was unwritable.
+
+Of the three questions this entry raised, the code answered the first: **the bodiless form
+is the one to support**, because it is what an author writes when there is no body to
+delimit. Rust's mandatory `{}` is an artifact of having no statement terminator to end the
+declaration; Lyra has one. Both spellings work.
+
+**The ambiguity that creates, and why it is safe.** With the body optional, a `{` on the
+next line could be absorbed as the trait's body. It is not — the terminator ends the
+declaration first, so `trait Marker` ⏎ `{ 1 }` is a trait plus a block statement. This is
+the same hazard that stopped the `for` condition taking `$.expression`; there the block was
+genuinely ambiguous, here the terminator settles it. Pinned by `A brace on the next line is
+not a trait body`.
+
+Cost: 7,786 → 7,825 states (+0.5%), `parser.c` +41 KB.
+
+The collector needed one change and it is the interesting one: `MustField` → `cst.Field`
+plus a nil check, so an absent list is an **empty method list rather than a dropped
+declaration**. MustField returns nil, which would erase the trait and then report
+`unknown trait` at every impl of it — a diagnostic pointing everywhere except at the
+declaration that caused it.
+
+- **[OPEN] Is an umbrella impl worth requiring?** `impl Arithmetic for Vec2 {}` asserts
+  nothing the supertrait checks do not already establish, so it is close to ceremony. But
+  making it *optional* means a `where t: Arithmetic` bound could be satisfied by a type that
+  never named the trait, which is a coherence change rather than a syntax one — and the
+  ceremony is where E040 currently fires, so removing it moves that diagnostic to the call
+  site. Left as it is deliberately.
 
 ### [DECIDED 08/07] Operator-named trait methods
 

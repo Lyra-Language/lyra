@@ -36,10 +36,15 @@ func (tc *TypeChecker) checkTraitImpl(impl *ast.TraitImplStmt) {
 	// Put the impl's `where` bounds (`t: Show`) in scope for the duration of its
 	// method-body checks, so a call on a value of type `t` can dispatch through
 	// the bound (see dispatchViaGenericBound). Save/restore handles nesting.
+	//
+	// Closed over supertraits by the same helper pushGenericBounds uses, which is the
+	// point of that comment about the two being twins: a bound that reaches `A`'s
+	// methods when written on a binding and not when written on an impl would mean two
+	// different things depending on where it is written.
 	oldBounds := tc.genericBounds
 	tc.genericBounds = map[string][]string{}
 	for _, c := range impl.Constraints {
-		tc.genericBounds[c.GenericType] = c.TraitBounds
+		tc.genericBounds[c.GenericType] = tc.closeOverSupertraits(c.TraitBounds, impl.GetLocation())
 	}
 	defer func() { tc.genericBounds = oldBounds }()
 

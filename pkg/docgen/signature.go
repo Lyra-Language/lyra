@@ -274,6 +274,16 @@ func traitSignature(s *ast.TraitDeclStmt) string {
 	return b.String()
 }
 
+// A method's name on a page is `MethodName.Key()`, never `GetName()` — the same
+// source-syntax rule typeName follows, one level down. `GetName()` is the bare `Value`, so
+// an operator-named method renders as `/` where an author writes `(_/_)`: a line that does
+// not compile, on a page read as the code to write. It also erases *kind*, which is part of
+// a method's identity — prefix `-` and binary `-` share a spelling and are different
+// methods, so both would render identically as `-`.
+//
+// Invisible until the prelude shipped operator-named methods (`Add`/`Sub`/`Mul`/`Div`,
+// 08/14), because every trait method before them was an ordinary identifier, where the two
+// agree.
 func traitMembers(s *ast.TraitDeclStmt) []Member {
 	out := make([]Member, 0, len(s.Methods))
 	for i := range s.Methods {
@@ -287,11 +297,11 @@ func traitMembers(s *ast.TraitDeclStmt) []Member {
 				b.WriteString(mod.word + " ")
 			}
 		}
-		b.WriteString(m.GetName())
+		b.WriteString(m.Name.Key())
 		if m.Signature != nil {
 			b.WriteString(": " + typeName(m.Signature))
 		}
-		out = append(out, Member{Name: m.GetName(), Signature: b.String(), Doc: m.Doc})
+		out = append(out, Member{Name: m.Name.Key(), Signature: b.String(), Doc: m.Doc})
 	}
 	return out
 }
@@ -333,8 +343,9 @@ func implMembers(s *ast.TraitImplStmt) []Member {
 				b.WriteString(mod.word + " ")
 			}
 		}
-		b.WriteString(m.GetName())
-		out = append(out, Member{Name: m.GetName(), Signature: b.String(), Doc: m.Doc})
+		// Key(), not GetName() — see traitMembers.
+		b.WriteString(m.Name.Key())
+		out = append(out, Member{Name: m.Name.Key(), Signature: b.String(), Doc: m.Doc})
 	}
 	return out
 }

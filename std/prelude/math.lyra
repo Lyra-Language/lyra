@@ -1,0 +1,102 @@
+module std.prelude
+//! The arithmetic operator traits — `+`, `-`, `*` and `/` on a type of your own.
+
+// **The compiler knows none of these names.** An arithmetic operator dispatches on the
+// *method* name it is spelled with, so the trait declaring `(_+_)` is whatever the author
+// wrote — these are a convention the standard library ships, not a mechanism it owns. That
+// is the opposite of `Eq` and `Ord`, which carry a `@builtin` marker and are found by
+// identity, because `<` and `<=>` have to agree and one trait must own both.
+//
+// **Four traits rather than one**, because most types that want `+` do not want the rest: a
+// duration adds and subtracts but has no meaningful product, a matrix multiplies but does
+// not divide. A bound then asks for exactly what the code uses — `where t: Add + Mul` for
+// something that only adds and multiplies — and `Arithmetic` is the umbrella for code that
+// wants all four.
+//
+// **`%` is missing on purpose, not by oversight.** It is overloadable like the rest, but a
+// remainder has two useful meanings in this language (`%` and `%%`) and only one of them is
+// spellable as a method name, so a shipped trait would have to pick one and be silently
+// wrong for the other half of its users. Declaring a trait with a `(_%_)` method works and
+// needs nothing from here. The bitwise operators (`& | ~ << >>`) are the same story.
+
+/// Types whose values can be added with `+`.
+///
+/// The operator and its compound form `+=` both dispatch here, and a `where t: Add` bound
+/// is what lets a generic function add operands whose type it does not know.
+///
+/// **A primitive never routes through an impl** — `1 + 1` is a machine add whatever a
+/// program declares — but a `newtype` over a scalar does, which is how arithmetic on a unit
+/// type is opted into: `impl Add for Cents` makes `+` work on `Cents` and nothing else.
+///
+/// Both operands and the result are `Self`, so a mixed-operand operation — scaling a vector
+/// by a float, say — cannot be written as an operator. That wants a named method.
+///
+/// # Examples
+///
+/// ```
+/// impl Add for Vec2 {
+///   (_+_) = (self, o) => Vec2 { x: self.x + o.x, y: self.y + o.y }
+/// }
+/// ```
+pub trait Add {
+  /// `self + other`.
+  (_+_): (Self, Self) -> Self
+}
+
+/// Types whose values can be subtracted with `-`.
+///
+/// The operator and its compound form `-=` both dispatch here.
+///
+/// **Only the binary operator.** Prefix `-` is a separate method spelled `(-_)`, because
+/// negation is a different operation from subtraction and a type may want one without the
+/// other — an unsigned quantity that subtracts but cannot be negated is the ordinary case.
+/// A trait declaring `(-_)` is not this one.
+pub trait Sub {
+  /// `self - other`.
+  (_-_): (Self, Self) -> Self
+}
+
+/// Types whose values can be multiplied with `*`.
+///
+/// The operator and its compound form `*=` both dispatch here.
+///
+/// The signature makes this a product *within* a type, so it fits a complex number or a
+/// matrix square and does not fit a dot product (which leaves the type) or scaling by a
+/// scalar (whose operands differ).
+pub trait Mul {
+  /// `self * other`.
+  (_*_): (Self, Self) -> Self
+}
+
+/// Types whose values can be divided with `/`.
+///
+/// The operator and its compound form `/=` both dispatch here.
+///
+/// Division by zero is the impl's problem, not the language's: the trap built into `/` is a
+/// property of the *primitive* operator, and an impl is an ordinary function that may return
+/// whatever the type's arithmetic says. A type with no total answer should say so — trap
+/// with `panic`, or return a `Maybe` from a named method instead of implementing this.
+pub trait Div {
+  /// `self / other`.
+  (_/_): (Self, Self) -> Self
+}
+
+/// Types that support all four arithmetic operators.
+///
+/// A bundle and nothing more: it declares no methods of its own, and implementing it
+/// requires impls of `Add`, `Sub`, `Mul` and `Div`. One `where t: Arithmetic` bound then
+/// reaches all four operators, which is what the separate traits otherwise cost —
+/// `where t: Add + Sub + Mul + Div` says the same thing four times.
+///
+/// **The empty impl is required, and is where the obligation is checked.**
+/// `impl Arithmetic for Vec2 {}` is refused unless all four are already implemented for
+/// `Vec2`, so a missing operator is reported at that line rather than at some later call.
+///
+/// # Examples
+///
+/// ```
+/// impl Arithmetic for Vec2 {}
+///
+/// let combine<t> where t: Arithmetic = (a: t, b: t) -> t => a * b + a
+/// ```
+pub trait Arithmetic: Add + Sub + Mul + Div

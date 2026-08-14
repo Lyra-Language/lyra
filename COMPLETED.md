@@ -9,6 +9,93 @@ Newest first.
 
 ## Dated log
 
+### 08/14/26
+**A supertrait's methods are reachable through a subtrait bound.** `trait B: A` was
+*enforced* from 08/07 — `impl B for T` requires an `impl A for T` (`lyra-E040`) — and
+then `where t: B` still could not call `t.foo()`, reporting *"type parameter t has no
+method `foo`; add a `where t: Trait` bound whose trait declares it"*. The promise was
+kept and unusable: a supertrait guaranteed something exists and gave the one place that
+needs it no way to reach it.
+
+**The fix is a transitive closure at the point a bound set enters scope, not a rule taught
+to each reader.** `tc.genericBounds[param]` held the literal trait names from the `where`
+clause, and four sites iterate that list — bound dispatch, the generic-argument check,
+operator overloading and the `Show` desugar. `closeOverSupertraits` expands it once, at
+the **two** write sites (`pushGenericBounds` for a binding, `checkTraitImpl` for an impl),
+and all four readers got it for free. This is hazard 8's shape applied before the fact
+rather than after: four copies of "also walk the named traits' own `Bounds`" is four
+chances to drift, and a fifth reader would have started wrong.
+
+The two write sites are twins by `pushGenericBounds`'s own comment, which is why both had
+to change in one go — a bound that reaches `A`'s methods when written on a binding and
+not when written on an impl is a bound that means different things depending on where it
+is written.
+
+Three things beyond the closure itself:
+
+- **Forwarding is the other half.** Passing a `where u: B` value to a callee bounded
+  `where t: A` was refused, and the diagnostic asked the author to add `where u: A` — a
+  bound `B` already guarantees. That path reads the same expanded map, so it came along.
+- **The walk carries a visited set.** `trait A: B` alongside `trait B: A` is legal: it
+  says the two are always implemented together, which is exactly what E040 then requires
+  of every implementer. Assuming a DAG hangs the typechecker, and a compiler that never
+  returns reads as an editor that froze, not as a compiler bug — so the cycle has a test.
+- **The backend needed nothing.** Dispatch publishes candidates for the trait that
+  *declares* the method, so a call through `B` to `A`'s method resolves to `A`'s impls
+  like any other. Pinned by `TestExec_BoundDispatchReachesASupertraitMethod` regardless:
+  "resolves abstractly" and "calls the right function" are different claims, and only the
+  second is the one a user notices.
+
+**A trait's body became optional the same day, which is what makes the shape above
+writable.** An umbrella trait — `trait Arithmetic: Add + Sub + Mul + Div`, no methods of
+its own — did not parse: `memberList` is built on `commaSep1` and its non-emptiness was
+deliberate, its comment naming this exact case (*"which is what makes `trait C {}` a syntax
+error rather than a trait with no methods"*). Right when a method-less trait meant nothing,
+and supertraits are precisely what stopped that being true.
+
+Three things worth keeping:
+
+- **The body is optional, braces and all** — not the member list, which stays non-empty, so
+  the list is *absent* rather than empty and `trait C { , }` is still an error. The bodiless
+  spelling (`trait Arithmetic: Add + Mul`) is the one an author reaches for, because there
+  is no body to delimit; Rust's mandatory `{}` is an artifact of having no statement
+  terminator to end the declaration, and Lyra has one. `impl_methods` had been optional
+  since it was written, so `impl Arithmetic for Vec2 {}` had been parsing all along and
+  only the *declaration* was unwritable.
+- **The optional body creates one ambiguity, and the terminator settles it.** A `{` on the
+  following line could have been absorbed as the body; it is not, so `trait Marker` ⏎
+  `{ 1 }` is a trait plus a block statement. This is the hazard that stopped the `for`
+  condition from taking `$.expression` — there the block reading was genuinely ambiguous,
+  here it is not. Pinned by a corpus test, because it is the kind of thing a later change
+  inverts silently.
+- **The collector reads the field with a nil check, not `MustField`.** An absent list is an
+  empty method list, **not** a dropped declaration: `MustField` returns nil, which erases
+  the trait and then reports `unknown trait` at every impl of it — a diagnostic pointing
+  everywhere except at the declaration that caused it.
+
+Cost: 7,786 → 7,825 states (+0.5%), `parser.c` +41 KB (+0.27%).
+
+**And the prelude's first operator-named methods exposed a docgen bug the same day.** A
+method's name on a page came from `GetName()` — the bare `Value` — so `(_/_)` rendered as
+`/: (Self, Self) -> Self`, a line that does not compile on a page whose whole contract is
+that it is the code to write. `MethodName.Key()` is the source spelling and exists for
+exactly this; it also carries *kind*, without which prefix `-` and binary `-` render
+identically although they are different methods.
+
+Two things kept it invisible, and the second is the reusable lesson. Every trait method in
+the standard library had been an ordinary identifier, where `GetName()` and `Key()` agree —
+so the bug needed a new *kind of declaration* to surface, not a new code path. And
+`TestSignature_RoundTripsThroughTheParser`, the guard written precisely to catch
+unparseable signatures, checks `Decl.Signature` only, while a trait's methods are
+`Members`: the guard's own blind spot was the shape of the model rather than the rendering.
+Members now round-trip too.
+
+What is deliberately *not* changed is whether the umbrella impl is required at all.
+`impl Arithmetic for Vec2 {}` asserts nothing the supertrait checks do not already
+establish — but making it optional would let a `where t: Arithmetic` bound be satisfied by
+a type that never named the trait, which is a coherence question, not a syntax one, and it
+is where E040 currently fires.
+
 ### 08/13/26
 **`lyrac doc` — the standard library's reference page is now generated.** One Markdown
 page per module with Starlight frontmatter, dropped straight into

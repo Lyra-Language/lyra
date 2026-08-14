@@ -349,6 +349,45 @@ implementation state:
   (`lyra-W015`): `&&`/`||` cannot short-circuit through a call, `!` is boolean negation,
   `**` is a spelling with no operator, the suffix forms name operators that do not exist.
 
+## Supertraits
+
+`trait B: A` means both halves as of 08/14, and they landed a week apart:
+
+- **The obligation** (08/07, `lyra-E040`, `checkTraitImpl`): `impl B for T` requires an
+  `impl A for T`. Declaration order does not matter — the impls are gathered up front.
+- **The use** (08/14, `closeOverSupertraits` in `typechecker_trait_dispatch.go`): a
+  `where t: B` bound reaches `A`'s methods, and satisfies a callee's `where u: A`.
+
+The second is a **transitive closure taken where a bound set enters scope**, not a rule
+each consumer applies. Four sites read `tc.genericBounds` — bound dispatch, the
+generic-argument check, operator overloading, the `Show` desugar — and expanding at the
+two write sites (`pushGenericBounds` for a binding, `checkTraitImpl` for an impl) is what
+keeps them from needing to agree about anything. If you add a fifth reader, it is already
+correct; if you add a third *writer*, it is not, and that is the thing to grep for.
+
+Those two writers are twins, and their comments say so: a bound that reaches `A`'s methods
+when written on a binding and not when written on an impl means different things depending
+on where it is written.
+
+Two properties worth not breaking. The closure is **cycle-safe by a visited set** —
+`trait A: B` alongside `trait B: A` is legal, meaning the two are always implemented
+together, which is precisely what E040 then requires of every implementer; assuming a DAG
+hangs the typechecker, which presents as a frozen editor. And the **backend needs nothing**:
+dispatch publishes candidates for the trait that *declares* the method, so a supertrait
+call resolves to that trait's impls like any other.
+
+**An umbrella trait parses as of the same day** — `trait Arithmetic: Add + Sub + Mul + Div`,
+with or without a `{}` — which needed a grammar change: a trait's body is now optional,
+braces and all. A method-less trait meant nothing before supertraits, so refusing it cost
+nothing; now it is the shape the feature is written for. `impl_methods` was already optional,
+so `impl Arithmetic for Vec2 {}` had been parsing all along.
+
+The collector reads the field with `cst.Field` + a nil check rather than `MustField`
+(`declarations/trait_decl.go`): an absent list is an empty method list, **not** a dropped
+declaration. `MustField` returns nil, which would erase the trait and then report
+`unknown trait` at every impl of it — a diagnostic pointing everywhere except at the
+declaration.
+
 Two rules hold across all of it. **A primitive is never routed through an impl** — `1 + 1`
 is a machine add whatever a program declares — where "primitive" is the receiver
 **unstripped** (08/12): a newtype over a scalar is not the scalar, so `impl Add for Cents`
@@ -374,7 +413,8 @@ reflection, so it makes everything look consumed. Excluding the declaring packag
 too, or a field read only by its own accessors (`SymbolTable.Traits`) reports as dead.
 
 Run 08/07: **119 fields, 3 suspicious, 2 genuine** (`TraitDeclStmt.Bounds`, unenforced
-supertraits; `SymbolTable.PureFuncs`, a map written and never read). The conclusion worth
+supertraits — enforced later that day and fully usable 08/14, see [Supertraits](#supertraits);
+`SymbolTable.PureFuncs`, a map written and never read). The conclusion worth
 keeping is that the AST surface is *not* where this problem lives — the phantoms were in
 effect tables (`builtinEffects`), in glue switches missing a case, and in grammar rules with
 no collector consumer. Those need their own sweeps, and a field-level one will not find
@@ -517,6 +557,15 @@ Two rules hold here and are easy to break:
   are individually small: `DynamicArray<string>`/`[]string`, `boolean`/`bool`,
   `AnonymousTuple(a, b)`/`(a, b)`, and `ParameterizedType.GetName()` returning `Maybe`
   for `Maybe<t>` — a type that exists and is the wrong one.
+
+  **The rule reaches members too, and that is where it was broken** (fixed 08/14): a
+  method's name on a page is `ast.MethodName.Key()`, never `GetName()`. `GetName()` is the
+  bare `Value`, so an operator-named method rendered as `/` where an author writes `(_/_)`
+  — and it erases *kind*, so prefix `-` and binary `-` both render as `-` although they are
+  different methods. It survived because every trait method in the standard library was an
+  ordinary identifier, for which the two agree, until the prelude gained
+  `Add`/`Sub`/`Mul`/`Div`; and because `TestSignature_RoundTripsThroughTheParser` checks
+  `Decl.Signature` only, while a trait's methods are `Members`. Both gaps now have tests.
 - **A doc body is shifted before it is embedded.** A doc comment is written standalone,
   so its `# Panics` is an h1; nested under a declaration on a page that breaks the
   outline and every table of contents built from it. `ast.ShiftHeadings` and

@@ -1,0 +1,19 @@
+module std.math
+//! Numeric types and functions beyond the arithmetic the language builds in.
+//!
+//! Imported explicitly, unlike `std.prelude`, which is in scope everywhere.
+//!
+//! The arithmetic operator traits are deliberately *not* here — `Add`, `Sub`, `Mul`, `Div`
+//! and `Arithmetic` live in the prelude. Implementing `+` for a type of your own should not
+//! require importing anything, and two in-scope traits declaring one operator for one type
+//! is an ambiguity reported at the operator, which is a thing an import can cause from a
+//! distance. What belongs here is everything built *on* those operators.
+
+// This file is the module's **lead**: `leadsModule` orders the file named for the module's
+// last path segment first, so its `//!` header opens the joined documentation whatever the
+// other files are called. Without a designated lead the summary is whichever file the walk
+// reached first, which is a fact about the filesystem rather than about the module.
+//
+// It declares nothing, and does not need to. A module that outgrows one file and wants a
+// chosen opening paragraph adds a file named after itself; one that does not care adds
+// nothing and the join order is unchanged.

@@ -244,3 +244,75 @@ pub data Shape = Circle(f64) | Empty
 		}
 	}
 }
+
+// An operator-named trait method is rendered in the spelling an author writes —
+// `(_/_)`, not `/`. Members go through `MethodName.Key()`, the same source-syntax rule
+// the round-trip above enforces for declarations, one level down.
+//
+// It rendered as the bare `/` until 08/14, which is a line that does not compile on a
+// page read as the code to write. Nothing caught it because every trait method in the
+// standard library was an ordinary identifier until the prelude gained `Add`/`Sub`/
+// `Mul`/`Div`, and for an identifier `GetName()` and `Key()` agree — so the bug needed a
+// *new kind of declaration* to become visible, not a new code path.
+func TestSignature_OperatorMethodsRenderInSourceSpelling(t *testing.T) {
+	src := `
+pub trait Div { (_/_): (Self, Self) -> Self }
+pub trait Neg { (-_): (Self) -> Self }
+pub struct Cents { c: i64 }
+impl Div for Cents { (_/_) = (self, o) => Cents { c: self.c / o.c } }
+`
+	m := collectOne(t, src, docgen.Options{})
+
+	want := map[string]string{"Div": "(_/_)", "Neg": "(-_)", "Div for Cents": "(_/_)"}
+	seen := map[string]bool{}
+	for _, d := range m.Decls {
+		spelling, expected := want[d.Name]
+		if !expected {
+			continue
+		}
+		seen[d.Name] = true
+		if len(d.Members) != 1 {
+			t.Fatalf("%s: got %d members, want 1", d.Name, len(d.Members))
+		}
+		if got := d.Members[0].Name; got != spelling {
+			t.Errorf("%s: member name %q, want %q", d.Name, got, spelling)
+		}
+		if !strings.HasPrefix(d.Members[0].Signature, spelling) {
+			t.Errorf("%s: member signature %q should start with %q",
+				d.Name, d.Members[0].Signature, spelling)
+		}
+	}
+	for name := range want {
+		if !seen[name] {
+			t.Errorf("declaration %q never appeared on the page", name)
+		}
+	}
+}
+
+// A trait method's rendered signature must parse, which the declaration-level round-trip
+// does not cover: it checks `Decl.Signature` only, and a trait's methods are Members. That
+// gap is what let the bare `/` spelling survive.
+func TestSignature_TraitMembersRoundTripThroughTheParser(t *testing.T) {
+	src := `
+pub trait Div { (_/_): (Self, Self) -> Self }
+pub trait Neg { (-_): (Self) -> Self }
+pub trait Show { pure show: (Self) -> string }
+`
+	m := collectOne(t, src, docgen.Options{})
+
+	for _, d := range m.Decls {
+		if d.Kind != docgen.KindTrait {
+			continue
+		}
+		for _, member := range d.Members {
+			wrapped := "module m\ntrait T { " + member.Signature + " }\n"
+			reparse := driver.Analyze([]byte(wrapped))
+			for _, diagnostic := range reparse.Errors() {
+				if strings.Contains(diagnostic.Message, "syntax error") {
+					t.Errorf("member signature does not parse: %s\n  %s",
+						member.Signature, diagnostic.Message)
+				}
+			}
+		}
+	}
+}

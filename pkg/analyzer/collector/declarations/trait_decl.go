@@ -45,11 +45,16 @@ func CollectTraitDeclaration(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.Tra
 		genericParams = ctx.MergeWhereConstraints(genericParams, whereNode)
 	}
 
-	methodsNode, ok := ctx.MustField(node, "methods")
-	if !ok {
-		return nil
+	// A trait may declare no methods of its own — an **umbrella** whose content is its
+	// supertraits (`trait Arithmetic: Add + Mul {}`), legal since 08/14. An absent field
+	// is an empty method list, not a dropped declaration: MustField reports a missing
+	// field and returns nil, which would erase the trait and then report `unknown trait`
+	// at every impl of it — a diagnostic pointing everywhere except at the declaration.
+	// Mirrors trait_impl.go, whose methods field has always been optional.
+	methods := []ast.TraitMethod{}
+	if methodsNode := cst.Field(node, "methods"); methodsNode != nil {
+		methods = collectMethods(methodsNode, ctx)
 	}
-	methods := collectMethods(methodsNode, ctx)
 
 	stmt := &ast.TraitDeclStmt{
 		AstBase:       ast.AstBase{Location: ctx.NodeLocation(node)},

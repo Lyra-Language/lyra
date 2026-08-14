@@ -364,7 +364,7 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 		// *"type parameter t has no method `show`; add a `where t: Trait` bound"* with
 		// the bound sitting right there — the diagnostic naming the very fix the author
 		// had already applied.
-		restoreBounds := tc.pushGenericBounds(decl.GenericParams)
+		restoreBounds := tc.pushGenericBounds(decl.GenericParams, decl.GetLocation())
 		tc.checkLambdaBody(decl.Name, lambda)
 		restoreBounds()
 		// Record the binding's type. A local `let f = <lambda>` is a closure *value*
