@@ -479,6 +479,13 @@ func traitNamesOf(matches []resolvedTraitMethod) string {
 // ordinary call.Arguments[0] and the whole parameter list lines up directly.
 func (tc *TypeChecker) inferResolvedTraitMethodCall(calleeName string, match resolvedTraitMethod, call *ast.FunctionCallExpr, receiver ast.Expression) types.Type {
 	tc.checkImplConstraints(match, call.GetLocation())
+	// A concrete dispatch onto a generic impl is an instantiation, and the impl's body
+	// has bound-dispatched sites of its own — the operator path does the same after
+	// SetOperatorResolution. Both are needed: `measure(Box { v: Box { v: 7 } })` reaches
+	// `impl Depth for Box<t>` at `t = Box<i64>`, whose `self.v.depth()` must find the
+	// same impl one level down, and fixing only the operator half leaves the identical
+	// failure under a `.method()` call.
+	tc.publishImplBodyCandidates(match)
 	// The full resolution, not just the method: the backend needs the impl it came
 	// from and the receiver-substituted signature to emit the call.
 	tc.methodTable.SetResolution(call, typetable.Resolution{
@@ -720,6 +727,11 @@ func (tc *TypeChecker) checkGenericBounds(calleeName string, lambda *ast.LambdaE
 				}
 				continue
 			}
+			// The bound holds, so this instantiation fixes the callee's parameter at a
+			// concrete type — the one thing the candidate tables were missing for a
+			// *generic* impl. Publish before reporting, since a failing bound has no
+			// specialization to publish for.
+			tc.publishCandidatesAt(lambda, traitName, concrete)
 			if ok, why := tc.typeImplementsTraitWhy(concrete, traitName, nil); !ok {
 				// The `because` clause is what makes a nested failure actionable: an
 				// impl may apply to `Complex<t>` in general and be excluded here by its
@@ -735,6 +747,187 @@ func (tc *TypeChecker) checkGenericBounds(calleeName string, lambda *ast.LambdaE
 			}
 		}
 	}
+}
+
+// publishCandidatesAt fills in the candidate key a **generic** impl can never supply on
+// its own: the substituted concrete type.
+//
+// The candidate tables are keyed by the impl's *written* target, which is right for a
+// concrete impl (`impl Show for i64` keys `i64`, and the backend looks up `i64`) and never
+// matches for a generic one — `impl Add for Box<t>` keys the literal string `Box<t>` while
+// the specialization looks up `Box<i64>`. So a generic impl was unreachable through a
+// bound in **both** forms, a method call and an operator, each failing in the backend with
+// its own message (`no impl of Sized2 for it`, `type not found for *ast.IdentifierExpr`)
+// for one cause.
+//
+// **This is the only place both halves of the question are in hand.** The callee's body
+// holds the bound-dispatched sites, and the instantiation fixes the type — the typechecker
+// knows the concrete type here and nowhere the body is visible, and the backend knows the
+// body but must not re-derive the match (that is the drift `Resolution` exists to
+// prevent). So the match stays here and the answer is published, exactly as the original
+// candidate publication does.
+//
+// Sites are filtered by trait rather than by which parameter they belong to. A generic
+// with two bounded parameters may publish a candidate under the wrong one, which costs a
+// table entry nobody selects — the same trade `publishBoundCandidates` already documents.
+func (tc *TypeChecker) publishCandidatesAt(lambda *ast.LambdaExpr, traitName string, concrete types.Type) {
+	if lambda == nil || lambda.Body == nil || concrete == nil {
+		return
+	}
+	if _, isVar := concrete.(types.GenericType); isVar {
+		return
+	}
+	keys := candidateKeys(concrete)
+	// **The bound's trait is not the method's trait once supertraits exist.** A site
+	// under `where u: Arithmetic` dispatches `(_+_)` through `Add`, because `Arithmetic`
+	// declares nothing — so matching the ref against the bound's name alone publishes
+	// for `Box<t> where t: Add` and silently skips the umbrella case that motivated all
+	// of this. The closure is the same one that makes the bound reach the method.
+	reachable := tc.closeOverSupertraits([]string{traitName}, lambda.GetLocation())
+	onExpr := func(e ast.Expression) bool {
+		if call, isCall := e.(*ast.FunctionCallExpr); isCall {
+			if ref, ok := tc.methodTable.GetBound(call); ok && slices.Contains(reachable, ref.Trait) {
+				if m, found := tc.matchOneAt(concrete, ast.NewMethodNameIdentifier(ref.Method), ref.Trait); found {
+					for _, k := range keys {
+						tc.methodTable.AddBoundCandidate(call, k, resolutionOf(m))
+					}
+					tc.publishImplBodyCandidates(m)
+				}
+			}
+		}
+		if ref, ok := tc.methodTable.OperatorBound(e); ok && slices.Contains(reachable, ref.Trait) {
+			if m, found := tc.matchOneAt(concrete, methodNameFromKey(ref.Method), ref.Trait); found {
+				for _, k := range keys {
+					tc.methodTable.AddOperatorCandidate(e, k, resolutionOf(m))
+				}
+				tc.publishImplBodyCandidates(m)
+			}
+		}
+		return true
+	}
+	ast.WalkExpr(lambda.Body, func(ast.Statement) bool { return true }, onExpr)
+}
+
+// publishImplBodyCandidates is publishCandidatesAt for the *inside* of a generic impl
+// that was just dispatched concretely.
+//
+// A concrete dispatch fixes the impl's own variables, so the impl's method body becomes a
+// specialization — and its bound-dispatched sites need the same candidate the call site
+// needed. `Box<Box<i64>> + Box<Box<i64>>` matches `impl Add for Box<t>` at `t = Box<i64>`,
+// and the body's `self.v + o.v` is a site checked when `t` was still a variable, so its
+// candidates are keyed by written targets and miss `Box<i64>`.
+//
+// The impl's own `where` clause supplies both halves: which trait each variable is bounded
+// by, and — through the bindings this match produced — the concrete type it now stands
+// for. Recursion is by construction rather than by a loop: publishing walks a body whose
+// own dispatches publish in turn, and each step strips a layer of type argument, so
+// `Box<Box<Box<i64>>>` terminates for the same reason the constraint walk does.
+func (tc *TypeChecker) publishImplBodyCandidates(m resolvedTraitMethod) {
+	if m.Impl == nil || m.Method == nil || len(m.Bindings) == 0 {
+		return
+	}
+	if m.Method.Clause.Body == nil {
+		return
+	}
+	// Publishing walks a body whose own sites publish in turn, so the same impl can be
+	// re-entered at the same bindings — directly for a self-referential type, or through
+	// two impls that reach each other. Each step normally strips a layer of type
+	// argument and terminates, and this is the guard for when it does not: without it
+	// the typechecker spins, which reads as a frozen editor rather than a crash.
+	key := fmt.Sprintf("%p|%s|%s", m.Impl, m.Method.Name.Key(), describeBindings(m.Bindings))
+	if tc.publishing == nil {
+		tc.publishing = map[string]bool{}
+	}
+	if tc.publishing[key] {
+		return
+	}
+	tc.publishing[key] = true
+	defer delete(tc.publishing, key)
+	body := &ast.LambdaExpr{Body: m.Method.Clause.Body}
+	for _, c := range m.Impl.Constraints {
+		concrete, ok := m.Bindings[c.GenericType]
+		if !ok || concrete == nil {
+			continue
+		}
+		for _, traitName := range c.TraitBounds {
+			tc.publishCandidatesAt(body, traitName, concrete)
+		}
+	}
+}
+
+// candidateKeys is every spelling the backend might look this type up under.
+//
+// **A generic struct is monomorphized before it is lowered**, so inside a specialization
+// the receiver's recorded type is the *substituted* one — named `Box$i64`, not
+// `Box<i64>` — and a candidate filed only under the source rendering is never found. The
+// mangling is `typetable.TypeSymbol`, which is shared rather than reproduced here, because
+// a second copy of a naming scheme is a silent miss the day either side changes.
+//
+// Both are published rather than picking one: which form reaches the lookup depends on
+// whether the receiver's type survived substitution, and an unselected key costs a map
+// entry.
+func candidateKeys(concrete types.Type) []string {
+	keys := []string{concrete.String()}
+	if sym := typetable.MonoTypeKey(concrete); sym != keys[0] {
+		keys = append(keys, sym)
+	}
+	return keys
+}
+
+// resolveOneAt resolves a trait method at a concrete type. The trait it requires is the
+// **ref's** — the one that declares the method — not the bound's: under `where u:
+// Arithmetic` the umbrella declares nothing, and asking for `(_+_)` on `Arithmetic`
+// matches no impl at all. That distinction only exists because supertraits do.
+//
+// Exactly one match is required, the rule boundCandidatesByType applies for the same
+// reasons —
+// the same rule boundCandidatesByType applies, for the same reasons: none means the impl
+// does not provide it (reported at the impl) and several is an ambiguity the concrete call
+// site reports.
+func (tc *TypeChecker) matchOneAt(concrete types.Type, method ast.MethodName, traitName string) (resolvedTraitMethod, bool) {
+	matches := tc.resolveTraitMethodNamed(concrete, method, traitName)
+	if len(matches) != 1 {
+		return resolvedTraitMethod{}, false
+	}
+	return matches[0], true
+}
+
+// describeBindings renders a binding set deterministically, for the in-progress key
+// above. Sorted, since a map's iteration order would make the guard fire at random.
+func describeBindings(b map[string]types.Type) string {
+	names := make([]string, 0, len(b))
+	for n := range b {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		parts = append(parts, n+"="+b[n].String())
+	}
+	return strings.Join(parts, ",")
+}
+
+func resolutionOf(m resolvedTraitMethod) typetable.Resolution {
+	return typetable.Resolution{
+		Impl: m.Impl, Method: m.Method, Signature: m.Signature, Bindings: m.Bindings,
+	}
+}
+
+// methodNameFromKey inverts ast.MethodName.Key() for the operator spellings, since a
+// BoundMethodRef carries the key string rather than the structured name. Kind is part of a
+// method's identity — prefix `-` and binary `-` are different methods — so a bare Value
+// would resolve the wrong one.
+func methodNameFromKey(key string) ast.MethodName {
+	if len(key) >= 4 && strings.HasPrefix(key, "(_") && strings.HasSuffix(key, "_)") {
+		return ast.NewMethodNameBinary(ast.BinaryOperator(key[2 : len(key)-2]))
+	}
+	if len(key) >= 3 && strings.HasPrefix(key, "(") && strings.HasSuffix(key, "_)") {
+		return ast.NewMethodNamePrefix(ast.PrefixOperator(key[1 : len(key)-2]))
+	}
+	if len(key) >= 3 && strings.HasPrefix(key, "(_") && strings.HasSuffix(key, ")") {
+		return ast.NewMethodNameSuffix(ast.SuffixOperator(key[2 : len(key)-1]))
+	}
+	return ast.NewMethodNameIdentifier(key)
 }
 
 // publishBoundCandidates records the concrete resolution of a `where`-bound call for

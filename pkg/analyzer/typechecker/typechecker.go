@@ -33,6 +33,7 @@ type TypeChecker struct {
 	enclosingFuncName string
 	traitImpls        []*ast.TraitImplStmt // every impl block in the program, collected up front by Check; see resolveTraitMethod
 	genericBounds     map[string][]string  // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
+	publishing        map[string]bool      // impl-body candidate publications in progress, so a body reaching itself terminates; see publishImplBodyCandidates
 	// currentImplMethod/currentImplType name the trait-impl method whose body is being
 	// checked, or the zero values outside one. Read by showApplies, which must not
 	// rewrite `${self}` inside `show` into a call to that same `show`.

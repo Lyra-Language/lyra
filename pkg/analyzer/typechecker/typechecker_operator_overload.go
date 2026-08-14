@@ -198,6 +198,13 @@ func (tc *TypeChecker) dispatchOperator(
 		Signature: m.Signature,
 		Bindings:  m.Bindings,
 	})
+	// This concrete dispatch fixes the impl's own variables, which makes it an
+	// instantiation like any other — and the impl's *body* has bound-dispatched sites of
+	// its own. `Box<Box<i64>> + Box<Box<i64>>` selects `impl Add for Box<t>` at
+	// `t = Box<i64>`, whose body's `self.v + o.v` must then find the same impl one level
+	// down. Nothing else reaches that: the outer call site published for the outer type,
+	// and the inner site was checked when `t` was still a variable.
+	tc.publishImplBodyCandidates(m)
 	result := m.Signature.ReturnType.Type
 	if result == nil {
 		tc.addError(expr.GetLocation(), SeverityError,

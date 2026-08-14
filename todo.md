@@ -2115,12 +2115,52 @@ should — "Complex<string> does not implement Arithmetic" is useless without "b
 `string` does not") and whether this subsumes the umbrella-impl question above, since a
 bound that verifies constraints is most of what requiring the impl was buying.
 
-### [OPEN] An operator impl on a *generic* struct does not lower in two positions
+### [DONE 08/14] A generic impl was never selectable as a candidate
 
-Found 08/14 while verifying the fix above, and **pre-existing** — the fix only rejects
-more, so it cannot push a program into codegen. `std/math/complex.lyra` works for direct
-operator use (`a + b`, `a * b`, `a / b` on a `Complex<f64>` all run and print correctly)
-and fails in two:
+**One cause, three symptoms**, and the diagnosis in the original report below was too
+narrow: it is not about operators, and not about the bound. The candidate tables are keyed
+by each impl's **written** target, which is exactly right for a concrete impl
+(`impl Show for i64` keys `i64`, and a specialization looks up `i64`) and can never match
+for a generic one — `impl Add for Box<t>` keys the literal string `Box<t>` while the
+specialization looks up `Box<i64>`. So a generic impl was unreachable through a bound in
+*both* forms, a method call and an operator, and nested besides.
+
+The missing keys are published where a concrete type is first known — the instantiation —
+by `publishCandidatesAt`, which is the only place both halves are in hand: the callee's
+body holds the bound-dispatched sites, and the instantiation fixes the type. Matching
+stays in the typechecker, which is the rule `Resolution` exists to keep.
+
+Four things it needed, each of which looked like the whole fix until the next one appeared:
+
+- **Publish under the monomorphized key too.** A generic struct is monomorphized before
+  lowering, so the receiver's type inside a specialization is named `Box$i64`, not
+  `Box<i64>`. The mangling is recursive — `Box<Box<i64>>` is `Box$Box_i64`, not
+  `Box$Box_i64_` — because the backend substitutes inner arguments *before* naming the
+  outer one. `typetable.MonoTypeKey` lives beside `TypeSymbol` and `mangleTypeName` so the
+  scheme stays in one place.
+- **Resolve against the trait that declares the method, not the bound's.** Under
+  `where u: Arithmetic` the umbrella declares nothing and `(_+_)` comes from `Add`; asking
+  for it on `Arithmetic` matches no impl, publishes nothing, and looks exactly like no fix.
+  Supertraits are what make the two differ.
+- **Filter sites by the supertrait closure**, for the same reason.
+- **Recurse into the selected impl's body.** A published candidate may itself select a
+  generic impl whose body has bound sites one level down — `measure(Box { v: Box { v: 7 } })`
+  reaches `impl Depth for Box<t>` at `t = Box<i64>`, whose `self.v.depth()` needs a
+  candidate at `Box<i64>`. Both concrete-dispatch paths hook it too (operator and method);
+  fixing one leaves the identical failure under the other spelling.
+
+The recursion carries an in-progress set. It terminates on its own for well-founded types,
+each step stripping a layer, but a body that reaches itself would otherwise spin — which
+reads as a frozen editor, not a crash.
+
+Measured: no meaningful change to `BenchmarkAnalyze_*` (within noise at 3 iterations).
+
+The original report follows.
+
+Found 08/14 while verifying the fix above, and **pre-existing** — that fix only rejects
+more, so it cannot push a program into codegen. `std/math/complex.lyra` worked for direct
+operator use (`a + b`, `a * b`, `a / b` on a `Complex<f64>` all ran and printed correctly)
+and failed in two:
 
 ```lyra
 let twice<u> where u: Arithmetic = (v: u) -> u => v + v

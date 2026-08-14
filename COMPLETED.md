@@ -10,6 +10,52 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**A generic impl is selectable as a candidate.** One cause behind three symptoms: a bound
+dispatch to an operator, a bound dispatch to a method, and a nested generic impl all failed
+in the backend with internal messages naming an AST node.
+
+The candidate tables are keyed by each impl's **written** target. That is exactly right for
+a concrete impl — `impl Show for i64` keys `i64`, and a specialization looks up `i64` — and
+can never match for a generic one: `impl Add for Box<t>` keys the literal string `Box<t>`
+while the specialization looks up `Box<i64>`. Every generic impl was therefore invisible to
+every bound.
+
+The missing keys are published where a concrete type is first known, which is the
+instantiation. `publishCandidatesAt` is the only place both halves of the question are in
+hand — the callee's body holds the bound-dispatched sites, and the instantiation fixes the
+type — so the match stays in the typechecker, which is what `Resolution` exists to keep.
+
+**Four things it needed, each of which looked like the whole fix until the next appeared:**
+
+- **The monomorphized key.** A generic struct is monomorphized before lowering, so inside a
+  specialization the receiver is named `Box$i64`, not `Box<i64>`. The mangling is
+  *recursive*: `Box<Box<i64>>` is `Box$Box_i64` and not `Box$Box_i64_`, because the backend
+  substitutes inner arguments before naming the outer one. `typetable.MonoTypeKey` lives
+  beside `TypeSymbol` and `mangleTypeName`, since a second copy of a naming scheme is a
+  silent miss the day any of them changes — and this one differs by a single character.
+- **The trait that declares the method, not the one the bound names.** Under
+  `where u: Arithmetic` the umbrella declares nothing and `(_+_)` comes from `Add`. Asking
+  for it on `Arithmetic` matches no impl, publishes nothing, and is indistinguishable from
+  having done nothing at all — which is how it presented: `Box where t: Add` worked and the
+  identical `Box where t: Arithmetic` did not.
+- **Filtering sites by the supertrait closure**, for the same reason.
+- **Recursion into the selected impl's body.** A published candidate may itself select a
+  generic impl with bound sites one level down. Both concrete-dispatch paths hook it too,
+  operator and method: fixing one leaves the identical failure under the other spelling,
+  which is hazard 8's shape yet again.
+
+The recursion carries an in-progress set. It terminates on its own for well-founded types —
+each step strips a layer — but a body reaching itself would otherwise spin, and a
+typechecker that never returns reads as a frozen editor rather than a crash.
+
+**What it unblocks**: `std.math`'s `Complex<t>` now works through a generic bound and
+nested, not only directly. `twice(Complex { re: 1.0, im: 2.0 })` prints `2 + 4i`, and
+`Complex<Complex<f64>>` adds componentwise. A generic `escape<t> where t: Arithmetic` — the
+shape a mandelbrot renderer wants — is now writable.
+
+Measured: no meaningful change to `BenchmarkAnalyze_*`.
+
+### 08/14/26
 **A `where` bound is no longer satisfied by an impl whose own `where` clause excludes the
 instantiation.** `typeImplementsTrait` matched an impl by its target's *head* and stopped
 there, so `impl Arithmetic for Complex<t> where t: Arithmetic` made **every** `Complex<x>`

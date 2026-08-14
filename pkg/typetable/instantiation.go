@@ -100,6 +100,34 @@ func TypeSymbol(name string, args []types.Type) string {
 	return strings.Join(parts, "$")
 }
 
+// MonoTypeKey is the name a type has once it has been monomorphized — `Box<i64>` becomes
+// `Box$i64`, and `Box<Box<i64>>` becomes `Box$Box_i64` rather than `Box$Box_i64_`.
+//
+// It is TypeSymbol applied **recursively**, and the recursion is the whole point: the
+// backend substitutes inner type arguments before naming the outer one, so by the time a
+// nested type is named its argument is already `Box$i64` and mangles to `Box_i64`.
+// Rendering the source type instead mangles `Box<i64>` to `Box_i64_`, a name that differs
+// by one character and misses every lookup.
+//
+// It lives beside TypeSymbol and mangleTypeName because it is the same naming scheme, and
+// a second copy elsewhere is a silent miss the day any of the three changes.
+func MonoTypeKey(t types.Type) string {
+	pt, ok := t.(types.ParameterizedType)
+	if !ok || len(pt.TypeArguments) == 0 {
+		return t.String()
+	}
+	parts := make([]string, 0, len(pt.TypeArguments)+1)
+	parts = append(parts, pt.Name)
+	for _, a := range pt.TypeArguments {
+		if a == nil {
+			parts = append(parts, "_")
+			continue
+		}
+		parts = append(parts, mangleTypeName(MonoTypeKey(a)))
+	}
+	return strings.Join(parts, "$")
+}
+
 // mangleTypeName reduces a type's rendering to symbol-safe characters.
 func mangleTypeName(s string) string {
 	return strings.Map(func(r rune) rune {

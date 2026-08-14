@@ -295,6 +295,44 @@ func (t *MethodTable) SetOperatorCandidates(expr ast.Expression, byType map[stri
 	t.operatorCandidates[expr] = byType
 }
 
+// AddBoundCandidate adds one resolution to a call's candidate set, for a concrete type
+// discovered *after* the set was first published.
+//
+// SetBoundCandidates enumerates the impls of a trait keyed by each impl's **written**
+// target, which is exactly right for a concrete impl (`impl Show for i64` keys `i64`) and
+// never matches for a generic one: `impl Add for Box<t>` keys the string `Box<t>`, while
+// the backend looks up the substituted `Box<i64>`. So a generic impl was unreachable
+// through a bound — the call type-checked and failed in codegen.
+//
+// The missing key can only be supplied where a concrete type is known, which is the
+// instantiation, so this merges rather than replacing.
+func (t *MethodTable) AddBoundCandidate(call *ast.FunctionCallExpr, concrete string, r Resolution) {
+	if t == nil {
+		return
+	}
+	if t.boundCandidates == nil {
+		t.boundCandidates = map[*ast.FunctionCallExpr]map[string]Resolution{}
+	}
+	if t.boundCandidates[call] == nil {
+		t.boundCandidates[call] = map[string]Resolution{}
+	}
+	t.boundCandidates[call][concrete] = r
+}
+
+// AddOperatorCandidate is AddBoundCandidate for an operator, which is not a call node.
+func (t *MethodTable) AddOperatorCandidate(expr ast.Expression, concrete string, r Resolution) {
+	if t == nil {
+		return
+	}
+	if t.operatorCandidates == nil {
+		t.operatorCandidates = map[ast.Expression]map[string]Resolution{}
+	}
+	if t.operatorCandidates[expr] == nil {
+		t.operatorCandidates[expr] = map[string]Resolution{}
+	}
+	t.operatorCandidates[expr][concrete] = r
+}
+
 // OperatorCandidate returns the impl an operator dispatches to at a concrete type.
 func (t *MethodTable) OperatorCandidate(expr ast.Expression, concrete string) (Resolution, bool) {
 	if t == nil {

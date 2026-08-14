@@ -118,3 +118,75 @@ let main = () -> void => {
 		t.Errorf("got %q; want \"an int\\na bool\"", got)
 	}
 }
+
+// ── A generic impl is selectable as a candidate (08/14) ────────────────────
+//
+// The candidate tables are keyed by each impl's **written** target, which is right for a
+// concrete impl (`impl Show for i64` keys `i64`, and a specialization looks up `i64`) and
+// never matches for a generic one: `impl Add for Box<t>` keys the literal `Box<t>` while
+// the specialization looks up `Box<i64>`. So a generic impl was unreachable through a
+// bound in both forms — a method call and an operator — each dying in the backend with its
+// own message for one cause.
+//
+// The missing keys are published where a concrete type is first known: the instantiation.
+
+const genericBoxArith = `
+struct Box<t> { v: t }
+impl Add for Box<t> where t: Arithmetic { (_+_) = (self, o) => Box { v: self.v + o.v } }
+impl Sub for Box<t> where t: Arithmetic { (_-_) = (self, o) => Box { v: self.v - o.v } }
+impl Mul for Box<t> where t: Arithmetic { (_*_) = (self, o) => Box { v: self.v * o.v } }
+impl Div for Box<t> where t: Arithmetic { (_/_) = (self, o) => Box { v: self.v / o.v } }
+impl Arithmetic for Box<t> where t: Arithmetic {}
+`
+
+// An operator on a generic struct, reached through a bound. Note the bound is the
+// **umbrella**: `Arithmetic` declares no methods, so `+` resolves through `Add`, and the
+// candidate has to be published for the trait that declares the method rather than the one
+// the bound names. Getting that wrong publishes nothing and looks exactly like no fix.
+func TestExec_OperatorThroughABoundOnAGenericImpl(t *testing.T) {
+	t.Parallel()
+	src := genericBoxArith + `
+let twice<u> where u: Arithmetic = (v: u) -> u => v + v
+let main = () -> void => { println(twice(Box { v: 21 }).v); }
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "42" {
+		t.Errorf("got %q; want \"42\"", got)
+	}
+}
+
+// The same gap in the method-call form, which failed with a different message
+// ("no impl of Sized2 for it") for the same reason.
+func TestExec_MethodThroughABoundOnAGenericImpl(t *testing.T) {
+	t.Parallel()
+	src := `
+trait Depth { depth: (Self) -> i64 }
+struct Box<t> { v: t }
+impl Depth for i64 { depth = (self) => 0 }
+impl Depth<t> for Box<t> where t: Depth { depth = (self) => self.v.depth() + 1 }
+let measure<u> where u: Depth = (x: u) -> i64 => x.depth()
+let main = () -> void => {
+  println(measure(7));
+  println(measure(Box { v: Box { v: 7 } }));
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "0\n2" {
+		t.Errorf("got %q; want \"0\\n2\"", got)
+	}
+}
+
+// Nesting, with no bound in sight: `Box<Box<i64>> + Box<Box<i64>>` selects
+// `impl Add for Box<t>` at `t = Box<i64>`, and *that body's* `self.v + o.v` must find the
+// same impl one level down. The outer call site publishes for the outer type only, so the
+// inner site is reached by the impl body's own publication.
+func TestExec_OperatorOnANestedGenericImpl(t *testing.T) {
+	t.Parallel()
+	src := genericBoxArith + `
+let main = () -> void => {
+  let n = Box { v: Box { v: 21 } };
+  println((n + n).v.v);
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "42" {
+		t.Errorf("got %q; want \"42\"", got)
+	}
+}
