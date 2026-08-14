@@ -1,6 +1,9 @@
 package typechecker_test
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // Bounded polymorphism in a method body: with `where t: Show`, a call on a
 // value of type `t` (`self.value.show()`) dispatches through the bound's trait
@@ -74,4 +77,69 @@ impl Dup<t> for Box<t> where t: Dup {
     }
 }`, false)
 	assertErrorsAre(t, res, "n: cannot assign t to i64")
+}
+
+// ── A matched impl's own `where` bounds are verified (08/14) ────────────────
+//
+// Matching on the target's *head* alone meant a generic impl satisfied a bound for every
+// instantiation of its target, including ones it explicitly excludes. That was a
+// documented first-cut limit — "the recursive obligation surfaces when that impl is itself
+// dispatched" — and what it misses is the impl that **is** its constraint: an umbrella
+// impl has no methods, so there is no later dispatch, and the bound check is the only
+// place the question is ever asked.
+
+const boxArith = `
+trait Add { (_+_): (Self, Self) -> Self }
+trait Arith: Add {}
+struct Box<t> { v: t }
+impl Add for Box<t> where t: Arith { (_+_) = (self, o) => Box { v: self.v + o.v } }
+impl Arith for Box<t> where t: Arith {}
+impl Add for i64 { (_+_) = (self, o) => self + o }
+impl Arith for i64 {}
+let twice<u> where u: Arith = (v: u) -> u => v + v
+`
+
+// The bug: `Box<string>` satisfied `where u: Arith` through `impl Arith for Box<t>`,
+// because only the head `Box` was compared. It type-checked clean and died in the backend.
+func TestBoundSatisfaction_ImplConstraintExcludesTheInstantiation(t *testing.T) {
+	res := parseCollectAndCheck(t, boxArith+`
+let main = () => { let s = Box { v: "x" }; println(twice(s).v) }
+`, false)
+	if len(res.errors) == 0 {
+		t.Fatal("Box<string> must not satisfy `where u: Arith` — its impl requires t: Arith")
+	}
+	// The diagnostic has to name the *inner* failure: the outer type alone says
+	// nothing about which part of it was wrong.
+	if !strings.Contains(res.errors[0].Error(), "string does not implement Arith") {
+		t.Errorf("want the nested reason, got: %v", res.errors[0])
+	}
+}
+
+// The other direction, which is the one a fix like this breaks: an instantiation the
+// impl's constraint *does* admit must still satisfy the bound.
+func TestBoundSatisfaction_ImplConstraintAdmitsTheInstantiation(t *testing.T) {
+	res := parseCollectAndCheck(t, boxArith+`
+let main = () => { let n = Box { v: 1 }; println(twice(n).v) }
+`, false)
+	assertNoErrors(t, res)
+}
+
+// **A binding that is itself a type variable is skipped, not failed.** `impl Arith for
+// Box<t> where t: Arith` is checked for its supertrait obligation with `t` still abstract;
+// answering "t does not implement Add" there would report against the impl's own
+// parameter, making every constrained generic impl an error. Whether `t` satisfies the
+// bound is the enclosing declaration's question, which is checkGenericBounds' own rule.
+func TestBoundSatisfaction_AbstractParameterIsNotAFailure(t *testing.T) {
+	res := parseCollectAndCheck(t, boxArith, false)
+	assertNoErrors(t, res)
+}
+
+// Nesting must terminate. Each step strips a layer of type argument, so the recursion ends
+// on its own here — but the in-progress set is what keeps a chain that does *not* shrink
+// from hanging the typechecker, which presents as a frozen editor rather than a crash.
+func TestBoundSatisfaction_NestedInstantiationTerminates(t *testing.T) {
+	res := parseCollectAndCheck(t, boxArith+`
+let main = () => { let n = Box { v: Box { v: 1 } }; println(twice(n).v.v) }
+`, false)
+	assertNoErrors(t, res)
 }

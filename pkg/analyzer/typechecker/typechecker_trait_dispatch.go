@@ -300,20 +300,107 @@ func (tc *TypeChecker) checkImplConstraints(match resolvedTraitMethod, loc ast.L
 // on a generic *binding* checked at its instantiation. It reuses the
 // same target-matching used for dispatch (so `i64` satisfies `Ord` via `impl Ord
 // for i64`, and a generic `impl Ord<u> for Box<u>` would satisfy `Box<i64>`).
-// This is a single level: the matched impl's *own* `where` bounds are not
-// recursively verified here (a deliberate first-cut limit — the recursive
-// obligation surfaces when that impl is itself dispatched).
+//
+// **A matched impl's own `where` bounds are verified too** (08/14). Matching on the
+// target's head alone meant a generic impl satisfied the bound for *every*
+// instantiation of its target, including ones it explicitly excludes:
+// `impl Arithmetic for Complex<t> where t: Arithmetic` made `Complex<string>` satisfy
+// `where u: Arithmetic`, which type-checked clean and died in the backend as
+// `llvm: type not found` — hazard 5 inverted.
+//
+// That single level was a documented first-cut limit, on the reasoning that "the
+// recursive obligation surfaces when that impl is itself dispatched". What it misses is
+// the impl that **is** its constraint: an umbrella impl has no methods, so there is no
+// later dispatch, and this is the only place the question is ever asked.
 func (tc *TypeChecker) typeImplementsTrait(t types.Type, traitName string) bool {
+	ok, _ := tc.typeImplementsTraitWhy(t, traitName, nil)
+	return ok
+}
+
+// implGoal is one "does T implement Trait?" question, for the in-progress set below.
+// Keyed on the type's rendering rather than its identity, since the same type arrives as
+// distinct values through different resolutions.
+type implGoal struct{ trait, target string }
+
+// typeImplementsTraitWhy is typeImplementsTrait plus the innermost constraint that
+// failed, so a caller can say *because*: "Complex<string> does not implement Arithmetic"
+// is not much use without "string does not implement Arithmetic" after it.
+//
+// `proving` carries the goals already on the stack. A constraint chain that leads back to
+// its own goal is not a proof, so re-entry answers **no** rather than looping — and only
+// that branch dies: the impl loop continues, so a goal provable another way still is. In
+// practice the recursion terminates on its own, since each step strips a layer of type
+// argument (`Complex<Complex<f64>>` → `Complex<f64>` → `f64`); the set is the guard for
+// the case that does not, which would otherwise hang the typechecker and read as a frozen
+// editor.
+func (tc *TypeChecker) typeImplementsTraitWhy(t types.Type, traitName string, proving map[implGoal]bool) (bool, string) {
+	goal := implGoal{trait: traitName}
+	if t != nil {
+		goal.target = t.String()
+	}
+	if proving[goal] {
+		return false, ""
+	}
 	for _, impl := range tc.traitImpls {
 		if impl.TraitName != traitName {
 			continue
 		}
 		implType := tc.resolveTypeIfKnown(impl.Type, impl.GetLocation())
-		if _, ok := implTargetMatches(implType, t); ok {
-			return true
+		bindings, matched := implTargetMatches(implType, t)
+		if !matched {
+			continue
+		}
+		if len(impl.Constraints) == 0 {
+			return true, ""
+		}
+		if proving == nil {
+			proving = map[implGoal]bool{}
+		}
+		proving[goal] = true
+		held, why := tc.implConstraintsHold(impl, bindings, proving)
+		delete(proving, goal)
+		if held {
+			return true, ""
+		}
+		// Keep the first explanation rather than the last: impls are tried in
+		// declaration order, and a later near-miss is no more the author's intent
+		// than an earlier one.
+		if why != "" {
+			return false, why
 		}
 	}
-	return false
+	return false, ""
+}
+
+// implConstraintsHold checks a matched impl's `where` clause against the bindings the
+// match produced — `impl Arithmetic for Complex<t> where t: Arithmetic` matched at
+// `Complex<string>` binds t to string, so the question becomes whether string is
+// Arithmetic.
+//
+// **A binding that is itself a type variable is skipped, not failed.** Inside a generic
+// body `t` may bind to another declaration's parameter, and whether *that* satisfies the
+// bound is a question about the enclosing declaration's `where` clause rather than about
+// any impl — the same rule checkGenericBounds states for its own type-variable arm, and
+// the reason the supertrait obligation on `impl Arithmetic for Complex<t>` does not
+// report against its own parameter.
+func (tc *TypeChecker) implConstraintsHold(impl *ast.TraitImplStmt, bindings map[string]types.Type, proving map[implGoal]bool) (bool, string) {
+	for _, c := range impl.Constraints {
+		bound, bound_ok := bindings[c.GenericType]
+		if !bound_ok || bound == nil {
+			// The target did not bind this parameter, so there is nothing concrete to
+			// check — matching checkImplConstraints, which skips an unbound variable.
+			continue
+		}
+		if _, isVar := bound.(types.GenericType); isVar {
+			continue
+		}
+		for _, traitName := range c.TraitBounds {
+			if ok, _ := tc.typeImplementsTraitWhy(bound, traitName, proving); !ok {
+				return false, fmt.Sprintf("%s does not implement %s", bound, traitName)
+			}
+		}
+	}
+	return true, ""
 }
 
 // dispatchViaGenericBound resolves a `.method()` call whose receiver is a bare
@@ -633,10 +720,18 @@ func (tc *TypeChecker) checkGenericBounds(calleeName string, lambda *ast.LambdaE
 				}
 				continue
 			}
-			if !tc.typeImplementsTrait(concrete, traitName) {
+			if ok, why := tc.typeImplementsTraitWhy(concrete, traitName, nil); !ok {
+				// The `because` clause is what makes a nested failure actionable: an
+				// impl may apply to `Complex<t>` in general and be excluded here by its
+				// own `where` clause, and naming only the outer type says nothing about
+				// which part of it was wrong.
+				because := ""
+				if why != "" {
+					because = " — " + why
+				}
 				tc.addErrorCode(call.GetLocation(), SeverityError, diag.CodeUnsatisfiedTraitBound,
-					"%s: %s is instantiated at %s, which does not implement %s (required by `where %s: %s`)",
-					calleeName, param, concrete, traitName, param, traitName)
+					"%s: %s is instantiated at %s, which does not implement %s%s (required by `where %s: %s`)",
+					calleeName, param, concrete, traitName, because, param, traitName)
 			}
 		}
 	}

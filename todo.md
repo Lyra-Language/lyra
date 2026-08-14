@@ -2057,10 +2057,33 @@ When it is built, `fixed_point_type` also needs adding to **both** highlight que
   ceremony is where E040 currently fires, so removing it moves that diagnostic to the call
   site. Left as it is deliberately.
 
-### [OPEN] A bound is satisfied by an impl whose own `where` clause fails
+### [DONE 08/14] A bound is satisfied by an impl whose own `where` clause fails
 
-`typeImplementsTrait` matches an impl by its target's *head* and never verifies the impl's
-own bounds, so a generic impl satisfies a bound for **every** instantiation of its target —
+Fixed as this entry proposed: `typeImplementsTrait` now verifies a matched impl's own
+constraints against the bindings the match produced, carrying the set of goals already
+being proved so a chain that leads back to its own goal answers *no* rather than looping.
+Only that branch dies — the impl loop continues, so a goal provable another way still is.
+
+Two details the entry did not anticipate. **A binding that is itself a type variable is
+skipped rather than failed**: `impl Arith for Box<t> where t: Arith` has its supertrait
+obligation checked with `t` still abstract, and answering "t does not implement Add" there
+would make every constrained generic impl an error — whether `t` holds is the enclosing
+declaration's question, which is checkGenericBounds' own stated rule. And the recursion
+**terminates on its own** in practice, since each step strips a layer of type argument
+(`Box<Box<i64>>` → `Box<i64>` → `i64`); the in-progress set is a guard against the case
+that does not, not the mechanism that makes nesting work.
+
+The diagnostic names the inner failure, as the entry asked: *"u is instantiated at
+`Box<string>`, which does not implement Arith — string does not implement Arith"*.
+
+**It does not subsume the umbrella-impl question**, the other half of what this entry
+guessed. Requiring `impl Arithmetic for Vec2 {}` is still where E040 fires, and the bound
+check verifies constraints rather than supplying the impl.
+
+The original report follows.
+
+`typeImplementsTrait` matched an impl by its target's *head* and never verified the impl's
+own bounds, so a generic impl satisfied a bound for **every** instantiation of its target —
 including ones it explicitly excludes:
 
 ```lyra
@@ -2091,6 +2114,38 @@ Two things to decide with it: whether the diagnostic names the failing inner bou
 should — "Complex<string> does not implement Arithmetic" is useless without "because
 `string` does not") and whether this subsumes the umbrella-impl question above, since a
 bound that verifies constraints is most of what requiring the impl was buying.
+
+### [OPEN] An operator impl on a *generic* struct does not lower in two positions
+
+Found 08/14 while verifying the fix above, and **pre-existing** — the fix only rejects
+more, so it cannot push a program into codegen. `std/math/complex.lyra` works for direct
+operator use (`a + b`, `a * b`, `a / b` on a `Complex<f64>` all run and print correctly)
+and fails in two:
+
+```lyra
+let twice<u> where u: Arithmetic = (v: u) -> u => v + v
+twice(Complex { re: 1.0, im: 2.0 })      // llvm: type not found for *ast.IdentifierExpr
+
+let n = Complex { re: Complex { re: 1.0, im: 0.0 }, im: Complex { re: 0.0, im: 1.0 } }
+n + n                                     // llvm: type not found for *ast.MemberExpr
+```
+
+**The dimension is the generic target, not the bound and not the operator.** Both of these
+work, so neither mechanism is broken on its own:
+
+- `twice(21.0)` — a primitive through the same bound;
+- `twice(Pt { x: 21 })` for a **non-generic** `struct Pt` with the four impls.
+
+So it is monomorphizing an operator impl whose target is generic: through a bound
+(instantiating `impl Add for Complex<t>` at `t = f64` selected abstractly), and nested
+(instantiating it at `t = Complex<f64>`, whose body's own `+` must then resolve to the same
+impl one level down). The second is the more interesting one — it needs the instantiation
+set to close over a generic impl reaching itself, which is the ordering `pkg/driver`'s
+`instantiations.go` already handles for generic *functions*.
+
+Both are hazard 5 inverted: they type-check clean and fail with an internal message naming
+an AST node. Until this is fixed, `Complex<t>` is usable directly and not through a generic
+bound, which is worth knowing before the mandelbrot program leans on it.
 
 ### [DECIDED 08/07] Operator-named trait methods
 

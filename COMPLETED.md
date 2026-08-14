@@ -10,6 +10,48 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**A `where` bound is no longer satisfied by an impl whose own `where` clause excludes the
+instantiation.** `typeImplementsTrait` matched an impl by its target's *head* and stopped
+there, so `impl Arithmetic for Complex<t> where t: Arithmetic` made **every** `Complex<x>`
+satisfy an `Arithmetic` bound — `Complex<string>` included, which type-checked clean and
+died in the backend as `llvm: type not found for *ast.IdentifierExpr`. Hazard 5 inverted.
+
+**The single level was deliberate and documented, and the reasoning had a hole.** The old
+comment justified it as "the recursive obligation surfaces when that impl is itself
+dispatched" — true for an impl with methods, and false for the one that *is* its
+constraint. An umbrella impl has no methods, so nothing is ever dispatched and the bound
+check is the only place the question is asked. `std/math/complex.lyra` is the first code
+to write one, which is what turned a documented limit into a reachable bug: a limit stays
+invisible until something stands exactly where it applies.
+
+The fix checks a matched impl's constraints against the bindings the match produced,
+carrying the goals already being proved so a chain returning to its own goal answers *no*
+instead of looping — and only that branch dies, so a goal provable another way still is.
+
+Two things that were not in the plan:
+
+- **A binding that is itself a type variable is skipped, not failed.** `impl Arith for
+  Box<t> where t: Arith` has its supertrait obligation checked with `t` abstract, and
+  answering "t does not implement Add" there would make every constrained generic impl an
+  error. Whether `t` holds is the *enclosing declaration's* question — the rule
+  checkGenericBounds already states for its own type-variable arm, arrived at again from
+  the other side.
+- **Nesting terminates on its own**, since each step strips a layer of type argument
+  (`Box<Box<i64>>` → `Box<i64>` → `i64`). The in-progress set guards the case that does
+  not; it is not what makes nesting work, which is the opposite of what the plan assumed.
+
+The diagnostic names the inner failure — *"u is instantiated at `Box<string>`, which does
+not implement Arith — string does not implement Arith"* — because the outer type alone says
+nothing about which part of it was wrong.
+
+**Verifying it turned up a separate, pre-existing backend gap** (todo.md): an operator impl
+whose target is *generic* does not lower through a bound, or nested. `twice(21.0)` and
+`twice(Pt {...})` for a non-generic struct both work, so neither the bound nor the operator
+is broken on its own — it is monomorphizing `impl Add for Complex<t>` at a concrete `t`.
+Direct use (`a + b` on `Complex<f64>`) works, so the new std module is usable, just not yet
+through a generic bound.
+
+### 08/14/26
 **The prelude implements the arithmetic traits for every numeric primitive**, and impl
 coherence stopped keying on the trait's *name*.
 
