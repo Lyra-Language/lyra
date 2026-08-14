@@ -10,6 +10,40 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**The logarithms — `log` (natural), `log2`, `log10`** — each answering the receiver's own
+width rather than a fixed one, because a log is a float operation whose answer is a float.
+
+**Builtins on the `random_seed` rule, not the `parse_i64` one.** A logarithm is not
+expressible in this language: no series, no lookup table, no FFI to reach libm. Parsing and
+formatting are arithmetic and belong in the prelude; this cannot, so it is primitive. They
+lower to `llvm.log`/`log2`/`log10`, which become the libm calls of the same name — which is
+what `lyrac build`'s unconditional `-lm` has been paying for all along.
+
+**All three rather than the natural one alone.** Smooth mandelbrot coloring is
+`n + 1 - log2(log(|z|))`, so `log2` is not a convenience: writing it as
+`x.log() / 2.0.log()` costs an extra call and loses accuracy at exactly the magnitudes
+shading depends on. `log10` comes free from the same intrinsic family, and having the trio
+is what makes the bare name's base unambiguous by contrast — `log` is the one with no
+subscript, which is `e`. (Rust spells it `ln` for that same ambiguity; the trio answers it
+differently.)
+
+**Outside the domain they answer IEEE's value rather than trapping** — `log(0)` is `-inf`,
+`log(-1)` is a NaN — which is the choice float division already makes. The trap comes later
+and in one place: feeding either to an integer conversion is what fails, which is where
+`guardFloatToInt` sits. One check, at the boundary where the value has to become something
+a machine integer can hold.
+
+Verified by rendering a Mandelbrot set with smooth shading, which is the point of the
+feature and exercises the day's whole stack: `log`/`log2` for the escape value, `to_fixed`
+for the readout, the float→int guard on every palette index, and a `pure` inner loop. The
+set comes out recognizable and symmetric about the real axis.
+
+The two tests that failed first were both **the test's arithmetic, not the compiler's**:
+`log2(ln(16)/2)` is 0.4712 rather than 1, and a `break` before the counter advances puts
+the smooth value in [1, 2) rather than [2, 3). Worth recording because the instinct on a red
+test is to suspect the code under it, and here the code was right twice.
+
+### 08/14/26
 **An out-of-range float→int conversion traps instead of answering a number.** `fptosi` is
 **poison** in LLVM for an operand no integer can hold — not a saturating conversion — so
 `(1.0e20).floor()` answered 0 under `lyrac run` and `-9223372036854775808` under the test

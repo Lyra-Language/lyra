@@ -86,6 +86,28 @@ var floatRoundingOps = map[string]bool{
 	"round": true,
 }
 
+// floatLogOps are the logarithms, which unlike the rounding builtins return the
+// receiver's **own** width rather than a fixed i64: a log is a float operation whose
+// answer is a float, and narrowing it here would throw away precision the caller may
+// still want.
+//
+// **Builtins rather than prelude Lyra, and that is the `random_seed` rule rather than
+// the `parse_i64` one.** A logarithm is not expressible in this language — no series,
+// no lookup table, and no FFI to reach libm — so it has to be primitive. Parsing and
+// formatting are arithmetic and live in the prelude; this cannot.
+//
+// **All three, not just the natural one.** Smooth mandelbrot coloring is
+// `n + 1 - log2(log(|z|))`, so `log2` is not a convenience — writing it as
+// `x.log() / 2.0.log()` costs an extra call and loses accuracy at exactly the
+// magnitudes that shading depends on. `log10` comes free from the same intrinsic
+// family, and having the trio is what makes the bare name's base unambiguous by
+// contrast: `log` is the one with no subscript, which is `e`.
+var floatLogOps = map[string]bool{
+	"log":   true,
+	"log2":  true,
+	"log10": true,
+}
+
 // builtinMethodSignature returns the LambdaType of the builtin method name for a
 // receiver of type recv, specialized to recv's concrete type, or ok=false when
 // no builtin of that name applies to that receiver. The signature's parameters
@@ -345,6 +367,16 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 		return &types.LambdaType{
 			Parameters: nil,
 			ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.Int64}},
+		}, true
+	}
+	if floatLogOps[name] {
+		if !isAnyConcreteFloat(p.Name) {
+			return nil, false
+		}
+		// The receiver's own width, not a fixed one: `f32.log()` is an f32.
+		return &types.LambdaType{
+			Parameters: nil,
+			ReturnType: types.ReturnType{Type: recv},
 		}, true
 	}
 	return nil, false

@@ -24,6 +24,19 @@ var roundingIntrinsicOps = map[string]string{
 	"round": "round",
 }
 
+// logIntrinsicOps maps the logarithm builtins (typechecker/builtins.go's floatLogOps) to
+// their LLVM intrinsics. They share the rounding builtins' shape — one float in, no
+// arguments — and differ in what comes out: a float of the receiver's own width, so the
+// result is the intrinsic's and there is no conversion to guard.
+//
+// LLVM lowers each to the libm call of the same name, which is why `lyrac build` links
+// `-lm` unconditionally.
+var logIntrinsicOps = map[string]string{
+	"log":   "log",
+	"log2":  "log2",
+	"log10": "log10",
+}
+
 // lowerBuiltinMethodCall lowers a call whose callee is a MemberExpr resolved
 // by the typechecker to a builtin method (builtins.go) rather than a struct
 // field, trait method, or user function: the float rounding builtins
@@ -118,8 +131,10 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	if ref, ok := l.res.MethodTable.GetBound(call); ok {
 		return l.lowerBoundMethodCall(block, call, member, ref)
 	}
-	op, ok := roundingIntrinsicOps[member.Property.Name]
-	if !ok {
+	op, isRounding := roundingIntrinsicOps[member.Property.Name]
+	if logOp, isLog := logIntrinsicOps[member.Property.Name]; isLog {
+		op = logOp
+	} else if !isRounding {
 		return nil, nil, fmt.Errorf("llvm: unsupported method call %q", member.Property.Name)
 	}
 	if len(call.Arguments) != 0 {
@@ -145,11 +160,18 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: %s() lowered receiver is not a float value (%s)", member.Property.Name, recv.Type())
 	}
-	rounded := block.NewCall(l.roundingIntrinsicFunc(op, suffix, fT), recv)
-	block = l.guardFloatToInt(block, rounded, fT)
+	result := block.NewCall(l.roundingIntrinsicFunc(op, suffix, fT), recv)
+	if !isRounding {
+		// A logarithm answers a float of the receiver's own width — the intrinsic's
+		// result, unconverted. `log(0)` is -inf and `log(negative)` is a NaN, which is
+		// IEEE's answer and the one the float operators already give; feeding either to
+		// an integer conversion is what traps, and that is the right place for it.
+		return result, block, nil
+	}
+	block = l.guardFloatToInt(block, result, fT)
 	// The builtin's fixed return type is i64 (builtins.go's floatRoundingOps);
 	// narrow further with an explicit int conversion, e.g. i32(x.floor()).
-	return block.NewFPToSI(rounded, lltypes.I64), block, nil
+	return block.NewFPToSI(result, lltypes.I64), block, nil
 }
 
 // guardFloatToInt traps unless v is a number an i64 can hold, and returns the block to
