@@ -2183,6 +2183,37 @@ compare against the target width's bounds plus a NaN test, which is what Rust's
   normalized coordinate, a clamped value) needs no check, and the pass already elides
   provable array-bounds and division checks.
 
+### [OPEN] Frame-buffer ergonomics — what the measurements left standing
+
+Measured 08/14 against a 200x60 escape-time render (12,000 pixels), a terminal viewer at a
+realistic size. Both strategies are far inside a frame budget, so **nothing here blocks the
+terminal version**; these are what a graphical one will hit.
+
+| building a frame | 12,000 pixels |
+|---|---|
+| a row per `++` per pixel | 1440 µs |
+| a preallocated `[]u32`, index-assigned | 606 µs |
+
+The delta is the string building: about 70 ns per pixel, which is 0.8 ms at 200x60 and
+~34 ms at 800x600 — the point where it stops being free.
+
+**Two of the three gaps behind that are now closed** (see COMPLETED.md): `[v; n]` is
+emitted as a loop above 64 elements rather than unrolling into n stores, and a **runtime
+count** builds a dynamic array, so a buffer sized by a window resize needs no `push` loop.
+
+What is left:
+
+- **A string can only be built with `++` or interpolation.** `to_runes` has no inverse and
+  there is no `join`, so a row assembled from parts pays one allocation and one copy per
+  part. `++` in a loop is also quadratic in the row length — invisible at 200 characters
+  (232 µs at 2,000) and 4,985 µs at 16,000. A `join` over `[]string`, or a string builder,
+  is the obvious answer; which one is a question about how much API the prelude wants.
+- **The fixed-size `[v; n]` path still emits one `insertvalue` per element**, so a
+  `[20000]u32` literal is 1.16 MB of IR. Bounded by a different problem arriving first — an
+  array that size is 80 KB of stack — but it wants the same treatment eventually, which
+  means an alloca and a store loop, changing the value from an SSA aggregate to a loaded
+  one.
+
 ### [OPEN] Return-type-directed dispatch — reopen when `From`/`Into` wants it
 
 **Lyra dispatches on a receiver, and nothing else.** A trait method with no receiver

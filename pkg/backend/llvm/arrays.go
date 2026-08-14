@@ -255,15 +255,22 @@ func (l *lowerer) lowerArrayRepeatExpr(block *ir.Block, e *ast.ArrayRepeatExpr) 
 		return nil, nil, fmt.Errorf("llvm: no type recorded for array repeat literal")
 	}
 	// The count is folded here rather than read off the recorded type, because a
-	// *dynamic* context records `[]T` and drops the size. A plain fold suffices: the
-	// typechecker rewrote a `const` count to the literal it folded to, so by now every
-	// count is a literal and this cannot disagree with the size the checker used.
-	n64, ok := ast.FoldIntExpr(e.Count)
-	if !ok {
-		return nil, nil, fmt.Errorf("llvm: array repeat count is not a compile-time integer")
-	}
+	// *dynamic* context records `[]T` and drops the size. A fold is not guaranteed to
+	// succeed any more: a **runtime** count is legal in dynamic position as of 08/14, and
+	// is the only way to size a buffer from something the compiler cannot see — a window
+	// resize, a terminal width. Where it does fold, the typechecker has already rewritten
+	// a `const` count to its literal, so this cannot disagree with the size it checked.
+	n64, folded := ast.FoldIntExpr(e.Count)
 	if dynType, isDyn := recorded.(types.DynamicArrayType); isDyn {
-		return l.lowerDynArrayRepeat(block, e, dynType, int(n64))
+		if folded {
+			return l.lowerDynArrayRepeat(block, e, dynType, int(n64))
+		}
+		return l.lowerDynArrayRepeatRuntime(block, e, dynType)
+	}
+	if !folded {
+		// A fixed array with a non-constant count is lyra-E056 and never reaches the
+		// backend; rule 5 says say so rather than guess a size.
+		return nil, nil, fmt.Errorf("llvm: a fixed-size array's repeat count is not a compile-time integer")
 	}
 	arrType, ok := recorded.(types.StaticArrayType)
 	if !ok {

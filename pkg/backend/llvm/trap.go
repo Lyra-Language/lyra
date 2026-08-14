@@ -50,6 +50,9 @@ const (
 	// rather than for `floor`/`ceil`/`round`, because that is where the loss happens —
 	// the rounding itself is exact and total.
 	floatToIntTrapMessage = "lyra: float value is out of range for an integer\n"
+	// `[v; n]` with a negative runtime n. The constant form refuses one at compile
+	// time; this is the same rule at the only moment a runtime count exists.
+	negativeLengthTrapMessage = "lyra: array length must not be negative\n"
 	// The user message and its newline follow this at run time, so unlike the four
 	// above it carries neither.
 	panicPrefixMessage = "lyra: panic: "
@@ -149,6 +152,16 @@ func (l *lowerer) panicRangeStepFunc() *ir.Func {
 // coordinate silently rendering the wrong pixel is the failure this exists to prevent.
 func (l *lowerer) panicFloatToIntFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_float_to_int", floatToIntTrapMessage)
+}
+
+// panicNegativeLengthFunc is the trap for `[v; n]` whose runtime count is negative.
+//
+// The constant form is refused by the typechecker with the number in hand, so this is the
+// same rule one rung down the ladder this project applies everywhere a value is only
+// knowable at run time — a shift amount, a range step, a newtype constraint. Zero is not
+// an error: it yields an empty array, exactly as `[]` does.
+func (l *lowerer) panicNegativeLengthFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_negative_length", negativeLengthTrapMessage)
 }
 
 // panicConstraintFunc is the trap for a value that reaches a constrained newtype

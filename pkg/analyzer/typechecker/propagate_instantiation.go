@@ -116,6 +116,14 @@ func (tc *TypeChecker) contextualType(expr ast.Expression, want, current types.T
 	if expr == nil || want == nil {
 		return current, false
 	}
+	// Reported here rather than left to the assignability failure below, because the
+	// generic message names the symptom and not the cause: `[0; n]` in fixed-array
+	// position surfaces as "cannot assign DynamicArray<integer literal> to
+	// StaticArray<u32, 3>", which says the literal inferred dynamic and not *why* it
+	// had to.
+	if tc.reportRuntimeRepeatInFixedContext(expr, want) {
+		return current, true
+	}
 	reported := tc.propagateInstantiation(expr, want)
 	if t, ok := tc.typeTable.Get(expr); ok && t != nil {
 		return t, reported

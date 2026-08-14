@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -12,13 +13,22 @@ import (
 // silent, so it was an unimplemented feature rather than a phantom. Found 08/07 by the
 // AST sweep (`ArrayRepeatExpr.Count` had no consumer at all) and implemented 08/08.
 //
-// **The count is a compile-time constant by construction**, not by a check here: the
-// grammar admits only a number literal or a `const_identifier` in that position
-// (`array_repeat_count`), so `[0; n]` for a runtime `n` is a syntax error. That is the
-// right place for the restriction — the size is part of the *type*, and a type cannot
-// depend on a value the compiler has not got.
+// **The count is a compile-time constant only where the *type* needs it to be** (08/14).
+// A fixed array carries its size in its type, so `[3]T` cannot depend on a value the
+// compiler has not got — but a `[]T` carries its length at run time and needs nothing
+// static. The grammar used to admit only a literal or a `const_identifier` here, which was
+// right for the first and inherited rather than reasoned for the second: a buffer sized by
+// a window resize (`let buf: []u32 = [0; n]`) was a *syntax* error. The grammar now accepts
+// any expression and the rule lives here, where the two cases can be told apart.
 
-// inferArrayRepeatType types `[v; n]` as `[n]T` where T is v's type.
+// inferArrayRepeatType types `[v; n]` as `[n]T` where T is v's type — or as `[]T` when the
+// count is not a compile-time constant.
+//
+// **A runtime count has exactly one sound answer**, which is why the fall-through is not a
+// silent choice between two things: no fixed type can describe it, so `[]T` is not a
+// preference but the only inhabitable option. That parallels `[1, 2, 3]` inferring `[3]T`
+// with no context — each form infers the one type it can have, and an annotation may still
+// widen a fixed one to dynamic.
 //
 // The element type is left **untyped** where v is an untyped literal, exactly as
 // inferArrayLiteralType leaves its elements untyped, so `let g: [4]u8 = [0; 4]` narrows
@@ -26,11 +36,52 @@ import (
 // propagateLiteralType has the matching arm.
 func (tc *TypeChecker) inferArrayRepeatType(expr *ast.ArrayRepeatExpr) types.Type {
 	elem := tc.inferExprType(expr.Value)
+	if elem == nil {
+		return nil
+	}
+	if !tc.arrayRepeatCountIsConstant(expr) {
+		if !tc.checkRuntimeRepeatCount(expr) {
+			return nil
+		}
+		return types.DynamicArrayType{ElementType: elem}
+	}
 	count, ok := tc.arrayRepeatCount(expr)
-	if !ok || elem == nil {
+	if !ok {
 		return nil
 	}
 	return types.StaticArrayType{ElementType: elem, Size: count}
+}
+
+// arrayRepeatCountIsConstant reports whether the count folds, without reporting anything.
+// The quiet twin of arrayRepeatCount, so inference can *choose* between the fixed and
+// dynamic readings instead of erroring on the way to one of them.
+func (tc *TypeChecker) arrayRepeatCountIsConstant(expr *ast.ArrayRepeatExpr) bool {
+	if expr.Count == nil {
+		return false
+	}
+	_, ok := ast.ArrayRepeatCount(expr.Count, tc.constInitializer)
+	return ok
+}
+
+// checkRuntimeRepeatCount verifies that a non-constant count is at least an integer.
+//
+// Nothing else does: the constant path proves it by folding, and without this a
+// `[0; "three"]` would reach the backend as a dynamic array whose length is a string.
+func (tc *TypeChecker) checkRuntimeRepeatCount(expr *ast.ArrayRepeatExpr) bool {
+	countType := tc.inferExprType(expr.Count)
+	if countType == nil {
+		return false
+	}
+	// Untyped included: `[0; n]` where n came from an unannotated literal is an
+	// integer that has not been pinned yet, and refusing it here would refuse the
+	// commonest spelling.
+	if p, ok := types.StripNewtype(countType).(types.PrimitiveType); ok &&
+		(isAnyConcreteInt(p.Name) || p.Name == types.UntypedInt || p.Name == types.UntypedSignedInt) {
+		return true
+	}
+	tc.addError(expr.Count.GetLocation(), SeverityError,
+		"array repeat count must be an integer, got %s", countType)
+	return false
 }
 
 // arrayRepeatCount folds the count to a non-negative int **and rewrites the AST**,
@@ -53,12 +104,18 @@ func (tc *TypeChecker) arrayRepeatCount(expr *ast.ArrayRepeatExpr) (int, bool) {
 	}
 	n, ok := ast.ArrayRepeatCount(count, tc.constInitializer)
 	if !ok {
+		// Only a **fixed** array reaches here now: inference reads a non-constant count
+		// as `[]T`, so this fires when such a literal is used where a size is part of
+		// the type. Naming the dynamic spelling is the whole message — the author has
+		// written something with a perfectly good meaning, in the one position that
+		// cannot hold it.
 		if id, isIdent := count.(*ast.IdentifierExpr); isIdent {
-			tc.addError(count.GetLocation(), SeverityError,
-				"array repeat count %s must be a `const` whose value is a compile-time integer", id.Name)
+			tc.addErrorCode(count.GetLocation(), SeverityError, diag.CodeNonConstantArraySize,
+				"a fixed-size array's length is part of its type, so the count must be a compile-time constant; %s is not a `const` — annotate the binding as `[]T` for an array sized at run time",
+				id.Name)
 		} else {
-			tc.addError(count.GetLocation(), SeverityError,
-				"array repeat count must be a compile-time constant")
+			tc.addErrorCode(count.GetLocation(), SeverityError, diag.CodeNonConstantArraySize,
+				"a fixed-size array's length is part of its type, so the count must be a compile-time constant — annotate the binding as `[]T` for an array sized at run time")
 		}
 		return 0, false
 	}
@@ -99,4 +156,25 @@ func (tc *TypeChecker) constInitializer(name string) (ast.Expression, bool) {
 		return nil, false
 	}
 	return decl.Value, true
+}
+
+// reportRuntimeRepeatInFixedContext reports lyra-E056 for `[v; n]` with a runtime count
+// used where a **fixed** array is wanted, and says whether it did.
+//
+// Inference reads such a literal as `[]T` — the only type it can have — so without this
+// the mismatch is an ordinary assignability failure naming two types, neither of which is
+// the problem. The count is.
+func (tc *TypeChecker) reportRuntimeRepeatInFixedContext(expr ast.Expression, want types.Type) bool {
+	ar, isRepeat := expr.(*ast.ArrayRepeatExpr)
+	if !isRepeat {
+		return false
+	}
+	if _, wantsFixed := tc.resolveTypeIfKnown(want, expr.GetLocation()).(types.StaticArrayType); !wantsFixed {
+		return false
+	}
+	if tc.arrayRepeatCountIsConstant(ar) {
+		return false
+	}
+	_, ok := tc.arrayRepeatCount(ar) // emits lyra-E056
+	return !ok
 }

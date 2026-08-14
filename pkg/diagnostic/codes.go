@@ -596,6 +596,23 @@ const (
 	// type whose parameters are themselves arithmetic.
 	CodeFixedPointNotImplemented = "lyra-E055"
 
+	// CodeNonConstantArraySize: `[v; n]` with a runtime count, used where a **fixed**
+	// array is wanted — `let a: [3]u32 = [0; n]`.
+	//
+	// The count was a compile-time constant *by grammar* until 08/14, which is right for
+	// a fixed array — its length is part of its type, and a type cannot depend on a value
+	// the compiler has not got — and was inherited rather than reasoned for a dynamic
+	// one, whose length rides the value at run time. So a buffer sized by a window resize
+	// (`let buf: []u32 = [0; n]`) was a *syntax* error, and `push` in a loop was the only
+	// way to build one.
+	//
+	// The grammar now accepts any expression there and this draws the line, because only
+	// the typechecker can: which of the two `[0; n]` builds is decided by the type it is
+	// checked against, which the parser cannot see. That is the split `rangeBounds`
+	// already documents — the grammar refuses what has no meaning anywhere, the checker
+	// refuses what has a plausible meaning in the wrong place, and gets to name the fix.
+	CodeNonConstantArraySize = "lyra-E056"
+
 	// CodeRawPointersNotImplemented: a raw-pointer operation (`&x`, `p^`, a write
 	// `p^ = v`) or an `unsafe { … }` block. The type system carries `^T`
 	// (types.RawPointerType unifies, substitutes and heads, and a newtype may wrap

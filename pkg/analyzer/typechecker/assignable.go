@@ -201,9 +201,22 @@ func (tc *TypeChecker) literalTakesShape(expr ast.Expression, from, to types.Typ
 		return true
 
 	case *ast.ArrayRepeatExpr:
-		toDyn, _, ok := arrayWideningPair(from, to)
+		// Two shapes reach here, and the second only since 08/14. A *constant* count
+		// infers a fixed array that the annotation widens (`[3]u8` into `[]u8`), which
+		// is arrayWideningPair. A **runtime** count infers `[]T` outright — no fixed
+		// type can describe it — so the pair is dynamic-to-dynamic and the widening
+		// helper, which requires a static source, answers false. Without this arm the
+		// element never narrows: `() -> []u32 => [0; w * h]` reported
+		// *"expected DynamicArray<u32>, got DynamicArray<integer literal>"*, an element
+		// type that had nothing to pin it.
+		toDyn, ok := to.(types.DynamicArrayType)
 		if !ok {
 			return false
+		}
+		if _, fromDyn := from.(types.DynamicArrayType); !fromDyn {
+			if _, _, widens := arrayWideningPair(from, to); !widens {
+				return false
+			}
 		}
 		return tc.elementTakesShape(e.Value, toDyn.ElementType)
 

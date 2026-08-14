@@ -10,6 +10,78 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**`[v; n]` accepts a runtime count, building a dynamic array** — the buffer a window resize
+or a terminal width sizes, which had no spelling at all: `let buf: []u32 = [0; n]` was a
+*syntax* error, and `push` in a loop was the only way to build one.
+
+**The restriction was right for one form and inherited by the other.** A fixed array
+carries its length in its type, so `[3]T` cannot depend on a value the compiler has not
+got — that is real, and unchanged. A `[]T` carries its length at run time and needs nothing
+static, and it had the constant rule only because the two share a spelling.
+
+So the grammar's `array_repeat_count` went from `choice($._number_literal,
+$.const_identifier)` to `$.expression`, and the rule moved to the typechecker — which is
+the only place it can live, because *which* of the two `[0; n]` builds is decided by the
+type it is checked against, and the parser cannot see that. This is the split `rangeBounds`
+already documents: the grammar refuses what has no meaning anywhere, the checker refuses
+what has a plausible meaning in the wrong place, and gets to name the fix (`lyra-E056`).
+
+**A runtime count infers `[]T` and that is not a preference.** No fixed type can describe
+it, so the fall-through is the only inhabitable answer — the same way `[1, 2, 3]` infers
+`[3]T` with no context. Each form infers the one type it can have.
+
+Four things it needed beyond the obvious:
+
+- **A second shape in the assignability check.** A constant count infers a fixed array that
+  the annotation *widens*; a runtime one infers `[]T` outright, so the pair is
+  dynamic-to-dynamic and `arrayWideningPair` — which requires a static source — answers
+  false. Without an arm for it the element never narrowed and `() -> []u32 => [0; w * h]`
+  reported *"expected DynamicArray<u32>, got DynamicArray<integer literal>"*: an element
+  type with nothing to pin it.
+- **The E056 report had to come from the context hook**, not from the assignability
+  failure. Left there it reads "cannot assign DynamicArray<integer literal> to
+  StaticArray<u32, 3>" — two types, neither of which is the problem. The count is.
+- **A negative count traps** (`lyra_panic_negative_length`), the same rung a shift amount
+  and a range step ride: refused at compile time where it is constant, trapped at the only
+  moment it exists where it is not. Zero is fine and yields an empty array.
+- **A non-integer count is checked on the runtime path**, which is the only thing that
+  checks it — the constant path proves it by folding. This also *improved* an existing
+  message: `const K = "no"` used to report "K must be a `const` whose value is a
+  compile-time integer", which mis-stated the fault, since K is a const. It now says the
+  count must be an integer and got a string.
+
+Cost to the grammar: **zero new states** (7,825 → 7,825) and +31 KB of `parser.c`.
+`expression` was already reachable in every neighbouring position, so widening the count
+added no automaton the parser was not already carrying.
+
+### 08/14/26
+**`[v; n]` is emitted as a loop above 64 elements**, where it used to unroll into n stores
+at any size.
+
+One store per slot is better code for `[0; 3]` — no counter, no branch, and the optimizer
+sees straight through it — and it is a **compile-time bomb** at any size a frame buffer
+reaches, because the IR then grows linearly in n. `[0; 200000]` produced a 43 MB `.ll` file
+and clang had not finished with it after five minutes. Nothing diagnosed it: the build
+simply never returned, which is the worst shape a performance cliff can have.
+
+Now 56 KB of IR regardless of the count, and that same 480,000-element buffer compiles and
+runs in 0.43 s.
+
+Two things the fix had to preserve. **A managed element is retained once per slot beyond
+the first** — every slot is an owner, so a count one low is a use-after-free and one high is
+a leak — which means the retain loop runs over `[1, n)` while the store loop runs over
+`[0, n)`. And the **unrolled path stays** below the threshold, because it is genuinely
+better there and every repeat literal written by hand is smaller than 64.
+
+`emitCountedLoop` is a helper rather than a third copy of the pattern: this file already
+walks n slots at run time in the array drop glue, and a back edge wired wrong produces IR
+that verifies and does not terminate.
+
+Found by measuring frame-buffer strategies rather than by reading — the 5-minute hang was
+the first symptom, and it looked like an infinite loop in the *program* until the IR size
+gave it away.
+
+### 08/14/26
 **`sqrt`**, joining the logarithms — and the two tables that held them became one.
 
 `floatLogOps`/`logIntrinsicOps` were named for what they happened to contain rather than

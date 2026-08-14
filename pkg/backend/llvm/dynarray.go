@@ -118,6 +118,72 @@ func (l *lowerer) dynArrayAlloc(block *ir.Block, boxTy *lltypes.StructType, elem
 	return box
 }
 
+// lowerDynArrayRepeatRuntime builds `[v; n]` where **n is only known at run time** — the
+// buffer a window resize or a terminal width sizes, which had no spelling at all before
+// 08/14 (`push` in a loop was the workaround, and allocated once per element).
+//
+// It is the constant path below with two differences, and only two: the length reaches
+// `dynArrayAlloc` as a value rather than a literal, and the loop bound is that same value.
+// Everything else — evaluate the value once, retain per slot beyond the first, store into
+// every slot — is the promise the constant form already makes, so the two are deliberately
+// the same shape rather than the same function: the constant one still unrolls below
+// `repeatUnrollLimit`, which this cannot do and should not pretend to.
+//
+// **A negative count traps.** The constant path refuses one at compile time; this is the
+// same rule at the only moment the value exists. Zero is fine and yields an empty array,
+// exactly as `[]` does.
+func (l *lowerer) lowerDynArrayRepeatRuntime(block *ir.Block, e *ast.ArrayRepeatExpr, dynType types.DynamicArrayType) (value.Value, *ir.Block, error) {
+	v, block, err := l.lowerExpr(block, e.Value)
+	if err != nil {
+		return nil, nil, err
+	}
+	if diverged(v, block) {
+		return nil, block, nil
+	}
+	count, block, err := l.lowerExpr(block, e.Count)
+	if err != nil {
+		return nil, nil, err
+	}
+	if diverged(count, block) {
+		return nil, block, nil
+	}
+	signed, _ := l.getIntSignedness(e.Count)
+	n := coerceIntWidth(block, count, signed, lltypes.I64)
+	block = l.emitTrapIf(block, block.NewICmp(enum.IPredSLT, n, i64c(0)), l.panicNegativeLengthFunc())
+
+	elemLL, err := l.lowerType(dynType.ElementType)
+	if err != nil {
+		return nil, nil, err
+	}
+	elemSize, elemAlign, sized := SizeAndAlign(l.resolveForLayout(dynType.ElementType))
+	if !sized {
+		return nil, nil, fmt.Errorf("llvm: cannot size dynamic array element type %s", dynType.ElementType)
+	}
+	boxTy := DynArrayBoxType(elemLL)
+	box := l.dynArrayAlloc(block, boxTy, elemLL, n, n, int64(alignUp(elemSize, elemAlign)))
+
+	v, err = l.coerceAggregateElem(block, v, elemLL, e.Value)
+	if err != nil {
+		return nil, nil, err
+	}
+	if l.needsDrop(dynType.ElementType) {
+		block, err = l.emitCountedLoop(block, i64c(1), n, func(body *ir.Block, _ value.Value) (*ir.Block, error) {
+			return l.emitRetainValue(body, v, dynType.ElementType)
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	block, err = l.emitCountedLoop(block, i64c(0), n, func(body *ir.Block, i value.Value) (*ir.Block, error) {
+		body.NewStore(v, dynArrayElemPtr(body, boxTy, box, i))
+		return body, nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return box, block, nil
+}
+
 // lowerDynArrayRepeat builds `[v; n]` in a **dynamic**-array context — the heap
 // counterpart of lowerArrayRepeatExpr's fixed-size path, and it makes the same promise:
 // the value is evaluated once, and each of the n slots is an owner, so a managed element
@@ -138,16 +204,85 @@ func (l *lowerer) lowerDynArrayRepeat(block *ir.Block, e *ast.ArrayRepeatExpr, d
 	if err != nil {
 		return nil, nil, err
 	}
-	for i := 1; i < n; i++ {
-		block, err = l.emitRetainValue(block, v, dynType.ElementType)
+	// **Unrolled while that is cheaper than a loop, and looped once it is not.** Emitting
+	// one store per slot is better code for `[0; 3]` — no counter, no branch, and the
+	// optimizer sees straight through it — and it is a compile-time bomb at any size a
+	// frame buffer reaches: the IR grows *linearly in n*, so `[0; 200000]` produced a
+	// 43 MB `.ll` file and clang had not finished with it after five minutes. Nothing
+	// diagnosed that; the build simply never returned.
+	//
+	// The threshold is deliberately low. Above it the per-slot cost is one add, one
+	// compare and one store either way, so the unrolled form buys almost nothing while
+	// each element still costs its own line of IR.
+	if n <= repeatUnrollLimit {
+		for i := 1; i < n; i++ {
+			block, err = l.emitRetainValue(block, v, dynType.ElementType)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
+		for i := 0; i < n; i++ {
+			block.NewStore(v, dynArrayElemPtr(block, boxTy, box, i64c(int64(i))))
+		}
+		return box, block, nil
+	}
+
+	// A managed element is retained once per slot beyond the first, exactly as the
+	// unrolled path does — the loop runs over [1, n) so the value's original reference
+	// becomes slot 0's.
+	if l.needsDrop(dynType.ElementType) {
+		block, err = l.emitCountedLoop(block, i64c(1), i64c(int64(n)), func(body *ir.Block, _ value.Value) (*ir.Block, error) {
+			return l.emitRetainValue(body, v, dynType.ElementType)
+		})
 		if err != nil {
 			return nil, nil, err
 		}
 	}
-	for i := 0; i < n; i++ {
-		block.NewStore(v, dynArrayElemPtr(block, boxTy, box, i64c(int64(i))))
+	block, err = l.emitCountedLoop(block, i64c(0), i64c(int64(n)), func(body *ir.Block, i value.Value) (*ir.Block, error) {
+		body.NewStore(v, dynArrayElemPtr(body, boxTy, box, i))
+		return body, nil
+	})
+	if err != nil {
+		return nil, nil, err
 	}
 	return box, block, nil
+}
+
+// repeatUnrollLimit is the largest `[v; n]` still emitted as n separate stores.
+//
+// Small enough that the IR a repeat literal contributes is bounded by a constant a
+// reader would accept, and large enough that every repeat literal anyone writes by hand
+// stays straight-line. `[0; 64]` is 64 stores; `[0; 65]` is a four-block loop.
+const repeatUnrollLimit = 64
+
+// emitCountedLoop emits `for i := lo; i < hi; i++ { body(i) }` as real IR and returns the
+// block execution continues in. The body may itself branch — it is handed a block and
+// returns the one it ended in — which is what lets a managed element's retain glue run
+// inside the loop.
+//
+// Shaped like the per-element loop in the array drop glue above, which is the other place
+// this file walks n slots at run time. Kept as a helper rather than a third copy: the
+// pattern is four blocks and an alloca'd counter, and getting the back edge wrong produces
+// IR that verifies and does not terminate.
+func (l *lowerer) emitCountedLoop(block *ir.Block, lo, hi value.Value, body func(*ir.Block, value.Value) (*ir.Block, error)) (*ir.Block, error) {
+	fn := block.Parent
+	iSlot := block.NewAlloca(lltypes.I64)
+	block.NewStore(lo, iSlot)
+
+	cond := fn.NewBlock("")
+	loopBody := fn.NewBlock("")
+	exit := fn.NewBlock("")
+	block.NewBr(cond)
+	cond.NewCondBr(cond.NewICmp(enum.IPredSLT, cond.NewLoad(lltypes.I64, iSlot), hi), loopBody, exit)
+
+	i := loopBody.NewLoad(lltypes.I64, iSlot)
+	end, err := body(loopBody, i)
+	if err != nil {
+		return nil, err
+	}
+	end.NewStore(end.NewAdd(i, i64c(1)), iSlot)
+	end.NewBr(cond)
+	return exit, nil
 }
 
 // lowerDynArrayIndex lowers `xs[i]` on a dynamic array: load the runtime length
