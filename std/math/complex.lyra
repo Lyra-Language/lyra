@@ -1,0 +1,88 @@
+module std.math
+//! Complex numbers.
+
+// **The element type is generic, and only the float instantiations are numerically
+// sound.** `where t: Arithmetic` admits every integer width too, and complex *division*
+// over integers truncates — `Complex<i64> { 1, 2 } / Complex<i64> { 3, 4 }` is `0 + 0i`
+// where the exact answer is `0.44 + 0.08i`. That is inherent to integer division rather
+// than to the formula, and it is silently wrong rather than trapping, which is the one
+// failure mode this language is otherwise built to refuse. Constraining the parameter to
+// the floats is the fix, and there is no trait naming them yet.
+
+/// A complex number, `re + im·i`.
+///
+/// Generic over the element type, which needs the four arithmetic operators. In practice
+/// that means `Complex<f64>`: see the note above on why the integer instantiations
+/// divide badly.
+///
+/// # Examples
+///
+/// ```
+/// let a = Complex { re: 1.0, im: 2.0 }
+/// let b = Complex { re: 3.0, im: 4.0 }
+/// let product = a * b
+/// ```
+pub struct Complex<t> {
+  /// The real part.
+  re: t,
+  /// The imaginary part — the coefficient of `i`, not the term.
+  im: t,
+}
+
+/// Componentwise addition.
+impl Add for Complex<t> where t: Arithmetic {
+  (_+_) = (self, other) => Complex { re: self.re + other.re, im: self.im + other.im }
+}
+
+/// Componentwise subtraction.
+impl Sub for Complex<t> where t: Arithmetic {
+  (_-_) = (self, other) => Complex { re: self.re - other.re, im: self.im - other.im }
+}
+
+/// The complex product: `(a + bi)(c + di) = (ac - bd) + (ad + bc)i`.
+impl Mul for Complex<t> where t: Arithmetic {
+  (_*_) = (self, other) => Complex {
+    re: self.re * other.re - self.im * other.im,
+    im: self.re * other.im + self.im * other.re
+  }
+}
+
+/// Division by the conjugate, `(a + bi)/(c + di) = ((ac + bd) + (bc - ad)i)/(c² + d²)`.
+///
+/// The naive formula rather than Smith's method, which trades two divisions for scaling
+/// that avoids overflow when the operands are large. At the magnitudes this type is
+/// written for the difference does not arise.
+///
+/// # Panics
+///
+/// Traps for an integer `t` when the divisor is zero, since `c² + d²` is then zero and
+/// integer division by zero traps. For a float `t` the quotient is an infinity or a NaN,
+/// which is IEEE 754's answer rather than a trap.
+impl Div for Complex<t> where t: Arithmetic {
+  (_/_) = (self, other) => {
+    let common_denominator = other.re * other.re + other.im * other.im
+    Complex {
+      re: (self.re * other.re + self.im * other.im) / common_denominator,
+      im: (self.im * other.re - self.re * other.im) / common_denominator,
+    }
+  }
+}
+
+// The `where` clause says what the four impls above already require, and today nothing
+// reads it: `typeImplementsTrait` matches an impl by its target's head and does not verify
+// the impl's own bounds, so `Complex<string>` satisfies a `where u: Arithmetic` bound and
+// then fails in the backend. It is written anyway — it states the intent, and it starts
+// being enforced the day that check learns to recurse (todo.md).
+
+/// `Complex<t>` supports all four arithmetic operators.
+impl Arithmetic for Complex<t> where t: Arithmetic {}
+
+/// Rendered as `re + imi` — for example `1 + 2i`.
+///
+/// **A negative imaginary part reads `1 + -2i`**, not `1 - 2i`. Choosing the sign means
+/// comparing `im` against zero, and there is no way to *name* zero at a generic numeric
+/// type: it would need a `Zero` trait, or a `Default`, and the standard library has
+/// neither. Formatting a concrete `Complex<f64>` by hand is the workaround.
+impl Show for Complex<t> where t: Show {
+  show = (self) => "${self.re} + ${self.im}i"
+}

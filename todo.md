@@ -2057,6 +2057,41 @@ When it is built, `fixed_point_type` also needs adding to **both** highlight que
   ceremony is where E040 currently fires, so removing it moves that diagnostic to the call
   site. Left as it is deliberately.
 
+### [OPEN] A bound is satisfied by an impl whose own `where` clause fails
+
+`typeImplementsTrait` matches an impl by its target's *head* and never verifies the impl's
+own bounds, so a generic impl satisfies a bound for **every** instantiation of its target —
+including ones it explicitly excludes:
+
+```lyra
+impl Arithmetic for Complex<t> where t: Arithmetic {}
+
+let twice<u> where u: Arithmetic = (v: u) -> u => v + v
+twice(Complex { re: "a", im: "b" })   // type-checks clean
+// → lyrac: llvm backend: llvm: type not found for *ast.IdentifierExpr
+```
+
+`Complex<string>` satisfies `where u: Arithmetic`, and the failure lands in the backend as
+an internal message — hazard 5 inverted, the `Rng.seeded(42)` shape.
+
+**The limit is deliberate and documented**, in `typeImplementsTrait`'s own comment: *"a
+single level: the matched impl's own `where` bounds are not recursively verified here (a
+deliberate first-cut limit — the recursive obligation surfaces when that impl is itself
+dispatched)."* What that reasoning misses is the case where the impl **is** its constraint:
+an umbrella impl has no methods, so there is no later dispatch to surface the obligation,
+and the bound check is the only place the question is ever asked. `std/math/complex.lyra`
+is the first code to write one, which is what made a documented limit into a reachable bug.
+
+The fix is recursion with a visited set — checking a matched impl's constraints against the
+bindings that matched it, the way `checkImplConstraints` already does at dispatch. The
+visited set is not optional: `impl Arithmetic for Complex<t> where t: Arithmetic` is
+satisfied *by itself* for `Complex<Complex<f64>>`, so a naive recursion does not terminate.
+
+Two things to decide with it: whether the diagnostic names the failing inner bound (it
+should — "Complex<string> does not implement Arithmetic" is useless without "because
+`string` does not") and whether this subsumes the umbrella-impl question above, since a
+bound that verifies constraints is most of what requiring the impl was buying.
+
 ### [DECIDED 08/07] Operator-named trait methods
 
 `(_==_)`, `(_+_)`, `(-_)`, `(_++)` parse and collect, and **nothing dispatches to them**:
