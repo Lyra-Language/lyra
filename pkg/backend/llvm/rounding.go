@@ -24,17 +24,24 @@ var roundingIntrinsicOps = map[string]string{
 	"round": "round",
 }
 
-// logIntrinsicOps maps the logarithm builtins (typechecker/builtins.go's floatLogOps) to
-// their LLVM intrinsics. They share the rounding builtins' shape — one float in, no
-// arguments — and differ in what comes out: a float of the receiver's own width, so the
-// result is the intrinsic's and there is no conversion to guard.
+// floatMathIntrinsicOps maps the unary float-math builtins
+// (typechecker/builtins.go's floatUnaryMathOps) to their LLVM intrinsics. They share the
+// rounding builtins' shape — one float in, no arguments — and differ in what comes out: a
+// float of the receiver's own width, so the result is the intrinsic's and there is no
+// conversion to guard.
+//
+// The Lyra name and the intrinsic name coincide for every one of them, which is why this
+// is a set spelled as a map: it stays a map so a future builtin whose spellings differ
+// (`ln` over `llvm.log`, say) needs no restructuring.
 //
 // LLVM lowers each to the libm call of the same name, which is why `lyrac build` links
-// `-lm` unconditionally.
-var logIntrinsicOps = map[string]string{
+// `-lm` unconditionally — `sqrt` is the one that often becomes a hardware instruction
+// instead, on every target this compiles for.
+var floatMathIntrinsicOps = map[string]string{
 	"log":   "log",
 	"log2":  "log2",
 	"log10": "log10",
+	"sqrt":  "sqrt",
 }
 
 // lowerBuiltinMethodCall lowers a call whose callee is a MemberExpr resolved
@@ -132,8 +139,8 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 		return l.lowerBoundMethodCall(block, call, member, ref)
 	}
 	op, isRounding := roundingIntrinsicOps[member.Property.Name]
-	if logOp, isLog := logIntrinsicOps[member.Property.Name]; isLog {
-		op = logOp
+	if mathOp, isMath := floatMathIntrinsicOps[member.Property.Name]; isMath {
+		op = mathOp
 	} else if !isRounding {
 		return nil, nil, fmt.Errorf("llvm: unsupported method call %q", member.Property.Name)
 	}
@@ -162,10 +169,11 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	}
 	result := block.NewCall(l.roundingIntrinsicFunc(op, suffix, fT), recv)
 	if !isRounding {
-		// A logarithm answers a float of the receiver's own width — the intrinsic's
-		// result, unconverted. `log(0)` is -inf and `log(negative)` is a NaN, which is
-		// IEEE's answer and the one the float operators already give; feeding either to
-		// an integer conversion is what traps, and that is the right place for it.
+		// A unary float-math builtin answers a float of the receiver's own width — the
+		// intrinsic's result, unconverted. Outside its domain each gives IEEE's value
+		// rather than trapping (`log(0)` is -inf, `log(-1)` and `sqrt(-1)` are NaN),
+		// which is the answer the float operators already give; feeding either to an
+		// integer conversion is what traps, and that is the right place for it.
 		return result, block, nil
 	}
 	block = l.guardFloatToInt(block, result, fT)

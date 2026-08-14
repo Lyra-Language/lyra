@@ -10,6 +10,26 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**`sqrt`**, joining the logarithms — and the two tables that held them became one.
+
+`floatLogOps`/`logIntrinsicOps` were named for what they happened to contain rather than
+for the shape they share: one float in, one float of the same width out, lowered to
+`llvm.<name>.<width>`. A square root is the same question, so a second pair of tables keyed
+the same way is the drift hazard 8 keeps cataloguing. They are `floatUnaryMathOps` and
+`floatMathIntrinsicOps` now, and adding `exp` or `sin` later is one line in each and
+nothing else — where under the old naming it would have been a third table, or a lie in a
+name.
+
+Renamed the day after the logs landed, which is the cheapest this ever gets: a table named
+for its contents is only wrong once something else belongs in it, and the moment to fix it
+is the moment that happens.
+
+`sqrt(-1)` is a NaN rather than a trap, matching the logarithms and float division. What
+the escape-time renderer needs it for is nothing — `log(|z|^2)/2` avoids the root entirely
+— but a distance estimator cannot, and neither can any ordinary magnitude: `|z|` for
+`3 + 4i` is the test that says 5.
+
+### 08/14/26
 **`++` names the fix instead of only stating the rule**, and deliberately still refuses to
 convert.
 

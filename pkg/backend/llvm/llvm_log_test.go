@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// The logarithms — `log` (natural), `log2`, `log10` (08/14).
+// The unary float-math builtins — `log` (natural), `log2`, `log10`, `sqrt` (08/14).
 //
 // **Builtins rather than prelude Lyra, and that is the `random_seed` rule rather than the
 // `parse_i64` one.** A logarithm is not expressible in this language: no series, no lookup
@@ -27,6 +27,12 @@ func TestExec_Logarithms(t *testing.T) {
 		// operation whose answer is a float, unlike the rounding builtins.
 		{"an f32 receiver stays f32", `let v: f32 = 8.0; let r: f32 = v.log2(); println(f64(r).to_fixed(2));`, "3.00"},
 		{"a literal receiver", `println((8.0).log2().to_fixed(1));`, "3.0"},
+		{"sqrt", `let v: f64 = 2.0; println(v.sqrt().to_fixed(6));`, "1.414214"},
+		{"sqrt of a perfect square", `let v: f64 = 9.0; println(v.sqrt().to_fixed(1));`, "3.0"},
+		// The magnitude of a complex number, which is what sqrt was added for: the
+		// escape-time renderer avoids it via log(|z|^2)/2, and a distance estimator
+		// cannot.
+		{"a complex magnitude", `let m2: f64 = 3.0 * 3.0 + 4.0 * 4.0; println(m2.sqrt().to_fixed(1));`, "5.0"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -51,10 +57,11 @@ let main = () -> void => {
   println("${z.log()}");
   let neg: f64 = -1.0;
   println("${neg.log()}");
+  println("${neg.sqrt()}");
 }
 `
-	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "-inf\nnan" {
-		t.Errorf("got %q; want \"-inf\\nnan\"", got)
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "-inf\nnan\nnan" {
+		t.Errorf("got %q; want \"-inf\\nnan\\nnan\"", got)
 	}
 }
 
