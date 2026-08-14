@@ -316,14 +316,35 @@ func makeTraitMethodKey(name ast.MethodName) traitMethodKey {
 // Keyed on the *written* target type rather than a resolved one: this runs before
 // anything is resolved, and two impls whose targets resolve to one type through
 // different aliases is the overlap case above, not this one.
+//
+// **The trait half is keyed on the resolved declaration, not on the name** (08/14). A
+// name does not identify a declaration (hazard 9), and a module may declare its own
+// `Add` beside the prelude's — so `impl Add for i64` in each is two impls of two
+// different traits, and calling them duplicates refuses a program that is correct. This
+// is the same mistake dispatch already avoids by filtering candidate impls on the
+// resolved declaration, for the same reason: filtering by name is what let a user's own
+// `trait Ord` be taken for the prelude's.
+//
+// It was reachable before the prelude shipped arithmetic impls — a user's own
+// `trait Show` plus `impl Show for i64` collides with `std/prelude/show.lyra` — and
+// latent only because nothing had written that.
 func (tc *TypeChecker) checkImplCoherence() {
-	type key struct{ trait, target string }
+	type key struct {
+		trait  *ast.TraitDeclStmt
+		target string
+	}
 	first := map[key]*ast.TraitImplStmt{}
 	for _, impl := range tc.traitImpls {
 		if impl.Type == nil {
 			continue
 		}
-		k := key{impl.TraitName, impl.Type.String()}
+		decl, known := tc.symTable.LookupTraitFrom(impl.TraitName, impl.GetLocation())
+		if !known {
+			// An unknown trait is checkTraitImpl's diagnostic; a second one here
+			// would name the same line twice.
+			continue
+		}
+		k := key{decl, impl.Type.String()}
 		prev, seen := first[k]
 		if !seen {
 			first[k] = impl

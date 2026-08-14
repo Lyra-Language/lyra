@@ -74,6 +74,16 @@ because each was learned from a real failure, and none is local to one package.
    is last-writer-wins, and reported a module's own type as private to another module that
    happened to declare the same name.
 
+   **A third landed 08/14, and it is the by-name form applied to a *trait*.**
+   `checkImplCoherence` keyed duplicate impls on `{impl.TraitName, target}`, so a
+   program's own `trait Add` plus `impl Add for i64` was reported as a duplicate of the
+   prelude's — refusing a correct program. Keying on the resolved `*ast.TraitDeclStmt`
+   (via `LookupTraitFrom`) is the fix, and it is what dispatch already does one function
+   over, its comment recording that filtering by name is what let a user's own
+   `trait Ord` be taken for the prelude's. Reachable since the prelude first shipped
+   `impl Show for i64`; latent until the prelude gained arithmetic impls for every
+   numeric width and a test that declares its own `Add` started failing.
+
    **The by-name form keeps coming back wherever a module is not in hand**, and two more
    were found 08/08 when a module became able to declare its own version of an imported
    name: `visibilityIn` fell through to `BindingOf(name)` — a `pub` check routed through
@@ -387,6 +397,13 @@ The collector reads the field with `cst.Field` + a nil check rather than `MustFi
 declaration. `MustField` returns nil, which would erase the trait and then report
 `unknown trait` at every impl of it — a diagnostic pointing everywhere except at the
 declaration.
+
+**The prelude ships `Add`/`Sub`/`Mul`/`Div` and the `Arithmetic` umbrella**
+(`std/prelude/math.lyra`), with impls for all ten integer widths and three float widths.
+They exist so a **bound** can be satisfied, not so a call can dispatch — without them
+`where t: Arithmetic` is undemandable of a number, and every generic numeric function is
+unwritable. `impl Add for f64 { (_+_) = (self, o) => self + o }` is not recursion for the
+reason immediately below.
 
 Two rules hold across all of it. **A primitive is never routed through an impl** — `1 + 1`
 is a machine add whatever a program declares — where "primitive" is the receiver

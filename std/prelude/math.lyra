@@ -100,3 +100,160 @@ pub trait Div {
 /// let combine<t> where t: Arithmetic = (a: t, b: t) -> t => a * b + a
 /// ```
 pub trait Arithmetic: Add + Sub + Mul + Div
+
+// **These impls exist so a bound can be satisfied, not so a call can dispatch.** A
+// primitive is never routed through an impl — `1 + 1` is a machine add whatever a program
+// declares — so `(_+_) = (self, o) => self + o` is not the recursion it looks like: the
+// body *is* the machine operator, and nothing can reach the impl from an expression.
+//
+// What they buy is that `where t: Add` becomes demandable of a number. Without them the
+// four traits apply only to user types, so a generic numeric function is unwritable and
+// `Complex<f64>` cannot satisfy its own impl's bound — which is how the gap was found.
+//
+// One per numeric width, on the `Show` model: ordinary Lyra, no builtin, and written out
+// rather than abbreviated because there is no way to abbreviate it. `rune` is excluded on
+// purpose — it is a code point, so arithmetic on one is a category error rather than a
+// missing impl — and so is `string`, whose concatenation is `++`.
+
+/// `+` on `i8`, trapping on overflow.
+impl Add for i8 { (_+_) = (self, o) => self + o }
+/// `-` on `i8`, trapping on overflow.
+impl Sub for i8 { (_-_) = (self, o) => self - o }
+/// `*` on `i8`, trapping on overflow.
+impl Mul for i8 { (_*_) = (self, o) => self * o }
+/// `/` on `i8`, trapping on a zero divisor and on `i8`'s minimum divided by `-1`.
+impl Div for i8 { (_/_) = (self, o) => self / o }
+/// `i8` supports all four arithmetic operators.
+impl Arithmetic for i8 {}
+
+/// `+` on `i16`, trapping on overflow.
+impl Add for i16 { (_+_) = (self, o) => self + o }
+/// `-` on `i16`, trapping on overflow.
+impl Sub for i16 { (_-_) = (self, o) => self - o }
+/// `*` on `i16`, trapping on overflow.
+impl Mul for i16 { (_*_) = (self, o) => self * o }
+/// `/` on `i16`, trapping on a zero divisor and on `i16`'s minimum divided by `-1`.
+impl Div for i16 { (_/_) = (self, o) => self / o }
+/// `i16` supports all four arithmetic operators.
+impl Arithmetic for i16 {}
+
+/// `+` on `i32`, trapping on overflow.
+impl Add for i32 { (_+_) = (self, o) => self + o }
+/// `-` on `i32`, trapping on overflow.
+impl Sub for i32 { (_-_) = (self, o) => self - o }
+/// `*` on `i32`, trapping on overflow.
+impl Mul for i32 { (_*_) = (self, o) => self * o }
+/// `/` on `i32`, trapping on a zero divisor and on `i32`'s minimum divided by `-1`.
+impl Div for i32 { (_/_) = (self, o) => self / o }
+/// `i32` supports all four arithmetic operators.
+impl Arithmetic for i32 {}
+
+/// `+` on `i64`, trapping on overflow.
+impl Add for i64 { (_+_) = (self, o) => self + o }
+/// `-` on `i64`, trapping on overflow.
+impl Sub for i64 { (_-_) = (self, o) => self - o }
+/// `*` on `i64`, trapping on overflow.
+impl Mul for i64 { (_*_) = (self, o) => self * o }
+/// `/` on `i64`, trapping on a zero divisor and on `i64`'s minimum divided by `-1`.
+impl Div for i64 { (_/_) = (self, o) => self / o }
+/// `i64` supports all four arithmetic operators.
+impl Arithmetic for i64 {}
+
+/// `+` on `i128`, trapping on overflow.
+impl Add for i128 { (_+_) = (self, o) => self + o }
+/// `-` on `i128`, trapping on overflow.
+impl Sub for i128 { (_-_) = (self, o) => self - o }
+/// `*` on `i128`, trapping on overflow.
+impl Mul for i128 { (_*_) = (self, o) => self * o }
+/// `/` on `i128`, trapping on a zero divisor and on `i128`'s minimum divided by `-1`.
+impl Div for i128 { (_/_) = (self, o) => self / o }
+/// `i128` supports all four arithmetic operators.
+impl Arithmetic for i128 {}
+
+/// `+` on `u8`, trapping on overflow.
+impl Add for u8 { (_+_) = (self, o) => self + o }
+/// `-` on `u8`, trapping on overflow.
+impl Sub for u8 { (_-_) = (self, o) => self - o }
+/// `*` on `u8`, trapping on overflow.
+impl Mul for u8 { (_*_) = (self, o) => self * o }
+/// `/` on `u8`, trapping on a zero divisor.
+impl Div for u8 { (_/_) = (self, o) => self / o }
+/// `u8` supports all four arithmetic operators.
+impl Arithmetic for u8 {}
+
+/// `+` on `u16`, trapping on overflow.
+impl Add for u16 { (_+_) = (self, o) => self + o }
+/// `-` on `u16`, trapping on overflow.
+impl Sub for u16 { (_-_) = (self, o) => self - o }
+/// `*` on `u16`, trapping on overflow.
+impl Mul for u16 { (_*_) = (self, o) => self * o }
+/// `/` on `u16`, trapping on a zero divisor.
+impl Div for u16 { (_/_) = (self, o) => self / o }
+/// `u16` supports all four arithmetic operators.
+impl Arithmetic for u16 {}
+
+/// `+` on `u32`, trapping on overflow.
+impl Add for u32 { (_+_) = (self, o) => self + o }
+/// `-` on `u32`, trapping on overflow.
+impl Sub for u32 { (_-_) = (self, o) => self - o }
+/// `*` on `u32`, trapping on overflow.
+impl Mul for u32 { (_*_) = (self, o) => self * o }
+/// `/` on `u32`, trapping on a zero divisor.
+impl Div for u32 { (_/_) = (self, o) => self / o }
+/// `u32` supports all four arithmetic operators.
+impl Arithmetic for u32 {}
+
+/// `+` on `u64`, trapping on overflow.
+impl Add for u64 { (_+_) = (self, o) => self + o }
+/// `-` on `u64`, trapping on overflow.
+impl Sub for u64 { (_-_) = (self, o) => self - o }
+/// `*` on `u64`, trapping on overflow.
+impl Mul for u64 { (_*_) = (self, o) => self * o }
+/// `/` on `u64`, trapping on a zero divisor.
+impl Div for u64 { (_/_) = (self, o) => self / o }
+/// `u64` supports all four arithmetic operators.
+impl Arithmetic for u64 {}
+
+/// `+` on `u128`, trapping on overflow.
+impl Add for u128 { (_+_) = (self, o) => self + o }
+/// `-` on `u128`, trapping on overflow.
+impl Sub for u128 { (_-_) = (self, o) => self - o }
+/// `*` on `u128`, trapping on overflow.
+impl Mul for u128 { (_*_) = (self, o) => self * o }
+/// `/` on `u128`, trapping on a zero divisor.
+impl Div for u128 { (_/_) = (self, o) => self / o }
+/// `u128` supports all four arithmetic operators.
+impl Arithmetic for u128 {}
+
+/// `+` on `f16`.
+impl Add for f16 { (_+_) = (self, o) => self + o }
+/// `-` on `f16`.
+impl Sub for f16 { (_-_) = (self, o) => self - o }
+/// `*` on `f16`.
+impl Mul for f16 { (_*_) = (self, o) => self * o }
+/// `/` on `f16`, which follows IEEE 754 — a zero divisor yields an infinity or a NaN rather than trapping.
+impl Div for f16 { (_/_) = (self, o) => self / o }
+/// `f16` supports all four arithmetic operators.
+impl Arithmetic for f16 {}
+
+/// `+` on `f32`.
+impl Add for f32 { (_+_) = (self, o) => self + o }
+/// `-` on `f32`.
+impl Sub for f32 { (_-_) = (self, o) => self - o }
+/// `*` on `f32`.
+impl Mul for f32 { (_*_) = (self, o) => self * o }
+/// `/` on `f32`, which follows IEEE 754 — a zero divisor yields an infinity or a NaN rather than trapping.
+impl Div for f32 { (_/_) = (self, o) => self / o }
+/// `f32` supports all four arithmetic operators.
+impl Arithmetic for f32 {}
+
+/// `+` on `f64`.
+impl Add for f64 { (_+_) = (self, o) => self + o }
+/// `-` on `f64`.
+impl Sub for f64 { (_-_) = (self, o) => self - o }
+/// `*` on `f64`.
+impl Mul for f64 { (_*_) = (self, o) => self * o }
+/// `/` on `f64`, which follows IEEE 754 — a zero divisor yields an infinity or a NaN rather than trapping.
+impl Div for f64 { (_/_) = (self, o) => self / o }
+/// `f64` supports all four arithmetic operators.
+impl Arithmetic for f64 {}

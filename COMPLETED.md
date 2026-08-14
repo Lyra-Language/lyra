@@ -10,6 +10,49 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**The prelude implements the arithmetic traits for every numeric primitive**, and impl
+coherence stopped keying on the trait's *name*.
+
+Declaring `Add`/`Sub`/`Mul`/`Div`/`Arithmetic` shipped them applicable to nothing: no
+primitive implemented them, so `where t: Arithmetic` could not be satisfied by a number,
+and almost every generic numeric bound bottoms out in one. The gap surfaced immediately on
+the first real customer — `impl Add for Complex<t> where t: Arithmetic` type-checks, and
+then `Complex<f64>` fails with *"f64 does not implement Arithmetic"*. A trait that only
+user types can satisfy is not much of a trait.
+
+Five impls each for the ten integer widths and the three float widths, on the `Show`
+model: ordinary Lyra, no builtin, written out because there is no way to abbreviate it.
+`rune` and `string` are excluded — a code point is not a number, and concatenation is `++`.
+
+**`impl Add for f64 { (_+_) = (self, o) => self + o }` is not the recursion it looks
+like.** A primitive is never routed through an impl, so the body is the machine add and
+nothing can reach the impl from an expression. The rule that makes operator overloading
+safe is exactly what makes these impls writable; Rust's core does the same.
+
+**What it exposed is the more interesting half.** `checkImplCoherence` keyed duplicates on
+`{impl.TraitName, target}` — the trait's *name* — so the prelude's `impl Add for i64` and
+a program's own `impl Add for i64`, over its own `trait Add`, were reported as duplicates.
+That refuses a correct program, and it is hazard 9 verbatim: a name does not identify a
+declaration. Dispatch already avoids it by filtering candidates on the resolved
+declaration, its comment recording that filtering by name is what let a user's own
+`trait Ord` be taken for the prelude's — the same lesson, one function over.
+
+It was reachable before any of this, via a user's own `trait Show` against
+`std/prelude/show.lyra`'s `impl Show for i64`, and latent only because nothing had written
+that. The prelude gaining thirteen more impls is what turned a latent bug into a failing
+test — `TestExec_OperatorImplCannotChangePrimitiveArithmetic`, which declares its own
+`trait Add` and `impl Add for i64` precisely to assert primitives ignore impls.
+
+**Cost, measured, because the LSP re-analyzes the prelude on every keystroke**:
+`BenchmarkAnalyze_Medium` 7.20 ms → 9.98 ms (+39%), Small +31%, Large +30%, WideTypes +15%.
+A CPU profile puts the increase in `cgocall` — tree-sitter parsing a longer prelude — with
+no dispatch hotspot, so it is linear in source size rather than a lookup blowup. In
+absolute terms an analysis is ~10 ms against a typing-latency budget of tens of
+milliseconds, which is why this was accepted rather than trimmed; it is worth revisiting if
+the prelude keeps growing, and the answer then is caching the prelude's analysis rather
+than shipping fewer widths.
+
+### 08/14/26
 **`fixed<I, F>` says it is unimplemented instead of failing as a type error**
 (`lyra-E055`). The annotation parses and collects into a real `types.FixedPointType`, and
 no pass after the collector knows what one is — so the type was **uninhabitable**: `1`,

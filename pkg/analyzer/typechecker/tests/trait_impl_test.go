@@ -1,6 +1,9 @@
 package typechecker_test
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestTraitImpl_UnknownTrait(t *testing.T) {
 	res := parseCollectAndCheck(t, `
@@ -135,5 +138,39 @@ func TestTraitImpl_MultipleMissingMethods(t *testing.T) {
 		for _, e := range res.errors {
 			t.Errorf("  %s", e.Message)
 		}
+	}
+}
+
+// ── Impl coherence is keyed on the trait *declaration*, not its name (08/14) ──
+
+// A module may declare its own `Add` beside the prelude's, and `impl Add for i64` in each
+// is two impls of two *different* traits. Keying the duplicate check on the trait's name
+// called them duplicates and refused a correct program — hazard 9 (a name does not
+// identify a declaration), and the same mistake dispatch already avoids.
+//
+// Reachable before the prelude shipped arithmetic impls, via `trait Show` over
+// std/prelude/show.lyra's `impl Show for i64`; latent only because nothing wrote it.
+func TestImplCoherence_OwnTraitDoesNotCollideWithThePrelude(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		trait Show { show: (Self) -> string }
+		impl Show for i64 { show = (self) => "mine" }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// The check must still bite: two impls of the *same* trait for one type is the ambiguity
+// it exists for, and widening the key must not have widened it into uselessness.
+func TestImplCoherence_RealDuplicateIsStillRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		trait Greet { hi: (Self) -> string }
+		struct Pt { x: i64 }
+		impl Greet for Pt { hi = (self) => "a" }
+		impl Greet for Pt { hi = (self) => "b" }
+	`, false)
+	if len(res.errors) == 0 {
+		t.Fatal("a second impl of one trait for one type must be refused")
+	}
+	if !strings.Contains(res.errors[0].Error(), "already implemented") {
+		t.Errorf("want the duplicate-impl diagnostic, got: %v", res.errors[0])
 	}
 }
