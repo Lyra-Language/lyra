@@ -10,6 +10,41 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**An out-of-range float→int conversion traps instead of answering a number.** `fptosi` is
+**poison** in LLVM for an operand no integer can hold — not a saturating conversion — so
+`(1.0e20).floor()` answered 0 under `lyrac run` and `-9223372036854775808` under the test
+harness's compilation, which is the tell: the value was whatever the optimizer left behind,
+and two optimization levels were free to disagree. A NaN converted the same way.
+
+**It was the one gap in this language's numeric ladder.** Integer overflow traps, an index
+out of bounds traps, an out-of-range shift traps, a violated `newtype` constraint traps —
+and then the one conversion that cannot represent its input quietly produced a plausible
+number. That is the quietest possible failure, because a wrong number reads as arithmetic
+rather than as a fault: `to_fixed`'s first draft rendered `1.0e20` as
+`9223372036854775807.9223372036854775807` and looked entirely credible doing it.
+
+`guardFloatToInt` traps unless the rounded value is in `[-2^63, 2^63)`. Three details:
+
+- **The upper bound is exclusive.** i64's minimum is exactly -2^63 and representable as a
+  float; its *maximum* is 2^63-1, which is not representable in binary64, the nearest float
+  above it being 2^63. So an inclusive check against a float spelled
+  `9223372036854775807` compares against 2^63 and admits a value one past the end — an
+  off-by-one that only exists because the two bounds have different representability, and
+  which a test at the boundary is the only way to catch.
+- **A NaN traps for free**, because the check is written as "trap unless in range" with
+  *ordered* comparisons, false for a NaN. The negation — trap *if* out of range, with
+  unordered compares — lets a NaN through to a conversion that is poison for it too. Same
+  condition, opposite polarity, one of them wrong.
+- **Trapping rather than saturating**, of the two defensible answers (Rust's `as`
+  saturates). The rest of the ladder traps, and a saturated coordinate quietly rendering
+  the wrong pixel is what this exists to prevent — which is exactly the program that is
+  coming.
+
+Cost is a compare and a branch per `floor`/`ceil`/`round`. The value-range pass does not
+elide it: everything that pass already elides is integer-valued, so this wants float range
+tracking rather than a new consumer of what exists. Left open in `todo.md`.
+
+### 08/14/26
 **`to_fixed` — a float rendered with a chosen number of decimal places**
 (`std/prelude/format.lyra`), because `print` deliberately has no precision knob and a
 status line needs one.

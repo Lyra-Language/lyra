@@ -46,6 +46,10 @@ const (
 	shiftOverflowTrapMessage  = "lyra: shift amount out of range\n"
 	rangeStepTrapMessage      = "lyra: range step must be positive\n"
 	constraintTrapMessage     = "lyra: value violates its newtype's constraint\n"
+	// A rounded float that no i64 can hold, or a NaN. Named for the *conversion*
+	// rather than for `floor`/`ceil`/`round`, because that is where the loss happens —
+	// the rounding itself is exact and total.
+	floatToIntTrapMessage = "lyra: float value is out of range for an integer\n"
 	// The user message and its newline follow this at run time, so unlike the four
 	// above it carries neither.
 	panicPrefixMessage = "lyra: panic: "
@@ -126,6 +130,25 @@ func (l *lowerer) panicShiftOverflowFunc() *ir.Func {
 // up front, so "never advances" has a defined size there (see rangeSource).
 func (l *lowerer) panicRangeStepFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_range_step", rangeStepTrapMessage)
+}
+
+// panicFloatToIntFunc is the trap for `x.floor()`/`.ceil()`/`.round()` whose result no
+// i64 can hold, and for a NaN.
+//
+// It closes the one place this language answered an impossible conversion with a value
+// instead of a trap. `fptosi` on an out-of-range operand is **poison** in LLVM, not a
+// saturating conversion: `(1.0e20).floor()` answered 0, `-1.0e20` answered 0, and what a
+// given build produces is whatever the optimizer leaves behind — so two optimization
+// levels were free to disagree. Integer overflow traps, an index out of bounds traps, a
+// shift amount out of range traps, a violated newtype constraint traps; this was the gap
+// in that ladder, and it was the quietest kind, since a plausible wrong number reads as
+// arithmetic rather than as a fault.
+//
+// Trapping rather than saturating, which is the other defensible answer (Rust's `as`
+// saturates): the rest of this language's numeric ladder traps, and a saturated
+// coordinate silently rendering the wrong pixel is the failure this exists to prevent.
+func (l *lowerer) panicFloatToIntFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_float_to_int", floatToIntTrapMessage)
 }
 
 // panicConstraintFunc is the trap for a value that reaches a constrained newtype

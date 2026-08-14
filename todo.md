@@ -2115,7 +2115,37 @@ should — "Complex<string> does not implement Arithmetic" is useless without "b
 `string` does not") and whether this subsumes the umbrella-impl question above, since a
 bound that verifies constraints is most of what requiring the impl was buying.
 
-### [OPEN] An out-of-range float→int conversion is silently wrong
+### [DONE 08/14] An out-of-range float→int conversion is silently wrong
+
+Fixed the same day it was found. `guardFloatToInt` (`pkg/backend/llvm/rounding.go`) traps
+unless the rounded value is in `[-2^63, 2^63)`, which is emitted before every `fptosi`.
+
+Three details worth keeping:
+
+- **The upper bound is exclusive, and that is not a slip.** i64's minimum is exactly
+  -2^63 and representable as a float; its *maximum* is 2^63-1, which is **not**
+  representable in binary64 — the nearest float above it is 2^63 itself. An inclusive
+  check against a float spelled `9223372036854775807` would compare against 2^63 and admit
+  a value one past the end.
+- **A NaN traps for free.** The check reads "trap unless in range" with *ordered*
+  comparisons, which are false for a NaN, so it takes the trap edge with no test of its
+  own. Written the other way round — trap *if* out of range, with unordered compares — a
+  NaN would slip through to a conversion that is poison for it too.
+- **Trapping rather than saturating**, of the two defensible answers (Rust's `as`
+  saturates). The rest of this language's numeric ladder traps, and a saturated coordinate
+  quietly rendering the wrong pixel is the failure the fix exists to prevent.
+
+Of the three questions this entry raised, the third is still open: the value-range pass
+does **not** elide the check, so a float bounded by construction still pays a compare and
+a branch. Everything the pass already elides (array bounds, division) is integer-valued,
+so this needs float range tracking rather than a new consumer of the existing one.
+
+`std/prelude/format.lyra` keeps its own guard, now for the *message* rather than for
+safety: `to_fixed` naming the value it could not render beats a generic conversion trap.
+
+The original report follows.
+
+### [WAS OPEN] An out-of-range float→int conversion is silently wrong
 
 `floor`/`ceil`/`round` do not check their result's range, and the answers are not merely
 imprecise — they are arbitrary:

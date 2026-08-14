@@ -43,11 +43,13 @@ module std.prelude
 /// Traps on a negative `places`, which is a caller's mistake rather than a value this can
 /// render — the same reasoning `slice` applies to an inverted range.
 ///
-/// Traps on a magnitude at or beyond 2^63, and on a NaN. The whole part is carried as an
-/// integer, and a float that large has no fractional precision left to render anyway — but
-/// the trap is explicit rather than inherited: converting an out-of-range float to an
-/// integer does *not* check, so without the guard both cases print a confident wrong
-/// number (`1.0e20` renders as `9223372036854775807.9223372036854775807`).
+/// Traps on a magnitude at or beyond 2^63, and on a NaN — the whole part is carried as an
+/// integer, and a float that large has no fractional precision left to render anyway.
+///
+/// The check here is for the *message*, not for safety: `floor` traps on the same values
+/// as of 08/14, so removing it would still refuse them, just less specifically. It was
+/// safety until that landed — an unguarded draft rendered `1.0e20` as
+/// `9223372036854775807.9223372036854775807`.
 pub let to_fixed = pure (self: f64, places: i64) -> string => {
   if places < 0 {
     panic("to_fixed: places must not be negative")
@@ -55,10 +57,10 @@ pub let to_fixed = pure (self: f64, places: i64) -> string => {
   let negative = self < 0.0
   let magnitude = self.abs()
 
-  // **Guarded rather than left to the conversion**, because the conversion does not
-  // check: `(1.0e20).floor()` answers 0 today, and a NaN answers 0 too, so an unguarded
-  // formatter prints a confident wrong number for both. Written as a negated `<` so a
-  // NaN takes the branch — every comparison with one is false, including this one.
+  // Guarded here for the message rather than for safety: `floor` traps on these values
+  // too as of 08/14, so this only decides whether the reader is told *to_fixed* could not
+  // render the value or that some conversion was out of range. Written as a negated `<`
+  // so a NaN takes the branch — every comparison with one is false, including this one.
   if !(magnitude < 9223372036854775808.0) {
     panic("to_fixed: the value is too large to render, or is not a number")
   }

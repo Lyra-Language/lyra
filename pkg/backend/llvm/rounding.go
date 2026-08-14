@@ -2,8 +2,11 @@ package llvm
 
 import (
 	"fmt"
+	"math"
 
 	"github.com/llir/llvm/ir"
+	"github.com/llir/llvm/ir/constant"
+	"github.com/llir/llvm/ir/enum"
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
@@ -143,9 +146,38 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 		return nil, nil, fmt.Errorf("llvm: %s() lowered receiver is not a float value (%s)", member.Property.Name, recv.Type())
 	}
 	rounded := block.NewCall(l.roundingIntrinsicFunc(op, suffix, fT), recv)
+	block = l.guardFloatToInt(block, rounded, fT)
 	// The builtin's fixed return type is i64 (builtins.go's floatRoundingOps);
 	// narrow further with an explicit int conversion, e.g. i32(x.floor()).
 	return block.NewFPToSI(rounded, lltypes.I64), block, nil
+}
+
+// guardFloatToInt traps unless v is a number an i64 can hold, and returns the block to
+// carry on in. Emitted before every `fptosi`, which is poison out of range rather than
+// saturating (see panicFloatToIntFunc).
+//
+// **The bounds are `-2^63 <= v < 2^63`, and the asymmetry is not a slip.** i64's minimum
+// is exactly -2^63 and representable as a float; its *maximum* is 2^63-1, which is **not**
+// representable in binary64 — the nearest float above 2^63-1 is 2^63 itself. So a `<=`
+// against a float spelled `9223372036854775807` would compare against 2^63 and admit a
+// value one past the end. The exclusive upper bound is exact in every float width.
+//
+// **A NaN traps here too, and for free.** The check is written as "trap unless in range"
+// using *ordered* comparisons, which are false for a NaN — so it takes the trap edge
+// without a test of its own. Written the other way round (`trap if v < lo || v >= hi`,
+// with unordered compares) a NaN would slip through to the conversion, which is poison for
+// it as well.
+func (l *lowerer) guardFloatToInt(block *ir.Block, v value.Value, fT *lltypes.FloatType) *ir.Block {
+	// 2^63 exactly, in the receiver's own width. f16 cannot reach it (its maximum is
+	// 65504) and f32 represents it exactly, being a power of two — so one constant
+	// serves all three widths without a per-width table.
+	limit := constant.NewFloat(fT, math.Ldexp(1, 63))
+	negLimit := constant.NewFloat(fT, -math.Ldexp(1, 63))
+	aboveMin := block.NewFCmp(enum.FPredOGE, v, negLimit)
+	belowMax := block.NewFCmp(enum.FPredOLT, v, limit)
+	inRange := block.NewAnd(aboveMin, belowMax)
+	outOfRange := block.NewXor(inRange, constant.NewInt(lltypes.I1, 1))
+	return l.emitTrapIf(block, outOfRange, l.panicFloatToIntFunc())
 }
 
 // roundingIntrinsicFunc lazily declares `llvm.<op>.<suffix>` (e.g.
