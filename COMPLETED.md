@@ -10,6 +10,38 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**`fixed<I, F>` says it is unimplemented instead of failing as a type error**
+(`lyra-E055`). The annotation parses and collects into a real `types.FixedPointType`, and
+no pass after the collector knows what one is — so the type was **uninhabitable**: `1`,
+`1.5`, `f64(1.5)` and `i32(1)` were each refused, and no spelling could construct a value.
+
+The absence itself was fine. What was not is that it presented as an ordinary type error:
+*"cannot assign integer literal to `fixed<16,16>`"* reads as a fixable mistake, so an
+author tries `1.5`, then `f64(1.5)`, then `i32(1)`, and gets the same sentence with one
+noun changed each time. Three plausible attempts to learn what one diagnostic can say —
+the lyra-E035/E052 rule, applied to a type rather than to an expression.
+
+Two implementation notes:
+
+- **Reported in `parseFixedPointType`**, the one place the syntax becomes a type, so it is
+  one diagnostic per mention at the mention — E035's rule. And it returns **nil** rather
+  than the type, which is what keeps it to one: a nil annotation reads as *absent*
+  downstream, so `let x: fixed<16,16> = 1` infers `i64` for the binding instead of stacking
+  the assignability failure underneath a refusal that already explained it.
+- **`parseArrayType` stopped adding a second error** on a nil element. `parseType` returns
+  nil in exactly three cases — a nil node, an unrecognized kind, and this — and reports the
+  latter two itself, so `[]fixed<16,16>` was answering one mistake with two errors, the
+  second phrased as a compiler-internal note (`parseArrayType: element type is nil`).
+
+Not deleted, because the intent is to build it and the syntax is the part worth keeping:
+a value-parameterized `fixed<I, F>` commits to binary scaling, which serves *determinism*
+(lockstep simulation, replays). Decimal money wants a different type and already has a
+better answer (`newtype Cents = i64` with a range constraint), so the grammar has made
+that choice already. What it does not settle is what arithmetic does to the parameters —
+`fixed<16,16> * fixed<16,16>` wants `fixed<32,32>`, and a static array, the only other
+value-parameterized type, never has its size changed by an operator. See `todo.md`.
+
+### 08/14/26
 **A supertrait's methods are reachable through a subtrait bound.** `trait B: A` was
 *enforced* from 08/07 — `impl B for T` requires an `impl A for T` (`lyra-E040`) — and
 then `where t: B` still could not call `t.foo()`, reporting *"type parameter t has no

@@ -569,6 +569,33 @@ const (
 	// a runtime engine.
 	CodeRegexValuesNotImplemented = "lyra-E052"
 
+	// CodeFixedPointNotImplemented: the `fixed<I, F>` type annotation. It parses, it
+	// collects into a real `types.FixedPointType`, and **no pass after the collector
+	// knows what it is** — so the type is *uninhabitable*: every literal and every
+	// conversion is refused, and no value of it can be constructed by any spelling.
+	//
+	// Refused since 08/14, on the lyra-E035/E052 reasoning: the state of affairs is
+	// "unimplemented", and saying so is better than letting the absence be inferred
+	// from a series of type errors. What an author got instead was
+	// *"cannot assign integer literal to `fixed<16,16>`"* — which reads as a fixable
+	// mistake and invites trying `1.5`, then `f64(1.5)`, then `i32(1)`, each
+	// answered by the same sentence with one noun changed. Three plausible attempts
+	// to learn what one diagnostic can say.
+	//
+	// **Not deleted, because the intent is to build it**, and the syntax is the part
+	// worth keeping — a value-parameterized `fixed<I, F>` commits to binary scaling,
+	// which is the design that serves *determinism* (lockstep simulation, replays).
+	// Decimal money wants a different type and already has a better answer here
+	// (`newtype Cents = i64` with a range constraint), so the grammar has already
+	// made the choice this diagnostic is holding open.
+	//
+	// The one design question it does not settle is what arithmetic does to the
+	// parameters: `fixed<16,16> * fixed<16,16>` naturally wants `fixed<32,32>`. A
+	// static array is already value-parameterized, so that much has precedent — but
+	// an array's size never changes under an operator, and this would be the first
+	// type whose parameters are themselves arithmetic.
+	CodeFixedPointNotImplemented = "lyra-E055"
+
 	// CodeRawPointersNotImplemented: a raw-pointer operation (`&x`, `p^`, a write
 	// `p^ = v`) or an `unsafe { … }` block. The type system carries `^T`
 	// (types.RawPointerType unifies, substitutes and heads, and a newtype may wrap

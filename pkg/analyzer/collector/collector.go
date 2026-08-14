@@ -871,7 +871,11 @@ func (c *Collector) parseArrayType(node *sitter.Node, allocation types.Allocatio
 
 	elementType := c.parseType(typeNode)
 	if elementType == nil {
-		c.addError(node, CollectorErrorSeverityError, "parseArrayType: element type is nil")
+		// Silent, unlike the structural guard above. parseType returns nil in exactly
+		// three cases: a nil node (ruled out one line up), an unrecognized node kind, and
+		// `fixed<I, F>` (lyra-E055) — and it reports the latter two itself. So a nil here
+		// is *already diagnosed*, and adding to it means `[]fixed<16,16>` answers one
+		// mistake with two errors, the second phrased as a compiler-internal note.
 		return nil
 	}
 
@@ -913,6 +917,18 @@ func (c *Collector) parseRawPointerType(node *sitter.Node) types.Type {
 	}
 }
 
+// parseFixedPointType refuses `fixed<I, F>` as unimplemented (lyra-E055).
+//
+// The type is *uninhabitable*: it parses and collects, and nothing downstream knows what
+// it is, so every literal and every conversion into it is refused and no value of it can
+// be constructed by any spelling. Reported **here** because this is the one place the
+// syntax becomes a type — one diagnostic per mention, at the mention, which is lyra-E035's
+// rule — and returning nil rather than the type keeps it to one: a nil annotation reads as
+// *absent* downstream, so `let x: fixed<16,16> = 1` infers `i64` for the binding instead of
+// adding "cannot assign integer literal to fixed<16,16>" underneath this.
+//
+// The bits are still parsed, so the message can name what was written. `types.FixedPointType`
+// stays for the same reason the grammar rule does: this is deferred, not abandoned.
 func (c *Collector) parseFixedPointType(node *sitter.Node) types.Type {
 	intBits, fracBits := 0, 0
 	idx := 0
@@ -929,7 +945,12 @@ func (c *Collector) parseFixedPointType(node *sitter.Node) types.Type {
 		}
 		idx++
 	}
-	return types.FixedPointType{IntegerBits: intBits, FractionalBits: fracBits}
+	c.ctx.AddErrorCoded(node, diag.SeverityError, diag.CodeFixedPointNotImplemented,
+		"fixed-point types are not implemented: `fixed<%d, %d>` parses but no value of it "+
+			"can be constructed; use `f64` for fractional arithmetic, or `newtype Cents = i64` "+
+			"with a `where range(...)` constraint for a scaled integer",
+		intBits, fracBits)
+	return nil
 }
 
 // parseWeakType collects a `weak T` node into a types.WeakType wrapping the

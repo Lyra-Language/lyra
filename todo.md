@@ -2013,6 +2013,43 @@ declaration**. MustField returns nil, which would erase the trait and then repor
 `unknown trait` at every impl of it — a diagnostic pointing everywhere except at the
 declaration that caused it.
 
+### [OPEN] Fixed-point types — `fixed<I, F>` is refused, not built
+
+Refused as unimplemented since 08/14 (`lyra-E055`, reported in `parseFixedPointType`).
+The annotation parses and collects into a real `types.FixedPointType`, and nothing after
+the collector knows what one is — so the type was **uninhabitable**: `1`, `1.5`,
+`f64(1.5)` and `i32(1)` are all refused, and no spelling constructs a value.
+
+What an author met was a plain type error — *"cannot assign integer literal to
+`fixed<16,16>`"* — which reads as a fixable mistake and invites three more attempts,
+each answered by the same sentence with one noun changed. That is the lyra-E035/E052
+situation exactly, and the diagnostic is the same answer: say the construct is
+unimplemented rather than leaving it to be inferred from what fails.
+
+Kept rather than deleted, because the intent is to build it. Two things to settle first:
+
+- **What it is for.** The three motivations want different types. *Determinism* (lockstep
+  simulation, replays, reproducibility) wants exact binary scaling, which is what
+  `fixed<I, F>` already commits to. *Money* wants **decimal** scaling and is better served
+  by what already exists — `newtype Cents = i64` with a range constraint. *No-FPU targets*
+  are irrelevant until there is an embedded target. The grammar has already chosen; worth
+  confirming that is the intent before building on it.
+- **What arithmetic does to the parameters.** `fixed<16,16> * fixed<16,16>` naturally wants
+  `fixed<32,32>`. A static array is already a value-parameterized type, so that much has
+  precedent — but an array's size never changes under an operator, and this would be the
+  first type whose parameters are themselves arithmetic. Division's rounding is the same
+  question from the other side.
+
+The surface is wide even after that: literals (there is no way to *write* one), defaulting,
+conversions both ways, comparison, `Show`, `%`, and the value-range pass. The natural
+driver is the mandelbrot viewer past ~1e15 zoom, where f64's mantissa runs out — but the
+usual answer at that depth is arbitrary precision rather than a fixed width, so let the
+program ask before assuming this is what it wants.
+
+When it is built, `fixed_point_type` also needs adding to **both** highlight query files
+(`tree-sitter-lyra/queries/highlights.scm` and `lyra-zed-ext/languages/lyra/highlights.scm`)
+— it is missing from both today, which is harmless only because nobody can write one.
+
 - **[OPEN] Is an umbrella impl worth requiring?** `impl Arithmetic for Vec2 {}` asserts
   nothing the supertrait checks do not already establish, so it is close to ceremony. But
   making it *optional* means a `where t: Arithmetic` bound could be satisfied by a type that
