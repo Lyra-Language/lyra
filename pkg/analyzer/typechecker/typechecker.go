@@ -2708,11 +2708,42 @@ func (tc *TypeChecker) inferStringConcatExpr(expr *ast.StringConcatExpr) types.T
 
 	if !types.IsString(left) || !types.IsString(right) {
 		tc.addError(expr.GetLocation(), SeverityError,
-			"operator ++: operands must be strings, got %s and %s", left, right)
+			"operator ++: operands must be strings, got %s and %s%s",
+			left, right, concatFixHint(left, right))
 		return nil
 	}
 
 	return types.PrimitiveType{Name: types.String}
+}
+
+// concatFixHint names the spelling that turns a non-string operand into one.
+//
+// **`++` deliberately does not convert**, and this is what that decision costs an author
+// unless the message pays it back. Accepting `string ++ rune` would be an implicit
+// conversion in a language that refuses them everywhere else — `let c: Cents = plain_i64`
+// is refused (lyra-E046), `i64(x)` on a float is refused, and `string(r)` on a rune is
+// refused *by name*, saying that conversion "only reads a value of that type back out". An
+// operator quietly performing the conversion its own conversion function declines would be
+// two mechanisms disagreeing, and the slope has a known bottom: if a rune converts, so does
+// an integer, and `++` becomes JavaScript's `+` — which is the thing having a separate
+// concatenation operator buys avoiding.
+//
+// So the answer is refuse-and-name-the-fix, the pattern lyra-E046, lyra-E043 and the
+// float→int rejection all follow. `show` rather than a new `to_string`: it is already the
+// language's stringification, ships for every printable scalar, and a second name for one
+// mechanism is the redundancy this project keeps deleting. What it is *not* is guessable
+// from a rune, which is exactly why it belongs in the message.
+func concatFixHint(left, right types.Type) string {
+	side := ""
+	switch {
+	case !types.IsString(left) && !types.IsString(right):
+		side = "each operand"
+	case !types.IsString(left):
+		side = "the left operand"
+	default:
+		side = "the right operand"
+	}
+	return fmt.Sprintf(" — `++` does not convert; render %s first, with `.show()` or `\"${…}\"` interpolation", side)
 }
 
 // inferInterpolatedStringExpr type-checks a `"… ${expr} …"`. Each segment is

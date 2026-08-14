@@ -10,6 +10,35 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**`++` names the fix instead of only stating the rule**, and deliberately still refuses to
+convert.
+
+`line ++ shades[i]` — a string and a rune — reported *"operands must be strings, got string
+and rune"*, which is true and leaves the author nowhere: nothing in it says a rune can be
+rendered, and `show` is not a word anyone guesses from a character.
+
+**The tempting fix is to make `++` accept a rune, and that is the wrong one.** It would be
+an implicit conversion in a language that refuses them everywhere else: `let c: Cents =
+plain_i64` is lyra-E046, `i64(x)` on a float is refused in favour of `floor`/`ceil`/`round`,
+and `string(r)` on a rune is refused *by name*, its message saying that conversion "only
+reads a value of that type back out". An operator quietly performing the conversion its own
+conversion function declines is two mechanisms disagreeing about the same question — and
+the slope has a known bottom: if a rune converts then so does an integer, and `++` becomes
+JavaScript's `+`, which is precisely what a separate concatenation operator buys avoiding.
+
+So the message carries the cost, which is the pattern lyra-E046, lyra-E043 and the float→int
+rejection all follow: refuse, and name the spelling. It also names *which side* is at fault,
+since "operands must be strings" leaves a reader checking both.
+
+`show` rather than a new `to_string`: it is already the language's stringification, ships
+for every printable scalar, and a second name for one mechanism is the redundancy this
+project keeps deleting. What it is not is discoverable, which is the whole argument for
+putting it in the diagnostic.
+
+Four existing tests baselined the old sentence and were updated — the message is the
+feature here, so an exact-match baseline is right even though it makes the diff wider.
+
+### 08/14/26
 **The logarithms — `log` (natural), `log2`, `log10`** — each answering the receiver's own
 width rather than a fixed one, because a log is a float operation whose answer is a float.
 
