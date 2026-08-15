@@ -49,6 +49,12 @@ func TestExec_Logarithms(t *testing.T) {
 // choice float division already makes: `1.0 / 0.0` is an infinity, not a fault. The trap
 // comes later and in one place — feeding either of these to an integer conversion is what
 // fails, which is where the guard belongs (guardFloatToInt).
+//
+// **`nan` unsigned, on every platform.** This asserted macOS's rendering and CI caught it
+// on Linux, where glibc prints `-nan` for a NaN whose sign bit is set. The fix was in the
+// formatter rather than here: a printed NaN's sign is a property of the libm that produced
+// it, not of the computation, and a program whose output depends on its platform is the
+// thing this language gave up platform-dependent integer widths to avoid.
 func TestExec_LogarithmOutsideItsDomain(t *testing.T) {
 	t.Parallel()
 	src := `

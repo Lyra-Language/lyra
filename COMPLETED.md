@@ -10,6 +10,32 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**A NaN prints as `nan` on every platform.** It printed `-nan` on Linux and `nan` on macOS:
+glibc renders a NaN whose sign bit is set with the sign, Apple's libc does not, and the
+float formatter had been handing the question to libc — its own comment said so, that a NaN
+"simply runs to the last rung and prints libc's `nan`".
+
+**This is a determinism bug, not a test bug**, which is why the fix is in the formatter
+rather than in the assertion. A program's *output* depended on the platform it was built
+for, in the language that removed platform-dependent integer widths to avoid exactly that.
+Caught by CI on Linux, four runs after it landed, because every test asserting a printed
+NaN had been written on macOS.
+
+**The sign is dropped rather than standardized on.** IEEE leaves the sign of a NaN
+unspecified for nearly every operation that produces one — `log(-1)`'s is a property of the
+libm implementation, not of the computation — so it carries nothing a program could act on.
+An infinity keeps its sign, which does.
+
+Handled before the precision ladder rather than as another rung: a NaN never compares equal
+to itself, so it would otherwise run every rung to reach the last one and print whatever
+libc said there.
+
+**Verified on Linux before pushing, not after.** `./asan.sh ./...` exists for this and had
+not been used all day — the whole suite passes in the Debian container, which is what turns
+"I think this is platform-independent" into a fact. Four red CI runs is the cost of not
+having asked earlier; the tool was there the entire time.
+
+### 08/14/26
 **`[v; n]` accepts a runtime count, building a dynamic array** — the buffer a window resize
 or a terminal width sizes, which had no spelling at all: `let buf: []u32 = [0; n]` was a
 *syntax* error, and `push` in a loop was the only way to build one.

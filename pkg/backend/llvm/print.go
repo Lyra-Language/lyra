@@ -138,13 +138,35 @@ func (l *lowerer) floatToStrFunc(name types.PrimitiveTypeName) (*ir.Func, error)
 	// candidate must match.
 	want := narrowFromDouble(entry, val, narrowTy)
 
+	// **A NaN is written by hand, because libc does not agree with itself about it.**
+	// glibc renders a NaN whose sign bit is set as `-nan`; Apple's libc renders it
+	// `nan`. So `(-1.0).log()` printed differently on Linux and macOS — a program's
+	// *output* depending on the platform, which is the determinism this language gave up
+	// platform-dependent integer widths to get.
+	//
+	// The sign of a NaN is the right thing to drop rather than to standardize on: IEEE
+	// leaves it unspecified for almost every operation that produces one, so it carries
+	// no meaning a program could act on. An infinity keeps its sign, which does.
+	//
+	// Written before the ladder rather than as another rung: a NaN never compares equal
+	// to itself, so it would otherwise run every rung to reach the last one and print
+	// whatever libc said there.
+	nanBlock := fn.NewBlock("nan")
+	ladderStart := fn.NewBlock("ladder")
+	entry.NewCondBr(entry.NewFCmp(enum.FPredUNO, val, val), nanBlock, ladderStart)
+	for i, ch := range []int64{'n', 'a', 'n'} {
+		nanBlock.NewStore(constant.NewInt(lltypes.I8, ch),
+			nanBlock.NewGetElementPtr(lltypes.I8, out, constant.NewInt(lltypes.I64, int64(i))))
+	}
+	nanBlock.NewRet(constant.NewInt(lltypes.I64, 3))
+
 	// One block per rung: render, parse back, and either stop or fall through to the
 	// next. The final rung has nowhere to fall through to — its precision is the
 	// width's round-trip guarantee, so it is correct by construction and taken
 	// unconditionally.
 	done := fn.NewBlock("done")
 	lengths := make([]*ir.Incoming, 0, len(ladder))
-	cur := entry
+	cur := ladderStart
 	for i, prec := range ladder {
 		n := cur.NewCall(l.snprintfFunc(), out, constant.NewInt(lltypes.I64, floatStrBufBytes),
 			l.cString("%.*g"), constant.NewInt(lltypes.I32, prec), val)
