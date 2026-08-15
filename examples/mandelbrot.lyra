@@ -1,0 +1,33 @@
+import std.math.{ Complex }
+
+const MAX_ITER = 500
+const X_MIN = -2.00
+const X_MAX = 0.47
+const Y_MIN = -1.12
+const Y_MAX = 1.12
+const X_LEN = X_MAX - X_MIN
+const Y_LEN = Y_MAX - Y_MIN
+const WIDTH = 150
+const HEIGHT = 68
+
+let main = () => {
+  var rows: []string = []
+  for py in 0..<HEIGHT {
+    var row = ""
+    for px in 0..<WIDTH {
+      let x0 = X_MIN + X_LEN * f64(px) / f64(WIDTH)
+      let y0 = Y_MIN + Y_LEN * f64(py) / f64(HEIGHT)
+      let c = Complex { re: x0, im: y0 }
+      var z = Complex { re: 0.0, im: 0.0 }
+      var iter = 0
+      for iter < MAX_ITER {
+        z = z * z + c
+        if z.re * z.re + z.im * z.im > 4.0 { break }
+        iter += 1
+      }
+      row = row ++ (if iter >= MAX_ITER { " " } else { "#" })
+    }
+    rows.push(row)
+  }
+  println(rows.join("\n"))
+}
