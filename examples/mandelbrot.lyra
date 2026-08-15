@@ -1,31 +1,72 @@
 import std.math.{ Complex }
 
 const MAX_ITER = 500
+const WIDTH = 150
+const HEIGHT = 68
+
 const X_MIN = -2.00
 const X_MAX = 0.47
 const Y_MIN = -1.12
 const Y_MAX = 1.12
 const X_LEN = X_MAX - X_MIN
 const Y_LEN = Y_MAX - Y_MIN
-const WIDTH = 150
-const HEIGHT = 68
+
+// A generous bailout rather than the usual 4.0. The smooth term below is only
+// asymptotically correct, so the further past the escape radius `z` is allowed to
+// travel, the less the shading bands.
+const ESCAPE = 65536.0
+
+// The shading ramp runs logarithmically from one iteration up to this, and anything
+// slower is drawn at the heaviest exterior character. Logarithmic because escape times
+// are: nearly every point outside the set leaves within a handful of steps, so a linear
+// scale against MAX_ITER spends the whole ramp on the thin band near the boundary and
+// draws the entire far field identically.
+const SHADE_MAX = 64.0
+
+// Lightest first: a point that takes longer to escape is drawn heavier, and one that
+// never escapes is drawn heaviest of all.
+const RAMP = [" ", ".", ":", "-", "=", "+", "*", "#", "%", "@"]
+
+/// How heavily to draw `c` — an index into `RAMP`, its last for a point in the set.
+let shade = (c: Complex<f64>) -> i64 => {
+  var z = Complex { re: 0.0, im: 0.0 }
+  var mag2 = 0.0
+  var iter = 0
+  for iter < MAX_ITER {
+    z = z * z + c
+    mag2 = z.re * z.re + z.im * z.im
+    if mag2 > ESCAPE { break }
+    iter += 1
+  }
+
+  if iter >= MAX_ITER {
+    RAMP.len() - 1
+  } else {
+    // Smooth escape time, `n + 1 - log2(log|z|)`: the integer iteration count alone
+    // draws visible contours, since every point escaping on the same step gets the
+    // same character.
+    let smooth = f64(iter) + 1.0 - mag2.sqrt().log().log2()
+    // The correction is worth about -1.5, so a point escaping immediately lands below
+    // zero, and the log of that is a NaN — which `round` traps on rather than quietly
+    // answering a number. Clamping is the fix; the trap is doing its job.
+    let s = if smooth < 1.0 { 1.0 } else if smooth > SHADE_MAX { SHADE_MAX } else { smooth }
+    let t = s.log() / SHADE_MAX.log()
+    // `len() - 2`: the heaviest character is reserved for the set itself, so the
+    // boundary stays visible instead of merging into it.
+    (t * f64(RAMP.len() - 2)).round()
+  }
+}
 
 let main = () => {
   var rows: []string = []
   for py in 0..<HEIGHT {
     var row = ""
     for px in 0..<WIDTH {
-      let x0 = X_MIN + X_LEN * f64(px) / f64(WIDTH)
-      let y0 = Y_MIN + Y_LEN * f64(py) / f64(HEIGHT)
-      let c = Complex { re: x0, im: y0 }
-      var z = Complex { re: 0.0, im: 0.0 }
-      var iter = 0
-      for iter < MAX_ITER {
-        z = z * z + c
-        if z.re * z.re + z.im * z.im > 4.0 { break }
-        iter += 1
+      let c = Complex {
+        re: X_MIN + X_LEN * f64(px) / f64(WIDTH),
+        im: Y_MIN + Y_LEN * f64(py) / f64(HEIGHT)
       }
-      row = row ++ (if iter >= MAX_ITER { " " } else { "#" })
+      row = row ++ RAMP[shade(c)]
     }
     rows.push(row)
   }
