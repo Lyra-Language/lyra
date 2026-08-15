@@ -424,3 +424,67 @@ impl Shift for Pt { by = (self, (dx, dy)) => self.x + dx + self.y + dy }`,
 		assertNoErrors(t, res)
 	}
 }
+
+// Capitalization is syntax, not convention: a SCREAMING_CASE name is the grammar's
+// `const_identifier` and a capitalized one a constructor, so either in binding position
+// parses as a pattern to match. lyra-E057 says so and names the fix — which differs
+// between the two spellings, since `const` accepts only the first.
+
+// TestDestructuring_ConstCaseBindingName_NamesConst: `let RAMP = …` is a constant
+// written with the wrong keyword, and the message says which keyword.
+func TestDestructuring_ConstCaseBindingName_NamesConst(t *testing.T) {
+	source := `let RAMP = [" ", "."]`
+	res := parseCollectAndCheck(t, source, false)
+	assertErrorsAre(t, res,
+		"\"RAMP\" is spelled as a constant, so it is matched here rather than bound; "+
+			"write `const RAMP = ...` to declare a constant")
+}
+
+// TestDestructuring_CapitalizedBindingName_NamesLowercase: `Foo` is not a
+// `const_identifier`, so `const Foo = …` would be a *syntax* error — the fix offered is
+// the initial letter instead.
+func TestDestructuring_CapitalizedBindingName_NamesLowercase(t *testing.T) {
+	source := `let Foo = 10`
+	res := parseCollectAndCheck(t, source, false)
+	assertErrorsAre(t, res,
+		"\"Foo\" is spelled as a constructor, so it is matched here rather than bound; "+
+			"a binding's name must start with a lowercase letter")
+}
+
+// TestDestructuring_CapitalizedBindingName_VarToo: the mistake is about the name, so the
+// keyword it follows does not change it.
+func TestDestructuring_CapitalizedBindingName_VarToo(t *testing.T) {
+	source := `var LIMIT = 10`
+	res := parseCollectAndCheck(t, source, false)
+	assertErrorsAre(t, res,
+		"\"LIMIT\" is spelled as a constant, so it is matched here rather than bound; "+
+			"write `const LIMIT = ...` to declare a constant")
+}
+
+// TestDestructuring_CapitalizedBindingName_DoesNotCascade: the name is bound anyway, so
+// one mistake draws one diagnostic. The exact-and-ordered assertion is the point — before
+// this, every *use* added an `undefined identifier` of its own.
+func TestDestructuring_CapitalizedBindingName_DoesNotCascade(t *testing.T) {
+	source := `
+let RAMP = [" ", "."]
+let f = () -> string => RAMP[0]
+let g = () -> string => RAMP[1]`
+	res := parseCollectAndCheck(t, source, false)
+	assertErrorsAre(t, res,
+		"\"RAMP\" is spelled as a constant, so it is matched here rather than bound; "+
+			"write `const RAMP = ...` to declare a constant")
+}
+
+// TestDestructuring_BareRealConstructor_KeepsShapeMismatch: a bare name that *is* a
+// constructor is a genuine attempt to destructure, and "cannot destructure" is what is
+// wrong with it — E057 must not swallow that.
+func TestDestructuring_BareRealConstructor_KeepsShapeMismatch(t *testing.T) {
+	source := `
+data Maybe<t> = Some t | None
+let f = (n: i64) -> i64 => {
+    let None = n
+    0
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertErrorsAre(t, res, "cannot destructure i64 with a data pattern")
+}

@@ -684,6 +684,23 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 		}
 
 	case *ast.DataPattern:
+		// A *bare* capitalized name owning no constructor is almost never a
+		// destructuring — it is a binding whose name is spelled the way the grammar
+		// reserves for constants and constructors, so it parsed as a pattern to match.
+		// Reported before the type is resolved at all, because the mistake does not
+		// depend on the value: `let RAMP = Some(5)` would otherwise reach the arm below
+		// and be told `RAMP` is not a constructor of `Maybe`, which is just as true and
+		// just as unhelpful.
+		if p.Pattern == nil {
+			if _, isCtor := tc.findDataTypeByConstructor(p.Name); !isCtor {
+				tc.reportCapitalizedBindingName(p)
+				// Bind anyway, so the body does not then cascade into an "undefined
+				// identifier" at every use — the same best-effort the struct arm above
+				// takes, and for the same reason.
+				bind(p.Name, t)
+				return
+			}
+		}
 		dt, ok := tc.resolveToDataType(t, p.GetLocation())
 		if !ok {
 			tc.addError(p.GetLocation(), SeverityError,
@@ -704,6 +721,41 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 		}
 		tc.bindDataPatternPayload(p, ctor, bind)
 	}
+}
+
+// isConstIdentifier mirrors the grammar's `const_identifier`, `/[A-Z][A-Z0-9_]*/`
+// (tree-sitter-lyra/include/expressions/index.js). Written out rather than approximated as
+// "is it all upper case", because it is the exact spelling `const` accepts and the whole
+// point of the message below is to name a fix that compiles.
+func isConstIdentifier(name string) bool {
+	if name == "" || name[0] < 'A' || name[0] > 'Z' {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// reportCapitalizedBindingName reports lyra-E057 for a binding whose name parsed as a
+// pattern instead — see that code's entry for why capitalization is syntax here.
+//
+// The two halves differ because the fixes do: `const` takes the SCREAMING_CASE spelling
+// and only that, so it is the answer for `RAMP` and a syntax error for `Foo`.
+func (tc *TypeChecker) reportCapitalizedBindingName(p *ast.DataPattern) {
+	if isConstIdentifier(p.Name) {
+		tc.addErrorCode(p.GetLocation(), SeverityError, diag.CodeCapitalizedBindingName,
+			"%q is spelled as a constant, so it is matched here rather than bound; write `const %s = ...` to declare a constant",
+			p.Name, p.Name)
+		return
+	}
+	tc.addErrorCode(p.GetLocation(), SeverityError, diag.CodeCapitalizedBindingName,
+		"%q is spelled as a constructor, so it is matched here rather than bound; a binding's name must start with a lowercase letter",
+		p.Name)
 }
 
 // bindDataPatternPayload pairs a DataPattern's nested Pattern (if any)

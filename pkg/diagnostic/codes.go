@@ -613,6 +613,28 @@ const (
 	// refuses what has a plausible meaning in the wrong place, and gets to name the fix.
 	CodeNonConstantArraySize = "lyra-E056"
 
+	// CodeCapitalizedBindingName: a `let`/`var` whose name is capitalized —
+	// `let RAMP = [" ", "."]`, `let Foo = 10`.
+	//
+	// Capitalization is *syntax* here, not convention. A SCREAMING_CASE name is a
+	// `const_identifier` (`/[A-Z][A-Z0-9_]*/`) and a capitalized one a constructor, so
+	// either in binding position parses as a **pattern to match** rather than a name to
+	// bind — and the value is then destructured against a constructor that does not
+	// exist.
+	//
+	// Which left the mistake describing the parse instead of itself: `let RAMP = 10`
+	// reported "cannot destructure integer literal with a data pattern", and every use of
+	// the name cascaded into `undefined identifier`. Neither line named the one-word fix,
+	// which is `const` for the SCREAMING_CASE spelling and a lowercase initial for the
+	// other — an asymmetry worth reporting rather than hiding, since `const Foo = 10` is a
+	// *syntax* error and so is not advice that could be given uniformly.
+	//
+	// A bare name that *is* a real constructor keeps the shape mismatch: `let None = 10`
+	// is a genuine attempt to destructure an integer, and "cannot destructure" is what is
+	// wrong with it. The name is bound anyway (best-effort, as the struct-pattern arm
+	// beside it already does) so one mistake draws one diagnostic.
+	CodeCapitalizedBindingName = "lyra-E057"
+
 	// CodeRawPointersNotImplemented: a raw-pointer operation (`&x`, `p^`, a write
 	// `p^ = v`) or an `unsafe { … }` block. The type system carries `^T`
 	// (types.RawPointerType unifies, substitutes and heads, and a newtype may wrap

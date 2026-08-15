@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 08/15/26
+**A capitalized binding name says so (`lyra-E057`).** `let RAMP = [" ", "."]` reported
+`cannot destructure StaticArray<string, 2> with a data pattern`, and then an
+`undefined identifier "RAMP"` at every use. Both lines are true and neither is the
+mistake.
+
+Capitalization is **syntax** here, not convention: a SCREAMING_CASE name is the grammar's
+`const_identifier` (`/[A-Z][A-Z0-9_]*/`) and a capitalized one a constructor, so either in
+binding position parses as a *pattern to match*. The value is then destructured against a
+constructor that does not exist, and the diagnostic describes that parse instead of the
+one-word fix.
+
+Two halves, because the fixes differ and cannot be given uniformly: `const RAMP = …` for
+the first spelling, a lowercase initial for the second — `const Foo = 10` is a *syntax*
+error, so offering `const` for `Foo` would be advice that does not compile. The check
+mirrors the grammar's character class literally rather than approximating it as "all upper
+case", for exactly that reason.
+
+Three things kept it narrow. It fires only on a **bare** pattern (`p.Pattern == nil`), so
+`let Some(x) = n` is untouched; only when the name owns **no constructor**, so
+`let None = 10` keeps the shape mismatch, which is what is genuinely wrong with it; and it
+is reported **before the value's type is resolved**, since the mistake does not depend on
+it — otherwise `let RAMP = Some(5)` reaches the next arm and is told `RAMP` is not a
+constructor of `Maybe`, equally true and equally unhelpful.
+
+The name is bound anyway, so one mistake draws one diagnostic — the same best-effort the
+struct-pattern arm beside it already took, its comment already citing spurious
+`undefined identifier` cascades as the reason.
+
+Found by writing `examples/mandelbrot.lyra`, which is what the example programs are for:
+every constant in that file is `const`, and the shading ramp was the first `let` to be
+given a name in the same house style.
+
 ### 08/14/26
 **A top-level `let`/`var` holding data lowers.** It type-checked clean and died in the
 backend as `llvm: unbound identifier "greeting"` — hazard 5 inverted, and a fairly basic
