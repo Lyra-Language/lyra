@@ -1,8 +1,8 @@
 import std.math.{ Complex }
 
-const MAX_ITER = 500
-const WIDTH = 150
-const HEIGHT = 68
+const MAX_ITER = 100
+const WIDTH = 125
+const HEIGHT = 57
 
 const X_MIN = -2.00
 const X_MAX = 0.47
