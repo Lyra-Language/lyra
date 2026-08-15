@@ -2224,16 +2224,50 @@ count** builds a dynamic array, so a buffer sized by a window resize needs no `p
 
 What is left:
 
-- **A string can only be built with `++` or interpolation.** `to_runes` has no inverse and
-  there is no `join`, so a row assembled from parts pays one allocation and one copy per
-  part. `++` in a loop is also quadratic in the row length — invisible at 200 characters
-  (232 µs at 2,000) and 4,985 µs at 16,000. A `join` over `[]string`, or a string builder,
-  is the obvious answer; which one is a question about how much API the prelude wants.
+- **A string can only be built with `++` or interpolation**, and `join` (08/14) is an
+  ergonomic answer rather than a performance one — it is the same quadratic, since each
+  `++` copies everything accumulated and the language has no way to allocate a string of a
+  known size and fill it. Measured at parity with a hand-written loop (323 µs against
+  347 µs over 600 parts), which is the point: it saves the loop, not the copying.
+
+  A **linear** join needs a primitive the language does not have: either a builder, or a
+  `join` builtin that sums the parts' byte lengths, allocates once and memcpys. The
+  precedent is `starts_with`, which was rewritten onto `byte_len`/`compare_bytes_at` when
+  its natural Lyra form turned out quadratic (19.9 ms → 19 µs). Worth doing when something
+  joins enough parts to notice; a 60-row frame is not that.
 - **The fixed-size `[v; n]` path still emits one `insertvalue` per element**, so a
   `[20000]u32` literal is 1.16 MB of IR. Bounded by a different problem arriving first — an
   array that size is 80 KB of stack — but it wants the same treatment eventually, which
   means an alloca and a store loop, changing the value from an SSA aggregate to a loaded
   one.
+
+### [OPEN] A `[]t` combinator is unreachable from an array literal
+
+`[1, 2, 3].map(f)` and `["a", "b"].join("")` are both errors: an array literal infers a
+**fixed** `[3]T`, every prelude combinator takes `[]T`, and UFCS does not widen the
+receiver. The workaround is an annotation — `let xs: []i64 = [1, 2, 3]` — which is what
+every test and example in the standard library happens to do, which is why this went
+unnoticed until `join` was written for exactly the literal case.
+
+**Auto-widening at the call is the obvious fix and is probably wrong**: a `[3]T` is a stack
+value and a `[]T` is a heap box, so widening allocates. The language's position is that you
+get a heap array when you *ask* for one (the annotation is the asking), and a UFCS call
+that allocated silently would be invisible to `noalloc` at the point a reader looks.
+
+Which leaves two honest options:
+
+- **Declare each combinator for `[N]t` as well.** Receiver-keyed overloading exists for
+  precisely this and the heads differ, so it is legal — at the cost of a second copy of
+  every body, which is the duplication this project keeps deleting.
+- **Improve the diagnostic and leave the rule.** An overloaded name already says what it
+  takes (*"map is overloaded on its receiver and takes DynamicArray<t>, Maybe<t>,
+  Result<t, e>"*); a single-declaration one does not, so `join` reports only *"member
+  access on non-struct type StaticArray<string, 3>"* — which names the receiver and not
+  the fix. Extending `ufcsHint` to the non-overloaded case would cost one sentence and
+  cover every combinator at once.
+
+The second is the cheaper half and does not foreclose the first. Found 08/14 writing
+`join`; it is pre-existing and affects `map`/`filter` identically.
 
 ### [OPEN] Return-type-directed dispatch — reopen when `From`/`Into` wants it
 

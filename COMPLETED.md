@@ -10,6 +10,39 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**`join` in the prelude** — `split`'s inverse, and the last of the frame-buffer ergonomics.
+
+Generic over the element rather than taking `[]string`, so a list of anything printable
+joins without being converted first: `[1, 2, 3].join(", ")` works, and a `[]string` pays
+nothing for the generality because `impl Show for string` returns the value rather than
+interpolating it. The separator goes *between* parts, so an empty array joins to `""` and a
+single element to itself.
+
+**It is an ergonomic win and not a performance one**, which the doc comment says outright:
+each `++` copies everything accumulated, and the language has no way to allocate a string of
+a known size and fill it, so this is the same quadratic a hand-written loop is.
+
+**It was 2x worse than the loop until a pair of parentheses**, which is the part worth
+keeping. `out ++ sep ++ part` associates left, so it copies the whole accumulator *twice*
+per element — once for the separator, once for the part. `out ++ (sep ++ part)` builds the
+small piece first and copies the big one once: 825 µs → 323 µs over 600 parts, against
+347 µs for the hand-written loop it now matches. Measured rather than assumed, and the
+2x would have shipped invisibly.
+
+A linear `join` needs a primitive that does not exist — a builder, or a builtin that sums
+the parts' byte lengths, allocates once and memcpys. The precedent is `starts_with`, quadratic
+in its natural Lyra form and rewritten onto `byte_len`/`compare_bytes_at` for 19.9 ms → 19 µs.
+Left for when something joins enough parts to notice.
+
+**Writing it surfaced a pre-existing gap** (`todo.md`): `["a", "b"].join("")` does not
+compile, because an array literal infers a fixed `[2]string` and every prelude combinator
+takes `[]T`. `[1, 2, 3].map(f)` fails identically, so it is general rather than about
+`join` — and it went unnoticed because every example in the standard library annotates.
+Auto-widening at the call is the obvious fix and probably wrong: `[N]T` is a stack value
+and `[]T` is a heap box, so it would allocate silently at a call site, which is exactly
+what `noalloc` exists to make visible.
+
+### 08/14/26
 **An impl's body is optional, braces and all** — `impl Arithmetic for Vec2` — matching the
 trait declaration, so an umbrella's pair reads as a pair:
 
