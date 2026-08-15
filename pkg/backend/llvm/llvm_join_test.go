@@ -56,3 +56,35 @@ let main = () -> void => {
 		t.Errorf("got %q; want three rows", got)
 	}
 }
+
+// The hint against the **real** prelude, which is what a reader actually meets: `join` is
+// declared once, `map` is overloaded on three receivers, and both must name the same edit.
+//
+// Checked here rather than in the typechecker's own tests because those run without a
+// prelude — `join` and `map` are not declared there, so the hint has nothing to look up and
+// the first draft of this passed vacuously against a bare "member access on non-struct
+// type".
+func TestCheck_ArrayLiteralReceiverNamesTheEditAgainstThePrelude(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct{ src, want string }{
+		"join, declared once": {
+			`let main = () -> void => { println(["a", "b"].join("")); }`,
+			"join takes a dynamic array",
+		},
+		"map, overloaded on three receivers": {
+			`let main = () -> void => { println([1, 2].map((x: i64) -> i64 => x).len()); }`,
+			"map takes a dynamic array",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			errs := strings.Join(checkWithPrelude(t, tc.src+"\n"), "\n")
+			if !strings.Contains(errs, tc.want) {
+				t.Errorf("want %q; got: %s", tc.want, errs)
+			}
+			if !strings.Contains(errs, "annotate the value as") {
+				t.Errorf("the hint should name the annotation; got: %s", errs)
+			}
+		})
+	}
+}

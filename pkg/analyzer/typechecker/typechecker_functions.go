@@ -1039,7 +1039,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// A free function of this name that *nearly* matched — one that never opted in, or
 	// one this file has not imported — is the likeliest thing the author meant, so the
 	// "no such member" message says so rather than leaving them hunting for a method.
-	hint := tc.ufcsHint(methodName, member.GetLocation())
+	hint := tc.ufcsHint(methodName, objType, member.GetLocation())
 	switch t := objType.(type) {
 	case types.NamedStructType:
 		tc.addError(member.GetLocation(), SeverityError, "%s has no field or method %q%s", t.Name, methodName, hint)

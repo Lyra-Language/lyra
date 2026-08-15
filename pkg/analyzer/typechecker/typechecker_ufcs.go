@@ -296,7 +296,18 @@ func desugarUFCSCall(member *ast.MemberExpr, call *ast.FunctionCallExpr) {
 // ufcsHint explains a failed member call when a free function of that name does exist —
 // the two near-misses worth naming, since "has no field or method" alone sends the reader
 // looking for a method that was never going to be there.
-func (tc *TypeChecker) ufcsHint(methodName string, loc ast.Location) string {
+func (tc *TypeChecker) ufcsHint(methodName string, recv types.Type, loc ast.Location) string {
+	// **The array-literal case is checked first, because it applies to both shapes and
+	// is the only one that names an actual edit.** `["a", "b"].join("")` and
+	// `[1, 2, 3].map(f)` fail identically: a literal infers a *fixed* array, every
+	// prelude combinator takes a dynamic one, and UFCS does not widen — deliberately,
+	// since `[N]T` is a stack value and `[]T` a heap box, so widening at a call would
+	// allocate where nothing asked it to. Left to the branches below, an overloaded name
+	// answers "map takes DynamicArray<t>, Maybe<t>, Result<t, e>", which is true and
+	// still leaves the reader to work out that an annotation is the fix.
+	if hint, ok := tc.arrayLiteralHint(methodName, recv, loc); ok {
+		return hint
+	}
 	// An overloaded name reaches here only when *no* member accepted the receiver, so
 	// the useful thing to say is which receivers there are — the reader picked a real
 	// method and applied it to the wrong type, and "has no method" alone reads as
@@ -309,7 +320,8 @@ func (tc *TypeChecker) ufcsHint(methodName string, loc ast.Location) string {
 	if !ok {
 		return ""
 	}
-	if _, isReceiver := ufcsReceiverParam(fn); !isReceiver {
+	param, isReceiver := ufcsReceiverParam(fn)
+	if !isReceiver {
 		return fmt.Sprintf(
 			"; %s is a free function — name its first parameter `self` to allow method syntax, or call %s(…)",
 			methodName, methodName)
@@ -318,9 +330,50 @@ func (tc *TypeChecker) ufcsHint(methodName string, loc ast.Location) string {
 		return fmt.Sprintf("; %s takes a `self` receiver in module %q — import it to call it method-style",
 			methodName, tc.symTable.ModuleOfFile[fn.GetLocation().File])
 	}
-	// It is a receiver function this file can see, so the receiver's type is what did
-	// not fit; the message the caller is about to print already names that type.
-	return ""
+	// It is a receiver function this file can see, so the receiver's *type* is what did
+	// not fit — and the caller's message names only the type that failed, never the one
+	// that would have worked. An overloaded name has said what it takes since it existed
+	// (see above); a single-declaration one said nothing, which is the difference between
+	// naming the symptom and naming the fix.
+	if !isReceiver || param.Type == nil {
+		return ""
+	}
+	want := tc.resolveTypeIfKnown(param.Type, fn.GetLocation())
+	if want == nil {
+		return ""
+	}
+	return fmt.Sprintf("; %s takes %s", methodName, want)
+}
+
+// arrayLiteralHint names the edit for the one mismatch a reader cannot guess from the
+// types alone: a fixed-array receiver against a combinator that takes a dynamic one.
+//
+// Keyed on *any* declaration of the name taking a dynamic array, so it covers the
+// overloaded shape (`map`, declared for `[]t`, `Maybe<t>` and `Result<t, e>`) and the
+// single one (`join`) with the same sentence. The annotation is spelled in source syntax —
+// `[]string`, not `DynamicArray<string>` — because it is code the reader is about to type.
+func (tc *TypeChecker) arrayLiteralHint(methodName string, recv types.Type, loc ast.Location) (string, bool) {
+	sa, isStatic := recv.(types.StaticArrayType)
+	if !isStatic {
+		return "", false
+	}
+	for _, fn := range tc.symTable.FunctionsNamed(methodName) {
+		param, isReceiver := ufcsReceiverParam(fn)
+		if !isReceiver || param.Type == nil || !tc.ufcsImported(fn, loc) {
+			continue
+		}
+		if _, wantsDyn := tc.resolveTypeIfKnown(param.Type, fn.GetLocation()).(types.DynamicArrayType); !wantsDyn {
+			continue
+		}
+		// The element is **defaulted** before it is named: an unannotated `[1, 2, 3]`
+		// has untyped elements, which render as "integer literal" — a phrase, not a
+		// type, so the suggested annotation would not compile. Same rule the generated
+		// documentation follows: a spelling offered to a reader has to parse.
+		return fmt.Sprintf(
+			"; %s takes a dynamic array — annotate the value as `[]%s` (a `[%d]T` literal is a fixed array, and widening it would allocate)",
+			methodName, promoteToDefault(sa.ElementType), sa.Size), true
+	}
+	return "", false
 }
 
 // exprText renders a receiver expression for a diagnostic that suggests the call form.

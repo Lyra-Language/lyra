@@ -10,6 +10,38 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**A fixed-array receiver against a `[]t` combinator names the edit.** `["a", "b"].join("")`
+reported *"member access on non-struct type StaticArray<string, 3>"* — the type that failed,
+never the one that would work, and nothing about the annotation that fixes it.
+
+Now: *"join takes a dynamic array — annotate the value as `[]string` (a `[3]T` literal is a
+fixed array, and widening it would allocate)"*.
+
+**Checked before the overload branch, because it applies to both shapes and is the only one
+that names an edit.** An overloaded name has said what it takes since the hint existed
+(*"map is overloaded on its receiver and takes DynamicArray<t>, Maybe<t>, Result<t, e>"*) —
+true, and it leaves the reader to work out that an annotation is the answer. `map` and
+`filter` are what people reach for, so the overloaded shape was the one that most needed it.
+A single-declaration name said nothing at all, and now says what it takes.
+
+**The suggested type is defaulted before it is named.** An unannotated `[1, 2, 3]` has
+untyped elements, which render as "integer literal" — a phrase, not a type — so the first
+version suggested `[]integer literal`, an annotation that does not compile. Same rule the
+generated documentation follows: a spelling offered to a reader has to parse. There is a
+test asserting the suggestion is `[]i64`, and another that taking the advice compiles, which
+is the only one that proves the hint is *correct* rather than merely well-worded.
+
+**The rule itself stays.** Auto-widening at the call is the obvious fix and is wrong: a
+`[N]T` is a stack value and a `[]T` a heap box, so widening allocates — silently, at a call
+site, where `noalloc` exists to make exactly that visible.
+
+The tests needed moving mid-write, which is worth recording: the first draft lived in the
+typechecker's own suite, where `parseCollectAndCheck` has no prelude — so `join` and `map`
+are undeclared, the hint has nothing to look up, and every assertion passed against a bare
+"member access on non-struct type". They now declare their own receivers to test the
+mechanism, with the real prelude covered separately by `checkWithPrelude`.
+
+### 08/14/26
 **`join` in the prelude** — `split`'s inverse, and the last of the frame-buffer ergonomics.
 
 Generic over the element rather than taking `[]string`, so a list of anything printable

@@ -2230,11 +2230,31 @@ What is left:
   known size and fill it. Measured at parity with a hand-written loop (323 µs against
   347 µs over 600 parts), which is the point: it saves the loop, not the copying.
 
-  A **linear** join needs a primitive the language does not have: either a builder, or a
-  `join` builtin that sums the parts' byte lengths, allocates once and memcpys. The
-  precedent is `starts_with`, which was rewritten onto `byte_len`/`compare_bytes_at` when
-  its natural Lyra form turned out quadratic (19.9 ms → 19 µs). Worth doing when something
-  joins enough parts to notice; a 60-row frame is not that.
+  A **linear** join needs a primitive the language does not have, and the useful framing is
+  not "add a string builder" — it is **should a string have a byte seam**.
+
+  A builder beats `++` because it is mutable and *over-allocates*: spare capacity, doubling
+  when full, one copy at the end. Lyra already has that half — `push` is amortized doubling
+  and measures dead linear (80,000 in 61 µs). What is missing is the other half: the
+  byte-level surface is `byte_len`, `byte_offset`, `compare_bytes`, `compare_bytes_at`, all
+  read-only *comparisons*, and `to_runes` has no inverse. Everything goes string → data and
+  nothing comes back, so you can build a `[]u8` efficiently and then have no way to call it
+  a string.
+
+  With a seam (`s.bytes()` and `[]u8 → string`, say), **both** a builder and a linear join
+  are ordinary Lyra in the prelude rather than language features — which is the
+  `starts_with` precedent exactly: quadratic in its natural form, fixed by adding
+  `byte_len`/`compare_bytes_at` and rewriting it here (19.9 ms → 19 µs). The narrower
+  alternative is `join` as a builtin that sums lengths, allocates once and memcpys; the
+  heaviest is a `StringBuilder` type, which is a new nominal type for something `[]u8`
+  already is.
+
+  **Deferred on measurement, not on taste.** The quadratic is invisible below ~8,000
+  characters in one string (1,332 µs) and hurts at 16,000 (4,985 µs). A terminal frame is
+  ~12,000 characters but built as 60 rows of 200, and renders in 1,440 µs with plain `++`.
+  What would cross the line is a *single* string that large — a whole frame joined and
+  written at once, or a large buffer dumped to a file. If the viewer starts doing that, add
+  the seam; `join` gets faster the same day for free.
 - **The fixed-size `[v; n]` path still emits one `insertvalue` per element**, so a
   `[20000]u32` literal is 1.16 MB of IR. Bounded by a different problem arriving first — an
   array that size is 80 KB of stack — but it wants the same treatment eventually, which
@@ -2245,29 +2265,26 @@ What is left:
 
 `[1, 2, 3].map(f)` and `["a", "b"].join("")` are both errors: an array literal infers a
 **fixed** `[3]T`, every prelude combinator takes `[]T`, and UFCS does not widen the
-receiver. The workaround is an annotation — `let xs: []i64 = [1, 2, 3]` — which is what
-every test and example in the standard library happens to do, which is why this went
-unnoticed until `join` was written for exactly the literal case.
+receiver. The workaround is an annotation — `let xs: []i64 = [1, 2, 3]`.
 
-**Auto-widening at the call is the obvious fix and is probably wrong**: a `[3]T` is a stack
-value and a `[]T` is a heap box, so widening allocates. The language's position is that you
-get a heap array when you *ask* for one (the annotation is the asking), and a UFCS call
-that allocated silently would be invisible to `noalloc` at the point a reader looks.
+**The diagnostic half is done** (08/14): both shapes now name the edit rather than only the
+mismatch — *"map takes a dynamic array — annotate the value as `[]i64` (a `[3]T` literal is
+a fixed array, and widening it would allocate)"*. The suggested type is *defaulted* before
+it is named, since an unannotated literal's elements render as "integer literal", a phrase
+rather than a type.
 
-Which leaves two honest options:
+**The rule itself stays, and auto-widening is the fix not to reach for**: a `[N]T` is a
+stack value and a `[]T` is a heap box, so widening at a call allocates. The language's
+position is that you get a heap array when you *ask* for one, and a UFCS call that
+allocated silently would be invisible to `noalloc` exactly where a reader looks for it.
+
+What is left is the ergonomic half, and it has one honest option:
 
 - **Declare each combinator for `[N]t` as well.** Receiver-keyed overloading exists for
   precisely this and the heads differ, so it is legal — at the cost of a second copy of
-  every body, which is the duplication this project keeps deleting.
-- **Improve the diagnostic and leave the rule.** An overloaded name already says what it
-  takes (*"map is overloaded on its receiver and takes DynamicArray<t>, Maybe<t>,
-  Result<t, e>"*); a single-declaration one does not, so `join` reports only *"member
-  access on non-struct type StaticArray<string, 3>"* — which names the receiver and not
-  the fix. Extending `ufcsHint` to the non-overloaded case would cost one sentence and
-  cover every combinator at once.
-
-The second is the cheaper half and does not foreclose the first. Found 08/14 writing
-`join`; it is pre-existing and affects `map`/`filter` identically.
+  every body, which is the duplication this project keeps deleting. Worth it only if the
+  annotation turns out to be a recurring irritation rather than a one-time surprise, which
+  the mandelbrot program is the right thing to decide.
 
 ### [OPEN] Return-type-directed dispatch — reopen when `From`/`Into` wants it
 
