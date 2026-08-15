@@ -6,6 +6,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // CheckUnusedImports walks all top-level ImportStmt nodes and warns for any
@@ -18,8 +19,14 @@ import (
 // syntactic test below cannot see it, while the import is exactly what permitted the
 // call. Without this the warning tells you to delete an import the program needs.
 func CheckUnusedImports(program *ast.Program, ufcsModules map[string]map[string]bool) []diag.Diagnostic {
-	// Collect all identifier references used anywhere in the program.
-	refs := collectAllRefs(program)
+	// Collected **per file**, because `program` spans every unit the import graph pulled
+	// in: an imported module's own source mentions its own types constantly, so a
+	// program-wide set answers "is this name used anywhere" when the question is "is it
+	// used *here*". Invisible while only identifiers were counted — a declaration's own
+	// name is not one — and immediate once type positions were, since `std.math`'s impl
+	// methods take `self: Complex<t>` and every unused `import std.math.{ Complex }`
+	// stopped warning.
+	refsByFile := collectRefsByFile(program)
 
 	var warnings []diag.Diagnostic
 	for _, node := range program.Statements {
@@ -28,6 +35,7 @@ func CheckUnusedImports(program *ast.Program, ufcsModules map[string]map[string]
 			continue
 		}
 		loc := stmt.GetLocation()
+		refs := refsByFile[loc.File]
 		// A module this file called into method-style is used, whatever its name does
 		// or does not appear in the source. Checked before the name-based tests below,
 		// which cannot see such a use at all.
@@ -105,24 +113,80 @@ func modulePath(stmt *ast.ImportStmt) string {
 	return strings.Join(parts, ".")
 }
 
-// collectAllRefs returns the set of all identifier names referenced anywhere
-// in the program (across all statements, expressions, and nested scopes).
-func collectAllRefs(program *ast.Program) map[string]bool {
-	refs := make(map[string]bool)
+// collectRefsByFile returns, per source file, the set of all names referenced in it — as an
+// identifier, as a struct literal's type, or **in a type position**.
+//
+// The last two were missing until 08/14, and between them they are how an imported *type*
+// is used: `Complex { re: … }` names it as a literal, `(c: Complex<f64>)` and
+// `-> Complex<f64>` name it in a signature, and neither is an IdentifierExpr — a type is
+// not an expression at all, so the expression walk could not see it however far it
+// descended. So `import std.math.{ Complex }` warned as unused in a program that fails to
+// compile without it (`undefined struct type "Complex"`), which is precisely the failure
+// the UFCS note above describes: advice to delete an import the program needs.
+//
+// Over-collecting is the safe direction here and is deliberate. Every name in every type
+// counts as a reference, so an import can only ever be reported unused when the name
+// genuinely appears nowhere — a false *absence* is a warning nobody can act on correctly,
+// while a false presence is only a warning not shown.
+func collectRefsByFile(program *ast.Program) map[string]map[string]bool {
+	byFile := make(map[string]map[string]bool)
 	for _, node := range program.Statements {
 		stmt, ok := node.(ast.Statement)
 		if !ok {
 			continue
 		}
-		ast.WalkStmt(stmt, nil, func(e ast.Expression) bool {
+		file := stmt.GetLocation().File
+		refs, seen := byFile[file]
+		if !seen {
+			refs = make(map[string]bool)
+			byFile[file] = refs
+		}
+		noteType := func(t types.Type) {
+			if t != nil {
+				types.CollectTypeNames(t, refs)
+			}
+		}
+		ast.WalkStmt(stmt, func(s ast.Statement) bool {
+			switch st := s.(type) {
+			case *ast.VarDeclStmt:
+				noteType(st.Type)
+			case *ast.TypeDeclStmt:
+				// A declaration's *members* are what mention other types;
+				// CollectTypeNames stops at a nominal head, which is right for a use
+				// (`Pair` mentions `Pair`) and wrong here, where the head is the thing
+				// being declared and the fields are the references.
+				switch dt := st.Type.(type) {
+				case types.NamedStructType:
+					for _, f := range dt.Fields {
+						noteType(f.Type)
+					}
+				case types.DataType:
+					for _, ctor := range dt.Constructors {
+						for _, p := range ctor.Params {
+							noteType(p)
+						}
+					}
+				default:
+					noteType(st.Type)
+				}
+			}
+			return true
+		}, func(e ast.Expression) bool {
 			switch ex := e.(type) {
 			case *ast.IdentifierExpr:
 				refs[ex.Name] = true
 			case *ast.SpreadExpr:
 				refs[ex.Name] = true
+			case *ast.StructInstanceExpr:
+				refs[ex.Name] = true
+			case *ast.LambdaExpr:
+				for _, p := range ex.Parameters {
+					noteType(p.Type)
+				}
+				noteType(ex.ReturnType.Type)
 			}
 			return true
 		})
 	}
-	return refs
+	return byFile
 }

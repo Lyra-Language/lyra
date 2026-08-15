@@ -96,3 +96,67 @@ func MentionsTypeVar(t Type) bool {
 	CollectTypeVars(t, vars)
 	return len(vars) > 0
 }
+
+// CollectTypeNames adds every **nominal** type name mentioned in t to names — the mirror
+// of CollectTypeVars, which collects the *variables* and deliberately skips the names.
+//
+// Written for the unused-import check, which asks a question no other pass asks: "does this
+// file mention that name anywhere". A reference to an imported *type* appears only in a
+// type position (`(c: Complex<f64>)`, `-> Complex<f64>`, a field's type), and the checker
+// walked expressions alone — so `import std.math.{ Complex }` warned as unused in a program
+// that did not compile without it, which is the failure mode the check's own UFCS comment
+// already describes.
+//
+// Unlike CollectTypeVars this **does** descend into a nominal head: `Maybe<Complex<f64>>`
+// mentions both names, and the question here is mention rather than binding. The structural
+// composites are walked identically, which is why the two live side by side — a second walk
+// that drifted would answer a use as an absence, and the symptom would be advice to delete
+// a load-bearing import.
+func CollectTypeNames(t Type, names map[string]bool) {
+	switch tt := t.(type) {
+	case UnresolvedType:
+		names[tt.Name] = true
+	case NamedStructType:
+		names[tt.Name] = true
+	case DataType:
+		names[tt.Name] = true
+	case *ConstrainedType:
+		names[tt.Name] = true
+	case ParameterizedType:
+		names[tt.Name] = true
+		for _, a := range tt.TypeArguments {
+			CollectTypeNames(a, names)
+		}
+	case StaticArrayType:
+		CollectTypeNames(tt.ElementType, names)
+	case DynamicArrayType:
+		CollectTypeNames(tt.ElementType, names)
+	case TupleType:
+		if tt.Name != "" {
+			names[tt.Name] = true
+		}
+		for _, e := range tt.Elements {
+			CollectTypeNames(e, names)
+		}
+	case AnonymousStructType:
+		for _, f := range tt.Fields {
+			CollectTypeNames(f.Type, names)
+		}
+	case WeakType:
+		CollectTypeNames(tt.Inner, names)
+	case RawPointerType:
+		CollectTypeNames(tt.Pointee, names)
+	case RangeType:
+		CollectTypeNames(tt.Start, names)
+		CollectTypeNames(tt.End, names)
+		CollectTypeNames(tt.Step, names)
+	case *LambdaType:
+		if tt == nil {
+			return
+		}
+		for _, p := range tt.Parameters {
+			CollectTypeNames(p.Type, names)
+		}
+		CollectTypeNames(tt.ReturnType.Type, names)
+	}
+}

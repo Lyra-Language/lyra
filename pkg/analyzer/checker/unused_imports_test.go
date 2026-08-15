@@ -170,3 +170,69 @@ let x = a(b(c(1)))
 `
 	assertNoUnusedImports(t, parseAndCheckUnusedImports(t, src))
 }
+
+// ── An imported *type* is used in type positions, not as an identifier (08/14) ──
+//
+// The walk counted `IdentifierExpr` and `SpreadExpr` only, so the two ways an imported type
+// is actually used were both invisible: a struct literal names it (`Complex { re: … }`, a
+// StructInstanceExpr) and a signature names it (`(c: Complex<f64>)`, a *type* — not an
+// expression at all, so no amount of expression walking could reach it).
+//
+// The result was advice to delete a load-bearing import: `import std.math.{ Complex }`
+// warned as unused in a program that fails to compile without it, with
+// `undefined struct type "Complex"`. That is the failure the check's own UFCS note already
+// describes, arriving by a second route.
+
+func TestUnusedImports_TypeUsedInAStructLiteral(t *testing.T) {
+	assertNoUnusedImports(t, parseAndCheckUnusedImports(t, `
+import std.math.{ Complex }
+let main = () => {
+  let c = Complex { re: 1.0, im: 2.0 }
+  println(c.re)
+}
+`))
+}
+
+func TestUnusedImports_TypeUsedOnlyInASignature(t *testing.T) {
+	assertNoUnusedImports(t, parseAndCheckUnusedImports(t, `
+import std.math.{ Complex }
+let re_of = (c: Complex<f64>) -> f64 => 0.0
+let main = () => println(re_of)
+`))
+}
+
+// A type mentioned only inside another type's declaration is still a use.
+func TestUnusedImports_TypeUsedOnlyInAFieldType(t *testing.T) {
+	assertNoUnusedImports(t, parseAndCheckUnusedImports(t, `
+import std.math.{ Complex }
+struct Pair { a: Complex<f64>, b: i64 }
+let main = () => println(1)
+`))
+}
+
+// Nested in a composite: the walk has to descend, not just match a leaf.
+func TestUnusedImports_TypeNestedInAComposite(t *testing.T) {
+	assertNoUnusedImports(t, parseAndCheckUnusedImports(t, `
+import std.math.{ Complex }
+let grid = (xs: [][]Complex<f64>) -> i64 => 0
+let main = () => println(grid)
+`))
+}
+
+// **The check must still bite.** Widening what counts as a reference risks silencing it
+// everywhere, which is worse than the false positive it replaced: a warning that never
+// fires is indistinguishable from a check that was deleted.
+func TestUnusedImports_GenuinelyUnusedTypeStillWarns(t *testing.T) {
+	diags := parseAndCheckUnusedImports(t, `
+import std.math.{ Complex }
+let main = () => println("no complex here")
+`)
+	if len(diags) != 1 {
+		t.Fatalf("want one warning for a genuinely unused type import, got %d: %v", len(diags), diags)
+	}
+	if !slices.ContainsFunc(diags, func(d diag.Diagnostic) bool {
+		return d.Code == diag.CodeUnusedImport
+	}) {
+		t.Errorf("want lyra-W004, got %v", diags)
+	}
+}
