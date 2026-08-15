@@ -2286,6 +2286,53 @@ What is left is the ergonomic half, and it has one honest option:
   annotation turns out to be a recurring irritation rather than a one-time surprise, which
   the mandelbrot program is the right thing to decide.
 
+### [OPEN] `[v; n]` aliases a mutable element, silently
+
+`[[' '; WIDTH]; HEIGHT]` builds **one** row referenced HEIGHT times, so every
+`grid[py][px] = …` writes to the same place and every row prints identically. Found 08/14
+in `examples/mandelbrot.lyra`, where it was the third of three bugs and the one that
+survived fixing the other two — the image stayed uniform, which reads as an arithmetic
+mistake rather than an aliasing one.
+
+**The semantics are correct and deliberate**, and are not what should change: `[v; n]`
+evaluates `v` **once**, and each of the n slots is an owner of that value. That is what
+makes `[expensive(); 1000]` one call and `[0; 480000]` a loop rather than 480,000
+evaluations. Changing it would be strictly worse.
+
+What is missing is that nothing says so at the one moment it bites. The failure is silent —
+a plausible image, not an error — and "n copies" reads as "n *independent* copies" to
+almost everyone.
+
+**The trigger is narrower than "managed", and measured** (08/14):
+
+| element | `[v; n]` then mutate slot 0 | |
+|---|---|---|
+| `[]i64` | `buckets[0].push(7)` → all three length 1 | **aliases observably** |
+| `string` | `words[0] = "bye"` → only slot 0 changes | safe: immutable, nothing to mutate *through* |
+| `i64` | copied | safe |
+
+So the predicate is **"can the element's contents be mutated through a reference"** — an
+array, or a `shared` aggregate with mutable fields. A string is managed and immutable, so
+its aliasing is unobservable; a scalar is copied. Warning on "managed" would fire on
+`["hi"; 3]`, which is correct code and by far the commoner spelling.
+
+The proposed diagnostic names the fix, on the pattern lyra-E046 and the array-literal hint
+follow: build a fresh value per iteration —
+
+```lyra
+var plot: [][]rune = []
+for py in 0..<HEIGHT {
+  var row: []rune = [' '; WIDTH]   // evaluated once per row, not once in total
+  …
+  plot.push(row)
+}
+```
+
+Two things to decide: whether it is a warning or an error (it is *correct* code, so a
+warning — but a warning nobody reads is worth less than the trap it prevents), and whether
+a deliberate alias wants an opt-out spelling, which it would need if this were ever an
+error.
+
 ### [OPEN] A terminal UI needs three builtins, not a library
 
 The **display** half already works and needs nothing from the compiler: `\e` and `\x1b`
