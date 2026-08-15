@@ -662,6 +662,21 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 			}
 			return types.PrimitiveType{Name: types.Int64}
 		}
+		if isBuiltinSetRawModeFn(ident.Name) {
+			return tc.inferSetRawModeCall(call)
+		}
+		if isBuiltinReadKeyFn(ident.Name) {
+			return tc.inferReadKeyCall(call)
+		}
+		if isBuiltinTerminalSizeFn(ident.Name) {
+			if len(call.Arguments) != 0 {
+				tc.addError(call.GetLocation(), SeverityError,
+					"terminal_size: expected 0 argument(s), got %d", len(call.Arguments))
+			}
+			// (columns, rows) — see isBuiltinTerminalSizeFn for why width comes first.
+			i64 := types.PrimitiveType{Name: types.Int64}
+			return types.TupleType{Elements: []types.Type{i64, i64}}
+		}
 		// A name that exists but belongs privately to another module gets the
 		// privacy diagnostic rather than "undefined": the distinction between "no
 		// such function" and "not yours to call" is the whole point of the rule.
@@ -839,6 +854,49 @@ func (tc *TypeChecker) inferReadLineCall(call *ast.FunctionCallExpr) types.Type 
 	return types.ParameterizedType{
 		Name:          name,
 		TypeArguments: []types.Type{types.PrimitiveType{Name: types.String}},
+	}
+}
+
+// inferSetRawModeCall type-checks `set_raw_mode(on)`, whose result is void.
+//
+// The argument is checked rather than merely counted, because `set_raw_mode(1)` is the
+// obvious slip and an unchecked one would reach the backend as an i64 where an i1 is
+// expected.
+func (tc *TypeChecker) inferSetRawModeCall(call *ast.FunctionCallExpr) types.Type {
+	if len(call.Arguments) != 1 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"set_raw_mode: expected 1 argument(s), got %d", len(call.Arguments))
+		return types.VoidType{}
+	}
+	argT := tc.inferExprType(call.Arguments[0])
+	if argT != nil && !types.IsBoolean(argT) {
+		tc.addError(call.Arguments[0].GetLocation(), SeverityError,
+			"set_raw_mode: expected a bool, got %s", argT)
+	}
+	return types.VoidType{}
+}
+
+// inferReadKeyCall type-checks `read_key()` and gives it the type `Maybe<rune>`.
+//
+// The `Maybe` is the program's *canonical* one, reached through the kind stamped at
+// collection rather than by writing the name "Maybe" here — the same reasoning as
+// inferReadLineCall, and for the same reason: the canonical type's spelling is free, so
+// a hard-coded name would build whatever type the program happens to have declared.
+func (tc *TypeChecker) inferReadKeyCall(call *ast.FunctionCallExpr) types.Type {
+	if len(call.Arguments) != 0 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"read_key: expected 0 argument(s), got %d", len(call.Arguments))
+	}
+	name, ok := tc.canonicalTypeName("Maybe", call.GetLocation())
+	if !ok {
+		tc.addError(call.GetLocation(), SeverityError,
+			"read_key returns a Maybe, and this program has no canonical Maybe type "+
+				"(it is normally the prelude's)")
+		return nil
+	}
+	return types.ParameterizedType{
+		Name:          name,
+		TypeArguments: []types.Type{types.PrimitiveType{Name: types.Rune}},
 	}
 }
 

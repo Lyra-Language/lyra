@@ -141,6 +141,23 @@ var builtinEffects = map[string]Effect{
 	// and would not reach the pass that decides `noalloc`. Left for whenever a
 	// builtin's allocation is charged at all; today no builtin's is.
 	"read_line": EffectInput,
+	// The terminal builtins, and their split is the interesting part: two of the three
+	// are Input and the other is Output, although all three are "terminal stuff".
+	//
+	// `set_raw_mode` changes the world and reads nothing back, and the change is
+	// deterministic — the same call has the same result — so it classifies with `print`.
+	// `det` code may therefore enter and leave raw mode; what it may not do is *read*
+	// while there.
+	//
+	// `read_key` consumes a keypress: Input, and destructive in `read_line`'s way.
+	//
+	// `terminal_size` is Input despite looking like a query about the program rather
+	// than the world, because a window can be resized between two calls — the result
+	// depends on state nobody passed in, which is what the bit means. A viewer that
+	// redraws on resize is built on precisely that.
+	"set_raw_mode":  EffectOutput,
+	"read_key":      EffectInput,
+	"terminal_size": EffectInput,
 	// A write returns a status (bytes written / error) the program can branch on,
 	// so external state can leak back into the computation — tagged Input
 	// (non-deterministic, forbidden in `det`) as well as Output.

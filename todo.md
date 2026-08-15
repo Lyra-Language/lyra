@@ -2333,35 +2333,19 @@ warning — but a warning nobody reads is worth less than the trap it prevents),
 a deliberate alias wants an opt-out spelling, which it would need if this were ever an
 error.
 
-### [OPEN] A terminal UI needs three builtins, not a library
+### [DONE 08/15] A terminal UI needs three builtins, not a library
 
-The **display** half already works and needs nothing from the compiler: `\e` and `\x1b`
-both reach stdout as byte 27, so ANSI colours, absolute cursor positioning, clear-screen and
-the alternate buffer are ordinary `print` calls. Verified 08/14 with a 256-colour probe.
+`set_raw_mode(on)`, `read_key() -> Maybe<rune>` and `terminal_size() -> (i64, i64)`
+landed 08/15 (`pkg/backend/llvm/tui.go`); see COMPLETED.md for the platform reasoning
+and why the three do not share an effect classification.
 
-The **input** half is blocked, and not on FFI:
-
-- `read_line()` is line-buffered — it waits for Enter, so there is no single keypress.
-- Raw mode wants `tcsetattr`; terminal size wants `ioctl(TIOCGWINSZ)`.
-
-Both are libc, which this language reaches through *builtins* rather than FFI —
-`read_line` over `getline`, `random_seed` over `getentropy`, `wall_clock_nanos` over
-`clock_gettime`. Three more in the same mould would unblock everything:
-
-```
-set_raw_mode(on: bool)
-read_key() -> Maybe<rune>
-terminal_size() -> (i64, i64)
-```
-
-Each is genuinely primitive, and everything above them — colours, boxes, a status bar,
-frame diffing — is ordinary Lyra in a `std.tui` module. That is the `read_line`/`parse_i64`
-division exactly.
-
-**Order of work**: build the viewer *line-driven* first (a command plus Enter), which costs
-nothing and can already look good. Panning will get annoying, and that is the moment to add
-the builtins — with a real program to check them against, which is the same argument as
-writing the mandelbrot program before finishing the features.
+**Still open above them: `std.tui` itself.** The builtins are the primitives, and the
+library the original entry described — escape-sequence decoding into named keys, colour
+helpers, box drawing, frame diffing, a status bar — is ordinary Lyra and unwritten. The
+one piece with a real design question is the **key decoder**: telling a bare ESC press
+from the start of a `\e[A` needs a timeout, and `read_key` deliberately blocks, so
+either it gains a non-blocking sibling or the decoder reads ahead and reports what it
+could not classify.
 
 ### [OPEN] Return-type-directed dispatch — reopen when `From`/`Into` wants it
 

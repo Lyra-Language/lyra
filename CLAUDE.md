@@ -901,6 +901,22 @@ phantom from the other side. It is `clock_gettime` and nothing else, on the `ran
 model, and the effect ladder needed no new machinery — ambient reads carry `EffectTime` and
 are refused by `pure`/`det`, a threaded timestamp is ordinary `i64` data.
 
+**The terminal landed 08/15** (`pkg/backend/llvm/tui.go`): `set_raw_mode(on)`,
+`read_key() -> Maybe<rune>` and `terminal_size() -> (i64, i64)`, on the `read_line`
+model — the syscalls are builtins, and `std.tui` above them is unwritten Lyra. Only the
+*input* half ever needed the compiler; `\e` already reached stdout as byte 27, so ANSI
+colour and cursor positioning were always `print` calls.
+
+Two things to know before touching it. It is **the only file that consults
+`runtime.GOOS`**, for one constant — `TIOCGWINSZ` differs between the targets — and it
+is sound only because `lyrac` compiles for its own host; the other two builtins avoid
+the question entirely by going through `cfmakeraw`, so `struct termios`'s
+genuinely-different layout is never indexed, only carried. And the three **do not share
+an effect**: `set_raw_mode` is EffectOutput (it changes the world deterministically, so
+`det` allows it) while `read_key` and `terminal_size` are EffectInput — a window can be
+resized between two calls, which is what makes the size external state rather than a
+property of the program.
+
 **Randomness landed 08/05**, and its shape is the same division of labour as `read_line`:
 `random_seed() -> u64` (`pkg/backend/llvm/random.go`) is the only builtin — one word of OS
 entropy via `getentropy` — while the generator (`Rng`, `next_u64`, `below`, `between`,

@@ -514,6 +514,73 @@ func isBuiltinWallClockFn(name string) bool {
 	return name == "wall_clock_nanos"
 }
 
+// The terminal builtins — `set_raw_mode`, `read_key`, `terminal_size`. Resolved by name
+// in inferIdentifierCall after scope resolution misses, like every builtin above.
+//
+// These three exist because a TUI's **input** half cannot be written in Lyra and its
+// output half already could: `\e` reaches stdout as byte 27, so ANSI colour, cursor
+// positioning and the alternate screen buffer were always ordinary `print` calls, while
+// `read_line` waits for Enter and no amount of prelude code makes it not. Raw mode is
+// `tcsetattr`, a single keypress is `read` on a raw fd, and the window size is an
+// `ioctl` — three syscalls, no FFI, so three builtins.
+//
+// Everything above them is prelude Lyra: decoding an escape sequence into an arrow key,
+// colour helpers, box drawing, frame diffing, a status bar. That is the `read_line`
+// beside `parse_i64` division exactly, and the line is the same one — the syscall is
+// primitive, the interpretation is not.
+
+// isBuiltinSetRawModeFn reports whether name is `set_raw_mode`.
+//
+// `set_raw_mode(on: bool)` turns off line buffering, echo and signal generation, so a
+// keypress is readable the moment it happens. It carries EffectOutput rather than
+// EffectInput: it changes the world instead of reading it, and it is *deterministic* —
+// which is what lets `det` code enter and leave raw mode while still being refused
+// `read_key`. Same classification, and the same reasoning, as `print`.
+//
+// The original terminal settings are saved by the shim on the first enable and restored
+// on disable, so this takes a bool rather than returning a token to hand back. See
+// `pkg/backend/llvm/tui.go` for why that is not merely convenient.
+func isBuiltinSetRawModeFn(name string) bool {
+	return name == "set_raw_mode"
+}
+
+// isBuiltinReadKeyFn reports whether name is `read_key`.
+//
+// `read_key() -> Maybe<rune>` reads one **code point** — not one byte, because `rune`
+// means a code point everywhere else in this language. `None` is EOF, which is the same
+// reason `read_line` answers a `Maybe`: in raw mode a read blocks until a byte arrives,
+// so `None` cannot mean "no key yet" and a bare `rune` would have no way to say the
+// input has ended.
+//
+// An escape sequence arrives as its separate bytes (ESC, `[`, `A` for an arrow key)
+// rather than as one decoded key. Assembling those needs a timeout, a table and a policy
+// for unknown sequences — none primitive, all expressible — so it is `std.tui`'s job.
+//
+// EffectInput, like `read_line`, and destructive in the same way: the key is consumed, so
+// two identical calls do not return the same thing.
+func isBuiltinReadKeyFn(name string) bool {
+	return name == "read_key"
+}
+
+// isBuiltinTerminalSizeFn reports whether name is `terminal_size`.
+//
+// `terminal_size() -> (i64, i64)` answers **(columns, rows)** — width first. That is the
+// reverse of the `struct winsize` underneath it, deliberately: the tuple is this
+// language's API rather than C's, and "size" is width-then-height wherever it is a pair.
+//
+// EffectInput rather than EffectOutput, and the reason is worth stating because the call
+// looks like a query about the program rather than about the world: the window can be
+// resized between two calls, so the result depends on external state and is not
+// reproducible — which is exactly what EffectInput classifies. A viewer that redraws on
+// resize is *built* on that not being deterministic.
+//
+// It never fails. A closed or absent window answers the 80x24 fallback, so piping the
+// output somewhere still renders; see `pkg/backend/llvm/tui.go` for why a defined answer
+// beats a plausible one.
+func isBuiltinTerminalSizeFn(name string) bool {
+	return name == "terminal_size"
+}
+
 // isPrintableType reports whether print/println can format a value of type t:
 // a string, any integer or float, a bool, or a rune. Each has a backend
 // formatting path (write for strings, snprintf for numbers, "true"/"false" for

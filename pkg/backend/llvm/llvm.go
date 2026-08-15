@@ -48,6 +48,8 @@
 //	  input.go            read_line: the stdin shim and its Maybe<string> result
 //	  random.go           random_seed: the OS-entropy shim (the PRNG is in the prelude)
 //	  clock.go            wall_clock_nanos: the clock_gettime shim
+//	  tui.go              set_raw_mode / read_key / terminal_size: the terminal shims,
+//	                      and the one file that consults the compiling host's OS
 //	  arithmetic.go       math, comparisons, &&/||, numeric conversions, width coercions
 //	  equality.go         structural == on aggregates: the per-type comparison glue
 //	  rounding.go         x.floor()/.ceil()/.round() via LLVM intrinsics
@@ -299,15 +301,20 @@ type lowerer struct {
 	// The ref-counted heap runtime (runtime.go), emitted lazily into the module
 	// the first time a value needs the heap (today: string concatenation). nil
 	// until ensureRCRuntime runs; all five are populated together.
-	malloc      *ir.Func // libc malloc
-	free        *ir.Func // libc free
-	readLine    *ir.Func // lyra_read_line: one line of stdin into a fresh box (input.go)
-	randomSeed  *ir.Func // lyra_random_seed: one word of OS entropy (random.go)
-	wallClock   *ir.Func // lyra_wall_clock_nanos: nanoseconds since the epoch (clock.go)
-	rcAlloc     *ir.Func // lyra_rc_alloc: malloc a box, rc = 1
-	rcRetain    *ir.Func // lyra_rc_retain: rc += 1 (pinned no-op)
-	rcRelease   *ir.Func // lyra_rc_release: rc -= 1, drop + free at 0 (pinned no-op)
-	rcDropReuse *ir.Func // lyra_rc_drop_reuse: unique → return box (reclaim), else decref/null (Perceus reuse)
+	malloc     *ir.Func // libc malloc
+	free       *ir.Func // libc free
+	readLine   *ir.Func // lyra_read_line: one line of stdin into a fresh box (input.go)
+	randomSeed *ir.Func // lyra_random_seed: one word of OS entropy (random.go)
+	wallClock  *ir.Func // lyra_wall_clock_nanos: nanoseconds since the epoch (clock.go)
+	// The terminal (tui.go). Three builtins, each a libc call with no Lyra spelling;
+	// everything layered on them is prelude code.
+	setRawMode   *ir.Func // lyra_set_raw_mode: tcsetattr via cfmakeraw, original saved
+	readKey      *ir.Func // lyra_read_key: one code point from stdin, Maybe<rune>
+	terminalSize *ir.Func // lyra_terminal_size: TIOCGWINSZ, (columns, rows)
+	rcAlloc      *ir.Func // lyra_rc_alloc: malloc a box, rc = 1
+	rcRetain     *ir.Func // lyra_rc_retain: rc += 1 (pinned no-op)
+	rcRelease    *ir.Func // lyra_rc_release: rc -= 1, drop + free at 0 (pinned no-op)
+	rcDropReuse  *ir.Func // lyra_rc_drop_reuse: unique → return box (reclaim), else decref/null (Perceus reuse)
 	// The weak half of the protocol: a weak reference keeps a box's *memory* alive
 	// without keeping its value alive, so the counts are independent — the payload
 	// dies at strong 0, the memory is freed at weak 0.

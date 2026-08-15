@@ -338,3 +338,44 @@ let viaCall = pure noalloc (n: i64) -> []i64 => helper(n)`)
 		t.Errorf("expected the indirect wording, got %q", errs[0].Message)
 	}
 }
+
+// The terminal builtins, and the point of testing all three together is that they do
+// *not* classify alike although they look like one feature. See builtinEffects.
+
+// `read_key` consumes a keypress, so its result comes from outside: `det` refuses it,
+// exactly as it refuses `read_line`.
+func TestDet_ReadKey_Violates(t *testing.T) {
+	src := `let k = det (n: i64) -> i64 => { match read_key() { Some(c) => 1, None => 0 } }`
+	errs := checkPurity(t, src)
+	assertBoundError(t, errs, "lyra-E016")
+}
+
+// `terminal_size` is refused too, and this is the one that looks like it should be
+// allowed: it reads no input and returns the same pair all day. It is still external
+// state — the window can be resized between two calls — and a viewer that redraws on
+// resize depends on exactly that.
+func TestDet_TerminalSize_Violates(t *testing.T) {
+	src := `let w = det (n: i64) -> i64 => { let (c, r) = terminal_size(); c }`
+	errs := checkPurity(t, src)
+	assertBoundError(t, errs, "lyra-E016")
+}
+
+// `set_raw_mode` is the exception: it changes the world rather than reading it, and the
+// change is deterministic, so it classifies with `print` and `det` allows it. A `det`
+// function may enter and leave raw mode; what it may not do is read while there.
+func TestDet_SetRawMode_Ok(t *testing.T) {
+	src := `let enter = det (n: i64) -> i64 => { set_raw_mode(true); n }`
+	if errs := checkPurity(t, src); len(errs) != 0 {
+		t.Errorf("expected set_raw_mode to be det-legal, got: %v", errs)
+	}
+}
+
+// `pure` refuses it, though — it is observable, which is the line `pure` draws and
+// `det` does not. Same pair of answers `print` gets.
+func TestPure_SetRawMode_Violates(t *testing.T) {
+	src := `let enter = pure (n: i64) -> i64 => { set_raw_mode(true); n }`
+	errs := checkPurity(t, src)
+	if len(errs) == 0 {
+		t.Fatal("expected set_raw_mode to be refused in a pure function")
+	}
+}

@@ -10,6 +10,67 @@ Newest first.
 ## Dated log
 
 ### 08/15/26
+**The terminal: `set_raw_mode`, `read_key`, `terminal_size`** (`pkg/backend/llvm/tui.go`).
+The three builtins an interactive TUI needs, and the only three — everything layered on
+them (escape-sequence decoding, colour, boxes, frame diffing) is expressible in Lyra and
+so belongs in `std.tui`, which is the `read_line`/`parse_i64` line exactly.
+
+**Only the input half needed the compiler.** `\e` already reached stdout as byte 27, so
+ANSI colour, cursor positioning and the alternate screen buffer were always ordinary
+`print` calls. What no amount of prelude code fixes is that `read_line` waits for Enter:
+a keypress is not observable until the terminal's line discipline releases it, and
+turning that off is `tcsetattr`.
+
+**Two of the three dodge the platform question rather than answering it, and that was
+the design work.** `struct termios` genuinely differs between macOS and glibc — 4- versus
+8-byte flags, an extra `c_line`, NCCS 20 versus 32 — so masking the raw-mode flags here
+would have put *field offsets* in the backend, which is the kind of constant that stays
+plausible while being wrong. Going through `cfmakeraw` means the struct is only ever
+carried, never indexed, so one over-sized opaque buffer covers both. `struct winsize` is
+four `unsigned short` everywhere, so only its ioctl selector was ever in question.
+
+That leaves **one** platform-dependent constant, `TIOCGWINSZ` (0x5413 on Linux,
+0x40087468 on macOS — its ioctl numbers encode direction and payload size, Linux's do
+not), chosen from `runtime.GOOS` at emission time. This is the first place the backend is
+not platform-neutral, which is worth flagging rather than burying: it is sound because
+`lyrac` hands its IR to the host's clang with no target flag, so the compiling host *is*
+the target, and that holds inside `asan.sh`'s Debian container too.
+
+**`read_key` answers a code point, not a byte**, because `rune` means a code point
+everywhere else — `s[i]` and `for c in s` both walk them — so a multi-byte character is
+one key rather than two mojibake ones. It reuses `lyra_utf8_decode`, the routine string
+iteration already uses. An **escape sequence is deliberately not decoded**: an arrow key
+arrives as ESC, `[`, `A` in three reads, and assembling those needs a timeout to tell a
+real ESC press from the start of a sequence, a table, and a policy for unknown sequences
+— none primitive, all expressible.
+
+**The three do not classify alike, although they look like one feature.** `read_key` and
+`terminal_size` are EffectInput; `set_raw_mode` is EffectOutput and therefore `det`-legal,
+because it changes the world rather than reading it and does so deterministically. So a
+`det` function may enter and leave raw mode and may not read while there — the same pair
+of answers `print` gets. `terminal_size` is the one that looks like it should be `det`:
+it reads no input and returns the same pair all day, but the window can be resized
+between two calls, and a viewer that redraws on resize is built on exactly that.
+
+**The original termios is saved in a module global and restored on disable**, rather than
+returned as a token for the caller to hand back. A terminal left raw after exit is
+unusable — no echo, no line editing, Ctrl-C dead — so restoring must not depend on the
+program having kept a token safe. `terminal_size` likewise never fails, answering 80x24
+when there is no window, which is clock.go's rule (a failed syscall leaves a *defined*
+value) and keeps a piped run rendering instead of dividing by zero.
+
+**What the suite guards, and what it cannot.** A test process has no controlling
+terminal, so the tty-only behaviour is not asserted — but a pipe delivers bytes to `read`
+immediately, so the whole of `read_key` except the blocking is exercised for real,
+including the multi-byte assembly, the truncated-sequence `None` and the EOF `None`. The
+tty half was verified by hand through a pty (`pty.fork`, `TIOCSWINSZ` set to a
+distinctive 123x45): the size came back 123x45 in that order, `abcé` arrived as four keys
+with no Enter and no echo, and after `set_raw_mode(false)` the terminal echoed again and
+`read_line` waited for Enter. Both halves also pass under `asan.sh`, which is what
+actually exercises the Linux selector and proves the variadic `ioctl` survives Debian
+clang's typed pointers.
+
+### 08/15/26
 **A capitalized binding name says so (`lyra-E057`).** `let RAMP = [" ", "."]` reported
 `cannot destructure StaticArray<string, 2> with a data pattern`, and then an
 `undefined identifier "RAMP"` at every use. Both lines are true and neither is the

@@ -460,6 +460,12 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 			return l.lowerRandomSeedCall(block, e)
 		case "wall_clock_nanos":
 			return l.lowerWallClockNanosCall(block, e)
+		case "set_raw_mode":
+			return l.lowerSetRawModeCall(block, e)
+		case "read_key":
+			return l.lowerReadKeyCall(block, e)
+		case "terminal_size":
+			return l.lowerTerminalSizeCall(block, e)
 		}
 		return nil, nil, fmt.Errorf("llvm: call to unknown function %q", ident.Name)
 	}
