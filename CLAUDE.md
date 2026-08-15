@@ -390,7 +390,7 @@ call resolves to that trait's impls like any other.
 with or without a `{}` — which needed a grammar change: a trait's body is now optional,
 braces and all. A method-less trait meant nothing before supertraits, so refusing it cost
 nothing; now it is the shape the feature is written for. `impl_methods` was already optional,
-so `impl Arithmetic for Vec2 {}` had been parsing all along.
+so `impl Arithmetic for Vec2 {}` had been parsing all along — and its braces became optional too, later the same day.
 
 The collector reads the field with `cst.Field` + a nil check rather than `MustField`
 (`declarations/trait_decl.go`): an absent list is an empty method list, **not** a dropped

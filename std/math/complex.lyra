@@ -68,14 +68,14 @@ impl Div for Complex<t> where t: Arithmetic {
   }
 }
 
-// The `where` clause says what the four impls above already require, and today nothing
-// reads it: `typeImplementsTrait` matches an impl by its target's head and does not verify
-// the impl's own bounds, so `Complex<string>` satisfies a `where u: Arithmetic` bound and
-// then fails in the backend. It is written anyway — it states the intent, and it starts
-// being enforced the day that check learns to recurse (todo.md).
+// The `where` clause says what the four impls above already require, and it is **enforced**
+// as of 08/14: `typeImplementsTrait` verifies a matched impl's own bounds, so
+// `Complex<string>` is refused at the bound rather than accepted and failed in the backend.
+// It was written before that landed, on the grounds that it stated the intent; the intent
+// is now the rule.
 
 /// `Complex<t>` supports all four arithmetic operators.
-impl Arithmetic for Complex<t> where t: Arithmetic {}
+impl Arithmetic for Complex<t> where t: Arithmetic
 
 /// Rendered as `re + imi`, or `re - imi` when the imaginary part is negative — `1 + 2i`
 /// and `1 - 2i` rather than `1 + -2i`.

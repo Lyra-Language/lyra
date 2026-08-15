@@ -10,6 +10,38 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**An impl's body is optional, braces and all** — `impl Arithmetic for Vec2` — matching the
+trait declaration, so an umbrella's pair reads as a pair:
+
+```lyra
+trait Arithmetic: Add + Sub + Mul + Div
+impl Arithmetic for Vec2
+```
+
+The *methods* were already optional; this drops the `{}` left standing around nothing. Same
+reasoning as the trait's, and the same reason Rust cannot follow: there is no body to
+delimit, and a language with a statement terminator does not need a brace to say where a
+declaration ended. The thirteen `impl Arithmetic for <width> {}` lines in the prelude are
+what make it worth having rather than merely consistent — all thirteen lost their braces, as
+did `Complex`'s.
+
+The ambiguity is the trait's, and the terminator settles it identically: `impl Marker for
+Vec2` followed by `{ 1 }` on the next line is an impl plus a block statement. Worth checking
+rather than assuming, because this rule carries `prec.right(PREC.TRAIT_IMPL)` and greedy
+absorption was the plausible failure. Pinned by a corpus test.
+
+Cost: **−4 states** (7,825 → 7,821). Making a required brace optional shrank the automaton —
+the same shape the `for`-condition widening had, a narrower rule replaced by one the parser
+was already tracking.
+
+**And the question it was asked in service of is settled**: the umbrella impl stays
+*required*. The compiler cannot distinguish a conjunction (`Arithmetic`) from a promise
+(`Currency: Add`) — identical in shape, and auto-satisfaction would make every `Add` type a
+`Currency`. With no orphan rule nobody is ever blocked from writing the impl, so the cost is
+one line, and that line is a checked assertion rather than ceremony: lyra-E040 verifies the
+claim where it is made. `todo.md` records what would reopen it.
+
+### 08/14/26
 **A NaN prints as `nan` on every platform.** It printed `-nan` on Linux and `nan` on macOS:
 glibc renders a NaN whose sign bit is set with the sign, Apple's libc does not, and the
 float formatter had been handing the question to libc — its own comment said so, that a NaN

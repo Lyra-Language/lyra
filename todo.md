@@ -2050,12 +2050,33 @@ When it is built, `fixed_point_type` also needs adding to **both** highlight que
 (`tree-sitter-lyra/queries/highlights.scm` and `lyra-zed-ext/languages/lyra/highlights.scm`)
 — it is missing from both today, which is harmless only because nobody can write one.
 
-- **[OPEN] Is an umbrella impl worth requiring?** `impl Arithmetic for Vec2 {}` asserts
-  nothing the supertrait checks do not already establish, so it is close to ceremony. But
-  making it *optional* means a `where t: Arithmetic` bound could be satisfied by a type that
-  never named the trait, which is a coherence change rather than a syntax one — and the
-  ceremony is where E040 currently fires, so removing it moves that diagnostic to the call
-  site. Left as it is deliberately.
+- **[DECIDED 08/14] An umbrella impl stays required — and loses its braces.**
+  `impl Arithmetic for Vec2` is the spelling now; requiring it at all is the decision.
+
+  **The compiler cannot tell a conjunction from a promise.**
+  `trait Arithmetic: Add + Sub + Mul + Div` is "these four and nothing more";
+  `trait Currency: Add` is "this is money, which also adds". Structurally identical — no
+  methods, some supertraits — and auto-satisfaction makes the first convenient and the
+  second *wrong*, since every `Add` type would silently become a `Currency`. No rule keyed
+  on shape gets both right, and only the author knows which they wrote.
+
+  **Nobody is ever blocked**, which is what would have forced the other answer. There is no
+  orphan rule, so a library shipping `Vec2` with the four impls and no umbrella costs you
+  one line rather than locking you out of your own bound.
+
+  **The impl is a checked assertion rather than ceremony**: it claims "Vec2 is fully
+  arithmetic" and lyra-E040 verifies it at that line — the same category as an explicit
+  annotation on a binding whose type could have been inferred.
+
+  One argument for it got *weaker* the same day and should not be leaned on: "the error
+  lands at a declaration rather than at every use site" was true when a use-site failure
+  named only the outer type, and `typeImplementsTraitWhy` now reports
+  *"Vec2 does not implement Arithmetic — Vec2 does not implement Mul"*.
+
+  **What would reopen it**: umbrella traits multiplying, so the cost stops being one line
+  per type. The fix then is not auto-satisfaction but an opt-in *at the trait* —
+  `@bundle trait Arithmetic: …`, on the existing `@builtin(...)` mechanism — which puts the
+  declaration where the knowledge is instead of asking every implementer to have it.
 
 ### [DONE 08/14] A bound is satisfied by an impl whose own `where` clause fails
 
