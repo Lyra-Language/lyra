@@ -10,6 +10,47 @@ Newest first.
 ## Dated log
 
 ### 08/14/26
+**A top-level `let`/`var` holding data lowers.** It type-checked clean and died in the
+backend as `llvm: unbound identifier "greeting"` — hazard 5 inverted, and a fairly basic
+gap: module-level state did not exist, and `const` was the only way to give a module a
+string.
+
+Nothing collected it. `const` was recorded for inlining, functions went through
+`forEachUserFunction`, and a top-level binding that was *neither* fell through both — so
+the failure was not a wrong answer but a missing one, reported at every use rather than at
+the declaration.
+
+They now get a module-level slot, zero-initialized, **filled at the top of `main` in
+declaration order**. `main` is the one place guaranteed to run before anything reads one,
+which avoids `llvm.global_ctors` and the cross-translation-unit ordering it would drag in
+for a language with a single entry point. Declaration order is the initialization order, so
+a global may read an earlier one — the same order the use-before-declaration checker
+already enforces on the way in, which makes this an existing policy honoured rather than a
+second one invented.
+
+A managed global is a ref-counted box the global owns for the program's life and never
+releases: there is no scope for it to leave. A fixed leak, the trade every language makes
+for module-level data, and the reason the ownership pass is not consulted — it reasons
+about scopes, and a global has none.
+
+**Four sites asked "where does this name live?", and each answered with `l.locals`
+alone** — reading an identifier, assigning, reassigning a whole binding, compound-assigning.
+Adding globals meant the same three lines in four files, which is the drift hazard 8 exists
+to name, so they go through one `slotFor` instead. The ordering is the part that must not
+vary: a local shadows a global, and a fourth site quietly disagreeing would produce a wrong
+*value*, not an error. Found by fixing them one at a time as each new failure appeared —
+plain reassignment, then compound assignment — which is the shape that says "stop patching
+and consolidate".
+
+**Found while probing whether a TUI is possible.** It is, on the display side, with nothing
+from the compiler: `\e` and `\x1b` both reach stdout as byte 27, so colours, cursor
+positioning and the alternate buffer are ordinary `print` calls. An escape-sequence table
+is the natural thing to write as module-level data, which is exactly what did not compile.
+What a TUI still lacks is *input* — `read_line` is line-buffered, and raw mode and terminal
+size want `tcsetattr`/`ioctl` — which would be three builtins on the `read_line` model
+rather than FFI. See `todo.md`.
+
+### 08/14/26
 **A fixed-array receiver against a `[]t` combinator names the edit.** `["a", "b"].join("")`
 reported *"member access on non-struct type StaticArray<string, 3>"* — the type that failed,
 never the one that would work, and nothing about the annotation that fixes it.

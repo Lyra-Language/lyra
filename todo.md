@@ -2286,6 +2286,36 @@ What is left is the ergonomic half, and it has one honest option:
   annotation turns out to be a recurring irritation rather than a one-time surprise, which
   the mandelbrot program is the right thing to decide.
 
+### [OPEN] A terminal UI needs three builtins, not a library
+
+The **display** half already works and needs nothing from the compiler: `\e` and `\x1b`
+both reach stdout as byte 27, so ANSI colours, absolute cursor positioning, clear-screen and
+the alternate buffer are ordinary `print` calls. Verified 08/14 with a 256-colour probe.
+
+The **input** half is blocked, and not on FFI:
+
+- `read_line()` is line-buffered — it waits for Enter, so there is no single keypress.
+- Raw mode wants `tcsetattr`; terminal size wants `ioctl(TIOCGWINSZ)`.
+
+Both are libc, which this language reaches through *builtins* rather than FFI —
+`read_line` over `getline`, `random_seed` over `getentropy`, `wall_clock_nanos` over
+`clock_gettime`. Three more in the same mould would unblock everything:
+
+```
+set_raw_mode(on: bool)
+read_key() -> Maybe<rune>
+terminal_size() -> (i64, i64)
+```
+
+Each is genuinely primitive, and everything above them — colours, boxes, a status bar,
+frame diffing — is ordinary Lyra in a `std.tui` module. That is the `read_line`/`parse_i64`
+division exactly.
+
+**Order of work**: build the viewer *line-driven* first (a command plus Enter), which costs
+nothing and can already look good. Panning will get annoying, and that is the moment to add
+the builtins — with a real program to check them against, which is the same argument as
+writing the mandelbrot program before finishing the features.
+
 ### [OPEN] Return-type-directed dispatch — reopen when `From`/`Into` wants it
 
 **Lyra dispatches on a receiver, and nothing else.** A trait method with no receiver

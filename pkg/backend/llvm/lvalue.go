@@ -210,7 +210,7 @@ func (l *lowerer) lvalueAddress(block *ir.Block, e ast.Expression) (lvalueLoc, *
 func (l *lowerer) lvalueAddressRaw(block *ir.Block, e ast.Expression) (lvalueLoc, *ir.Block, error) {
 	switch t := e.(type) {
 	case *ast.IdentifierExpr:
-		slot, ok := l.locals[t.Name]
+		slot, ok := l.slotFor(t.Name)
 		if !ok {
 			return lvalueLoc{}, nil, fmt.Errorf("llvm: assignment to unbound identifier %q", t.Name)
 		}

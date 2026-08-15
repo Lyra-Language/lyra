@@ -167,6 +167,15 @@ func (l *lowerer) lowerEntry(entry *driver.EntryPoint) error {
 	l.beginFunction(lltypes.I32, entry.Lambda.ReturnType.Type, false, true) // entryABI: emitReturn handles the u8→i32 coercion
 	block := fn.NewBlock("entry")
 
+	// Module-level data is filled before the body runs, in declaration order — main is
+	// the one place guaranteed to run before anything reads one, and it avoids
+	// llvm.global_ctors, whose ordering across translation units is exactly the
+	// unpredictability this sidesteps by having a single entry point.
+	block, err := l.initGlobals(block)
+	if err != nil {
+		return err
+	}
+
 	switch entry.Returns {
 	case driver.EntryReturnExitCode:
 		v, block, err := l.lowerExpr(block, entry.Lambda.Body)

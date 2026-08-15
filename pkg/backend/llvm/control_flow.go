@@ -822,7 +822,7 @@ func (l *lowerer) lowerVarReassignment(block *ir.Block, vrs *ast.VarReassignment
 	if diverged(rhsVal, block) {
 		return block, nil
 	}
-	slot := l.locals[vrs.Name]
+	slot, _ := l.slotFor(vrs.Name)
 	// Reassigning an *owning* binding drops what the old value owned before the new one
 	// overwrites it. The new value was coerced to +1 by the ownership pass, and it's
 	// computed *before* this release (so `s = s ++ x`, which reads the old s, is safe:

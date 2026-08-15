@@ -578,12 +578,13 @@ func (l *lowerer) emitCheckedDivOp(block *ir.Block, op ast.MathBinaryOp, left, r
 
 // lowerMathAssignOp lowers a compound assignment (`i += x`) to load / op / store
 // against the target's alloca: load the current value, apply the binary op with
-// the lowered RHS, store the result back. The target is always a local binding
-// (an lvalue name), so its slot is in l.locals. Signedness comes from the RHS,
+// the lowered RHS, store the result back. The target is a local binding or a
+// top-level `var` holding data — storage either way, differing only in where the
+// pointer comes from. Signedness comes from the RHS,
 // whose width the typechecker propagated to match the target (checkMathAssignOp),
 // so both operands share a width for the op.
 func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (value.Value, *ir.Block, error) {
-	slot, ok := l.locals[e.Left.Name]
+	slot, ok := l.slotFor(e.Left.Name)
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: compound assignment to unbound identifier %q", e.Left.Name)
 	}

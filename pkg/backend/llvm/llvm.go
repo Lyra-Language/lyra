@@ -143,6 +143,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		overloads:          map[*ast.LambdaExpr]emitted{},
 		byRefParams:        map[value.Value]bool{},
 		consts:             map[string]*ast.VarDeclStmt{},
+		globals:            map[string]*ir.Global{},
 		structTypes:        map[string]*lltypes.StructType{},
 		traitMethods:       map[string]*ir.Func{},
 		roundingIntrinsics: map[string]*ir.Func{},
@@ -162,9 +163,23 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 	}
 	// Record top-level `const` declarations so a reference to one inlines its
 	// compile-time value (they aren't functions, so forEachUserFunction skips them).
+	//
+	// A top-level `let`/`var` holding *data* is collected alongside them, and needs
+	// storage rather than inlining. Until 08/14 nothing collected it at all: the
+	// declaration type-checked, forEachUserFunction skipped it for not being a function,
+	// and every reference died as `llvm: unbound identifier` — hazard 5 inverted, and
+	// the reason `const` was the only way to give a module a string.
 	for _, stmt := range res.Program.Statements {
-		if vd, ok := stmt.(*ast.VarDeclStmt); ok && vd.BindingKind == ast.BindingConst {
+		vd, ok := stmt.(*ast.VarDeclStmt)
+		if !ok {
+			continue
+		}
+		if vd.BindingKind == ast.BindingConst {
 			l.consts[vd.Name] = vd
+			continue
+		}
+		if _, isFunc := vd.Value.(*ast.LambdaExpr); !isFunc && vd.Value != nil {
+			l.globalDecls = append(l.globalDecls, vd)
 		}
 	}
 	// Lower type declarations
@@ -198,6 +213,11 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 	if err := l.declareSpecializations(); err != nil {
 		return nil, err
 	}
+	// Declared before main so its initializers — and every function body — can name
+	// one; *initialized* at the top of main, in declaration order.
+	if err := l.declareGlobals(); err != nil {
+		return nil, err
+	}
 	if err := l.lowerEntry(entry); err != nil {
 		return nil, err
 	}
@@ -222,12 +242,19 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 }
 
 type lowerer struct {
-	module              *ir.Module
-	res                 *driver.Result                 // gives you TypeTable, SymbolTable, MethodTable, …
-	funcs               map[string]*ir.Func            // name → its function IR (all declared before any body)
-	funcParams          map[string][]ast.Parameter     // name → its declared parameters (call sites need the `mut` by-ref modes)
-	overloads           map[*ast.LambdaExpr]emitted    // receiver-keyed overloads, by declaration (see overloads.go)
-	consts              map[string]*ast.VarDeclStmt    // top-level `const` name → its declaration (its value is inlined at each use)
+	module     *ir.Module
+	res        *driver.Result              // gives you TypeTable, SymbolTable, MethodTable, …
+	funcs      map[string]*ir.Func         // name → its function IR (all declared before any body)
+	funcParams map[string][]ast.Parameter  // name → its declared parameters (call sites need the `mut` by-ref modes)
+	overloads  map[*ast.LambdaExpr]emitted // receiver-keyed overloads, by declaration (see overloads.go)
+	consts     map[string]*ast.VarDeclStmt // top-level `const` name → its declaration (its value is inlined at each use)
+	// globals are top-level `let`/`var` bindings whose value is *not* a function —
+	// module-level data. Unlike a `const` they have storage, because their value is
+	// computed at run time (a string box, an array, a call); unlike a local they outlive
+	// every function. The slice preserves declaration order, which is the order they are
+	// initialized in.
+	globals             map[string]*ir.Global
+	globalDecls         []*ast.VarDeclStmt
 	traitMethods        map[string]*ir.Func            // emitted trait-impl methods, keyed by mangled symbol
 	pendingTraitMethods []pendingTraitMethod           // declared, body not yet lowered (see traits.go)
 	structTypes         map[string]*lltypes.StructType // type key → its struct type (for named tuple and struct lowering)
@@ -682,7 +709,7 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		}
 		return constant.NewInt(lltypes.I1, bit), block, nil
 	case *ast.IdentifierExpr:
-		if slot, ok := l.locals[e.Name]; ok {
+		if slot, ok := l.slotFor(e.Name); ok {
 			elem, err := slotElemType(slot)
 			if err != nil {
 				return nil, nil, err
@@ -765,10 +792,84 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 // storage (functions.go, paramIsByRef). Both spellings carry the pointee in their
 // LLVM type, so read it from there rather than asserting the alloca, which would
 // panic on a by-ref parameter.
+// slotFor answers "where does this name's storage live?" — the local first, then the
+// module-level slot a top-level `let`/`var` holding data gets.
+//
+// **One lookup rather than four.** Reading an identifier, assigning to one, reassigning a
+// whole binding and compound-assigning to one each asked the question separately, and each
+// answered it with `l.locals` alone — so adding globals meant the same three lines in four
+// files, which is the drift hazard 8 exists to name. The ordering is the part that must not
+// vary: a local of the same name shadows the global, and a fourth site quietly disagreeing
+// about that would be a wrong *value*, not an error.
+func (l *lowerer) slotFor(name string) (value.Value, bool) {
+	if slot, ok := l.locals[name]; ok {
+		return slot, true
+	}
+	if g, ok := l.globals[name]; ok {
+		return g, true
+	}
+	return nil, false
+}
+
 func slotElemType(slot value.Value) (lltypes.Type, error) {
 	pt, ok := slot.Type().(*lltypes.PointerType)
 	if !ok {
 		return nil, fmt.Errorf("llvm: local slot is not a pointer (%s)", slot.Type())
 	}
 	return pt.ElemType, nil
+}
+
+// declareGlobals emits one module-level slot per top-level `let`/`var` holding data,
+// zero-initialized. They are *filled* at the top of main (initGlobals), because their
+// values are computed at run time — a string is a ref-counted box, an array is an
+// allocation, and neither is an LLVM constant.
+//
+// Declared before main and before any function body so either can name one: a global's
+// own initializer may call a top-level function, and a function may read a global, and
+// neither ordering can be resolved by emitting them lazily.
+func (l *lowerer) declareGlobals() error {
+	for _, vd := range l.globalDecls {
+		t, ok := l.recordedType(vd.Value)
+		if !ok {
+			return fmt.Errorf("llvm: no type recorded for top-level %q", vd.Name)
+		}
+		ty, err := l.lowerType(t)
+		if err != nil {
+			return fmt.Errorf("llvm: top-level %q: %w", vd.Name, err)
+		}
+		g := l.module.NewGlobalDef("lyra_global_"+vd.Name, constant.NewZeroInitializer(ty))
+		l.globals[vd.Name] = g
+	}
+	return nil
+}
+
+// initGlobals emits the stores that fill those slots, in declaration order, and returns
+// the block to carry on in.
+//
+// **Declaration order is the initialization order**, which is what makes a global
+// referring to an earlier one work and a forward reference not. That is the same rule the
+// use-before-declaration checker already enforces on the way in, so the ordering here is
+// not a second policy — it is the first one, honoured.
+//
+// A managed value stored here is owned by the global for the life of the program and is
+// never released: there is no scope for it to leave. That is a deliberate leak of a fixed
+// amount, the same trade every language makes for module-level data, and it is why the
+// ownership pass is not consulted — it reasons about scopes, and a global has none.
+func (l *lowerer) initGlobals(block *ir.Block) (*ir.Block, error) {
+	for _, vd := range l.globalDecls {
+		g, ok := l.globals[vd.Name]
+		if !ok {
+			continue
+		}
+		v, next, err := l.lowerExpr(block, vd.Value)
+		if err != nil {
+			return nil, fmt.Errorf("llvm: top-level %q: %w", vd.Name, err)
+		}
+		block = next
+		if diverged(v, block) {
+			return block, nil
+		}
+		block.NewStore(v, g)
+	}
+	return block, nil
 }
