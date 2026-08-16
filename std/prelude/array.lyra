@@ -12,6 +12,10 @@ module std.prelude
 /// Allocates the result, so this is not `noalloc`. The comprehension `[f(x) for x in xs]`
 /// is the same thing written inline.
 ///
+/// # Complexity
+///
+/// Time: O(n) calls to `f`. Space: O(n) — a new array; the input is not modified.
+///
 /// # Examples
 ///
 /// ```
@@ -23,6 +27,11 @@ pub let map<t,u> = pure (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]
 ///
 /// Allocates the result. An array where nothing matches is empty, never `None` — absence
 /// of matches is not an error.
+///
+/// # Complexity
+///
+/// Time: O(n) calls to `predicate`. Space: O(k) for the k elements kept, though the
+/// array may grow to O(n) capacity on the way there.
 ///
 /// # Examples
 ///

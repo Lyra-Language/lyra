@@ -110,8 +110,13 @@ pub trait Eq {
 impl Ord for string {
   /// Compares byte by byte, which **is** the code-point order: UTF-8 encodes a lower code
   /// point as a byte sequence that compares lower, so a `memcmp` and a rune-by-rune walk
-  /// agree. That equivalence is why this can be one primitive call — written in Lyra with
-  /// `s[i]` it would be O(n²), since indexing a string is O(i).
+  /// agree.
+  ///
+  /// # Complexity
+  ///
+  /// Time: O(n) in the shorter operand, one `memcmp`. Space: O(1). That equivalence is
+  /// what buys it: written in Lyra with `s[i]` the same comparison would be O(n²), since
+  /// indexing a string is O(i).
   compare = (self, other) => {
     let c = self.compare_bytes(other);
     if c < 0 { Less } else if c > 0 { Greater } else { Equal }

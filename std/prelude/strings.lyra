@@ -123,11 +123,10 @@ pub let starts_with = pure noalloc (self: string, other: string) -> bool =>
 
 /// Whether `self` ends with `other`.
 ///
-/// O(`other`'s length), allocation-free, as `starts_with` is.
-///
 /// # Complexity
 ///
-/// Time: O(m). Space: O(1).
+/// Time: O(m). Space: O(1) — the same `memcmp`, offset to where the suffix would
+/// start.
 pub let ends_with = pure noalloc (self: string, other: string) -> bool =>
   self.compare_bytes_at(self.byte_len() - other.byte_len(), other) == 0
 
@@ -216,15 +215,13 @@ impl Needle for string {
 /// Both `offset` and the result are **rune** indices, so the answer feeds straight into
 /// `slice`. A negative `offset` is `None`.
 ///
-/// The scan is naive — O(n·m) worst case — rather than Rabin–Karp, which would trade a
-/// libc memcmp for byte-at-a-time arithmetic in Lyra and buy only an *expected* bound. A
-/// real guarantee wants a `memmem` builtin.
+/// The scan is naive rather than Rabin–Karp, which would trade a libc memcmp for
+/// byte-at-a-time arithmetic in Lyra and buy only an *expected* bound. A real guarantee
+/// wants a `memmem` builtin.
 ///
 /// # Complexity
 ///
-/// Time: O(n·m) worst case, n the haystack and m the needle; the scan is naive
-/// rather than Rabin–Karp, which trades a libc `memcmp` for byte-at-a-time
-/// arithmetic and buys only an *expected* bound. Space: O(1).
+/// Time: O(n·m) worst case, n the haystack and m the needle. Space: O(1).
 ///
 /// # Examples
 ///
@@ -249,7 +246,7 @@ pub let contains<t> where t: Needle = pure noalloc(self: string, needle: t, offs
 /// instead.
 ///
 /// `[]rune`, not `[]string`: a caller who wants characters wants code points, and a box
-/// per character would buy nothing. Allocates the result.
+/// per character would buy nothing.
 ///
 /// # Complexity
 ///
@@ -263,7 +260,7 @@ pub let to_runes = pure (self: string) -> []rune => {
 /// `self` split on every occurrence of `sep`, with the separators removed.
 ///
 /// Always returns at least one part: a string not containing `sep` splits into itself, and
-/// adjacent separators yield empty parts. Allocates the array and each part.
+/// adjacent separators yield empty parts.
 ///
 /// # Panics
 ///

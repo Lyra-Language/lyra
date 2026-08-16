@@ -84,8 +84,14 @@ pub let rng_from_entropy = () -> Rng => rng_seeded(random_seed())
 /// not divide evenly into `bound` buckets, so the low residues get one extra value each.
 /// The bias is tiny for a small bound and total for a large one, which is the worst shape
 /// for a bug — it never shows up in the case you test. This rejects the top partial bucket
-/// and redraws instead; the redraw happens with probability at most `bound / 2^64`, so the
-/// loop is expected to run once.
+/// and redraws instead.
+///
+/// # Complexity
+///
+/// Time: expected O(1) — the rejection loop redraws with probability at most
+/// `bound / 2^64`, so for any bound a program actually passes it runs once. There is
+/// no worst-case bound; that is what rejection sampling buys uniformity with.
+/// Space: O(1).
 ///
 /// # Panics
 ///

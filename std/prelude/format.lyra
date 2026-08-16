@@ -31,6 +31,11 @@ module std.prelude
 /// Only `f64`, which is the type an untyped float literal defaults to. An `f32` converts
 /// first — `f64(x).to_fixed(2)`.
 ///
+/// # Complexity
+///
+/// Time: O(places + digits in the whole part) — the fractional part is built one digit
+/// at a time. Space: the rendered string, plus the concatenations that build it.
+///
 /// # Examples
 ///
 /// ```

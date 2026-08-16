@@ -39,6 +39,10 @@ module std.prelude
 /// Named for its width rather than being a bare `parse`, because a function's return type
 /// cannot be chosen by the context it is called in.
 ///
+/// # Complexity
+///
+/// Time: O(n) in the length of the string, one pass. Space: O(1).
+///
 /// # Examples
 ///
 /// ```

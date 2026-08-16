@@ -194,3 +194,40 @@ func TestPrelude_ModuleDocIsJoinedAcrossFiles(t *testing.T) {
 		}
 	}
 }
+
+// `# Complexity` is the section a reader consults before choosing between two functions
+// that do the same thing — `starts_with` against a hand-rolled slice, `to_runes` against
+// `split`. It is optional, since O(1) on a two-line combinator is noise, so this asserts
+// it on the entries where the cost is the reason the function exists.
+func TestPrelude_ComplexitySectionsAreClassified(t *testing.T) {
+	program, _, _ := collectPrelude(t)
+
+	documented := map[string]string{}
+	for _, stmt := range program.Statements {
+		decl, ok := stmt.(*ast.VarDeclStmt)
+		if !ok || decl.Doc == nil {
+			continue
+		}
+		if s, has := decl.Doc.Section(ast.DocSectionComplexity); has {
+			documented[decl.Name] = s.Body
+		}
+	}
+
+	// Every entry whose cost is non-obvious or is the point of its design.
+	for _, name := range []string{"starts_with", "ends_with", "trim", "index", "split", "to_runes", "map", "filter", "parse_i64", "below"} {
+		body, has := documented[name]
+		if !has {
+			t.Errorf("%s has no `# Complexity` section", name)
+			continue
+		}
+		// The convention is a Time line and a Space line. Space says *how much*;
+		// whether it allocates is already in the signature as `noalloc`, and
+		// checked.
+		if !strings.Contains(body, "Time:") {
+			t.Errorf("%s: complexity section has no `Time:` line: %q", name, body)
+		}
+		if !strings.Contains(body, "Space:") {
+			t.Errorf("%s: complexity section has no `Space:` line: %q", name, body)
+		}
+	}
+}
