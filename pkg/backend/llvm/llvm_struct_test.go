@@ -151,3 +151,52 @@ func TestEmit_StructRecordUpdate_Deferred(t *testing.T) {
 		t.Errorf("expected a record-update error, got: %v", err)
 	}
 }
+
+// Assigning to a struct field whose type is a generic data type must lower.
+//
+// It did not until 08/15, and failed as `llvm: unknown named type "Maybe"` — a backend
+// error for a front-end omission. A nullary construction like `None` solves no type
+// parameter, so it stays the bare *declaration* until some context completes it
+// (propagateInstantiation), and an assignment through a member target was not one of the
+// sites applying that context. The comment sitting in checkLValueAssignment said as much
+// — "this path does no literal propagation at all … whether it *should* is a separate
+// question" — a deferred question that was already this bug.
+//
+// Found writing std.tui's key decoder, whose reader clears its lookahead with exactly
+// this statement. Four lines reproduce it, which is the surprising part: nothing about
+// the shape is exotic.
+func TestExec_AssignNoneToAGenericStructField(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+struct Holder { pending: Maybe<rune> }
+let main = () -> void => {
+  var h = Holder { pending: Some('a') };
+  h.pending = None;
+  match h.pending { Some(r) => println("some ${r}"), None => println("none") }
+}
+`
+	got := strings.TrimSpace(buildAndRunWithPrelude(t, src, ""))
+	if got != "none" {
+		t.Errorf("assigning None to a Maybe field gave %q, want \"none\"", got)
+	}
+}
+
+// The mirror: assigning a *solved* construction to the same field, so the fix is not
+// simply "stop checking assignments to generic fields".
+func TestExec_AssignSomeToAGenericStructField(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+struct Holder { pending: Maybe<i64> }
+let main = () -> void => {
+  var h = Holder { pending: None };
+  h.pending = Some(7);
+  match h.pending { Some(v) => println("some ${v}"), None => println("none") }
+}
+`
+	got := strings.TrimSpace(buildAndRunWithPrelude(t, src, ""))
+	if got != "some 7" {
+		t.Errorf("assigning Some(7) to a Maybe field gave %q, want \"some 7\"", got)
+	}
+}

@@ -1241,6 +1241,20 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	if targetType == nil || valueType == nil {
 		return
 	}
+	// The target's type is the context that completes a partly solved construction, and
+	// this is the fifth site to need it — `self.pending = None` names no type argument of
+	// its own, so without this the `None` stays the bare `Maybe` *declaration* and the
+	// backend fails to lower it at all (`unknown named type "Maybe"`). Same failure the
+	// return position had before 08/05, one statement form over.
+	//
+	// It runs before the assignability check because a partly solved *struct* or named
+	// tuple is not assignable to an instantiation of itself until the context has
+	// completed it — see contextualType. `reported` suppresses the coarse "cannot assign"
+	// when the propagation has already named the offending payload precisely.
+	valueType, reportedByContext := tc.contextualType(stmt.Value, targetType, valueType)
+	if reportedByContext || valueType == nil {
+		return
+	}
 	if !tc.assignableValue(stmt.Value, valueType, targetType) {
 		tc.addError(stmt.GetLocation(), SeverityError,
 			"cannot assign %s to %s", valueType, targetType)
