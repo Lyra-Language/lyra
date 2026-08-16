@@ -168,3 +168,46 @@ func TestMustUse_DiscardBindingIsNotAName(t *testing.T) {
 		t.Error("`_` is a discard, not a binding — reading it back should not parse")
 	}
 }
+
+// A block's value is used, not dropped, so the must-use rule must not fire on it —
+// including when the block is a branch rather than a function body.
+//
+// Both of these warned until 08/15, and the shape of the bug is why they are tested
+// together: checkBlock walked *every* statement as a statement and then additionally
+// treated the last one as the block's value, so the tail was checked both ways.
+// checkBlockReturn — the same walk for a function body — had the exemption all along,
+// which is exactly why a bare block body was fine and the identical expression one brace
+// deeper was not.
+
+// The `if`-branch form, found writing std.tui's key decoder.
+func TestMustUse_TailOfAnIfBranchIsTheValue(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		data Maybe<t> = Some t | None
+		let f = () -> Maybe<i64> => Some(1)
+		let g = (n: i64) -> Maybe<i64> => if n == 0 { f() } else { None }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// The braced match arm, which is the same hole reached by the other construct — an
+// *unbraced* arm (`0 => f()`) was always fine, so the brace was the whole difference.
+func TestMustUse_TailOfABracedMatchArmIsTheValue(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		data Maybe<t> = Some t | None
+		let f = () -> Maybe<i64> => Some(1)
+		let g = (n: i64) -> Maybe<i64> => match n { 0 => { f() }, _ => None }
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// The exemption is for the value only: a Maybe dropped *before* the tail of a branch is
+// still discarded, and must still warn. Guards against the fix having simply switched
+// the warning off inside branches.
+func TestMustUse_NonTailInsideABranchStillWarns(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		data Maybe<t> = Some t | None
+		let f = () -> Maybe<i64> => Some(1)
+		let g = (n: i64) -> Maybe<i64> => if n == 0 { f(); None } else { None }
+	`, false)
+	assertHasErrorContaining(t, res, "unused Maybe")
+}

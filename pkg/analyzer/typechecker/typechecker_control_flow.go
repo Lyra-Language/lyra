@@ -127,14 +127,25 @@ func (tc *TypeChecker) checkBlock(block *ast.BlockExpr, onValue func(*ast.Expres
 		if len(block.Statements) == 0 {
 			return
 		}
-		for _, stmt := range block.Statements {
+		last := len(block.Statements) - 1
+		for i, stmt := range block.Statements {
+			// The block's value is *used*, not dropped, so it must not also be checked
+			// as a discarded statement. Checking it both ways was a `lyra-W006` on every
+			// `Maybe`-returning call in the tail of an `if` branch or a braced match arm
+			// — code doing exactly the right thing, told to bind or match its result.
+			//
+			// checkBlockReturn (typechecker_functions.go) is the twin of this loop for a
+			// function body and had the exemption all along, which is why a *bare* block
+			// body was fine and the same expression one brace deeper was not. Keep the
+			// two in step: they answer one question — "walk a block; the last statement
+			// is its value" — and this is what it cost to have two answers.
+			if onValue != nil && i == last {
+				if exprStmt, ok := stmt.(*ast.ExpressionStmt); ok {
+					onValue(exprStmt)
+					continue
+				}
+			}
 			tc.checkNode(stmt) // type-check every statement, not just the last
-		}
-		if onValue == nil {
-			return
-		}
-		if exprStmt, ok := block.Statements[len(block.Statements)-1].(*ast.ExpressionStmt); ok {
-			onValue(exprStmt)
 		}
 	})
 }
