@@ -1,6 +1,9 @@
 package ast
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func lines(ss ...string) []string { return ss }
 
@@ -154,5 +157,44 @@ func TestDoc_SectionOnNilReceiver(t *testing.T) {
 	var d *Doc
 	if _, ok := d.Section(DocSectionPanics); ok {
 		t.Error("Section on a nil Doc reported a match")
+	}
+}
+
+func TestDoc_ComplexitySectionIsRecognized(t *testing.T) {
+	d := NewDoc(lines(
+		"/// Finds a needle.",
+		"///",
+		"/// # Complexity",
+		"///",
+		"/// Time: O(n·m) worst case, n the haystack and m the needle.",
+		"/// Space: O(1) — the scan allocates nothing.",
+	), Location{}, false)
+
+	s, ok := d.Section(DocSectionComplexity)
+	if !ok {
+		t.Fatalf("Complexity was not recognized: %+v", d.Sections)
+	}
+	if !strings.Contains(s.Body, "Time:") || !strings.Contains(s.Body, "Space:") {
+		t.Errorf("body lost its lines: %q", s.Body)
+	}
+	if got := DocSectionComplexity.String(); got != "Complexity" {
+		t.Errorf("String() = %q", got)
+	}
+}
+
+// `# Time complexity` is what an author writes when only the time bound matters. It maps
+// to the same kind, so a generator indexing complexity finds both spellings.
+func TestDoc_TimeComplexityHeadingMapsToTheSameKind(t *testing.T) {
+	d := NewDoc(lines("/// Sorts.", "///", "/// # Time complexity", "///", "/// O(n log n)."), Location{}, false)
+	if _, ok := d.Section(DocSectionComplexity); !ok {
+		t.Errorf("`# Time complexity` was not recognized: %+v", d.Sections)
+	}
+}
+
+// Matching is case-insensitive, as it is for the other recognized headings.
+func TestDoc_ComplexityIsCaseInsensitive(t *testing.T) {
+	d := NewDoc(lines("/// X.", "///", "/// # COMPLEXITY", "///", "/// O(1)."), Location{}, false)
+	if _, ok := d.Section(DocSectionComplexity); !ok {
+		t.Errorf("`# COMPLEXITY` was not recognized: %+v", d.Sections)
 	}
 }

@@ -56,6 +56,21 @@ const (
 	// for. Distinct from Panics on purpose: the split is the language's own, since
 	// a trap ends the program and an `Err` is a value the caller handles.
 	DocSectionErrors
+	// DocSectionComplexity documents the cost of a call — time and memory in one
+	// section, by the convention of a `Time:` line and a `Space:` line.
+	//
+	// One section rather than two, because the two numbers are chosen together:
+	// nearly every interesting entry in this standard library is a trade between
+	// them (`starts_with` is O(m) and allocation-free *because* it compares bytes
+	// instead of slicing; `trim` makes one allocation instead of two *because* it
+	// scans both ends before slicing once). Splitting them across headings puts
+	// half of each decision under each.
+	//
+	// **Space means how much, not whether.** Lyra already answers "whether" in the
+	// signature and checks it: a `noalloc` function cannot heap-allocate, and that
+	// bound is enforced rather than promised. A `Space:` line restating it is a
+	// second copy of a machine-checked fact, and the one that can go stale.
+	DocSectionComplexity
 )
 
 func (k DocSectionKind) String() string {
@@ -66,6 +81,8 @@ func (k DocSectionKind) String() string {
 		return "Panics"
 	case DocSectionErrors:
 		return "Errors"
+	case DocSectionComplexity:
+		return "Complexity"
 	default:
 		return "Other"
 	}
@@ -92,6 +109,10 @@ var recognizedSections = map[string]DocSectionKind{
 	"panic":    DocSectionPanics,
 	"errors":   DocSectionErrors,
 	"error":    DocSectionErrors,
+	// No plural of "complexity" is idiomatic, so the two spellings recognized are
+	// the bare noun and the one an author reaches for when only time is meant.
+	"complexity":      DocSectionComplexity,
+	"time complexity": DocSectionComplexity,
 }
 
 // NewDoc builds a Doc from the raw text of the comment lines, each still carrying its

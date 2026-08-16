@@ -2336,16 +2336,53 @@ error.
 ### [DONE 08/15] A terminal UI needs three builtins, not a library
 
 `set_raw_mode(on)`, `read_key() -> Maybe<rune>` and `terminal_size() -> (i64, i64)`
-landed 08/15 (`pkg/backend/llvm/tui.go`); see COMPLETED.md for the platform reasoning
-and why the three do not share an effect classification.
+landed 08/15 (`pkg/backend/llvm/tui.go`), and `std.tui` on top of them the same day —
+`event.lyra` (the `Event` type and decoder), `key.lyra` (named keys), `mouse.lyra` (SGR
+reporting), `screen.lyra` (alternate buffer, clear, cursor) and `style.lyra` (256-colour,
+attributes). **The mouse needed no builtin either**: a terminal reports clicks as escape
+sequences on stdin, so it is `print` to enable and `read_key` to receive. See
+COMPLETED.md, including why SGR mode is the only encoding a rune-oriented `read_key` can
+carry.
 
-**Still open above them: `std.tui` itself.** The builtins are the primitives, and the
-library the original entry described — escape-sequence decoding into named keys, colour
-helpers, box drawing, frame diffing, a status bar — is ordinary Lyra and unwritten. The
-one piece with a real design question is the **key decoder**: telling a bare ESC press
-from the start of a `\e[A` needs a timeout, and `read_key` deliberately blocks, so
-either it gains a non-blocking sibling or the decoder reads ahead and reports what it
-could not classify.
+### [OPEN] A timed `read_key`, for the one key three builtins cannot resolve
+
+**The claim that three builtins are the whole of what a TUI needs from the compiler is
+very nearly true, and this is the exception.** `\e` begins every arrow and navigation
+key, so a decoder that reads one must look at the next code point to know what it has —
+and `read_key` blocks. If the user pressed Escape and nothing else, that read waits for
+the *next* keypress, whenever it comes.
+
+`std.tui`'s decoder is correct under this: it buffers the lookahead, so nothing is lost
+and a lone Escape is reported one keypress late rather than wrongly. Arrow keys are
+entirely unaffected — their bytes arrive together — so the practical cost is that a
+program wanting a responsive quit binds `q` rather than Escape. That is what the
+mandelbrot viewer will do, which is why this is not urgent.
+
+Resolving it needs a **timed or non-blocking read**, and the shape is worth deciding
+before it is built:
+
+- `read_key_timeout(ms: i64) -> Maybe<rune>` is the smallest addition, but `None` then
+  means two different things — no key yet, and end of input — which is exactly the
+  conflation `read_line`'s `Maybe` was introduced to avoid. A `Result` or a three-way
+  data type is the honest signature, and is a bigger commitment.
+- Setting VMIN/VTIME through `set_raw_mode` instead would make *every* read timed and
+  change `read_key`'s contract rather than adding to it.
+- A bulk `read` (`\e[A` usually arrives as three bytes in one go, since cfmakeraw sets
+  VMIN=1 and a multi-byte read returns as soon as any byte is available) sidesteps the
+  timeout for the common case but is not a guarantee — a slow link can split a sequence,
+  and then the decoder is wrong rather than late.
+
+The first is probably right, with the naming question settled first.
+
+### [OPEN] `std.tui` above the decoder: frames, boxes, a status bar
+
+What the original entry listed and is still unwritten: **frame diffing** (redrawing only
+the cells that changed, which is what makes a full-screen redraw not flicker), box
+drawing, and a status bar. None of it needs anything from the compiler.
+
+Frame diffing is the one with a measurement behind it already: `todo.md`'s rendering
+section found that a terminal frame is better assembled into one string and printed once
+than positioned and printed per cell, so a diff wants to emit runs rather than cells.
 
 ### [OPEN] Return-type-directed dispatch — reopen when `From`/`Into` wants it
 

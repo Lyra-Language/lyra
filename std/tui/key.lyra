@@ -1,0 +1,106 @@
+module std.tui
+
+// Keyboard keys, and the part of the decoder that names them.
+//
+// `read_key()` is the compiler's half and is deliberately raw — it answers one code point
+// and decodes nothing, because an arrow key is not a code point at all. It is `\e`, `[`,
+// `A`: three separate reads that only *mean* "up arrow" together. Assembling them needs a
+// table and a policy, both of which are ordinary code, so they are here.
+
+/// A decoded keypress.
+///
+/// `Char` carries any key that is a character — including the ones a terminal sends as
+/// control bytes but a reader thinks of as characters. The named constructors are the
+/// keys that have no character to carry.
+///
+/// # Examples
+///
+/// ```
+/// var events = event_reader();
+/// match events.next_event() {
+///   Some(Keyboard(Up)) => println("up"),
+///   Some(Keyboard(Char c)) => println("typed ${c}"),
+///   Some(_) => println("something else"),
+///   None => println("input ended")
+/// }
+/// ```
+pub data Key =
+  /// A character key, carrying its code point.
+  Char rune
+  /// The four arrow keys.
+  | Up
+  | Down
+  | Left
+  | Right
+  /// Navigation keys, sent as `\e[H`/`\e[F` or as the numbered `\e[1~` family depending
+  /// on the terminal — both spellings decode to these.
+  | Home
+  | End
+  | PageUp
+  | PageDown
+  | Delete
+  /// Return/Enter, sent as CR in raw mode rather than the LF it is outside one.
+  | Enter
+  | Tab
+  | Backspace
+  /// The Escape key itself. **Reported one keypress late** — see `next_event`.
+  | Escape
+
+/// The single-code-point keys: the control bytes a terminal sends for Enter, Tab and
+/// Backspace, and everything else as itself.
+///
+/// Backspace is 127 (DEL) on essentially every modern terminal, with 8 (BS) accepted
+/// beside it because some still send that and the two mean the same thing to a reader.
+let classify = pure (c: rune) -> Key => {
+  let n = i64(c)
+  if n == 13 || n == 10 { Enter }
+  else if n == 9 { Tab }
+  else if n == 127 || n == 8 { Backspace }
+  else { Char(c) }
+}
+
+/// A sequence's final letter.
+///
+/// An unrecognized one decodes to `Escape` rather than to a `Char` of the letter: the
+/// bytes were part of a sequence this does not know, and reporting the letter would put a
+/// stray `A` into a text field. Losing an unknown key is the lesser wrong.
+let final_key = pure (f: rune) -> Key => {
+  let n = i64(f)
+  if n == 65 { Up }
+  else if n == 66 { Down }
+  else if n == 67 { Right }
+  else if n == 68 { Left }
+  else if n == 72 { Home }
+  else if n == 70 { End }
+  else { Escape }
+}
+
+/// Read the rest of a `\e[<number>~` sequence and name it, having consumed the first
+/// digit. Accumulates further digits until the terminating `~`, so `\e[15~` (F5 on many
+/// terminals) is consumed whole even though it decodes to nothing this type names.
+let decode_numeric = (start: i64) -> Maybe<Event> => {
+  var code = start
+  var done = false
+  var ended = false
+  for !done {
+    match read_key() {
+      None => { done = true; ended = true },
+      Some(d) => {
+        let n = i64(d)
+        if n >= 48 && n <= 57 { code = code * 10 + (n - 48) }
+        else { done = true }
+      }
+    }
+  }
+  if ended { Some(Keyboard(Escape)) } else { Some(Keyboard(numeric_key(code))) }
+}
+
+/// The `\e[<n>~` family. Unrecognized numbers are `Escape`, on `final_key`'s reasoning.
+let numeric_key = pure (code: i64) -> Key => {
+  if code == 1 || code == 7 { Home }
+  else if code == 4 || code == 8 { End }
+  else if code == 3 { Delete }
+  else if code == 5 { PageUp }
+  else if code == 6 { PageDown }
+  else { Escape }
+}

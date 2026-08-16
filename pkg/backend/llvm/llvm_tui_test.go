@@ -1,6 +1,7 @@
 package llvm
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -126,4 +127,116 @@ let main = () -> void => {
 	if got != "survived" {
 		t.Errorf("set_raw_mode round trip without a tty = %q, want \"survived\"", got)
 	}
+}
+
+// std.tui's decoder, exercised end to end against the real library.
+//
+// These run over a pipe rather than a terminal, which costs nothing here: the decoder's
+// whole job is turning a *byte sequence* into a named event, and a pipe delivers the same
+// bytes a terminal would. Only the blocking behaviour differs, and that is `read_key`'s,
+// tested above.
+
+// eventNamerSrc is a program that names the first n events it decodes, so a test asserts
+// on the decoder's output rather than on escape bytes.
+func eventNamerSrc(n int) string {
+	return `
+module main
+import std.tui.{ event_reader, Event, Key, MouseButton, MouseAction }
+let btn = (b: MouseButton) -> string => match b {
+  MouseLeft => "L", MouseMiddle => "M", MouseRight => "R",
+  WheelUp => "WU", WheelDown => "WD", NoButton => "-"
+}
+let act = (a: MouseAction) -> string => match a { Press => "down", Release => "up", Move => "move" }
+let kname = (k: Key) -> string => match k {
+  Char c => "Char(${c})", Up => "Up", Down => "Down", Left => "Left", Right => "Right",
+  Home => "Home", End => "End", PageUp => "PageUp", PageDown => "PageDown",
+  Delete => "Delete", Enter => "Enter", Tab => "Tab", Backspace => "Backspace",
+  Escape => "Escape"
+}
+let describe = (e: Event) -> string => match e {
+  Keyboard(k) => kname(k),
+  Mouse(m) => "${btn(m.button)}${act(m.action)}@${m.col},${m.row}"
+}
+let main = () -> void => {
+  var ev = event_reader();
+  var i = 0;
+  for i < ` + strconv.Itoa(n) + ` {
+    match ev.next_event() { Some(e) => print("${describe(e)} "), None => print("EOF ") }
+    i = i + 1;
+  }
+  println("");
+}
+`
+}
+
+func assertDecodes(t *testing.T, n int, input, want string) {
+	t.Helper()
+	got := strings.TrimSpace(buildAndRunWithPrelude(t, eventNamerSrc(n), input))
+	if got != want {
+		t.Errorf("decoded %q as %q, want %q", input, got, want)
+	}
+}
+
+// The four arrows in the ordinary `\e[X` form — the keys the whole decoder exists for.
+func TestExec_TuiDecodesArrowKeys(t *testing.T) {
+	t.Parallel()
+	assertDecodes(t, 4, "\x1b[A\x1b[B\x1b[C\x1b[D", "Up Down Right Left")
+}
+
+// The `\eOX` form, which a terminal in "application cursor keys" mode sends instead.
+// Handling only `\e[` loses arrows outright on a real terminal in that mode.
+func TestExec_TuiDecodesApplicationModeArrows(t *testing.T) {
+	t.Parallel()
+	assertDecodes(t, 2, "\x1bOA\x1bOD", "Up Left")
+}
+
+// The numbered `\e[<n>~` family, whose body is read digit by digit to its `~`.
+func TestExec_TuiDecodesNumericSequences(t *testing.T) {
+	t.Parallel()
+	assertDecodes(t, 3, "\x1b[5~\x1b[6~\x1b[3~", "PageUp PageDown Delete")
+}
+
+// The lookahead buffer: recognizing a sequence means reading past the `\e`, so when what
+// follows is not one, that key has already been consumed. It must come back on the next
+// call rather than being dropped — which is the entire reason EventReader holds state.
+func TestExec_TuiEscapeLookaheadLosesNothing(t *testing.T) {
+	t.Parallel()
+	assertDecodes(t, 3, "\x1bxZ", "Escape Char(x) Char(Z)")
+}
+
+// The control bytes a terminal sends for keys a reader thinks of as named: CR for Enter
+// (raw mode sends CR, not the LF it would outside one) and DEL for Backspace.
+func TestExec_TuiDecodesControlKeys(t *testing.T) {
+	t.Parallel()
+	assertDecodes(t, 3, "\r\t\x7f", "Enter Tab Backspace")
+}
+
+// SGR mouse reports: press, release, and the wheel. The coordinates are 1-based and come
+// back as written, which is the property a transposed or off-by-one decode would break.
+func TestExec_TuiDecodesMouseButtons(t *testing.T) {
+	t.Parallel()
+	assertDecodes(t, 4,
+		"\x1b[<0;10;5M\x1b[<0;10;5m\x1b[<2;8;2M\x1b[<1;5;5m",
+		"Ldown@10,5 Lup@10,5 Rdown@8,2 Mup@5,5")
+}
+
+// Bit 6 (64) marks the wheel, so a notch is button code 64/65 rather than a low-bit
+// button — and terminals send no matching release, which is why a notch is always Press.
+func TestExec_TuiDecodesMouseWheel(t *testing.T) {
+	t.Parallel()
+	assertDecodes(t, 2, "\x1b[<64;3;7M\x1b[<65;1;1M", "WUdown@3,7 WDdown@1,1")
+}
+
+// Bit 5 (32) marks motion: with a button in the low bits that is a drag, and with 3
+// (no button) it is a bare move. Both arrive only after mouse_enable_motion.
+func TestExec_TuiDecodesMouseMotion(t *testing.T) {
+	t.Parallel()
+	assertDecodes(t, 2, "\x1b[<32;9;3M\x1b[<35;9;4M", "Lmove@9,3 -move@9,4")
+}
+
+// Keys and mouse reports share one file descriptor, so they interleave — the reason
+// there is one reader and one `next_event` rather than two streams to poll.
+func TestExec_TuiInterleavesKeysAndMouse(t *testing.T) {
+	t.Parallel()
+	assertDecodes(t, 3, "\x1b[<0;1;1Mq\x1b[A", "Ldown@1,1 Char(q) Up")
 }

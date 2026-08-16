@@ -1,0 +1,58 @@
+module std.tui
+
+// Screen and cursor control.
+//
+// Every function here *performs* its escape sequence, where `style.lyra`'s *return*
+// theirs. The split is not arbitrary: a colour is part of the text it colours, so it
+// composes into a frame that is printed once, while clearing the screen is an action
+// with nothing to compose into. A version of `clear` that handed back a string you had
+// to remember to print would be a trap with no upside.
+//
+// **Build a frame, then print it once.** Positioning the cursor per cell and printing
+// per cell is the obvious way to draw and is far slower than assembling one string and
+// issuing a single `print` — the same measurement that shaped `join` in the prelude.
+// `move_to` is for placing a cursor, not for drawing.
+
+/// Switch to the alternate screen buffer: a blank screen that does not scroll, leaving
+/// whatever the user had in their terminal untouched underneath.
+///
+/// This is what makes a full-screen program polite — on `alt_screen_leave` the shell's
+/// scrollback comes back exactly as it was. Pair the two, and note that a program which
+/// exits without leaving strands the user on a blank screen.
+pub let alt_screen_enter = () -> void => print("\e[?1049h")
+
+/// Return to the normal screen buffer, restoring what was on it before.
+pub let alt_screen_leave = () -> void => print("\e[?1049l")
+
+/// Erase the whole screen. Does not move the cursor — pair with `cursor_home` (or
+/// `move_to`) unless the next thing written positions itself.
+pub let clear = () -> void => print("\e[2J")
+
+/// Erase from the cursor to the end of the line.
+///
+/// Redrawing a status bar with this is what stops a shorter line leaving the tail of the
+/// longer one that was there before, which is the classic flicker-free-redraw bug.
+pub let clear_line = () -> void => print("\e[K")
+
+/// Move the cursor to the top-left corner.
+pub let cursor_home = () -> void => print("\e[H")
+
+/// Move the cursor to `col`, `row` — **1-based, and column first**.
+///
+/// The width-first order matches `terminal_size()` and every other pair in this library,
+/// and is the reverse of the escape sequence underneath, which is `\e[<row>;<col>H`. One
+/// place has to flip, and it is better that it be this line than every call site.
+///
+/// 1-based because the terminal is: `\e[1;1H` is the top-left cell, and renumbering to
+/// match array indexing would make every hand-checked escape sequence disagree with the
+/// library by one.
+pub let move_to = (col: i64, row: i64) -> void => print("\e[${row};${col}H")
+
+/// Hide the cursor. Worth doing for the duration of a full-screen redraw: a visible
+/// cursor skitters across the screen as the frame is written.
+pub let cursor_hide = () -> void => print("\e[?25l")
+
+/// Show the cursor again. A program that hides it and exits leaves the user with no
+/// cursor in their shell, so this pairs with `cursor_hide` the way `alt_screen_leave`
+/// pairs with `alt_screen_enter`.
+pub let cursor_show = () -> void => print("\e[?25h")

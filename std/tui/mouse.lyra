@@ -1,0 +1,124 @@
+module std.tui
+
+// The mouse.
+//
+// **This needed nothing from the compiler**, which is worth saying because it is not
+// obvious: a terminal reports mouse activity as escape sequences *on stdin*, so enabling
+// it is a `print` and receiving it is `read_key`. The same two halves the keyboard uses.
+//
+// # Why SGR mode is required, not merely preferred
+//
+// A terminal has two ways to encode a mouse report, and only one of them survives this
+// language's `read_key`.
+//
+// The legacy X10 encoding is `\e[M` followed by three **raw bytes**, each its value plus
+// 32. `read_key` answers a *code point*, so it decodes UTF-8 — and a column past 95
+// produces a byte of 128 or more, which is a UTF-8 lead byte. It then swallows the two
+// bytes after it and returns one bogus code point: measured, `\e[M` at column 200 came
+// back as `27 91 77 32 35137 …`, with the column and row gone into that 35137.
+//
+// SGR mode (`\e[?1006h`) encodes the same fields as **ASCII digits** — `\e[<Cb;Cx;CyM` —
+// so every byte is below 128 and the decode is exact at any terminal size. It is also the
+// only encoding without a coordinate limit. Hence `mouse_enable` always requests it, and
+// there is deliberately no option not to.
+
+/// Which button an event is about.
+pub data MouseButton =
+  MouseLeft
+  | MouseMiddle
+  | MouseRight
+  /// A wheel notch. Terminals report the wheel as a button press with no matching
+  /// release, so a `WheelUp` is always a `Press` and never arrives in pairs.
+  | WheelUp
+  | WheelDown
+  /// Motion with nothing held down, reported only under `mouse_enable_motion`.
+  | NoButton
+
+/// What happened.
+pub data MouseAction =
+  Press
+  | Release
+  /// The pointer moved. Under `mouse_enable_motion` this arrives with a button held (a
+  /// drag) or with `NoButton` (a bare move); `mouse_enable` alone never produces it.
+  | Move
+
+/// A mouse event, with the pointer's cell.
+///
+/// `col` and `row` are **1-based**, matching `move_to` and the terminal itself — the
+/// top-left cell is `(1, 1)`. A grid indexed from zero needs one subtraction, which is
+/// better than every escape sequence in the program disagreeing with the library by one.
+pub struct MouseEvent {
+  /// The button, wheel notch, or `NoButton` for a bare move.
+  button: MouseButton,
+  /// Press, release, or motion.
+  action: MouseAction,
+  /// Column, 1-based, counting from the left.
+  col: i64,
+  /// Row, 1-based, counting from the top.
+  row: i64
+}
+
+/// Report button presses, releases and wheel notches.
+///
+/// **Pair this with `mouse_disable`**, exactly as `alt_screen_enter` pairs with
+/// `alt_screen_leave` — a program that exits without disabling leaves the terminal
+/// emitting escape sequences into the user's shell, where they arrive as garbage text on
+/// every click.
+pub let mouse_enable = () -> void => print("\e[?1000h\e[?1006h")
+
+/// As `mouse_enable`, and also report motion while a button is held (a drag).
+///
+/// Kept separate rather than made the default because it is *much* noisier: a drag across
+/// the screen produces an event per cell entered, where a click produces two. Enable it
+/// when a drag is what the program is for, not routinely.
+pub let mouse_enable_motion = () -> void => print("\e[?1000h\e[?1002h\e[?1006h")
+
+/// Stop reporting the mouse, whichever of the two enables was used.
+///
+/// Disabling a mode that was never enabled is harmless, so this needs no memory of which
+/// one was.
+pub let mouse_disable = () -> void => print("\e[?1006l\e[?1002l\e[?1000l")
+
+/// Decode an SGR mouse report, having consumed `\e[<`.
+///
+/// The three fields are `button;col;row`, and the terminator says which way the button
+/// went: `M` for press or motion, `m` for release. `None` means input ended mid-report,
+/// which is a truncated sequence rather than an event.
+let decode_mouse = () -> Maybe<Event> => {
+  match read_number() {
+    None => None,
+    Some((code, _)) => match read_number() {
+      None => None,
+      Some((col, _)) => match read_number() {
+        None => None,
+        Some((row, term)) => Some(Mouse(mouse_event(code, col, row, term)))
+      }
+    }
+  }
+}
+
+/// Turn an SGR button code and terminator into a `MouseEvent`.
+///
+/// The code is a bit set: the low two bits are the button, bit 5 (32) marks motion, and
+/// bit 6 (64) marks the wheel — so a wheel notch is 64/65 rather than a button in the low
+/// bits, and a drag is the button number with 32 added.
+///
+/// **Modifier bits are dropped**: shift is 4, meta 8 and ctrl 16, and none of them is
+/// carried on `MouseEvent` today. That is a deliberate omission rather than an oversight —
+/// adding them is three fields on a struct most matches do not want — and the bit values
+/// are written here so it is a small change if something needs ctrl-click.
+let mouse_event = pure (code: i64, col: i64, row: i64, term: i64) -> MouseEvent => {
+  let low = code & 3
+  let button = if (code & 64) != 0 {
+    if low == 0 { WheelUp } else { WheelDown }
+  } else if low == 0 { MouseLeft }
+  else if low == 1 { MouseMiddle }
+  else if low == 2 { MouseRight }
+  else { NoButton }
+  // `m` (109) is the release terminator; `M` is press *or* motion, and bit 5 separates
+  // those two. Checked in this order because a release while dragging sets both.
+  let action = if term == 109 { Release }
+  else if (code & 32) != 0 { Move }
+  else { Press }
+  MouseEvent { button: button, action: action, col: col, row: row }
+}

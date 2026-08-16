@@ -1,0 +1,74 @@
+module std.tui
+
+// Colour and text attributes.
+//
+// Everything here **returns** its escape sequence rather than printing it, because a
+// colour is part of the text it colours: it belongs in the string being built, so that
+// a whole frame — colours and all — reaches the terminal in one `print`. See
+// `screen.lyra` for the other half of that split, and why it goes the other way.
+//
+// The 256-colour palette rather than 24-bit truecolour: it is what a terminal is most
+// likely to actually support, and `\e[38;5;<n>m` is one number to carry rather than
+// three. A truecolour pair is a two-line addition here if something wants it.
+
+/// Reset every attribute — colour, bold, the lot.
+///
+/// **Emit this at the end of anything styled.** A colour is terminal state, not a
+/// property of the string that set it, so an unreset colour runs on into whatever is
+/// printed next, including the user's shell prompt after the program exits.
+pub let reset = pure () -> string => "\e[0m"
+
+/// Foreground colour, from the 256-colour palette.
+///
+/// 0–7 are the basic colours, 8–15 their bright variants, 16–231 a 6×6×6 RGB cube, and
+/// 232–255 a 24-step grey ramp. `grey` and `rgb` below build the last two, which are the
+/// two worth computing rather than memorizing.
+///
+/// # Panics
+///
+/// Never traps; a number outside 0–255 produces a sequence the terminal ignores.
+pub let fg = pure (color: i64) -> string => "\e[38;5;${color}m"
+
+/// Background colour, from the same palette as `fg`.
+pub let bg = pure (color: i64) -> string => "\e[48;5;${color}m"
+
+/// The palette index for a point in the 6×6×6 RGB cube, each component 0–5.
+///
+/// Components are **clamped rather than trapped**, which is the opposite of what this
+/// language does with an out-of-range index and is deliberate: a colour is decoration,
+/// and a program computing one from a value it is visualizing should not die at the edge
+/// of its own gradient. Getting a slightly wrong shade is the appropriate failure.
+///
+/// # Examples
+///
+/// ```
+/// print(fg(rgb(5, 0, 0)) ++ "red" ++ reset())
+/// ```
+pub let rgb = pure (r: i64, g: i64, b: i64) -> i64 =>
+  16 + 36 * clamp05(r) + 6 * clamp05(g) + clamp05(b)
+
+/// The palette index for one of the 24 greys, `level` from 0 (near black) to 23 (near
+/// white). Clamped, on `rgb`'s reasoning.
+///
+/// The ramp excludes true black and true white; those are palette 16 and 231, reachable
+/// through `rgb(0, 0, 0)` and `rgb(5, 5, 5)`.
+pub let grey = pure (level: i64) -> i64 => 232 + clamp(level, 0, 23)
+
+/// Bold, or on many terminals simply brighter.
+pub let bold = pure () -> string => "\e[1m"
+
+/// Dim/faint. Not universally supported; degrades to ordinary text.
+pub let dim = pure () -> string => "\e[2m"
+
+/// Swap foreground and background. The portable way to highlight a selected row, since
+/// it needs no assumption about what the user's colours are.
+pub let inverse = pure () -> string => "\e[7m"
+
+/// `v` restricted to `lo..=hi`. Local rather than exported: a general clamp belongs in
+/// the prelude beside the other numeric helpers, not in the terminal library.
+let clamp = pure noalloc (v: i64, lo: i64, hi: i64) -> i64 =>
+  if v < lo { lo } else if v > hi { hi } else { v }
+
+/// The cube's per-component range, which is 0–5 and not 0–255 — the frequent mistake,
+/// since every other RGB API in the world uses bytes.
+let clamp05 = pure noalloc (v: i64) -> i64 => clamp(v, 0, 5)

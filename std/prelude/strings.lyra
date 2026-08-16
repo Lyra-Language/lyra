@@ -58,6 +58,10 @@ pub let trim_end = pure (self: string) -> string => {
 /// reads better and allocates twice, building a whole intermediate string only to copy
 /// most of it again. An all-whitespace input yields `""`.
 ///
+/// # Complexity
+///
+/// Time: O(n). Space: one string of the trimmed length.
+///
 /// # Examples
 ///
 /// ```
@@ -92,9 +96,13 @@ pub let trim = pure (self: string) -> string => {
 
 /// Whether `self` begins with `other`.
 ///
-/// O(`other`'s length), with no decoding and no allocation — `pure noalloc`, so it is
-/// usable from the code that most wants a cheap prefix test. Every string is the prefix
-/// of itself, and `""` is a prefix of everything.
+/// Every string is the prefix of itself, and `""` is a prefix of everything.
+///
+/// # Complexity
+///
+/// Time: O(m), m the length of `other` — one `memcmp`, no decoding, and no O(n)
+/// length call, which is what makes it usable from the code that most wants a cheap
+/// prefix test. Space: O(1).
 ///
 /// # Examples
 ///
@@ -116,6 +124,10 @@ pub let starts_with = pure noalloc (self: string, other: string) -> bool =>
 /// Whether `self` ends with `other`.
 ///
 /// O(`other`'s length), allocation-free, as `starts_with` is.
+///
+/// # Complexity
+///
+/// Time: O(m). Space: O(1).
 pub let ends_with = pure noalloc (self: string, other: string) -> bool =>
   self.compare_bytes_at(self.byte_len() - other.byte_len(), other) == 0
 
@@ -208,6 +220,12 @@ impl Needle for string {
 /// libc memcmp for byte-at-a-time arithmetic in Lyra and buy only an *expected* bound. A
 /// real guarantee wants a `memmem` builtin.
 ///
+/// # Complexity
+///
+/// Time: O(n·m) worst case, n the haystack and m the needle; the scan is naive
+/// rather than Rabin–Karp, which trades a libc `memcmp` for byte-at-a-time
+/// arithmetic and buys only an *expected* bound. Space: O(1).
+///
 /// # Examples
 ///
 /// ```
@@ -232,6 +250,10 @@ pub let contains<t> where t: Needle = pure noalloc(self: string, needle: t, offs
 ///
 /// `[]rune`, not `[]string`: a caller who wants characters wants code points, and a box
 /// per character would buy nothing. Allocates the result.
+///
+/// # Complexity
+///
+/// Time: O(n), one decoding pass. Space: O(n) runes.
 pub let to_runes = pure (self: string) -> []rune => {
   var out: []rune = [];
   for c in self { out.push(c) }
@@ -248,6 +270,11 @@ pub let to_runes = pure (self: string) -> []rune => {
 /// Traps when `sep` is an empty string — it matches everywhere without consuming anything,
 /// so there is no answer to give. Use `to_runes` to split a string into its characters. A
 /// `rune` separator cannot be empty, so that call never risks it.
+///
+/// # Complexity
+///
+/// Time: O(n·m), the search cost of `index` repeated across the string. Space:
+/// O(n) — the array plus a fresh string per part, since `slice` copies.
 ///
 /// # Examples
 ///

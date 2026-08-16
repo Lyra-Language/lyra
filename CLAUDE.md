@@ -907,7 +907,20 @@ model — the syscalls are builtins, and `std.tui` above them is unwritten Lyra.
 *input* half ever needed the compiler; `\e` already reached stdout as byte 27, so ANSI
 colour and cursor positioning were always `print` calls.
 
-Two things to know before touching it. It is **the only file that consults
+`std/tui/` sits on top of them (`event.lyra`, `key.lyra`, `mouse.lyra`, `screen.lyra`,
+`style.lyra`) and is where the `Event` type, the escape-sequence decoder and the ANSI
+helpers live. **Mouse input needed no builtin**: a terminal reports clicks as escape
+sequences on stdin, so enabling is `print` and receiving is `read_key`. It must be SGR
+mode (`\e[?1006h`) — the legacy X10 encoding sends raw bytes, and a column past 95 is a
+UTF-8 lead byte that `read_key` swallows the next two bytes into, losing the
+coordinates. One thing it proved:
+**three builtins are very nearly the whole story, and a lone Escape is the exception** —
+`\e` begins every arrow, so the decoder must look ahead, and `read_key` blocks. It
+buffers the lookahead so nothing is lost and Escape is merely one keypress late; the
+proper fix is a timed read, whose signature is an open `todo.md` entry rather than a
+hastily added fourth builtin.
+
+Two things to know before touching the backend half. It is **the only file that consults
 `runtime.GOOS`**, for one constant — `TIOCGWINSZ` differs between the targets — and it
 is sound only because `lyrac` compiles for its own host; the other two builtins avoid
 the question entirely by going through `cfmakeraw`, so `struct termios`'s

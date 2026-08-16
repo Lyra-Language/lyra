@@ -10,6 +10,87 @@ Newest first.
 ## Dated log
 
 ### 08/15/26
+**`std.tui`** — `event.lyra`, `key.lyra`, `mouse.lyra`, `screen.lyra`, `style.lyra`: an
+`Event` type and the escape-sequence decoder, named keys, SGR mouse reporting,
+alternate-buffer/clear/cursor control, and 256-colour styling. All ordinary Lyra over the
+three builtins below, which is the division those were built for.
+
+**The mouse needed nothing from the compiler either**, and that is the part worth
+recording. A terminal reports clicks as escape sequences *on stdin*, so enabling is a
+`print` and receiving is `read_key` — the same two halves the keyboard uses. Verified
+before it was designed rather than after: an injected `\e[<0;10;5M` came back through
+`read_key` as `27 91 60 48 59 49 48 59 53 77`, every byte intact.
+
+**SGR mode is a requirement, not a preference, and the reason is an interaction between
+two decisions taken independently.** The legacy X10 encoding is `\e[M` plus three *raw
+bytes*, each its value plus 32 — and `read_key` answers a code point, so it decodes
+UTF-8. A column past 95 therefore produces a byte of 128 or more, which is a UTF-8 lead
+byte: measured, `\e[M` at column 200 came back as `27 91 77 32 35137 66`, with the column
+*and* the row swallowed into that one bogus code point. SGR (`\e[?1006h`) encodes the
+same fields as ASCII digits, so every byte stays below 128 and the decode is exact at any
+terminal size. `mouse_enable` always requests it and offers no way not to. This would
+have surfaced as a coordinate bug on wide terminals only.
+
+**`next_key` became `next_event`** (and `KeyReader`/`key_reader` became
+`EventReader`/`event_reader`) the same day, before anything depended on it. Terminal
+input is genuinely *one* stream — keys and mouse reports interleave on one file
+descriptor, told apart only by their bytes — so there is one reader and one state
+machine, and a `next_key` that could return a click would have been a name that lied.
+`Event = Keyboard Key | Mouse MouseEvent`.
+
+Two smaller decisions. Motion reporting is a **separate enable** (`mouse_enable_motion`)
+rather than a default, because a drag across the screen produces an event per cell where
+a click produces two. And `mouse_disable` must be paired like `alt_screen_leave`, or the
+terminal keeps emitting reports into the user's shell, where a click arrives as garbage
+text.
+
+**Writing it turned up one thing the builtins cannot do, and it is worth recording as a
+correction rather than a footnote.** The claim that three builtins are the whole of what
+a TUI needs from the compiler is very nearly true; the exception is a **lone Escape**.
+`\e` begins every arrow and navigation key, so a decoder must look at the next code
+point to know what it has — and `read_key` blocks, so a bare Escape waits for whatever
+is pressed next. The decoder is *correct* under this (it buffers the lookahead, so
+nothing is lost and Escape is reported one keypress late rather than wrongly) and arrow
+keys are unaffected, their bytes arriving together. Resolving it properly needs a timed
+read, whose signature is a real design question — `None` would then mean both "no key
+yet" and "end of input", the conflation `read_line`'s `Maybe` exists to avoid — so it is
+an open entry in `todo.md` rather than a fourth builtin added in haste.
+
+Two API decisions worth keeping. **Styles return their escape sequence, screen commands
+perform theirs**: a colour is part of the text it colours, so it composes into a frame
+printed once, while clearing the screen has nothing to compose into and a version
+returning a string you must remember to print would be a trap. And **every pair is
+width-first** — `move_to(col, row)` matches `terminal_size()`'s (columns, rows) and is
+the reverse of the `\e[<row>;<col>H` underneath; one place has to flip, and better there
+than at every call site.
+
+**Two compiler bugs fell out of writing it**, both pre-existing and both found only by
+using the language rather than testing it:
+
+- **`lyra-W006` fired on a value that was returned** (`typechecker_control_flow.go`).
+  `checkBlock` walked *every* statement as a statement and then additionally treated the
+  last as the block's value, so the tail was checked both ways and any `Maybe`-returning
+  call in the tail of an `if` branch or a **braced** match arm was told to bind or match
+  its result. `checkBlockReturn` — the same walk for a function body — had the exemption
+  all along, which is exactly why a bare block body was fine and the identical expression
+  one brace deeper was not. Hazard 8's "two helpers, one question" shape, and the brace
+  was the whole difference: an *unbraced* arm always worked.
+
+- **Assigning to a struct field of type `Maybe<…>` did not lower at all** —
+  `llvm: unknown named type "Maybe"` from four lines of Lyra. A nullary construction like
+  `None` solves no type parameter, so it stays the bare declaration until a context
+  completes it (`propagateInstantiation`), and `checkLValueAssignment` was not one of the
+  sites applying that context. The comment sitting there said so — "this path does no
+  literal propagation at all … whether it *should* is a separate question" — a deferred
+  question that was already a bug. Same failure the return position had before 08/05, one
+  statement form over; the fix is the same `contextualType` call, which also has to run
+  *before* the assignability check because a partly solved struct is not assignable to an
+  instantiation of itself until the context has completed it.
+
+  Worth recording how it was mis-diagnosed: the first repro was cross-module and the
+  same-file version appeared to work, so it looked like a module-resolution bug for
+  several minutes. The same-file test had only *read* the field, never assigned to it.
+
 **The terminal: `set_raw_mode`, `read_key`, `terminal_size`** (`pkg/backend/llvm/tui.go`).
 The three builtins an interactive TUI needs, and the only three — everything layered on
 them (escape-sequence decoding, colour, boxes, frame diffing) is expressible in Lyra and
