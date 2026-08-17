@@ -56,8 +56,7 @@ let main = () -> void => {
   var events = event_reader()
 
   let (cols0, rows0) = terminal_size()
-  let (width_cells, height_cells) = contain_set(cols0, rows0)
-  draw(width_cells, height_cells, zoom, mx, my)
+  draw(cols0, rows0, zoom, mx, my)
 
   var last_cols = cols0
   var last_rows = rows0
@@ -70,11 +69,8 @@ let main = () -> void => {
         mx = clamp(mx, 1, poll_cols)
         my = clamp(my, 1, poll_rows - 1)
 
-        // Make sure the Mandelbrot set is contained within the drawable space
-        let (width_cells, height_cells) = contain_set(poll_cols, poll_rows)
-
         clear()
-        draw(width_cells, height_cells, zoom, mx, my)
+        draw(poll_cols, poll_rows, zoom, mx, my)
       }
     } else {
     match events.next_event() {
@@ -113,20 +109,6 @@ let main = () -> void => {
 }
 
 /// The largest cell rectangle that shows the whole set without distorting it.
-///
-/// Matching the region's proportions is **not** matching `Y_LEN/X_LEN` in cells, because
-/// a cell is `CELL_ASPECT` times taller than it is wide. What has to hold is that the
-/// *rendered* shape matches:
-///
-///     width / (height * CELL_ASPECT) == X_LEN / Y_LEN
-///
-/// which rearranges to the two lines below. Leaving the correction out is what made the
-/// set render tall and narrow — 26 columns of 80, since it was asking for a rectangle
-/// about `CELL_ASPECT` times too thin and then hitting the row limit almost immediately.
-///
-/// The width-from-height branch cannot overflow `cols`: it is reached only when the
-/// height computed from `cols` already exceeded `rows`, and inverting that inequality
-/// gives a width below `cols`.
 let contain_set = (cols: i64, rows: i64) -> (i64, i64) => {
   var width = cols
   var height = (f64(cols) * ASPECT_RATIO / CELL_ASPECT).round()
@@ -155,8 +137,17 @@ let teardown = () => {
 
 let clamp = pure (v: i64, lo: i64, hi: i64) -> i64 => if v < lo { lo } else if v > hi { hi } else { v }
 
-/// Draw one whole frame: rows of gradient, then the status line, in a single write.
-let draw = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64) -> void => {
+/// Draw one whole frame: rows of the set, then the status line, in a single write.
+///
+/// Takes the **terminal** size and calls `contain_set` itself, rather than being handed a
+/// pre-contained size. That is what makes the aspect correction unforgettable: it used to
+/// be the caller's job, and two of the three call sites did it while the third — the one
+/// that redraws after a keypress or a click — passed the raw terminal size straight
+/// through. The frame was correct until you touched anything, then stretched to full
+/// width. A parameter that must be pre-processed by every caller is a parameter that will
+/// eventually not be.
+let draw = (term_cols: i64, term_rows: i64, zoom: i64, mx: i64, my: i64) -> void => {
+  let (cols, rows) = contain_set(term_cols, term_rows)
   var lines: []string = []
   let span_rows = rows - 1
   for row in 1..<=span_rows {
