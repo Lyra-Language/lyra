@@ -12,27 +12,17 @@ import (
 //   - a literal (integer, float, string, bool, char, regex),
 //   - a reference to another `const`,
 //   - a purely-constant expression built from the above: unary (`-x`, `!x`),
-//     arithmetic / boolean binary ops, string concatenation, or an array/tuple
-//     literal whose elements are themselves all constant.
+//     arithmetic / boolean binary ops, string concatenation, a **conversion**
+//     (`f64(N)`, `u8(200)`) of a constant operand, or an array/tuple literal whose
+//     elements are themselves all constant.
 //
 // Anything that depends on runtime state — a function call, a non-const variable,
 // an interpolated string, a member/index access, etc. — is rejected with
 // lyra-E012. The check reports the first (outermost) offending sub-expression so
 // the author is pointed at the part that isn't constant.
-func (tc *TypeChecker) checkConstInitializer(name string, expr ast.Expression) {
+func (tc *TypeChecker) checkConstInitializer(_ string, expr ast.Expression) {
 	offender, ok := tc.firstNonConstant(expr)
 	if ok {
-		return
-	}
-	// A **conversion** gets the fix rather than the category. `const A = u8(200)`
-	// is a reasonable thing to write and was reported as "a function call is not
-	// constant" — true of the mechanism (a conversion is spelled as a call) and
-	// useless as advice, since it names neither what was wrong nor what to do. The
-	// type belongs in an annotation, which *is* supported: `const A: u8 = 200`.
-	if target, isConv := conversionTargetOf(offender); isConv {
-		tc.addErrorCode(offender.GetLocation(), SeverityError, diag.CodeNonConstantConstInitializer,
-			"`const` initializer must be a compile-time constant: a conversion is not constant — "+
-				"write the type as an annotation instead: `const %s: %s = ...`", name, target)
 		return
 	}
 	tc.addErrorCode(offender.GetLocation(), SeverityError, diag.CodeNonConstantConstInitializer,
@@ -101,6 +91,28 @@ func (tc *TypeChecker) firstNonConstant(expr ast.Expression) (ast.Expression, bo
 			return off, false
 		}
 		return tc.firstNonConstant(e.Right)
+
+	case *ast.FunctionCallExpr:
+		// A **conversion** of a constant operand is constant. It is spelled as a call,
+		// which is why it landed in the default arm and was refused — but `f64(HEIGHT)`
+		// depends on nothing but HEIGHT, and a `const` is *inlined as its value
+		// expression* and lowered like any other code (llvm.go's identifier arm), so
+		// accepting it changes nothing about what the program computes. It only stops
+		// refusing a derivation that has to be written out by hand otherwise.
+		//
+		// This replaced a diagnostic that suggested `const A: u8 = 200` instead of
+		// `const A = u8(200)`. The annotation still works and is often the nicer
+		// spelling, but it cannot express a conversion *inside* a larger expression —
+		// `X_LEN * ASPECT * f64(HEIGHT) / f64(WIDTH)` has no annotation that rescues it,
+		// which is what made the advice a workaround rather than an answer.
+		//
+		// Recursing into the operand rather than accepting outright is what keeps
+		// `u8(x)` for a runtime `x` refused, and improves its message: the offender is
+		// now the variable, which is the thing that is not constant.
+		if _, isConv := conversionTargetOf(e); isConv && len(e.Arguments) == 1 {
+			return tc.firstNonConstant(e.Arguments[0])
+		}
+		return expr, false
 
 	case *ast.ArrayLiteralExpr:
 		for _, el := range e.Elements {

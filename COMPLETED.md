@@ -10,6 +10,36 @@ Newest first.
 ## Dated log
 
 ### 08/17/26
+**A conversion of a constant operand is constant** (`typechecker_const.go`).
+`const Y_LEN = X_LEN * ASPECT * f64(HEIGHT) / f64(WIDTH)` was refused: a conversion is
+spelled as a call, so it landed in the non-constant arm.
+
+The refusal came with advice — write the type as an annotation, `const A: u8 = 200`
+instead of `const A = u8(200)` — and that advice is fine for a bare literal and **cannot
+express a conversion inside a larger expression**. There is no annotation that rescues
+`X_LEN * ASPECT * f64(HEIGHT) / f64(WIDTH)`, which is what made it a workaround rather
+than an answer, and what forced the derivation to be a runtime `let` in the example that
+motivated it.
+
+Accepting it is safe for a reason already in the backend: **a `const` is inlined as its
+value expression** and lowered like any other code (llvm.go's identifier arm), so nothing
+about what the program computes changes. The check recurses into the operand rather than
+accepting outright, which is what keeps `u8(x)` for a runtime `x` refused.
+
+**Removing the special-case diagnostic improved three messages, which was not the goal.**
+It fired before the conversion was type-checked, so it masked whatever was genuinely
+wrong: `u8(x)` now names the *variable* rather than the conversion, `string(7)` reports
+that `string(...)` only reads a value of that type back out, and `i64(2.5)` reports that
+it is lossy and names floor/ceil/round. A diagnostic that pre-empts a more specific one is
+worth suspecting.
+
+Not extended to the **integer** folder (`FoldBigExpr`), which serves overflow checks and
+array sizes: it walks magnitudes, and folding a narrowing conversion as identity there
+would defeat the overflow detection it exists for. So `const N = i64(…)` is accepted as a
+const and still refused as an array size — reported at the use rather than the
+declaration, which is a corner with no motivating case.
+
+### 08/17/26
 **`wait_for_key_ms(timeout: i64) -> bool`** — a fourth terminal builtin, closing the one
 case the other three could not: `\e` begins every escape sequence, so a decoder must look
 at what follows it, and with only a blocking read a lone Escape waited for the user's

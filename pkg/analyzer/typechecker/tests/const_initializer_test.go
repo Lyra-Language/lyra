@@ -80,32 +80,54 @@ const NUMS = [1, y, 3]`, false)
 		"`const` initializer must be a compile-time constant: variable `y` is not constant")
 }
 
-// A **conversion** in a const initializer gets the fix, not the category (08/13).
+// A **conversion of a constant operand is constant** (08/17).
 //
-// `const A = u8(200)` was reported as "a function call is not constant" — true of
-// the mechanism, since a conversion is spelled as a call, and useless as advice: it
-// named neither what was wrong nor what to do. The type belongs in an annotation,
-// which is supported and is what the message now shows.
-func TestConst_Conversion_SuggestsAnnotation(t *testing.T) {
-	res := parseCollectAndCheck(t, `const A = u8(200)`, false)
-	assertErrorsAre(t, res,
-		"`const` initializer must be a compile-time constant: a conversion is not constant — "+
-			"write the type as an annotation instead: `const A: u8 = ...`")
+// It is spelled as a call, which is why it used to land in the non-constant arm and be
+// refused with advice to write the type as an annotation instead. The annotation still
+// works and is often nicer for a bare literal, but it cannot express a conversion *inside*
+// a larger expression — `X_LEN * ASPECT * f64(HEIGHT) / f64(WIDTH)` has no annotation that
+// rescues it, which is what made that advice a workaround rather than an answer.
+//
+// Accepting it is safe because a `const` is inlined as its value *expression* and lowered
+// like any other code, so nothing about what the program computes changes.
+func TestConst_ConversionOfAConstantIsConstant(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `const A = u8(200)
+const B = f64(5) + 1.0`, false))
 }
 
-// The suggested spelling is the one that actually works, which is the point of
-// naming it.
+// The motivating case: a conversion nested in arithmetic, which no annotation can express.
+func TestConst_ConversionInsideArithmetic(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `const WIDTH = 125
+const HEIGHT = 57
+const ASPECT = 2.0
+const X_LEN = 2.47
+const Y_LEN = X_LEN * ASPECT * f64(HEIGHT) / f64(WIDTH)`, false))
+}
+
+// The annotation spelling keeps working; the two are alternatives now rather than a
+// refusal and its workaround.
 func TestConst_AnnotatedInsteadOfConverted_Ok(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `const A: u8 = 200
 const B: f64 = 1.5`, false))
 }
 
-// Every conversion spelling reports its own target, including the identity forms
-// that exist only as newtype read-outs.
-func TestConst_ConversionNamesItsTarget(t *testing.T) {
+// A conversion of a *runtime* value is still refused, and names the operand rather than
+// the conversion — the walk recurses into it, so the offender reported is the thing that
+// is actually not constant.
+func TestConst_ConversionOfAVariableNamesTheVariable(t *testing.T) {
+	res := parseCollectAndCheck(t, `let x = 3
+const A = u8(x)`, false)
+	assertHasErrorContaining(t, res, "variable `x` is not constant")
+}
+
+// A conversion that is a genuine *type* error now reports as one. The blanket "not
+// constant" refusal used to mask these: `string(...)` is identity-only and `i64` of a
+// float is lossy, and both said nothing about either.
+func TestConst_BadConversionReportsTheRealError(t *testing.T) {
 	res := parseCollectAndCheck(t, `const S = string(7)`, false)
-	assertHasErrorContaining(t, res,
-		"a conversion is not constant — write the type as an annotation instead: `const S: string = ...`")
+	assertHasErrorContaining(t, res, "only reads a value of that type")
+	res2 := parseCollectAndCheck(t, `const C = i64(2.5)`, false)
+	assertHasErrorContaining(t, res2, "use floor(), ceil(), or round()")
 }
 
 // An ordinary call keeps the ordinary message: it is not a conversion and there is
