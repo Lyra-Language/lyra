@@ -143,12 +143,20 @@ because each was learned from a real failure, and none is local to one package.
 
    The front-end cousin, same day: `checkMatchExpr` had no `requireType` flag, so a
    match's arms were always checked in *value* position and a one-armed `if` as an arm
-   body was refused — while `checkIfExpr` had taken that flag all along.
-   `checkExprForEffect` is the value-optional twin of `inferExprType` those paths share.
-   With `checkBlockForEffect` (loop bodies) and `checkBlock`'s double-checked tail
-   (lyra-W006, 08/15), that makes **four constructs that had to decide whether their tail
-   is a value or a statement, each getting the answer from a different place** — the set
-   to read together before adding a fifth.
+   body was refused. `checkIfExpr` had taken that flag all along — but only for the
+   *mismatch* check, still inferring both branches as values, so the identical refusal
+   applied one construct over (found the next day, writing a polling loop).
+
+   **That family had five members and now has one answer.** `checkExprForEffect` — the
+   value-optional twin of `inferExprType` — is what `checkBlockForEffect` (loop bodies),
+   `checkBlock`'s tail (lyra-W006, 08/15), `checkMatchExpr(false)` and `checkIfExpr(false)`
+   all use, and it subsumed a hand-rolled else-if special case that had propagated
+   statement context only through a *bare* `else if` (a braced `else { if … }` still put
+   its tail in value position). `checkLValueAssignment`'s missing context (08/15) is the
+   same question asked about a value rather than a tail. The durable fix here was hazard
+   8's own advice — stop having more than one of it — rather than a fifth copy that
+   happens to agree today; **anything new that must decide whether a tail is a value or a
+   statement should call `checkExprForEffect`, not re-derive it.**
 
    Two more landed 08/05, both in the backend and both found by *reviewing* for duplication
    rather than by hitting them: `resolveStructType`/`resolveTupleType` missing the
@@ -927,6 +935,14 @@ are refused by `pure`/`det`, a threaded timestamp is ordinary `i64` data.
 model — the syscalls are builtins, and `std.tui` above them is unwritten Lyra. Only the
 *input* half ever needed the compiler; `\e` already reached stdout as byte 27, so ANSI
 colour and cursor positioning were always `print` calls.
+
+**A fourth builtin landed 08/17**, `wait_for_key_ms(timeout) -> bool`: poll stdin with a
+timeout and say whether anything is readable. It answers a **bool rather than a timed
+read** because there are three outcomes (a key, nothing yet, input ended) and a
+`Maybe<rune>` has two — so `read_key` still answers "a key or the end", and this answers
+"is there anything". At EOF poll reports readable, so the pairing is exact rather than a
+convention. Unlike `terminal_size` it needs no `runtime.GOOS`: `struct pollfd` and the
+POLL* bits are identical on both targets.
 
 `std/tui/` sits on top of them (`event.lyra`, `key.lyra`, `mouse.lyra`, `screen.lyra`,
 `style.lyra`) and is where the `Event` type, the escape-sequence decoder and the ANSI

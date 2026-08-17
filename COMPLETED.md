@@ -10,6 +10,46 @@ Newest first.
 ## Dated log
 
 ### 08/17/26
+**`wait_for_key_ms(timeout: i64) -> bool`** — a fourth terminal builtin, closing the one
+case the other three could not: `\e` begins every escape sequence, so a decoder must look
+at what follows it, and with only a blocking read a lone Escape waited for the user's
+*next* keypress. It now reports immediately, and `tui_viewer.lyra` redraws on a resize
+with no key pressed (measured: 40x12 to 60x20, nothing sent).
+
+**A bool rather than the timed read the todo entry proposed, and the reason is a counting
+argument.** There are three outcomes — a key arrived, nothing yet, input ended — and
+`read_key_timeout(ms) -> Maybe<rune>` has two answers, so it must conflate two. Conflating
+"nothing yet" with "ended" is exactly the mistake `read_line`'s `Maybe` exists to avoid: it
+makes the natural loop spin forever once stdin closes. Splitting the question needs no new
+type at all — this answers "is there anything to read", `read_key` then answers "a key, or
+the end".
+
+The pairing is a **property of poll rather than a convention**: a closed descriptor reports
+readable, so at EOF this returns true and the read that follows returns `None`. Verified
+before the design was committed to, not after — a poll of a pipe whose write end is closed
+answers POLLIN|POLLHUP and the read then returns 0.
+
+Two smaller decisions. The timeout is **clamped into [0, INT_MAX]** rather than rejected:
+`deadline - now()` naturally goes negative once the deadline has passed, and "do not wait"
+is the meaning there rather than an error, so this is not the silent reinterpretation the
+language usually refuses. And unlike `terminal_size`, this needs **no `runtime.GOOS`** —
+`struct pollfd` is `{int, short, short}` and POLLIN/POLLERR/POLLHUP are 0x1/0x8/0x10 on
+both targets.
+
+**A fifth member of the "block value vs statement" family fell out of using it.** Writing
+the viewer's polling loop produced `if !available { if resized { redraw() } } else { … }`,
+refused for wanting an `else` on the inner one-armed `if`. `checkIfExpr` took its
+`requireType` flag for the *mismatch* check but still inferred both branches as values.
+It now routes them through `checkExprForEffect` in statement context — which subsumes the
+hand-rolled else-if special case it replaced, and more evenly: that one propagated
+statement context only through a bare `else if`, so a braced `else { if … }` still put its
+tail in value position.
+
+With that, the family finally has **one** answer rather than five: `checkExprForEffect` is
+what `checkBlockForEffect`, `checkMatchExpr(false)` and `checkIfExpr(false)` all use. That
+is hazard 8's durable fix — stop having more than one of it — rather than a fifth copy
+that happens to agree today.
+
 **Three `std.tui` demo programs**, and the four bugs writing them turned up.
 `examples/tui_palette.lyra` is the style half alone (pipeable, touches no terminal
 state), `tui_events.lyra` the input half as a readable transcript, and

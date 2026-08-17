@@ -1,5 +1,5 @@
 import std.tui.{
-  event_reader, Event, Key,
+  event_reader, Event, Key, event_available,
   mouse_enable, mouse_disable,
   alt_screen_enter, alt_screen_leave, clear, cursor_hide, cursor_show, cursor_home, move_to,
   fg, bg, rgb, reset, bold, inverse
@@ -108,15 +108,31 @@ let draw = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> v
   print(lines.join("\r\n"))
 }
 
+/// How long the loop waits for input before looking at the terminal size again. Short
+/// enough that a resize feels immediate, long enough that an idle program is not spinning
+/// — it wakes 20 times a second and does nothing.
+const redraw_interval_ms = 50
+
 let clamp = pure (v: i64, lo: i64, hi: i64) -> i64 => if v < lo { lo } else if v > hi { hi } else { v }
 
-let main = () => {
+let setup = () => {
   // Order matters on the way in, and the reverse order on the way out.
   set_raw_mode(true)
   alt_screen_enter()
   cursor_hide()
   mouse_enable()
   clear()
+}
+
+let teardown = () => {
+  mouse_disable()
+  cursor_show()
+  alt_screen_leave()
+  set_raw_mode(false)
+}
+
+let main = () => {
+  setup()
 
   var zoom = 0
   var mx = 1
@@ -128,14 +144,32 @@ let main = () => {
   let (cols0, rows0) = terminal_size()
   draw(cols0, rows0, zoom, mx, my, count)
 
+  var last_cols = cols0
+  var last_rows = rows0
   for running {
+    // **Poll rather than block**, so the loop can do something other than wait for a key.
+    // Here that something is noticing a resize: `terminal_size` is EffectInput precisely
+    // because the window can change without the user typing, and until `wait_for_key_ms`
+    // existed there was no way to look. A blocking `next_event` redraws only on the next
+    // keypress, which is what made a resized window sit there stale.
+    if !events.event_available(redraw_interval_ms) {
+      let (poll_cols, poll_rows) = terminal_size()
+      if poll_cols != last_cols || poll_rows != last_rows {
+        last_cols = poll_cols
+        last_rows = poll_rows
+        mx = clamp(mx, 1, poll_cols)
+        my = clamp(my, 1, poll_rows - 1)
+        clear()
+        draw(poll_cols, poll_rows, zoom, mx, my, count)
+      }
+    } else {
     match events.next_event() {
       None => { running = false },
       Some(e) => {
         count += 1
-        // Read the size every frame rather than once: the window can change, and this is
-        // exactly why `terminal_size` is EffectInput rather than a constant.
         let (cols, rows) = terminal_size()
+        last_cols = cols
+        last_rows = rows
         match e {
           Keyboard(Up) => { my -= 1 },
           Keyboard(Down) => { my += 1 },
@@ -159,16 +193,14 @@ let main = () => {
         draw(cols, rows, zoom, mx, my, count)
       }
     }
+    }
   }
 
-  mouse_disable()
-  cursor_show()
-  alt_screen_leave()
-  set_raw_mode(false)
+  teardown()
 
-  // A resize is only noticed on the *next* event, because `read_key` blocks and there is
-  // no way to wake it: no signal handler for SIGWINCH, and no timed read. Resizing the
-  // window and then pressing any key redraws correctly. Closing that properly is the
-  // `timed read_key` item in todo.md.
+  // A resize is now picked up without a keypress: the loop polls with a timeout and
+  // re-reads the size whenever the poll comes back empty. There is still no SIGWINCH
+  // handler — this notices a resize within `redraw_interval_ms` rather than instantly,
+  // which for a terminal is indistinguishable.
   println("marker ended at ${mx},${my} after ${count} events")
 }

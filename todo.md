@@ -2344,35 +2344,16 @@ sequences on stdin, so it is `print` to enable and `read_key` to receive. See
 COMPLETED.md, including why SGR mode is the only encoding a rune-oriented `read_key` can
 carry.
 
-### [OPEN] A timed `read_key`, for the one key three builtins cannot resolve
+### [DONE 08/17] A timed `read_key`, for the one key three builtins cannot resolve
 
-**The claim that three builtins are the whole of what a TUI needs from the compiler is
-very nearly true, and this is the exception.** `\e` begins every arrow and navigation
-key, so a decoder that reads one must look at the next code point to know what it has —
-and `read_key` blocks. If the user pressed Escape and nothing else, that read waits for
-the *next* keypress, whenever it comes.
+`wait_for_key_ms(timeout: i64) -> bool` landed 08/17 — a fourth terminal builtin, and
+**not** the `read_key_timeout(ms) -> Maybe<rune>` this entry proposed. See COMPLETED.md
+for why splitting the question beats a timed read: three outcomes (a key, nothing yet,
+input ended) do not fit two answers, and a `Maybe` has to conflate two of them.
 
-`std.tui`'s decoder is correct under this: it buffers the lookahead, so nothing is lost
-and a lone Escape is reported one keypress late rather than wrongly. Arrow keys are
-entirely unaffected — their bytes arrive together — so the practical cost is that a
-program wanting a responsive quit binds `q` rather than Escape. That is what the
-mandelbrot viewer will do, which is why this is not urgent.
-
-Resolving it needs a **timed or non-blocking read**, and the shape is worth deciding
-before it is built:
-
-- `read_key_timeout(ms: i64) -> Maybe<rune>` is the smallest addition, but `None` then
-  means two different things — no key yet, and end of input — which is exactly the
-  conflation `read_line`'s `Maybe` was introduced to avoid. A `Result` or a three-way
-  data type is the honest signature, and is a bigger commitment.
-- Setting VMIN/VTIME through `set_raw_mode` instead would make *every* read timed and
-  change `read_key`'s contract rather than adding to it.
-- A bulk `read` (`\e[A` usually arrives as three bytes in one go, since cfmakeraw sets
-  VMIN=1 and a multi-byte read returns as soon as any byte is available) sidesteps the
-  timeout for the common case but is not a guarantee — a slow link can split a sequence,
-  and then the decoder is wrong rather than late.
-
-The first is probably right, with the naming question settled first.
+Both motivating cases are closed. A lone Escape is reported immediately rather than one
+keypress late, and `tui_viewer.lyra` redraws on a window resize with no key pressed
+(measured: 40x12 to 60x20, no input sent).
 
 ### [OPEN] `std.tui` above the decoder: frames, boxes, a status bar
 

@@ -70,17 +70,15 @@ pub let event_reader = () -> EventReader => EventReader { pending: None }
 ///
 /// Never traps. `None` is the end of input, exactly as it is for `read_key`.
 ///
-/// **A lone Escape is reported one keypress late, and that is a real limitation rather
-/// than an oversight.** `\e` begins every arrow, navigation key and mouse report, so on
-/// reading one this has to look at the next code point to know what it has — and
-/// `read_key` blocks. If the user pressed Escape and nothing else, that read waits for
-/// whatever they press next, and only then does `Escape` come back (followed by the other
-/// key, from `pending`, so nothing is lost). Distinguishing the two cases needs a *timed*
-/// read, which none of the three terminal builtins offers.
+/// **A lone Escape is reported immediately** as of 08/17. `\e` begins every arrow,
+/// navigation key and mouse report, so on reading one this must look at what follows to
+/// know what it has — and with only a blocking read that meant waiting for the user's
+/// *next* keypress, so Escape arrived one key late. `wait_for_key_ms` resolves it: if
+/// nothing follows the `\e` within `escape_timeout_ms`, it was the Escape key.
 ///
-/// The practical consequence is small and worth stating plainly: **arrows and mouse
-/// reports work exactly as expected** — their bytes arrive together, so nothing waits —
-/// and a program that wants a responsive "quit" should bind `q` rather than Escape.
+/// The lookahead buffer is still needed and still does its job — a key that follows an
+/// Escape too quickly to be a timeout is read, found not to be a sequence introducer, and
+/// handed back on the next call rather than dropped.
 pub let next_event = (self: mut EventReader) -> Maybe<Event> => {
   let first = match self.pending {
     Some(r) => { self.pending = None; Some(r) },
@@ -98,6 +96,12 @@ pub let next_event = (self: mut EventReader) -> Maybe<Event> => {
 /// keypress of its own and the code point just read belongs to the *next* event, so it is
 /// buffered rather than dropped.
 let decode_escape = (self: mut EventReader) -> Maybe<Event> => {
+  // Nothing following the `\e` within the window means it *was* the Escape key. This is
+  // the one thing three builtins could not settle: without a timed read the only way to
+  // find out is to block, which reports the Escape a keypress late.
+  if !wait_for_key_ms(escape_timeout_ms) {
+    Some(Keyboard(Escape))
+  } else {
   match read_key() {
     // Input ended right after the Escape, so it was the last key pressed.
     None => Some(Keyboard(Escape)),
@@ -110,7 +114,37 @@ let decode_escape = (self: mut EventReader) -> Maybe<Event> => {
       else { self.pending = Some(b); Some(Keyboard(Escape)) }
     }
   }
+  }
 }
+
+/// How long to wait for the code point after an `\e` before concluding that the Escape
+/// was a keypress of its own.
+///
+/// 25ms is the conventional figure and the tradeoff is symmetric: too short and a
+/// sequence arriving over a slow link is read as Escape-then-garbage; too long and the
+/// Escape key feels sluggish. A local terminal delivers a whole sequence in well under a
+/// millisecond, so this is generous by a wide margin.
+const escape_timeout_ms = 25
+
+/// Whether an event is ready to be read, waiting up to `timeout_ms` for one.
+///
+/// This is what lets a program do something *other* than wait for input — redraw on a
+/// resize, animate, poll a clock — instead of blocking in `next_event` until a key
+/// arrives.
+///
+/// It consults the lookahead buffer first, which a bare `wait_for_key_ms` cannot: a code
+/// point already read and held here is an event that is ready even though the terminal
+/// has nothing new to offer.
+///
+/// **True does not promise a key.** At end of input this answers true and the
+/// `next_event` that follows answers `None` — which is the whole reason the underlying
+/// builtin is a bool rather than a timed read returning `Maybe`: the two outcomes stay
+/// distinguishable instead of collapsing into one `None`.
+pub let event_available = (self: EventReader, timeout_ms: i64) -> bool =>
+  match self.pending {
+    Some(_) => true,
+    None => wait_for_key_ms(timeout_ms)
+  }
 
 /// Decode a sequence body — the part after `\e[`.
 ///
