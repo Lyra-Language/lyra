@@ -942,7 +942,15 @@ func (l *lowerer) lowerIf(block *ir.Block, e *ast.IfExpr) (value.Value, *ir.Bloc
 	// neither branch reaches (both diverged — the merge is unreachable, terminated by
 	// downstream lowering). In value position the typechecker guarantees both
 	// branches produce a compatible value, so only the phi cases below remain.
-	if (thenReaches && thenVal == nil) || (elseReaches && elseVal == nil) {
+	//
+	// **"Void" has two spellings here and both have to be caught.** A branch that
+	// produces nothing hands back a nil, which is what a builtin like `set_raw_mode`
+	// does — but a call to a *user-defined* `void` function hands back the `ir.Call`
+	// itself, non-nil with a void type. Testing only for nil built `phi void` from
+	// `if b { f() } else { g() }`, six ordinary lines that clang rejects outright
+	// ("void type only allowed for function results"). The comment above already
+	// anticipated void branches; it just did not anticipate that one of them is not nil.
+	if (thenReaches && isVoidResult(thenVal)) || (elseReaches && isVoidResult(elseVal)) {
 		return nil, mergeBlock, nil
 	}
 	var incomings []*ir.Incoming
@@ -959,6 +967,21 @@ func (l *lowerer) lowerIf(block *ir.Block, e *ast.IfExpr) (value.Value, *ir.Bloc
 	// branchCommonType guarantees the branches are type-compatible; a width mismatch
 	// that slipped through yields invalid IR clang rejects (loud), not wrong code.
 	return mergeBlock.NewPhi(incomings...), mergeBlock, nil
+}
+
+// isVoidResult reports whether v carries no usable value — either nothing at all, or a
+// call whose LLVM result type is void.
+//
+// The two are the same thing to a caller and different things to `llir`, which is what
+// made the distinction worth a named predicate rather than an inline test: anything that
+// feeds a branch result into a phi, a store or an aggregate has to ask this question, and
+// asking it as `== nil` is right until the day the branch calls a `void` function.
+func isVoidResult(v value.Value) bool {
+	if v == nil {
+		return true
+	}
+	_, isVoid := v.Type().(*lltypes.VoidType)
+	return isVoid
 }
 
 // lowerBranchValue lowers a two-armed `if` branch, tolerating a *void* branch (a

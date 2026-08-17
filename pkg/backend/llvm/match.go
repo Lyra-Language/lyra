@@ -139,7 +139,13 @@ func (m *matchMerge) arm(val value.Value, end *ir.Block) {
 	// its block already sealed and contributes nothing, while an arm that merely
 	// produced no value still reaches the merge and control still continues past the
 	// match — there is just nothing to phi.
-	if val == nil {
+	//
+	// `isVoidResult` rather than `val == nil`, because "produced no value" has two
+	// spellings: a builtin hands back nil, and a call to a user-defined `void` function
+	// hands back the `ir.Call`, non-nil with a void type. `match x { 0 => f(), _ => g() }`
+	// over void functions built `phi void` and clang refused the module — the `if` form
+	// of this is the twin in control_flow.go, and both had to be fixed in one change.
+	if isVoidResult(val) {
 		m.void = true
 		return
 	}
