@@ -1,3 +1,4 @@
+import std.math.{ Complex }
 import std.tui.{
   event_reader, Event, Key, event_available,
   mouse_enable, mouse_disable,
@@ -5,18 +6,58 @@ import std.tui.{
   fg, bg, rgb, reset, bold, inverse
 }
 
-let main = () => {
+const MAX_ITER = 100
+const X_MIN = -2.00
+const X_MAX = 0.47
+const X_LEN = X_MAX - X_MIN
+
+const Y_MIN = -1.12
+const Y_MAX = 1.12
+const Y_LEN = Y_MAX - Y_MIN
+
+const CELL_ASPECT = 2.2
+const ASPECT_RATIO = Y_LEN / X_LEN
+
+const ESCAPE = 65536.0
+const SHADE_MAX = 64.0
+// The colour ramp, walked white -> yellow -> orange -> red -> magenta -> purple -> blue
+// through std.tui's 6x6x6 cube. Index 0 is the set itself; 1 is hard against its boundary
+// and 23 is the far field, matching what `shade` produces.
+//
+// **Black for the set and dark blue for the far field, with the bright end at the
+// boundary.** That is where the structure is — the thin band of points that take many
+// iterations to escape — so it gets the contrast, and the two large flat regions get the
+// two dark ends. The reverse ramp looks like a photographic negative of the same image.
+//
+// The stops are spaced by **arc length** through the cube rather than evenly between key
+// colours: the cube is coarse enough (six levels per channel) that even spacing collapses
+// several neighbours onto the same index, which shows as flat bands. Arc-length spacing
+// gives 23 distinct colours out of 23.
+const PALETTE = [
+  16,
+  231, 230, 229, 228, 227, 226,
+  220, 214, 208, 202, 196, 197,
+  161, 162, 126, 127, 91, 92,
+  56, 20, 19, 18, 17
+]
+
+/// How long the loop waits for input before looking at the terminal size again. Short
+/// enough that a resize feels immediate, long enough that an idle program is not spinning
+/// — it wakes 20 times a second and does nothing.
+const redraw_interval_ms = 50
+
+let main = () -> void => {
   setup()
 
   var zoom = 0
   var mx = 1
   var my = 1
-  var count = 0
   var running = true
   var events = event_reader()
 
   let (cols0, rows0) = terminal_size()
-  draw(cols0, rows0, zoom, mx, my, count)
+  let (width_cells, height_cells) = contain_set(cols0, rows0)
+  draw(width_cells, height_cells, zoom, mx, my)
 
   var last_cols = cols0
   var last_rows = rows0
@@ -28,14 +69,17 @@ let main = () => {
         last_rows = poll_rows
         mx = clamp(mx, 1, poll_cols)
         my = clamp(my, 1, poll_rows - 1)
+
+        // Make sure the Mandelbrot set is contained within the drawable space
+        let (width_cells, height_cells) = contain_set(poll_cols, poll_rows)
+
         clear()
-        draw(poll_cols, poll_rows, zoom, mx, my, count)
+        draw(width_cells, height_cells, zoom, mx, my)
       }
     } else {
     match events.next_event() {
       None => { running = false },
       Some(e) => {
-        count += 1
         let (cols, rows) = terminal_size()
         last_cols = cols
         last_rows = rows
@@ -48,8 +92,8 @@ let main = () => {
           Keyboard(PageDown) => { zoom -= 1 },
           Keyboard(Char c) => { running = i64(c) != 113 },
           Mouse(m) => match m.button {
-            WheelUp => { zoom += 1 },
-            WheelDown => { zoom -= 1 },
+            WheelUp => { zoom -= 1 },
+            WheelDown => { zoom += 1 },
             // A click sets the marker where the pointer is — the coordinates are
             // already 1-based, matching the frame's own numbering.
             _ => { mx = m.col; my = m.row }
@@ -59,78 +103,39 @@ let main = () => {
         mx = clamp(mx, 1, cols)
         my = clamp(my, 1, rows - 1)
         zoom = clamp(zoom, 0, 99)
-        draw(cols, rows, zoom, mx, my, count)
+        draw(cols, rows, zoom, mx, my)
       }
     }
     }
   }
 
   teardown()
-
-  println("marker ended at ${mx},${my} after ${count} events")
 }
 
-/// Spread a **1-based** position over `span` cells onto the cube's 0..5, in six even bands.
-let band = pure noalloc (pos: i64, span: i64) -> i64 =>
-  if span <= 0 { 0 } else { 6 * (pos - 1) / span }
-
-/// The gradient cell for a position — stands in for a rendered pixel.
-let cell_color = pure (col: i64, row: i64, cols: i64, span_rows: i64, zoom: i64) -> i64 =>
-  rgb(band(col, cols), band(row, span_rows), zoom % 6)
-
-/// One row of the frame, as a string. Built by concatenation into a single row rather
-/// than printed per cell.
-let render_row = (row: i64, cols: i64, span_rows: i64, zoom: i64, mx: i64, my: i64) -> string => {
-  var out = ""
-  for col in 1..<=cols {
-    let painted = if col == mx && row == my {
-      inverse() ++ ("+" ++ reset())
-    } else {
-      bg(cell_color(col, row, cols, span_rows, zoom)) ++ " "
-    }
-    out = out ++ painted
+/// The largest cell rectangle that shows the whole set without distorting it.
+///
+/// Matching the region's proportions is **not** matching `Y_LEN/X_LEN` in cells, because
+/// a cell is `CELL_ASPECT` times taller than it is wide. What has to hold is that the
+/// *rendered* shape matches:
+///
+///     width / (height * CELL_ASPECT) == X_LEN / Y_LEN
+///
+/// which rearranges to the two lines below. Leaving the correction out is what made the
+/// set render tall and narrow — 26 columns of 80, since it was asking for a rectangle
+/// about `CELL_ASPECT` times too thin and then hitting the row limit almost immediately.
+///
+/// The width-from-height branch cannot overflow `cols`: it is reached only when the
+/// height computed from `cols` already exceeded `rows`, and inverting that inequality
+/// gives a width below `cols`.
+let contain_set = (cols: i64, rows: i64) -> (i64, i64) => {
+  var width = cols
+  var height = (f64(cols) * ASPECT_RATIO / CELL_ASPECT).round()
+  if height > rows {
+    height = rows
+    width = (f64(height) * CELL_ASPECT / ASPECT_RATIO).round()
   }
-  out ++ reset()
+  (width, height)
 }
-
-/// `text` at exactly `width` characters: padded if short, cut if long.
-let fit = (text: string, width: i64) -> string => {
-  if text.len() > width {
-    text.slice(0, width)
-  } else {
-    var padded = text
-    for i in text.len()..<width {
-      padded = padded ++ " "
-    }
-    padded
-  }
-}
-
-/// The status line, always exactly one terminal row wide.
-let status = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> string => {
-  let text = " ${cols}x${rows}  zoom ${zoom}  marker ${mx},${my}  events ${events}  " ++
-    "arrows/click move · wheel zooms · q quits "
-  inverse() ++ (bold() ++ (fit(text, cols) ++ reset()))
-}
-
-/// Draw one whole frame: rows of gradient, then the status line, in a single write.
-let draw = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> void => {
-  var lines: []string = []
-  let span_rows = rows - 1
-  for row in 1..<=span_rows {
-    lines.push(render_row(row, cols, span_rows, zoom, mx, my))
-  }
-  lines.push(status(cols, rows, zoom, mx, my, events))
-  cursor_home()
-  print(lines.join("\r\n"))
-}
-
-/// How long the loop waits for input before looking at the terminal size again. Short
-/// enough that a resize feels immediate, long enough that an idle program is not spinning
-/// — it wakes 20 times a second and does nothing.
-const redraw_interval_ms = 50
-
-let clamp = pure (v: i64, lo: i64, hi: i64) -> i64 => if v < lo { lo } else if v > hi { hi } else { v }
 
 let setup = () => {
   // Order matters on the way in, and the reverse order on the way out.
@@ -146,4 +151,88 @@ let teardown = () => {
   cursor_show()
   alt_screen_leave()
   set_raw_mode(false)
+}
+
+let clamp = pure (v: i64, lo: i64, hi: i64) -> i64 => if v < lo { lo } else if v > hi { hi } else { v }
+
+/// Draw one whole frame: rows of gradient, then the status line, in a single write.
+let draw = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64) -> void => {
+  var lines: []string = []
+  let span_rows = rows - 1
+  for row in 1..<=span_rows {
+    lines.push(render_row(row, rows, cols, mx, my))
+  }
+  lines.push(status(cols, rows, zoom, mx, my))
+  cursor_home()
+  print(lines.join("\r\n"))
+}
+
+
+/// One row of the frame, as a string. Built by concatenation into a single row rather
+/// than printed per cell.
+let render_row = (row: i64, rows: i64, cols: i64, mx: i64, my: i64) -> string => {
+  var out = ""
+  for col in 1..<=cols {
+    let painted = if col == mx && row == my {
+      inverse() ++ ("+" ++ reset())
+    } else {
+      let c = Complex {
+        re: X_MIN + X_LEN * f64(col) / f64(cols),
+        im: Y_MIN + Y_LEN * f64(row) / f64(rows)
+      }
+      bg(PALETTE[shade(c)]) ++ " "
+    }
+    out = out ++ painted
+  }
+  out ++ reset()
+}
+
+/// The gradient cell for a position — stands in for a rendered pixel.
+let shade = pure (c: Complex<f64>) -> i64 => {
+  var z = Complex { re: 0.0, im: 0.0 }
+  var mag2 = 0.0
+  var iter = 0
+  for iter < MAX_ITER {
+    z = z * z + c
+    mag2 = z.re * z.re + z.im * z.im
+    if mag2 > ESCAPE { break }
+    iter += 1
+  }
+
+  if iter >= MAX_ITER {
+    0
+  } else {
+    // Smooth escape time, `n + 1 - log2(log|z|)`: the integer iteration count alone
+    // draws visible contours, since every point escaping on the same step gets the
+    // same character.
+    let smooth = f64(iter) + 1.0 - mag2.sqrt().log().log2()
+    // The correction is worth about -1.5, so a point escaping immediately lands below
+    // zero, and the log of that is a NaN — which `round` traps on rather than quietly
+    // answering a number. Clamping is the fix; the trap is doing its job.
+    let s = if smooth < 1.0 { 1.0 } else if smooth > SHADE_MAX { SHADE_MAX } else { smooth }
+    let t = s.log() / SHADE_MAX.log()
+    // `len() - 1` at the far end and `len() - 2` as the span leave index 0 unused by the
+    // exterior, reserved for the set — so the boundary never takes the set's colour.
+    PALETTE.len() - 1 - (t * f64(PALETTE.len() - 2)).round()
+  }
+}
+
+/// The status line, always exactly one terminal row wide.
+let status = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64) -> string => {
+  let text = " ${cols}x${rows}  zoom ${zoom}  marker ${mx},${my}  " ++
+    "arrows/click move · wheel zooms · q quits "
+  inverse() ++ (bold() ++ (fit(text, cols) ++ reset()))
+}
+
+/// `text` at exactly `width` characters: padded if short, cut if long.
+let fit = (text: string, width: i64) -> string => {
+  if text.len() > width {
+    text.slice(0, width)
+  } else {
+    var padded = text
+    for i in text.len()..<width {
+      padded = padded ++ " "
+    }
+    padded
+  }
 }
