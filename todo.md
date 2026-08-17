@@ -2365,6 +2365,57 @@ Frame diffing is the one with a measurement behind it already: `todo.md`'s rende
 section found that a terminal frame is better assembled into one string and printed once
 than positioned and printed per cell, so a diff wants to emit runs rather than cells.
 
+### [OPEN] An import's member list does not restrict visibility
+
+`import std.tui.{ bg }` lets **every** `pub` name in `std.tui` resolve bare — `grey`,
+`rgb`, `bold`, the lot. Measured 08/17:
+
+| reference | today |
+|---|---|
+| selective import, unlisted name | resolves |
+| selective import, unlisted *type* | resolves |
+| **namespace** import (`import std.tui`), bare name | resolves |
+| namespace import, qualified (`tui.grey`) | resolves (correct) |
+| module never imported | refused (correct) |
+| prelude name | resolves (correct) |
+
+So the rule today is "any `pub` name of any module you imported at all", and the member
+list drives only the namespace binding and `lyra-W004`.
+
+**It is architectural rather than a missing check.** `exportToGlobal` puts every `pub`
+declaration into the shared global scope, and a module scope's parent chain reaches it —
+so *exported* and *visible* are the same thing, and no per-reference check is consulted.
+`checkVisible` returns true for anything `pub` and never looks at imports;
+`inferIdentifierCall` says outright that a successful lookup needs no visibility check
+because "scoping now enforces it structurally", which is exactly the assumption that does
+not hold.
+
+Two ways to close it, and they are not the same size:
+
+- **Rewire the scopes.** Give each module an imports scope between its own and the
+  prelude, populated from its import list, and stop resolving through the global scope.
+  This is the real fix and needs no consumer changes — but it needs a post-pass (a
+  module's imports cannot be populated until every module's exports are known) and has to
+  respect the export-timing sharp edges `pkg/modules/README.md` documents.
+- **Enforce with a checker pass.** Reuse `collectRefsByFile` from `unused_imports.go`,
+  which already gathers identifier *and* type references per file, and warn for a name
+  whose declaring module is neither this one, the prelude, nor named by an import. Much
+  smaller, but it is a second answer to "what is visible here" living beside the scope
+  chain, which is the drift hazard 8 keeps cataloguing. It also needs
+  `collectRefsByFile` to start carrying a location per name, which it does not today.
+
+Three decisions to settle first:
+
+- **Warning or error.** An error is the honest reading and is a breaking change to every
+  program relying on the hole. `lyra-W016` is the precedent for warning first.
+- **Does a namespace import admit bare names?** It should not — `import shapes` binds
+  `shapes.Point`, and admitting bare `Point` makes the two import forms mean the same
+  thing. But that is the form most likely to be relied on today.
+- **UFCS is exempt by construction and should stay that way.** `m.map(f)` never writes
+  `map` as an identifier, so a reference-based check does not see it — which is correct,
+  since the import is what permits the call. Worth writing down before someone "fixes"
+  the check to catch member expressions too.
+
 ### [OPEN] Inference should not depend on declaration order
 
 `let (w, h) = contain_set(cols, rows)` fails when `contain_set` is declared **later** in
