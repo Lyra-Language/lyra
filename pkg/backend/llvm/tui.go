@@ -68,6 +68,7 @@ const (
 	ShimSetRawMode   = "lyra_set_raw_mode"
 	ShimReadKey      = "lyra_read_key"
 	ShimTerminalSize = "lyra_terminal_size"
+	ShimWaitForKey   = "lyra_wait_for_key_ms"
 )
 
 // ensureSetRawModeRuntime emits `lyra_set_raw_mode(i1)`, idempotent per module.
@@ -404,4 +405,105 @@ func (l *lowerer) lowerTerminalSizeCall(block *ir.Block, e *ast.FunctionCallExpr
 		return nil, nil, err
 	}
 	return block.NewCall(fn), block, nil
+}
+
+// poll's flag bits and struct layout, all of which are **identical on both targets** —
+// `struct pollfd` is `{int, short, short}` and POLLIN/POLLERR/POLLHUP are 0x1/0x8/0x10 on
+// macOS and glibc alike. That is the opposite of TIOCGWINSZ above, and the reason this
+// builtin needs no `runtime.GOOS` at all.
+const (
+	pollIn  = 0x0001
+	pollErr = 0x0008
+	pollHup = 0x0010
+	// A poll timeout is an `int`, so an i64 argument is clamped to this before truncating.
+	pollTimeoutMax = 0x7fffffff
+)
+
+// ensureWaitForKeyRuntime emits `lyra_wait_for_key_ms(i64) -> i1`, idempotent per module.
+//
+// # Why a bool rather than a timed read
+//
+// There are **three** outcomes to report — a key arrived, nothing arrived yet, input has
+// ended — and the obvious `read_key_timeout(ms) -> Maybe<rune>` has only two answers for
+// them, so it has to conflate two. Conflating "nothing yet" with "ended" is exactly the
+// mistake `read_line`'s `Maybe` was introduced to avoid: it makes the natural loop spin
+// forever once stdin closes.
+//
+// Splitting the question resolves it with no new type. This answers only "is there
+// something to read", which a bool says exactly; `read_key` then answers "a key, or the
+// end". The pairing is not a workaround but a property of poll: **a closed descriptor
+// reports readable**, so at EOF this returns true and the read that follows returns
+// `None`. Verified rather than assumed — a poll of a pipe whose write end is closed
+// answers POLLIN|POLLHUP, and the read then returns 0.
+//
+// # The timeout
+//
+// Clamped into [0, INT_MAX] rather than rejected. A negative value is what deadline
+// arithmetic naturally produces once the deadline has passed (`deadline - now()`), and
+// "do not wait at all" is the right answer there — so this is not the silent
+// reinterpretation the language dislikes, it is the meaning. Zero is a pure non-blocking
+// poll, which is the useful degenerate case.
+//
+// A poll error (-1, typically EINTR) answers false rather than trapping: a signal
+// arriving during the wait is not the program's fault, and the caller's loop will poll
+// again.
+func (l *lowerer) ensureWaitForKeyRuntime() *ir.Func {
+	if l.waitForKey != nil {
+		return l.waitForKey
+	}
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	pollfdTy := lltypes.NewStruct(lltypes.I32, lltypes.I16, lltypes.I16)
+	poll := l.module.NewFunc("poll", lltypes.I32,
+		ir.NewParam("", i8ptr), ir.NewParam("", lltypes.I64), ir.NewParam("", lltypes.I32))
+
+	timeout := ir.NewParam("timeout_ms", lltypes.I64)
+	fn := l.module.NewFunc(ShimWaitForKey, lltypes.I1, timeout)
+	b := fn.NewBlock("entry")
+
+	pfd := b.NewAlloca(pollfdTy)
+	i32zero := constant.NewInt(lltypes.I32, 0)
+	fdPtr := b.NewGetElementPtr(pollfdTy, pfd, i32zero, constant.NewInt(lltypes.I32, 0))
+	evPtr := b.NewGetElementPtr(pollfdTy, pfd, i32zero, constant.NewInt(lltypes.I32, 1))
+	rePtr := b.NewGetElementPtr(pollfdTy, pfd, i32zero, constant.NewInt(lltypes.I32, 2))
+	b.NewStore(constant.NewInt(lltypes.I32, 0), fdPtr) // stdin, the fd read_key reads
+	b.NewStore(constant.NewInt(lltypes.I16, pollIn), evPtr)
+	// revents is written by poll, but zero it anyway: on the error path below it is read
+	// without poll having set it, and clock.go's rule is that a failed syscall must leave
+	// a defined value rather than uninitialized stack.
+	b.NewStore(constant.NewInt(lltypes.I16, 0), rePtr)
+
+	belowZero := b.NewICmp(enum.IPredSLT, timeout, constant.NewInt(lltypes.I64, 0))
+	atLeastZero := b.NewSelect(belowZero, constant.NewInt(lltypes.I64, 0), timeout)
+	aboveMax := b.NewICmp(enum.IPredSGT, atLeastZero, constant.NewInt(lltypes.I64, pollTimeoutMax))
+	clamped := b.NewSelect(aboveMax, constant.NewInt(lltypes.I64, pollTimeoutMax), atLeastZero)
+
+	n := b.NewCall(poll, b.NewBitCast(pfd, i8ptr), constant.NewInt(lltypes.I64, 1),
+		b.NewTrunc(clamped, lltypes.I32))
+
+	// Branchless: 0 (timed out) and -1 (error) both answer false; otherwise the answer is
+	// whether any of the three interesting bits came back. POLLERR and POLLHUP count as
+	// readable because the read that follows is what turns them into `None`.
+	failed := b.NewICmp(enum.IPredSLE, n, i32zero)
+	revents := b.NewLoad(lltypes.I16, rePtr)
+	interesting := b.NewAnd(revents, constant.NewInt(lltypes.I16, pollIn|pollErr|pollHup))
+	ready := b.NewICmp(enum.IPredNE, interesting, constant.NewInt(lltypes.I16, 0))
+	b.NewRet(b.NewSelect(failed, constant.NewInt(lltypes.I1, 0), ready))
+
+	l.waitForKey = fn
+	return fn
+}
+
+// lowerWaitForKeyCall lowers `wait_for_key_ms(timeout)`.
+//
+// The argument is an i64 and the result a bool — both scalars, so nothing here owns
+// anything and there is no temp machinery to involve.
+func (l *lowerer) lowerWaitForKeyCall(block *ir.Block, e *ast.FunctionCallExpr) (value.Value, *ir.Block, error) {
+	if len(e.Arguments) != 1 {
+		return nil, nil, fmt.Errorf("llvm: wait_for_key_ms expects 1 argument, got %d", len(e.Arguments))
+	}
+	ms, block, err := l.lowerExpr(block, e.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	return block.NewCall(l.ensureWaitForKeyRuntime(), ms), block, nil
 }

@@ -158,6 +158,11 @@ var builtinEffects = map[string]Effect{
 	"set_raw_mode":  EffectOutput,
 	"read_key":      EffectInput,
 	"terminal_size": EffectInput,
+	// `wait_for_key_ms` consumes no input, but its answer depends on whether the user has
+	// typed something — state the caller never passed in — so it is Input like the read it
+	// precedes. A `det` function that could observe whether a key is waiting would not be
+	// reproducible.
+	"wait_for_key_ms": EffectInput,
 	// A write returns a status (bytes written / error) the program can branch on,
 	// so external state can leak back into the computation — tagged Input
 	// (non-deterministic, forbidden in `det`) as well as Output.

@@ -240,3 +240,99 @@ func TestExec_TuiInterleavesKeysAndMouse(t *testing.T) {
 	t.Parallel()
 	assertDecodes(t, 3, "\x1b[<0;1;1Mq\x1b[A", "Ldown@1,1 Char(q) Up")
 }
+
+// `wait_for_key_ms` and the reason it answers a bool.
+//
+// The timeout path itself is tty-only and not asserted here — a test's stdin is a pipe
+// that closes after its content, so it is always immediately readable. It was verified by
+// hand through a pty on 08/17: a 300ms wait with nothing sent returned false after 300ms,
+// and a lone ESC decoded as `Escape` half a second later *without* a second keypress
+// being sent, which is the limitation this builtin exists to remove.
+//
+// What is reachable here is the property the whole design rests on: at end of input the
+// poll answers **true** and the read that follows answers **None**, so "nothing yet" and
+// "input ended" stay distinguishable. A timed read returning `Maybe<rune>` would collapse
+// them into one `None`, which is the conflation `read_line`'s `Maybe` exists to avoid.
+func TestExec_WaitForKeyIsTrueAtEOFAndTheReadIsNone(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  let ready = wait_for_key_ms(50);
+  match read_key() {
+    Some(k) => println("ready=${ready} key=${i64(k)}"),
+    None => println("ready=${ready} key=none")
+  }
+}
+`
+	got := strings.TrimSpace(buildAndRunWithPrelude(t, src, ""))
+	if got != "ready=true key=none" {
+		t.Errorf("at EOF got %q, want \"ready=true key=none\"", got)
+	}
+}
+
+// With input waiting, the same pair reports the key — the other half of the split.
+func TestExec_WaitForKeyIsTrueWithInputWaiting(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  let ready = wait_for_key_ms(50);
+  match read_key() {
+    Some(k) => println("ready=${ready} key=${i64(k)}"),
+    None => println("ready=${ready} key=none")
+  }
+}
+`
+	got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "A"))
+	if got != "ready=true key=65" {
+		t.Errorf("with a key waiting got %q, want \"ready=true key=65\"", got)
+	}
+}
+
+// A negative timeout is clamped to zero rather than refused or treated as "wait forever".
+// Deadline arithmetic (`deadline - now()`) produces negatives naturally once the deadline
+// has passed, and "do not wait at all" is the meaning there — so this must return
+// promptly rather than hang.
+//
+// It asserts *elapsed time* rather than the returned bool on purpose: with the timeout
+// clamped to zero, whether the parent has closed the stdin pipe before the child polls is
+// a genuine race, so the bool is not deterministic here. The contract being tested is that
+// a negative timeout is not read as poll's \"wait forever\", and that is about duration.
+func TestExec_WaitForKeyClampsANegativeTimeout(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  let t0 = wall_clock_nanos();
+  let ready = wait_for_key_ms(-5);
+  let ms = (wall_clock_nanos() - t0) / 1000000;
+  println(if ms < 1000 { "prompt" } else { "slow" });
+}
+`
+	got := strings.TrimSpace(buildAndRunWithPrelude(t, src, ""))
+	if got != "prompt" {
+		t.Errorf("a negative timeout took %q, want \"prompt\" — it must clamp to zero, "+
+			"not be read as poll's \"wait forever\"", got)
+	}
+}
+
+// std.tui's wrapper consults the lookahead buffer, which the bare builtin cannot see: a
+// code point already read and held is an event that is ready even when the terminal has
+// nothing new. Here `\ex` leaves `x` pending once the Escape is reported.
+func TestExec_EventAvailableSeesTheLookaheadBuffer(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+import std.tui.{ event_reader, Event }
+let main = () -> void => {
+  var ev = event_reader();
+  match ev.next_event() { Some(_) => print("first "), None => print("none ") }
+  println("pending-ready=${ev.event_available(0)}");
+}
+`
+	got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "\x1bx"))
+	if got != "first pending-ready=true" {
+		t.Errorf("got %q, want \"first pending-ready=true\"", got)
+	}
+}

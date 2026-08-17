@@ -668,6 +668,9 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		if isBuiltinReadKeyFn(ident.Name) {
 			return tc.inferReadKeyCall(call)
 		}
+		if isBuiltinWaitForKeyFn(ident.Name) {
+			return tc.inferWaitForKeyCall(call)
+		}
 		if isBuiltinTerminalSizeFn(ident.Name) {
 			if len(call.Arguments) != 0 {
 				tc.addError(call.GetLocation(), SeverityError,
@@ -874,6 +877,27 @@ func (tc *TypeChecker) inferSetRawModeCall(call *ast.FunctionCallExpr) types.Typ
 			"set_raw_mode: expected a bool, got %s", argT)
 	}
 	return types.VoidType{}
+}
+
+// inferWaitForKeyCall type-checks `wait_for_key_ms(timeout)`, whose result is a bool.
+//
+// The argument is checked rather than merely counted: a float timeout is the plausible
+// slip (`wait_for_key_ms(0.025)` for "25ms"), and unchecked it would reach the backend as
+// a double where an i64 is expected.
+func (tc *TypeChecker) inferWaitForKeyCall(call *ast.FunctionCallExpr) types.Type {
+	if len(call.Arguments) != 1 {
+		tc.addError(call.GetLocation(), SeverityError,
+			"wait_for_key_ms: expected 1 argument(s), got %d", len(call.Arguments))
+		return types.PrimitiveType{Name: types.Boolean}
+	}
+	argT := tc.inferExprType(call.Arguments[0])
+	if argT != nil && !isIntegerOperand(argT) {
+		tc.addError(call.Arguments[0].GetLocation(), SeverityError,
+			"wait_for_key_ms: expected a timeout in milliseconds (an integer), got %s",
+			promoteToDefault(argT))
+	}
+	tc.propagateLiteralType(call.Arguments[0], types.PrimitiveType{Name: types.Int64})
+	return types.PrimitiveType{Name: types.Boolean}
 }
 
 // inferReadKeyCall type-checks `read_key()` and gives it the type `Maybe<rune>`.

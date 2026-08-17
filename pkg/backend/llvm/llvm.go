@@ -311,6 +311,7 @@ type lowerer struct {
 	setRawMode   *ir.Func // lyra_set_raw_mode: tcsetattr via cfmakeraw, original saved
 	readKey      *ir.Func // lyra_read_key: one code point from stdin, Maybe<rune>
 	terminalSize *ir.Func // lyra_terminal_size: TIOCGWINSZ, (columns, rows)
+	waitForKey   *ir.Func // lyra_wait_for_key_ms: poll(stdin) with a timeout
 	rcAlloc      *ir.Func // lyra_rc_alloc: malloc a box, rc = 1
 	rcRetain     *ir.Func // lyra_rc_retain: rc += 1 (pinned no-op)
 	rcRelease    *ir.Func // lyra_rc_release: rc -= 1, drop + free at 0 (pinned no-op)

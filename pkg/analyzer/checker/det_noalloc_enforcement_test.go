@@ -379,3 +379,12 @@ func TestPure_SetRawMode_Violates(t *testing.T) {
 		t.Fatal("expected set_raw_mode to be refused in a pure function")
 	}
 }
+
+// `wait_for_key_ms` consumes no input but its answer depends on whether the user has
+// typed something, so it is Input like the read it precedes — a `det` function that could
+// observe whether a key is waiting would not be reproducible.
+func TestDet_WaitForKey_Violates(t *testing.T) {
+	src := `let w = det (n: i64) -> i64 => { if wait_for_key_ms(0) { 1 } else { 0 } }`
+	errs := checkPurity(t, src)
+	assertBoundError(t, errs, "lyra-E016")
+}

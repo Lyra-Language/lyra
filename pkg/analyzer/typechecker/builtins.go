@@ -581,6 +581,32 @@ func isBuiltinTerminalSizeFn(name string) bool {
 	return name == "terminal_size"
 }
 
+// isBuiltinWaitForKeyFn reports whether name is `wait_for_key_ms`.
+//
+// `wait_for_key_ms(timeout: i64) -> bool` waits up to `timeout` milliseconds for input to
+// become readable, and answers whether it did. It is the fourth terminal builtin, added
+// once `std.tui` proved the other three could not resolve one case: `\e` begins every
+// escape sequence, so a decoder must look at what follows it, and with only a *blocking*
+// read a lone Escape waits for the next keypress instead of being reported.
+//
+// **A bool, deliberately, rather than a timed read returning `Maybe<rune>`.** There are
+// three outcomes — a key arrived, nothing yet, input ended — and a `Maybe` has two
+// answers, so it must conflate two of them. Conflating "nothing yet" with "ended" is the
+// exact mistake `read_line`'s `Maybe` exists to avoid, and it makes the natural loop spin
+// forever once stdin closes. Splitting the question needs no new type: this says whether
+// there is anything to read, and `read_key` then says whether it is a key or the end.
+//
+// The pairing is a property of `poll` rather than a convention: **a closed descriptor
+// reports readable**, so at EOF this answers true and the following `read_key` answers
+// `None`. See `pkg/backend/llvm/tui.go` for the timeout's clamping rule.
+//
+// EffectInput, like `read_key` — the answer depends on state the caller never passed in.
+// It consumes no input, but a `det` function that could observe whether a key is waiting
+// is not reproducible.
+func isBuiltinWaitForKeyFn(name string) bool {
+	return name == "wait_for_key_ms"
+}
+
 // isPrintableType reports whether print/println can format a value of type t:
 // a string, any integer or float, a bool, or a rune. Each has a backend
 // formatting path (write for strings, snprintf for numbers, "true"/"false" for
