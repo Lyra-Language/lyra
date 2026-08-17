@@ -312,7 +312,7 @@ func (tc *TypeChecker) checkExpressionStmt(n *ast.ExpressionStmt) {
 	case *ast.IfExpr:
 		tc.checkIfExpr(e, false)
 	case *ast.MatchExpr:
-		tc.checkMatchExpr(e)
+		tc.checkMatchExpr(e, false)
 	case *ast.ForInLoopExpr:
 		tc.checkForInLoopExpr(e)
 	case *ast.ForLoopExpr:
@@ -1946,7 +1946,7 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 	case *ast.IfExpr:
 		return tc.checkIfExpr(e, true)
 	case *ast.MatchExpr:
-		return tc.checkMatchExpr(e)
+		return tc.checkMatchExpr(e, true)
 	case *ast.UnsafeBlockExpr:
 		return tc.reportRawPointersUnimplemented(e, "an `unsafe` block", &e.Body)
 	case *ast.AddressOfExpr:

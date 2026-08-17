@@ -256,7 +256,51 @@ func (tc *TypeChecker) withPatternBindings(pattern ast.Pattern, scrutineeType ty
 	tc.patternBound = oldBound
 }
 
-func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
+// checkMatchArmGuard checks an arm's `if` guard, which must be a bool.
+//
+// Called with the pattern's bindings already in scope, since a guard may reference them
+// (`Some(x) if x > 0`). Inferring it also records its sub-expressions in the TypeTable,
+// which the backend reads to lower the guard — so this must run in both the value and
+// statement paths below, not only the one that computes a type.
+func (tc *TypeChecker) checkMatchArmGuard(arm ast.MatchArm) {
+	if arm.Guard == nil {
+		return
+	}
+	if gt := tc.inferExprType(arm.Guard.Condition); gt != nil && !types.IsBoolean(gt) {
+		tc.addError(arm.Guard.Condition.GetLocation(), SeverityError,
+			"match arm guard must be a bool, got %s", promoteToDefault(gt))
+	}
+}
+
+// checkExprForEffect checks an expression whose value is discarded, tolerating the forms
+// that have no value — a one-armed `if`, a `match` used for effect, a block whose last
+// statement is either.
+//
+// It is the value-optional twin of inferExprType, and exists because "check this, I do
+// not want its value" is a question three constructs answer differently: a block must
+// skip the last-statement-is-the-value step (checkBlockForEffect), and `if`/`match` each
+// take a requireType flag. Everything else is checked by inferring it and dropping the
+// answer.
+func (tc *TypeChecker) checkExprForEffect(e ast.Expression) {
+	switch v := e.(type) {
+	case *ast.BlockExpr:
+		tc.checkBlockForEffect(v)
+	case *ast.IfExpr:
+		tc.checkIfExpr(v, false)
+	case *ast.MatchExpr:
+		tc.checkMatchExpr(v, false)
+	default:
+		tc.inferExprType(e)
+	}
+}
+
+// checkMatchExpr type-checks a `match` and returns its type.
+//
+// requireType mirrors checkIfExpr's parameter of the same name, for the same reason: in
+// value context every arm must produce a mutually compatible type, while in statement
+// context the value is discarded, so the arms are checked individually and a mismatch
+// between them is not an error.
+func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) types.Type {
 	scrutineeType := tc.inferExprType(expr.Scrutinee)
 	// Every integer literal a pattern carries is value-checked against the type it
 	// will be compared to — bare, range bounds, and payload sub-patterns alike
@@ -350,20 +394,28 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr) types.Type {
 	// reads). An untyped-literal result is left un-promoted so a bare `0` arm can
 	// adapt to a concrete sibling (`Some x => x` with x: u8) or to the match's
 	// outer context — rather than defaulting to i64 and clashing.
+	// Statement position: every arm is still checked for errors *inside* it, but the
+	// arms' types need not agree, because the value is discarded. That is the policy
+	// checkIfExpr already applies with requireType=false, and withholding it here is
+	// what made a one-armed `if` illegal as an arm body — `match e { Up => { if c { … } },
+	// _ => { } }` was refused with "`if` used as a value must have an `else` branch",
+	// naming a value nobody wanted. The loop-body form of exactly this was fixed when
+	// checkBlockForEffect was introduced; a match arm in statement position never got it.
+	if !requireType {
+		for _, arm := range expr.MatchArms {
+			tc.withPatternBindings(arm.Pattern, scrutineeType, func() {
+				tc.checkMatchArmGuard(arm)
+				tc.checkExprForEffect(arm.Body)
+			})
+		}
+		return nil
+	}
+
 	var commonType types.Type
 	for _, arm := range expr.MatchArms {
 		var armType types.Type
 		tc.withPatternBindings(arm.Pattern, scrutineeType, func() {
-			// A guard (`Some(x) if x > 0`) is checked with the pattern's bindings in
-			// scope — it may reference them — and must be a bool. Inferring it here
-			// also records its sub-expressions in the TypeTable, which the backend
-			// reads to lower the guard.
-			if arm.Guard != nil {
-				if gt := tc.inferExprType(arm.Guard.Condition); gt != nil && !types.IsBoolean(gt) {
-					tc.addError(arm.Guard.Condition.GetLocation(), SeverityError,
-						"match arm guard must be a bool, got %s", promoteToDefault(gt))
-				}
-			}
+			tc.checkMatchArmGuard(arm)
 			armType = tc.inferExprType(arm.Body)
 		})
 		if armType == nil {
