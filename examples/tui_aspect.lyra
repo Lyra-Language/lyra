@@ -1,0 +1,90 @@
+import std.tui.{
+  bg, reset, bold, dim,
+  alt_screen_enter, alt_screen_leave, clear, cursor_home
+}
+
+// Measure your terminal's **cell aspect ratio** — how many times taller than wide one
+// character cell is — and check whether raw mode changes it.
+//
+// Terminal graphics distort because a cell is not square: mapping a square region onto
+// one stretches it vertically. Every program that draws has to know the ratio, and it is
+// a property of the font and line spacing rather than of anything a program can ask for
+// — there is no escape sequence that reports it. So it gets measured by eye, once.
+//
+// The program draws the same bars twice, the second time inside raw mode and the
+// alternate screen buffer. If the two look identical — they will — then neither of those
+// changes the font, and an apparent size difference between two programs is a difference
+// in what they *drew*, not in how the terminal drew it.
+//
+// Run: lyrac run examples/tui_aspect.lyra
+
+// Each bar is this many rows tall. Five keeps the candidate widths small integers.
+const BAR_ROWS = 5
+
+// Bar widths in cells. A bar `w` wide and BAR_ROWS tall is square exactly when the cell
+// ratio is `w / BAR_ROWS`, so these cover 1.8 through 2.6 — the range real terminal fonts
+// fall in. 2.0 is the common case and what `mandelbrot.lyra` assumes.
+const WIDTHS = [9, 10, 11, 12, 13]
+
+// Palette colours for the bars, so adjacent ones are easy to tell apart.
+const COLORS = [67, 108, 179, 174, 139]
+
+let main = () => {
+  draw_calibration("normal screen", "\n")
+
+  println("")
+  println("Press Enter to draw the identical bars in raw mode + alternate screen.")
+  let _ = read_line()
+
+  set_raw_mode(true)
+  alt_screen_enter()
+  clear()
+  cursor_home()
+  draw_calibration("raw mode + alternate screen", "\r\n")
+  print("\r\n  Press any key to return.\r\n")
+  let _ = read_key()
+  alt_screen_leave()
+  set_raw_mode(false)
+
+  println("")
+  println("If the two looked the same, raw mode changed nothing — as it cannot.")
+  println("Put the ratio of the square-looking bar into CELL_ASPECT.")
+}
+
+/// Draw the labelled bars. `nl` is the line terminator: raw mode needs a carriage return
+/// with every newline, since it turns off the translation that normally supplies one.
+let draw_calibration = (title: string, nl: string) -> void => {
+  print(bold() ++ ("  " ++ (title ++ (reset() ++ nl))))
+  print(dim() ++ ("  Which bar is square? Its label is your cell aspect ratio." ++ (reset() ++ nl ++ nl)))
+
+  for r in 0..<BAR_ROWS {
+    var line = "  "
+    for i in 0..<WIDTHS.len() {
+      line = line ++ (bg(COLORS[i]) ++ (spaces(WIDTHS[i]) ++ (reset() ++ "  ")))
+    }
+    print(line ++ nl)
+  }
+
+  var labels = "  "
+  for i in 0..<WIDTHS.len() {
+    // Each label occupies the same cells as its bar plus the two-space gap after it —
+    // 2 lead + 3 for the label + the rest — so the columns stay in step all the way
+    // across. Getting this wrong drifts by two cells per bar, which is enough to put the
+    // last label under the wrong bar entirely.
+    let ratio = f64(WIDTHS[i]) / f64(BAR_ROWS)
+    labels = labels ++ ("  " ++ (ratio.to_fixed(1) ++ pad(WIDTHS[i] - 3)))
+  }
+  print(labels ++ nl)
+}
+
+/// `n` spaces. The bar is drawn as background colour over blanks, so its width is exactly
+/// the character count — the same one-character-per-cell rule the viewer follows.
+let spaces = (n: i64) -> string => {
+  var out = ""
+  for i in 0..<n { out = out ++ " " }
+  out
+}
+
+/// `n` spaces, never negative — a narrow bar would otherwise ask for a negative pad and
+/// the loop would simply not run, but saying so is clearer than relying on it.
+let pad = (n: i64) -> string => if n <= 0 { "" } else { spaces(n) }
