@@ -147,20 +147,59 @@ let clamp = pure (v: i64, lo: i64, hi: i64) -> i64 => if v < lo { lo } else if v
 /// width. A parameter that must be pre-processed by every caller is a parameter that will
 /// eventually not be.
 let draw = (term_cols: i64, term_rows: i64, zoom: i64, mx: i64, my: i64) -> void => {
-  let (cols, rows) = contain_set(term_cols, term_rows)
+  // The status bar owns the last row, so the set is fitted into what is left rather than
+  // into the whole terminal — otherwise it is one row too tall and the bottom is lost
+  // under the bar.
+  let canvas_rows = term_rows - 1
+  let (cols, rows) = contain_set(term_cols, canvas_rows)
+
+  // Centred in whichever direction has room. Only one of these is ever non-zero: the fit
+  // makes the set touch one pair of edges exactly, and which pair depends on whether the
+  // terminal is wider or taller than the set's corrected shape.
+  let left = (term_cols - cols) / 2
+  let top = (canvas_rows - rows) / 2
+
   var lines: []string = []
-  let span_rows = rows - 1
-  for row in 1..<=span_rows {
-    lines.push(render_row(row, rows, cols, mx, my))
+  for i in 1..<=top {
+    lines.push(spaces(term_cols))
   }
-  lines.push(status(cols, rows, zoom, mx, my))
+  for row in 1..<=rows {
+    // **Every line is exactly `term_cols` wide**, blanks included. The frame is redrawn
+    // over the previous one with no `clear` between, so a short line leaves the old
+    // frame's pixels to its right — and after centring there is old content on *both*
+    // sides to overwrite.
+    //
+    // The padding is counted rather than measured: a rendered row carries escape
+    // sequences, so its `len()` is nothing like its width in cells, and `fit` would
+    // truncate it to ribbons.
+    let painted = render_row(row, rows, cols, mx - left, my - top)
+    lines.push(spaces(left) ++ (painted ++ spaces(term_cols - cols - left)))
+  }
+  for i in 1..<=(canvas_rows - rows - top) {
+    lines.push(spaces(term_cols))
+  }
+  lines.push(status(term_cols, term_rows, zoom, mx, my))
   cursor_home()
   print(lines.join("\r\n"))
+}
+
+/// `n` spaces, and none for a negative count — the padding arithmetic can ask for a
+/// negative width on a terminal too small to hold the status text, and a blank is the
+/// right answer there rather than a trap.
+let spaces = (n: i64) -> string => {
+  var out = ""
+  for i in 1..<=n { out = out ++ " " }
+  out
 }
 
 
 /// One row of the frame, as a string. Built by concatenation into a single row rather
 /// than printed per cell.
+///
+/// `mx`/`my` are in the **set's** coordinates, not the terminal's — `draw` subtracts the
+/// centring offsets before calling. A click arrives in terminal cells, and without that
+/// translation the marker would land offset by exactly the left margin, which reads as
+/// the click being inaccurate rather than as a coordinate-space mixup.
 let render_row = (row: i64, rows: i64, cols: i64, mx: i64, my: i64) -> string => {
   var out = ""
   for col in 1..<=cols {
