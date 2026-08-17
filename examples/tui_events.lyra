@@ -12,51 +12,6 @@ import std.tui.{
 //
 // Run: lyrac run examples/tui_events.lyra
 
-/// A rune's name, printable or not — the control codes have no glyph, so show the number.
-///
-/// The `i64(c)` here is deliberate: this is the one place the numeric code point is the
-/// point. Everywhere else a rune literal (`'q'`) says it better than its number does.
-let show_code = (c: rune) -> string => {
-  let n = i64(c)
-  if c < ' ' || c == '\x7f' { "<${n}>" } else { "'${c}' (${n})" }
-}
-
-let key_name = (k: Key) -> string => match k {
-  Char c => "Char ${show_code(c)}",
-  Up => "Up", Down => "Down", Left => "Left", Right => "Right",
-  Home => "Home", End => "End", PageUp => "PageUp", PageDown => "PageDown",
-  Delete => "Delete", Enter => "Enter", Tab => "Tab", Backspace => "Backspace",
-  Escape => "Escape"
-}
-
-let button_name = (b: MouseButton) -> string => match b {
-  MouseLeft => "left", MouseMiddle => "middle", MouseRight => "right",
-  WheelUp => "wheel-up", WheelDown => "wheel-down", NoButton => "no button"
-}
-
-let action_name = (a: MouseAction) -> string => match a {
-  Press => "press", Release => "release", Move => "move"
-}
-
-let describe = (e: Event) -> string => match e {
-  Keyboard(k) => "key    ${key_name(k)}",
-  Mouse(m) => "mouse  ${button_name(m.button)} ${action_name(m.action)} at col ${m.col}, row ${m.row}"
-}
-
-/// Phase 1: the raw builtin. Three code points, whatever they are.
-let show_raw_reads = () -> void => {
-  print("Press one arrow key. `read_key()` will report it as three code points:\r\n")
-  var i = 0
-  for i < 3 {
-    match read_key() {
-      Some(c) => print("  read_key -> ${show_code(c)}\r\n"),
-      None => { print("  read_key -> None (input ended)\r\n"); i = 3 }
-    }
-    i += 1
-  }
-  print("\r\nThat is ESC, '[' and a letter — one key, three reads. Now the decoder:\r\n\r\n")
-}
-
 let main = () => {
   // Raw mode first: without it `read_key` waits for Enter and none of this works.
   set_raw_mode(true)
@@ -104,4 +59,49 @@ let main = () => {
   mouse_disable()
   set_raw_mode(false)
   println("")
+}
+
+/// A rune's name, printable or not — the control codes have no glyph, so show the number.
+///
+/// The `i64(c)` here is deliberate: this is the one place the numeric code point is the
+/// point. Everywhere else a rune literal (`'q'`) says it better than its number does.
+let show_code = (c: rune) -> string => {
+  let n = i64(c)
+  if c < ' ' || c == '\x7f' { "<${n}>" } else { "'${c}' (${n})" }
+}
+
+let key_name = (k: Key) -> string => match k {
+  Char c => "Char ${show_code(c)}",
+  Up => "Up", Down => "Down", Left => "Left", Right => "Right",
+  Home => "Home", End => "End", PageUp => "PageUp", PageDown => "PageDown",
+  Delete => "Delete", Enter => "Enter", Tab => "Tab", Backspace => "Backspace",
+  Escape => "Escape"
+}
+
+let button_name = (b: MouseButton) -> string => match b {
+  MouseLeft => "left", MouseMiddle => "middle", MouseRight => "right",
+  WheelUp => "wheel-up", WheelDown => "wheel-down", NoButton => "no button"
+}
+
+let action_name = (a: MouseAction) -> string => match a {
+  Press => "press", Release => "release", Move => "move"
+}
+
+let describe = (e: Event) -> string => match e {
+  Keyboard(k) => "key    ${key_name(k)}",
+  Mouse(m) => "mouse  ${button_name(m.button)} ${action_name(m.action)} at col ${m.col}, row ${m.row}"
+}
+
+/// Phase 1: the raw builtin. Three code points, whatever they are.
+let show_raw_reads = () -> void => {
+  print("Press one arrow key. `read_key()` will report it as three code points:\r\n")
+  var i = 0
+  for i < 3 {
+    match read_key() {
+      Some(c) => print("  read_key -> ${show_code(c)}\r\n"),
+      None => { print("  read_key -> None (input ended)\r\n"); i = 3 }
+    }
+    i += 1
+  }
+  print("\r\nThat is ESC, '[' and a letter — one key, three reads. Now the decoder:\r\n\r\n")
 }

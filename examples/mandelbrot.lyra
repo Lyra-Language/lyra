@@ -44,6 +44,31 @@ const SHADE_MAX = 64.0
 // never escapes is drawn heaviest of all.
 const RAMP = [" ", ".", ":", "-", "=", "+", "*", "#", "%", "@"]
 
+let main = () => {
+  // Centred on the real axis, which is where the set is.
+  //
+  // Note what this does *not* do: it holds the horizontal view fixed and lets the
+  // vertical show whatever fits, so a wide, short window sees **less** of the imaginary
+  // axis rather than a squashed set. That is what a uniform scale means. A viewer that
+  // would rather always frame the whole set should derive the other way round, or take
+  // whichever of the two extents is more constraining.
+  let y_min = -Y_LEN / 2.0
+
+  var rows: []string = []
+  for py in 0..<HEIGHT {
+    var row = ""
+    for px in 0..<WIDTH {
+      let c = Complex {
+        re: X_MIN + X_LEN * f64(px) / f64(WIDTH),
+        im: y_min + Y_LEN * f64(py) / f64(HEIGHT)
+      }
+      row = row ++ RAMP[shade(c)]
+    }
+    rows.push(row)
+  }
+  println(rows.join("\n"))
+}
+
 /// How heavily to draw `c` — an index into `RAMP`, its last for a point in the set.
 let shade = (c: Complex<f64>) -> i64 => {
   var z = Complex { re: 0.0, im: 0.0 }
@@ -72,29 +97,4 @@ let shade = (c: Complex<f64>) -> i64 => {
     // boundary stays visible instead of merging into it.
     (t * f64(RAMP.len() - 2)).round()
   }
-}
-
-let main = () => {
-  // Centred on the real axis, which is where the set is.
-  //
-  // Note what this does *not* do: it holds the horizontal view fixed and lets the
-  // vertical show whatever fits, so a wide, short window sees **less** of the imaginary
-  // axis rather than a squashed set. That is what a uniform scale means. A viewer that
-  // would rather always frame the whole set should derive the other way round, or take
-  // whichever of the two extents is more constraining.
-  let y_min = -Y_LEN / 2.0
-
-  var rows: []string = []
-  for py in 0..<HEIGHT {
-    var row = ""
-    for px in 0..<WIDTH {
-      let c = Complex {
-        re: X_MIN + X_LEN * f64(px) / f64(WIDTH),
-        im: y_min + Y_LEN * f64(py) / f64(HEIGHT)
-      }
-      row = row ++ RAMP[shade(c)]
-    }
-    rows.push(row)
-  }
-  println(rows.join("\n"))
 }

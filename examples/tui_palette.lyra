@@ -8,18 +8,6 @@ import std.tui.{ fg, bg, rgb, grey, reset, bold, dim, inverse }
 
 const SWATCH = "  "
 
-/// One row of the 6×6×6 cube: green varies across, blue within each group.
-let cube_row = (r: i64) -> string => {
-  var row = ""
-  for g in 0..<6 {
-    for b in 0..<6 {
-      row = row ++ (bg(rgb(r, g, b)) ++ SWATCH)
-    }
-    row = row ++ (reset() ++ " ")
-  }
-  row
-}
-
 let main = () => {
   println(bold() ++ "Attributes" ++ reset())
   println("  ${bold()}bold${reset()}  ${dim()}dim${reset()}  ${inverse()}inverse${reset()}  plain")
@@ -52,4 +40,16 @@ let main = () => {
   println(bold() ++ "Out-of-range components clamp" ++ reset())
   println("  rgb(9, 9, 9) = ${rgb(9, 9, 9)}, same as rgb(5, 5, 5) = ${rgb(5, 5, 5)}")
   println("  grey(99) = ${grey(99)}, same as grey(23) = ${grey(23)}")
+}
+
+/// One row of the 6×6×6 cube: green varies across, blue within each group.
+let cube_row = (r: i64) -> string => {
+  var row = ""
+  for g in 0..<6 {
+    for b in 0..<6 {
+      row = row ++ (bg(rgb(r, g, b)) ++ SWATCH)
+    }
+    row = row ++ (reset() ++ " ")
+  }
+  row
 }
