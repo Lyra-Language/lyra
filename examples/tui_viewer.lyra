@@ -23,17 +23,32 @@ import std.tui.{
 //
 // Run: lyrac run examples/tui_viewer.lyra   (q to quit)
 
+/// Spread a **1-based** position over `span` cells onto the cube's 0..5, in six even
+/// bands.
+///
+/// `6 * (pos - 1) / span`, and both adjustments are the point. The obvious
+/// `5 * pos / span` looks right and is wrong at exactly one place: it reaches 5 only when
+/// `pos == span`, so the top band is a **single cell** while the other five are `span/5`
+/// wide each — which is visible as one anomalously bright edge and nothing else. Scaling
+/// by 6 rather than 5 gives six buckets instead of five-and-a-bit; subtracting 1 is
+/// because the position is 1-based, as everything in this library is.
+///
+/// Needs no clamp: `pos - 1` is at most `span - 1`, so the result is at most 5 whenever
+/// `span >= 6`, and `rgb` clamps anyway on a terminal too narrow for six bands.
+let band = pure noalloc (pos: i64, span: i64) -> i64 =>
+  if span <= 0 { 0 } else { 6 * (pos - 1) / span }
+
 /// The gradient cell for a position — stands in for a rendered pixel.
-let cell_color = pure (col: i64, row: i64, cols: i64, rows: i64, zoom: i64) -> i64 => {
-  let r = 5 * col / cols
-  let g = 5 * row / rows
-  let b = zoom % 6
-  rgb(r, g, b)
-}
+///
+/// `span_rows` is the number of rows actually drawn, not the terminal's height: the
+/// status line takes the last row, so passing the full height would leave the vertical
+/// axis one band short of its top — the same off-by-one as above, one axis over.
+let cell_color = pure (col: i64, row: i64, cols: i64, span_rows: i64, zoom: i64) -> i64 =>
+  rgb(band(col, cols), band(row, span_rows), zoom % 6)
 
 /// One row of the frame, as a string. Built by concatenation into a single row rather
 /// than printed per cell.
-let render_row = (row: i64, cols: i64, rows: i64, zoom: i64, mx: i64, my: i64) -> string => {
+let render_row = (row: i64, cols: i64, span_rows: i64, zoom: i64, mx: i64, my: i64) -> string => {
   var out = ""
   for col in 1..<=cols {
     // **Exactly one character per cell, marker included.** A terminal has no notion of
@@ -43,7 +58,7 @@ let render_row = (row: i64, cols: i64, rows: i64, zoom: i64, mx: i64, my: i64) -
     let painted = if col == mx && row == my {
       inverse() ++ ("+" ++ reset())
     } else {
-      bg(cell_color(col, row, cols, rows, zoom)) ++ " "
+      bg(cell_color(col, row, cols, span_rows, zoom)) ++ " "
     }
     out = out ++ painted
   }
@@ -80,11 +95,13 @@ let status = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) ->
 /// Draw one whole frame: rows of gradient, then the status line, in a single write.
 let draw = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> void => {
   var lines: []string = []
-  // rows - 1, leaving the last line for the status bar. Drawing into the final row of a
-  // terminal and then emitting a newline scrolls the screen, which is what makes a
-  // full-height frame jitter.
-  for row in 1..<rows {
-    lines.push(render_row(row, cols, rows, zoom, mx, my))
+  // rows - 1, leaving the last line for the status bar. Drawing into the final row and
+  // then emitting a newline scrolls the screen, which is what makes a full-height frame
+  // jitter. The same count is also the vertical span the gradient spreads over — passing
+  // the terminal's full height instead would leave the top band unused.
+  let span_rows = rows - 1
+  for row in 1..<=span_rows {
+    lines.push(render_row(row, cols, span_rows, zoom, mx, my))
   }
   lines.push(status(cols, rows, zoom, mx, my, events))
   cursor_home()
