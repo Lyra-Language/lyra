@@ -9,6 +9,50 @@ Newest first.
 
 ## Dated log
 
+### 08/17/26
+**Three `std.tui` demo programs**, and the four bugs writing them turned up.
+`examples/tui_palette.lyra` is the style half alone (pipeable, touches no terminal
+state), `tui_events.lyra` the input half as a readable transcript, and
+`tui_viewer.lyra` a full-screen skeleton — one-write frames, size read per frame,
+arrows and mouse both moving a marker. All three were driven through a pty to check
+they actually run rather than merely compile.
+
+`tui_events` earns its place by showing *why* the decoder exists: it reads three code
+points with the raw builtin first, so an arrow key prints as `<27>`, `'[' (91)`,
+`'A' (65)`, and then the same key as `Down`.
+
+**`if b { f() } else { g() }` over two `void` functions did not compile at all.** It
+emitted `phi void` and clang refused the module outright — six ordinary lines. `match x
+{ 0 => f(), _ => g() }` had the identical bug, found by checking the sibling as this
+project's notes say to.
+
+The cause is that **"produced no value" has two spellings and both merges tested only
+one**: a builtin hands back a nil, while a call to a *user-defined* `void` function
+hands back the `ir.Call`, non-nil with a void type. Both guards' comments already
+anticipated void branches; neither anticipated that one of them is not nil. Fixed with a
+shared `isVoidResult` in both walks in one change, since a partial fix here is a phi
+that is well-formed on one construct and not the other.
+
+**A one-armed `if` was illegal as the tail of a statement-position match arm** —
+`match e { Up => { if c { … } }, _ => { } }` refused with "`if` used as a value must
+have an `else` branch", naming a value nobody wanted. `checkIfExpr` has taken a
+`requireType` flag all along for exactly this; `checkMatchExpr` did not, so its arms
+were always checked in value position. It takes one now, and the statement path routes
+arm bodies through a new `checkExprForEffect` — the value-optional twin of
+`inferExprType`, recursive so a nested statement `match` gets the same treatment.
+
+**That is the fourth member of the "block value vs statement" family**, and the set is
+worth reading together: `checkBlockForEffect` (loop bodies, earlier), `checkBlock`'s
+double-checked tail (`lyra-W006` on a returned value, 08/15), `checkLValueAssignment`'s
+missing context (08/15), and this. Each was a construct that had to decide whether its
+tail is a value or a statement, and each got the answer from a different place.
+
+Two smaller things the demos surfaced, both documentation rather than compiler bugs:
+`_ => ()` is the **empty tuple**, not void, so mixing it with void arms is a type error
+and `_ => { }` is the no-op arm; and a bare assignment is not a valid arm body
+(`None => running = false` needs braces). `std.tui`'s own module-doc example had both
+wrong, which is the argument for examples that compile.
+
 ### 08/15/26
 **`std.tui`** — `event.lyra`, `key.lyra`, `mouse.lyra`, `screen.lyra`, `style.lyra`: an
 `Event` type and the escape-sequence decoder, named keys, SGR mouse reporting,

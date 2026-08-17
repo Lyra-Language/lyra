@@ -1,0 +1,55 @@
+import std.tui.{ fg, bg, rgb, grey, reset, bold, dim, inverse }
+
+// Everything `std.tui`'s style half can do, and nothing else — no raw mode, no event
+// loop. Safe to pipe into a file or a pager, which is the point of styles being
+// *strings* rather than commands: this program never touches the terminal's state.
+//
+// Run: lyrac run examples/tui_palette.lyra
+
+const SWATCH = "  "
+
+/// One row of the 6×6×6 cube: green varies across, blue within each group.
+let cube_row = (r: i64) -> string => {
+  var row = ""
+  for g in 0..<6 {
+    for b in 0..<6 {
+      row = row ++ (bg(rgb(r, g, b)) ++ SWATCH)
+    }
+    row = row ++ (reset() ++ " ")
+  }
+  row
+}
+
+let main = () => {
+  println(bold() ++ "Attributes" ++ reset())
+  println("  ${bold()}bold${reset()}  ${dim()}dim${reset()}  ${inverse()}inverse${reset()}  plain")
+  println("")
+
+  println(bold() ++ "rgb(r, g, b) — the 6x6x6 cube, each component 0..5" ++ reset())
+  println(dim() ++ "  red increases down; green across; blue within each group" ++ reset())
+  for r in 0..<6 {
+    println("  " ++ cube_row(r))
+  }
+  println("")
+
+  println(bold() ++ "grey(level) — 24 steps, excluding true black and white" ++ reset())
+  var ramp = "  "
+  for level in 0..<24 {
+    ramp = ramp ++ (bg(grey(level)) ++ SWATCH)
+  }
+  println(ramp ++ reset())
+  println("")
+
+  println(bold() ++ "fg vs bg on the same colour" ++ reset())
+  for level in 0..<6 {
+    let c = rgb(5, level, 0)
+    println("  ${fg(c)}foreground ${c}${reset()}   ${bg(c)}  background ${c}  ${reset()}")
+  }
+  println("")
+
+  // Clamping rather than trapping is deliberate — a colour is decoration, and a program
+  // computing one from data it is visualizing should not die at the edge of its gradient.
+  println(bold() ++ "Out-of-range components clamp" ++ reset())
+  println("  rgb(9, 9, 9) = ${rgb(9, 9, 9)}, same as rgb(5, 5, 5) = ${rgb(5, 5, 5)}")
+  println("  grey(99) = ${grey(99)}, same as grey(23) = ${grey(23)}")
+}

@@ -23,11 +23,11 @@ module std.tui
 //! var running = true;
 //! for running {
 //!   match events.next_event() {
-//!     Some(Keyboard(Char c)) => if i64(c) == 113 { running = false },
+//!     Some(Keyboard(Char c)) => { running = i64(c) != 113 },
 //!     Some(Keyboard(Up)) => println("up"),
 //!     Some(Mouse(m)) => println("click at ${m.col},${m.row}"),
-//!     Some(_) => (),
-//!     None => running = false
+//!     Some(_) => { },
+//!     None => { running = false }
 //!   }
 //! }
 //! mouse_disable();

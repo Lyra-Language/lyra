@@ -1,0 +1,139 @@
+import std.tui.{
+  event_reader, Event, Key,
+  mouse_enable, mouse_disable,
+  alt_screen_enter, alt_screen_leave, clear, cursor_hide, cursor_show, cursor_home, move_to,
+  fg, bg, rgb, reset, bold, inverse
+}
+
+// A full-screen interactive skeleton: the shape a terminal viewer wants, with a colour
+// gradient standing in for whatever the program actually renders.
+//
+// What it demonstrates, and why each is here:
+//
+//   * **Setup and teardown pair up.** Four things are switched on and all four must be
+//     switched off, in reverse. Leave any of them and the user's shell is broken after
+//     the program exits.
+//   * **One frame, one `print`.** Every cell goes into a single string and reaches the
+//     terminal in one write. Positioning and printing per cell is the obvious way and is
+//     far slower.
+//   * **The size is read every frame**, so a resize is picked up. See the note on that
+//     at the bottom — it is not free.
+//   * Arrows and mouse both move the marker, the wheel changes a zoom number: the input
+//     vocabulary a pan-and-zoom viewer needs.
+//
+// Run: lyrac run examples/tui_viewer.lyra   (q to quit)
+
+/// The gradient cell for a position — stands in for a rendered pixel.
+let cell_color = pure (col: i64, row: i64, cols: i64, rows: i64, zoom: i64) -> i64 => {
+  let r = 5 * col / cols
+  let g = 5 * row / rows
+  let b = zoom % 6
+  rgb(r, g, b)
+}
+
+/// One row of the frame, as a string. Built by concatenation into a single row rather
+/// than printed per cell.
+let render_row = (row: i64, cols: i64, rows: i64, zoom: i64, mx: i64, my: i64) -> string => {
+  var out = ""
+  for col in 1..<=cols {
+    // The marker is drawn inverted so it is visible against any gradient colour.
+    let painted = if col == mx && row == my {
+      inverse() ++ ("[]" ++ reset())
+    } else {
+      bg(cell_color(col, row, cols, rows, zoom)) ++ " "
+    }
+    out = out ++ painted
+  }
+  out ++ reset()
+}
+
+/// The status line. `clear_line` is not needed because the row is padded to full width —
+/// a shorter line would otherwise leave the tail of the previous, longer one behind.
+let status = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> string => {
+  let text = " ${cols}x${rows}  zoom ${zoom}  marker ${mx},${my}  events ${events}  " ++
+    "arrows/click move · wheel zooms · q quits "
+  var padded = text
+  for i in text.len()..<cols {
+    padded = padded ++ " "
+  }
+  inverse() ++ (bold() ++ (padded ++ reset()))
+}
+
+/// Draw one whole frame: rows of gradient, then the status line, in a single write.
+let draw = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> void => {
+  var lines: []string = []
+  // rows - 1, leaving the last line for the status bar. Drawing into the final row of a
+  // terminal and then emitting a newline scrolls the screen, which is what makes a
+  // full-height frame jitter.
+  for row in 1..<rows {
+    lines.push(render_row(row, cols, rows, zoom, mx, my))
+  }
+  lines.push(status(cols, rows, zoom, mx, my, events))
+  cursor_home()
+  print(lines.join("\r\n"))
+}
+
+let clamp = pure (v: i64, lo: i64, hi: i64) -> i64 => if v < lo { lo } else if v > hi { hi } else { v }
+
+let main = () => {
+  // Order matters on the way in, and the reverse order on the way out.
+  set_raw_mode(true)
+  alt_screen_enter()
+  cursor_hide()
+  mouse_enable()
+  clear()
+
+  var zoom = 0
+  var mx = 1
+  var my = 1
+  var count = 0
+  var running = true
+  var events = event_reader()
+
+  let (cols0, rows0) = terminal_size()
+  draw(cols0, rows0, zoom, mx, my, count)
+
+  for running {
+    match events.next_event() {
+      None => { running = false },
+      Some(e) => {
+        count += 1
+        // Read the size every frame rather than once: the window can change, and this is
+        // exactly why `terminal_size` is EffectInput rather than a constant.
+        let (cols, rows) = terminal_size()
+        match e {
+          Keyboard(Up) => { my -= 1 },
+          Keyboard(Down) => { my += 1 },
+          Keyboard(Left) => { mx -= 1 },
+          Keyboard(Right) => { mx += 1 },
+          Keyboard(PageUp) => { zoom += 1 },
+          Keyboard(PageDown) => { zoom -= 1 },
+          Keyboard(Char c) => { running = i64(c) != 113 },
+          Mouse(m) => match m.button {
+            WheelUp => { zoom += 1 },
+            WheelDown => { zoom -= 1 },
+            // A click sets the marker where the pointer is — the coordinates are
+            // already 1-based, matching the frame's own numbering.
+            _ => { mx = m.col; my = m.row }
+          },
+          _ => { }
+        }
+        mx = clamp(mx, 1, cols)
+        my = clamp(my, 1, rows - 1)
+        zoom = clamp(zoom, 0, 99)
+        draw(cols, rows, zoom, mx, my, count)
+      }
+    }
+  }
+
+  mouse_disable()
+  cursor_show()
+  alt_screen_leave()
+  set_raw_mode(false)
+
+  // A resize is only noticed on the *next* event, because `read_key` blocks and there is
+  // no way to wake it: no signal handler for SIGWINCH, and no timed read. Resizing the
+  // window and then pressing any key redraws correctly. Closing that properly is the
+  // `timed read_key` item in todo.md.
+  println("marker ended at ${mx},${my} after ${count} events")
+}

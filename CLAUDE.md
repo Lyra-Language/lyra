@@ -129,6 +129,27 @@ because each was learned from a real failure, and none is local to one package.
    kind or a composite type, grep for the switches over it; when fixing one, check the
    others in the same file, since these travel in pairs.
 
+   **A ninth and tenth landed 08/17, and they are one bug in two places plus its
+   front-end cousin.** "Produced no value" has **two spellings** in the backend — a nil,
+   and an `ir.Call` whose LLVM type is void — and both branch merges (`lowerIfExpr` in
+   control_flow.go, `matchMerge.arm` in match.go) tested only the nil. So
+   `if b { f() } else { g() }` over two user-defined `void` functions emitted `phi void`
+   and clang refused the module: six ordinary lines that did not compile. Both guards'
+   comments already anticipated void branches; neither anticipated that one of them is
+   not nil, which is the fifth instance's lesson again — a shared *assumption* fails
+   silently rather than diverging. `isVoidResult` is now the one predicate, and the twins
+   were fixed together because a partial fix leaves a phi well-formed on one construct
+   and not the other.
+
+   The front-end cousin, same day: `checkMatchExpr` had no `requireType` flag, so a
+   match's arms were always checked in *value* position and a one-armed `if` as an arm
+   body was refused — while `checkIfExpr` had taken that flag all along.
+   `checkExprForEffect` is the value-optional twin of `inferExprType` those paths share.
+   With `checkBlockForEffect` (loop bodies) and `checkBlock`'s double-checked tail
+   (lyra-W006, 08/15), that makes **four constructs that had to decide whether their tail
+   is a value or a statement, each getting the answer from a different place** — the set
+   to read together before adding a fifth.
+
    Two more landed 08/05, both in the backend and both found by *reviewing* for duplication
    rather than by hitting them: `resolveStructType`/`resolveTupleType` missing the
    `ParameterizedType` arm their sibling `resolveDataType` had been given (a nested generic
