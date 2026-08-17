@@ -52,10 +52,9 @@ pub data Key =
 /// Backspace is 127 (DEL) on essentially every modern terminal, with 8 (BS) accepted
 /// beside it because some still send that and the two mean the same thing to a reader.
 let classify = pure (c: rune) -> Key => {
-  let n = i64(c)
-  if n == 13 || n == 10 { Enter }
-  else if n == 9 { Tab }
-  else if n == 127 || n == 8 { Backspace }
+  if c == '\r' || c == '\n' { Enter }
+  else if c == '\t' { Tab }
+  else if c == '\x7f' || c == '\x08' { Backspace }
   else { Char(c) }
 }
 
@@ -65,13 +64,12 @@ let classify = pure (c: rune) -> Key => {
 /// bytes were part of a sequence this does not know, and reporting the letter would put a
 /// stray `A` into a text field. Losing an unknown key is the lesser wrong.
 let final_key = pure (f: rune) -> Key => {
-  let n = i64(f)
-  if n == 65 { Up }
-  else if n == 66 { Down }
-  else if n == 67 { Right }
-  else if n == 68 { Left }
-  else if n == 72 { Home }
-  else if n == 70 { End }
+  if f == 'A' { Up }
+  else if f == 'B' { Down }
+  else if f == 'C' { Right }
+  else if f == 'D' { Left }
+  else if f == 'H' { Home }
+  else if f == 'F' { End }
   else { Escape }
 }
 
@@ -86,14 +84,26 @@ let decode_numeric = (start: i64) -> Maybe<Event> => {
     match read_key() {
       None => { done = true; ended = true },
       Some(d) => {
-        let n = i64(d)
-        if n >= 48 && n <= 57 { code = code * 10 + (n - 48) }
+        if is_digit(d) { code = code * 10 + digit_value(d) }
         else { done = true }
       }
     }
   }
   if ended { Some(Keyboard(Escape)) } else { Some(Keyboard(numeric_key(code))) }
 }
+
+/// Whether a code point is an ASCII decimal digit.
+pub let is_digit = pure noalloc (c: rune) -> bool => c >= '0' && c <= '9'
+
+/// The value of an ASCII decimal digit, 0..9.
+///
+/// # Panics
+///
+/// Never traps, but answers nonsense for a non-digit — guard with `is_digit`, as the
+/// sequence readers do. The conversion to i64 is the one thing a rune literal cannot
+/// express: subtracting `'0'` is arithmetic, and arithmetic on runes is not a thing this
+/// language offers.
+pub let digit_value = pure noalloc (c: rune) -> i64 => i64(c) - i64('0')
 
 /// The `\e[<n>~` family. Unrecognized numbers are `Escape`, on `final_key`'s reasoning.
 let numeric_key = pure (code: i64) -> Key => {

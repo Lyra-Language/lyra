@@ -107,7 +107,7 @@ let decode_mouse = () -> Maybe<Event> => {
 /// carried on `MouseEvent` today. That is a deliberate omission rather than an oversight —
 /// adding them is three fields on a struct most matches do not want — and the bit values
 /// are written here so it is a small change if something needs ctrl-click.
-let mouse_event = pure (code: i64, col: i64, row: i64, term: i64) -> MouseEvent => {
+let mouse_event = pure (code: i64, col: i64, row: i64, term: rune) -> MouseEvent => {
   let low = code & 3
   let button = if (code & 64) != 0 {
     if low == 0 { WheelUp } else { WheelDown }
@@ -115,9 +115,9 @@ let mouse_event = pure (code: i64, col: i64, row: i64, term: i64) -> MouseEvent 
   else if low == 1 { MouseMiddle }
   else if low == 2 { MouseRight }
   else { NoButton }
-  // `m` (109) is the release terminator; `M` is press *or* motion, and bit 5 separates
-  // those two. Checked in this order because a release while dragging sets both.
-  let action = if term == 109 { Release }
+  // `m` is the release terminator; `M` is press *or* motion, and bit 5 separates those
+  // two. Checked in this order because a release while dragging sets both.
+  let action = if term == 'm' { Release }
   else if (code & 32) != 0 { Move }
   else { Press }
   MouseEvent { button: button, action: action, col: col, row: row }

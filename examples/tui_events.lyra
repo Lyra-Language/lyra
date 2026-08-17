@@ -13,9 +13,12 @@ import std.tui.{
 // Run: lyrac run examples/tui_events.lyra
 
 /// A rune's name, printable or not — the control codes have no glyph, so show the number.
+///
+/// The `i64(c)` here is deliberate: this is the one place the numeric code point is the
+/// point. Everywhere else a rune literal (`'q'`) says it better than its number does.
 let show_code = (c: rune) -> string => {
   let n = i64(c)
-  if n < 32 || n == 127 { "<${n}>" } else { "'${c}' (${n})" }
+  if c < ' ' || c == '\x7f' { "<${n}>" } else { "'${c}' (${n})" }
 }
 
 let key_name = (k: Key) -> string => match k {
@@ -80,11 +83,11 @@ let main = () => {
         // statement-position arm used to be refused.
         match e {
           Keyboard(Char c) => {
-            let n = i64(c)
-            // `q` quits. Escape deliberately does not: it is reported one keypress late,
-            // so binding it here would feel broken — see std.tui's next_event.
-            if n == 113 { running = false }
-            else if n == 109 {
+            // `q` quits — written as a rune literal rather than 113, which is what the
+            // language is for. Escape would work too now that it is reported promptly,
+            // but `q` is the convention.
+            if c == 'q' { running = false }
+            else if c == 'm' {
               motion = !motion
               if motion { mouse_enable_motion() } else { mouse_enable() }
               print("  motion reporting ${if motion { "on" } else { "off" }}\r\n")
