@@ -2397,24 +2397,34 @@ Two ways to close it, and they are not the same size:
   This is the real fix and needs no consumer changes — but it needs a post-pass (a
   module's imports cannot be populated until every module's exports are known) and has to
   respect the export-timing sharp edges `pkg/modules/README.md` documents.
-- **Enforce with a checker pass.** Reuse `collectRefsByFile` from `unused_imports.go`,
-  which already gathers identifier *and* type references per file, and warn for a name
-  whose declaring module is neither this one, the prelude, nor named by an import. Much
-  smaller, but it is a second answer to "what is visible here" living beside the scope
-  chain, which is the drift hazard 8 keeps cataloguing. It also needs
-  `collectRefsByFile` to start carrying a location per name, which it does not today.
+- ~~**Enforce with a checker pass.**~~ **Tried 08/17 and it cannot work.** Reusing
+  `collectRefsByFile` looks right — it already gathers identifier *and* type references
+  per file — but it is a **syntactic** walk with no scope information, so it cannot tell a
+  local binding from a module member. The check then asks `DeclaringModule(name)`, which
+  is last-writer-wins, and every local whose name collides with *any* top-level name
+  anywhere in the program is reported. It failed inside the prelude's own files: a
+  callback parameter named `f` in `array.lyra` was reported as belonging to a user module
+  that happened to declare a top-level `f`.
 
-Three decisions to settle first:
+  Over-collection is safe for "is this name mentioned anywhere" — which is all the unused
+  -import warning asks — and unsound for "what does this name resolve to". The distinction
+  is the whole difficulty, and it is why this has to happen where resolution happens.
 
-- **Warning or error.** An error is the honest reading and is a breaking change to every
-  program relying on the hole. `lyra-W016` is the precedent for warning first.
-- **Does a namespace import admit bare names?** It should not — `import shapes` binds
-  `shapes.Point`, and admitting bare `Point` makes the two import forms mean the same
-  thing. But that is the form most likely to be relied on today.
-- **UFCS is exempt by construction and should stay that way.** `m.map(f)` never writes
-  `map` as an identifier, so a reference-based check does not see it — which is correct,
-  since the import is what permits the call. Worth writing down before someone "fixes"
-  the check to catch member expressions too.
+Three decisions, **settled 08/17**:
+
+- **An error**, not a warning. Measured first: zero of the 25 files in `std/` and
+  `examples/` rely on the hole, so there is nothing to break.
+- **A namespace import admits no bare names.** `import shapes` binds `shapes.Point`; if
+  it also admitted bare `Point` the two import forms would mean the same thing and the
+  member list would be decoration.
+- **UFCS stays exempt**, and the reason is *ordering* rather than the shape of any walk.
+  `m.map(f)` writes `map` as a member, but the UFCS desugar rewrites the call into a bare
+  `map(m, …)` **in place**, so anything running after the typechecker sees an identifier
+  and demands an import for a method the receiver's type already justifies. Verified: the
+  attempted pass failed on `next_event` in three example programs until it was moved ahead
+  of the typechecker. An alias binds only its local name (`X as Y` admits `Y`, not `X`).
+
+So what remains is the scope-and-maps route, with the semantics above already decided.
 
 ### [OPEN] Inference should not depend on declaration order
 
