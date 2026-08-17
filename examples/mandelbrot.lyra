@@ -4,12 +4,30 @@ const MAX_ITER = 100
 const WIDTH = 125
 const HEIGHT = 57
 
+// How many times taller than wide one terminal cell is.
+//
+// **This is a property of the font, not of the fractal**, and it is the only number here
+// that would need touching on a terminal whose cells are not the usual 2:1 (8x16, 9x18
+// and 10x20 are all typical). Without it the set renders vertically stretched — the
+// classic terminal-graphics distortion — because one character per pixel maps a square
+// region of the complex plane onto a cell that is anything but square.
+//
+// Compensating in the *coordinate mapping* rather than by drawing two characters per
+// pixel is what keeps the horizontal resolution: 125 samples across instead of 62.
+const CELL_ASPECT = 2.0
+
 const X_MIN = -2.00
 const X_MAX = 0.47
-const Y_MIN = -1.12
-const Y_MAX = 1.12
 const X_LEN = X_MAX - X_MIN
-const Y_LEN = Y_MAX - Y_MIN
+
+// The vertical extent is **derived, not chosen**, so the aspect correction holds by
+// construction rather than by the constants happening to agree. Picking Y_MIN/Y_MAX by
+// hand works right up until WIDTH or HEIGHT changes, and then it silently does not — the
+// distortion looks like a rendering artifact rather than like arithmetic.
+//
+// It cannot be a `const`: deriving it needs f64(HEIGHT), and a conversion is not a
+// compile-time constant. Declaring float copies of the dimensions beside the integer ones
+// would fix that and introduce two numbers that can drift apart, which is worse.
 
 // A generous bailout rather than the usual 4.0. The smooth term below is only
 // asymptotically correct, so the further past the escape radius `z` is allowed to
@@ -58,13 +76,25 @@ let shade = (c: Complex<f64>) -> i64 => {
 }
 
 let main = () => {
+  // One cell should cover the same complex distance either way once the cell's own
+  // shape is accounted for: X_LEN/WIDTH per column, and CELL_ASPECT times that per row.
+  let y_len = X_LEN * CELL_ASPECT * f64(HEIGHT) / f64(WIDTH)
+  // Centred on the real axis, which is where the set is.
+  //
+  // Note what this does *not* do: it holds the horizontal view fixed and lets the
+  // vertical show whatever fits, so a wide, short window sees **less** of the imaginary
+  // axis rather than a squashed set. That is what a uniform scale means. A viewer that
+  // would rather always frame the whole set should derive the other way round, or take
+  // whichever of the two extents is more constraining.
+  let y_min = -y_len / 2.0
+
   var rows: []string = []
   for py in 0..<HEIGHT {
     var row = ""
     for px in 0..<WIDTH {
       let c = Complex {
         re: X_MIN + X_LEN * f64(px) / f64(WIDTH),
-        im: Y_MIN + Y_LEN * f64(py) / f64(HEIGHT)
+        im: y_min + y_len * f64(py) / f64(HEIGHT)
       }
       row = row ++ RAMP[shade(c)]
     }
