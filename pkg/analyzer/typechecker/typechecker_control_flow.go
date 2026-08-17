@@ -176,18 +176,29 @@ func (tc *TypeChecker) checkIfExpr(expr *ast.IfExpr, requireType bool) types.Typ
 	}
 
 	// ── 2. infer branch types ────────────────────────────────────────────────
+	//
+	// In statement context the branches are checked *for effect*: their values are
+	// discarded, so a branch whose own tail has no value — a one-armed `if`, a `match`
+	// used for effect — is fine. Inferring them unconditionally is what made
+	// `if a { if b { f() } } else { … }` illegal, refused for wanting an `else` on the
+	// inner `if` whose value nobody uses.
+	//
+	// checkExprForEffect subsumes the else-if special case this replaced, and does it
+	// more evenly: that one propagated statement context only through a *bare* `else if`,
+	// so a braced `else { if … }` still put its tail in value position.
 	var thenType, elseType types.Type
 	if expr.Then != nil {
-		thenType = tc.inferExprType(expr.Then)
+		if requireType {
+			thenType = tc.inferExprType(expr.Then)
+		} else {
+			tc.checkExprForEffect(expr.Then)
+		}
 	}
 	if expr.Else != nil {
-		if innerIf, ok := expr.Else.(*ast.IfExpr); ok && !requireType {
-			// Propagate statement context through else-if chains so that
-			// `if a { T } else if b { U } else { V }` as a statement never
-			// errors on branch mismatches at any level.
-			tc.checkIfExpr(innerIf, false)
-		} else {
+		if requireType {
 			elseType = tc.inferExprType(expr.Else)
+		} else {
+			tc.checkExprForEffect(expr.Else)
 		}
 	}
 

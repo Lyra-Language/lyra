@@ -112,3 +112,45 @@ func TestMatch_ValueArmStillRefusesAOneArmedIf(t *testing.T) {
 	`, false)
 	assertHasErrorContaining(t, res, "must have an `else` branch")
 }
+
+// The `if` half of the same rule, and the fifth member of the family: a statement-position
+// `if` checks its *branches* for effect too, so a one-armed `if` nested inside one is
+// legal. checkIfExpr took its requireType flag for the mismatch check but still inferred
+// both branches as values, which is what refused this.
+func TestIf_StatementBranchAllowsANestedOneArmedIf(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = () -> void => println("f")
+		let g = (n: i64) -> void => {
+			if n == 0 { if n == 0 { f() } } else { f() }
+		}
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// A braced `else { if … }`, which the special case this replaced did not cover: it
+// propagated statement context only through a bare `else if`.
+func TestIf_StatementBracedElseAllowsANestedOneArmedIf(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = () -> void => println("f")
+		let g = (n: i64) -> void => {
+			if n == 0 { f() } else { if n == 1 { f() } }
+		}
+	`, false)
+	assertNoErrors(t, res)
+}
+
+// Value position keeps requiring an else, at any nesting depth.
+func TestIf_ValueBranchStillRequiresAnElse(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let g = (n: i64) -> i64 => if n == 0 { if n == 0 { 1 } } else { 2 }
+	`, false)
+	assertHasErrorContaining(t, res, "must have an `else` branch")
+}
+
+// And incompatible branches are still an error where the value is used.
+func TestIf_ValueBranchesMustStillAgree(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let g = (n: i64) -> i64 => if n == 0 { 1 } else { "x" }
+	`, false)
+	assertHasErrorContaining(t, res, "incompatible types")
+}
