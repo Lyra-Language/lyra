@@ -14,7 +14,7 @@ const HEIGHT = 57
 //
 // Compensating in the *coordinate mapping* rather than by drawing two characters per
 // pixel is what keeps the horizontal resolution: 125 samples across instead of 62.
-const CELL_ASPECT = 2.0
+const CELL_ASPECT = 2.2
 
 const X_MIN = -2.00
 const X_MAX = 0.47

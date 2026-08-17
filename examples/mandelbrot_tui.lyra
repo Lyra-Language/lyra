@@ -1,0 +1,149 @@
+import std.tui.{
+  event_reader, Event, Key, event_available,
+  mouse_enable, mouse_disable,
+  alt_screen_enter, alt_screen_leave, clear, cursor_hide, cursor_show, cursor_home, move_to,
+  fg, bg, rgb, reset, bold, inverse
+}
+
+let main = () => {
+  setup()
+
+  var zoom = 0
+  var mx = 1
+  var my = 1
+  var count = 0
+  var running = true
+  var events = event_reader()
+
+  let (cols0, rows0) = terminal_size()
+  draw(cols0, rows0, zoom, mx, my, count)
+
+  var last_cols = cols0
+  var last_rows = rows0
+  for running {
+    if !events.event_available(redraw_interval_ms) {
+      let (poll_cols, poll_rows) = terminal_size()
+      if poll_cols != last_cols || poll_rows != last_rows {
+        last_cols = poll_cols
+        last_rows = poll_rows
+        mx = clamp(mx, 1, poll_cols)
+        my = clamp(my, 1, poll_rows - 1)
+        clear()
+        draw(poll_cols, poll_rows, zoom, mx, my, count)
+      }
+    } else {
+    match events.next_event() {
+      None => { running = false },
+      Some(e) => {
+        count += 1
+        let (cols, rows) = terminal_size()
+        last_cols = cols
+        last_rows = rows
+        match e {
+          Keyboard(Up) => { my -= 1 },
+          Keyboard(Down) => { my += 1 },
+          Keyboard(Left) => { mx -= 1 },
+          Keyboard(Right) => { mx += 1 },
+          Keyboard(PageUp) => { zoom += 1 },
+          Keyboard(PageDown) => { zoom -= 1 },
+          Keyboard(Char c) => { running = i64(c) != 113 },
+          Mouse(m) => match m.button {
+            WheelUp => { zoom += 1 },
+            WheelDown => { zoom -= 1 },
+            // A click sets the marker where the pointer is — the coordinates are
+            // already 1-based, matching the frame's own numbering.
+            _ => { mx = m.col; my = m.row }
+          },
+          _ => { }
+        }
+        mx = clamp(mx, 1, cols)
+        my = clamp(my, 1, rows - 1)
+        zoom = clamp(zoom, 0, 99)
+        draw(cols, rows, zoom, mx, my, count)
+      }
+    }
+    }
+  }
+
+  teardown()
+
+  println("marker ended at ${mx},${my} after ${count} events")
+}
+
+/// Spread a **1-based** position over `span` cells onto the cube's 0..5, in six even bands.
+let band = pure noalloc (pos: i64, span: i64) -> i64 =>
+  if span <= 0 { 0 } else { 6 * (pos - 1) / span }
+
+/// The gradient cell for a position — stands in for a rendered pixel.
+let cell_color = pure (col: i64, row: i64, cols: i64, span_rows: i64, zoom: i64) -> i64 =>
+  rgb(band(col, cols), band(row, span_rows), zoom % 6)
+
+/// One row of the frame, as a string. Built by concatenation into a single row rather
+/// than printed per cell.
+let render_row = (row: i64, cols: i64, span_rows: i64, zoom: i64, mx: i64, my: i64) -> string => {
+  var out = ""
+  for col in 1..<=cols {
+    let painted = if col == mx && row == my {
+      inverse() ++ ("+" ++ reset())
+    } else {
+      bg(cell_color(col, row, cols, span_rows, zoom)) ++ " "
+    }
+    out = out ++ painted
+  }
+  out ++ reset()
+}
+
+/// `text` at exactly `width` characters: padded if short, cut if long.
+let fit = (text: string, width: i64) -> string => {
+  if text.len() > width {
+    text.slice(0, width)
+  } else {
+    var padded = text
+    for i in text.len()..<width {
+      padded = padded ++ " "
+    }
+    padded
+  }
+}
+
+/// The status line, always exactly one terminal row wide.
+let status = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> string => {
+  let text = " ${cols}x${rows}  zoom ${zoom}  marker ${mx},${my}  events ${events}  " ++
+    "arrows/click move · wheel zooms · q quits "
+  inverse() ++ (bold() ++ (fit(text, cols) ++ reset()))
+}
+
+/// Draw one whole frame: rows of gradient, then the status line, in a single write.
+let draw = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> void => {
+  var lines: []string = []
+  let span_rows = rows - 1
+  for row in 1..<=span_rows {
+    lines.push(render_row(row, cols, span_rows, zoom, mx, my))
+  }
+  lines.push(status(cols, rows, zoom, mx, my, events))
+  cursor_home()
+  print(lines.join("\r\n"))
+}
+
+/// How long the loop waits for input before looking at the terminal size again. Short
+/// enough that a resize feels immediate, long enough that an idle program is not spinning
+/// — it wakes 20 times a second and does nothing.
+const redraw_interval_ms = 50
+
+let clamp = pure (v: i64, lo: i64, hi: i64) -> i64 => if v < lo { lo } else if v > hi { hi } else { v }
+
+let setup = () => {
+  // Order matters on the way in, and the reverse order on the way out.
+  set_raw_mode(true)
+  alt_screen_enter()
+  cursor_hide()
+  mouse_enable()
+  clear()
+}
+
+let teardown = () => {
+  mouse_disable()
+  cursor_show()
+  alt_screen_leave()
+  set_raw_mode(false)
+}
