@@ -471,6 +471,11 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 	}
 	inferredType := tc.inferExprType(decl.Value)
 	if inferredType == nil {
+		// A type we could not infer binds nothing, and the names then report as undefined
+		// at every use — a diagnostic that points at the line *after* this one while the
+		// cause is elsewhere entirely. When the cause is a callee whose return type is
+		// inferred rather than declared, say so and name the annotation.
+		tc.reportDestructureOfInferredReturn(decl)
 		return
 	}
 	// Upgrading a `weak` reference: `if let strong = w` binds a **`shared T`**, not
@@ -1273,6 +1278,40 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	}
 	tc.checkImplicitNewtypeReadout(stmt.Value, valueType, targetType)
 	tc.checkNewtypeConstraints(stmt.Value, targetType)
+}
+
+// reportDestructureOfInferredReturn reports lyra-E058 when a destructuring's value is a
+// call whose return type is inferred rather than declared.
+//
+// Destructuring needs the element types at the point the pattern is walked, and a callee
+// declared later in the file has not had its return type inferred yet — so the value's
+// type is nil and the pattern binds nothing. Binding the whole value is unaffected, and so
+// is a scalar return; this is the one position that cannot defer.
+//
+// Deliberately narrow: it fires only for a call to a function that genuinely has no return
+// annotation. A nil type from any other cause has already been reported by whatever
+// produced it, and a second, more confident message about the wrong thing is worse than
+// the silence this replaces.
+func (tc *TypeChecker) reportDestructureOfInferredReturn(decl *ast.DestructuringDeclStmt) {
+	if _, isIdent := decl.Pattern.(*ast.IdentifierPattern); isIdent {
+		return // a plain binding does not decompose, so this is not its problem
+	}
+	call, ok := decl.Value.(*ast.FunctionCallExpr)
+	if !ok {
+		return
+	}
+	callee, ok := call.Function.(*ast.IdentifierExpr)
+	if !ok {
+		return
+	}
+	fn, ok := tc.symTable.LookupFunctionFrom(callee.Name, decl.Value.GetLocation())
+	if !ok || fn == nil || fn.ReturnType.Type != nil {
+		return
+	}
+	tc.addErrorCode(decl.GetLocation(), SeverityError, diag.CodeDestructureOfInferredReturn,
+		"cannot destructure the result of %q: its return type is inferred and it is "+
+			"declared later in the file, so it is not known here — give it a return type "+
+			"annotation (`-> (i64, i64)` and so on)", callee.Name)
 }
 
 // rootIdentifier walks a member/index path back to the identifier it is rooted

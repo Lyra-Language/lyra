@@ -1,6 +1,9 @@
 package typechecker_test
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestDestructuring_TupleDeclBindsNames: each name in a tuple-destructuring
 // declaration must resolve to its corresponding element's type, not just
@@ -487,4 +490,81 @@ let f = (n: i64) -> i64 => {
 }`
 	res := parseCollectAndCheck(t, source, false)
 	assertErrorsAre(t, res, "cannot destructure i64 with a data pattern")
+}
+
+// Destructuring the result of a function whose return type is **inferred** and which is
+// declared **later** in the file (lyra-E058, 08/17).
+//
+// Destructuring needs the element types where the pattern is walked, and a later
+// declaration's inferred return type does not exist yet — so the value's type is nil and
+// the pattern binds nothing. Until this diagnostic the only symptom was `undefined
+// identifier` at every *use* of the names, pointing at the line after the destructure
+// while the cause was a missing `->` further down the file.
+//
+// The top-down house style (main first, helpers below) is exactly the arrangement that
+// puts an un-annotated helper after its caller, which is what made this worth naming.
+
+func TestDestructuring_InferredLaterReturn_NamesTheAnnotation(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = () -> void => {
+			let (a, b) = pair(1, 2)
+			println("${a} ${b}")
+		}
+		let pair = (x: i64, y: i64) => (x, y)
+	`, false)
+	assertHasErrorContaining(t, res, "its return type is inferred and it is declared later")
+	assertHasErrorContaining(t, res, "give it a return type annotation")
+}
+
+// The annotation is the fix, so with one there is no error at all.
+func TestDestructuring_AnnotatedLaterReturn_Ok(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+		let f = () -> void => {
+			let (a, b) = pair(1, 2)
+			println("${a} ${b}")
+		}
+		let pair = (x: i64, y: i64) -> (i64, i64) => (x, y)
+	`, false))
+}
+
+// Declared *before* its caller, inference has already run, so an annotation is not needed
+// — which is what makes this an ordering gap rather than a rule about destructuring.
+func TestDestructuring_InferredEarlierReturn_Ok(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+		let pair = (x: i64, y: i64) => (x, y)
+		let f = () -> void => {
+			let (a, b) = pair(1, 2)
+			println("${a} ${b}")
+		}
+	`, false))
+}
+
+// Binding the whole tuple defers the element types, so it is unaffected. Guards against
+// the diagnostic being widened into "you must annotate any later function".
+func TestDestructuring_WholeTupleFromInferredLaterReturn_Ok(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+		let f = () -> void => {
+			let p = pair(1, 2)
+			println("${p.0}")
+		}
+		let pair = (x: i64, y: i64) => (x, y)
+	`, false))
+}
+
+// A nil type from any *other* cause keeps its own diagnostic: an undefined callee is
+// reported as undefined, not as a missing annotation. The narrowness is the point — a
+// confident message about the wrong thing is worse than the silence this replaced.
+func TestDestructuring_UndefinedCallee_KeepsItsOwnError(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = () -> void => {
+			let (a, b) = nonexistent(1)
+			println("${a} ${b}")
+		}
+	`, false)
+	assertHasErrorContaining(t, res, `undefined function "nonexistent"`)
+	for _, e := range res.errors {
+		if strings.Contains(e.Message, "return type is inferred") {
+			t.Errorf("E058 fired for an undefined callee: %q", e.Message)
+		}
+	}
 }

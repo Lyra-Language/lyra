@@ -2365,6 +2365,32 @@ Frame diffing is the one with a measurement behind it already: `todo.md`'s rende
 section found that a terminal frame is better assembled into one string and printed once
 than positioned and printed per cell, so a diff wants to emit runs rather than cells.
 
+### [OPEN] Inference should not depend on declaration order
+
+`let (w, h) = contain_set(cols, rows)` fails when `contain_set` is declared **later** in
+the file and its return type is **inferred** rather than annotated: destructuring needs
+the element types where the pattern is walked, and the callee's return type has not been
+inferred yet, so the value's type is nil and the pattern binds nothing.
+
+`lyra-E058` names the fix as of 08/17 (add a return annotation), which turns a mystery
+into a one-line change — before it, the only symptom was `undefined identifier` at every
+*use* of the names, pointing at the line after the destructure while the cause was a
+missing `->` fifty lines down. **The diagnostic is the workaround, not the fix.**
+
+The gap is narrow and the boundary is known: a scalar return is fine, and binding the
+whole tuple is fine — both defer the type. Destructuring is the one position that needs
+it immediately. So the fix is to infer a callee's return type **on demand** when a
+destructure asks for it, rather than relying on file order.
+
+Two things to settle when doing it: mutual recursion between two un-annotated functions
+needs a cycle guard (the same shape `resolveType`'s `resolvingTypes` guard has), and
+on-demand inference must not double-report diagnostics from a body that is later checked
+normally.
+
+**Worth doing because the house style causes it.** Helpers-below-main is exactly the
+arrangement that puts an un-annotated helper after its caller, so this is reachable by
+writing ordinary code in the documented style, not by doing anything unusual.
+
 ### [OPEN] Return-type-directed dispatch — reopen when `From`/`Into` wants it
 
 **Lyra dispatches on a receiver, and nothing else.** A trait method with no receiver

@@ -635,6 +635,27 @@ const (
 	// beside it already does) so one mistake draws one diagnostic.
 	CodeCapitalizedBindingName = "lyra-E057"
 
+	// CodeDestructureOfInferredReturn: destructuring the result of a function whose
+	// return type is **inferred** and which is declared **later** in the file —
+	// `let (w, h) = fit(cols, rows)` above `let fit = (…) => (a, b)`.
+	//
+	// Binding the whole value is fine and so is a scalar return; destructuring is the one
+	// position that needs the element types *now* rather than lazily, and at that point a
+	// later declaration's inferred return type does not exist yet.
+	//
+	// Until 08/17 this reported nothing at all: the type was nil, the pattern bound no
+	// names, and the only symptom was `undefined identifier` at every *use* of them —
+	// pointing at the line after the destructure while the cause was a missing `->` fifty
+	// lines further down. Worse, the collector knows the names perfectly well, so a second
+	// destructure of the same names in an inner scope warns that it *shadows* them, which
+	// says they exist.
+	//
+	// The house style is to annotate returns and the standard library does so throughout,
+	// so this is mostly a diagnostic for the day someone forgets. It names the annotation
+	// because that is a one-line fix; making the inference order-independent is the real
+	// answer and is open in todo.md.
+	CodeDestructureOfInferredReturn = "lyra-E058"
+
 	// CodeRawPointersNotImplemented: a raw-pointer operation (`&x`, `p^`, a write
 	// `p^ = v`) or an `unsafe { … }` block. The type system carries `^T`
 	// (types.RawPointerType unifies, substitutes and heads, and a newtype may wrap

@@ -10,6 +10,33 @@ Newest first.
 ## Dated log
 
 ### 08/17/26
+**`lyra-E058`: destructuring the result of an inferred, later-declared return.**
+`let (w, h) = contain_set(cols, rows)` above an un-annotated `contain_set` reported
+nothing at the destructure and `undefined identifier` at every *use* of the names — a
+diagnostic pointing at the line after the cause, while the cause was a missing `->` fifty
+lines down.
+
+The boundary is narrow and was mapped before fixing: a scalar return is fine, and binding
+the whole tuple is fine — both defer the type. **Destructuring is the one position that
+needs the element types immediately**, and a later declaration's inferred return type does
+not exist yet, so `checkDestructuringDecl` saw a nil type and returned silently.
+
+Two things made it worse than a plain missing error. The collector knows the names
+perfectly well, so a second destructure of them in an inner scope warns that it *shadows*
+them — which says they exist. And the house style adopted the same day (main first,
+helpers below) is exactly the arrangement that puts an un-annotated helper after its
+caller, so this is reachable by writing ordinary code in the documented style.
+
+Deliberately narrow: it fires only for a call to a function that genuinely has no return
+annotation, so an undefined callee keeps its own diagnostic. A confident message about the
+wrong thing is worse than the silence it replaces.
+
+**The diagnostic is the workaround.** Making inference order-independent — infer a
+callee's return type on demand when a destructure asks — is open in `todo.md`, with the
+two things to settle (a cycle guard for mutually recursive un-annotated functions, and not
+double-reporting a body that is later checked normally).
+
+### 08/17/26
 **A conversion of a constant operand is constant** (`typechecker_const.go`).
 `const Y_LEN = X_LEN * ASPECT * f64(HEIGHT) / f64(WIDTH)` was refused: a conversion is
 spelled as a call, so it landed in the non-constant arm.
