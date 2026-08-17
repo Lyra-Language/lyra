@@ -36,9 +36,12 @@ let cell_color = pure (col: i64, row: i64, cols: i64, rows: i64, zoom: i64) -> i
 let render_row = (row: i64, cols: i64, rows: i64, zoom: i64, mx: i64, my: i64) -> string => {
   var out = ""
   for col in 1..<=cols {
-    // The marker is drawn inverted so it is visible against any gradient colour.
+    // **Exactly one character per cell, marker included.** A terminal has no notion of
+    // drawing "over" a cell — everything is a stream, so a two-character marker does not
+    // cover its neighbour, it *displaces* it and shoves the rest of the row right by one.
+    // Inverted rather than coloured, so it stands out against any gradient colour.
     let painted = if col == mx && row == my {
-      inverse() ++ ("[]" ++ reset())
+      inverse() ++ ("+" ++ reset())
     } else {
       bg(cell_color(col, row, cols, rows, zoom)) ++ " "
     }
@@ -47,16 +50,31 @@ let render_row = (row: i64, cols: i64, rows: i64, zoom: i64, mx: i64, my: i64) -
   out ++ reset()
 }
 
-/// The status line. `clear_line` is not needed because the row is padded to full width —
-/// a shorter line would otherwise leave the tail of the previous, longer one behind.
+/// `text` at exactly `width` characters: padded if short, cut if long.
+///
+/// **Both halves matter, and for opposite reasons.** Padding to full width is what lets
+/// the status line be redrawn without `clear_line` — a shorter line would otherwise leave
+/// the tail of the longer one that was there before. Cutting is what stops a long line
+/// *wrapping*: a terminal has no concept of a line that is too wide, so it continues onto
+/// the next row and pushes the whole frame up by one, which reads as the display jittering
+/// rather than as text being too long.
+let fit = (text: string, width: i64) -> string => {
+  if text.len() > width {
+    text.slice(0, width)
+  } else {
+    var padded = text
+    for i in text.len()..<width {
+      padded = padded ++ " "
+    }
+    padded
+  }
+}
+
+/// The status line, always exactly one terminal row wide.
 let status = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> string => {
   let text = " ${cols}x${rows}  zoom ${zoom}  marker ${mx},${my}  events ${events}  " ++
     "arrows/click move · wheel zooms · q quits "
-  var padded = text
-  for i in text.len()..<cols {
-    padded = padded ++ " "
-  }
-  inverse() ++ (bold() ++ (padded ++ reset()))
+  inverse() ++ (bold() ++ (fit(text, cols) ++ reset()))
 }
 
 /// Draw one whole frame: rows of gradient, then the status line, in a single write.
