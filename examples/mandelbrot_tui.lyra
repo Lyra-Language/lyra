@@ -3,7 +3,7 @@ import std.tui.{
   event_reader, Event, Key, event_available,
   mouse_enable, mouse_disable,
   alt_screen_enter, alt_screen_leave, clear, cursor_hide, cursor_show, cursor_home, move_to,
-  fg, bg, rgb, reset, bold, inverse
+  bg_rgb, reset, bold, inverse
 }
 
 const MAX_ITER = 100
@@ -19,42 +19,27 @@ const CELL_ASPECT = 2.2
 const ASPECT_RATIO = Y_LEN / X_LEN
 
 const ESCAPE = 65536.0
-/// Iterations per full **there-and-back** trip through the palette.
-///
-/// The palette is reused rather than stretched, because at depth there is nothing to
-/// stretch it over: the iteration budget grows with magnification, so escape times run to
-/// several hundred, and any fixed ceiling turns everything above it into one colour. A
-/// cycle has no ceiling.
-///
-/// **There and back, not wrapping round.** This palette runs white to dark blue, so a
-/// saw-tooth wrap puts a hard white-against-blue seam at every repeat. Bouncing — up
-/// through the colours and back down — is continuous at both ends, and reuses each colour
-/// twice per cycle for free. The cost is that a colour no longer identifies one escape
-/// band uniquely, which nothing here was using it for.
+// Colour is computed rather than looked up, now that the terminal takes 24-bit values:
+// a **hue circle** at full saturation, which is piecewise linear over six sectors and
+// closes on itself.
+//
+// Closing on itself is the point. A palette had to be walked there-and-back to avoid a
+// seam where the cycle repeated; a hue circle has no ends to join, so it simply wraps.
+// And "running out of colours" stops being a concept — the gradient is continuous, so
+// depth costs nothing.
+//
+// Black is still the set, and the far field still fades to black, but by *value* now
+// rather than by landing on a dark palette entry.
+
+/// Escape iterations per full turn of the hue circle.
 const COLOR_CYCLE = 64.0
-// The colour ramp: a full **hue circuit** through std.tui's 6x6x6 cube — white, yellow,
-// orange, red, magenta, violet, blue, cyan, green, and back down to dark blue. Index 0 is
-// the set itself; 1 is hard against its boundary and 37 is the far field.
-//
-// **37 is the cube's practical ceiling, not an arbitrary length.** Sampling this path more
-// finely stops producing new colours: at 47 stops it still yields 37 distinct entries,
-// because six levels per channel is all there is. The previous ramp took a short path
-// (white to dark blue without the greens and cyans) and saturated at 23 — going the long
-// way round the hues is what buys the extra 14.
-//
-// **Black for the set, dark for the far field, bright at the boundary.** That is where the
-// structure is, so it gets the contrast, and the two large flat regions get the dark ends.
-//
-// Consecutive duplicates are dropped rather than kept: a repeated entry is a band that
-// costs a cycle step and shows nothing, not a wider band.
-const PALETTE = [
-  16,
-  231, 230, 229, 228, 227, 226, 220, 214,
-  208, 202, 196, 197, 198, 199, 164, 129,
-  93, 57, 21, 27, 33, 39, 45, 51,
-  50, 49, 48, 47, 41, 40, 34, 28,
-  29, 23, 24, 18, 17
-]
+
+/// Escape iterations over which the colour fades up from black.
+///
+/// Without it the fastest-escaping points — the whole far field — come out fully bright,
+/// and the picture reads as a flat wash with the structure lost in it. Fading the first
+/// few iterations to black is what keeps the boundary the brightest thing on screen.
+const FADE_IN = 8.0
 
 /// The visible region: its centre and horizontal span. The **vertical** span is not
 /// stored — it is derived from the frame's shape every time, so it cannot drift out of
@@ -295,9 +280,9 @@ let render_row = pure (row: i64, rows: i64, cols: i64, w: Window, mx: i64, my: i
         re: w.x_min + w.x_len * f64(col) / f64(cols),
         im: w.y_min + w.y_len * f64(row) / f64(rows)
       }
-      let p = PALETTE[shade(c, iter_limit(w))]
+      let p = shade(c, iter_limit(w))
       if p != prev {
-        out = out ++ bg(p)
+        out = out ++ bg_rgb((p >> 16) & 255, (p >> 8) & 255, p & 255)
         prev = p
       }
       out = out ++ " "
@@ -321,7 +306,11 @@ let iter_limit = pure (w: Window) -> i64 => {
   }
 }
 
-/// The gradient cell for a position — stands in for a rendered pixel.
+/// The colour of a point, packed as `r * 65536 + g * 256 + b`.
+///
+/// Packed rather than returned as a tuple or a string so the renderer can compare one
+/// integer to decide whether to re-emit an escape — the run-length test that keeps the
+/// frame small.
 let shade = pure (c: Complex<f64>, max_iter: i64) -> i64 => {
   var z = Complex { re: 0.0, im: 0.0 }
   var mag2 = 0.0
@@ -334,7 +323,7 @@ let shade = pure (c: Complex<f64>, max_iter: i64) -> i64 => {
   }
 
   if iter >= max_iter {
-    0
+    0 // the set itself: black
   } else {
     // Smooth escape time, `n + 1 - log2(log|z|)`: the integer iteration count alone
     // draws visible contours, since every point escaping on the same step gets the same
@@ -347,20 +336,35 @@ let shade = pure (c: Complex<f64>, max_iter: i64) -> i64 => {
     // backwards off the palette.
     let s = if smooth < 0.0 { 0.0 } else { smooth }
 
-    // A triangle wave over the palette's exterior colours. With 23 of them the period is
-    // 44: `k` climbs 0..22, then `period - k` walks 21..1 back down, and at 44 it is 0
-    // again — continuous, with no seam where the cycle repeats.
-    let bands = PALETTE.len() - 1
-    let period = 2 * bands - 2
-    let k = (s * f64(period) / COLOR_CYCLE).round() % period
-    let band = if k < bands { k } else { period - k }
-
-    // Counting down from the last entry puts the *far field* at the dark end, where a
-    // fast escape gives a small `band`. Index 0 is never produced — `band` peaks at
-    // `bands - 1` — so it stays reserved for the set itself.
-    PALETTE.len() - 1 - band
+    // The fractional part of the turn count is the position on the hue circle, so the
+    // colour wraps with no seam however many times it goes round.
+    let turns = s / COLOR_CYCLE
+    let hue = 6.0 * (turns - f64(turns.floor()))
+    let value = if s >= FADE_IN { 1.0 } else { s / FADE_IN }
+    hue_rgb(hue, value)
   }
 }
+
+/// A hue at full saturation and the given value, packed.
+///
+/// Plain HSV with S = 1: each sector holds one channel at full, ramps a second up or down,
+/// and leaves the third at zero. Six linear sectors, no trigonometry — which is just as
+/// well, since the language has `log` and `sqrt` and no `cos`.
+let hue_rgb = pure (hue: f64, value: f64) -> i64 => {
+  let sector = hue.floor()
+  let f = hue - f64(sector)
+  let full = (255.0 * value).round()
+  let up = (255.0 * value * f).round()
+  let down = (255.0 * value * (1.0 - f)).round()
+  if sector <= 0 { pack(full, up, 0) }
+  else if sector == 1 { pack(down, full, 0) }
+  else if sector == 2 { pack(0, full, up) }
+  else if sector == 3 { pack(0, down, full) }
+  else if sector == 4 { pack(up, 0, full) }
+  else { pack(full, 0, down) }
+}
+
+let pack = pure noalloc (r: i64, g: i64, b: i64) -> i64 => r * 65536 + g * 256 + b
 
 /// The status line, always exactly one terminal row wide.
 let status = pure (cols: i64, rows: i64, view: View) -> string => {

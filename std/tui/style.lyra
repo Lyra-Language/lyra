@@ -54,6 +54,46 @@ pub let rgb = pure (r: i64, g: i64, b: i64) -> i64 =>
 /// through `rgb(0, 0, 0)` and `rgb(5, 5, 5)`.
 pub let grey = pure (level: i64) -> i64 => 232 + clamp(level, 0, 23)
 
+/// Foreground colour as **24-bit RGB**, each component 0–255.
+///
+/// # Beware the range
+///
+/// `rgb` takes 0–5 and this takes 0–255, and the two are one letter apart at the call
+/// site. `fg(rgb(5, 0, 0))` and `fg_rgb(5, 0, 0)` are both valid and the second is almost
+/// black — the mistake produces a picture, not an error, which is why the range is the
+/// first thing said about each.
+///
+/// # Support
+///
+/// Not universal. Every terminal supports the 256-colour palette `fg`/`bg` use; 24-bit
+/// colour is widespread but not guaranteed — iTerm2, Ghostty, WezTerm, Kitty and Alacritty
+/// have it, macOS's own Terminal.app does not, and there a program using this renders its
+/// escape sequences as visible text. There is no way to ask the terminal, so this is the
+/// caller's choice to make, not something the library can decide.
+///
+/// It also costs bytes: up to 19 per cell against 11 for the palette form, which matters
+/// for a full-screen redraw where every byte is parsed by the terminal.
+///
+/// # Examples
+///
+/// ```
+/// print(fg_rgb(255, 128, 0) ++ "orange" ++ reset())
+/// ```
+pub let fg_rgb = pure (r: i64, g: i64, b: i64) -> string =>
+  "\e[38;2;${byte(r)};${byte(g)};${byte(b)}m"
+
+/// Background colour as 24-bit RGB, each component 0–255. See `fg_rgb` for the range
+/// hazard and the support caveat.
+pub let bg_rgb = pure (r: i64, g: i64, b: i64) -> string =>
+  "\e[48;2;${byte(r)};${byte(g)};${byte(b)}m"
+
+/// A colour component clamped to 0–255.
+///
+/// Clamped rather than trapped, on `rgb`'s reasoning: a colour is decoration, and a
+/// program computing one from the data it is visualizing should not die at the edge of its
+/// own gradient. A slightly wrong shade is the appropriate failure.
+let byte = pure noalloc (v: i64) -> i64 => clamp(v, 0, 255)
+
 /// Bold, or on many terminals simply brighter.
 pub let bold = pure () -> string => "\e[1m"
 
