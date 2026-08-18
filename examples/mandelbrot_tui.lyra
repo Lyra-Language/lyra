@@ -41,6 +41,19 @@ const PALETTE = [
   56, 20, 19, 18, 17
 ]
 
+/// The visible region: its centre and horizontal span. The **vertical** span is not
+/// stored — it is derived from the frame's shape every time, so it cannot drift out of
+/// step with the cells and reintroduce the distortion CELL_ASPECT exists to remove.
+struct View { cx: f64, cy: f64, x_len: f64 }
+
+/// The same region as a concrete rectangle, which is what the renderer wants.
+struct Window { x_min: f64, y_min: f64, x_len: f64, y_len: f64 }
+
+/// How much one wheel notch scales the span. Zoom is **multiplicative**, not a level
+/// counter: a fixed step feels like the same movement at every depth, which is what makes
+/// it read as smooth rather than as jumping between preset magnifications.
+const ZOOM_STEP = 0.85
+
 /// How long the loop waits for input before looking at the terminal size again. Short
 /// enough that a resize feels immediate, long enough that an idle program is not spinning
 /// — it wakes 20 times a second and does nothing.
@@ -49,14 +62,14 @@ const redraw_interval_ms = 50
 let main = () -> void => {
   setup()
 
-  var zoom = 0
+  var view = View { cx: (X_MIN + X_MAX) / 2.0, cy: 0.0, x_len: X_LEN }
   var mx = 1
   var my = 1
   var running = true
   var events = event_reader()
 
   let (cols0, rows0) = terminal_size()
-  draw(cols0, rows0, zoom, mx, my)
+  draw(cols0, rows0, view, mx, my)
 
   var last_cols = cols0
   var last_rows = rows0
@@ -68,47 +81,95 @@ let main = () -> void => {
         last_rows = poll_rows
         mx = clamp(mx, 1, poll_cols)
         my = clamp(my, 1, poll_rows - 1)
-
         clear()
-        draw(poll_cols, poll_rows, zoom, mx, my)
+        draw(poll_cols, poll_rows, view, mx, my)
       }
     } else {
-    match events.next_event() {
-      None => { running = false },
-      Some(e) => {
-        let (cols, rows) = terminal_size()
-        last_cols = cols
-        last_rows = rows
-        match e {
-          Keyboard(Up) => { my -= 1 },
-          Keyboard(Down) => { my += 1 },
-          Keyboard(Left) => { mx -= 1 },
-          Keyboard(Right) => { mx += 1 },
-          Keyboard(PageUp) => { zoom += 1 },
-          Keyboard(PageDown) => { zoom -= 1 },
-          Keyboard(Char c) => { running = i64(c) != 113 },
-          Mouse(m) => match m.button {
-            WheelUp => { zoom -= 1 },
-            WheelDown => { zoom += 1 },
-            // A click sets the marker where the pointer is — the coordinates are
-            // already 1-based, matching the frame's own numbering.
-            _ => { mx = m.col; my = m.row }
-          },
-          _ => { }
+      // **Drain everything pending, then draw once.** A wheel spin delivers a notch per
+      // event, and redrawing after each one renders N frames to show the last — which is
+      // exactly the lag a fast spin produces. Applying them all first makes a burst cost
+      // one frame however long it is, which is what `event_available(0)` is for: it asks
+      // "is there more right now" without waiting.
+      let (cols, rows) = terminal_size()
+      last_cols = cols
+      last_rows = rows
+      let (fcols, frows, left, top) = frame_geometry(cols, rows)
+      var more = true
+      for more {
+        match events.next_event() {
+          None => { running = false; more = false },
+          Some(e) => {
+            match e {
+              Keyboard(Up) => { my -= 1 },
+              Keyboard(Down) => { my += 1 },
+              Keyboard(Left) => { mx -= 1 },
+              Keyboard(Right) => { mx += 1 },
+              // Keys zoom about the marker, since a keypress has no pointer of its own.
+              Keyboard(PageUp) => { view = zoom_at(view, fcols, frows, left, top, mx, my, 1.0 / ZOOM_STEP) },
+              Keyboard(PageDown) => { view = zoom_at(view, fcols, frows, left, top, mx, my, ZOOM_STEP) },
+              Keyboard(Char c) => { running = i64(c) != 113 },
+              Mouse(m) => match m.button {
+                // Wheel up zooms *out*, matching the direction chosen for this viewer.
+                // Swap the two factors to invert it.
+                WheelUp => { view = zoom_at(view, fcols, frows, left, top, m.col, m.row, 1.0 / ZOOM_STEP) },
+                WheelDown => { view = zoom_at(view, fcols, frows, left, top, m.col, m.row, ZOOM_STEP) },
+                _ => { mx = m.col; my = m.row }
+              },
+              _ => { }
+            }
+            mx = clamp(mx, 1, cols)
+            my = clamp(my, 1, rows - 1)
+          }
         }
-        mx = clamp(mx, 1, cols)
-        my = clamp(my, 1, rows - 1)
-        zoom = clamp(zoom, 0, 99)
-        draw(cols, rows, zoom, mx, my)
+        if more && !events.event_available(0) { more = false }
       }
-    }
+      if running { draw(cols, rows, view, mx, my) }
     }
   }
 
   teardown()
 }
 
-/// The largest cell rectangle that shows the whole set without distorting it.
+/// Where the set sits inside the terminal: its size in cells and its top-left margin.
+///
+/// One source of truth, because two callers need it and they must agree: `draw` places
+/// the frame with it, and the zoom handler needs the same numbers to work out which
+/// complex point is under the pointer. Computing it in each place is how the marker ends
+/// up offset from the thing it is zooming towards.
+let frame_geometry = pure (term_cols: i64, term_rows: i64) -> (i64, i64, i64, i64) => {
+  let canvas_rows = term_rows - 1
+  let (cols, rows) = contain_set(term_cols, canvas_rows)
+  (cols, rows, (term_cols - cols) / 2, (canvas_rows - rows) / 2)
+}
+
+/// The view as a rectangle, with the vertical span derived so a cell stays square.
+let window_for = pure (v: View, cols: i64, rows: i64) -> Window => {
+  let y_len = v.x_len * f64(rows) * CELL_ASPECT / f64(cols)
+  Window { x_min: v.cx - v.x_len / 2.0, y_min: v.cy - y_len / 2.0, x_len: v.x_len, y_len: y_len }
+}
+
+/// Scale the view by `factor` **about the cell under (mx, my)**, so the complex point
+/// there stays exactly where it is on screen.
+///
+/// Zooming about the *centre* instead is the obvious version and is wrong in use: the
+/// feature you are heading for slides away as you zoom, so you chase it with the arrows
+/// between every notch. Keeping the pointer's point fixed is what makes a wheel feel like
+/// it is pulling that spot towards you.
+///
+/// The arithmetic: the pointer sits at fraction `u` across the window, so the point under
+/// it is `x_min + u * x_len`. After scaling, the centre that puts the same point at the
+/// same fraction is `p + x_len' * (0.5 - u)`.
+let zoom_at = pure (v: View, cols: i64, rows: i64, left: i64, top: i64, mx: i64, my: i64, factor: f64) -> View => {
+  let w = window_for(v, cols, rows)
+  let u = f64(clamp(mx - left, 0, cols)) / f64(cols)
+  let t = f64(clamp(my - top, 0, rows)) / f64(rows)
+  let px = w.x_min + u * w.x_len
+  let py = w.y_min + t * w.y_len
+  let nx = v.x_len * factor
+  let ny = w.y_len * factor
+  View { cx: px + nx * (0.5 - u), cy: py + ny * (0.5 - t), x_len: nx }
+}
+
 let contain_set = pure (cols: i64, rows: i64) -> (i64, i64) => {
   var width = cols
   var height = (f64(cols) * ASPECT_RATIO / CELL_ASPECT).round()
@@ -146,18 +207,17 @@ let clamp = pure (v: i64, lo: i64, hi: i64) -> i64 => if v < lo { lo } else if v
 /// through. The frame was correct until you touched anything, then stretched to full
 /// width. A parameter that must be pre-processed by every caller is a parameter that will
 /// eventually not be.
-let draw = (term_cols: i64, term_rows: i64, zoom: i64, mx: i64, my: i64) -> void => {
+let draw = (term_cols: i64, term_rows: i64, view: View, mx: i64, my: i64) -> void => {
   // The status bar owns the last row, so the set is fitted into what is left rather than
   // into the whole terminal — otherwise it is one row too tall and the bottom is lost
   // under the bar.
+  // Geometry comes from the one helper the zoom handler also uses, so the frame drawn
+  // and the frame zoomed about are the same frame. Centred in whichever direction has
+  // room; only one offset is ever non-zero, since the fit makes the set touch one pair of
+  // edges exactly.
+  let (cols, rows, left, top) = frame_geometry(term_cols, term_rows)
+  let w = window_for(view, cols, rows)
   let canvas_rows = term_rows - 1
-  let (cols, rows) = contain_set(term_cols, canvas_rows)
-
-  // Centred in whichever direction has room. Only one of these is ever non-zero: the fit
-  // makes the set touch one pair of edges exactly, and which pair depends on whether the
-  // terminal is wider or taller than the set's corrected shape.
-  let left = (term_cols - cols) / 2
-  let top = (canvas_rows - rows) / 2
 
   var lines: []string = []
   for i in 1..<=top {
@@ -172,13 +232,13 @@ let draw = (term_cols: i64, term_rows: i64, zoom: i64, mx: i64, my: i64) -> void
     // The padding is counted rather than measured: a rendered row carries escape
     // sequences, so its `len()` is nothing like its width in cells, and `fit` would
     // truncate it to ribbons.
-    let painted = render_row(row, rows, cols, mx - left, my - top)
+    let painted = render_row(row, rows, cols, w, mx - left, my - top)
     lines.push(spaces(left) ++ (painted ++ spaces(term_cols - cols - left)))
   }
   for i in 1..<=(canvas_rows - rows - top) {
     lines.push(spaces(term_cols))
   }
-  lines.push(status(term_cols, term_rows, zoom, mx, my))
+  lines.push(status(term_cols, term_rows, view))
   cursor_home()
   print(lines.join("\r\n"))
 }
@@ -200,36 +260,65 @@ let spaces = pure (n: i64) -> string => {
 /// centring offsets before calling. A click arrives in terminal cells, and without that
 /// translation the marker would land offset by exactly the left margin, which reads as
 /// the click being inaccurate rather than as a coordinate-space mixup.
-let render_row = pure (row: i64, rows: i64, cols: i64, mx: i64, my: i64) -> string => {
+let render_row = pure (row: i64, rows: i64, cols: i64, w: Window, mx: i64, my: i64) -> string => {
   var out = ""
+  // **A background escape is emitted only where the colour changes.** Repeating it per
+  // cell costs about half the frame time and three to four times the bytes, and a
+  // Mandelbrot is mostly large single-colour regions — measured at 80x24, 15.7 KB of
+  // escapes became 5.4 KB. The terminal parses every one of those bytes, so this is the
+  // cheapest thing available that makes a fast zoom feel smooth.
+  //
+  // `prev` starts at -1, which is no palette entry, so the first cell always emits.
+  var prev = -1
   for col in 1..<=cols {
-    let painted = if col == mx && row == my {
-      inverse() ++ ("+" ++ reset())
+    if col == mx && row == my {
+      out = out ++ (inverse() ++ ("+" ++ reset()))
+      // The reset cleared the background, so the next cell has to restate it.
+      prev = -1
     } else {
       let c = Complex {
-        re: X_MIN + X_LEN * f64(col) / f64(cols),
-        im: Y_MIN + Y_LEN * f64(row) / f64(rows)
+        re: w.x_min + w.x_len * f64(col) / f64(cols),
+        im: w.y_min + w.y_len * f64(row) / f64(rows)
       }
-      bg(PALETTE[shade(c)]) ++ " "
+      let p = PALETTE[shade(c, iter_limit(w))]
+      if p != prev {
+        out = out ++ bg(p)
+        prev = p
+      }
+      out = out ++ " "
     }
-    out = out ++ painted
   }
   out ++ reset()
 }
 
+/// How many iterations this window needs.
+///
+/// A fixed limit stops working the moment you zoom: the points that survive longest are
+/// exactly the ones near the boundary being zoomed into, so at depth everything reads as
+/// "in the set" and the picture goes flat black. The budget grows with the *log* of the
+/// magnification, which is how the boundary's detail actually scales.
+let iter_limit = pure (w: Window) -> i64 => {
+  let magnification = X_LEN / w.x_len
+  if magnification <= 1.0 {
+    MAX_ITER
+  } else {
+    MAX_ITER + (120.0 * magnification.log10()).round()
+  }
+}
+
 /// The gradient cell for a position — stands in for a rendered pixel.
-let shade = pure (c: Complex<f64>) -> i64 => {
+let shade = pure (c: Complex<f64>, max_iter: i64) -> i64 => {
   var z = Complex { re: 0.0, im: 0.0 }
   var mag2 = 0.0
   var iter = 0
-  for iter < MAX_ITER {
+  for iter < max_iter {
     z = z * z + c
     mag2 = z.re * z.re + z.im * z.im
     if mag2 > ESCAPE { break }
     iter += 1
   }
 
-  if iter >= MAX_ITER {
+  if iter >= max_iter {
     0
   } else {
     // Smooth escape time, `n + 1 - log2(log|z|)`: the integer iteration count alone
@@ -248,9 +337,10 @@ let shade = pure (c: Complex<f64>) -> i64 => {
 }
 
 /// The status line, always exactly one terminal row wide.
-let status = pure (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64) -> string => {
-  let text = " ${cols}x${rows}  zoom ${zoom}  marker ${mx},${my}  " ++
-    "arrows/click move · wheel zooms · q quits "
+let status = pure (cols: i64, rows: i64, view: View) -> string => {
+  let text = " ${cols}x${rows}  ${(X_LEN / view.x_len).to_fixed(1)}x at " ++
+    "${view.cx.to_fixed(4)},${view.cy.to_fixed(4)}  " ++
+    "wheel zooms to the pointer · q quits "
   inverse() ++ (bold() ++ (fit(text, cols) ++ reset()))
 }
 
