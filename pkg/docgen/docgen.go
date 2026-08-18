@@ -9,10 +9,12 @@ package docgen
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	"github.com/Lyra-Language/lyra/pkg/driver"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // Options controls what a run covers.
@@ -73,7 +75,30 @@ type Decl struct {
 	Members  []Member
 	IsPublic bool
 	Location ast.Location
+	// Receiver is the `self` parameter's type rendered in source syntax (`Maybe<t>`,
+	// `string`, `Rng`), or "" for a function that takes no receiver. It is what a
+	// group of methods is headed with.
+	//
+	// The borrow modifier is **not** part of it: `self: mut Rng` and `self: Rng` are
+	// both methods on `Rng`, and whether a particular one needs a mutable receiver is
+	// a fact about that method, visible in its own signature.
+	Receiver string
+	// ReceiverKey is `types.HeadName` of the same type — the grouping identity, which
+	// is not the display name. `Maybe<t>` and `Maybe<i64>` share the key `Maybe` and
+	// belong in one group; a dynamic array keys as `[]` and renders as `[]t`.
+	//
+	// The split matters because HeadName is documented as an identity that is never
+	// shown to a user: it answers `boolean` for `bool` and `[_]` for a fixed array.
+	// Keying on it and displaying something else is the same discipline the signature
+	// renderer follows.
+	ReceiverKey string
 }
+
+// IsMethod reports whether this declaration takes a `self` receiver — which in a
+// language with UFCS is the whole of what makes it a method. There is no separate
+// declaration form: `m.unwrap_or(0)` works because `unwrap_or`'s first parameter is
+// named `self`, and nothing else distinguishes it from a free function.
+func (d Decl) IsMethod() bool { return d.ReceiverKey != "" }
 
 // Documented reports whether this declaration carries prose. An undocumented public
 // declaration is still listed — the signature is real information, and dropping it would
@@ -172,6 +197,78 @@ func sortDecls(decls []Decl) {
 	})
 }
 
+// MethodGroup is the methods on one receiver type, in the order they should be listed.
+type MethodGroup struct {
+	// Receiver is the display name (`Maybe<t>`, `string`), Key the grouping identity.
+	Receiver string
+	Key      string
+	Decls    []Decl
+}
+
+// Partition splits a module's functions into the free ones and the methods, grouped by
+// receiver.
+//
+// The grouping is the page's main organising idea, and it follows the language: with
+// UFCS there is no separate method declaration, so `self` is the only thing that says
+// `trim` belongs to `string` — and a flat alphabetical list of 70 functions therefore
+// buries which type each one is for. Grouping by receiver reassembles what the source
+// deliberately does not spell out.
+//
+// Types, traits, impls and values are returned untouched, in `rest`.
+func (m Module) Partition() (rest []Decl, free []Decl, groups []MethodGroup) {
+	byKey := map[string]*MethodGroup{}
+	var order []string
+	for _, d := range m.Decls {
+		switch {
+		case d.Kind != KindFunction:
+			rest = append(rest, d)
+		case !d.IsMethod():
+			free = append(free, d)
+		default:
+			g, ok := byKey[d.ReceiverKey]
+			if !ok {
+				g = &MethodGroup{Receiver: d.Receiver, Key: d.ReceiverKey}
+				byKey[d.ReceiverKey] = g
+				order = append(order, d.ReceiverKey)
+			}
+			g.Decls = append(g.Decls, d)
+		}
+	}
+	for _, k := range order {
+		groups = append(groups, *byKey[k])
+	}
+	// Case-insensitively by display name: a reference index is looked up, and `Rng`
+	// sorting between `[]t` and `rune` by ASCII would put the capitalised names in a
+	// block of their own for no reason a reader could see.
+	sort.SliceStable(groups, func(i, j int) bool {
+		return strings.ToLower(groups[i].Receiver) < strings.ToLower(groups[j].Receiver)
+	})
+	return rest, free, groups
+}
+
+// receiverOf returns the display name and grouping key of a function's `self` parameter,
+// or two empty strings when it has none.
+//
+// A receiver is the *first* parameter named `self` and nothing else — the same rule UFCS
+// itself applies, so a page cannot disagree with the compiler about what is a method.
+// The borrow modifier is dropped: `self: mut Rng` is a method on `Rng`.
+func receiverOf(l *ast.LambdaExpr) (display, key string) {
+	if len(l.Parameters) == 0 {
+		return "", ""
+	}
+	p := &l.Parameters[0]
+	if p.Pattern == nil || p.Pattern.GetName() != "self" || p.Type == nil {
+		return "", ""
+	}
+	k, ok := types.HeadName(p.Type)
+	if !ok {
+		// A type variable heads as nothing, and that is right here as well as for
+		// overloading: `self: t` accepts every receiver, so it names no group.
+		return "", ""
+	}
+	return typeName(p.Type), k
+}
+
 func moduleDoc(table *symbols.SymbolTable, path string) *ast.Doc {
 	if table == nil {
 		return nil
@@ -201,16 +298,20 @@ func declFor(stmt ast.AstNode) (Decl, bool) {
 	switch s := stmt.(type) {
 	case *ast.VarDeclStmt:
 		kind := KindValue
-		if _, isFn := s.Value.(*ast.LambdaExpr); isFn {
+		var receiver, receiverKey string
+		if fn, isFn := s.Value.(*ast.LambdaExpr); isFn {
 			kind = KindFunction
+			receiver, receiverKey = receiverOf(fn)
 		}
 		return Decl{
-			Name:      s.Name,
-			Kind:      kind,
-			Signature: bindingSignature(s),
-			Doc:       s.Doc,
-			IsPublic:  s.IsPublic,
-			Location:  s.GetLocation(),
+			Name:        s.Name,
+			Kind:        kind,
+			Signature:   bindingSignature(s),
+			Doc:         s.Doc,
+			IsPublic:    s.IsPublic,
+			Location:    s.GetLocation(),
+			Receiver:    receiver,
+			ReceiverKey: receiverKey,
 		}, true
 
 	case *ast.TypeDeclStmt:

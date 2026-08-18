@@ -106,3 +106,34 @@ func TestFileName(t *testing.T) {
 		t.Errorf("FileName(\"\") = %q, want %q", got, want)
 	}
 }
+
+// Implementations go last. std/prelude/math.lyra alone contributes 78 of them, so
+// anywhere earlier they are a wall between the traits and the part of the page anyone
+// reads — and the sidebar's table of contents becomes a list of arithmetic
+// instantiations with the module's real surface below the fold.
+func TestRenderMarkdown_ImplementationsGoLast(t *testing.T) {
+	page := renderOne(t, `
+pub trait Show { show: (Self) -> string }
+pub struct Pt { x: f64 }
+/// Shows.
+impl Show for string { show = (self) => self }
+/// Trims.
+pub let trim = pure (self: string) -> string => self
+/// Builds.
+pub let mk = pure () -> f64 => 1.0
+`)
+	impls := strings.Index(page, "## Implementations")
+	if impls < 0 {
+		t.Fatalf("no Implementations section:\n%s", page)
+	}
+	for _, earlier := range []string{"## Types", "## Traits", "## Functions", "## Methods on `string`"} {
+		i := strings.Index(page, earlier)
+		if i < 0 {
+			t.Errorf("missing %q", earlier)
+			continue
+		}
+		if i > impls {
+			t.Errorf("%q comes after Implementations; impls must be last", earlier)
+		}
+	}
+}

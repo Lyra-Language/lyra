@@ -316,3 +316,116 @@ pub trait Show { pure show: (Self) -> string }
 		}
 	}
 }
+
+// With UFCS there is no separate method declaration — `self` is the only thing that says
+// `trim` belongs to `string` — so a flat alphabetical list hides which type each function
+// is for. These pin the regrouping.
+func TestPartition_GroupsMethodsByReceiver(t *testing.T) {
+	src := `
+pub struct Rng { state: u64 }
+pub let next_u64 = det noalloc (self: mut Rng) -> u64 => self.state
+pub let below = det noalloc (self: mut Rng, bound: i64) -> i64 => bound
+pub let trim = pure (self: string) -> string => self
+pub let rng_seeded = pure noalloc (seed: u64) -> Rng => Rng { state: seed }
+`
+	m := collectOne(t, src, docgen.Options{})
+	rest, free, groups := m.Partition()
+
+	if names := names(rest); len(names) != 1 || names[0] != "Rng" {
+		t.Errorf("rest = %v, want just the struct", names)
+	}
+	if n := names(free); len(n) != 1 || n[0] != "rng_seeded" {
+		t.Errorf("free = %v, want [rng_seeded] — a constructor takes no self", n)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("got %d groups, want 2 (Rng, string)", len(groups))
+	}
+	// Case-insensitive display order: Rng before string.
+	if groups[0].Receiver != "Rng" || groups[1].Receiver != "string" {
+		t.Errorf("group order = %q, %q", groups[0].Receiver, groups[1].Receiver)
+	}
+	if n := names(groups[0].Decls); len(n) != 2 {
+		t.Errorf("Rng methods = %v, want both", n)
+	}
+}
+
+// `self: mut Rng` is a method on `Rng`. The borrow modifier is a fact about the method,
+// not about the group, and a heading reading "Methods on `mut Rng`" would split a type's
+// methods in two by whether each one mutates.
+func TestPartition_BorrowModifierIsNotPartOfTheReceiver(t *testing.T) {
+	src := `
+pub struct Rng { state: u64 }
+pub let draw = det noalloc (self: mut Rng) -> u64 => self.state
+pub let peek = pure noalloc (self: Rng) -> u64 => self.state
+`
+	_, _, groups := collectOne(t, src, docgen.Options{}).Partition()
+	if len(groups) != 1 {
+		t.Fatalf("got %d groups, want 1 — `mut Rng` and `Rng` are one receiver: %+v", len(groups), groups)
+	}
+	if groups[0].Receiver != "Rng" {
+		t.Errorf("Receiver = %q, want %q", groups[0].Receiver, "Rng")
+	}
+}
+
+// The key is HeadName, which is an identity and not a rendering: a dynamic array keys as
+// `[]` and must be *shown* as `[]t`.
+func TestPartition_ReceiverKeyIsNotTheDisplayName(t *testing.T) {
+	src := "pub let first = pure (self: []i64) -> i64 => self[0]"
+	_, _, groups := collectOne(t, src, docgen.Options{}).Partition()
+	if len(groups) != 1 {
+		t.Fatalf("got %d groups, want 1", len(groups))
+	}
+	if got, want := groups[0].Key, "[]"; got != want {
+		t.Errorf("Key = %q, want %q", got, want)
+	}
+	if got, want := groups[0].Receiver, "[]i64"; got != want {
+		t.Errorf("Receiver = %q, want %q — the key must not leak into the heading", got, want)
+	}
+}
+
+// A generic receiver heads as nothing, exactly as it does for overloading: `self: t`
+// accepts everything, so it names no group and stays a free function.
+func TestPartition_GenericReceiverIsNotAGroup(t *testing.T) {
+	src := "pub let id<t> = pure (self: t) -> t => self"
+	_, free, groups := collectOne(t, src, docgen.Options{}).Partition()
+	if len(groups) != 0 {
+		t.Errorf("got %d groups, want none: %+v", len(groups), groups)
+	}
+	if len(free) != 1 {
+		t.Errorf("free = %v, want the declaration to stay ungrouped", names(free))
+	}
+}
+
+func TestRenderMarkdown_HeadsEachReceiverGroup(t *testing.T) {
+	page := renderOne(t, `
+pub struct Rng { state: u64 }
+/// Draws.
+pub let next_u64 = det noalloc (self: mut Rng) -> u64 => self.state
+/// Trims.
+pub let trim = pure (self: string) -> string => self
+/// Builds one.
+pub let rng_seeded = pure noalloc (seed: u64) -> Rng => Rng { state: seed }
+`)
+	for _, want := range []string{"## Functions", "## Methods on `Rng`", "## Methods on `string`"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("page is missing %q:\n%s", want, page)
+		}
+	}
+	// A method appears under its receiver, not in the free-function list.
+	fns := strings.Index(page, "## Functions")
+	rng := strings.Index(page, "## Methods on `Rng`")
+	if !(fns < rng) {
+		t.Errorf("free functions should precede the method groups")
+	}
+	if i := strings.Index(page, "### `next_u64`"); !(i > rng) {
+		t.Errorf("next_u64 is not under its receiver's heading:\n%s", page)
+	}
+}
+
+func names(decls []docgen.Decl) []string {
+	out := make([]string, len(decls))
+	for i, d := range decls {
+		out[i] = d.Name
+	}
+	return out
+}

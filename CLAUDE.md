@@ -594,6 +594,24 @@ The split is the design: nothing about Markdown reaches the model, so a terminal
 doc` view or a JSON dump is a new renderer beside this one rather than a second walk of
 the AST that can disagree with it about what a module contains.
 
+**A page is organised by receiver, not alphabetically** (`pageSections`,
+`Module.Partition`). Types and traits come first, then impls, then the free functions,
+then one section per `self` type — `## Methods on \`Maybe<t>\`` — and values last. That
+follows the language rather than decorating it: with UFCS there is no separate method
+declaration, so `self` is the only thing that says `trim` belongs to `string`, and one
+flat run of seventy functions hides exactly the fact a reader is looking for. It also
+resolves receiver-keyed overloads, which used to render as two adjacent `### unwrap_or`
+headings with nothing to tell them apart; now one sits under `Maybe<t>` and the other
+under `Result<t, e>`. And it turns the sidebar's table of contents into an index of the
+module's types.
+
+Grouping keys on `types.HeadName` and displays `typeName` — **not the same string**, and
+HeadName's own doc comment says why: it is an identity that is "never shown to a user",
+answering `boolean` for `bool` and `[]` for a dynamic array. The borrow modifier is not
+part of a group either, or a type's methods would split in two by whether each mutates
+(`self: mut Rng` and `self: Rng` are both `Rng`). A generic receiver heads as nothing and
+stays a free function, exactly as it cannot be an overload.
+
 Two rules hold here and are easy to break:
 
 - **Signatures are re-rendered from the AST, in source syntax.** Not sliced from the
