@@ -31,17 +31,17 @@ pub struct Complex<t> {
 
 /// Componentwise addition.
 impl Add for Complex<t> where t: Arithmetic {
-  (_+_) = (self, other) => Complex { re: self.re + other.re, im: self.im + other.im }
+  (_+_) = pure (self, other) => Complex { re: self.re + other.re, im: self.im + other.im }
 }
 
 /// Componentwise subtraction.
 impl Sub for Complex<t> where t: Arithmetic {
-  (_-_) = (self, other) => Complex { re: self.re - other.re, im: self.im - other.im }
+  (_-_) = pure (self, other) => Complex { re: self.re - other.re, im: self.im - other.im }
 }
 
 /// The complex product: `(a + bi)(c + di) = (ac - bd) + (ad + bc)i`.
 impl Mul for Complex<t> where t: Arithmetic {
-  (_*_) = (self, other) => Complex {
+  (_*_) = pure (self, other) => Complex {
     re: self.re * other.re - self.im * other.im,
     im: self.re * other.im + self.im * other.re
   }
@@ -59,7 +59,7 @@ impl Mul for Complex<t> where t: Arithmetic {
 /// integer division by zero traps. For a float `t` the quotient is an infinity or a NaN,
 /// which is IEEE 754's answer rather than a trap.
 impl Div for Complex<t> where t: Arithmetic {
-  (_/_) = (self, other) => {
+  (_/_) = pure (self, other) => {
     let common_denominator = other.re * other.re + other.im * other.im
     Complex {
       re: (self.re * other.re + self.im * other.im) / common_denominator,
@@ -85,7 +85,7 @@ impl Arithmetic for Complex<t> where t: Arithmetic
 /// no receiver to dispatch on, and picking an impl from the expected type is
 /// return-type-directed dispatch, which Lyra does not have.
 impl Show for Complex<t> where t: Show + Signed {
-  show = (self) => if self.im.is_negative() {
+  show = pure (self) => if self.im.is_negative() {
     "${self.re} - ${self.im.abs()}i"
   } else {
     "${self.re} + ${self.im}i"

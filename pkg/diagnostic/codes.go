@@ -506,6 +506,36 @@ const (
 	// breaking the build over prose is not a trade worth making.
 	CodeStrayDocComment = "lyra-W017"
 
+	// CodeMissingPureBound: a top-level function (or a trait-impl method) whose
+	// inferred effect set is empty, and which does not say so. The effect row is
+	// already computed for every callable — `pure` is checked *against* it — so the
+	// question "could this have been marked pure" is one the compiler can already
+	// answer and, until now, kept to itself.
+	//
+	// **Not because anything is refused.** Purity is inferred whole-program here, so
+	// a `pure` caller may freely call an unannotated callee the fixpoint found
+	// effect-free; the missing bound costs nothing at all today. It costs on the next
+	// edit. An effect added to an unmarked function is reported at whatever *calls*
+	// it — the only thing in the program that promised anything — while the same
+	// effect added to a `pure`-marked one is reported at the effect, in the function
+	// the author is editing. So the bound is not a description of the body; it is
+	// where the blame lands when the body changes, which is the same
+	// diagnostic-lands-somewhere-else failure lyra-E031 exists to close.
+	//
+	// A warning, not an error: `pure` is a commitment about the future, and an
+	// author who is about to add an effect has every right to leave it off. There is
+	// no `#[allow]`-shaped suppression in this language, so an error here would make
+	// a legitimate intention uncompilable.
+	//
+	// **Only `pure`, deliberately.** `det` and `noalloc` are inferred by the same
+	// pass and were measured on the same code: `det` fires on roughly a sixth of all
+	// functions and `noalloc` on two-fifths, and nearly every `det` candidate is a
+	// terminal-escape wrapper (`cursor_hide`, `move_to`) that is deterministic only
+	// because `det` permits EffectOutput by design. Advice that lands on every print
+	// helper in a program is advice nobody reads, and it would bury the `pure` half,
+	// which fires a handful of times per file and names real pure helpers.
+	CodeMissingPureBound = "lyra-W018"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

@@ -213,9 +213,13 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 
 	// Purity must run after typechecking — it consumes the resolved MethodTable —
 	// and after captures, which is how it knows a closure construction's cost.
-	for _, e := range checker.CheckPurity(program, scopeTable, tt, tc.MethodTable(), res.Captures) {
+	purityErrors, purityWarnings := checker.CheckPurity(program, scopeTable, tt, tc.MethodTable(), res.Captures)
+	for _, e := range purityErrors {
 		res.err(e.Location, e.Code, e.Message)
 	}
+	// Appended rather than routed through res.err: these are the missing-`pure`-bound
+	// advisories (lyra-W018), which carry their own severity already.
+	res.Diagnostics = append(res.Diagnostics, purityWarnings...)
 
 	// Use-after-move also runs after typechecking: it needs the TypeTable to tell
 	// which values are managed (only those are actually consumed by an `own`

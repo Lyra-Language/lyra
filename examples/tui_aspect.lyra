@@ -79,7 +79,7 @@ let draw_calibration = (title: string, nl: string) -> void => {
 
 /// `n` spaces. The bar is drawn as background colour over blanks, so its width is exactly
 /// the character count — the same one-character-per-cell rule the viewer follows.
-let spaces = (n: i64) -> string => {
+let spaces = pure (n: i64) -> string => {
   var out = ""
   for i in 0..<n { out = out ++ " " }
   out
@@ -87,4 +87,4 @@ let spaces = (n: i64) -> string => {
 
 /// `n` spaces, never negative — a narrow bar would otherwise ask for a negative pad and
 /// the loop would simply not run, but saying so is clearer than relying on it.
-let pad = (n: i64) -> string => if n <= 0 { "" } else { spaces(n) }
+let pad = pure (n: i64) -> string => if n <= 0 { "" } else { spaces(n) }

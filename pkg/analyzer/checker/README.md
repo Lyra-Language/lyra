@@ -20,7 +20,9 @@ the replacement for reassigning a borrowed parameter (`lyra-E025`).
 
 ## `purity.go`
 
-`CheckPurity` enforces `pure` (lambdas and, since 06/24/26, trait-impl methods): no captured
+`CheckPurity` returns **two** results — the `pure` violations, and the missing-bound
+warnings from `missing_pure_bound.go` (documented below), which ride along because they
+read the same fixpoint. It enforces `pure` (lambdas and, since 06/24/26, trait-impl methods): no captured
 mutation, no calls to non-pure functions/methods, no `await`. Both `CheckPurity` and the
 call-site "non-pure method" check consult `inferImpurity`'s bottom-up fixpoint (not just the
 explicit `pure` flag) for whether a callee is actually pure — it runs over free functions and
@@ -31,6 +33,60 @@ tracked: `checkTraitImplMethodBody` (`typechecker_traits.go`) type-checks each i
 — verifying it against the trait's declared return type (Self and the trait's own params
 substituted, mirroring `checkLambdaBody`) and populating `MethodTable` with any `.`-calls
 inside, so `methodEffects` finds them in the fixpoint.
+
+## `missing_pure_bound.go`
+
+`missingPureBounds` is `CheckPurity` inverted, and it is why that function returns two
+results rather than one: the enforcement half reads an annotation and checks the body
+against it, this half reads the body and asks whether the annotation is missing
+(`lyra-W018`). Both consume the one effect fixpoint, so nothing is re-derived — it is a
+method on `purityChecker` for exactly that reason.
+
+**The obvious justification for it is false in this compiler, and the code says so.**
+"An unmarked callee blocks a `pure` caller" is what a reader expects, and purity here is
+*inferred* whole-program: a `pure` function may call an unannotated free function or impl
+method whose body the fixpoint found effect-free, and nothing is refused. The missing bound
+costs on the **next edit**:
+
+```lyra
+let helper = (n: i64) -> i64 => { println("added later"); n * 2 }
+let caller = pure (n: i64) -> i64 => helper(n)
+```
+
+The `println` is reported at `caller` — the only thing in the program that promised
+anything. Write `pure` on `helper` and it is reported at the `println` too, in the function
+being edited. So the bound is where the *blame* goes when a body changes, which is
+`generic_params.go`'s "the diagnostic lands somewhere else" one rung up.
+
+Scope was chosen against measurements over `std/` and `examples/`, not from taste:
+
+- **`pure` only.** `det` and `noalloc` come off the same fixpoint and were counted on the
+  same code: `det` fires on ~1/6 of all functions and `noalloc` on ~2/5, and nearly every
+  `det` candidate is a terminal-escape wrapper (`cursor_hide`, `move_to`) that qualifies
+  only because `det` permits `EffectOutput` by design. Reporting them buries the `pure`
+  half, which fires a handful of times per file and names real pure helpers.
+- **Declarations only.** The fixpoint covers every lambda including inline closure
+  arguments; `(x) => x * 2` inside an `xs.map(…)` is an expression, not an interface. A
+  nested named `let` is excluded on the weaker version of the same point — its callers are
+  in the body around it.
+- **`main` never warns.** Nothing calls it, so there is no caller for blame to move to.
+- **A trait-declared bound counts as annotated.** `effectiveMethodBounds` is shared with
+  `checkTraitMethodBounds` so the two cannot disagree; warning at an impl whose trait
+  already says `pure` would be advice to restate what is already enforced.
+
+A higher-order function *is* reported: a callback's effects are charged to the call site
+that supplies it, so marking one `pure` does not forbid impure callbacks — which is how the
+prelude's `map`/`filter`/`flat_map` are `pure noalloc` today.
+
+**Landing it required marking the standard library**, and that is the real cost of the
+feature rather than an incidental chore. `std/prelude` was diagnostic-clean before this and
+drew 97 warnings after — every one a trait-impl method (`Add::+` and friends per numeric
+width, `Show::show`, `Signed::abs`, `Ord::compare`, `Needle::found_at`) — which would have
+appeared on *every user compile*, about code the user did not write. They were marked at the
+impl rather than by declaring the traits' methods `pure`, which would have been one edit
+instead of 97: a bound on the trait binds every implementer, including a user's, and
+deciding that no `impl Show for MyType` may ever print is a language decision, not a
+cleanup. `std/math`, `std/tui` and `examples/` were marked the same way.
 
 ## `effects.go`
 

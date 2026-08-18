@@ -136,7 +136,7 @@ let draw = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> v
 
 /// One row of the frame, as a string. Built by concatenation into a single row rather
 /// than printed per cell.
-let render_row = (row: i64, cols: i64, span_rows: i64, zoom: i64, mx: i64, my: i64) -> string => {
+let render_row = pure (row: i64, cols: i64, span_rows: i64, zoom: i64, mx: i64, my: i64) -> string => {
   var out = ""
   for col in 1..<=cols {
     // **Exactly one character per cell, marker included.** A terminal has no notion of
@@ -177,7 +177,7 @@ let band = pure noalloc (pos: i64, span: i64) -> i64 =>
   if span <= 0 { 0 } else { 6 * (pos - 1) / span }
 
 /// The status line, always exactly one terminal row wide.
-let status = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> string => {
+let status = pure (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> string => {
   let text = " ${cols}x${rows}  zoom ${zoom}  marker ${mx},${my}  events ${events}  " ++
     "arrows/click move · wheel zooms · q quits "
   inverse() ++ (bold() ++ (fit(text, cols) ++ reset()))
@@ -191,7 +191,7 @@ let status = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) ->
 /// *wrapping*: a terminal has no concept of a line that is too wide, so it continues onto
 /// the next row and pushes the whole frame up by one, which reads as the display jittering
 /// rather than as text being too long.
-let fit = (text: string, width: i64) -> string => {
+let fit = pure (text: string, width: i64) -> string => {
   if text.len() > width {
     text.slice(0, width)
   } else {

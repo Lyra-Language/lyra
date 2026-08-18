@@ -31,7 +31,8 @@ func checkPurity(t *testing.T, source string) []checker.PurityError {
 	// Captures before purity, as the driver orders them: a closure construction's
 	// allocation charge is keyed on whether it captures.
 	caps := captures.Analyze(program, symTable, tt)
-	return checker.CheckPurity(program, scopeTable, tt, tc.MethodTable(), caps)
+	errs, _ := checker.CheckPurity(program, scopeTable, tt, tc.MethodTable(), caps)
+	return errs
 }
 
 func assertPurityCount(t *testing.T, errs []checker.PurityError, want int) {

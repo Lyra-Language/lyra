@@ -1,1 +1,3 @@
-let helper = () => { 1 }
+// `pure` so this fixture stays about the missing entry point: without it the file
+// also draws lyra-W018, and the golden would assert that warning's wording too.
+let helper = pure () => { 1 }

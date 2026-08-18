@@ -62,7 +62,7 @@ pub struct EventReader {
 }
 
 /// A fresh reader with nothing buffered.
-pub let event_reader = () -> EventReader => EventReader { pending: None }
+pub let event_reader = pure () -> EventReader => EventReader { pending: None }
 
 /// The next event, or `None` once input has ended.
 ///

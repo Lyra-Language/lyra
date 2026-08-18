@@ -990,6 +990,33 @@ name — hazard 9's rule. **There were three copies of that dispatch ladder** (`
 `methodEffects`, and the reporting walk in `checkCallPurity`); all three needed the same arm,
 which is hazard 8 again.
 
+**A missing `pure` bound is a warning as of 08/17** (`lyra-W018`,
+`pkg/analyzer/checker/missing_pure_bound.go`): a top-level function or trait-impl method whose
+inferred effect set is empty and which does not say so. It rides on `CheckPurity`'s own
+fixpoint — that function now returns violations *and* warnings — so it is the inference read
+backwards rather than a second analysis.
+
+The reason is not that anything is refused. Purity is inferred whole-program here, so a `pure`
+caller may call an unannotated callee the fixpoint cleared; the bound costs nothing until the
+body changes, and then it decides **where the blame lands** — an effect added to an unmarked
+function is reported at whatever calls it, while the same effect in a `pure`-marked one is
+reported at the effect. That is `generic_params.go`'s diagnostic-lands-somewhere-else failure
+one rung up.
+
+Only `pure` is reported, and the split was measured rather than guessed: `det` fires on ~1/6
+of all functions and `noalloc` on ~2/5, nearly every `det` candidate being a terminal-escape
+wrapper that qualifies only because `det` permits `EffectOutput`. Declarations only, never an
+inline closure; `main` is exempt; a bound the *trait* declares counts as annotated
+(`effectiveMethodBounds`, shared with the enforcement half so the two cannot disagree).
+
+**Landing it meant annotating the standard library, and that is the feature's real cost.**
+`std/prelude` was diagnostic-clean and drew 97 warnings — all trait-impl methods, one per
+numeric width — which would have shown up on every user compile about code the user did not
+write. They were marked at each impl rather than by declaring the traits' methods `pure`:
+that would have been one edit instead of 97, but a bound on a trait binds every implementer
+including a user's, and deciding no `impl Show for MyType` may print is a language decision
+rather than a cleanup. See `pkg/analyzer/checker/README.md`.
+
 **`where` bounds mean something as of 08/07**, in three parts: a binding's bounds are in
 scope for its own body (`tc.genericBounds` was fed only by an *impl's* clause, so a bounded
 call reported "add a `where t: Trait` bound" with the bound already written); an

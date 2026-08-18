@@ -25,7 +25,12 @@ func (e PurityError) Error() string {
 }
 
 // CheckPurity walks the program and reports observable side effects that occur
-// inside any function marked `pure`.
+// inside any function marked `pure`, plus — as warnings, the second result — the
+// inverse: a function that could have been marked `pure` and was not
+// (missingPureBounds, lyra-W018). Two results because the two severities travel
+// differently: an effect inside a `pure` function is an error and a missing bound
+// is advice, and the pass owns both because both read the one effect fixpoint it
+// computes.
 //
 // Model — purity is about effects crossing the function boundary, NOT about
 // whether mutation happens at all. A `pure` function may freely mutate values it
@@ -66,7 +71,7 @@ func (e PurityError) Error() string {
 //   - bottom-up purity *inference* for methods — today only an explicit
 //     `pure` marker on the method itself is trusted; an unannotated method is
 //     always treated as potentially impure, unlike a free function
-func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable, methodTable *typetable.MethodTable, caps *captures.Table) []PurityError {
+func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable, methodTable *typetable.MethodTable, caps *captures.Table) ([]PurityError, []diag.Diagnostic) {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
 	frames := newScopeFrames(program, scopeTable)
 	boundGroups := collectTraitMethodGroups(program)
@@ -103,7 +108,7 @@ func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable
 			c.checkTraitMethodBounds(impl, base)
 		}
 	}
-	return c.errors
+	return c.errors, c.missingPureBounds(program)
 }
 
 // checkTraitMethodBounds checks each method in impl against its declared effect
@@ -118,12 +123,7 @@ func (c *purityChecker) checkTraitMethodBounds(impl *ast.TraitImplStmt, base []s
 		// The effective bound is the impl method's own annotation OR the one the
 		// trait declares on that method (`trait Show { pure show: … }`) — a bound
 		// on the trait is a contract every impl must satisfy.
-		isPure, isDet, isNoAlloc := m.IsPure, m.IsDet, m.IsNoAlloc
-		if td := traitMethodDecl(c.traitDecls, impl.TraitName, m.Name); td != nil {
-			isPure = isPure || td.IsPure
-			isDet = isDet || td.IsDet
-			isNoAlloc = isNoAlloc || td.IsNoAlloc
-		}
+		isPure, isDet, isNoAlloc := c.effectiveMethodBounds(impl, m)
 		c.checkBoundedEffects(isDet, isNoAlloc, c.impureMethods[m], m.Clause.GetLocation(), c.allocSites.methodSites[m])
 		if !isPure {
 			continue
@@ -139,6 +139,23 @@ func (c *purityChecker) checkTraitMethodBounds(impl *ast.TraitImplStmt, base []s
 		childCapture := pushScope(base, scope)
 		ast.WalkExpr(m.Clause.Body, c.stmtVisitor(sc), c.exprVisitor(sc, childCapture, nil))
 	}
+}
+
+// effectiveMethodBounds is the bound set an impl method is actually held to: its
+// own annotation OR the one the trait declares for that method
+// (`trait Show { pure show: … }`), since a bound on the trait is a contract every
+// impl must satisfy. Shared by the enforcement half (checkTraitMethodBounds) and
+// the missing-bound warning, which must agree about what counts as annotated —
+// warning "mark this `pure`" at a method whose trait already says `pure` would be
+// advice to write down something the compiler is already enforcing.
+func (c *purityChecker) effectiveMethodBounds(impl *ast.TraitImplStmt, m *ast.TraitMethodImpl) (isPure, isDet, isNoAlloc bool) {
+	isPure, isDet, isNoAlloc = m.IsPure, m.IsDet, m.IsNoAlloc
+	if td := traitMethodDecl(c.traitDecls, impl.TraitName, m.Name); td != nil {
+		isPure = isPure || td.IsPure
+		isDet = isDet || td.IsDet
+		isNoAlloc = isNoAlloc || td.IsNoAlloc
+	}
+	return isPure, isDet, isNoAlloc
 }
 
 // InferredPureFunctions returns, for every top-level `let`/`var name = <lambda>`

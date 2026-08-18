@@ -65,12 +65,12 @@ let main = () => {
 ///
 /// The `i64(c)` here is deliberate: this is the one place the numeric code point is the
 /// point. Everywhere else a rune literal (`'q'`) says it better than its number does.
-let show_code = (c: rune) -> string => {
+let show_code = pure (c: rune) -> string => {
   let n = i64(c)
   if c < ' ' || c == '\x7f' { "<${n}>" } else { "'${c}' (${n})" }
 }
 
-let key_name = (k: Key) -> string => match k {
+let key_name = pure (k: Key) -> string => match k {
   Char c => "Char ${show_code(c)}",
   Up => "Up", Down => "Down", Left => "Left", Right => "Right",
   Home => "Home", End => "End", PageUp => "PageUp", PageDown => "PageDown",
@@ -78,16 +78,16 @@ let key_name = (k: Key) -> string => match k {
   Escape => "Escape"
 }
 
-let button_name = (b: MouseButton) -> string => match b {
+let button_name = pure (b: MouseButton) -> string => match b {
   MouseLeft => "left", MouseMiddle => "middle", MouseRight => "right",
   WheelUp => "wheel-up", WheelDown => "wheel-down", NoButton => "no button"
 }
 
-let action_name = (a: MouseAction) -> string => match a {
+let action_name = pure (a: MouseAction) -> string => match a {
   Press => "press", Release => "release", Move => "move"
 }
 
-let describe = (e: Event) -> string => match e {
+let describe = pure (e: Event) -> string => match e {
   Keyboard(k) => "key    ${key_name(k)}",
   Mouse(m) => "mouse  ${button_name(m.button)} ${action_name(m.action)} at col ${m.col}, row ${m.row}"
 }

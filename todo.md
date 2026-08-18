@@ -1678,6 +1678,19 @@ interior assignment, and deep retain-on-copy.
     bounded because it is forwarded into a bounded slot) is the natural next step and is
     what would make bounds composable without annotation churn.
 
+- **[DONE 08/17] A missing `pure` bound is warned about** (`lyra-W018`,
+  `checker/missing_pure_bound.go`) — the inference read backwards, off `CheckPurity`'s own
+  fixpoint. The justification is *not* that a caller is blocked (inference already handles
+  that whole-program); it is that an unwritten bound moves the blame for a later edit to
+  the caller. Only `pure`, measured: `det` fires on ~1/6 of functions and `noalloc` on
+  ~2/5. Landing it meant annotating 97 standard-library impl methods. See COMPLETED.md.
+  - **[IDEA] A suppression syntax.** The language has no `#[allow]` equivalent, which is
+    the reason this is a warning rather than an error, and the reason a deliberately
+    unannotated function has no way to say so. If a second opinionated lint lands, this
+    stops being a one-off and starts being a gap.
+  - **[IDEA] Warn on `det`/`noalloc` behind a flag.** Both are inferred already and both
+    were measured too noisy to default on; a `--pedantic`-shaped opt-in would make them
+    available to a codebase that wants the annotation discipline without imposing it.
 - **[OPEN] (#3) Purity inference phase 2 for trait-method clauses.** Lambdas and free functions
   read the collector's `ScopeTable`; method clauses still re-walk the AST, because
   `CollectLambdaClause` records no scope. Needs a collector change reconciled with

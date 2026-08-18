@@ -10,6 +10,62 @@ Newest first.
 ## Dated log
 
 ### 08/17/26
+**`lyra-W018`: a function that could be `pure` and does not say so.** The effect row is
+already computed for every callable — `pure` is checked *against* it — so "could this have
+been marked pure" was a question the compiler could always answer and kept to itself. It is
+`CheckPurity`'s own fixpoint read backwards, which is why that function now returns two
+results rather than gaining a second pass: an effect inside a `pure` function is an error,
+a missing bound is advice, and both come off one analysis.
+
+**The obvious justification is false here, and finding that out changed the feature.** The
+first draft's message said an unmarked callee blocks a `pure` caller. It does not: purity is
+inferred whole-program, so `pure caller = helper(n)` compiles against an unannotated
+`helper`, free function and impl method alike. Nothing is refused, and a warning whose
+stated reason is wrong is worse than no warning.
+
+What the bound actually buys shows up on the *next* edit — it decides **where the blame
+lands**:
+
+```lyra
+let helper = (n: i64) -> i64 => { println("added later"); n * 2 }
+let caller = pure (n: i64) -> i64 => helper(n)
+```
+
+The `println` is reported at `caller`, the only thing in the program that promised
+anything. Mark `helper` and it is reported at the `println` as well — at the edit, in the
+function being looked at. That is `lyra-E031`'s diagnostic-lands-somewhere-else failure one
+rung up, and it is the whole case for the warning.
+
+**The scope was measured, not chosen.** Counted over `std/` and `examples/`: `pure` fires
+0–6 times per file and names real pure helpers (`fit`, `render_row`, `key_name`); `det`
+fires 11–14 times and *every* candidate in `tui_viewer` is a terminal-escape wrapper
+(`cursor_hide`, `move_to`, `alt_screen_enter`) that qualifies only because `det` permits
+`EffectOutput` by design; `noalloc` fires on ~40% of all functions. So only `pure` is
+reported — the other two would bury it. Declarations only, never an inline closure
+(`(x) => x * 2` inside an `xs.map(…)` is an expression, not an interface); `main` is exempt,
+since nothing calls it and there is no caller for blame to move to; and a bound the *trait*
+declares counts as annotated, via an `effectiveMethodBounds` helper shared with the
+enforcement half so the two cannot drift.
+
+**Landing it cost more than building it, and that is the entry's real content.**
+`std/prelude` was clean of every existing diagnostic and drew **97** W018s — all trait-impl
+methods: `Add`/`Sub`/`Mul`/`Div` per numeric width, `Show::show`, `Signed::abs`,
+`Ord::compare`, `Needle::found_at`. Those would have appeared on *every user compile*, about
+code the user did not write, which is the state no shipped library may be in.
+
+They were marked at each impl rather than by declaring the traits' methods `pure` — one edit
+instead of 97, and refused deliberately: a bound on a trait binds every implementer,
+including a user's, so that spelling decides no `impl Show for MyType` may ever print. That
+is a language decision, not a cleanup, and it is left open. `std/math`, `std/tui` and
+`examples/` were annotated the same way; the tree is diagnostic-clean again.
+
+Two gaps the work exposed, both in `todo.md`: the language has **no `#[allow]`-shaped
+suppression**, which is why this is a warning rather than an error and why a deliberately
+unannotated function cannot say so; and `det`/`noalloc` are inferred already and measured
+too noisy to default on, so a `--pedantic`-shaped opt-in is what would make them available
+without imposing them.
+
+### 08/17/26
 **`lyra-E058`: destructuring the result of an inferred, later-declared return.**
 `let (w, h) = contain_set(cols, rows)` above an un-annotated `contain_set` reported
 nothing at the destructure and `undefined identifier` at every *use* of the names — a

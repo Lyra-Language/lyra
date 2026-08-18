@@ -70,7 +70,7 @@ let main = () => {
 }
 
 /// How heavily to draw `c` — an index into `RAMP`, its last for a point in the set.
-let shade = (c: Complex<f64>) -> i64 => {
+let shade = pure (c: Complex<f64>) -> i64 => {
   var z = Complex { re: 0.0, im: 0.0 }
   var mag2 = 0.0
   var iter = 0

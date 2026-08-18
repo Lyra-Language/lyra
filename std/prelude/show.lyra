@@ -47,38 +47,38 @@ pub trait Show {
 /// It returns the value rather than interpolating it: `"${s}"` would copy the bytes into
 /// a fresh box for no reason, and `show` is the one place that cost would be paid on
 /// every rendering of every string.
-impl Show for string { show = (self) => self }
+impl Show for string { show = pure (self) => self }
 
 /// Shows as `true` or `false`.
-impl Show for bool { show = (self) => "${self}" }
+impl Show for bool { show = pure (self) => "${self}" }
 /// Shows as the character itself, not as its code point.
-impl Show for rune { show = (self) => "${self}" }
+impl Show for rune { show = pure (self) => "${self}" }
 
 /// Shows in base 10, with a leading `-` when negative.
-impl Show for i8 { show = (self) => "${self}" }
+impl Show for i8 { show = pure (self) => "${self}" }
 /// Shows in base 10, with a leading `-` when negative.
-impl Show for i16 { show = (self) => "${self}" }
+impl Show for i16 { show = pure (self) => "${self}" }
 /// Shows in base 10, with a leading `-` when negative.
-impl Show for i32 { show = (self) => "${self}" }
+impl Show for i32 { show = pure (self) => "${self}" }
 /// Shows in base 10, with a leading `-` when negative.
-impl Show for i64 { show = (self) => "${self}" }
+impl Show for i64 { show = pure (self) => "${self}" }
 /// Shows in base 10, with a leading `-` when negative.
-impl Show for i128 { show = (self) => "${self}" }
+impl Show for i128 { show = pure (self) => "${self}" }
 
 /// Shows in base 10.
-impl Show for u8 { show = (self) => "${self}" }
+impl Show for u8 { show = pure (self) => "${self}" }
 /// Shows in base 10.
-impl Show for u16 { show = (self) => "${self}" }
+impl Show for u16 { show = pure (self) => "${self}" }
 /// Shows in base 10.
-impl Show for u32 { show = (self) => "${self}" }
+impl Show for u32 { show = pure (self) => "${self}" }
 /// Shows in base 10.
-impl Show for u64 { show = (self) => "${self}" }
+impl Show for u64 { show = pure (self) => "${self}" }
 /// Shows in base 10.
-impl Show for u128 { show = (self) => "${self}" }
+impl Show for u128 { show = pure (self) => "${self}" }
 
 /// Shows in decimal notation.
-impl Show for f16 { show = (self) => "${self}" }
+impl Show for f16 { show = pure (self) => "${self}" }
 /// Shows in decimal notation.
-impl Show for f32 { show = (self) => "${self}" }
+impl Show for f32 { show = pure (self) => "${self}" }
 /// Shows in decimal notation.
-impl Show for f64 { show = (self) => "${self}" }
+impl Show for f64 { show = pure (self) => "${self}" }

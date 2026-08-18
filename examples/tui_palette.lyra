@@ -43,7 +43,7 @@ let main = () => {
 }
 
 /// One row of the 6×6×6 cube: green varies across, blue within each group.
-let cube_row = (r: i64) -> string => {
+let cube_row = pure (r: i64) -> string => {
   var row = ""
   for g in 0..<6 {
     for b in 0..<6 {

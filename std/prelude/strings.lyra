@@ -169,7 +169,7 @@ pub trait Needle {
 
 /// A rune matches a single code point, spanning one rune.
 impl Needle for rune {
-  found_at = (needle, haystack, offset) => {
+  found_at = pure (needle, haystack, offset) => {
     if offset < 0 {
       return None
     }
@@ -186,7 +186,7 @@ impl Needle for rune {
 
 /// A string matches its own contents, spanning its own rune length.
 impl Needle for string {
-  found_at = (needle, haystack, offset) => {
+  found_at = pure (needle, haystack, offset) => {
     if offset < 0 {
       return None
     }
