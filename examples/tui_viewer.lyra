@@ -76,8 +76,8 @@ let main = () => {
           Keyboard(PageDown) => { zoom -= 1 },
           Keyboard(Char c) => { running = i64(c) != 113 },
           Mouse(m) => match m.button {
-            WheelUp => { zoom += 1 },
-            WheelDown => { zoom -= 1 },
+            WheelUp => { zoom -= 1 },
+            WheelDown => { zoom += 1 },
             // A click sets the marker where the pointer is — the coordinates are
             // already 1-based, matching the frame's own numbering.
             _ => { mx = m.col; my = m.row }
