@@ -32,25 +32,28 @@ const ESCAPE = 65536.0
 /// twice per cycle for free. The cost is that a colour no longer identifies one escape
 /// band uniquely, which nothing here was using it for.
 const COLOR_CYCLE = 64.0
-// The colour ramp, walked white -> yellow -> orange -> red -> magenta -> purple -> blue
-// through std.tui's 6x6x6 cube. Index 0 is the set itself; 1 is hard against its boundary
-// and 23 is the far field, matching what `shade` produces.
+// The colour ramp: a full **hue circuit** through std.tui's 6x6x6 cube — white, yellow,
+// orange, red, magenta, violet, blue, cyan, green, and back down to dark blue. Index 0 is
+// the set itself; 1 is hard against its boundary and 37 is the far field.
 //
-// **Black for the set and dark blue for the far field, with the bright end at the
-// boundary.** That is where the structure is — the thin band of points that take many
-// iterations to escape — so it gets the contrast, and the two large flat regions get the
-// two dark ends. The reverse ramp looks like a photographic negative of the same image.
+// **37 is the cube's practical ceiling, not an arbitrary length.** Sampling this path more
+// finely stops producing new colours: at 47 stops it still yields 37 distinct entries,
+// because six levels per channel is all there is. The previous ramp took a short path
+// (white to dark blue without the greens and cyans) and saturated at 23 — going the long
+// way round the hues is what buys the extra 14.
 //
-// The stops are spaced by **arc length** through the cube rather than evenly between key
-// colours: the cube is coarse enough (six levels per channel) that even spacing collapses
-// several neighbours onto the same index, which shows as flat bands. Arc-length spacing
-// gives 23 distinct colours out of 23.
+// **Black for the set, dark for the far field, bright at the boundary.** That is where the
+// structure is, so it gets the contrast, and the two large flat regions get the dark ends.
+//
+// Consecutive duplicates are dropped rather than kept: a repeated entry is a band that
+// costs a cycle step and shows nothing, not a wider band.
 const PALETTE = [
   16,
-  231, 230, 229, 228, 227, 226,
-  220, 214, 208, 202, 196, 197,
-  161, 162, 126, 127, 91, 92,
-  56, 20, 19, 18, 17
+  231, 230, 229, 228, 227, 226, 220, 214,
+  208, 202, 196, 197, 198, 199, 164, 129,
+  93, 57, 21, 27, 33, 39, 45, 51,
+  50, 49, 48, 47, 41, 40, 34, 28,
+  29, 23, 24, 18, 17
 ]
 
 /// The visible region: its centre and horizontal span. The **vertical** span is not
