@@ -536,6 +536,32 @@ const (
 	// which fires a handful of times per file and names real pure helpers.
 	CodeMissingPureBound = "lyra-W018"
 
+	// CodeSharedRepeatElement: `[v; n]` where the element can be mutated through the
+	// reference every slot shares — a `[]T`, a `shared` aggregate with a writable
+	// field, or anything containing one. Writing through slot 0 is then visible in
+	// every slot.
+	//
+	// **The semantics are correct and are not what should change.** `[v; n]`
+	// evaluates v exactly once, which is what makes `[expensive(); 1000]` one call
+	// and `[0; 480000]` a loop rather than 480,000 evaluations; each slot is an owner
+	// of that one value. Nothing here is a bug in the language. What is missing is
+	// that "n copies" reads as "n *independent* copies" to almost everyone, and the
+	// failure is silent — `[[' '; WIDTH]; HEIGHT]` builds one row referenced HEIGHT
+	// times, so a grid renders every row identically, which reads as an arithmetic
+	// mistake rather than an aliasing one. Found that way in examples/mandelbrot.lyra
+	// on 08/14, where it was the third of three bugs and the one that survived fixing
+	// the other two.
+	//
+	// A warning rather than an error, on lyra-W018's reasoning: the code is correct,
+	// a deliberate alias is a real thing to want, and this language has no
+	// `#[allow]`-shaped suppression — so an error would make a legitimate intention
+	// uncompilable and there would be nothing to write instead.
+	//
+	// The predicate is narrower than "managed" and every rung of it is measured: a
+	// string is managed and immutable, so `["hi"; 3]` — the commonest spelling by far
+	// — does not fire. See ownership.SharesMutableState.
+	CodeSharedRepeatElement = "lyra-W019"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

@@ -310,6 +310,196 @@ func resolveNamedType(t types.Type, symTable *symbols.SymbolTable, loc ast.Locat
 	return types.WithAllocation(decl.Type, u.Allocation)
 }
 
+// SharesMutableState reports whether two copies of a value of type t can observe
+// each other's writes — whether copying it duplicates a reference to storage that
+// can then be *mutated* through either copy.
+//
+// It is the third and narrowest of a graded trio, and the distinctions are what make
+// it useful rather than alarming:
+//
+//   - IsManaged — is this value itself a ref-counted reference?
+//   - OwnsManaged — does copying it duplicate a reference, so refcounting must run?
+//   - SharesMutableState — is that duplication *observable* to a program?
+//
+// A string is managed and copying one shares its box, so both of the first two say
+// yes; a string is immutable, so there is nothing to mutate through and this says no.
+// That gap is the whole point: `["hi"; 3]` is correct, unremarkable code and by far
+// the commoner spelling, so a diagnostic built on "managed" would fire mostly on it.
+//
+// What answers yes, each rung measured rather than reasoned from the layout (08/18,
+// `[v; n]` then a write through slot 0):
+//
+//   - a dynamic array `[]T` — always. Its elements live behind the box pointer a
+//     copy shares, and `xs[0] = v` and `xs.push(v)` write them.
+//   - a `shared` aggregate with any field that is not `readonly` — the box is the
+//     value, and a field write goes through it.
+//   - any inline aggregate — a struct, tuple, `[N]T`, `data` payload, or one
+//     instantiation of a generic type — that *contains* one of the above. The copy
+//     is shallow, so `struct Row { cells: []i64 }` shares its cells.
+//
+// And what does not: a scalar and a `[N]T` of scalars (copied outright), a string
+// and a `rune` (immutable), a `shared` scalar (assigning to the binding rebinds it
+// rather than writing the box).
+//
+// **`readonly` is not honoured on the way down**, only at the top of a `shared`
+// aggregate, and that asymmetry is measured too. Freezing a field stops the direct
+// write — `fs[0].cells[0] = 7` is lyra-E001 — but not the two-line launder that gets
+// the same effect:
+//
+//	let mut c = fs[0].cells
+//	c[0] = 7                  // writes every slot's cells
+//
+// So a frozen field whose *type* shares mutable state still shares it, and treating
+// `readonly` as a stopping rule would be a false negative in exactly the shape
+// (a struct wrapping an array) the predicate exists for.
+//
+// A closure is deliberately excluded although it too shares a mutable environment.
+// Copying a function value shares its captures in every language that has both, so
+// `[counter; 3]` is not the "n independent copies" mistake this is looking for — it
+// is what a closure *is*.
+func SharesMutableState(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) bool {
+	_, shares := SharedMutablePath(t, symTable, loc, nil)
+	return shares
+}
+
+// SharedMutablePath is SharesMutableState with its evidence: the chain of **struct
+// field** names from t down to the thing that actually shares, empty when t is itself
+// that thing (or reaches it through a tuple or a `data` payload, whose own spelling
+// already shows what they hold).
+//
+// One implementation, two entry points, for the reason OwnsManaged is the single
+// definition of managed-ness: a diagnostic that explains *why* a `Row` aliases has to
+// agree with the predicate that decided it does, and a second walk written to answer
+// "which field" would be free to drift from the one that answers "whether".
+//
+// seen guards the recursion by type name; pass nil at the top. OwnsManaged rests on
+// lyra-E014 (a recursive type's cycle must pass through a `shared` field, which it
+// answers outright) and needs no guard, but this walk can decline a `shared`
+// aggregate and keep descending, so the cycle is reachable here.
+func SharedMutablePath(t types.Type, symTable *symbols.SymbolTable, loc ast.Location, seen map[string]bool) ([]string, bool) {
+	if t == nil {
+		return nil, false
+	}
+	// Nominal only — `newtype Grid = []i64` is represented exactly as its base, and
+	// shares exactly what its base shares.
+	t = types.StripNewtype(t)
+	if types.IsDynamicArray(t) {
+		return nil, true
+	}
+	if seen == nil {
+		seen = map[string]bool{}
+	}
+	if u, isNamed := t.(types.UnresolvedType); isNamed {
+		if seen[u.Name] {
+			return nil, false
+		}
+		seen[u.Name] = true
+	}
+	resolved := resolveNamedType(t, symTable, loc)
+	if types.AllocationOf(resolved) == types.Shared && hasWritableField(resolved, symTable, loc) {
+		return nil, true
+	}
+	switch v := resolved.(type) {
+	case *types.ConstrainedType:
+		return SharedMutablePath(v.Type, symTable, loc, seen)
+	case types.NamedStructType:
+		return firstSharingField(v.Fields, symTable, loc, seen)
+	case types.AnonymousStructType:
+		return firstSharingField(v.Fields, symTable, loc, seen)
+	case types.TupleType:
+		// No name is prefixed for a tuple or a `data` payload, unlike a struct field:
+		// both render their contents in their own spelling — `(i64, []i64)`,
+		// `Maybe<[]i64>` — so the sharing part is already on the page, and `.1` or
+		// `.Some` would only repeat it. A struct is the case that needs the path,
+		// since `Row` says nothing about what it holds.
+		for _, e := range v.Elements {
+			if path, shares := SharedMutablePath(e, symTable, loc, seen); shares {
+				return path, true
+			}
+		}
+	case types.DataType:
+		for _, c := range v.Constructors {
+			for _, f := range c.FieldTypes() {
+				if path, shares := SharedMutablePath(f, symTable, loc, seen); shares {
+					return path, true
+				}
+			}
+		}
+	case types.StaticArrayType:
+		// `[2][]i64` is two box pointers copied inline: the array is independent per
+		// slot and each of its elements is not.
+		return SharedMutablePath(v.ElementType, symTable, loc, seen)
+	case types.ParameterizedType:
+		// Substituted, for OwnsManaged's reason: `Maybe<[]i64>` shares, `Maybe<i64>`
+		// does not, and the declaration alone — whose payload is the variable `t` —
+		// cannot tell them apart.
+		return parameterizedSharedMutablePath(v, symTable, loc, seen)
+	}
+	return nil, false
+}
+
+// firstSharingField returns the first field that shares, prefixed to its own path.
+func firstSharingField(fields []types.StructField, symTable *symbols.SymbolTable, loc ast.Location, seen map[string]bool) ([]string, bool) {
+	for _, f := range fields {
+		if path, shares := SharedMutablePath(f.Type, symTable, loc, seen); shares {
+			return append([]string{f.Name}, path...), true
+		}
+	}
+	return nil, false
+}
+
+// hasWritableField reports whether a `shared` aggregate has a field a program can
+// write through the box. An all-`readonly` struct has none, and a `shared` scalar has
+// no fields at all — assigning to the binding rebinds it rather than writing the box,
+// which is why the allocation flavor alone is not the test.
+func hasWritableField(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) bool {
+	switch v := t.(type) {
+	case types.NamedStructType:
+		return slices.ContainsFunc(v.Fields, func(f types.StructField) bool { return !f.Frozen })
+	case types.AnonymousStructType:
+		return slices.ContainsFunc(v.Fields, func(f types.StructField) bool { return !f.Frozen })
+	case types.TupleType:
+		return len(v.Elements) > 0
+	case types.StaticArrayType:
+		return v.Size > 0
+	case types.DataType:
+		return slices.ContainsFunc(v.Constructors, func(c types.DataTypeConstructor) bool {
+			return len(c.FieldTypes()) > 0
+		})
+	case types.ParameterizedType:
+		if symTable == nil {
+			return false
+		}
+		decl, ok := symTable.LookupTypeFrom(v.Name, loc)
+		if !ok {
+			return false
+		}
+		return hasWritableField(decl.Type, symTable, loc)
+	}
+	return false
+}
+
+// parameterizedSharedMutablePath answers SharedMutablePath for one instantiation,
+// pairing the declaration's parameters with the instantiation's arguments exactly as
+// parameterizedOwnsManaged does.
+func parameterizedSharedMutablePath(p types.ParameterizedType, symTable *symbols.SymbolTable, loc ast.Location, seen map[string]bool) ([]string, bool) {
+	if symTable == nil || seen[p.Name] {
+		return nil, false
+	}
+	seen[p.Name] = true
+	decl, ok := symTable.LookupTypeFrom(p.Name, loc)
+	if !ok {
+		return nil, false
+	}
+	subst := make(map[string]types.Type, len(decl.GenericParams))
+	for i, gp := range decl.GenericParams {
+		if i < len(p.TypeArguments) {
+			subst[gp.Name] = p.TypeArguments[i]
+		}
+	}
+	return SharedMutablePath(substituteTypeVars(decl.Type, subst), symTable, loc, seen)
+}
+
 // Analyze walks the typed program and returns the retain/release-temp Table.
 func Analyze(program *ast.Program, symTable *symbols.SymbolTable, tt *typetable.TypeTable, mt *typetable.MethodTable) *Table {
 	a := newAnalyzer(symTable, tt, nil, mt)

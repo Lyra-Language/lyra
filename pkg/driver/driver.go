@@ -226,6 +226,13 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	// parameter).
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUseAfterMove(program, symTable, tt, res.MethodTable)...)
 
+	// `[v; n]` whose slots share one mutable value (lyra-W019). After typechecking
+	// because the element's *settled* type is the question: under a `[][]rune`
+	// annotation the inner `[' '; WIDTH]` infers as a fixed `[WIDTH]rune` and only
+	// propagation widens it to the `[]rune` that actually aliases, so the check has to
+	// read the TypeTable rather than inference's first answer.
+	res.Diagnostics = append(res.Diagnostics, checker.CheckArrayRepeatAliasing(program, symTable, tt)...)
+
 	// Value-range analysis (integer overflow / constant comparisons) also runs
 	// after typechecking — it reads the TypeTable for each expression's width and
 	// signedness. It also returns the safety table the backend uses to elide

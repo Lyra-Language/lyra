@@ -1204,7 +1204,7 @@ the expression reported `unknown expression type "array_comp_expr"`.
 
 They matter beyond convenience: **a comprehension is the only way to build an array.** There
 was no growth operation until 08/09 (`push`), and a spread in an array literal
-(`[0, ...xs]`) parses but is still not collected, so before this the prelude could not have a `map` for `[]t` at all — the natural
+(`[0, ...xs]`) parses and collects but is still not type-checked (see below), so before this the prelude could not have a `map` for `[]t` at all — the natural
 recursive `[head, ...tail]` formulation needs both of the missing pieces. `map` for arrays
 is now one line in `std/prelude.lyra`, and a third receiver head beside `Maybe` and
 `Result`.
@@ -1288,6 +1288,21 @@ allocates nothing — so the walk asks it of the construction cases only. See CO
   pass moved ahead of purity in the driver to answer the capture question; the residual
   LSS decision is only ever a **loosening** (a non-escaping capturing closure could
   become free), which is the compatible direction. See COMPLETED.md.
+- **[OPEN] `[...xs, v]` spread does not type-check.** The grammar has `spread_expr`,
+  the collector builds an `ast.SpreadExpr`, and every lint pass counts it as a use of
+  the name — but the typechecker has no arm, so it falls to the default and reports
+  `unknown expression type "...xs"`. The backend never sees it, so this is a front-end
+  gap rather than a lowering one. Exactly where `[v; n]` array-repeat sat before it
+  landed.
+
+  **Widen the node before adding the arm.** `SpreadExpr.Name` is a `string` and
+  `walk.go` lists the node as a leaf, so only `...identifier` is representable —
+  `[...f(x), 1]` and `[...a.b, 1]` cannot be built even once the typechecker accepts
+  spread. Doing the arm first would silently fix the feature at bare names.
+
+  It is the one append-shaped syntax the language has, so it is also what a reader
+  reaches for before finding `push`; `lyra-website`'s arrays guide documents it as
+  working, and its snippets fail `pnpm check:snippets` until this lands.
 
 ## Lazy sequences — `gen` and `Seq<t>`
 
@@ -2299,52 +2314,34 @@ What is left is the ergonomic half, and it has one honest option:
   annotation turns out to be a recurring irritation rather than a one-time surprise, which
   the mandelbrot program is the right thing to decide.
 
-### [OPEN] `[v; n]` aliases a mutable element, silently
+### [DONE 08/18] `[v; n]` that shares a mutable element now says so
 
 `[[' '; WIDTH]; HEIGHT]` builds **one** row referenced HEIGHT times, so every
-`grid[py][px] = …` writes to the same place and every row prints identically. Found 08/14
-in `examples/mandelbrot.lyra`, where it was the third of three bugs and the one that
-survived fixing the other two — the image stayed uniform, which reads as an arithmetic
-mistake rather than an aliasing one.
+`grid[py][px] = …` writes to the same place and every row prints identically. Found
+08/14 in `examples/mandelbrot.lyra`, where it was the third of three bugs and the one
+that survived fixing the other two — the image stayed uniform, which reads as an
+arithmetic mistake rather than an aliasing one.
 
-**The semantics are correct and deliberate**, and are not what should change: `[v; n]`
-evaluates `v` **once**, and each of the n slots is an owner of that value. That is what
-makes `[expensive(); 1000]` one call and `[0; 480000]` a loop rather than 480,000
-evaluations. Changing it would be strictly worse.
+**The semantics were correct and did not change.** `[v; n]` evaluates its value once,
+which is what makes `[expensive(); 1000]` one call; each of the n slots is then an owner
+of it. What was missing is that nothing said so at the moment it bites. `lyra-W019` does,
+and it is a **warning** — the code is correct, a deliberate alias is a real thing to want,
+and the language has no `#[allow]`-shaped suppression to offer instead.
 
-What is missing is that nothing says so at the one moment it bites. The failure is silent —
-a plausible image, not an error — and "n copies" reads as "n *independent* copies" to
-almost everyone.
+The predicate is `ownership.SharesMutableState`, deliberately narrower than "managed":
+a `[]T`, a `shared` aggregate with a writable field, or any struct/tuple/`data`/`[N]T`
+containing one. A string is managed and immutable, so `["hi"; 3]` — correct code and the
+commoner spelling by far — stays silent. Every rung was measured, and two of them
+surprised: `readonly` stops the direct write but not a two-line launder, so it is not a
+stopping rule; and a `shared` *scalar* does not share, since assigning to the binding
+rebinds it. See COMPLETED.md.
 
-**The trigger is narrower than "managed", and measured** (08/14):
-
-| element | `[v; n]` then mutate slot 0 | |
-|---|---|---|
-| `[]i64` | `buckets[0].push(7)` → all three length 1 | **aliases observably** |
-| `string` | `words[0] = "bye"` → only slot 0 changes | safe: immutable, nothing to mutate *through* |
-| `i64` | copied | safe |
-
-So the predicate is **"can the element's contents be mutated through a reference"** — an
-array, or a `shared` aggregate with mutable fields. A string is managed and immutable, so
-its aliasing is unobservable; a scalar is copied. Warning on "managed" would fire on
-`["hi"; 3]`, which is correct code and by far the commoner spelling.
-
-The proposed diagnostic names the fix, on the pattern lyra-E046 and the array-literal hint
-follow: build a fresh value per iteration —
-
-```lyra
-var plot: [][]rune = []
-for py in 0..<HEIGHT {
-  var row: []rune = [' '; WIDTH]   // evaluated once per row, not once in total
-  …
-  plot.push(row)
-}
-```
-
-Two things to decide: whether it is a warning or an error (it is *correct* code, so a
-warning — but a warning nobody reads is worth less than the trap it prevents), and whether
-a deliberate alias wants an opt-out spelling, which it would need if this were ever an
-error.
+**Still open, and it came out of the same measurements:** `[]shared T` does not lower at
+all. `var cs: []shared Cell = [Cell { n: 0 }, Cell { n: 0 }]` dies in the backend with
+`aggregate element type mismatch: cannot store %Cell into { i64, i64, %Cell }*`, and the
+repeat spelling fails identically — so it is the array literal's coercion of an element
+into a shared box, not anything to do with `[v; n]`. The warning covers the case on the
+day it works.
 
 ### [DONE 08/15] A terminal UI needs three builtins, not a library
 

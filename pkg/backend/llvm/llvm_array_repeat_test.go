@@ -137,3 +137,65 @@ let main = () -> void => {
 		t.Errorf("struct/empty repeat = %q; want \"1 2 0\"", got)
 	}
 }
+
+// The other half of "the slots are independent storage": the *values* in them are not,
+// where the value is a reference. These are the measurements lyra-W019 is built on, and
+// they belong in the backend because the predicate the warning uses is a claim about
+// what the lowering does — a change here that made a `[]T` element copy per slot would
+// silently turn the warning into noise.
+func TestExec_ArrayRepeatSharesAReferenceElement(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  var row: []i64 = [0, 0];
+  var grid: [][]i64 = [row; 3];
+  grid[0][0] = 7;
+  println("${grid[1][0]}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "7" {
+		t.Errorf("write through slot 0 = %q; want \"7\" (every slot holds the same array)", got)
+	}
+}
+
+// A struct is copied per slot, so its scalar fields are independent — while the array
+// *behind* one of its fields is not, the copy being shallow. Both readings in one test,
+// because the pair is the rule: lyra-W019 fires on the second and not the first.
+func TestExec_ArrayRepeatStructIsCopiedButItsArrayIsNot(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+struct Cell { n: i64 }
+struct Row { cells: []i64 }
+let main = () -> void => {
+  var cs: []Cell = [Cell { n: 0 }; 3];
+  cs[0].n = 7;
+  var rs: []Row = [Row { cells: [0, 0] }; 3];
+  rs[0].cells[0] = 7;
+  println("${cs[1].n} ${rs[1].cells[0]}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "0 7" {
+		t.Errorf("struct-vs-field aliasing = %q; want \"0 7\"", got)
+	}
+}
+
+// A string element is managed and shared, and the sharing is unobservable: there is no
+// way to mutate a string in place, so slot 0 can only be *replaced*. This is why
+// lyra-W019's predicate is narrower than ownership.IsManaged — `["hi"; 3]` is correct
+// code and by far the commoner spelling.
+func TestExec_ArrayRepeatStringElementIsUnobservable(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  var words: []string = ["hi"; 3];
+  words[0] = "bye";
+  println("${words[0]} ${words[1]}");
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "bye hi" {
+		t.Errorf("string repeat = %q; want \"bye hi\"", got)
+	}
+}

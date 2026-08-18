@@ -357,6 +357,34 @@ type params (a `GenericType`, not a `PrimitiveType`); aggregates (can own manage
 Scoped to `LambdaExpr.Parameters` (every free function + nested lambda). AST-only; wired into
 the driver's lint block.
 
+## `array_repeat_alias.go`
+
+`CheckArrayRepeatAliasing(program, symTable, tt)` (`lyra-W019`) warns when `[v; n]` fills its
+slots with a value the program can mutate through the reference they all share.
+`[[' '; WIDTH]; HEIGHT]` is the shape it exists for: one row referenced HEIGHT times, so every
+`grid[py][px] = c` writes the same place and every row prints identically — found in
+`examples/mandelbrot.lyra`, where a uniform image read as bad arithmetic and outlived the two
+genuine arithmetic bugs it was hiding behind. The semantics are right and unchanged (`[v; n]`
+evaluates its value once, which is what makes `[expensive(); 1000]` one call), so the fix is a
+diagnostic. A **warning**, on `missing_pure_bound.go`'s reasoning: the code is correct, a
+deliberate alias is a real thing to want, and with no `#[allow]`-shaped suppression an error
+would leave that intention nothing to write.
+
+**It runs after typechecking, and it has to.** The element's type at *inference* time is not
+the type it is lowered at: under a `[][]rune` annotation the inner `[' '; WIDTH]` infers as the
+fixed `[WIDTH]rune` — copied per slot, sharing nothing — and only propagation widens it to the
+heap-boxed `[]rune` that does. A check inside `inferArrayRepeatType` would have cleared the
+exact program that motivated it, so this reads the `TypeTable` for the settled type the backend
+will lower. That is the whole reason it is a standalone pass rather than an arm of the
+typechecker.
+
+The element predicate is `ownership.SharesMutableState`, deliberately narrower than "managed" —
+see that package's README for the two measurements that shaped it. A count folding to 0 or 1
+fills no second slot and is silent; a **runtime** count is assumed plural, since `[buf; n]` sized
+from a window resize is exactly the case the author cannot see the number for either. The
+message names the struct field it reaches the sharing through (`SharedMutablePath`), and nothing
+for a tuple or `data` payload, whose own spelling already prints what they hold.
+
 ## `type_names.go`
 
 `CheckTypeNames(program)` (`lyra-W009`) warns when a **struct** is declared with an

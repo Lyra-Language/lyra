@@ -9,6 +9,73 @@ Newest first.
 
 ## Dated log
 
+### 08/18/26
+**`lyra-W019`: `[v; n]` whose slots share one mutable value.** `[[' '; WIDTH]; HEIGHT]`
+builds **one** row referenced HEIGHT times, so every `grid[py][px] = c` writes the same
+place and every row prints identically. Found 08/14 in `examples/mandelbrot.lyra`, where it
+was the third of three bugs and the one that survived fixing the other two — the image
+stayed uniform, which reads as an arithmetic mistake rather than an aliasing one.
+
+**The semantics are correct and are not what changed.** `[v; n]` evaluates its value once,
+which is what makes `[expensive(); 1000]` one call and `[0; 480000]` a loop rather than
+480,000 evaluations; each slot is then an owner of that one value. What was missing is that
+nothing said so at the moment it bites, and "n copies" reads as "n *independent* copies" to
+almost everyone. A warning rather than an error on lyra-W018's reasoning: the code is
+correct, a deliberate alias is a real thing to want, and with no `#[allow]`-shaped
+suppression in the language an error would leave that intention nothing to write.
+
+**The predicate is narrower than "managed", and every rung of it was measured** rather than
+read off the layout — `[v; n]`, then a write through slot 0:
+
+| element | result | |
+|---|---|---|
+| `[]i64` | `grid[0][0] = 7` → visible in every slot | **shares** |
+| `struct Row { cells: []i64 }` | same, through the field | **shares** |
+| `(i64, []i64)`, `Held<[]i64>` | same, through the component | **shares** |
+| `string` | `words[0] = "bye"` → only slot 0 | immutable: nothing to mutate *through* |
+| `i64`, `[2]i64`, `struct Cell { n: i64 }` | copied per slot | inline storage |
+| `shared Cell` | aliases (proven separately) | `[]shared T` does not lower — see todo.md |
+
+So the question is not "is this managed" but **"can the sharers mutate what they share"**,
+and the gap between the two is `["hi"; 3]` — correct, unremarkable code, and by far the
+commoner spelling. Warning on managed values would have fired mostly on it, which is how a
+warning stops being read. That reasoning is now the third of a graded trio in
+`pkg/analyzer/ownership`: `IsManaged` (is this a ref-counted reference), `OwnsManaged`
+(does copying duplicate one, so refcounting must run), `SharesMutableState` (is the
+duplication *observable*).
+
+**Two findings inside the predicate, both from measuring rather than reasoning.**
+`readonly` does not stop the sharing, only the direct write: `fs[0].cells[0] = 7` is
+lyra-E001, and
+
+```lyra
+let mut c = fs[0].cells
+c[0] = 7                   // writes every slot's cells
+```
+
+is not — so a frozen field whose *type* shares still shares, and honouring `readonly` on
+the way down would have been a false negative in exactly the struct-wrapping-an-array shape
+the warning exists for. And a `shared` *scalar* does not share: assigning to the binding
+rebinds it rather than writing the box, so the test is a writable **field**, not the
+allocation flavor.
+
+**It is a standalone post-typecheck pass, and it has to be.** The element's type at
+inference time is not the type it is lowered at: under a `[][]rune` annotation the inner
+`[' '; WIDTH]` infers as the fixed `[WIDTH]rune` — which shares nothing, being copied per
+slot — and only propagation widens it to the heap-boxed `[]rune` that does. A check inside
+`inferArrayRepeatType` would have cleared the exact program that motivated it. Reading the
+TypeTable is what makes it see the settled type the backend will lower.
+
+The evidence is carried by the same walk that decides: `SharedMutablePath` returns the
+chain of **struct field** names down to the sharing part and `SharesMutableState` is its
+boolean face, so the message that explains why a `Row` aliases cannot drift from the
+predicate that decided it does. No name is appended for a tuple or a `data` payload —
+`(i64, []i64)` and `Held<[]i64>` already print what they hold.
+
+**`examples/life.lyra`** — Conway's Game of Life, toroidal, sized to the window — was
+written alongside it as the program that walks straight into the shape: a double-buffered
+grid rebuilt every generation. It also turned up two gaps of its own; see todo.md.
+
 ### 08/17/26
 **`lyra-W018`: a function that could be `pure` and does not say so.** The effect row is
 already computed for every callable — `pure` is checked *against* it — so "could this have

@@ -108,6 +108,39 @@ token being non-null (dropping it at reclaim time would free a field an arm hasn
 yet); the typechecker's `propagateAllocation` stamps `shared` onto construction leaves inside
 match arms so the arm's value is heap-boxed. See ALLOCATION.md.
 
+## A third predicate: `SharesMutableState`
+
+`IsManaged` and `OwnsManaged` both answer questions the *runtime* asks — is this a
+ref-counted reference, and does copying it duplicate one, so refcounting must run.
+`SharesMutableState(t, symTable, loc)` (08/18) answers the one a *program* asks: is that
+duplication **observable**? A string is managed and copying one shares its box, so both of
+the first two say yes; a string is immutable, so there is nothing to mutate through it and
+this says no.
+
+That gap is the reason it exists. `lyra-W019` (`checker/array_repeat_alias.go`) warns that
+`[v; n]` fills every slot with one value, and built on `IsManaged` it would have fired
+mostly on `["hi"; 3]` — correct, unremarkable code and the commoner spelling by far. What
+answers yes is a `[]T` (its elements live behind the shared box pointer), a `shared`
+aggregate with a **writable** field, or any struct / tuple / `data` payload / `[N]T` / generic
+instantiation containing one; the copy is shallow, so `struct Row { cells: []i64 }` shares
+its cells.
+
+Two rungs were measured rather than reasoned from the layout, and both came out against the
+obvious guess. `readonly` is **not** honoured on the way down: it stops the direct write
+(`fs[0].cells[0] = 7` is lyra-E001) and not the two-line launder that gets the same effect
+(`let mut c = fs[0].cells` then `c[0] = 7`), so a frozen field whose type shares still
+shares. And a `shared` **scalar** does not share at all, since assigning to the binding
+rebinds it rather than writing the box — which is why the test is a writable field and not
+the allocation flavor.
+
+`SharedMutablePath` is the implementation and `SharesMutableState` its boolean face: it
+returns the chain of struct-field names down to the sharing part, so the diagnostic that
+explains *why* a `Row` aliases comes from the same walk that decided it does — the
+single-definition rule `OwnsManaged` follows, applied to a message. It carries a `seen` set
+where `OwnsManaged` needs none: `OwnsManaged` answers `shared` outright, so lyra-E014's
+"a cycle must pass through a `shared` field" cuts every recursion, while this walk can
+decline a `shared` aggregate and keep descending.
+
 ## Trait-method parameter modes
 
 A `.`-call's modes come from the **trait's declared signature**, resolved through the

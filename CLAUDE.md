@@ -4,6 +4,8 @@ This is the main compiler infrastructure for the Lyra programming language. It c
 parser, AST, type system, collector, typechecker, a standalone semantic checker, and the LSP
 server.
 
+Never create a git commit or push to remote unless the user explicitly asks in their current message.
+
 Go module: `github.com/Lyra-Language/lyra`
 
 **This file is a map.** Each package's depth lives in a `README.md` beside its code; the
@@ -551,6 +553,14 @@ RangeSafety, Diagnostics}`. Every pass's errors are normalized to `[]diagnostic.
 parse errors converted from tree-sitter's 0-based positions to 1-based `ast.Location`).
 `Result.HasErrors()` / `Result.Errors()` filter by severity. This is where a backend (or any
 tool needing a typed program) starts, instead of re-implementing the pipeline.
+
+**A post-typecheck pass may be there for the *settled* type, not only for the MethodTable.**
+`checker.CheckArrayRepeatAliasing` (lyra-W019) is the clearest case: under a `[][]rune`
+annotation the inner `[' '; WIDTH]` *infers* as a fixed `[WIDTH]rune`, which is copied per slot,
+and only propagation widens it to the `[]rune` that every slot then shares — so a check written
+inside inference would clear the exact program it exists for. When a check's answer depends on
+what the backend will lower rather than on what inference first said, it reads the `TypeTable`
+and lives here.
 
 One ordering inside it is load-bearing rather than incidental: **the generic instantiation
 set is closed before the per-specialization ownership pass runs** (`instantiations.go`). A
