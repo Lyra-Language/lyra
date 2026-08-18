@@ -1,0 +1,184 @@
+import std.tui.{
+  alt_screen_enter, alt_screen_leave, clear, cursor_home, cursor_hide, cursor_show,
+  event_reader, Event, Key, fg, reset, rgb
+}
+
+// Conway's Game of Life, animated in the terminal and sized to the window.
+//
+// Four rules on a grid of cells, applied to every cell at once: a live cell with two or
+// three live neighbours survives, a dead cell with exactly three is born, and everything
+// else dies. The whole program is those two lines plus the machinery to see them.
+//
+// **The grid is a torus** — the left edge neighbours the right, the top the bottom — so a
+// glider that runs off one side comes back on the other rather than dissolving at a wall.
+// It is one `%%` per axis (see `wrap`) and it is what makes a small window worth watching.
+//
+// Run: lyrac run examples/life.lyra
+//   q or Escape  quit          space  pause / resume
+//   s            single step   r      reseed
+
+/// Milliseconds per generation. Also the input poll window: the program waits for a key
+/// for exactly this long, so a keypress is answered at once and a quiet window advances
+/// the world. There is no sleep in the language and none is wanted — the wait *is* the
+/// frame timer, which is what `wait_for_key_ms` returning a bool buys.
+const STEP_MS = 90
+
+/// Live cells per hundred in a fresh world. A third is dense enough to be busy for a few
+/// hundred generations and sparse enough that structure separates out of the soup.
+const DENSITY = 33
+
+let main = () => {
+  set_raw_mode(true)
+  alt_screen_enter()
+  cursor_hide()
+  clear()
+
+  let (width, height) = playfield()
+  var grid = random_grid(width, height, random_seed())
+  var events = event_reader()
+  var generation = 0
+  var running = true
+  var paused = false
+
+  for running {
+    draw(grid, generation, paused)
+
+    // Poll and animate in one call: true means a key is waiting, false means the window
+    // elapsed with nothing typed — which is the tick.
+    if events.event_available(STEP_MS) {
+      match events.next_event() {
+        None => { running = false },
+        Some(e) => match e {
+          Keyboard(Char c) => {
+            if c == 'q' { running = false }
+            else if c == ' ' { paused = !paused }
+            else if c == 's' {
+              grid = step(grid)
+              generation += 1
+            }
+            else if c == 'r' {
+              grid = random_grid(width, height, random_seed())
+              generation = 0
+            }
+          },
+          Keyboard(Escape) => { running = false },
+          _ => { }
+        }
+      }
+    } else if !paused {
+      grid = step(grid)
+      generation += 1
+    }
+  }
+
+  // In reverse, and all three matter: a program that exits without them leaves a terminal
+  // with no echo, no cursor and the world still on screen.
+  cursor_show()
+  alt_screen_leave()
+  set_raw_mode(false)
+}
+
+/// The next generation, as a fresh grid.
+///
+/// Fresh rather than in place, and that is Life's one real constraint: every cell reads
+/// its neighbours' *current* states, so a grid mutated as it is walked would feed a cell
+/// its neighbour's new value and quietly compute a different automaton.
+let step = pure (grid: [][]bool) -> [][]bool => {
+  let height = grid.len()
+  let width = grid[0].len()
+  var next: [][]bool = []
+  for y in 0..<height {
+    var row: []bool = []
+    for x in 0..<width {
+      let n = neighbours(grid, x, y)
+      row.push(if grid[y][x] { n == 2 || n == 3 } else { n == 3 })
+    }
+    next.push(row)
+  }
+  next
+}
+
+/// How many of the eight cells around `(x, y)` are alive, wrapping at every edge.
+let neighbours = pure (grid: [][]bool, x: i64, y: i64) -> i64 => {
+  let height = grid.len()
+  let width = grid[0].len()
+  let around: [3]i64 = [-1, 0, 1]
+  var count = 0
+  for dy in around {
+    for dx in around {
+      // The cell itself is not its own neighbour, and it is the one case the double loop
+      // gets wrong for free.
+      if dx != 0 || dy != 0 {
+        if grid[wrap(y + dy, height)][wrap(x + dx, width)] { count += 1 }
+      }
+    }
+  }
+  count
+}
+
+/// `i` brought into `0..<limit` by wrapping, for a neighbour one step off either edge.
+///
+/// `%%` rather than `%`: Lyra has both, and this is exactly the case that tells them
+/// apart. `-1 % 10` is `-1` — the sign follows the dividend, as in C — and would index
+/// out of bounds and trap. `-1 %% 10` is `9`, which is the edge the torus joins to.
+let wrap = pure (i: i64, limit: i64) -> i64 => i %% limit
+
+/// A world seeded from `seed`, `DENSITY` cells per hundred alive.
+///
+/// **Deterministic**, and marked so: it draws from a generator built out of the seed it
+/// was handed, and `rng_seeded` only mutates its own receiver. Asking the OS for entropy
+/// is the non-deterministic act, and it happens once, at the call site in `main` — so the
+/// same seed replays the same world exactly.
+let random_grid = det (width: i64, height: i64, seed: u64) -> [][]bool => {
+  var rng = rng_seeded(seed)
+  var grid: [][]bool = []
+  for y in 0..<height {
+    // **A fresh row per iteration, deliberately.** The short spelling for this is
+    // `[[false; width]; height]` and it is wrong: `[v; n]` evaluates its value once, so
+    // every one of the `height` slots would hold the *same* row and each generation would
+    // print `height` copies of one line. The compiler says so (lyra-W019)
+    var row: []bool = []
+    for x in 0..<width {
+      row.push(rng.below(100) < DENSITY)
+    }
+    grid.push(row)
+  }
+  grid
+}
+
+/// Draw the whole world, plus a status line.
+///
+/// One `print` for the frame rather than one per row: a terminal renders what it is given
+/// when it is given it, so a frame written in `height` separate writes can be displayed
+/// half-updated, which reads as tearing. Rows are separated by `\r\n` — the `\r` because
+/// raw mode has turned off the newline translation that would otherwise supply it.
+///
+/// The status line carries no trailing newline, deliberately: writing one on the last row
+/// of the screen scrolls it, and the whole frame walks up a line every generation.
+let draw = (grid: [][]bool, generation: i64, paused: bool) -> void => {
+  cursor_home()
+  var frame = ""
+  for row in grid {
+    for cell in row {
+      frame = frame ++ (if cell { "█" } else { " " })
+    }
+    frame = frame ++ "\r\n"
+  }
+  frame = frame ++ fg(rgb(2, 2, 2))
+  frame = frame ++ " generation ${generation}${if paused { "  [paused]" } else { "" }}"
+  frame = frame ++ "   q quit · space pause · s step · r reseed"
+  frame = frame ++ reset()
+  print(frame)
+}
+
+/// The window, less the status line — and never smaller than one cell, so a terminal too
+/// short to hold the status bar still runs.
+///
+/// The return type is written out rather than inferred because `main` destructures the
+/// result and this is declared below it: an inferred return type is not known until the
+/// declaration is reached, and a destructure needs the element types where it stands
+/// (lyra-E058). Helpers-below-main is the house style, so this is the ordinary case.
+let playfield = () -> (i64, i64) => {
+  let (cols, rows) = terminal_size()
+  (cols, if rows > 1 { rows - 1 } else { 1 })
+}

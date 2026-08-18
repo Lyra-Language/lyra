@@ -2343,6 +2343,30 @@ repeat spelling fails identically — so it is the array literal's coercion of a
 into a shared box, not anything to do with `[v; n]`. The warning covers the case on the
 day it works.
 
+### [OPEN] Three gaps `examples/life.lyra` walked into (08/18)
+
+All three found writing Conway's Game of Life, which is the method this file keeps
+recommending — write the program someone would actually write, and see what it costs.
+
+- **A `for` over a range with a negative literal bound leaves the counter untyped.**
+  `for d in -1..<=1 { if d != 0 { … } }` is `lyra-E001: operator !=: incompatible types:
+  integer literal and integer literal`, while `for d in 0..<=2` over the same comparison
+  is fine. The start is `untyped_signed_int` and the `0` it is compared against is
+  `untyped_int`, and nothing reconciles them — so the counter never pins to `i64`. There
+  is no annotation to reach for either: `for d: i64 in …` is a syntax error, so the only
+  way out is to iterate an annotated array (`let around: [3]i64 = [-1, 0, 1]`), which is
+  what the example does. The natural spelling of every neighbour-offset loop there is.
+
+- **`for _ in 0..<n` is a syntax error.** A loop that repeats something a fixed number of
+  times has no use for its counter, and the wildcard pattern — legal in a `let` since
+  08/07 — is not admitted as a for-in binding, so the only spelling is a named variable
+  nothing reads. Nothing warns about it either: `lyra-W003` covers `let`/`var`, not loop
+  bindings, which is presumably why an unused counter has never been noticed.
+
+- **No `min`/`max` in the prelude.** Every program that fits something to a window writes
+  its own, and they are three characters of Lyra each. `clamp` exists in `std/tui/style.lyra`
+  as a private helper, which is the same function wanting to be somewhere shared.
+
 ### [DONE 08/15] A terminal UI needs three builtins, not a library
 
 `set_raw_mode(on)`, `read_key() -> Maybe<rune>` and `terminal_size() -> (i64, i64)`
