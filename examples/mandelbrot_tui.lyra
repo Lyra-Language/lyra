@@ -19,7 +19,19 @@ const CELL_ASPECT = 2.2
 const ASPECT_RATIO = Y_LEN / X_LEN
 
 const ESCAPE = 65536.0
-const SHADE_MAX = 64.0
+/// Iterations per full **there-and-back** trip through the palette.
+///
+/// The palette is reused rather than stretched, because at depth there is nothing to
+/// stretch it over: the iteration budget grows with magnification, so escape times run to
+/// several hundred, and any fixed ceiling turns everything above it into one colour. A
+/// cycle has no ceiling.
+///
+/// **There and back, not wrapping round.** This palette runs white to dark blue, so a
+/// saw-tooth wrap puts a hard white-against-blue seam at every repeat. Bouncing — up
+/// through the colours and back down — is continuous at both ends, and reuses each colour
+/// twice per cycle for free. The cost is that a colour no longer identifies one escape
+/// band uniquely, which nothing here was using it for.
+const COLOR_CYCLE = 64.0
 // The colour ramp, walked white -> yellow -> orange -> red -> magenta -> purple -> blue
 // through std.tui's 6x6x6 cube. Index 0 is the set itself; 1 is hard against its boundary
 // and 23 is the far field, matching what `shade` produces.
@@ -322,17 +334,28 @@ let shade = pure (c: Complex<f64>, max_iter: i64) -> i64 => {
     0
   } else {
     // Smooth escape time, `n + 1 - log2(log|z|)`: the integer iteration count alone
-    // draws visible contours, since every point escaping on the same step gets the
-    // same character.
+    // draws visible contours, since every point escaping on the same step gets the same
+    // colour. The smooth value is used **linearly** here — the logarithmic mapping this
+    // replaced existed to spend a single fixed ramp sensibly, and a cycle has no ramp to
+    // exhaust.
     let smooth = f64(iter) + 1.0 - mag2.sqrt().log().log2()
     // The correction is worth about -1.5, so a point escaping immediately lands below
-    // zero, and the log of that is a NaN — which `round` traps on rather than quietly
-    // answering a number. Clamping is the fix; the trap is doing its job.
-    let s = if smooth < 1.0 { 1.0 } else if smooth > SHADE_MAX { SHADE_MAX } else { smooth }
-    let t = s.log() / SHADE_MAX.log()
-    // `len() - 1` at the far end and `len() - 2` as the span leave index 0 unused by the
-    // exterior, reserved for the set — so the boundary never takes the set's colour.
-    PALETTE.len() - 1 - (t * f64(PALETTE.len() - 2)).round()
+    // zero — and a negative feeds a negative into the remainder below, which would index
+    // backwards off the palette.
+    let s = if smooth < 0.0 { 0.0 } else { smooth }
+
+    // A triangle wave over the palette's exterior colours. With 23 of them the period is
+    // 44: `k` climbs 0..22, then `period - k` walks 21..1 back down, and at 44 it is 0
+    // again — continuous, with no seam where the cycle repeats.
+    let bands = PALETTE.len() - 1
+    let period = 2 * bands - 2
+    let k = (s * f64(period) / COLOR_CYCLE).round() % period
+    let band = if k < bands { k } else { period - k }
+
+    // Counting down from the last entry puts the *far field* at the dark end, where a
+    // fast escape gives a small `band`. Index 0 is never produced — `band` peaks at
+    // `bands - 1` — so it stays reserved for the set itself.
+    PALETTE.len() - 1 - band
   }
 }
 
