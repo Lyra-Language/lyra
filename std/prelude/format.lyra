@@ -33,8 +33,16 @@ module std.prelude
 ///
 /// # Complexity
 ///
-/// Time: O(places + digits in the whole part) — the fractional part is built one digit
-/// at a time. Space: the rendered string, plus the concatenations that build it.
+/// Writing d for the digits in the whole part and p for `places`:
+///
+/// |            | Best     | Average  | Worst    |
+/// | ---------- | -------- | -------- | -------- |
+/// | **Time**   | O(d + p) | O(d + p) | O(d + p) |
+/// | **Memory** | O(d + p) | O(d + p) | O(d + p) |
+///
+/// Fixed by the arguments rather than by the value: the fractional part is built one
+/// digit at a time, `places` of them, and the result is one string of that length. The
+/// concatenations that assemble it allocate intermediates along the way.
 ///
 /// # Examples
 ///

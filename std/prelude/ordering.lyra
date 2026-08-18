@@ -114,9 +114,15 @@ impl Ord for string {
   ///
   /// # Complexity
   ///
-  /// Time: O(n) in the shorter operand, one `memcmp`. Space: O(1). That equivalence is
-  /// what buys it: written in Lyra with `s[i]` the same comparison would be O(n²), since
-  /// indexing a string is O(i).
+  /// |            | Best | Average | Worst |
+  /// | ---------- | ---- | ------- | ----- |
+  /// | **Time**   | O(1) | O(n)    | O(n)  |
+  /// | **Memory** | O(1) | O(1)    | O(1)  |
+  ///
+  /// n is the shorter operand. The best case is a difference in the first byte; the worst
+  /// is equal strings, where every byte must be read. That the whole thing is one
+  /// `memcmp` is what the byte-order equivalence buys: written in Lyra with `s[i]` the
+  /// same comparison would be O(n²), since indexing a string is O(i).
   compare = pure (self, other) => {
     let c = self.compare_bytes(other);
     if c < 0 { Less } else if c > 0 { Greater } else { Equal }

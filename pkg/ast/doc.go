@@ -56,20 +56,36 @@ const (
 	// for. Distinct from Panics on purpose: the split is the language's own, since
 	// a trap ends the program and an `Err` is a value the caller handles.
 	DocSectionErrors
-	// DocSectionComplexity documents the cost of a call — time and memory in one
-	// section, by the convention of a `Time:` line and a `Space:` line.
+	// DocSectionComplexity documents the cost of a call, as a table of Time and
+	// Memory against Best, Average and Worst:
 	//
-	// One section rather than two, because the two numbers are chosen together:
-	// nearly every interesting entry in this standard library is a trade between
-	// them (`starts_with` is O(m) and allocation-free *because* it compares bytes
-	// instead of slicing; `trim` makes one allocation instead of two *because* it
-	// scans both ends before slicing once). Splitting them across headings puts
-	// half of each decision under each.
+	//	|            | Best | Average | Worst  |
+	//	| ---------- | ---- | ------- | ------ |
+	//	| **Time**   | O(1) | O(n)    | O(n·m) |
+	//	| **Memory** | O(1) | O(1)    | O(1)   |
 	//
-	// **Space means how much, not whether.** Lyra already answers "whether" in the
+	// One section rather than two, because the two rows are chosen together: nearly
+	// every interesting entry in this standard library is a trade between them
+	// (`starts_with` is O(m) and allocation-free *because* it compares bytes instead
+	// of slicing; `trim` makes one allocation instead of two *because* it scans both
+	// ends before slicing once). Splitting them across headings puts half of each
+	// decision under each.
+	//
+	// A table rather than a sentence, because the interesting entries are the ones
+	// whose columns *differ* and a sentence hides that: the naive search in `index`
+	// is O(n) on ordinary text and O(n·m) on the adversarial case, and `below` is
+	// expected-O(1) with **no** worst-case bound at all — which is precisely what
+	// rejection sampling trades for uniformity. A row of identical cells is a real
+	// answer too: it says the cost does not depend on the input.
+	//
+	// **Memory means how much, not whether.** Lyra already answers "whether" in the
 	// signature and checks it: a `noalloc` function cannot heap-allocate, and that
-	// bound is enforced rather than promised. A `Space:` line restating it is a
-	// second copy of a machine-checked fact, and the one that can go stale.
+	// bound is enforced rather than promised. A Memory row restating it is a second
+	// copy of a machine-checked fact, and the one that can go stale.
+	//
+	// The table is a convention, not a syntax — the body stays Markdown, and nothing
+	// here parses cells. What keeps the standard library's tables uniform is a test
+	// over the shipped prelude, not a sub-grammar in the compiler.
 	DocSectionComplexity
 )
 

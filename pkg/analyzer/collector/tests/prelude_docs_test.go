@@ -220,14 +220,17 @@ func TestPrelude_ComplexitySectionsAreClassified(t *testing.T) {
 			t.Errorf("%s has no `# Complexity` section", name)
 			continue
 		}
-		// The convention is a Time line and a Space line. Space says *how much*;
+		// The convention is a table of Time and Memory against Best, Average and
+		// Worst. Enforced across the whole prelude rather than left to each
+		// author, because a reference page is scanned: a reader looking for the
+		// worst case wants it in the same cell every time, and "Worst" beside
+		// "Worst case" beside "Max" is how that erodes. Memory says *how much* —
 		// whether it allocates is already in the signature as `noalloc`, and
-		// checked.
-		if !strings.Contains(body, "Time:") {
-			t.Errorf("%s: complexity section has no `Time:` line: %q", name, body)
-		}
-		if !strings.Contains(body, "Space:") {
-			t.Errorf("%s: complexity section has no `Space:` line: %q", name, body)
+		// checked there.
+		for _, want := range []string{"| Best | Average | Worst", "| **Time**", "| **Memory**"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: complexity table is missing %q:\n%s", name, want, body)
+			}
 		}
 	}
 }

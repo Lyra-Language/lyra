@@ -41,7 +41,14 @@ module std.prelude
 ///
 /// # Complexity
 ///
-/// Time: O(n) in the length of the string, one pass. Space: O(1).
+/// |            | Best | Average | Worst |
+/// | ---------- | ---- | ------- | ----- |
+/// | **Time**   | O(n) | O(n)    | O(n)  |
+/// | **Memory** | O(1) | O(1)    | O(1)  |
+///
+/// One pass over the runes, and it does not stop early on bad input — a stray character
+/// sets the failure flag and the walk continues, so a malformed string costs the same as
+/// a well-formed one. Nothing is allocated: the accumulator is an `i64`.
 ///
 /// # Examples
 ///

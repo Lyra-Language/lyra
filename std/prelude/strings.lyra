@@ -60,7 +60,14 @@ pub let trim_end = pure (self: string) -> string => {
 ///
 /// # Complexity
 ///
-/// Time: O(n). Space: one string of the trimmed length.
+/// |            | Best | Average | Worst |
+/// | ---------- | ---- | ------- | ----- |
+/// | **Time**   | O(n) | O(n)    | O(n)  |
+/// | **Memory** | O(1) | O(n)    | O(n)  |
+///
+/// Both ends are scanned whatever they hold, so time does not vary. Memory is the copy
+/// `slice` makes: an all-whitespace input yields `""` and copies nothing, a string with no
+/// whitespace copies all of it.
 ///
 /// # Examples
 ///
@@ -100,9 +107,14 @@ pub let trim = pure (self: string) -> string => {
 ///
 /// # Complexity
 ///
-/// Time: O(m), m the length of `other` — one `memcmp`, no decoding, and no O(n)
-/// length call, which is what makes it usable from the code that most wants a cheap
-/// prefix test. Space: O(1).
+/// |            | Best | Average | Worst |
+/// | ---------- | ---- | ------- | ----- |
+/// | **Time**   | O(1) | O(m)    | O(m)  |
+/// | **Memory** | O(1) | O(1)    | O(1)  |
+///
+/// m is the length of `other`, and the bound is in *m* rather than n — one `memcmp`, no
+/// decoding, and no O(n) length call, which is what makes this usable from the code that
+/// most wants a cheap prefix test. The best case is a difference in the first byte.
 ///
 /// # Examples
 ///
@@ -125,8 +137,12 @@ pub let starts_with = pure noalloc (self: string, other: string) -> bool =>
 ///
 /// # Complexity
 ///
-/// Time: O(m). Space: O(1) — the same `memcmp`, offset to where the suffix would
-/// start.
+/// |            | Best | Average | Worst |
+/// | ---------- | ---- | ------- | ----- |
+/// | **Time**   | O(1) | O(m)    | O(m)  |
+/// | **Memory** | O(1) | O(1)    | O(1)  |
+///
+/// The same `memcmp` as `starts_with`, offset to where the suffix would begin.
 pub let ends_with = pure noalloc (self: string, other: string) -> bool =>
   self.compare_bytes_at(self.byte_len() - other.byte_len(), other) == 0
 
@@ -221,7 +237,15 @@ impl Needle for string {
 ///
 /// # Complexity
 ///
-/// Time: O(n·m) worst case, n the haystack and m the needle. Space: O(1).
+/// |            | Best | Average | Worst  |
+/// | ---------- | ---- | ------- | ------ |
+/// | **Time**   | O(m) | O(n)    | O(n·m) |
+/// | **Memory** | O(1) | O(1)    | O(1)   |
+///
+/// n is the haystack and m the needle. The columns differ here, and that is the point of
+/// the table: a naive scan behaves like O(n) on ordinary text, where a mismatch is usually
+/// found in the first byte or two, and degrades to O(n·m) on input built to defeat it —
+/// a needle that repeatedly *almost* matches. The best case is a match at the offset.
 ///
 /// # Examples
 ///
@@ -250,7 +274,13 @@ pub let contains<t> where t: Needle = pure noalloc(self: string, needle: t, offs
 ///
 /// # Complexity
 ///
-/// Time: O(n), one decoding pass. Space: O(n) runes.
+/// |            | Best | Average | Worst |
+/// | ---------- | ---- | ------- | ----- |
+/// | **Time**   | O(n) | O(n)    | O(n)  |
+/// | **Memory** | O(n) | O(n)    | O(n)  |
+///
+/// One decoding pass, one `rune` out per code point in. n counts runes, not bytes, so a
+/// string of multi-byte characters costs less than its byte length suggests.
 pub let to_runes = pure (self: string) -> []rune => {
   var out: []rune = [];
   for c in self { out.push(c) }
@@ -270,8 +300,15 @@ pub let to_runes = pure (self: string) -> []rune => {
 ///
 /// # Complexity
 ///
-/// Time: O(n·m), the search cost of `index` repeated across the string. Space:
-/// O(n) — the array plus a fresh string per part, since `slice` copies.
+/// |            | Best | Average | Worst  |
+/// | ---------- | ---- | ------- | ------ |
+/// | **Time**   | O(n) | O(n)    | O(n·m) |
+/// | **Memory** | O(n) | O(n)    | O(n)   |
+///
+/// `index`'s scan repeated across the string, so it inherits that row: linear on ordinary
+/// text, O(n·m) against a needle built to almost-match. Memory is O(n) whatever the
+/// separator does — the parts together hold about as many runes as the input, since
+/// `slice` copies each one.
 ///
 /// # Examples
 ///

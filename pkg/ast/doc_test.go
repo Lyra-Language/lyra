@@ -166,16 +166,29 @@ func TestDoc_ComplexitySectionIsRecognized(t *testing.T) {
 		"///",
 		"/// # Complexity",
 		"///",
-		"/// Time: O(n·m) worst case, n the haystack and m the needle.",
-		"/// Space: O(1) — the scan allocates nothing.",
+		"/// |            | Best | Average | Worst  |",
+		"/// | ---------- | ---- | ------- | ------ |",
+		"/// | **Time**   | O(m) | O(n)    | O(n·m) |",
+		"/// | **Memory** | O(1) | O(1)    | O(1)   |",
+		"///",
+		"/// The columns differ, which is the point of the table.",
 	), Location{}, false)
 
 	s, ok := d.Section(DocSectionComplexity)
 	if !ok {
 		t.Fatalf("Complexity was not recognized: %+v", d.Sections)
 	}
-	if !strings.Contains(s.Body, "Time:") || !strings.Contains(s.Body, "Space:") {
-		t.Errorf("body lost its lines: %q", s.Body)
+	// The table has to survive intact: a Markdown table is whitespace- and
+	// pipe-sensitive, and the body passes through heading-shifting and fence-tagging
+	// on its way to a page.
+	for _, want := range []string{"| Best | Average | Worst", "| **Time**", "| **Memory**", "O(n·m)"} {
+		if !strings.Contains(s.Body, want) {
+			t.Errorf("body lost %q:\n%s", want, s.Body)
+		}
+	}
+	// Prose after the table is still part of the section.
+	if !strings.Contains(s.Body, "the point of the table") {
+		t.Errorf("prose after the table was dropped: %q", s.Body)
 	}
 	if got := DocSectionComplexity.String(); got != "Complexity" {
 		t.Errorf("String() = %q", got)

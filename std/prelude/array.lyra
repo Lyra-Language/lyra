@@ -14,7 +14,13 @@ module std.prelude
 ///
 /// # Complexity
 ///
-/// Time: O(n) calls to `f`. Space: O(n) — a new array; the input is not modified.
+/// |            | Best | Average | Worst |
+/// | ---------- | ---- | ------- | ----- |
+/// | **Time**   | O(n) | O(n)    | O(n)  |
+/// | **Memory** | O(n) | O(n)    | O(n)  |
+///
+/// Every cell is O(n) because there is nothing to vary: `f` is called once per element
+/// and the result holds one element per call. The input is not modified.
 ///
 /// # Examples
 ///
@@ -30,8 +36,15 @@ pub let map<t,u> = pure (self: []t, f: (t) -> u) -> []u => [x in self | f(x)]
 ///
 /// # Complexity
 ///
-/// Time: O(n) calls to `predicate`. Space: O(k) for the k elements kept, though the
-/// array may grow to O(n) capacity on the way there.
+/// |            | Best | Average | Worst |
+/// | ---------- | ---- | ------- | ----- |
+/// | **Time**   | O(n) | O(n)    | O(n)  |
+/// | **Memory** | O(1) | O(k)    | O(n)  |
+///
+/// `predicate` is called once per element whatever it answers, so time does not vary.
+/// Memory is the k elements kept: nothing matching is the best case, everything matching
+/// the worst. The array may hold O(n) *capacity* on the way there even when k is small,
+/// since `push` grows by doubling.
 ///
 /// # Examples
 ///

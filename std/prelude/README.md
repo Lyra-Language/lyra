@@ -88,6 +88,30 @@ Three conventions, the first of which is a rule and not a preference:
   so the doc is the only place it can be stated. `# Errors` is the sibling for a
   `Result`-returning function, and the two are deliberately different sections.
 
+- **A `# Complexity` section is a table, and always this table:**
+
+  ```markdown
+  |            | Best | Average | Worst  |
+  | ---------- | ---- | ------- | ------ |
+  | **Time**   | O(m) | O(n)    | O(n·m) |
+  | **Memory** | O(1) | O(1)    | O(1)   |
+  ```
+
+  Uniform across the prelude rather than left to each author, and
+  `TestPrelude_ComplexitySectionsAreClassified` enforces it: a reference page is
+  *scanned*, so a reader looking for the worst case wants it in the same cell every
+  time, and `Worst` beside `Worst case` beside `Max` is how that erodes. A row of
+  identical cells is a real answer — it says the cost does not depend on the input —
+  and the cells that differ are the reason the table beats a sentence: `index` is O(n)
+  on ordinary text and O(n·m) against a needle built to almost-match, and `below` has
+  **no** worst case at all, which is exactly what rejection sampling trades for
+  uniformity. Put the caveats in prose *after* the table.
+
+  **Memory means how much, not whether.** `noalloc` in the signature already answers
+  whether, and is checked; a row restating it is a second copy of a machine-checked
+  fact. The section is optional — `O(1)` on a two-line combinator is noise — so add it
+  where the cost is the reason the function exists.
+
 `# Examples` blocks are prose. **Nothing compiles them**, so they can rot; keep them short
 and obvious until a doctest runner exists.
 

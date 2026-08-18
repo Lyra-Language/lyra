@@ -88,10 +88,17 @@ pub let rng_from_entropy = () -> Rng => rng_seeded(random_seed())
 ///
 /// # Complexity
 ///
-/// Time: expected O(1) — the rejection loop redraws with probability at most
-/// `bound / 2^64`, so for any bound a program actually passes it runs once. There is
-/// no worst-case bound; that is what rejection sampling buys uniformity with.
-/// Space: O(1).
+/// |            | Best | Average | Worst         |
+/// | ---------- | ---- | ------- | ------------- |
+/// | **Time**   | O(1) | O(1)    | **unbounded** |
+/// | **Memory** | O(1) | O(1)    | O(1)          |
+///
+/// The worst case is the honest entry in this table: rejection sampling has no bound at
+/// all, because a draw landing in the top partial bucket is redrawn and *that* draw may
+/// land there too. What it has instead is a probability — at most `bound / 2^64` per
+/// iteration, so for any bound a program actually passes, the loop runs once and the
+/// expected cost is O(1). Unboundedness is what buys the uniformity; a modulo would be
+/// O(1) flat and biased.
 ///
 /// # Panics
 ///
