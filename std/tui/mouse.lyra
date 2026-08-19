@@ -44,17 +44,22 @@ pub data MouseAction =
 
 /// A mouse event, with the pointer's cell.
 ///
-/// `col` and `row` are **1-based**, matching `move_to` and the terminal itself — the
-/// top-left cell is `(1, 1)`. A grid indexed from zero needs one subtraction, which is
-/// better than every escape sequence in the program disagreeing with the library by one.
+/// `col` and `row` are **0-based** — the top-left cell is `(0, 0)`, so a click indexes a
+/// grid directly and `for x in 0..<width` compares against it without arithmetic.
+///
+/// The terminal's own numbering is 1-based, and that is exactly why the conversion
+/// happens here: `mouse_event` subtracts the one and `move_to` adds it back, so the whole
+/// library speaks the language's coordinates and only the two functions that touch an
+/// escape sequence know the terminal's. The alternative puts a `- 1` at every call site
+/// and gets it wrong at one of them.
 pub struct MouseEvent {
   /// The button, wheel notch, or `NoButton` for a bare move.
   button: MouseButton,
   /// Press, release, or motion.
   action: MouseAction,
-  /// Column, 1-based, counting from the left.
+  /// Column, 0-based, counting from the left.
   col: i64,
-  /// Row, 1-based, counting from the top.
+  /// Row, 0-based, counting from the top.
   row: i64
 }
 
@@ -107,6 +112,10 @@ let decode_mouse = () -> Maybe<Event> => {
 /// carried on `MouseEvent` today. That is a deliberate omission rather than an oversight —
 /// adding them is three fields on a struct most matches do not want — and the bit values
 /// are written here so it is a small change if something needs ctrl-click.
+///
+/// **The coordinates are rebased here**, from the terminal's 1-based report to the
+/// library's 0-based cell. This is the only place a mouse coordinate is read, so it is the
+/// only place that has to know.
 let mouse_event = pure (code: i64, col: i64, row: i64, term: rune) -> MouseEvent => {
   let low = code & 3
   let button = if (code & 64) != 0 {
@@ -120,5 +129,5 @@ let mouse_event = pure (code: i64, col: i64, row: i64, term: rune) -> MouseEvent
   let action = if term == 'm' { Release }
   else if (code & 32) != 0 { Move }
   else { Press }
-  MouseEvent { button: button, action: action, col: col, row: row }
+  MouseEvent { button: button, action: action, col: col - 1, row: row - 1 }
 }

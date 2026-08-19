@@ -3,7 +3,7 @@ import std.tui.{
   event_reader, Event, Key, event_available,
   mouse_enable, mouse_disable,
   alt_screen_enter, alt_screen_leave, clear, cursor_hide, cursor_show, cursor_home, move_to,
-  bg_rgb, reset, bold, inverse
+  bg_rgb, reset, bold, inverse, fit
 }
 
 const MAX_ITER = 100
@@ -63,8 +63,8 @@ let main = () -> void => {
   setup()
 
   var view = View { cx: (X_MIN + X_MAX) / 2.0, cy: 0.0, x_len: X_LEN }
-  var mx = 1
-  var my = 1
+  var mx = 0
+  var my = 0
   var running = true
   var events = event_reader()
 
@@ -79,8 +79,8 @@ let main = () -> void => {
       if poll_cols != last_cols || poll_rows != last_rows {
         last_cols = poll_cols
         last_rows = poll_rows
-        mx = clamp(mx, 1, poll_cols)
-        my = clamp(my, 1, poll_rows - 1)
+        mx = clamp(mx, 0, poll_cols - 1)
+        my = clamp(my, 0, poll_rows - 2)
         clear()
         draw(poll_cols, poll_rows, view, mx, my)
       }
@@ -117,8 +117,8 @@ let main = () -> void => {
               },
               _ => { }
             }
-            mx = clamp(mx, 1, cols)
-            my = clamp(my, 1, rows - 1)
+            mx = clamp(mx, 0, cols - 1)
+            my = clamp(my, 0, rows - 2)
           }
         }
         if more && !events.event_available(0) { more = false }
@@ -161,8 +161,10 @@ let window_for = pure (v: View, cols: i64, rows: i64) -> Window => {
 /// same fraction is `p + x_len' * (0.5 - u)`.
 let zoom_at = pure (v: View, cols: i64, rows: i64, left: i64, top: i64, mx: i64, my: i64, factor: f64) -> View => {
   let w = window_for(v, cols, rows)
-  let u = f64(clamp(mx - left, 0, cols)) / f64(cols)
-  let t = f64(clamp(my - top, 0, rows)) / f64(rows)
+  // `+ 1` on each, matching `render_row`'s far-edge mapping — the pointer must resolve
+  // to the same complex point the cell under it was drawn from.
+  let u = f64(clamp(mx - left + 1, 0, cols)) / f64(cols)
+  let t = f64(clamp(my - top + 1, 0, rows)) / f64(rows)
   let px = w.x_min + u * w.x_len
   let py = w.y_min + t * w.y_len
   let nx = v.x_len * factor
@@ -223,7 +225,7 @@ let draw = (term_cols: i64, term_rows: i64, view: View, mx: i64, my: i64) -> voi
   for _ in 1..<=top {
     lines.push(spaces(term_cols))
   }
-  for row in 1..<=rows {
+  for row in 0..<rows {
     // **Every line is exactly `term_cols` wide**, blanks included. The frame is redrawn
     // over the previous one with no `clear` between, so a short line leaves the old
     // frame's pixels to its right — and after centring there is old content on *both*
@@ -270,15 +272,19 @@ let render_row = pure (row: i64, rows: i64, cols: i64, w: Window, mx: i64, my: i
   //
   // `prev` starts at -1, which is no palette entry, so the first cell always emits.
   var prev = -1
-  for col in 1..<=cols {
+  for col in 0..<cols {
     if col == mx && row == my {
       out = out ++ (inverse() ++ ("+" ++ reset()))
       // The reset cleared the background, so the next cell has to restate it.
       prev = -1
     } else {
       let c = Complex {
-        re: w.x_min + w.x_len * f64(col) / f64(cols),
-        im: w.y_min + w.y_len * f64(row) / f64(rows)
+        // `col + 1`, not `col`: a cell is mapped by its far edge, so the window's
+        // right and bottom edges are reached exactly and its left and top are one cell in.
+        // That is the sampling this has always used — the `+ 1` is what a 0-based index
+        // spells it as, not a change to the image. `zoom_at` adds the same one.
+        re: w.x_min + w.x_len * f64(col + 1) / f64(cols),
+        im: w.y_min + w.y_len * f64(row + 1) / f64(rows)
       }
       let p = shade(c, iter_limit(w))
       if p != prev {
@@ -372,17 +378,4 @@ let status = pure (cols: i64, rows: i64, view: View) -> string => {
     "${view.cx.to_fixed(4)},${view.cy.to_fixed(4)}  " ++
     "wheel zooms to the pointer · q quits "
   inverse() ++ (bold() ++ (fit(text, cols) ++ reset()))
-}
-
-/// `text` at exactly `width` characters: padded if short, cut if long.
-let fit = pure (text: string, width: i64) -> string => {
-  if text.len() > width {
-    text.slice(0, width)
-  } else {
-    var padded = text
-    for _ in text.len()..<width {
-      padded = padded ++ " "
-    }
-    padded
-  }
 }

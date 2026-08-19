@@ -1,0 +1,50 @@
+module std.tui
+
+// Fitting text to a width.
+//
+// The third half of the split the other two files describe: `screen.lyra` *performs* its
+// escape sequences and `style.lyra` *returns* them, and what is here does neither — it is
+// ordinary string work that a frame needs before any of that applies. Kept apart so
+// neither of those headers stops being true.
+//
+// **Everything here counts runes, which is what a terminal counts.** An escape sequence
+// occupies no cells, so it must be added *around* a fitted string rather than inside one;
+// `fit(text, w)` on a string that already carries colour codes cuts the visible text
+// dozens of columns early. Nothing here can detect that — a string is a string — so it is
+// the caller's rule, and it is why `style.lyra`'s functions return their sequences instead
+// of wrapping text for you.
+
+/// `text` at exactly `width` columns: cut if long, padded with spaces if short.
+///
+/// # Examples
+///
+/// ```lyra
+/// print(fit(" generation ${n} · q quits ", cols))
+/// ```
+///
+/// **The cut is the half that prevents a bug rather than a blemish.** A terminal has no
+/// notion of a line too wide — it wraps onto the next row, and wrapping off the *last* row
+/// scrolls the whole screen, so every cell of the frame is then displayed one row above
+/// where it was written. A full-screen program with a status bar reads that as the display
+/// jittering; one that also handles the mouse reads it as clicks toggling the wrong cell,
+/// since the pointer still reports true screen rows. Each wrapped line shifts it by one.
+///
+/// **The padding is the other half.** A status line redrawn without `clear_line` leaves
+/// the tail of whatever longer line was there before, so a short string must arrive at
+/// full width rather than merely not too wide.
+///
+/// A rune is not always one column — a wide CJK glyph occupies two — so this is exact for
+/// the text a status bar is usually made of and an over-estimate of the room left by
+/// anything wider. Correcting it needs a character-width table, which is a larger feature
+/// than this file.
+pub let fit = pure (text: string, width: i64) -> string => {
+  if text.len() > width {
+    text.slice(0, width)
+  } else {
+    var padded = text
+    for _ in text.len()..<width {
+      padded = padded ++ " "
+    }
+    padded
+  }
+}

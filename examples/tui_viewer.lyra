@@ -2,7 +2,7 @@ import std.tui.{
   event_reader, Event, Key, event_available,
   mouse_enable, mouse_disable,
   alt_screen_enter, alt_screen_leave, clear, cursor_hide, cursor_show, cursor_home, move_to,
-  fg, bg, rgb, reset, bold, inverse
+  fg, bg, rgb, reset, bold, inverse, fit
 }
 
 // A full-screen interactive skeleton: the shape a terminal viewer wants, with a colour
@@ -32,8 +32,8 @@ let main = () => {
   setup()
 
   var zoom = 0
-  var mx = 1
-  var my = 1
+  var mx = 0
+  var my = 0
   var count = 0
   var running = true
   var events = event_reader()
@@ -54,8 +54,8 @@ let main = () => {
       if poll_cols != last_cols || poll_rows != last_rows {
         last_cols = poll_cols
         last_rows = poll_rows
-        mx = clamp(mx, 1, poll_cols)
-        my = clamp(my, 1, poll_rows - 1)
+        mx = clamp(mx, 0, poll_cols - 1)
+        my = clamp(my, 0, poll_rows - 2)
         clear()
         draw(poll_cols, poll_rows, zoom, mx, my, count)
       }
@@ -79,13 +79,13 @@ let main = () => {
             WheelUp => { zoom -= 1 },
             WheelDown => { zoom += 1 },
             // A click sets the marker where the pointer is — the coordinates are
-            // already 1-based, matching the frame's own numbering.
+            // already 0-based, matching the frame's own numbering and the language's.
             _ => { mx = m.col; my = m.row }
           },
           _ => { }
         }
-        mx = clamp(mx, 1, cols)
-        my = clamp(my, 1, rows - 1)
+        mx = clamp(mx, 0, cols - 1)
+        my = clamp(my, 0, rows - 2)
         zoom = clamp(zoom, 0, 99)
         draw(cols, rows, zoom, mx, my, count)
       }
@@ -126,7 +126,7 @@ let draw = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> v
   // jitter. The same count is also the vertical span the gradient spreads over — passing
   // the terminal's full height instead would leave the top band unused.
   let span_rows = rows - 1
-  for row in 1..<=span_rows {
+  for row in 0..<span_rows {
     lines.push(render_row(row, cols, span_rows, zoom, mx, my))
   }
   lines.push(status(cols, rows, zoom, mx, my, events))
@@ -138,7 +138,7 @@ let draw = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> v
 /// than printed per cell.
 let render_row = pure (row: i64, cols: i64, span_rows: i64, zoom: i64, mx: i64, my: i64) -> string => {
   var out = ""
-  for col in 1..<=cols {
+  for col in 0..<cols {
     // **Exactly one character per cell, marker included.** A terminal has no notion of
     // drawing "over" a cell — everything is a stream, so a two-character marker does not
     // cover its neighbour, it *displaces* it and shoves the rest of the row right by one.
@@ -161,46 +161,25 @@ let render_row = pure (row: i64, cols: i64, span_rows: i64, zoom: i64, mx: i64, 
 let cell_color = pure (col: i64, row: i64, cols: i64, span_rows: i64, zoom: i64) -> i64 =>
   rgb(band(col, cols), band(row, span_rows), zoom % 6)
 
-/// Spread a **1-based** position over `span` cells onto the cube's 0..5, in six even
+/// Spread a **0-based** position over `span` cells onto the cube's 0..5, in six even
 /// bands.
 ///
-/// `6 * (pos - 1) / span`, and both adjustments are the point. The obvious
-/// `5 * pos / span` looks right and is wrong at exactly one place: it reaches 5 only when
-/// `pos == span`, so the top band is a **single cell** while the other five are `span/5`
-/// wide each — which is visible as one anomalously bright edge and nothing else. Scaling
-/// by 6 rather than 5 gives six buckets instead of five-and-a-bit; subtracting 1 is
-/// because the position is 1-based, as everything in this library is.
+/// `6 * pos / span`, and the 6 is the point. The obvious `5 * pos / (span - 1)` looks
+/// right and is wrong at exactly one place: it reaches 5 only at the very last cell, so
+/// the top band is a **single cell** while the other five are `span/5` wide each — which
+/// is visible as one anomalously bright edge and nothing else. Scaling by 6 gives six
+/// buckets instead of five-and-a-bit.
 ///
-/// Needs no clamp: `pos - 1` is at most `span - 1`, so the result is at most 5 whenever
+/// Needs no clamp: `pos` is at most `span - 1`, so the result is at most 5 whenever
 /// `span >= 6`, and `rgb` clamps anyway on a terminal too narrow for six bands.
 let band = pure noalloc (pos: i64, span: i64) -> i64 =>
-  if span <= 0 { 0 } else { 6 * (pos - 1) / span }
+  if span <= 0 { 0 } else { 6 * pos / span }
 
 /// The status line, always exactly one terminal row wide.
 let status = pure (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> string => {
   let text = " ${cols}x${rows}  zoom ${zoom}  marker ${mx},${my}  events ${events}  " ++
     "arrows/click move · wheel zooms · q quits "
   inverse() ++ (bold() ++ (fit(text, cols) ++ reset()))
-}
-
-/// `text` at exactly `width` characters: padded if short, cut if long.
-///
-/// **Both halves matter, and for opposite reasons.** Padding to full width is what lets
-/// the status line be redrawn without `clear_line` — a shorter line would otherwise leave
-/// the tail of the longer one that was there before. Cutting is what stops a long line
-/// *wrapping*: a terminal has no concept of a line that is too wide, so it continues onto
-/// the next row and pushes the whole frame up by one, which reads as the display jittering
-/// rather than as text being too long.
-let fit = pure (text: string, width: i64) -> string => {
-  if text.len() > width {
-    text.slice(0, width)
-  } else {
-    var padded = text
-    for _ in text.len()..<width {
-      padded = padded ++ " "
-    }
-    padded
-  }
 }
 
 let clamp = pure (v: i64, lo: i64, hi: i64) -> i64 => if v < lo { lo } else if v > hi { hi } else { v }

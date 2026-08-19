@@ -211,34 +211,36 @@ func TestExec_TuiDecodesControlKeys(t *testing.T) {
 	assertDecodes(t, 3, "\r\t\x7f", "Enter Tab Backspace")
 }
 
-// SGR mouse reports: press, release, and the wheel. The coordinates are 1-based and come
-// back as written, which is the property a transposed or off-by-one decode would break.
+// SGR mouse reports: press, release, and the wheel. A terminal reports 1-based cells and
+// `MouseEvent` is 0-based, so each coordinate comes back one lower than it was sent —
+// which is the property a transposed or misplaced rebase would break. The pairing is
+// `move_to`, which adds the one back on the way out.
 func TestExec_TuiDecodesMouseButtons(t *testing.T) {
 	t.Parallel()
 	assertDecodes(t, 4,
 		"\x1b[<0;10;5M\x1b[<0;10;5m\x1b[<2;8;2M\x1b[<1;5;5m",
-		"Ldown@10,5 Lup@10,5 Rdown@8,2 Mup@5,5")
+		"Ldown@9,4 Lup@9,4 Rdown@7,1 Mup@4,4")
 }
 
 // Bit 6 (64) marks the wheel, so a notch is button code 64/65 rather than a low-bit
 // button — and terminals send no matching release, which is why a notch is always Press.
 func TestExec_TuiDecodesMouseWheel(t *testing.T) {
 	t.Parallel()
-	assertDecodes(t, 2, "\x1b[<64;3;7M\x1b[<65;1;1M", "WUdown@3,7 WDdown@1,1")
+	assertDecodes(t, 2, "\x1b[<64;3;7M\x1b[<65;1;1M", "WUdown@2,6 WDdown@0,0")
 }
 
 // Bit 5 (32) marks motion: with a button in the low bits that is a drag, and with 3
 // (no button) it is a bare move. Both arrive only after mouse_enable_motion.
 func TestExec_TuiDecodesMouseMotion(t *testing.T) {
 	t.Parallel()
-	assertDecodes(t, 2, "\x1b[<32;9;3M\x1b[<35;9;4M", "Lmove@9,3 -move@9,4")
+	assertDecodes(t, 2, "\x1b[<32;9;3M\x1b[<35;9;4M", "Lmove@8,2 -move@8,3")
 }
 
 // Keys and mouse reports share one file descriptor, so they interleave — the reason
 // there is one reader and one `next_event` rather than two streams to poll.
 func TestExec_TuiInterleavesKeysAndMouse(t *testing.T) {
 	t.Parallel()
-	assertDecodes(t, 3, "\x1b[<0;1;1Mq\x1b[A", "Ldown@1,1 Char(q) Up")
+	assertDecodes(t, 3, "\x1b[<0;1;1Mq\x1b[A", "Ldown@0,0 Char(q) Up")
 }
 
 // `wait_for_key_ms` and the reason it answers a bool.
