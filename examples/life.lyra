@@ -196,17 +196,15 @@ let neighbours = pure (grid: [][]bool, x: i64, y: i64) -> i64 => {
 /// out of bounds and trap. `-1 %% 10` is `9`, which is the edge the torus joins to.
 let wrap = pure (i: i64, limit: i64) -> i64 => i %% limit
 
-let empty_grid = pure (width: i64, height: i64) -> [][]bool => {
-  var grid: [][]bool = []
-  for _ in 0..<height {
-    var row: []bool = []
-    for _ in 0..<width {
-      row.push(false)
-    }
-    grid.push(row)
-  }
-  grid
-}
+/// A dead world of the given size.
+///
+/// **A comprehension rather than `[[false; width]; height]`**, which is the short spelling
+/// and is wrong: `[v; n]` evaluates its value *once*, so every row would be the same array
+/// and one `grid[y][x] = v` would write to all of them. A comprehension's result is
+/// evaluated per iteration, so each row is its own. `lyra-W019` reports the other form,
+/// and this is what it is telling you to write.
+let empty_grid = pure (width: i64, height: i64) -> [][]bool =>
+  [ y in 0..<height | [ x in 0..<width | false ] ]
 
 /// A world seeded from `seed`, `DENSITY` cells per hundred alive.
 ///
@@ -263,18 +261,12 @@ let draw = (grid: [][]bool, generation: i64, paused: bool) -> void => {
 /// drew — dragging a window wider should not clear it. The torus wraps at the new edges, so
 /// the topology changes under a running world; that is inherent in resizing a wrapped grid
 /// rather than something to correct.
+/// A cell outside the old world is dead, and `&&` is what says so: it short-circuits, so
+/// the two bounds tests guard the index that follows them rather than merely preceding it.
 let resized = pure (grid: [][]bool, width: i64, height: i64) -> [][]bool => {
   let old_height = grid.len()
   let old_width = grid[0].len()
-  var next: [][]bool = []
-  for y in 0..<height {
-    var row: []bool = []
-    for x in 0..<width {
-      row.push(if y < old_height && x < old_width { grid[y][x] } else { false })
-    }
-    next.push(row)
-  }
-  next
+  [ y in 0..<height | [ x in 0..<width | y < old_height && x < old_width && grid[y][x] ] ]
 }
 
 /// The window, less the status line — and never smaller than one cell, so a terminal too
