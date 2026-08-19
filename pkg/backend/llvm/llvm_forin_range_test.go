@@ -302,3 +302,66 @@ let main = () -> void => {
 		t.Errorf("got %q; want \"8\"", got)
 	}
 }
+
+// `for _ in 0..<n` — a loop that repeats without naming a counter.
+//
+// It was a syntax error, because `identifier` is `/(_[a-zA-Z0-9_]+|[a-z][a-zA-Z0-9_]*)/`:
+// a leading underscore needs a character after it, so `_i` parsed and a bare `_` did not.
+// The workaround — naming the counter something and never reading it — looks like a style
+// choice rather than a necessity, which is how the gap survived.
+//
+// The name it binds is `_`, which no identifier can spell, so the body cannot refer to it.
+// That is the property the spelling promises, and it holds by construction rather than by
+// a check.
+func TestExec_ForInRange_WildcardBinding(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			"a counter nothing reads",
+			`let main = () -> void => {
+			   var n = 0
+			   for _ in 0..<3 { n = n + 1 }
+			   println("${n}")
+			 }`,
+			"3",
+		},
+		{
+			// Nested, which is where a synthesized name would have to be unique. `_`
+			// simply shadows `_`, and neither is reachable.
+			"nested wildcard loops",
+			`let main = () -> void => {
+			   var n = 0
+			   for _ in 0..<2 {
+			     for _ in 0..<3 { n = n + 1 }
+			   }
+			   println("${n}")
+			 }`,
+			"6",
+		},
+		{
+			// Either position of the two-name form, so the *other* one is what the body
+			// uses: values without indices, and indices without values.
+			"a wildcard in either position",
+			`let main = () -> void => {
+			   var sum = 0
+			   for _, v in [10, 20] { sum = sum + v }
+			   for k, _ in [10, 20] { sum = sum + k }
+			   println("${sum}")
+			 }`,
+			"31",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			src := "module main\n" + tc.src
+			if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != tc.want {
+				t.Errorf("got %q; want %q", got, tc.want)
+			}
+		})
+	}
+}

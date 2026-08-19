@@ -10,6 +10,27 @@ Newest first.
 ## Dated log
 
 ### 08/19/26
+**`for _ in 0..<n` parses** — a loop that repeats without naming a counter.
+
+`identifier` is `/(_[a-zA-Z0-9_]+|[a-z][a-zA-Z0-9_]*)/`: a leading underscore needs a
+character after it. So `for _i in` worked and a bare `for _ in` was a syntax error, and the
+workaround — name the counter and never read it — looked like a style choice rather than a
+necessity. That is the same shape `let _ = expr` had before 08/07, and the same reason it
+survived.
+
+**`_` is admitted inside the existing alias** rather than as a `wildcard_pattern`
+alternative beside it, so `for_variable_or_key` still spans whichever was written and every
+consumer keeps reading one node kind — the collector needed no change at all. It sees a
+binding whose text is `_`, and that name is *unforgeable*: no identifier can be a bare
+underscore, so nothing in the body can refer to it and nested wildcards shadow each other
+harmlessly. The property the spelling promises holds by construction rather than by a check,
+which is why no pass had to learn about it.
+
+The alternative was a synthesized name per loop (`_for0`), which would have had to be unique
+across nesting, would have shown up in diagnostics and debug output, and would have been
+forgeable — `_for0` is a legal identifier. Cost: **+1 parser state**, 7,821 → 7,822.
+
+### 08/19/26
 **`for d in -1..<=1 { if d != 0 { … } }` compiles.** It was
 `lyra-E001: operator !=: incompatible types: integer literal and integer literal` — the
 same words twice, which is what an asymmetry between two rules looks like from the outside.

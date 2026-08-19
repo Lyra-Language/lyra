@@ -102,10 +102,9 @@ let step = pure (grid: [][]bool) -> [][]bool => {
 let neighbours = pure (grid: [][]bool, x: i64, y: i64) -> i64 => {
   let height = grid.len()
   let width = grid[0].len()
-  let around: [3]i64 = [-1, 0, 1]
   var count = 0
-  for dy in around {
-    for dx in around {
+  for dy in -1..<=1 {
+    for dx in -1..<=1 {
       // The cell itself is not its own neighbour, and it is the one case the double loop
       // gets wrong for free.
       if dx != 0 || dy != 0 {
@@ -132,13 +131,13 @@ let wrap = pure (i: i64, limit: i64) -> i64 => i %% limit
 let random_grid = det (width: i64, height: i64, seed: u64) -> [][]bool => {
   var rng = rng_seeded(seed)
   var grid: [][]bool = []
-  for y in 0..<height {
+  for _ in 0..<height {
     // **A fresh row per iteration, deliberately.** The short spelling for this is
     // `[[false; width]; height]` and it is wrong: `[v; n]` evaluates its value once, so
     // every one of the `height` slots would hold the *same* row and each generation would
     // print `height` copies of one line. The compiler says so (lyra-W019)
     var row: []bool = []
-    for x in 0..<width {
+    for _ in 0..<width {
       row.push(rng.below(100) < DENSITY)
     }
     grid.push(row)

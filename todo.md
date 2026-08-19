@@ -2415,11 +2415,21 @@ recommending — write the program someone would actually write, and see what it
   equality refuses `5 == 5.0`. One of the two is wrong and it is probably ordering, since
   the int/float separation is written down as a rule; nothing here changed either.
 
-- **`for _ in 0..<n` is a syntax error.** A loop that repeats something a fixed number of
-  times has no use for its counter, and the wildcard pattern — legal in a `let` since
-  08/07 — is not admitted as a for-in binding, so the only spelling is a named variable
-  nothing reads. Nothing warns about it either: `lyra-W003` covers `let`/`var`, not loop
-  bindings, which is presumably why an unused counter has never been noticed.
+- **[DONE 08/19] `for _ in 0..<n` parses.** `identifier` is
+  `/(_[a-zA-Z0-9_]+|[a-z][a-zA-Z0-9_]*)/` — a leading underscore needs a character after
+  it — so `for _i in` worked and a bare `for _ in` was a syntax error, which is why the
+  workaround (name the counter, never read it) read as a style choice rather than a
+  necessity.
+
+  `_` is admitted **inside the existing alias** in `for_in_condition`, so the CST shape is
+  unchanged and every consumer keeps reading one node kind; the collector sees a binding
+  whose text is `_`. That name is unforgeable — no identifier can be a bare underscore —
+  so the body cannot refer to it and nested wildcards simply shadow each other. Cost: +1
+  parser state. See COMPLETED.md.
+
+  **Still open, and now worth more:** nothing warns about an unused *named* loop counter
+  (`lyra-W003` covers `let`/`var`, not loop bindings). The warning would have somewhere to
+  point now — `for _ in` is the fix it would name — which it did not before.
 
 - **No `min`/`max` in the prelude.** Every program that fits something to a window writes
   its own, and they are three characters of Lyra each. `clamp` exists in `std/tui/style.lyra`
