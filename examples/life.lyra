@@ -1,6 +1,7 @@
 import std.tui.{
   alt_screen_enter, alt_screen_leave, clear, cursor_home, cursor_hide, cursor_show,
-  event_reader, Event, Key, fg, reset, rgb
+  mouse_enable_motion, mouse_disable, event_reader, Event, MouseEvent, MouseButton,
+  MouseAction, Key, fg, reset, rgb, fit
 }
 
 // Conway's Game of Life, animated in the terminal and sized to the window.
@@ -15,7 +16,10 @@ import std.tui.{
 //
 // Run: lyrac run examples/life.lyra
 //   q or Escape  quit          space  pause / resume
-//   s            single step   r      reseed
+//   s            single step   r      reseed        c  clear
+//   click or drag on the grid to draw; press on a live cell to erase instead
+//
+// The window may be resized while it runs; the world is re-fitted and the pattern kept.
 
 /// Milliseconds per generation. Also the input poll window: the program waits for a key
 /// for exactly this long, so a keypress is answered at once and a quiet window advances
@@ -28,17 +32,19 @@ const STEP_MS = 90
 const DENSITY = 33
 
 let main = () => {
-  set_raw_mode(true)
-  alt_screen_enter()
-  cursor_hide()
-  clear()
+  setup()
 
-  let (width, height) = playfield()
-  var grid = random_grid(width, height, random_seed())
+  let (initial_width, initial_height) = playfield()
+  var width = initial_width
+  var height = initial_height
+  var grid = empty_grid(width, height)
   var events = event_reader()
   var generation = 0
   var running = true
-  var paused = false
+  var paused = true
+  // A stroke in progress, and what it is painting. See the `Mouse` arm below.
+  var painting = false
+  var paint_alive = true
 
   for running {
     draw(grid, generation, paused)
@@ -56,23 +62,91 @@ let main = () => {
               grid = step(grid)
               generation += 1
             }
+            else if c == 'c' {
+              grid = empty_grid(width, height)
+              generation = 0
+            }
             else if c == 'r' {
               grid = random_grid(width, height, random_seed())
               generation = 0
             }
           },
           Keyboard(Escape) => { running = false },
+          // A press starts a stroke, a drag continues it, a release ends it.
+          //
+          // **What to paint is decided once, at the press**, from the cell under it — on a
+          // dead cell the stroke draws, on a live one it erases. Toggling per event instead
+          // would undo the stroke as the hand wobbles: a drag reports every cell entered,
+          // so crossing back over a cell already painted would flip it again.
+          Mouse(m) => match m.action {
+            Press => match m.button {
+              MouseLeft => match cell_at(grid, m) {
+                Some((x, y)) => {
+                  paint_alive = !grid[y][x]
+                  grid[y][x] = paint_alive
+                  painting = true
+                },
+                None => { }
+              },
+              // A wheel notch is a press too, and must not draw.
+              _ => { }
+            },
+            Move => {
+              if painting {
+                match cell_at(grid, m) {
+                  Some((x, y)) => { grid[y][x] = paint_alive },
+                  None => { }
+                }
+              }
+            },
+            Release => { painting = false }
+          },
           _ => { }
         }
       }
-    } else if !paused {
-      grid = step(grid)
-      generation += 1
+    } else {
+      // The poll window elapsed with nothing typed, and two things share it.
+      //
+      // **The window is re-measured here**, because nothing announces a resize — there is
+      // no SIGWINCH handler, and `terminal_size` is EffectInput precisely because the
+      // answer can change with no input. Measuring once at startup is what makes a resized
+      // window fatal rather than untidy: the frame keeps its old height, the extra lines
+      // scroll the screen, and every cell is then displayed above where it was written
+      // while the mouse still reports true screen rows — so clicks toggle the wrong cell.
+      let (now_width, now_height) = playfield()
+      if now_width != width || now_height != height {
+        grid = resized(grid, now_width, now_height)
+        width = now_width
+        height = now_height
+        // A shrink leaves the old frame's right and bottom edges on screen, outside
+        // anything the new one writes over.
+        clear()
+      }
+
+      // And the world advances. A resize is not a pause, so this is not an `else`.
+      if !paused {
+        grid = step(grid)
+        generation += 1
+      }
     }
   }
 
   // In reverse, and all three matter: a program that exits without them leaves a terminal
   // with no echo, no cursor and the world still on screen.
+  teardown()
+}
+
+let setup = () => {
+  // Order matters on the way in, and the reverse order on the way out.
+  set_raw_mode(true)
+  alt_screen_enter()
+  cursor_hide()
+  mouse_enable_motion()
+  clear()
+}
+
+let teardown = () -> void => {
+  mouse_disable()
   cursor_show()
   alt_screen_leave()
   set_raw_mode(false)
@@ -122,6 +196,18 @@ let neighbours = pure (grid: [][]bool, x: i64, y: i64) -> i64 => {
 /// out of bounds and trap. `-1 %% 10` is `9`, which is the edge the torus joins to.
 let wrap = pure (i: i64, limit: i64) -> i64 => i %% limit
 
+let empty_grid = pure (width: i64, height: i64) -> [][]bool => {
+  var grid: [][]bool = []
+  for _ in 0..<height {
+    var row: []bool = []
+    for _ in 0..<width {
+      row.push(false)
+    }
+    grid.push(row)
+  }
+  grid
+}
+
 /// A world seeded from `seed`, `DENSITY` cells per hundred alive.
 ///
 /// **Deterministic**, and marked so: it draws from a generator built out of the seed it
@@ -153,7 +239,8 @@ let random_grid = det (width: i64, height: i64, seed: u64) -> [][]bool => {
 /// raw mode has turned off the newline translation that would otherwise supply it.
 ///
 /// The status line carries no trailing newline, deliberately: writing one on the last row
-/// of the screen scrolls it, and the whole frame walks up a line every generation.
+/// of the screen scrolls it, and the whole frame walks up a line every generation. It is
+/// also cut to the window's width, for the same reason one row down — see `fit`.
 let draw = (grid: [][]bool, generation: i64, paused: bool) -> void => {
   cursor_home()
   var frame = ""
@@ -163,11 +250,31 @@ let draw = (grid: [][]bool, generation: i64, paused: bool) -> void => {
     }
     frame = frame ++ "\r\n"
   }
-  frame = frame ++ fg(rgb(2, 2, 2))
-  frame = frame ++ " generation ${generation}${if paused { "  [paused]" } else { "" }}"
-  frame = frame ++ "   q quit · space pause · s step · r reseed"
-  frame = frame ++ reset()
+  let status = " generation ${generation}${if paused { "  [paused]" } else { "" }}" ++
+    " (click or drag to draw) [q quit · space pause · s step · c clear · r reseed]"
+  // The colour codes go *outside* `fit`: they occupy no cells, and counting them as
+  // characters would cut the visible text dozens of columns early.
+  frame = frame ++ (fg(rgb(2, 2, 2)) ++ (fit(status, grid[0].len()) ++ reset()))
   print(frame)
+}
+/// The world re-fitted to a new window: the overlap is kept, everything new is dead.
+///
+/// **Kept rather than reseeded**, because a resize is not a request to lose the pattern you
+/// drew — dragging a window wider should not clear it. The torus wraps at the new edges, so
+/// the topology changes under a running world; that is inherent in resizing a wrapped grid
+/// rather than something to correct.
+let resized = pure (grid: [][]bool, width: i64, height: i64) -> [][]bool => {
+  let old_height = grid.len()
+  let old_width = grid[0].len()
+  var next: [][]bool = []
+  for y in 0..<height {
+    var row: []bool = []
+    for x in 0..<width {
+      row.push(if y < old_height && x < old_width { grid[y][x] } else { false })
+    }
+    next.push(row)
+  }
+  next
 }
 
 /// The window, less the status line — and never smaller than one cell, so a terminal too
@@ -180,4 +287,19 @@ let draw = (grid: [][]bool, generation: i64, paused: bool) -> void => {
 let playfield = () -> (i64, i64) => {
   let (cols, rows) = terminal_size()
   (cols, if rows > 1 { rows - 1 } else { 1 })
+}
+
+/// The grid cell under a mouse event, or `None` when the pointer is off the playfield.
+///
+/// **No arithmetic**, because `std.tui` reports a mouse in the same 0-based cells the grid
+/// is indexed by. What is left is the bounds check, and that is not optional: the status
+/// line is a row the mouse can reach and the grid cannot, so an unchecked click there
+/// indexes past the last row and **traps**, ending the program with the terminal still in
+/// raw mode.
+let cell_at = pure (grid: [][]bool, m: MouseEvent) -> Maybe<(i64, i64)> => {
+  if m.row >= 0 && m.row < grid.len() && m.col >= 0 && m.col < grid[0].len() {
+    Some((m.col, m.row))
+  } else {
+    None
+  }
 }
