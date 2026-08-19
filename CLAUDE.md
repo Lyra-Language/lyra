@@ -183,7 +183,23 @@ real failure, and none is local to one package.
     mid-drop; Rust's `Arc` does the same, for the same reason. Do not "simplify" that back
     into a `weak == 0` test — it reads as equivalent and is an ASan-confirmed double free.
 
-13. **A builtin returning an owned managed value needs two things the defaults get wrong.**
+13. **A bound-dispatched call is resolved in two places, and both must be asked.** The
+    typechecker resolves it *abstractly* — the receiver is a type variable there — and
+    publishes one concrete candidate per implementing type; only a specialization names a
+    function. Two faults came of forgetting the second half, and neither was diagnosable:
+    reading borrow modes from the **resolution** table (which a bound call has no entry
+    in) passed a `mut` receiver by value into a method expecting a pointer, a wild load
+    rather than a mismatch; and looking a candidate up by `recordedType(...).String()`
+    asked under the *instantiated* name — module-prefixed — while the table is keyed in
+    the typechecker's spelling. Use `candidateKey` for the lookup and `methodParams` for
+    the modes.
+
+    **The module header is what makes the second one visible**, which is why it survived:
+    every reproduction small enough to paste has no `module` line, and every real program
+    has one. When a bug's trigger is a header, snippet-sized testing is structurally
+    blind to it — the backend suite prepends `module main` for exactly this reason.
+
+14. **A builtin returning an owned managed value needs two things the defaults get wrong.**
     `read_line` is the model: the ownership pass must know it owns its result
     (`calleeIsOwningBuiltin`), because the unresolved-callee default treats a *result* as
     borrowed and that direction leaks rather than being leak-safe; and its call site must
@@ -306,11 +322,43 @@ They exist so a **bound** can be satisfied, not so a call can dispatch — witho
 unwritable. `impl Add for f64 { (_+_) = (self, o) => self + o }` is not recursion, by the
 primitive rule above.
 
+## Trait default methods
+
+A trait method may carry a body an impl inherits by writing nothing and overrides by
+writing a clause. **`Self` is a type variable in that body** — `types.GenericType{"Self"}`,
+bounded by the declaring trait — so it is checked once (`checkTraitDefaultMethods`) and
+monomorphized per implementing type, which is what a generic function already is. The
+backend needed nothing: `dispatchViaGenericBound` types the body's calls,
+`SetBoundCandidates` publishes one concrete impl per implementing type, and `recordedType`
+substitutes `Resolution.Bindings` at each specialization.
+
+The name is unforgeable — a type variable is lowercase by lexer rule, so no program can
+declare one called `Self`.
+
+Three things to know before touching it:
+
+- **`ast.TraitMethod.DefaultImpl()` is the one instance**, cached on the AST rather than
+  per pass. Dispatch, the MethodTable, the purity fixpoint, the ownership table and the
+  backend's emitted-method cache all key on the pointer, so a second instance means the
+  body is emitted once per call site. One per trait *method*, not per impl — the impl is
+  what `SpecKey` varies over.
+- **Dispatch tries the impl's own clauses first**, and falls back to the default only when
+  they match nothing. That is what makes an override an override rather than an ambiguity.
+- **The body's inner bound calls need publishing at the concrete receiver**
+  (`publishDefaultBodyCandidates`). Without it the body type-checks — the bound is
+  abstract — and then cannot be lowered, because the candidate table would hold only what
+  `boundCandidatesByType` keys by the impl's *declared* target.
+
+The alternative considered and rejected was deep-copying the default clause into every
+impl that lacks it. That needs a full expression/statement cloner this compiler does not
+have, and a missing case in one is a silently *shared* subtree — hazard 8 with a
+miscompile at the end of it.
+
 ## Sweeping for surfaces nothing reads
 
 Features that parse, collect, and are consumed by nobody look implemented and do nothing,
-which costs more than an absent feature does. Known instances: `wallClock`, a binding's
-`where` bounds, `@derive`, operator-named trait methods, trait default methods.
+which costs more than an absent feature does. Known instances, all now closed: `wallClock`, a binding's `where` bounds,
+`@derive`, operator-named trait methods, trait default methods.
 
 The sweep that finds the AST half: enumerate every exported field of every struct in
 `pkg/ast`, then grep for a reader **outside `pkg/ast`, outside `pkg/printer`, and outside

@@ -393,6 +393,12 @@ func (l *lowerer) lowerParameter(param ast.Parameter, idx int) (*ir.Param, error
 }
 
 func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr) (value.Value, *ir.Block, error) {
+	// `Trait::method(receiver, …)` — the fully-qualified form, resolved by dispatch like
+	// any other trait-method call. Tested before the callee kinds below because it is
+	// none of them: falling through treats the trait-method *name* as a function value.
+	if path, ok := e.Function.(*ast.TraitMethodPathExpr); ok {
+		return l.lowerTraitPathCall(block, e, path)
+	}
 	if member, ok := e.Function.(*ast.MemberExpr); ok {
 		// A struct field that *holds* a function is an indirect call through that
 		// value, not a method dispatch: `h.run(5)` where `run: (i64) -> i64`. The

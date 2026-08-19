@@ -737,6 +737,41 @@ the callee's declaration, and an indirect call has none — a `types.LambdaType`
 a parameter has a default, not what it is. Named arguments, if they ever exist, would be the
 other half of this feature and would lift the trailing rule.
 
+## Trait default methods (`typechecker_trait_default.go`)
+
+A trait method's default body — `pure shout: (Self) -> string = (self) => self.name() ++ "!"` —
+is the body an impl inherits by writing nothing. It parsed and collected from the start and
+was dispatched to by nobody.
+
+**It is checked as generic code.** `checkTraitDefaultMethods` runs once per default, with
+`self` typed `types.GenericType{"Self"}` and `tc.genericBounds["Self"]` set to the declaring
+trait closed over its supertraits, then hands the body to `checkTraitImplMethodBody` — the
+same function an impl's clause goes through, so a default and an override cannot be checked
+by two rules that disagree. Everything that follows is the generic path already in place:
+`dispatchViaGenericBound` types `self.name()`, `publishBoundCandidates` names one concrete
+impl per implementing type, and the backend substitutes `Resolution.Bindings` per
+specialization. The backend needed no change.
+
+It runs **after** `tc.traitImpls` is collected: a call inside a default publishes one
+candidate per implementing type, and a set gathered before the impls were known would be
+empty, so the body would type-check and then fail to lower.
+
+`resolveTraitMethodNamed` tries an impl's own clauses first and calls `defaultMatch` only
+when they match nothing — an override is therefore an override rather than an ambiguity,
+the same last-rung shape the newtype method fallback has. `Self` **joins** the impl's own
+bindings rather than replacing them, so a generic impl's variables survive: a default
+running for `impl Show for Box<t>` at `Box<i64>` needs both `t→i64` and `Self→Box<i64>`.
+
+`publishDefaultBodyCandidates` is `publishImplBodyCandidates` for a default: that one walks
+the impl's `where` constraints, and a default has exactly one bound to walk — `Self`, at its
+trait. It carries the same re-entry guard, since a default reaching another default on the
+same type re-enters it.
+
+**One diagnostic is specific to this context.** `self.nonexistent()` in a default would
+otherwise report *"type parameter Self has no method; add a `where Self: Trait` bound"* —
+advice naming a clause no program can write, `Self` being a variable the compiler introduced.
+Inside a default (`tc.currentDefaultTrait`) it names the trait instead.
+
 ## UFCS — method syntax for free functions (`typechecker_ufcs.go`)
 
 `m.unwrap_or(0)` resolves to the free function `unwrap_or(m, 0)` when that function opts in

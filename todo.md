@@ -1993,18 +1993,64 @@ still refuses them. See COMPLETED.md.
     Found 08/09 while weighing a `Length` trait beside `Needle`. It is the reason
     `trait Needle: Length` would not have helped: the bound would be enforced and
     `split` still could not call the method. That option is now open.
-- **[OPEN] A trait *default method* is never dispatched to.** `trait G { name: …
-  twice: (Self) -> i64 = (self) => self.name() * 2 }` parses, collects, and calling
-  `n.twice()` on a type with an `impl G` reports *"i64 has no method `twice`"*. An impl
-  cannot override one either, since nothing looks for it.
+- **[DONE 08/19] A trait *default method* is dispatched to**, and an impl overrides one
+  by writing a clause. It was the **fifth** instance of the surface-nothing-reads shape,
+  after `wallClock`, the `where` bounds, `@derive` and the operator-named methods.
 
-  Independent of the supertrait gap above — it reproduces with no supertrait in sight —
-  and the **fifth** instance of the shape this file keeps cataloguing: a surface that
-  parses, collects, and is read by nobody, after `wallClock`, the `where` bounds,
-  `@derive` and the operator-named methods. `walk.go` descends into
-  `TraitDeclStmt.Methods[i].DefaultMethod.Body` and the return checker gives it a
-  function scope (08/09), so the body is *walked* and checked — it simply cannot be
-  called. Found 08/09 alongside the supertrait gap.
+  **`Self` is a type variable in a default body**, bounded by the declaring trait, so the
+  body is checked once and monomorphized per implementing type — which is what a generic
+  function already is. Everything the feature needed existed for that path:
+  `dispatchViaGenericBound` types `self.name()`, `SetBoundCandidates` publishes one
+  concrete impl per implementing type, and the backend substitutes `Bindings` through
+  `recordedType`. **The backend needed no change at all.** The alternative — deep-copying
+  the default clause into every impl that lacks it — needs a full AST cloner the compiler
+  does not have, and a missing case in one is a silently *shared* subtree.
+
+  Two things came with it. The default is presented as the `TraitMethodImpl` it stands in
+  for (`ast.TraitMethod.DefaultImpl()`, one instance per trait method, cached on the AST
+  because pointer identity is what the emitted-method cache and the ownership table key
+  on). And the purity pass now holds a default to the bound its trait declares, reported
+  at the default rather than at each impl that inherited it — the bound used to be
+  enforced on every *override* and not on the thing being overridden. See COMPLETED.md.
+
+- **[DONE 08/19] Three bound-dispatch faults, all of them silent in a snippet.** Found
+  while landing trait defaults; two of them reproduce with no default in sight.
+
+  1. **A `where`-bound call on a generic impl target did not lower once the program
+     declared a `module`.** The candidate is published under the typechecker's spelling
+     of the type (`Box<i64>`, and the mono key `Box$i64`) while the backend asked under
+     the *instantiated* name, which `instantiationSymbol` prefixes with the declaring
+     module's key — `main__Box$i64`. Drop the `module` line and the same program ran,
+     which is exactly why it survived: every reproduction small enough to paste is a
+     program with no module header.
+
+     The fix is `candidateKey`, which asks in the vocabulary the table was keyed in — the
+     recorded type with substitution applied and *without* the instantiation
+     normalization `recordedType` does for everything else. Teaching the typechecker to
+     predict the backend's mangling instead would have been a second copy of
+     `instantiationSymbol`, free to disagree with the one that emits the symbol.
+
+  2. **A `mut` receiver through a bound was a wild load.** A bound call has no entry in
+     the resolution table — it was resolved abstractly and its concrete impl comes from
+     the *candidate* table at lowering — so reading modes from the table alone returned
+     nil and every operand went by value. The emitted method takes a pointer for a `mut`
+     receiver, so it was handed a struct: `v.bump(n)` under `where t: Bump` segfaulted,
+     and so did the identical call inside a trait default. `methodParams` takes the
+     resolution the caller has in hand and falls back to the table only for the path that
+     has none.
+
+  3. **`Trait::method(x)` did not lower at all**, for a defaulted method and an ordinary
+     one alike — `no type recorded for the callee of an indirect call`, because the call
+     lowering knew a `.`-callee and an identifier and nothing else, so the
+     `TraitMethodPathExpr` fell through to the function-value path where a trait method's
+     *name* is not a value. It is the spelling the ambiguity diagnostic tells you to
+     reach for, so the compiler was recommending a form that did not build. Everything it
+     needed was already published; the one difference from a `.`-call is that the
+     receiver is argument 0 rather than a separate expression, so arguments and signature
+     parameters are index-aligned.
+
+  See COMPLETED.md.
+
 - **[DECIDED 08/07] `Ord: Eq` is deliberately *not* declared** — see the design correction
   above. The mechanism is real as of 08/14 (enforced 08/07, reachable through a bound
   today); this stays a decision about `Ord`, not a gap in supertraits.

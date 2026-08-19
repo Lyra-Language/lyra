@@ -9,6 +9,124 @@ Newest first.
 
 ## Dated log
 
+### 08/19/26
+**Three bound-dispatch faults, found landing trait defaults; two of them reproduce with no
+default in sight.** All three type-checked cleanly, which is what they have in common: a
+call the typechecker resolved *abstractly* — the receiver was a type variable there — and
+that only a specialization can name a function for.
+
+**A `where`-bound call on a generic impl target did not lower once the program declared a
+`module`.** The candidate table is keyed in the typechecker's spelling of the type
+(`Box<i64>`, and the mono key `Box$i64`); the backend asked under the *instantiated*
+name, which `instantiationSymbol` prefixes with the declaring module's key —
+`main__Box$i64`. So `impl Sized2 for Box<t>` published a candidate nothing looked up, and
+the call failed with "no impl of Sized2 for it" on a program the front end had checked
+clean. **Drop the `module` line and it ran**, which is why it survived: every reproduction
+small enough to paste is a program with no module header, and every real one has a header.
+
+The fix is a second accessor rather than a shared mangler. `candidateKey` is
+`recordedType` minus its last step — substitution applied, instantiation normalization
+*not* — so the lookup asks in the vocabulary the table was keyed in. The alternative was
+to teach the typechecker to predict this package's mangling, which is a second copy of
+`instantiationSymbol` free to disagree with the one that emits the symbol. Three lookup
+sites moved onto it (the bound method call and both operator-candidate paths).
+
+**A `mut` receiver through a bound was a wild load, not a type mismatch.** A bound call
+has no entry in the *resolution* table — its concrete impl comes from the candidate table
+at lowering — so `methodParamModes`, which reads that table, returned nil and every
+operand went by value. The emitted method takes a pointer for a `mut` receiver, so it was
+handed a struct:
+
+```lyra
+let twice<t> where t: Bump = (v: mut t, n: i64) -> void => { v.bump(n)  v.bump(n) }
+```
+
+segfaulted, and so did the identical call inside a trait default — which is the shape that
+found it, since a default body's `self` is a type variable and every call on it is a bound
+call. `methodParams` now takes the resolution the caller has in hand and falls back to the
+table only for the one path that has none. Not a diagnosable mismatch at any point: the
+front end sees a well-typed call, and the IR is well-formed with the wrong ABI.
+
+**`Trait::method(x)` did not lower at all** — for a defaulted method and an ordinary impl
+method alike — dying as `no type recorded for the callee of an indirect call`.
+`lowerFunctionCallExpr` knows a `MemberExpr` callee and an identifier and nothing else, so
+a `TraitMethodPathExpr` fell through to the function-value path, where the callee is the
+*name of a trait method*: not a value, and with no recorded type. That made the compiler's
+own advice unbuildable, since the ambiguity diagnostic for a name two traits provide says
+"use TraitName::method(...) to disambiguate".
+
+Everything it needed was already published — dispatch records the full `Resolution` for
+this call exactly as for a `.`-call. The one difference is the operand layout: the receiver
+is argument 0 here rather than a separate expression, so arguments and signature parameters
+are index-aligned and the loop needs no offset. The stale comment on `methodParamModes`
+had said as much for months ("or nil when there is no resolution — a fully-qualified call,
+or an unresolved one"), describing a state that stopped being true when dispatch started
+recording these.
+
+**Trait default methods are dispatched to.** `trait Named { pure name: (Self) -> string
+pure shout: (Self) -> string = (self) => self.name() ++ "!" }` parsed and collected from
+the beginning; `c.shout()` reported *"Cat has no field or method"*, and an impl could not
+override one either, since nothing looked. The fifth instance of the
+surface-nothing-reads shape, after `wallClock`, the `where` bounds, `@derive` and the
+operator-named methods.
+
+**`Self` is a type variable, and that is the whole design.** A default body is written
+once and runs for every implementing type, which is the definition of a generic function
+— so it is checked once with `self: GenericType{"Self"}` bounded by the declaring trait,
+and monomorphized per implementing type. Every piece that needs already existed:
+
+- `self.name()` inside the body is a call on a value of type-variable type, which is
+  `dispatchViaGenericBound` — it records the abstract resolution and publishes one
+  concrete candidate per implementing type;
+- the backend substitutes `Resolution.Bindings` through `recordedType`, so the shared body
+  lowers at each receiver's own type;
+- the ownership pass analyzes that body once per specialization, at those bindings.
+
+**The backend needed no change at all**, which is the strongest evidence the choice was
+right. The alternative was to deep-copy the default clause into every impl that lacks it,
+so each got its own AST nodes — that needs a full expression/statement cloner this
+compiler does not have, and a missing case in one is a silently *shared* subtree with a
+miscompile at the end of it. Type variables are the mechanism already in hand for "one
+body, many types". The name `Self` is unforgeable: a type variable is lowercase by lexer
+rule, so no program can declare one that collides.
+
+**The default is presented as the `TraitMethodImpl` it stands in for**
+(`ast.TraitMethod.DefaultImpl()`), because every consumer of an impl method already
+handles that shape — dispatch, the MethodTable, the purity fixpoint, the ownership pass,
+the backend's emitted-method cache. It is cached **on the AST** rather than per pass, and
+that is load-bearing: those consumers key on the pointer, so two passes building their own
+would disagree about whether they are looking at the same method, and the body would be
+emitted once per call site. One instance per trait *method*, not per impl — the impl is
+what `SpecKey` varies over (`Cat$Named$shout` beside `Dog$Named$shout`), so sharing the
+instance is exactly what makes the body shared and the specializations distinct.
+
+**Dispatch tries the impl's own clauses first** and falls back to the default only when
+they match nothing, which is what makes an override an override rather than an ambiguity —
+the same last-rung shape a newtype's method fallback has. `Self` joins the impl's own
+bindings rather than replacing them, so a generic impl's variables survive.
+
+**Two things that had to be added beyond dispatch.** The default body's *inner* bound
+calls need a candidate published at the concrete receiver
+(`publishDefaultBodyCandidates`, `publishImplBodyCandidates` for a default: that one is
+driven by the impl's `where` constraints and a default has exactly one bound to walk,
+`Self` at its trait). And the **purity pass now holds a default to the bound its trait
+declares** — `collectMethodImpls` gathers defaults, `checkTraitDefaultBounds` enforces
+them — reported at the default rather than at each impl that inherited it. The bound used
+to be enforced on every *override* and not on the thing being overridden, which is the
+wrong way round: the default is the one body the trait's author controls.
+
+**One diagnostic had to be written for the new context.** `self.nonexistent()` in a
+default reported *"type parameter Self has no method; add a `where Self: Trait` bound"* —
+advice naming a clause no program can write, because `Self` is a variable the compiler
+introduced rather than one the author wrote. It now names the trait: *"trait Bad does not
+declare a method "nonexistent", so a default body cannot call it on `self`"*.
+
+Found along the way, both pre-existing and both now in todo.md: a `where`-bound call on a
+**generic impl target** does not lower once the program declares a `module` (the candidate
+is keyed `Box$i64`, the backend asks about `main__Box$i64`), and `Trait::method(x)` does
+not lower at all — which is the spelling the ambiguous-call diagnostic tells you to reach
+for.
+
 ### 08/18/26
 **`lyra-W019`: `[v; n]` whose slots share one mutable value.** `[[' '; WIDTH]; HEIGHT]`
 builds **one** row referenced HEIGHT times, so every `grid[py][px] = c` writes the same

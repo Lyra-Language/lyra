@@ -124,8 +124,8 @@ func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinary
 	// The operand was a type variable at check time, so the impl could not be named
 	// then; this specialization has fixed it. Looked up by the *substituted* operand
 	// type — without this an `Eq` impl applied outside a generic and not inside one.
-	if lt, ok := l.recordedType(e.Left); ok {
-		if res, ok := l.res.MethodTable.OperatorCandidate(e, lt.String()); ok {
+	if key, ok := l.candidateKey(e.Left); ok {
+		if res, ok := l.res.MethodTable.OperatorCandidate(e, key); ok {
 			return l.lowerOrdComparison(block, e, res, left, right)
 		}
 	}

@@ -2,6 +2,7 @@ package llvm
 
 import (
 	"fmt"
+	"github.com/Lyra-Language/lyra/pkg/typetable"
 	"math"
 
 	"github.com/llir/llvm/ir"
@@ -62,7 +63,9 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	if fn, isTraitCall, err := l.traitMethodCallee(call); err != nil {
 		return nil, nil, err
 	} else if isTraitCall {
-		return l.lowerTraitMethodCall(block, call, member, fn)
+		// No resolution in hand here: this path found the callee through the table, so
+		// methodParams falls back to reading the same table for its modes.
+		return l.lowerTraitMethodCall(block, call, member, fn, typetable.Resolution{})
 	}
 	if m, ok := intOverflowMethods[member.Property.Name]; ok {
 		return l.lowerIntOverflowMethod(block, call, member, m)

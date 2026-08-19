@@ -83,6 +83,7 @@ func (tc *TypeChecker) resolveTraitMethodNamed(receiverType types.Type, methodNa
 				traitSubst[gp.Name] = substituteGenerics(impl.TraitArgs[i], bindings)
 			}
 		}
+		provided := false
 		for i := range impl.Methods {
 			m := &impl.Methods[i]
 			if m.Name != methodName {
@@ -94,6 +95,7 @@ func (tc *TypeChecker) resolveTraitMethodNamed(receiverType types.Type, methodNa
 				// checkTraitImpl already warns about) — not dispatchable.
 				continue
 			}
+			provided = true
 			var sig *types.LambdaType
 			if traitMethod.Signature != nil {
 				// Substitute Self with the concrete receiver (not impl.Type,
@@ -104,8 +106,48 @@ func (tc *TypeChecker) resolveTraitMethodNamed(receiverType types.Type, methodNa
 			}
 			matches = append(matches, resolvedTraitMethod{Impl: impl, Method: m, Signature: sig, Bindings: bindings})
 		}
+		// An impl that provides no clause for the name falls back to the trait's
+		// **default**, if it declares one. Tried after the impl's own methods and only
+		// when they matched nothing, which is what makes an impl's clause an override
+		// rather than an ambiguity — the same last-rung shape a newtype's method
+		// fallback has.
+		if !provided {
+			if m, sig, ok := tc.defaultMatch(trait, methodName, receiverType, traitSubst); ok {
+				// `Self` joins the impl's own bindings rather than replacing them, so a
+				// generic impl's variables survive: a default running for
+				// `impl Show for Box<t>` at `Box<i64>` needs both t→i64 and Self→Box<i64>.
+				withSelf := make(map[string]types.Type, len(bindings)+1)
+				for k, v := range bindings {
+					withSelf[k] = v
+				}
+				withSelf[selfVar] = receiverType
+				matches = append(matches, resolvedTraitMethod{Impl: impl, Method: m, Signature: sig, Bindings: withSelf})
+			}
+		}
 	}
 	return matches
+}
+
+// defaultMatch is the trait's default clause for methodName presented as an impl method,
+// with the signature Self-substituted for this receiver exactly as a provided method's is.
+//
+// The signature is built for the *concrete* receiver while the body was checked with Self
+// abstract, which is the same split a generic function has: the call site is checked
+// against the instantiated signature, the body once against the variable.
+func (tc *TypeChecker) defaultMatch(trait *ast.TraitDeclStmt, methodName ast.MethodName, receiverType types.Type, traitSubst map[string]types.Type) (*ast.TraitMethodImpl, *types.LambdaType, bool) {
+	traitMethod := findTraitMethodNamed(trait, methodName)
+	if traitMethod == nil || traitMethod.DefaultMethod == nil {
+		return nil, nil, false
+	}
+	var sig *types.LambdaType
+	if traitMethod.Signature != nil {
+		sig = substituteSelf(traitMethod.Signature, receiverType)
+		sig = substituteSigGenerics(sig, traitSubst)
+	}
+	// The body's own bound calls need a candidate at *this* receiver, or the default
+	// type-checks abstractly and fails to lower. See publishDefaultBodyCandidates.
+	tc.publishDefaultBodyCandidates(trait, traitMethod, receiverType)
+	return traitMethod.DefaultImpl(), sig, true
 }
 
 // implTargetMatches reports whether an impl's target type matches receiverType.

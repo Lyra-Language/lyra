@@ -1559,6 +1559,33 @@ that everything was by value; `ref`/`mut` landed 07/31, and the line it warned a
 one now doing the carrying. `own` is still rejected (lyra-E030) — see `todo.md`, where the
 ownership prerequisite it named is now built.
 
+### Bound dispatch: two tables, and which to ask
+
+A **bound-dispatched** call (`v.show()` under `where t: Show`, and every call on `self`
+inside a trait default) is resolved twice. The typechecker resolves it *abstractly* — the
+receiver is a type variable there, so no impl can be named — and publishes one concrete
+candidate per implementing type; the concrete answer arrives here, where a specialization
+has fixed the variable. Two accessors exist because both halves are easy to skip, and
+skipping either is silent:
+
+- **`candidateKey(expr)`, not `recordedType(expr).String()`, for the lookup.** The
+  candidate tables are keyed in the *typechecker's* spelling of a type (`Box<i64>`, and
+  the mono key `Box$i64`); `recordedType` takes one further step this package needs
+  everywhere else, normalizing a `ParameterizedType` to the emitted instantiation's named
+  type — whose name carries the declaring module's key, `main__Box$i64`. Asked under
+  that, a generic impl's candidate is never found and the call fails to lower, **in any
+  program that declares a `module` and in none that does not**.
+- **`methodParams(call, res)`, not `methodParamModes(call)`, for the borrow modes.** A
+  bound call has no entry in the *resolution* table — that is the point of the candidate
+  table — so reading modes from it returns nil and every operand goes by value. A `mut`
+  receiver's emitted method takes a pointer, so it is handed a struct: not a mismatch
+  anything can diagnose, a wild load.
+
+`Trait::method(receiver, …)` is lowered by `lowerTraitPathCall` and is *not* a bound call
+— dispatch records its full resolution like a `.`-call's. The one difference is the
+operand layout: the receiver is argument 0 rather than a separate expression, so
+arguments and signature parameters are index-aligned where a `.`-call offsets by one.
+
 ## Behavioural tests
 
 **AddressSanitizer only works because the harness adds the `sanitize_address` function

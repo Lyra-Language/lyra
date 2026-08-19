@@ -52,10 +52,51 @@ type TraitMethod struct {
 	// This is the *contract's* documentation — what any implementation must do —
 	// which is why an impl's own method carries a separate one.
 	Doc *Doc
+	// defaultImpl caches DefaultMethod presented as the TraitMethodImpl it stands in
+	// for. Unexported and reached only through DefaultImpl(), because **one instance
+	// per trait method** is the invariant the rest of the compiler rests on.
+	defaultImpl *TraitMethodImpl
 }
 
 func (t *TraitMethod) GetName() string {
 	return t.Name.GetName()
+}
+
+// DefaultImpl is this method's default body presented as the impl method it stands in
+// for — nil when the method declares no default.
+//
+// Every consumer of an impl method already handles a *TraitMethodImpl: dispatch, the
+// MethodTable, the purity fixpoint, the ownership pass and the backend's emitted-method
+// cache. A default is the same thing without an impl to sit in, so presenting it as one
+// is what lets the feature reuse all of them instead of teaching each about a second
+// shape.
+//
+// **The identity is the point, which is why this lives on the AST rather than in a
+// per-pass cache.** Those consumers key on the pointer — the emitted-method cache, the
+// per-specialization ownership table, the purity pass's effect map — so two passes
+// building their own would disagree about whether they are looking at the same method,
+// and the body would be emitted once per call site. One instance per trait method, *not*
+// one per impl: the impl is what a specialization varies over (`Cat$Named$shout` beside
+// `Dog$Named$shout`), so sharing this is exactly what makes the body shared and the
+// specializations distinct — the arrangement a generic function already has.
+//
+// Must be called on an addressable trait method (`&trait.Methods[i]`), or the cache is
+// written to a copy and every call hands back a fresh pointer.
+func (t *TraitMethod) DefaultImpl() *TraitMethodImpl {
+	if t.DefaultMethod == nil {
+		return nil
+	}
+	if t.defaultImpl == nil {
+		t.defaultImpl = &TraitMethodImpl{
+			Name:      t.Name,
+			IsPure:    t.IsPure,
+			IsDet:     t.IsDet,
+			IsNoAlloc: t.IsNoAlloc,
+			Clause:    *t.DefaultMethod,
+			Doc:       t.Doc,
+		}
+	}
+	return t.defaultImpl
 }
 
 // MethodNameKind classifies a trait method name. Prefix vs binary matters for

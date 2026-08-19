@@ -160,13 +160,13 @@ func (l *lowerer) definePendingTraitMethods() error {
 // A `.`-call writes the receiver as the object rather than as an argument, so it is
 // prepended here; a fully-qualified `Trait::method(x)` already has it in the argument
 // list and does not reach this path.
-func (l *lowerer) lowerTraitMethodCall(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, fn *ir.Func) (value.Value, *ir.Block, error) {
+func (l *lowerer) lowerTraitMethodCall(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, fn *ir.Func, res typetable.Resolution) (value.Value, *ir.Block, error) {
 	// The receiver is signature parameter 0 and each argument i is parameter i+1. Both go
 	// by pointer when their parameter is a `mut`/`ref` borrow — the same convention
 	// Resolution.Lambda binds the body against, and the two must agree: a body expecting a
 	// pointer handed a value (or the reverse) is not a type error the front end can catch,
 	// it is a wild load.
-	params := l.methodParamModes(call)
+	params := l.methodParams(call, res)
 	recv, block, err := l.methodOperand(block, member.Object, params, 0)
 	if err != nil {
 		return nil, nil, err
@@ -187,9 +187,31 @@ func (l *lowerer) lowerTraitMethodCall(block *ir.Block, call *ast.FunctionCallEx
 	return block.NewCall(fn, args...), block, nil
 }
 
-// methodParamModes returns the trait signature's parameters for a resolved `.`-call, or nil
-// when there is no resolution (a fully-qualified call, or an unresolved one) — in which case
-// every operand goes by value, which is what this path did before signatures carried modes.
+// methodParams returns the trait signature's parameters for a trait-method call — the
+// borrow modes its operands must be passed under.
+//
+// **The resolution is taken from the caller first, and the table only as a fallback**,
+// because a **bound-dispatched** call has no entry in the resolution table: it was
+// resolved abstractly at check time and its concrete impl comes from the candidate table
+// at lowering, which only the caller has in hand. Reading the table alone returned nil
+// modes there, so every operand went by value — and a `mut` receiver, whose emitted
+// function takes a pointer, was handed a struct. That is not a diagnosable mismatch, it
+// is a wild load: `v.bump(n)` under `where t: Bump` segfaulted, and so did the identical
+// call inside a trait default.
+//
+// Both call forms are resolved, and their operands line up differently: for a `.`-call the
+// receiver is parameter 0 and argument i is parameter i+1, while a fully-qualified
+// `Trait::method(x, …)` passes the receiver *as* argument 0, so index and position agree.
+// The offset is the caller's to apply — see methodOperand.
+func (l *lowerer) methodParams(call *ast.FunctionCallExpr, res typetable.Resolution) []types.ParameterType {
+	if res.Signature != nil {
+		return res.Signature.Parameters
+	}
+	return l.methodParamModes(call)
+}
+
+// methodParamModes returns the parameters recorded for a call in the resolution table, or
+// nil for a call that has none. See methodParams, which prefers a resolution in hand.
 func (l *lowerer) methodParamModes(call *ast.FunctionCallExpr) []types.ParameterType {
 	res, ok := l.res.MethodTable.GetResolution(call)
 	if !ok || res.Signature == nil {
@@ -230,7 +252,12 @@ func (l *lowerer) lowerBoundMethodCall(block *ir.Block, call *ast.FunctionCallEx
 		return nil, nil, fmt.Errorf("llvm: no type recorded for the receiver of %s::%s",
 			ref.Trait, ref.Method)
 	}
-	res, ok := l.res.MethodTable.BoundCandidate(call, recvT.String())
+	key, ok := l.candidateKey(member.Object)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no type recorded for the receiver of %s::%s",
+			ref.Trait, ref.Method)
+	}
+	res, ok := l.res.MethodTable.BoundCandidate(call, key)
 	if !ok {
 		// A bound satisfied through the *enclosing* declaration's bounds rather than by
 		// an impl — the receiver is still a type variable here because this body is
@@ -246,7 +273,7 @@ func (l *lowerer) lowerBoundMethodCall(block *ir.Block, call *ast.FunctionCallEx
 	if err != nil {
 		return nil, nil, err
 	}
-	return l.lowerTraitMethodCall(block, call, member, fn)
+	return l.lowerTraitMethodCall(block, call, member, fn, res)
 }
 
 // lowerOrdComparison lowers a comparison operator that dispatches to a trait impl —
@@ -364,14 +391,56 @@ func (l *lowerer) lowerOperatorImplCall(block *ir.Block, res typetable.Resolutio
 // not name one — the receiver was a type *variable* there, and only this specialization
 // fixes it.
 //
-// The key is the receiver's **substituted** type, which is what `recordedType` gives
-// inside a specialization. It is a separate step from `OperatorResolution` rather than a
-// fallback inside it, because the two answer different questions: one is "which impl did
-// the checker pick", the other "which impl does this instantiation name".
+// The key is the receiver's **substituted** type, in the typechecker's own spelling —
+// candidateKey, not recordedType; see its comment. It is a separate step from
+// `OperatorResolution` rather than a fallback inside it, because the two answer different
+// questions: one is "which impl did the checker pick", the other "which impl does this
+// instantiation name".
 func (l *lowerer) operatorCandidate(expr ast.Expression, receiver ast.Expression) (typetable.Resolution, bool) {
-	recv, ok := l.recordedType(receiver)
+	key, ok := l.candidateKey(receiver)
 	if !ok {
 		return typetable.Resolution{}, false
 	}
-	return l.res.MethodTable.OperatorCandidate(expr, recv.String())
+	return l.res.MethodTable.OperatorCandidate(expr, key)
+}
+
+// lowerTraitPathCall lowers the fully-qualified call form, `Trait::method(receiver, …)`.
+//
+// It type-checked and then died in the backend as `no type recorded for the callee of an
+// indirect call`, because lowerFunctionCallExpr knows a `MemberExpr` callee and an
+// identifier and nothing else, so a TraitMethodPathExpr fell through to the
+// function-value path — where the callee is a *name of a trait method*, which is not a
+// value and has no recorded type. That made the compiler's own advice unbuildable: the
+// ambiguity diagnostic for a name two traits provide says "use TraitName::method(...) to
+// disambiguate".
+//
+// Everything it needs is already published — dispatch records the full Resolution for
+// this call exactly as it does for a `.`-call. The one difference is the operand layout:
+// the receiver is argument 0 here rather than a separate expression, so arguments and
+// signature parameters are index-aligned and the loop needs no offset.
+func (l *lowerer) lowerTraitPathCall(block *ir.Block, call *ast.FunctionCallExpr, path *ast.TraitMethodPathExpr) (value.Value, *ir.Block, error) {
+	res, ok := l.res.MethodTable.GetResolution(call)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no resolution recorded for %s::%s",
+			path.TraitName, path.Method.Name)
+	}
+	fn, err := l.traitMethod(res)
+	if err != nil {
+		return nil, nil, err
+	}
+	params := l.methodParams(call, res)
+	args := make([]value.Value, 0, len(call.Arguments))
+	for i, arg := range call.Arguments {
+		v, next, err := l.methodOperand(block, arg, params, i)
+		if err != nil {
+			return nil, nil, err
+		}
+		block = next
+		args = append(args, v)
+	}
+	if len(args) != len(fn.Params) {
+		return nil, nil, fmt.Errorf("llvm: %s::%s expects %d argument(s) including the receiver, got %d",
+			path.TraitName, path.Method.Name, len(fn.Params), len(args))
+	}
+	return block.NewCall(fn, args...), block, nil
 }

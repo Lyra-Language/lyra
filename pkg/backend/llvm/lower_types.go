@@ -309,6 +309,29 @@ func (l *lowerer) recordedType(expr ast.Expression) (types.Type, bool) {
 	return t, true
 }
 
+// candidateKey is the string a call site looks a **published candidate** up by — a bound
+// method's impl, or an operator's — and it is deliberately *not* `recordedType(...).String()`.
+//
+// The candidate tables are built by the typechecker, which names a type the way it names
+// types: `Box<i64>`, and the mono key `Box$i64` beside it (typechecker's candidateKeys).
+// recordedType takes one further step this package needs everywhere else — it normalizes a
+// ParameterizedType to the *emitted instantiation's* named type, whose name carries the
+// declaring module's key, so `Box<i64>` becomes `main__Box$i64`. Looked up under that, a
+// generic impl's candidate was never found and the call failed to lower with "no impl of
+// … for it" — in any program that declares a `module`, and in none that does not, which is
+// what kept it out of every snippet-sized reproduction.
+//
+// So the rule is: **ask in the vocabulary the table was keyed in.** The alternative —
+// teaching the typechecker to predict this package's mangling — is a second copy of
+// instantiationSymbol, free to disagree with the one that emits the symbol.
+func (l *lowerer) candidateKey(expr ast.Expression) (string, bool) {
+	t, ok := l.res.TypeTable.Get(expr)
+	if !ok {
+		return "", false
+	}
+	return l.stripNewtype(l.applyTypeSubst(t)).String(), true
+}
+
 // stripNewtype removes newtype wrappers from t, resolving a type written as a
 // *name* through the symbol table — a struct field or array element declared as
 // `Meters` is recorded as an UnresolvedType, so that lookup is the only way to

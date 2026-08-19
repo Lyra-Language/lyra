@@ -1,6 +1,7 @@
 package checker_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
@@ -871,4 +872,43 @@ var log = 0
 let panic = (msg: string) -> i64 => { log = 1  0 }
 let f = pure (n: i64) -> i64 => panic("x")`
 	assertPurityCount(t, checkPurity(t, src), 1)
+}
+
+// A trait method's **default body** is held to the bound the trait declares for that
+// method, exactly as an impl's clause is.
+//
+// The diagnostic lands on the default — the body that is wrong — rather than on every
+// impl that inherited it, which is the point: the default is the one body the trait's
+// author controls, and reporting it at each implementer would blame code that wrote
+// nothing. Before defaults were dispatchable the bound was enforced on every *override*
+// and not on the thing being overridden, which is the wrong way round.
+func TestPurity_TraitDefaultBodyMustSatisfyItsDeclaredBound(t *testing.T) {
+	errs := checkPurity(t, `
+trait Named {
+  pure name: (Self) -> string
+  pure shout: (Self) -> string = (self) => {
+    println("side effect")
+    self.name() ++ "!"
+  }
+}
+struct Cat { n: i64 }
+impl Named for Cat { name = pure (self) => "cat" }
+`)
+	assertPurityCount(t, errs, 1)
+	if !strings.Contains(errs[0].Message, "println") {
+		t.Fatalf("expected the impure call to be named, got %q", errs[0].Message)
+	}
+}
+
+// The clean case, so the check above is not passing for the wrong reason.
+func TestPurity_TraitDefaultBodySatisfyingItsBoundIsFine(t *testing.T) {
+	errs := checkPurity(t, `
+trait Named {
+  pure name: (Self) -> string
+  pure shout: (Self) -> string = (self) => self.name() ++ "!"
+}
+struct Cat { n: i64 }
+impl Named for Cat { name = pure (self) => "cat" }
+`)
+	assertPurityCount(t, errs, 0)
 }

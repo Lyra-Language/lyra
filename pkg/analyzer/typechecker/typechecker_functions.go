@@ -1020,6 +1020,16 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		if ret, ok := tc.dispatchViaGenericBound(g, methodName, call); ok {
 			return ret
 		}
+		// Inside a trait's default body the receiver is `Self`, which is a type variable
+		// by construction and not one the author wrote — so the generic advice names a
+		// `where Self: Trait` clause that no program can write. The question there is
+		// which trait declares the method, and the answer is the one being declared.
+		if g.Name == selfVar && tc.currentDefaultTrait != "" {
+			tc.addError(member.GetLocation(), SeverityError,
+				"trait %s does not declare a method %q, so a default body cannot call it on `self`; declare it in %s (or in a supertrait) first",
+				tc.currentDefaultTrait, methodName, tc.currentDefaultTrait)
+			return nil
+		}
 		tc.addError(member.GetLocation(), SeverityError,
 			"type parameter %s has no method %q; add a `where %s: Trait` bound whose trait declares it",
 			g.Name, methodName, g.Name)

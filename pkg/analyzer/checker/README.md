@@ -357,6 +357,22 @@ type params (a `GenericType`, not a `PrimitiveType`); aggregates (can own manage
 Scoped to `LambdaExpr.Parameters` (every free function + nested lambda). AST-only; wired into
 the driver's lint block.
 
+## Trait default bodies in the purity pass
+
+`collectMethodImpls` gathers an impl's clauses **and** every trait method's default
+(`ast.TraitMethod.DefaultImpl()`), because a default is a body like any other and is
+dispatched to exactly as an impl's is. It is taken from that accessor rather than built
+here: the effect map is keyed by pointer and the typechecker's resolutions name that same
+instance, so a second one would leave every call to a default charged the unresolved-callee
+default (`AllEffects`) while the body it actually runs sat in the map unread.
+
+`checkTraitDefaultBounds` then holds each default to the bound its trait declares, as
+`checkTraitMethodBounds` does for an impl's clause. **The diagnostic lands on the default**,
+which is the body that is wrong, rather than on every impl that inherited it — the default
+is the one body the trait's author controls, and blaming implementers would blame code that
+wrote nothing. Before defaults were dispatchable the bound was enforced on every *override*
+and not on the thing being overridden.
+
 ## `array_repeat_alias.go`
 
 `CheckArrayRepeatAliasing(program, symTable, tt)` (`lyra-W019`) warns when `[v; n]` fills its

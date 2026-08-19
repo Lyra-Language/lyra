@@ -34,6 +34,11 @@ type TypeChecker struct {
 	traitImpls        []*ast.TraitImplStmt // every impl block in the program, collected up front by Check; see resolveTraitMethod
 	genericBounds     map[string][]string  // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
 	publishing        map[string]bool      // impl-body candidate publications in progress, so a body reaching itself terminates; see publishImplBodyCandidates
+	// currentDefaultTrait names the trait whose default-method body is being checked, or
+	// "" outside one. Read only by a diagnostic: inside a default, `Self` is a type
+	// variable the compiler introduced rather than one the author wrote, so the generic
+	// "add a `where Self: Trait` bound" advice names a clause no program can write.
+	currentDefaultTrait string
 	// currentImplMethod/currentImplType name the trait-impl method whose body is being
 	// checked, or the zero values outside one. Read by showApplies, which must not
 	// rewrite `${self}` inside `show` into a call to that same `show`.
@@ -138,6 +143,10 @@ func (tc *TypeChecker) Check(program *ast.Program) []TypeError {
 	// Before anything dispatches: two impls of one trait for one type make dispatch
 	// depend on declaration order, which is not a property a program should have.
 	tc.checkImplCoherence()
+	// Trait default-method bodies, checked once each with Self abstract. After the impls
+	// are collected: a call inside a default publishes one candidate per implementing
+	// type, and a candidate set gathered before the impls were known would be empty.
+	tc.checkTraitDefaultMethods(program)
 	// Check top-level `const`s first, in declaration order, so a later statement —
 	// a function body, or a subsequent const — that references one sees its resolved
 	// type. Lyra has no declare-before-use requirement at the top level (the same

@@ -107,6 +107,9 @@ func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable
 		if impl, ok := node.(*ast.TraitImplStmt); ok {
 			c.checkTraitMethodBounds(impl, base)
 		}
+		if trait, ok := node.(*ast.TraitDeclStmt); ok {
+			c.checkTraitDefaultBounds(trait, base)
+		}
 	}
 	return c.errors, c.missingPureBounds(program)
 }
@@ -135,6 +138,39 @@ func (c *purityChecker) checkTraitMethodBounds(impl *ast.TraitImplStmt, base []s
 		}
 		// Method parameters have no mut/own/ref modifier syntax yet (unlike a
 		// lambda's), so there is no mutBorrows set to populate here.
+		sc := &funcScope{locals: locals, mutBorrows: map[string]bool{}}
+		childCapture := pushScope(base, scope)
+		ast.WalkExpr(m.Clause.Body, c.stmtVisitor(sc), c.exprVisitor(sc, childCapture, nil))
+	}
+}
+
+// checkTraitDefaultBounds holds a trait method's **default body** to the bound the trait
+// declares for that method, exactly as checkTraitMethodBounds holds an impl's clause to it.
+//
+// A default is the body an impl inherits by writing nothing, so a `pure shout` whose
+// default prints has broken the contract at the declaration — and the diagnostic belongs
+// there, on the body that is wrong, rather than at each impl that inherited it. Without
+// this the bound is enforced on every override and not on the thing being overridden,
+// which is the wrong way round: the default is the one body the trait's author controls.
+//
+// The bound is the trait method's own annotation, with no impl to consult: there is no
+// override in play, which is exactly what makes this the default's case.
+func (c *purityChecker) checkTraitDefaultBounds(trait *ast.TraitDeclStmt, base []scopeBindings) {
+	for i := range trait.Methods {
+		tm := &trait.Methods[i]
+		m := tm.DefaultImpl()
+		if m == nil {
+			continue
+		}
+		c.checkBoundedEffects(tm.IsDet, tm.IsNoAlloc, c.impureMethods[m], m.Clause.GetLocation(), c.allocSites.methodSites[m])
+		if !tm.IsPure {
+			continue
+		}
+		scope := directScopeBindingsForClause(&m.Clause)
+		locals := make(map[string]bool, len(scope.mutable))
+		for name := range scope.mutable {
+			locals[name] = true
+		}
 		sc := &funcScope{locals: locals, mutBorrows: map[string]bool{}}
 		childCapture := pushScope(base, scope)
 		ast.WalkExpr(m.Clause.Body, c.stmtVisitor(sc), c.exprVisitor(sc, childCapture, nil))
@@ -1755,15 +1791,29 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 // keyed by pointer (impl.Methods[i]'s address is stable since Methods is
 // never reallocated after collection) so it matches the identity methodTable
 // resolutions use.
+// collectMethodImpls gathers every method body the fixpoint must account for: an impl's
+// own clauses, and a **trait method's default**, which is a body like any other and is
+// dispatched to exactly as an impl's is.
+//
+// A default is gathered through ast.TraitMethod.DefaultImpl(), not by building a
+// TraitMethodImpl here — the effect map is keyed by pointer and the typechecker's
+// resolutions name that same instance, so a second one would leave every call to a
+// default charged the unresolved-callee default (AllEffects) while the body it actually
+// runs sat in the map unread.
 func collectMethodImpls(program *ast.Program) []*ast.TraitMethodImpl {
 	var methods []*ast.TraitMethodImpl
 	for _, node := range program.Statements {
-		impl, ok := node.(*ast.TraitImplStmt)
-		if !ok {
-			continue
-		}
-		for i := range impl.Methods {
-			methods = append(methods, &impl.Methods[i])
+		switch decl := node.(type) {
+		case *ast.TraitImplStmt:
+			for i := range decl.Methods {
+				methods = append(methods, &decl.Methods[i])
+			}
+		case *ast.TraitDeclStmt:
+			for i := range decl.Methods {
+				if m := decl.Methods[i].DefaultImpl(); m != nil {
+					methods = append(methods, m)
+				}
+			}
 		}
 	}
 	return methods
