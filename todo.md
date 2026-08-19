@@ -2008,7 +2008,17 @@ Types, checked arithmetic, division via the builtins library, `match`, conversio
 
 ## Foreign functions — `extern`
 
-**[DECIDED 08/19] Nothing is built.** Raw pointers landed the same day, which is what makes
+**[PARTIAL 08/19] The grammar is built; nothing else is.** `extern` parses — the
+declaration form, the `unsafe`-plus-bound prefix and `@link("m")` — and the collector
+**refuses it loudly**, because a declaration that parses and collects to nothing is the
+phantom shape this file keeps cataloguing. What remains is inference (the signature, the
+asserted bound, FFI-safe types), `@link` collection, and lowering.
+
+Grammar notes, including the state-cost measurement that chose the modifier shape, are in
+`tree-sitter-lyra/CLAUDE.md`. `extern` is **not** reserved — it is a keyword only in
+declaration position, exactly like `type`.
+
+**[DECIDED 08/19] The design below is settled.** Raw pointers landed the same day, which is what makes
 this worth settling: the piece an `extern` sits on now works, and what remains is three
 questions of meaning rather than three subsystems.
 

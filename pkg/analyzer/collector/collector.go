@@ -571,6 +571,17 @@ func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 		return statements.CollectContinueStatement(node, c.ctx)
 	case "return_statement":
 		return statements.CollectReturnStatement(node, c.ctx)
+	case "extern_declaration":
+		// Parses since 08/19 and is read by nobody: inference, the effect rules the
+		// declaration asserts, `@link` collection and lowering are all unwritten. Refused
+		// **loudly** rather than dropped, because a declaration that collects to nothing
+		// is the phantom shape this project keeps cataloguing — it would look implemented
+		// and do nothing, which costs more than an absent feature. The design it is
+		// waiting on is settled; see todo.md, Foreign functions.
+		c.addError(node, diag.SeverityError,
+			"`extern` is not implemented yet: the declaration parses, but nothing type-checks "+
+				"or links a foreign function — see todo.md (Foreign functions)")
+		return nil
 	}
 	return nil
 }

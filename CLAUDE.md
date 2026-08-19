@@ -760,8 +760,11 @@ go test -run TestFunctionName ./pkg/...
 
 ## Foreign functions
 
-Not built. The three design questions are **settled** in `todo.md` (Foreign functions —
-`extern`), and the summary a reader needs before touching anything nearby:
+**The grammar parses `extern`; nothing else exists.** The collector refuses it loudly
+(a declaration that parses and collects to nothing is the phantom shape this project
+hunts), so what remains is inference, `@link` collection and lowering. The design is
+**settled** in `todo.md` (Foreign functions — `extern`); the summary a reader needs before
+touching anything nearby:
 
 - **An extern carries `AllEffects` unless a bound is written, and writing one is `unsafe`.**
   For Lyra code a bound is a promise the compiler checks; for an extern it is a promise the
