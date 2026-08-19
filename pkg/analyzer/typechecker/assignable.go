@@ -689,14 +689,57 @@ func nominalName(t types.Type) (string, bool) {
 }
 
 // areEqualityCompatible reports whether two types can be compared with == or !=.
-// The rule is symmetric assignability: a == b is valid whenever a can be
-// assigned to b's type OR b can be assigned to a's type. This covers:
+//
+// The rule is symmetric assignability: `a == b` is valid whenever a can be assigned to
+// b's type OR b can be assigned to a's. This covers:
 //   - Same concrete types:            bool == bool, i32 == i32
 //   - Untyped widening to concrete:   i32 == 5, f64 == 1.0
 //   - Rejects int/float mixing:       5 == 5.0  (UntypedInt ↛ UntypedFloat)
 //   - Rejects cross-kind mismatches:  string == 5, bool == 5
+//
+// **Plus one pair assignability cannot express: two untyped integers of different
+// signedness.** A negative literal is `untyped_signed_int` and a non-negative one is
+// `untyped_int`, and neither is assignable to the other — assignability widens an untyped
+// type to a *concrete* one and says nothing about two placeholders. Both pin to the same
+// concrete type in the end, so refusing the comparison describes nothing real, and it was
+// reachable from ordinary code:
+//
+//	for d in -1..<=1 { if d != 0 { … } }
+//
+// A range with a negative bound gives the loop variable `untyped_signed_int`; the `0` is
+// `untyped_int`. `d < 0` compiled and `d != 0` did not, reporting "incompatible types:
+// integer literal and integer literal" — the same words twice, which is the signature of
+// exactly this kind of asymmetry — and there is no annotation to reach for, since
+// `for d: i64 in …` is a syntax error. The neighbour-offset loop every grid program
+// writes lands on it.
+//
+// It is written here rather than in isAssignable deliberately. Assignability is asked at
+// every owning site — binding, argument, return, field, element — and "an untyped int
+// fits an untyped-signed-int slot" is not a claim any of those need, since neither is a
+// slot a value ever lands in. Ordering (`<`, `<=>`) already accepts the pair through
+// numericResultType, which is the rule this brings equality into line with, and *only*
+// for this pair: numericResultType is the wider rule in another direction (it accepts
+// `5 < 5.0`), and equality's refusal of int/float mixing is deliberate.
 func areEqualityCompatible(a, b types.Type) bool {
+	if bothUntypedInts(a, b) {
+		return true
+	}
 	return isAssignable(a, b) || isAssignable(b, a)
+}
+
+// bothUntypedInts reports whether a and b are both un-pinned integer literals — the pair
+// `untyped_int` and `untyped_signed_int`, in either order. Equal untyped types are left to
+// isAssignable, which already answers them.
+func bothUntypedInts(a, b types.Type) bool {
+	ap, aOK := a.(types.PrimitiveType)
+	bp, bOK := b.(types.PrimitiveType)
+	if !aOK || !bOK {
+		return false
+	}
+	isUntypedInt := func(n types.PrimitiveTypeName) bool {
+		return n == types.UntypedInt || n == types.UntypedSignedInt
+	}
+	return isUntypedInt(ap.Name) && isUntypedInt(bp.Name)
 }
 
 // numericResultType returns the result type of a binary operation on two numeric types.

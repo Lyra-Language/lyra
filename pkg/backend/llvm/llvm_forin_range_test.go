@@ -254,3 +254,51 @@ let main = () -> u8 => {
 		})
 	}
 }
+
+// A range with a **negative bound** gives its counter the `untyped_signed_int` type,
+// while a non-negative literal is `untyped_int` — so `d != 0` compared two untyped
+// integers of different signedness, which assignability refuses and ordering accepts.
+// `d < 0` compiled and `d != 0` did not.
+//
+// The counter runs to the end here rather than only being compared, because the fix is in
+// the *typechecker* and the thing worth pinning at this level is that the loop still
+// emits the arithmetic it always did at whatever width the literal settles on.
+func TestExec_ForInRange_NegativeBoundCounterCompares(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  var nonzero = 0
+  var sum = 0
+  for d in -1..<=1 {
+    if d != 0 { nonzero = nonzero + 1 }
+    sum = sum + d
+  }
+  println("${nonzero} ${sum}")
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "2 0" {
+		t.Errorf("got %q; want \"2 0\"", got)
+	}
+}
+
+// The neighbour-offset loop the bug was found in — two nested ranges with negative
+// bounds, skipping the centre.
+func TestExec_ForInRange_NeighbourOffsets(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+let main = () -> void => {
+  var visited = 0
+  for dy in -1..<=1 {
+    for dx in -1..<=1 {
+      if dx != 0 || dy != 0 { visited = visited + 1 }
+    }
+  }
+  println("${visited}")
+}
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "8" {
+		t.Errorf("got %q; want \"8\"", got)
+	}
+}

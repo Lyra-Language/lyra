@@ -2394,14 +2394,26 @@ day it works.
 All three found writing Conway's Game of Life, which is the method this file keeps
 recommending — write the program someone would actually write, and see what it costs.
 
-- **A `for` over a range with a negative literal bound leaves the counter untyped.**
-  `for d in -1..<=1 { if d != 0 { … } }` is `lyra-E001: operator !=: incompatible types:
-  integer literal and integer literal`, while `for d in 0..<=2` over the same comparison
-  is fine. The start is `untyped_signed_int` and the `0` it is compared against is
-  `untyped_int`, and nothing reconciles them — so the counter never pins to `i64`. There
-  is no annotation to reach for either: `for d: i64 in …` is a syntax error, so the only
-  way out is to iterate an annotated array (`let around: [3]i64 = [-1, 0, 1]`), which is
-  what the example does. The natural spelling of every neighbour-offset loop there is.
+- **[DONE 08/19] A `for` over a range with a negative literal bound compares.**
+  `for d in -1..<=1 { if d != 0 { … } }` was `lyra-E001: operator !=: incompatible types:
+  integer literal and integer literal` — the same words twice, which is the signature of
+  the asymmetry it was: a negative literal is `untyped_signed_int` and a non-negative one
+  is `untyped_int`, and equality decided its operands with **assignability** while
+  ordering decided them with **numericResultType**. Neither untyped type is assignable to
+  the other (assignability widens an untyped type to a *concrete* one and says nothing
+  about two placeholders), so `d < 0` compiled and `d != 0` did not, with no annotation to
+  reach for — `for d: i64 in …` is a syntax error.
+
+  `areEqualityCompatible` admits that one pair. Deliberately not by adopting
+  numericResultType wholesale: that rule is wider in another direction (`5 < 5.0`
+  compiles), and equality's refusal of int/float mixing is a decision, not an oversight.
+  And deliberately not in `isAssignable`, which is asked at every owning site — "an
+  untyped int fits an untyped-signed-int slot" is not a claim any of those need, since
+  neither is a slot a value lands in. See COMPLETED.md.
+
+  **Left standing, and worth a look on its own:** ordering accepts `5 < 5.0` while
+  equality refuses `5 == 5.0`. One of the two is wrong and it is probably ordering, since
+  the int/float separation is written down as a rule; nothing here changed either.
 
 - **`for _ in 0..<n` is a syntax error.** A loop that repeats something a fixed number of
   times has no use for its counter, and the wildcard pattern — legal in a `let` since

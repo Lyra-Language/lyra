@@ -10,6 +10,33 @@ Newest first.
 ## Dated log
 
 ### 08/19/26
+**`for d in -1..<=1 { if d != 0 { … } }` compiles.** It was
+`lyra-E001: operator !=: incompatible types: integer literal and integer literal` — the
+same words twice, which is what an asymmetry between two rules looks like from the outside.
+
+A negative literal is `untyped_signed_int`, a non-negative one is `untyped_int`, so a range
+with a negative bound gives its counter the signed untyped type while the `0` it is
+compared against has the unsigned one. Equality decides its operands with
+**assignability**, ordering with **numericResultType**, and only the second knows that
+pair: assignability widens an untyped type to a *concrete* one and says nothing about two
+placeholders, neither of which is a slot a value ever lands in. So `d < 0` compiled and
+`d != 0` did not.
+
+There was also nothing to write instead. `for d: i64 in …` is a syntax error, so the only
+way out was to iterate an annotated array (`let around: [3]i64 = [-1, 0, 1]`), which is
+what `examples/life.lyra` does — the neighbour-offset loop is where this was found, and it
+is the loop every grid program writes.
+
+**The fix admits that one pair and no more.** Adopting numericResultType for equality was
+the first attempt and it broke four tests, correctly: that rule is wider in another
+direction — `5 < 5.0` compiles — and equality's refusal of int/float mixing is a written
+decision. Putting the rule in `isAssignable` instead would have answered a question none of
+its ~14 owning sites asks. So `areEqualityCompatible` takes the pair directly.
+
+Left standing and now in todo.md: ordering accepts `5 < 5.0` while equality refuses
+`5 == 5.0`. One of those is wrong, and it is probably ordering.
+
+### 08/19/26
 **Three bound-dispatch faults, found landing trait defaults; two of them reproduce with no
 default in sight.** All three type-checked cleanly, which is what they have in common: a
 call the typechecker resolved *abstractly* — the receiver was a type variable there — and

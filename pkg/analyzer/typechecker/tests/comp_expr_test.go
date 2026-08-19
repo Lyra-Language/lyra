@@ -231,3 +231,45 @@ func TestTypeCheck_Comparison_StringOperands_Error(t *testing.T) {
 	res := parseCollectAndCheck(t, `"a" < "b"`, false)
 	assertErrorsAre(t, res, "operator <: operands must be numeric or implement Ord, got string and string")
 }
+
+// **Two untyped integers of different signedness compare.** A negative literal is
+// `untyped_signed_int` and a non-negative one is `untyped_int`; neither is assignable to
+// the other, because assignability widens an untyped type to a *concrete* one and says
+// nothing about two placeholders. Both pin to the same concrete type in the end.
+//
+// It is reachable from a loop, not from a hand-written literal pair — a range with a
+// negative bound gives its counter the signed untyped type:
+//
+//	for d in -1..<=1 { if d != 0 { … } }
+//
+// and there is no annotation to reach for, since `for d: i64 in …` is a syntax error. `<`
+// accepted the pair through numericResultType all along, so this brings equality into
+// line with ordering rather than inventing a rule.
+func TestTypeCheck_Equality_UntypedSignedAndUnsignedLiterals(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let main = () -> void => {
+		  for d in -1..<=1 {
+		    if d != 0 { println("${d}") }
+		  }
+		}`, false)
+	assertNoErrors(t, res)
+}
+
+// The same pair under `==`, and written directly rather than through a loop counter.
+func TestTypeCheck_Equality_NegativeAndNonNegativeLiterals(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let main = () -> void => {
+		  var d = -1
+		  if d == 0 { println("zero") }
+		}`, false)
+	assertNoErrors(t, res)
+}
+
+// The widening this does *not* do. Equality's refusal of int/float mixing is deliberate,
+// and the numeric rule ordering uses is wider in that direction (`5 < 5.0` compiles), so
+// the untyped-integer case is admitted on its own rather than by adopting that rule
+// wholesale.
+func TestTypeCheck_Equality_StillRejectsIntAgainstFloat(t *testing.T) {
+	res := parseCollectAndCheck(t, "5 == 5.0", false)
+	assertErrorsAre(t, res, "operator ==: incompatible types: integer literal and float literal")
+}
