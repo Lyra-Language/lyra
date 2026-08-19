@@ -1888,6 +1888,85 @@ by-reference `mut`/`ref` parameters (d) landed 07/29.
   (Hylo/Swift copy-out/write-back subscripts — no holdable element reference, in-place via
   the optimizer) over a static container freeze. Parallel `ref` borrows get their
   no-mutation guarantee from `pure`/`det`, not a new checker.
+- **[OPEN] (e) Observable aliasing is a *separate* problem from (c), and is the one users
+  meet.** Filed 08/19. (c) is about a use-after-free RC cannot catch — an interior borrow
+  into a container that then resizes. This is about code that is perfectly memory-safe and
+  simply does something other than what it looks like:
+
+  ```lyra
+  var a: []i64 = [1, 2, 3]
+  var b = a
+  b[0] = 99        // a[0] is 99 as well
+  ```
+
+  Measured 08/19, all five rows run:
+
+  | form | result |
+  |---|---|
+  | `var b = a` on a `[]i64`, then `b[0] = 99` | `a[0]` is 99 — **silent**, nothing written |
+  | `var q = p` on a struct, then `q.tags[0] = …` | `p.tags[0]` changes too |
+  | `bump(c)` against `(xs: mut []i64)` | `c` changes — but `mut` is *written*, so it is declared |
+  | `var e = [x in d \| x]`, then `e[0] = 77` | `d` untouched — the copy idiom works |
+  | `var g = f` on a `[3]i64`, then `g[0] = 55` | `f` untouched — inline data is a real copy |
+
+  **Rust's model is coherent as a pair and Lyra has taken half of it.** `.clone()` is not
+  primarily a convenience there; it is what you are *forced* to write because the
+  alternative is prevented — assignment moves, and two mutable aliases into a `Vec` cannot
+  be had in safe code. Lyra dropped the prevention and never had the duplicate, so rows 1
+  and 2 above are exactly the situation Rust's design exists to make unwritable, and here
+  they are the default with nothing in the type, the syntax or a diagnostic to mark them.
+
+  **The one warning points at the rarest path.** `lyra-W019` fires on `[v; n]`, which a
+  scan on 08/19 found used **zero times** in `std/` and `examples/` combined, while
+  `var b = a` — the way anyone actually reaches the same aliasing — is silent.
+
+  Two things keep this from being an indictment, and they are why it is (e) rather than a
+  bug. It is **memory-safe**: RC means this cannot dangle or double-free, so the charge is
+  "surprising", not "unsound". And the obvious fix is worse than the disease: warning on
+  every binding copy of a managed value would fire on most lines of most programs, which is
+  the `det`/`noalloc` measurement all over again. Rust does not warn here either — it makes
+  the state unreachable.
+
+  **The default is defended by cost, not by meaning** — which is the thing to notice before
+  designing around it. Nothing here argues that reference semantics is what an author wants
+  from `var b = a`; the argument is that the alternative, copying, is O(n) and silent, which
+  is the C++ trap. Sharing as an *intent* is already spelled twice — the `shared` flavour,
+  and a `mut`/`ref` parameter mode, which is why row 3 above is fine and rows 1–2 are not.
+
+  ### Copy-on-write is the third option, and this compiler nearly has it
+
+  Swift's `Array` is a value type with COW: assignment stays O(1), `b[0] = 99` leaves `a`
+  alone, and a copy happens only on a write to a buffer someone else holds. The primitive
+  it needs is "is this buffer uniquely referenced?", and **that already exists here** —
+  `lyra_rc_drop_reuse` (`runtime.go`) is documented as
+
+  ```
+  rc == 1 → ret box       (unique; reclaim the shell, leave rc = 1, don't free)
+  else    → rc -= 1; ret null   (shared; decrement, can't reuse)
+  ```
+
+  which is `isKnownUniquelyReferenced` under another name, already emitted and already
+  relied on by Perceus reuse. The refcount and the uniqueness test are both in the compiler
+  today.
+
+  **What stops it is `noalloc`, and the collision is specific to this language.** COW does
+  not remove the surprise, it moves it from reads to writes: `xs[i] = v` may allocate and
+  copy n elements. Swift accepts that; Lyra has made non-allocation a *checkable bound*, so
+  the same trade leaves two bad options — `noalloc` code cannot mutate a `[]T` at all, which
+  guts the bound for the code most likely to want it, or the compiler must prove the buffer
+  unique *statically* at the write, which is exclusivity again.
+
+  **So the two are not competing answers: COW needs exclusivity to keep `noalloc` honest.**
+  The surprises are duals — today an unexpected *share*, under naive COW an unexpected
+  *allocation* — and the effect system is exactly what stops Lyra hiding the second the way
+  Swift can. Which is the argument for doing (c) first regardless of whether COW ever
+  follows it.
+
+  So the real answer is **(c) generalized** — exclusivity, whatever form it takes — and the
+  point of this entry is that (c)'s current scope (interior borrows into resizable
+  containers) does not cover it. Whatever lands for (c) should be checked against the table
+  above before it is called done, and against whether it is strong enough to let a COW
+  `[]T` mutate inside `noalloc`.
 
 ## Wider integers — `i128`/`u128`
 
@@ -2937,6 +3016,42 @@ What is left:
   means an alloca and a store loop, changing the value from an SSA aggregate to a loaded
   one.
 
+### [IDEA] `xs.copy()` — give "I want my own" a spelling
+
+Filed 08/19, out of the aliasing entry in *Borrow model* (e). It is one line of prelude:
+
+```lyra
+pub let copy<t> = pure (self: []t) -> []t => [x in self | x]
+```
+
+**Today the answer to "how do I not share this?" is an idiom you have to already know.**
+`var b = a` aliases; the fix is `var b = [x in a | x]`, which is a comprehension used for
+its side effect of allocating rather than for mapping anything. Naming it costs a line and
+gives two existing diagnostics something concrete to point at — `lyra-W019`, which
+currently describes the aliasing without offering a fix, and whatever (e) eventually says
+about a plain binding copy.
+
+**It is a shallow copy and the name must not promise more.** `[x in self | x]` duplicates
+the spine and retains each element, so `xs.copy()` on a `[][]bool` gives a new outer array
+whose rows are the *same* rows. That is the right depth for this language — an element's
+own box owns what it holds, which is the same stopping rule `retain.go` and `drop.go` both
+use — but it is exactly the sort of thing a reader assumes goes all the way down. The doc
+has to say so, and a nested structure still needs a nested comprehension.
+
+Two smaller questions to settle:
+
+- **Is it `copy` or `clone`?** `clone` carries Rust's meaning, which is recursive, so the
+  name would promise the depth this deliberately does not have. `copy` collides with
+  nothing today and reads as shallow.
+- **Does a `[N]T` want one?** No — an inline array is already copied by assignment (proved
+  in (e)'s table), so `copy` on a fixed array would be a no-op that implies the opposite
+  about the type it is *not* defined on. Defining it only for `[]t` is what makes its
+  existence informative.
+
+**What this does not do** is fix the default. `var b = a` still aliases silently, and only
+exclusivity — (c) generalized — changes that. This is a name for the workaround, filed as
+an [IDEA] rather than a plan so it is not mistaken for the answer.
+
 ### [OPEN] A `[]t` combinator is unreachable from an array literal
 
 `[1, 2, 3].map(f)` and `["a", "b"].join("")` are both errors: an array literal infers a
@@ -2990,6 +3105,101 @@ all. `var cs: []shared Cell = [Cell { n: 0 }, Cell { n: 0 }]` dies in the backen
 repeat spelling fails identically — so it is the array literal's coercion of an element
 into a shared box, not anything to do with `[v; n]`. The warning covers the case on the
 day it works.
+
+### [IDEA] `[v; n]` could evaluate `v` n times, and then `[[false; width]; height]` works
+
+Raised 08/19 from `examples/life.lyra`, whose three grid builders are all nested loops or
+comprehensions because the short spelling is the wrong one. The proposal is one sentence:
+**`[v; n]` evaluates its operand once per slot instead of once**, so the inner literal in
+`[[false; width]; height]` is a fresh row each time and the form everybody reaches for
+first is the form that works.
+
+**It is narrower than it sounds.** For a *binding* operand nothing changes: `[s; n]`
+evaluates a name n times, which is n reads of one value, identical to today apart from
+where the retains come from. The two rules diverge only where the operand **allocates or
+has an effect** — which is exactly the set `lyra-W019` was invented for.
+
+**And wider.** The form stops being "a value, repeated" and becomes a loop whose trip
+count is a runtime value: `[read_line(); 3]` reads three lines, `[expensive(); n]` is n
+calls. Today's contract is one evaluation, stated in `CLAUDE.md` and argued in
+`lowerArrayRepeatExpr`'s comment, and "expensive paths are loud" is a rule against a hidden
+loop with no loop syntax. The counter-argument is that `[roll(); 5]` meaning five rolls is
+what a reader expects anyway, and that the current answer is defensible mainly because
+Rust's is.
+
+### What is traded, and where it goes
+
+A **deliberate alias with a dynamic count** — n slots pointing at one `shared` object —
+becomes unspellable in this form. It is one line as a comprehension:
+
+```lyra
+let e = empty(); [ i in 0..<n | e ]
+```
+
+Note the symmetry, which is the whole argument: **today the *fresh* case is the
+comprehension**, and after the change the *shared* case is. One of the two always lands
+there and the question is only which meaning the three-character form carries. Building n
+fresh things is far commoner than building n aliases of one, so the short form should be
+that.
+
+### The cost model is recoverable, and this compiler is well placed to recover it
+
+If the operand is **`pure noalloc`**, evaluating once and copying is indistinguishable from
+evaluating n times — and that is a predicate the effect passes already decide mechanically.
+So `[0; 1_000_000]` stays a memset and only an allocating or effectful operand pays for the
+loop. The backend needs less than it looks: `lowerDynArrayRepeatRuntime` already emits a
+loop for a runtime count, so the change there is *where the operand is evaluated* rather
+than a new shape.
+
+It also **simplifies the lowering it touches**. Evaluating once is what forces the n-1
+extra retains — each slot is an owner of a value the expression produced one reference to.
+Under per-slot evaluation each iteration produces its own reference and those retains go
+away.
+
+### What it does *not* buy: W019 stays
+
+The warning narrows, it does not retire. `let row = mk_row(); [row; h]` is still a genuine
+alias under the new rule, so `ownership.SharesMutableState` still has a case to cover — it
+simply stops firing on `[[' '; WIDTH]; HEIGHT]`, the spelling everybody writes. Anyone
+proposing this as "delete a warning" has mis-costed it; the payoff is that the idiomatic
+line stops being wrong, not that the diagnostic disappears.
+
+### Two alternatives, both rejected here for stated reasons
+
+- **Clone per slot, keeping one evaluation** — Rust's answer, where `vec![v; n]` requires
+  `Clone` and copies into each slot. It reaches the same destination without turning the
+  form into a loop, and it is unavailable here: a copy of a managed value in Lyra is a
+  *retain*, so this would need deep clone as a new language concept, with its own answers
+  for cycles and for a `shared` reference that was meant to stay shared.
+- **Distinguish by syntax** — Ruby's `Array.new(3, [])` against `Array.new(3) { … }`, or a
+  second spelling here taking a lambda. It keeps both meanings and makes the reader choose,
+  at the price of two forms for one idea and a `{ … }` that is a thunk rather than a block.
+  Worth reconsidering only if the deliberate-alias case turns out to be commoner than this
+  entry assumes.
+
+### Measured 08/19, and it favours the change
+
+The question the design turns on is whether `[v; n]` with an **effectful** operand appears
+anywhere, since that is the only case the loop objection is about. Scanned:
+
+- **Zero occurrences of the form in `std/` and `examples/` — all of them, none.** The
+  shipped library and every example build their arrays with a loop or a comprehension,
+  including the three grid builders in `life.lyra`, which are written that way *because*
+  the short spelling is the wrong one. So the change breaks no shipped Lyra code.
+- 23 distinct operands across `pkg/backend/llvm`'s tests, and they sort into three groups:
+  integer literals (`[0; 5]`, `[0; w * h]`, `[7; n]`), bindings (`[s; 3]`, `[row; 3]`) and
+  struct literals (`[Pt { x: 1, y: 2 }; 3]`, `[Cell { n: 0 }; 3]`).
+- **Exactly two effectful operands exist: `[next(); 3]` and `[noisy(); 3]`** — and both are
+  tests written to pin the evaluate-once contract itself.
+
+So the hidden-loop objection has no instance outside the tests that assert it, while the
+trap it is weighed against has two dated ones in real programs (`examples/mandelbrot.lyra`
+08/14, `examples/life.lyra` 08/18). That is not proof — the library is young and the form
+is new — but it is the evidence available, and it points one way.
+
+The literals and struct literals are all `pure noalloc`, so under the optimization above
+every one of them lowers exactly as it does today. The two effectful tests would change
+meaning by design, and their being the *only* things that change is the argument.
 
 ### [OPEN] Three gaps `examples/life.lyra` walked into (08/18)
 
