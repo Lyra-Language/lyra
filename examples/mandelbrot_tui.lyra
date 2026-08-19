@@ -220,7 +220,7 @@ let draw = (term_cols: i64, term_rows: i64, view: View, mx: i64, my: i64) -> voi
   let canvas_rows = term_rows - 1
 
   var lines: []string = []
-  for i in 1..<=top {
+  for _ in 1..<=top {
     lines.push(spaces(term_cols))
   }
   for row in 1..<=rows {
@@ -235,7 +235,7 @@ let draw = (term_cols: i64, term_rows: i64, view: View, mx: i64, my: i64) -> voi
     let painted = render_row(row, rows, cols, w, mx - left, my - top)
     lines.push(spaces(left) ++ (painted ++ spaces(term_cols - cols - left)))
   }
-  for i in 1..<=(canvas_rows - rows - top) {
+  for _ in 1..<=(canvas_rows - rows - top) {
     lines.push(spaces(term_cols))
   }
   lines.push(status(term_cols, term_rows, view))
@@ -248,7 +248,7 @@ let draw = (term_cols: i64, term_rows: i64, view: View, mx: i64, my: i64) -> voi
 /// right answer there rather than a trap.
 let spaces = pure (n: i64) -> string => {
   var out = ""
-  for i in 1..<=n { out = out ++ " " }
+  for _ in 1..<=n { out = out ++ " " }
   out
 }
 
@@ -380,7 +380,7 @@ let fit = pure (text: string, width: i64) -> string => {
     text.slice(0, width)
   } else {
     var padded = text
-    for i in text.len()..<width {
+    for _ in text.len()..<width {
       padded = padded ++ " "
     }
     padded

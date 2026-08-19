@@ -79,7 +79,7 @@ pub let to_fixed = pure (self: f64, places: i64) -> string => {
   }
 
   var scale = 1
-  for i in 0..<places {
+  for _ in 0..<places {
     scale *= 10
   }
 
@@ -99,7 +99,7 @@ pub let to_fixed = pure (self: f64, places: i64) -> string => {
     sign ++ "${whole}"
   } else {
     var digits = "${fraction}"
-    for i in 0..<(places - digits.len()) {
+    for _ in 0..<(places - digits.len()) {
       digits = "0" ++ digits
     }
     sign ++ "${whole}" ++ "." ++ digits

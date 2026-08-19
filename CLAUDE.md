@@ -199,7 +199,16 @@ real failure, and none is local to one package.
     has one. When a bug's trigger is a header, snippet-sized testing is structurally
     blind to it — the backend suite prepends `module main` for exactly this reason.
 
-14. **A builtin returning an owned managed value needs two things the defaults get wrong.**
+14. **A diagnostic with no Location is not merely imprecise — it appears on every file.**
+    `diagnosticsFor` keeps a location-less diagnostic deliberately, on the grounds that it
+    is program-level and has nowhere else to go (a missing `main`), so a *per-node* warning
+    whose node has a zero Location attaches itself to whatever the user is compiling. Two
+    warnings on prelude loops showed up on a file with no loop in it, which is how the
+    missing `Location` on `ForInLoopExpr` was found — it had never had one. When adding a
+    node, set its span; when adding a diagnostic, check that the node you report against
+    has one.
+
+15. **A builtin returning an owned managed value needs two things the defaults get wrong.**
     `read_line` is the model: the ownership pass must know it owns its result
     (`calleeIsOwningBuiltin`), because the unresolved-callee default treats a *result* as
     borrowed and that direction leaks rather than being leak-safe; and its call site must

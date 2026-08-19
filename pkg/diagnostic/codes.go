@@ -562,6 +562,25 @@ const (
 	// — does not fire. See ownership.SharesMutableState.
 	CodeSharedRepeatElement = "lyra-W019"
 
+	// CodeUnusedLoopBinding: a `for-in` binding the loop body never reads.
+	//
+	// Separate from CodeUnusedVariable because the *fix* is different, and the fix is the
+	// point: an unused local can be deleted, while a loop binding cannot — the loop still
+	// has to iterate — so the answer is `_`, which names nothing and is unforgeable by
+	// anything the body could refer to (no identifier is a bare underscore).
+	//
+	// **It had nowhere to point until `for _ in` parsed** (08/19). Before that the only
+	// way to write "I do not read this counter" was to name it something and not read it,
+	// which is what the warning would have been complaining about — advice to use a
+	// spelling the parser rejects is worse than silence, and is why a loop counter nobody
+	// reads went unremarked while the identical `let` did not.
+	//
+	// The two-name form is where it earns its keep: `for k, v in xs` that reads only `v`
+	// is exactly the case `for _, v in xs` was added for. A name already starting with `_`
+	// is exempt, matching the unused-local rule — `_i` is the older spelling of the same
+	// intent and still reads as deliberate.
+	CodeUnusedLoopBinding = "lyra-W020"
+
 	CodeShadowing       = "lyra-W001"
 	CodeUnreachableCode = "lyra-W002"
 	CodeUnusedVariable  = "lyra-W003"

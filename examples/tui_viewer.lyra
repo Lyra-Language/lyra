@@ -196,7 +196,7 @@ let fit = pure (text: string, width: i64) -> string => {
     text.slice(0, width)
   } else {
     var padded = text
-    for i in text.len()..<width {
+    for _ in text.len()..<width {
       padded = padded ++ " "
     }
     padded

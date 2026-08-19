@@ -57,7 +57,7 @@ let draw_calibration = (title: string, nl: string) -> void => {
   print(bold() ++ ("  " ++ (title ++ (reset() ++ nl))))
   print(dim() ++ ("  Which bar is square? Its label is your cell aspect ratio." ++ (reset() ++ nl ++ nl)))
 
-  for r in 0..<BAR_ROWS {
+  for _ in 0..<BAR_ROWS {
     var line = "  "
     for i in 0..<WIDTHS.len() {
       line = line ++ (bg(COLORS[i]) ++ (spaces(WIDTHS[i]) ++ (reset() ++ "  ")))
@@ -81,7 +81,7 @@ let draw_calibration = (title: string, nl: string) -> void => {
 /// the character count — the same one-character-per-cell rule the viewer follows.
 let spaces = pure (n: i64) -> string => {
   var out = ""
-  for i in 0..<n { out = out ++ " " }
+  for _ in 0..<n { out = out ++ " " }
   out
 }
 

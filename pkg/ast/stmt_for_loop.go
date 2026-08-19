@@ -24,11 +24,16 @@ func (t *ForLoopExpr) GetName() string { return "for_loop" }
 
 type ForInLoopExpr struct {
 	ExprBase
-	Label    string
-	Key      string
-	Value    string
-	Iterable Expression
-	Body     *BlockExpr
+	Label string
+	Key   string
+	Value string
+	// KeyLocation/ValueLocation span just the binding names, for a diagnostic that is
+	// about one of them rather than about the loop (lyra-W020). Tagged out of the printer
+	// like every other auxiliary position, so goldens stay stable.
+	KeyLocation   Location `print:"-"`
+	ValueLocation Location `print:"-"`
+	Iterable      Expression
+	Body          *BlockExpr
 }
 
 func (t *ForInLoopExpr) GetName() string { return "for_in_loop" }

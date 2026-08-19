@@ -2427,9 +2427,12 @@ recommending — write the program someone would actually write, and see what it
   so the body cannot refer to it and nested wildcards simply shadow each other. Cost: +1
   parser state. See COMPLETED.md.
 
-  **Still open, and now worth more:** nothing warns about an unused *named* loop counter
-  (`lyra-W003` covers `let`/`var`, not loop bindings). The warning would have somewhere to
-  point now — `for _ in` is the fix it would name — which it did not before.
+  **[DONE 08/19] And the warning that wanted it**: `lyra-W020` reports a `for-in` binding
+  the body never reads, naming `_` as the fix. It is a separate code from the unused-local
+  warning because the fix differs — a local can be deleted, a loop binding cannot — and it
+  could not have existed before `for _ in` parsed, since the advice would have named a
+  spelling the parser rejects. Measured before shipping: 2 in the prelude, 7 across three
+  examples, all of them genuine and all now written `_`.
 
 - **No `min`/`max` in the prelude.** Every program that fits something to a window writes
   its own, and they are three characters of Lyra each. `clamp` exists in `std/tui/style.lyra`

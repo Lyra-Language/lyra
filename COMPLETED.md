@@ -10,6 +10,35 @@ Newest first.
 ## Dated log
 
 ### 08/19/26
+**`lyra-W020`: a `for-in` binding the body never reads.** It names `_` as the fix, which is
+why it could not have existed a day earlier — the advice would have been to write a
+spelling the parser rejects, and silence beats that.
+
+Separate from the unused-*local* warning because the fix is different and the difference is
+the whole point: a local can be deleted, a loop binding cannot, since the loop still has to
+iterate. The two-name form is where it earns its keep — `for k, v in xs` that reads only
+`v` is exactly the case `for _, v in xs` was added for. A name already starting with `_` is
+exempt, matching the unused-local rule.
+
+Both halves read one walk (`referencedNames`), because "is this name referenced" is the same
+question about two kinds of declaration and two copies would drift about the cases that make
+it conservative: a *write* counts as a read, and the walk descends into nested lambdas so a
+captured name is not reported.
+
+**Measured before shipping**, as lyra-W018 was: 2 instances in the prelude and 7 across
+three examples, every one of them a genuine unused counter. All are now written `_`.
+
+**It surfaced a bug worth more than the warning.** `ForInLoopExpr` carried **no Location** —
+the collector never set one — and a diagnostic reported against a zero Location does two
+things: it prints with no `line:col`, and it *escapes the driver's per-file filtering*, which
+keeps a location-less diagnostic on the grounds that it must be program-level. So the two
+prelude warnings appeared on **every file compiled**, attached to whatever the user was
+checking. The first sighting was `lyrac check` reporting `loop variable "i"` on a file with
+no loop in it. The loop now carries its own span, and `KeyLocation`/`ValueLocation` carry the
+bindings', so the warning points at the name it is about. Both are tagged out of the printer,
+so no golden moved.
+
+### 08/19/26
 **`for _ in 0..<n` parses** — a loop that repeats without naming a counter.
 
 `identifier` is `/(_[a-zA-Z0-9_]+|[a-z][a-zA-Z0-9_]*)/`: a leading underscore needs a

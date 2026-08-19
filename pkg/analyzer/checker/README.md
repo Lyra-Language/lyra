@@ -401,6 +401,27 @@ from a window resize is exactly the case the author cannot see the number for ei
 message names the struct field it reaches the sharing through (`SharedMutablePath`), and nothing
 for a tuple or `data` payload, whose own spelling already prints what they hold.
 
+### Unused loop bindings (`lyra-W020`)
+
+`checkLoopBindings` reports a `for-in` binding the body never reads, naming `_` as the fix.
+A separate code from `lyra-W003` because the fix differs and the difference is the point: an
+unused local can be deleted, a loop binding cannot — the loop still has to iterate.
+
+**It could not have existed before `for _ in` parsed** (08/19); until then the advice would
+have named a spelling the parser rejects. The two-name form is where it earns its keep —
+`for k, v in xs` reading only `v` is the case `for _, v in xs` exists for. A name already
+starting with `_` is exempt, matching the unused-local rule.
+
+Both halves of the pass share `referencedNames`, because "is this name referenced" is one
+question about two kinds of declaration; two copies would drift about exactly the cases that
+make it conservative (a write counts as a read; the walk descends into nested lambdas, so a
+captured name is not reported).
+
+**The warning is reported at `ForInLoopExpr.KeyLocation`/`ValueLocation`, not at the loop.**
+Beyond precision, this is load-bearing: the loop node had no Location at all until this
+landed, and a diagnostic with a zero Location escapes the driver's per-file filtering — the
+two prelude instances appeared on every file compiled, which is how the gap was found.
+
 ## `type_names.go`
 
 `CheckTypeNames(program)` (`lyra-W009`) warns when a **struct** is declared with an

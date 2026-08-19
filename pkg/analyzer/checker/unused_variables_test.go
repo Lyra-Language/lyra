@@ -2,6 +2,7 @@ package checker_test
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
@@ -183,4 +184,91 @@ let f = () => {
 }
 `
 	assertNoUnused(t, parseAndCheckUnused(t, src))
+}
+
+// loopBindingWarnings is the lyra-W020 half of the pass — a `for-in` binding the body
+// never reads.
+func loopBindingWarnings(t *testing.T, source string) []diag.Diagnostic {
+	t.Helper()
+	var out []diag.Diagnostic
+	for _, d := range parseAndCheckUnused(t, source) {
+		if d.Code == diag.CodeUnusedLoopBinding {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+func assertLoopBindings(t *testing.T, source string, wantNames ...string) {
+	t.Helper()
+	got := loopBindingWarnings(t, source)
+	if len(got) != len(wantNames) {
+		t.Fatalf("want %d loop-binding warnings %v, got %d: %v", len(wantNames), wantNames, len(got), got)
+	}
+	for i, name := range wantNames {
+		if !strings.Contains(got[i].Message, `"`+name+`"`) {
+			t.Errorf("warning %d does not name %q: %s", i, name, got[i].Message)
+		}
+		if got[i].Location.StartLine == 0 {
+			t.Errorf("warning %d has no location — a location-less diagnostic escapes the "+
+				"driver's per-file filtering and appears on every file compiled", i)
+		}
+	}
+}
+
+// The base case. The fix the message names is `_`, not deleting the binding: the loop
+// still has to iterate.
+func TestUnusedLoopBinding_CounterNobodyReads(t *testing.T) {
+	assertLoopBindings(t, `
+let main = () -> void => {
+  var n = 0
+  for i in 0..<3 { n = n + 1 }
+  println("${n}")
+}`, "i")
+}
+
+// The two-name form is where it earns its keep — `for k, v in xs` reading only `v` is the
+// case `for _, v in xs` exists for. Either position is checked.
+func TestUnusedLoopBinding_EitherPositionOfTwo(t *testing.T) {
+	assertLoopBindings(t, `
+let main = () -> void => {
+  var n = 0
+  for k, v in [1, 2] { n = n + v }
+  for a, b in [1, 2] { n = n + a }
+  println("${n}")
+}`, "k", "b")
+}
+
+// What must stay silent. `_` is the fix, so it cannot be the complaint; `_i` is the older
+// spelling of the same intent and is exempt like an unused local; and a name read anywhere
+// in the body counts, including inside a string interpolation and from a nested closure.
+func TestUnusedLoopBinding_SilentCases(t *testing.T) {
+	assertLoopBindings(t, `
+let main = () -> void => {
+  var n = 0
+  for _ in 0..<3 { n = n + 1 }
+  for _i in 0..<3 { n = n + 1 }
+  for j in 0..<3 { n = n + j }
+  for s in 0..<3 { println("${s}") }
+  for c in 0..<3 {
+    let f = () -> i64 => c
+    n = n + f()
+  }
+  println("${n}")
+}`)
+}
+
+// A write counts as a read, matching the unused-local rule: a binding assigned in the body
+// is being used, whatever it was initialized to.
+func TestUnusedLoopBinding_ReassignmentCounts(t *testing.T) {
+	assertLoopBindings(t, `
+let main = () -> void => {
+  var n = 0
+  for k, v in [1, 2] {
+    var m = v
+    m = k
+    n = n + m
+  }
+  println("${n}")
+}`)
 }
