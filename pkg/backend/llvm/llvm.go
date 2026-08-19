@@ -789,6 +789,12 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 		return l.lowerNullCoalescing(block, e)
 	case *ast.LambdaExpr:
 		return l.lowerLambdaExpr(block, e)
+	case *ast.AddressOfExpr:
+		return l.lowerAddressOf(block, e)
+	case *ast.DerefExpr:
+		return l.lowerDeref(block, e)
+	case *ast.UnsafeBlockExpr:
+		return l.lowerUnsafeBlock(block, e)
 	}
 	return nil, nil, fmt.Errorf("llvm: expression lowering not implemented for %T", expr)
 }

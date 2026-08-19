@@ -230,7 +230,7 @@ func (c *Collector) rewriteCtorChildren(expr ast.Expression) {
 	case *ast.YieldFromExpr:
 		e.Generator = c.rewriteCtorExpr(e.Generator)
 	case *ast.UnsafeBlockExpr:
-		c.rewriteCtorBlock(&e.Body)
+		c.rewriteCtorBlock(e.Body)
 	case *ast.DataConstructorExpr:
 		e.Value = c.rewriteCtorExpr(e.Value)
 	case *ast.GuardExpr:

@@ -1586,6 +1586,32 @@ skipping either is silent:
 operand layout: the receiver is argument 0 rather than a separate expression, so
 arguments and signature parameters are index-aligned where a `.`-call offsets by one.
 
+## Raw pointers (`pointers.go`)
+
+`&x`, `&mut x`, `p^`, `p^ = v` and `unsafe { … }`. **Every one is something this package
+already did**, which is why the feature is small here after being large in the front end:
+a raw pointer *is* an LLVM pointer, so `&x` is `argumentAddress` — the address a `mut`
+parameter is already passed by — `p^` is a load, `p^ = v` a store, and an `unsafe` block
+is its body. No ownership, no refcounting and no drop glue: a raw pointer does not own
+what it points at.
+
+Three things to keep:
+
+- **`argumentAddress`, never `lowerExpr`, for the operand of `&`.** `lowerExpr` yields the
+  *value*, and storing it into a fresh slot hands out the address of a copy. The
+  typechecker has already refused a non-lvalue operand (`lyra-E059`), so the fallback path
+  in `argumentAddress` is unreachable from here — and the error if it is reached is a hard
+  one, per rule 5.
+- **`^T` lowers to a pointer to its pointee, not `i8*`.** llir type-checks a store against
+  the destination's element type, so an opaque pointer panics on every write before clang
+  sees it. `^T` and `^mut T` lower identically; mutability is a front-end rule
+  (`lyra-E061`), not a machine distinction. A named pointee is safe to name mid-layout,
+  since every type is *declared* before any is defined.
+- **An `unsafe` block goes through `lowerBlockStmts`, not `lowerBlock`.** The latter
+  insists the block has a value, and `unsafe { p^ = v }` ends in an assignment and
+  produces none. `lowerForEffect` unwraps one to its body for the same reason a plain
+  block is unwrapped there.
+
 ## Behavioural tests
 
 **AddressSanitizer only works because the harness adds the `sanitize_address` function

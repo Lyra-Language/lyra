@@ -418,6 +418,25 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		// `(i64) -> i64` parameter accept a named function, a captureless lambda, and
 		// a capturing closure without specializing the call site.
 		return ClosureLLVMType(), nil
+	case types.RawPointerType:
+		// A raw pointer is an LLVM pointer **to its pointee's type**, not an opaque
+		// `i8*`: llir type-checks a store against the destination's element type, so an
+		// opaque pointer makes every write through one `store i64 into i8*` and panics
+		// before clang ever sees it. `^T` and `^mut T` lower identically — mutability is
+		// a front-end rule about what may be written through the pointer (lyra-E061),
+		// not a machine distinction.
+		//
+		// A named pointee is safe to name here even mid-layout: types are *declared*
+		// before any is defined (lowerTypeDeclarations, then lowerTypeDefinitions), so
+		// `^Node` inside `Node` names a type that already exists.
+		if t.Pointee == nil {
+			return lltypes.NewPointer(lltypes.I8), nil
+		}
+		pointee, err := l.lowerType(t.Pointee)
+		if err != nil {
+			return nil, err
+		}
+		return lltypes.NewPointer(pointee), nil
 	case types.WeakType:
 		// A weak reference is a non-owning pointer (pointer-sized), so it lowers to
 		// an opaque `i8*` — enough to lay out a `weak` field and break a recursive

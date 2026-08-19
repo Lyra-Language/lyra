@@ -10,6 +10,47 @@ Newest first.
 ## Dated log
 
 ### 08/19/26
+**Raw pointers infer and lower.** `&x`, `&mut x`, `p^`, `p^ = v` and `unsafe { … }` all
+work, and `lyra-E011`'s unsafe-context policy is reported again after being withdrawn on
+08/13 — its advice was to write an `unsafe` block that was itself an unknown expression,
+and a diagnostic whose fix does not compile is worse than none.
+
+**Large in the front end and small in the back**, which is the shape worth recording. A
+raw pointer *is* an LLVM pointer: `&x` is `argumentAddress` — the address a `mut`
+parameter is already passed by — `p^` is a load, `p^ = v` a store, and an `unsafe` block
+is its body. No ownership, no refcounting, no drop glue, because a raw pointer does not
+own what it points at. The one thing that would have been wrong is `lowerExpr` on the
+operand of `&`, which yields the *value*; storing that into a fresh slot hands out the
+address of a copy.
+
+**Mutability is checked twice, and the two questions are not interchangeable.** `&mut x`
+asks whether **x** may be mutated — the binding rule every interior mutation obeys, reused
+so a `&mut` cannot outrun the assignment rule — while `p^ = v` asks whether **p** is a
+`^mut`. A `^mut T` may be copied into a `let` and a `^T` may be taken of a `var`, so
+neither answer implies the other, and checking only one lets a program write through a
+pointer it was never allowed to take.
+
+**`^T` lowers to a pointer to its pointee, not to an opaque `i8*`.** llir type-checks a
+store against the destination's element type, so the opaque form panicked on every write
+before clang saw it. The Linux/ASan suite is the check that matters for this: Debian's
+older clang uses *typed* pointers and rejects exactly the mismatches Apple clang's opaque
+ones make invisible. It passes.
+
+**One bug fell out that had been invisible by construction.** `UnsafeBlockExpr.Body` was a
+`BlockExpr` **by value**, so the collector's `Body: *body` stored a *copy* — with a
+different address from the node the scope table was keyed on. Every binding declared inside
+an `unsafe` block therefore resolved nowhere, and each reference reported "undefined
+identifier". It could not have been noticed while the block was refused before anything
+looked inside it, which is the recurring shape: an unimplemented feature hides its own
+bugs, and both surface the day it is implemented.
+
+Deliberately absent: pointer arithmetic, comparison, null, and any way to make a pointer
+other than `&`. A raw pointer addresses a binding that exists; producing one from an
+integer is a separate feature with its own safety story, and adding it silently as a
+consequence of `^T` being a type would be exactly the phantom surface this history is
+about.
+
+### 08/19/26
 **An import's member list restricts visibility.** `import std.tui.{ bg }` admitted `grey`,
 `rgb`, `bold` and every other `pub` name in the module. The rule in force was "any `pub`
 name of any module you imported at all", and the member list drove only the namespace

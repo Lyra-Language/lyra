@@ -98,6 +98,9 @@ func (l *lowerer) lowerBlockStmts(block *ir.Block, be *ast.BlockExpr, flushTail 
 		case *ast.LValueAssignmentStmt:
 			block, err = l.lowerLValueAssignment(block, s)
 			v = nil
+		case *ast.DerefAssignmentStmt:
+			block, err = l.lowerDerefAssignment(block, s)
+			v = nil
 		case *ast.DestructuringDeclStmt:
 			block, err = l.lowerDestructuringDecl(block, s)
 			v = nil
@@ -179,6 +182,13 @@ func (l *lowerer) lowerBlock(block *ir.Block, be *ast.BlockExpr) (value.Value, *
 func (l *lowerer) lowerForEffect(block *ir.Block, expr ast.Expression) (*ir.Block, error) {
 	if be, ok := expr.(*ast.BlockExpr); ok {
 		_, end, err := l.lowerBlockStmts(block, be, true)
+		return end, err
+	}
+	// An `unsafe` block is its body, here as everywhere: the keyword changes what the
+	// front end permits inside it and has no runtime meaning of its own, so a discarded
+	// tail's temporaries are released exactly as a plain block's are.
+	if ub, ok := expr.(*ast.UnsafeBlockExpr); ok && ub.Body != nil {
+		_, end, err := l.lowerBlockStmts(block, ub.Body, true)
 		return end, err
 	}
 	start := block

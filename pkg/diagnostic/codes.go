@@ -726,25 +726,36 @@ const (
 	// resolves it, which is what the message asks for.
 	CodeDestructureOfInferredReturn = "lyra-E058"
 
-	// CodeRawPointersNotImplemented: a raw-pointer operation (`&x`, `p^`, a write
-	// `p^ = v`) or an `unsafe { … }` block. The type system carries `^T`
-	// (types.RawPointerType unifies, substitutes and heads, and a newtype may wrap
-	// one), the grammar and collector build the nodes, and lyra-E011's
-	// unsafe-context policy checker is written and tested — but nothing infers
-	// these expressions and nothing lowers them, so every one of them died in the
-	// typechecker's default arm as `unknown expression type "address_of_expr"`.
+	// CodeRawPointersNotImplemented: **retired 08/19**, when raw pointers gained
+	// inference and lowering. It refused `&x`, `p^`, `p^ = v` and `unsafe { … }` from
+	// 08/13, in the register of "not implemented" rather than the internal-sounding
+	// "unknown expression type" they drew before that.
 	//
-	// Refused at the expression since 08/13, on the lyra-E035/E050 reasoning: a
-	// construct that cannot mean anything is refused where it is written, in the
-	// register of "not implemented" rather than an internal-sounding "unknown
-	// expression type". What made this one worse than an inert surface is that the
-	// compiler's own advice was impossible to follow — E011 told the user a raw
-	// pointer "requires an `unsafe` block or function", and `unsafe { … }` was
-	// itself an unknown expression, so following the instruction produced a
-	// different error. E011 is not reported while this is (see driver.go); it is
-	// the right policy for the day pointers work, and until then it can only send
-	// a reader somewhere that does not exist.
+	// Kept as a reserved code rather than reused: a diagnostic code is a thing people
+	// search for, and pointing lyra-E051 at some later feature would make every hit for
+	// it before this date describe the wrong thing. The operations report as ordinary
+	// type errors now (lyra-E059/E060/E061) and the unsafe-context rule is lyra-E011.
 	CodeRawPointersNotImplemented = "lyra-E051"
+
+	// CodeNotAddressable: `&` applied to something that is not storage — a call's
+	// result, an arithmetic expression, a literal. Only a binding, a field or an
+	// element has an address; a temporary stops existing at the end of the statement,
+	// so the pointer would dangle immediately.
+	CodeNotAddressable = "lyra-E059"
+
+	// CodeNotAPointer: `^` applied to a value that is not a raw pointer, reading or
+	// writing. Separate from the ordinary type mismatch because the operator is the
+	// thing to explain: `^` is postfix dereference here and prefix `^T` is the pointer
+	// *type*, so a reader who has met one may be reaching for the other.
+	CodeNotAPointer = "lyra-E060"
+
+	// CodeImmutablePointerWrite: `p^ = v` through a `^T` rather than a `^mut T`.
+	//
+	// Mutability is checked twice for raw pointers, and the two checks are not
+	// interchangeable: taking `&mut x` requires *x* to be mutable, while writing `p^ = v`
+	// requires *p* to be a mutable pointer. A `^mut T` may be copied into a `let`, and a
+	// `^T` may be taken of a `var`, so neither answer implies the other.
+	CodeImmutablePointerWrite = "lyra-E061"
 
 	// CodeArenaNotImplemented: a `with <handle> = <arena> { … }` statement. Arena
 	// allocation was designed early — the grammar, the collector, a reserved runtime

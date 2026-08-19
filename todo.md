@@ -477,6 +477,26 @@ write today:
   E011-and-E001 double report again — and stays where it does real work. Six tests
   inverted; the constraint suite is unchanged and still passes. See COMPLETED.md.
 
+- **[DONE 08/19] Raw pointers infer and lower.** `&x`, `&mut x`, `p^`, `p^ = v` and
+  `unsafe { … }` all work, and `lyra-E011`'s unsafe-context policy is reported again — it
+  had been withdrawn since 08/13 because its advice named a block that was itself an
+  unknown expression.
+
+  Small in the backend and not in the front end, which is the shape of it: a raw pointer
+  *is* an LLVM pointer, so `&x` is `argumentAddress` (the address a `mut` parameter is
+  already passed by), `p^` a load, `p^ = v` a store, and an `unsafe` block its body. No
+  ownership, no refcounting, no drop glue — a raw pointer does not own what it points at.
+
+  **Mutability is checked twice and the two are not interchangeable**: `&mut x` asks
+  whether *x* may be mutated (the binding rule every interior mutation obeys), `p^ = v`
+  asks whether *p* is a `^mut` (`lyra-E061`). A `^mut T` copies into a `let` and a `^T` can
+  be taken of a `var`, so neither implies the other. `&` of a temporary is `lyra-E059` and
+  `^` on a non-pointer is `lyra-E060`.
+
+  Deliberately absent: pointer arithmetic, comparison, null, and any way to make a pointer
+  other than `&`. Producing one from an integer is a separate feature with its own safety
+  story. See COMPLETED.md.
+
 - **[DONE 08/13] The raw-pointer / `unsafe` phantom is closed** (`lyra-E051`), and its
   distinguishing feature was that **the compiler's own advice could not be followed**.
   `&x` drew `lyra-E011` — "taking a raw pointer with `&` requires an `unsafe` block or

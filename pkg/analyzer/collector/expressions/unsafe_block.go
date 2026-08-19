@@ -17,6 +17,6 @@ func collectUnsafeBlockExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc ast.L
 	body := CollectBlockExpr(bodyNode, ctx, ctx.NodeLocation(bodyNode))
 	return &ast.UnsafeBlockExpr{
 		ExprBase: ast.ExprBase{AstBase: ast.AstBase{Location: loc}},
-		Body:     *body,
+		Body:     body,
 	}
 }

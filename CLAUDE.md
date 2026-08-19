@@ -363,6 +363,26 @@ impl that lacks it. That needs a full expression/statement cloner this compiler 
 have, and a missing case in one is a silently *shared* subtree — hazard 8 with a
 miscompile at the end of it.
 
+## Raw pointers
+
+`&x`/`&mut x`, `p^`, `p^ = v` and `unsafe { … }` (`typechecker_pointers.go`,
+`backend/llvm/pointers.go`). The language-level rules are in the workspace `CLAUDE.md`;
+inside this project, three things:
+
+- **`lyra-E011` is wired in again** (`driver.go`). Its policy — a raw-pointer op or a call
+  to an `unsafe` function needs an enclosing `unsafe` block or function, and unsafe-ness
+  does not leak across a lambda boundary — was written and tested throughout but *not run*
+  between 08/13 and 08/19, because the block it recommended was itself an unknown
+  expression.
+- **Mutability is two checks, deliberately.** `requireMutableRoot` reuses the binding rule
+  `checkLValueAssignment` applies, so a `&mut` cannot outrun the assignment rule; the
+  pointer's own `IsMut` is what `checkDerefWrite` tests. Neither implies the other.
+- **`UnsafeBlockExpr.Body` is a pointer**, and that is load-bearing rather than a style
+  choice: stored by value the collector's `Body: *body` kept a *copy*, whose address
+  differed from the node the scope table was keyed on, so every binding declared inside an
+  `unsafe` block resolved nowhere. Invisible while the block was refused before anything
+  looked inside it.
+
 ## Sweeping for surfaces nothing reads
 
 Features that parse, collect, and are consumed by nobody look implemented and do nothing,
