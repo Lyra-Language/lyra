@@ -477,7 +477,7 @@ write today:
   E011-and-E001 double report again — and stays where it does real work. Six tests
   inverted; the constraint suite is unchanged and still passes. See COMPLETED.md.
 
-- **[DONE 08/19] Raw pointers infer and lower.** `&x`, `&mut x`, `p^`, `p^ = v` and
+- **[DONE 08/18] Raw pointers infer and lower.** `&x`, `&mut x`, `p^`, `p^ = v` and
   `unsafe { … }` all work, and `lyra-E011`'s unsafe-context policy is reported again — it
   had been withdrawn since 08/13 because its advice named a block that was itself an
   unknown expression.
@@ -2018,7 +2018,7 @@ Grammar notes, including the state-cost measurement that chose the modifier shap
 `tree-sitter-lyra/CLAUDE.md`. `extern` is **not** reserved — it is a keyword only in
 declaration position, exactly like `type`.
 
-**[DECIDED 08/19] The design below is settled.** Raw pointers landed the same day, which is what makes
+**[DECIDED 08/18] The design below is settled.** Raw pointers landed the same day, which is what makes
 this worth settling: the piece an `extern` sits on now works, and what remains is three
 questions of meaning rather than three subsystems.
 
@@ -2097,7 +2097,7 @@ that produced it already put the caller.
 
 ### Linking — `@link`
 
-**[DECIDED 08/19]** A link requirement rides the `extern` that needs it:
+**[DECIDED 08/18]** A link requirement rides the `extern` that needs it:
 
 ```lyra
 @link("m")
@@ -2679,7 +2679,7 @@ still refuses them. See COMPLETED.md.
     Found 08/09 while weighing a `Length` trait beside `Needle`. It is the reason
     `trait Needle: Length` would not have helped: the bound would be enforced and
     `split` still could not call the method. That option is now open.
-- **[DONE 08/19] A trait *default method* is dispatched to**, and an impl overrides one
+- **[DONE 08/18] A trait *default method* is dispatched to**, and an impl overrides one
   by writing a clause. It was the **fifth** instance of the surface-nothing-reads shape,
   after `wallClock`, the `where` bounds, `@derive` and the operator-named methods.
 
@@ -2699,7 +2699,7 @@ still refuses them. See COMPLETED.md.
   at the default rather than at each impl that inherited it — the bound used to be
   enforced on every *override* and not on the thing being overridden. See COMPLETED.md.
 
-- **[DONE 08/19] Three bound-dispatch faults, all of them silent in a snippet.** Found
+- **[DONE 08/18] Three bound-dispatch faults, all of them silent in a snippet.** Found
   while landing trait defaults; two of them reproduce with no default in sight.
 
   1. **A `where`-bound call on a generic impl target did not lower once the program
@@ -3216,7 +3216,7 @@ meaning by design, and their being the *only* things that change is the argument
 All three found writing Conway's Game of Life, which is the method this file keeps
 recommending — write the program someone would actually write, and see what it costs.
 
-- **[DONE 08/19] A `for` over a range with a negative literal bound compares.**
+- **[DONE 08/18] A `for` over a range with a negative literal bound compares.**
   `for d in -1..<=1 { if d != 0 { … } }` was `lyra-E001: operator !=: incompatible types:
   integer literal and integer literal` — the same words twice, which is the signature of
   the asymmetry it was: a negative literal is `untyped_signed_int` and a non-negative one
@@ -3237,7 +3237,7 @@ recommending — write the program someone would actually write, and see what it
   equality refuses `5 == 5.0`. One of the two is wrong and it is probably ordering, since
   the int/float separation is written down as a rule; nothing here changed either.
 
-- **[DONE 08/19] `for _ in 0..<n` parses.** `identifier` is
+- **[DONE 08/18] `for _ in 0..<n` parses.** `identifier` is
   `/(_[a-zA-Z0-9_]+|[a-z][a-zA-Z0-9_]*)/` — a leading underscore needs a character after
   it — so `for _i in` worked and a bare `for _ in` was a syntax error, which is why the
   workaround (name the counter, never read it) read as a style choice rather than a
@@ -3249,7 +3249,7 @@ recommending — write the program someone would actually write, and see what it
   so the body cannot refer to it and nested wildcards simply shadow each other. Cost: +1
   parser state. See COMPLETED.md.
 
-  **[DONE 08/19] And the warning that wanted it**: `lyra-W020` reports a `for-in` binding
+  **[DONE 08/18] And the warning that wanted it**: `lyra-W020` reports a `for-in` binding
   the body never reads, naming `_` as the fix. It is a separate code from the unused-local
   warning because the fix differs — a local can be deleted, a loop binding cannot — and it
   could not have existed before `for _ in` parsed, since the advice would have named a
@@ -3292,7 +3292,7 @@ Frame diffing is the one with a measurement behind it already: `todo.md`'s rende
 section found that a terminal frame is better assembled into one string and printed once
 than positioned and printed per cell, so a diff wants to emit runs rather than cells.
 
-### [DONE 08/19] An import's member list restricts visibility
+### [DONE 08/18] An import's member list restricts visibility
 
 `import std.tui.{ bg }` used to admit every `pub` name in `std.tui` — `grey`, `rgb`,
 `bold`, the lot — because `exportToGlobal` put every export into one global scope that sat
@@ -3318,7 +3318,7 @@ through the scope chain, so the imports scope gates it structurally, but a type 
 through the Types/Traits maps keyed by `declKey` — which answers "whose declaration is
 this" and nothing about who may see it. See COMPLETED.md.
 
-### [DONE 08/19] Inference no longer depends on declaration order
+### [DONE 08/18] Inference no longer depends on declaration order
 
 `let (w, h) = contain_set(cols, rows)` failed when `contain_set` was declared **later** in
 the file with an inferred return type: a destructure needs the element types where the

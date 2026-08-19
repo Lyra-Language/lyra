@@ -110,7 +110,7 @@ func referencedNames(stmts []ast.Statement) map[string]bool {
 // the loop still has to iterate — so the answer is to write `_`, which says "no name" and
 // is unforgeable by anything the body could refer to.
 //
-// **The warning had nowhere to point until `for _ in` existed** (08/19), which is why a
+// **The warning had nowhere to point until `for _ in` existed** (08/18), which is why a
 // loop counter nobody reads went unremarked while the identical `let` did not. Advice to
 // use a spelling the parser rejects would have been worse than silence.
 //

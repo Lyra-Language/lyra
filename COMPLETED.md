@@ -9,7 +9,7 @@ Newest first.
 
 ## Dated log
 
-### 08/19/26
+### 08/18/26
 **Raw pointers infer and lower.** `&x`, `&mut x`, `p^`, `p^ = v` and `unsafe { … }` all
 work, and `lyra-E011`'s unsafe-context policy is reported again after being withdrawn on
 08/13 — its advice was to write an `unsafe` block that was itself an unknown expression,
@@ -50,7 +50,7 @@ integer is a separate feature with its own safety story, and adding it silently 
 consequence of `^T` being a type would be exactly the phantom surface this history is
 about.
 
-### 08/19/26
+### 08/18/26
 **An import's member list restricts visibility.** `import std.tui.{ bg }` admitted `grey`,
 `rgb`, `bold` and every other `pub` name in the module. The rule in force was "any `pub`
 name of any module you imported at all", and the member list drove only the namespace
@@ -101,7 +101,7 @@ resolve, so an exported-but-unimported name was reported as **private**, telling
 to add a `pub` that was already there. Before visibility was restricted the two could not
 be told apart there, because an exported type always resolved.
 
-### 08/19/26
+### 08/18/26
 **On-demand return inference: a destructure no longer depends on declaration order.**
 `let (w, h) = viewport()` with `viewport` declared below its caller and un-annotated was
 `lyra-E058`, asking for a return type. A destructure needs the element types where the
@@ -146,7 +146,7 @@ a method body is checked inside, restoring all of it after. The general rule: **
 hoists work must reset the context that work would have had**, not merely the context it
 needs to borrow.
 
-### 08/19/26
+### 08/18/26
 **`lyra-W020`: a `for-in` binding the body never reads.** It names `_` as the fix, which is
 why it could not have existed a day earlier — the advice would have been to write a
 spelling the parser rejects, and silence beats that.
@@ -175,7 +175,7 @@ no loop in it. The loop now carries its own span, and `KeyLocation`/`ValueLocati
 bindings', so the warning points at the name it is about. Both are tagged out of the printer,
 so no golden moved.
 
-### 08/19/26
+### 08/18/26
 **`for _ in 0..<n` parses** — a loop that repeats without naming a counter.
 
 `identifier` is `/(_[a-zA-Z0-9_]+|[a-z][a-zA-Z0-9_]*)/`: a leading underscore needs a
@@ -196,7 +196,7 @@ The alternative was a synthesized name per loop (`_for0`), which would have had 
 across nesting, would have shown up in diagnostics and debug output, and would have been
 forgeable — `_for0` is a legal identifier. Cost: **+1 parser state**, 7,821 → 7,822.
 
-### 08/19/26
+### 08/18/26
 **`for d in -1..<=1 { if d != 0 { … } }` compiles.** It was
 `lyra-E001: operator !=: incompatible types: integer literal and integer literal` — the
 same words twice, which is what an asymmetry between two rules looks like from the outside.
@@ -223,7 +223,7 @@ its ~14 owning sites asks. So `areEqualityCompatible` takes the pair directly.
 Left standing and now in todo.md: ordering accepts `5 < 5.0` while equality refuses
 `5 == 5.0`. One of those is wrong, and it is probably ordering.
 
-### 08/19/26
+### 08/18/26
 **Three bound-dispatch faults, found landing trait defaults; two of them reproduce with no
 default in sight.** All three type-checked cleanly, which is what they have in common: a
 call the typechecker resolved *abstractly* — the receiver was a type variable there — and

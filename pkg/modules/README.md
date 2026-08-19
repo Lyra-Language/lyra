@@ -120,7 +120,7 @@ backend's `namespaceCallee`, and both share three rules worth knowing:
 A local binding **shadows** a namespace, so `math.double` is an ordinary field read when `math`
 names a value.
 
-### An import's member list restricts visibility (08/19)
+### An import's member list restricts visibility (08/18)
 
 `import lib.{ listed }` admits `listed` and nothing else — not `lib`'s other exports, and not
 its types. Until this landed the rule was "any `pub` name of any module you imported at all",

@@ -372,7 +372,7 @@ inside this project, three things:
 - **`lyra-E011` is wired in again** (`driver.go`). Its policy — a raw-pointer op or a call
   to an `unsafe` function needs an enclosing `unsafe` block or function, and unsafe-ness
   does not leak across a lambda boundary — was written and tested throughout but *not run*
-  between 08/13 and 08/19, because the block it recommended was itself an unknown
+  between 08/13 and 08/18, because the block it recommended was itself an unknown
   expression.
 - **Mutability is two checks, deliberately.** `requireMutableRoot` reuses the binding rule
   `checkLValueAssignment` applies, so a `&mut` cannot outrun the assignment rule; the

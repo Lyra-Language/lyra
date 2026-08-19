@@ -3,7 +3,7 @@ package typechecker_test
 import "testing"
 
 // Raw pointers: `&x`, `&mut x`, `p^`, `p^ = v`, and the `unsafe { … }` block they must sit
-// inside. Implemented 08/19; refused as lyra-E051 from 08/13 until then, and before that
+// inside. Implemented 08/18; refused as lyra-E051 from 08/13 until then, and before that
 // they fell to the typechecker's default arm as `unknown expression type
 // "address_of_expr"`, which reads like an internal error rather than an unbuilt feature.
 //

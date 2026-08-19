@@ -168,7 +168,7 @@ func (tc *TypeChecker) forceCheckDestructureCallee(decl *ast.DestructuringDeclSt
 // unimportedHint names the module that exports a name the current file could not resolve,
 // as a clause to append to an "undefined" diagnostic — or "" when nothing exports it.
 //
-// An import's member list restricts visibility as of 08/19, so "undefined" is now the
+// An import's member list restricts visibility as of 08/18, so "undefined" is now the
 // wrong word for by far the commonest new failure: the name exists, it is `pub`, and this
 // file simply did not ask for it. Saying so and naming the import is the difference
 // between a one-line fix and a hunt.

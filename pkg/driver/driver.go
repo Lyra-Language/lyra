@@ -173,7 +173,7 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	// The unsafe-context policy (lyra-E011): a raw-pointer operation or a call to an
 	// `unsafe` function needs an enclosing `unsafe` block or function, and unsafe-ness
 	// does not leak across a lambda boundary. Written and tested since 07/xx and *not*
-	// run between 08/13 and 08/19, because its advice was to write an `unsafe` block
+	// run between 08/13 and 08/18, because its advice was to write an `unsafe` block
 	// that was itself an unknown expression — a diagnostic whose fix does not compile is
 	// worse than none. Pointers lower now, so the advice can be followed and the check
 	// is back.

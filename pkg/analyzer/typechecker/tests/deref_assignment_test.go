@@ -14,7 +14,7 @@ func TestDerefAssignment_ConstTargetRejected(t *testing.T) {
 
 // A lowercase (non-const) identifier in the same caret-deref form is not a const
 // binding, so the const check does not fire — and what is left is a genuine pointer
-// write, type-checked as one since 08/19.
+// write, type-checked as one since 08/18.
 //
 // **This test asserted no errors at all until 08/13, and that was the phantom in
 // miniature**: nothing looked at a pointer write, so the one raw-pointer form that never

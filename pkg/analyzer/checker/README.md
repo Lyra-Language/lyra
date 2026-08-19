@@ -407,7 +407,7 @@ for a tuple or `data` payload, whose own spelling already prints what they hold.
 A separate code from `lyra-W003` because the fix differs and the difference is the point: an
 unused local can be deleted, a loop binding cannot — the loop still has to iterate.
 
-**It could not have existed before `for _ in` parsed** (08/19); until then the advice would
+**It could not have existed before `for _ in` parsed** (08/18); until then the advice would
 have named a spelling the parser rejects. The two-name form is where it earns its keep —
 `for k, v in xs` reading only `v` is the case `for _, v in xs` exists for. A name already
 starting with `_` is exempt, matching the unused-local rule.

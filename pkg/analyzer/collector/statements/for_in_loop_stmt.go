@@ -47,7 +47,7 @@ func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInL
 	}
 
 	loop := &ast.ForInLoopExpr{
-		// The loop's own span. It carried none until 08/19, which is not the cosmetic
+		// The loop's own span. It carried none until 08/18, which is not the cosmetic
 		// gap it looks like: a diagnostic reported against a zero Location prints with no
 		// `line:col` *and* escapes the driver's per-file filtering, which keeps a
 		// location-less diagnostic on the grounds that it is program-level. A warning on

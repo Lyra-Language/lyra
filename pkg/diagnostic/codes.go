@@ -569,7 +569,7 @@ const (
 	// has to iterate — so the answer is `_`, which names nothing and is unforgeable by
 	// anything the body could refer to (no identifier is a bare underscore).
 	//
-	// **It had nowhere to point until `for _ in` parsed** (08/19). Before that the only
+	// **It had nowhere to point until `for _ in` parsed** (08/18). Before that the only
 	// way to write "I do not read this counter" was to name it something and not read it,
 	// which is what the warning would have been complaining about — advice to use a
 	// spelling the parser rejects is worse than silence, and is why a loop counter nobody
@@ -718,7 +718,7 @@ const (
 	// it — so it is the one position that cannot defer. Binding the whole value is
 	// unaffected, and so is a scalar return.
 	//
-	// **Declaration order stopped being a cause on 08/19.** A callee declared below its
+	// **Declaration order stopped being a cause on 08/18.** A callee declared below its
 	// caller is now checked on demand, which is what the house style (helpers below
 	// main) makes the ordinary arrangement. What remains is the case with no answer at
 	// all: two un-annotated functions destructuring each other's results, where
@@ -726,7 +726,7 @@ const (
 	// resolves it, which is what the message asks for.
 	CodeDestructureOfInferredReturn = "lyra-E058"
 
-	// CodeRawPointersNotImplemented: **retired 08/19**, when raw pointers gained
+	// CodeRawPointersNotImplemented: **retired 08/18**, when raw pointers gained
 	// inference and lowering. It refused `&x`, `p^`, `p^ = v` and `unsafe { … }` from
 	// 08/13, in the register of "not implemented" rather than the internal-sounding
 	// "unknown expression type" they drew before that.

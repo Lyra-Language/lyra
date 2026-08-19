@@ -499,7 +499,7 @@ let f = (n: i64) -> i64 => {
 // comes from decomposing the value there and then, and nothing later revisits it — so a
 // helper declared below its caller had not been inferred yet, the value's type was nil,
 // and the pattern bound nothing. It was lyra-E058 from 08/17, asking for an annotation;
-// since 08/19 the callee is checked **on demand** instead and the program compiles.
+// since 08/18 the callee is checked **on demand** instead and the program compiles.
 //
 // The top-down house style (main first, helpers below) is exactly the arrangement that
 // puts an un-annotated helper after its caller, which is what made this worth fixing

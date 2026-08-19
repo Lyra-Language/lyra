@@ -12,7 +12,7 @@ import (
 //
 // The type, the grammar, the collector and lyra-E011's unsafe-context policy all existed
 // since long before; what was missing was inference and lowering, so every form was
-// refused at the expression (lyra-E051) until 08/19.
+// refused at the expression (lyra-E051) until 08/18.
 func TestExec_RawPointers(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

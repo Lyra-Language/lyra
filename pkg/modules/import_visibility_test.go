@@ -2,7 +2,7 @@ package modules_test
 
 import "testing"
 
-// An import's member list restricts visibility (08/19). Until then the rule was "any
+// An import's member list restricts visibility (08/18). Until then the rule was "any
 // `pub` name of any module you imported at all": `import std.tui.{ bg }` admitted `grey`,
 // `rgb` and `bold` too, and the member list drove only the namespace binding and the
 // unused-import warning.
