@@ -34,6 +34,13 @@ type TypeChecker struct {
 	traitImpls        []*ast.TraitImplStmt // every impl block in the program, collected up front by Check; see resolveTraitMethod
 	genericBounds     map[string][]string  // type-parameter name -> trait bounds in scope (from an impl's `where` clause) while checking its method bodies; see dispatchViaGenericBound
 	publishing        map[string]bool      // impl-body candidate publications in progress, so a body reaching itself terminates; see publishImplBodyCandidates
+	// declOfFunc/inferring/checked back on-demand return inference: the declaration a
+	// top-level function's lambda belongs to, the ones currently being inferred (the cycle
+	// guard) and the ones already checked (so nothing is checked twice). See
+	// typechecker_on_demand.go.
+	declOfFunc   map[*ast.LambdaExpr]*ast.VarDeclStmt
+	inferringRet map[*ast.VarDeclStmt]bool
+	checkedDecls map[*ast.VarDeclStmt]bool
 	// currentDefaultTrait names the trait whose default-method body is being checked, or
 	// "" outside one. Read only by a diagnostic: inside a default, `Self` is a type
 	// variable the compiler introduced rather than one the author wrote, so the generic
@@ -142,6 +149,10 @@ func (tc *TypeChecker) Check(program *ast.Program) []TypeError {
 	}
 	// Before anything dispatches: two impls of one trait for one type make dispatch
 	// depend on declaration order, which is not a property a program should have.
+	// Indexed before anything is checked: a destructure may need a function declared
+	// further down the file, and getting from the callee back to its declaration is what
+	// lets that be checked on demand (typechecker_on_demand.go).
+	tc.collectTopLevelFuncs(program)
 	tc.checkImplCoherence()
 	// Trait default-method bodies, checked once each with Self abstract. After the impls
 	// are collected: a call inside a default publishes one candidate per implementing
@@ -361,6 +372,12 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// Full lambda type inference is not yet implemented, so the regular
 	// annotation check is skipped for them.
 	if lambda, ok := decl.Value.(*ast.LambdaExpr); ok {
+		// A top-level function may have been checked already, out of order, because a
+		// destructure needed its return type before the main pass reached it. Checking the
+		// body twice reports its diagnostics twice; see typechecker_on_demand.go.
+		if _, isTopLevel := tc.declOfFunc[lambda]; isTopLevel && tc.markChecked(decl) {
+			return
+		}
 		// An annotated binding is a context: `let g: (i64) -> i64 = (x) => x + 1` tells
 		// the lambda what its parameter and return types are. This has to happen before
 		// checkLambdaBody, which walks the body — after it, the body has already reported
@@ -479,6 +496,16 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 		return
 	}
 	inferredType := tc.inferExprType(decl.Value)
+	if inferredType == nil {
+		// The commonest cause is a callee declared *below* this line whose return type is
+		// inferred: the main pass has not reached it, so there is nothing to decompose.
+		// A destructure is the one position that cannot defer — each name's type comes
+		// from decomposing the value here and now — so the callee is checked on demand
+		// and the destructure retried. See typechecker_on_demand.go.
+		if tc.forceCheckDestructureCallee(decl) {
+			inferredType = tc.inferExprType(decl.Value)
+		}
+	}
 	if inferredType == nil {
 		// A type we could not infer binds nothing, and the names then report as undefined
 		// at every use — a diagnostic that points at the line *after* this one while the
@@ -1290,12 +1317,15 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 }
 
 // reportDestructureOfInferredReturn reports lyra-E058 when a destructuring's value is a
-// call whose return type is inferred rather than declared.
+// call whose return type is inferred and could not be worked out.
 //
-// Destructuring needs the element types at the point the pattern is walked, and a callee
-// declared later in the file has not had its return type inferred yet — so the value's
-// type is nil and the pattern binds nothing. Binding the whole value is unaffected, and so
-// is a scalar return; this is the one position that cannot defer.
+// Destructuring needs the element types at the point the pattern is walked, so it is the
+// one position that cannot defer — binding the whole value is unaffected, and so is a
+// scalar return. **Declaration order is no longer a cause**: a callee declared below its
+// caller is checked on demand (typechecker_on_demand.go). What is left is the case that
+// has no answer at all — two un-annotated functions destructuring each other's results,
+// where computing either return type requires the other — and the case where the callee's
+// own body failed to infer, which has already been reported at the body.
 //
 // Deliberately narrow: it fires only for a call to a function that genuinely has no return
 // annotation. A nil type from any other cause has already been reported by whatever
@@ -1318,9 +1348,10 @@ func (tc *TypeChecker) reportDestructureOfInferredReturn(decl *ast.Destructuring
 		return
 	}
 	tc.addErrorCode(decl.GetLocation(), SeverityError, diag.CodeDestructureOfInferredReturn,
-		"cannot destructure the result of %q: its return type is inferred and it is "+
-			"declared later in the file, so it is not known here — give it a return type "+
-			"annotation (`-> (i64, i64)` and so on)", callee.Name)
+		"cannot destructure the result of %q: its return type is inferred and could not be "+
+			"worked out here — give it a return type annotation (`-> (i64, i64)` and so on). "+
+			"Two functions that destructure each other's results need one on at least one "+
+			"of them", callee.Name)
 }
 
 // rootIdentifier walks a member/index path back to the identifier it is rooted

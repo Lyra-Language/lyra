@@ -493,30 +493,105 @@ let f = (n: i64) -> i64 => {
 }
 
 // Destructuring the result of a function whose return type is **inferred** and which is
-// declared **later** in the file (lyra-E058, 08/17).
+// declared **later** in the file.
 //
-// Destructuring needs the element types where the pattern is walked, and a later
-// declaration's inferred return type does not exist yet — so the value's type is nil and
-// the pattern binds nothing. Until this diagnostic the only symptom was `undefined
-// identifier` at every *use* of the names, pointing at the line after the destructure
-// while the cause was a missing `->` further down the file.
+// A destructure needs the element types where the pattern is walked — each name's type
+// comes from decomposing the value there and then, and nothing later revisits it — so a
+// helper declared below its caller had not been inferred yet, the value's type was nil,
+// and the pattern bound nothing. It was lyra-E058 from 08/17, asking for an annotation;
+// since 08/19 the callee is checked **on demand** instead and the program compiles.
 //
 // The top-down house style (main first, helpers below) is exactly the arrangement that
-// puts an un-annotated helper after its caller, which is what made this worth naming.
-
-func TestDestructuring_InferredLaterReturn_NamesTheAnnotation(t *testing.T) {
-	res := parseCollectAndCheck(t, `
+// puts an un-annotated helper after its caller, which is what made this worth fixing
+// rather than diagnosing.
+func TestDestructuring_InferredLaterReturn_Ok(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
 		let f = () -> void => {
 			let (a, b) = pair(1, 2)
 			println("${a} ${b}")
 		}
 		let pair = (x: i64, y: i64) => (x, y)
+	`, false))
+}
+
+// On demand is *transitive*: the hoisted helper's own body may destructure a third
+// function declared below it.
+func TestDestructuring_InferredLaterReturn_Chained(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+		let f = () -> void => {
+			let (a, b) = first()
+			println("${a} ${b}")
+		}
+		let first = () => {
+			let (x, y) = second()
+			(x + 1, y + 1)
+		}
+		let second = () => (1, 2)
+	`, false))
+}
+
+// **Where it still cannot answer, and must not hang.** Two un-annotated functions that
+// destructure each other's results have no fixed point — computing either return type
+// requires the other — so the cycle guard breaks the recursion and lyra-E058 asks for the
+// annotation that resolves it. The same honest answer self-recursion already gets.
+func TestDestructuring_MutuallyRecursiveInferredReturns_ReportsAndTerminates(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let ping = () => {
+			let (x, y) = pong()
+			(x, y)
+		}
+		let pong = () => {
+			let (p, q) = ping()
+			(p, q)
+		}
 	`, false)
-	assertHasErrorContaining(t, res, "its return type is inferred and it is declared later")
+	assertHasErrorContaining(t, res, "its return type is inferred and could not be worked out")
 	assertHasErrorContaining(t, res, "give it a return type annotation")
 }
 
-// The annotation is the fix, so with one there is no error at all.
+// **A hoisted body is checked as if the pass had reached it in order.** withParamScope
+// copies an enclosing lambda's parameters into a nested one's — a nested lambda really is
+// lexically inside its enclosing one — so a hoisted *top-level* function would otherwise
+// resolve a name belonging to the caller's parameters. A false accept, which is the
+// direction that does not announce itself: checked in declaration order this is undefined.
+func TestDestructuring_HoistedBodyDoesNotSeeTheCallersParameters(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let outer = (secret: i64) -> i64 => {
+			let (a, b) = helper()
+			a + b + secret
+		}
+		let helper = () => (secret, 2)
+	`, false)
+	assertHasErrorContaining(t, res, `undefined identifier "secret"`)
+}
+
+// **A body checked early must not be checked twice.** The main pass reaches the same
+// declaration later, and a second walk reports everything in it a second time — so the
+// error inside the hoisted helper must appear exactly once.
+func TestDestructuring_HoistedBodyReportsItsErrorsOnce(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+		let f = () -> void => {
+			let (a, b) = helper()
+			println("${a} ${b}")
+		}
+		let helper = () => {
+			let bad = undefined_name + 1
+			(bad, 2)
+		}
+	`, false)
+	n := 0
+	for _, e := range res.errors {
+		if strings.Contains(e.Message, "undefined_name") {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("want the hoisted body's error reported once, got %d: %v", n, res.errors)
+	}
+}
+
+// An annotation on the later helper works too, and always did — the on-demand path is
+// only reached when there is none.
 func TestDestructuring_AnnotatedLaterReturn_Ok(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
 		let f = () -> void => {

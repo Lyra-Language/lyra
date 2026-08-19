@@ -2531,31 +2531,29 @@ Three decisions, **settled 08/17**:
 
 So what remains is the scope-and-maps route, with the semantics above already decided.
 
-### [OPEN] Inference should not depend on declaration order
+### [DONE 08/19] Inference no longer depends on declaration order
 
-`let (w, h) = contain_set(cols, rows)` fails when `contain_set` is declared **later** in
-the file and its return type is **inferred** rather than annotated: destructuring needs
-the element types where the pattern is walked, and the callee's return type has not been
-inferred yet, so the value's type is nil and the pattern binds nothing.
+`let (w, h) = contain_set(cols, rows)` failed when `contain_set` was declared **later** in
+the file with an inferred return type: a destructure needs the element types where the
+pattern is walked — each name's type comes from decomposing the value there and then, and
+nothing later revisits it — so the value's type was nil and the pattern bound nothing.
+`lyra-E058` named the annotation as the fix; the callee is now **checked on demand**
+instead, and the program compiles. Helpers-below-main is the documented house style, so
+this was reachable by writing ordinary code.
 
-`lyra-E058` names the fix as of 08/17 (add a return annotation), which turns a mystery
-into a one-line change — before it, the only symptom was `undefined identifier` at every
-*use* of the names, pointing at the line after the destructure while the cause was a
-missing `->` fifty lines down. **The diagnostic is the workaround, not the fix.**
+Both things the entry said to settle fall out of memoizing the *declaration*. Checking it
+twice would report its body's diagnostics twice, so `checkVarDecl` consults the memo and
+returns — "checked early" and "checked in order" are one event. And a cycle guard breaks
+mutual recursion between two un-annotated functions, which has no fixed point; that case
+still gets `lyra-E058`, now worded for it rather than for declaration order.
 
-The gap is narrow and the boundary is known: a scalar return is fine, and binding the
-whole tuple is fine — both defer the type. Destructuring is the one position that needs
-it immediately. So the fix is to infer a callee's return type **on demand** when a
-destructure asks for it, rather than relying on file order.
-
-Two things to settle when doing it: mutual recursion between two un-annotated functions
-needs a cycle guard (the same shape `resolveType`'s `resolvingTypes` guard has), and
-on-demand inference must not double-report diagnostics from a body that is later checked
-normally.
-
-**Worth doing because the house style causes it.** Helpers-below-main is exactly the
-arrangement that puts an un-annotated helper after its caller, so this is reachable by
-writing ordinary code in the documented style, not by doing anything unusual.
+**A third thing it did not say, and the one that bites**: a hoisted body must be checked
+as if the pass had reached it *in order*. `withParamScope` copies an enclosing lambda's
+parameters into a nested one's — correct, since a nested lambda is lexically inside its
+enclosing one — so without clearing that context a hoisted top-level function resolved
+names belonging to the caller's parameters. A false *accept*, the direction that does not
+announce itself. `atTopLevel` clears the parameter scope, the enclosing return, the
+`where` bounds and the impl/trait context. See COMPLETED.md.
 
 ### [OPEN] Return-type-directed dispatch — reopen when `From`/`Into` wants it
 

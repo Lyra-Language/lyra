@@ -10,6 +10,51 @@ Newest first.
 ## Dated log
 
 ### 08/19/26
+**On-demand return inference: a destructure no longer depends on declaration order.**
+`let (w, h) = viewport()` with `viewport` declared below its caller and un-annotated was
+`lyra-E058`, asking for a return type. A destructure needs the element types where the
+pattern is walked — each name's type comes from decomposing the value there and then, and
+nothing later revisits it — so it is the one position that cannot defer. Binding the whole
+tuple was always fine, and so was a scalar return.
+
+**It was reachable by writing ordinary code in the style this project documents.**
+Helpers-below-main puts an un-annotated helper after its caller by construction, which is
+what made a diagnostic the wrong answer.
+
+The callee's declaration is now checked at the point the destructure asks for it, once.
+
+**Both things the todo entry said to settle fall out of memoizing the declaration.** A body
+checked twice reports its diagnostics twice, so `checkVarDecl` consults `checkedDecls` and
+returns — "checked early" and "checked in order" become one event, whichever happens first.
+And `inferringRet` breaks a cycle: two un-annotated functions destructuring each other's
+results have no fixed point, since computing either return type requires the other. That
+case still gets lyra-E058, whose message is now written for it rather than for declaration
+order.
+
+**The third thing, which the entry did not anticipate and which is the one that bites.** A
+hoisted body has to be checked *as if the pass had reached it in order*, and it is not
+enough to swap the module scope. `withParamScope` **copies** an enclosing lambda's
+parameters into a nested one's — deliberately and correctly, since a nested lambda is
+lexically inside its enclosing one and sees its parameters. A hoisted *top-level* function
+is not inside anything, so without clearing that context its body could resolve a name
+belonging to the caller's parameters:
+
+```lyra
+let outer = (secret: i64) -> i64 => {
+  let (a, b) = helper()
+  a + b + secret
+}
+let helper = () => (secret, 2)     // type-checked clean; `secret` is not in scope here
+```
+
+A false **accept** — the direction that does not announce itself, and it would have shipped
+unnoticed had the probe not gone looking. `atTopLevel` saves and clears the parameter scope,
+the enclosing return type and name, the `where` bounds in scope, and the impl/trait context
+a method body is checked inside, restoring all of it after. The general rule: **a pass that
+hoists work must reset the context that work would have had**, not merely the context it
+needs to borrow.
+
+### 08/19/26
 **`lyra-W020`: a `for-in` binding the body never reads.** It names `_` as the fix, which is
 why it could not have existed a day earlier — the advice would have been to write a
 spelling the parser rejects, and silence beats that.

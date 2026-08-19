@@ -365,3 +365,33 @@ func TestExec_ForInRange_WildcardBinding(t *testing.T) {
 		})
 	}
 }
+
+// Destructuring the result of a helper declared *below* its caller, with no return
+// annotation. The typechecker checks the callee on demand — a destructure is the one
+// position that cannot defer, since each name's type comes from decomposing the value
+// there and then — and this is the evidence the result lowers rather than merely checking.
+//
+// Helpers-below-main is the house style, so this is the arrangement ordinary code takes.
+func TestExec_DestructureOfLaterInferredReturn(t *testing.T) {
+	t.Parallel()
+	const src = `
+module main
+struct Size { w: i64, h: i64 }
+let main = () -> void => {
+  let (w, h) = viewport()
+  let { w: sw, h: sh } = dims()
+  let (a, b) = chained()
+  println("${w} ${h} ${sw} ${sh} ${a} ${b}")
+}
+let viewport = () => (80, 24)
+let dims = () => Size { w: 3, h: 4 }
+let chained = () => {
+  let (x, y) = innermost()
+  (x + 1, y + 1)
+}
+let innermost = () => (1, 2)
+`
+	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != "80 24 3 4 2 3" {
+		t.Errorf("got %q; want \"80 24 3 4 2 3\"", got)
+	}
+}

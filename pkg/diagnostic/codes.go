@@ -711,24 +711,19 @@ const (
 	CodeCapitalizedBindingName = "lyra-E057"
 
 	// CodeDestructureOfInferredReturn: destructuring the result of a function whose
-	// return type is **inferred** and which is declared **later** in the file —
-	// `let (w, h) = fit(cols, rows)` above `let fit = (…) => (a, b)`.
+	// return type is inferred and could not be worked out.
 	//
-	// Binding the whole value is fine and so is a scalar return; destructuring is the one
-	// position that needs the element types *now* rather than lazily, and at that point a
-	// later declaration's inferred return type does not exist yet.
+	// A destructure needs the element types where the pattern is walked — each name's
+	// type comes from decomposing the value there and then, and nothing later revisits
+	// it — so it is the one position that cannot defer. Binding the whole value is
+	// unaffected, and so is a scalar return.
 	//
-	// Until 08/17 this reported nothing at all: the type was nil, the pattern bound no
-	// names, and the only symptom was `undefined identifier` at every *use* of them —
-	// pointing at the line after the destructure while the cause was a missing `->` fifty
-	// lines further down. Worse, the collector knows the names perfectly well, so a second
-	// destructure of the same names in an inner scope warns that it *shadows* them, which
-	// says they exist.
-	//
-	// The house style is to annotate returns and the standard library does so throughout,
-	// so this is mostly a diagnostic for the day someone forgets. It names the annotation
-	// because that is a one-line fix; making the inference order-independent is the real
-	// answer and is open in todo.md.
+	// **Declaration order stopped being a cause on 08/19.** A callee declared below its
+	// caller is now checked on demand, which is what the house style (helpers below
+	// main) makes the ordinary arrangement. What remains is the case with no answer at
+	// all: two un-annotated functions destructuring each other's results, where
+	// computing either return type requires the other. The annotation on either one
+	// resolves it, which is what the message asks for.
 	CodeDestructureOfInferredReturn = "lyra-E058"
 
 	// CodeRawPointersNotImplemented: a raw-pointer operation (`&x`, `p^`, a write

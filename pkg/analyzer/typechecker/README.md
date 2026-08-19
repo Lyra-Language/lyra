@@ -737,6 +737,38 @@ the callee's declaration, and an indirect call has none — a `types.LambdaType`
 a parameter has a default, not what it is. Named arguments, if they ever exist, would be the
 other half of this feature and would lift the trailing rule.
 
+## On-demand return inference (`typechecker_on_demand.go`)
+
+Lyra has no declare-before-use requirement and the house style puts helpers *below* the
+function that calls them, so an un-annotated helper is normally checked after its caller.
+That is fine almost everywhere, because a call's type can be deferred — the binding takes
+whatever the callee turns out to return.
+
+**A destructure is the one position that cannot defer.** `let (w, h) = viewport()` needs
+the element types where the pattern is walked, since each name's type comes from
+decomposing the value there and then and nothing revisits it. So `forceCheckDestructureCallee`
+checks that declaration now, and `checkDestructuringDecl` retries.
+
+Three properties hold it together:
+
+- **Memoized by declaration.** `checkVarDecl` consults `checkedDecls` and returns, so a
+  body checked early is not checked again by the main pass — "checked early" and "checked
+  in order" are one event. Without it every diagnostic in a hoisted body appears twice.
+- **Cycle-guarded.** `inferringRet` breaks mutual recursion between two un-annotated
+  functions that destructure each other's results; there is no fixed point, so the caller
+  falls back to `lyra-E058`, which asks for the annotation that resolves it. Same shape as
+  `resolveType`'s `resolvingTypes` guard.
+- **Checked at the top level** (`atTopLevel`), which is the subtle one. `withParamScope`
+  *copies* an enclosing lambda's parameters into a nested one's — right for a nested
+  lambda, which is lexically inside its enclosing one — so a hoisted **top-level** function
+  would otherwise resolve names belonging to the caller's parameters. That is a false
+  accept, the direction that does not announce itself. The parameter scope, enclosing
+  return, `where` bounds and impl/trait context are all cleared and restored.
+
+It deliberately does **not** infer every call's return type early. Only the destructure
+asks, because only the destructure cannot wait; eager inference everywhere is a different
+design with a much larger blast radius, for a problem nothing else has.
+
 ## Trait default methods (`typechecker_trait_default.go`)
 
 A trait method's default body — `pure shout: (Self) -> string = (self) => self.name() ++ "!"` —
