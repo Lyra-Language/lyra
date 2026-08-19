@@ -25,6 +25,11 @@ const (
 	ScopeBlock
 	ScopeLoop
 	ScopePrelude
+	// ScopeImports holds the names a module's `import` statements bring in, and sits
+	// between that module's own scope and the prelude's. It is what makes an import's
+	// member list mean something: a name reaches a module because the module asked for
+	// it, not because some other module marked it `pub`. See ImportScopeFor.
+	ScopeImports
 )
 
 func NewScope(parent *Scope, kind ScopeKind) *Scope {
@@ -135,9 +140,14 @@ type SymbolTable struct {
 	// prelude ever had it — and the shadow would be reported as a hard collision.
 	PreludeNames map[string]bool
 
-	// ModuleScopes holds one ScopeModule per module, each a child of GlobalScope.
-	// See ModuleScopeFor for what it is for and what it is not yet.
+	// ModuleScopes holds one ScopeModule per module, each a child of that module's
+	// imports scope. See ModuleScopeFor.
 	ModuleScopes map[string]*Scope
+
+	// ImportScopes holds one ScopeImports per module — the names its `import`
+	// statements bring in, populated by PopulateImportScopes once every module's
+	// exports are known. See ImportScopeFor.
+	ImportScopes map[string]*Scope
 
 	// Imports maps a module path to the imports its files declare. A plain
 	// `import a.b` binds a *namespace* under the last segment (or its `as` alias);
@@ -154,8 +164,17 @@ type SymbolTable struct {
 func NewSymbolTable() *SymbolTable {
 	global := NewScope(nil, ScopeGlobal)
 	st := &SymbolTable{
-		GlobalScope:  global,
-		PreludeScope: NewScope(global, ScopePrelude),
+		GlobalScope: global,
+		// **Not a child of GlobalScope.** Resolution stops at the prelude: a name reaches
+		// a module through its own scope, its imports scope, or the prelude, and nowhere
+		// else. Parenting the prelude on the global scope is what made *exported* and
+		// *visible* the same thing — every `pub` declaration in the program sat on every
+		// module's chain, so an import's member list restricted nothing.
+		//
+		// GlobalScope is still written (exportToGlobal) and still read, but for a
+		// different question: it is the program-wide name registry that makes two modules
+		// exporting one name an error, and the map ImportScopeFor draws from.
+		PreludeScope: NewScope(nil, ScopePrelude),
 		Types:        make(map[string]*ast.TypeDeclStmt),
 		Functions:    make(map[string]*ast.LambdaExpr),
 		Traits:       make(map[string]*ast.TraitDeclStmt),
@@ -163,6 +182,7 @@ func NewSymbolTable() *SymbolTable {
 		ModuleOfFile: make(map[string]string),
 		Imports:      make(map[string][]Import),
 		ModuleScopes: make(map[string]*Scope),
+		ImportScopes: make(map[string]*Scope),
 		PreludeNames: make(map[string]bool),
 		OverloadSets: make(map[string]*ast.OverloadSet),
 		ModuleDocs:   make(map[string]*ast.Doc),
@@ -249,7 +269,45 @@ func (st *SymbolTable) LookupTypeFrom(name string, loc ast.Location) (*ast.TypeD
 		return nil, false
 	}
 	decl, ok := st.Types[st.declKey(name, loc)]
-	return decl, ok
+	if !ok || !st.importedAt(decl, name, loc) {
+		return nil, false
+	}
+	return decl, true
+}
+
+// importedAt reports whether a *type-level* declaration is visible to the file at loc:
+// its own module's, the prelude's, or one that file's module imported by name.
+//
+// **Values do not need this and types do**, which is the asymmetry to keep in mind. A
+// value reference resolves through the scope chain — module → imports → prelude — so the
+// imports scope gates it structurally. A type reference does not: it goes through the
+// Types/Traits maps keyed by declKey, which answers "whose declaration is this" and says
+// nothing about who may see it. Without the gate `import lib.{ listed }` still admitted
+// `lib`'s `Point`, which is the same hole one level up.
+//
+// A declaration's module is the module of the *file* it is written in — not
+// `ModuleOf[name]`, which is last-writer-wins and would answer for whichever module
+// declared that name last (invariant 4).
+func (st *SymbolTable) importedAt(decl ast.Named, name string, loc ast.Location) bool {
+	if decl == nil {
+		return false
+	}
+	asking := st.ModuleOfFile[loc.File]
+	declared := st.ModuleOfFile[decl.GetLocation().File]
+	if declared == asking || declared == st.PreludeModule {
+		return true
+	}
+	// A declaration with no file recorded predates this bookkeeping or was synthesized;
+	// admitting it is the conservative direction, matching declIsPublic's.
+	if declared == "" && decl.GetLocation().File == "" {
+		return true
+	}
+	if imports := st.ImportScopes[asking]; imports != nil {
+		if sym, found := imports.LookupLocal(name); found && sym == decl {
+			return true
+		}
+	}
+	return false
 }
 
 func (st *SymbolTable) LookupTraitFrom(name string, loc ast.Location) (*ast.TraitDeclStmt, bool) {
@@ -257,7 +315,10 @@ func (st *SymbolTable) LookupTraitFrom(name string, loc ast.Location) (*ast.Trai
 		return nil, false
 	}
 	decl, ok := st.Traits[st.declKey(name, loc)]
-	return decl, ok
+	if !ok || !st.importedAt(decl, name, loc) {
+		return nil, false
+	}
+	return decl, true
 }
 
 // LookupTypeIn and LookupTraitIn resolve a name as a member of a named module — the
@@ -905,9 +966,96 @@ func (st *SymbolTable) ModuleScopeFor(module string) *Scope {
 	if scope, ok := st.ModuleScopes[module]; ok {
 		return scope
 	}
-	scope := NewScope(st.PreludeScope, ScopeModule)
+	scope := NewScope(st.ImportScopeFor(module), ScopeModule)
 	st.ModuleScopes[module] = scope
 	return scope
+}
+
+// ImportScopeFor returns the scope holding what module's imports bring in, creating it
+// as a child of PreludeScope on first use.
+//
+// **This is where "imported" stops meaning "exported by somebody".** Until it existed,
+// every `pub` declaration went into one global scope that sat on every module's parent
+// chain, so `import std.tui.{ bg }` admitted `grey`, `rgb` and `bold` too — the member
+// list drove the namespace binding and the unused-import warning and nothing else. A name
+// now reaches a module because that module asked for it.
+//
+// It sits *under* the module's own scope and *over* the prelude's, which is the order the
+// three shadowing rules already assume: a module's own declaration wins over an imported
+// name (lyra-W016), and an imported name wins over an ambient prelude one.
+func (st *SymbolTable) ImportScopeFor(module string) *Scope {
+	if st == nil {
+		return nil
+	}
+	if scope, ok := st.ImportScopes[module]; ok {
+		return scope
+	}
+	scope := NewScope(st.PreludeScope, ScopeImports)
+	st.ImportScopes[module] = scope
+	return scope
+}
+
+// PopulateImportScopes fills every module's imports scope from its import list, and must
+// run **after every file has been walked** — a module's imports cannot be resolved until
+// the modules they name have registered their exports, and exports are recorded per file.
+// The Collector calls it from Finish.
+//
+// Only a **selective** import binds a bare name. `import shapes` binds the namespace
+// `shapes.Point` and nothing else: if it also admitted bare `Point`, the two import forms
+// would mean the same thing and the member list would be decoration.
+//
+// An alias binds only its local name — `import a.{ X as Y }` admits `Y`, never `X` — which
+// is why the entry is written under the local name rather than through Define, whose key
+// is the declaration's own.
+//
+// A member that does not exist, or exists and is not `pub`, binds nothing. It is not
+// reported here: this runs inside the collector, where a missing import member is already
+// the import checker's to report, and a second message about the same line would be worse
+// than the one that names it precisely.
+func (st *SymbolTable) PopulateImportScopes() {
+	if st == nil {
+		return
+	}
+	for module, imports := range st.Imports {
+		scope := st.ImportScopeFor(module)
+		for _, imp := range imports {
+			if imp.IsNamespace() {
+				continue
+			}
+			from, ok := st.ModuleScopes[imp.Path]
+			if !ok || from == nil {
+				continue
+			}
+			for local, source := range imp.Members {
+				sym, found := from.LookupLocal(source)
+				if !found || !declIsPublic(sym) {
+					continue
+				}
+				scope.Symbols[local] = sym
+			}
+		}
+	}
+}
+
+// ExportingModule reports the module that exports name, for a name that did not resolve
+// where it was written. Empty when nothing exports it.
+//
+// This is what GlobalScope is *for* now that it is off every module's parent chain: it is
+// the program-wide registry of exported names, so it can answer "this name exists, you did
+// not ask for it" — which is the difference between a useful diagnostic and "undefined".
+func (st *SymbolTable) ExportingModule(name string) (string, bool) {
+	if st == nil || st.GlobalScope == nil {
+		return "", false
+	}
+	sym, ok := st.GlobalScope.LookupLocal(name)
+	if !ok {
+		return "", false
+	}
+	module := st.ModuleOfFile[sym.GetLocation().File]
+	if module == "" {
+		return "", false
+	}
+	return module, true
 }
 
 // EntryScope is the scope of the file a compile started from — the module with no

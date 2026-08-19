@@ -2106,7 +2106,7 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		}
 		sym, ok := tc.scope.Lookup(e.Name)
 		if !ok {
-			tc.addError(e.GetLocation(), SeverityError, "undefined identifier %q", e.Name)
+			tc.addError(e.GetLocation(), SeverityError, "undefined identifier %q%s", e.Name, tc.unimportedHint(e.Name, e.GetLocation()))
 			return nil
 		}
 		// Sequential rebinding: inside `let x = x + 1`, the name `x` resolves in
@@ -2148,7 +2148,7 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 			// placeholder means the destructuring never bound this name with a type
 			// (e.g. arity mismatch / non-destructurable scrutinee), so the name is
 			// effectively undefined.
-			tc.addError(e.GetLocation(), SeverityError, "undefined identifier %q", e.Name)
+			tc.addError(e.GetLocation(), SeverityError, "undefined identifier %q%s", e.Name, tc.unimportedHint(e.Name, e.GetLocation()))
 			return nil
 		}
 		tc.addError(e.GetLocation(), SeverityError, "undefined symbol %q", e.Name)
@@ -3467,7 +3467,7 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		structType = types.NamedStructType{Name: expr.Name, Fields: fields}
 		resultType = dt
 	} else {
-		tc.addError(expr.GetLocation(), SeverityError, "undefined struct type %q", expr.Name)
+		tc.addError(expr.GetLocation(), SeverityError, "undefined struct type %q%s", expr.Name, tc.unimportedHint(expr.Name, expr.GetLocation()))
 		return nil
 	}
 

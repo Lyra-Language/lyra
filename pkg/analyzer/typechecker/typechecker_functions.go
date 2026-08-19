@@ -687,7 +687,7 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 			tc.checkVisible(v, call.GetLocation())
 			return nil
 		}
-		tc.addError(call.GetLocation(), SeverityError, "undefined function %q", ident.Name)
+		tc.addError(call.GetLocation(), SeverityError, "undefined function %q%s", ident.Name, tc.unimportedHint(ident.Name, call.GetLocation()))
 		return nil
 	}
 	// No visibility check on a *successful* lookup: scoping now enforces it

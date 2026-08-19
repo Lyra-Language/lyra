@@ -2470,66 +2470,31 @@ Frame diffing is the one with a measurement behind it already: `todo.md`'s rende
 section found that a terminal frame is better assembled into one string and printed once
 than positioned and printed per cell, so a diff wants to emit runs rather than cells.
 
-### [OPEN] An import's member list does not restrict visibility
+### [DONE 08/19] An import's member list restricts visibility
 
-`import std.tui.{ bg }` lets **every** `pub` name in `std.tui` resolve bare — `grey`,
-`rgb`, `bold`, the lot. Measured 08/17:
+`import std.tui.{ bg }` used to admit every `pub` name in `std.tui` — `grey`, `rgb`,
+`bold`, the lot — because `exportToGlobal` put every export into one global scope that sat
+on every module's parent chain. *Exported* and *visible* were the same thing, and the
+member list drove only the namespace binding and `lyra-W004`.
 
-| reference | today |
-|---|---|
-| selective import, unlisted name | resolves |
-| selective import, unlisted *type* | resolves |
-| **namespace** import (`import std.tui`), bare name | resolves |
-| namespace import, qualified (`tui.grey`) | resolves (correct) |
-| module never imported | refused (correct) |
-| prelude name | resolves (correct) |
+The scope-and-maps route, as the entry expected. Each module has an **imports scope**
+between its own and the prelude's (`ImportScopeFor`), filled by `PopulateImportScopes` in
+`Collector.Finish` — the earliest it can run, since a module's imports resolve against
+other modules' exports and exports are recorded per file. `PreludeScope.Parent` is now
+**nil**: resolution stops at the prelude. GlobalScope is still written and still read, for
+a different question — it is the registry that makes two modules exporting one name an
+error, and what turns "undefined" into *"module `lib` exports it, but this file does not
+import it; add `import lib.{ … }`"*.
 
-So the rule today is "any `pub` name of any module you imported at all", and the member
-list drives only the namespace binding and `lyra-W004`.
+All three decisions held: an error; a namespace import admits no bare names; UFCS stays
+exempt, structurally rather than by a rule, because a method call resolves against the
+receiver's type. The measurement held too — nothing in `std/` or `examples/` relied on the
+hole, and the only fixtures that did were tests written against it.
 
-**It is architectural rather than a missing check.** `exportToGlobal` puts every `pub`
-declaration into the shared global scope, and a module scope's parent chain reaches it —
-so *exported* and *visible* are the same thing, and no per-reference check is consulted.
-`checkVisible` returns true for anything `pub` and never looks at imports;
-`inferIdentifierCall` says outright that a successful lookup needs no visibility check
-because "scoping now enforces it structurally", which is exactly the assumption that does
-not hold.
-
-Two ways to close it, and they are not the same size:
-
-- **Rewire the scopes.** Give each module an imports scope between its own and the
-  prelude, populated from its import list, and stop resolving through the global scope.
-  This is the real fix and needs no consumer changes — but it needs a post-pass (a
-  module's imports cannot be populated until every module's exports are known) and has to
-  respect the export-timing sharp edges `pkg/modules/README.md` documents.
-- ~~**Enforce with a checker pass.**~~ **Tried 08/17 and it cannot work.** Reusing
-  `collectRefsByFile` looks right — it already gathers identifier *and* type references
-  per file — but it is a **syntactic** walk with no scope information, so it cannot tell a
-  local binding from a module member. The check then asks `DeclaringModule(name)`, which
-  is last-writer-wins, and every local whose name collides with *any* top-level name
-  anywhere in the program is reported. It failed inside the prelude's own files: a
-  callback parameter named `f` in `array.lyra` was reported as belonging to a user module
-  that happened to declare a top-level `f`.
-
-  Over-collection is safe for "is this name mentioned anywhere" — which is all the unused
-  -import warning asks — and unsound for "what does this name resolve to". The distinction
-  is the whole difficulty, and it is why this has to happen where resolution happens.
-
-Three decisions, **settled 08/17**:
-
-- **An error**, not a warning. Measured first: zero of the 25 files in `std/` and
-  `examples/` rely on the hole, so there is nothing to break.
-- **A namespace import admits no bare names.** `import shapes` binds `shapes.Point`; if
-  it also admitted bare `Point` the two import forms would mean the same thing and the
-  member list would be decoration.
-- **UFCS stays exempt**, and the reason is *ordering* rather than the shape of any walk.
-  `m.map(f)` writes `map` as a member, but the UFCS desugar rewrites the call into a bare
-  `map(m, …)` **in place**, so anything running after the typechecker sees an identifier
-  and demands an import for a method the receiver's type already justifies. Verified: the
-  attempted pass failed on `next_event` in three example programs until it was moved ahead
-  of the typechecker. An alias binds only its local name (`X as Y` admits `Y`, not `X`).
-
-So what remains is the scope-and-maps route, with the semantics above already decided.
+**A type needed its own gate**, which the entry did not anticipate: a value resolves
+through the scope chain, so the imports scope gates it structurally, but a type goes
+through the Types/Traits maps keyed by `declKey` — which answers "whose declaration is
+this" and nothing about who may see it. See COMPLETED.md.
 
 ### [DONE 08/19] Inference no longer depends on declaration order
 

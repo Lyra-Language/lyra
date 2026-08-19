@@ -38,7 +38,7 @@ func analyzeTree(t *testing.T, files map[string]string) *driver.Result {
 // both resolve.
 func TestMultiFile_ReceiverOverloadsSpanFiles(t *testing.T) {
 	res := analyzeTree(t, map[string]string{
-		"app.lyra": `import util.shape
+		"app.lyra": `import util.shape.{ Square, Circle }
 let main = () -> u8 => {
   let s = Square { side: 3 }
   let c = Circle { r: 2 }
@@ -79,7 +79,7 @@ pub let area = pure (self: Square) -> i64 => 0`,
 // files would make a helper unusable by the module that wrote it.
 func TestMultiFile_PrivateDeclarationIsVisibleWithinTheModule(t *testing.T) {
 	res := analyzeTree(t, map[string]string{
-		"app.lyra": `import util.math
+		"app.lyra": `import util.math.{ util_double }
 let main = () -> u8 => u8(util_double(4))`,
 		"util/math/helper.lyra": `module util.math
 let twice = pure (n: i64) -> i64 => n * 2`,
@@ -111,7 +111,7 @@ pub let util_double = pure (n: i64) -> i64 => twice(n)`,
 // a value built in one file's function is accepted by another's.
 func TestMultiFile_TypeIdentityIsSharedAcrossFiles(t *testing.T) {
 	res := analyzeTree(t, map[string]string{
-		"app.lyra": `import util.shape
+		"app.lyra": `import util.shape.{ make, width }
 let main = () -> u8 => u8(width(make(5)))`,
 		"util/shape/decl.lyra": `module util.shape
 pub struct Box { w: i64 }

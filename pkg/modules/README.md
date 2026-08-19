@@ -120,6 +120,49 @@ backend's `namespaceCallee`, and both share three rules worth knowing:
 A local binding **shadows** a namespace, so `math.double` is an ordinary field read when `math`
 names a value.
 
+### An import's member list restricts visibility (08/19)
+
+`import lib.{ listed }` admits `listed` and nothing else — not `lib`'s other exports, and not
+its types. Until this landed the rule was "any `pub` name of any module you imported at all",
+and the member list drove only the namespace binding and `lyra-W004`.
+
+**It was architectural, not a missing check.** `exportToGlobal` put every `pub` declaration into
+one global scope that sat on every module's parent chain, so *exported* and *visible* were the
+same thing and no per-reference check was consulted. The fix is a scope, not a pass — an
+attempt at a checker pass is recorded in `todo.md` as unworkable: reusing `collectRefsByFile`
+looks right but it is a **syntactic** walk with no scope information, so it cannot tell a local
+binding from a module member, and it reported a callback parameter named `f` in the prelude's
+own `array.lyra` as belonging to a user module that happened to declare a top-level `f`.
+Over-collection is safe for "is this name mentioned anywhere" and unsound for "what does this
+name resolve to".
+
+The chain is now **module → imports → prelude**, and it *stops there*:
+
+- `SymbolTable.ImportScopeFor(module)` holds what that module's imports bring in.
+  `PopulateImportScopes` fills it in `Collector.Finish`, which is the earliest it can run — a
+  module's imports resolve against other modules' exports, and exports are recorded per file.
+- `PreludeScope.Parent` is **nil**. GlobalScope is still written and still read, but for a
+  different question: it is the program-wide registry that makes two modules exporting one name
+  an error, and it is what `ExportingModule` consults to turn "undefined" into *"module `lib`
+  exports it, but this file does not import it"*.
+- Only a **selective** import binds a bare name. `import lib` binds `lib.listed` and nothing
+  else: if it also admitted bare `listed`, the two import forms would mean the same thing. An
+  alias binds only its local name.
+
+**A type needed its own gate**, and the asymmetry is worth remembering: a value resolves through
+the scope chain, so the imports scope gates it structurally, while a type goes through the
+Types/Traits maps keyed by `declKey` — which answers "whose declaration is this" and says
+nothing about who may see it. `importedAt` is that gate, and it asks the module of the
+declaration's **file**, never `ModuleOf[name]`, which is last-writer-wins (invariant 4).
+
+**UFCS is exempt**, structurally rather than by a rule: `b.doubled()` resolves against the
+receiver's type, so a method the receiver justifies needs no import of the free function.
+
+One diagnostic had to learn the difference. `reportPrivateType` fired for any name another
+module declared and this one could not resolve; with visibility restricted, an *exported* name
+that was simply not imported took that path and was reported as private — telling an author to
+add a `pub` that was already there.
+
 **`pub` is enforced across module boundaries** (`lyra-E028`, 07/30). The rule is exactly the
 boundary: within a module everything is visible, and `pub` is what crosses — enforcing it
 *inside* a module would make a private helper unusable by the module that declared it.

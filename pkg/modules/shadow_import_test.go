@@ -79,7 +79,7 @@ import util.other
 let map = (n: i64) -> i64 => n + 1
 let main = () -> u8 => u8(other.use())`,
 		"util/seq.lyra":   "module util.seq\npub let map = (n: i64) -> i64 => n * 2",
-		"util/other.lyra": "module util.other\nimport util.seq\npub let use = () -> u8 => u8(map(21))",
+		"util/other.lyra": "module util.other\nimport util.seq.{ map }\npub let use = () -> u8 => u8(map(21))",
 	})
 	res := analyze(t, root)
 	if errs := res.Errors(); len(errs) != 0 {

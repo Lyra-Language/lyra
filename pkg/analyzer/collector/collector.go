@@ -355,6 +355,9 @@ func (c *Collector) Finish() (*ast.Program, *symbols.SymbolTable, *symbols.Scope
 	// impl, so it must exist before the typechecker's up-front impl gathering.
 	c.synthesizeDerives()
 	c.checkOperatorMethodNames()
+	// Last, and it has to be: a module's imports resolve against other modules' exports,
+	// and exports are recorded per file as each is walked.
+	c.table.PopulateImportScopes()
 	return c.ast, c.table, c.scopeTable, c.errors
 }
 

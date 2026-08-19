@@ -10,6 +10,57 @@ Newest first.
 ## Dated log
 
 ### 08/19/26
+**An import's member list restricts visibility.** `import std.tui.{ bg }` admitted `grey`,
+`rgb`, `bold` and every other `pub` name in the module. The rule in force was "any `pub`
+name of any module you imported at all", and the member list drove only the namespace
+binding and `lyra-W004`.
+
+**It was architectural rather than a missing check**, which is why the obvious fix does not
+work. `exportToGlobal` put every `pub` declaration into one global scope that sat on every
+module's parent chain, so *exported* and *visible* were the same thing and no per-reference
+check was ever consulted. A checker pass over `collectRefsByFile` was tried on 08/17 and
+abandoned: that walk is **syntactic**, with no scope information, so it cannot tell a local
+binding from a module member — it reported a callback parameter named `f` in the prelude's
+own `array.lyra` as belonging to a user module that happened to declare a top-level `f`.
+Over-collection is safe for "is this name mentioned anywhere", which is all the
+unused-import warning asks, and unsound for "what does this name resolve to".
+
+So the fix is a scope. The chain is **module → imports → prelude**, and it stops there:
+
+- `ImportScopeFor(module)` holds what that module's imports bring in, filled by
+  `PopulateImportScopes` from `Collector.Finish` — the earliest it can run, since a
+  module's imports resolve against other modules' exports and exports are recorded per
+  file.
+- `PreludeScope.Parent` is **nil**. GlobalScope is still written and still read, for a
+  different question: it is the program-wide registry that makes two modules exporting one
+  name an error, and it is what `ExportingModule` consults to turn "undefined" into a
+  useful sentence.
+
+**All three decisions from 08/17 held.** An error, not a warning — nothing in `std/` or
+`examples/` relied on the hole, exactly as measured, and the only fixtures that did were
+tests written against it. A namespace import admits no bare names, or the two import forms
+would mean the same thing. And UFCS stays exempt — structurally rather than by a rule,
+since `b.doubled()` resolves against the receiver's type, so a method the receiver
+justifies needs no import of the free function.
+
+**A type needed its own gate, and the asymmetry is the thing to remember.** A value
+resolves through the scope chain, so the imports scope gates it for free. A type does not:
+it goes through the Types/Traits maps keyed by `declKey`, which answers *whose declaration
+is this* and says nothing about *who may see it*. So `import lib.{ listed }` still admitted
+`lib`'s `Point` — the same hole one level up. `importedAt` closes it, and asks the module of
+the declaration's **file** rather than `ModuleOf[name]`, which is last-writer-wins
+(invariant 4).
+
+**Two diagnostics had to learn the difference between the two failures.** "Undefined" is
+the wrong word for by far the commonest new one — the name exists, it is `pub`, and this
+file simply did not ask for it — so every undefined-name site now appends *"module `lib`
+exports it, but this file does not import it; add `import lib.{ Point }`"*. And
+`reportPrivateType` fired for any name another module declared and this one could not
+resolve, so an exported-but-unimported name was reported as **private**, telling an author
+to add a `pub` that was already there. Before visibility was restricted the two could not
+be told apart there, because an exported type always resolved.
+
+### 08/19/26
 **On-demand return inference: a destructure no longer depends on declaration order.**
 `let (w, h) = viewport()` with `viewport` declared below its caller and un-annotated was
 `lyra-E058`, asking for a return type. A destructure needs the element types where the

@@ -109,14 +109,14 @@ func TestPrelude_ShadowIsConfinedToItsModule(t *testing.T) {
 	for _, c := range []struct{ name, app, shadower string }{
 		{
 			name: "entry file",
-			app: `import bystander
+			app: `import bystander.{ fromBystander }
 let unwrapOr = (a: i64, b: i64) -> i64 => a + b
 let main = () -> u8 => u8(unwrapOr(1, 2) + fromBystander())`,
 		},
 		{
 			name: "another module, privately",
-			app: `import bystander
-import shadower
+			app: `import bystander.{ fromBystander }
+import shadower.{ fromShadower }
 let main = () -> u8 => u8(fromShadower() + fromBystander())`,
 			shadower: `module shadower
 let unwrapOr = (a: i64, b: i64) -> i64 => a + b
@@ -124,8 +124,8 @@ pub let fromShadower = () -> i64 => unwrapOr(1, 2)`,
 		},
 		{
 			name: "another module, exported",
-			app: `import bystander
-import shadower
+			app: `import bystander.{ fromBystander }
+import shadower.{ fromShadower }
 let main = () -> u8 => u8(fromShadower() + fromBystander())`,
 			shadower: `module shadower
 pub let unwrapOr = (a: i64, b: i64) -> i64 => a + b

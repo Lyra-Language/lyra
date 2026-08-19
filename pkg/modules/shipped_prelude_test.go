@@ -279,7 +279,7 @@ func TestShippedPrelude_ImportedModuleMayReusePreludeMethodName(t *testing.T) {
 	std := filepath.Dir(filepath.Dir(path))
 
 	app := t.TempDir()
-	write(t, filepath.Join(app, "app.lyra"), `import util.box
+	write(t, filepath.Join(app, "app.lyra"), `import util.box.{ Box }
 let main = () -> u8 => {
   let m: Maybe<i64> = Some 3
   let b = Box { v: 4 }
@@ -495,7 +495,7 @@ func TestShippedPrelude_BareCallResolvesLikeAMethodCall(t *testing.T) {
 	std := filepath.Dir(filepath.Dir(path))
 
 	app := t.TempDir()
-	write(t, filepath.Join(app, "app.lyra"), `import util.box
+	write(t, filepath.Join(app, "app.lyra"), `import util.box.{ Box }
 let main = () -> u8 => {
   let b = Box { v: 4 }
   let m: Maybe<i64> = Some 5
@@ -524,7 +524,7 @@ func TestShippedPrelude_BareCallReachesASinglyDeclaredImport(t *testing.T) {
 	std := filepath.Dir(filepath.Dir(path))
 
 	app := t.TempDir()
-	write(t, filepath.Join(app, "app.lyra"), `import util.box
+	write(t, filepath.Join(app, "app.lyra"), `import util.box.{ Box }
 let main = () -> u8 => {
   let b = Box { v: 4 }
   u8(if is_some(b) { 7 } else { 0 })

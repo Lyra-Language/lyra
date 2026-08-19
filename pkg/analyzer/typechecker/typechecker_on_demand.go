@@ -1,6 +1,8 @@
 package typechecker
 
 import (
+	"fmt"
+
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
@@ -161,4 +163,23 @@ func (tc *TypeChecker) forceCheckDestructureCallee(decl *ast.DestructuringDeclSt
 		return false
 	}
 	return tc.forceCheckFunction(fn)
+}
+
+// unimportedHint names the module that exports a name the current file could not resolve,
+// as a clause to append to an "undefined" diagnostic — or "" when nothing exports it.
+//
+// An import's member list restricts visibility as of 08/19, so "undefined" is now the
+// wrong word for by far the commonest new failure: the name exists, it is `pub`, and this
+// file simply did not ask for it. Saying so and naming the import is the difference
+// between a one-line fix and a hunt.
+func (tc *TypeChecker) unimportedHint(name string, loc ast.Location) string {
+	if tc.symTable == nil {
+		return ""
+	}
+	module, ok := tc.symTable.ExportingModule(name)
+	if !ok || module == tc.symTable.ModuleOfFile[loc.File] {
+		return ""
+	}
+	return fmt.Sprintf(" — module %q exports it, but this file does not import it; add `import %s.{ %s }`",
+		module, module, name)
 }

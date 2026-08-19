@@ -79,7 +79,7 @@ func TestModules_DuplicateTypeNamesTheOtherFile(t *testing.T) {
 // Distinct names across modules compose: this is the case that must keep working.
 func TestModules_DistinctNamesCompose(t *testing.T) {
 	root := buildTree(t, map[string]string{
-		"app.lyra":       "import util.math\nlet main = () -> u8 => u8(double(21))",
+		"app.lyra":       "import util.math.{ double }\nlet main = () -> u8 => u8(double(21))",
 		"util/math.lyra": "module util.math\npub let double = (n: i64) -> i64 => n * 2",
 	})
 	res := analyze(t, root)
@@ -206,7 +206,7 @@ func TestModules_PubGatesCrossModuleAccess(t *testing.T) {
 		},
 		{
 			"exported type as an annotation",
-			`import lib.api
+			`import lib.api.{ Config }
 			 let main = () -> u8 => {
 				let c: Config = Config { level: 3 }
 				u8(c.level)

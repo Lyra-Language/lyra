@@ -153,6 +153,15 @@ func (tc *TypeChecker) declVisibility(name string, decl ast.AstNode, isPublic bo
 // survives on for a bare call.
 func (tc *TypeChecker) reportPrivateType(name string, loc ast.Location) bool {
 	from := tc.symTable.ModuleOfFile[loc.File]
+	// A name the other module *exports* did not fail to resolve because it is private —
+	// it failed because this file did not import it, which is a different fix and has
+	// its own message. Before imports restricted visibility the two could not be told
+	// apart here, since an exported type always resolved; now the commoner of the two
+	// would otherwise be reported as the rarer, telling an author to add a `pub` that is
+	// already there.
+	if exporter, ok := tc.symTable.ExportingModule(name); ok && exporter != from {
+		return false
+	}
 	for _, module := range tc.symTable.DeclaringModulesOf(name) {
 		if module == from {
 			continue

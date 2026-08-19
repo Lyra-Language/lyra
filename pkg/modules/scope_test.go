@@ -9,13 +9,14 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/modules"
 )
 
-// Each module's top-level declarations land in its own ScopeModule, and only a `pub`
-// one also lands in the shared global scope — which is what makes a private name
-// invisible outside its module while a cross-module reference still resolves.
+// Each module's top-level declarations land in its own ScopeModule; a `pub` one also
+// lands in the global registry, and reaches another module only through that module's
+// **imports** scope. That is what makes a private name invisible outside its module and
+// an *unimported* export invisible too.
 func TestModuleScopes_PopulatedPerModule(t *testing.T) {
 	root := buildTree(t, map[string]string{
-		"app.lyra":       "import util.math\nlet appOnly = () -> i64 => 1\nlet main = () -> u8 => u8(math.double(1))",
-		"util/math.lyra": "module util.math\npub let double = (n: i64) -> i64 => n * 2\nlet mathOnly = () -> i64 => 3",
+		"app.lyra":       "import util.math.{ double }\nlet appOnly = () -> i64 => 1\nlet main = () -> u8 => u8(double(1))",
+		"util/math.lyra": "module util.math\npub let double = (n: i64) -> i64 => n * 2\npub let alsoExported = () -> i64 => 4\nlet mathOnly = () -> i64 => 3",
 	})
 	units, diags := modules.Resolve(filepath.Join(root, "app.lyra"), []string{root}, modules.Options{})
 	if len(diags) != 0 {
@@ -45,7 +46,7 @@ func TestModuleScopes_PopulatedPerModule(t *testing.T) {
 		{mathScope, "mathOnly", true, "private, but still its module's own"},
 		{mathScope, "appOnly", false, "belongs to the entry module"},
 		{appScope, "appOnly", true, "declared in the entry file"},
-		{appScope, "double", false, "exported, so it lives in the global scope, not here"},
+		{appScope, "double", false, "imported, so it lives in the imports scope, not here"},
 		{appScope, "mathOnly", false, "private to util.math — the point of the split"},
 	} {
 		if _, found := c.scope.LookupLocal(c.name); found != c.want {
@@ -53,23 +54,36 @@ func TestModuleScopes_PopulatedPerModule(t *testing.T) {
 		}
 	}
 
-	// An export is still reachable from another module — through the chain, not by
-	// sitting in that module's own scope.
+	// An export is reachable from another module **because that module imported it** —
+	// through the chain, not by sitting in its own scope. app.lyra says
+	// `import util.math.{ double }`, so `double` is in its imports scope.
 	if _, found := appScope.Lookup("double"); !found {
-		t.Error("util.math exports double, so the entry module should resolve it")
+		t.Error("app imports double, so the entry module should resolve it")
 	}
 	if _, found := appScope.Lookup("mathOnly"); found {
 		t.Error("a private name must not be reachable from another module")
 	}
-
-	// Siblings, not nested: modules do not contain one another. They hang off the
-	// prelude scope, which is what puts the prelude's names between a module's own
-	// declarations and the global ones.
-	if mathScope.Parent != st.PreludeScope || appScope.Parent != st.PreludeScope {
-		t.Error("a module's scope should be a child of the prelude scope")
+	// And an export it did *not* import stays out, which is the whole point of the
+	// imports scope: exported and visible are no longer the same thing.
+	if _, found := appScope.Lookup("alsoExported"); found {
+		t.Error("an unimported export must not resolve bare")
 	}
-	if st.PreludeScope.Parent != st.GlobalScope {
-		t.Error("the prelude scope should sit under the global scope")
+
+	// Siblings, not nested: modules do not contain one another. Each hangs off its own
+	// imports scope, which hangs off the prelude's — so a module's own declarations
+	// shadow what it imports, and both shadow the ambient prelude.
+	if mathScope.Parent != st.ImportScopes["util.math"] || appScope.Parent != st.ImportScopes[""] {
+		t.Error("a module's scope should be a child of its imports scope")
+	}
+	if st.ImportScopes[""].Parent != st.PreludeScope {
+		t.Error("an imports scope should sit under the prelude scope")
+	}
+	// Resolution stops at the prelude. The global scope is still the program-wide name
+	// registry — it is what makes two modules exporting one name an error — but it is
+	// no longer on any module's chain, which is what made every export visible
+	// everywhere.
+	if st.PreludeScope.Parent != nil {
+		t.Error("the prelude scope should be the end of the chain, not a child of the global scope")
 	}
 	if mathScope.Kind != symbols.ScopeModule {
 		t.Errorf("expected ScopeModule, got %v", mathScope.Kind)
@@ -113,7 +127,7 @@ func TestModuleScopes_SamePrivateNameInTwoModules(t *testing.T) {
 	root := buildTree(t, map[string]string{
 		"one.lyra": "module one\nlet helper = () -> i64 => 1\npub let fromOne = () -> i64 => helper()",
 		"two.lyra": "module two\nlet helper = () -> i64 => 2\npub let fromTwo = () -> i64 => helper()",
-		"app.lyra": "import one\nimport two\nlet main = () -> u8 => u8(fromOne() + fromTwo() * 10)",
+		"app.lyra": "import one.{ fromOne }\nimport two.{ fromTwo }\nlet main = () -> u8 => u8(fromOne() + fromTwo() * 10)",
 	})
 	res := analyze(t, root)
 	if errs := res.Errors(); len(errs) != 0 {
@@ -143,7 +157,7 @@ func TestModuleScopes_OwnPrivateCallIsNotReportedPrivate(t *testing.T) {
 	root := buildTree(t, map[string]string{
 		"one.lyra": "module one\npub let helper = () -> i64 => 1\npub let fromOne = () -> i64 => helper()",
 		"two.lyra": "module two\nlet helper = () -> i64 => 2\npub let fromTwo = () -> i64 => 5",
-		"app.lyra": "import one\nimport two\nlet main = () -> u8 => u8(fromOne() + fromTwo())",
+		"app.lyra": "import one.{ fromOne }\nimport two.{ fromTwo }\nlet main = () -> u8 => u8(fromOne() + fromTwo())",
 	})
 	res := analyze(t, root)
 	if errs := res.Errors(); len(errs) != 0 {
