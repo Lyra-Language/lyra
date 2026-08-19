@@ -1773,7 +1773,9 @@ interior assignment, and deep retain-on-copy.
 - **[ROADMAP] (#7) Explicit SIMD** — `simd<T,N>` → LLVM `<N x T>`, for determinism and games.
   Layer 1 is the primitive vector type; layer 2 is a data-parallel map over `pure`/`det`
   component arrays (the auto-parallel payoff). SoA-for-components, distinct from `[N]T`.
-  Sequenced after the scalar backend; spec in `pkg/backend/llvm/SIMD.md`.
+  Sequenced after the scalar backend; spec in `pkg/backend/llvm/SIMD.md`. `N` is a
+  **compile-time value parameter**, which the language does not have — see *Const
+  generics*, which `fixed<I, F>` and a generic `[N]T` helper are blocked on identically.
 
 ### Borrow model (#8) — targeted checks, not a Rust borrow checker
 
@@ -1975,6 +1977,112 @@ library; anything wanting `-L`, a static archive by path, or a macOS framework i
 build-system question, and `--cc` already lets a wrapper stand in. That is also the point
 where a manifest would start to earn its keep, which is the argument for not inventing one
 before then.
+
+## Const generics — a value as a type parameter
+
+**[OPEN]** A generic parameter today is always a *type*. Three open items on this list are
+the same missing feature underneath — a parameter that is a **compile-time value**:
+
+- `fixed<I, F>` is refused, not built (below). `I` and `F` are integers, not types.
+- `simd<T, N>` is [ROADMAP] (`pkg/backend/llvm/SIMD.md`). `N` is an integer, not a type.
+- `[N]T` carries its size in its type, so **no function can be generic over that size**.
+  Every array helper degrades to `[]T` — which is a different type, heap-allocated, and
+  refused by `noalloc`. The static-array half of the language has no library.
+
+The third is the one that pays first and the one that should drive the design, because it
+is the only one whose absence costs a program someone would write today.
+
+The idea is Mojo's parameter/argument split (`fn dot[width: Int](a: SIMD[…])`) minus the
+part that makes it expensive: Mojo's parameters are a whole compile-time *language*, run by
+an interpreter. What is proposed here is only a value in the parameter list. Generalized
+compile-time evaluation is a separate, larger item and is not assumed by this one.
+
+### The spelling — SCREAMING_CASE, and why it is not the ML lowercase
+
+```lyra
+let sum<t, const N: i64> where t: Add = (xs: [N]t) -> t => …
+type Matrix<t, const ROWS: i64, const COLS: i64> = [ROWS][COLS]t
+```
+
+**A value parameter is not a type variable, so it does not take a type variable's
+spelling.** The lowercase rule is load-bearing elsewhere — a lowercase name is a type
+variable and an Uppercase one a concrete type, which is what lets `Some t` read as an
+application without semantic resolution (`tree-sitter-lyra`'s `generic_type.js` records
+this). SCREAMING_CASE is what `const` already uses, and it is what a *use* site already
+demands: `array_size` is `choice($._number_literal, $.const_identifier)`, so **`[N]t`
+needs no grammar change at all** — only the declaration list has to bind `N`.
+
+The leading `const` keyword also steps around the lexer collision `generic_type.js` names
+as the reason uppercase type parameters are unsupported (`T` matches both
+`user_defined_type_name` and `const_identifier`). A parameter-list entry beginning with
+`const` needs no lexical decision — the keyword has already made it.
+
+### What has to change
+
+Roughly in order of how invasive it is:
+
+- **Grammar.** `generic_parameter` gains a second form: `const NAME: type`. New node, so
+  both highlight query files need it (`tree-sitter-lyra/queries/highlights.scm` and
+  `lyra-zed-ext/languages/lyra/highlights.scm`) — the standing rule.
+- **`ast.GenericParam`** is `{Name, Constraints, Location}`; it needs to say which kind it
+  is and, for a value, what type it holds.
+- **`types.StaticArrayType.Size` is an `int`** (`pkg/types/array.go`). A size that is a
+  parameter has no representation there, and this is the change everything downstream
+  feels: assignability, `SizeAndAlign`, the printer, and every switch that reads `.Size`.
+  Whether it becomes a small sum (`literal | parameter`) or the array type grows a separate
+  field is the first implementation decision.
+- **Instantiation.** `pkg/driver/instantiations.go` closes the specialization set by
+  composing a body's generic calls with the enclosing specialization's bindings, and it
+  must run *before* ownership, since `OwnershipBySpec` is per instantiation. A binding
+  becomes type-or-value; the specialization key grows values; the composition walk is
+  otherwise the same shape. Nothing about the "closed to a fixpoint before ownership"
+  discipline changes, and it should not.
+- **Folding.** `ast.FoldIntExprWith` already resolves `const` references through a
+  `constInit` callback, which is exactly the hook a specialization's value bindings plug
+  into. `[N]t` inside a generic body folds once `N` is bound, and not before.
+
+### Rules to settle first
+
+1. **Integers only, at the start** (plus `bool` if it falls out free). A float parameter
+   makes the specialization key depend on float equality, and a string parameter is really
+   a request for compile-time evaluation. Anything else is refused with a code of its own
+   (E062 is the next free) saying *unimplemented*, not *type error* — rule 5, the same
+   answer E035/E052/E055 gave.
+2. **No arithmetic on a parameter in type position.** `[N]t -> [N]t` is in; `[N + 1]t`,
+   `[N * 2]t` and `fixed<I, F> * fixed<I, F> -> fixed<I + F, …>` are out. The moment a
+   parameter can be computed, checking that two types are equal becomes checking that two
+   *expressions* are equal, which is a solver. The fixed-point item lists this as its own
+   open question; the answer here is that it is a second feature and must not be smuggled
+   into the first.
+3. **Inference from the argument.** `sum([1, 2, 3])` should bind `N = 3` by unification
+   against `[3]i64`, the same way `t = i64` is bound today — otherwise every call needs a
+   turbofish and the feature is not worth having. Explicit values go in the existing
+   turbofish positionally (`sum::<i64, 3>(xs)`), which makes a value legal in
+   `generic_arguments` — today `commaSep1($.type)`, so a literal there is a grammar change
+   at the *call* site even though the type site needed none.
+4. **A value parameter takes no bound.** `where` is for traits. "N must be a power of two"
+   is a different feature — a compile-time assertion with an author-written message, Mojo's
+   `constrained[…]` — and is worth its own [IDEA] entry once this exists, since a generic
+   function is the only place that could use one.
+5. **Instantiation cost is real and mostly already paid.** Each distinct value is a
+   specialization, so a helper called at ten sizes emits ten bodies. That is what a static
+   array already implies — `[3]i64` and `[4]i64` are different types today — so the feature
+   makes an existing cost *visible* rather than adding one. Worth a measurement on the
+   prelude before the wide version, not before the first one.
+
+### Sequencing
+
+**Layer 0 is a value parameter over `[N]T` in a function signature**, and nothing else: no
+`fixed`, no `simd`, no arithmetic. It is the smallest version that pays — it gives the
+static-array half of the language a library, and it is the version that proves the
+`StaticArrayType.Size` and instantiation-key changes on real code. `fixed<I, F>` and
+`simd<T, N>` then become what they claim to be, ordinary parameterized types, rather than
+each inventing its own value-parameter machinery.
+
+**What would say it is not worth building:** if a sweep of the array helpers anyone
+actually wants shows they are all fine as `[]t`. The static/dynamic split is deliberate and
+`noalloc` is the reason it matters, so the check is specifically whether the helpers that
+need to be `noalloc` are the ones being written. Measure before layer 0, not after.
 
 ## Traits
 
@@ -2276,6 +2384,11 @@ Kept rather than deleted, because the intent is to build it. Two things to settl
   precedent — but an array's size never changes under an operator, and this would be the
   first type whose parameters are themselves arithmetic. Division's rounding is the same
   question from the other side.
+
+  **Both of those sit on top of a feature that does not exist yet**: a generic parameter is
+  always a *type* today, and `I`/`F` are integers. See *Const generics* above — it lists
+  parameter arithmetic as explicitly out of its first layer, which means this item waits on
+  that layer and then on a second decision of its own.
 
 The surface is wide even after that: literals (there is no way to *write* one), defaulting,
 conversions both ways, comparison, `Show`, `%`, and the value-range pass. The natural
