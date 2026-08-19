@@ -1795,6 +1795,79 @@ interior assignment, and deep retain-on-copy.
   Sequenced after the scalar backend; spec in `pkg/backend/llvm/SIMD.md`. `N` is a
   **compile-time value parameter**, which the language does not have — see *Const
   generics*, which `fixed<I, F>` and a generic `[N]T` helper are blocked on identically.
+  - **[IDEA] A scalar as a width-1 vector**, Mojo's arrangement (`Scalar[dt]` *is*
+    `SIMD[dt, 1]`), so every elementwise operation is written once. Take the shape, not the
+    identification: a Lyra scalar is not a library type but a primitive with literal
+    syntax, defaulting rules and untyped-literal inference, so making `i64` an alias of
+    `simd<i64, 1>` would route `1 + 1` and `untyped_int` through a parameterized type for
+    no gain. What is worth copying is on the *lowering* side — write the elementwise
+    operator emission once, parameterized by lane count, with 1 a legal count.
+
+### [IDEA] Non-copyable types — a value that may only be moved
+
+Mojo's default is that a struct is **not** copyable unless it says so; Lyra's is deep
+retain-on-copy, and a type has no way to say that copying it is a bug. The machinery is
+already here — `own`, use-after-move (`lyra-E019`), the ownership pass — so what is missing
+is the *declaration* and the rule that every use of such a value is a move.
+
+The motivating shapes all arrive with `extern`: a file descriptor, a socket, a lock guard,
+any handle where a second owner means a double close. Today the type system cannot tell
+those from an `i64`.
+
+**The hard part is specific to Lyra, and should be settled before any syntax.** Mojo has no
+refcounting, so "non-copyable" there simply means "no implicit `__copyinit__`". Lyra's
+memory model *is* refcounting, and a retain is precisely a second owner — so a `shared`
+non-copyable type is a contradiction in terms unless "non-copyable" is defined as **no
+implicit retain**, leaving `stack` flavour and unique ownership as the only place it means
+anything. That definition is probably right and is not obviously the only one.
+
+Three consequences fall out of it and are worth writing down because they are free checks:
+a non-copyable value may only be bound by move and passed to an `own` parameter; a closure
+may not capture one it outlives; and `[v; n]` for n > 1 must refuse it outright, which is
+`lyra-W019`'s shape promoted from a warning to an error for exactly the types where the
+sharing it warns about is never intended.
+
+**Spelling.** An attribute (`@nocopy`, on the mechanism `@builtin(...)` already uses) is the
+smaller change than a marker trait: Rust and Mojo hang this on the *absence* of a derived
+`Copy`/`Copyable`, and Lyra has no auto-derived traits for an absence to be meaningful
+against.
+
+### [PARTIAL] ASAP destruction — landed as Perceus; a liveness pass is what is left
+
+Releasing at last use rather than at scope exit is **already implemented**, and further
+than the name suggests: `pkg/analyzer/ownership` carries `LastUseTransfer` (the final use
+in an owning position moves its reference, no dup), `LastUseDrop` (the final use in a
+borrowing position releases there), and `ReuseMatch`/`ReuseTarget` (Perceus reuse / FBIP —
+a matched `shared data` box at its last use is *reclaimed* rather than freed).
+
+What is left is precision, and it is one thing wearing five hats. `computeLastUse` is a
+**textual pre-order walk**, so it declares a binding ineligible when it is shadowed,
+is a parameter, is ever reassigned, or is referenced anywhere inside a loop body — and
+`LastUseTransfer` additionally fires only on an *unconditional* use. Every one of those is
+the sound over-approximation of "still used later", and each is exactly what a real
+**liveness analysis over the CFG** would answer precisely: a loop-carried binding dead
+after its last iteration, a `var` whose reassignment starts a new live range, a value that
+dies on one branch only. `dominators.go` is already there.
+
+**Nothing is unsound today** — a missed last use defers a free, never doubles it — so this
+is a performance question and settles by measurement rather than argument. The case to
+measure is a loop body holding a large `shared` array alive to scope exit that a liveness
+pass would drop at the top.
+
+### [IDEA] A transfer marker at the call site
+
+`own` is written on the *declaration*; the call site shows nothing, so a move reads like an
+ordinary call. Mojo writes `consume(x^)`, making it visible where it happens. `lyra-E019`
+already catches the *error*; this is about legibility, which is the weaker case.
+
+**It cannot be `^`**, which is taken twice over — the raw-pointer type prefix (`^T`) and
+postfix deref (`p^`) — and postfix `x^` in an argument position is exactly the deref
+spelling. So it needs a keyword (`consume(own x)`), which is real syntax for a check that
+already fires, on top of a rule that already forces one move to be visible: UFCS refuses an
+`own` receiver precisely so that a move always looks like a call.
+
+**What would reopen it**: second-class borrows landing, if reading a moved-from binding
+becomes common enough that E019 starts reading as a surprise rather than a typo.
 
 ### Borrow model (#8) — targeted checks, not a Rust borrow checker
 
@@ -2207,6 +2280,35 @@ box-drawing sets) rather than building it on every start-up; or const generics w
 parameter more interesting than a written integer.
 Until one of those is real, the folding that exists covers what programs are writing, and
 this stays an [IDEA] — the credit to Mojo is for naming the capability, not for scheduling it.
+
+## Target introspection — the answerable half, and the half with no target
+
+**[IDEA]** Mojo exposes `sizeof`, `alignof` and `simdwidthof` as compile-time values a
+branch can be taken on, so portable code picks a strategy without a preprocessor. The two
+halves of that have very different prices here.
+
+**`size_of` / `align_of` are answerable today.** `SizeAndAlign` in
+`pkg/backend/llvm/layout.go` already computes both for every type, so only a *spelling* is
+missing — and `lyra-E035` rules out the obvious one, since `i64.size_of()` is a member call
+on a type name. It would be a bare name with a turbofish and no value arguments
+(`size_of::<t>()`), which is a call shape the language does not have yet: today's turbofish
+always accompanies value arguments the inference could have used instead. Worth pairing
+with an array *stride*, since size and stride differ once alignment padding exists and
+picking the wrong one is a silent bug.
+
+They are also the natural first inputs to *Compile-time function evaluation* and to a
+`const` parameter — a value the compiler knows and a program cannot otherwise write.
+
+**`is_x86()` and `simd_width_of` are blocked on something bigger: Lyra has no concept of a
+target.** `lyrac` emits IR and hands it to clang, and the single place a platform decision
+is made is `pkg/backend/llvm/tui.go` picking a termios layout from Go's `runtime.GOOS` —
+the *compiler's own host*, which is correct only because compilation is host-only. Adding
+target predicates before there is a `--target` would bake that assumption into the language
+surface rather than the backend, which is the one place it is currently contained.
+
+**So: build `size_of`/`align_of`, and leave target predicates until cross-compilation is
+real.** The first needs a spelling; the second needs a compiler that knows what it is
+compiling for.
 
 ## Constraints are ordinary Lyra
 
