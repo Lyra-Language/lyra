@@ -2171,10 +2171,126 @@ than one member.
 
 **Linking a library nothing calls is harmless**, as `-lm` already is today.
 
+### Integer widths at the boundary — LP64, fixed, written down
+
+**[DECIDED 08/19]** An extern signature uses Lyra's **fixed** widths. There are no
+C-shaped aliases (`c_int`, `c_size_t`) and no target-dependent types.
+
+The question is real: C's scalars are not fixed-width, and Lyra removed `int`/`uint`
+*for determinism*, so nothing in the language spells "whatever `long` is here". But the
+boundary is not where that gets decided — **the compiler already hardcodes the answer**,
+in three places that each found it independently:
+
+- `pkg/backend/llvm/clock.go` builds `struct timespec` as `[2 x i64]`, commented "two
+  64-bit words there — `{ time_t tv_sec; long tv_nsec; }`". A C `long` is already written
+  as `i64`, in a shipped builtin.
+- `layout.go`'s `const pointerSize = 8`, commented "assume a typical 64-bit target
+  datalayout". Every union payload and aggregate layout rests on it.
+- `i128` is laid out "16/16 on the mainstream 64-bit ABI".
+
+So `extern` inherits a commitment rather than introducing one. Adding aliases would buy
+portability no program this compiler can emit could observe, and cost a target-dependent
+type mechanism the language has none of — `type` aliases are fixed source and the prelude
+is one set of files.
+
+**Where the assumption lives:** `layout.go`'s `pointerSize`. Everything else should
+reference it rather than restate it.
+
+### What Windows would actually cost, since LP64 is not the whole story
+
+Worth writing down because the obvious framing is wrong. **Windows x64 is LLP64, not
+32-bit**: pointers are 64 bits, so `pointerSize`, the alignment rules and the union layout
+engine are all *correct* there. The earlier note that a non-LP64 target "invalidates
+pointerSize first" is true of a 32-bit target and false of Windows.
+
+| C type | LP64 | Windows LLP64 |
+|---|---|---|
+| `long`, `unsigned long` | 64 | **32** |
+| `int`, `long long`, `size_t`, pointer, `float`, `double` | same | same |
+
+**`long` is the only divergent type**, and zlib walks straight into it: `uLong` is
+`unsigned long`, so `crc32` returns 64 bits here and 32 there. Declared `u64`, a Windows
+build would read eight bytes where the ABI passes four — an ABI break, not a compile error.
+
+It is gated behind larger blockers (`tui.go` is termios and `ioctl`, `random_seed` is
+`getentropy`, `clock.go` is `clock_gettime` — API ports, not width fixes), but it is on
+that list rather than absent from it.
+
+**The mitigation costs one line and needs no new feature.** `lyra-E063` looks *through* a
+newtype, so `std.ffi` defines the one divergent type:
+
+```lyra
+newtype CLong  = i64
+newtype CULong = u64
+```
+
+and a signature writes it wherever C writes `long`:
+
+```lyra
+@link("z")
+unsafe extern pure crc32: (CULong, ^u8, u32) -> CULong
+```
+
+That turns "audit every extern" into "change two lines" the day a Windows target is real.
+It does not buy automatic correctness — someone still edits and rebuilds — but nothing
+short of target-dependent types would, and that is a feature to build when there is a
+target to build it for.
+
+### Writing C's types
+
+| C | Lyra | C | Lyra |
+|---|---|---|---|
+| `char` | `i8` | `long`, `long long` | `i64` (`CLong` for `long`) |
+| `unsigned char` | `u8` | `unsigned long` | `u64` (`CULong`) |
+| `short` | `i16` | `size_t`, `uintptr_t` | `u64` |
+| `int` | `i32` | `float` | `f32` |
+| `unsigned int` | `u32` | `double` | `f64` |
+| `void` | `void` | `T*`, `void*` | `^T` / `^u8` |
+
+`_Bool` is deliberately absent — `lyra-E063`, and see the FFI-safe section for why.
+
+### The first real test — zlib
+
+**[DECIDED 08/19]** zlib, once lowering lands. Small, installed everywhere, and it
+exercises nearly every distinctive piece of this design at once:
+
+| piece | zlib |
+|---|---|
+| `@link` on a library not already passed | `-lz` |
+| `pure` bound | `crc32`, `compressBound` |
+| `det noalloc` bound | `compress` writes only through caller buffers |
+| `^u8` + length (`xs.data()`) | `crc32(crc, buf, len)` |
+| `^mut u8` out-buffer | `compress`'s `dest` |
+| `^mut T` in/out scalar | `destLen` — `&mut n`, read back |
+| returned `char*` → `string` | `zlibVersion()` |
+| ownership never crosses | caller allocates both buffers |
+| a real proof, not "it did not crash" | compress → uncompress → compare |
+
+Verified in C before choosing: 35 bytes → 17 compressed → 35 back, identical.
+
+It misses **floats**, so pair it with two lines of libm (`sqrt`, `pow`) — which is also the
+motivating case, since `sqrt` and `log` are builtins today and FFI is meant to be able to
+replace them.
+
+**Two test targets, not one, and the split matters.** `-lz` links on macOS but **not in the
+Debian ASan container** — measured: `-lm`, `-lc`, `-lpthread` and `-ldl` are the only ones
+that work in both. So:
+
+- **A vendored C fixture** for the automated suite: hermetic, no apt, compiled by the
+  harness that already shells out to clang, and free to exercise floats and anything else.
+- **zlib as the example and end-to-end proof**, because a fixture whose both sides we wrote
+  cannot demonstrate the thing that matters — that Lyra talks to a library nobody wrote for
+  it. Cost: `zlib1g-dev` in `asan.Dockerfile` and a CI step, against a Dockerfile whose
+  comments are proud of needing nothing.
+
 ### What is deliberately not decided here
 
 Variadics, callbacks passed *to* C (a Lyra closure is a code pointer plus a ref-counted
 environment, so it is not a C function pointer), and struct-by-value layout compatibility.
+
+**Non-LP64 targets**, per the width section above: the decision there is to state the
+assumption rather than abstract over it, and `CLong`/`CULong` is the one grep target a
+future port needs.
 
 On linking specifically: **search paths and non-system libraries**. `@link` names a system
 library; anything wanting `-L`, a static archive by path, or a macOS framework is a

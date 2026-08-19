@@ -777,6 +777,12 @@ backend, loudly (rule 5). Three things about the shape of it, then the language 
   *name*, and a name does not identify a declaration (rule 9) — an `extern f` made every
   `f(…)` in the prelude report as an unsafe call.
 
+**Integer widths at the boundary are Lyra's fixed ones**, with no C-shaped aliases: the
+compiler already hardcodes LP64 in three places — `layout.go`'s `pointerSize`, `clock.go`'s
+`struct timespec` as `[2 x i64]` (a C `long` written as `i64`, in a shipped builtin), and
+`i128`'s 16/16 ABI — so `extern` inherits that commitment rather than making it.
+`pointerSize` is where the assumption lives; everything else should reference it.
+
 The design is **settled** in `todo.md` (Foreign functions — `extern`); the summary a reader
 needs before touching anything nearby:
 
