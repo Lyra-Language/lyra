@@ -896,6 +896,25 @@ write today:
   instantiation machinery, but a newtype *is* its base plus a name, so it must become a
   `ConstrainedType` or `StripNewtype` finds nothing and every assignment to it is rejected.
 
+- **[OPEN] A generic `newtype` over a *managed* base does not lower.** `newtype Sorted<t> = []t`
+  checks clean and then fails the build with `llvm: cannot generate drop glue for Sorted<i64>:
+  llvm: "Sorted" is not a generic type that can be instantiated (*types.ConstrainedType)`.
+  Hazard 8: `instantiateGenericType`'s switch (`backend/llvm/generic_types.go:69`) has arms for
+  `NamedStructType`, `TupleType` and `DataType` but not `*ConstrainedType` — which is exactly
+  what the front end expands a parameterized newtype into, and the asymmetry the DONE entry
+  above says to remember. `Boxed<i64>` works because a scalar base needs no drop glue, so the
+  path is never taken; the wrapper is transparent, so the arm should substitute and hand back
+  the base's own instantiation. Found 08/19.
+
+- **[OPEN] Two things a `newtype` is not transparent to: indexing and calling.** `s[0]` on a
+  `newtype Sorted = []i64` is `lyra-E001` *"cannot index into type Sorted"*, and `f(2)` on a
+  `newtype Fn = (i64) -> i64` is *"identifier `f` is not callable"* — the method fallback
+  covers `.len()` but no operator rung looks through the wrapper. Both bases are ones a
+  conversion cannot *name*, so the read-out is the implicit one (`let xs: []i64 = s`), which
+  makes the workaround a rebinding rather than a cast. Whether these should fall through is a
+  design question, not obviously a bug: an array newtype exists partly to *stop* raw indexing.
+  Found 08/19.
+
 - **[DONE 08/07] The non-parsing test sources are fixed and the class is closed.**
   Both `parseCollectAndCheck` and the collector's golden helper now check
   `tree.RootNode().HasError()`, so a source that does not parse is a test failure rather
@@ -1995,7 +2014,8 @@ is the only one whose absence costs a program someone would write today.
 The idea is Mojo's parameter/argument split (`fn dot[width: Int](a: SIMD[…])`) minus the
 part that makes it expensive: Mojo's parameters are a whole compile-time *language*, run by
 an interpreter. What is proposed here is only a value in the parameter list. Generalized
-compile-time evaluation is a separate, larger item and is not assumed by this one.
+compile-time evaluation is a separate, larger item — *Compile-time function evaluation*,
+below — and is not assumed by this one.
 
 ### The spelling — SCREAMING_CASE, and why it is not the ML lowercase
 
@@ -2045,7 +2065,7 @@ Roughly in order of how invasive it is:
 
 1. **Integers only, at the start** (plus `bool` if it falls out free). A float parameter
    makes the specialization key depend on float equality, and a string parameter is really
-   a request for compile-time evaluation. Anything else is refused with a code of its own
+   a request for compile-time evaluation (below). Anything else is refused with a code of its own
    (E062 is the next free) saying *unimplemented*, not *type error* — rule 5, the same
    answer E035/E052/E055 gave.
 2. **No arithmetic on a parameter in type position.** `[N]t -> [N]t` is in; `[N + 1]t`,
@@ -2060,10 +2080,20 @@ Roughly in order of how invasive it is:
    turbofish positionally (`sum::<i64, 3>(xs)`), which makes a value legal in
    `generic_arguments` — today `commaSep1($.type)`, so a literal there is a grammar change
    at the *call* site even though the type site needed none.
-4. **A value parameter takes no bound.** `where` is for traits. "N must be a power of two"
-   is a different feature — a compile-time assertion with an author-written message, Mojo's
-   `constrained[…]` — and is worth its own [IDEA] entry once this exists, since a generic
-   function is the only place that could use one.
+   - **[IDEA] A named form in the turbofish** — `sum::<i64, N = 3>(xs)`. The declaration
+     marks a value twice (the `const` keyword, SCREAMING_CASE); the turbofish keeps
+     neither, so `3` is readable only by knowing the parameter order. Rust lives with
+     exactly this, and tolerably, because inference means the turbofish is rarely written
+     at all — which is the reason to leave it positional now rather than the reason it is
+     right. Purely additive if it grates: a `NAME =` prefix is unambiguous against a
+     positional entry, so it can be added without changing any call already written.
+4. **A value parameter takes a *constraint*, not a trait bound.** `where t: Show` is for
+   types; "N must be a power of two" is a predicate on a value, which is what a newtype's
+   `where` already expresses — so the answer is *Constraints are ordinary Lyra* below,
+   applied to a parameter: `<const N: i64 where power_of(2)>`. Two things follow. A
+   parameter has **no run time to trap in**, so unlike a newtype it cannot ship on the
+   trap rung and waits on CTFE outright. And a constraint is a predicate on *one* value, so
+   a relationship between two parameters is still `const_assert`'s shape, not this one.
 5. **Instantiation cost is real and mostly already paid.** Each distinct value is a
    specialization, so a helper called at ten sizes emits ten bodies. That is what a static
    array already implies — `[3]i64` and `[4]i64` are different types today — so the feature
@@ -2083,6 +2113,200 @@ each inventing its own value-parameter machinery.
 actually wants shows they are all fine as `[]t`. The static/dynamic split is deliberate and
 `noalloc` is the reason it matters, so the check is specifically whether the helpers that
 need to be `noalloc` are the ones being written. Measure before layer 0, not after.
+
+## Compile-time function evaluation
+
+**[IDEA]** — not committed, and larger than anything else on this list. It exists as an
+entry because *Const generics* above refers to it twice (a parameter that is not an
+integer; a value computed rather than written) and those references should land somewhere.
+
+**What exists today is folding, not evaluation.** `ast.FoldBigExpr` walks `+ - *` over
+literals at arbitrary precision, resolving `const` references through a `constInit`
+callback, and that is the whole of it: no calls, no control flow, no local bindings. It is
+enough for an array size and a range bound and was never meant to be more.
+
+**The proof that the larger thing works is already in the compiler.** A `pattern(...)`
+constraint's regex is compiled to a DFA *during compilation* and emitted as a frozen table
+(`pkg/regex`, capped by `regex.MaxTableStates`; `pkg/backend/llvm/regex_match.go`), so the
+program ships the answer rather than the machinery — no pattern parser, no DFA builder, no
+regex engine, just a constant table and one loop that walks it. That is compile-time
+evaluation, and it is the most valuable thing a compiler can do with a constant. It is also
+hand-written in Go, for exactly one feature. **A Lyra author has no way to do it for their
+own data**, and that gap is what this item is about.
+
+### The gate is a bound the compiler already infers
+
+Every language that has this invents a colour for it — `constexpr`, `comptime`, `const fn`
+— because it has to mark which functions are safe to run early. Lyra already computes that
+answer for a different reason: `pure` means no observable effect and `det` adds
+reproducibility, `CheckPurity` infers both whole-program, and "safe to run at compile time"
+is `pure det` with folded arguments. Nothing new is annotated and nothing new is inferred.
+
+That is the design claim worth defending, and the reason not to take Mojo's *surface*
+along with its idea. Mojo makes the parameter list a compile-time language of its own, with
+`@parameter if` and `@parameter for` shadowing the runtime forms. The version proposed here
+has no separate syntax at all — it is the same language, gated on a bound that is already
+there. If it turns out to need its own spelling, it has lost its main argument and should
+be re-argued from scratch rather than grown one keyword at a time.
+
+**`noalloc` is not part of the gate.** The interpreter may allocate freely; what is
+constrained is the **result**, which has to be emittable as a constant — a scalar, a
+string, an `[N]T`, a struct or tuple of those. A computation that allocates internally and
+returns a scalar is fine; one that returns a `[]t` is not, until there is an answer for
+what a heap value baked into a binary means.
+
+### The cost, and the argument to have before building
+
+An interpreter over the AST is a **second implementation of the language's semantics**,
+standing next to the LLVM backend, and the two must agree exactly. Where they disagree, a
+program computes one answer at compile time and a different one at run time — the worst
+class of bug this project can ship, because both answers look right in isolation.
+
+Lyra has already made this argument at 1/100 scale and should re-read its own comment
+before making it again. `FoldIntExpr` lives in `pkg/ast` rather than in either caller
+specifically because the typechecker and the backend both need the same number, and *"a
+second copy of the arithmetic is the kind of divergence that shows up as a program whose
+array is one length to the checker and another to codegen."* That is this feature's entire
+risk, stated about three operators.
+
+The places the two would drift, all of which need settling first:
+
+- **Integer overflow.** `+ - * /` trap at run time. At compile time a trap has no meaning,
+  so it becomes a **diagnostic** naming the operation — which is strictly the better
+  outcome and is the pit-of-success answer, but it means the two evaluators do not merely
+  disagree in edge cases, they *deliberately* differ. Division by zero and `INT_MIN / -1`
+  are the same shape, and `checked_*`/`wrapping_*`/`saturating_*` must each be interpreted
+  as the backend lowers them, not as their names suggest.
+- **Floats.** The interpreter has to compute at the operand's declared width with the same
+  rounding, never at Go's `float64` for an `f32` expression. `%%`, and `floor`/`ceil`/
+  `round`'s out-of-range trap, are the same question.
+- **Termination.** A nonterminating CTFE hangs the compiler, so the interpreter needs a
+  step budget reported as a diagnostic that names the limit. `foldBigLimit` (2^512, guarding
+  a pathological fold chain) is the precedent for the shape of that answer.
+
+### A ladder, so the first rung is small
+
+0. **Today.** Literal arithmetic, const chains.
+1. **A `const` initialized by a call** to a `pure det` function whose arguments fold,
+   returning a scalar or a string — with local `let`, `if`, `match` and a `for` over a
+   range inside. This is most of the value and is where the semantics-agreement work
+   actually gets done; everything above it is surface area on a settled core.
+2. **Aggregate results** — `[N]T`, structs, tuples of constants. This is the rung the DFA
+   trick needs, and therefore the rung at which a library author can do what the compiler
+   does for regex today.
+3. **Reaching into the type system** — a computed value as a generic parameter. Note that
+   this does **not** settle *Const generics* rule 2: refusing `[N + 1]t` is about comparing
+   two types whose parameters are unevaluated expressions, which stays a solver question
+   even when every fully-bound value is computable.
+
+**What would actually drive it**: *Constraints are ordinary Lyra* below, which is the
+concrete one — a user-written constraint predicate is checkable at compile time only by
+running it, so its static rung is this feature and nothing else. Behind that: a library
+author blocked on shipping a table (a parsed format, a precomputed curve, `std.tui`'s
+box-drawing sets) rather than building it on every start-up; or const generics wanting a
+parameter more interesting than a written integer.
+Until one of those is real, the folding that exists covers what programs are writing, and
+this stays an [IDEA] — the credit to Mojo is for naming the capability, not for scheduling it.
+
+## Constraints are ordinary Lyra
+
+**[IDEA] 08/19** — the direction is chosen, nothing is built. Today a newtype's constraint
+is one of five **keywords** (`constrained_type.js`: `range`, `values`, `pattern`,
+`precision`, `step`), each with a bespoke argument grammar, and a program cannot add a
+sixth. The proposal: **a constraint is an ordinary `pure det` predicate on the constrained
+value**, resolved by name like anything else, and the builtins are rewritten in the prelude
+— accepting a changed spelling for each, since keeping the spelling is exactly what forces
+them to stay keywords.
+
+This is the rule the language already states, applied to the largest place it is not:
+*"Anything expressible in the language goes in the prelude; the builtin registry stays
+whatever is genuinely primitive"* — `read_line` vs `parse_i64`. Four of the five are
+expressible. One is not, and saying so is the rule working rather than an exception to it.
+
+### The shape
+
+```lyra
+pub let power_of = pure det (self: i64, p: i64) -> bool => self > 0 && …
+newtype SIMDLane = i64 where power_of(2)
+```
+
+`where power_of(2)` means `power_of(v, 2)` — the constrained value is argument 0, which is
+**the UFCS rewrite the typechecker already performs** for a first parameter named `self`.
+Nothing new is invented for the receiver, and scoping falls out too: the name resolves
+through the module's own imports (the member-list boundary), and a local declaration
+shadowing a prelude predicate is `lyra-W016`, the existing rule.
+
+### The five, one at a time
+
+1. **`range(0..<=100)` → `at_least(0), at_most(100)`.** A range in constraint position is a
+   *set*, which is why it has no direction and why `..>`/`..>=` there is `lyra-E034`. Two
+   predicates carry no direction to refuse, so **E034 stops existing**. Keeping a range
+   argument instead would require first-class range *values*, a larger feature; that is the
+   argument for the two predicates rather than a reason to wait.
+2. **`values(200, 404, 500)` → `one_of([200, 404, 500])`.** Lyra has no variadics (left
+   undecided under `extern`), so the arguments become an array literal. One pair of
+   brackets is the entire cost.
+3. **`step(10)` → `congruent(5, 10)`.** The one that fixes something rather than moving it.
+   `step` measures from its *sibling* `range`'s start — `range(5..<=95), step(10)` accepts
+   15 and refuses 10 (`lyra-E053`), which is a documented surprise. A predicate over one
+   value cannot see a sibling constraint, so unification **forces the offset to be
+   written**. It was modular congruence all along and now says so.
+4. **`precision(0.01, round_even)` → `quantized(0.01, RoundEven)`**, with a prelude `data`
+   type for the mode: five grammar node kinds (`even_rounding_mode` …) become five
+   constructors. **Consider deleting it instead.** `PrecisionConstraint` is collected
+   (`collector/typedecls/constrained_type_def.go`), given a node in `pkg/types`, and read
+   by no checker and no backend — the collected-and-unread shape `lyra-E045`'s own comment
+   records `values` having been in until 08/12. Rewriting a constraint nothing enforces is
+   the moment to ask whether anything ever wanted it.
+5. **`pattern(r"[a-z]+")` stays a builtin.** The DFA compiled at compile time *is* the
+   feature — a Lyra implementation would be a regex engine in the prelude, evaluated at
+   every construction site, which is precisely what the frozen table exists to avoid. Its
+   argument is not an ordinary value either (a regex literal is `lyra-E052`), so it keeps a
+   special form. It should be **declared in the prelude with an `@builtin(Pattern)`
+   marker** rather than left a keyword in type position, which is how `Ord`, `Eq`, `Maybe`
+   and `Result` are already handled.
+
+### Doing all five is what removes the collision hazard
+
+A half-rewrite — a general call form admitted *alongside* the five keywords — leaves
+`range`/`values`/`step` reserved in constraint position while remaining ordinary names
+everywhere else, so a program's own `step(…)` predicate would be silently read as the
+builtin. Rewriting them removes the special forms entirely: `_constraint`'s five
+alternatives collapse to one `call_constraint`, the names become ordinary prelude
+functions, and shadowing one is `lyra-W016` like shadowing anything else. **That is the
+argument for the whole rewrite over the convenient half of it.**
+
+### Migration — nothing regresses before CTFE
+
+The compile-time rung (`lyra-E023`/`lyra-E045`) exists because the checker *interprets* a
+form it recognizes. A user-written predicate needs *Compile-time function evaluation* to be
+checked statically; the prelude four do not have to wait for it.
+
+- **Phase 1.** Rewrite the four in the prelude, marked `@builtin(...)`. The checker keeps
+  recognizing them by identity and keeps exactly today's logic, so every existing
+  diagnostic is unchanged. The grammar collapses. **User predicates are accepted and
+  checked at run time only** — the trap rung the newtype ladder already has, so the feature
+  ships useful before the interpreter exists.
+- **Phase 2.** CTFE lands; a user predicate gains the static rung; the markers may come off
+  the four, or stay as a lowering optimization.
+
+A **const generic parameter cannot take that path** — there is no run time to trap in — so
+a predicate on one is compile-time or nothing, and that half genuinely blocks on CTFE.
+
+### What is lost, and what is still not covered
+
+- **Cost.** A recognized constraint lowers to a compare-and-branch; a user predicate lowers
+  to a call at every site the checker could not settle. Keeping the four marked is what
+  preserves today's codegen, which makes the markers a performance decision and not only a
+  migration crutch.
+- **Message quality.** *"value 150 is outside the range 0..<=100 of Percent"* is written by
+  a compiler that understands the form. A predicate yields *"150 violates at_most(100) of
+  Percent"* — mechanical, unable to go stale, and a sentence nobody wrote. Whether a
+  predicate can supply its own wording (its doc comment's first line? a second return
+  value?) is open, and is the one place this loses to a hand-written form.
+- **A relationship among several values** stays inexpressible: a constraint applies to one
+  value, so `ROWS * COLS` being a multiple of `LANES` is not a constraint. That shape is
+  `const_assert` in *Compile-time function evaluation*, which this does not subsume.
 
 ## Traits
 
