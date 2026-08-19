@@ -1912,12 +1912,69 @@ reallocates the element buffer. That is Rust's `as_ptr` hazard exactly, it is no
 checkable today, and it is therefore squarely inside `unsafe` — which is where the pointer
 that produced it already put the caller.
 
+### Linking — `@link`
+
+**[DECIDED 08/19]** A link requirement rides the `extern` that needs it:
+
+```lyra
+@link("m")
+unsafe extern pure sqrt: (f64) -> f64
+```
+
+`lyrac build` collects the `@link`s of every module in the compile, sorts and deduplicates
+them, and passes `-l<name>` for each.
+
+**Neither of the two conventional answers works here.** A CLI flag
+(`lyrac build --link m`) does not compose: a *module* wrapping libm would force every
+consumer program to know and pass it, which is exactly the failure the module system exists
+to prevent — a library's requirements travel with the library. A manifest (`lyra.toml`) is a
+package-manager-shaped file introduced for one field, in a compiler that has deliberately
+avoided having one: modules resolve by path, `std` is found beside the executable, and the
+RC runtime is emitted *into the module* precisely so there is no separate object to link.
+
+So it goes in the source, where attributes already live (`@builtin`, `@derive`, `@packed`,
+`@align`).
+
+**Per declaration, not per module.** A `std.math` wrapping twenty libm functions repeats
+`@link("m")` twenty times, which is the cost; what it buys is that the requirement is never
+separated from the thing requiring it, and that a library can in principle be attributed to
+the extern that needed it — so linking only what is reachable stays possible later. A
+module-level form could not.
+
+Four smaller rules:
+
+- **The argument is a library name, not a flag.** `@link("m")` becomes `-lm`. Taking a raw
+  flag invites `@link("-framework CoreFoundation")` and makes `lyrac` a shell.
+- **Sorted and deduplicated.** Deterministic for the reason `Resolution.SpecKey` sorts its
+  bindings: a build must not wobble between runs. If link *order* ever matters for a real
+  case, that is evidence the flat set is wrong rather than a reason to preserve source
+  order.
+- **`--emit-llvm`'s hint carries them.** The "compile it with: clang …" line must name every
+  `-l` the real build would pass, on the standing rule that both hints carry the
+  optimization level — a hint that describes a different build than the one it stands in
+  for is worse than no hint.
+- **`@link` needs no `unsafe`.** It is not an assertion about behaviour: a wrong library
+  name fails loudly at link time. That is the whole contrast with the effect bound, which
+  fails *silently* and therefore does need the keyword.
+
+**`-lm` stays unconditional** for now. The float intrinsics (`floor`/`ceil`/`round`, `fmod`)
+are the *compiler's* requirement rather than a program's, so they are not a `@link`
+anywhere. The tidier shape is one requirement set fed by two sources — source attributes and
+the backend's own intrinsics — and it is worth doing only when the second source has more
+than one member.
+
+**Linking a library nothing calls is harmless**, as `-lm` already is today.
+
 ### What is deliberately not decided here
 
 Variadics, callbacks passed *to* C (a Lyra closure is a code pointer plus a ref-counted
-environment, so it is not a C function pointer), struct-by-value layout compatibility, and
-linking — which library, and how `lyrac build` is told about it. Each is a separate
-question, and none of them blocks the three above.
+environment, so it is not a C function pointer), and struct-by-value layout compatibility.
+
+On linking specifically: **search paths and non-system libraries**. `@link` names a system
+library; anything wanting `-L`, a static archive by path, or a macOS framework is a
+build-system question, and `--cc` already lets a wrapper stand in. That is also the point
+where a manifest would start to earn its keep, which is the argument for not inventing one
+before then.
 
 ## Traits
 

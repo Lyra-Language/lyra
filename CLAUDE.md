@@ -774,6 +774,11 @@ Not built. The three design questions are **settled** in `todo.md` (Foreign func
 - **Ownership never crosses.** Neither side adopts the other's buffer; both directions
   would need the other to understand the rc header. A `^T` into a live array dangles at the
   next `push`.
+- **A link requirement rides the extern that needs it** — `@link("m")` on the declaration,
+  collected across every module in the compile, sorted and deduplicated, emitted as `-l`.
+  Not a CLI flag (a module's requirement would not compose) and not a manifest (this
+  compiler has deliberately never had one). It needs no `unsafe`: a wrong library name
+  fails loudly at link time, which is exactly what an effect bound does not do.
 
 ## Current Development Focus
 
