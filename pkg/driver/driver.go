@@ -12,6 +12,7 @@ package driver
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/captures"
@@ -62,7 +63,15 @@ type Result struct {
 	OwnershipByMethod map[string]*ownership.Table
 	Captures          *captures.Table      // each lambda's free variables (its closure environment)
 	RangeSafety       *checker.SafetyTable // overflow ops the backend may leave unchecked
-	Diagnostics       []diag.Diagnostic
+	// Links are the libraries `@link("m")` names across every module in the compile,
+	// **sorted and deduplicated**. `lyrac build` passes one `-l<name>` for each.
+	//
+	// Sorted for the reason Resolution.SpecKey sorts its bindings: a build must not wobble
+	// between runs. Collected here rather than by the CLI because the requirement is a
+	// property of the *program* — a module that wraps libm carries its own need, and no
+	// consumer should have to know about it.
+	Links       []string
+	Diagnostics []diag.Diagnostic
 }
 
 // HasErrors reports whether any diagnostic is error-severity. A compiler should
@@ -242,6 +251,7 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	rangeDiags, rangeSafety := checker.CheckIntegerRanges(program, tt)
 	res.Diagnostics = append(res.Diagnostics, rangeDiags...)
 	res.RangeSafety = rangeSafety
+	res.Links = collectLinks(program)
 
 	// Ownership analysis (retain/release-temp decisions for managed values) runs
 	// after typechecking — it reads the TypeTable to identify managed types. It
@@ -473,4 +483,38 @@ func lastSegment(module string) string {
 		return module[idx+1:]
 	}
 	return module
+}
+
+// collectLinks is the union of every `extern`'s `@link` in the program, sorted and
+// deduplicated.
+//
+// A flat set rather than an ordered list: link order matters for static archives, and if a
+// real case ever needs it, that is evidence the set is the wrong shape rather than a reason
+// to preserve source order — which would make the link line depend on which module happened
+// to be walked first.
+func collectLinks(program *ast.Program) []string {
+	if program == nil {
+		return nil
+	}
+	seen := map[string]bool{}
+	for _, stmt := range program.Statements {
+		ext, ok := stmt.(*ast.ExternDeclStmt)
+		if !ok {
+			continue
+		}
+		for _, lib := range ext.Links {
+			if lib != "" {
+				seen[lib] = true
+			}
+		}
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	libs := make([]string, 0, len(seen))
+	for lib := range seen {
+		libs = append(libs, lib)
+	}
+	sort.Strings(libs)
+	return libs
 }

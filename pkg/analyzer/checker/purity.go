@@ -1658,8 +1658,43 @@ func topLevelFunctions(program *ast.Program) map[string]*ast.LambdaExpr {
 				fns[vd.Name] = lam
 			}
 		}
+		// An extern is a top-level function like any other here, which is what makes a
+		// call to one resolvable by the fixpoint and reportable by lyra-E011 — every
+		// extern is `unsafe` to call, so `unsafeFunctions` finds it through this.
+		if ext, ok := node.(*ast.ExternDeclStmt); ok {
+			fns[ext.Name] = ext.Func()
+		}
 	}
 	return fns
+}
+
+// externEffects is what an extern's *declared bound* permits, and it is where a foreign
+// function's effects come from — there is no body to infer them from.
+//
+// **The default is every effect**, matching the unresolved-callee rule this pass already
+// uses: a function whose body the compiler cannot see may do anything. A bound narrows it,
+// and the narrowing is what `unsafe` on the declaration asserts, since nothing here can
+// check it. So for Lyra code a bound is a promise the compiler *checks*; for an extern it
+// is a promise the compiler *records*.
+//
+// `noalloc` is the one that needs saying out loud: it clears EffectAlloc, which tracks the
+// ref-counted boxes the ownership pass reasons about. A foreign `malloc` is not in that
+// ledger and this bound does not claim it is.
+func externEffects(lam *ast.LambdaExpr) Effect {
+	switch {
+	case lam.IsPure:
+		return EffectNone
+	case lam.IsDet:
+		// `det` permits exactly what determinism allows: output, mutation, allocation.
+		e := EffectOutput | EffectMut | EffectAlloc
+		if lam.IsNoAlloc {
+			e &^= EffectAlloc
+		}
+		return e
+	case lam.IsNoAlloc:
+		return AllEffects &^ EffectAlloc
+	}
+	return AllEffects
 }
 
 // collectFuncBindings walks the whole program once, recording every lambda
@@ -1672,6 +1707,15 @@ func topLevelFunctions(program *ast.Program) map[string]*ast.LambdaExpr {
 // never confused with each other.
 func collectFuncBindings(program *ast.Program, base []scopeBindings, frames *scopeFrames) map[*ast.LambdaExpr][]scopeBindings {
 	defs := map[*ast.LambdaExpr][]scopeBindings{}
+	// An extern's lambda is not reachable by walking the program — it hangs off the
+	// declaration rather than sitting in an expression — so it is added here. Without an
+	// entry its effect stays the zero value, which reads as *pure*: the one answer a
+	// function nobody can see the body of must never get.
+	for _, node := range program.Statements {
+		if ext, ok := node.(*ast.ExternDeclStmt); ok {
+			defs[ext.Func()] = base
+		}
+	}
 	var visit func(capture []scopeBindings, lam *ast.LambdaExpr)
 	visit = func(capture []scopeBindings, lam *ast.LambdaExpr) {
 		defs[lam] = capture
@@ -2085,6 +2129,11 @@ func unknownCallbackEffect(callbacks map[string]int) Effect {
 }
 
 func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext, frames *scopeFrames, callbacks map[*ast.LambdaExpr]map[string]int) (Effect, map[string]int) {
+	if lam.IsExtern {
+		// No body to walk, and no reason to walk one: what a foreign function does is
+		// what its declaration claims. See externEffects.
+		return externEffects(lam), nil
+	}
 	scope := frames.forLambda(lam)
 	locals := make(map[string]bool, len(scope.mutable))
 	for name := range scope.mutable {

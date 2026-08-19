@@ -760,11 +760,25 @@ go test -run TestFunctionName ./pkg/...
 
 ## Foreign functions
 
-**The grammar parses `extern`; nothing else exists.** The collector refuses it loudly
-(a declaration that parses and collects to nothing is the phantom shape this project
-hunts), so what remains is inference, `@link` collection and lowering. The design is
-**settled** in `todo.md` (Foreign functions — `extern`); the summary a reader needs before
-touching anything nearby:
+**The front end is built; lowering is not.** A call to an extern is refused at the
+backend, loudly (rule 5). Three things about the shape of it, then the language rules:
+
+- **`ExternDeclStmt.Func()` is the body-less function an extern *is*.** Registered in
+  `SymbolTable.Functions`, so a call resolves, type-checks and is charged effects by the
+  machinery every other call goes through — the arrangement `TraitMethod.DefaultImpl()`
+  has, for the same reason. `LambdaExpr.IsExtern` marks it, because two passes must not
+  read it as an ordinary lambda that happens to be empty: the purity fixpoint would charge
+  no effect and call a foreign function *pure*, and the backend would emit a `define` with
+  no blocks.
+- **An extern's effects are its bound's** (`externEffects`), defaulting to `AllEffects` —
+  the same conservatism the unresolved-callee rule already encodes.
+- **`lyra-E011`'s "calling an unsafe function" half is in the typechecker**, not in the
+  syntactic pass that owns the raw-pointer half. That pass could only match the callee's
+  *name*, and a name does not identify a declaration (rule 9) — an `extern f` made every
+  `f(…)` in the prelude report as an unsafe call.
+
+The design is **settled** in `todo.md` (Foreign functions — `extern`); the summary a reader
+needs before touching anything nearby:
 
 - **An extern carries `AllEffects` unless a bound is written, and writing one is `unsafe`.**
   For Lyra code a bound is a promise the compiler checks; for an extern it is a promise the

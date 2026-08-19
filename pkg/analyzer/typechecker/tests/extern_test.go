@@ -1,0 +1,88 @@
+package typechecker_test
+
+import "testing"
+
+// `extern` declares a foreign function: a signature with no body, and the effect bound its
+// caller is asked to trust. The design is settled in todo.md (Foreign functions); this is
+// the front end of it — the declaration is collected, calls are checked against the
+// signature, effects come from the bound, and `@link` is gathered. Lowering is not built.
+
+func TestExtern_CallChecksAgainstTheSignature(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+unsafe extern pure sqrt: (f64) -> f64
+let main = () -> void => { unsafe { println("${sqrt(16.0)}") } }
+`, false))
+}
+
+func TestExtern_CallArityIsChecked(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+unsafe extern pure sqrt: (f64) -> f64
+let main = () -> void => { unsafe { println("${sqrt(16.0, 2.0)}") } }
+`, false)
+	assertHasErrorContaining(t, res, "expected 1 argument(s), got 2")
+}
+
+// Every extern is unsafe to *call*, whatever bound it claims — the bound is about effects,
+// not about safety.
+func TestExtern_CallNeedsAnUnsafeContext(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+unsafe extern pure sqrt: (f64) -> f64
+let main = () -> void => { println("${sqrt(16.0)}") }
+`, false)
+	assertHasErrorContaining(t, res, `calling unsafe function "sqrt" requires an `+"`unsafe`")
+}
+
+// The effect rule — that an unbound extern is not callable from `pure`, and a bound one
+// is — is exercised in the checker suite, which runs the purity pass (extern_purity_test).
+
+// **Narrowing the bound is the unsafe act.** Declaring an extern claims nothing and is
+// safe; claiming `pure` asserts something no compiler can check, and a wrong claim does not
+// fail here — it is believed, and corrupts every caller's effect analysis.
+func TestExtern_BoundWithoutUnsafeIsRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `extern pure sqrt: (f64) -> f64`, false)
+	assertHasErrorContaining(t, res, "write `unsafe extern` to assert it")
+}
+
+func TestExtern_NoBoundNeedsNoUnsafe(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `extern getpid: () -> i32`, false))
+}
+
+// The inverse is deliberately not an error: `unsafe extern` with no bound asserts nothing
+// and is merely redundant, and a program mid-edit should not stop compiling for it.
+func TestExtern_UnsafeWithoutABoundIsAllowed(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `unsafe extern getpid: () -> i32`, false))
+}
+
+// **FFI-safe types.** Refusing at the signature is what leaves no room for an implicit
+// conversion, and so no nul-termination policy to get wrong.
+func TestExtern_SignatureRefusesTypesWithNoCSpelling(t *testing.T) {
+	for _, c := range []struct{ name, src, want string }{
+		{"string", `unsafe extern pure puts: (string) -> i32`, "not NUL-terminated"},
+		{"array", `unsafe extern pure sum: ([]i64) -> i64`, "xs.data()"},
+		{"closure", `unsafe extern pure go: ((i64) -> i64) -> i32`, "not a C function pointer"},
+		{"bool", `unsafe extern pure ok: (bool) -> i32`, "C's `_Bool` is a byte"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			res := parseCollectAndCheck(t, c.src, false)
+			assertHasErrorContaining(t, res, c.want)
+		})
+	}
+}
+
+func TestExtern_SignatureAcceptsScalarsPointersAndVoid(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+unsafe extern det memcpy: (^mut u8, ^u8, i64) -> ^mut u8
+unsafe extern pure scale: (f32, i16, rune) -> f64
+extern flush: () -> void
+`, false))
+}
+
+// A newtype is looked *through*: it is nominal only, so `newtype Fd = i32` is an i32 at the
+// boundary — and refusing it would refuse the one wrapper that makes a foreign signature
+// readable.
+func TestExtern_SignatureLooksThroughANewtype(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+newtype Fd = i32
+unsafe extern det close: (Fd) -> i32
+`, false))
+}

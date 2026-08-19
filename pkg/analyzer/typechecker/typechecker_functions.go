@@ -25,6 +25,13 @@ import (
 // user-defined names (constrained types, structs, etc.) are expanded and
 // unknown names emit an "unknown type" diagnostic.
 func (tc *TypeChecker) withParamScope(lambda *ast.LambdaExpr, fn func()) {
+	// A function boundary resets the unsafe context: only an `unsafe` function's body is
+	// unsafe, and unsafe-ness does not leak in from an enclosing block — the same rule the
+	// raw-pointer walk applies, kept identical because they are one policy reported in two
+	// places.
+	oldUnsafe := tc.inUnsafe
+	tc.inUnsafe = lambda.IsUnsafe
+	defer func() { tc.inUnsafe = oldUnsafe }()
 	oldTypes, oldMods, oldBound := tc.paramTypes, tc.paramMods, tc.patternBound
 	// A nested lambda is lexically inside the enclosing one, so it sees that
 	// lambda's parameters too — start from them and let this lambda's own
@@ -707,7 +714,17 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		return tc.inferOverloadedCall(set, call)
 	}
 	if lambda, ok := sym.(*ast.LambdaExpr); ok {
-		return tc.inferLambdaCall(ident.Name, tc.bareCalleeFor(ident.Name, lambda, call), call)
+		callee := tc.bareCalleeFor(ident.Name, lambda, call)
+		tc.requireUnsafeCall(ident.Name, callee, call)
+		return tc.inferLambdaCall(ident.Name, callee, call)
+	}
+	// A foreign function is checked against its declared signature like any other call —
+	// ExternDeclStmt.Func is the body-less function it is, so nothing below this line
+	// knows an extern exists. The scope holds the *declaration* rather than that lambda
+	// because a scope entry needs a name and a lambda has none.
+	if ext, ok := sym.(*ast.ExternDeclStmt); ok {
+		tc.requireUnsafeCall(ident.Name, ext.Func(), call)
+		return tc.inferLambdaCall(ident.Name, ext.Func(), call)
 	}
 	if decl, ok := sym.(*ast.VarDeclStmt); ok {
 		lambda, ok := decl.Value.(*ast.LambdaExpr)
@@ -748,6 +765,7 @@ func (tc *TypeChecker) inferIdentifierCall(ident *ast.IdentifierExpr, call *ast.
 		// indirect call lowers through it.
 		lambda = tc.bareCalleeFor(ident.Name, lambda, call)
 		tc.typeTable.Set(ident, tc.lambdaSignature(lambda))
+		tc.requireUnsafeCall(ident.Name, lambda, call)
 		return tc.inferLambdaCall(ident.Name, lambda, call)
 	}
 	tc.addError(call.GetLocation(), SeverityError, "cannot resolve function %q", ident.Name)
@@ -1330,4 +1348,22 @@ func (tc *TypeChecker) checkBuiltinMutatesReceiver(recv types.Type, name string,
 			tc.addInteriorImmutableError(root.GetLocation(), root.Name, decl.BindingKind)
 		}
 	}
+}
+
+// requireUnsafeCall reports calling an `unsafe` function from a safe context (lyra-E011).
+//
+// **Here rather than in the syntactic pass that owns the rest of E011**, because this is
+// the only question in that policy that needs a *resolved* callee. That pass could match
+// the callee's name against the set of top-level unsafe functions, and a name does not
+// identify a declaration (hazard 9): an `extern f` made every `f(…)` in the prelude report
+// as an unsafe call, `f` there being a callback parameter shadowing nothing at all.
+//
+// Unsafe-ness is not transitive — a safe function may call an unsafe one from inside an
+// `unsafe` block — so this asks only about the context the call sits in.
+func (tc *TypeChecker) requireUnsafeCall(name string, callee *ast.LambdaExpr, call *ast.FunctionCallExpr) {
+	if callee == nil || !callee.IsUnsafe || tc.inUnsafe {
+		return
+	}
+	tc.addErrorCode(call.GetLocation(), SeverityError, diag.CodeUnsafeOutsideUnsafe,
+		"calling unsafe function %q requires an `unsafe` block or function", name)
 }

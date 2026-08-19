@@ -92,39 +92,10 @@ unsafe {
 `), 1)
 }
 
-// --- calling an unsafe function requires an unsafe context ---
-
-func TestUnsafe_CallUnsafeFn_OutsideUnsafe_Error(t *testing.T) {
-	assertUnsafeCount(t, checkUnsafe(t, `
-let load = unsafe (ptr: i64) -> i64 => {
-    ptr^
-}
-let use = (p: i64) -> i64 => {
-    load(p)
-}
-`), 1)
-}
-
-func TestUnsafe_CallUnsafeFn_InsideBlock_Ok(t *testing.T) {
-	assertUnsafeCount(t, checkUnsafe(t, `
-let load = unsafe (ptr: i64) -> i64 => {
-    ptr^
-}
-let use = (p: i64) -> i64 => {
-    unsafe {
-        load(p)
-    }
-}
-`), 0)
-}
-
-func TestUnsafe_CallSafeFn_NoError(t *testing.T) {
-	assertUnsafeCount(t, checkUnsafe(t, `
-let add = (a: i64, b: i64) -> i64 => {
-    a + b
-}
-let use = (p: i64) -> i64 => {
-    add(p, 1)
-}
-`), 0)
-}
+// --- calling an unsafe function ---
+//
+// Moved to the typechecker suite (raw_pointer_test.go) on 08/19. This pass is syntactic
+// and could only match the callee's *name* against the top-level unsafe functions, which
+// is hazard 9: an `extern f` made every `f(…)` in the prelude report as an unsafe call,
+// `f` there being an ordinary callback parameter. The typechecker resolves the callee
+// before deciding, which is the only place that question has an answer.

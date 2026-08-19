@@ -2008,15 +2008,38 @@ Types, checked arithmetic, division via the builtins library, `match`, conversio
 
 ## Foreign functions — `extern`
 
-**[PARTIAL 08/19] The grammar is built; nothing else is.** `extern` parses — the
-declaration form, the `unsafe`-plus-bound prefix and `@link("m")` — and the collector
-**refuses it loudly**, because a declaration that parses and collects to nothing is the
-phantom shape this file keeps cataloguing. What remains is inference (the signature, the
-asserted bound, FFI-safe types), `@link` collection, and lowering.
+**[PARTIAL 08/19] The front end is built; lowering is not.** An extern is collected,
+its calls are checked against its signature, its effects come from the bound it asserts,
+`unsafe` is required to narrow that bound, FFI-safe types are enforced at the signature,
+and `@link` is collected into `driver.Result.Links` (sorted, deduplicated). A call to one
+is refused at the backend, loudly, per rule 5.
+
+**Two decisions the design entry did not settle, made here:**
+
+- **An extern is always private to its module**, which is why the grammar gives it no
+  `pub`. A module that wants to offer a foreign function offers a *Lyra* function around
+  it — what `std/prelude/rand.lyra` already does with the `random_seed` builtin — so an
+  `unsafe` declaration never crosses a module boundary and every use of FFI has a checked
+  Lyra function in front of it. The cost is a one-line wrapper.
+- **`bool` is not FFI-safe.** Lyra's lowers to `i1` and C's `_Bool` is a byte, so passing
+  one silently disagrees about the calling convention — the class of wrongness this
+  language traps for everywhere else. `lyra-E063` names `i8` as the fix. Relaxable if the
+  ABI is pinned down deliberately.
+
+**And one bug it turned up, pre-existing and made reachable:** `lyra-E011`'s
+"calling an unsafe function" half was keyed on the callee's **name**, with no scope
+information — so an `extern f` made every `f(…)` in the prelude report as an unsafe call,
+`f` there being an ordinary callback parameter. That half now lives in the typechecker,
+where the callee is resolved; the syntactic pass keeps the raw-pointer half, which needs
+no resolution. Hazard 9, again.
 
 Grammar notes, including the state-cost measurement that chose the modifier shape, are in
 `tree-sitter-lyra/CLAUDE.md`. `extern` is **not** reserved — it is a keyword only in
 declaration position, exactly like `type`.
+
+**What lowering needs:** declare the foreign symbol in the module, emit a call to it, and
+pass `-l<name>` for each of `Result.Links` (plus carrying them in `--emit-llvm`'s
+"compile it with" hint). Nothing about the front end is waiting on a decision.
 
 **[DECIDED 08/18] The design below is settled.** Raw pointers landed the same day, which is what makes
 this worth settling: the piece an `extern` sits on now works, and what remains is three

@@ -41,6 +41,12 @@ type TypeChecker struct {
 	declOfFunc   map[*ast.LambdaExpr]*ast.VarDeclStmt
 	inferringRet map[*ast.VarDeclStmt]bool
 	checkedDecls map[*ast.VarDeclStmt]bool
+	// inUnsafe is whether the expression being checked sits inside an `unsafe` block or an
+	// `unsafe` function body. It exists so that "calling an unsafe function" can be
+	// reported *here*, where the callee has been resolved — the syntactic pass that owns
+	// the raw-pointer half could only match the callee's name, and a name does not
+	// identify a declaration (hazard 9).
+	inUnsafe bool
 	// currentDefaultTrait names the trait whose default-method body is being checked, or
 	// "" outside one. Read only by a diagnostic: inside a default, `Self` is a type
 	// variable the compiler introduced rather than one the author wrote, so the generic
@@ -216,6 +222,8 @@ func (tc *TypeChecker) checkNode(node ast.AstNode) {
 		tc.checkLValueAssignment(n)
 	case *ast.BooleanBinaryOpExpr:
 		tc.checkBooleanBinaryOpExpr(n)
+	case *ast.ExternDeclStmt:
+		tc.checkExternDecl(n)
 	case *ast.TraitImplStmt:
 		tc.checkTraitImpl(n)
 	case *ast.WithStmt:
@@ -2002,6 +2010,9 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 	case *ast.UnsafeBlockExpr:
 		// An `unsafe` block is its body: it changes what is *permitted* inside it
 		// (E011's policy), never what anything means or produces.
+		prev := tc.inUnsafe
+		tc.inUnsafe = true
+		defer func() { tc.inUnsafe = prev }()
 		return tc.inferExprType(e.Body)
 	case *ast.AddressOfExpr:
 		return tc.inferAddressOf(e)

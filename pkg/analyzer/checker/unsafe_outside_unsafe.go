@@ -20,17 +20,24 @@ func (e UnsafeOutsideUnsafeError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Location.Pretty(), e.Message)
 }
 
-// CheckUnsafeOutsideUnsafe walks the program AST and reports unsafe operations
-// that are not enclosed by an `unsafe { ... }` block or an `unsafe` function
-// body: taking a raw pointer (`&x`), dereferencing one (`p^` / a pointer write
-// `p^ = v`), and calling an `unsafe` function. The unsafe surface must be explicit so it
-// stays greppable and loud, mirroring CheckAwaitOutsideAsync's context walk.
+// CheckUnsafeOutsideUnsafe walks the program AST and reports the **raw-pointer**
+// operations that are not enclosed by an `unsafe { ... }` block or an `unsafe` function
+// body: taking a pointer (`&x`), dereferencing one (`p^`), and writing through one
+// (`p^ = v`). The unsafe surface must be explicit so it stays greppable and loud,
+// mirroring CheckAwaitOutsideAsync's context walk.
+//
+// **Calling an `unsafe` function is checked in the typechecker instead**, and the reason is
+// hazard 9. This walk is syntactic and has no scope information, so it could only ask
+// whether the callee's *name* belonged to some top-level unsafe function — and a name does
+// not identify a declaration. An `extern f` in one module made every `f(…)` in the prelude
+// report as an unsafe call, `f` there being an ordinary callback parameter. The typechecker
+// resolves the callee before deciding, which is the only place that question has an answer.
 //
 // The unsafe context does NOT leak across a function boundary: a non-unsafe
 // lambda declared inside an `unsafe` block is its own safe context (just as
 // `inAsync` resets per-lambda in the await checker).
 func CheckUnsafeOutsideUnsafe(program *ast.Program) []UnsafeOutsideUnsafeError {
-	c := &unsafeChecker{unsafeFns: unsafeFunctions(program)}
+	c := &unsafeChecker{}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
 			// Top level is a safe context: inUnsafe == false.
@@ -42,9 +49,6 @@ func CheckUnsafeOutsideUnsafe(program *ast.Program) []UnsafeOutsideUnsafeError {
 
 type unsafeChecker struct {
 	errors []UnsafeOutsideUnsafeError
-	// unsafeFns names the top-level functions declared `unsafe`, so a call to one
-	// from a safe context can be reported even though it isn't a raw-pointer op.
-	unsafeFns map[string]bool
 }
 
 func (c *unsafeChecker) report(loc ast.Location, format string, args ...any) {
@@ -83,14 +87,6 @@ func (c *unsafeChecker) exprVisitor(inUnsafe bool) func(ast.Expression) bool {
 					"dereferencing a raw pointer with `^` requires an `unsafe` block or function")
 			}
 
-		case *ast.FunctionCallExpr:
-			if !inUnsafe {
-				if name := calleeName(e.Function); name != "" && c.unsafeFns[name] {
-					c.report(e.GetLocation(),
-						"calling unsafe function %q requires an `unsafe` block or function", name)
-				}
-			}
-
 		case *ast.UnsafeBlockExpr:
 			// The block body is an unsafe context. Recurse manually so the
 			// elevated context is threaded through, then stop the walker.
@@ -113,18 +109,4 @@ func (c *unsafeChecker) exprVisitor(inUnsafe bool) func(ast.Expression) bool {
 		}
 		return true
 	}
-}
-
-// unsafeFunctions maps the names of top-level `let`/`var name = <lambda>`
-// bindings whose lambda is declared `unsafe`. Unlike impurity, unsafe-ness is
-// not transitive: a safe function that calls an unsafe one is fine *if* the call
-// sits in an `unsafe` block, which is exactly what this checker enforces.
-func unsafeFunctions(program *ast.Program) map[string]bool {
-	unsafe := map[string]bool{}
-	for name, lam := range topLevelFunctions(program) {
-		if lam.IsUnsafe {
-			unsafe[name] = true
-		}
-	}
-	return unsafe
 }

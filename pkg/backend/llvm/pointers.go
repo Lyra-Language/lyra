@@ -112,3 +112,30 @@ func (l *lowerer) lowerUnsafeBlock(block *ir.Block, e *ast.UnsafeBlockExpr) (val
 	// and reports it, which is the same split lowerForEffect draws for a plain block.
 	return l.lowerBlockStmts(block, e.Body, false)
 }
+
+// isExtern reports whether name is a foreign function declared in this program.
+func (l *lowerer) isExtern(name string) bool {
+	if l.res == nil || l.res.Program == nil {
+		return false
+	}
+	for _, stmt := range l.res.Program.Statements {
+		if ext, ok := stmt.(*ast.ExternDeclStmt); ok && ext.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// lowerExternCall refuses a call to a foreign function, loudly.
+//
+// The front end is complete — the declaration is collected, its signature checked against
+// each call, its effects taken from the bound it asserts, and its `@link` collected — but
+// nothing emits a declaration for the foreign symbol or a call to it. Rule 5: a form that
+// does not lower yet is a hard error, never a guess, and the alternative here is worse than
+// usual — an `extern`'s body-less LambdaExpr would otherwise reach the ordinary function
+// path and emit a `define` with no blocks, which clang rejects with a message about the IR
+// rather than about the program.
+func (l *lowerer) lowerExternCall(name string) error {
+	return fmt.Errorf("llvm: cannot lower a call to the foreign function %q: `extern` is "+
+		"checked but not yet emitted — see todo.md (Foreign functions)", name)
+}

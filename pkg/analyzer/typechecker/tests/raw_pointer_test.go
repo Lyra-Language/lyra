@@ -167,3 +167,33 @@ let take = pure (p: ^i64) -> i64 => 0
 let main = () -> void => { println(take2()) }
 let take2 = pure () -> i64 => 0`, false))
 }
+
+// Calling an `unsafe` function needs an `unsafe` context. Checked here rather than in the
+// syntactic pass that owns the rest of lyra-E011, because it is the only question in that
+// policy needing a **resolved** callee: matching the callee's name against the top-level
+// unsafe functions is hazard 9, and it made every `f(…)` in the prelude report as an
+// unsafe call the moment an `extern f` existed anywhere.
+func TestPointers_CallingAnUnsafeFunctionNeedsUnsafe(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let load = unsafe (n: i64) -> i64 => n
+let use = pure (n: i64) -> i64 => load(n)
+`, false)
+	assertHasErrorContaining(t, res, `calling unsafe function "load" requires an `+"`unsafe`")
+}
+
+func TestPointers_CallingAnUnsafeFunctionInsideUnsafeIsFine(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+let load = unsafe (n: i64) -> i64 => n
+let use = pure (n: i64) -> i64 => unsafe { load(n) }
+`, false))
+}
+
+// **The case that moved the check.** A parameter named after an unsafe function is an
+// ordinary local, and calling it is an ordinary call — the resolution says so and a name
+// could not.
+func TestPointers_AParameterShadowingAnUnsafeFunctionIsNotAnUnsafeCall(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+let load = unsafe (n: i64) -> i64 => n
+let apply = pure (load: (i64) -> i64, n: i64) -> i64 => load(n)
+`, false))
+}

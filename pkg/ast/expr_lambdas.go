@@ -12,12 +12,19 @@ type LambdaExpr struct {
 	ReturnType    types.ReturnType
 	Body          Expression
 	LambdaClauses []LambdaClause
-	IsUnsafe      bool
-	IsPure        bool
-	IsDet         bool
-	IsNoAlloc     bool
-	IsAsync       bool
-	IsGenerator   bool
+	// IsExtern marks the body-less function an `extern` declaration *is*
+	// (ExternDeclStmt.Func). Two passes must not read it as an ordinary lambda that
+	// happens to be empty: the purity fixpoint would find no body, charge no effect and
+	// call a foreign function pure, and the backend would emit a definition with no
+	// blocks. Effects come from the declared bound instead, and the backend declares
+	// rather than defines.
+	IsExtern    bool
+	IsUnsafe    bool
+	IsPure      bool
+	IsDet       bool
+	IsNoAlloc   bool
+	IsAsync     bool
+	IsGenerator bool
 	// GenericBounds are the `where` bounds of the declaration this lambda is the
 	// value of, keyed by type-parameter name — lifted here by the collector exactly
 	// as the leading modifiers are, because the bounds are written on the *binding*

@@ -167,6 +167,16 @@ func (c *Collector) recordModuleBindings(modulePath string, stmts []ast.AstNode)
 		case *ast.TraitDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
 			c.exportToGlobal(modulePath, s, s.IsPublic)
+		// **An extern is always private to its module**, which is why nothing exports it
+		// here and why the grammar gives it no `pub`. A module that wants to offer a
+		// foreign function offers a Lyra function around it — which is what
+		// `std/prelude/rand.lyra` already does with the `random_seed` builtin, and it
+		// means an `unsafe` declaration can never cross a module boundary: every use of
+		// FFI has a checked Lyra function standing in front of it. The cost is a one-line
+		// wrapper; the gain is that `unsafe` stays where it was written.
+		case *ast.ExternDeclStmt:
+			c.noteDeclared(s.Name, modulePath)
+			c.defineInModule(moduleScope, s)
 		case *ast.VarDeclStmt:
 			c.noteDeclared(s.Name, modulePath)
 			c.defineInModule(moduleScope, s)
@@ -456,6 +466,21 @@ func (c *Collector) reclassifyPattern(pat ast.Pattern) ast.Pattern {
 // is handled separately (see checker/purity.go's capture-stack walk).
 func (c *Collector) registerTopLevelFunctions() {
 	for _, stmt := range c.ast.Statements {
+		// An extern registers the body-less function it *is* (ExternDeclStmt.Func), so a
+		// call to one resolves through the same map and the same lookup as a call to
+		// anything else. Registering the declaration under some second mechanism would
+		// mean every call path had to learn what an extern is, and each of those is a
+		// place the two could come to disagree about one call.
+		if ext, isExtern := stmt.(*ast.ExternDeclStmt); isExtern {
+			if err := c.table.RegisterFunction(ext.Name, ext.Func()); err != nil {
+				c.errors = append(c.errors, diag.Diagnostic{
+					Location: ext.NameLocation,
+					Severity: diag.SeverityError,
+					Message:  err.Error(),
+				})
+			}
+			continue
+		}
 		vd, ok := stmt.(*ast.VarDeclStmt)
 		if !ok {
 			continue
@@ -572,16 +597,7 @@ func (c *Collector) CollectStatement(node *sitter.Node) ast.Statement {
 	case "return_statement":
 		return statements.CollectReturnStatement(node, c.ctx)
 	case "extern_declaration":
-		// Parses since 08/19 and is read by nobody: inference, the effect rules the
-		// declaration asserts, `@link` collection and lowering are all unwritten. Refused
-		// **loudly** rather than dropped, because a declaration that collects to nothing
-		// is the phantom shape this project keeps cataloguing — it would look implemented
-		// and do nothing, which costs more than an absent feature. The design it is
-		// waiting on is settled; see todo.md, Foreign functions.
-		c.addError(node, diag.SeverityError,
-			"`extern` is not implemented yet: the declaration parses, but nothing type-checks "+
-				"or links a foreign function — see todo.md (Foreign functions)")
-		return nil
+		return declarations.CollectExternDeclaration(node, c.ctx)
 	}
 	return nil
 }

@@ -757,6 +757,35 @@ const (
 	// `^T` may be taken of a `var`, so neither answer implies the other.
 	CodeImmutablePointerWrite = "lyra-E061"
 
+	// CodeExternBoundNeedsUnsafe: an `extern` that narrows its effect bound without
+	// `unsafe`.
+	//
+	// An extern with no bound carries every effect and is safe to declare, because it
+	// claims nothing. `pure`, `det` or `noalloc` on one claims something no compiler can
+	// check, and a wrong claim does not fail at the declaration — it is *believed*, and
+	// silently corrupts the effect analysis of every caller. So for Lyra code a bound is a
+	// promise the compiler checks; for an extern it is a promise the compiler records, and
+	// `unsafe` is what marks the difference.
+	//
+	// The inverse is deliberately not an error: `unsafe extern` with no bound asserts
+	// nothing and is merely redundant, and a program mid-edit should not stop compiling.
+	CodeExternBoundNeedsUnsafe = "lyra-E062"
+
+	// CodeNotFFISafe: a parameter or return type in an `extern` signature that has no C
+	// spelling — `string`, `[]T`, a closure, a tuple, a `data` type, anything `shared` or
+	// `weak`, and `bool`.
+	//
+	// Refusing at the *signature* is what leaves no room for an implicit conversion, and
+	// therefore no nul-termination policy to get wrong: `std.ffi` builds what Lyra wants
+	// on top, in ordinary Lyra, where the copy is visible and `noalloc` can see it. The
+	// same division of labour `read_line` and `parse_i64` have, one layer up.
+	//
+	// **`bool` is excluded on an ABI ground rather than a representational one**: Lyra's
+	// lowers to `i1` and C's `_Bool` is a byte, so passing one would silently disagree
+	// about the calling convention — the class of wrongness this language traps for
+	// everywhere else. A newtype is looked *through*, since it is nominal only.
+	CodeNotFFISafe = "lyra-E063"
+
 	// CodeArenaNotImplemented: a `with <handle> = <arena> { … }` statement. Arena
 	// allocation was designed early — the grammar, the collector, a reserved runtime
 	// shim (`lyra_arena_alloc`) and the `PinnedRC` sentinel are all in place — and

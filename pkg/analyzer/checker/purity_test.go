@@ -912,3 +912,39 @@ impl Named for Cat { name = pure (self) => "cat" }
 `)
 	assertPurityCount(t, errs, 0)
 }
+
+// **An extern carries every effect unless it says otherwise.** There is no body to infer
+// from, so the default matches the unresolved-callee rule this pass already uses: a
+// function nothing can see the body of may do anything. Without this the fixpoint would
+// find no body, charge no effect, and call a foreign function pure — the one answer it
+// must never get.
+func TestPurity_ExternWithoutABoundIsImpure(t *testing.T) {
+	errs := checkPurity(t, `
+extern noisy: (i64) -> i64
+let f = pure (n: i64) -> i64 => unsafe { noisy(n) }
+`)
+	assertPurityCount(t, errs, 1)
+	if !strings.Contains(errs[0].Message, "noisy") {
+		t.Fatalf("expected the extern to be named, got %q", errs[0].Message)
+	}
+}
+
+// …and a declared bound is believed, which is what lets FFI replace a builtin: `sqrt` is
+// `pure` today, so a std.math written over libm has to be able to say so.
+func TestPurity_ExternWithAPureBoundIsPure(t *testing.T) {
+	assertPurityCount(t, checkPurity(t, `
+unsafe extern pure sq: (f64) -> f64
+let f = pure (x: f64) -> f64 => unsafe { sq(x) }
+`), 0)
+}
+
+// `det` permits what determinism allows — output, mutation, allocation — and forbids
+// input, randomness and the clock. An extern claiming it is callable from `det` and not
+// from `pure`.
+func TestPurity_ExternWithADetBoundIsNotPure(t *testing.T) {
+	errs := checkPurity(t, `
+unsafe extern det emit: (i64) -> void
+let f = pure (n: i64) -> void => unsafe { emit(n) }
+`)
+	assertPurityCount(t, errs, 1)
+}
