@@ -1833,6 +1833,92 @@ Types, checked arithmetic, division via the builtins library, `match`, conversio
     `let d: u8 = 10^20 + 1` reached the backend unchecked and emitted invalid IR. See
     COMPLETED.md.
 
+## Foreign functions — `extern`
+
+**[DECIDED 08/19] Nothing is built.** Raw pointers landed the same day, which is what makes
+this worth settling: the piece an `extern` sits on now works, and what remains is three
+questions of meaning rather than three subsystems.
+
+The motivation is that the builtin registry is a de-facto libc shim layer. `read_line`,
+`random_seed`, `wall_clock_nanos`, the terminal four, `sqrt`/`log`: each is a compiler
+change because Lyra has no FFI, and the rule "the builtin is only what cannot be written in
+Lyra" carries a hidden asterisk — *because there is no FFI*. FFI dissolves the asterisk.
+
+### The effect of an extern call
+
+An extern has no body, so nothing can be inferred. It carries **`AllEffects` by default**,
+matching the unresolved-callee rule the purity pass already uses — the cautious answer is
+what you get for free.
+
+**A bound may be written, and writing one is `unsafe`.**
+
+```lyra
+extern sqrt: (f64) -> f64                    // legal, and useless: AllEffects
+unsafe extern pure sqrt: (f64) -> f64        // the assertion, marked as one
+```
+
+The asymmetry is the point: **for Lyra code a bound is a promise the compiler checks; for
+an extern it is a promise the compiler records.** Lyra already has a word for an assertion
+it cannot verify, and this is one — a wrong `pure` here does not fail locally, it silently
+corrupts the effect analysis of every caller, which is a *declaration-time* danger Rust's
+"safe to declare, unsafe to call" split has no analogue for. So the keyword marks exactly
+the unverifiable claim and nothing more: declaring is safe, narrowing is not.
+
+Calling one still needs an `unsafe` block — `lyra-E011` already implements that for an
+`unsafe` function and needs no new rule.
+
+**`noalloc` on an extern means "allocates nothing *Lyra* owns."** `EffectAlloc` tracks the
+ref-counted boxes the ownership pass reasons about; a foreign `malloc` is not in that
+ledger and this bound does not claim it is. Writing it down matters because the alternative
+is a bound that silently stops binding — the shape `pure noalloc … => s.trim()` had.
+
+Without a bound the compiler must assume the callee may do anything, which includes reading
+input and mutating through any pointer it was handed. That is the same conservatism
+`AllEffects` already encodes, so no new machinery: an extern with no bound is simply a
+function `pure`/`det`/`noalloc` cannot call.
+
+### What may cross: FFI-safe types only
+
+An extern signature admits the **scalars**, **`^T`**, and **`void`**. It refuses `string`,
+`[]T`, closures, tuples, `data` types, and anything `shared` or `weak`, with a diagnostic
+naming what to write instead.
+
+This is `read_line` beside `parse_i64`, one layer up: the compiler takes only what is
+genuinely primitive, and everything expressible is ordinary Lyra in the prelude. It also
+means **there is no nul-termination policy to get wrong**, because there is no automatic
+conversion to have one.
+
+`std.ffi` supplies the ergonomics, written in Lyra:
+
+- **`CString`** — a `[]u8` carrying a trailing NUL, with a `^u8` accessor. A Lyra `string`
+  is `{ptr, byte_len, rune_count}` and deliberately **not** NUL-terminated, so a `char*`
+  needs a copy; making that copy visible is what lets `noalloc` see it and what stops a
+  temporary buffer acquiring an invented lifetime.
+- **`xs.data() -> ^T`** — no copy needed. A `[]T`'s elements already live behind a
+  contiguous `T*` inside the box (they are not inline, which is what makes `push` safe), so
+  the buffer a C function wants is already there.
+
+### Ownership does not cross, in either direction
+
+Lyra never hands a Lyra-allocated buffer to C to keep, and never adopts a C-allocated one
+into a `[]T`. Both would require the other side to understand the box header — and a
+`[]T`'s header sits at the *start* of its box, which is the same fact that makes `slice`
+copy rather than borrow. To give C data it keeps, copy into a C-allocated buffer through an
+extern allocator; to take C data, copy into a fresh `[]T`. Both copies are written in Lyra
+and visible.
+
+**A `^T` into a live array is valid only until the next mutation**, since `push`
+reallocates the element buffer. That is Rust's `as_ptr` hazard exactly, it is not
+checkable today, and it is therefore squarely inside `unsafe` — which is where the pointer
+that produced it already put the caller.
+
+### What is deliberately not decided here
+
+Variadics, callbacks passed *to* C (a Lyra closure is a code pointer plus a ref-counted
+environment, so it is not a C function pointer), struct-by-value layout compatibility, and
+linking — which library, and how `lyrac build` is told about it. Each is a separate
+question, and none of them blocks the three above.
+
 ## Traits
 
 ### [DONE 08/08] `Show` — a bounded type parameter can be formatted

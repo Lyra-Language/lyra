@@ -758,6 +758,23 @@ go test ./...
 go test -run TestFunctionName ./pkg/...
 ```
 
+## Foreign functions
+
+Not built. The three design questions are **settled** in `todo.md` (Foreign functions —
+`extern`), and the summary a reader needs before touching anything nearby:
+
+- **An extern carries `AllEffects` unless a bound is written, and writing one is `unsafe`.**
+  For Lyra code a bound is a promise the compiler checks; for an extern it is a promise the
+  compiler *records*, so the keyword marks the unverifiable claim. Declaring is safe;
+  narrowing is not. Calling one needs an `unsafe` block, which `lyra-E011` already covers.
+- **Only FFI-safe types cross**: the scalars, `^T`, `void`. `string`, `[]T`, closures,
+  tuples, `data` types and anything `shared` are refused at the signature, so there is no
+  implicit conversion and therefore no nul-termination policy to get wrong. `std.ffi`
+  supplies `CString` and `xs.data()` as ordinary Lyra.
+- **Ownership never crosses.** Neither side adopts the other's buffer; both directions
+  would need the other to understand the rc header. A `^T` into a live array dangles at the
+  next `push`.
+
 ## Current Development Focus
 
 The typechecker is the active area — match exhaustiveness (see
