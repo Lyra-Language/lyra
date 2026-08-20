@@ -144,8 +144,20 @@ real failure, and none is local to one package.
      symptom of a missing case in a position lookup is an editor doing nothing, which
      reads as "unsupported" rather than as a bug, so it sat from 08/18 to 08/20.
 
-     What would actually close this is a test enumerating the node kinds and failing when
-     a new one appears unhandled. It is not written.
+     **`pkg/ast/exhaustive_test.go` is that checklist**, written 08/20. It parses the
+     switches rather than reflecting on types — the question is about *code*, and
+     reflection can say what fields a node has and never what a switch does with it. Two
+     halves: registered mirrors of `walkExprChildren`/`walkStmtChildren` must cover every
+     case the canonical walker has, and every switch in `declarationConsumers` must cover
+     every kind in `declarationKinds` — a list guarded in turn by "a statement with a
+     `Doc` field is a declaration", so a new declaration node fails there first with a
+     message naming what to do.
+
+     An omission is a bug; an **exclusion is a claim**, written next to its reason. It
+     found thirteen more expression kinds missing from the LSP walker on its first run,
+     including both loop forms, which had made navigation dead inside every loop body in
+     every program. What it cannot do is find a switch nobody registered; adding an entry
+     when you add a *consumer* is still manual, and adding a *node* is not.
    - **Paired walks must be fixed in one change.** `emitRetainValue`/`emitDropValue` both
      lacked `ParameterizedType`; fixing only the drop is an instant double free.
    - **A copy that admits it is a copy is still a copy.** The typechecker's

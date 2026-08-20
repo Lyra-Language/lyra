@@ -10,6 +10,51 @@ Newest first.
 ## Dated log
 
 ### 08/20/26
+**The checklist that adding a node kind never had** — `pkg/ast/exhaustive_test.go`.
+
+Rule 8 has said "grep for the switches over it" for months, and it kept not working, because
+grepping requires knowing which switches exist and nothing enumerated them. Two node kinds
+in three days made the cost concrete: `ExternDeclStmt` missing from **ten** switches over
+declaration kinds, and `UnsafeBlockExpr` from the LSP's expression walker.
+
+The test has two halves, and neither is reflection: the question is about *code*, and
+reflection can say what fields a node has and never what a switch does with it. So it parses
+the switches with `go/parser` and compares case sets.
+
+- **Mirrors.** `walkExprChildren`/`walkStmtChildren` are this package's canonical answer to
+  what a node's children are. A registered mirror — today the LSP's `findInChildren` — must
+  cover every case they have, in both directions, so either falling behind fails.
+- **Declaration consumers.** Eight switches must cover every kind in `declarationKinds`,
+  and that list is guarded in turn by the language's own rule: **a statement node with a
+  `Doc` field is a declaration**, because documentation attaches to declarations and to
+  nothing else. So a new declaration node fails at the list first, with a message saying to
+  add it there and then to the consumers.
+
+**An omission is a bug; an exclusion is a claim.** Every excused kind carries its reason in
+writing beside it — and the most useful entry is `declIsPublic`'s, which excuses
+`TraitImplStmt` and `ModuleDeclStmt` on the grounds that its `default: return true` is right
+for them. `ExternDeclStmt` took that same default and was **wrong** to, which is how two
+modules each declaring `extern abs` collided on a program-wide name. The test makes the
+difference between those two an argument someone has to write down.
+
+**It earned its keep before it was finished.** The mirror half found **thirteen** more
+expression kinds missing from the LSP walker — both loop forms, ranges, comprehensions,
+`??`, `t.0`, `~x`, compose, guard, the async trio. Loop bodies are not an exotic construct;
+that is most code in most programs, and hover, go-to-definition and rename had been silently
+dead in all of it. Fixing the loops then exposed a subtler bug in the scope half: iterating
+`e.Body.Statements` finds every scope *nested* in a loop and misses the one the loop itself
+introduces, so the loop variable was the single name inside a loop that could not be
+resolved. `scopeInExpr(e.Body, …)` is the fix — the body block, not its contents.
+
+Both failure modes were verified by breaking the code on purpose: deleting one case from
+`findInChildren` fails the mirror test naming that case, and adding a scratch declaration
+node fails the completeness test naming the file to edit.
+
+**What it does not do**, said plainly in the file: it cannot find a switch nobody
+registered. Adding an entry when you add a *consumer* is still a manual act. What it buys is
+that adding a *node kind* is not.
+
+### 08/20/26
 **The rule-8 sweep, worked.** All six places `ExternDeclStmt` was missing from a switch
 over top-level declaration kinds, plus a seventh found by testing the sixth.
 
