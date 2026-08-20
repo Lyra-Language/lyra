@@ -85,6 +85,19 @@ func stmtToSymbolInfo(uri string, source string, node ast.AstNode) *lsp.SymbolIn
 			Kind:     kind,
 			Location: astLocToLSPLocation(uri, source, s.GetLocation()),
 		}
+
+	case *ast.ExternDeclStmt:
+		if s.Name == "" {
+			return nil
+		}
+		// Indexed like a function, and located at its *name* — an extern's declaration
+		// begins at an `@link` or `unsafe` token, so jumping to the span's start lands
+		// above the symbol the search matched.
+		return &lsp.SymbolInformation{
+			Name:     s.Name,
+			Kind:     lsp.SymbolKindFunction,
+			Location: astLocToLSPLocation(uri, source, s.NameLocation),
+		}
 	}
 	return nil
 }

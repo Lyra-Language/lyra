@@ -2063,41 +2063,6 @@ externs and exporting Lyra wrappers, Rust's `*-sys` pattern — and it needs not
 externs are private so two of them cannot clash, `@link` rides the declaration so a
 program linking zlib says so once, and the backend dedups by C symbol.
 
-### `ExternDeclStmt` is missing from six more switches
-
-Not six bugs — one omission, six times, which is what makes it worth a single item.
-Adding a top-level declaration kind means every switch over those kinds needs a case, and
-nothing enumerates them. Four have been fixed as they were hit (`declIsPublic` 08/19,
-`attachDoc` and `docOf` 08/19, `captures.globalNames` 08/19 — that last one made a closure
-calling an extern fail to lower); these are the ones a sweep found and nothing has yet
-tripped over:
-
-| where | symptom |
-|---|---|
-| `docgen.go` | `lyrac doc --private` omits every extern |
-| `lsp/documentsymbol.go` | no extern in the file outline |
-| `lsp/workspacesymbols.go` | workspace symbol search cannot find one |
-| `lsp/semantictokens.go` | an extern gets no semantic highlighting |
-| `lsp/rename.go` | an extern cannot be renamed |
-| `lsp/definition.go` | (declares only `VarDeclStmt`; check what go-to-definition does) |
-
-All editor-facing rather than miscompiles, which is why they have gone unnoticed — and
-also why they should be fixed together, since each is one case in one switch.
-
-`pkg/ast/walk.go` was checked and is **fine**: it has no extern case either, but an extern
-has no child statements or expressions to descend into, so there is nothing to miss.
-
-### `lyrac doc` does not render an extern
-
-`ExternDeclStmt.Doc` is written (08/19) and LSP hover reads it, but `pkg/docgen` has no
-case for one, so `lyrac doc --private` silently omits every foreign declaration from a
-module that has them. Only `--private` is affected — an extern is private by rule, so the
-default page is right to leave them out.
-
-Small, and it needs a decision rather than only code: an extern's signature is already C's,
-so the interesting thing to render beside it is the `@link` and the effect bound, neither
-of which any existing section shows.
-
 ### The first real test — zlib
 
 **[DECIDED 08/19]** zlib, once lowering lands. Small, installed everywhere, and it

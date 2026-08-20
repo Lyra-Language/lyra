@@ -34,6 +34,12 @@ func findExprInStmt(stmt ast.AstNode, line, col int) ast.Expression {
 	case *ast.ExpressionStmt:
 		return findExprInExpr(s.Expression, line, col)
 	case *ast.DerefAssignmentStmt:
+		// The **target** as well as the value: `p^ = v` mentions `p`, and looking only
+		// at the right-hand side makes the pointer being written through the one name
+		// in the statement an editor cannot resolve.
+		if e := findExprInExpr(&s.Target, line, col); e != nil {
+			return e
+		}
 		return findExprInExpr(s.Value, line, col)
 	case *ast.ReturnStmt:
 		return findExprInExpr(s.Value, line, col)
@@ -139,6 +145,20 @@ func findInChildren(expr ast.Expression, line, col int) ast.Expression {
 	case *ast.MathAssignOpExpr:
 		return findExprInExpr(e.Right, line, col)
 	case *ast.TryExpr:
+		return findExprInExpr(e.Operand, line, col)
+	case *ast.UnsafeBlockExpr:
+		// **Without this, every navigation feature is blind inside `unsafe { … }`** —
+		// hover, go-to-definition, rename, document highlight, all of which start from
+		// findExprAtPos. That is the whole of a program's FFI and raw-pointer code,
+		// since both require the block; go-to-definition on a call to an `extern` is
+		// *only* reachable from inside one.
+		//
+		// Missing since `unsafe` blocks landed on 08/18, and not noticed because the
+		// symptom is an editor doing nothing rather than doing something wrong.
+		return findExprInExpr(e.Body, line, col)
+	case *ast.AddressOfExpr:
+		return findExprInExpr(e.Operand, line, col)
+	case *ast.DerefExpr:
 		return findExprInExpr(e.Operand, line, col)
 	}
 	return nil

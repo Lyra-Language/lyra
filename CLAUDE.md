@@ -134,8 +134,18 @@ real failure, and none is local to one package.
      (every `///` above an extern reported as documenting nothing), `captures.globalNames`
      (a closure calling an extern failed to lower), plus docgen and five LSP surfaces.
      None of them shares a file or a package with the others, so grepping for one kind
-     finds them only if you know to grep. The list is in `todo.md`; when adding a
-     declaration kind, work it.
+     finds them only if you know to grep. All ten are fixed (08/20); the sweep that found
+     the last six is the thing to repeat, not the list.
+
+     **`UnsafeBlockExpr` cost the same tax on the expression side**, and worse: `hover.go`'s
+     `findExprAtPos` and `definition.go`'s `scopeInExpr` had no case for it, so hover,
+     go-to-definition, rename and document-highlight all returned *nothing* inside an
+     `unsafe` block — which is the whole of a program's FFI and raw-pointer code. The
+     symptom of a missing case in a position lookup is an editor doing nothing, which
+     reads as "unsupported" rather than as a bug, so it sat from 08/18 to 08/20.
+
+     What would actually close this is a test enumerating the node kinds and failing when
+     a new one appears unhandled. It is not written.
    - **Paired walks must be fixed in one change.** `emitRetainValue`/`emitDropValue` both
      lacked `ParameterizedType`; fixing only the drop is an instant double free.
    - **A copy that admits it is a copy is still a copy.** The typechecker's
@@ -259,6 +269,11 @@ language-level rules are in the workspace `CLAUDE.md`; what matters inside this 
   as a post-pass over the file's tree — after the walk, because whether a `///` was
   claimed is only knowable once every collector that might have claimed it has run. The
   claim set is keyed by start byte and reset per file (`ctx.ResetDocs`).
+- **Every position-based feature starts at `findExprAtPos`** (`hover.go`), and
+  `definition.go`'s `scopeInExpr` is its twin for scopes. A node kind missing from one of
+  them makes hover, definition, rename and highlight silently answer nothing in that
+  construct; missing from only *one* is worse, since the expression is found and its name
+  then resolved in the wrong scope. Add a kind to both or to neither.
 - **LSP hover** renders the doc under the type (`cmd/lyra-lsp/hoverdoc.go`).
   `resolveDoc` mirrors `resolveDefinition` case for case; keep them in step, or hover
   shows one symbol's docs above another symbol's type. **A typeless expression may still

@@ -147,6 +147,11 @@ func collectSemanticTokens(source string, analysis *docAnalysis) []semToken {
 			add(decl.NameLocation, decl.Name, semTypeType, 0)
 		case *ast.TraitDeclStmt:
 			add(decl.NameLocation, decl.Name, semTypeType, 0)
+		case *ast.ExternDeclStmt:
+			// A foreign function highlights as a function. Two switches in this file
+			// needed it, not one: this colours the *declaration's* name, and
+			// classifyIdentifier below colours every reference to it.
+			add(decl.NameLocation, decl.Name, semTypeFunction, 0)
 		}
 		return true
 	}
@@ -181,6 +186,8 @@ func classifyIdentifier(ident *ast.IdentifierExpr, analysis *docAnalysis) (int, 
 		return semTypeParameter, 0, true
 	case *ast.TypeDeclStmt, *ast.TraitDeclStmt:
 		return semTypeType, 0, true
+	case *ast.ExternDeclStmt:
+		return semTypeFunction, 0, true
 	}
 	return semTypeVariable, 0, true
 }

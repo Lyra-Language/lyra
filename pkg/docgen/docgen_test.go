@@ -220,6 +220,10 @@ pub let ids = pure (xs: []string, n: [3]i64, p: (i64, string), flag: bool = true
 pub trait Show { show: (Self) -> string }
 impl Show for string { show = (self) => self }
 pub data Shape = Circle(f64) | Empty
+/// Foreign.
+@link("m")
+unsafe extern pure sqrt: (f64) -> f64
+unsafe extern det noalloc fill: (^mut u8, u64) -> void
 `
 	m := collectOne(t, src, docgen.Options{})
 
@@ -233,6 +237,10 @@ pub data Shape = Circle(f64) | Empty
 		case strings.Contains(d.Signature, "struct "):
 			// The page shows a struct's head and lists its fields as members.
 			body = " { f: i64 }"
+		case strings.Contains(d.Signature, "extern "):
+			// An extern *is* a signature — there is no body to append, which is the
+			// whole of what it is. Ahead of the `->` arm, which would otherwise give
+			// it one and make the round-trip fail on a page that was correct.
 		case strings.Contains(d.Signature, "->"):
 			body = ` => panic("x")`
 		}
@@ -428,4 +436,49 @@ func names(decls []docgen.Decl) []string {
 		out[i] = d.Name
 	}
 	return out
+}
+
+// An `extern` reaches a page, under `--private` — which is the only way it can, there
+// being no `pub extern` to write. Missing until 08/20: `declFor` switched over the
+// top-level declaration kinds and had no case for one, so `lyrac doc --private` silently
+// omitted every foreign declaration a module had.
+//
+// It gets a **kind of its own** rather than joining the ordinary functions, because the
+// difference is what a reader of the page needs: calling one requires `unsafe`, its
+// effect bound is asserted rather than checked, and it drags a `@link` requirement into
+// every program that reaches it.
+func TestCollect_ExternIsDocumented(t *testing.T) {
+	src := `
+/// Square root, from libm.
+@link("m")
+unsafe extern pure sqrt: (f64) -> f64
+pub let ordinary = pure () -> i64 => 1
+`
+	m := collectOne(t, src, docgen.Options{IncludePrivate: true})
+
+	var found *docgen.Decl
+	for i := range m.Decls {
+		if m.Decls[i].Name == "sqrt" {
+			found = &m.Decls[i]
+		}
+	}
+	if found == nil {
+		t.Fatal("no `sqrt` declaration on the page")
+	}
+	if found.Kind != docgen.KindExtern {
+		t.Errorf("kind = %v; want KindExtern", found.Kind)
+	}
+	if found.IsPublic {
+		t.Error("an extern is always private — there is no `pub extern` to write")
+	}
+	// **The `@link` line is part of the signature.** Elsewhere an attribute is metadata
+	// a reader can skip; here it is a build requirement riding the declaration, so a
+	// page omitting it documents a function the reader cannot successfully call.
+	want := "@link(\"m\")\nunsafe extern pure sqrt: (f64) -> f64"
+	if found.Signature != want {
+		t.Errorf("signature =\n%q\nwant\n%q", found.Signature, want)
+	}
+	if found.Doc == nil || found.Doc.Summary != "Square root, from libm." {
+		t.Errorf("doc = %v; want the summary above the declaration", found.Doc)
+	}
 }

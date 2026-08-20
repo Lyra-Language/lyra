@@ -82,6 +82,22 @@ func stmtToSymbol(source string, node ast.AstNode) *lsp.DocumentSymbol {
 			Range:          locToRange(source, loc),
 			SelectionRange: nameRange(source, loc, s.Name),
 		}
+
+	case *ast.ExternDeclStmt:
+		if s.Name == "" {
+			return nil
+		}
+		// A foreign function is a function in the outline. The selection range comes
+		// from **NameLocation** rather than from the declaration's start, which the
+		// other three can get away with: an extern's span begins at its `@link` or
+		// `unsafe` token, so measuring len(name) from there would highlight the wrong
+		// text — and does, if this is written like its neighbours.
+		return &lsp.DocumentSymbol{
+			Name:           s.Name,
+			Kind:           lsp.SymbolKindFunction,
+			Range:          locToRange(source, s.GetLocation()),
+			SelectionRange: nameRange(source, s.NameLocation, s.Name),
+		}
 	}
 	return nil
 }

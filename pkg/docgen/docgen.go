@@ -39,6 +39,15 @@ const (
 	KindFunction
 	// KindValue is a `let`/`var`/`const` binding whose value is not a function.
 	KindValue
+	// KindExtern is a foreign function — a signature standing in for a body someone
+	// else supplies.
+	//
+	// A kind of its own rather than KindFunction, because the difference is exactly
+	// what a reader of the page needs: calling one requires `unsafe`, its effect bound
+	// is asserted rather than checked, and it drags a `@link` requirement into every
+	// program that reaches it. Filed among the ordinary functions, none of that would
+	// be visible above the signature.
+	KindExtern
 )
 
 func (k Kind) String() string {
@@ -51,6 +60,8 @@ func (k Kind) String() string {
 		return "Implementations"
 	case KindFunction:
 		return "Functions"
+	case KindExtern:
+		return "Foreign functions"
 	default:
 		return "Values"
 	}
@@ -334,6 +345,19 @@ func declFor(stmt ast.AstNode) (Decl, bool) {
 			Members:   traitMembers(s),
 			IsPublic:  s.IsPublic,
 			Location:  s.GetLocation(),
+		}, true
+
+	case *ast.ExternDeclStmt:
+		// **Always private**, and recorded as such rather than as a page-visible
+		// declaration: there is no `pub extern` to write, so an extern reaches a page
+		// only under `--private`. What a module exports is the Lyra wrapper over one.
+		return Decl{
+			Name:      s.Name,
+			Kind:      KindExtern,
+			Signature: externSignature(s),
+			Doc:       s.Doc,
+			IsPublic:  false,
+			Location:  s.NameLocation,
 		}, true
 
 	case *ast.TraitImplStmt:

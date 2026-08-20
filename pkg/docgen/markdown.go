@@ -108,6 +108,10 @@ func pageSections(m Module) []section {
 	for _, g := range groups {
 		add("Methods on `"+g.Receiver+"`", g.Decls)
 	}
+	// After the Lyra functions and before the values: an extern is what the module
+	// calls, not what it offers, and a reader scanning the page wants the surface
+	// first. It appears at all only under --private, being unexportable.
+	add(KindExtern.String(), declsOfKind(rest, KindExtern))
 	add(KindValue.String(), declsOfKind(rest, KindValue))
 	add(KindImpl.String(), declsOfKind(rest, KindImpl))
 	return out

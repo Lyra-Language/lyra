@@ -457,3 +457,42 @@ func typeNames(ts []types.Type) string {
 	}
 	return strings.Join(parts, ", ")
 }
+
+// externSignature renders an `extern` declaration in source syntax:
+//
+//	@link("z")
+//	unsafe extern pure crc32: (u64, ^u8, u32) -> u64
+//
+// **The `@link` lines are part of it**, which is the one way this differs from every
+// other signature on a page. Elsewhere an attribute is metadata a reader can ignore;
+// here it is a build requirement that rides the declaration, so a page omitting it
+// documents a function the reader cannot successfully call.
+//
+// `unsafe` goes before `extern` and the bound after it, because that is where the
+// language puts them: the keyword marks the *claim*, and the claim follows it.
+func externSignature(s *ast.ExternDeclStmt) string {
+	var b strings.Builder
+	for _, lib := range s.Links {
+		b.WriteString("@link(\"")
+		b.WriteString(lib)
+		b.WriteString("\")\n")
+	}
+	if s.IsUnsafe {
+		b.WriteString("unsafe ")
+	}
+	b.WriteString("extern")
+	for _, mod := range []struct {
+		on   bool
+		word string
+	}{{s.IsPure, "pure"}, {s.IsDet, "det"}, {s.IsNoAlloc, "noalloc"}} {
+		if mod.on {
+			b.WriteString(" ")
+			b.WriteString(mod.word)
+		}
+	}
+	b.WriteString(" ")
+	b.WriteString(s.Name)
+	b.WriteString(": ")
+	b.WriteString(typeName(s.Signature))
+	return b.String()
+}

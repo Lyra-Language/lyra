@@ -54,6 +54,8 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 					sName, sNameLoc = x.Name, x.NameLocation
 				case *ast.TraitDeclStmt:
 					sName, sNameLoc = x.Name, x.NameLocation
+				case *ast.ExternDeclStmt:
+					sName, sNameLoc = x.Name, x.NameLocation
 				default:
 					return true // descend into nested stmts
 				}
@@ -125,6 +127,25 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 		return renameAnchor{}, false
 	}
 
+	// **An `extern`'s name is the C symbol**, so there is nothing here to rename: the
+	// other half of the declaration is in a library this compiler did not build, and
+	// renaming the Lyra side would emit `declare @newName` for a symbol nobody defines
+	// — a link error naming something the source no longer contains. Declined rather
+	// than performed, on the rule the cross-file case above follows: a rename that
+	// cannot be carried out completely should not be carried out partially.
+	//
+	// It was worse than missing before 08/20. `namedNameLoc` had no extern case either,
+	// so the anchor's nameLoc fell back to the *declaration's* start — the `@link` or
+	// `unsafe` token — and renaming a usage spliced the new name over the first few
+	// characters of the declaration line, corrupting the source.
+	//
+	// If externs ever gain a `@symbol("…")` attribute to decouple the Lyra name from the
+	// linker's, this becomes an ordinary rename and the check comes out.
+	if _, isExtern := named.(*ast.ExternDeclStmt); isExtern {
+		log.Printf("rename: %q is an extern; its name is the C symbol — declining", name)
+		return renameAnchor{}, false
+	}
+
 	return anchor, true
 }
 
@@ -143,6 +164,10 @@ func namedNameLoc(named ast.Named) ast.Location {
 			return n.NameLocation
 		}
 	case *ast.TraitDeclStmt:
+		if n.NameLocation != (ast.Location{}) {
+			return n.NameLocation
+		}
+	case *ast.ExternDeclStmt:
 		if n.NameLocation != (ast.Location{}) {
 			return n.NameLocation
 		}

@@ -83,7 +83,12 @@ func resolveDefinition(expr ast.Expression, line, col int, analysis *docAnalysis
 		if !ok {
 			return nil
 		}
-		loc := named.GetLocation()
+		// The *name's* location, not the declaration's: `namedNameLoc` (rename.go) is
+		// already the one answer to that question, and using it here rather than a
+		// second copy is what makes an `extern` — whose declaration starts at an
+		// `@link` or `unsafe` token several lines above its name — land on the name
+		// like every other declaration does.
+		loc := namedNameLoc(named)
 		return &loc
 
 	case *ast.StructInstanceExpr:
@@ -166,6 +171,13 @@ func scopeInExpr(expr ast.Expression, scopeTable *symbols.ScopeTable, line, col 
 			}
 		}
 	case *ast.LambdaExpr:
+		return scopeInExpr(e.Body, scopeTable, line, col)
+	case *ast.UnsafeBlockExpr:
+		// An `unsafe` block *is* its body, including for scoping: a binding declared
+		// inside one is scoped to it (which is why UnsafeBlockExpr.Body is a pointer —
+		// see the collector). Its twin is findExprInExpr in hover.go; a position lookup
+		// that finds the expression but not its scope resolves the name in the wrong
+		// place, so the two have to gain a node together.
 		return scopeInExpr(e.Body, scopeTable, line, col)
 	}
 	return nil

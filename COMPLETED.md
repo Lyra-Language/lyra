@@ -9,6 +9,54 @@ Newest first.
 
 ## Dated log
 
+### 08/20/26
+**The rule-8 sweep, worked.** All six places `ExternDeclStmt` was missing from a switch
+over top-level declaration kinds, plus a seventh found by testing the sixth.
+
+| where | was | now |
+|---|---|---|
+| `docgen.declFor` | `--private` omitted every extern | its own **Foreign functions** section |
+| `documentsymbol` | absent from the outline | a Function, selected at its *name* |
+| `workspacesymbols` | not findable by symbol search | indexed, located at its name |
+| `semantictokens` | no highlighting (two switches) | a function, at the declaration and every use |
+| `rename` | **corrupted the source** | declined, with a reason |
+| `definition` | landed on the `@link` line | lands on the name |
+
+**Two of them were not "add the case".**
+
+`rename` was worse than missing. `namedNameLoc` had no extern case, so a rename anchored
+on a *usage* fell back to the declaration's **start** — the `@link` or `unsafe` token —
+and spliced the new name over the first characters of that line. But the right fix is not
+to make renaming work: **an extern's name is the C symbol**, so the other half of the
+declaration lives in a library this compiler did not build, and renaming the Lyra side
+would emit `declare @newName` for a symbol nobody defines. It is declined, on the rule the
+cross-file case already follows — a rename that cannot be carried out completely should
+not be carried out partially. If externs ever gain a `@symbol("…")` attribute to decouple
+the two names, the check comes out.
+
+`definition` worked in the sense of returning something, and returned the wrong line.
+Instead of a case it now calls `namedNameLoc`, which rename.go already owns — one answer
+to "where is this declaration's name" rather than a second copy that can drift.
+
+**And the seventh, which is the one that matters.** Testing go-to-definition on an extern
+means testing it inside `unsafe { … }`, because a call to an extern requires one — and
+nothing worked in there at all. `findExprAtPos` (hover.go), which hover, definition, rename
+and document-highlight all start from, had no case for `UnsafeBlockExpr`, `AddressOfExpr`
+or `DerefExpr`; `scopeInExpr` (definition.go) had none for `UnsafeBlockExpr` either, so
+even a found expression resolved its name in the wrong scope. Since raw pointers and FFI
+*both* require the block, that is every editor feature dead across the whole of a
+program's unsafe code — since 08/18, unnoticed, because the symptom is an editor doing
+nothing rather than doing something wrong.
+
+`DerefAssignmentStmt` was a third: it looked only at the value, so `p` in `p^ = v` — the
+pointer being written through, the one name in the statement — could not be resolved.
+
+**What the sweep is evidence for.** Ten switches for `ExternDeclStmt`, four more for
+`UnsafeBlockExpr` and its siblings, none of them sharing a package: adding a node kind has
+no checklist, and the cost is paid weeks later in features that silently do nothing. The
+hazard-8 entry names the sweep now; the honest fix is a test that enumerates the kinds and
+fails when a new one appears, which is not written yet.
+
 ### 08/19/26
 **`std.ffi`'s `cstring` — a C string is a plain `[]u8`.**
 
