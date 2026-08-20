@@ -51,8 +51,9 @@ const CAPACITY = 256
 /// `zlibVersion` hands back a `char*` — memory Lyra does not own, with no length. A raw
 /// pointer alone can only be read at offset zero, so the length has to come from
 /// somewhere before anything can be checked: `cstring_len` scans for the terminator,
-/// `CBuffer` holds the two together, and `buf.get(i)` then traps on a bad index exactly
-/// as `xs[i]` would.
+/// `CBuffer` holds the two together, and `decode_utf8` copies them into a string Lyra
+/// owns — which is the only way to hold them, since foreign memory may be freed or
+/// rewritten the moment the call returns.
 ///
 /// Note that `cstring_len` is ordinary Lyra rather than a binding to `strlen`. Scanning
 /// for a zero byte is expressible in the language, so it is written in it — the same
@@ -60,9 +61,7 @@ const CAPACITY = 256
 let version = pure () -> string => {
   let p = unsafe { zlibVersion() }
   let buf = unsafe { CBuffer { ptr: p, len: cstring_len(p) } }
-  var out = ""
-  for i in 0..<buf.len { out = out ++ "${rune(buf.get(i))}" }
-  out
+  buf.decode_utf8()
 }
 
 /// The bytes to round-trip: repetitive, so zlib has something to find.

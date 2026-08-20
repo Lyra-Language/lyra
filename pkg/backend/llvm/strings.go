@@ -11,6 +11,7 @@ import (
 	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // lowerStringConstant materializes a compile-time string (a literal's bytes, or a
@@ -544,4 +545,70 @@ func (l *lowerer) strRuneOffsetFunc() *ir.Func {
 	retOK.NewRet(retOK.NewLoad(lltypes.I64, biSlot))
 	oor.NewRet(constant.NewInt(lltypes.I64, -1))
 	return fn
+}
+
+// lowerDecodeUTF8 lowers `bytes.decode_utf8()` — a `[]u8` or `[N]u8` read as UTF-8 text.
+//
+// The shape is `lowerStringConcat`'s: allocate a ref-counted box, memcpy the bytes into
+// its payload, and hand back a fat pointer into it. What differs is where the bytes come
+// from and how the rune count is got. Concatenation adds its operands' counts because
+// joining cannot split or merge a rune; a byte buffer carries no count at all, so this is
+// one of the three places that has to walk the bytes (`lyra_utf8_count`, beside
+// `read_line` and interpolation's formatted segments).
+//
+// **The copy is not avoidable.** A string is a ref-counted box whose header sits at its
+// start, so a fat pointer into an array's buffer could not be released — the same reason
+// `slice` copies rather than borrowing its parent's bytes. It is also what makes the
+// result independent of the array: a later `push` may move the buffer, and the string
+// must not follow.
+func (l *lowerer) lowerDecodeUTF8(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, recvT types.Type) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 0 {
+		return nil, nil, fmt.Errorf("llvm: decode_utf8() expects 0 arguments, got %d", len(call.Arguments))
+	}
+	src, byteLen, block, err := l.byteBufferOf(block, member.Object, recvT)
+	if err != nil {
+		return nil, nil, err
+	}
+	_, dst := l.rcAllocPayload(block, byteLen)
+	// memcpy over a zero length is a valid no-op, so an empty buffer needs no special
+	// case — it decodes to the empty string, which is the right answer.
+	block.NewCall(l.memcpyFunc(), dst, src, byteLen)
+
+	strTy := StringLLVMType()
+	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dst, 0)
+	withLen := block.NewInsertValue(withPtr, byteLen, 1)
+	return block.NewInsertValue(withLen, block.NewCall(l.utf8CountFunc(), dst, byteLen), 2), block, nil
+}
+
+// byteBufferOf answers an `i8*` to a byte array's elements and their count.
+//
+// The two array flavours differ in exactly the way their layouts do. A `[]u8` is a box
+// holding a pointer to its elements, so the buffer is a load and the length a field read.
+// A `[N]u8` *is* its elements, held by value, so it has no address until one is taken —
+// `argumentAddress`, the same helper `&xs[0]` goes through, which spills a temporary to a
+// slot when the receiver is not storage (`makeBytes().decode_utf8()`).
+func (l *lowerer) byteBufferOf(block *ir.Block, obj ast.Expression, recvT types.Type) (value.Value, value.Value, *ir.Block, error) {
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	switch it := recvT.(type) {
+	case types.DynamicArrayType:
+		elem, err := l.lowerType(it.ElementType)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		boxTy := DynArrayBoxType(elem)
+		box, block, err := l.lowerExpr(block, obj)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		length := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
+		elems := block.NewLoad(lltypes.NewPointer(elem), dynArrayElemsPtr(block, boxTy, box))
+		return block.NewBitCast(elems, i8ptr), length, block, nil
+	case types.StaticArrayType:
+		addr, block, err := l.argumentAddress(block, obj)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return block.NewBitCast(addr, i8ptr), i64c(int64(it.Size)), block, nil
+	}
+	return nil, nil, nil, fmt.Errorf("llvm: decode_utf8() on non-array receiver %s", recvT)
 }

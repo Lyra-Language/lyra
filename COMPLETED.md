@@ -10,6 +10,63 @@ Newest first.
 ## Dated log
 
 ### 08/19/26
+**`bytes.decode_utf8()` — a string built from bytes.** The gap the zlib example exposed
+from the other side: reading a foreign buffer produced a `[]u8`, and turning one into a
+`string` had no spelling but `s = s ++ "${rune(b)}"` in a loop.
+
+**It is a builtin because it has to be**, which is the `read_line` rule rather than the
+`parse_i64` one: it allocates a ref-counted string box and copies into it, and
+concatenation is the *only* string construction Lyra code has. So the loop was one
+allocation per rune, each copying everything before it — a shape whose cost is easy to
+assert and worth measuring instead:
+
+| bytes | `++` loop | `decode_utf8` |
+|---|---|---|
+| 50k | 0.06s | 0.02s |
+| 100k | 0.24s | 0.02s |
+| 200k | 0.70s | 0.02s |
+| 400k | 1.44s | 0.02s |
+
+Eight times the input for twenty-four times the time, against no change at all. (The
+growth flattens above 100k rather than staying cleanly quadratic — allocator and bandwidth
+effects — so the honest claim is *superlinear and unbounded*, not a clean n². The
+structural fact is exact either way: n allocations totalling O(n²) bytes.)
+
+**Named for the interpretation, not the destination.** `to_string` on a byte array is
+ambiguous with *rendering* it — `[104, 105]` as text is "hi" or "[104, 105]" depending on
+what the reader assumed, and both are things programs want. `decode_utf8` says which, and
+names the inverse that will read bytes back out.
+
+**It does not validate**, and that is a decision rather than an omission. `read_line`
+already builds a string from libc's bytes without validating, and `lyra_utf8_count` counts
+non-continuation bytes rather than checking them, so malformed input yields a string whose
+rune count disagrees with what it holds. Adding a `Maybe<string>` here would give the
+language two different answers to one question while the older one stayed wrong; one
+unvalidated answer is worse in isolation and better as a whole, and both are fixed by the
+same change to that counter.
+
+**Both array flavours**, because which one a byte buffer is depends on how it was written
+rather than on what it holds — `[104, 105]` is a `[2]u8` and the same literal under a
+`[]u8` annotation is dynamic. `byteBufferOf` is where they differ: a dynamic array's
+buffer is a load and its length a field read, while a fixed one *is* its elements and has
+no address until `argumentAddress` takes one.
+
+The copy is not avoidable, and is the reason rather than the cost: a box's header sits at
+its start, so a string cannot point into an array's buffer — the same fact that makes
+`slice` copy. A test pins the consequence, mutating and growing the array afterwards and
+checking the string did not follow.
+
+Ownership needed nothing, which was worth checking rather than assuming (hazard 15). The
+typechecker records the builtin's signature on the MemberExpr, and its return carries no
+`ref`/`mut`, so `isOwnedReturn` already answers *owned* — which is why `slice` has no
+entry in `calleeIsOwningBuiltin` either. That list is for builtins called as free
+functions, which have no signature to read.
+
+`std.ffi` gains `CBuffer.decode_utf8()` — the same name for the same operation on the same
+bytes, told apart by the receiver — and `examples/zlib.lyra` reads zlib's version string
+through it instead of interpolating rune by rune.
+
+### 08/19/26
 **`cstring_len` is Lyra, not a binding to `strlen`.** The question that produced it was
 whether `unsafe extern pure strlen: (^u8) -> u64` belonged in a shared C-bindings module,
 and the answer turned out to be that it should not be an extern at all.

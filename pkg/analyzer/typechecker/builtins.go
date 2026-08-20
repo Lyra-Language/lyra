@@ -163,6 +163,30 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 			}, true
 		}
 	}
+	// `bytes.decode_utf8()` — a `[]u8` or `[N]u8` read as UTF-8 text.
+	//
+	// **A builtin because it has to be**: it allocates a ref-counted string box and
+	// copies into it, and nothing in the language can build a string out of parts.
+	// Concatenation is the only construction Lyra code has, so the alternative was
+	// `s = s ++ "${rune(b)}"` in a loop — O(n²) in allocations, which is what
+	// `examples/zlib.lyra` did to read a six-byte version string.
+	//
+	// **Named for the interpretation, not for the destination.** `to_string` on a byte
+	// array is ambiguous with rendering it — `[104, 105]` as text is "hi" or "[104, 105]"
+	// depending on what the reader assumed — and the two are both things a program wants.
+	// `decode_utf8` says which, and pairs with the `encode_utf8` that will read bytes back
+	// out (todo.md).
+	//
+	// It does **not** validate, which is a decision rather than an omission: `read_line`
+	// already builds a string from libc bytes without validating, and one unvalidated
+	// answer is better than two different ones. Both count runes with `lyra_utf8_count`,
+	// so both are wrong the same way on malformed input, and both are fixed by the same
+	// change.
+	if name == "decode_utf8" && isByteArray(recv) {
+		return &types.LambdaType{
+			ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.String}},
+		}, true
+	}
 	// `p.offset(n)` — the only pointer arithmetic the language has, and a *method*
 	// rather than an operator on purpose.
 	//
@@ -436,6 +460,9 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 // parameter exists to prevent; it was live for as long as it took to write the
 // prelude's `trim`.
 func builtinMethodAllocates(recv types.Type, name string) bool {
+	if name == "decode_utf8" && isByteArray(recv) {
+		return true
+	}
 	if name == "slice" && types.IsString(recv) {
 		return true
 	}
@@ -645,4 +672,25 @@ func isBuiltinWaitForKeyFn(name string) bool {
 // (no Show/Display trait yet).
 func isPrintableType(t types.Type) bool {
 	return types.IsString(t) || types.IsNumeric(t) || types.IsBoolean(t) || isRuneType(t)
+}
+
+// isByteArray reports whether t is an array of u8, fixed or dynamic — the receiver
+// `decode_utf8` takes.
+//
+// Both flavours, because which one a byte buffer is depends on how it was written rather
+// than on what it holds: `[104, 105]` is a `[2]u8` and the same literal under a `[]u8`
+// annotation is dynamic, and a reader decoding a buffer does not think of the two as
+// different questions.
+func isByteArray(t types.Type) bool {
+	var elem types.Type
+	switch v := t.(type) {
+	case types.DynamicArrayType:
+		elem = v.ElementType
+	case types.StaticArrayType:
+		elem = v.ElementType
+	default:
+		return false
+	}
+	p, ok := elem.(types.PrimitiveType)
+	return ok && p.Name == types.UInt8
 }

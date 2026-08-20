@@ -2025,12 +2025,12 @@ read direction: a foreign `char*` can be walked, and the walk is bounds-checked.
 
 What the module still wants, all of it now ordinary Lyra rather than blocked:
 
-- **`CString`** — a NUL-terminated `[]u8` from a `string` (the out direction, writable
-  today by hand), and a `string` from a `^u8` (the in direction). The length question is
-  settled: `cstring_len` is ordinary Lyra, so what is left is the copy itself, which wants
-  a decision about where a `string` gets built from bytes — the prelude has no
-  `from_bytes`, and interpolating rune by rune (what `examples/zlib.lyra` does) is O(n²)
-  in allocations.
+- **`CString`, the *out* direction only.** A `string` to a NUL-terminated `[]u8` needs
+  the inverse of `decode_utf8`, and there is no way to read a byte out of a string today:
+  `byte_len`, `byte_offset` and `compare_bytes_at` measure and compare, none of them
+  reads. So `encode_utf8() -> []u8` is a second small builtin, and `CString` is a `push`
+  of the zero byte on top of it. The in direction is done — `cstring_len` +
+  `CBuffer.decode_utf8()`.
 - **`xs.data() -> ^T`** — a buffer's base pointer, which every "pointer plus a length"
   call needs and which `&mut xs[0]` currently spells by hand. It must refuse or trap on an
   empty array rather than hand out the address of nothing, which is exactly what `&xs[0]`

@@ -1620,6 +1620,23 @@ Three things to keep:
   produces none. `lowerForEffect` unwraps one to its body for the same reason a plain
   block is unwrapped there.
 
+### Building a string from bytes (`decode_utf8`)
+
+`lowerStringConcat`'s shape — allocate a ref-counted box, memcpy in, hand back a fat
+pointer — with two differences. The bytes come from an array rather than from two strings,
+which is what `byteBufferOf` is for: a `[]u8` is a box holding a pointer, so its buffer is
+a load and its length a field read, while a `[N]u8` *is* its elements and has no address
+until `argumentAddress` takes one (spilling a temporary to a slot when the receiver is not
+storage). And the rune count has to be **walked**: concatenation can add its operands'
+counts because joining cannot split or merge a rune, but a byte buffer carries none, so
+this is the third caller of `lyra_utf8_count` beside `read_line` and interpolation's
+formatted segments.
+
+Ownership needs nothing: the typechecker records the builtin's signature on the MemberExpr,
+whose return carries no `ref`/`mut`, so `isOwnedReturn` already answers *owned*. That is
+why `slice` has no entry in `calleeIsOwningBuiltin` either — that list is for builtins
+called as *free functions* (`read_line`), which have no signature to read.
+
 ## Foreign functions (`extern.go`)
 
 `extern name: (…) -> T`, and a call to one. **Almost nothing is here, and that is the

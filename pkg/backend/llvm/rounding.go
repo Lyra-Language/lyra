@@ -128,6 +128,13 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 			return l.lowerPointerOffset(block, call, member, ptrT)
 		}
 	}
+	if member.Property.Name == "decode_utf8" {
+		recvT, ok := l.recordedType(member.Object)
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: no type recorded for decode_utf8() receiver")
+		}
+		return l.lowerDecodeUTF8(block, call, member, l.resolveForLayout(recvT))
+	}
 	if member.Property.Name == "compare_bytes" {
 		return l.lowerStringCompareBytes(block, call, member)
 	}
