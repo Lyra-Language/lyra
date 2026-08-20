@@ -149,7 +149,7 @@ func findInChildren(expr ast.Expression, line, col int) ast.Expression {
 	case *ast.UnsafeBlockExpr:
 		// **Without this, every navigation feature is blind inside `unsafe { … }`** —
 		// hover, go-to-definition, rename, document highlight, all of which start from
-		// findExprAtPos. That is the whole of a program's FFI and raw-pointer code,
+		// findExprAtPos and descend through this switch. That is the whole of a program's FFI and raw-pointer code,
 		// since both require the block; go-to-definition on a call to an `extern` is
 		// *only* reachable from inside one.
 		//
@@ -160,6 +160,91 @@ func findInChildren(expr ast.Expression, line, col int) ast.Expression {
 		return findExprInExpr(e.Operand, line, col)
 	case *ast.DerefExpr:
 		return findExprInExpr(e.Operand, line, col)
+
+	// The rest mirror `ast.walkExprChildren`, which is the canonical answer to "what are
+	// this node's children" — and which had all of these while this switch had none of
+	// them, so hover, go-to-definition and rename returned nothing inside a `for` body,
+	// a comprehension, a range, `a ?? b`, `t.0` and the rest. `exhaustive_test.go` in
+	// pkg/ast now fails when the two drift.
+	case *ast.ForLoopExpr:
+		if e.Init != nil {
+			if r := findExprInExpr(e.Init.Value, line, col); r != nil {
+				return r
+			}
+		}
+		if e.Condition != nil {
+			if r := findExprInExpr(*e.Condition, line, col); r != nil {
+				return r
+			}
+		}
+		if e.Post != nil {
+			if r := findExprInExpr(*e.Post, line, col); r != nil {
+				return r
+			}
+		}
+		return findExprInStmts(e.Body.Statements, line, col)
+	case *ast.ForInLoopExpr:
+		if r := findExprInExpr(e.Iterable, line, col); r != nil {
+			return r
+		}
+		return findExprInStmts(e.Body.Statements, line, col)
+	case *ast.RangeExpr:
+		if r := findExprInExpr(e.Start, line, col); r != nil {
+			return r
+		}
+		if r := findExprInExpr(e.End, line, col); r != nil {
+			return r
+		}
+		return findExprInExpr(e.Step, line, col)
+	case *ast.ArrayCompExpr:
+		for _, gen := range e.Generators {
+			if r := findExprInExpr(gen.Value, line, col); r != nil {
+				return r
+			}
+		}
+		if r := firstIn(e.Guards, line, col); r != nil {
+			return r
+		}
+		return findExprInExpr(e.Result, line, col)
+	case *ast.ArrayRepeatExpr:
+		if r := findExprInExpr(e.Value, line, col); r != nil {
+			return r
+		}
+		return findExprInExpr(e.Count, line, col)
+	case *ast.NullCoalescingExpr:
+		if r := findExprInExpr(e.Optional, line, col); r != nil {
+			return r
+		}
+		return findExprInExpr(e.Default, line, col)
+	case *ast.ComposeExpr:
+		if r := findExprInExpr(e.Left, line, col); r != nil {
+			return r
+		}
+		return findExprInExpr(e.Right, line, col)
+	case *ast.TupleIndexExpr:
+		return findExprInExpr(e.Object, line, col)
+	case *ast.BitwiseNotExpr:
+		return findExprInExpr(e.Operand, line, col)
+	case *ast.GuardExpr:
+		return findExprInExpr(e.Condition, line, col)
+	case *ast.AwaitExpr:
+		return findExprInExpr(e.Operand, line, col)
+	case *ast.YieldExpr:
+		return findExprInExpr(e.Value, line, col)
+	case *ast.YieldFromExpr:
+		return findExprInExpr(e.Generator, line, col)
+	}
+	return nil
+}
+
+// findExprInStmts is `BlockExpr`'s loop, shared with the two loop forms — whose bodies are
+// BlockExprs the switch above reaches through a field rather than as a case, so they
+// cannot simply recurse.
+func findExprInStmts(stmts []ast.Statement, line, col int) ast.Expression {
+	for _, stmt := range stmts {
+		if r := findExprInStmt(stmt, line, col); r != nil {
+			return r
+		}
 	}
 	return nil
 }

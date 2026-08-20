@@ -172,6 +172,15 @@ func scopeInExpr(expr ast.Expression, scopeTable *symbols.ScopeTable, line, col 
 		}
 	case *ast.LambdaExpr:
 		return scopeInExpr(e.Body, scopeTable, line, col)
+	case *ast.ForLoopExpr:
+		// The **body**, not its statements: a loop's own bindings — the counter, or
+		// `for i, c in s`'s pair — live in the body block's scope, so iterating the
+		// statements finds every nested scope and misses the one the loop introduced.
+		// The loop variable is then the one name inside a loop that cannot be resolved,
+		// which is a strange enough hole to look like something else.
+		return scopeInExpr(e.Body, scopeTable, line, col)
+	case *ast.ForInLoopExpr:
+		return scopeInExpr(e.Body, scopeTable, line, col)
 	case *ast.UnsafeBlockExpr:
 		// An `unsafe` block *is* its body, including for scoping: a binding declared
 		// inside one is scoped to it (which is why UnsafeBlockExpr.Body is a pointer —

@@ -200,3 +200,38 @@ let main = () -> void => {
 		t.Errorf("definition of an unsafe-block binding = %v; want one location on line 5", locs)
 	}
 }
+
+// Navigation inside a `for` body, which is not an exotic construct — it is where most code
+// lives. `findInChildren` had no case for either loop form (nor for ranges,
+// comprehensions, `??`, `t.0`, `~x` and seven more), so hover, definition and rename
+// returned nothing in all of them.
+//
+// Found by pkg/ast's exhaustive_test.go, which compares this switch against
+// `walkExprChildren` — the canonical answer to what a node's children are. Thirteen kinds
+// were missing. That test now fails when the two drift again.
+func TestNavigation_InsideALoopBody(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	src := `
+let helper = pure (n: i64) -> i64 => n
+let main = () -> void => {
+  for i in 0..<3 {
+    let y = helper(i)
+  }
+}`
+	openAndWait(t, h, src)
+	locs, err := h.Definition(testURI, 4, 12) // `helper` inside the loop body
+	if err != nil {
+		t.Fatalf("Definition: %v", err)
+	}
+	if len(locs) != 1 || locs[0].Range.Start.Line != 1 {
+		t.Errorf("definition inside a for-in body = %v; want one location on line 1", locs)
+	}
+	// And the loop variable, whose scope is the body's — the scopeInExpr half.
+	locs, err = h.Definition(testURI, 4, 19) // `i` in `helper(i)`
+	if err != nil {
+		t.Fatalf("Definition: %v", err)
+	}
+	if len(locs) != 1 {
+		t.Errorf("definition of a loop variable = %v; want one location", locs)
+	}
+}
