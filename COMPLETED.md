@@ -10,6 +10,45 @@ Newest first.
 ## Dated log
 
 ### 08/19/26
+**`std.ffi`'s `cstring` — a C string is a plain `[]u8`.**
+
+**The out direction is a plain `[]u8`** — encode, check for an interior NUL, `push(0)` —
+with the pointer taken at the call site. That is option A of four, and the survey is why
+it won rather than a preference:
+
+- **The shape it is accused of does not compile.** `&"x".cstring()[0]` is `lyra-E059`,
+  *cannot take the address of a temporary*. That is precisely the bug
+  `CString::new(…).as_ptr()` produces silently in Rust — common enough that Clippy carries
+  a dedicated lint for it — and Lyra's type checker refuses it outright. A wrapper type
+  adds nothing there.
+- **A struct storing the pointer is worse, and measurably.** A `[]u8`'s elements live
+  behind a pointer *in* the box, so growth reallocates them: `CStr { bytes, ptr }` read
+  104 before a thousand pushes and 6 after, with the struct holding it perfectly alive.
+  Recomputing at the call site cannot fail that way.
+- **The wrapper that would genuinely help is not a wrapper.** Every language shipping a
+  `CString` also ships a *scoped* form and documents it as the default — Swift's
+  `withCString`, Haskell's, C#'s `fixed`. That is worth adding; a name around a `[]u8` is
+  not a step toward it.
+- **A newtype was tried and is a worse A**: transparency covers methods but not indexing,
+  so `cs.len()` resolves and `cs[0]` is *cannot index into type CString*, and getting the
+  pointer needs a read-out binding at every call site. Zig's sentinel slices (`[:0]const
+  u8`) are what that was reaching for, and they are a type constructor rather than a
+  nominal wrapper.
+
+None of the four closes the actual hole — `let escapes = (xs: []u8) -> ^u8 => &xs[0]`
+compiles — so this is a convention, and the declaration says so.
+
+**An interior NUL traps** rather than returning a `Maybe`. C cannot represent one, so the
+string would arrive truncated at that byte: the silently-wrong answer this language traps
+for everywhere else. Rust returns an error here; a trap is the call `split("")` already
+makes, for an argument with no meaningful answer rather than for input a program did not
+choose.
+
+The backend's `llvm_pointer_offset_test.go` gave up its `std.ffi` half to a new
+`llvm_ffi_test.go`, on the lesson from `rounding.go` the same afternoon: a file named for
+its first tenant stops describing its contents at the second.
+
+### 08/19/26
 **A closure can call a foreign function.**
 
 Testing a scoped `with_cstring(s, f)` turned up

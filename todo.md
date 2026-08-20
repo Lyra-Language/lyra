@@ -2025,8 +2025,16 @@ read direction: a foreign `char*` can be walked, and the walk is bounds-checked.
 
 What the module still wants, all of it now ordinary Lyra rather than blocked:
 
-- **`CString`** — both builtins now exist (`encode_utf8`/`decode_utf8`), so this is three
-  lines of Lyra. What it needs is a decision about the *shape* rather than the code.
+- **[DONE 08/19] `cstring`** — a plain `[]u8`, the caller's to keep alive, with the
+  pointer taken at the call site. The reasoning is on the declaration and in
+  `COMPLETED.md`; the short form is that the dangling shape is already `lyra-E059`, a
+  stored pointer is measurably *worse*, and the wrapper that would genuinely help is the
+  scoped `with_cstring` rather than a type.
+- **`with_cstring(s, f)`** — the scoped form, now that a closure can call an extern. Every
+  language shipping a `CString` also ships this and documents it as the default (Swift's
+  `withCString`, Haskell's, C#'s `fixed`), because it is the only shape where the pointer
+  cannot outlive the buffer. Two things to settle first: it nests badly for a C function
+  taking two strings, and a closure allocates, so a `noalloc` caller cannot use it.
 - **`xs.data() -> ^T`** — a buffer's base pointer, which every "pointer plus a length"
   call needs and which `&mut xs[0]` currently spells by hand. It must refuse or trap on an
   empty array rather than hand out the address of nothing, which is exactly what `&xs[0]`

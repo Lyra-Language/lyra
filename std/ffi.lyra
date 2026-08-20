@@ -116,3 +116,51 @@ pub let decode_utf8 = pure (self: CBuffer) -> string => {
   bytes.decode_utf8()
 }
 
+/// A NUL-terminated copy of `self`, to hand to a C function taking `char*`.
+///
+/// ```
+/// import std.ffi.{ cstring }
+///
+/// var buf = path.cstring()
+/// let fd = unsafe { open(&buf[0], 0) }
+/// ```
+///
+/// **A plain `[]u8` rather than a `CString` type**, which is a decision worth stating
+/// because every language with an FFI makes it differently. Three things settled it here:
+///
+/// The dangerous shape is already refused. `open(&"x".cstring()[0], 0)` — the pointer into
+/// a buffer that stops existing at the end of the statement — is `lyra-E059`, *cannot take
+/// the address of a temporary*. That is the exact bug Rust's `CString::new(…).as_ptr()`
+/// produces silently and that Clippy carries a dedicated lint for, and Lyra's type checker
+/// refuses it outright. A wrapper type would not add to that.
+///
+/// A struct pairing the bytes with a stored pointer is *worse*, not better. A `[]u8`'s
+/// elements live behind a pointer in the box, so growth reallocates them: a pointer stored
+/// at construction goes stale on the next `push` while the struct holding it is perfectly
+/// alive, and the read is silent garbage. Recomputing the pointer at the call site cannot
+/// have that failure.
+///
+/// And the wrapper that would genuinely help is not a wrapper. What every language that
+/// ships a `CString` also ships — and documents as the default — is a *scoped* form,
+/// `withCString`/`with_cstring`, where the pointer cannot outlive the callback. That is
+/// worth adding here later; a name around a `[]u8` is not a step toward it.
+///
+/// The buffer is the caller's to keep alive, and nothing in the language enforces that:
+/// `let escapes = (xs: []u8) -> ^u8 => &xs[0]` compiles. Bind it, use it, and let it fall
+/// out of scope after the call.
+///
+/// # Panics
+/// Traps if `self` contains a NUL byte, because C cannot represent one: the string would
+/// arrive truncated at that byte, which is the silently-wrong answer this language traps
+/// for everywhere else. Rust returns an error here instead; a trap is the same call
+/// `split("")` makes, an argument with no meaningful answer rather than input a program
+/// did not choose.
+pub let cstring = pure (self: string) -> []u8 => {
+  var bytes = self.encode_utf8()
+  for i in 0..<bytes.len() {
+    if bytes[i] == 0 { panic("std.ffi: a C string cannot contain a NUL byte") }
+  }
+  bytes.push(0)
+  bytes
+}
+

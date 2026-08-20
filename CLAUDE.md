@@ -853,6 +853,12 @@ needs before touching anything nearby:
   deliberately never had one). It needs no `unsafe`: a wrong library name fails loudly at
   link time, which is exactly what an effect bound does not do.
 
+**`std.ffi` is `CBuffer`/`get`/`cstring_len`/`decode_utf8`/`cstring`.** The last is the
+out direction and is a plain `[]u8` — option A, chosen over a `CString` type because the
+dangling shape is already `lyra-E059`, because a struct storing the pointer dangles for
+real on the next `push` (measured), and because the wrapper that would help is the scoped
+`with_cstring`, not a name. It traps on an interior NUL.
+
 **Both directions work now.** A buffer goes *out* as `&mut xs[0]` plus a length, which is
 what zlib's `compress` takes; a `^u8` coming *back* is read through `p.offset(n)^`, and
 `std.ffi`'s `CBuffer` is the checked wrapper over it (see "Raw pointers" above). What is
