@@ -2025,12 +2025,12 @@ read direction: a foreign `char*` can be walked, and the walk is bounds-checked.
 
 What the module still wants, all of it now ordinary Lyra rather than blocked:
 
-- **`CString`, the *out* direction only.** A `string` to a NUL-terminated `[]u8` needs
-  the inverse of `decode_utf8`, and there is no way to read a byte out of a string today:
-  `byte_len`, `byte_offset` and `compare_bytes_at` measure and compare, none of them
-  reads. So `encode_utf8() -> []u8` is a second small builtin, and `CString` is a `push`
-  of the zero byte on top of it. The in direction is done — `cstring_len` +
-  `CBuffer.decode_utf8()`.
+- **`CString`** — both builtins now exist (`encode_utf8`/`decode_utf8`), so this is three
+  lines of Lyra: encode, `push(0)`, and hand out `&mut bytes[0]`. What it needs is a
+  decision about the *shape*, not the code — a `[]u8` the caller keeps alive for the
+  duration of the call, or a struct pairing the bytes with the pointer. The pointer must
+  not outlive the array, and nothing in the language enforces that, so the type is where
+  the reminder goes.
 - **`xs.data() -> ^T`** — a buffer's base pointer, which every "pointer plus a length"
   call needs and which `&mut xs[0]` currently spells by hand. It must refuse or trap on an
   empty array rather than hand out the address of nothing, which is exactly what `&xs[0]`

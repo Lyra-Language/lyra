@@ -10,6 +10,37 @@ Newest first.
 ## Dated log
 
 ### 08/19/26
+**`s.encode_utf8()` — a string's bytes as a `[]u8`.** `decode_utf8`'s inverse, and a
+builtin for the mirror-image reason: **nothing in the language could read a byte out of a
+string.** `byte_len` measures, `byte_offset` maps a rune position to a byte one,
+`compare_bytes_at` compares — none of them reads, and `s[i]` is a rune. So the bytes a
+string already holds were reachable only by re-encoding each rune by hand, which is a
+UTF-8 encoder written in user code to recover what was there all along.
+
+**Dynamic rather than `[N]u8`**, because the length is a run-time property of the string
+and a fixed size could not be written down — which also makes the result `push`-able, and
+that is exactly what a NUL-terminated form needs.
+
+It copies, and here the copy is *load-bearing in the other direction* from `decode_utf8`'s:
+that one copies because a box's header sits at its start, so a string cannot point into an
+array's buffer; this one copies because a `[]u8` is mutable and a string is not, so sharing
+the bytes would make `b[0] = 65` a way to write through an immutable value. A test mutates
+and grows the result and checks the source string is untouched.
+
+Two allocations, which is what a `[]u8` always costs — `dynArrayAlloc`'s fixed box plus a
+malloc'd buffer — with the payload memcpy'd in. Element type i8 and stride 1, so the byte
+length *is* the element count and no scaling appears anywhere.
+
+Ownership needed nothing again, and for the same reason `decode_utf8` did not: the
+signature is recorded on the MemberExpr and its return carries no `ref`/`mut`, so
+`isOwnedReturn` answers *owned* and the array gets its ordinary drop glue. Confirmed in the
+emitted IR rather than assumed — `lyra_rc_release` with `lyra_drop_1_DynamicArray_u8_`.
+
+What this leaves for `CString` is a *shape* decision rather than code: three lines of Lyra
+(encode, `push(0)`, `&mut bytes[0]`), but the pointer must not outlive the array and
+nothing in the language enforces that, so the type is where the reminder has to live.
+
+### 08/19/26
 **`bytes.decode_utf8()` — a string built from bytes.** The gap the zlib example exposed
 from the other side: reading a foreign buffer produced a `[]u8`, and turning one into a
 `string` had no spelling but `s = s ++ "${rune(b)}"` in a loop.

@@ -207,8 +207,10 @@ let main = () -> void => {
 	}
 	var in, want strings.Builder
 	for _, c := range cases {
-		in.WriteString(c.in + "\n")
-		want.WriteString(c.want + "\n")
+		in.WriteString(c.in)
+		in.WriteString("\n")
+		want.WriteString(c.want)
+		want.WriteString("\n")
 	}
 	if got := buildAndRunWithPrelude(t, src, in.String()); got != want.String() {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want.String())

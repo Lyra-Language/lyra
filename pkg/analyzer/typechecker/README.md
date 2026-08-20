@@ -307,7 +307,8 @@ Signedness comes from the receiver's type. Also registered: `floatRoundingOps` �
 the untyped-literal-default pattern rather than inferring a narrower width from context — narrow
 further via the existing explicit int conversion, `i32(x.floor())`). This is the explicit escape
 hatch `inferTypeConversion`'s float→int rejection points callers to; the backend lowers each to
-a lazily-declared `llvm.<op>.<width>` intrinsic (`rounding.go`) + `fptosi`. Also registered:
+a lazily-declared `llvm.<op>.<width>` intrinsic (`rounding.go`, reached through
+`builtin_methods.go`'s one dispatcher) + `fptosi`. Also registered:
 **`len`** on any array receiver (fixed-size or dynamic) → i64, no args; the backend
 `lowerArrayLen` (`dynarray.go`) returns the compile-time size for a `[N]T` and loads the box's
 `len` field for a `[]T`. `checked_*` and the `truncate`/`saturate`/`narrow` conversions are not

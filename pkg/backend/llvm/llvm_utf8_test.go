@@ -115,3 +115,69 @@ let main = () -> void => {
 		t.Errorf("CBuffer.decode_utf8 = %q; want \"hi!\"", got)
 	}
 }
+
+// `s.encode_utf8()` — the inverse, and a builtin for the mirror-image reason: nothing in
+// the language can read a byte out of a string. `byte_len` measures, `byte_offset` maps a
+// rune position to a byte one, `compare_bytes_at` compares — none of them reads, and
+// `s[i]` is a rune. The bytes were reachable only by re-encoding each rune by hand, which
+// is a UTF-8 encoder written in user code to recover bytes the string already holds.
+func TestExec_EncodeUTF8RoundTrips(t *testing.T) {
+	t.Parallel()
+	out, _ := buildAndRunCapture(t, `module main
+let main = () -> void => {
+  let s = "hi λ!"
+  let b = s.encode_utf8()
+  print("${b.len()} ${s.len()} ${b[0]} ${b.decode_utf8()}")
+}
+`)
+	// Six bytes and five runes: the λ is two bytes, which is the whole point of having
+	// both numbers. The first byte is 'h', not a rune.
+	if got := strings.TrimSpace(out); got != "6 5 104 hi λ!" {
+		t.Errorf("encode_utf8 = %q; want \"6 5 104 hi λ!\"", got)
+	}
+}
+
+// The result is an ordinary mutable `[]u8` and owes nothing to the string it came from —
+// which is what the copy buys, and what a language with immutable strings had better not
+// get wrong.
+func TestExec_EncodeUTF8ResultIsIndependentAndMutable(t *testing.T) {
+	t.Parallel()
+	out, _ := buildAndRunCapture(t, `module main
+let main = () -> void => {
+  let s = "abc"
+  var b = s.encode_utf8()
+  b[0] = 65
+  b.push(33)
+  print("${b.decode_utf8()} ${s}")
+}
+`)
+	if got := strings.TrimSpace(out); got != "Abc! abc" {
+		t.Errorf("mutating the bytes should not reach the string; got %q, want \"Abc! abc\"", got)
+	}
+}
+
+// An empty string encodes to an empty array. `malloc(0)` is a pointer `free` accepts and
+// memcpy over a zero length is a no-op, so this needs no case of its own — the test keeps
+// it that way.
+func TestExec_EncodeUTF8OfTheEmptyString(t *testing.T) {
+	t.Parallel()
+	out, _ := buildAndRunCapture(t, `module main
+let main = () -> void => { print("${"".encode_utf8().len()}") }
+`)
+	if got := strings.TrimSpace(out); got != "0" {
+		t.Errorf(`"".encode_utf8().len() = %q; want "0"`, got)
+	}
+}
+
+// It allocates two things — the box and its buffer — so `noalloc` refuses it, like its
+// inverse and like `slice`.
+func TestCheck_EncodeUTF8IsRefusedInNoalloc(t *testing.T) {
+	t.Parallel()
+	errs := checkWithPrelude(t, `module main
+let f = pure noalloc (s: string) -> i64 => s.encode_utf8().len()
+let main = () -> void => { println("${f("hi")}") }
+`)
+	if len(errs) == 0 {
+		t.Error("encode_utf8 allocates, so a `noalloc` function must not be able to call it")
+	}
+}

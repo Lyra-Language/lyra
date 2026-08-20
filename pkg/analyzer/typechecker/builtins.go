@@ -163,6 +163,25 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 			}, true
 		}
 	}
+	// `s.encode_utf8()` — a string's bytes, as a `[]u8`.
+	//
+	// `decode_utf8`'s inverse, and a builtin for the mirror-image reason: **nothing in the
+	// language can read a byte out of a string.** `byte_len` measures, `byte_offset` maps
+	// a rune position to a byte one and `compare_bytes_at` compares — none of them reads,
+	// and `s[i]` is a rune. So the bytes were reachable only by re-encoding each rune by
+	// hand, which is a UTF-8 encoder written in user code to recover bytes the string
+	// already holds.
+	//
+	// **Dynamic, not `[N]u8`**: the length is a run-time property of the string, so a
+	// fixed size could not be written down. That also makes the result `push`-able, which
+	// is what `std.ffi`'s NUL-terminated form needs.
+	if name == "encode_utf8" && types.IsString(recv) {
+		return &types.LambdaType{
+			ReturnType: types.ReturnType{Type: types.DynamicArrayType{
+				ElementType: types.PrimitiveType{Name: types.UInt8},
+			}},
+		}, true
+	}
 	// `bytes.decode_utf8()` — a `[]u8` or `[N]u8` read as UTF-8 text.
 	//
 	// **A builtin because it has to be**: it allocates a ref-counted string box and
@@ -461,6 +480,9 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 // prelude's `trim`.
 func builtinMethodAllocates(recv types.Type, name string) bool {
 	if name == "decode_utf8" && isByteArray(recv) {
+		return true
+	}
+	if name == "encode_utf8" && types.IsString(recv) {
 		return true
 	}
 	if name == "slice" && types.IsString(recv) {

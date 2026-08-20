@@ -52,7 +52,8 @@
 //	                      and the one file that consults the compiling host's OS
 //	  arithmetic.go       math, comparisons, &&/||, numeric conversions, width coercions
 //	  equality.go         structural == on aggregates: the per-type comparison glue
-//	  rounding.go         x.floor()/.ceil()/.round() via LLVM intrinsics
+//	  builtin_methods.go  the one dispatcher for every builtin method call
+//	  rounding.go         floor/ceil/round and log/log2/log10/sqrt via LLVM intrinsics
 //	  trap.go             checked arithmetic and the trap runtime; the diverged() guard
 //	  wrapping.go         the wrapping_*/saturating_* escape hatches
 //	  closures.go         boxed closures (dev tier) and indirect calls

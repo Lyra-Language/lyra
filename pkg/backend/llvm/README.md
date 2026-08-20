@@ -1162,7 +1162,8 @@ float params/returns (`emitReturn` handles a `FloatType` `retType`).
 already-lowered operand's LLVM type (`*lltypes.FloatType` → the float path, else the int path).
 The `i64(x)`-style conversion call still rejects float→int as lossy (no rounding mode implied);
 a float reaches an int width (and so the u8 exit code) explicitly, via
-**`x.floor()`/`.ceil()`/`.round()`** (`rounding.go`'s `lowerBuiltinMethodCall`, dispatched from
+**`x.floor()`/`.ceil()`/`.round()`** (`rounding.go`'s `lowerFloatMathMethod`, reached from
+`builtin_methods.go`'s `lowerBuiltinMethodCall`, dispatched from
 `lowerFunctionCallExpr` when the call's callee is a `*ast.MemberExpr` naming a builtin rather
 than a struct field/trait method/user function): the receiver's Lyra float type picks the
 matching `llvm.<op>.<width>` intrinsic (`floor`/`ceil`/`round`, half-away-from-zero for `round`
@@ -1620,7 +1621,7 @@ Three things to keep:
   produces none. `lowerForEffect` unwraps one to its body for the same reason a plain
   block is unwrapped there.
 
-### Building a string from bytes (`decode_utf8`)
+### Text and bytes (`decode_utf8` / `encode_utf8`)
 
 `lowerStringConcat`'s shape — allocate a ref-counted box, memcpy in, hand back a fat
 pointer — with two differences. The bytes come from an array rather than from two strings,
@@ -1632,10 +1633,15 @@ counts because joining cannot split or merge a rune, but a byte buffer carries n
 this is the third caller of `lyra_utf8_count` beside `read_line` and interpolation's
 formatted segments.
 
-Ownership needs nothing: the typechecker records the builtin's signature on the MemberExpr,
-whose return carries no `ref`/`mut`, so `isOwnedReturn` already answers *owned*. That is
-why `slice` has no entry in `calleeIsOwningBuiltin` either — that list is for builtins
-called as *free functions* (`read_line`), which have no signature to read.
+`encode_utf8` is the same two allocations a `[]u8` always costs — `dynArrayAlloc`'s fixed
+box plus a malloc'd buffer — with the string's payload memcpy'd into the buffer. Element
+type i8 and stride 1, so the byte length *is* the element count and no scaling appears.
+
+Ownership needs nothing from either: the typechecker records the builtin's signature on
+the MemberExpr, whose return carries no `ref`/`mut`, so `isOwnedReturn` already answers
+*owned* — and the `[]u8` gets `lyra_drop_1_DynamicArray_u8_` like any other. That is why
+`slice` has no entry in `calleeIsOwningBuiltin` either: that list is for builtins called
+as *free functions* (`read_line`), which have no signature to read.
 
 ## Foreign functions (`extern.go`)
 

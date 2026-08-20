@@ -612,3 +612,35 @@ func (l *lowerer) byteBufferOf(block *ir.Block, obj ast.Expression, recvT types.
 	}
 	return nil, nil, nil, fmt.Errorf("llvm: decode_utf8() on non-array receiver %s", recvT)
 }
+
+// lowerEncodeUTF8 lowers `s.encode_utf8()` — a string's bytes as a `[]u8`.
+//
+// `decode_utf8` in reverse, and the same two allocations a `[]u8` always costs: a box
+// (fixed size, holding length, capacity and a buffer pointer) plus the buffer itself,
+// which is then memcpy'd from the string's payload. The stride is 1 and the element type
+// i8, so the byte length is the element count and no scaling appears.
+//
+// It copies for the reason every construction here does: the two representations are
+// different shapes — a string is a fat pointer into a ref-counted box, a `[]u8` is a box
+// pointing at a separately-malloc'd buffer — so there is no aliasing arrangement to
+// choose between. It is also what keeps the result mutable without the string becoming
+// so, which a language whose strings are immutable had better not offer.
+func (l *lowerer) lowerEncodeUTF8(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 0 {
+		return nil, nil, fmt.Errorf("llvm: encode_utf8() expects 0 arguments, got %d", len(call.Arguments))
+	}
+	str, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	data := block.NewExtractValue(str, 0)
+	byteLen := block.NewExtractValue(str, 1)
+
+	boxTy := DynArrayBoxType(lltypes.I8)
+	box := l.dynArrayAlloc(block, boxTy, lltypes.I8, byteLen, byteLen, 1)
+	buf := block.NewLoad(lltypes.NewPointer(lltypes.I8), dynArrayElemsPtr(block, boxTy, box))
+	// malloc(0) for an empty string is a pointer `free` accepts, and memcpy over a zero
+	// length is a no-op, so the empty case needs nothing of its own.
+	block.NewCall(l.memcpyFunc(), buf, data, byteLen)
+	return box, block, nil
+}
