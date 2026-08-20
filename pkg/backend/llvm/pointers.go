@@ -4,9 +4,11 @@ import (
 	"fmt"
 
 	"github.com/llir/llvm/ir"
+	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // Raw pointers: `&x`, `&mut x`, `p^`, `p^ = v`, and the `unsafe { … }` block they sit
@@ -113,29 +115,35 @@ func (l *lowerer) lowerUnsafeBlock(block *ir.Block, e *ast.UnsafeBlockExpr) (val
 	return l.lowerBlockStmts(block, e.Body, false)
 }
 
-// isExtern reports whether name is a foreign function declared in this program.
-func (l *lowerer) isExtern(name string) bool {
-	if l.res == nil || l.res.Program == nil {
-		return false
-	}
-	for _, stmt := range l.res.Program.Statements {
-		if ext, ok := stmt.(*ast.ExternDeclStmt); ok && ext.Name == name {
-			return true
-		}
-	}
-	return false
-}
-
-// lowerExternCall refuses a call to a foreign function, loudly.
+// lowerPointerOffset lowers `p.offset(n)` to a `getelementptr`.
 //
-// The front end is complete — the declaration is collected, its signature checked against
-// each call, its effects taken from the bound it asserts, and its `@link` collected — but
-// nothing emits a declaration for the foreign symbol or a call to it. Rule 5: a form that
-// does not lower yet is a hard error, never a guess, and the alternative here is worse than
-// usual — an `extern`'s body-less LambdaExpr would otherwise reach the ordinary function
-// path and emit a `define` with no blocks, which clang rejects with a message about the IR
-// rather than about the program.
-func (l *lowerer) lowerExternCall(name string) error {
-	return fmt.Errorf("llvm: cannot lower a call to the foreign function %q: `extern` is "+
-		"checked but not yet emitted — see todo.md (Foreign functions)", name)
+// **In elements**, which is what a GEP with the pointee's type already means — so the
+// language's choice and LLVM's agree and no scaling is written here. `^T` and `^mut T`
+// lower identically, so nothing distinguishes them at this level; the mutability the
+// signature propagates is the front end's (lyra-E061).
+//
+// No bounds check, because there is nothing to check against: a raw pointer carries no
+// length. `std.ffi`'s CBuffer is where a length joins a pointer and the check becomes
+// possible — in ordinary Lyra, over this.
+func (l *lowerer) lowerPointerOffset(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, ptrT types.RawPointerType) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 1 {
+		return nil, nil, fmt.Errorf("llvm: offset() expects 1 argument, got %d", len(call.Arguments))
+	}
+	ptr, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	idx, block, err := l.lowerExpr(block, call.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	elem, err := l.lowerType(ptrT.Pointee)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Widened to i64 rather than assumed: the argument is an i64 by the builtin's
+	// signature, but an untyped literal reaches here at whatever width propagation left
+	// it, and a GEP index of the wrong width is a module clang refuses.
+	idx = coerceIntWidth(block, idx, true, lltypes.I64)
+	return block.NewGetElementPtr(elem, ptr, idx), block, nil
 }

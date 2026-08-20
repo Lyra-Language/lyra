@@ -1091,6 +1091,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		// but a consumer testing the bare name would have to take that on faith.
 		tc.methodTable.SetBuiltinMethod(call, builtinMethodAllocates(objType, methodName))
 		tc.checkBuiltinMutatesReceiver(objType, methodName, member)
+		tc.requireUnsafeBuiltin(objType, methodName, member)
 		return tc.inferLambdaCallFromType(methodName, sig, call)
 	}
 
@@ -1360,6 +1361,24 @@ func (tc *TypeChecker) checkBuiltinMutatesReceiver(recv types.Type, name string,
 //
 // Unsafe-ness is not transitive — a safe function may call an unsafe one from inside an
 // `unsafe` block — so this asks only about the context the call sits in.
+// requireUnsafeBuiltin reports a builtin method that needs an `unsafe` context.
+//
+// Only pointer arithmetic is in that set, and it is here rather than in the syntactic pass
+// that owns the rest of lyra-E011 for the same reason the unsafe-call half moved: the
+// question needs the **receiver's type**, which only inference has. `p.offset(n)` and
+// `xs.offset(n)` are the same three tokens, and a name-keyed check would either refuse
+// both or neither.
+func (tc *TypeChecker) requireUnsafeBuiltin(recv types.Type, name string, member *ast.MemberExpr) {
+	if tc.inUnsafe || name != "offset" {
+		return
+	}
+	if _, isPtr := recv.(types.RawPointerType); !isPtr {
+		return
+	}
+	tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeUnsafeOutsideUnsafe,
+		"pointer arithmetic with `offset` requires an `unsafe` block or function")
+}
+
 func (tc *TypeChecker) requireUnsafeCall(name string, callee *ast.LambdaExpr, call *ast.FunctionCallExpr) {
 	if callee == nil || !callee.IsUnsafe || tc.inUnsafe {
 		return

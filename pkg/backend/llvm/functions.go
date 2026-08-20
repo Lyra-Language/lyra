@@ -475,12 +475,6 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 		case "wait_for_key_ms":
 			return l.lowerWaitForKeyCall(block, e)
 		}
-		// A foreign function is *declared* but never emitted, so it is not in l.funcs and
-		// would otherwise read as a name the compiler has never heard of. Rule 5: name
-		// what is missing.
-		if l.isExtern(ident.Name) {
-			return nil, nil, l.lowerExternCall(ident.Name)
-		}
 		return nil, nil, fmt.Errorf("llvm: call to unknown function %q", ident.Name)
 	}
 	// Arguments match the parameters positionally. The typechecker validated

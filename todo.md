@@ -2008,246 +2008,56 @@ Types, checked arithmetic, division via the builtins library, `match`, conversio
 
 ## Foreign functions — `extern`
 
-**[PARTIAL 08/19] The front end is built; lowering is not.** An extern is collected,
-its calls are checked against its signature, its effects come from the bound it asserts,
-`unsafe` is required to narrow that bound, FFI-safe types are enforced at the signature,
-and `@link` is collected into `driver.Result.Links` (sorted, deduplicated). A call to one
-is refused at the backend, loudly, per rule 5.
+**[DONE 08/19] Built, front to back.** An extern collects, resolves, type-checks against
+its signature, is charged the effects of the bound it asserts, lowers to a `declare` under
+the C symbol, and `@link` reaches the link line. Proved against real zlib: `crc32` matches
+Python's, and `compress` → `uncompress` round-trips 16 bytes through a `^mut u64` in/out
+length. The design and what it cost are in `COMPLETED.md` (08/19); the rules that hold
+today, including the C→Lyra type mapping, are in `CLAUDE.md`.
 
-**Two decisions the design entry did not settle, made here:**
+What is left is below.
 
-- **An extern is always private to its module**, which is why the grammar gives it no
-  `pub`. A module that wants to offer a foreign function offers a *Lyra* function around
-  it — what `std/prelude/rand.lyra` already does with the `random_seed` builtin — so an
-  `unsafe` declaration never crosses a module boundary and every use of FFI has a checked
-  Lyra function in front of it. The cost is a one-line wrapper.
-- **`bool` is not FFI-safe.** Lyra's lowers to `i1` and C's `_Bool` is a byte, so passing
-  one silently disagrees about the calling convention — the class of wrongness this
-  language traps for everywhere else. `lyra-E063` names `i8` as the fix. Relaxable if the
-  ABI is pinned down deliberately.
+### `std.ffi` — what is still missing
 
-**And one bug it turned up, pre-existing and made reachable:** `lyra-E011`'s
-"calling an unsafe function" half was keyed on the callee's **name**, with no scope
-information — so an `extern f` made every `f(…)` in the prelude report as an unsafe call,
-`f` there being an ordinary callback parameter. That half now lives in the typechecker,
-where the callee is resolved; the syntactic pass keeps the raw-pointer half, which needs
-no resolution. Hazard 9, again.
+**[DONE 08/19]** `p.offset(n)` and `std.ffi`'s `CBuffer`/`get`, which together closed the
+read direction: a foreign `char*` can be walked, and the walk is bounds-checked. See
+`COMPLETED.md`.
 
-Grammar notes, including the state-cost measurement that chose the modifier shape, are in
-`tree-sitter-lyra/CLAUDE.md`. `extern` is **not** reserved — it is a keyword only in
-declaration position, exactly like `type`.
+What the module still wants, all of it now ordinary Lyra rather than blocked:
 
-**What lowering needs:** declare the foreign symbol in the module, emit a call to it, and
-pass `-l<name>` for each of `Result.Links` (plus carrying them in `--emit-llvm`'s
-"compile it with" hint). Nothing about the front end is waiting on a decision.
+- **`CString`** — a NUL-terminated `[]u8` from a `string` (the out direction, writable
+  today by hand), and a `string` from a `^u8` (the in direction, now writable over
+  `CBuffer`). The second needs a decision about who supplies the length: `strlen` is an
+  extern the caller must declare, and a `CBuffer.to_string()` that scans for the NUL
+  itself would need no such declaration but would read past a buffer that has none.
+- **`xs.data() -> ^T`** — a buffer's base pointer, which every "pointer plus a length"
+  call needs and which `&mut xs[0]` currently spells by hand. It must refuse or trap on an
+  empty array rather than hand out the address of nothing, which is exactly what `&xs[0]`
+  does today.
+- **`CLong`/`CULong`** — the newtypes the width section names, so the one type that moves
+  between LP64 and Windows is a grep target rather than an audit.
 
-**[DECIDED 08/18] The design below is settled.** Raw pointers landed the same day, which is what makes
-this worth settling: the piece an `extern` sits on now works, and what remains is three
-questions of meaning rather than three subsystems.
+### `^mut T` is not assignable to `^T`
 
-The motivation is that the builtin registry is a de-facto libc shim layer. `read_line`,
-`random_seed`, `wall_clock_nanos`, the terminal four, `sqrt`/`log`: each is a compiler
-change because Lyra has no FFI, and the rule "the builtin is only what cannot be written in
-Lyra" carries a hidden asterisk — *because there is no FFI*. FFI dissolves the asterisk.
+Dropping mutability is sound and every language with both spellings allows it, but
+`CBuffer { ptr: &mut xs[0], … }` is refused today (`cannot assign ^mut u8 to ^u8`) and the
+author has to write `&xs[0]` instead. Harmless where a read-only pointer was wanted
+anyway, which is why it has not blocked anything; wrong as a rule.
 
-### The effect of an extern call
+One line in `assignable.go`, but worth checking what else it reaches — the same coercion
+question applies to a `^mut T` argument against a `^T` parameter, which is where it would
+actually be missed.
 
-An extern has no body, so nothing can be inferred. It carries **`AllEffects` by default**,
-matching the unresolved-callee rule the purity pass already uses — the cautious answer is
-what you get for free.
+### `lyrac doc` does not render an extern
 
-**A bound may be written, and writing one is `unsafe`.**
+`ExternDeclStmt.Doc` is written (08/19) and LSP hover reads it, but `pkg/docgen` has no
+case for one, so `lyrac doc --private` silently omits every foreign declaration from a
+module that has them. Only `--private` is affected — an extern is private by rule, so the
+default page is right to leave them out.
 
-```lyra
-extern sqrt: (f64) -> f64                    // legal, and useless: AllEffects
-unsafe extern pure sqrt: (f64) -> f64        // the assertion, marked as one
-```
-
-The asymmetry is the point: **for Lyra code a bound is a promise the compiler checks; for
-an extern it is a promise the compiler records.** Lyra already has a word for an assertion
-it cannot verify, and this is one — a wrong `pure` here does not fail locally, it silently
-corrupts the effect analysis of every caller, which is a *declaration-time* danger Rust's
-"safe to declare, unsafe to call" split has no analogue for. So the keyword marks exactly
-the unverifiable claim and nothing more: declaring is safe, narrowing is not.
-
-Calling one still needs an `unsafe` block — `lyra-E011` already implements that for an
-`unsafe` function and needs no new rule.
-
-**`noalloc` on an extern means "allocates nothing *Lyra* owns."** `EffectAlloc` tracks the
-ref-counted boxes the ownership pass reasons about; a foreign `malloc` is not in that
-ledger and this bound does not claim it is. Writing it down matters because the alternative
-is a bound that silently stops binding — the shape `pure noalloc … => s.trim()` had.
-
-Without a bound the compiler must assume the callee may do anything, which includes reading
-input and mutating through any pointer it was handed. That is the same conservatism
-`AllEffects` already encodes, so no new machinery: an extern with no bound is simply a
-function `pure`/`det`/`noalloc` cannot call.
-
-### What may cross: FFI-safe types only
-
-An extern signature admits the **scalars**, **`^T`**, and **`void`**. It refuses `string`,
-`[]T`, closures, tuples, `data` types, and anything `shared` or `weak`, with a diagnostic
-naming what to write instead.
-
-This is `read_line` beside `parse_i64`, one layer up: the compiler takes only what is
-genuinely primitive, and everything expressible is ordinary Lyra in the prelude. It also
-means **there is no nul-termination policy to get wrong**, because there is no automatic
-conversion to have one.
-
-`std.ffi` supplies the ergonomics, written in Lyra:
-
-- **`CString`** — a `[]u8` carrying a trailing NUL, with a `^u8` accessor. A Lyra `string`
-  is `{ptr, byte_len, rune_count}` and deliberately **not** NUL-terminated, so a `char*`
-  needs a copy; making that copy visible is what lets `noalloc` see it and what stops a
-  temporary buffer acquiring an invented lifetime.
-- **`xs.data() -> ^T`** — no copy needed. A `[]T`'s elements already live behind a
-  contiguous `T*` inside the box (they are not inline, which is what makes `push` safe), so
-  the buffer a C function wants is already there.
-
-### Ownership does not cross, in either direction
-
-Lyra never hands a Lyra-allocated buffer to C to keep, and never adopts a C-allocated one
-into a `[]T`. Both would require the other side to understand the box header — and a
-`[]T`'s header sits at the *start* of its box, which is the same fact that makes `slice`
-copy rather than borrow. To give C data it keeps, copy into a C-allocated buffer through an
-extern allocator; to take C data, copy into a fresh `[]T`. Both copies are written in Lyra
-and visible.
-
-**A `^T` into a live array is valid only until the next mutation**, since `push`
-reallocates the element buffer. That is Rust's `as_ptr` hazard exactly, it is not
-checkable today, and it is therefore squarely inside `unsafe` — which is where the pointer
-that produced it already put the caller.
-
-### Linking — `@link`
-
-**[DECIDED 08/18]** A link requirement rides the `extern` that needs it:
-
-```lyra
-@link("m")
-unsafe extern pure sqrt: (f64) -> f64
-```
-
-`lyrac build` collects the `@link`s of every module in the compile, sorts and deduplicates
-them, and passes `-l<name>` for each.
-
-**Neither of the two conventional answers works here.** A CLI flag
-(`lyrac build --link m`) does not compose: a *module* wrapping libm would force every
-consumer program to know and pass it, which is exactly the failure the module system exists
-to prevent — a library's requirements travel with the library. A manifest (`lyra.toml`) is a
-package-manager-shaped file introduced for one field, in a compiler that has deliberately
-avoided having one: modules resolve by path, `std` is found beside the executable, and the
-RC runtime is emitted *into the module* precisely so there is no separate object to link.
-
-So it goes in the source, where attributes already live (`@builtin`, `@derive`, `@packed`,
-`@align`).
-
-**Per declaration, not per module.** A `std.math` wrapping twenty libm functions repeats
-`@link("m")` twenty times, which is the cost; what it buys is that the requirement is never
-separated from the thing requiring it, and that a library can in principle be attributed to
-the extern that needed it — so linking only what is reachable stays possible later. A
-module-level form could not.
-
-Four smaller rules:
-
-- **The argument is a library name, not a flag.** `@link("m")` becomes `-lm`. Taking a raw
-  flag invites `@link("-framework CoreFoundation")` and makes `lyrac` a shell.
-- **Sorted and deduplicated.** Deterministic for the reason `Resolution.SpecKey` sorts its
-  bindings: a build must not wobble between runs. If link *order* ever matters for a real
-  case, that is evidence the flat set is wrong rather than a reason to preserve source
-  order.
-- **`--emit-llvm`'s hint carries them.** The "compile it with: clang …" line must name every
-  `-l` the real build would pass, on the standing rule that both hints carry the
-  optimization level — a hint that describes a different build than the one it stands in
-  for is worse than no hint.
-- **`@link` needs no `unsafe`.** It is not an assertion about behaviour: a wrong library
-  name fails loudly at link time. That is the whole contrast with the effect bound, which
-  fails *silently* and therefore does need the keyword.
-
-**`-lm` stays unconditional** for now. The float intrinsics (`floor`/`ceil`/`round`, `fmod`)
-are the *compiler's* requirement rather than a program's, so they are not a `@link`
-anywhere. The tidier shape is one requirement set fed by two sources — source attributes and
-the backend's own intrinsics — and it is worth doing only when the second source has more
-than one member.
-
-**Linking a library nothing calls is harmless**, as `-lm` already is today.
-
-### Integer widths at the boundary — LP64, fixed, written down
-
-**[DECIDED 08/19]** An extern signature uses Lyra's **fixed** widths. There are no
-C-shaped aliases (`c_int`, `c_size_t`) and no target-dependent types.
-
-The question is real: C's scalars are not fixed-width, and Lyra removed `int`/`uint`
-*for determinism*, so nothing in the language spells "whatever `long` is here". But the
-boundary is not where that gets decided — **the compiler already hardcodes the answer**,
-in three places that each found it independently:
-
-- `pkg/backend/llvm/clock.go` builds `struct timespec` as `[2 x i64]`, commented "two
-  64-bit words there — `{ time_t tv_sec; long tv_nsec; }`". A C `long` is already written
-  as `i64`, in a shipped builtin.
-- `layout.go`'s `const pointerSize = 8`, commented "assume a typical 64-bit target
-  datalayout". Every union payload and aggregate layout rests on it.
-- `i128` is laid out "16/16 on the mainstream 64-bit ABI".
-
-So `extern` inherits a commitment rather than introducing one. Adding aliases would buy
-portability no program this compiler can emit could observe, and cost a target-dependent
-type mechanism the language has none of — `type` aliases are fixed source and the prelude
-is one set of files.
-
-**Where the assumption lives:** `layout.go`'s `pointerSize`. Everything else should
-reference it rather than restate it.
-
-### What Windows would actually cost, since LP64 is not the whole story
-
-Worth writing down because the obvious framing is wrong. **Windows x64 is LLP64, not
-32-bit**: pointers are 64 bits, so `pointerSize`, the alignment rules and the union layout
-engine are all *correct* there. The earlier note that a non-LP64 target "invalidates
-pointerSize first" is true of a 32-bit target and false of Windows.
-
-| C type | LP64 | Windows LLP64 |
-|---|---|---|
-| `long`, `unsigned long` | 64 | **32** |
-| `int`, `long long`, `size_t`, pointer, `float`, `double` | same | same |
-
-**`long` is the only divergent type**, and zlib walks straight into it: `uLong` is
-`unsigned long`, so `crc32` returns 64 bits here and 32 there. Declared `u64`, a Windows
-build would read eight bytes where the ABI passes four — an ABI break, not a compile error.
-
-It is gated behind larger blockers (`tui.go` is termios and `ioctl`, `random_seed` is
-`getentropy`, `clock.go` is `clock_gettime` — API ports, not width fixes), but it is on
-that list rather than absent from it.
-
-**The mitigation costs one line and needs no new feature.** `lyra-E063` looks *through* a
-newtype, so `std.ffi` defines the one divergent type:
-
-```lyra
-newtype CLong  = i64
-newtype CULong = u64
-```
-
-and a signature writes it wherever C writes `long`:
-
-```lyra
-@link("z")
-unsafe extern pure crc32: (CULong, ^u8, u32) -> CULong
-```
-
-That turns "audit every extern" into "change two lines" the day a Windows target is real.
-It does not buy automatic correctness — someone still edits and rebuilds — but nothing
-short of target-dependent types would, and that is a feature to build when there is a
-target to build it for.
-
-### Writing C's types
-
-| C | Lyra | C | Lyra |
-|---|---|---|---|
-| `char` | `i8` | `long`, `long long` | `i64` (`CLong` for `long`) |
-| `unsigned char` | `u8` | `unsigned long` | `u64` (`CULong`) |
-| `short` | `i16` | `size_t`, `uintptr_t` | `u64` |
-| `int` | `i32` | `float` | `f32` |
-| `unsigned int` | `u32` | `double` | `f64` |
-| `void` | `void` | `T*`, `void*` | `^T` / `^u8` |
-
-`_Bool` is deliberately absent — `lyra-E063`, and see the FFI-safe section for why.
+Small, and it needs a decision rather than only code: an extern's signature is already C's,
+so the interesting thing to render beside it is the `@link` and the effect bound, neither
+of which any existing section shows.
 
 ### The first real test — zlib
 
@@ -2282,6 +2092,14 @@ that work in both. So:
   cannot demonstrate the thing that matters — that Lyra talks to a library nobody wrote for
   it. Cost: `zlib1g-dev` in `asan.Dockerfile` and a CI step, against a Dockerfile whose
   comments are proud of needing nothing.
+**[UPDATE 08/19]** The proof itself is done, and lives in `examples/zlib.lyra` — `crc32`,
+`compressBound`, `compress`, `uncompress` and `zlibVersion` all called from Lyra, correct
+against Python's `zlib`, with the version string read back through `std.ffi`. What is
+still open is putting it in CI, which is the part the split above is about: the suite's own
+extern tests call **libc and libm** (`abs`, `sqrt`, `frexp`, `strlen`, `srand`), which need
+no package on either platform and still prove the thing that matters — an ABI Lyra had to
+match rather than choose. A vendored C fixture would add float and struct cases; `zlib1g-dev`
+in `asan.Dockerfile` would let the round-trip run there too.
 
 ### What is deliberately not decided here
 

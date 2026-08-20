@@ -607,6 +607,15 @@ func declIsPublic(sym ast.Named) bool {
 		return d.IsPublic
 	case *ast.TraitDeclStmt:
 		return d.IsPublic
+	case *ast.ExternDeclStmt:
+		// An extern is **always** private, because there is no `pub extern` to write:
+		// what a module exports is the Lyra wrapper it puts over one, which is the whole
+		// division of labour the FFI design rests on (`std.ffi` builds in Lyra on top of
+		// signatures nothing else sees). Without this case an extern took the default —
+		// exported — and two modules each declaring `extern abs`, the way two modules
+		// each use `strlen`, collided on the program-wide name. The C symbol they share
+		// is the linker's business and the backend's, which declares it once (extern.go).
+		return false
 	case *ast.OverloadSet:
 		// The members agree on `pub` — a set that disagreed was refused at the
 		// declaration (ast.OverloadableWith) precisely so this question has an answer.

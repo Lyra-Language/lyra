@@ -382,6 +382,12 @@ inside this project, three things:
   differed from the node the scope table was keyed on, so every binding declared inside an
   `unsafe` block resolved nowhere. Invisible while the block was refused before anything
   looked inside it.
+- **`p.offset(n)` is a builtin method, and its unsafe-context check is in the
+  typechecker** — `requireUnsafeBuiltin`, beside `requireUnsafeCall` and for the same
+  reason: the question needs the **receiver's type**. `p.offset(n)` and `xs.offset(n)` are
+  the same three tokens, so the syntactic pass could only refuse both or neither. It
+  lowers to a `getelementptr` with the pointee's type, so "in elements" is what LLVM
+  already means and no scaling is written by hand.
 
 ## Sweeping for surfaces nothing reads
 
@@ -760,8 +766,9 @@ go test -run TestFunctionName ./pkg/...
 
 ## Foreign functions
 
-**The front end is built; lowering is not.** A call to an extern is refused at the
-backend, loudly (rule 5). Three things about the shape of it, then the language rules:
+**Built, front to back**: an `extern` declares, type-checks, is charged effects, lowers to
+a `declare`, and `@link` reaches the link line. Four things about the shape of it, then
+the language rules:
 
 - **`ExternDeclStmt.Func()` is the body-less function an extern *is*.** Registered in
   `SymbolTable.Functions`, so a call resolves, type-checks and is charged effects by the
@@ -776,12 +783,33 @@ backend, loudly (rule 5). Three things about the shape of it, then the language 
   syntactic pass that owns the raw-pointer half. That pass could only match the callee's
   *name*, and a name does not identify a declaration (rule 9) — an `extern f` made every
   `f(…)` in the prelude report as an unsafe call.
+- **An extern is private to its module and its symbol is global**, which are not in
+  tension — they are the two halves of one arrangement. There is no `pub extern`
+  (`declIsPublic` returns false for one), so two modules may each declare `strlen`, which
+  is what two libraries *using* `strlen` looks like; the backend keys `l.externs` by the C
+  symbol and emits one `declare`. What a module exports is the Lyra wrapper it puts over
+  an extern, which is the whole division of labour `std.ffi` rests on.
 
 **Integer widths at the boundary are Lyra's fixed ones**, with no C-shaped aliases: the
 compiler already hardcodes LP64 in three places — `layout.go`'s `pointerSize`, `clock.go`'s
 `struct timespec` as `[2 x i64]` (a C `long` written as `i64`, in a shipped builtin), and
 `i128`'s 16/16 ABI — so `extern` inherits that commitment rather than making it.
 `pointerSize` is where the assumption lives; everything else should reference it.
+
+| C | Lyra | C | Lyra |
+|---|---|---|---|
+| `char` | `i8` | `long`, `long long` | `i64` (`CLong` for `long`) |
+| `unsigned char` | `u8` | `unsigned long` | `u64` (`CULong`) |
+| `short` | `i16` | `size_t`, `uintptr_t` | `u64` |
+| `int` | `i32` | `float` | `f32` |
+| `unsigned int` | `u32` | `double` | `f64` |
+| `void` | `void` | `T*`, `void*` | `^T` / `^u8` |
+
+`_Bool` is absent deliberately (`lyra-E063`): Lyra's `bool` is one bit and C's is a byte.
+So is a borrow modifier — `mut`/`ref` is Lyra's own by-reference passing, which at the
+boundary is either inert or an ABI mismatch. `long` is the one type that moves off LP64
+(Windows x64 is LLP64: 64-bit pointers, 32-bit `long`), which is what `CLong`/`CULong`
+exist to make a grep target rather than an audit.
 
 The design is **settled** in `todo.md` (Foreign functions — `extern`); the summary a reader
 needs before touching anything nearby:
@@ -798,10 +826,17 @@ needs before touching anything nearby:
   would need the other to understand the rc header. A `^T` into a live array dangles at the
   next `push`.
 - **A link requirement rides the extern that needs it** — `@link("m")` on the declaration,
-  collected across every module in the compile, sorted and deduplicated, emitted as `-l`.
-  Not a CLI flag (a module's requirement would not compose) and not a manifest (this
-  compiler has deliberately never had one). It needs no `unsafe`: a wrong library name
-  fails loudly at link time, which is exactly what an effect bound does not do.
+  collected across every module in the compile, sorted and deduplicated, emitted as `-l`
+  (`lyrac`'s `linkFlags`, which every "compile with" hint prints too). Not a CLI flag (a
+  module's requirement would not compose) and not a manifest (this compiler has
+  deliberately never had one). It needs no `unsafe`: a wrong library name fails loudly at
+  link time, which is exactly what an effect bound does not do.
+
+**Both directions work now.** A buffer goes *out* as `&mut xs[0]` plus a length, which is
+what zlib's `compress` takes; a `^u8` coming *back* is read through `p.offset(n)^`, and
+`std.ffi`'s `CBuffer` is the checked wrapper over it (see "Raw pointers" above). What is
+still unbuilt is the rest of `std.ffi` — `CString`, `xs.data()`, `CLong`/`CULong` — all of
+which are now ordinary Lyra rather than blocked. See `todo.md`.
 
 ## Current Development Focus
 

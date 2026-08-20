@@ -88,6 +88,8 @@ func docOf(named ast.Named) *ast.Doc {
 		return d.Doc
 	case *ast.TraitDeclStmt:
 		return d.Doc
+	case *ast.ExternDeclStmt:
+		return d.Doc
 	}
 	return nil
 }

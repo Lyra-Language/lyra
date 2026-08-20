@@ -1607,10 +1607,50 @@ Three things to keep:
   sees it. `^T` and `^mut T` lower identically; mutability is a front-end rule
   (`lyra-E061`), not a machine distinction. A named pointee is safe to name mid-layout,
   since every type is *declared* before any is defined.
+- **`p.offset(n)` is a `getelementptr` with the pointee's type**, which is what makes
+  "in elements" LLVM's own meaning rather than a scaling written here — on a `^i64` a
+  byte-offset lowering would answer garbage from inside the first element instead of
+  failing. The index is widened to i64 rather than assumed to be one: an untyped literal
+  reaches here at whatever width propagation left it, and a GEP index of the wrong width
+  is a module clang refuses. No bounds check, because there is nothing to check against;
+  `std.ffi`'s CBuffer is where a length joins a pointer and the check becomes possible,
+  in ordinary Lyra.
 - **An `unsafe` block goes through `lowerBlockStmts`, not `lowerBlock`.** The latter
   insists the block has a value, and `unsafe { p^ = v }` ends in an assignment and
   produces none. `lowerForEffect` unwraps one to its body for the same reason a plain
   block is unwrapped there.
+
+## Foreign functions (`extern.go`)
+
+`extern name: (…) -> T`, and a call to one. **Almost nothing is here, and that is the
+design working**: an extern is a signature standing in for a body someone else supplies,
+which is a shape this package already emits — a function declared before any body exists so
+a call can reference it. `ExternDeclStmt.Func()` is that body-less function, so declaring
+one is `declareFunctionAs` and calling one is the ordinary call path, found under the same
+`funcKey` any other function is. Nothing downstream knows an extern exists.
+
+Three things are decisions rather than details:
+
+- **The symbol is the name as written**, not `userSymbol`'s `lyra.<module>.<name>`. A
+  foreign symbol is the linker's, and mangling it would name a function nobody defines —
+  failing as a link error about a symbol the source never mentions.
+- **Two declarations of one foreign name are one `declare`** (`l.externs`, keyed by the C
+  symbol). They have to be: each `extern` is private to its module — there is no
+  `pub extern`, and `declIsPublic` says so — but the symbol they name is global, so two
+  modules both declaring `strlen`, which is what two libraries using `strlen` looks like,
+  would otherwise emit two `declare`s of one name. What *is* refused is two declarations
+  that **disagree** about the signature: only one can describe the function that gets
+  linked, so emitting either silently picks a winner (rule 5).
+- **No ownership crosses.** Every parameter and result is FFI-safe by `lyra-E063` —
+  scalars, `^T`, `void` — so none is reference-counted and there is no retain, release or
+  drop glue to emit. The front-end rule is what makes this file short. It is also why
+  `mut`/`ref` is refused on an extern's parameter: `paramIsByRef` is *Lyra's* convention,
+  and at the boundary it is either inert (a `mut` scalar still goes by value) or an ABI
+  mismatch (`mut ^i64` reads as a pointer and passes an `i64**`).
+
+`@link("z")` reaches the link line through `driver.Result.Links` and `lyrac`'s
+`linkFlags` — and through every "compile with" hint, which must name the same libraries as
+the build it stands in for.
 
 ## Behavioural tests
 

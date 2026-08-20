@@ -315,6 +315,7 @@ func analyze(path string) (*driver.Result, bool) {
 // summary to report — so `lyrac run`'s output is the program's alone.
 func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) (string, int) {
 	be := llvm.New()
+	libs := linkFlags(res)
 	ir, err := be.Emit(res, entry)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %s backend: %v\n", be.Name(), err)
@@ -341,7 +342,7 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 
 	if o.emitOnly {
 		fmt.Printf("%s: wrote %s (%s backend)\n", o.path, llPath, be.Name())
-		fmt.Printf("  compile with: clang %s %s -lm -o %s\n", o.opt, llPath, exePath(o))
+		fmt.Printf("  compile with: clang %s %s %s -o %s\n", o.opt, llPath, strings.Join(libs, " "), exePath(o))
 		return llPath, 0
 	}
 
@@ -359,7 +360,7 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 				}
 			}
 			fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
-			fmt.Fprintf(os.Stderr, "  wrote %s; compile it with: clang %s %s -lm -o %s\n", llPath, o.opt, llPath, exePath(o))
+			fmt.Fprintf(os.Stderr, "  wrote %s; compile it with: clang %s %s %s -o %s\n", llPath, o.opt, llPath, strings.Join(libs, " "), exePath(o))
 			return "", 1
 		}
 		fmt.Fprintf(os.Stderr, "lyrac: %v\n", err)
@@ -367,15 +368,38 @@ func lowerAndEmit(o buildOptions, res *driver.Result, entry *driver.EntryPoint) 
 	}
 
 	exe := exePath(o)
-	// -lm links libm for the float intrinsics (floor/ceil/round, fmod). It is
-	// passed unconditionally: harmless for a program that needs none of them,
-	// and matching what the backend's behavioural tests compile with.
-	cmd := exec.Command(cc, o.opt, llPath, "-lm", "-o", exe)
+	cmd := exec.Command(cc, append(append([]string{o.opt, llPath}, libs...), "-o", exe)...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "lyrac: %s failed to compile the emitted IR: %v\n%s", cc, err, out)
 		return "", 1
 	}
 	return exe, 0
+}
+
+// linkFlags is the library list this build hands the C compiler.
+//
+// `-lm` is unconditional: it links libm for the float intrinsics (floor/ceil/round,
+// fmod), it is harmless for a program that needs none of them, and it is what the
+// backend's behavioural tests compile with.
+//
+// The rest are the program's own — one `-l` per library an `extern`'s `@link` named,
+// already sorted and deduplicated across every module in the compile (driver.Links). A
+// requirement rides the declaration that has it rather than a flag the user must
+// remember, which is the whole point of the attribute: a module that needs zlib says so
+// once, and every program that imports it links zlib.
+//
+// **Every "compile with" hint prints these too.** A hint naming different flags than the
+// build it stands in for is worse than no hint — it is a command that fails at link time
+// on a program that compiles.
+func linkFlags(res *driver.Result) []string {
+	flags := []string{"-lm"}
+	for _, lib := range res.Links {
+		if lib == "m" {
+			continue // already passed, unconditionally
+		}
+		flags = append(flags, "-l"+lib)
+	}
+	return flags
 }
 
 // exePath is where the executable goes: -o if given, else the source path with

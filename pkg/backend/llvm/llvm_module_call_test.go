@@ -19,7 +19,26 @@ import (
 func buildAndRunModules(t *testing.T, files map[string]string) int {
 	t.Helper()
 	clang := lookClang(t)
+	return exitCodeOf(t, exec.Command(compileCached(t, clang, emitModules(t, files))).Run())
+}
 
+// emitModules is buildAndRunModules' front half: resolve, analyze and emit, returning the
+// IR text. Split out for a test whose question is about what was *emitted* rather than
+// what the program does — a foreign symbol declared by two modules must produce one
+// `declare`, which running the program cannot show.
+func emitModules(t *testing.T, files map[string]string) string {
+	t.Helper()
+	ir, err := emitModulesErr(t, files)
+	if err != nil {
+		t.Fatalf("emit: %v", err)
+	}
+	return ir
+}
+
+// emitModulesErr hands the backend's error back instead of failing the test, for the
+// cases whose subject *is* the refusal.
+func emitModulesErr(t *testing.T, files map[string]string) (string, error) {
+	t.Helper()
 	root := t.TempDir()
 	for name, body := range files {
 		path := filepath.Join(root, name)
@@ -43,11 +62,13 @@ func buildAndRunModules(t *testing.T, files map[string]string) int {
 		t.Fatalf("no entry point: %v", epDiags)
 	}
 	ir, err := New().Emit(res, ep)
-	if err != nil {
-		t.Fatalf("emit: %v", err)
-	}
+	return string(ir), err
+}
 
-	runErr := exec.Command(compileCached(t, clang, string(ir))).Run()
+// exitCodeOf is the exit status of a finished command, with a non-zero exit reported as
+// the code rather than as an error (it arrives as *exec.ExitError).
+func exitCodeOf(t *testing.T, runErr error) int {
+	t.Helper()
 	if runErr == nil {
 		return 0
 	}

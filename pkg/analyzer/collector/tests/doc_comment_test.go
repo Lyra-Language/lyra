@@ -323,3 +323,35 @@ func collectFilesIntoModule(t *testing.T, modulePath string, files []struct{ fil
 	_, table, _, _ := c.Finish()
 	return table
 }
+
+// **A doc comment on an `extern` attaches to it.** It did not until 08/19: `attachDoc`
+// switches over the top-level declaration kinds and an extern is the kind added last, so
+// `ExternDeclStmt.Doc` was a field nothing ever wrote — and every `///` above a foreign
+// declaration was reported as documenting nothing (lyra-W017), which is the loudest
+// possible way for a missing switch case to present and still went unnoticed, since no
+// program had documented an extern yet. Hazard 8.
+func TestDocComment_AttachesToAnExtern(t *testing.T) {
+	program, _, _, _ := parseAndCollect(t, `/// The C library's absolute value.
+///
+/// # Panics
+/// Traps on i32::MIN, which has no positive counterpart.
+unsafe extern pure abs: (i32) -> i32
+`)
+	for _, stmt := range program.Statements {
+		ext, ok := stmt.(*ast.ExternDeclStmt)
+		if !ok {
+			continue
+		}
+		if ext.Doc == nil {
+			t.Fatal("an `extern` must carry the doc comment above it")
+		}
+		if want := "The C library's absolute value."; ext.Doc.Summary != want {
+			t.Errorf("Summary = %q; want %q", ext.Doc.Summary, want)
+		}
+		if len(ext.Doc.Sections) != 1 || ext.Doc.Sections[0].Kind != ast.DocSectionPanics {
+			t.Errorf("a `# Panics` heading should be classified; got %v", ext.Doc.Sections)
+		}
+		return
+	}
+	t.Fatal("no ExternDeclStmt collected")
+}

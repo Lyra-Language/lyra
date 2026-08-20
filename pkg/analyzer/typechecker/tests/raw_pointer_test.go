@@ -197,3 +197,73 @@ let load = unsafe (n: i64) -> i64 => n
 let apply = pure (load: (i64) -> i64, n: i64) -> i64 => load(n)
 `, false))
 }
+
+// `p.offset(n)` — the language's only pointer arithmetic, and a method rather than an
+// operator on purpose. `p[i]` was the obvious spelling and is the wrong one: it is
+// `xs[i]`'s spelling with none of `xs[i]`'s bounds check, so two things that behave
+// differently would look alike. Written this way the rule stays statable, and `^` remains
+// the only load — `p.offset(3)^` is visibly the two acts it is.
+func TestPointers_OffsetProducesAPointerToRead(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+let main = () -> void => {
+  var xs: []i64 = [1, 2, 3]
+  unsafe {
+    let p = &xs[0]
+    println("${p.offset(2)^}")
+  }
+}`, false))
+}
+
+// **Mutability propagates**, so a `^mut T` offsets to a `^mut T` and the write direction
+// works at all. The inverse is what pins it: offsetting a read-only pointer must not
+// launder it into a writable one.
+func TestPointers_OffsetOfAReadOnlyPointerCannotBeWritten(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let main = () -> void => {
+  var xs: []i64 = [1, 2, 3]
+  unsafe {
+    let p = &xs[0]
+    p.offset(1)^ = 9
+  }
+}`, false)
+	assertHasErrorContaining(t, res, "it is a read-only pointer")
+}
+
+func TestPointers_OffsetOfAMutablePointerCanBeWritten(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+let main = () -> void => {
+  var xs: []i64 = [1, 2, 3]
+  unsafe {
+    let p = &mut xs[0]
+    p.offset(1)^ = 9
+  }
+}`, false))
+}
+
+// It needs an `unsafe` context like every other pointer operation — and the check lives in
+// the typechecker rather than in the syntactic pass that owns the rest of lyra-E011,
+// because it needs the **receiver's type**: `p.offset(n)` and `xs.offset(n)` are the same
+// three tokens, and a name-keyed check would refuse both or neither.
+func TestPointers_OffsetNeedsAnUnsafeContext(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let main = () -> void => {
+  var xs: []i64 = [1, 2, 3]
+  let p = unsafe { &xs[0] }
+  let q = p.offset(1)
+  println("${unsafe { q^ }}")
+}`, false)
+	assertHasErrorContaining(t, res, "pointer arithmetic with `offset` requires an `unsafe`")
+}
+
+// And it is a pointer method only. `offset` is an ordinary name a user type may declare,
+// so nothing here may claim it for every receiver.
+func TestPointers_OffsetIsNotAMethodOnAnArray(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let main = () -> void => {
+  var xs: []i64 = [1, 2, 3]
+  println("${xs.offset(1)}")
+}`, false)
+	if len(res.errors) == 0 {
+		t.Error("`offset` is a raw-pointer method; an array receiver must not resolve to it")
+	}
+}

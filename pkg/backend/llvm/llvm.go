@@ -162,6 +162,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		closures:           map[*ast.LambdaExpr]*ir.Func{},
 		closureThunks:      map[string]*ir.Func{},
 		envDropFns:         map[string]*ir.Func{},
+		externs:            map[string]externDecl{},
 	}
 	// Record top-level `const` declarations so a reference to one inlines its
 	// compile-time value (they aren't functions, so forEachUserFunction skips them).
@@ -196,6 +197,11 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 	// self-call — can reference any function before its body exists: declare all
 	// user functions, then lower main (whose body may call them), then lower the
 	// user-function bodies.
+	// Foreign functions first, so a user function's body can call one — they are
+	// declarations either way, and an extern has no body to lower afterwards.
+	if err := l.declareExterns(res.Program); err != nil {
+		return nil, err
+	}
 	if err := l.forEachUserFunction(res.Program, entry.Lambda, l.declareFunction); err != nil {
 		return nil, err
 	}
@@ -393,6 +399,11 @@ type lowerer struct {
 	// specOwnership is the ownership table computed for the instantiation currently
 	// being lowered — see the `ownership()` accessor, which every read goes through.
 	specOwnership *ownership.Table
+
+	// externs is every foreign function declared so far, keyed by the C symbol — which
+	// is what a `declare` is unique by, so two modules naming one library function share
+	// this entry rather than emitting two `declare`s of one name (extern.go).
+	externs map[string]externDecl
 
 	closures       map[*ast.LambdaExpr]*ir.Func
 	closureThunks  map[string]*ir.Func

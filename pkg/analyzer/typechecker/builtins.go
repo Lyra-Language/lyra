@@ -163,6 +163,37 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 			}, true
 		}
 	}
+	// `p.offset(n)` — the only pointer arithmetic the language has, and a *method*
+	// rather than an operator on purpose.
+	//
+	// `p[i]` was the obvious spelling and is the wrong one: it is `xs[i]`'s spelling
+	// with none of `xs[i]`'s bounds check, so the two would look alike and behave
+	// differently in the language whose thesis is that they must not. Written this way
+	// the rule stays statable — *pointer arithmetic is a named method, never an
+	// operator* — and `^` remains the only load, so `p.offset(3)^` is visibly the two
+	// acts it is.
+	//
+	// Three things it decides, each of which had a plausible other answer:
+	//
+	//   - **Elements, not bytes.** A `^T` knows its pointee, and the parallel is the
+	//     language's own: a string is rune-indexed so `len` and `[i]` agree about the
+	//     unit, and `byte_offset` is the precedent for putting the unit in the name when
+	//     it differs.
+	//   - **Mutability propagates.** `^mut T` in, `^mut T` out — otherwise
+	//     `p.offset(n)^ = v` is unwritable and the write direction stays broken.
+	//   - **Signed.** A negative offset is meaningful in C, and refusing it buys nothing
+	//     when nothing here is checked anyway.
+	//
+	// Nothing is checked, and nothing can be: a raw pointer carries no length. That is
+	// what `std.ffi`'s `CBuffer` is for — a pointer *and* a length can be checked, so
+	// the trapping accessor is ordinary Lyra written over this one primitive, and
+	// `unsafe` appears once in the standard library instead of at every use.
+	if ptr, ok := recv.(types.RawPointerType); ok && name == "offset" {
+		return &types.LambdaType{
+			Parameters: []types.ParameterType{{Type: types.PrimitiveType{Name: types.Int64}}},
+			ReturnType: types.ReturnType{Type: ptr},
+		}, true
+	}
 	// `xs.push(v)` — the growth operation, on a **dynamic** array only. A `[N]T` has
 	// its size in its type, so growing one would change what type it is.
 	//

@@ -86,3 +86,26 @@ newtype Fd = i32
 unsafe extern det close: (Fd) -> i32
 `, false))
 }
+
+// **A borrow modifier is refused where the types are**, because it is the same question:
+// what may cross. `mut`/`ref` is Lyra's own by-reference passing, decided by the compiler
+// for a Lyra callee — at the boundary it is either inert (a `mut` scalar still goes by
+// value, so the modifier says something the call does not do) or an outright ABI mismatch
+// (`mut ^i64` reads as "a pointer" and would pass an `i64**`). What C has is the pointer,
+// which the signature can already say.
+func TestExtern_BorrowModifierOnAParameterIsRefused(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+unsafe extern pure takes: (mut i64, ref ^u8) -> i64
+`, false)
+	assertHasErrorContaining(t, res, "parameter 1 of `extern takes` is `mut`")
+	assertHasErrorContaining(t, res, "parameter 2 of `extern takes` is `ref`")
+}
+
+// `own` is not in that set: it is the move axis rather than the by-reference one, and an
+// extern's FFI-safe types are all copied scalars and pointers, so moving one means
+// nothing either way. Refusing it would be a rule with no failure behind it.
+func TestExtern_OwnOnAParameterIsNotRefused(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+unsafe extern pure takes: (own i64) -> i64
+`, false))
+}

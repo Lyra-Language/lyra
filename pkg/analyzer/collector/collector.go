@@ -541,6 +541,12 @@ func (c *Collector) attachDoc(node *sitter.Node, stmt ast.Statement) {
 		s.Doc = c.ctx.DocFor(node)
 	case *ast.TraitImplStmt:
 		s.Doc = c.ctx.DocFor(node)
+	case *ast.ExternDeclStmt:
+		// Missing until 08/19, which made `ExternDeclStmt.Doc` a field nothing ever
+		// wrote — and, worse, made every `///` above an extern a stray-doc warning
+		// (lyra-W017) rather than documentation. Hazard 8: a switch over declaration
+		// kinds, and the kind added last.
+		s.Doc = c.ctx.DocFor(node)
 	case *ast.ModuleDeclStmt:
 		// The module header's documentation is the file's `//!` block, gathered
 		// before the walk — not a `///` above the `module` line, which documents

@@ -170,3 +170,47 @@ let twice = pure (n: i64) -> i64 => n * 2`)
 		t.Errorf("got units %q; want both files of util.math", got)
 	}
 }
+
+// **An `extern` is private to its module**, and two modules declaring the same foreign
+// function do not collide.
+//
+// There is no `pub extern` to write, so an extern that keyed as *exported* would put every
+// foreign symbol a program uses in one program-wide namespace: two libraries both
+// declaring `strlen` — which is what two libraries using `strlen` look like — would be a
+// duplicate-definition error with no way to say otherwise. What a module exports is the
+// Lyra wrapper it puts over an extern, which is the division of labour the whole FFI
+// design rests on.
+//
+// The symbol they share is the *linker's*, and the backend declares it once (llvm's
+// extern.go); the front end's job is only to keep the two declarations apart.
+func TestMultiFile_ExternIsPrivateToItsModule(t *testing.T) {
+	res := analyzeTree(t, map[string]string{
+		"app.lyra": `import lib.a
+import lib.b
+let main = () -> u8 => u8(a.one() + b.two())`,
+		"lib/a.lyra": `module lib.a
+unsafe extern pure abs: (i32) -> i32
+pub let one = unsafe () -> i64 => i64(unsafe { abs(-1) })`,
+		"lib/b.lyra": `module lib.b
+unsafe extern pure abs: (i32) -> i32
+pub let two = unsafe () -> i64 => i64(unsafe { abs(-2) })`,
+	})
+	if errs := res.Errors(); len(errs) != 0 {
+		t.Errorf("two modules may each declare `extern abs`; got %v", errs)
+	}
+}
+
+// And it stays private: a module cannot call another's extern by name. The wrapper is the
+// export, so this is the same rule a private `let` follows.
+func TestMultiFile_ExternIsNotReachableFromAnotherModule(t *testing.T) {
+	res := analyzeTree(t, map[string]string{
+		"app.lyra": `import lib.a
+let main = () -> u8 => u8(unsafe { abs(-1) })`,
+		"lib/a.lyra": `module lib.a
+unsafe extern pure abs: (i32) -> i32
+pub let one = unsafe () -> i64 => i64(unsafe { abs(-1) })`,
+	})
+	if len(res.Errors()) == 0 {
+		t.Error("an extern is private to its module, so a bare `abs` elsewhere must not resolve")
+	}
+}

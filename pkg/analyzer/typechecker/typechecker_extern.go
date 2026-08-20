@@ -56,8 +56,31 @@ func (tc *TypeChecker) checkExternSignatureIsFFISafe(decl *ast.ExternDeclStmt) {
 	}
 	for i, p := range decl.Signature.Parameters {
 		tc.requireFFISafe(p.Type, decl, "parameter %d of", i+1)
+		tc.requireNoBorrow(p, decl, i+1)
 	}
 	tc.requireFFISafe(decl.Signature.ReturnType.Type, decl, "the return type of", 0)
+}
+
+// requireNoBorrow refuses `mut`/`ref` on an extern's parameter.
+//
+// A borrow modifier is **Lyra's** by-reference passing, and the compiler decides what it
+// means: `paramIsByRef` passes a `mut` aggregate as a pointer to its storage and a `mut`
+// scalar by value. Neither is a rule a C function was compiled by, so at the boundary the
+// modifier is one of two bad things — inert on a scalar, where it says something the call
+// does not do, or an outright ABI mismatch on a pointer, where `(mut ^i64)` reads as "a
+// pointer" and would pass an `i64**`.
+//
+// What C has is the pointer itself, which the signature can already say. Refused where the
+// types are, because it is the same question: what may cross.
+func (tc *TypeChecker) requireNoBorrow(p types.ParameterType, decl *ast.ExternDeclStmt, idx int) {
+	if p.Borrow != types.Mut && p.Borrow != types.Ref {
+		return
+	}
+	tc.addErrorCode(decl.NameLocation, SeverityError, diag.CodeNotFFISafe,
+		"parameter %d of `extern %s` is `%s`, and a borrow modifier has no C spelling: it is "+
+			"Lyra's own by-reference passing, which a foreign callee was not compiled by. "+
+			"Drop it, and where C takes a pointer write one — `^T`, passed as `&x` or `&mut x`",
+		idx, decl.Name, p.Borrow)
 }
 
 func (tc *TypeChecker) requireFFISafe(t types.Type, decl *ast.ExternDeclStmt, what string, idx int) {

@@ -1,0 +1,64 @@
+module std.ffi
+//! The Lyra half of the C boundary.
+//!
+//! An `extern` declares what C provides and the compiler checks the call; what it cannot
+//! do is make the result *safe*, because C hands back a pointer and nothing else. A raw
+//! pointer carries no length, so nothing about it can be checked — `p.offset(n)^` will
+//! read whatever is at that address, and `unsafe` is the only thing standing between a
+//! program and that fact.
+//!
+//! **A pointer and a length together can be checked**, and that is the whole idea here:
+//! `CBuffer` pairs the two, `get` traps on an index outside them exactly as `xs[i]` does,
+//! and `unsafe` appears once — in this file — instead of at every use. It is the same
+//! division `random_seed`/`Rng` and `read_line`/`parse_i64` already draw: the compiler
+//! provides only what cannot be written in Lyra, and the part that can be is written here.
+//!
+//! What it does **not** do is make the pointer valid. Nothing can: a `CBuffer` over
+//! memory C has freed, or built with a length larger than the allocation, checks against
+//! the wrong number and reads out of bounds without complaint. Constructing one is the
+//! promise; the checking is what the promise then buys.
+//!
+//! ```
+//! import std.ffi.{ CBuffer }
+//!
+//! unsafe extern pure strlen: (^u8) -> u64
+//!
+//! let read_c_string = (p: ^u8) -> CBuffer =>
+//!   CBuffer { ptr: p, len: i64(unsafe { strlen(p) }) }
+//! ```
+
+/// A foreign buffer: a pointer, and the number of bytes it is valid for.
+///
+/// Bytes rather than a generic element type, because that is what crosses the boundary —
+/// `^u8` is what `lyra-E063` leaves you holding for a string, an array or any other block
+/// of memory, and a typed view over it would be a second question (alignment) on top of
+/// this one.
+///
+/// The fields are public because building one *is* the unsafe act, and hiding them behind
+/// a constructor would only add a place to look: a caller who can produce the pointer can
+/// already produce a wrong length.
+pub struct CBuffer {
+  /// Where the bytes are. Not owned — this type never frees anything, on the standing
+  /// rule that ownership does not cross the boundary in either direction.
+  ptr: ^u8,
+  /// How many bytes `ptr` is valid for. Whoever built the buffer promised this.
+  len: i64,
+}
+
+/// The byte at `i`.
+///
+/// `pure` here means what the compiler means by it — no tracked effect — and **not** that
+/// two calls must agree. The bytes belong to someone else, who may write them between one
+/// call and the next; that is a property of foreign memory rather than of this function,
+/// and no bound could describe it.
+///
+/// # Panics
+/// Traps if `i` is outside the buffer, which is the same answer `xs[i]` gives and the
+/// reason this type exists. The message is a constant rather than an interpolation, so
+/// `get` allocates nothing and stays callable from `noalloc` code.
+pub let get = pure noalloc (self: CBuffer, i: i64) -> u8 => {
+  if i < 0 || i >= self.len {
+    panic("std.ffi: CBuffer index out of bounds")
+  }
+  unsafe { self.ptr.offset(i)^ }
+}

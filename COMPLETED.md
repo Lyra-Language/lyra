@@ -9,6 +9,336 @@ Newest first.
 
 ## Dated log
 
+### 08/19/26
+**Pointer arithmetic, and `std.ffi`'s first type.** `p.offset(n) -> ^T` is the language's
+only pointer arithmetic, and `std.ffi`'s `CBuffer { ptr, len }` is the checked thing built
+over it. Together they close the gap the zlib work found the same day: a foreign `char*`
+can now be walked, and the walk traps on a bad index. `examples/zlib.lyra` reads zlib's
+version string through it.
+
+**`p[i]` was the obvious spelling and is the wrong one**, which is the decision worth
+recording. It is `xs[i]`'s spelling with none of `xs[i]`'s bounds check — in a language
+whose thesis is that two things behaving differently must not look alike, and inside an
+`unsafe` block, where most of the code is ordinary and `p` and `xs` are just names. A
+method keeps the rule statable — *pointer arithmetic is a named method, never an
+operator*, replacing "there is no pointer arithmetic" — and leaves `^` as the only load,
+so `p.offset(3)^` is visibly the two acts it is.
+
+Three sub-decisions, each with a plausible other answer:
+
+- **Elements, not bytes**, which is also the one most easily got wrong and least easily
+  noticed: on a `^i64` a byte-offset lowering answers garbage from inside the first
+  element rather than failing. It matches the language — a string is rune-indexed so `len`
+  and `[i]` agree about the unit — and it is what a `getelementptr` with the pointee's
+  type already means, so nothing scales by hand.
+- **Mutability propagates.** `^mut T` in, `^mut T` out, or `p.offset(n)^ = v` is
+  unwritable and the write direction stays broken. The inverse is what pins it: offsetting
+  a `^T` must not launder it into a writable one.
+- **Signed**, because a negative offset is meaningful in C and refusing it buys nothing
+  where nothing is checked anyway.
+
+**The unsafe-context check went in the typechecker**, beside the unsafe-*call* check that
+moved there on 08/18 and for the same reason: it needs the **receiver's type**.
+`p.offset(n)` and `xs.offset(n)` are the same three tokens, so the syntactic pass that
+owns the rest of lyra-E011 could only refuse both or neither. That is hazard 9 in its
+general form — a name does not identify what it names — showing up a third time.
+
+**`CBuffer` is the point of making `offset` a primitive rather than a feature.** A raw
+pointer carries no length, so nothing about it can be checked; a pointer *and* a length
+can be. So the compiler gets one unsafe primitive and `std/ffi.lyra` gets the trapping
+accessor in ordinary Lyra, which puts `unsafe` in one file instead of at every use — the
+same division `random_seed`/`Rng` and `read_line`/`parse_i64` already draw. `get` is
+`pure noalloc`, the second of which is why its panic message is a constant rather than an
+interpolation naming the index.
+
+What it does **not** buy is worth being as explicit about: the pointer can still dangle,
+and a `CBuffer` built with a wrong length checks against the wrong number and reads out of
+bounds silently. Constructing one is the promise; the checking is what the promise buys.
+Hence public fields — a caller who can produce the pointer can already produce a bad
+length, so a constructor would add a place to look and no safety.
+
+**One thing found and left alone**: `^mut T` is not assignable to `^T`, so
+`CBuffer { ptr: &mut xs[0], … }` is refused and the author writes `&xs[0]`. Dropping
+mutability is sound and every language with both spellings allows it, but it is an
+assignability change that also reaches argument passing, so it is in `todo.md` rather than
+folded into this.
+
+### 08/19/26
+**Foreign functions lower, and Lyra calls zlib.** `extern` now goes front to back: the
+declaration collects, a call resolves and type-checks against the signature, its effects
+come from the bound it asserts, it lowers to a `declare` under the C symbol, and `@link`
+reaches the link line. The proof was run against a library nobody wrote for Lyra — zlib's
+`crc32` agrees with Python's, and `compress` → `uncompress` round-trips 16 bytes back
+identical, with the compressed length arriving through a `^mut u64`.
+
+**The backend half is 100 lines, and that is the design working rather than luck.** An
+extern is a signature standing in for a body someone else supplies, which is a shape this
+package already emits — a function declared before any body exists so a call can reference
+it. `ExternDeclStmt.Func()` is that body-less function, so declaring one is
+`declareFunctionAs` and calling one is the ordinary call path, found under the same
+`funcKey` any other function is. Nothing downstream of `extern.go` knows an extern exists.
+The two prior decisions that bought this were putting `Func()` on the AST node in the first
+place (08/18, on `TraitMethod.DefaultImpl()`'s pattern) and refusing non-FFI-safe types at
+the signature: every parameter and result is a scalar, a `^T` or `void`, so nothing is
+reference-counted and there is no retain, release or drop glue to emit at all.
+
+**Three decisions in the backend, each with an obvious wrong answer:**
+
+- **The symbol is the name as written**, not `userSymbol`'s `lyra.<module>.<name>`. A
+  foreign symbol belongs to the linker; mangling it names a function nobody defines, and
+  the failure is a link error about a symbol the source never mentions.
+- **Two declarations of one foreign name are one `declare`** (`l.externs`, keyed by the C
+  symbol). Two `declare`s of one name is invalid IR, and the case is ordinary rather than a
+  corner: two libraries both using `strlen` is what a standard library looks like. What
+  *is* refused is two declarations that **disagree** about the signature — only one can
+  describe the function that gets linked, so emitting either silently picks a winner
+  (rule 5). The diagnostic names both files, because two externs of one name are usually
+  in two files and a bare `line:col` prints the same position twice.
+- **`mut`/`ref` on an extern's parameter is refused** (`lyra-E063`, where the types are
+  checked, because it is the same question). `paramIsByRef` is *Lyra's* convention, and at
+  the boundary it is one of two bad things: inert on a scalar, which still goes by value,
+  so the modifier says something the call does not do; or an ABI mismatch on a pointer,
+  where `(mut ^i64)` reads as "a pointer" and would pass an `i64**`. `own` is deliberately
+  still accepted — it is the move axis, and moving a copied scalar means nothing either way,
+  so refusing it would be a rule with no failure behind it.
+
+**And one bug the work turned up, which would have made FFI unusable in a library.** An
+extern has no `pub` — there is no way to export one — but `declIsPublic` returned `true`
+for any node it did not recognise, so an extern took the **bare, program-wide key** and two
+modules each declaring `extern abs` collided with `function "abs" is already defined`. That
+is not an edge case: it is what two libraries both using `strlen` produce. The fix is one
+case in `declIsPublic`, and the two halves then compose exactly — the front end keys each
+declaration by its module and keeps them apart, the backend keys `l.externs` by the C
+symbol and emits one `declare`. The dedup written for the invalid-IR reason turned out to
+be what makes the privacy rule work.
+
+**The gap the zlib run found, and it is a language gap rather than an FFI one.** A buffer
+goes *out* today — `&mut xs[0]` plus a length is exactly what `compress` takes — but a
+`^u8` coming *back* can only be read at offset zero: `p^` is the whole vocabulary a raw
+pointer has, `p[i]` is `lyra-E001`, and there is no `offset`. So `zlibVersion()`'s second
+byte is unreachable and `CString`'s read direction is unwritable. The spelling is a real
+choice (`p[i]` reads naturally and is `xs[i]`'s spelling with none of its bounds check;
+`p.offset(n)` is uglier and honest about the arithmetic being a separate act), so it is in
+`todo.md` rather than guessed at here.
+
+**Linking rides the declaration.** `@link("z")` on the extern, unioned across every module
+in the compile, sorted, deduplicated, and passed as `-l` by `lyrac`'s `linkFlags` — which
+every "compile with" hint prints too, since a hint naming fewer libraries than the build it
+stands in for is a command that fails at link time on a program that compiles.
+
+**The suite's own extern tests call libc and libm** — `abs`, `sqrt`, `frexp`, `strlen`,
+`srand` — rather than a fixture whose both sides we wrote. A fixture proves the IR is
+self-consistent; the thing worth proving is that Lyra matches an ABI it did not choose.
+They also need no package installed on either platform, which is why zlib stays the manual
+proof and the CI story is still open (`-lz` links on macOS and not in the Debian container).
+The whole suite passes there too, which for backend work is the check that counts: Debian's
+older clang uses typed pointers and rejects function-type mismatches Apple clang's opaque
+pointers cannot represent.
+
+---
+
+The design settled on 08/18–08/19 and implemented here, kept for the reasoning behind each
+rule rather than for the rules themselves (those are in `CLAUDE.md`):
+
+### The effect of an extern call
+
+An extern has no body, so nothing can be inferred. It carries **`AllEffects` by default**,
+matching the unresolved-callee rule the purity pass already uses — the cautious answer is
+what you get for free.
+
+**A bound may be written, and writing one is `unsafe`.**
+
+```lyra
+extern sqrt: (f64) -> f64                    // legal, and useless: AllEffects
+unsafe extern pure sqrt: (f64) -> f64        // the assertion, marked as one
+```
+
+The asymmetry is the point: **for Lyra code a bound is a promise the compiler checks; for
+an extern it is a promise the compiler records.** Lyra already has a word for an assertion
+it cannot verify, and this is one — a wrong `pure` here does not fail locally, it silently
+corrupts the effect analysis of every caller, which is a *declaration-time* danger Rust's
+"safe to declare, unsafe to call" split has no analogue for. So the keyword marks exactly
+the unverifiable claim and nothing more: declaring is safe, narrowing is not.
+
+Calling one still needs an `unsafe` block — `lyra-E011` already implements that for an
+`unsafe` function and needs no new rule.
+
+**`noalloc` on an extern means "allocates nothing *Lyra* owns."** `EffectAlloc` tracks the
+ref-counted boxes the ownership pass reasons about; a foreign `malloc` is not in that
+ledger and this bound does not claim it is. Writing it down matters because the alternative
+is a bound that silently stops binding — the shape `pure noalloc … => s.trim()` had.
+
+Without a bound the compiler must assume the callee may do anything, which includes reading
+input and mutating through any pointer it was handed. That is the same conservatism
+`AllEffects` already encodes, so no new machinery: an extern with no bound is simply a
+function `pure`/`det`/`noalloc` cannot call.
+
+### What may cross: FFI-safe types only
+
+An extern signature admits the **scalars**, **`^T`**, and **`void`**. It refuses `string`,
+`[]T`, closures, tuples, `data` types, and anything `shared` or `weak`, with a diagnostic
+naming what to write instead.
+
+This is `read_line` beside `parse_i64`, one layer up: the compiler takes only what is
+genuinely primitive, and everything expressible is ordinary Lyra in the prelude. It also
+means **there is no nul-termination policy to get wrong**, because there is no automatic
+conversion to have one.
+
+`std.ffi` supplies the ergonomics, written in Lyra:
+
+- **`CString`** — a `[]u8` carrying a trailing NUL, with a `^u8` accessor. A Lyra `string`
+  is `{ptr, byte_len, rune_count}` and deliberately **not** NUL-terminated, so a `char*`
+  needs a copy; making that copy visible is what lets `noalloc` see it and what stops a
+  temporary buffer acquiring an invented lifetime.
+- **`xs.data() -> ^T`** — no copy needed. A `[]T`'s elements already live behind a
+  contiguous `T*` inside the box (they are not inline, which is what makes `push` safe), so
+  the buffer a C function wants is already there.
+
+### Ownership does not cross, in either direction
+
+Lyra never hands a Lyra-allocated buffer to C to keep, and never adopts a C-allocated one
+into a `[]T`. Both would require the other side to understand the box header — and a
+`[]T`'s header sits at the *start* of its box, which is the same fact that makes `slice`
+copy rather than borrow. To give C data it keeps, copy into a C-allocated buffer through an
+extern allocator; to take C data, copy into a fresh `[]T`. Both copies are written in Lyra
+and visible.
+
+**A `^T` into a live array is valid only until the next mutation**, since `push`
+reallocates the element buffer. That is Rust's `as_ptr` hazard exactly, it is not
+checkable today, and it is therefore squarely inside `unsafe` — which is where the pointer
+that produced it already put the caller.
+
+### Linking — `@link`
+
+**[DECIDED 08/18]** A link requirement rides the `extern` that needs it:
+
+```lyra
+@link("m")
+unsafe extern pure sqrt: (f64) -> f64
+```
+
+`lyrac build` collects the `@link`s of every module in the compile, sorts and deduplicates
+them, and passes `-l<name>` for each.
+
+**Neither of the two conventional answers works here.** A CLI flag
+(`lyrac build --link m`) does not compose: a *module* wrapping libm would force every
+consumer program to know and pass it, which is exactly the failure the module system exists
+to prevent — a library's requirements travel with the library. A manifest (`lyra.toml`) is a
+package-manager-shaped file introduced for one field, in a compiler that has deliberately
+avoided having one: modules resolve by path, `std` is found beside the executable, and the
+RC runtime is emitted *into the module* precisely so there is no separate object to link.
+
+So it goes in the source, where attributes already live (`@builtin`, `@derive`, `@packed`,
+`@align`).
+
+**Per declaration, not per module.** A `std.math` wrapping twenty libm functions repeats
+`@link("m")` twenty times, which is the cost; what it buys is that the requirement is never
+separated from the thing requiring it, and that a library can in principle be attributed to
+the extern that needed it — so linking only what is reachable stays possible later. A
+module-level form could not.
+
+Four smaller rules:
+
+- **The argument is a library name, not a flag.** `@link("m")` becomes `-lm`. Taking a raw
+  flag invites `@link("-framework CoreFoundation")` and makes `lyrac` a shell.
+- **Sorted and deduplicated.** Deterministic for the reason `Resolution.SpecKey` sorts its
+  bindings: a build must not wobble between runs. If link *order* ever matters for a real
+  case, that is evidence the flat set is wrong rather than a reason to preserve source
+  order.
+- **`--emit-llvm`'s hint carries them.** The "compile it with: clang …" line must name every
+  `-l` the real build would pass, on the standing rule that both hints carry the
+  optimization level — a hint that describes a different build than the one it stands in
+  for is worse than no hint.
+- **`@link` needs no `unsafe`.** It is not an assertion about behaviour: a wrong library
+  name fails loudly at link time. That is the whole contrast with the effect bound, which
+  fails *silently* and therefore does need the keyword.
+
+**`-lm` stays unconditional** for now. The float intrinsics (`floor`/`ceil`/`round`, `fmod`)
+are the *compiler's* requirement rather than a program's, so they are not a `@link`
+anywhere. The tidier shape is one requirement set fed by two sources — source attributes and
+the backend's own intrinsics — and it is worth doing only when the second source has more
+than one member.
+
+**Linking a library nothing calls is harmless**, as `-lm` already is today.
+
+### Integer widths at the boundary — LP64, fixed, written down
+
+**[DECIDED 08/19]** An extern signature uses Lyra's **fixed** widths. There are no
+C-shaped aliases (`c_int`, `c_size_t`) and no target-dependent types.
+
+The question is real: C's scalars are not fixed-width, and Lyra removed `int`/`uint`
+*for determinism*, so nothing in the language spells "whatever `long` is here". But the
+boundary is not where that gets decided — **the compiler already hardcodes the answer**,
+in three places that each found it independently:
+
+- `pkg/backend/llvm/clock.go` builds `struct timespec` as `[2 x i64]`, commented "two
+  64-bit words there — `{ time_t tv_sec; long tv_nsec; }`". A C `long` is already written
+  as `i64`, in a shipped builtin.
+- `layout.go`'s `const pointerSize = 8`, commented "assume a typical 64-bit target
+  datalayout". Every union payload and aggregate layout rests on it.
+- `i128` is laid out "16/16 on the mainstream 64-bit ABI".
+
+So `extern` inherits a commitment rather than introducing one. Adding aliases would buy
+portability no program this compiler can emit could observe, and cost a target-dependent
+type mechanism the language has none of — `type` aliases are fixed source and the prelude
+is one set of files.
+
+**Where the assumption lives:** `layout.go`'s `pointerSize`. Everything else should
+reference it rather than restate it.
+
+### What Windows would actually cost, since LP64 is not the whole story
+
+Worth writing down because the obvious framing is wrong. **Windows x64 is LLP64, not
+32-bit**: pointers are 64 bits, so `pointerSize`, the alignment rules and the union layout
+engine are all *correct* there. The earlier note that a non-LP64 target "invalidates
+pointerSize first" is true of a 32-bit target and false of Windows.
+
+| C type | LP64 | Windows LLP64 |
+|---|---|---|
+| `long`, `unsigned long` | 64 | **32** |
+| `int`, `long long`, `size_t`, pointer, `float`, `double` | same | same |
+
+**`long` is the only divergent type**, and zlib walks straight into it: `uLong` is
+`unsigned long`, so `crc32` returns 64 bits here and 32 there. Declared `u64`, a Windows
+build would read eight bytes where the ABI passes four — an ABI break, not a compile error.
+
+It is gated behind larger blockers (`tui.go` is termios and `ioctl`, `random_seed` is
+`getentropy`, `clock.go` is `clock_gettime` — API ports, not width fixes), but it is on
+that list rather than absent from it.
+
+**The mitigation costs one line and needs no new feature.** `lyra-E063` looks *through* a
+newtype, so `std.ffi` defines the one divergent type:
+
+```lyra
+newtype CLong  = i64
+newtype CULong = u64
+```
+
+and a signature writes it wherever C writes `long`:
+
+```lyra
+@link("z")
+unsafe extern pure crc32: (CULong, ^u8, u32) -> CULong
+```
+
+That turns "audit every extern" into "change two lines" the day a Windows target is real.
+It does not buy automatic correctness — someone still edits and rebuilds — but nothing
+short of target-dependent types would, and that is a feature to build when there is a
+target to build it for.
+
+### Writing C's types
+
+| C | Lyra | C | Lyra |
+|---|---|---|---|
+| `char` | `i8` | `long`, `long long` | `i64` (`CLong` for `long`) |
+| `unsigned char` | `u8` | `unsigned long` | `u64` (`CULong`) |
+| `short` | `i16` | `size_t`, `uintptr_t` | `u64` |
+| `int` | `i32` | `float` | `f32` |
+| `unsigned int` | `u32` | `double` | `f64` |
+| `void` | `void` | `T*`, `void*` | `^T` / `^u8` |
+
+`_Bool` is deliberately absent — `lyra-E063`, and see the FFI-safe section for why.
+
 ### 08/18/26
 **Raw pointers infer and lower.** `&x`, `&mut x`, `p^`, `p^ = v` and `unsafe { … }` all
 work, and `lyra-E011`'s unsafe-context policy is reported again after being withdrawn on

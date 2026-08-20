@@ -1,0 +1,143 @@
+//! Calling zlib from Lyra: the whole FFI surface in one program.
+//!
+//! Build it like anything else — `@link("z")` on the declarations is what puts `-lz` on
+//! the link line, so no flag is needed here:
+//!
+//!     lyrac run examples/zlib.lyra
+//!
+//! What it demonstrates: a `pure` bound on a foreign function, a buffer crossing as a
+//! pointer plus a length, a `^mut` in/out scalar (zlib reports the compressed size by
+//! overwriting the capacity you gave it), and a real round-trip — compress, uncompress,
+//! compare — rather than "it did not crash".
+//!
+//! Three rules the code obeys. **`unsafe` marks the bound, not the declaration**: an
+//! extern with no bound carries every effect and claims nothing, so writing `pure` is the
+//! unverifiable assertion and the keyword is what marks it. **Only FFI-safe types cross**
+//! — the widths, `^T` and `void` — which is why the buffers are handed over as `^u8` and
+//! a length rather than as the `[]u8` they live in. And the pointers are taken *at* the
+//! call: between Lyra functions a buffer travels as an ordinary `mut []u8`, so the raw
+//! pointer never outlives the statement that made it.
+
+import std.ffi.{ CBuffer }
+
+let main = () -> u8 => {
+  println("zlib ${version()}")
+
+  let data = sample()
+  println("original:   ${data.len()} bytes, crc32 ${checksum(data)}")
+
+  var packed: []u8 = [0; CAPACITY]
+  let packed_len = squeeze(data, packed)
+  println("compressed: ${packed_len} bytes")
+
+  var back: []u8 = [0; CAPACITY]
+  let back_len = expand(packed, packed_len, back)
+  println("restored:   ${back_len} bytes")
+
+  if back_len != data.len() || !same(data, back, back_len) {
+    println("MISMATCH")
+    return 1
+  }
+  println("identical")
+  0
+}
+
+/// Room for both buffers. zlib needs the output buffer's size up front, and
+/// `compressBound` is what would size it in a program that did not know its input.
+const CAPACITY = 256
+
+/// zlib's version string, which is the direction that needs `std.ffi`.
+///
+/// `zlibVersion` hands back a `char*` — memory Lyra does not own, with no length. A raw
+/// pointer alone can only be read at offset zero, so the length has to come from
+/// somewhere before anything can be checked: `strlen` supplies it, `CBuffer` holds the
+/// two together, and `buf.get(i)` then traps on a bad index exactly as `xs[i]` would.
+let version = pure () -> string => {
+  let p = unsafe { zlibVersion() }
+  let buf = CBuffer { ptr: p, len: i64(unsafe { strlen(p) }) }
+  var out = ""
+  for i in 0..<buf.len { out = out ++ "${rune(buf.get(i))}" }
+  out
+}
+
+/// The bytes to round-trip: repetitive, so zlib has something to find.
+let sample = pure () -> []u8 => {
+  var xs: []u8 = [0; 96]
+  for i in 0..<96 { xs[i] = u8(i %% 8) + 65 }
+  xs
+}
+
+/// crc32 of a whole buffer, which is `crc32`'s own contract: seed with 0, hand it the
+/// bytes, take the answer back.
+///
+/// The `unsafe` block covers both halves of the call — taking `&xs[0]` needs one as much
+/// as calling a foreign function does.
+let checksum = pure (xs: []u8) -> u64 => unsafe { crc32(0, &xs[0], u32(xs.len())) }
+
+/// Compress `src` into `dst`, answering how many bytes it took.
+///
+/// `room` is the shape worth looking at: it goes in as the space available and comes back
+/// as the space used, because that is C's way of returning two things. `&mut room` passes
+/// the local's address, and reading `room` afterwards reads what zlib wrote there.
+///
+/// # Panics
+/// Traps if zlib refuses — with a fixed buffer that means the output did not fit, and
+/// carrying on with an unwritten `dst` would corrupt the comparison rather than fail it.
+let squeeze = (src: []u8, dst: mut []u8) -> i64 => {
+  var room: u64 = u64(CAPACITY)
+  let rc = unsafe { compress(&mut dst[0], &mut room, &src[0], u64(src.len())) }
+  if rc != 0 { panic("zlib compress failed") }
+  i64(room)
+}
+
+/// The inverse. `src_len` is what `squeeze` answered — zlib has to be told, since the
+/// compressed bytes carry no length of their own.
+///
+/// # Panics
+/// Traps if zlib refuses, for the same reason.
+let expand = (src: []u8, src_len: i64, dst: mut []u8) -> i64 => {
+  var room: u64 = u64(CAPACITY)
+  let rc = unsafe { uncompress(&mut dst[0], &mut room, &src[0], u64(src_len)) }
+  if rc != 0 { panic("zlib uncompress failed") }
+  i64(room)
+}
+
+/// Whether the first `n` bytes match.
+let same = pure (a: []u8, b: []u8, n: i64) -> bool => {
+  for i in 0..<n { if a[i] != b[i] { return false } }
+  true
+}
+
+// The foreign declarations sit at the bottom rather than the top because they are the
+// least interesting thing in the file: a reader wants the program, and these say only
+// what C already said.
+
+/// `uLong crc32(uLong crc, const Bytef *buf, uInt len)` — a checksum, so `pure` is
+/// honest: it reads the bytes and touches nothing else.
+@link("z")
+unsafe extern pure crc32: (u64, ^u8, u32) -> u64
+
+/// `int compress(Bytef *dest, uLongf *destLen, const Bytef *source, uLong sourceLen)`.
+///
+/// `det noalloc` rather than `pure`: it writes through the caller's pointers, which is an
+/// effect, and it allocates nothing the caller does not own — zlib's scratch space comes
+/// and goes inside the call.
+///
+/// **`uLong` is `unsigned long`**, 64 bits here and 32 on Windows. Written `u64` on the
+/// standing rule that widths at the boundary are fixed; `std.ffi`'s `CULong` is where
+/// that becomes one grep target if a Windows target ever appears.
+@link("z")
+unsafe extern det noalloc compress: (^mut u8, ^mut u64, ^u8, u64) -> i32
+
+/// `int uncompress(Bytef *dest, uLongf *destLen, const Bytef *source, uLong sourceLen)`.
+@link("z")
+unsafe extern det noalloc uncompress: (^mut u8, ^mut u64, ^u8, u64) -> i32
+
+/// `const char *zlibVersion(void)` — a pointer into zlib's own static storage, which is
+/// why nothing here frees it. Ownership does not cross the boundary in either direction.
+@link("z")
+unsafe extern pure zlibVersion: () -> ^u8
+
+/// `size_t strlen(const char *s)`, from libc rather than zlib — the length a `char*` does
+/// not carry, and the one thing standing between a foreign pointer and a checked read.
+unsafe extern pure strlen: (^u8) -> u64

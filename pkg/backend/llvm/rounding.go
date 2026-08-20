@@ -116,6 +116,18 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 		}
 		return l.lowerDynArrayPush(block, call, member, dyn)
 	}
+	// `p.offset(n)` — pointer arithmetic, the one form of it the language has
+	// (pointers.go). Dispatched on the recorded receiver type, because `offset` is a
+	// perfectly ordinary method name a user type may also have.
+	if member.Property.Name == "offset" {
+		recvT, ok := l.recordedType(member.Object)
+		if !ok {
+			return nil, nil, fmt.Errorf("llvm: no type recorded for offset() receiver")
+		}
+		if ptrT, isPtr := l.resolveForLayout(recvT).(types.RawPointerType); isPtr {
+			return l.lowerPointerOffset(block, call, member, ptrT)
+		}
+	}
 	if member.Property.Name == "compare_bytes" {
 		return l.lowerStringCompareBytes(block, call, member)
 	}
