@@ -10,6 +10,26 @@ Newest first.
 ## Dated log
 
 ### 08/19/26
+**A closure can call a foreign function.**
+
+Testing a scoped `with_cstring(s, f)` turned up
+`let f = (p: ^u8) -> u64 => unsafe { strlen(p) }` failing to lower — *no type recorded for
+captured binding "strlen"*. `captures.globalNames` switches over the top-level declaration
+kinds a lambda body can reach without capturing, and had no case for `ExternDeclStmt`, so
+the extern's name was collected as a **free variable**: nothing records a type for a
+binding that is not one, and the backend failed on a program the front end had checked
+clean. One line.
+
+**That is the fourth switch over top-level declaration kinds to be missing this same
+node**, after `declIsPublic`, `attachDoc` and `docOf`, and a sweep found six more (docgen
+and five LSP surfaces, all editor-facing rather than miscompiles — listed in `todo.md`).
+Ten instances of one omission, in ten files sharing no package, is not ten oversights: it
+is that adding a declaration kind has no checklist. Hazard 8 now names the sweep.
+
+`pkg/ast/walk.go` was checked and is correctly silent — it has no extern case either, but
+an extern has no child statements or expressions, so there is nothing to descend into.
+
+### 08/19/26
 **`s.encode_utf8()` — a string's bytes as a `[]u8`.** `decode_utf8`'s inverse, and a
 builtin for the mirror-image reason: **nothing in the language could read a byte out of a
 string.** `byte_len` measures, `byte_offset` maps a rune position to a byte one,

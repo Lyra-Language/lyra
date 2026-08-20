@@ -189,3 +189,31 @@ pub let two = unsafe () -> i64 => unsafe { abs(-2) }
 		}
 	}
 }
+
+// **A closure may call a foreign function**, which it could not until 08/19.
+//
+// `captures.globalNames` is the set of names a lambda body reaches without capturing — a
+// switch over the top-level declaration kinds — and it had a case for `VarDeclStmt` and
+// `TypeDeclStmt` and none for `ExternDeclStmt`. So the extern's name was collected as a
+// **free variable**: nothing records a type for a binding that is not one, and the backend
+// failed with *no type recorded for captured binding "strlen"* on a program the front end
+// had checked clean. Hazard 8, and the fourth switch over declaration kinds to be missing
+// this same node.
+//
+// Found while testing a scoped `with_cstring(s, f)`, which is the shape every language
+// shipping a CString also ships — so this is the bug that stood between Lyra and that
+// form, rather than an oddity about closures.
+func TestExec_ExternCalledFromInsideAClosure(t *testing.T) {
+	t.Parallel()
+	src := `module main
+unsafe extern pure strlen: (^u8) -> u64
+let apply<t> = (bytes: mut []u8, f: (^u8) -> t) -> t => unsafe { f(&bytes[0]) }
+let main = () -> u8 => {
+  var b: []u8 = [104, 105, 33, 0]
+  u8(apply(b, (p: ^u8) -> u64 => unsafe { strlen(p) }))
+}
+`
+	if got := buildAndRun(t, src); got != 3 {
+		t.Errorf("strlen through a closure exited %d; want 3", got)
+	}
+}

@@ -127,6 +127,15 @@ real failure, and none is local to one package.
    - **When adding an expression kind, grep for the kind it is a variant of.** The purity
      pass's allocation walk names allocating *forms*, not types, so `ArrayRepeatExpr` was
      missed in five places `ArrayLiteralExpr` appeared in.
+   - **A new *declaration kind* has no checklist, and pays for it repeatedly.**
+     `ExternDeclStmt` landed on 08/18 and by 08/19 had been found missing from ten
+     switches over top-level declaration kinds — `declIsPublic` (two modules each
+     declaring `extern abs` collided on a program-wide name), `attachDoc` and `docOf`
+     (every `///` above an extern reported as documenting nothing), `captures.globalNames`
+     (a closure calling an extern failed to lower), plus docgen and five LSP surfaces.
+     None of them shares a file or a package with the others, so grepping for one kind
+     finds them only if you know to grep. The list is in `todo.md`; when adding a
+     declaration kind, work it.
    - **Paired walks must be fixed in one change.** `emitRetainValue`/`emitDropValue` both
      lacked `ParameterizedType`; fixing only the drop is an instant double free.
    - **A copy that admits it is a copy is still a copy.** The typechecker's

@@ -2026,11 +2026,7 @@ read direction: a foreign `char*` can be walked, and the walk is bounds-checked.
 What the module still wants, all of it now ordinary Lyra rather than blocked:
 
 - **`CString`** — both builtins now exist (`encode_utf8`/`decode_utf8`), so this is three
-  lines of Lyra: encode, `push(0)`, and hand out `&mut bytes[0]`. What it needs is a
-  decision about the *shape*, not the code — a `[]u8` the caller keeps alive for the
-  duration of the call, or a struct pairing the bytes with the pointer. The pointer must
-  not outlive the array, and nothing in the language enforces that, so the type is where
-  the reminder goes.
+  lines of Lyra. What it needs is a decision about the *shape* rather than the code.
 - **`xs.data() -> ^T`** — a buffer's base pointer, which every "pointer plus a length"
   call needs and which `&mut xs[0]` currently spells by hand. It must refuse or trap on an
   empty array rather than hand out the address of nothing, which is exactly what `&xs[0]`
@@ -2058,6 +2054,30 @@ exists — which is exactly what happened to `strlen`.
 externs and exporting Lyra wrappers, Rust's `*-sys` pattern — and it needs nothing new:
 externs are private so two of them cannot clash, `@link` rides the declaration so a
 program linking zlib says so once, and the backend dedups by C symbol.
+
+### `ExternDeclStmt` is missing from six more switches
+
+Not six bugs — one omission, six times, which is what makes it worth a single item.
+Adding a top-level declaration kind means every switch over those kinds needs a case, and
+nothing enumerates them. Four have been fixed as they were hit (`declIsPublic` 08/19,
+`attachDoc` and `docOf` 08/19, `captures.globalNames` 08/19 — that last one made a closure
+calling an extern fail to lower); these are the ones a sweep found and nothing has yet
+tripped over:
+
+| where | symptom |
+|---|---|
+| `docgen.go` | `lyrac doc --private` omits every extern |
+| `lsp/documentsymbol.go` | no extern in the file outline |
+| `lsp/workspacesymbols.go` | workspace symbol search cannot find one |
+| `lsp/semantictokens.go` | an extern gets no semantic highlighting |
+| `lsp/rename.go` | an extern cannot be renamed |
+| `lsp/definition.go` | (declares only `VarDeclStmt`; check what go-to-definition does) |
+
+All editor-facing rather than miscompiles, which is why they have gone unnoticed — and
+also why they should be fixed together, since each is one case in one switch.
+
+`pkg/ast/walk.go` was checked and is **fine**: it has no extern case either, but an extern
+has no child statements or expressions to descend into, so there is nothing to miss.
 
 ### `lyrac doc` does not render an extern
 

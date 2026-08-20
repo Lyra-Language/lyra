@@ -286,6 +286,15 @@ func globalNames(program *ast.Program, symTable *symbols.SymbolTable) map[string
 			out[v.Name] = true
 		case *ast.TypeDeclStmt:
 			out[v.Name] = true
+		case *ast.ExternDeclStmt:
+			// A foreign function is a top-level declaration like any other, and calling
+			// one from a closure is not a capture. Missing until 08/19: the closure's
+			// capture list then named `strlen`, nothing recorded a type for a binding
+			// that is not one, and the backend failed with "no type recorded for
+			// captured binding" on a program the front end had checked clean. Hazard 8,
+			// and the *third* switch over top-level declaration kinds to be missing this
+			// one — see the note in CLAUDE.md.
+			out[v.Name] = true
 		}
 	}
 	if symTable != nil {
