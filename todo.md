@@ -2026,10 +2026,11 @@ read direction: a foreign `char*` can be walked, and the walk is bounds-checked.
 What the module still wants, all of it now ordinary Lyra rather than blocked:
 
 - **`CString`** — a NUL-terminated `[]u8` from a `string` (the out direction, writable
-  today by hand), and a `string` from a `^u8` (the in direction, now writable over
-  `CBuffer`). The second needs a decision about who supplies the length: `strlen` is an
-  extern the caller must declare, and a `CBuffer.to_string()` that scans for the NUL
-  itself would need no such declaration but would read past a buffer that has none.
+  today by hand), and a `string` from a `^u8` (the in direction). The length question is
+  settled: `cstring_len` is ordinary Lyra, so what is left is the copy itself, which wants
+  a decision about where a `string` gets built from bytes — the prelude has no
+  `from_bytes`, and interpolating rune by rune (what `examples/zlib.lyra` does) is O(n²)
+  in allocations.
 - **`xs.data() -> ^T`** — a buffer's base pointer, which every "pointer plus a length"
   call needs and which `&mut xs[0]` currently spells by hand. It must refuse or trap on an
   empty array rather than hand out the address of nothing, which is exactly what `&xs[0]`
@@ -2037,16 +2038,26 @@ What the module still wants, all of it now ordinary Lyra rather than blocked:
 - **`CLong`/`CULong`** — the newtypes the width section names, so the one type that moves
   between LP64 and Windows is a grep target rather than an audit.
 
-### `^mut T` is not assignable to `^T`
+### No `std.libc`, deliberately
 
-Dropping mutability is sound and every language with both spellings allows it, but
-`CBuffer { ptr: &mut xs[0], … }` is refused today (`cannot assign ^mut u8 to ^u8`) and the
-author has to write `&xs[0]` instead. Harmless where a read-only pointer was wanted
-anyway, which is why it has not blocked anything; wrong as a rule.
+**[DECIDED 08/19]** Asked and answered while writing `cstring_len`: a shared module of
+libc bindings is not the shape to build.
 
-One line in `assignable.go`, but worth checking what else it reaches — the same coercion
-question applies to a `^mut T` argument against a `^T` parameter, which is where it would
-actually be missed.
+An extern cannot be exported in the first place — there is no `pub extern`, precisely so
+two libraries both using `strlen` do not collide on a program-wide name — so such a module
+could only export Lyra wrappers. And then it re-creates, one level up, the thing FFI was
+built to dissolve: the builtin registry had become a de-facto libc shim, and a `std.libc`
+is the same unbounded surface with the same unanswerable question of which few hundred
+functions ship, each one a maintenance commitment and an ABI claim nobody checks.
+
+The candidates also thin out fast. `malloc`/`free` are excluded by design (ownership does
+not cross), and the string and memory functions are writable in Lyra now that `offset`
+exists — which is exactly what happened to `strlen`.
+
+**The shape that does work is a per-library binding module** — a `lyra-zlib` owning its
+externs and exporting Lyra wrappers, Rust's `*-sys` pattern — and it needs nothing new:
+externs are private so two of them cannot clash, `@link` rides the declaration so a
+program linking zlib says so once, and the backend dedups by C symbol.
 
 ### `lyrac doc` does not render an extern
 

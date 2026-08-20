@@ -223,6 +223,22 @@ func unifyGenericTarget(implType, receiverType types.Type, generics map[string]b
 	case types.StaticArrayType:
 		rt, ok := receiverType.(types.StaticArrayType)
 		return ok && it.Size == rt.Size && unifyGenericTarget(it.ElementType, rt.ElementType, generics, bindings)
+	case types.RawPointerType:
+		// A raw pointer binds through its pointee, so `(p: ^t)` is solvable at all.
+		// Missing until 08/19, which made every generic function over a pointer
+		// uncallable — `first(&xs[0])` reported "cannot infer type variable t from these
+		// arguments" for a call that determines it perfectly well. Hazard 8, in the
+		// switch that has a case for each composite kind.
+		//
+		// **Mutability is deliberately not matched here.** This is unification against a
+		// pattern, not a subtyping test: its job is to solve `t`, and the question of
+		// whether the argument may then be passed is assignability's — which is checked
+		// afterwards, against the substituted parameter, and knows that `^mut T` goes to
+		// `^T` and not the reverse. Matching IsMut here would refuse `^t` a `^mut u8`
+		// before that rule ever ran, and would refuse it *silently*, as an inference
+		// failure naming the type variable rather than the mismatch.
+		rt, ok := receiverType.(types.RawPointerType)
+		return ok && unifyGenericTarget(it.Pointee, rt.Pointee, generics, bindings)
 	case types.TupleType:
 		rt, ok := receiverType.(types.TupleType)
 		if !ok || len(it.Elements) != len(rt.Elements) {

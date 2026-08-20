@@ -10,6 +10,77 @@ Newest first.
 ## Dated log
 
 ### 08/19/26
+**`cstring_len` is Lyra, not a binding to `strlen`.** The question that produced it was
+whether `unsafe extern pure strlen: (^u8) -> u64` belonged in a shared C-bindings module,
+and the answer turned out to be that it should not be an extern at all.
+
+Two facts settle it. An extern **cannot be exported** — there is no `pub extern`, by the
+rule landed the same morning — so a bindings module could only ever export Lyra wrappers.
+And scanning for a zero byte became **expressible in Lyra** the moment `p.offset(n)` did,
+which puts it on the `parse_i64` side of the division this language keeps drawing: the
+builtin is only what genuinely cannot be written here. Writing it in Lyra settles two
+questions rather than relocating them — whether C's return is `u64` on this target, and
+which library a `@link` would name.
+
+It is **`unsafe`**, and the contrast with `CBuffer.get` is the design in miniature.
+`cstring_len` *is* the promise — "there is a zero byte somewhere ahead" — and nothing can
+check it; `get` needs no marking because that promise was made once, at construction, and
+every read after it is checked against the length. A test asserts both directions against
+each other.
+
+The cost is real and worth stating: libc's `strlen` is hand-vectorised and this is a byte
+at a time. The prelude's `index` is a naive scan on the same reasoning — a real guarantee
+wants a `memmem`-shaped builtin, and until there is one, honest and slow beats an ABI
+claim nobody verifies.
+
+The general form of the question — a `std.libc` — is refused in `todo.md`, along with the
+shape that does work: a per-library binding module, which the design already supports with
+nothing added.
+
+**`^mut T` is assignable to `^T`, and a generic over a pointer is callable.** Two separate
+gaps, found together because the first one's todo entry said to check what else it reached.
+
+The assignability half is one rule in `isAssignable`: dropping the permission to write is
+safe — the two are the same machine value and `^T` can do strictly less — where adding it
+is the hole `lyra-E061` exists to close. It is one-directional, the pointee stays
+invariant (`^Meters` to `^i64` would let a write through the second land in storage the
+first names), and `TypesEqual` still tells them apart, which is the same split the
+effect-bound rule draws: identity is a different question from what may be passed.
+
+**The downgrade is real, not cosmetic**, which is what makes it safe rather than merely
+convenient: a binding annotated `^T` takes that type, so `down^ = 7` is still refused
+however writable the pointer it came from was. It reaches four positions at once — a `let`
+annotation, a struct field, an argument and a return — because they are one rule, and it
+was refused in all four before.
+
+**Then the part that was hiding behind it.** Checking the argument case turned up
+`let first<t> = (p: ^t) -> t` reporting *"cannot infer type variable t from these
+arguments"* — for a plain `^u8` as much as a `^mut u8`, so nothing to do with mutability.
+`unifyGenericTarget` is a switch with a case per composite kind and had none for
+`RawPointerType`, so `^t` never bound anything. Hazard 8, in the switch that decides
+exactly this question.
+
+Mutability is deliberately **not** matched there. Unification's job is to solve `t`;
+whether the argument may then be passed is assignability's, checked afterwards against the
+substituted parameter. Matching `IsMut` in the unifier would refuse `^t` a `^mut u8` before
+that rule ever ran, and would refuse it *silently* — as an inference failure naming the
+type variable rather than the mismatch it actually is. With the split, `poke(&n, 9)`
+against `(p: ^mut t)` reports "cannot assign ^i64 to ^mut i64", in the substituted types.
+
+**And behind *that*, a second walker.** Fixing the unifier got `t` solved and the call
+still failed, now against an un-substituted `^t`: the typechecker had its own
+`substituteGenerics` beside `types.Substitute`, and only the latter had a raw-pointer
+case. The two comments are the whole story — the local copy said it walked "the handful of
+compound type shapes a data constructor's payload realistically takes today", and
+`types.Substitute` said it exists because "a switch over composite types that exists twice
+drifts". So the durable fix rule 8 actually asks for: the local name is now a one-line
+call to the real walker, and `types.Substitute` is listed with the other single answers.
+
+Three bugs in one afternoon, each hidden by the one above it: with no unifier case the
+call never reached an assignability question, and with no substitution the solved variable
+never reached the parameter.
+
+### 08/19/26
 **Pointer arithmetic, and `std.ffi`'s first type.** `p.offset(n) -> ^T` is the language's
 only pointer arithmetic, and `std.ffi`'s `CBuffer { ptr, len }` is the checked thing built
 over it. Together they close the gap the zlib work found the same day: a foreign `char*`

@@ -114,3 +114,103 @@ let main = () -> void => {
 		t.Errorf("output = %q; want the out-of-bounds message", out)
 	}
 }
+
+// A **generic** function over a pointer, run rather than only checked: `^t` binds `t`,
+// the specialization lowers, and a `^mut u8` argument reaches a `^t` parameter — the
+// assignability relaxation and the unifier's raw-pointer case meeting in one program.
+// Both were missing until 08/19, and each hid the other: with no unifier case the call
+// never got as far as an assignability question.
+func TestExec_GenericOverAPointer(t *testing.T) {
+	t.Parallel()
+	src := `module main
+let first<t> = pure (p: ^t) -> t => unsafe { p^ }
+let poke<t> = (p: ^mut t, v: t) -> void => unsafe { p^ = v }
+let main = () -> u8 => {
+  var xs: []u8 = [7, 0]
+  var n: i64 = 30
+  unsafe {
+    poke(&mut n, 5)
+    u8(first(&n)) + first(&mut xs[0])
+  }
+}
+`
+	if got := buildAndRun(t, src); got != 12 {
+		t.Errorf("exited %d; want 12 (5 written through ^mut t, plus 7 read through ^t)", got)
+	}
+}
+
+// `cstring_len` — strlen, in Lyra, over a buffer this program built so the test needs no
+// library installed. It is library code rather than an `extern` because scanning for a
+// zero byte became expressible the moment `offset` existed, which is the same division
+// that puts `parse_i64` in the prelude and leaves `read_line` a builtin.
+//
+// `unsafe`, because the terminator is the caller's promise and nothing can check it —
+// which is exactly what `CBuffer.get` does *not* need, its length having been promised
+// once at construction.
+func TestExec_CStringLenScansToTheTerminator(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.ffi.{ CBuffer, cstring_len }
+let main = () -> void => {
+  var bytes: []u8 = [104, 105, 33, 0, 122]
+  let p = unsafe { &bytes[0] }
+  let buf = unsafe { CBuffer { ptr: p, len: cstring_len(p) } }
+  var s = ""
+  for i in 0..<buf.len { s = s ++ "${rune(buf.get(i))}" }
+  print("${buf.len} ${s}")
+}
+`, "")
+	// 3, not 5: the scan stops at the NUL and the byte after it is not part of the string.
+	if got := strings.TrimSpace(out); got != "3 hi!" {
+		t.Errorf("cstring_len walk = %q; want \"3 hi!\"", got)
+	}
+}
+
+// An empty C string is a lone NUL, and answers 0 rather than reading anything.
+func TestExec_CStringLenOfAnEmptyString(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.ffi.{ cstring_len }
+let main = () -> void => {
+  var bytes: []u8 = [0, 65]
+  print("${unsafe { cstring_len(&bytes[0]) }}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "0" {
+		t.Errorf("cstring_len of an empty C string = %q; want \"0\"", got)
+	}
+}
+
+// The two halves of the module's safety story, asserted against each other: `cstring_len`
+// needs an `unsafe` context and `CBuffer.get` does not. That is the whole design in one
+// test — the promise is made once, where the length is established, and every read after
+// it is checked rather than trusted.
+func TestCheck_CStringLenIsUnsafeAndGetIsNot(t *testing.T) {
+	t.Parallel()
+	errs := checkWithPrelude(t, `
+module main
+import std.ffi.{ CBuffer, cstring_len }
+let main = () -> void => {
+  var bytes: []u8 = [65, 0]
+  let p = unsafe { &bytes[0] }
+  println("${cstring_len(p)}")
+}
+`)
+	if len(errs) != 1 || !strings.Contains(errs[0], `calling unsafe function "cstring_len"`) {
+		t.Errorf("calling cstring_len outside `unsafe` should be refused; got %v", errs)
+	}
+	safe := checkWithPrelude(t, `
+module main
+import std.ffi.{ CBuffer }
+let main = () -> void => {
+  var bytes: []u8 = [65, 0]
+  let buf = CBuffer { ptr: unsafe { &bytes[0] }, len: 2 }
+  println("${buf.get(0)}")
+}
+`)
+	if len(safe) != 0 {
+		t.Errorf("CBuffer.get needs no `unsafe` — its length was promised at construction; got %v", safe)
+	}
+}

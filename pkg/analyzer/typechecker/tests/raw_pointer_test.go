@@ -267,3 +267,98 @@ let main = () -> void => {
 		t.Error("`offset` is a raw-pointer method; an array receiver must not resolve to it")
 	}
 }
+
+// **A `^mut T` is assignable to a `^T`, and not the reverse.** Dropping the permission to
+// write is safe — the two are the same machine value and `^T` can do strictly less —
+// where adding it is the hole lyra-E061 exists to close. Refused until 08/19, which meant
+// `CBuffer { ptr: &mut xs[0], … }` had to be written `&xs[0]`: harmless where a read-only
+// pointer was wanted anyway, which is why it blocked nothing and was wrong as a rule.
+//
+// All four positions, because they are one rule and would otherwise be four.
+func TestPointers_MutablePointerIsAssignableToAReadOnlyOne(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+struct Buf { ptr: ^u8, len: i64 }
+let takes = pure (p: ^u8) -> u8 => unsafe { p^ }
+let gives = pure (xs: mut []u8) -> ^u8 => unsafe { &mut xs[0] }
+let main = () -> void => {
+  var xs: []u8 = [1, 2, 3]
+  unsafe {
+    let m = &mut xs[0]
+    let a: ^u8 = m
+    let b = Buf { ptr: m, len: 3 }
+    println("${a^} ${b.ptr^} ${takes(m)} ${gives(xs)^}")
+  }
+}`, false))
+}
+
+func TestPointers_ReadOnlyPointerIsNotAssignableToAMutableOne(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let main = () -> void => {
+  var x: i64 = 5
+  unsafe {
+    let r = &x
+    let bad: ^mut i64 = r
+  }
+}`, false)
+	assertHasErrorContaining(t, res, "cannot assign ^i64 to ^mut i64")
+}
+
+// **The downgrade is real, not cosmetic**, which is the property that makes the rule safe
+// rather than merely convenient: the binding takes the annotated type, so writing through
+// it is refused even though the pointer it came from was writable.
+func TestPointers_ADowngradedPointerCannotBeWrittenThrough(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let main = () -> void => {
+  var x: i64 = 5
+  unsafe {
+    let down: ^i64 = &mut x
+    down^ = 7
+  }
+}`, false)
+	assertHasErrorContaining(t, res, "it is a read-only pointer")
+}
+
+// The pointee stays invariant. `^Meters` to `^i64` would let a write through the second
+// land in storage the first names — the mixup a newtype exists to prevent — and unlike
+// mutability it is not a strictly-weaker permission.
+func TestPointers_PointeeIsInvariant(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Meters = i64
+let takes = pure (p: ^i64) -> i64 => unsafe { p^ }
+let main = () -> void => {
+  var m: Meters = 5
+  unsafe { println("${takes(&mut m)}") }
+}`, false)
+	assertHasErrorContaining(t, res, "cannot assign ^mut Meters to ^i64")
+}
+
+// **A generic function over a pointer is callable**, which it was not until 08/19:
+// `unifyGenericTarget` had no raw-pointer case, so `^t` never bound `t` and every such
+// call reported "cannot infer type variable t" — for a plain `^u8` as much as a `^mut u8`,
+// so this is independent of the assignability rule above.
+func TestPointers_GenericOverAPointerSolvesItsTypeVariable(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+let first<t> = pure (p: ^t) -> t => unsafe { p^ }
+let poke<t> = (p: ^mut t, v: t) -> void => unsafe { p^ = v }
+let main = () -> void => {
+  var xs: []u8 = [40, 41]
+  var n: i64 = 7
+  unsafe {
+    println("${first(&xs[1])} ${first(&mut xs[0])} ${first(&n)}")
+    poke(&mut n, 9)
+  }
+}`, false))
+}
+
+// And solving `t` does not launder the mutability: unification decides what `t` is,
+// assignability decides whether the argument may be passed, and the diagnostic names the
+// *substituted* types rather than the type variable.
+func TestPointers_GenericMutablePointerParameterStillRefusesAReadOnlyArgument(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let poke<t> = (p: ^mut t, v: t) -> void => unsafe { p^ = v }
+let main = () -> void => {
+  var n: i64 = 7
+  unsafe { poke(&n, 9) }
+}`, false)
+	assertHasErrorContaining(t, res, "cannot assign ^i64 to ^mut i64")
+}

@@ -668,60 +668,19 @@ func (tc *TypeChecker) resolveToDataType(t types.Type, loc ast.Location) (types.
 	return types.DataType{}, false
 }
 
-// substituteGenerics replaces every occurrence of a generic type variable in
-// t with its concrete binding from subst (param name -> argument type),
-// recursing into the handful of compound type shapes a data constructor's
-// payload realistically takes today (tuples and arrays). Anything else —
-// including a generic nested inside a struct/another data type's payload —
-// is left as-is rather than guessed; that's a sharper-edged case than this
-// destructuring/match-arm support targets.
+// substituteGenerics is types.Substitute, kept as a name because two dozen call sites
+// read better with the shorter one.
+//
+// It **was** a second walker, and the drift was the ordinary kind: this copy recursed
+// into "the handful of compound type shapes a data constructor's payload realistically
+// takes today" — tuples, arrays, parameterized types, lambdas — and had no case for a
+// raw pointer. So `let first<t> = (p: ^t) -> t` solved `t` and then compared the
+// argument against an un-substituted `^t`, reporting *"cannot assign ^u8 to ^t"* on a
+// call whose type variable it had just worked out. `types.Substitute`'s own doc comment
+// says why it exists: a switch over composite types that exists twice drifts. Hazard 8,
+// and the fix rule 8 actually asks for — stop having two.
 func substituteGenerics(t types.Type, subst map[string]types.Type) types.Type {
-	switch tt := t.(type) {
-	case types.GenericType:
-		if concrete, ok := subst[tt.Name]; ok {
-			return concrete
-		}
-		return tt
-	case types.TupleType:
-		elems := make([]types.Type, len(tt.Elements))
-		for i, el := range tt.Elements {
-			elems[i] = substituteGenerics(el, subst)
-		}
-		tt.Elements = elems
-		return tt
-	case types.DynamicArrayType:
-		tt.ElementType = substituteGenerics(tt.ElementType, subst)
-		return tt
-	case types.StaticArrayType:
-		tt.ElementType = substituteGenerics(tt.ElementType, subst)
-		return tt
-	case types.ParameterizedType:
-		args := make([]types.Type, len(tt.TypeArguments))
-		for i, a := range tt.TypeArguments {
-			args[i] = substituteGenerics(a, subst)
-		}
-		tt.TypeArguments = args
-		return tt
-	case *types.LambdaType:
-		// A function type carries variables in its signature just as an aggregate
-		// carries them in its elements, and a higher-order generic is unusable
-		// without this: solving `t` from a `() -> i64` argument only helps if the
-		// declared `() -> t` parameter is then substituted to `() -> i64` for the
-		// assignability check. A *copy* is returned — LambdaType is the one type here
-		// held by pointer, so substituting in place would rewrite the declaration
-		// every other call site shares.
-		params := make([]types.ParameterType, len(tt.Parameters))
-		for i, p := range tt.Parameters {
-			params[i] = p
-			params[i].Type = substituteGenerics(p.Type, subst)
-		}
-		ret := tt.ReturnType
-		if ret.Type != nil {
-			ret.Type = substituteGenerics(ret.Type, subst)
-		}
-		return &types.LambdaType{Parameters: params, ReturnType: ret}
-	}
-	return t
+	return types.Substitute(t, subst)
 }
 
 // checkDataMatchArm validates one arm's pattern against a data-type scrutinee.

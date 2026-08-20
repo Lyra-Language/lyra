@@ -19,13 +19,15 @@ module std.ffi
 //! promise; the checking is what the promise then buys.
 //!
 //! ```
-//! import std.ffi.{ CBuffer }
-//!
-//! unsafe extern pure strlen: (^u8) -> u64
+//! import std.ffi.{ CBuffer, cstring_len }
 //!
 //! let read_c_string = (p: ^u8) -> CBuffer =>
-//!   CBuffer { ptr: p, len: i64(unsafe { strlen(p) }) }
+//!   unsafe { CBuffer { ptr: p, len: cstring_len(p) } }
 //! ```
+//!
+//! A buffer Lyra owns works too — `CBuffer { ptr: unsafe { &mut xs[0] }, len: xs.len() }`
+//! — since a `^mut T` is assignable to a `^T`. Reading one that way buys nothing `xs[i]`
+//! does not already give you; it is for handing the same bytes to C and back.
 
 /// A foreign buffer: a pointer, and the number of bytes it is valid for.
 ///
@@ -61,4 +63,34 @@ pub let get = pure noalloc (self: CBuffer, i: i64) -> u8 => {
     panic("std.ffi: CBuffer index out of bounds")
   }
   unsafe { self.ptr.offset(i)^ }
+}
+
+/// The length of a NUL-terminated C string, not counting the NUL — `strlen`, in Lyra.
+///
+/// **Written here rather than declared as an `extern`**, which is the division the whole
+/// language follows: anything expressible in Lyra goes in the library, and only what
+/// genuinely cannot be stays primitive (`random_seed` is a builtin, `Rng` is not;
+/// `read_line` is, `parse_i64` is not). Scanning for a zero byte became expressible the
+/// moment `p.offset(n)` existed, and writing it here settles two questions rather than
+/// moving them: whether C's return is `u64` or something else on this target, and which
+/// library a `@link` would have to name.
+///
+/// The cost is that libc's `strlen` is hand-vectorised and this is a byte at a time. The
+/// prelude's `index` is a naive scan on the same reasoning — a real guarantee would want
+/// a `memmem`-shaped builtin, and until there is one, honest and slow beats an ABI claim
+/// nobody checks.
+///
+/// **`unsafe`, because the terminator is the caller's promise.** `CBuffer.get` needs no
+/// such marking: its length was promised once, at construction, and every read after that
+/// is checked against it. This *is* that promise — "there is a zero byte somewhere ahead"
+/// — and nothing here can verify it. A pointer into memory with no NUL runs off the end
+/// exactly as `strlen` does.
+pub let cstring_len = unsafe pure noalloc (p: ^u8) -> i64 => {
+  var n = 0
+  var b = unsafe { p^ }
+  for b != 0 {
+    n += 1
+    b = unsafe { p.offset(n)^ }
+  }
+  n
 }

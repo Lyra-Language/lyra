@@ -399,6 +399,28 @@ func isAssignable(from, to types.Type) bool {
 			)
 		}
 	}
+	// **A `^mut T` is assignable to a `^T`, and not the reverse.** Dropping the
+	// permission to write is safe — the two are the same machine value, and `^T` can do
+	// strictly less — where adding it is exactly the hole `lyra-E061` exists to close.
+	//
+	// One-directional and written here rather than in `TypesEqual`, which must keep
+	// telling them apart: the two are different *types*, and a trait signature or an
+	// impl match asking about identity has to see that. This is the same split the
+	// effect-bound rule above draws, for the same reason.
+	//
+	// The pointee stays invariant. `^Meters` to `^i64` would let a write through the
+	// second land in storage the first names, which is the mixup a newtype exists to
+	// prevent — and unlike mutability, nothing about it is a strictly-weaker permission.
+	//
+	// Additive rather than deciding the pair: a `to` that is a pointer but does not
+	// match falls through to the rules below, which is what keeps a newtype over a
+	// pointer working the way every other newtype does.
+	if fromPtr, ok := from.(types.RawPointerType); ok {
+		if toPtr, ok := to.(types.RawPointerType); ok && fromPtr.IsMut && !toPtr.IsMut &&
+			types.TypesEqual(fromPtr.Pointee, toPtr.Pointee) {
+			return true
+		}
+	}
 	// A data-type value is assignable to the same nominal type whether the slot
 	// is written as a bare name, with generic arguments (`Maybe<i64>`), or as
 	// another reference to the data type. The checker does not instantiate

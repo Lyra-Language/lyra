@@ -18,7 +18,7 @@
 //! call: between Lyra functions a buffer travels as an ordinary `mut []u8`, so the raw
 //! pointer never outlives the statement that made it.
 
-import std.ffi.{ CBuffer }
+import std.ffi.{ CBuffer, cstring_len }
 
 let main = () -> u8 => {
   println("zlib ${version()}")
@@ -50,11 +50,16 @@ const CAPACITY = 256
 ///
 /// `zlibVersion` hands back a `char*` — memory Lyra does not own, with no length. A raw
 /// pointer alone can only be read at offset zero, so the length has to come from
-/// somewhere before anything can be checked: `strlen` supplies it, `CBuffer` holds the
-/// two together, and `buf.get(i)` then traps on a bad index exactly as `xs[i]` would.
+/// somewhere before anything can be checked: `cstring_len` scans for the terminator,
+/// `CBuffer` holds the two together, and `buf.get(i)` then traps on a bad index exactly
+/// as `xs[i]` would.
+///
+/// Note that `cstring_len` is ordinary Lyra rather than a binding to `strlen`. Scanning
+/// for a zero byte is expressible in the language, so it is written in it — the same
+/// reason `parse_i64` is prelude code while `read_line` is a builtin.
 let version = pure () -> string => {
   let p = unsafe { zlibVersion() }
-  let buf = CBuffer { ptr: p, len: i64(unsafe { strlen(p) }) }
+  let buf = unsafe { CBuffer { ptr: p, len: cstring_len(p) } }
   var out = ""
   for i in 0..<buf.len { out = out ++ "${rune(buf.get(i))}" }
   out
@@ -137,7 +142,3 @@ unsafe extern det noalloc uncompress: (^mut u8, ^mut u64, ^u8, u64) -> i32
 /// why nothing here frees it. Ownership does not cross the boundary in either direction.
 @link("z")
 unsafe extern pure zlibVersion: () -> ^u8
-
-/// `size_t strlen(const char *s)`, from libc rather than zlib — the length a `char*` does
-/// not carry, and the one thing standing between a foreign pointer and a checked read.
-unsafe extern pure strlen: (^u8) -> u64

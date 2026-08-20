@@ -129,6 +129,12 @@ real failure, and none is local to one package.
      missed in five places `ArrayLiteralExpr` appeared in.
    - **Paired walks must be fixed in one change.** `emitRetainValue`/`emitDropValue` both
      lacked `ParameterizedType`; fixing only the drop is an instant double free.
+   - **A copy that admits it is a copy is still a copy.** The typechecker's
+     `substituteGenerics` said in its own comment that it walked only "the handful of
+     compound type shapes a data constructor's payload realistically takes today" — and
+     `types.Substitute` beside it said in *its* comment that it exists so there is one
+     walker. A generic over `^t` solved `t` and then compared the argument against an
+     un-substituted `^t`. The local copy is now a one-line call to the real one.
    - **A memory-safety test can pass because the code under it does nothing** — a weak-cycle
      test was green *by leaking* before the glue walked the field at all.
 
@@ -143,6 +149,7 @@ real failure, and none is local to one package.
    | did this expression produce a value? | `isVoidResult` (a nil **and** a void-typed `ir.Call`) |
    | does this value transitively own a reference? | `ownership.OwnsManaged` |
    | is that sharing observable? | `ownership.SharesMutableState` |
+   | substitute type variables in a type | `types.Substitute` |
 
 9. **A name does not identify a declaration, and may not even identify one function.**
    A *key* is module-qualified for a private declaration (rule 4), and a
@@ -382,6 +389,11 @@ inside this project, three things:
   differed from the node the scope table was keyed on, so every binding declared inside an
   `unsafe` block resolved nowhere. Invisible while the block was refused before anything
   looked inside it.
+- **`^mut T` is assignable to `^T` and not the reverse** (`isAssignable`), while
+  `TypesEqual` keeps telling them apart — the same split the effect-bound rule draws, and
+  for the same reason: identity is a different question from what may be passed. The
+  pointee stays invariant. The downgrade is *real*, so writing through a binding annotated
+  `^T` is still lyra-E061 whatever the pointer came from.
 - **`p.offset(n)` is a builtin method, and its unsafe-context check is in the
   typechecker** — `requireUnsafeBuiltin`, beside `requireUnsafeCall` and for the same
   reason: the question needs the **receiver's type**. `p.offset(n)` and `xs.offset(n)` are
@@ -837,6 +849,13 @@ what zlib's `compress` takes; a `^u8` coming *back* is read through `p.offset(n)
 `std.ffi`'s `CBuffer` is the checked wrapper over it (see "Raw pointers" above). What is
 still unbuilt is the rest of `std.ffi` — `CString`, `xs.data()`, `CLong`/`CULong` — all of
 which are now ordinary Lyra rather than blocked. See `todo.md`.
+
+**A libc function that Lyra can express is written in Lyra, not bound.** `cstring_len` is
+`strlen` in prelude-style code, because scanning for a zero byte stopped needing C the
+moment `offset` existed — the `read_line`/`parse_i64` division, applied at the boundary.
+There is deliberately **no `std.libc`**: an extern cannot be exported anyway, and a shared
+bindings module re-creates the libc shim layer FFI was built to dissolve. The shape that
+works is a per-library binding module owning its own externs, which needs nothing new.
 
 ## Current Development Focus
 
