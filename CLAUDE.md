@@ -869,7 +869,7 @@ needs before touching anything nearby:
 - **Only FFI-safe types cross**: the scalars, `^T`, `void`. `string`, `[]T`, closures,
   tuples, `data` types and anything `shared` are refused at the signature, so there is no
   implicit conversion and therefore no nul-termination policy to get wrong. `std.ffi`
-  supplies `CString` and `xs.data()` as ordinary Lyra.
+  supplies `s.cstring()` and `xs.data()` as ordinary Lyra.
 - **Ownership never crosses.** Neither side adopts the other's buffer; both directions
   would need the other to understand the rc header. A `^T` into a live array dangles at the
   next `push`.
@@ -880,17 +880,26 @@ needs before touching anything nearby:
   deliberately never had one). It needs no `unsafe`: a wrong library name fails loudly at
   link time, which is exactly what an effect bound does not do.
 
-**`std.ffi` is `CBuffer`/`get`/`cstring_len`/`decode_utf8`/`cstring`.** The last is the
-out direction and is a plain `[]u8` — option A, chosen over a `CString` type because the
-dangling shape is already `lyra-E059`, because a struct storing the pointer dangles for
-real on the next `push` (measured), and because the wrapper that would help is the scoped
-`with_cstring`, not a name. It traps on an interior NUL.
+**`std.ffi` is `CBuffer`/`get`/`cstring_len`/`decode_utf8`/`cstring`/`data`/`data_mut`.**
+`cstring` is the out direction for a string and is a plain `[]u8` — option A, chosen over a
+`CString` type because the dangling shape is already `lyra-E059`, because a struct storing
+the pointer dangles for real on the next `push` (measured), and because the wrapper that
+would help is the scoped `with_cstring`, not a name. It traps on an interior NUL.
 
-**Both directions work now.** A buffer goes *out* as `&mut xs[0]` plus a length, which is
-what zlib's `compress` takes; a `^u8` coming *back* is read through `p.offset(n)^`, and
+**`xs.data()`/`xs.data_mut()` are the out direction for a buffer**, and they copy nothing:
+a `[]T`'s elements already live behind a contiguous `T*` in its box, so the pointer C wants
+is the one Lyra is holding. **Two functions, because `&x` and `&mut x` are two spellings**
+and a method call has nowhere to put the word — `data_mut` takes a `mut` receiver, the rule
+`push` and `xs[i] = v` already follow. Both are `unsafe pure noalloc`, both trap on an empty
+array with their own message rather than the index check's, and both are **dynamic arrays
+only**: a `[N]T` carries its size in its type, so it cannot be a generic parameter until
+const generics exist.
+
+**Both directions work now.** A buffer goes *out* as `xs.data_mut()` plus a length, which
+is what zlib's `compress` takes; a `^u8` coming *back* is read through `p.offset(n)^`, and
 `std.ffi`'s `CBuffer` is the checked wrapper over it (see "Raw pointers" above). What is
-still unbuilt is the rest of `std.ffi` — `CString`, `xs.data()`, `CLong`/`CULong` — all of
-which are now ordinary Lyra rather than blocked. See `todo.md`.
+still unbuilt is `with_cstring` and `CLong`/`CULong` — both ordinary Lyra rather than
+blocked. See `todo.md`.
 
 **A libc function that Lyra can express is written in Lyra, not bound.** `cstring_len` is
 `strlen` in prelude-style code, because scanning for a zero byte stopped needing C the

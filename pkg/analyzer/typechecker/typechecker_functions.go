@@ -1070,6 +1070,14 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 			return nil
 		}
 		desugarUFCSCall(member, call)
+		// The same E011 check the bare-call path makes, because this *is* the bare call
+		// now — and the rung a reader would assume shares it. It did not: `unsafe` on a
+		// free function was enforced at `data(xs)` and silently not at `xs.data()`, so
+		// the method spelling of the standard library's own FFI helpers was the way
+		// around the keyword. Latent since UFCS landed, and invisible until the first
+		// unsafe function with a `self` receiver (`std.ffi`'s `data`) — hazard 8, in a
+		// resolution ladder rather than a switch.
+		tc.requireUnsafeCall(methodName, fn, call)
 		return tc.inferLambdaCall(methodName, fn, call)
 	}
 
@@ -1119,6 +1127,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 				}
 				tc.typeTable.Set(member.Object, base)
 				desugarUFCSCall(member, call)
+				tc.requireUnsafeCall(methodName, fn, call)
 				return tc.inferLambdaCall(methodName, fn, call)
 			}
 			if sig, ok := tc.builtinMethodSignature(base, methodName, member.GetLocation()); ok {

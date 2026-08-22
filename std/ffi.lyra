@@ -164,3 +164,55 @@ pub let cstring = pure (self: string) -> []u8 => {
   bytes
 }
 
+
+/// The address of a buffer's first element, to hand to a C function taking a pointer and
+/// a length.
+///
+/// ```
+/// import std.ffi.{ data }
+///
+/// let checksum = (xs: []u8) -> u64 => unsafe { crc32(0, xs.data(), u32(xs.len())) }
+/// ```
+///
+/// **No copy, unlike `cstring`.** A `[]T`'s elements already live behind a contiguous
+/// `T*` inside its box — they are not inline, which is exactly what makes `push` safe —
+/// so the buffer C wants is the one Lyra is already holding. What crosses is the pointer;
+/// the length crosses beside it as `xs.len()`, because a raw pointer carries none.
+///
+/// **`unsafe`, because handing the pointer out is the unverifiable act.** Nothing here can
+/// dereference anything, so the danger is entirely in what the caller does next — which is
+/// the same reason `cstring_len` is marked and `CBuffer.get` is not.
+///
+/// **Dynamic arrays only.** A `[N]T` carries its size in its type, so it cannot be a
+/// generic parameter until const generics exist (todo.md); a fixed buffer still spells
+/// this `&xs[0]` by hand, which is what this function is.
+///
+/// **The pointer is valid until the next mutation.** `push` reallocates the element
+/// buffer, so a pointer taken before one addresses memory the array no longer owns. That
+/// is Rust's `as_ptr` hazard exactly, it is not checkable, and it is why the caller is
+/// already inside an `unsafe` block.
+///
+/// # Panics
+/// Traps on an empty array, which has no first element to point at. The alternative is
+/// handing back the address of nothing, and the alternative to trapping *here* is the
+/// index check's own message — which names a `[0]` the caller did not write.
+pub let data = unsafe pure noalloc (self: []t) -> ^t => {
+  if self.len() == 0 { panic("std.ffi: data() on an empty array") }
+  &self[0]
+}
+
+/// The same address, writable — for a C function that fills the buffer rather than
+/// reading it.
+///
+/// **Two functions rather than one, because `&x` and `&mut x` are two spellings.**
+/// Mutability is written at the point a pointer is taken, and a method call has nowhere to
+/// put the word; the receiver carries it instead, so `data_mut` needs a `mut` receiver for
+/// the same reason `xs.push(v)` and `xs[i] = v` do. Everything `data` documents holds here
+/// too, and the stale-pointer hazard holds harder: this is the direction that writes.
+///
+/// # Panics
+/// Traps on an empty array, exactly as `data` does.
+pub let data_mut = unsafe pure noalloc (self: mut []t) -> ^mut t => {
+  if self.len() == 0 { panic("std.ffi: data_mut() on an empty array") }
+  &mut self[0]
+}

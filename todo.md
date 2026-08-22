@@ -2035,10 +2035,20 @@ What the module still wants, all of it now ordinary Lyra rather than blocked:
   `withCString`, Haskell's, C#'s `fixed`), because it is the only shape where the pointer
   cannot outlive the buffer. Two things to settle first: it nests badly for a C function
   taking two strings, and a closure allocates, so a `noalloc` caller cannot use it.
-- **`xs.data() -> ^T`** — a buffer's base pointer, which every "pointer plus a length"
-  call needs and which `&mut xs[0]` currently spells by hand. It must refuse or trap on an
-  empty array rather than hand out the address of nothing, which is exactly what `&xs[0]`
-  does today.
+- **[DONE 08/22] `xs.data() -> ^t`**, and `xs.data_mut() -> ^mut t` beside it — a
+  buffer's base pointer, which every "pointer plus a length" call needs and which
+  `&mut xs[0]` spelled by hand. Ordinary generic Lyra over `&self[0]`, so it cost the
+  compiler nothing; `examples/zlib.lyra` is written through it now. See `COMPLETED.md`.
+  - **Two functions, because `&x` and `&mut x` are two spellings** and a method call has
+    nowhere to put the word. The receiver carries it instead: `data_mut` takes a `mut`
+    receiver, the same rule `xs.push(v)` and `xs[i] = v` already follow.
+  - **Dynamic arrays only.** A `[N]T` carries its size in its type, so it cannot be a
+    generic parameter until const generics exist — a fixed buffer still writes `&xs[0]`.
+    The one item on this list that would close it is *Const generics* below.
+  - **It found a real hole in `lyra-E011`**: an `unsafe` free function called *method*-style
+    escaped the check entirely, because the UFCS rung desugars to a bare call and did not
+    make the check the bare-call rung makes. Latent since UFCS landed 08/03 and invisible
+    until `data` became the first unsafe function with a `self` receiver. Fixed with it.
 - **`CLong`/`CULong`** — the newtypes the width section names, so the one type that moves
   between LP64 and Windows is a grep target rather than an audit.
 
@@ -2073,7 +2083,7 @@ exercises nearly every distinctive piece of this design at once:
 | `@link` on a library not already passed | `-lz` |
 | `pure` bound | `crc32`, `compressBound` |
 | `det noalloc` bound | `compress` writes only through caller buffers |
-| `^u8` + length (`xs.data()`) | `crc32(crc, buf, len)` |
+| `^u8` + length (`xs.data()`) | `crc32(crc, buf, len)` — written this way as of 08/22 |
 | `^mut u8` out-buffer | `compress`'s `dest` |
 | `^mut T` in/out scalar | `destLen` — `&mut n`, read back |
 | returned `char*` → `string` | `zlibVersion()` |

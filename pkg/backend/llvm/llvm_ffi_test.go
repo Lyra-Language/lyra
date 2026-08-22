@@ -245,3 +245,94 @@ let main = () -> void => {
 		t.Errorf("a pointer into a temporary C string must be refused; got %v", errs)
 	}
 }
+
+// `data`/`data_mut` — the buffer direction, and the one that copies nothing: a `[]T`'s
+// elements already live behind a contiguous `T*` in its box, so the pointer C wants is
+// the one Lyra is holding. Both directions in one program, against libc rather than by
+// inspection: `strlen` reads through `data`, `memset` writes through `data_mut`, and the
+// array is read back afterwards to prove the bytes C wrote are the bytes Lyra has.
+func TestExec_DataIsTheBufferLibcReadsAndWrites(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.ffi.{ data, data_mut }
+unsafe extern pure strlen: (^u8) -> u64
+unsafe extern memset: (^mut u8, i32, u64) -> ^mut u8
+let main = () -> void => {
+  var c = "hello λ".cstring()
+  var xs: []u8 = [1, 2, 3, 4]
+  unsafe { memset(xs.data_mut(), 65, 3) }
+  print("${unsafe { strlen(c.data()) }} ${xs[0]} ${xs[2]} ${xs[3]}")
+}
+`, "")
+	// Eight bytes of content, and memset filled exactly the three it was given.
+	if got := strings.TrimSpace(out); got != "8 65 65 4" {
+		t.Errorf("data/data_mut = %q; want \"8 65 65 4\"", got)
+	}
+}
+
+// **An empty array traps**, rather than handing out the address of nothing. The message
+// is the function's own and not the index check's: the caller wrote `data()`, so naming a
+// `[0]` they did not write would send them looking for an index.
+func TestExec_DataOnAnEmptyArrayTraps(t *testing.T) {
+	t.Parallel()
+	for _, fn := range []string{"data", "data_mut"} {
+		src := `
+module main
+import std.ffi.{ ` + fn + ` }
+let main = () -> void => {
+  var xs: []u8 = []
+  let p = unsafe { xs.` + fn + `() }
+  print("${unsafe { p^ }}")
+}
+`
+		out, err := exec.Command(preludeBinary(t, src)).CombinedOutput()
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != 101 {
+			t.Fatalf("%s() on an empty array must trap; got %v", fn, err)
+		}
+		if !strings.Contains(string(out), fn+"() on an empty array") {
+			t.Errorf("%s(): output = %q; want its own empty-array message", fn, out)
+		}
+	}
+}
+
+// **`unsafe` binds to the function, not to the spelling of the call.** The method form
+// goes through UFCS, which desugars to the bare call and used to skip the E011 check the
+// bare path makes — so `xs.data()` was a way around the keyword while `data(xs)` was not.
+// Latent since UFCS landed and invisible until `data` became the first unsafe function
+// with a `self` receiver.
+func TestCheck_AnUnsafeFunctionIsUnsafeInMethodForm(t *testing.T) {
+	t.Parallel()
+	errs := checkWithPrelude(t, `
+module main
+import std.ffi.{ data }
+let escapes = (xs: []u8) -> ^u8 => xs.data()
+let main = () -> void => { println("ok") }
+`)
+	found := false
+	for _, e := range errs {
+		if strings.Contains(e, "lyra-E011") || strings.Contains(e, "requires an `unsafe`") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("xs.data() outside an unsafe context must be refused; got %v", errs)
+	}
+}
+
+// `data` is callable from `pure noalloc` code: taking an address is not an effect and
+// allocates nothing, and the empty-array trap's message is a constant so it stays that
+// way.
+func TestExec_DataIsCallableFromNoallocCode(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.ffi.{ data }
+let head = pure noalloc (xs: []u8) -> u8 => unsafe { xs.data()^ }
+let main = () -> void => { print("${head([9, 8, 7])}") }
+`, "")
+	if got := strings.TrimSpace(out); got != "9" {
+		t.Errorf("head = %q; want \"9\"", got)
+	}
+}

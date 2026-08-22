@@ -9,6 +9,77 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26
+**`xs.data()` — the buffer direction of the C boundary, and the E011 hole it found.**
+
+The last thing `examples/zlib.lyra` spelled by hand. Every "pointer plus a length" call
+wants a buffer's base address, and the only way to say it was `&mut xs[0]` — an index the
+author does not mean, whose bounds check is the only reason it happens to be safe on an
+empty array. `std.ffi` now has the name:
+
+```lyra
+pub let data     = unsafe pure noalloc (self: []t)     -> ^t     => { … &self[0] }
+pub let data_mut = unsafe pure noalloc (self: mut []t) -> ^mut t => { … &mut self[0] }
+```
+
+**It cost the compiler nothing**, which is the outcome the FFI design was aiming at: a
+generic function over `[]t` returning `^t`, monomorphized by the machinery that already
+existed. Raw-pointer generics landed 08/19 (`^mut T` assignable to `^T`, the unifier's
+pointer case), and this is the first thing written on top of them that a program actually
+reaches for. No builtin, no backend arm, no new diagnostic — the `random_seed`/`Rng`
+division applied once more, at the boundary.
+
+**Two functions rather than one, because `&x` and `&mut x` are two spellings.** Mutability
+is written where the pointer is taken, and a method call has nowhere to put the word. The
+receiver carries it instead: `data_mut` takes a `mut` receiver, which is the rule
+`xs.push(v)` and `xs[i] = v` already obey, so a caller holding an immutable array cannot
+reach the writable pointer. The alternative — one function whose result's mutability
+follows the receiver's — would make `^T` and `^mut T` depend on how the binding two lines
+up was declared, which is precisely the thing the two spellings exist to make local.
+
+**An empty array traps with its own message**, not with the index check's. `&self[0]`
+already trapped, so the safety was there; what was wrong was the sentence, which named a
+`[0]` the caller never wrote and sent them looking for an index bug. One redundant compare
+buys a message that describes what happened. The message is a constant, so `data` stays
+`noalloc` — and it is `pure noalloc`, since taking an address is not an effect.
+
+**`unsafe`, and that is where the real finding was.** Marking it follows `cstring_len`:
+nothing in the body dereferences anything, and the danger is entirely in what the caller
+does next — a pointer into a live `[]T` goes stale on the next `push`, Rust's `as_ptr`
+hazard exactly. But writing the first unsafe function with a `self` receiver revealed that
+**`lyra-E011` did not apply to the method form at all**:
+
+```lyra
+let escapes = (xs: []u8) -> ^u8 => data(xs)     // error: requires an `unsafe` block
+let escapes = (xs: []u8) -> ^u8 => xs.data()    // checked clean
+```
+
+The UFCS rung desugars the receiver into `Arguments` and then calls `inferLambdaCall`
+directly — it is the bare call by that point — but it did not make the check the bare-call
+rung makes two hundred lines away. So the method spelling was a way around the keyword.
+Latent since UFCS landed 08/03 and unobservable until now: every unsafe declaration in the
+language was either an `extern` (whose parameters are C's, never named `self`) or
+`cstring_len`, which takes a `p: ^u8`. Nothing could be called method-style, so nothing
+demonstrated the hole.
+
+This is hazard 8 in a **resolution ladder** rather than in a switch, and it is worth
+naming as such: the ladder's rungs are not cases of one `switch` and no exhaustiveness
+test can compare them, but they are still copies of one question — *what does this call
+call, and what must be true to call it?* — and a rung that answers the first half without
+the second is exactly the silent divergence the rule is about. Both UFCS sites (the plain
+one and the newtype fallback) now call `requireUnsafeCall`.
+
+**`examples/zlib.lyra` is written through it**, which is the proof that matters: `crc32`
+reads `xs.data()`, `compress`/`uncompress` write through `dst.data_mut()`, and the
+round-trip still matches Python's answer byte for byte. One rename went with it — the local
+`data` in `main` became `original`, since the flagship FFI example should not shadow the
+function it is demonstrating.
+
+**Dynamic arrays only**, and the reason is a feature rather than an oversight: a `[N]T`
+carries its size in its type, so it cannot be a generic parameter until const generics
+exist. A fixed buffer still writes `&xs[0]`. That is the first concrete thing on the const
+generics entry's account rather than a hypothetical one.
+
 ### 08/20/26
 **The checklist that adding a node kind never had** — `pkg/ast/exhaustive_test.go`.
 

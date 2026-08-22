@@ -18,23 +18,23 @@
 //! call: between Lyra functions a buffer travels as an ordinary `mut []u8`, so the raw
 //! pointer never outlives the statement that made it.
 
-import std.ffi.{ CBuffer, cstring_len }
+import std.ffi.{ CBuffer, cstring_len, data, data_mut }
 
 let main = () -> u8 => {
   println("zlib ${version()}")
 
-  let data = sample()
-  println("original:   ${data.len()} bytes, crc32 ${checksum(data)}")
+  let original = sample()
+  println("original:   ${original.len()} bytes, crc32 ${checksum(original)}")
 
   var packed: []u8 = [0; CAPACITY]
-  let packed_len = squeeze(data, packed)
+  let packed_len = squeeze(original, packed)
   println("compressed: ${packed_len} bytes")
 
   var back: []u8 = [0; CAPACITY]
   let back_len = expand(packed, packed_len, back)
   println("restored:   ${back_len} bytes")
 
-  if back_len != data.len() || !same(data, back, back_len) {
+  if back_len != original.len() || !same(original, back, back_len) {
     println("MISMATCH")
     return 1
   }
@@ -74,9 +74,9 @@ let sample = pure () -> []u8 => {
 /// crc32 of a whole buffer, which is `crc32`'s own contract: seed with 0, hand it the
 /// bytes, take the answer back.
 ///
-/// The `unsafe` block covers both halves of the call — taking `&xs[0]` needs one as much
-/// as calling a foreign function does.
-let checksum = pure (xs: []u8) -> u64 => unsafe { crc32(0, &xs[0], u32(xs.len())) }
+/// The `unsafe` block covers both halves of the call — `std.ffi`'s `data()` hands out a
+/// pointer into a live buffer, which needs one as much as calling a foreign function does.
+let checksum = pure (xs: []u8) -> u64 => unsafe { crc32(0, xs.data(), u32(xs.len())) }
 
 /// Compress `src` into `dst`, answering how many bytes it took.
 ///
@@ -89,7 +89,7 @@ let checksum = pure (xs: []u8) -> u64 => unsafe { crc32(0, &xs[0], u32(xs.len())
 /// carrying on with an unwritten `dst` would corrupt the comparison rather than fail it.
 let squeeze = (src: []u8, dst: mut []u8) -> i64 => {
   var room: u64 = u64(CAPACITY)
-  let rc = unsafe { compress(&mut dst[0], &mut room, &src[0], u64(src.len())) }
+  let rc = unsafe { compress(dst.data_mut(), &mut room, src.data(), u64(src.len())) }
   if rc != 0 { panic("zlib compress failed") }
   i64(room)
 }
@@ -101,7 +101,7 @@ let squeeze = (src: []u8, dst: mut []u8) -> i64 => {
 /// Traps if zlib refuses, for the same reason.
 let expand = (src: []u8, src_len: i64, dst: mut []u8) -> i64 => {
   var room: u64 = u64(CAPACITY)
-  let rc = unsafe { uncompress(&mut dst[0], &mut room, &src[0], u64(src_len)) }
+  let rc = unsafe { uncompress(dst.data_mut(), &mut room, src.data(), u64(src_len)) }
   if rc != 0 { panic("zlib uncompress failed") }
   i64(room)
 }
