@@ -18,7 +18,7 @@
 //! call: between Lyra functions a buffer travels as an ordinary `mut []u8`, so the raw
 //! pointer never outlives the statement that made it.
 
-import std.ffi.{ CBuffer, cstring_len, data, data_mut }
+import std.ffi.{ CBuffer, CULong, cstring_len, data, data_mut }
 
 let main = () -> u8 => {
   println("zlib ${version()}")
@@ -76,7 +76,10 @@ let sample = pure () -> []u8 => {
 ///
 /// The `unsafe` block covers both halves of the call — `std.ffi`'s `data()` hands out a
 /// pointer into a live buffer, which needs one as much as calling a foreign function does.
-let checksum = pure (xs: []u8) -> u64 => unsafe { crc32(0, xs.data(), u32(xs.len())) }
+///
+/// The `u64(…)` is where the boundary's width stops: `crc32` answers a `CULong`, and
+/// everything above this line is in Lyra's own fixed widths.
+let checksum = pure (xs: []u8) -> u64 => u64(unsafe { crc32(0, xs.data(), u32(xs.len())) })
 
 /// Compress `src` into `dst`, answering how many bytes it took.
 ///
@@ -88,7 +91,7 @@ let checksum = pure (xs: []u8) -> u64 => unsafe { crc32(0, xs.data(), u32(xs.len
 /// Traps if zlib refuses — with a fixed buffer that means the output did not fit, and
 /// carrying on with an unwritten `dst` would corrupt the comparison rather than fail it.
 let squeeze = (src: []u8, dst: mut []u8) -> i64 => {
-  var room: u64 = u64(CAPACITY)
+  var room: CULong = u64(CAPACITY)
   let rc = unsafe { compress(dst.data_mut(), &mut room, src.data(), u64(src.len())) }
   if rc != 0 { panic("zlib compress failed") }
   i64(room)
@@ -100,7 +103,7 @@ let squeeze = (src: []u8, dst: mut []u8) -> i64 => {
 /// # Panics
 /// Traps if zlib refuses, for the same reason.
 let expand = (src: []u8, src_len: i64, dst: mut []u8) -> i64 => {
-  var room: u64 = u64(CAPACITY)
+  var room: CULong = u64(CAPACITY)
   let rc = unsafe { uncompress(dst.data_mut(), &mut room, src.data(), u64(src_len)) }
   if rc != 0 { panic("zlib uncompress failed") }
   i64(room)
@@ -118,8 +121,12 @@ let same = pure (a: []u8, b: []u8, n: i64) -> bool => {
 
 /// `uLong crc32(uLong crc, const Bytef *buf, uInt len)` — a checksum, so `pure` is
 /// honest: it reads the bytes and touches nothing else.
+///
+/// `uLong` is `unsigned long`, which is `std.ffi`'s `CULong`; `uInt` is `unsigned int`,
+/// which is `u32` on every target and needs no alias. See `compress` for why the
+/// distinction is worth making in a program that runs on one platform.
 @link("z")
-unsafe extern pure crc32: (u64, ^u8, u32) -> u64
+unsafe extern pure crc32: (CULong, ^u8, u32) -> CULong
 
 /// `int compress(Bytef *dest, uLongf *destLen, const Bytef *source, uLong sourceLen)`.
 ///
@@ -127,15 +134,18 @@ unsafe extern pure crc32: (u64, ^u8, u32) -> u64
 /// effect, and it allocates nothing the caller does not own — zlib's scratch space comes
 /// and goes inside the call.
 ///
-/// **`uLong` is `unsigned long`**, 64 bits here and 32 on Windows. Written `u64` on the
-/// standing rule that widths at the boundary are fixed; `std.ffi`'s `CULong` is where
-/// that becomes one grep target if a Windows target ever appears.
+/// **`uLong` is `unsigned long`**, 64 bits here and 32 under Windows' LLP64 — the one C
+/// type in this file whose width is not the same everywhere. Written `CULong` rather than
+/// `u64` so that a port changes one line in `std.ffi` and the compiler then points at
+/// every site that has to follow, rather than leaving someone to audit each `u64` and
+/// decide which ones meant `long`. The alias is the *boundary's*: the Lyra functions below
+/// convert to a fixed width at their edge, so the target-dependent type stops there.
 @link("z")
-unsafe extern det noalloc compress: (^mut u8, ^mut u64, ^u8, u64) -> i32
+unsafe extern det noalloc compress: (^mut u8, ^mut CULong, ^u8, CULong) -> i32
 
 /// `int uncompress(Bytef *dest, uLongf *destLen, const Bytef *source, uLong sourceLen)`.
 @link("z")
-unsafe extern det noalloc uncompress: (^mut u8, ^mut u64, ^u8, u64) -> i32
+unsafe extern det noalloc uncompress: (^mut u8, ^mut CULong, ^u8, CULong) -> i32
 
 /// `const char *zlibVersion(void)` — a pointer into zlib's own static storage, which is
 /// why nothing here frees it. Ownership does not cross the boundary in either direction.

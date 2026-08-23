@@ -9,6 +9,51 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (3)
+**`examples/zlib.lyra` uses `CULong`, and the alias could not reach a pointer until it
+did.**
+
+zlib's API is `uLong` — `unsigned long` — in five places: `crc32`'s seed and result, both
+`compress`/`uncompress` length parameters, and the `uLongf *destLen` in/out. The file had
+them written `u64` with a comment saying so and pointing at a `CULong` that did not exist
+yet. It exists, so they are written `CULong`, and the comment now says why rather than
+apologising for not.
+
+**The alias is the boundary's, not the program's.** The three Lyra wrappers convert at
+their edge — `checksum` answers a `u64(…)` of what `crc32` returned — so the
+target-dependent type stops at the wrapper and the rest of the program is in Lyra's fixed
+widths. That is the same division `std.ffi` draws everywhere else, and it is what makes a
+port local: the sites that have to change are the ones that mention `CULong`.
+
+**And it did not work, which is the part worth recording.** `&mut room` on a
+`room: CULong` binding produced `^mut u64`, and the parameter wanted `^mut CULong` —
+different types, so the call was rejected. `resolveTypeWith` had no `RawPointerType` case,
+so the pointee was left an unresolved *name*; a pointee is invariant, so that is not a
+near-miss but a flat rejection.
+
+The function's own doc comment describes this exact failure mode four times over — a
+named element in `[3]Node`, a `weak Node` referent, a type argument in `Box<Pt>`, a
+function type's parameters — each case added after an unresolved name inside a type made
+two spellings of one type compare unequal. Raw pointers landed 08/18 and were never added
+to it. It stayed invisible because a raw pointer's pointee is almost always written as a
+primitive, where there is no name to resolve.
+
+**Second instance in one day**, after `SizeAndAlign`, so the sweep was worth running rather
+than fixing one more. It found no others: the type-variable walks (`Substitute`,
+`CollectTypeVars`, `mentionsGenericParam`, ownership's `substituteTypeVars`) already handle
+pointers, because generics over `^t` landed *with* the feature on 08/19 — verified by
+running a generic whose only type-variable occurrence is inside a pointer. The
+container-shaped switches (`elementType`, `isByteArray`, `iterableElementType`) have no
+pointer case and are right not to.
+
+So the rule 8 lesson is sharper than "grep for the type kind": the family that matters is
+the walks that must reach **every** composite — resolution, layout, substitution,
+retain/drop — and not every switch that happens to mention one.
+
+**One rough edge left standing.** An alias has no constructor, so `CULong(n)` reports
+*"CULong: not a tuple type"* — the juxtaposition path's message, and nothing a reader can
+act on. The spelling is `u64(n)`, and the diagnostic should say so.
+
 ### 08/22/26 (2)
 **`with_cstring`, `with_cstrings`, `CLong`/`CULong` — `std.ffi` is complete, and two
 compiler bugs it walked into.**

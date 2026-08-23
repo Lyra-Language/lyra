@@ -2078,12 +2078,19 @@ primitives. What it wanted, and what each cost:
 **Two compiler bugs the module found, both fixed 08/22**, and both the same shape — one
 missing case in a switch over kinds, with a symptom nowhere near the cause:
 
+- **`resolveTypeWith` had no `RawPointerType` case**, so a pointee was left an
+  unresolved name and `^mut CULong` was not `^mut u64`. A pointee is invariant, so that is
+  a flat rejection rather than a near-miss — and it broke the shape the alias exists for,
+  since a C in/out parameter (`uLongf *destLen`) is a pointer. Found by putting `CULong`
+  into `examples/zlib.lyra`, which is where it is now used.
 - **`SizeAndAlign` had no `RawPointerType` case**, so it was not pointers that failed to
   size but *any aggregate containing one*: `std.ffi`'s own `CBuffer` could not be captured
   by a closure or held in a `[]T`, and a closure could not capture a bare `^u8` — which is
   what every scoped-callback FFI shape is. Found by writing `with_cstring`'s nested form.
-  The lesson rule 8 does not yet state: **a new *type* kind pays the same tax as a new
-  declaration kind**, and nothing enumerates the switches over composite types.
+  The lesson rule 8 now states: **a new *type* kind pays the same tax as a new declaration
+  kind**, and nothing enumerates the switches over composite types. The sweep found only
+  these two — the type-variable walks already handle pointers, since generics over `^t`
+  landed with the feature.
 - **The unused-import walk was blind to signatures hanging off a declaration** rather than
   off a LambdaExpr — an `extern`'s, and a `trait` method's. So `import std.ffi.{ CLong }`
   beside the only construct that can use it warned as unused, which is advice to delete an
@@ -2091,6 +2098,13 @@ missing case in a switch over kinds, with a symptom nowhere near the cause:
   `pkg/ast/exhaustive_test.go`'s `declarationConsumers`, an eleventh entry; the test could
   not have caught it before, since it cannot find a switch nobody registered.
 
+
+- **[OPEN] An alias has no constructor, and says so badly.** `CULong(n)` reports
+  *"CULong: not a tuple type"* — the juxtaposition path's message, since `Name(x)` parses
+  as a constructor call and an alias declares no constructor. The spelling is `u64(n)`, and
+  a reader reaching for the wrapper form has no way to learn that from the diagnostic. It
+  is one arm: a call whose callee names a type *alias* should say that an alias is
+  transparent and name its base's conversion.
 
 ### No `std.libc`, deliberately
 
