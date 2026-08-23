@@ -158,6 +158,14 @@ real failure, and none is local to one package.
      including both loop forms, which had made navigation dead inside every loop body in
      every program. What it cannot do is find a switch nobody registered; adding an entry
      when you add a *consumer* is still manual, and adding a *node* is not.
+   - **A new *type* kind pays the same tax as a new declaration kind, and has no
+     checklist.** `RawPointerType` landed 08/18 and was missing from `SizeAndAlign` until
+     08/22 — where the symptom was not "a pointer has no size" but *any aggregate
+     containing one* failing to lay out, so `std.ffi`'s `CBuffer` could not be captured by
+     a closure or held in a `[]T`. It hid because every pointer test kept its pointers in
+     locals. `exhaustive_test.go` enumerates *declaration* kinds; nothing enumerates the
+     switches over composite types, which is the family `emitRetainValue`/`emitDropValue`
+     and `mentionsTypeVar` also belong to.
    - **Paired walks must be fixed in one change.** `emitRetainValue`/`emitDropValue` both
      lacked `ParameterizedType`; fixing only the drop is an instant double free.
    - **A copy that admits it is a copy is still a copy.** The typechecker's
@@ -880,7 +888,9 @@ needs before touching anything nearby:
   deliberately never had one). It needs no `unsafe`: a wrong library name fails loudly at
   link time, which is exactly what an effect bound does not do.
 
-**`std.ffi` is `CBuffer`/`get`/`cstring_len`/`decode_utf8`/`cstring`/`data`/`data_mut`.**
+**`std.ffi` is `CBuffer`/`get`/`cstring_len`/`decode_utf8`/`cstring`/`with_cstring`/
+`with_cstrings`/`data`/`data_mut`/`CLong`/`CULong`** — complete as of 08/22, and every
+piece of it ordinary Lyra over the primitives.
 `cstring` is the out direction for a string and is a plain `[]u8` — option A, chosen over a
 `CString` type because the dangling shape is already `lyra-E059`, because a struct storing
 the pointer dangles for real on the next `push` (measured), and because the wrapper that
@@ -895,11 +905,26 @@ array with their own message rather than the index check's, and both are **dynam
 only**: a `[N]T` carries its size in its type, so it cannot be a generic parameter until
 const generics exist.
 
-**Both directions work now.** A buffer goes *out* as `xs.data_mut()` plus a length, which
-is what zlib's `compress` takes; a `^u8` coming *back* is read through `p.offset(n)^`, and
+**`with_cstring(s, f)` is the scoped string form, and it is deliberately *not* marked
+`unsafe`.** The rule it establishes: **`unsafe` marks handing a pointer out to keep
+(`data`), not lending one for the duration of a call.** Marking it would have made the
+safer shape the more ceremonious one, since `unsafe` does not cross a lambda boundary — an
+outer block for the call plus an inner one for the foreign call, against the *one* block
+the unscoped `cstring()` spelling costs. The scope is not a lifetime, so
+`s.with_cstring((p) => p)` still compiles; what holds is that the escaped pointer cannot be
+used without `unsafe` at the use site. `with_cstrings(a, b, f)` is the flat two-string
+form — a free function, because neither string is the receiver.
+
+**`CLong`/`CULong` are `pub type` aliases, not newtypes.** They name the one C type whose
+width moves between LP64 and Windows' LLP64. An alias, because changing this one line to
+`i32` already fails every site that passes an `i64`, naming `CLong` in the message —
+nominal identity would tax every crossing on every target to prevent a mixup that is
+either harmless or already a width error.
+
+**Both directions work.** A buffer goes *out* as `xs.data_mut()` plus a length, which is
+what zlib's `compress` takes; a `^u8` coming *back* is read through `p.offset(n)^`, and
 `std.ffi`'s `CBuffer` is the checked wrapper over it (see "Raw pointers" above). What is
-still unbuilt is `with_cstring` and `CLong`/`CULong` — both ordinary Lyra rather than
-blocked. See `todo.md`.
+left at the boundary is the extern tests in CI. See `todo.md`.
 
 **A libc function that Lyra can express is written in Lyra, not bound.** `cstring_len` is
 `strlen` in prelude-style code, because scanning for a zero byte stopped needing C the

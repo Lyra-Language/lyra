@@ -2023,18 +2023,34 @@ What is left is below.
 read direction: a foreign `char*` can be walked, and the walk is bounds-checked. See
 `COMPLETED.md`.
 
-What the module still wants, all of it now ordinary Lyra rather than blocked:
+**[DONE 08/22] The module is complete**, and every piece of it is ordinary Lyra over the
+primitives. What it wanted, and what each cost:
 
 - **[DONE 08/19] `cstring`** — a plain `[]u8`, the caller's to keep alive, with the
   pointer taken at the call site. The reasoning is on the declaration and in
   `COMPLETED.md`; the short form is that the dangling shape is already `lyra-E059`, a
   stored pointer is measurably *worse*, and the wrapper that would genuinely help is the
   scoped `with_cstring` rather than a type.
-- **`with_cstring(s, f)`** — the scoped form, now that a closure can call an extern. Every
-  language shipping a `CString` also ships this and documents it as the default (Swift's
-  `withCString`, Haskell's, C#'s `fixed`), because it is the only shape where the pointer
-  cannot outlive the buffer. Two things to settle first: it nests badly for a C function
-  taking two strings, and a closure allocates, so a `noalloc` caller cannot use it.
+- **[DONE 08/22] `with_cstring(s, f)`**, and `with_cstrings(a, b, f)` beside it. Both
+  settled questions this entry raised, and neither the way it expected. See `COMPLETED.md`.
+  - **Not marked `unsafe`**, which is the decision the whole feature turns on: it lends a
+    pointer for a call and takes it back, where `data` hands one out to keep. Marking it
+    would have made the *safer* shape the more ceremonious one — an outer block for this
+    call plus an inner one for the foreign call, since `unsafe` does not cross a lambda
+    boundary — and a safer shape that costs more is one nobody reaches for. Measured
+    against the unscoped spelling it now costs exactly the same one block, at the foreign
+    call, and removes the lifetime obligation.
+  - **The scope is not a lifetime**, so this entry's "the only shape where the pointer
+    cannot outlive the buffer" was too strong: `s.with_cstring((p) => p)` compiles. Closing
+    it needs a lifetime system. What holds meanwhile is that the escaped pointer cannot be
+    *used* without `unsafe` at the use site.
+  - **The nesting worry was a lowering bug, not an ergonomic one.** Nesting did not
+    compile at all — a closure could not capture a `^u8` — which is fixed (below). It now
+    reads two levels deep, which is what `with_cstrings` is for: a free function rather
+    than a method, because the two strings are peers.
+  - **`pure`, not `noalloc`.** The copy is an allocation and stays visible; the callback's
+    effects are the call's, so a `pure` caller may pass a `pure` callback and is refused an
+    impure one. No bound had to be invented for it — the polymorphism already existed.
 - **[DONE 08/22] `xs.data() -> ^t`**, and `xs.data_mut() -> ^mut t` beside it — a
   buffer's base pointer, which every "pointer plus a length" call needs and which
   `&mut xs[0]` spelled by hand. Ordinary generic Lyra over `&self[0]`, so it cost the
@@ -2049,8 +2065,32 @@ What the module still wants, all of it now ordinary Lyra rather than blocked:
     escaped the check entirely, because the UFCS rung desugars to a bare call and did not
     make the check the bare-call rung makes. Latent since UFCS landed 08/03 and invisible
     until `data` became the first unsafe function with a `self` receiver. Fixed with it.
-- **`CLong`/`CULong`** — the newtypes the width section names, so the one type that moves
-  between LP64 and Windows is a grep target rather than an audit.
+- **[DONE 08/22] `CLong`/`CULong`** — **aliases**, not the newtypes this entry recorded,
+  and the program is the argument. A newtype would demand `CLong(n)` at every crossing and
+  `i64(r)` at every result, on every target, forever, to prevent a mixup that is either
+  harmless (LP64, where the types coincide) or already a width error (LLP64): change the
+  alias to `i32` and every site passing an `i64` fails to compile, naming `CLong` in the
+  message. The precedent is the prelude's `Index`/`Length`. The rule for a third is
+  written on the declaration: an alias earns its place when a C type's width differs
+  across targets Lyra intends to support — `wchar_t` is the next candidate, `int` and
+  `size_t` are not candidates at all.
+
+**Two compiler bugs the module found, both fixed 08/22**, and both the same shape — one
+missing case in a switch over kinds, with a symptom nowhere near the cause:
+
+- **`SizeAndAlign` had no `RawPointerType` case**, so it was not pointers that failed to
+  size but *any aggregate containing one*: `std.ffi`'s own `CBuffer` could not be captured
+  by a closure or held in a `[]T`, and a closure could not capture a bare `^u8` — which is
+  what every scoped-callback FFI shape is. Found by writing `with_cstring`'s nested form.
+  The lesson rule 8 does not yet state: **a new *type* kind pays the same tax as a new
+  declaration kind**, and nothing enumerates the switches over composite types.
+- **The unused-import walk was blind to signatures hanging off a declaration** rather than
+  off a LambdaExpr — an `extern`'s, and a `trait` method's. So `import std.ffi.{ CLong }`
+  beside the only construct that can use it warned as unused, which is advice to delete an
+  import the program cannot compile without. `collectRefsByFile` is now registered in
+  `pkg/ast/exhaustive_test.go`'s `declarationConsumers`, an eleventh entry; the test could
+  not have caught it before, since it cannot find a switch nobody registered.
+
 
 ### No `std.libc`, deliberately
 

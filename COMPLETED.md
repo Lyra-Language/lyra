@@ -9,6 +9,84 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (2)
+**`with_cstring`, `with_cstrings`, `CLong`/`CULong` — `std.ffi` is complete, and two
+compiler bugs it walked into.**
+
+Three items, and the interesting part of each is where it landed differently from the plan
+`todo.md` recorded.
+
+**`with_cstring` is not marked `unsafe`.** The entry assumed it would be — it hands a raw
+pointer to a callback — and writing it the marked way showed why that is wrong. `unsafe`
+does not cross a lambda boundary, so a marked `with_cstring` costs an outer block for the
+call *and* an inner one for the foreign call inside the callback:
+
+```lyra
+unsafe { path.with_cstring((p) => unsafe { open(p, 0) }) }   // marked: two blocks
+path.with_cstring((p) => unsafe { open(p, 0) })              // unmarked: one
+var buf = path.cstring(); unsafe { open(buf.data(), 0) }     // unscoped: one, plus a rule
+```
+
+The unscoped spelling — the one this function exists to replace — costs one block. So
+marking it would have made the *safer* shape the more ceremonious one, and a safer shape
+that costs more is a shape nobody reaches for. Unmarked it costs exactly what the unscoped
+form costs and removes the lifetime obligation, which is the entire trade.
+
+The rule that falls out is statable and now written down: **`unsafe` marks handing a
+pointer out to keep (`data`), not lending one for the duration of a call.** It is the same
+line `CBuffer.get` sits on — an obligation discharged rather than passed on.
+
+**And the entry's claim for the shape was too strong.** "The only shape where the pointer
+cannot outlive the buffer" is not true here: `s.with_cstring((p) => p)` compiles, because
+Lyra cannot say that `f` may not keep what it was handed. Closing that needs a lifetime
+system. What holds meanwhile is that the escaped pointer cannot be *used* without `unsafe`
+at the use site — `p^`, `p.offset(n)` and a foreign call are each marked where they are —
+which is where this language marks memory-unsafety everywhere else.
+
+**`with_cstrings` exists because nesting was broken, not because it was ugly.** The entry
+worried that a two-string call "nests badly". It did not nest at all: a closure could not
+capture a `^u8`, so the nested form failed in the backend. With that fixed it nests fine
+and reads two levels deep, which is what the flat form is for — a free function rather
+than a method, because neither string is the receiver.
+
+**`CLong`/`CULong` are aliases, not newtypes**, reversing what was recorded, and the
+program is the argument. A newtype demands `CLong(n)` at every crossing and `i64(r)` at
+every result, on every target, forever — to prevent a mixup that is either harmless (LP64,
+where the two coincide) or already caught (LLP64: change the alias to `i32` and every site
+passing an `i64` fails to compile, naming `CLong` in the message). The nominal identity is
+paid for everywhere and buys nothing the width check does not already give. The precedent
+is the prelude's `Index`/`Length`. The rule for adding a third is on the declaration: an
+alias earns its place when a C type's width differs across targets Lyra intends to support
+— `wchar_t` next, `int` and `size_t` never.
+
+### The two bugs, both one missing case in a switch
+
+**`SizeAndAlign` had no `RawPointerType` case.** The symptom was never "a pointer has no
+size" — it was *any aggregate containing one* failing to lay out. `std.ffi`'s own `CBuffer`
+could not be captured by a closure (`cannot size captured binding`) or held in a `[]T`
+(`cannot size dynamic array element type`), and a bare `^u8` could not be captured at all,
+which is what every scoped-callback FFI shape is. Three lines to fix, and it had been there
+since raw pointers landed on 08/18 — invisible because the pointer tests all kept their
+pointers in locals.
+
+The lesson rule 8 does not yet state: **a new *type* kind pays the same tax as a new
+declaration kind.** `pkg/ast/exhaustive_test.go` enumerates declaration kinds and the
+switches over them; nothing enumerates the switches over composite *types*, and this is the
+family `emitRetainValue`/`emitDropValue` and `mentionsTypeVar` also belong to.
+
+**The unused-import walk was blind to a signature hanging off a declaration** rather than
+off a LambdaExpr — an `extern`'s, and a `trait` method's. So `import std.ffi.{ CLong }`
+beside `unsafe extern pure labs: (CLong) -> CLong` — the only construct that can use it —
+warned that the import was unused. That is advice to delete an import the program cannot
+compile without, which is precisely the failure the function's own doc comment describes
+having fixed for struct literals and signatures on 08/14. `collectRefsByFile` is now
+registered in `declarationConsumers`, the eleventh entry; the test could not have caught it
+before, since it cannot find a switch nobody registered. Verified by deleting the case and
+watching it fail.
+
+**What is left at the boundary** is no longer a `std.ffi` gap: the extern tests in CI, and
+a lifetime system if the `(p) => p` escape ever justifies one.
+
 ### 08/22/26
 **`xs.data()` — the buffer direction of the C boundary, and the E011 hole it found.**
 

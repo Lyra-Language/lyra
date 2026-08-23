@@ -165,6 +165,73 @@ pub let cstring = pure (self: string) -> []u8 => {
 }
 
 
+/// Run `f` with a NUL-terminated copy of `self`, and throw the copy away after.
+///
+/// ```
+/// import std.ffi.{ with_cstring }
+///
+/// let fd = path.with_cstring((p) => unsafe { open(p, 0) })
+/// ```
+///
+/// **The scoped form every language with an FFI ships**, and documents as the default:
+/// Swift's `withCString`, Haskell's, C#'s `fixed`. The reason is always the same — the
+/// buffer's lifetime is the call's, so there is no moment at which the pointer is valid
+/// and the bytes are not. Compare the unscoped spelling, where keeping the buffer alive is
+/// a rule the author has to remember and nothing checks:
+///
+/// ```
+/// var buf = path.cstring()                        // must outlive the call…
+/// let fd = unsafe { open(buf.data(), 0) }
+/// ```
+///
+/// **Not marked `unsafe`, and that is the whole point of it.** `data` is marked because it
+/// hands a pointer *out to keep*; this lends one for the duration of a call and takes it
+/// back, which is the obligation being discharged rather than passed on — the same reason
+/// `CBuffer.get` is not marked either. Marking it would have made the safer shape the more
+/// ceremonious one (an outer block for this call, an inner one for the foreign call, since
+/// `unsafe` does not cross a lambda boundary), and a safer shape that costs more is a
+/// shape nobody reaches for.
+///
+/// The one hole is that a scope is not a lifetime: Lyra cannot say that `f` may not keep
+/// what it was handed, so `s.with_cstring((p) => p)` compiles and yields a pointer into
+/// freed memory. Closing it needs a lifetime system. What holds meanwhile is that such a
+/// pointer cannot be *used* without `unsafe` — `p^`, `p.offset(n)` and a foreign call are
+/// each marked at their own site, which is where this language marks memory-unsafety
+/// everywhere else.
+///
+/// **`pure`, and it cannot be `noalloc`.** The effect of a call is this function's base
+/// effect plus the callback's, so a `pure` caller may pass a `pure` callback and is refused
+/// an impure one — the polymorphism the prelude's combinators already rely on. The copy is
+/// an allocation, and that it is visible is the point rather than the cost.
+pub let with_cstring = pure (self: string, f: (^u8) -> t) -> t => {
+  var buf = self.cstring()
+  f(unsafe { buf.data() })
+}
+
+/// The same, for a C function taking **two** strings — `strcmp`, `fopen`, `setenv`,
+/// `symlink`.
+///
+/// ```
+/// import std.ffi.{ with_cstrings }
+///
+/// let f = with_cstrings(path, mode, (p, m) => unsafe { fopen(p, m) })
+/// ```
+///
+/// **A free function, not a method, because the two strings are peers.** Neither is the
+/// receiver, and `path.with_cstring2(mode, …)` would claim one is.
+///
+/// It exists for the drift. Nesting works — both buffers are ordinary locals, and a
+/// closure may capture a `^u8` as of 08/22 — but it reads as
+/// `path.with_cstring((p) => mode.with_cstring((m) => unsafe { fopen(p, m) }))`, two
+/// levels deep for one call, and two-string C functions are common enough to be worth a
+/// flat spelling. Both buffers are locals of one frame here. Three strings is rare enough
+/// to nest.
+pub let with_cstrings = pure (a: string, b: string, f: (^u8, ^u8) -> t) -> t => {
+  var first = a.cstring()
+  var second = b.cstring()
+  f(unsafe { first.data() }, unsafe { second.data() })
+}
+
 /// The address of a buffer's first element, to hand to a C function taking a pointer and
 /// a length.
 ///
@@ -216,3 +283,36 @@ pub let data_mut = unsafe pure noalloc (self: mut []t) -> ^mut t => {
   if self.len() == 0 { panic("std.ffi: data_mut() on an empty array") }
   &mut self[0]
 }
+
+/// C's `long`, and the only integer whose width is not the same on every target Lyra
+/// might compile for.
+///
+/// `long` is 64 bits under LP64 (macOS, Linux, the BSDs) and **32** under Windows' LLP64,
+/// where only pointers widen. Everything else in the C mapping is fixed: `int` is 32 bits
+/// on both, `size_t` and a pointer are 64 on both, and the explicit widths are explicit.
+/// So this is the one place a port has to visit, and naming it is what makes that a grep
+/// rather than an audit of every `extern` in the program.
+///
+/// ```
+/// import std.ffi.{ CLong }
+///
+/// unsafe extern pure labs: (CLong) -> CLong
+/// ```
+///
+/// **An alias rather than a `newtype`**, which reverses what `todo.md` recorded, and the
+/// program is the argument. A newtype would demand `CLong(n)` at every crossing and
+/// `i64(r)` at every result, on every target, forever — and buy nothing, because the thing
+/// it would catch is already caught: change this line to `i32` and every site that passes
+/// an `i64` fails to compile, naming `CLong` in the message. The nominal identity would be
+/// paid for on all targets to prevent a mixup that is either harmless (LP64, where the
+/// types coincide) or already a width error (LLP64). The precedent is the prelude's
+/// `Index`/`Length` — a name for an `i64` that says what it means.
+///
+/// **The rule for adding a third**: an alias here earns its place when a C type's width
+/// differs across targets Lyra intends to support. `wchar_t` (16 on Windows, 32 elsewhere)
+/// is the next candidate; `int`, `size_t` and the explicit widths are not candidates at
+/// all, and giving them names would bury the two that matter.
+pub type CLong = i64
+
+/// C's `unsigned long` — the same story as [CLong], unsigned.
+pub type CULong = u64

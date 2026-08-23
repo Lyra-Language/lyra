@@ -337,6 +337,82 @@ let main = () -> void => { print("${head([9, 8, 7])}") }
 	}
 }
 
+// `with_cstring` — the scoped form, checked through libc so what is asserted is what C
+// reads. The buffer's lifetime is the call's, which is the whole reason to prefer it over
+// `cstring()` plus a pointer taken by hand.
+func TestExec_WithCStringLendsTheBufferForTheCall(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.ffi.{ with_cstring }
+unsafe extern pure strlen: (^u8) -> u64
+let main = () -> void => {
+  print("${"hello λ".with_cstring((p) => unsafe { strlen(p) })}")
+}
+`, "")
+	// Eight bytes for seven characters: the lambda is two.
+	if got := strings.TrimSpace(out); got != "8" {
+		t.Errorf("with_cstring = %q; want \"8\"", got)
+	}
+}
+
+// **It is not marked `unsafe`**, which is a decision rather than an omission: it lends a
+// pointer for the duration of a call and takes it back, where `data` hands one out to
+// keep. Asserted as a *check* — a safe caller with no `unsafe` block of its own around
+// the call must compile — because the alternative made the safer shape the more
+// ceremonious one.
+func TestCheck_WithCStringNeedsNoUnsafeAtTheCall(t *testing.T) {
+	t.Parallel()
+	errs := checkWithPrelude(t, `
+module main
+import std.ffi.{ with_cstring }
+unsafe extern pure strlen: (^u8) -> u64
+let main = () -> void => { println("${"hi".with_cstring((p) => unsafe { strlen(p) })}") }
+`)
+	if len(errs) != 0 {
+		t.Errorf("with_cstring must be callable without an enclosing unsafe block; got %v", errs)
+	}
+}
+
+// The effect polymorphism the prelude's combinators rely on, at this boundary: a `pure`
+// caller may pass a `pure` callback, and an impure one is refused *at the call site*.
+// That is why no bound beyond `pure` is written on with_cstring — the callback's effects
+// are the call's.
+func TestCheck_WithCStringIsPolymorphicInItsCallback(t *testing.T) {
+	t.Parallel()
+	errs := checkWithPrelude(t, `
+module main
+import std.ffi.{ with_cstring }
+unsafe extern pure strlen: (^u8) -> u64
+let ok = pure () -> u64 => "hi".with_cstring((p) => unsafe { strlen(p) })
+let bad = pure () -> u64 => "hi".with_cstring((p) => { println("boom"); unsafe { strlen(p) } })
+let main = () -> void => { println("${ok()}") }
+`)
+	if len(errs) != 1 || !strings.Contains(errs[0], "impure") {
+		t.Errorf("want exactly one impure-callback error, got %v", errs)
+	}
+}
+
+// `with_cstrings` — the flat two-string form, and the nested spelling it exists to spare
+// the reader. Both are run: the nested one is also the regression guard for a closure
+// capturing a `^u8`, which did not lower until 08/22.
+func TestExec_WithCStringsFlatAndNested(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.ffi.{ with_cstring, with_cstrings }
+unsafe extern pure strcmp: (^u8, ^u8) -> i32
+let main = () -> void => {
+  print("${with_cstrings("abc", "abd", (x, y) => unsafe { strcmp(x, y) })} ")
+  print("${with_cstrings("abc", "abc", (x, y) => unsafe { strcmp(x, y) })} ")
+  print("${"abc".with_cstring((x) => "abd".with_cstring((y) => unsafe { strcmp(x, y) }))}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "-1 0 -1" {
+		t.Errorf("with_cstrings = %q; want \"-1 0 -1\"", got)
+	}
+}
+
 // **A raw pointer has a size**, which is what lets an aggregate holding one be captured
 // by a closure or held in a `[]T`. `SizeAndAlign` had no case for `^T` until 08/22, and
 // the symptom was never "a pointer has no size": `std.ffi`'s own `CBuffer` could not be
@@ -358,5 +434,26 @@ let main = () -> void => {
 `, "")
 	if got := strings.TrimSpace(out); got != "65 66 65" {
 		t.Errorf("captured/stored pointer = %q; want \"65 66 65\"", got)
+	}
+}
+
+// `CLong`/`CULong` cross an extern boundary and are the plain widths on the other side —
+// the point of the alias being that it names the one C type whose width moves between
+// LP64 and Windows' LLP64, without taxing every call site the way a newtype would.
+func TestExec_CLongCrossesTheBoundaryAsItsWidth(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.ffi.{ CLong, CULong, with_cstring }
+unsafe extern pure labs: (CLong) -> CLong
+unsafe extern pure strtoul: (^u8, ^u8, i32) -> CULong
+let main = () -> void => {
+  let n: i64 = -42
+  let m: u64 = "1234".with_cstring((p) => unsafe { strtoul(p, p, 10) })
+  print("${unsafe { labs(n) }} ${m}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "42 1234" {
+		t.Errorf("CLong round trip = %q; want \"42 1234\"", got)
 	}
 }
