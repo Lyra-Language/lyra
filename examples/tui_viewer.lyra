@@ -181,5 +181,3 @@ let status = pure (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i6
     "arrows/click move · wheel zooms · q quits "
   inverse() ++ (bold() ++ (fit(text, cols) ++ reset()))
 }
-
-let clamp = pure (v: i64, lo: i64, hi: i64) -> i64 => if v < lo { lo } else if v > hi { hi } else { v }

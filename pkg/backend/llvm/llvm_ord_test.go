@@ -1,6 +1,8 @@
 package llvm
 
 import (
+	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -144,5 +146,93 @@ let main = () -> void => {
 	want := "true true true\ntrue true true"
 	if got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "")); got != want {
 		t.Errorf("got:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// `min`/`max`/`clamp` — the prelude's, generic over `where t: Ord`, run rather than only
+// checked. Every type with an ordering: the default integer width, a string, a rune.
+func TestExec_MinMaxClampOverOrd(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+let main = () -> void => {
+  print("${3.min(5)} ${min(3, 5)} ${max(3, 5)} ")
+  print("${(7).clamp(0, 3)} ${(-2).clamp(0, 3)} ${(2).clamp(0, 3)} ")
+  print("${"b".min("a")} ${'z'.max('c')}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "3 3 5 3 0 2 a z" {
+		t.Errorf("min/max/clamp = %q; want \"3 3 5 3 0 2 a z\"", got)
+	}
+}
+
+// **Ties go to `self` for `min` and to `other` for `max`**, so the pair still names both
+// values when two compare equal but are not interchangeable. Asserted on a type ordered
+// by one field while carrying another, since on a scalar the rule is unobservable — which
+// is exactly why it would otherwise be got wrong and never noticed.
+//
+// Card is deliberately **not** `pub`: it was, for as long as a specialization of a prelude
+// generic at a privately declared type failed to lower, and that is fixed (08/22).
+func TestExec_MinAndMaxSplitATie(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+struct Card { rank: i64, suit: string }
+impl Ord for Card { compare = pure (self, other) => self.rank <=> other.rank }
+let main = () -> void => {
+  let a = Card { rank: 7, suit: "hearts" }
+  let b = Card { rank: 7, suit: "spades" }
+  print("${a.min(b).suit} ${a.max(b).suit}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "hearts spades" {
+		t.Errorf("tie-breaking = %q; want \"hearts spades\" (min keeps self, max takes other)", got)
+	}
+}
+
+// A reversed range describes an empty one, so there is no nearest value to answer with.
+// Returning either bound would pick one arbitrarily and hide the mistake that produced it.
+func TestExec_ClampWithAReversedRangeTraps(t *testing.T) {
+	t.Parallel()
+	out, err := exec.Command(preludeBinary(t, `
+module main
+let main = () -> void => { println("${(5).clamp(10, 0)}") }
+`)).CombinedOutput()
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 101 {
+		t.Fatalf("clamp with lo > hi must trap; got %v", err)
+	}
+	if !strings.Contains(string(out), "lo is greater than hi") {
+		t.Errorf("output = %q; want the reversed-range message", out)
+	}
+}
+
+// The primitive `Ord` impls exist **so a bound can be satisfied**, on the same footing as
+// math.lyra's arithmetic impls — and the body's `<=>` is the machine comparison, not
+// recursion, because a primitive is never routed through an impl. Asserted by demanding
+// the bound of a number at all, which is what failed before they existed.
+//
+// The **free-function** form is deliberate: `best.max(x)` on a receiver whose type is a
+// bare type parameter does not resolve — UFCS dispatches on the receiver's type, and a
+// type variable has none, so the ladder consults only the trait bounds. `max(best, x)` is
+// the same call and works. In todo.md; the diagnostic there is misleading, since it asks
+// for a `where` bound that is already written.
+func TestExec_APrimitiveSatisfiesAnOrdBound(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+let largest<t> where t: Ord = pure noalloc (xs: []t, seed: t) -> t => {
+  var best = seed
+  for x in xs { best = max(best, x) }
+  best
+}
+let main = () -> void => {
+  var ns: []i64 = [3, 11, 7]
+  var ws: []u8 = [3, 11, 7]
+  print("${largest(ns, 0)} ${largest(ws, u8(0))}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "11 11" {
+		t.Errorf("bounded max = %q; want \"11 11\"", got)
 	}
 }

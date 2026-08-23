@@ -54,6 +54,67 @@ why every program written so far has worked: the idiom that fails is the one nob
 written down. Confirmed pre-existing against HEAD and recorded as grammar work in
 `todo.md`.
 
+### 08/22/26 (5)
+**`min`/`max`/`clamp` in the prelude, and the three gaps writing them found.**
+
+Generic over `where t: Ord`, with a `self` receiver so `a.min(b)` and `min(a, b)` are the
+same call. Three private copies are gone with them: `std/tui/style.lyra`'s, and one each in
+`examples/mandelbrot_tui.lyra` and `examples/tui_viewer.lyra` — which is what the entry
+meant by "every program that fits something to a window writes its own".
+
+**The primitive `Ord` impls had to come first**, ten integer widths plus `rune`, and they
+are `math.lyra`'s arithmetic impls exactly: they exist **so a bound can be satisfied**, not
+so a call can dispatch. `3 < 5` is a machine compare whatever a program declares, so the
+body's `self <=> other` is the operator and not recursion. Without them `where t: Ord` is
+undemandable of a number, which is to say `min` is unwritable for the types that want it
+most.
+
+**Floats are excluded, and that is the recorded decision being respected rather than
+re-opened.** `<=>` refuses them because NaN is neither less than, equal to nor greater than
+anything and a three-way answer has to pick one; the partial-ordering design is open in
+`todo.md` and explicitly *"deferred rather than guessed"*. An `impl Ord for f64` would be
+that guess, made once here and inherited by every generic that sorts or ranks. So
+`min(1.5, 2.5)` is a compile error, and on concrete floats `if a < b { a } else { b }` is a
+machine compare that works today.
+
+**Ties are split**: `min` keeps `self`, `max` takes `other`. On a scalar that is
+unobservable, which is exactly why it would be got wrong and never noticed — so it is
+asserted on a type ordered by one field while carrying another. The reason is that
+`min(a, b)` and `max(a, b)` between them should still name *both* values; had both kept
+`self`, the pair would answer `a` twice and `b` would vanish. Rust's `Ord::min`/`max` split
+it the same way.
+
+**`clamp` traps on `lo > hi`**, which describes an empty range and so has no nearest value
+to answer with. Returning either bound would pick one arbitrarily and hide the mistake that
+produced the reversed pair. The message is a constant, so it stays `noalloc`.
+
+### Three gaps, none of them fixed here
+
+Each is recorded in `todo.md` with its repro. None is caused by this change; all three are
+what writing an ordinary generic prelude function walks into.
+
+- **An untyped literal argument defaults before the type variable is solved.**
+  `count.min(80)` on a `u8` reports *"cannot infer type variable t"*, because
+  `solveTypeVars` promotes the literal to `i64` before unifying and the two arguments then
+  bind `t` inconsistently. It is documented behaviour with a workaround (`u8(80)`), and on
+  `i64` nothing is needed — but `min`/`max`/`clamp` put it in front of every program using
+  a narrow width. The mechanism to fix it is *in the same function*: an un-annotated lambda
+  is already deferred to a second pass because it cannot be inferred until it knows what is
+  expected of it, and an untyped literal is that shape exactly.
+
+- **A method call on a bare type parameter does not reach UFCS.** Inside `where t: Ord`,
+  `best.max(x)` asks for a `where` bound that is already written, while `max(best, x)` is
+  the same call and compiles. UFCS dispatches on the receiver's type and a type variable
+  has none.
+
+- **A prelude generic at a *privately* declared struct does not lower** —
+  `m.unwrap_or(other)` on a `Maybe<Card>` dies with `llvm: unknown named type "Card"`, and
+  adding `pub` fixes it. `declareSpecialization` enters the module of the generic function
+  so its signature's names resolve, but a *type argument* comes from the caller's module
+  and is keyed `<module>::<name>` when private, so entering one module cannot serve both.
+  The `pub` in this session's tie-breaking test is that bug and is commented as such,
+  because a workaround left unlabelled reads as a preference.
+
 ### 08/22/26 (4)
 **`lyra-E064` — an alias applied to an operand says which spelling was wanted.**
 

@@ -1,5 +1,6 @@
 module std.prelude
-//! Comparison: `Ordering`, the `Ord` and `Eq` traits, and the ordering of `string`.
+//! Comparison: `Ordering`, the `Ord` and `Eq` traits, the ordering of the primitives,
+//! and `min`/`max`/`clamp` over any of them.
 
 // Note on the layout of this file, which holds for the whole prelude: an implementation
 // note written as `//` goes *above* the `///` block, never between it and the
@@ -126,5 +127,109 @@ impl Ord for string {
   compare = pure (self, other) => {
     let c = self.compare_bytes(other);
     if c < 0 { Less } else if c > 0 { Greater } else { Equal }
+  }
+}
+
+// The primitive orderings, and they exist for the same reason `math.lyra`'s arithmetic
+// impls do: **so a bound can be satisfied**, not so a call can dispatch. `3 < 5` is a
+// machine compare whatever a program declares — a primitive is never routed through an
+// impl — so the body's `self <=> other` is the machine operator and not recursion. Without
+// them `where t: Ord` is undemandable of a number, which makes `min`, `max`, `clamp` and
+// every generic comparison below unwritable for the types that need them most.
+//
+// **The floats are absent, deliberately.** `<=>` refuses them because NaN is neither less
+// than, equal to nor greater than anything, and a three-way answer has to pick one; an
+// `Ord` impl for `f64` would be that guess, made once here and inherited by every generic
+// that sorts, ranks or picks a maximum. The partial-ordering design (a second `Ordering`
+// type, or a fourth variant) is open in `todo.md` and is deferred rather than guessed, so
+// `min(1.5, 2.5)` is a compile error today. On concrete floats `if a < b { a } else { b }`
+// is a machine compare and works, which is what a program should write meanwhile.
+//
+// `bool` is absent because `<=>` does not take it, and there is no order on true/false
+// worth inventing here.
+
+/// Ordering for `i8`, by the machine comparison `<=>` already makes.
+impl Ord for i8 { compare = pure noalloc (self, other) => self <=> other }
+/// Ordering for `i16`, by the machine comparison `<=>` already makes.
+impl Ord for i16 { compare = pure noalloc (self, other) => self <=> other }
+/// Ordering for `i32`, by the machine comparison `<=>` already makes.
+impl Ord for i32 { compare = pure noalloc (self, other) => self <=> other }
+/// Ordering for `i64`, by the machine comparison `<=>` already makes.
+impl Ord for i64 { compare = pure noalloc (self, other) => self <=> other }
+/// Ordering for `i128`, by the machine comparison `<=>` already makes.
+impl Ord for i128 { compare = pure noalloc (self, other) => self <=> other }
+/// Ordering for `u8`, by the machine comparison `<=>` already makes.
+impl Ord for u8 { compare = pure noalloc (self, other) => self <=> other }
+/// Ordering for `u16`, by the machine comparison `<=>` already makes.
+impl Ord for u16 { compare = pure noalloc (self, other) => self <=> other }
+/// Ordering for `u32`, by the machine comparison `<=>` already makes.
+impl Ord for u32 { compare = pure noalloc (self, other) => self <=> other }
+/// Ordering for `u64`, by the machine comparison `<=>` already makes.
+impl Ord for u64 { compare = pure noalloc (self, other) => self <=> other }
+/// Ordering for `u128`, by the machine comparison `<=>` already makes.
+impl Ord for u128 { compare = pure noalloc (self, other) => self <=> other }
+/// Ordering for `rune`, which is **code-point order** — the order the underlying i32
+/// has, and not an alphabetical or locale-aware one, exactly as `impl Ord for string` is
+/// lexicographic by code point rather than by collation.
+impl Ord for rune { compare = pure noalloc (self, other) => self <=> other }
+
+// **The three below take a `self` receiver**, so `a.min(b)` and `min(a, b)` are the same
+// call and an author picks whichever reads better at the site. They are `pure noalloc`,
+// so they are usable from code with either bound.
+//
+// **One sharp edge, on a width narrower or wider than `i64`.** An untyped literal argument
+// settles to its default width *before* the type variable is solved (`solveTypeVars`), so
+// `count.min(80)` on a `u8` reports *"cannot infer type variable t"* rather than binding
+// `t = u8` — the literal has already become an `i64` and the two bindings disagree. The
+// spelling that works is `count.min(u8(80))`, and on an `i64` (the default, and what a
+// terminal coordinate is) nothing is needed. Solving this wants the untyped argument
+// deferred the way an un-annotated lambda already is; it is in `todo.md`.
+
+/// The smaller of two values, or `self` when they compare equal.
+///
+/// ```
+/// let width = requested.min(terminal_width)
+/// ```
+///
+/// **Both spellings work**, because the first parameter is named `self`: `a.min(b)` and
+/// `min(a, b)` are the same call. The method form is what reads well in a chain
+/// (`count.min(cap).max(0)`); the free form is what reads well when neither argument is
+/// the subject.
+///
+/// **Ties go to `self`, and `max` gives them to `other`** — so `min(a, b)` and `max(a, b)`
+/// between them still name *both* values when the two compare equal but are not
+/// interchangeable (a struct ordered on one field, say). Had both returned `self`, the
+/// pair would answer `a` twice and the other value would simply vanish. It is the same
+/// rule Rust's `Ord::min`/`max` follow, for the same reason.
+pub let min<t> where t: Ord = pure noalloc (self: t, other: t) -> t =>
+  match self.compare(other) { Greater => other, _ => self }
+
+/// The larger of two values, or `other` when they compare equal — see [min] for why the
+/// tie goes the other way.
+pub let max<t> where t: Ord = pure noalloc (self: t, other: t) -> t =>
+  match self.compare(other) { Less => other, Equal => other, Greater => self }
+
+/// `self` restricted to the range `lo..=hi`.
+///
+/// ```
+/// let row = cursor.clamp(0, rows - 1)
+/// ```
+///
+/// **Clamping is the alternative to trapping**, and the reason to reach for it: an index
+/// out of bounds is a bug and `xs[i]` traps, but a value being *fitted* to a window is
+/// ordinary — a scroll position past the end of a document, a colour past the end of a
+/// gradient — and the appropriate answer is the nearest one in range rather than the end
+/// of the program.
+///
+/// # Panics
+/// Traps if `lo > hi`, which describes an empty range and so has no nearest value to
+/// answer with. Returning either bound would pick one arbitrarily and hide the mistake
+/// that produced the reversed pair, which is the silently-wrong answer this language
+/// refuses everywhere else. The message is a constant, so `clamp` allocates nothing.
+pub let clamp<t> where t: Ord = pure noalloc (self: t, lo: t, hi: t) -> t => {
+  match lo.compare(hi) { Greater => panic("clamp: lo is greater than hi"), _ => {} }
+  match self.compare(lo) {
+    Less => lo,
+    _ => match self.compare(hi) { Greater => hi, _ => self },
   }
 }

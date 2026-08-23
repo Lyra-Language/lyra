@@ -198,8 +198,6 @@ let teardown = () => {
   set_raw_mode(false)
 }
 
-let clamp = pure (v: i64, lo: i64, hi: i64) -> i64 => if v < lo { lo } else if v > hi { hi } else { v }
-
 /// Draw one whole frame: rows of the set, then the status line, in a single write.
 ///
 /// Takes the **terminal** size and calls `contain_set` itself, rather than being handed a

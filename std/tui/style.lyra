@@ -104,11 +104,9 @@ pub let dim = pure () -> string => "\e[2m"
 /// it needs no assumption about what the user's colours are.
 pub let inverse = pure () -> string => "\e[7m"
 
-/// `v` restricted to `lo..=hi`. Local rather than exported: a general clamp belongs in
-/// the prelude beside the other numeric helpers, not in the terminal library.
-let clamp = pure noalloc (v: i64, lo: i64, hi: i64) -> i64 =>
-  if v < lo { lo } else if v > hi { hi } else { v }
-
 /// The cube's per-component range, which is 0–5 and not 0–255 — the frequent mistake,
 /// since every other RGB API in the world uses bytes.
-let clamp05 = pure noalloc (v: i64) -> i64 => clamp(v, 0, 5)
+///
+/// `clamp` itself is the prelude's as of 08/22; this file carried a private copy of it
+/// until there was somewhere shared to put one.
+let clamp05 = pure noalloc (v: i64) -> i64 => v.clamp(0, 5)

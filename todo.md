@@ -3286,9 +3286,39 @@ recommending — write the program someone would actually write, and see what it
   spelling the parser rejects. Measured before shipping: 2 in the prelude, 7 across three
   examples, all of them genuine and all now written `_`.
 
-- **No `min`/`max` in the prelude.** Every program that fits something to a window writes
-  its own, and they are three characters of Lyra each. `clamp` exists in `std/tui/style.lyra`
-  as a private helper, which is the same function wanting to be somewhere shared.
+- **[DONE 08/22] `min`/`max`/`clamp` are in the prelude**, generic over `where t: Ord`
+  and taking a `self` receiver, so `a.min(b)` and `min(a, b)` are the same call. The three
+  private copies are gone — `std/tui/style.lyra`'s and one each in `examples/mandelbrot_tui`
+  and `examples/tui_viewer`, which is the duplication this entry was about. See
+  `COMPLETED.md`.
+  - **The primitive `Ord` impls came with them** (ten integer widths plus `rune`), on
+    `math.lyra`'s precedent: they exist so a **bound can be satisfied**, not so a call can
+    dispatch — `3 < 5` stays a machine compare, so the body's `<=>` is not recursion.
+  - **Floats are excluded, and that is the deferred decision being respected rather than
+    guessed.** `<=>` refuses them because NaN is neither less than, equal to nor greater
+    than anything; an `impl Ord for f64` would make that guess once and have every generic
+    inherit it. `min(1.5, 2.5)` is a compile error, and on concrete floats
+    `if a < b { a } else { b }` is a machine compare and works.
+
+- **[OPEN] An untyped literal argument defaults before a type variable is solved.**
+  `count.min(80)` on a `u8` reports *"cannot infer type variable t from these arguments"* —
+  `solveTypeVars` promotes the literal to `i64` **before** unifying, so the two arguments
+  bind `t` inconsistently. Documented behaviour with a stated workaround (`count.min(u8(80))`),
+  and on `i64` nothing is needed; what makes it worth revisiting is that `min`/`max`/`clamp`
+  put it in front of every program that uses a narrow width. The mechanism to reuse already
+  exists in the same function: an un-annotated lambda is **deferred** to a second pass
+  precisely because it cannot be inferred until it knows what is expected of it, and an
+  untyped literal is the same shape. Defer it, adopt a solved binding if there is one, and
+  default only if the variable is still free. Purely additive — every call that compiles
+  today compiles the same way. The diagnostic should name the conversion either way.
+
+- **[OPEN] A method call on a bare type parameter does not reach UFCS.** Inside
+  `where t: Ord`, `best.max(x)` reports *"type parameter t has no method max; add a
+  `where t: Trait` bound"* — advice naming a bound that is already written — while
+  `max(best, x)` is the same call and works. UFCS dispatches on the receiver's *type* and a
+  type variable has none, so the ladder consults only the trait's own methods. Two ways
+  through: resolve a UFCS candidate whose `self` parameter is itself generic, or at minimum
+  stop the diagnostic from asking for what is there.
 
 - **[DONE 08/22] A prelude generic at a *privately* declared type now lowers.**
   `let m = Some(card); m.unwrap_or(other)` failed with `llvm: unknown named type "Card"`
