@@ -236,3 +236,28 @@ let main = () => println("no complex here")
 		t.Errorf("want lyra-W004, got %v", diags)
 	}
 }
+
+// **An extern's signature is a use**, and it is the *only* place an imported type can
+// appear at the boundary — an extern has no body. Missed until 08/22, which made
+// `import std.ffi.{ CLong }` beside `unsafe extern pure labs: (CLong) -> CLong` advise
+// deleting the import the program cannot compile without: the exact failure — advice to
+// break working code — that widening this walk in the first place was for.
+func TestUnusedImports_TypeUsedOnlyInAnExternSignature(t *testing.T) {
+	assertNoUnusedImports(t, parseAndCheckUnusedImports(t, `
+import std.math.{ Complex }
+unsafe extern pure conj: (Complex<f64>) -> Complex<f64>
+let main = () => println(1)
+`))
+}
+
+// The same shape one declaration kind over: a trait's method signatures are LambdaTypes
+// hanging off the declaration, not LambdaExprs in the tree, so the expression walk never
+// reached them either. A trait is where an imported type is most likely to be named with
+// no body mentioning it at all.
+func TestUnusedImports_TypeUsedOnlyInATraitMethodSignature(t *testing.T) {
+	assertNoUnusedImports(t, parseAndCheckUnusedImports(t, `
+import std.math.{ Complex }
+trait Scales { pure scale: (Self, Complex<f64>) -> Self }
+let main = () => println(1)
+`))
+}

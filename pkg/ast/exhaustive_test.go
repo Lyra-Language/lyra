@@ -147,6 +147,16 @@ var declarationConsumers = []struct {
 		"ModuleDeclStmt": "a module is renamed by moving the file, not by this server",
 		"TraitImplStmt":  "an impl has no name of its own to rename",
 	}},
+	// Registered 08/22, after `ExternDeclStmt` and `TraitDeclStmt` were both found
+	// missing from it — an eleventh and twelfth instance of the family, and the first
+	// found by using the language rather than by the sweep. The question it answers is
+	// narrower than the others': which declarations mention a type somewhere the
+	// *expression* walk cannot reach. A LambdaExpr's signature it already sees; a
+	// `*types.LambdaType` hanging off a declaration it does not.
+	{"unused-import references", repoRoot + "/pkg/analyzer/checker/unused_imports.go", "collectRefsByFile", map[string]string{
+		"TraitImplStmt":  "an impl's methods are LambdaExprs, reached by the expression walk below",
+		"ModuleDeclStmt": "a module header names no type",
+	}},
 }
 
 // declarationKinds is every AST node that declares a name at the top level of a program.

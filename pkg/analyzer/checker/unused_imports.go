@@ -146,10 +146,36 @@ func collectRefsByFile(program *ast.Program) map[string]map[string]bool {
 				types.CollectTypeNames(t, refs)
 			}
 		}
+		noteSignature := func(sig *types.LambdaType) {
+			if sig == nil {
+				return
+			}
+			for _, p := range sig.Parameters {
+				noteType(p.Type)
+			}
+			noteType(sig.ReturnType.Type)
+		}
 		ast.WalkStmt(stmt, func(s ast.Statement) bool {
 			switch st := s.(type) {
 			case *ast.VarDeclStmt:
 				noteType(st.Type)
+			case *ast.ExternDeclStmt:
+				// An extern's signature is a `*types.LambdaType` on the declaration,
+				// not a LambdaExpr in the tree, so the expression walk below never
+				// reaches it. That is the whole of an extern's type surface — it has
+				// no body — so without this the only way to *use* an imported type at
+				// the boundary warned as unused: `import std.ffi.{ CLong }` beside
+				// `unsafe extern pure labs: (CLong) -> CLong` advised deleting the
+				// import the program cannot compile without.
+				noteSignature(st.Signature)
+			case *ast.TraitDeclStmt:
+				// The same shape one declaration kind over: a trait's method
+				// *signatures* are LambdaTypes too, and a trait is where an imported
+				// type is most likely to be named without any body mentioning it. A
+				// default method's body is a LambdaClause the walk does reach.
+				for _, m := range st.Methods {
+					noteSignature(m.Signature)
+				}
 			case *ast.TypeDeclStmt:
 				// A declaration's *members* are what mention other types;
 				// CollectTypeNames stops at a nominal head, which is right for a use
