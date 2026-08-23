@@ -571,6 +571,16 @@ that table is analyzed generically, where a type variable is not reference-count
 `typetable.Resolution.SpecKey()` is the one name for a specialization, shared by the symbol,
 the emitted-method cache and that table.
 
+**An instantiation carries the *site* it was requested from**, and that is a second module
+rather than a detail. Lowering a specialization enters the **generic function's** module, so
+the names in its own signature resolve; a **type argument** comes from the caller, and a
+private declaration is keyed `<module>::<name>` — so one location cannot answer both, and
+`Some(card).unwrap_or(x)` on a private `struct Card` failed as `unknown named type`.
+`lookupNamedType` falls back to the site's key, *after* the current module's, so it can only
+turn an error into a success. When a generic calls a generic the composed specialization
+takes the **outer** instantiation's site, since that is where the substituted bindings were
+resolved.
+
 `driver.AnalyzeUnits(units)` is the multi-module form, with `Analyze` as its single-unit
 case; both user-facing tools go through it, since both resolve an import graph first.
 `Analyze` remains for a caller with a snippet and no file — a test, or an unsaved editor

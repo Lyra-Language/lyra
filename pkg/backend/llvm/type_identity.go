@@ -50,6 +50,20 @@ func (l *lowerer) typeKey(name string) string {
 	return l.res.SymbolTable.TypeKey(name, l.currentLoc)
 }
 
+// specSiteKey is the key `name` has in the module that requested the specialization
+// currently being lowered, or "" when there is none to ask about — outside a
+// specialization, or when it agrees with the key already tried.
+func (l *lowerer) specSiteKey(name string) string {
+	if l.res == nil || l.res.SymbolTable == nil || l.specSite.File == "" {
+		return ""
+	}
+	key := l.res.SymbolTable.TypeKey(name, l.specSite)
+	if key == l.typeKey(name) {
+		return ""
+	}
+	return key
+}
+
 // llvmTypeName is the name an emitted LLVM type definition carries.
 //
 // A key equal to the declared name — every exported type, and every type in a

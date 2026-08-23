@@ -397,6 +397,11 @@ type lowerer struct {
 	specialized       map[string]*ir.Func
 	specializedParams map[string][]ast.Parameter
 	typeSubst         map[string]types.Type
+	// specSite is the location the specialization currently being lowered was
+	// *requested* from, installed alongside typeSubst. It is the second module a named
+	// type may live in — see lookupNamedType — and is the zero Location outside a
+	// specialization, which keys as a bare name and so changes nothing.
+	specSite ast.Location
 	// specOwnership is the ownership table computed for the instantiation currently
 	// being lowered — see the `ownership()` accessor, which every read goes through.
 	specOwnership *ownership.Table

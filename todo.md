@@ -3290,6 +3290,27 @@ recommending — write the program someone would actually write, and see what it
   its own, and they are three characters of Lyra each. `clamp` exists in `std/tui/style.lyra`
   as a private helper, which is the same function wanting to be somewhere shared.
 
+- **[DONE 08/22] A prelude generic at a *privately* declared type now lowers.**
+  `let m = Some(card); m.unwrap_or(other)` failed with `llvm: unknown named type "Card"`
+  unless `struct Card` was `pub`. `declareSpecialization` enters the module of the
+  **generic function** so the names in its own signature resolve, but a *type argument*
+  comes from the caller's module and is keyed `<module>::<name>` when private — one module
+  cannot serve both. `Instantiation` now carries the **site** it was requested from, and
+  `lookupNamedType` falls back to that module's key when the callee's own does not know the
+  name. Second, not first, so it can only turn an error into a success. See `COMPLETED.md`.
+
+- **[OPEN] A method call on a constructor-call receiver does not parse.**
+  `Some(1).unwrap_or(0)` — the most idiomatic expression in the language — reports
+  `` `let _or` must be initialized ``, and so do `Some(1).is_some()` and
+  `Some(1).unwrap_or_else(…)`. A *literal* receiver is fine (`(1).wrapping_add(2)`,
+  `"ab".starts_with("a")`), and a **binding** receiver is fine (`let m = Some(1)` then
+  `m.unwrap_or(0)`), which is why every program written so far has worked and why the
+  standard library's own tests never tripped it. The split at `_or` says the constructor
+  **juxtaposition** rule is taking `Some` as applied to `(1).unwrap`, leaving `_or(0)` to
+  start a new statement — `_or` being a legal identifier. Confirmed pre-existing (checked
+  against HEAD before today's monomorphization change). Grammar work: the juxtaposed
+  constructor operand must not swallow a postfix `.method` chain.
+
 ### [DONE 08/15] A terminal UI needs three builtins, not a library
 
 `set_raw_mode(on)`, `read_key() -> Maybe<rune>` and `terminal_size() -> (i64, i64)`

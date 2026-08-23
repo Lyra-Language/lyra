@@ -298,6 +298,9 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 	tc.warnFloatEqualityAtInstantiation(calleeName, lambda, call, subst)
 	tc.instantiations.Set(call, typetable.Instantiation{
 		Name: calleeName, Func: lambda, Disc: tc.instantiationDisc(lambda), Subst: subst,
+		// The *call's* location, not the declaration's: the type arguments were resolved
+		// here, so this is the module a private type among them can be found in.
+		Site: call.GetLocation(),
 	})
 	return ret
 }

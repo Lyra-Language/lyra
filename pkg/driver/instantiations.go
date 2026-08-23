@@ -190,6 +190,11 @@ func closeInstantiations(res *Result) []diag.Diagnostic {
 				continue
 			}
 			composed := callee.Substituted(current.Subst, substituteTypeVars)
+			// The bindings just substituted in are `current`'s, and they were resolved
+			// where *it* was requested — not at this inner call, which sits inside a
+			// generic body in some library's module. So the site travels outward with the
+			// types it explains.
+			composed.Site = current.Site
 			if !composed.IsConcrete() {
 				// A binding this specialization cannot settle. Reachable when a body
 				// mentions a variable that is not one of its own — the front end reports

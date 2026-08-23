@@ -78,6 +78,7 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 	// in a parameter or return position becomes its concrete binding.
 	restore := l.pushTypeSubst(inst.Subst)
 	defer restore()
+	defer l.pushSpecSite(inst.Site)()
 	// …and the module, so a named type in that signature resolves under the key it was
 	// registered with. Every other function-lowering path does this (lowerFunction,
 	// defineFunction, the entry point); the specialization path did not, so
@@ -117,9 +118,11 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 func (l *lowerer) defineSpecializations() error {
 	for _, inst := range l.specializations() {
 		restoreSubst := l.pushTypeSubst(inst.Subst)
+		restoreSite := l.pushSpecSite(inst.Site)
 		restoreOwn := l.pushSpecOwnership(inst.Key())
 		err := l.defineSpecialization(inst)
 		restoreOwn()
+		restoreSite()
 		restoreSubst()
 		if err != nil {
 			return err
@@ -164,6 +167,15 @@ func (l *lowerer) pushTypeSubst(subst map[string]types.Type) func() {
 	prev := l.typeSubst
 	l.typeSubst = subst
 	return func() { l.typeSubst = prev }
+}
+
+// pushSpecSite installs the location a specialization was requested from, alongside its
+// substitution. The two belong together: the substitution supplies the concrete types and
+// this says which module their *names* were resolved in.
+func (l *lowerer) pushSpecSite(site ast.Location) func() {
+	prev := l.specSite
+	l.specSite = site
+	return func() { l.specSite = prev }
 }
 
 // pushSpecOwnership installs the ownership table computed for one instantiation,

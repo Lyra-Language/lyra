@@ -517,6 +517,23 @@ func (l *lowerer) lookupNamedType(name string) (lltypes.Type, error) {
 	if decl, ok := l.lookupTypeDecl(name); ok && decl.IsAlias {
 		return l.lowerType(decl.Type)
 	}
+	// A **type argument** of the specialization being lowered, declared privately in the
+	// module that requested it. Lowering a specialization enters the *generic function's*
+	// module, because that is where the names in its own signature live (monomorphize.go
+	// says why) — but a type argument comes from the caller, and a private declaration is
+	// keyed `<module>::<name>`, so one module cannot serve both. `Some(card).unwrap_or(x)`
+	// on a private `struct Card` failed here with `unknown named type "Card"`, and adding
+	// `pub` fixed it, which is what made the bug look like it was about generics.
+	//
+	// The fallback is second, not first, so a name the callee's own module declares keeps
+	// winning — the behaviour every program has today — and it can only turn an error into
+	// a success. Outside a specialization `specSite` is the zero Location, which keys as a
+	// bare name and so finds nothing this lookup did not already try.
+	if key := l.specSiteKey(name); key != "" {
+		if st, ok := l.structTypes[key]; ok {
+			return st, nil
+		}
+	}
 	return nil, fmt.Errorf("llvm: unknown named type %q", name)
 }
 

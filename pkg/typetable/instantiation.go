@@ -30,6 +30,14 @@ type Instantiation struct {
 	// in the emitted IR rather than anywhere a diagnostic could reach.
 	Disc  string
 	Subst map[string]types.Type // type variable → concrete type
+	// Site is where this specialization was *requested* — the call, not the generic's
+	// declaration. The two are in different modules whenever a program instantiates a
+	// library generic, and the type **arguments** are names the caller's module can see:
+	// a private `struct Card` is keyed `main::Card`, so resolving it from the callee's
+	// module finds nothing. The backend enters the callee's module to lower the
+	// signature (its own names live there) and falls back to this one for a name that
+	// module does not know. See lookupNamedType.
+	Site ast.Location
 }
 
 // Key is a stable identity for the *specialization*, so two call sites that solve
@@ -203,7 +211,12 @@ func (i Instantiation) Substituted(subst map[string]types.Type, apply func(types
 	if len(subst) == 0 {
 		return i
 	}
-	out := Instantiation{Name: i.Name, Func: i.Func, Subst: make(map[string]types.Type, len(i.Subst))}
+	// Disc and Site travel with it: dropping Disc would let two receiver-keyed overloads'
+	// composed specializations collide on one key — the very confusion Disc exists to
+	// prevent — and dropping Site would lose the module a private type argument resolves
+	// in. The caller may overwrite Site with the *outer* instantiation's, which is where
+	// these substituted bindings were actually resolved.
+	out := Instantiation{Name: i.Name, Func: i.Func, Disc: i.Disc, Site: i.Site, Subst: make(map[string]types.Type, len(i.Subst))}
 	for name, bound := range i.Subst {
 		out.Subst[name] = apply(bound, subst)
 	}

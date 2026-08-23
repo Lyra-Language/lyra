@@ -9,6 +9,51 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (6)
+**A specialization's type argument resolves in the module that asked for it.**
+
+`let m = Some(card); m.unwrap_or(other)` did not lower when `struct Card` had no `pub`:
+`llvm: unknown named type "Card"`. Adding `pub` fixed it, which is exactly what made the
+bug look like it was about generics rather than about visibility.
+
+**Two modules, one slot.** `declareSpecialization` enters the module of the *generic
+function* before lowering its signature, and monomorphize.go explains why: a named type in
+that signature is the callee's own, keyed under the callee's module. But a **type
+argument** is the caller's, and a private declaration is keyed `<module>::<name>` (rule 4).
+`l.currentLoc` is one value, so entering either module leaves the other's names
+unresolvable — and the failure only shows for a *private* type, since a `pub` one has a
+bare key that resolves from anywhere.
+
+The fix is to stop asking one location to answer both questions. `Instantiation` now
+carries the **site** it was requested from, and `lookupNamedType` tries that module's key
+when the current one misses. Second, not first, so a name the callee's own module declares
+keeps winning and the change can only turn an error into a success; outside a
+specialization the site is the zero Location, which keys as a bare name and finds nothing
+the lookup did not already try.
+
+**The composed path needed one more line, and it is the interesting half.** A generic
+calling a generic records a *template* — bindings written in the enclosing body's own type
+variables — which the driver composes into a real specialization. That inner call sits
+inside a library's module, so the template's own site is useless; the concrete types come
+from the **outer** instantiation, resolved where *it* was requested. So the site travels
+outward with the types it explains: `composed.Site = current.Site`. Without it,
+`get_or(Some(card), other)` still failed while the direct call worked.
+
+`Instantiation.Substituted` was also dropping **`Disc`** — the discriminant that tells two
+receiver-keyed overloads apart. Composition therefore produced specializations keyed
+without it, which is precisely the collision `Disc` was added to prevent (`map<t=i64>`
+naming both the `Maybe` overload and the array one, sharing one emitted function). Not
+observed in the wild, and fixed in passing while adding `Site` to the same literal.
+
+**What it did *not* fix, found while testing it**: `Some(1).unwrap_or(0)` does not parse at
+all. A *binding* receiver works (`let m = Some(1)` then `m.unwrap_or(0)`) and a literal
+receiver works (`(1).wrapping_add(2)`), but a **constructor-call** receiver splits at the
+underscore — `` `let _or` must be initialized `` — which reads as the juxtaposition rule
+taking `Some` as applied to `(1).unwrap` and leaving `_or(0)` to begin a statement. That is
+why every program written so far has worked: the idiom that fails is the one nobody had
+written down. Confirmed pre-existing against HEAD and recorded as grammar work in
+`todo.md`.
+
 ### 08/22/26 (4)
 **`lyra-E064` — an alias applied to an operand says which spelling was wanted.**
 
