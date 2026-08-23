@@ -2099,12 +2099,17 @@ missing case in a switch over kinds, with a symptom nowhere near the cause:
   not have caught it before, since it cannot find a switch nobody registered.
 
 
-- **[OPEN] An alias has no constructor, and says so badly.** `CULong(n)` reports
-  *"CULong: not a tuple type"* — the juxtaposition path's message, since `Name(x)` parses
-  as a constructor call and an alias declares no constructor. The spelling is `u64(n)`, and
-  a reader reaching for the wrapper form has no way to learn that from the diagnostic. It
-  is one arm: a call whose callee names a type *alias* should say that an alias is
-  transparent and name its base's conversion.
+- **[DONE 08/22] An alias has no constructor, and now says so** (`lyra-E064`). It was
+  *"CULong: not a tuple type"* — the parse reported instead of the language, since
+  `Name(x)` parses as a tuple literal — which is the wording lyra-E044's own history
+  records having already replaced once, for `newtype`, arrived at again by a different
+  route. **Two messages, because there are two fixes**: where the alias names a type a
+  conversion can name, the message hands over that spelling (`u64(...)`), since a width
+  change is the only thing the wrapper could have meant; where it does not (an alias for
+  an array or a function type) there is nothing to offer and nothing needed, so it says
+  the operand already has that type. Naming `[]i64(…)` would be worse than silence — it
+  does not parse. `conversionSpellingFor` asks the two functions `inferTypeConversion`
+  itself asks, so the message cannot name a spelling the conversion path would refuse.
 
 ### No `std.libc`, deliberately
 

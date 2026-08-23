@@ -3218,6 +3218,51 @@ func (tc *TypeChecker) inferNewtypeConstruction(expr *ast.TupleLiteralExpr, name
 	return ct
 }
 
+// reportAliasConstruction explains an alias applied to an operand (lyra-E064).
+//
+// Two messages, because there are two fixes. Where the aliased type is one a conversion
+// can *name*, a width change is the only thing the wrapper could have meant, so the
+// message hands over that spelling — `u64(n)` for `type CULong = u64`. Where it is not
+// (an alias for an array or a function type) there is no conversion to offer and none is
+// needed, so the message says the operand is already of that type rather than leaving the
+// author to guess at a wrapper that does not exist.
+//
+// The base is resolved first: an alias may name another named type, and reporting the
+// unresolved name would tell the reader nothing they did not write.
+func (tc *TypeChecker) reportAliasConstruction(expr *ast.TupleLiteralExpr, name string, decl *ast.TypeDeclStmt) {
+	base := tc.resolveTypeIfKnown(decl.Type, expr.GetLocation())
+	if spelling, ok := conversionSpellingFor(base); ok {
+		tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeAliasIsNotConstructible,
+			"%s is an alias for %s and has no constructor — an alias is transparent, so a %s "+
+				"value already has type %s. To convert, write `%s(...)`",
+			name, base, base, name, spelling)
+		return
+	}
+	tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeAliasIsNotConstructible,
+		"%s is an alias for %s and has no constructor — an alias is transparent, so the operand "+
+			"already has that type. Drop the wrapper",
+		name, base)
+}
+
+// conversionSpellingFor reports the name a conversion call would use for t, when there is
+// one. It asks the two functions inferTypeConversion itself asks, so the message cannot
+// name a spelling the conversion path would then refuse — the numeric widths, plus
+// `string` and `bool`, which exist solely as a newtype's read-out spelling.
+func conversionSpellingFor(t types.Type) (string, bool) {
+	prim, ok := t.(types.PrimitiveType)
+	if !ok {
+		return "", false
+	}
+	spelling := string(prim.Name)
+	if _, ok := numericPrimitiveByName(spelling); ok {
+		return spelling, true
+	}
+	if _, ok := identityConversionTargetByName(spelling); ok {
+		return spelling, true
+	}
+	return "", false
+}
+
 // inferNamedTupleLiteralExpr type-checks a named-tuple literal (`Point(3, 4)`).
 // A named tuple is nominal (Pit-of-Success #8, todo.md: "positional nominal"),
 // matching NamedStructType — so, mirroring inferStructInstanceExpr for structs,
@@ -3239,6 +3284,17 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 		// juxtaposed spelling into this same node, so both forms cost one arm).
 		if ct, isNewtype := decl.Type.(*types.ConstrainedType); isNewtype {
 			return tc.inferNewtypeConstruction(expr, name, ct, decl)
+		}
+		// A type **alias** applied to an operand. Transparent, so it declares no
+		// constructor and there is nothing to construct — but "not a tuple type"
+		// reports the *parse* (`Name(x)` is a tuple literal) rather than the language,
+		// which is the wording lyra-E044's history records having already replaced once
+		// for `newtype`. Reported here rather than left to fall through, because the
+		// author reaching for `CULong(n)` has a specific wrong belief — that the alias
+		// is nominal — and the fix depends on what it aliases.
+		if decl.IsAlias {
+			tc.reportAliasConstruction(expr, name, decl)
+			return nil
 		}
 		tc.addError(expr.GetLocation(), SeverityError, "%s: not a tuple type", name)
 		return nil

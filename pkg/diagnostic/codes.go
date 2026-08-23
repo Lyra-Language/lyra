@@ -786,6 +786,26 @@ const (
 	// everywhere else. A newtype is looked *through*, since it is nominal only.
 	CodeNotFFISafe = "lyra-E063"
 
+	// CodeAliasIsNotConstructible: a type **alias** applied to an operand — `CULong(n)`,
+	// or the juxtaposed `CULong n`. An alias is transparent, so it declares no
+	// constructor: a value of the aliased type already *is* a value of the alias, and
+	// there is nothing for the application to do.
+	//
+	// It exists because the failure was a *parse* being reported instead of the
+	// language. `Name(x)` parses as a tuple literal, so the message was "CULong: not a
+	// tuple type" — which names a construct the author did not write, about a type that
+	// is not a tuple and was never going to be. Exactly the wording lyra-E044's own
+	// history records having replaced for `newtype`, arrived at again by a different
+	// route.
+	//
+	// The message says which spelling was wanted, and there are two. Where the alias
+	// names a type a conversion can name, the operand needs `u64(n)` — the base's
+	// conversion, since a width change is the only thing the wrapper could have meant.
+	// Where it does not (an alias for an array, a function type), there is no conversion
+	// to offer and none is needed: the operand is already of that type. Refusing without
+	// naming the difference is what makes an author reach for a wrapper again.
+	CodeAliasIsNotConstructible = "lyra-E064"
+
 	// CodeArenaNotImplemented: a `with <handle> = <arena> { … }` statement. Arena
 	// allocation was designed early — the grammar, the collector, a reserved runtime
 	// shim (`lyra_arena_alloc`) and the `PinnedRC` sentinel are all in place — and

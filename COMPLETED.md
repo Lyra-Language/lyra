@@ -9,6 +9,40 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (4)
+**`lyra-E064` — an alias applied to an operand says which spelling was wanted.**
+
+`CULong(n)` reported *"CULong: not a tuple type"*. That is the **parse** being reported
+instead of the language: `Name(x)` parses as a tuple literal, so the message named a
+construct the author did not write, about a type that is not a tuple and was never going
+to be. lyra-E044's own comment records replacing exactly this wording for `newtype` on
+08/12 — *"naming the parse rather than the language"* — so the same failure arrived twice
+by different routes, which is what makes it a shape rather than a typo.
+
+**Two messages, because there are two fixes**, and that is the whole content of the change:
+
+- Where the alias names a type a conversion can name, a width change is the only thing the
+  wrapper could have meant, so the message hands over that spelling — *"an alias is
+  transparent, so a u64 value already has type CULong. To convert, write `u64(...)`"*.
+- Where it does not — an alias for an array, a function type — there is no conversion to
+  offer and none is needed, so it says the operand already has that type and to drop the
+  wrapper. Naming `[]i64(…)` would be worse than saying nothing: it does not parse.
+
+`conversionSpellingFor` asks the two functions `inferTypeConversion` itself asks
+(`numericPrimitiveByName`, `identityConversionTargetByName`), so a message here cannot
+name a spelling the conversion path would then refuse. That is the same one-answer
+discipline the rest of the compiler follows, applied to a diagnostic's *advice* rather
+than to a check.
+
+The juxtaposed form `CULong 5` reaches the same arm, since the collector erases it into
+the same node — asserted, because falling through would produce a second and worse
+message for the spelling that is arguably more natural to reach for.
+
+**What it does not touch**, checked rather than assumed: a `newtype` still constructs
+(`Cents(150)`), and an alias for an anonymous tuple still accepts `P(1, 2)` and stays
+transparent — the result is assignable to `(i64, i64)`, so that spelling is an extra way
+to write a tuple rather than a nominal type an alias smuggled in.
+
 ### 08/22/26 (3)
 **`examples/zlib.lyra` uses `CULong`, and the alias could not reach a pointer until it
 did.**

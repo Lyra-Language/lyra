@@ -113,3 +113,42 @@ let use = () -> i64 => {
 }`, false)
 	assertNoErrors(t, res)
 }
+
+// **An alias applied to an operand is lyra-E064**, and the message names the spelling
+// that was wanted. Before 08/22 it was "CULong: not a tuple type" — `Name(x)` parses as a
+// tuple literal, so the diagnostic reported the *parse* rather than the language, about a
+// type that is not a tuple and was never going to be. That is the same wording lyra-E044's
+// history records having already replaced once, for `newtype`.
+func TestTypeAlias_ConstructionNamesTheConversion(t *testing.T) {
+	res := parseCollectAndCheck(t, `type CULong = u64
+let use = () -> u64 => CULong(5)`, false)
+	assertHasErrorContaining(t, res, "has no constructor")
+	assertHasErrorContaining(t, res, "write `u64(...)`")
+}
+
+// The juxtaposed spelling is the same node — the collector erases `CULong 5` into the
+// call form — so it must reach the same arm rather than falling through to a second,
+// worse message.
+func TestTypeAlias_JuxtaposedConstructionIsTheSameError(t *testing.T) {
+	res := parseCollectAndCheck(t, `type CULong = u64
+let use = () -> u64 => CULong 5`, false)
+	assertHasErrorContaining(t, res, "has no constructor")
+}
+
+// Where the aliased type is one no conversion can *name*, there is no spelling to offer
+// and none is needed — so the message says the operand already has that type instead of
+// pointing at a wrapper that does not exist. Naming `[]i64(…)` would be worse than saying
+// nothing: it does not parse.
+func TestTypeAlias_ConstructionOfAnUnconvertibleBaseSaysDropIt(t *testing.T) {
+	res := parseCollectAndCheck(t, `type Row = []i64
+let use = () -> i64 => { let r = Row([1, 2]); r[0] }`, false)
+	assertHasErrorContaining(t, res, "Drop the wrapper")
+}
+
+// The arm must not swallow the case it sits next to: a `newtype` **does** have a
+// constructor, and `Cents(150)` is how a base value becomes one.
+func TestTypeAlias_ANewtypeStillConstructs(t *testing.T) {
+	res := parseCollectAndCheck(t, `newtype Cents = i64
+let use = () -> Cents => Cents(150)`, false)
+	assertNoErrors(t, res)
+}
