@@ -336,3 +336,27 @@ let main = () -> void => { print("${head([9, 8, 7])}") }
 		t.Errorf("head = %q; want \"9\"", got)
 	}
 }
+
+// **A raw pointer has a size**, which is what lets an aggregate holding one be captured
+// by a closure or held in a `[]T`. `SizeAndAlign` had no case for `^T` until 08/22, and
+// the symptom was never "a pointer has no size": `std.ffi`'s own `CBuffer` could not be
+// captured ("cannot size captured binding") or stored in a dynamic array ("cannot size
+// dynamic array element type").
+func TestExec_ARawPointerCanBeCapturedAndStored(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.ffi.{ CBuffer }
+let apply = pure (f: () -> u8) -> u8 => f()
+let main = () -> void => {
+  var xs: []u8 = [65, 66]
+  let p = unsafe { &xs[0] }
+  let b = CBuffer { ptr: p, len: 2 }
+  var bs: []CBuffer = [b]
+  print("${apply(() => unsafe { p^ })} ${apply(() => b.get(1))} ${bs[0].get(0)}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "65 66 65" {
+		t.Errorf("captured/stored pointer = %q; want \"65 66 65\"", got)
+	}
+}

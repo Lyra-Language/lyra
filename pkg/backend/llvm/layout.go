@@ -296,6 +296,15 @@ func SizeAndAlign(t types.Type) (size, align int, ok bool) {
 	switch v := t.(type) {
 	case types.PrimitiveType:
 		return primitiveSizeAndAlign(v.Name)
+	case types.RawPointerType:
+		// A raw pointer is a machine pointer and nothing else — no header, no length,
+		// no ownership. Missing until 08/22, and the symptom was remote from the cause
+		// in the usual way: not "a pointer has no size" but *any aggregate containing
+		// one* failing to size, so `std.ffi`'s own `CBuffer` could not be captured by a
+		// closure ("cannot size captured binding") or held in a `[]T` ("cannot size
+		// dynamic array element type"). Found by a closure taking a `^u8` — which is
+		// what every scoped-callback FFI shape is.
+		return pointerSize, pointerSize, true
 	case types.NamedStructType:
 		return aggregateSizeAndAlign(fieldTypes(v.Fields))
 	case types.AnonymousStructType:
