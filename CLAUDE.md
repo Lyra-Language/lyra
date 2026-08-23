@@ -159,13 +159,24 @@ real failure, and none is local to one package.
      every program. What it cannot do is find a switch nobody registered; adding an entry
      when you add a *consumer* is still manual, and adding a *node* is not.
    - **A new *type* kind pays the same tax as a new declaration kind, and has no
-     checklist.** `RawPointerType` landed 08/18 and was missing from `SizeAndAlign` until
-     08/22 — where the symptom was not "a pointer has no size" but *any aggregate
-     containing one* failing to lay out, so `std.ffi`'s `CBuffer` could not be captured by
-     a closure or held in a `[]T`. It hid because every pointer test kept its pointers in
-     locals. `exhaustive_test.go` enumerates *declaration* kinds; nothing enumerates the
-     switches over composite types, which is the family `emitRetainValue`/`emitDropValue`
-     and `mentionsTypeVar` also belong to.
+     checklist.** `RawPointerType` landed 08/18 and was found missing from **two**
+     composite-type switches on 08/22, each with a symptom nowhere near the cause:
+     `SizeAndAlign`, where it was not "a pointer has no size" but *any aggregate
+     containing one* failing to lay out (`std.ffi`'s `CBuffer` could not be captured by a
+     closure or held in a `[]T`); and `resolveTypeWith`, where an unresolved *pointee*
+     made `^mut CULong` and `^mut u64` different types, so a type alias could not be used
+     for a C in/out parameter — which is what a pointer at the boundary is.
+     `exhaustive_test.go` enumerates *declaration* kinds; nothing enumerates the switches
+     over composite types, which is the family `emitRetainValue`/`emitDropValue` and
+     `mentionsTypeVar` also belong to.
+
+     **The sweep, when it was run, found only those two**: the type-variable walks
+     (`Substitute`, `CollectTypeVars`, `mentionsGenericParam`, ownership's
+     `substituteTypeVars`) already handle pointers, because generics over `^t` landed with
+     the feature on 08/19. The container-shaped switches (`elementType`, `isByteArray`,
+     `iterableElementType`) have no pointer case and are right not to. So the family to
+     check when adding a type kind is the walks that must reach *every* composite —
+     resolution, layout, substitution, retain/drop — not every switch that mentions one.
    - **Paired walks must be fixed in one change.** `emitRetainValue`/`emitDropValue` both
      lacked `ParameterizedType`; fixing only the drop is an instant double free.
    - **A copy that admits it is a copy is still a copy.** The typechecker's

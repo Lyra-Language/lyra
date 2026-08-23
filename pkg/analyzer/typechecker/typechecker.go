@@ -1742,6 +1742,16 @@ func (tc *TypeChecker) resolveTypeWith(t types.Type, loc ast.Location, leaf func
 			tt.Inner = recur(tt.Inner)
 		}
 		return tt
+	case types.RawPointerType:
+		// Added 08/22, for exactly the failure this comment block describes: a pointee
+		// left unresolved made `^mut CULong` and `^mut u64` different types, so
+		// `&mut room` could not be passed to a C in/out parameter — which is what a
+		// pointer parameter at the boundary *is*. The pointee is invariant, so an
+		// unresolved name there is not a near-miss, it is a rejection.
+		if tt.Pointee != nil {
+			tt.Pointee = recur(tt.Pointee)
+		}
+		return tt
 	case types.ParameterizedType:
 		if len(tt.TypeArguments) > 0 {
 			args := make([]types.Type, len(tt.TypeArguments))

@@ -80,3 +80,36 @@ let aliased = (n: Id) -> Id => n
 let use = () -> i64 => plain(aliased(1)) + aliased(plain(2))`, false)
 	assertNoErrors(t, res)
 }
+
+// **Transparency has to reach inside a composite**, and the pointee is where it did not:
+// `^mut Id` and `^mut i64` were different types until 08/22, because resolveTypeWith had
+// no RawPointerType case and so left the pointee an unresolved name. A pointee is
+// invariant, so an unresolved name there is not a near-miss — it is a flat rejection.
+//
+// The shape it broke is the one that matters: a C in/out parameter is a pointer, so
+// `std.ffi`'s `CULong` could not be used for `uLongf *destLen`, which is most of what the
+// alias exists for. `&mut n` on an `i64` binding produced `^mut i64` and the parameter
+// wanted `^mut Id`.
+func TestTypeAlias_IsTransparentInsideAPointer(t *testing.T) {
+	res := parseCollectAndCheck(t, `type Id = i64
+let through = unsafe (p: ^mut Id) -> i64 => unsafe { p^ }
+let use = () -> i64 => { var n: i64 = 1; unsafe { through(&mut n) } }`, false)
+	assertNoErrors(t, res)
+}
+
+// The same walk, one composite over — a guard against fixing only the case that was
+// reported. An alias inside an array, a tuple and a function type all have to resolve, and
+// each of those cases was added to the walk for a failure of its own.
+func TestTypeAlias_IsTransparentInsideEveryComposite(t *testing.T) {
+	res := parseCollectAndCheck(t, `type Id = i64
+let arr = pure (xs: []Id) -> i64 => xs.len()
+let fixed = pure (xs: [2]Id) -> i64 => xs.len()
+let tup = pure (p: (Id, Id)) -> i64 => p.0
+let fn = pure (f: (Id) -> Id) -> i64 => f(1)
+let use = () -> i64 => {
+  var d: []i64 = [1]
+  let s: [2]i64 = [1, 2]
+  arr(d) + fixed(s) + tup((1, 2)) + fn((n: i64) -> i64 => n)
+}`, false)
+	assertNoErrors(t, res)
+}
