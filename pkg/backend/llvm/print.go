@@ -147,9 +147,9 @@ func (l *lowerer) floatToStrFunc(name types.PrimitiveTypeName) (*ir.Func, error)
 	entry.NewCondBr(entry.NewFCmp(enum.FPredUNO, val, val), nanBlock, ladderStart)
 	for i, ch := range []int64{'n', 'a', 'n'} {
 		nanBlock.NewStore(constant.NewInt(lltypes.I8, ch),
-			nanBlock.NewGetElementPtr(lltypes.I8, out, constant.NewInt(lltypes.I64, int64(i))))
+			nanBlock.NewGetElementPtr(lltypes.I8, out, i64c(int64(i))))
 	}
-	nanBlock.NewRet(constant.NewInt(lltypes.I64, 3))
+	nanBlock.NewRet(i64c(3))
 
 	// One block per rung: render, parse back, and either stop or fall through to the
 	// next. The final rung has nowhere to fall through to — its precision is the
@@ -159,8 +159,8 @@ func (l *lowerer) floatToStrFunc(name types.PrimitiveTypeName) (*ir.Func, error)
 	lengths := make([]*ir.Incoming, 0, len(ladder))
 	cur := ladderStart
 	for i, prec := range ladder {
-		n := cur.NewCall(l.snprintfFunc(), out, constant.NewInt(lltypes.I64, floatStrBufBytes),
-			l.cString("%.*g"), constant.NewInt(lltypes.I32, prec), val)
+		n := cur.NewCall(l.snprintfFunc(), out, i64c(floatStrBufBytes),
+			l.cString("%.*g"), i32c(prec), val)
 		length := cur.NewSExt(n, lltypes.I64)
 		lengths = append(lengths, ir.NewIncoming(length, cur))
 
@@ -201,7 +201,7 @@ func (l *lowerer) cString(s string) value.Value {
 		l.cStrings[s] = g
 	}
 	arrTy := g.ContentType
-	zero := constant.NewInt(lltypes.I32, 0)
+	zero := i32c(0)
 	return constant.NewGetElementPtr(arrTy, g, zero, zero)
 }
 
@@ -213,7 +213,7 @@ func (l *lowerer) newlinePtr() value.Value {
 		l.newlineByte = l.privateConst(".nl", constant.NewCharArray([]byte("\n")))
 	}
 	arrTy := lltypes.NewArray(1, lltypes.I8)
-	zero := constant.NewInt(lltypes.I32, 0)
+	zero := i32c(0)
 	return constant.NewGetElementPtr(arrTy, l.newlineByte, zero, zero)
 }
 
@@ -242,34 +242,34 @@ func (l *lowerer) runeToUTF8Func() *ir.Func {
 
 	// storeByte writes the low 8 bits of v (an i32) into buf[idx].
 	storeByte := func(b *ir.Block, idx int64, v value.Value) {
-		ptr := b.NewGetElementPtr(lltypes.I8, buf, constant.NewInt(lltypes.I64, idx))
+		ptr := b.NewGetElementPtr(lltypes.I8, buf, i64c(idx))
 		b.NewStore(b.NewTrunc(v, lltypes.I8), ptr)
 	}
-	c := func(n int64) value.Value { return constant.NewInt(lltypes.I32, n) }
+	c := func(n int64) value.Value { return i32c(n) }
 
 	entry.NewCondBr(entry.NewICmp(enum.IPredULT, cp, c(0x80)), one, twoPlus)
 
 	storeByte(one, 0, cp)
-	one.NewRet(constant.NewInt(lltypes.I64, 1))
+	one.NewRet(i64c(1))
 
 	twoPlus.NewCondBr(twoPlus.NewICmp(enum.IPredULT, cp, c(0x800)), two, threePlus)
 
 	storeByte(two, 0, two.NewOr(c(0xC0), two.NewLShr(cp, c(6))))
 	storeByte(two, 1, two.NewOr(c(0x80), two.NewAnd(cp, c(0x3F))))
-	two.NewRet(constant.NewInt(lltypes.I64, 2))
+	two.NewRet(i64c(2))
 
 	threePlus.NewCondBr(threePlus.NewICmp(enum.IPredULT, cp, c(0x10000)), three, four)
 
 	storeByte(three, 0, three.NewOr(c(0xE0), three.NewLShr(cp, c(12))))
 	storeByte(three, 1, three.NewOr(c(0x80), three.NewAnd(three.NewLShr(cp, c(6)), c(0x3F))))
 	storeByte(three, 2, three.NewOr(c(0x80), three.NewAnd(cp, c(0x3F))))
-	three.NewRet(constant.NewInt(lltypes.I64, 3))
+	three.NewRet(i64c(3))
 
 	storeByte(four, 0, four.NewOr(c(0xF0), four.NewLShr(cp, c(18))))
 	storeByte(four, 1, four.NewOr(c(0x80), four.NewAnd(four.NewLShr(cp, c(12)), c(0x3F))))
 	storeByte(four, 2, four.NewOr(c(0x80), four.NewAnd(four.NewLShr(cp, c(6)), c(0x3F))))
 	storeByte(four, 3, four.NewOr(c(0x80), four.NewAnd(cp, c(0x3F))))
-	four.NewRet(constant.NewInt(lltypes.I64, 4))
+	four.NewRet(i64c(4))
 
 	l.fmtRune = fn
 	return fn
@@ -307,7 +307,7 @@ func (l *lowerer) i128ToStrFunc() *ir.Func {
 	revloop := fn.NewBlock("revloop")
 	done := fn.NewBlock("done")
 
-	i64 := func(n int64) *constant.Int { return constant.NewInt(lltypes.I64, n) }
+	i64 := func(n int64) *constant.Int { return i64c(n) }
 	i128 := func(n int64) *constant.Int { return constant.NewInt(lltypes.I128, n) }
 
 	// Entry: allocas + sign/magnitude setup.
@@ -387,20 +387,20 @@ func (l *lowerer) formatForPrint(block *ir.Block, val value.Value, argType types
 		truePtr := l.cString("true")
 		falsePtr := l.cString("false")
 		dataPtr := block.NewSelect(val, truePtr, falsePtr)
-		length := block.NewSelect(val, constant.NewInt(lltypes.I64, 4), constant.NewInt(lltypes.I64, 5))
+		length := block.NewSelect(val, i64c(4), i64c(5))
 		return dataPtr, length, nil
 
 	case prim.Name == types.Rune:
 		buf := entry.NewAlloca(lltypes.NewArray(4, lltypes.I8))
 		dataPtr := block.NewGetElementPtr(lltypes.NewArray(4, lltypes.I8), buf,
-			constant.NewInt(lltypes.I64, 0), constant.NewInt(lltypes.I64, 0))
+			i64c(0), i64c(0))
 		length := block.NewCall(l.runeToUTF8Func(), val, dataPtr)
 		return dataPtr, length, nil
 
 	case isFloat:
 		buf := entry.NewAlloca(lltypes.NewArray(floatStrBufBytes, lltypes.I8))
 		dataPtr := block.NewGetElementPtr(lltypes.NewArray(floatStrBufBytes, lltypes.I8), buf,
-			constant.NewInt(lltypes.I64, 0), constant.NewInt(lltypes.I64, 0))
+			i64c(0), i64c(0))
 		// Widened to double because that is what a vararg float becomes anyway, and
 		// because every f16/f32 is exactly representable as one — so the formatter
 		// can do its round-trip check against the *original* width without loss.
@@ -416,7 +416,7 @@ func (l *lowerer) formatForPrint(block *ir.Block, val value.Value, argType types
 		// formatter renders it (40 bytes covers an optional '-' + up to 39 digits).
 		buf := entry.NewAlloca(lltypes.NewArray(40, lltypes.I8))
 		dataPtr := block.NewGetElementPtr(lltypes.NewArray(40, lltypes.I8), buf,
-			constant.NewInt(lltypes.I64, 0), constant.NewInt(lltypes.I64, 0))
+			i64c(0), i64c(0))
 		signedBit := int64(0)
 		if IsSignedInt(prim.Name) {
 			signedBit = 1
@@ -427,14 +427,14 @@ func (l *lowerer) formatForPrint(block *ir.Block, val value.Value, argType types
 	default: // an integer type
 		buf := entry.NewAlloca(lltypes.NewArray(24, lltypes.I8))
 		dataPtr := block.NewGetElementPtr(lltypes.NewArray(24, lltypes.I8), buf,
-			constant.NewInt(lltypes.I64, 0), constant.NewInt(lltypes.I64, 0))
+			i64c(0), i64c(0))
 		signed := IsSignedInt(prim.Name)
 		promoted := coerceIntWidth(block, val, signed, lltypes.I64) // widen to long long
 		format := "%llu"
 		if signed {
 			format = "%lld"
 		}
-		n := block.NewCall(l.snprintfFunc(), dataPtr, constant.NewInt(lltypes.I64, 24), l.cString(format), promoted)
+		n := block.NewCall(l.snprintfFunc(), dataPtr, i64c(24), l.cString(format), promoted)
 		return dataPtr, block.NewSExt(n, lltypes.I64), nil
 	}
 }
@@ -460,10 +460,10 @@ func (l *lowerer) lowerPrintCall(block *ir.Block, e *ast.FunctionCallExpr, newli
 	if err != nil {
 		return nil, nil, err
 	}
-	fd := constant.NewInt(lltypes.I32, 1) // stdout
+	fd := i32c(1) // stdout
 	result := block.NewCall(l.writeFunc(), fd, dataPtr, length)
 	if newline {
-		result = block.NewCall(l.writeFunc(), fd, l.newlinePtr(), constant.NewInt(lltypes.I64, 1))
+		result = block.NewCall(l.writeFunc(), fd, l.newlinePtr(), i64c(1))
 	}
 	return result, block, nil
 }

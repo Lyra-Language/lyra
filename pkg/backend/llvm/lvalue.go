@@ -5,7 +5,6 @@ import (
 	"slices"
 
 	"github.com/llir/llvm/ir"
-	"github.com/llir/llvm/ir/constant"
 	"github.com/llir/llvm/ir/enum"
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
@@ -274,7 +273,7 @@ func (l *lowerer) memberFieldAddress(block *ir.Block, e *ast.MemberExpr) (lvalue
 			return lvalueLoc{}, nil, err
 		}
 		fieldPtr := block.NewGetElementPtr(SharedBoxType(payloadTy), box,
-			i32c(0), i32c(boxPayloadField), constant.NewInt(lltypes.I32, int64(idx)))
+			i32c(0), i32c(boxPayloadField), i32c(int64(idx)))
 		return lvalueLoc{ptr: fieldPtr, ty: fieldType, viaBox: true}, block, nil
 	}
 
@@ -290,7 +289,7 @@ func (l *lowerer) memberFieldAddress(block *ir.Block, e *ast.MemberExpr) (lvalue
 		return lvalueLoc{}, nil, err
 	}
 	fieldPtr := block.NewGetElementPtr(structTy, obj.ptr,
-		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, int64(idx)))
+		i32c(0), i32c(int64(idx)))
 	return lvalueLoc{ptr: fieldPtr, ty: fieldType}, block, nil
 }
 
@@ -310,7 +309,7 @@ func (l *lowerer) indexElemAddress(block *ir.Block, e *ast.IndexExpr) (lvalueLoc
 			return lvalueLoc{}, nil, err
 		}
 		arrayTy := lltypes.NewArray(uint64(at.Size), elemLL)
-		size := constant.NewInt(lltypes.I64, int64(at.Size))
+		size := i64c(int64(at.Size))
 		if types.AllocationOf(objType) == types.Shared {
 			box, block, err := l.lvalueBoxPtr(block, e.Object, objType)
 			if err != nil {
@@ -336,7 +335,7 @@ func (l *lowerer) indexElemAddress(block *ir.Block, e *ast.IndexExpr) (lvalueLoc
 		if err != nil {
 			return lvalueLoc{}, nil, err
 		}
-		elemPtr := block.NewGetElementPtr(arrayTy, obj.ptr, constant.NewInt(lltypes.I64, 0), adjusted)
+		elemPtr := block.NewGetElementPtr(arrayTy, obj.ptr, i64c(0), adjusted)
 		return lvalueLoc{ptr: elemPtr, ty: at.ElementType}, block, nil
 
 	case types.DynamicArrayType:

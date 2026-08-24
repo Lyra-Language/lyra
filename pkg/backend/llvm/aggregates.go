@@ -215,7 +215,7 @@ func (l *lowerer) lowerMemberExpr(block *ir.Block, e *ast.MemberExpr) (value.Val
 			return nil, nil, fmt.Errorf("llvm: `shared` field access on non-struct payload %s", boxTy.Fields[boxPayloadField])
 		}
 		fieldPtr := block.NewGetElementPtr(boxTy, obj,
-			i32c(0), i32c(boxPayloadField), constant.NewInt(lltypes.I32, int64(idx)))
+			i32c(0), i32c(boxPayloadField), i32c(int64(idx)))
 		return block.NewLoad(payloadTy.Fields[idx], fieldPtr), block, nil
 	}
 	if _, ok := obj.Type().(*lltypes.StructType); !ok {
@@ -387,7 +387,7 @@ func (l *lowerer) buildDataValue(block *ir.Block, dt types.DataType, tag int, ct
 	// Alloca the union in the entry block (mem2reg-promotable), then fill it.
 	slot := block.Parent.Blocks[0].NewAlloca(unionTy)
 	tagPtr := block.NewGetElementPtr(unionTy, slot,
-		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 0))
+		i32c(0), i32c(0))
 	block.NewStore(constant.NewInt(tagTy, int64(tag)), tagPtr)
 
 	// Store the payload (field 1, the blob) reinterpreted as this variant's payload
@@ -411,7 +411,7 @@ func (l *lowerer) buildDataValue(block *ir.Block, dt types.DataType, tag int, ct
 			payload = block.NewInsertValue(payload, f, uint64(i))
 		}
 		blobPtr := block.NewGetElementPtr(unionTy, slot,
-			constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+			i32c(0), i32c(1))
 		typedPtr := block.NewBitCast(blobPtr, lltypes.NewPointer(payloadStructTy))
 		block.NewStore(payload, typedPtr)
 	}

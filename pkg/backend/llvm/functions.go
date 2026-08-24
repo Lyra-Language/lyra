@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/llir/llvm/ir"
-	"github.com/llir/llvm/ir/constant"
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
@@ -100,7 +99,7 @@ func (l *lowerer) emitReturn(start, block *ir.Block, val value.Value) error {
 	}
 	if l.entryABI {
 		if val == nil {
-			block.NewRet(constant.NewInt(lltypes.I32, 0))
+			block.NewRet(i32c(0))
 			return nil
 		}
 		u8 := coerceIntWidth(block, val, false, lltypes.I8)

@@ -55,11 +55,11 @@ func (l *lowerer) regexTablesFor(pattern string) (*regexTables, error) {
 	idx := len(l.regexTables)
 	trans := make([]constant.Constant, len(m.Trans))
 	for i, v := range m.Trans {
-		trans[i] = constant.NewInt(lltypes.I32, int64(v))
+		trans[i] = i32c(int64(v))
 	}
 	nl := make([]constant.Constant, len(m.NewlineLast))
 	for i, v := range m.NewlineLast {
-		nl[i] = constant.NewInt(lltypes.I32, int64(v))
+		nl[i] = i32c(int64(v))
 	}
 	acc := make([]byte, len(m.AcceptFinal))
 	for i, v := range m.AcceptFinal {
@@ -82,7 +82,7 @@ func (l *lowerer) regexTablesFor(pattern string) (*regexTables, error) {
 // element, the same shape cString uses for an interned byte string.
 func (l *lowerer) constGlobal(name string, init constant.Constant) value.Value {
 	g := l.privateConst(name, init)
-	zero := constant.NewInt(lltypes.I32, 0)
+	zero := i32c(0)
 	return constant.NewGetElementPtr(g.ContentType, g, zero, zero)
 }
 
@@ -125,7 +125,7 @@ func (l *lowerer) regexMatchFunc() *ir.Func {
 	statePtr := entry.NewAlloca(lltypes.I32)
 	iPtr := entry.NewAlloca(lltypes.I64)
 	entry.NewStore(start, statePtr)
-	entry.NewStore(constant.NewInt(lltypes.I64, 0), iPtr)
+	entry.NewStore(i64c(0), iPtr)
 	entry.NewBr(cond)
 
 	i := cond.NewLoad(lltypes.I64, iPtr)
@@ -135,7 +135,7 @@ func (l *lowerer) regexMatchFunc() *ir.Func {
 	b := body.NewLoad(lltypes.I8, body.NewGetElementPtr(lltypes.I8, data, bi))
 	isNL := body.NewICmp(enum.IPredEQ, b, constant.NewInt(lltypes.I8, '\n'))
 	isLast := body.NewICmp(enum.IPredEQ, bi,
-		body.NewSub(length, constant.NewInt(lltypes.I64, 1)))
+		body.NewSub(length, i64c(1)))
 	body.NewCondBr(body.NewAnd(isNL, isLast), nlPath, bytePath)
 
 	// A trailing newline takes its own column: IsMatch deliberately omits the
@@ -148,7 +148,7 @@ func (l *lowerer) regexMatchFunc() *ir.Func {
 	nlPath.NewBr(after)
 
 	byState := bytePath.NewLoad(lltypes.I32, statePtr)
-	row := bytePath.NewMul(byState, constant.NewInt(lltypes.I32, 256))
+	row := bytePath.NewMul(byState, i32c(256))
 	off := bytePath.NewAdd(row, bytePath.NewZExt(b, lltypes.I32))
 	bytePath.NewStore(
 		bytePath.NewLoad(lltypes.I32, bytePath.NewGetElementPtr(lltypes.I32, trans, off)),
@@ -159,9 +159,9 @@ func (l *lowerer) regexMatchFunc() *ir.Func {
 	// DFA gets for free and the reason matching is linear with no backtracking.
 	afterState := after.NewLoad(lltypes.I32, statePtr)
 	afterI := after.NewLoad(lltypes.I64, iPtr)
-	after.NewStore(after.NewAdd(afterI, constant.NewInt(lltypes.I64, 1)), iPtr)
+	after.NewStore(after.NewAdd(afterI, i64c(1)), iPtr)
 	after.NewCondBr(
-		after.NewICmp(enum.IPredEQ, afterState, constant.NewInt(lltypes.I32, int64(regex.DeadState))),
+		after.NewICmp(enum.IPredEQ, afterState, i32c(int64(regex.DeadState))),
 		dead, cond)
 
 	dead.NewRet(constant.NewInt(lltypes.I1, 0))
@@ -188,7 +188,7 @@ func (l *lowerer) emitPatternCheck(block *ir.Block, val value.Value, pattern str
 	byteLen := block.NewExtractValue(val, 1)
 	matched := block.NewCall(l.regexMatchFunc(), data, byteLen,
 		tables.trans, tables.newlineLast, tables.acceptFinal,
-		constant.NewInt(lltypes.I32, int64(tables.start)))
+		i32c(int64(tables.start)))
 	return l.emitTrapIf(block, block.NewICmp(enum.IPredEQ, matched, constant.NewInt(lltypes.I1, 0)),
 		l.panicConstraintFunc()), nil
 }

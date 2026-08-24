@@ -507,7 +507,7 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 		block.NewStore(whole, wholeSlot)
 	}
 	tagTy := unionTy.Fields[0].(*lltypes.IntType)
-	tagPtr := block.NewGetElementPtr(unionTy, slot, constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 0))
+	tagPtr := block.NewGetElementPtr(unionTy, slot, i32c(0), i32c(0))
 	tag := block.NewLoad(tagTy, tagPtr)
 
 	// Perceus reuse (FBIP): if the scrutinee is an owned `shared data` binding at its
@@ -664,7 +664,7 @@ func (l *lowerer) bindDataPayload(armBlock *ir.Block, p *ast.DataPattern, ctor t
 	if err != nil {
 		return err
 	}
-	blobPtr := armBlock.NewGetElementPtr(unionTy, slot, constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+	blobPtr := armBlock.NewGetElementPtr(unionTy, slot, i32c(0), i32c(1))
 	typedPtr := armBlock.NewBitCast(blobPtr, lltypes.NewPointer(payloadStructTy))
 	payload := armBlock.NewLoad(payloadStructTy, typedPtr)
 
@@ -694,7 +694,7 @@ func (l *lowerer) extractDataPayload(block *ir.Block, val value.Value, ctor type
 	}
 	slot := block.Parent.Blocks[0].NewAlloca(unionSt)
 	block.NewStore(val, slot)
-	blobPtr := block.NewGetElementPtr(unionSt, slot, constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+	blobPtr := block.NewGetElementPtr(unionSt, slot, i32c(0), i32c(1))
 	typedPtr := block.NewBitCast(blobPtr, lltypes.NewPointer(payloadStructTy))
 	return block.NewLoad(payloadStructTy, typedPtr), nil
 }

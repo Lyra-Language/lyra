@@ -201,7 +201,7 @@ func (l *lowerer) emitEqData(block *ir.Block, a, b value.Value, dt types.DataTyp
 			}
 			load := func(slot value.Value) value.Value {
 				blob := arm.NewGetElementPtr(unionTy, slot,
-					constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+					i32c(0), i32c(1))
 				return arm.NewLoad(payloadStructTy, arm.NewBitCast(blob, lltypes.NewPointer(payloadStructTy)))
 			}
 			pa, pb := load(slotA), load(slotB)

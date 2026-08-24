@@ -126,7 +126,7 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 			return nil, nil, err
 		}
 		elemPtr := block.NewGetElementPtr(arrayTy, payloadPtr,
-			constant.NewInt(lltypes.I64, 0), constant.NewInt(lltypes.I64, lit.Value))
+			i64c(0), i64c(lit.Value))
 		return block.NewLoad(arrayTy.ElemType, elemPtr), block, nil
 	}
 
@@ -152,7 +152,7 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	// wrap below is a no-op for it.
 	signed, _ := l.getIntSignedness(e.Index)
 	idx64 := coerceIntWidth(block, idx, signed, lltypes.I64)
-	size := constant.NewInt(lltypes.I64, int64(arrType.Size))
+	size := i64c(int64(arrType.Size))
 
 	// The value-range analysis may have proved 0 <= i < size (res.RangeSafety): then
 	// the bounds trap is dead — emit the bare gep+load. Otherwise a single *unsigned*
@@ -168,7 +168,7 @@ func (l *lowerer) lowerIndexExpr(block *ir.Block, e *ast.IndexExpr) (value.Value
 	}
 
 	// getelementptr [N x T], [N x T]* arrPtr, i64 0, i64 idx64  →  T*
-	elemPtr := block.NewGetElementPtr(arrayTy, arrPtr, constant.NewInt(lltypes.I64, 0), idx64)
+	elemPtr := block.NewGetElementPtr(arrayTy, arrPtr, i64c(0), idx64)
 	return block.NewLoad(arrayTy.ElemType, elemPtr), block, nil
 }
 

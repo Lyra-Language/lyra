@@ -51,8 +51,8 @@ func (l *lowerer) ensureReadLineRuntime(dt types.DataType, someC types.DataTypeC
 	l.ensureRCRuntime() // for lyra_rc_alloc / free, and l.malloc's declaration
 
 	i8ptr := lltypes.NewPointer(lltypes.I8)
-	zero := constant.NewInt(lltypes.I64, 0)
-	one := constant.NewInt(lltypes.I64, 1)
+	zero := i64c(0)
+	one := i64c(1)
 
 	getchar := l.module.NewFunc("getchar", lltypes.I32)
 	// The shared lazy declaration, not a fresh NewFunc: push (dynarray.go) declares
@@ -86,17 +86,17 @@ func (l *lowerer) ensureReadLineRuntime(dt types.DataType, someC types.DataTypeC
 	capSlot := entry.NewAlloca(lltypes.I64)
 	boxSlot := entry.NewAlloca(i8ptr)
 	lenSlot := entry.NewAlloca(lltypes.I64)
-	initCap := constant.NewInt(lltypes.I64, readLineInitialCap)
+	initCap := i64c(readLineInitialCap)
 	entry.NewStore(initCap, capSlot)
 	entry.NewStore(zero, lenSlot)
 	entry.NewStore(entry.NewCall(l.rcAlloc,
-		entry.NewAdd(initCap, constant.NewInt(lltypes.I64, rcHeaderSize))), boxSlot)
+		entry.NewAdd(initCap, i64c(rcHeaderSize))), boxSlot)
 	entry.NewBr(loop)
 
 	// c = getchar(); EOF (-1) and '\n' both end the line; everything else is a byte.
 	ch := loop.NewCall(getchar)
-	loop.NewCondBr(loop.NewICmp(enum.IPredEQ, ch, constant.NewInt(lltypes.I32, -1)), atEOF, notEOF)
-	notEOF.NewCondBr(notEOF.NewICmp(enum.IPredEQ, ch, constant.NewInt(lltypes.I32, '\n')), finish, notNewline)
+	loop.NewCondBr(loop.NewICmp(enum.IPredEQ, ch, i32c(-1)), atEOF, notEOF)
+	notEOF.NewCondBr(notEOF.NewICmp(enum.IPredEQ, ch, i32c('\n')), finish, notNewline)
 
 	// Grow when the payload is full: realloc the whole box (header included) and
 	// keep going. realloc is valid on lyra_rc_alloc's memory — it is plain malloc —
@@ -105,15 +105,15 @@ func (l *lowerer) ensureReadLineRuntime(dt types.DataType, someC types.DataTypeC
 	curCap := notNewline.NewLoad(lltypes.I64, capSlot)
 	notNewline.NewCondBr(notNewline.NewICmp(enum.IPredULT, curLen, curCap), appendCh, grow)
 
-	newCap := grow.NewMul(curCap, constant.NewInt(lltypes.I64, 2))
+	newCap := grow.NewMul(curCap, i64c(2))
 	grow.NewStore(newCap, capSlot)
 	grow.NewStore(grow.NewCall(realloc, grow.NewLoad(i8ptr, boxSlot),
-		grow.NewAdd(newCap, constant.NewInt(lltypes.I64, rcHeaderSize))), boxSlot)
+		grow.NewAdd(newCap, i64c(rcHeaderSize))), boxSlot)
 	grow.NewBr(appendCh)
 
 	payloadAt := func(b *ir.Block, off value.Value) value.Value {
 		box := b.NewLoad(i8ptr, boxSlot)
-		payload := b.NewGetElementPtr(lltypes.I8, box, constant.NewInt(lltypes.I64, rcHeaderSize))
+		payload := b.NewGetElementPtr(lltypes.I8, box, i64c(rcHeaderSize))
 		return b.NewGetElementPtr(lltypes.I8, payload, off)
 	}
 	appendLen := appendCh.NewLoad(lltypes.I64, lenSlot)
@@ -146,7 +146,7 @@ func (l *lowerer) ensureReadLineRuntime(dt types.DataType, someC types.DataTypeC
 
 	doneLen := done.NewLoad(lltypes.I64, lenSlot)
 	doneBox := done.NewLoad(i8ptr, boxSlot)
-	payload := done.NewGetElementPtr(lltypes.I8, doneBox, constant.NewInt(lltypes.I64, rcHeaderSize))
+	payload := done.NewGetElementPtr(lltypes.I8, doneBox, i64c(rcHeaderSize))
 	// The bytes came from libc, so the rune count needs the one linear pass no
 	// arithmetic can replace — negligible beside the read it annotates.
 	count := done.NewCall(l.utf8CountFunc(), payload, doneLen)

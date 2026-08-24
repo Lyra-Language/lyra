@@ -84,10 +84,10 @@ func (l *lowerer) ensureRCRuntime() {
 	}
 	i8ptr := lltypes.NewPointer(lltypes.I8)
 	i64ptr := lltypes.NewPointer(lltypes.I64)
-	pinnedBits := PinnedRC                                    // via a var: int64(constant) would overflow at compile time
-	pinned := constant.NewInt(lltypes.I64, int64(pinnedBits)) // all-ones bit pattern == -1
-	one := constant.NewInt(lltypes.I64, 1)
-	zero := constant.NewInt(lltypes.I64, 0)
+	pinnedBits := PinnedRC            // via a var: int64(constant) would overflow at compile time
+	pinned := i64c(int64(pinnedBits)) // all-ones bit pattern == -1
+	one := i64c(1)
+	zero := i64c(0)
 
 	l.malloc = l.module.NewFunc("malloc", i8ptr, ir.NewParam("", lltypes.I64))
 	l.free = l.module.NewFunc("free", lltypes.Void, ir.NewParam("", i8ptr))
@@ -149,7 +149,7 @@ func (l *lowerer) ensureRCRuntime() {
 		dropNull := maybeDrop.NewICmp(enum.IPredEQ, drop, constant.NewNull(i8ptr))
 		maybeDrop.NewCondBr(dropNull, doFree, callDrop)
 
-		payload := callDrop.NewGetElementPtr(lltypes.I8, box, constant.NewInt(lltypes.I64, rcHeaderSize))
+		payload := callDrop.NewGetElementPtr(lltypes.I8, box, i64c(rcHeaderSize))
 		dropTy := lltypes.NewPointer(lltypes.NewFunc(lltypes.Void, i8ptr))
 		callDrop.NewCall(callDrop.NewBitCast(drop, dropTy), payload)
 		callDrop.NewBr(doFree)
@@ -292,9 +292,9 @@ func (l *lowerer) ensureRCRuntime() {
 // currently leak — see ALLOCATION.md / STRING_LAYOUT.md).
 func (l *lowerer) rcAllocPayload(block *ir.Block, payloadSize value.Value) (box, payload value.Value) {
 	l.ensureRCRuntime()
-	boxSize := block.NewAdd(payloadSize, constant.NewInt(lltypes.I64, rcHeaderSize))
+	boxSize := block.NewAdd(payloadSize, i64c(rcHeaderSize))
 	box = block.NewCall(l.rcAlloc, boxSize)
-	payload = block.NewGetElementPtr(lltypes.I8, box, constant.NewInt(lltypes.I64, rcHeaderSize))
+	payload = block.NewGetElementPtr(lltypes.I8, box, i64c(rcHeaderSize))
 	return box, payload
 }
 
@@ -302,6 +302,6 @@ func (l *lowerer) rcAllocPayload(block *ir.Block, payloadSize value.Value) (box,
 // arrives as an i8* in the runtime shims, where the payload type is unknown) —
 // the count words are the first two i64s of every box, whatever it wraps.
 func weakCountPtr(b *ir.Block, box value.Value, i64ptr lltypes.Type) value.Value {
-	off := constant.NewInt(lltypes.I64, boxWeakField*8)
+	off := i64c(boxWeakField * 8)
 	return b.NewBitCast(b.NewGetElementPtr(lltypes.I8, box, off), i64ptr)
 }

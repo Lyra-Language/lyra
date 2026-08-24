@@ -104,7 +104,7 @@ func (l *lowerer) ensureSetRawModeRuntime() *ir.Func {
 	cfmakeraw := l.module.NewFunc("cfmakeraw", lltypes.Void, ir.NewParam("", i8ptr))
 
 	saved := l.module.NewGlobalDef("lyra_termios_saved", constant.NewZeroInitializer(bufTy))
-	savedOK := l.module.NewGlobalDef("lyra_termios_saved_ok", constant.NewInt(lltypes.I32, 0))
+	savedOK := l.module.NewGlobalDef("lyra_termios_saved_ok", i32c(0))
 
 	on := ir.NewParam("on", lltypes.I1)
 	fn := l.module.NewFunc(ShimSetRawMode, lltypes.Void, on)
@@ -123,18 +123,18 @@ func (l *lowerer) ensureSetRawModeRuntime() *ir.Func {
 	scratch := entry.NewAlloca(bufTy)
 	scratchPtr := entry.NewBitCast(scratch, i8ptr)
 	savedPtr := entry.NewBitCast(saved, i8ptr)
-	stdin := constant.NewInt(lltypes.I32, 0)
-	now := constant.NewInt(lltypes.I32, tcsaNow)
+	stdin := i32c(0)
+	now := i32c(tcsaNow)
 	entry.NewCondBr(on, enable, disable)
 
 	// Save once. A second enable must not overwrite the saved copy with the raw mode
 	// this function itself installed — that is how a restore comes to restore nothing.
 	enable.NewCondBr(
 		enable.NewICmp(enum.IPredEQ, enable.NewLoad(lltypes.I32, savedOK),
-			constant.NewInt(lltypes.I32, 0)),
+			i32c(0)),
 		firstSave, applyRaw)
 	firstSave.NewCall(tcgetattr, stdin, savedPtr)
-	firstSave.NewStore(constant.NewInt(lltypes.I32, 1), savedOK)
+	firstSave.NewStore(i32c(1), savedOK)
 	firstSave.NewBr(applyRaw)
 
 	// Read the *current* attributes rather than copying the saved ones, so no memcpy is
@@ -148,7 +148,7 @@ func (l *lowerer) ensureSetRawModeRuntime() *ir.Func {
 	// terminal, which is far worse than doing nothing.
 	disable.NewCondBr(
 		disable.NewICmp(enum.IPredNE, disable.NewLoad(lltypes.I32, savedOK),
-			constant.NewInt(lltypes.I32, 0)),
+			i32c(0)),
 		restore, ret)
 	restore.NewCall(tcsetattr, stdin, now, savedPtr)
 	restore.NewBr(ret)
@@ -222,9 +222,9 @@ func (l *lowerer) ensureReadKeyRuntime(dt types.DataType, someC types.DataTypeCo
 	bufPtr := entry.NewBitCast(buf, i8ptr)
 	cpSlot := entry.NewAlloca(lltypes.I32)
 	idxSlot := entry.NewAlloca(lltypes.I64)
-	zero64 := constant.NewInt(lltypes.I64, 0)
-	one64 := constant.NewInt(lltypes.I64, 1)
-	stdin := constant.NewInt(lltypes.I32, 0)
+	zero64 := i64c(0)
+	one64 := i64c(1)
+	stdin := i32c(0)
 
 	n0 := entry.NewCall(read, stdin, bufPtr, one64)
 	entry.NewCondBr(entry.NewICmp(enum.IPredSLE, n0, zero64), retNone, gotFirst)
@@ -237,14 +237,14 @@ func (l *lowerer) ensureReadKeyRuntime(dt types.DataType, someC types.DataTypeCo
 	b0 := gotFirst.NewLoad(lltypes.I8, bufPtr)
 	b0w := gotFirst.NewZExt(b0, lltypes.I64)
 	is2 := gotFirst.NewICmp(enum.IPredEQ,
-		gotFirst.NewAnd(b0w, constant.NewInt(lltypes.I64, 0xE0)), constant.NewInt(lltypes.I64, 0xC0))
+		gotFirst.NewAnd(b0w, i64c(0xE0)), i64c(0xC0))
 	is3 := gotFirst.NewICmp(enum.IPredEQ,
-		gotFirst.NewAnd(b0w, constant.NewInt(lltypes.I64, 0xF0)), constant.NewInt(lltypes.I64, 0xE0))
+		gotFirst.NewAnd(b0w, i64c(0xF0)), i64c(0xE0))
 	is4 := gotFirst.NewICmp(enum.IPredEQ,
-		gotFirst.NewAnd(b0w, constant.NewInt(lltypes.I64, 0xF8)), constant.NewInt(lltypes.I64, 0xF0))
+		gotFirst.NewAnd(b0w, i64c(0xF8)), i64c(0xF0))
 	extra := gotFirst.NewSelect(is2, one64,
-		gotFirst.NewSelect(is3, constant.NewInt(lltypes.I64, 2),
-			gotFirst.NewSelect(is4, constant.NewInt(lltypes.I64, 3), zero64)))
+		gotFirst.NewSelect(is3, i64c(2),
+			gotFirst.NewSelect(is4, i64c(3), zero64)))
 	gotFirst.NewStore(one64, idxSlot)
 	gotFirst.NewBr(contLoop)
 
@@ -358,26 +358,26 @@ func (l *lowerer) ensureTerminalSizeRuntime(tt types.TupleType) (*ir.Func, error
 	// platform knowledge — only the ioctl selector does.
 	wsTy := lltypes.NewArray(4, lltypes.I16)
 	ws := b.NewAlloca(wsTy)
-	i32zero := constant.NewInt(lltypes.I32, 0)
-	rowPtr := b.NewGetElementPtr(wsTy, ws, i32zero, constant.NewInt(lltypes.I32, 0))
-	colPtr := b.NewGetElementPtr(wsTy, ws, i32zero, constant.NewInt(lltypes.I32, 1))
+	i32zero := i32c(0)
+	rowPtr := b.NewGetElementPtr(wsTy, ws, i32zero, i32c(0))
+	colPtr := b.NewGetElementPtr(wsTy, ws, i32zero, i32c(1))
 	// Zeroed before the call, so a failure is distinguishable and lands on the fallback
 	// below instead of reading uninitialized stack — clock.go's rule.
 	b.NewStore(constant.NewInt(lltypes.I16, 0), rowPtr)
 	b.NewStore(constant.NewInt(lltypes.I16, 0), colPtr)
 
-	b.NewCall(ioctl, constant.NewInt(lltypes.I32, 1),
-		constant.NewInt(lltypes.I64, tiocgwinsz()), b.NewBitCast(ws, i8ptr))
+	b.NewCall(ioctl, i32c(1),
+		i64c(tiocgwinsz()), b.NewBitCast(ws, i8ptr))
 
 	// The ioctl's own return value is ignored in favour of testing the values: a
 	// terminal reporting a zero dimension is as unusable as a failed call, and this way
 	// one test covers both.
 	var rows value.Value = b.NewZExt(b.NewLoad(lltypes.I16, rowPtr), lltypes.I64)
 	var cols value.Value = b.NewZExt(b.NewLoad(lltypes.I16, colPtr), lltypes.I64)
-	rows = b.NewSelect(b.NewICmp(enum.IPredEQ, rows, constant.NewInt(lltypes.I64, 0)),
-		constant.NewInt(lltypes.I64, terminalSizeFallbackRows), rows)
-	cols = b.NewSelect(b.NewICmp(enum.IPredEQ, cols, constant.NewInt(lltypes.I64, 0)),
-		constant.NewInt(lltypes.I64, terminalSizeFallbackCols), cols)
+	rows = b.NewSelect(b.NewICmp(enum.IPredEQ, rows, i64c(0)),
+		i64c(terminalSizeFallbackRows), rows)
+	cols = b.NewSelect(b.NewICmp(enum.IPredEQ, cols, i64c(0)),
+		i64c(terminalSizeFallbackCols), cols)
 
 	agg := b.NewInsertValue(constant.NewUndef(structTy), cols, 0)
 	b.NewRet(b.NewInsertValue(agg, rows, 1))
@@ -461,23 +461,23 @@ func (l *lowerer) ensureWaitForKeyRuntime() *ir.Func {
 	b := fn.NewBlock("entry")
 
 	pfd := b.NewAlloca(pollfdTy)
-	i32zero := constant.NewInt(lltypes.I32, 0)
-	fdPtr := b.NewGetElementPtr(pollfdTy, pfd, i32zero, constant.NewInt(lltypes.I32, 0))
-	evPtr := b.NewGetElementPtr(pollfdTy, pfd, i32zero, constant.NewInt(lltypes.I32, 1))
-	rePtr := b.NewGetElementPtr(pollfdTy, pfd, i32zero, constant.NewInt(lltypes.I32, 2))
-	b.NewStore(constant.NewInt(lltypes.I32, 0), fdPtr) // stdin, the fd read_key reads
+	i32zero := i32c(0)
+	fdPtr := b.NewGetElementPtr(pollfdTy, pfd, i32zero, i32c(0))
+	evPtr := b.NewGetElementPtr(pollfdTy, pfd, i32zero, i32c(1))
+	rePtr := b.NewGetElementPtr(pollfdTy, pfd, i32zero, i32c(2))
+	b.NewStore(i32c(0), fdPtr) // stdin, the fd read_key reads
 	b.NewStore(constant.NewInt(lltypes.I16, pollIn), evPtr)
 	// revents is written by poll, but zero it anyway: on the error path below it is read
 	// without poll having set it, and clock.go's rule is that a failed syscall must leave
 	// a defined value rather than uninitialized stack.
 	b.NewStore(constant.NewInt(lltypes.I16, 0), rePtr)
 
-	belowZero := b.NewICmp(enum.IPredSLT, timeout, constant.NewInt(lltypes.I64, 0))
-	atLeastZero := b.NewSelect(belowZero, constant.NewInt(lltypes.I64, 0), timeout)
-	aboveMax := b.NewICmp(enum.IPredSGT, atLeastZero, constant.NewInt(lltypes.I64, pollTimeoutMax))
-	clamped := b.NewSelect(aboveMax, constant.NewInt(lltypes.I64, pollTimeoutMax), atLeastZero)
+	belowZero := b.NewICmp(enum.IPredSLT, timeout, i64c(0))
+	atLeastZero := b.NewSelect(belowZero, i64c(0), timeout)
+	aboveMax := b.NewICmp(enum.IPredSGT, atLeastZero, i64c(pollTimeoutMax))
+	clamped := b.NewSelect(aboveMax, i64c(pollTimeoutMax), atLeastZero)
 
-	n := b.NewCall(poll, b.NewBitCast(pfd, i8ptr), constant.NewInt(lltypes.I64, 1),
+	n := b.NewCall(poll, b.NewBitCast(pfd, i8ptr), i64c(1),
 		b.NewTrunc(clamped, lltypes.I32))
 
 	// Branchless: 0 (timed out) and -1 (error) both answer false; otherwise the answer is

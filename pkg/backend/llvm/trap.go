@@ -82,10 +82,10 @@ func (l *lowerer) panicFunc(name, msg string) *ir.Func {
 	fn.FuncAttrs = append(fn.FuncAttrs, enum.FuncAttrNoReturn)
 	b := fn.NewBlock("entry")
 	b.NewCall(l.writeFunc(),
-		constant.NewInt(lltypes.I32, 2), // stderr
+		i32c(2), // stderr
 		l.cString(msg),
-		constant.NewInt(lltypes.I64, int64(len(msg))))
-	b.NewCall(l.exitFunc(), constant.NewInt(lltypes.I32, trapExitCode))
+		i64c(int64(len(msg))))
+	b.NewCall(l.exitFunc(), i32c(trapExitCode))
 	b.NewUnreachable()
 	l.panics[name] = fn
 	return fn
@@ -206,12 +206,12 @@ func (l *lowerer) panicMessageFunc() *ir.Func {
 	fn := l.module.NewFunc(name, lltypes.Void, data, length)
 	fn.FuncAttrs = append(fn.FuncAttrs, enum.FuncAttrNoReturn)
 	b := fn.NewBlock("entry")
-	stderr := constant.NewInt(lltypes.I32, 2)
+	stderr := i32c(2)
 	b.NewCall(l.writeFunc(), stderr, l.cString(panicPrefixMessage),
-		constant.NewInt(lltypes.I64, int64(len(panicPrefixMessage))))
+		i64c(int64(len(panicPrefixMessage))))
 	b.NewCall(l.writeFunc(), stderr, data, length)
-	b.NewCall(l.writeFunc(), stderr, l.newlinePtr(), constant.NewInt(lltypes.I64, 1))
-	b.NewCall(l.exitFunc(), constant.NewInt(lltypes.I32, trapExitCode))
+	b.NewCall(l.writeFunc(), stderr, l.newlinePtr(), i64c(1))
+	b.NewCall(l.exitFunc(), i32c(trapExitCode))
 	b.NewUnreachable()
 	l.panics[name] = fn
 	return fn

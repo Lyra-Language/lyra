@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/llir/llvm/ir"
-	"github.com/llir/llvm/ir/constant"
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
@@ -73,21 +72,21 @@ func (l *lowerer) ensureWallClockRuntime() *ir.Func {
 	b := fn.NewBlock("entry")
 	ts := b.NewAlloca(tsType)
 
-	zero := constant.NewInt(lltypes.I32, 0)
-	secPtr := b.NewGetElementPtr(tsType, ts, zero, constant.NewInt(lltypes.I32, 0))
-	nsecPtr := b.NewGetElementPtr(tsType, ts, zero, constant.NewInt(lltypes.I32, 1))
-	b.NewStore(constant.NewInt(lltypes.I64, 0), secPtr)
-	b.NewStore(constant.NewInt(lltypes.I64, 0), nsecPtr)
+	zero := i32c(0)
+	secPtr := b.NewGetElementPtr(tsType, ts, zero, i32c(0))
+	nsecPtr := b.NewGetElementPtr(tsType, ts, zero, i32c(1))
+	b.NewStore(i64c(0), secPtr)
+	b.NewStore(i64c(0), nsecPtr)
 
 	// CLOCK_REALTIME is 0 on both Linux and macOS.
-	b.NewCall(clockGettime, constant.NewInt(lltypes.I32, 0), b.NewBitCast(ts, i8ptr))
+	b.NewCall(clockGettime, i32c(0), b.NewBitCast(ts, i8ptr))
 
 	sec := b.NewLoad(lltypes.I64, secPtr)
 	nsec := b.NewLoad(lltypes.I64, nsecPtr)
 	// Plain mul/add, not the checked forms: this is runtime support, below the
 	// language's arithmetic, and the product cannot overflow an i64 for any epoch
 	// second a clock_gettime can report.
-	b.NewRet(b.NewAdd(b.NewMul(sec, constant.NewInt(lltypes.I64, 1_000_000_000)), nsec))
+	b.NewRet(b.NewAdd(b.NewMul(sec, i64c(1_000_000_000)), nsec))
 
 	l.wallClock = fn
 	return fn

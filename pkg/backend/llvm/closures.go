@@ -194,7 +194,7 @@ func (l *lowerer) defineClosure(fn *ast.LambdaExpr) error {
 		typed := entry.NewBitCast(irFn.Params[0], lltypes.NewPointer(envTy))
 		for i, c := range caps {
 			ptr := entry.NewGetElementPtr(envTy, typed,
-				constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, int64(i+1))) // +1: dropFn slot
+				i32c(0), i32c(int64(i+1))) // +1: dropFn slot
 			slot := entry.NewAlloca(envTy.Fields[i+1])
 			entry.NewStore(entry.NewLoad(envTy.Fields[i+1], ptr), slot)
 			l.locals[c.Name] = slot
@@ -295,7 +295,7 @@ func (l *lowerer) buildEnv(block *ir.Block, caps []captures.Capture) (value.Valu
 	if err != nil {
 		return nil, nil, err
 	}
-	_, payload := l.rcAllocPayload(block, constant.NewInt(lltypes.I64, int64(size)))
+	_, payload := l.rcAllocPayload(block, i64c(int64(size)))
 	typed := block.NewBitCast(payload, lltypes.NewPointer(envTy))
 
 	dropFn, err := l.envDropFnFor(caps, envTy)
@@ -303,7 +303,7 @@ func (l *lowerer) buildEnv(block *ir.Block, caps []captures.Capture) (value.Valu
 		return nil, nil, err
 	}
 	block.NewStore(dropFn, block.NewGetElementPtr(envTy, typed,
-		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 0)))
+		i32c(0), i32c(0)))
 
 	for i, c := range caps {
 		slot, ok := l.locals[c.Name]
@@ -323,7 +323,7 @@ func (l *lowerer) buildEnv(block *ir.Block, caps []captures.Capture) (value.Valu
 			}
 		}
 		block.NewStore(v, block.NewGetElementPtr(envTy, typed,
-			constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, int64(i+1))))
+			i32c(0), i32c(int64(i+1))))
 	}
 	return payload, block, nil
 }
@@ -379,7 +379,7 @@ func (l *lowerer) envDropFnFor(caps []captures.Capture, envTy *lltypes.StructTyp
 				continue
 			}
 			ptr := block.NewGetElementPtr(envTy, typed,
-				constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, int64(i+1)))
+				i32c(0), i32c(int64(i+1)))
 			v := block.NewLoad(envTy.Fields[i+1], ptr)
 			var err error
 			block, err = l.emitDropValue(block, v, c.Type)
@@ -430,7 +430,7 @@ func (l *lowerer) closureEnvDropFn() value.Value {
 // pointer does, so the box is env - rcHeaderSize.
 func (l *lowerer) closureEnvBox(block *ir.Block, closure value.Value) value.Value {
 	env := block.NewExtractValue(closure, 1)
-	return block.NewGetElementPtr(lltypes.I8, env, constant.NewInt(lltypes.I64, -rcHeaderSize))
+	return block.NewGetElementPtr(lltypes.I8, env, i64c(-rcHeaderSize))
 }
 
 // emptyEnv is the shared environment of every captureless function value: a
@@ -446,7 +446,7 @@ func (l *lowerer) emptyEnv() value.Value {
 		g := l.privateConst(".closure.empty_env", boxConst)
 		l.emptyEnvPtr = constant.NewBitCast(
 			constant.NewGetElementPtr(boxTy, g,
-				constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, boxPayloadField)),
+				i32c(0), i32c(boxPayloadField)),
 			lltypes.NewPointer(lltypes.I8))
 	}
 	return l.emptyEnvPtr

@@ -114,7 +114,7 @@ func (l *lowerer) lowerStringSlice(block *ir.Block, call *ast.FunctionCallExpr, 
 	end := coerceIntWidth(block, endV, endSigned, lltypes.I64)
 
 	fn := block.Parent
-	zero := constant.NewInt(lltypes.I64, 0)
+	zero := i64c(0)
 	yes := constant.NewInt(lltypes.I1, 1)
 
 	trapBlock := fn.NewBlock("")
@@ -193,18 +193,18 @@ func (l *lowerer) lowerStringFromEnd(block *ir.Block, call *ast.FunctionCallExpr
 	kSigned, _ := l.getIntSignedness(call.Arguments[0])
 	k := coerceIntWidth(block, kV, kSigned, lltypes.I64)
 
-	one := constant.NewInt(lltypes.I64, 1)
+	one := i64c(1)
 	block = l.emitTrapIf(block, block.NewICmp(enum.IPredSLT, k, one), l.panicStringIndexOOBFunc())
 
 	data := block.NewExtractValue(str, 0)
 	byteLen := block.NewExtractValue(str, 1)
-	target := block.NewSub(constant.NewInt(lltypes.I64, 0), k)
+	target := block.NewSub(i64c(0), k)
 	off := block.NewCall(l.strRuneOffsetFunc(), data, byteLen, target, constant.NewInt(lltypes.I1, 0))
 
 	fn := block.Parent
 	foundBlock := fn.NewBlock("")
 	trapBlock := fn.NewBlock("")
-	block.NewCondBr(block.NewICmp(enum.IPredSLT, off, constant.NewInt(lltypes.I64, 0)), trapBlock, foundBlock)
+	block.NewCondBr(block.NewICmp(enum.IPredSLT, off, i64c(0)), trapBlock, foundBlock)
 	trapBlock.NewCall(l.panicStringIndexOOBFunc())
 	trapBlock.NewUnreachable()
 
@@ -253,7 +253,7 @@ func (l *lowerer) lowerStringCompareBytes(block *ir.Block, call *ast.FunctionCal
 	// subtraction rather than a branch, keeping the call site branchless for the reason
 	// the rest of this file is.
 	lenDiff := block.NewSub(la, lb)
-	prefixEqual := block.NewICmp(enum.IPredEQ, cmp, constant.NewInt(lltypes.I64, 0))
+	prefixEqual := block.NewICmp(enum.IPredEQ, cmp, i64c(0))
 	return block.NewSelect(prefixEqual, lenDiff, cmp), block, nil
 }
 
@@ -323,7 +323,7 @@ func (l *lowerer) lowerStringCompareBytesAt(block *ir.Block, call *ast.FunctionC
 	otherData := block.NewExtractValue(other, 0)
 	otherLen := block.NewExtractValue(other, 1)
 
-	zero := constant.NewInt(lltypes.I64, 0)
+	zero := i64c(0)
 	// 0 <= offset <= byteLen. An offset *equal* to the length is in range and names the
 	// empty tail, which is what `"".ends_with("")` and `s.ends_with(s)` need.
 	inRange := block.NewAnd(
@@ -343,7 +343,7 @@ func (l *lowerer) lowerStringCompareBytesAt(block *ir.Block, call *ast.FunctionC
 	// The bytes that were there matched. `n - otherLen` is 0 when all of `other` was
 	// compared and negative when `self` ran short; an offset that was out of range is
 	// negative for the same reason — there was no such range to match.
-	tail := block.NewSelect(inRange, block.NewSub(n, otherLen), constant.NewInt(lltypes.I64, -1))
+	tail := block.NewSelect(inRange, block.NewSub(n, otherLen), i64c(-1))
 	prefixEqual := block.NewICmp(enum.IPredEQ, cmp, zero)
 	return block.NewSelect(prefixEqual, tail, cmp), block, nil
 }
@@ -402,8 +402,8 @@ func (l *lowerer) lowerStringByteOffset(block *ir.Block, call *ast.FunctionCallE
 	// through its backward walk to a valid offset (that walk is `from_end`'s internal
 	// contract now). None rather than a trap, matching `index`'s negative offset:
 	// this returns a Maybe, so the no-such-position answer has a shape.
-	negIdx := block.NewICmp(enum.IPredSLT, idx, constant.NewInt(lltypes.I64, 0))
-	missing := block.NewOr(negIdx, block.NewICmp(enum.IPredSLT, off, constant.NewInt(lltypes.I64, 0)))
+	negIdx := block.NewICmp(enum.IPredSLT, idx, i64c(0))
+	missing := block.NewOr(negIdx, block.NewICmp(enum.IPredSLT, off, i64c(0)))
 
 	some, err := l.buildDataValue(block, dt, someTag, someC, []value.Value{off})
 	if err != nil {

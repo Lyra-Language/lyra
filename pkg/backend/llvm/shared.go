@@ -112,7 +112,7 @@ func (l *lowerer) lowerBoxShared(block *ir.Block, payload value.Value, payloadTy
 	if !ok {
 		return nil, fmt.Errorf("llvm: cannot size a `shared %s` payload yet", payloadType)
 	}
-	boxSize := constant.NewInt(lltypes.I64, int64(rcHeaderSize+payloadSize))
+	boxSize := i64c(int64(rcHeaderSize + payloadSize))
 	boxI8 := block.NewCall(l.rcAlloc, boxSize) // i8*, rc already 1
 	boxTy := SharedBoxType(payload.Type())     // { i64, payloadLLVM }
 	box := block.NewBitCast(boxI8, lltypes.NewPointer(boxTy))
@@ -147,7 +147,7 @@ func (l *lowerer) lowerBoxSharedReuse(block *ir.Block, payload value.Value, payl
 	reuseBox := reuseBlock.NewBitCast(token, boxPtrTy)
 	rcPtr := reuseBlock.NewGetElementPtr(boxTy, reuseBox,
 		i32c(0), i32c(boxStrongField))
-	reuseBlock.NewStore(constant.NewInt(lltypes.I64, 1), rcPtr)
+	reuseBlock.NewStore(i64c(1), rcPtr)
 	reusePayloadPtr := boxPayloadPtr(reuseBlock, boxTy, reuseBox)
 	reuseBlock.NewStore(payload, reusePayloadPtr)
 	reuseBlock.NewBr(merge)

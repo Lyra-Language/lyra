@@ -174,7 +174,7 @@ func pinnedBoxConstant(payload constant.Constant) (*constant.Struct, *lltypes.St
 	boxTy := SharedBoxType(payload.Type())
 	fields := make([]constant.Constant, 0, len(boxTy.Fields))
 	for range len(boxTy.Fields) - 1 { // every count word
-		fields = append(fields, constant.NewInt(lltypes.I64, -1)) // PinnedRC bit pattern
+		fields = append(fields, i64c(-1)) // PinnedRC bit pattern
 	}
 	fields = append(fields, payload)
 	return constant.NewStruct(boxTy, fields...), boxTy

@@ -175,7 +175,7 @@ func (l *lowerer) emitOwnedData(block *ir.Block, v value.Value, dt types.DataTyp
 	block.NewStore(v, slot)
 	tagTy := unionTy.Fields[0].(*lltypes.IntType)
 	tagPtr := block.NewGetElementPtr(unionTy, slot,
-		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 0))
+		i32c(0), i32c(0))
 	tag := block.NewLoad(tagTy, tagPtr)
 
 	exit := fn.NewBlock("")
@@ -191,7 +191,7 @@ func (l *lowerer) emitOwnedData(block *ir.Block, v value.Value, dt types.DataTyp
 			return nil, err
 		}
 		blobPtr := armBlock.NewGetElementPtr(unionTy, slot,
-			constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
+			i32c(0), i32c(1))
 		typedPtr := armBlock.NewBitCast(blobPtr, lltypes.NewPointer(payloadStructTy))
 		payload := armBlock.NewLoad(payloadStructTy, typedPtr)
 

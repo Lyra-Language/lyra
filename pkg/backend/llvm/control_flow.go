@@ -413,10 +413,10 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 		if err != nil {
 			return nil, nil, err
 		}
-		length = constant.NewInt(lltypes.I64, int64(it.Size))
+		length = i64c(int64(it.Size))
 		elemLL = arrayTy.ElemType
 		arrGep = func(b *ir.Block, i value.Value) value.Value {
-			return b.NewGetElementPtr(arrayTy, arrPtr, constant.NewInt(lltypes.I64, 0), i)
+			return b.NewGetElementPtr(arrayTy, arrPtr, i64c(0), i)
 		}
 	case types.DynamicArrayType:
 		elem, err := l.lowerType(it.ElementType)
@@ -442,7 +442,7 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 	entry := fn.Blocks[0]
 	iSlot := entry.NewAlloca(lltypes.I64)
 	xSlot := entry.NewAlloca(elemLL)
-	block.NewStore(constant.NewInt(lltypes.I64, 0), iSlot)
+	block.NewStore(i64c(0), iSlot)
 	l.locals[elemVar] = xSlot // borrow of the element — bound, not framed
 	var idxSlot value.Value
 	if indexVar != "" {
@@ -477,7 +477,7 @@ func (l *lowerer) lowerForInLoop(block *ir.Block, e *ast.ForInLoopExpr) (value.V
 	}
 
 	ic := incBlock.NewLoad(lltypes.I64, iSlot)
-	incBlock.NewStore(incBlock.NewAdd(ic, constant.NewInt(lltypes.I64, 1)), iSlot)
+	incBlock.NewStore(incBlock.NewAdd(ic, i64c(1)), iSlot)
 	incBlock.NewBr(condBlock)
 
 	return nil, exitBlock, nil
@@ -714,7 +714,7 @@ func (l *lowerer) lowerForInString(block *ir.Block, e *ast.ForInLoopExpr) (value
 	biSlot := entry.NewAlloca(lltypes.I64) // byte index
 	cSlot := entry.NewAlloca(lltypes.I32)  // the rune loop variable
 	cpSlot := entry.NewAlloca(lltypes.I32) // decode out-param
-	block.NewStore(constant.NewInt(lltypes.I64, 0), biSlot)
+	block.NewStore(i64c(0), biSlot)
 	runeVar := e.Key
 	var riSlot value.Value
 	if e.Value != "" {
@@ -722,7 +722,7 @@ func (l *lowerer) lowerForInString(block *ir.Block, e *ast.ForInLoopExpr) (value
 		// convention). The index is its own counter — the byte cursor cannot stand
 		// in for it, since a multi-byte rune advances the bytes by more than one.
 		riSlot = entry.NewAlloca(lltypes.I64)
-		block.NewStore(constant.NewInt(lltypes.I64, 0), riSlot)
+		block.NewStore(i64c(0), riSlot)
 		l.locals[e.Key] = riSlot
 		runeVar = e.Value
 	}
@@ -755,7 +755,7 @@ func (l *lowerer) lowerForInString(block *ir.Block, e *ast.ForInLoopExpr) (value
 	incBlock.NewStore(incBlock.NewAdd(biI, n), biSlot) // advance by the decoded byte count
 	if riSlot != nil {
 		ri := incBlock.NewLoad(lltypes.I64, riSlot)
-		incBlock.NewStore(incBlock.NewAdd(ri, constant.NewInt(lltypes.I64, 1)), riSlot)
+		incBlock.NewStore(incBlock.NewAdd(ri, i64c(1)), riSlot)
 	}
 	incBlock.NewBr(condBlock)
 

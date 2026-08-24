@@ -40,10 +40,6 @@ import (
 // and at push, like a tuple/struct's fields). Deferred, loud error: `match` on a
 // `shared` array.
 
-// i32c / i64c are small constant helpers for the many GEP indices below.
-func i32c(n int64) *constant.Int { return constant.NewInt(lltypes.I32, n) }
-func i64c(n int64) *constant.Int { return constant.NewInt(lltypes.I64, n) }
-
 // lowerDynArrayConstruction builds a `[]T` literal: allocate a ref-counted box
 // sized to hold the elements, store the length and each element, and yield the box
 // pointer. An empty literal still allocates a (len-0) box, keeping every dynamic

@@ -46,14 +46,14 @@ func (l *lowerer) lowerStringConstant(block *ir.Block, content string) value.Val
 	g := l.privateConst(fmt.Sprintf(".str.%d", l.strLitCount), boxConst)
 	l.strLitCount++
 
-	zero := constant.NewInt(lltypes.I32, 0)
+	zero := i32c(0)
 	// i8* to the first payload byte: &box.payload[0] == box + rcHeaderSize.
-	dataPtr := constant.NewGetElementPtr(boxTy, g, zero, constant.NewInt(lltypes.I32, boxPayloadField), zero)
+	dataPtr := constant.NewGetElementPtr(boxTy, g, zero, i32c(boxPayloadField), zero)
 	// The rune count is a compile-time fact for a literal — the one construction
 	// where it is literally free.
 	return makeString(block, dataPtr,
-		constant.NewInt(lltypes.I64, int64(len(bytes))),
-		constant.NewInt(lltypes.I64, int64(utf8.RuneCountInString(content))))
+		i64c(int64(len(bytes))),
+		i64c(int64(utf8.RuneCountInString(content))))
 }
 
 // utf8CountFunc lazily defines `i64 @lyra_utf8_count(i8* data, i64 byteLen)` — the
@@ -73,8 +73,8 @@ func (l *lowerer) utf8CountFunc() *ir.Func {
 	fn := l.module.NewFunc("lyra_utf8_count", lltypes.I64, data, byteLen)
 	l.utf8Count = fn
 
-	zero := constant.NewInt(lltypes.I64, 0)
-	one := constant.NewInt(lltypes.I64, 1)
+	zero := i64c(0)
+	one := i64c(1)
 
 	entry := fn.NewBlock("entry")
 	cond := fn.NewBlock("cond")
@@ -111,7 +111,7 @@ func (l *lowerer) utf8CountFunc() *ir.Func {
 // and release operate on any string value without distinguishing the two.
 func (l *lowerer) stringBox(block *ir.Block, str value.Value) value.Value {
 	data := block.NewExtractValue(str, 0)
-	return block.NewGetElementPtr(lltypes.I8, data, constant.NewInt(lltypes.I64, -rcHeaderSize))
+	return block.NewGetElementPtr(lltypes.I8, data, i64c(-rcHeaderSize))
 }
 
 // (Refcount bump/drop on a string's box are handled by the type-dispatching
@@ -153,7 +153,7 @@ func (l *lowerer) lowerStringIndex(block *ir.Block, e *ast.IndexExpr) (value.Val
 	signed, _ := l.getIntSignedness(e.Index)
 	target := coerceIntWidth(block, idx, signed, lltypes.I64) // the wanted rune index
 
-	negIdx := block.NewICmp(enum.IPredSLT, target, constant.NewInt(lltypes.I64, 0))
+	negIdx := block.NewICmp(enum.IPredSLT, target, i64c(0))
 	block = l.emitTrapIf(block, negIdx, l.panicStringIndexOOBFunc())
 
 	off := block.NewCall(l.strRuneOffsetFunc(), data, length, target, constant.NewInt(lltypes.I1, 0))
@@ -161,7 +161,7 @@ func (l *lowerer) lowerStringIndex(block *ir.Block, e *ast.IndexExpr) (value.Val
 	fn := block.Parent
 	foundBlock := fn.NewBlock("")
 	trapBlock := fn.NewBlock("")
-	block.NewCondBr(block.NewICmp(enum.IPredSLT, off, constant.NewInt(lltypes.I64, 0)), trapBlock, foundBlock)
+	block.NewCondBr(block.NewICmp(enum.IPredSLT, off, i64c(0)), trapBlock, foundBlock)
 
 	trapBlock.NewCall(l.panicStringIndexOOBFunc())
 	trapBlock.NewUnreachable()
@@ -203,14 +203,14 @@ func (l *lowerer) utf8DecodeFunc() *ir.Func {
 	byteAt := func(b *ir.Block, off int64) value.Value {
 		idx := value.Value(pos)
 		if off != 0 {
-			idx = b.NewAdd(pos, constant.NewInt(lltypes.I64, off))
+			idx = b.NewAdd(pos, i64c(off))
 		}
 		return b.NewZExt(b.NewLoad(lltypes.I8, b.NewGetElementPtr(lltypes.I8, data, idx)), lltypes.I32)
 	}
-	c := func(n int64) *constant.Int { return constant.NewInt(lltypes.I32, n) }
+	c := func(n int64) *constant.Int { return i32c(n) }
 	ret := func(b *ir.Block, cp value.Value, n int64) {
 		b.NewStore(cp, cpOut)
-		b.NewRet(constant.NewInt(lltypes.I64, n))
+		b.NewRet(i64c(n))
 	}
 
 	b0 := byteAt(entry, 0)
@@ -330,7 +330,7 @@ func (l *lowerer) lowerInterpolatedString(block *ir.Block, e *ast.InterpolatedSt
 		data, length value.Value
 	}
 	var segs []segment
-	total := value.Value(constant.NewInt(lltypes.I64, 0))
+	total := value.Value(i64c(0))
 
 	for _, seg := range e.Segments {
 		val, blk, err := l.lowerExpr(block, seg)
@@ -352,7 +352,7 @@ func (l *lowerer) lowerInterpolatedString(block *ir.Block, e *ast.InterpolatedSt
 
 	_, dst := l.rcAllocPayload(block, total)
 	memcpy := l.memcpyFunc()
-	offset := value.Value(constant.NewInt(lltypes.I64, 0))
+	offset := value.Value(i64c(0))
 	for _, s := range segs {
 		target := block.NewGetElementPtr(lltypes.I8, dst, offset)
 		block.NewCall(memcpy, target, s.data, s.length)
@@ -382,7 +382,7 @@ func (l *lowerer) lowerStringEquality(block *ir.Block, a, b value.Value) value.V
 	aShorter := block.NewICmp(enum.IPredULT, la, lb)
 	n := block.NewSelect(aShorter, la, lb) // min(la, lb)
 	cmp := block.NewCall(l.memcmpFunc(), pa, pb, n)
-	bytesEq := block.NewICmp(enum.IPredEQ, cmp, constant.NewInt(lltypes.I32, 0))
+	bytesEq := block.NewICmp(enum.IPredEQ, cmp, i32c(0))
 	return block.NewAnd(lenEq, bytesEq)
 }
 
@@ -466,8 +466,8 @@ func (l *lowerer) strRuneOffsetFunc() *ir.Func {
 	fn := l.module.NewFunc("lyra_str_rune_offset", lltypes.I64, data, byteLen, idx, allowEnd)
 	l.strRuneOffset = fn
 
-	zero := constant.NewInt(lltypes.I64, 0)
-	one := constant.NewInt(lltypes.I64, 1)
+	zero := i64c(0)
+	one := i64c(1)
 
 	entry := fn.NewBlock("entry")
 	fwdInit := fn.NewBlock("fwd")
@@ -533,7 +533,7 @@ func (l *lowerer) strRuneOffsetFunc() *ir.Func {
 		bi := skipTest.NewLoad(lltypes.I64, biSlot)
 		b := skipTest.NewZExt(skipTest.NewLoad(lltypes.I8, skipTest.NewGetElementPtr(lltypes.I8, data, bi)), lltypes.I32)
 		isCont := skipTest.NewICmp(enum.IPredEQ,
-			skipTest.NewAnd(b, constant.NewInt(lltypes.I32, 0xC0)), constant.NewInt(lltypes.I32, 0x80))
+			skipTest.NewAnd(b, i32c(0xC0)), i32c(0x80))
 		skipTest.NewCondBr(isCont, skipBody, backNext)
 	}
 	skipBody.NewStore(skipBody.NewSub(skipBody.NewLoad(lltypes.I64, biSlot), one), biSlot)
@@ -542,7 +542,7 @@ func (l *lowerer) strRuneOffsetFunc() *ir.Func {
 	backNext.NewBr(backCond)
 
 	retOK.NewRet(retOK.NewLoad(lltypes.I64, biSlot))
-	oor.NewRet(constant.NewInt(lltypes.I64, -1))
+	oor.NewRet(i64c(-1))
 	return fn
 }
 

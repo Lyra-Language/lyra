@@ -66,7 +66,7 @@ func (l *lowerer) ensureRandomSeedRuntime() *ir.Func {
 	b := fn.NewBlock("entry")
 	slot := b.NewAlloca(lltypes.I64)
 	b.NewStore(b.NewCall(timeFn, constant.NewNull(i8ptr)), slot)
-	b.NewCall(getentropy, b.NewBitCast(slot, i8ptr), constant.NewInt(lltypes.I64, 8))
+	b.NewCall(getentropy, b.NewBitCast(slot, i8ptr), i64c(8))
 	b.NewRet(b.NewLoad(lltypes.I64, slot))
 
 	l.randomSeed = fn
