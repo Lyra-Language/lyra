@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -658,22 +659,67 @@ func arrayMatchIsExhaustive(arms []ast.MatchArm, _ types.Type) bool {
 	return true
 }
 
-// findDataTypeByConstructor searches the registered type declarations for the
-// DataType that owns a constructor named ctorName. Returns (DataType, true) on
-// success and (DataType{}, false) when no such constructor is found.
-func (tc *TypeChecker) findDataTypeByConstructor(ctorName string) (types.DataType, bool) {
-	for _, decl := range tc.symTable.Types {
+// declaringDataType returns the declaration whose data type declares ctorName, **as the
+// file at loc sees it**, along with that data type.
+//
+// Two things about it are load-bearing, and it had neither.
+//
+// **It resolves through the file's own view** (rule 4). Iterating SymbolTable.Types sees
+// every module's declarations including the private ones, so `Hidden(42)` in another module
+// found a `data Secret` it has no right to name. The caller then looked the *name* up
+// properly, correctly got nothing back, and dereferenced it — a SIGSEGV out of `lyrac` on a
+// program whose only fault is naming something private, and the same crash in the LSP on
+// every keystroke.
+//
+// **It is deterministic.** Map iteration order is random, so two data types sharing a
+// constructor name — trivially reachable, since a program may declare its own `Some`
+// beside the prelude's — resolved to a different one on each compile. Sorted keys plus the
+// visibility filter make the answer a property of the program rather than of the run.
+func (tc *TypeChecker) declaringDataType(ctorName string, loc ast.Location) (*ast.TypeDeclStmt, types.DataType, bool) {
+	// Ordered by locality, then by key. A module's own declaration shadows an ambient one
+	// for every other kind of name, and a constructor should not be the exception: a
+	// program declaring `data Opt = Some(i64) | None` means *its* `Some`, not the
+	// prelude's. Alphabetical order alone is deterministic but picks by spelling, which
+	// would hand `Some` to `Maybe` on the strength of "Maybe" < "Opt".
+	asking := tc.symTable.ModuleOfFile[loc.File]
+	keys := make([]string, 0, len(tc.symTable.Types))
+	for k := range tc.symTable.Types {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		li := tc.symTable.ModuleOfFile[tc.symTable.Types[keys[i]].GetLocation().File] == asking
+		lj := tc.symTable.ModuleOfFile[tc.symTable.Types[keys[j]].GetLocation().File] == asking
+		if li != lj {
+			return li
+		}
+		return keys[i] < keys[j]
+	})
+	for _, k := range keys {
+		decl := tc.symTable.Types[k]
 		dt, ok := decl.Type.(types.DataType)
 		if !ok {
 			continue
 		}
-		for _, ctor := range dt.Constructors {
-			if ctor.Name == ctorName {
-				return dt, true
-			}
+		if !slices.ContainsFunc(dt.Constructors, func(c types.DataTypeConstructor) bool {
+			return c.Name == ctorName
+		}) {
+			continue
+		}
+		// The name must resolve, from *this* file, to *this* declaration. A type it
+		// cannot see does not resolve; one shadowed by a same-named local declaration
+		// resolves to the other one, and this is not it.
+		if resolved, ok := tc.symTable.LookupTypeFrom(decl.Name, loc); ok && resolved == decl {
+			return decl, dt, true
 		}
 	}
-	return types.DataType{}, false
+	return nil, types.DataType{}, false
+}
+
+// findDataTypeByConstructor is declaringDataType without the declaration — the shape most
+// callers want.
+func (tc *TypeChecker) findDataTypeByConstructor(ctorName string, loc ast.Location) (types.DataType, bool) {
+	_, dt, ok := tc.declaringDataType(ctorName, loc)
+	return dt, ok
 }
 
 // resolveToDataType returns the DataType underlying t, or (DataType{}, false)

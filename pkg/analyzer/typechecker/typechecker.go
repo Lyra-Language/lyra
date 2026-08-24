@@ -754,7 +754,7 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 		// and be told `RAMP` is not a constructor of `Maybe`, which is just as true and
 		// just as unhelpful.
 		if p.Pattern == nil {
-			if _, isCtor := tc.findDataTypeByConstructor(p.Name); !isCtor {
+			if _, isCtor := tc.findDataTypeByConstructor(p.Name, p.GetLocation()); !isCtor {
 				tc.reportCapitalizedBindingName(p)
 				// Bind anyway, so the body does not then cascade into an "undefined
 				// identifier" at every use — the same best-effort the struct arm above
@@ -2111,7 +2111,7 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		// Resolve the data type that owns this constructor so that the type of
 		// a data-constructor expression (e.g. `Some 42`) is the enclosing
 		// DataType (e.g. `Maybe`), not nil.
-		if dt, ok := tc.findDataTypeByConstructor(e.Constructor); ok {
+		if dt, ok := tc.findDataTypeByConstructor(e.Constructor, e.GetLocation()); ok {
 			return dt
 		}
 		// Not a constructor, so the collector's reading of this PascalCase name was
@@ -3071,7 +3071,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 	// constructor or the old `data_constructor_expr` did — by constructor name —
 	// so `?`, `??`, and must-use see the owning data type (e.g. `Maybe`).
 	if name != "?" {
-		if dt, isCtor := tc.findDataTypeByConstructor(name); isCtor {
+		if dt, isCtor := tc.findDataTypeByConstructor(name, expr.GetLocation()); isCtor {
 			// The constructor's declared payload field types (flat), so an untyped
 			// literal argument (`B(3)` with `B(u8)`) takes the field's width instead
 			// of promoting to i64 — the same context-directed propagation structs and
@@ -3555,7 +3555,7 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 			return nil
 		}
 		decl, structType, resultType = d, st, st
-	} else if dDecl, fields, dt, ok := tc.findInlineRecordConstructor(expr.Name); ok {
+	} else if dDecl, fields, dt, ok := tc.findInlineRecordConstructor(expr.Name, expr.GetLocation()); ok {
 		// `Node { … }` where Node is a data constructor whose payload is an inline
 		// record (anonymous struct). Check the supplied fields against the record's
 		// fields; the literal evaluates to the owning data type. decl is the data
@@ -3690,23 +3690,21 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 // `Node { … }` for a `data Tree = … | Node { … }` constructor type-checks like a
 // struct literal but evaluates to the data type. Returns ok=false when no such
 // constructor exists or its payload is not an inline record.
-func (tc *TypeChecker) findInlineRecordConstructor(ctorName string) (*ast.TypeDeclStmt, []types.StructField, types.DataType, bool) {
-	for _, decl := range tc.symTable.Types {
-		dt, ok := decl.Type.(types.DataType)
-		if !ok {
+func (tc *TypeChecker) findInlineRecordConstructor(ctorName string, loc ast.Location) (*ast.TypeDeclStmt, []types.StructField, types.DataType, bool) {
+	decl, dt, ok := tc.declaringDataType(ctorName, loc)
+	if !ok {
+		return nil, nil, types.DataType{}, false
+	}
+	for _, ctor := range dt.Constructors {
+		if ctor.Name != ctorName {
 			continue
 		}
-		for _, ctor := range dt.Constructors {
-			if ctor.Name != ctorName {
-				continue
+		if len(ctor.Params) == 1 {
+			if anon, ok := ctor.Params[0].(types.AnonymousStructType); ok {
+				return decl, anon.Fields, dt, true
 			}
-			if len(ctor.Params) == 1 {
-				if anon, ok := ctor.Params[0].(types.AnonymousStructType); ok {
-					return decl, anon.Fields, dt, true
-				}
-			}
-			return nil, nil, types.DataType{}, false
 		}
+		return nil, nil, types.DataType{}, false
 	}
 	return nil, nil, types.DataType{}, false
 }
@@ -3728,7 +3726,14 @@ func (tc *TypeChecker) findInlineRecordConstructor(ctorName string) (*ast.TypeDe
 // precision the call site did not supply, and the missing argument is exactly what
 // a turbofish is for.
 func parameterizedResult(result types.Type, decl *ast.TypeDeclStmt, subst map[string]types.Type) (types.ParameterizedType, bool) {
-	if len(decl.GenericParams) == 0 {
+	// **nil is a real state, not an impossible one.** LookupTypeFrom answers for the file
+	// that asked, and it legitimately resolves nothing for a name that file cannot see.
+	// This was reached with nil — a visibility-blind constructor scan handed the caller a
+	// data type whose name the file could not name — and the deref below was a SIGSEGV out
+	// of `lyrac`, and out of the LSP on every keystroke. declaringDataType closed that
+	// route; the guard stays so a nil degrades to the unparameterized type rather than
+	// crashing, which is the standing rule for a state the compiler did not expect.
+	if decl == nil || len(decl.GenericParams) == 0 {
 		return types.ParameterizedType{}, false
 	}
 	args := make([]types.Type, 0, len(decl.GenericParams))

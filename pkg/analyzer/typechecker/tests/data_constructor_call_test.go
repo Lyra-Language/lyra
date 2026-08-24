@@ -80,3 +80,36 @@ func TestDataConstructorCall_WrongDataTypeRejected(t *testing.T) {
 	assertErrorsAre(t, res,
 		"bad: return type mismatch: expected Maybe<i64>, got Color")
 }
+
+// **A constructor resolves as the asking file sees it, and resolves the same way twice.**
+//
+// The lookup iterated SymbolTable.Types directly, which is rule 4's forbidden shape twice
+// over. It saw every module's *private* declarations, so naming another module's private
+// constructor found a data type the file has no right to name — the caller then looked the
+// name up properly, correctly got nothing back, and dereferenced it, taking `lyrac` down
+// with a SIGSEGV (and the LSP with it, on every keystroke). And it iterated a Go map, so two
+// data types sharing a constructor name resolved to a different one on each compile.
+//
+// Here a program declares its own `Some` beside the prelude's. The local declaration must
+// win — a module's own declaration shadows an ambient one for every other kind of name —
+// and it must win every time, which is why this runs the check repeatedly.
+func TestDataConstructor_LocalDeclarationShadowsThePrelude(t *testing.T) {
+	const src = `
+data Opt = Some(i64) | None
+let main = () -> void => {
+  let m: Opt = Some(1)
+  println(match m { Some(x) => x, None => 0 })
+}`
+	for i := 0; i < 8; i++ {
+		res := parseCollectAndCheck(t, src, false)
+		assertNoErrors(t, res)
+	}
+}
+
+// A constructor of an unshadowed local data type still resolves.
+func TestDataConstructor_UnshadowedStillResolves(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+data Other = Alpha(i64) | Beta
+let f = (o: Other) -> i64 => match o { Alpha(n) => n, Beta => 0 }`, false)
+	assertNoErrors(t, res)
+}
