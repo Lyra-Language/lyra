@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 08/24/26 (5)
+**The LLVM backend's small duplications.**
+
+Nine near-identical spellings, folded into six helpers, plus four pieces of dead or
+superseded code. Individually minor; the reason to do them together is that each was a
+place where one question had several answers.
+
+- **`makeString`** — the three insertvalues building a string's `{ptr, byte_len,
+  rune_count}` fat pointer, written out at six sites. The shape being repeated is what hid
+  the interesting part: the *count* is maintained three different ways under it — a literal
+  knows it at compile time, `++` and `slice` derive it arithmetically, and only `read_line`
+  and interpolation pay the linear `lyra_utf8_count`. Those differences now sit at the call
+  sites instead of being buried in identical scaffolding.
+- **`icmpPred(rel, signed)`** — three ladders mapping a relation and a signedness to an
+  LLVM predicate, reached from three different starting points: an AST comparison operator,
+  a range loop's ascending/descending operator, and a `match` range pattern's
+  inclusive/exclusive one. The shared half is the one that must not disagree — a `u64` loop
+  bound read with a *signed* predicate compares negative and the loop does not run.
+- **`declareLibc`** — eight lazily-declared libc functions, each with its own lowerer field
+  and its own `if l.x == nil` guard. One map now. It reports whether *this* call created the
+  declaration, which is how `exit` stays `noreturn` and `snprintf` variadic without
+  re-stamping the attribute on every lookup.
+- **`privateConst`** — five hand-set `Immutable`/`LinkagePrivate` pairs. One of them
+  (`constGlobal`, in regex_match.go) said in its own comment that it was "the same shape
+  cString uses", which is the tell.
+- **`lowerTypeList`** — four copies of "lower each Lyra type into a field list", differing
+  only in whether the result appends into an already-registered struct (so a recursive
+  reference finds it) or builds a fresh one. `fieldTypesOf`/`anonFieldTypesOf` became
+  one-liners over layout.go's `fieldTypes` at the same time.
+
+Removed outright: **`IsNumericConversionTarget`**, dead, and by its own comment "mirrors the
+typechecker's numericPrimitiveByName exactly" — an unenforced second copy of a table whose
+live answer is `types.ConversionTargetName`; **`isManagedLLVMType`**, dead; **`maxInt`**,
+which predates Go's builtin `max`; and **`emitCheckedDiv`** rebuilding INT_MIN with
+`big.Int` twenty lines from a call to `intMinConst`.
+
+**Verified by IR identity rather than by tests alone.** Emitting a module that exercises
+strings, arrays, `match`, `data`, structs, closures, loops and float printing, before and
+after: 32 of 2696 lines differ, and after normalizing SSA numbering the instruction
+*multiset* is identical — four `sub`s moved a few slots earlier, where `makeString` now
+evaluates its rune-count argument before building the struct. Pure reordering of a
+side-effect-free instruction. The full suite and `./asan.sh ./...` are green.
+
 ### 08/24/26 (4)
 **`declKey` memoization: implemented, measured at zero, reverted.**
 

@@ -9,6 +9,22 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
+// lowerTypeList lowers each Lyra type to its LLVM type, in order — the loop the four
+// aggregate lowerings below were each written around. They differ only in where the result
+// goes: a named struct or tuple appends into the type it was already registered under (so a
+// recursive reference finds it), while an anonymous one builds a fresh struct.
+func (l *lowerer) lowerTypeList(ts []types.Type) ([]lltypes.Type, error) {
+	out := make([]lltypes.Type, len(ts))
+	for i, t := range ts {
+		lt, err := l.lowerType(t)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = lt
+	}
+	return out, nil
+}
+
 func (l *lowerer) lowerTypeDeclarations(program *ast.Program) error {
 	for _, statement := range program.Statements {
 		if typeDeclStmt, ok := statement.(*ast.TypeDeclStmt); ok {
@@ -254,13 +270,11 @@ func (l *lowerer) lowerTupleDefInto(st *lltypes.StructType, t types.TupleType) e
 	if st == nil {
 		return fmt.Errorf("llvm: no registered LLVM type for tuple type %q", t.Name)
 	}
-	for _, element := range t.Elements {
-		elementType, err := l.lowerType(element)
-		if err != nil {
-			return err
-		}
-		st.Fields = append(st.Fields, elementType)
+	fields, err := l.lowerTypeList(t.Elements)
+	if err != nil {
+		return err
 	}
+	st.Fields = append(st.Fields, fields...)
 	return nil
 }
 
@@ -272,13 +286,11 @@ func (l *lowerer) lowerStructDefInto(st *lltypes.StructType, t types.NamedStruct
 	if st == nil {
 		return fmt.Errorf("llvm: no registered LLVM type for struct type %q", t.Name)
 	}
-	for _, field := range t.Fields {
-		fieldType, err := l.lowerType(field.Type)
-		if err != nil {
-			return err
-		}
-		st.Fields = append(st.Fields, fieldType)
+	fields, err := l.lowerTypeList(fieldTypes(t.Fields))
+	if err != nil {
+		return err
 	}
+	st.Fields = append(st.Fields, fields...)
 	return nil
 }
 
@@ -546,25 +558,17 @@ func (l *lowerer) lookupNamedType(name string) (lltypes.Type, error) {
 // type's own field order. The anonymous tuple's twin below, and deliberately beside it:
 // both are the structural aggregates that have no declaration to look up.
 func (l *lowerer) lowerAnonymousStructType(t types.AnonymousStructType) (*lltypes.StructType, error) {
-	fields := make([]lltypes.Type, len(t.Fields))
-	for i, f := range t.Fields {
-		ft, err := l.lowerType(f.Type)
-		if err != nil {
-			return nil, err
-		}
-		fields[i] = ft
+	fields, err := l.lowerTypeList(fieldTypes(t.Fields))
+	if err != nil {
+		return nil, err
 	}
 	return lltypes.NewStruct(fields...), nil
 }
 
 func (l *lowerer) lowerAnonymousTupleType(t types.TupleType) (*lltypes.StructType, error) {
-	fields := make([]lltypes.Type, len(t.Elements))
-	for i, elem := range t.Elements {
-		ft, err := l.lowerType(elem)
-		if err != nil {
-			return nil, err
-		}
-		fields[i] = ft
+	fields, err := l.lowerTypeList(t.Elements)
+	if err != nil {
+		return nil, err
 	}
 	return lltypes.NewStruct(fields...), nil
 }

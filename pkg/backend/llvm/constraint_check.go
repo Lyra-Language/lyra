@@ -273,11 +273,8 @@ func (l *lowerer) emitStepCheck(block *ir.Block, val value.Value, ct *types.Cons
 // fmodFunc lazily declares libc's `double @fmod(double, double)`, the float
 // remainder the step check needs.
 func (l *lowerer) fmodFunc() *ir.Func {
-	if l.fmod == nil {
-		l.fmod = l.module.NewFunc("fmod", lltypes.Double,
-			ir.NewParam("", lltypes.Double), ir.NewParam("", lltypes.Double))
-	}
-	return l.fmod
+	fn, _ := l.declareLibc("fmod", lltypes.Double, lltypes.Double, lltypes.Double)
+	return fn
 }
 
 // constraintRangeOriginInt / Float give the value a step grid is measured from: the

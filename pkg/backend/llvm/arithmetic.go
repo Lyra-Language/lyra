@@ -17,6 +17,51 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
+// icmpRel is a relational comparison with the signedness left out — the half of an LLVM
+// integer predicate that comes from the *operator*, as against the half that comes from the
+// operand's type.
+type icmpRel int
+
+const (
+	relLT icmpRel = iota
+	relLE
+	relGT
+	relGE
+)
+
+// icmpPred is the one place signedness picks a predicate.
+//
+// Three ladders spelled this out before: the boolean-operator switch below, the range
+// *loop* guard (rangeLoopPredicate), and a `match` range pattern's upper-bound test. Each
+// arrived at the same four pairs from a different starting point — an AST operator, an
+// ascending/descending range operator, an inclusive/exclusive one — and the mapping they
+// shared was the part that must not disagree: reading a u64 loop bound with a *signed*
+// predicate makes a large count compare negative, and the loop simply does not run.
+func icmpPred(rel icmpRel, signed bool) enum.IPred {
+	switch rel {
+	case relLT:
+		if signed {
+			return enum.IPredSLT
+		}
+		return enum.IPredULT
+	case relLE:
+		if signed {
+			return enum.IPredSLE
+		}
+		return enum.IPredULE
+	case relGT:
+		if signed {
+			return enum.IPredSGT
+		}
+		return enum.IPredUGT
+	default: // relGE
+		if signed {
+			return enum.IPredSGE
+		}
+		return enum.IPredUGE
+	}
+}
+
 // literalIntType returns the LLVM integer type an integer literal should lower
 // at: the concrete width the typechecker recorded for it (via context-directed
 // literal-width inference), or i64 when the literal has no resolved context (an
@@ -179,29 +224,13 @@ func (l *lowerer) lowerBooleanBinaryOpExpr(block *ir.Block, e *ast.BooleanBinary
 	case ast.BooleanBinaryOpNEq:
 		cmpOp = enum.IPredNE
 	case ast.BooleanBinaryOpLT:
-		if signed {
-			cmpOp = enum.IPredSLT
-		} else {
-			cmpOp = enum.IPredULT
-		}
+		cmpOp = icmpPred(relLT, signed)
 	case ast.BooleanBinaryOpLTE:
-		if signed {
-			cmpOp = enum.IPredSLE
-		} else {
-			cmpOp = enum.IPredULE
-		}
+		cmpOp = icmpPred(relLE, signed)
 	case ast.BooleanBinaryOpGT:
-		if signed {
-			cmpOp = enum.IPredSGT
-		} else {
-			cmpOp = enum.IPredUGT
-		}
+		cmpOp = icmpPred(relGT, signed)
 	case ast.BooleanBinaryOpGTE:
-		if signed {
-			cmpOp = enum.IPredSGE
-		} else {
-			cmpOp = enum.IPredUGE
-		}
+		cmpOp = icmpPred(relGE, signed)
 	default:
 		return nil, nil, fmt.Errorf("llvm: boolean operator %v not implemented", e.Operator)
 	}

@@ -18,18 +18,6 @@ import (
 // retain/release act on it directly. This file boxes a constructed value and
 // provides the type-dispatching retain/release the ownership lowering calls.
 
-// isManagedLLVMType reports whether an LLVM-typed value is reference-counted: a
-// string fat pointer, or a `shared` box pointer (the only pointer-typed values
-// the backend produces — every stack value is inline). Both participate in the
-// retain/release / last-use machinery.
-func isManagedLLVMType(t lltypes.Type) bool {
-	if isStringLLVMType(t) {
-		return true
-	}
-	_, isPtr := t.(*lltypes.PointerType)
-	return isPtr
-}
-
 // managedBox returns the ref-counted box pointer (as i8*) for a managed value —
 // stringBox for a string, the pointer itself for a `shared` box.
 func (l *lowerer) managedBox(block *ir.Block, v value.Value) value.Value {

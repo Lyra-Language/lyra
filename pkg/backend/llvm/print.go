@@ -19,13 +19,9 @@ import (
 // links libc, so no runtime object is needed — the same self-contained story as
 // memcmp/memcpy/malloc.
 func (l *lowerer) writeFunc() *ir.Func {
-	if l.write == nil {
-		l.write = l.module.NewFunc("write", lltypes.I64,
-			ir.NewParam("", lltypes.I32),
-			ir.NewParam("", lltypes.NewPointer(lltypes.I8)),
-			ir.NewParam("", lltypes.I64))
-	}
-	return l.write
+	fn, _ := l.declareLibc("write", lltypes.I64,
+		lltypes.I32, lltypes.NewPointer(lltypes.I8), lltypes.I64)
+	return fn
 }
 
 // snprintfFunc lazily declares libc's variadic
@@ -34,14 +30,12 @@ func (l *lowerer) writeFunc() *ir.Func {
 // output and stays in program order with the raw `write`s that string/bool/rune
 // print use.
 func (l *lowerer) snprintfFunc() *ir.Func {
-	if l.snprintf == nil {
-		i8ptr := lltypes.NewPointer(lltypes.I8)
-		f := l.module.NewFunc("snprintf", lltypes.I32,
-			ir.NewParam("", i8ptr), ir.NewParam("", lltypes.I64), ir.NewParam("", i8ptr))
-		f.Sig.Variadic = true
-		l.snprintf = f
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	fn, fresh := l.declareLibc("snprintf", lltypes.I32, i8ptr, lltypes.I64, i8ptr)
+	if fresh {
+		fn.Sig.Variadic = true
 	}
-	return l.snprintf
+	return fn
 }
 
 // floatStrBufBytes sizes the stack buffer a formatted float is written into. The
@@ -55,12 +49,9 @@ const floatStrBufBytes = 32
 // what makes the formatter below a *round-trip* check rather than a guess: the only
 // way to know a decimal string denotes the same float is to parse it back.
 func (l *lowerer) strtodFunc() *ir.Func {
-	if l.strtod == nil {
-		i8ptr := lltypes.NewPointer(lltypes.I8)
-		l.strtod = l.module.NewFunc("strtod", lltypes.Double,
-			ir.NewParam("", i8ptr), ir.NewParam("", lltypes.NewPointer(i8ptr)))
-	}
-	return l.strtod
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	fn, _ := l.declareLibc("strtod", lltypes.Double, i8ptr, lltypes.NewPointer(i8ptr))
+	return fn
 }
 
 // floatPrecisionLadder gives the significant-digit counts to try for a float
@@ -206,10 +197,7 @@ func (l *lowerer) cString(s string) value.Value {
 	g, ok := l.cStrings[s]
 	if !ok {
 		bytes := append([]byte(s), 0) // NUL terminator for a C string
-		g = l.module.NewGlobalDef(fmt.Sprintf(".cstr.%d", len(l.cStrings)),
-			constant.NewCharArray(bytes))
-		g.Immutable = true
-		g.Linkage = enum.LinkagePrivate
+		g = l.privateConst(fmt.Sprintf(".cstr.%d", len(l.cStrings)), constant.NewCharArray(bytes))
 		l.cStrings[s] = g
 	}
 	arrTy := g.ContentType
@@ -222,9 +210,7 @@ func (l *lowerer) cString(s string) value.Value {
 // every println in the module.
 func (l *lowerer) newlinePtr() value.Value {
 	if l.newlineByte == nil {
-		l.newlineByte = l.module.NewGlobalDef(".nl", constant.NewCharArray([]byte("\n")))
-		l.newlineByte.Immutable = true
-		l.newlineByte.Linkage = enum.LinkagePrivate
+		l.newlineByte = l.privateConst(".nl", constant.NewCharArray([]byte("\n")))
 	}
 	arrTy := lltypes.NewArray(1, lltypes.I8)
 	zero := constant.NewInt(lltypes.I32, 0)

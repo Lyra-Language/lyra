@@ -92,6 +92,7 @@ import (
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
+	"github.com/llir/llvm/ir/enum"
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
@@ -251,7 +252,12 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 }
 
 type lowerer struct {
-	module     *ir.Module
+	module *ir.Module
+	// libc holds every lazily-declared external libc function, keyed by symbol, so each
+	// is declared once however many call sites want it. Eight named fields with eight
+	// `if l.x == nil` accessors before this; the accessors remain, because what a call
+	// site wants is `l.memcpyFunc()` and not a signature spelled out again.
+	libc       map[string]*ir.Func
 	res        *driver.Result              // gives you TypeTable, SymbolTable, MethodTable, …
 	funcs      map[string]*ir.Func         // name → its function IR (all declared before any body)
 	funcParams map[string][]ast.Parameter  // name → its declared parameters (call sites need the `mut` by-ref modes)
@@ -274,18 +280,11 @@ type lowerer struct {
 	// resolved types reaching lowerType carry no location of their own.
 	currentLoc      ast.Location
 	strLitCount     int                     // counter for unique string-literal global names
-	memcmp          *ir.Func                // libc memcmp, declared lazily on first string comparison
-	memcpy          *ir.Func                // libc memcpy, declared lazily on first string concatenation
-	write           *ir.Func                // libc write, declared lazily on first print/println
-	snprintf        *ir.Func                // libc snprintf, declared lazily on first numeric print
 	fmtRune         *ir.Func                // lyra_rune_to_utf8, defined lazily on first rune print
 	utf8Decode      *ir.Func                // lyra_utf8_decode, defined lazily on first string for-in
 	strRuneOffset   *ir.Func                // lyra_str_rune_offset, defined lazily on first string index/slice
 	utf8Count       *ir.Func                // lyra_utf8_count, defined lazily (read_line / interpolation rune counts)
-	realloc         *ir.Func                // libc realloc, declared lazily on first dynamic-array push
 	fmtI128         *ir.Func                // lyra_i128_to_str, defined lazily on first i128/u128 print
-	strtod          *ir.Func                // libc strtod, declared lazily (the float formatter's round-trip check)
-	fmod            *ir.Func                // libc fmod, declared lazily (a float `step(...)` constraint check)
 	regexMatch      *ir.Func                // lyra_regex_match, the shared DFA driver (regex_match.go)
 	regexTables     map[string]*regexTables // compiled pattern -> its constant tables, one per distinct pattern
 	fmtFloat        map[string]*ir.Func     // lyra_f{16,32,64}_to_str, one per printed float width
@@ -303,7 +302,6 @@ type lowerer struct {
 	// divide-by-zero); exit is libc's.
 	overflowIntrinsics map[string]*ir.Func
 	panics             map[string]*ir.Func
-	exit               *ir.Func
 
 	// The ref-counted heap runtime (runtime.go), emitted lazily into the module
 	// the first time a value needs the heap (today: string concatenation). nil
@@ -903,4 +901,43 @@ func (l *lowerer) initGlobals(block *ir.Block) (*ir.Block, error) {
 		block.NewStore(v, g)
 	}
 	return block, nil
+}
+
+// declareLibc lazily declares an external libc function, cached by symbol so every call
+// site shares one declaration. clang links libc, so no runtime object is needed — the same
+// self-contained story the rc runtime has.
+//
+// It reports whether *this* call created the declaration, which the two that need more
+// than a signature use: `exit` is noreturn and `snprintf` is variadic, and both must be
+// stamped once rather than re-stamped on every lookup (appending the attribute again on
+// each call is the bug the shared helper exists to make unwritable).
+func (l *lowerer) declareLibc(name string, ret lltypes.Type, params ...lltypes.Type) (*ir.Func, bool) {
+	if fn, ok := l.libc[name]; ok {
+		return fn, false
+	}
+	ps := make([]*ir.Param, len(params))
+	for i, t := range params {
+		ps[i] = ir.NewParam("", t)
+	}
+	fn := l.module.NewFunc(name, ret, ps...)
+	if l.libc == nil {
+		l.libc = map[string]*ir.Func{}
+	}
+	l.libc[name] = fn
+	return fn, true
+}
+
+// privateConst defines a private, immutable module global — the form every interned
+// constant takes: a string literal's pinned box, a NUL-terminated C string, println's
+// newline byte, the shared empty closure environment, and a compiled regex's tables.
+//
+// Five sites set the two fields by hand, and one of them (constGlobal, in regex_match.go)
+// said in its own comment that it was "the same shape cString uses". What differs between
+// them is only what they hand back — a bare global, a pointer to element 0, or a bitcast of
+// a box-payload GEP — so that is what stays at the call sites.
+func (l *lowerer) privateConst(name string, init constant.Constant) *ir.Global {
+	g := l.module.NewGlobalDef(name, init)
+	g.Immutable = true
+	g.Linkage = enum.LinkagePrivate
+	return g
 }

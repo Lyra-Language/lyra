@@ -443,9 +443,7 @@ func (l *lowerer) emptyEnv() value.Value {
 		payloadTy := lltypes.NewStruct(lltypes.NewPointer(lltypes.I8))
 		boxConst, boxTy := pinnedBoxConstant(
 			constant.NewStruct(payloadTy, constant.NewNull(lltypes.NewPointer(lltypes.I8))))
-		g := l.module.NewGlobalDef(".closure.empty_env", boxConst)
-		g.Immutable = true
-		g.Linkage = enum.LinkagePrivate
+		g := l.privateConst(".closure.empty_env", boxConst)
 		l.emptyEnvPtr = constant.NewBitCast(
 			constant.NewGetElementPtr(boxTy, g,
 				constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, boxPayloadField)),

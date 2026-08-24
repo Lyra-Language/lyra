@@ -63,11 +63,11 @@ const overflowTrapExitCode = trapExitCode
 
 // exitFunc lazily declares libc's `void @exit(i32)` (noreturn).
 func (l *lowerer) exitFunc() *ir.Func {
-	if l.exit == nil {
-		l.exit = l.module.NewFunc("exit", lltypes.Void, ir.NewParam("", lltypes.I32))
-		l.exit.FuncAttrs = append(l.exit.FuncAttrs, enum.FuncAttrNoReturn)
+	fn, fresh := l.declareLibc("exit", lltypes.Void, lltypes.I32)
+	if fresh {
+		fn.FuncAttrs = append(fn.FuncAttrs, enum.FuncAttrNoReturn)
 	}
-	return l.exit
+	return fn
 }
 
 // panicFunc lazily emits a noreturn `void @name()` into the module: write msg to

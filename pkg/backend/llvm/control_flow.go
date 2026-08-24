@@ -641,22 +641,14 @@ func rangeLoopPredicate(endOperator string, signed bool) enum.IPred {
 	descending := types.RangeDescends(endOperator)
 	exclusive := types.RangeExcludesEnd(endOperator)
 	switch {
-	case descending && exclusive && signed:
-		return enum.IPredSGT
 	case descending && exclusive:
-		return enum.IPredUGT
-	case descending && signed:
-		return enum.IPredSGE
+		return icmpPred(relGT, signed)
 	case descending:
-		return enum.IPredUGE
-	case exclusive && signed:
-		return enum.IPredSLT
+		return icmpPred(relGE, signed)
 	case exclusive:
-		return enum.IPredULT
-	case signed:
-		return enum.IPredSLE
+		return icmpPred(relLT, signed)
 	default:
-		return enum.IPredULE
+		return icmpPred(relLE, signed)
 	}
 }
 

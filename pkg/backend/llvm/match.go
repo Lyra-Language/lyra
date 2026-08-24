@@ -289,18 +289,13 @@ func (l *lowerer) scalarMatchTest(block *ir.Block, scrut value.Value, pattern as
 			if !ok {
 				return nil, fmt.Errorf("llvm: unsupported range end in match pattern")
 			}
-			var hiPred enum.IPred
-			switch {
-			case types.RangeExcludesEnd(p.EndOperator) && signed:
-				hiPred = enum.IPredSLT
-			case types.RangeExcludesEnd(p.EndOperator):
-				hiPred = enum.IPredULT
-			case signed:
-				hiPred = enum.IPredSLE
-			default:
-				hiPred = enum.IPredULE
+			// A pattern range is a *set*, so it never descends (lyra-E034 refuses
+			// `..>`/`..>=` here) — only the inclusive/exclusive half varies.
+			hiRel := relLE
+			if types.RangeExcludesEnd(p.EndOperator) {
+				hiRel = relLT
 			}
-			tests = append(tests, block.NewICmp(hiPred, scrut, hi))
+			tests = append(tests, block.NewICmp(icmpPred(hiRel, signed), scrut, hi))
 		}
 		switch len(tests) {
 		case 0:

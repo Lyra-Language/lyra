@@ -73,28 +73,6 @@ func StringLLVMType() *lltypes.StructType {
 	return lltypes.NewStruct(lltypes.NewPointer(lltypes.I8), lltypes.I64, lltypes.I64)
 }
 
-// IsNumericConversionTarget reports whether name is one of the eleven
-// concrete numeric primitives that a Lyra type-conversion call (`i8(x)`,
-// `f32(x)`, …) may target — Lyra's one conversion syntax (Pit-of-Success #5).
-// Mirrors the typechecker's numericPrimitiveByName exactly (bool/char/string
-// are not conversion targets this way, even though LLVMPrimitive maps them to
-// an LLVM type for other purposes).
-func IsNumericConversionTarget(name types.PrimitiveTypeName) bool {
-	switch name {
-	case types.Int8, types.Int16, types.Int32, types.Int64, types.Int128,
-		types.UInt8, types.UInt16, types.UInt32, types.UInt64, types.UInt128,
-		types.Float16, types.Float32, types.Float64,
-		// `rune` converts to and from the integer types (it lowers as an i32 code
-		// point), so `rune(n)` dispatches here rather than being read as a call to
-		// an undefined function. The typechecker has already restricted the pairing
-		// to rune↔integer.
-		types.Rune:
-		return true
-	default:
-		return false
-	}
-}
-
 // conversionTargetName is types.ConversionTargetName — the one shared answer to
 // "is this callee a conversion?", kept as a local name so call sites read the same
 // as before it was hoisted.
@@ -370,8 +348,8 @@ func dataSizeAndAlign(dt types.DataType) (int, int, bool) {
 		return 0, 0, false
 	}
 	// Layout { tag, [payload] } with the payload aligned to payloadAlign.
-	size := alignUp(tagBytes, maxInt(payloadAlign, 1)) + payloadSize
-	align := maxInt(tagBytes, payloadAlign)
+	size := alignUp(tagBytes, max(payloadAlign, 1)) + payloadSize
+	align := max(tagBytes, payloadAlign)
 	return alignUp(size, align), align, true
 }
 
@@ -425,10 +403,3 @@ func alignUp(n, a int) int {
 }
 
 func ceilDiv(n, d int) int { return (n + d - 1) / d }
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}

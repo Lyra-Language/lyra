@@ -14,6 +14,21 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
+// makeString builds the `{ i8* data, i64 byte_len, i64 rune_count }` fat pointer a Lyra
+// string is — the three insertvalues every construction ends with.
+//
+// Written out at six sites before this, which is how the *count* came to be maintained
+// three different ways under one shape: a literal knows it at compile time, `++` and
+// `slice` derive it arithmetically from their operands, and only read_line and
+// interpolation pay the linear `lyra_utf8_count`. Those differences are the interesting
+// part, and they now sit at the call sites where the shape no longer hides them.
+func makeString(block *ir.Block, data, byteLen, runeCount value.Value) value.Value {
+	strTy := StringLLVMType()
+	withPtr := block.NewInsertValue(constant.NewUndef(strTy), data, 0)
+	withLen := block.NewInsertValue(withPtr, byteLen, 1)
+	return block.NewInsertValue(withLen, runeCount, 2)
+}
+
 // lowerStringConstant materializes a compile-time string (a literal's bytes, or a
 // match pattern's text) as a fat-pointer value { i8* data, i64 len }. The bytes
 // are interned in a private, immutable global shaped as a **pinned ref-counted
@@ -28,20 +43,17 @@ import (
 func (l *lowerer) lowerStringConstant(block *ir.Block, content string) value.Value {
 	bytes := []byte(content)
 	boxConst, boxTy := pinnedBoxConstant(constant.NewCharArray(bytes))
-	g := l.module.NewGlobalDef(fmt.Sprintf(".str.%d", l.strLitCount), boxConst)
-	g.Immutable = true
-	g.Linkage = enum.LinkagePrivate
+	g := l.privateConst(fmt.Sprintf(".str.%d", l.strLitCount), boxConst)
 	l.strLitCount++
 
 	zero := constant.NewInt(lltypes.I32, 0)
 	// i8* to the first payload byte: &box.payload[0] == box + rcHeaderSize.
 	dataPtr := constant.NewGetElementPtr(boxTy, g, zero, constant.NewInt(lltypes.I32, boxPayloadField), zero)
-	strTy := StringLLVMType()
-	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dataPtr, 0)
-	withLen := block.NewInsertValue(withPtr, constant.NewInt(lltypes.I64, int64(len(bytes))), 1)
 	// The rune count is a compile-time fact for a literal — the one construction
 	// where it is literally free.
-	return block.NewInsertValue(withLen, constant.NewInt(lltypes.I64, int64(utf8.RuneCountInString(content))), 2)
+	return makeString(block, dataPtr,
+		constant.NewInt(lltypes.I64, int64(len(bytes))),
+		constant.NewInt(lltypes.I64, int64(utf8.RuneCountInString(content))))
 }
 
 // utf8CountFunc lazily defines `i64 @lyra_utf8_count(i8* data, i64 byteLen)` — the
@@ -240,23 +252,17 @@ func (l *lowerer) utf8DecodeFunc() *ir.Func {
 // memcmpFunc lazily declares libc's `i32 @memcmp(i8*, i8*, i64)` (clang links
 // libc), caching it so string comparisons share one declaration.
 func (l *lowerer) memcmpFunc() *ir.Func {
-	if l.memcmp == nil {
-		i8ptr := lltypes.NewPointer(lltypes.I8)
-		l.memcmp = l.module.NewFunc("memcmp", lltypes.I32,
-			ir.NewParam("", i8ptr), ir.NewParam("", i8ptr), ir.NewParam("", lltypes.I64))
-	}
-	return l.memcmp
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	fn, _ := l.declareLibc("memcmp", lltypes.I32, i8ptr, i8ptr, lltypes.I64)
+	return fn
 }
 
 // memcpyFunc lazily declares libc's `i8* @memcpy(i8*, i8*, i64)` (clang links
 // libc), caching it so every concatenation shares one declaration.
 func (l *lowerer) memcpyFunc() *ir.Func {
-	if l.memcpy == nil {
-		i8ptr := lltypes.NewPointer(lltypes.I8)
-		l.memcpy = l.module.NewFunc("memcpy", i8ptr,
-			ir.NewParam("", i8ptr), ir.NewParam("", i8ptr), ir.NewParam("", lltypes.I64))
-	}
-	return l.memcpy
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	fn, _ := l.declareLibc("memcpy", i8ptr, i8ptr, i8ptr, lltypes.I64)
+	return fn
 }
 
 // lowerStringConcat lowers `a ++ b`. A concatenated string is the first value
@@ -301,10 +307,7 @@ func (l *lowerer) lowerStringConcat(block *ir.Block, e *ast.StringConcatExpr) (v
 	tail := block.NewGetElementPtr(lltypes.I8, dst, lenA)
 	block.NewCall(memcpy, tail, dataB, lenB) // dst[lenA .. total) = b
 
-	strTy := StringLLVMType()
-	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dst, 0)
-	withLen := block.NewInsertValue(withPtr, total, 1)
-	return block.NewInsertValue(withLen, count, 2), block, nil
+	return makeString(block, dst, total, count), block, nil
 }
 
 // lowerInterpolatedString lowers a `"… ${expr} …"` to a heap string. It's the
@@ -360,11 +363,7 @@ func (l *lowerer) lowerInterpolatedString(block *ir.Block, e *ast.InterpolatedSt
 	// buffer carries no rune count — so the result's count is one linear pass over
 	// the bytes just copied, cache-hot and dwarfed by the allocation beside it.
 	count := block.NewCall(l.utf8CountFunc(), dst, total)
-
-	strTy := StringLLVMType()
-	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dst, 0)
-	withLen := block.NewInsertValue(withPtr, total, 1)
-	return block.NewInsertValue(withLen, count, 2), block, nil
+	return makeString(block, dst, total, count), block, nil
 }
 
 // lowerStringEquality builds the i1 "are these two strings equal?" test,
@@ -574,10 +573,8 @@ func (l *lowerer) lowerDecodeUTF8(block *ir.Block, call *ast.FunctionCallExpr, m
 	// case — it decodes to the empty string, which is the right answer.
 	block.NewCall(l.memcpyFunc(), dst, src, byteLen)
 
-	strTy := StringLLVMType()
-	withPtr := block.NewInsertValue(constant.NewUndef(strTy), dst, 0)
-	withLen := block.NewInsertValue(withPtr, byteLen, 1)
-	return block.NewInsertValue(withLen, block.NewCall(l.utf8CountFunc(), dst, byteLen), 2), block, nil
+	count := block.NewCall(l.utf8CountFunc(), dst, byteLen)
+	return makeString(block, dst, byteLen, count), block, nil
 }
 
 // byteBufferOf answers an `i8*` to a byte array's elements and their count.

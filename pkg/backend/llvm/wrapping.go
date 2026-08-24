@@ -2,7 +2,6 @@ package llvm
 
 import (
 	"fmt"
-	"math/big"
 
 	"github.com/llir/llvm/ir"
 	"github.com/llir/llvm/ir/constant"
@@ -246,11 +245,10 @@ func (l *lowerer) emitCheckedDiv(block *ir.Block, left, right value.Value, signe
 	failed = block.NewICmp(enum.IPredEQ, right, zero)
 	if signed {
 		// INT_MIN / -1 has no representable quotient: its true value is INT_MAX+1.
-		minVal := constant.NewInt(intTy, 0)
-		minVal.X = new(big.Int).Lsh(big.NewInt(1), uint(intTy.BitSize-1))
-		minVal.X.Neg(minVal.X)
+		// intMinConst is the shared spelling — this rebuilt the same value by hand
+		// twenty lines from a call to it.
 		negOne := constant.NewInt(intTy, -1)
-		isMin := block.NewICmp(enum.IPredEQ, left, minVal)
+		isMin := block.NewICmp(enum.IPredEQ, left, intMinConst(intTy))
 		isNegOne := block.NewICmp(enum.IPredEQ, right, negOne)
 		failed = block.NewOr(failed, block.NewAnd(isMin, isNegOne))
 	}

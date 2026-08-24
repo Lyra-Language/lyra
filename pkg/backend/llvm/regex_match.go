@@ -81,9 +81,7 @@ func (l *lowerer) regexTablesFor(pattern string) (*regexTables, error) {
 // constGlobal defines a private immutable global and returns a pointer to its first
 // element, the same shape cString uses for an interned byte string.
 func (l *lowerer) constGlobal(name string, init constant.Constant) value.Value {
-	g := l.module.NewGlobalDef(name, init)
-	g.Immutable = true
-	g.Linkage = enum.LinkagePrivate
+	g := l.privateConst(name, init)
 	zero := constant.NewInt(lltypes.I32, 0)
 	return constant.NewGetElementPtr(g.ContentType, g, zero, zero)
 }

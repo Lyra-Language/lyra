@@ -157,12 +157,9 @@ func (l *lowerer) lowerStringSlice(block *ir.Block, call *ast.FunctionCallExpr, 
 	_, dst := l.rcAllocPayload(buildBlock, nOut)
 	buildBlock.NewCall(l.memcpyFunc(), dst, buildBlock.NewGetElementPtr(lltypes.I8, data, startOff), nOut)
 
-	strTy := StringLLVMType()
-	withPtr := buildBlock.NewInsertValue(constant.NewUndef(strTy), dst, 0)
-	withLen := buildBlock.NewInsertValue(withPtr, nOut, 1)
 	// The bounds *are* rune indices, so the result's rune count is their difference —
 	// no bytes need looking at, the same arithmetic ledger `++` keeps.
-	return buildBlock.NewInsertValue(withLen, buildBlock.NewSub(end, start), 2), buildBlock, nil
+	return makeString(buildBlock, dst, nOut, buildBlock.NewSub(end, start)), buildBlock, nil
 }
 
 // lowerStringFromEnd lowers `s.from_end(k)` → the k-th rune from the end, 1-based:

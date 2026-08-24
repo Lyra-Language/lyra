@@ -571,9 +571,7 @@ func (l *lowerer) lowerDynArrayPush(block *ir.Block, call *ast.FunctionCallExpr,
 // reallocFunc lazily declares libc's `i8* @realloc(i8*, i64)`, cached on the lowerer
 // beside malloc and free.
 func (l *lowerer) reallocFunc() *ir.Func {
-	if l.realloc == nil {
-		i8ptr := lltypes.NewPointer(lltypes.I8)
-		l.realloc = l.module.NewFunc("realloc", i8ptr, ir.NewParam("", i8ptr), ir.NewParam("", lltypes.I64))
-	}
-	return l.realloc
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	fn, _ := l.declareLibc("realloc", i8ptr, i8ptr, lltypes.I64)
+	return fn
 }

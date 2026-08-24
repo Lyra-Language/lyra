@@ -206,25 +206,14 @@ func (l *lowerer) emitOwnedData(block *ir.Block, v value.Value, dt types.DataTyp
 	return exit, nil
 }
 
-// fieldTypesOf is a struct's field types in declaration order — the extractvalue index
-// order, matching lowerStructDef. anonFieldTypesOf is the same for the structural struct:
-// two functions rather than one, because the two field slices are separate types. What
-// matters is that every walk uses these, in the type's own field order.
-func fieldTypesOf(st types.NamedStructType) []types.Type {
-	out := make([]types.Type, len(st.Fields))
-	for i, f := range st.Fields {
-		out[i] = f.Type
-	}
-	return out
-}
+// fieldTypesOf and anonFieldTypesOf are a struct's field types in declaration order — the
+// extractvalue index order, matching lowerStructDef. Two named functions over one body
+// because NamedStructType and AnonymousStructType are separate types carrying the same
+// []StructField; what matters is that every walk asks in the type's own field order, which
+// layout.go's fieldTypes is the single answer to.
+func fieldTypesOf(st types.NamedStructType) []types.Type { return fieldTypes(st.Fields) }
 
-func anonFieldTypesOf(st types.AnonymousStructType) []types.Type {
-	out := make([]types.Type, len(st.Fields))
-	for i, f := range st.Fields {
-		out[i] = f.Type
-	}
-	return out
-}
+func anonFieldTypesOf(st types.AnonymousStructType) []types.Type { return fieldTypes(st.Fields) }
 
 // anyNeedsDrop reports whether any of these types owns something managed.
 func anyNeedsDrop(l *lowerer, ts []types.Type) bool {

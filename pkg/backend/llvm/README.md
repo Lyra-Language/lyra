@@ -1757,3 +1757,34 @@ Retain and drop stop *at* a managed value, because its own box owns whatever it 
 equality descends *into* one to compare it, and it returns a value rather than performing an
 effect. Nothing breaks if it visits a different set of fields than these two do, and that is
 precisely what makes it a different walk instead of a third copy of this one.
+
+## Small shared spellings
+
+Nine near-identical spellings were folded into six helpers (08/24). None of them changed
+what is emitted — the instruction multiset of a module exercising strings, arrays, `match`,
+`data`, structs and closures is identical before and after, with four `sub`s moved a few
+slots earlier where `makeString` now evaluates its rune-count argument first.
+
+| helper | replaces |
+|---|---|
+| `makeString(block, data, byteLen, runeCount)` | the three insertvalues every string construction ended with, at 6 sites |
+| `icmpPred(rel, signed)` | three hand-written `(relation, signedness) → IPred` ladders |
+| `declareLibc(name, ret, params…)` | eight `if l.x == nil` accessors and their eight lowerer fields |
+| `privateConst(name, init)` | five hand-set `Immutable`/`LinkagePrivate` pairs |
+| `lowerTypeList(ts)` | four copies of "lower each Lyra type into a field list" |
+| `fieldTypes(fields)` | `fieldTypesOf` / `anonFieldTypesOf`, now one-liners over it |
+
+Two of these are worth more than the line count. **`icmpPred` is the one place signedness
+picks a predicate** — three ladders reached the same four pairs from different starting
+points (an AST operator, an ascending/descending range operator, an inclusive/exclusive
+one), and the mapping they shared is the part that must not disagree: reading a `u64` loop
+bound with a *signed* predicate makes a large count compare negative and the loop simply
+does not run. **`declareLibc` reports whether it created the declaration**, which is what
+lets `exit` be stamped `noreturn` and `snprintf` variadic exactly once — appending an
+attribute on every lookup is the bug a shared helper makes unwritable.
+
+Also removed: `IsNumericConversionTarget`, dead and by its own comment "mirrors the
+typechecker's numericPrimitiveByName exactly" — an unenforced second copy of a table
+(`types.ConversionTargetName` is the live one); `isManagedLLVMType`, dead; `maxInt`, which
+predates Go's builtin `max`; and `emitCheckedDiv` rebuilding INT_MIN with `big.Int` twenty
+lines from a call to `intMinConst`.
