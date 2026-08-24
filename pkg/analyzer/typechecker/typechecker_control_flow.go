@@ -305,6 +305,123 @@ func (tc *TypeChecker) checkExprForEffect(e ast.Expression) {
 	}
 }
 
+// matchKind is one scrutinee shape's match policy: how an arm's pattern is checked against
+// it, what "exhaustive" means for it, and how loudly a gap is reported.
+//
+// Eight `else if` arms spelled this out, each a copy of "walk the arms with this checker,
+// then test exhaustiveness and report". What differed between them is exactly these three
+// fields, and one of the three is easy to lose in the noise: **bool and `data` gaps are
+// errors, every other kind's is a warning**, because those two are the shapes where the
+// compiler can name what is missing rather than only observe that nothing catches the rest.
+type matchKind struct {
+	checkArm func(ast.Pattern)
+	// exhaustive reports whether the arms cover the scrutinee, and when they do not, the
+	// diagnostic message — already formatted, since only the `data` case has anything to
+	// interpolate.
+	exhaustive func() (bool, string)
+	severity   Severity
+}
+
+// matchKindOf picks the policy for a scrutinee, or reports false when the type is one match
+// has nothing to say about.
+//
+// **kindType is the newtype-stripped type and scrutineeType is not**, which is not
+// interchangeable: the per-kind checks and exhaustiveness dispatch on the base (08/13) — a
+// `Percent` scrutinee is a u8 match, and the backend already dispatches on the base — while
+// the two resolver arms take the original, since resolving is what strips a wrapper for
+// them. Until that strip, a newtype scrutinee matched none of these and got no kind
+// policing and no exhaustiveness check at all.
+func (tc *TypeChecker) matchKindOf(scrutineeType, kindType types.Type, expr *ast.MatchExpr) (matchKind, bool) {
+	arms := expr.MatchArms
+	switch {
+	case types.IsBoolean(kindType):
+		return matchKind{
+			checkArm: tc.checkBoolMatchArm,
+			exhaustive: func() (bool, string) {
+				return boolMatchIsExhaustive(arms),
+					"match on bool is not exhaustive: add arms for both `true` and `false`, or a wildcard `_ => ...`"
+			},
+			severity: SeverityError,
+		}, true
+
+	case types.IsNumeric(kindType):
+		return matchKind{
+			checkArm: func(p ast.Pattern) { tc.checkNumericMatchArm(p, kindType) },
+			exhaustive: func() (bool, string) {
+				return tc.isNumericMatchExhaustive(arms, kindType),
+					"match on numeric type is not exhaustive: add a wildcard `_ => ...` or catch-all arm"
+			},
+			severity: SeverityWarning,
+		}, true
+
+	case types.IsString(kindType):
+		return matchKind{
+			checkArm: tc.checkStringMatchArm,
+			exhaustive: func() (bool, string) {
+				return hasUnguardedCatchAll(arms),
+					"match on string type is not exhaustive: add a wildcard `_ => ...` or catch-all arm"
+			},
+			severity: SeverityWarning,
+		}, true
+
+	case isRuneType(kindType):
+		return matchKind{
+			checkArm: tc.checkRuneMatchArm,
+			exhaustive: func() (bool, string) {
+				return hasUnguardedCatchAll(arms),
+					"match on rune type is not exhaustive: add a wildcard `_ => ...` or catch-all arm"
+			},
+			severity: SeverityWarning,
+		}, true
+
+	case types.IsArray(kindType):
+		return matchKind{
+			checkArm: func(p ast.Pattern) { tc.checkArrayMatchArm(p, kindType) },
+			exhaustive: func() (bool, string) {
+				return arrayMatchIsExhaustive(arms, kindType),
+					"match on array type is not exhaustive: add a wildcard `_ => ...` or catch-all arm"
+			},
+			severity: SeverityWarning,
+		}, true
+	}
+
+	// The three that need resolution rather than a predicate, and so take the *unstripped*
+	// type: resolving is what looks through a wrapper for them.
+	if dt, ok := tc.resolveToDataType(scrutineeType, expr.GetLocation()); ok {
+		return matchKind{
+			checkArm: func(p ast.Pattern) { tc.checkDataMatchArm(p, dt) },
+			exhaustive: func() (bool, string) {
+				exhaustive, missing := dataMatchIsExhaustive(arms, dt)
+				return exhaustive, fmt.Sprintf(
+					"match on %s is not exhaustive: missing constructors: %s",
+					dt.Name, strings.Join(missing, ", "))
+			},
+			severity: SeverityError,
+		}, true
+	}
+	if tt, ok := scrutineeType.(types.TupleType); ok {
+		return matchKind{
+			checkArm: func(p ast.Pattern) { tc.checkTupleMatchArm(p, tt) },
+			exhaustive: func() (bool, string) {
+				return tc.tupleMatchIsExhaustive(arms, tt, expr.GetLocation()),
+					"match on tuple type is not exhaustive: add a wildcard `_ => ...` or catch-all arm"
+			},
+			severity: SeverityWarning,
+		}, true
+	}
+	if st, ok := tc.resolveToNamedStructType(scrutineeType, expr.GetLocation()); ok {
+		return matchKind{
+			checkArm: func(p ast.Pattern) { tc.checkStructMatchArm(p, st) },
+			exhaustive: func() (bool, string) {
+				return aggregateMatchIsExhaustive(arms),
+					"match on struct type is not exhaustive: add a wildcard `_ => ...` or catch-all arm"
+			},
+			severity: SeverityWarning,
+		}, true
+	}
+	return matchKind{}, false
+}
+
 // checkMatchExpr type-checks a `match` and returns its type.
 //
 // requireType mirrors checkIfExpr's parameter of the same name, for the same reason: in
@@ -328,70 +445,12 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) typ
 	// arms got no kind policing and no exhaustiveness check at all — the audit's
 	// dispatch-skip sub-finding.
 	kindType := types.StripNewtype(scrutineeType)
-	if types.IsBoolean(kindType) {
+	if k, ok := tc.matchKindOf(scrutineeType, kindType, expr); ok {
 		for _, arm := range expr.MatchArms {
-			tc.checkBoolMatchArm(arm.Pattern)
+			k.checkArm(arm.Pattern)
 		}
-		if !boolMatchIsExhaustive(expr.MatchArms) {
-			tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNonExhaustiveMatch,
-				"match on bool is not exhaustive: add arms for both `true` and `false`, or a wildcard `_ => ...`")
-		}
-	} else if types.IsNumeric(kindType) {
-		for _, arm := range expr.MatchArms {
-			tc.checkNumericMatchArm(arm.Pattern, kindType)
-		}
-		if !tc.isNumericMatchExhaustive(expr.MatchArms, kindType) {
-			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
-				"match on numeric type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
-		}
-	} else if types.IsString(kindType) {
-		for _, arm := range expr.MatchArms {
-			tc.checkStringMatchArm(arm.Pattern)
-		}
-		if !stringMatchIsExhaustive(expr.MatchArms) {
-			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
-				"match on string type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
-		}
-	} else if isRuneType(kindType) {
-		for _, arm := range expr.MatchArms {
-			tc.checkRuneMatchArm(arm.Pattern)
-		}
-		if !hasUnguardedCatchAll(expr.MatchArms) {
-			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
-				"match on rune type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
-		}
-	} else if types.IsArray(kindType) {
-		for _, arm := range expr.MatchArms {
-			tc.checkArrayMatchArm(arm.Pattern, kindType)
-		}
-		if !arrayMatchIsExhaustive(expr.MatchArms, kindType) {
-			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
-				"match on array type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
-		}
-	} else if dt, ok := tc.resolveToDataType(scrutineeType, expr.GetLocation()); ok {
-		for _, arm := range expr.MatchArms {
-			tc.checkDataMatchArm(arm.Pattern, dt)
-		}
-		if exhaustive, missing := dataMatchIsExhaustive(expr.MatchArms, dt); !exhaustive {
-			tc.addErrorCode(expr.GetLocation(), SeverityError, diag.CodeNonExhaustiveMatch,
-				"match on %s is not exhaustive: missing constructors: %s",
-				dt.Name, strings.Join(missing, ", "))
-		}
-	} else if tt, ok := scrutineeType.(types.TupleType); ok {
-		for _, arm := range expr.MatchArms {
-			tc.checkTupleMatchArm(arm.Pattern, tt)
-		}
-		if !tc.tupleMatchIsExhaustive(expr.MatchArms, tt, expr.GetLocation()) {
-			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
-				"match on tuple type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
-		}
-	} else if st, ok := tc.resolveToNamedStructType(scrutineeType, expr.GetLocation()); ok {
-		for _, arm := range expr.MatchArms {
-			tc.checkStructMatchArm(arm.Pattern, st)
-		}
-		if !aggregateMatchIsExhaustive(expr.MatchArms) {
-			tc.addErrorCode(expr.GetLocation(), SeverityWarning, diag.CodeNonExhaustiveMatch,
-				"match on struct type is not exhaustive: add a wildcard `_ => ...` or catch-all arm")
+		if exhaustive, missing := k.exhaustive(); !exhaustive {
+			tc.addErrorCode(expr.GetLocation(), k.severity, diag.CodeNonExhaustiveMatch, "%s", missing)
 		}
 	}
 	tc.checkDuplicateMatchArms(expr.MatchArms)
@@ -789,15 +848,6 @@ func (tc *TypeChecker) checkStringMatchArm(pattern ast.Pattern) {
 	}
 }
 
-// stringMatchIsExhaustive reports whether at least one arm unconditionally
-// catches every string — a wildcard or an unguarded identifier. String
-// literals and regex literals can only cover finite or partial subsets of
-// the language, so they never on their own make the match exhaustive (we
-// don't try to prove regex unions cover Σ*).
-func stringMatchIsExhaustive(arms []ast.MatchArm) bool {
-	return hasUnguardedCatchAll(arms)
-}
-
 // isRuneType reports whether t is the `rune` primitive. A rune is a code point
 // (i32) but is deliberately excluded from IsNumeric — arithmetic on code points
 // is meaningless — so match dispatch handles it on its own scalar path.
@@ -842,7 +892,7 @@ func (tc *TypeChecker) checkRuneMatchArm(pattern ast.Pattern) {
 //     RangePattern and checks whether their union spans [typeMin, typeMax].
 func (tc *TypeChecker) isNumericMatchExhaustive(arms []ast.MatchArm, scrutineeType types.Type) bool {
 	// Fast path: a wildcard or unguarded identifier catches everything.
-	if numericMatchIsExhaustive(arms) {
+	if hasUnguardedCatchAll(arms) {
 		return true
 	}
 	// For fixed-width integer types, attempt interval coverage analysis.
@@ -1011,12 +1061,6 @@ func integerIntervalsExhaustive(arms []ast.MatchArm, typeMin, typeMax int64) boo
 		}
 	}
 	return false
-}
-
-// numericMatchIsExhaustive reports whether at least one arm unconditionally
-// catches every value — i.e. a WildcardPattern or an unguarded IdentifierPattern.
-func numericMatchIsExhaustive(arms []ast.MatchArm) bool {
-	return hasUnguardedCatchAll(arms)
 }
 
 func (tc *TypeChecker) checkNumericMatchArm(pattern ast.Pattern, scrutineeType types.Type) {
