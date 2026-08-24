@@ -1,7 +1,6 @@
 package llvm
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -108,8 +107,9 @@ func TestCoerceAggregateElem_NilValueIsALoudError(t *testing.T) {
 		t.Fatal("a nil element value returned no error; it must be rule 5's loud error, " +
 			"since the alternative is a nil deref one line down")
 	}
+	// err.Error() formats the message, location included, so a panic in the location
+	// rendering fails here rather than needing its own call.
 	if !strings.Contains(err.Error(), "diverged") {
 		t.Errorf("error %q does not mention divergence, which is the only way v is nil", err)
 	}
-	fmt.Sprint(err) // the message formats without panicking on the location
 }
