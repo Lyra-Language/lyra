@@ -151,10 +151,33 @@ func (c *useAfterMove) stmt(st moveState, s ast.Statement) moveState {
 		st = c.expr(st, v.Value)
 		delete(st, v.Name) // reassignment gives the name a new value
 		return st
+	case *ast.DestructuringDeclStmt:
+		// Every name the pattern binds is a *fresh* binding, exactly as VarDeclStmt's
+		// single name is, so each stops being moved here.
+		//
+		// Without this the statement fell to the generic walker, which walks the value and
+		// clears nothing — and the clearing is what makes a loop work. `loopBody` seeds the
+		// state with every move anywhere in the body, so that a move flags the *next*
+		// iteration's read; a declaration inside the body then deletes its own name,
+		// because that binding is new each time round. A destructuring never did, so
+		// `for pair in ps { let (x, y) = pair; take(x) }` reported x as used after a move
+		// that can only have happened to a previous iteration's *different* value. The
+		// identical loop written `let x = p` was clean, which is the shape of a missing
+		// case rather than a rule.
+		st = c.expr(st, v.Value)
+		for _, name := range patternBoundNames(v.Pattern) {
+			delete(st, name)
+		}
+		return st
 	case *ast.ExpressionStmt:
 		return c.expr(st, v.Expression)
 	case *ast.ReturnStmt:
 		return c.expr(st, v.Value)
+
+	case *ast.IfDestructuringStmt:
+		return c.destructuringBranches(st, &v.DestructuringStatement, v.Then, v.Else)
+	case *ast.ElseDestructuringStmt:
+		return c.destructuringBranches(st, &v.DestructuringStatement, nil, v.Else)
 
 	case *ast.TraitImplStmt:
 		// Each method is its own function, so each gets a fresh state. Letting the
@@ -183,6 +206,37 @@ func (c *useAfterMove) stmt(st moveState, s ast.Statement) moveState {
 		return false
 	})
 	return st
+}
+
+// destructuringBranches walks an `if let` / `else let`: the scrutinee, then each branch as
+// an alternative, joined by union — the convention IfExpr follows.
+//
+// The reason it exists rather than the DestructuringDeclStmt case covering it: these embed
+// the declaration **by value** (`DestructuringStatement DestructuringDeclStmt`), so the
+// walker never sees a `*ast.DestructuringDeclStmt` and that case never fires. The names the
+// pattern binds are fresh in the *matching* branch only, which is also why the delete
+// happens on the branch's state rather than on the state flowing past.
+func (c *useAfterMove) destructuringBranches(st moveState, d *ast.DestructuringDeclStmt, then, els *ast.BlockExpr) moveState {
+	st = c.expr(st, d.Value)
+	bound := patternBoundNames(d.Pattern)
+	branch := func(b *ast.BlockExpr, binds bool) moveState {
+		s := st.clone()
+		if binds {
+			for _, name := range bound {
+				delete(s, name)
+			}
+		}
+		if b == nil {
+			return s
+		}
+		return c.expr(s, b)
+	}
+	// The pattern's names are in scope in `then` for an `if let` and in `els` for an
+	// `else let` — the branch that ran because the match succeeded.
+	if then != nil {
+		return mergeMoves(branch(then, true), branch(els, false))
+	}
+	return mergeMoves(branch(nil, false), branch(els, true))
 }
 
 func (c *useAfterMove) expr(st moveState, e ast.Expression) moveState {

@@ -227,6 +227,43 @@ write today:
 
 ## Known bugs
 
+- **[DONE 08/24] Four false rejections, and a crash behind one of them.** Each refused a
+  correct program, so each was a feature the language claimed to have and did not.
+
+  **A comprehension could not appear inside a closure.** The captures pass computes free
+  variables as "names read minus names bound" and had no `ArrayCompExpr` case, so a
+  generator's binder was never bound and the enclosing lambda tried to capture it — the
+  backend refused outright (*"captured binding `n` is not in scope where the closure is
+  created"*). The `ForLoopExpr` arm beside it exists to fix the identical bug for a loop
+  counter; hazard 8's "grep for the kind it is a variant of", missed.
+
+  **`?` was rejected in every trait-impl method.** The structural check reads the nearest
+  enclosing *lambda's* declared return type, and an impl binds patterns — `parse = (self) =>
+  …` — so its lambda has no return type; the signature is on the trait. Resolved now through
+  `LookupTraitFrom` at the impl's location (rule 4), sharing purity's `traitMethodDecl`
+  rather than adding a second answer to "which declaration does this implement".
+
+  **A destructuring in a loop was reported as a use-after-move.** `loopBody` seeds the state
+  with every move in the body so a move flags the next iteration's read; a declaration then
+  clears its own name, because that binding is fresh each time. `VarDeclStmt` cleared,
+  `DestructuringDeclStmt` did not — so `for pair in ps { let (x, y) = pair; take(x) }` was
+  refused while the identical `let x = p` was clean. `if let`/`else let` needed their own
+  arm: they embed the declaration **by value**, so the walker never sees a
+  `*DestructuringDeclStmt`.
+
+  **lyra-E024 was reported once per enclosing lambda.** A name an inner closure captures is
+  transitively captured by every enclosing one, and the reporting walk did not stop at a
+  lambda boundary either, so one write in a nested closure produced two identical
+  diagnostics. The call site's comment had always said writes belong to the lambda that
+  performs them; only the walk disagreed.
+
+  **And the crash the last one led to.** A closure that only *writes* a captured binding
+  segfaulted `lyrac`. `VarReassignmentStmt` keeps its target in a plain `Name string` rather
+  than an IdentifierExpr — the one assignment form with no expression node anywhere — so the
+  read walk never saw it, the closure environment had no slot for the name, and the backend
+  dereferenced nil in `lowerVarReassignment`. Recording it makes E024 fire, which is the
+  right answer: the write would reach only the closure's own copy.
+
 - **[DONE 08/24] Ownership walks every statement kind that carries an expression.**
   `analyzer.stmt` switched over five of eighteen; six of the missing thirteen hold an
   expression, so nothing — no retain, release or transfer — was recorded for it. Hazard 8,

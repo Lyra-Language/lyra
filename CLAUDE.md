@@ -144,7 +144,19 @@ real failure, and none is local to one package.
      gives a newtype a head, so a method written *for* a newtype was silently unreachable.
    - **When adding an expression kind, grep for the kind it is a variant of.** The purity
      pass's allocation walk names allocating *forms*, not types, so `ArrayRepeatExpr` was
-     missed in five places `ArrayLiteralExpr` appeared in.
+     missed in five places `ArrayLiteralExpr` appeared in. **A *binder* is its own such
+     family**, and the captures pass proves it: its free-variable walk binds a `for-in`
+     variable and a C-style loop counter — with a comment explaining that a binder it does
+     not know reads as a capture — and had no case for a comprehension's generator, so a
+     comprehension inside a closure could not be compiled at all. Anything that introduces a
+     name is a binder: parameters, `match` arms, loop variables, destructurings, generators.
+   - **A field that is a bare `string` rather than a node is invisible to every walk.**
+     `VarReassignmentStmt.Name` is the one assignment target with no `IdentifierExpr` behind
+     it (`n += 1` has one in `Left`, `p.x = v` an expression path), so the captures pass
+     never saw a write-only capture — and the symptom was not a missing diagnostic but a
+     **nil deref in the backend**, since the closure environment had no slot for a name
+     nothing had recorded. When a walk's contract is "every mention of a name", a plain
+     string field is a hole in it that grepping for node kinds will never find.
    - **A new *declaration kind* has no checklist, and pays for it repeatedly.**
      `ExternDeclStmt` landed on 08/18 and by 08/19 had been found missing from ten
      switches over top-level declaration kinds — `declIsPublic` (two modules each

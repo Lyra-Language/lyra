@@ -86,6 +86,18 @@ func capturedWrites(fn *ast.LambdaExpr, captured map[string]bool) []diag.Diagnos
 		return true
 	}
 	onExpr := func(e ast.Expression) bool {
+		// Stop at a nested lambda. Its writes are reported against *it* when the outer
+		// walk reaches it, against its own capture set — which is the right attribution,
+		// since it captured from here in turn.
+		//
+		// The comment at the call site has always said so; the walk did not do it. Because
+		// a name captured by an inner lambda is transitively captured by every enclosing
+		// one (the read walk does not stop at a lambda boundary either), the same write was
+		// reported once per enclosing lambda that captured the name — two identical
+		// diagnostics at one location for one mistake, and more the deeper the nesting.
+		if _, isLambda := e.(*ast.LambdaExpr); isLambda {
+			return false
+		}
 		if v, ok := e.(*ast.MathAssignOpExpr); ok {
 			report(v.Left.Name, v.GetLocation())
 		}

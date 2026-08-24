@@ -193,6 +193,21 @@ func collect(body []ast.Expression, bound map[string]bool, reads map[string]ast.
 			if v.Value != "" {
 				bound[v.Value] = true
 			}
+		case *ast.ArrayCompExpr:
+			// `[n in xs | n * 2]` binds n, exactly as a `for-in` binds its loop variable
+			// — and for the same reason the ForLoopExpr arm below exists: a binder this
+			// walk does not know about reads as a *free* name, so a comprehension inside a
+			// a lambda made the lambda try to capture its own binder. The backend refused
+			// it outright ("captured binding \"n\" is not in scope where the closure is
+			// created"), so a comprehension simply could not appear inside a closure.
+			//
+			// Every generator binds: a multi-generator comprehension is nested iteration,
+			// and each name is in scope for the guards and the result.
+			for i := range v.Generators {
+				if name := v.Generators[i].Identifier; name != "" {
+					bound[name] = true
+				}
+			}
 		case *ast.ForLoopExpr:
 			// A C-style loop's init declaration is reached by the generic walker only
 			// as an *expression* (it walks Init.Value), never as the statement it is —
@@ -206,6 +221,27 @@ func collect(body []ast.Expression, bound map[string]bool, reads map[string]ast.
 	}
 	onStmt := func(s ast.Statement) bool {
 		switch v := s.(type) {
+		case *ast.VarReassignmentStmt:
+			// **A bare `name = value` write is invisible to the read walk**, because
+			// VarReassignmentStmt keeps its target in a plain `Name string` field rather
+			// than an IdentifierExpr — so the walker never sees a node for it. Every other
+			// assignment form does have one (`n += 1` holds an IdentifierExpr in Left,
+			// `p.x = v` an expression path), which is why this was the single form that
+			// escaped.
+			//
+			// The consequence was not a missing diagnostic but a **compiler crash**: with
+			// the name absent from the capture set, the closure environment had no slot for
+			// it and the backend dereferenced nil in lowerVarReassignment. `var n = 0; let
+			// f = () -> void => { n = 99 }` segfaulted lyrac.
+			//
+			// Recording it here is what lets lyra-E024 fire, and the entry can only ever
+			// end in that error — any write to a captured name is E024 — so the Value's
+			// type standing in for the target's is not a layout the backend will ever see.
+			// A name bound inside this lambda is filtered out below, so a local's
+			// reassignment is untouched.
+			if _, seen := reads[v.Name]; !seen {
+				reads[v.Name] = v.Value
+			}
 		case *ast.VarDeclStmt:
 			bound[v.Name] = true
 		case *ast.DestructuringDeclStmt:

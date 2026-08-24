@@ -32,7 +32,36 @@ type tryChecker struct {
 }
 
 func (c *tryChecker) stmtVisitor() func(ast.Statement) bool {
-	return func(ast.Statement) bool { return true }
+	return func(s ast.Statement) bool {
+		impl, ok := s.(*ast.TraitImplStmt)
+		if !ok {
+			return true
+		}
+		// **An impl method's return type is on the trait, not on the impl.** An impl binds
+		// patterns — `parse = (self) => …` — so its LambdaExpr carries no ReturnType, and
+		// the generic descent below would reach the body with a nil enclosing return and
+		// reject every `?` in it. A trait method returning Result or Maybe is exactly where
+		// `?` belongs, so the operator was unusable in the half of the language written as
+		// trait impls.
+		//
+		// Resolved through LookupTraitFrom at the impl's own location (rule 4): a bare-name
+		// index is last-writer-wins, and two modules may each declare a trait of one name.
+		// traitMethodDecl is purity.go's, and shared deliberately: "which declaration does
+		// this impl method implement" is one question, and answering it twice is how the
+		// two come to disagree about generics or about which module's trait is meant.
+		for i := range impl.Methods {
+			m := &impl.Methods[i]
+			var ret *types.ReturnType
+			if decl := traitMethodDecl(c.symTable, impl, m.Name); decl != nil && decl.Signature != nil {
+				ret = &decl.Signature.ReturnType
+			}
+			// A method with no resolvable declaration implements something undeclared,
+			// which is already an error elsewhere; walking it with a nil enclosing return
+			// keeps the old behaviour rather than inventing a context for it.
+			ast.WalkExpr(m.Clause.Body, c.stmtVisitor(), c.exprVisitor(ret))
+		}
+		return false
+	}
 }
 
 func (c *tryChecker) exprVisitor(enclosing *types.ReturnType) func(ast.Expression) bool {
