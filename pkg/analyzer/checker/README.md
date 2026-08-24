@@ -594,3 +594,41 @@ accordingly. **Still open:** impurity of imported functions; and the *trait-meth
 (`directScopeBindingsForClause`) still re-walks — method clauses have no recorded scope
 (`CollectLambdaClause` pushes none), so converting them needs a collector change reconciled with
 `checkTraitImplMethodBody`. See `todo.md`'s FP/Imperative #3.
+
+## Effect inference is one walk, and why that matters
+
+`inferImpurity` runs a fixpoint over an effect *set*: each round asks every callable what
+its body does, ORs in anything newly found, and stops when nothing changes. The question
+"what does this body do" used to be asked by **two** functions — `lambdaEffects` for a free
+function and `methodEffects` for a trait-impl method — at ~200 near-identical lines each.
+Both carried comments saying the other had to stay in step. One line did not.
+
+A call resolving to a trait-impl method charged `impureMethods[method]` on the lambda side
+and `methodCallEffect(...)` on the method side, and only the second adds the effects of the
+arguments supplied for that method's **callback** parameters. So:
+
+```lyra
+trait Runner { run: (Self, () -> i64) -> i64 }
+impl Runner for Runbox { run = (self, f) => f() + self.n }
+
+let noisy = () -> i64 => { println("noise") 42 }
+let mid   = (r: Runbox) -> i64 => r.run(noisy)     // inferred pure — wrong
+let outer = pure (r: Runbox) -> i64 => mid(r)      // accepted, and prints
+```
+
+`outer` promised purity, checked clean, and printed. The *reporting* walk (`exprVisitor`)
+had used `methodCallEffect` all along, so the diagnostic machinery was right and the table
+it consults was wrong — which is exactly why nothing caught it, and why a test asserting
+"this program is rejected" was the only thing that could have.
+
+Inference is now one walk. `bodyEffects` takes a **`callable`**, the descriptor of what the
+two entry points actually differ in: the body's own frame, the capture stack, the `mut`
+parameters (nil for a method, which has no modifier syntax yet — and a nil map reads false,
+which is precisely what the method walk did by omitting the test), the parameter positions,
+where to record an allocation site, how to read a declared bound on a parameter, and how to
+walk the body. Everything else is shared, so a divergence now requires editing the one walk
+into disagreeing with itself.
+
+The tables the walk reads live in **`inference`**, which `purityChecker` embeds rather than
+copying field by field. That is the second half of the same lesson: the reporting walk and
+the fixpoint answer the same questions, so they should not be reading two sets of maps.

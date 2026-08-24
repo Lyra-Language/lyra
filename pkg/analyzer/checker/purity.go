@@ -83,20 +83,13 @@ func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable
 	// a nested lambda that captures allocates its environment box, one that does not
 	// is the shared pinned static (closures.go's emptyEnv) and stays free.
 	alloc := buildAllocContext(program, typeTable, caps)
-	impureLambdas, impureMethods, callbacks, methodCallbacks := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, methodTable, boundGroups, alloc, frames, signatures)
+	inf := newInference(signatures, methodTable, boundGroups, frames, alloc)
+	inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, inf)
 	c := &purityChecker{
-		methodCallbacks: methodCallbacks,
-		signatures:      signatures,
-		impureLambdas:   impureLambdas,
-		impureMethods:   impureMethods,
-		callbacks:       callbacks,
-		assignTargets:   map[*ast.IdentifierExpr]bool{},
-		methodTable:     methodTable,
-		boundGroups:     boundGroups,
-		traitDecls:      traitDecls,
-		frames:          frames,
-		typeTable:       typeTable,
-		allocSites:      alloc,
+		inference:     inf,
+		assignTargets: map[*ast.IdentifierExpr]bool{},
+		traitDecls:    traitDecls,
+		typeTable:     typeTable,
 	}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -247,10 +240,17 @@ func InferredEffects(program *ast.Program, scopeTable *symbols.ScopeTable) map[s
 	// The third result is the per-lambda callback set; this helper reports each
 	// function's *base* effect, which is what a caller asking "what does this function
 	// itself do" wants — the callback contribution is per call site by construction.
-	impure, _, _, _ := inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, nil, collectTraitMethodGroups(program), buildAllocContext(program, nil, nil), frames, collectMethodSignatures(program, collectTraitDecls(program)))
+	inf := newInference(
+		collectMethodSignatures(program, collectTraitDecls(program)),
+		nil, // no MethodTable: nil-safe, and this entry point runs without a typechecker
+		collectTraitMethodGroups(program),
+		frames,
+		buildAllocContext(program, nil, nil),
+	)
+	inferImpurity(collectFuncBindings(program, base, frames), collectMethodImpls(program), base, inf)
 	result := make(map[string]Effect, len(base[0].functions))
 	for name, lam := range base[0].functions {
-		result[name] = impure[lam]
+		result[name] = inf.impureLambdas[lam]
 	}
 	return result
 }
@@ -557,54 +557,84 @@ func boundEffect(lt *types.LambdaType) Effect {
 	return permitted
 }
 
-type purityChecker struct {
-	errors []PurityError
-	// impureLambdas holds the inferred effect set for each function literal,
-	// keyed by pointer (not name) so that two unrelated functions in different
-	// scopes that happen to share a name are never confused with each other.
-	// EffectNone means inferred pure. Populated by inferImpurity (purity
-	// inference, todo #3; generalized to a full effect row, todo #5).
+// inference is the state of the effect fixpoint: the four tables it computes, and the
+// context every body walk reads. It exists because those nine values were threaded through
+// six functions by hand — inferImpurity, the two body walks, callEffect, methodCallEffect
+// and argumentEffect — and then copied field by field into purityChecker so the *reporting*
+// walk could ask the same questions.
+//
+// The field names are purityChecker's, deliberately: it embeds this, so `c.impureLambdas`
+// still reads the one table rather than a copy of it that can be stale.
+type inference struct {
+	// impureLambdas holds the inferred effect set for each function literal, keyed by
+	// pointer (not name) so two unrelated functions sharing a name are never confused.
+	// EffectNone means inferred pure.
 	impureLambdas map[*ast.LambdaExpr]Effect
-	// impureMethods is impureLambdas' counterpart for trait-impl methods,
-	// populated by the same call to inferImpurity.
+	// impureMethods is impureLambdas' counterpart for trait-impl methods.
 	impureMethods map[*ast.TraitMethodImpl]Effect
+	// callbacks holds each lambda's effect-polymorphic parameters (name → position): the
+	// function-typed ones it calls, whose effects are charged at the call site rather than
+	// to the definition.
+	callbacks map[*ast.LambdaExpr]map[string]int
 	// methodCallbacks is callbacks' counterpart for trait-impl methods. Positions index the
 	// *signature*, where the receiver is parameter 0 — see methodArgumentAt.
 	methodCallbacks map[*ast.TraitMethodImpl]map[string]int
 	// signatures maps each impl method to the signature its trait declares, the only place
 	// a method's parameter types (and so its declared callback bounds) exist.
 	signatures map[*ast.TraitMethodImpl]*types.LambdaType
-	// callbacks holds each lambda's effect-polymorphic parameters (name → position):
-	// the function-typed ones it calls, whose effects are charged at the call site
-	// rather than to the definition. See the note above lambdaEffects.
-	callbacks map[*ast.LambdaExpr]map[string]int
+	// methodTable maps a call site to the trait-impl method the typechecker resolved it to
+	// (nil-safe: a nil table behaves as "no resolutions").
+	methodTable *typetable.MethodTable
+	// boundGroups maps a (trait, method) to every impl providing it, so a call resolved by
+	// abstract bound dispatch can be scored as the join over those impls' effects.
+	boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl
+	// frames builds a lambda's flat scope-bindings frame from the collector's Scope tree.
+	frames *scopeFrames
+	// allocSites is where the inference records *which* expression allocated, so lyra-E016
+	// can point at it instead of listing every allocating form in the language.
+	allocSites *allocContext
+}
+
+// newInference builds the fixpoint's state with its four tables empty. They are filled in
+// place by inferImpurity, which is why it takes the struct rather than returning four maps:
+// the reporting walk reads the *same* tables afterwards rather than a copy.
+func newInference(
+	signatures map[*ast.TraitMethodImpl]*types.LambdaType,
+	methodTable *typetable.MethodTable,
+	boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl,
+	frames *scopeFrames,
+	alloc *allocContext,
+) *inference {
+	return &inference{
+		impureLambdas:   map[*ast.LambdaExpr]Effect{},
+		impureMethods:   map[*ast.TraitMethodImpl]Effect{},
+		callbacks:       map[*ast.LambdaExpr]map[string]int{},
+		methodCallbacks: map[*ast.TraitMethodImpl]map[string]int{},
+		signatures:      signatures,
+		methodTable:     methodTable,
+		boundGroups:     boundGroups,
+		frames:          frames,
+		allocSites:      alloc,
+	}
+}
+
+type purityChecker struct {
+	errors []PurityError
+	// The effect tables and the context they were computed against, shared with the
+	// fixpoint rather than copied out of it. Embedded, so `c.impureLambdas`,
+	// `c.methodTable`, `c.frames` and the rest read exactly what inference holds.
+	*inference
 	// assignTargets records IdentifierExpr nodes that are the root of an assignment
 	// target (the LHS of `x += …`, or the base of `x.f = …`). The write is reported
 	// by the mutation checks, so the same node must not be re-reported as a read.
 	assignTargets map[*ast.IdentifierExpr]bool
-	// methodTable maps a call site to the trait-impl method the type-checker
-	// resolved it to (nil-safe: a nil table behaves as "no resolutions", so
-	// this is optional — passing nil into CheckPurity simply skips
-	// method-call purity checking, e.g. for callers that haven't run the
-	// typechecker first).
-	methodTable *typetable.MethodTable
-	// boundGroups maps a (trait, method) to every impl providing it, so a call
-	// resolved by abstract bound dispatch (methodTable.GetBound) can be scored as
-	// the join over those impls' effects.
-	boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl
 	// traitDecls indexes trait declarations by name, so an impl method inherits
 	// and is checked against the effect bounds its trait declares on that method.
 	traitDecls map[string]*ast.TraitDeclStmt
-	// frames builds a lambda's flat scope-bindings frame from the collector's
-	// Scope tree (see scopeFrames), replacing the earlier AST re-walk.
-	frames *scopeFrames
 	// typeTable carries the resolved callee of an overloaded call (see calleeFor).
 	// Nil-safe, like methodTable, so a caller that has not run the typechecker
 	// simply resolves callees by name as this pass always did.
 	typeTable *typetable.TypeTable
-	// allocSites is the alloc context the effect inference filled in, read here for the
-	// one expression `lyra-E016` points at.
-	allocSites *allocContext
 }
 
 // describeAllocation names what an expression allocates, in the terms the author wrote it
@@ -713,7 +743,7 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, encl
 		// that is what the author wrote — the method name `(_+_)` would send them
 		// looking for a call that is not there.
 		if sc != nil {
-			if eff, method := operatorImplEffect(expr, c.methodTable, c.impureMethods, c.boundGroups); eff&PurityEffects != 0 {
+			if eff, method := operatorImplEffect(expr, c.inference); eff&PurityEffects != 0 {
 				c.report(expr.GetLocation(),
 					"pure function uses an operator that dispatches to non-pure trait method %q",
 					method)
@@ -798,8 +828,7 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, encl
 					// The effect is of *this call site*: a method taking a callback is
 					// polymorphic in it exactly as a free function is, so what the
 					// argument supplied here does is part of the cost.
-					eff := methodCallEffect(method, e, capture, c.impureLambdas, c.impureMethods,
-						c.callbacks, c.methodCallbacks, callbackParamsOf(sc), nil)
+					eff := methodCallEffect(method, e, capture, c.inference, callbackParamsOf(sc), nil)
 					if eff&PurityEffects != 0 {
 						if c.impureMethods[method]&PurityEffects != 0 {
 							c.report(e.GetLocation(),
@@ -813,7 +842,7 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, encl
 				} else if ref, ok := c.methodTable.GetBound(e); ok {
 					// Abstract dispatch through a `where` bound: pure only if every
 					// impl of the bound trait method is pure.
-					if boundCallEffect(ref, c.boundGroups, c.impureMethods)&PurityEffects != 0 {
+					if boundCallEffect(ref, c.inference)&PurityEffects != 0 {
 						c.report(e.GetLocation(),
 							"pure function calls non-pure trait method %q via a bound", ref.Method)
 					}
@@ -1031,7 +1060,7 @@ func (c *purityChecker) checkCallPurity(sc *funcScope, capture []scopeBindings, 
 			continue // arity mismatch — the typechecker reports it
 		}
 		arg := call.Arguments[idx]
-		eff := argumentEffect(arg, capture, c.impureLambdas, c.callbacks, sc.callbacks, nil)
+		eff := argumentEffect(arg, capture, c.inference, sc.callbacks, nil)
 		if eff&PurityEffects == 0 {
 			continue
 		}
@@ -1770,11 +1799,9 @@ func collectFuncBindings(program *ast.Program, base []scopeBindings, frames *sco
 // That set is part of the same fixpoint, because discovering a callback can change a
 // caller's effect (it stops paying AllEffects for the call) and discovering an effect can
 // reveal a callback one round later.
-func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*ast.TraitMethodImpl, base []scopeBindings, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext, frames *scopeFrames, signatures map[*ast.TraitMethodImpl]*types.LambdaType) (map[*ast.LambdaExpr]Effect, map[*ast.TraitMethodImpl]Effect, map[*ast.LambdaExpr]map[string]int, map[*ast.TraitMethodImpl]map[string]int) {
-	impureLambdas := map[*ast.LambdaExpr]Effect{}
-	impureMethods := map[*ast.TraitMethodImpl]Effect{}
-	callbacks := map[*ast.LambdaExpr]map[string]int{}
-	methodCallbacks := map[*ast.TraitMethodImpl]map[string]int{}
+func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*ast.TraitMethodImpl, base []scopeBindings, inf *inference) {
+	impureLambdas, impureMethods := inf.impureLambdas, inf.impureMethods
+	callbacks, methodCallbacks := inf.callbacks, inf.methodCallbacks
 	// Fixpoint over an effect *set*: a callable's effect can only grow as more
 	// of its callees are analyzed, so each pass ORs in any newly found bits and
 	// we iterate until nothing changes. (This must recompute every callable
@@ -1784,7 +1811,7 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 	for {
 		changed := false
 		for lam, capture := range lambdaDefs {
-			effects, cbs := lambdaEffects(lam, capture, impureLambdas, impureMethods, methodTable, boundGroups, alloc, frames, callbacks)
+			effects, cbs := lambdaEffects(lam, capture, inf)
 			e := impureLambdas[lam] | effects
 			if e != impureLambdas[lam] {
 				impureLambdas[lam] = e
@@ -1805,8 +1832,7 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 			}
 		}
 		for _, m := range methods {
-			effects, cbs := methodEffects(m, base, impureLambdas, impureMethods, methodTable,
-				boundGroups, alloc, signatures[m], callbacks, methodCallbacks)
+			effects, cbs := methodEffects(m, base, inf)
 			e := impureMethods[m] | effects
 			if e != impureMethods[m] {
 				impureMethods[m] = e
@@ -1828,7 +1854,6 @@ func inferImpurity(lambdaDefs map[*ast.LambdaExpr][]scopeBindings, methods []*as
 			break
 		}
 	}
-	return impureLambdas, impureMethods, callbacks, methodCallbacks
 }
 
 // collectMethodImpls gathers every trait-impl method declared in program,
@@ -1984,10 +2009,10 @@ func collectTraitMethodGroups(program *ast.Program) map[typetable.BoundMethodRef
 // every concrete impl of that trait method. A `pure`/`det`/`noalloc` caller is
 // only safe if *all* impls of the bound method are — the bound admits any of
 // them. With no impls in scope the join is empty (EffectNone).
-func boundCallEffect(ref typetable.BoundMethodRef, groups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, impureMethods map[*ast.TraitMethodImpl]Effect) Effect {
+func boundCallEffect(ref typetable.BoundMethodRef, inf *inference) Effect {
 	var found Effect
-	for _, m := range groups[ref] {
-		found |= impureMethods[m]
+	for _, m := range inf.boundGroups[ref] {
+		found |= inf.impureMethods[m]
 	}
 	return found
 }
@@ -2042,20 +2067,19 @@ func callEffect(
 	callee *ast.LambdaExpr,
 	call *ast.FunctionCallExpr,
 	capture []scopeBindings,
-	effects map[*ast.LambdaExpr]Effect,
-	callbacks map[*ast.LambdaExpr]map[string]int,
+	inf *inference,
 	enclosing map[string]int,
 	enclosingCallbacks map[string]int,
 ) Effect {
-	found := effects[callee]
-	for _, idx := range callbacks[callee] {
+	found := inf.impureLambdas[callee]
+	for _, idx := range inf.callbacks[callee] {
 		if idx >= len(call.Arguments) {
 			// Arity mismatch — the typechecker reports it; assume the worst here rather
 			// than reading past the end.
 			found |= AllEffects
 			continue
 		}
-		found |= argumentEffect(call.Arguments[idx], capture, effects, callbacks, enclosing, enclosingCallbacks)
+		found |= argumentEffect(call.Arguments[idx], capture, inf, enclosing, enclosingCallbacks)
 	}
 	return found
 }
@@ -2069,21 +2093,18 @@ func methodCallEffect(
 	method *ast.TraitMethodImpl,
 	call *ast.FunctionCallExpr,
 	capture []scopeBindings,
-	effects map[*ast.LambdaExpr]Effect,
-	methodEffectsByImpl map[*ast.TraitMethodImpl]Effect,
-	callbacks map[*ast.LambdaExpr]map[string]int,
-	methodCallbacks map[*ast.TraitMethodImpl]map[string]int,
+	inf *inference,
 	enclosing map[string]int,
 	enclosingCallbacks map[string]int,
 ) Effect {
-	found := methodEffectsByImpl[method]
-	for _, idx := range methodCallbacks[method] {
+	found := inf.impureMethods[method]
+	for _, idx := range inf.methodCallbacks[method] {
 		arg, ok := methodArgumentAt(call, idx)
 		if !ok {
 			found |= AllEffects
 			continue
 		}
-		found |= argumentEffect(arg, capture, effects, callbacks, enclosing, enclosingCallbacks)
+		found |= argumentEffect(arg, capture, inf, enclosing, enclosingCallbacks)
 	}
 	return found
 }
@@ -2092,8 +2113,7 @@ func methodCallEffect(
 func argumentEffect(
 	arg ast.Expression,
 	capture []scopeBindings,
-	effects map[*ast.LambdaExpr]Effect,
-	callbacks map[*ast.LambdaExpr]map[string]int,
+	inf *inference,
 	enclosing map[string]int,
 	enclosingCallbacks map[string]int,
 ) Effect {
@@ -2101,7 +2121,7 @@ func argumentEffect(
 	case *ast.LambdaExpr:
 		// An inline lambda literal: its own inferred base. If it is *itself* polymorphic,
 		// nothing here supplies its callbacks, so assume the worst for those.
-		return effects[a] | unknownCallbackEffect(callbacks[a])
+		return inf.impureLambdas[a] | unknownCallbackEffect(inf.callbacks[a])
 	case *ast.IdentifierExpr:
 		// The caller's own callback, handed straight on: stay polymorphic and charge it
 		// one level up instead of tainting here.
@@ -2112,7 +2132,7 @@ func argumentEffect(
 			return EffectNone
 		}
 		if lam, ok := resolveFunction(capture, a.Name); ok {
-			return effects[lam] | unknownCallbackEffect(callbacks[lam])
+			return inf.impureLambdas[lam] | unknownCallbackEffect(inf.callbacks[lam])
 		}
 	}
 	// A field, a call result, an element — nothing this pass can see through.
@@ -2128,23 +2148,110 @@ func unknownCallbackEffect(callbacks map[string]int) Effect {
 	return EffectNone
 }
 
-func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext, frames *scopeFrames, callbacks map[*ast.LambdaExpr]map[string]int) (Effect, map[string]int) {
+// callable is what the two effect-inference entry points differ in. A free function's
+// lambda and a trait-impl method reach the *same* body walk through it.
+//
+// **They used to be two walks, and the two disagreed.** lambdaEffects and methodEffects
+// were ~200 near-identical lines each — the same onStmt, the same twelve-arm onExpr, the
+// same six allocation cases — and both said in their comments that the other had to stay
+// in step. One line did not: a call resolving to a trait-impl method charged
+// `impureMethods[method]` on the lambda side and `methodCallEffect(...)` on the method
+// side, and only the second adds the effects of the arguments supplied for the method's
+// *callback* parameters.
+//
+// That was a purity hole, not a cosmetic drift. Given a trait method that calls a callback
+// it takes, a free function passing an impure one was inferred **pure**:
+//
+//	let mid = (r: Runbox) -> i64 => r.run(noisy)      // inferred pure — wrong
+//	let outer = pure (r: Runbox) -> i64 => mid(r)     // accepted, and prints
+//
+// `outer` promised purity, checked clean, and printed at run time. The reporting walk
+// (exprVisitor) had always used methodCallEffect, so the diagnostic machinery was right
+// and the table it consults was wrong — which is why nothing caught it.
+type callable struct {
+	// scope is the body's own frame; declares reports whether a name is bound in it.
+	scope scopeBindings
+	// capture is the stack calls and reads resolve against, with scope already pushed.
+	capture []scopeBindings
+	// mutBorrows are the `mut` parameters, whose interior mutation escapes to the caller.
+	// Nil for a method: trait methods have no mut/own/ref modifier syntax yet, and a nil
+	// map reads false, which is exactly what the method walk did by omitting the test.
+	mutBorrows map[string]bool
+	// params maps a parameter name to its position, for callback detection.
+	params map[string]int
+	// note records an allocation *site* against whichever owner this body belongs to, so
+	// lyra-E016 can point at the expression.
+	note func(ex ast.Expression)
+	// boundAt is the declared effect bound on parameter idx, or nil when unconstrained —
+	// read from the lambda's own signature, or from the trait's for a method.
+	boundAt func(idx int) *types.LambdaType
+	// walk visits the body: every clause for a lambda, the single clause for a method.
+	walk func(onStmt func(ast.Statement) bool, onExpr func(ast.Expression) bool)
+}
+
+// declares reports whether name is bound directly in this body's own frame — the question
+// every mutation check asks, since mutating a name declared elsewhere is mutating captured
+// state. It tests key presence, not the mapped value: scopeBindings.mutable records
+// *mutability* under the name, and "declared here" is a different question.
+func (c *callable) declares(name string) bool {
+	_, ok := c.scope.mutable[name]
+	return ok
+}
+
+// lambdaEffects is the effect of a free function's body, plus the callback parameters it
+// calls. See callable for why this is a descriptor rather than a walk.
+func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *inference) (Effect, map[string]int) {
 	if lam.IsExtern {
 		// No body to walk, and no reason to walk one: what a foreign function does is
 		// what its declaration claims. See externEffects.
 		return externEffects(lam), nil
 	}
-	scope := frames.forLambda(lam)
-	locals := make(map[string]bool, len(scope.mutable))
-	for name := range scope.mutable {
-		locals[name] = true
+	scope := inf.frames.forLambda(lam)
+	c := &callable{
+		scope: scope,
+		// Calls/reads inside lam's own body must resolve against a stack that includes
+		// lam's own frame too (a call to a sibling helper declared alongside lam in the
+		// same body), not just the scope it was defined in.
+		capture:    pushScope(defCapture, scope),
+		mutBorrows: mutBorrowParams(lam),
+		params:     callableParams(lam),
+		note:       func(ex ast.Expression) { inf.allocSites.noteLambda(lam, ex) },
+		boundAt:    func(idx int) *types.LambdaType { return declaredBound(lam, idx) },
+		walk: func(onStmt func(ast.Statement) bool, onExpr func(ast.Expression) bool) {
+			walkLambdaBodies(lam, onStmt, onExpr)
+		},
 	}
-	// Calls/reads inside lam's own body must resolve against a stack that
-	// includes lam's own frame too (e.g. a call to a sibling helper declared
-	// alongside lam in the same body), not just the scope it was defined in.
-	bodyCapture := pushScope(defCapture, scope)
-	mutBorrows := mutBorrowParams(lam)
-	params := callableParams(lam)
+	return bodyEffects(c, inf)
+}
+
+// methodEffects is lambdaEffects for a trait-impl method: the same walk over a bare
+// LambdaClause (a method is always exactly one clause, never multi-clause or bare-body).
+// base is the program's top-level capture frame — a method's scope never nests inside
+// another lambda's, so that is the entire capture stack besides its own.
+//
+// The method's declared parameter bounds come from its *trait's* signature, the only place
+// a method's parameter types live. A nil signature falls back to treating every called
+// parameter as unconstrained, which is the conservative answer.
+func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, inf *inference) (Effect, map[string]int) {
+	scope := directScopeBindingsForClause(&m.Clause)
+	signature := inf.signatures[m]
+	c := &callable{
+		scope:   scope,
+		capture: pushScope(base, scope),
+		params:  clauseParams(m),
+		note:    func(ex ast.Expression) { inf.allocSites.noteMethod(m, ex) },
+		boundAt: func(idx int) *types.LambdaType { return signatureBound(signature, idx) },
+		walk: func(onStmt func(ast.Statement) bool, onExpr func(ast.Expression) bool) {
+			ast.WalkExpr(m.Clause.Body, onStmt, onExpr)
+		},
+	}
+	return bodyEffects(c, inf)
+}
+
+// bodyEffects walks one callable's body and returns its base effect together with the
+// effect-polymorphic parameters it was found to call — the ones whose cost belongs to
+// whoever supplies them, charged at that call site instead.
+func bodyEffects(c *callable, inf *inference) (Effect, map[string]int) {
 	// foundCallbacks are the effect-polymorphic parameters discovered on this pass: the
 	// ones this body calls, or hands on to another function's callback slot.
 	foundCallbacks := make(map[string]int)
@@ -2153,16 +2260,16 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 	// the allocation instead of listing every form the language can allocate with.
 	noteAlloc := func(ex ast.Expression) {
 		found |= EffectAlloc
-		alloc.noteLambda(lam, ex)
+		c.note(ex)
 	}
 	onStmt := func(s ast.Statement) bool {
 		switch st := s.(type) {
 		case *ast.VarReassignmentStmt:
-			if !locals[st.Name] {
+			if !c.declares(st.Name) {
 				found |= EffectMut
 			}
 		case *ast.LValueAssignmentStmt:
-			if root := rootIdentName(st.Target); root != "" && (mutBorrows[root] || !locals[root]) {
+			if root := rootIdentName(st.Target); root != "" && (c.mutBorrows[root] || !c.declares(root)) {
 				found |= EffectMut
 			}
 		case *ast.DerefAssignmentStmt:
@@ -2173,75 +2280,78 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 	onExpr := func(e ast.Expression) bool {
 		// An overloaded operator is a call to a trait impl method; charge it as one.
 		// Before the switch, since the operator nodes appear in it for other reasons.
-		if eff, _ := operatorImplEffect(e, methodTable, impureMethods, boundGroups); eff != EffectNone {
+		if eff, _ := operatorImplEffect(e, inf); eff != EffectNone {
 			found |= eff
 		}
 		switch ex := e.(type) {
 		case *ast.LambdaExpr:
-			// A nested lambda is a separate boundary — its body's effects are its
-			// own, charged where it is called — but its *construction* happens here,
-			// and a capturing one heap-boxes its environment (closureAllocates has
-			// the reasoning; a capture-free one is a shared pinned static and stays
-			// free). This was the audit's `noalloc` hole: with no charge here, a
-			// `noalloc` function building a capturing closure checked clean while
-			// calling `lyra_rc_alloc` on every invocation.
-			if alloc.closureAllocates(ex) {
+			// A nested lambda is a separate boundary — its body's effects are its own,
+			// charged where it is called — but its *construction* happens here, and a
+			// capturing one heap-boxes its environment (closureAllocates has the
+			// reasoning; a capture-free one is a shared pinned static and stays free).
+			// This was the audit's `noalloc` hole: with no charge here, a `noalloc`
+			// function building a capturing closure checked clean while calling
+			// `lyra_rc_alloc` on every invocation.
+			if inf.allocSites.closureAllocates(ex) {
 				noteAlloc(ex)
 			}
 			return false
 		case *ast.IdentifierExpr:
-			// Reading captured mutable state is non-deterministic. (An assignment
-			// target also visits its root as an IdentifierExpr, but those nodes are
-			// already counted by the mutation cases above, so double-counting the
-			// bit here is harmless.)
-			if !locals[ex.Name] && capturedMutable(bodyCapture, ex.Name) {
+			// Reading captured mutable state is non-deterministic. (An assignment target
+			// also visits its root as an IdentifierExpr, but those nodes are already
+			// counted by the mutation cases above, so double-counting the bit here is
+			// harmless.)
+			if !c.declares(ex.Name) && capturedMutable(c.capture, ex.Name) {
 				found |= EffectMut
 			}
 		case *ast.MathAssignOpExpr:
-			if !locals[ex.Left.Name] {
+			if !c.declares(ex.Left.Name) {
 				found |= EffectMut
 			}
 		case *ast.FunctionCallExpr:
-			if methodTable.IsBuiltinMethod(ex) {
+			if inf.methodTable.IsBuiltinMethod(ex) {
 				// A compiler builtin method (`x.wrapping_mul(y)`, `x.floor()`,
-				// `xs.len()`): pure arithmetic, no effect. Checked before the
-				// name-based ladder below, which would otherwise see the dotted name
-				// `x.wrapping_mul`, resolve it to nothing, and charge AllEffects —
-				// making explicit wrapping arithmetic unusable from exactly the
+				// `xs.len()`): pure arithmetic, no effect. Checked before the name-based
+				// ladder below, which would otherwise see the dotted name
+				// `x.wrapping_mul`, resolve it to nothing, and charge AllEffects — making
+				// explicit wrapping arithmetic unusable from exactly the
 				// `pure`/`det`/`noalloc` code that wants it.
 				//
-				// "No effect" is not quite "nothing": `s.slice(…)` builds a fresh
-				// string, so it carries EffectAlloc — pure, and refused by `noalloc`.
-				// The typechecker records which, since only it saw the receiver's type.
-				if methodTable.BuiltinMethodAllocates(ex) {
+				// "No effect" is not quite "nothing": `s.slice(…)` builds a fresh string,
+				// so it carries EffectAlloc — pure, and refused by `noalloc`. The
+				// typechecker records which, since only it saw the receiver's type.
+				if inf.methodTable.BuiltinMethodAllocates(ex) {
 					found |= EffectAlloc
 				}
-			} else if method, ok := methodTable.Get(ex); ok {
-				found |= impureMethods[method]
-			} else if ref, ok := methodTable.GetBound(ex); ok {
-				// Abstract dispatch through a `where` bound: join over the impls of
-				// the bound trait method (pure only if all of them are).
-				found |= boundCallEffect(ref, boundGroups, impureMethods)
+			} else if method, ok := inf.methodTable.Get(ex); ok {
+				// The method's own base effect **plus** whatever this site supplies for
+				// its callback parameters. The second half is what the free-function walk
+				// used to omit; see callable.
+				found |= methodCallEffect(method, ex, c.capture, inf, c.params, foundCallbacks)
+			} else if ref, ok := inf.methodTable.GetBound(ex); ok {
+				// Abstract dispatch through a `where` bound: join over the impls of the
+				// bound trait method (pure only if all of them are).
+				found |= boundCallEffect(ref, inf)
 			} else if name := calleeName(ex.Function); name != "" {
 				// Resolution order: a real binding, then our own parameters, then
 				// builtins — the typechecker's order, and it is also what makes a
 				// body-declared `let f = …` shadowing a parameter named `f` resolve to
-				// the declaration (both live in this lambda's frame, and resolveFunction
-				// consults .functions before .mutable).
-				if target, ok := calleeFor(alloc.table(), ex, bodyCapture, name); ok {
-					// The callee's *base* effect plus whatever this site supplies for
-					// its callback parameters.
-					found |= callEffect(target, ex, bodyCapture, impureLambdas, callbacks, params, foundCallbacks)
-				} else if idx, isParam := params[name]; isParam {
-					if bound := declaredBound(lam, idx); bound != nil {
+				// the declaration (both live in this frame, and resolveFunction consults
+				// .functions before .mutable).
+				if target, ok := calleeFor(inf.allocSites.table(), ex, c.capture, name); ok {
+					// The callee's *base* effect plus whatever this site supplies for its
+					// callback parameters.
+					found |= callEffect(target, ex, c.capture, inf, c.params, foundCallbacks)
+				} else if idx, isParam := c.params[name]; isParam {
+					if bound := c.boundAt(idx); bound != nil {
 						// The parameter's *type* constrains it (`f: pure () -> t`), so
-						// what calling it can do is known from the signature alone: charge
-						// exactly what the bound still permits. This function is therefore
-						// **not** polymorphic in it — it is pure (or det, or noalloc) for
-						// every caller, which is the whole point of writing the bound.
+						// what calling it can do is known from the signature alone:
+						// charge exactly what the bound still permits. This body is
+						// therefore **not** polymorphic in it — it is pure (or det, or
+						// noalloc) for every caller, which is the point of the bound.
 						found |= boundEffect(bound)
 					} else {
-						// Unconstrained: this function is effect-polymorphic in the
+						// Unconstrained: this body is effect-polymorphic in the
 						// parameter. The effect belongs to whoever supplies the callback
 						// and is charged at that call site.
 						foundCallbacks[name] = idx
@@ -2249,215 +2359,49 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, impureLambda
 				} else if e, ok := builtinEffects[name]; ok {
 					found |= e
 				} else if !isTypeConversionCall(name) {
-					// Cannot resolve to a local lambda or known builtin, and not a
-					// pure type-conversion call. Conservatively assume the worst —
-					// the callee is imported/external and we can't verify anything
-					// about it, including whether it allocates (AllEffects, not just
-					// PurityEffects, so `noalloc` catches it too).
+					// Cannot resolve to a local lambda or known builtin, and not a pure
+					// type-conversion call. Conservatively assume the worst — the callee
+					// is imported/external and we can't verify anything about it,
+					// including whether it allocates (AllEffects, not just PurityEffects,
+					// so `noalloc` catches it too).
 					found |= AllEffects
 				}
 			}
-		case *ast.StructInstanceExpr:
-			// Constructing a value used as `shared` heap-allocates (allocates
-			// reads the flavor the typechecker recorded on this construction).
-			if alloc.allocates(ex) {
-				noteAlloc(ex)
-			}
-		case *ast.TupleLiteralExpr:
-			// A named tuple literal (`Foo(1, 2)`) or a data construction
-			// (`Branch(5)`) — allocates when its recorded flavor is `shared`.
-			if alloc.allocates(ex) {
-				noteAlloc(ex)
-			}
-		case *ast.DataConstructorExpr:
-			// A nullary constructor (`Leaf`) — allocates when used as `shared`.
-			if alloc.allocates(ex) {
-				noteAlloc(ex)
-			}
-		case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr:
-			// `[1, 2, 3]` as a `[]T` allocates its box; the same literal as a fixed
-			// `[3]T` is stack storage and does not. `allocates` reads the type the
-			// typechecker recorded, so the two are told apart by what the literal was
-			// used as rather than by how it was written.
+		case *ast.StructInstanceExpr, *ast.TupleLiteralExpr, *ast.DataConstructorExpr,
+			*ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr, *ast.ArrayCompExpr:
+			// Every form whose *recorded type* decides whether it allocates:
 			//
-			// `[0; 3]` is the same expression with a count instead of a list, and
-			// belongs in the same arm for the same reason. It was left out when the
-			// repeat form landed (08/08) and the gap was live for exactly one build:
-			// `noalloc … => { let d: []i64 = [0; 3]; … }` type-checked clean while the
-			// identical `[1, 2, 3]` was refused — hazard 8, in the arm that names the
-			// forms rather than in a switch over types.
-			if alloc.allocates(ex) {
-				noteAlloc(ex)
-			}
-		case *ast.ArrayCompExpr:
-			// A comprehension always builds a `[]T` box — its length is a runtime
-			// question, so there is no fixed-size form of it to be the cheap case.
-			if alloc.allocates(ex) {
+			//   - a struct instance, named tuple (`Foo(1, 2)`), data construction
+			//     (`Branch(5)`) or nullary constructor (`Leaf`) allocates when the
+			//     typechecker recorded its flavor as `shared`;
+			//   - `[1, 2, 3]` as a `[]T` allocates its box, while the same literal as a
+			//     fixed `[3]T` is stack storage and does not — told apart by what the
+			//     literal was *used as* rather than how it was written;
+			//   - `[v; n]` is that literal with a count instead of a list, and belongs
+			//     here for the same reason. It was left out when the repeat form landed
+			//     (08/08) and the gap was live for exactly one build: `noalloc … => { let
+			//     d: []i64 = [0; 3]; … }` checked clean while the identical `[1, 2, 3]`
+			//     was refused — hazard 8, in the arm that names forms rather than types;
+			//   - a comprehension always builds a `[]T` box, its length being a runtime
+			//     question, so there is no fixed-size form of it to be the cheap case.
+			if inf.allocSites.allocates(ex) {
 				noteAlloc(ex)
 			}
 		case *ast.StringConcatExpr, *ast.InterpolatedStringExpr:
 			// `a ++ b` and `"${x}"` each build a fresh ref-counted box. A string
-			// *literal* does not — it interns as a pinned static box — which is why
-			// these are charged by form rather than by type: all three are `string`.
-			if alloc.allocatesByForm(ex) {
+			// *literal* does not — it interns as a pinned static box — which is why these
+			// are charged by form rather than by type: all three are `string`.
+			if inf.allocSites.allocatesByForm(ex) {
 				noteAlloc(ex)
 			}
 		case *ast.AwaitExpr:
-			// Awaiting resumes with the result of an external async operation, so
-			// its value is non-deterministic — an input effect (forbidden in
-			// `pure` and `det`).
+			// Awaiting resumes with the result of an external async operation, so its
+			// value is non-deterministic — an input effect (forbidden in `pure`/`det`).
 			found |= EffectInput
 		}
 		return true
 	}
-	walkLambdaBodies(lam, onStmt, onExpr)
-	return found, foundCallbacks
-}
-
-// methodEffects is lambdaEffects's counterpart for a trait-impl method: same
-// effect checks as lambdaEffects, but over a bare LambdaClause (a method is
-// always exactly one clause, never a multi-clause or bare-body lambda) and
-// with no mut-borrow parameter set to consult (methods have no mut/own/ref
-// parameter-modifier syntax yet, unlike a lambda's — see
-// directScopeBindingsForClause). base is the program's top-level capture
-// frame; a method's own scope never nests inside another lambda's, so that
-// is the entire capture stack besides the method's own.
-// It returns the method's *base* effect plus the callback parameters it calls, exactly as
-// lambdaEffects does for a free function — a trait method taking a callback used to be as
-// poisoned as every function was before effect polymorphism landed.
-//
-// signature is what the method's trait declares for it (collectMethodSignatures); it is the
-// only place a method's parameter *types* live, so it is what declared bounds
-// (`f: pure () -> t` in a trait signature) are read from. A nil signature falls back to
-// treating every called parameter as unconstrained, which is the conservative answer.
-func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, impureLambdas map[*ast.LambdaExpr]Effect, impureMethods map[*ast.TraitMethodImpl]Effect, methodTable *typetable.MethodTable, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl, alloc *allocContext, signature *types.LambdaType, callbacks map[*ast.LambdaExpr]map[string]int, methodCallbacks map[*ast.TraitMethodImpl]map[string]int) (Effect, map[string]int) {
-	scope := directScopeBindingsForClause(&m.Clause)
-	locals := make(map[string]bool, len(scope.mutable))
-	for name := range scope.mutable {
-		locals[name] = true
-	}
-	bodyCapture := pushScope(base, scope)
-	params := clauseParams(m)
-	foundCallbacks := make(map[string]int)
-	var found Effect
-	noteAlloc := func(ex ast.Expression) {
-		found |= EffectAlloc
-		alloc.noteMethod(m, ex)
-	}
-	onStmt := func(s ast.Statement) bool {
-		switch st := s.(type) {
-		case *ast.VarReassignmentStmt:
-			if !locals[st.Name] {
-				found |= EffectMut
-			}
-		case *ast.LValueAssignmentStmt:
-			if root := rootIdentName(st.Target); root != "" && !locals[root] {
-				found |= EffectMut
-			}
-		case *ast.DerefAssignmentStmt:
-			found |= EffectMut
-		}
-		return true
-	}
-	onExpr := func(e ast.Expression) bool {
-		// An overloaded operator is a call to a trait impl method; charge it as one.
-		// Before the switch, since the operator nodes appear in it for other reasons.
-		if eff, _ := operatorImplEffect(e, methodTable, impureMethods, boundGroups); eff != EffectNone {
-			found |= eff
-		}
-		switch ex := e.(type) {
-		case *ast.LambdaExpr:
-			// A separate boundary, but a capturing construction heap-boxes its
-			// environment here — the same charge as lambdaEffects's copy of this
-			// arm, for the reason the builtin-method case below spells out about
-			// the two ladders staying in step.
-			if alloc.closureAllocates(ex) {
-				noteAlloc(ex)
-			}
-			return false
-		case *ast.IdentifierExpr:
-			if !locals[ex.Name] && capturedMutable(bodyCapture, ex.Name) {
-				found |= EffectMut
-			}
-		case *ast.MathAssignOpExpr:
-			if !locals[ex.Left.Name] {
-				found |= EffectMut
-			}
-		case *ast.FunctionCallExpr:
-			if methodTable.IsBuiltinMethod(ex) {
-				// A compiler builtin method — pure, and checked first, for the reason
-				// spelled out in lambdaEffects's copy of this ladder. The two must stay
-				// in step: this one is the same question asked from inside a trait-impl
-				// method body, so a divergence would make `x.wrapping_mul(y)` pure in a
-				// free function and all-effects in a method — or, with the allocating
-				// case below, `noalloc` refusing `s.slice(…)` in a function and
-				// permitting it in a method.
-				if methodTable.BuiltinMethodAllocates(ex) {
-					found |= EffectAlloc
-				}
-			} else if method, ok := methodTable.Get(ex); ok {
-				found |= methodCallEffect(method, ex, bodyCapture, impureLambdas, impureMethods,
-					callbacks, methodCallbacks, params, foundCallbacks)
-			} else if ref, ok := methodTable.GetBound(ex); ok {
-				// Abstract dispatch through a `where` bound: join over the impls of
-				// the bound trait method (pure only if all of them are).
-				found |= boundCallEffect(ref, boundGroups, impureMethods)
-			} else if name := calleeName(ex.Function); name != "" {
-				// Scope before builtins, matching isImpureCallee and the typechecker:
-				// a user binding shadows a builtin of the same name, so its own body
-				// decides its effects.
-				if target, ok := calleeFor(alloc.table(), ex, bodyCapture, name); ok {
-					found |= callEffect(target, ex, bodyCapture, impureLambdas, callbacks, params, foundCallbacks)
-				} else if idx, isParam := params[name]; isParam {
-					// A call through one of this method's own parameters. Its trait
-					// signature may constrain it (`f: pure () -> t`), in which case the
-					// cost is known and the method is not polymorphic in it.
-					if bound := signatureBound(signature, idx); bound != nil {
-						found |= boundEffect(bound)
-					} else {
-						foundCallbacks[name] = idx
-					}
-				} else if e, ok := builtinEffects[name]; ok {
-					found |= e
-				} else if !isTypeConversionCall(name) {
-					// Cannot resolve to a local lambda or known builtin, and not a
-					// pure type-conversion call. Conservatively assume the worst —
-					// the callee is imported/external and we can't verify anything
-					// about it, including whether it allocates (AllEffects, not just
-					// PurityEffects, so `noalloc` catches it too).
-					found |= AllEffects
-				}
-			}
-		case *ast.StructInstanceExpr:
-			if alloc.allocates(ex) {
-				noteAlloc(ex)
-			}
-		case *ast.TupleLiteralExpr:
-			if alloc.allocates(ex) {
-				noteAlloc(ex)
-			}
-		case *ast.DataConstructorExpr:
-			if alloc.allocates(ex) {
-				noteAlloc(ex)
-			}
-		case *ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr:
-			if alloc.allocates(ex) {
-				noteAlloc(ex)
-			}
-		case *ast.ArrayCompExpr:
-			if alloc.allocates(ex) {
-				noteAlloc(ex)
-			}
-		case *ast.StringConcatExpr, *ast.InterpolatedStringExpr:
-			if alloc.allocatesByForm(ex) {
-				noteAlloc(ex)
-			}
-		case *ast.AwaitExpr:
-			found |= EffectInput
-		}
-		return true
-	}
-	ast.WalkExpr(m.Clause.Body, onStmt, onExpr)
+	c.walk(onStmt, onExpr)
 	return found, foundCallbacks
 }
 
@@ -2513,7 +2457,7 @@ func calleeName(fn ast.Expression) string {
 // -> bool => a < b` type-checked with an `Ord::compare` that printed. Arithmetic would
 // have added a second instance of that; this fixes both, which is why it keys on the
 // resolution rather than on the operator.
-func operatorImplEffect(e ast.Expression, methodTable *typetable.MethodTable, impureMethods map[*ast.TraitMethodImpl]Effect, boundGroups map[typetable.BoundMethodRef][]*ast.TraitMethodImpl) (Effect, string) {
+func operatorImplEffect(e ast.Expression, inf *inference) (Effect, string) {
 	switch e.(type) {
 	case *ast.MathBinaryOpExpr, *ast.NegationExpr, *ast.BitwiseNotExpr,
 		*ast.BooleanBinaryOpExpr, *ast.MathAssignOpExpr:
@@ -2522,15 +2466,15 @@ func operatorImplEffect(e ast.Expression, methodTable *typetable.MethodTable, im
 	default:
 		return EffectNone, ""
 	}
-	if res, ok := methodTable.OperatorResolution(e); ok && res.Method != nil {
-		return impureMethods[res.Method], res.Method.Name.GetName()
+	if res, ok := inf.methodTable.OperatorResolution(e); ok && res.Method != nil {
+		return inf.impureMethods[res.Method], res.Method.Name.GetName()
 	}
 	// An operator resolved through a `where` bound names no single impl, so the effect
 	// is the join over every impl of that trait method — the same rule a bound *call*
 	// follows, and the same reason: the bound admits any of them, so a `pure` caller is
 	// only safe if all of them are.
-	if ref, ok := methodTable.OperatorBound(e); ok {
-		return boundCallEffect(ref, boundGroups, impureMethods), ref.Method
+	if ref, ok := inf.methodTable.OperatorBound(e); ok {
+		return boundCallEffect(ref, inf), ref.Method
 	}
 	return EffectNone, ""
 }

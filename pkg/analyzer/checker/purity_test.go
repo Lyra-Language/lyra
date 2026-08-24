@@ -948,3 +948,59 @@ let f = pure (n: i64) -> void => unsafe { emit(n) }
 `)
 	assertPurityCount(t, errs, 1)
 }
+
+// **A `pure` function could print, through a trait method taking a callback.**
+//
+// Effect inference ran two walks — lambdaEffects for a free function, methodEffects for a
+// trait-impl method — that were ~200 near-identical lines each and disagreed on one line: a
+// call resolving to a trait-impl method charged `impureMethods[method]` on the lambda side
+// and `methodCallEffect(...)` on the method side, and only the second adds the effects of
+// the arguments supplied for the method's *callback* parameters.
+//
+// So `mid` below was inferred **pure** — it calls `r.run(noisy)`, `run` calls the callback
+// it is given, and `noisy` prints — and `outer`, which promises purity, checked clean and
+// printed at run time. The reporting walk had always used methodCallEffect, so the
+// diagnostic machinery was correct and the table it consults was wrong, which is why
+// nothing caught it. `mid` even drew a lyra-W018 advising that it be marked `pure`.
+//
+// The two walks are one now (bodyEffects over a `callable` descriptor), so the divergence
+// cannot come back by editing one of them.
+func TestPurity_TraitMethodCallbackTaintsCaller_Error(t *testing.T) {
+	src := `
+trait Runner { run: (Self, () -> i64) -> i64 }
+struct Runbox { n: i64 }
+impl Runner for Runbox { run = (self, f) => f() + self.n }
+
+let noisy = () -> i64 => {
+  println("noise")
+  42
+}
+
+let mid = (r: Runbox) -> i64 => r.run(noisy)
+let outer = pure (r: Runbox) -> i64 => mid(r)
+`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	if !strings.Contains(errs[0].Message, "impure function") {
+		t.Errorf("expected `outer` to be reported as calling an impure function, got %q", errs[0].Message)
+	}
+}
+
+// The companion that must keep working: a trait method taking a callback is *effect-
+// polymorphic*, so supplying a **pure** callback leaves the caller pure. The fix above
+// charges the argument's effect at the call site, which means charging EffectNone here —
+// not "a method with a callback is always impure", which would poison every `map`-shaped
+// trait method in the language.
+func TestPurity_TraitMethodPureCallbackKeepsCallerPure_Ok(t *testing.T) {
+	src := `
+trait Runner { run: (Self, () -> i64) -> i64 }
+struct Runbox { n: i64 }
+impl Runner for Runbox { run = (self, f) => f() + self.n }
+
+let quiet = pure () -> i64 => 42
+
+let mid = pure (r: Runbox) -> i64 => r.run(quiet)
+let outer = pure (r: Runbox) -> i64 => mid(r)
+`
+	assertPurityCount(t, checkPurity(t, src), 0)
+}

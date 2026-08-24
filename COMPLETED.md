@@ -9,6 +9,73 @@ Newest first.
 
 ## Dated log
 
+### 08/24/26 (1)
+**A `pure` function could print. Effect inference was two walks, and they disagreed.**
+
+`inferImpurity` asks "what does this body do" once per callable per fixpoint round, and the
+question had **two** implementations: `lambdaEffects` for a free function and
+`methodEffects` for a trait-impl method, ~200 near-identical lines each — the same `onStmt`,
+the same twelve-arm `onExpr`, the same six allocation cases. Each carried a comment saying
+the other had to stay in step. One line did not:
+
+```go
+// lambdaEffects
+} else if method, ok := methodTable.Get(ex); ok {
+    found |= impureMethods[method]                  // base effect only
+// methodEffects
+} else if method, ok := methodTable.Get(ex); ok {
+    found |= methodCallEffect(method, ex, …)        // base + the callbacks supplied here
+```
+
+Only the second adds the effects of the arguments supplied for the method's *callback*
+parameters. So a free function passing an impure callback through a trait method was
+inferred **pure**:
+
+```lyra
+trait Runner { run: (Self, () -> i64) -> i64 }
+impl Runner for Runbox { run = (self, f) => f() + self.n }
+
+let noisy = () -> i64 => { println("noise") 42 }
+let mid   = (r: Runbox) -> i64 => r.run(noisy)     // inferred pure
+let outer = pure (r: Runbox) -> i64 => mid(r)      // checks clean
+```
+
+`outer` promises purity, `lyrac check` exits 0, and running it prints `noise`. `mid` even
+drew a **lyra-W018** advising that it be marked `pure` — advice that would have made the
+program worse.
+
+**Why nothing caught it.** The *reporting* walk (`exprVisitor`) had used `methodCallEffect`
+all along, so the diagnostic machinery was correct and the table it consults was wrong.
+Every test asserting "this bad program is rejected" passed, because those tests report
+against the direct call. The only thing that finds this shape is a test asserting a program
+*two levels up* is rejected — which is what now exists, alongside its companion asserting a
+**pure** callback still leaves the caller pure, since the wrong over-correction ("a method
+with a callback is impure") would poison every `map`-shaped trait method in the language.
+
+**The fix is that inference is one walk.** `bodyEffects` takes a `callable`: the descriptor
+of what the two entry points genuinely differ in — the body's own frame, the capture stack,
+the `mut` parameters, the parameter positions, where to record an allocation site, how to
+read a declared bound, and how to walk the body. Everything else is shared, so a divergence
+now requires editing one walk into disagreeing with itself.
+
+Two details worth keeping. The method walk had *no* `mut`-borrow set, because trait methods
+have no `mut`/`own`/`ref` modifier syntax yet; a nil map reads false, so passing nil
+reproduces the omission exactly rather than by a special case. And the per-body `locals`
+map — a copy of the scope frame's key set, rebuilt every round for every callable — is gone:
+`callable.declares` tests key presence directly, which is what `locals` was standing in for.
+
+**The nine-value parameter thread is gone with it.** `impureLambdas`, `impureMethods`,
+`callbacks`, `methodCallbacks`, `methodTable`, `boundGroups`, `alloc`, `frames` and
+`signatures` were threaded through six functions by hand and then copied field by field into
+`purityChecker` so the reporting walk could ask the same questions of the same data. They
+are one `inference` struct now, which `purityChecker` **embeds** — so `c.impureLambdas`
+reads the one table rather than a copy that could go stale, and the field names did not have
+to change.
+
+Verified: the whole standard library and every example in `examples/` still check clean
+under the stricter inference, which is the check that mattered — the fix charges *more*
+effects, so the risk was rejecting valid code rather than accepting invalid code.
+
 ### 08/23/26 (2)
 **The type-walk and substitution copies outside `pkg/types`.**
 

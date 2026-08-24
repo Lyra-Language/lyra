@@ -117,10 +117,20 @@ real failure, and none is local to one package.
    Six lessons the instances add, none of which follows from "add the arm":
 
    - **A second copy is enough** — the drift does not need three.
-   - **Copies can agree and be wrong together.** All three purity ladders charge a builtin
+   - **Copies can agree and be wrong together.** The purity ladders all charged a builtin
      method no effect, which is right for scalar arithmetic and wrong for `s.slice(a, b)`,
      the first that allocates: `pure noalloc … => s.trim()` type-checked clean. A shared
      answer is a shared *assumption*, and it fails with no divergence to notice.
+   - **…and copies that disagree can be a soundness hole rather than a wrong message.**
+     There were three of those ladders: two *inference* walks (a free function's,
+     a trait method's) and the *reporting* walk. The two inference walks differed on one
+     line — a call to a trait-impl method charged only the method's base effect on the
+     lambda side, and its base **plus the effects of the callbacks supplied at this site**
+     on the method side. A `pure` function passing an impure callback through a trait
+     method was therefore inferred pure, checked clean, and printed. The reporting walk had
+     the right rule all along, which is why the diagnostic never fired: the machinery was
+     correct and the table it consults was wrong. Inference is now **one** walk
+     (`bodyEffects` over a `callable`), leaving the reporting walk as the only mirror.
    - **Two switches can disagree about a case neither one names**, which grepping will not
      find — `nominalHead` lacked `*ConstrainedType` while `types.HeadName` one layer up
      gives a newtype a head, so a method written *for* a newtype was silently unreachable.
@@ -381,7 +391,7 @@ method fallback must not hand out what the operator rule withholds.) And the res
 `resolveTraitMethodNamed`, the *same* function the identifier path uses with a full
 `MethodName` key, so an operator and a `.method()` call cannot come to disagree about
 generic impls or `where` bounds. An operator is a call, so the purity ladders charge it as
-one (`operatorImplEffect`).
+one (`operatorImplEffect`), which both of them reach through the shared `inference`.
 
 ## Supertraits
 
@@ -563,7 +573,8 @@ implements one. All concrete nodes embed `AstBase`, which holds a 1-based `Locat
   a `BoundMethodRef{Trait, Method}`. There is no single concrete impl, so the purity checker
   joins over all impls of that trait method.
 - `SetBuiltinMethod(call, allocates)` records what a builtin method resolved to, because
-  only the typechecker still has the receiver's type. All three purity ladders read it.
+  only the typechecker still has the receiver's type. Both purity ladders read it — the
+  one inference walk and the reporting walk.
 - `SetBoundCandidates` is how a bound-dispatched call **lowers**: the typechecker publishes
   one resolution per implementing type and the backend picks by the receiver's substituted
   type. **Impl matching stays in the typechecker** — a second copy in codegen is exactly the
