@@ -1004,3 +1004,63 @@ let outer = pure (r: Runbox) -> i64 => mid(r)
 `
 	assertPurityCount(t, checkPurity(t, src), 0)
 }
+
+// **The fixpoint still iterates.** The per-callable facts a body walk needs — its scope
+// frame, its `mut` parameters, its parameter positions (including the aliases a
+// body-level `match` binds) — are memoized on scopeFrames, because they are pure
+// functions of the AST and the scope tree and were being rebuilt once per round per
+// callable.
+//
+// What must not come with that is any freezing of the fixpoint's own *outputs*, which do
+// change between rounds. This chain is deliberately deeper than one round can settle: the
+// effect starts at `noisy` and has to climb four bindings, in an order the map iteration
+// gives no guarantee about, before `top` can be known impure. A memo that captured an
+// effect rather than an input would report zero errors here.
+//
+// `mid` is written multi-clause so the walk also crosses a desugared `match (p0)` — the
+// shape addMatchAliases exists for, and the most expensive thing paramsFor caches.
+func TestPurity_DeepChainStillReachesTheFixpoint_Error(t *testing.T) {
+	src := `
+let noisy = () -> i64 => {
+  println("noise")
+  1
+}
+let a = () -> i64 => noisy()
+let mid = (n: i64) -> i64
+  | 0 => a()
+  | m => a() + m
+let b = () -> i64 => mid(3)
+let top = pure () -> i64 => b()
+`
+	errs := checkPurity(t, src)
+	assertPurityCount(t, errs, 1)
+	if !strings.Contains(errs[0].Message, "impure") {
+		t.Errorf("expected `top` to be reported as impure, got %q", errs[0].Message)
+	}
+}
+
+// The memoized maps are handed out **shared**, so nothing may write to one after it is
+// built. Running the whole pass twice over one program is the cheap standing check that
+// nothing does: a mutated frame or parameter map would make the second run disagree with
+// the first.
+func TestPurity_IsIdempotent(t *testing.T) {
+	src := `
+let noisy = () -> i64 => {
+  println("noise")
+  1
+}
+let mid = (n: i64) -> i64 => noisy() + n
+let top = pure () -> i64 => mid(1)
+let fine = pure (n: i64) -> i64 => n * 2
+`
+	first := checkPurity(t, src)
+	second := checkPurity(t, src)
+	if len(first) != len(second) {
+		t.Fatalf("purity is not idempotent: %d error(s) then %d", len(first), len(second))
+	}
+	for i := range first {
+		if first[i].Message != second[i].Message {
+			t.Errorf("run %d differs: %q vs %q", i, first[i].Message, second[i].Message)
+		}
+	}
+}

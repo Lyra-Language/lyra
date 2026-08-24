@@ -632,3 +632,37 @@ into disagreeing with itself.
 The tables the walk reads live in **`inference`**, which `purityChecker` embeds rather than
 copying field by field. That is the second half of the same lesson: the reporting walk and
 the fixpoint answer the same questions, so they should not be reading two sets of maps.
+
+## The fixpoint's per-callable facts are memoized
+
+`inferImpurity` recomputes every callable's effect on every round — it has to, since a
+function found to allocate early may still gain an io bit from a callee resolved later, and
+a "skip the ones already impure" early-out would miss that. What it does *not* have to
+recompute is the **inputs** each body walk needs:
+
+| fact | what it costs | cached as |
+|---|---|---|
+| the body's scope frame | a walk of the collector's scope subtree, plus two maps | `frames.forLambda` |
+| its `mut` parameters | a parameter scan | `frames.mutBorrowsFor` |
+| its parameter positions | a parameter scan **plus** the body-level match-alias walk | `frames.paramsFor` |
+| a method's frame / parameters | the same, per impl method | `frames.forMethod` / `methodParamsFor` |
+
+Each is a pure function of the AST and the scope tree, both immutable once collection has
+finished, so caching them per `CheckPurity` run is sound. Measured on the pass in isolation
+(`BenchmarkCheckPurity_*`, over the real prelude): **~27–30% faster, ~35% fewer
+allocations**. End to end it is ~2–4%, because parsing and collection dominate the pipeline
+so completely that `CheckPurity` does not appear in a CPU profile of
+`BenchmarkAnalyze_Large` at all — which is the honest way to read both numbers.
+
+**The maps are handed out shared, so nothing may write to one after it is built.** That
+invariant is what makes the caching safe rather than merely fast, and it holds by
+construction today: every write to a frame or parameter map happens inside its builder
+(`buildLambdaFrame`, `addScopeSymbols`, `directScopeBindingsForClause`, and
+`addMatchAliases` on its own map), and every other use is a read. `TestPurity_IsIdempotent`
+is the standing check — running the pass twice over one program must agree with itself.
+
+The same rule is why `funcScope.isLocal` tests **key presence** rather than the mapped
+value. A frame's `mutable` map records mutability under each name, while "is this name
+declared in this body" is a different question; three call sites used to copy the key set
+into a fresh all-true map so a value test would work, once per round per callable. The
+presence test lets them share the frame's own map, and those copies are gone.

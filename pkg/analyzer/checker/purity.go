@@ -124,14 +124,10 @@ func (c *purityChecker) checkTraitMethodBounds(impl *ast.TraitImplStmt, base []s
 		if !isPure {
 			continue
 		}
-		scope := directScopeBindingsForClause(&m.Clause)
-		locals := make(map[string]bool, len(scope.mutable))
-		for name := range scope.mutable {
-			locals[name] = true
-		}
+		scope := c.frames.forMethod(m)
 		// Method parameters have no mut/own/ref modifier syntax yet (unlike a
 		// lambda's), so there is no mutBorrows set to populate here.
-		sc := &funcScope{locals: locals, mutBorrows: map[string]bool{}}
+		sc := &funcScope{locals: scope.mutable, mutBorrows: map[string]bool{}}
 		childCapture := pushScope(base, scope)
 		ast.WalkExpr(m.Clause.Body, c.stmtVisitor(sc), c.exprVisitor(sc, childCapture, nil))
 	}
@@ -159,12 +155,8 @@ func (c *purityChecker) checkTraitDefaultBounds(trait *ast.TraitDeclStmt, base [
 		if !tm.IsPure {
 			continue
 		}
-		scope := directScopeBindingsForClause(&m.Clause)
-		locals := make(map[string]bool, len(scope.mutable))
-		for name := range scope.mutable {
-			locals[name] = true
-		}
-		sc := &funcScope{locals: locals, mutBorrows: map[string]bool{}}
+		scope := c.frames.forMethod(m)
+		sc := &funcScope{locals: scope.mutable, mutBorrows: map[string]bool{}}
 		childCapture := pushScope(base, scope)
 		ast.WalkExpr(m.Clause.Body, c.stmtVisitor(sc), c.exprVisitor(sc, childCapture, nil))
 	}
@@ -365,7 +357,18 @@ type funcScope struct {
 	callbacks map[string]int
 }
 
-func (s *funcScope) isLocal(name string) bool { return s != nil && s.locals[name] }
+// isLocal tests **key presence**, not the mapped value: locals is a scope frame's own
+// `mutable` map, whose value records *mutability* while the question here is "declared in
+// this body". Three call sites used to copy the key set into a fresh all-true map to make
+// the value test work, once per round per callable; the presence test lets them share the
+// frame's map instead.
+func (s *funcScope) isLocal(name string) bool {
+	if s == nil {
+		return false
+	}
+	_, ok := s.locals[name]
+	return ok
+}
 
 // isCallback reports whether name is one of this function's effect-polymorphic
 // parameters — a callback whose effects are the caller's, not this function's.
@@ -766,14 +769,10 @@ func (c *purityChecker) exprVisitor(sc *funcScope, capture []scopeBindings, encl
 			var child *funcScope
 			scope := c.frames.forLambda(e)
 			if e.IsPure {
-				locals := make(map[string]bool, len(scope.mutable))
-				for name := range scope.mutable {
-					locals[name] = true
-				}
 				// The callback parameters inference found for this lambda travel with the
 				// scope, so the call check below can tell "calls its own callback"
 				// (polymorphic, not this function's effect) from "calls something impure".
-				child = &funcScope{locals: locals, mutBorrows: mutBorrowParams(e), callbacks: c.callbacks[e]}
+				child = &funcScope{locals: scope.mutable, mutBorrows: c.frames.mutBorrowsFor(e), callbacks: c.callbacks[e]}
 			}
 			childCapture := pushScope(capture, scope)
 			walkLambdaBodies(e, c.stmtVisitor(child), c.exprVisitor(child, childCapture, e))
@@ -978,7 +977,7 @@ func (c *purityChecker) suppliedEffect(arg ast.Expression, capture []scopeBindin
 			}
 			return c.impureLambdas[lam], true
 		}
-		if params := callableParams(enclosing); params != nil {
+		if params := c.frames.paramsFor(enclosing); params != nil {
 			if idx, isParam := params[a.Name]; isParam {
 				if b := declaredBound(enclosing, idx); b != nil {
 					return boundEffect(b), true
@@ -1030,7 +1029,7 @@ func (c *purityChecker) checkCallPurity(sc *funcScope, capture []scopeBindings, 
 	// and nothing to report unless the bound itself allows an impurity. Without this the
 	// pure walk would flag `f()` inside `pure (…, f: pure () -> t) => … f() …`, which is
 	// precisely the function the declared half exists to make writable.
-	if params := callableParams(enclosing); params != nil {
+	if params := c.frames.paramsFor(enclosing); params != nil {
 		if idx, isParam := params[name]; isParam {
 			if bound := declaredBound(enclosing, idx); bound != nil {
 				if boundEffect(bound)&PurityEffects != 0 {
@@ -1190,6 +1189,21 @@ func nondeterminismDescription(e Effect) string {
 // (the collector records no scope for them; see directScopeBindingsForClause).
 type scopeFrames struct {
 	scopeTable *symbols.ScopeTable
+	// Memoized per-callable facts. Each is a pure function of the AST and the collector's
+	// scope tree — both immutable once collection has finished — and the effect fixpoint
+	// asks for every one of them again on **every round for every callable**, so without
+	// these the scope-subtree walk, the parameter scan and the match-alias walk are redone
+	// once per round per function. The reporting walk asks for the same facts a third time.
+	//
+	// The maps are handed out **shared**, which is safe because nothing writes to one after
+	// it is built: addMatchAliases writes only while constructing its own map, and every
+	// other use is a read. Cached per CheckPurity run (scopeFrames is built by
+	// newScopeFrames), so nothing outlives the program it describes.
+	lambdaFrames map[*ast.LambdaExpr]scopeBindings
+	lambdaMut    map[*ast.LambdaExpr]map[string]bool
+	lambdaParams map[*ast.LambdaExpr]map[string]int
+	methodFrames map[*ast.TraitMethodImpl]scopeBindings
+	methodParams map[*ast.TraitMethodImpl]map[string]int
 	// arenaScopes are the `with`-block scopes whose sole binding (the arena
 	// handle) must read as interior-mutable despite being a plain `let`. Reachable
 	// only from a program that already fails to check (lyra-E050 refuses `with`);
@@ -1207,9 +1221,14 @@ type scopeFrames struct {
 // pipeline always passes the collected table).
 func newScopeFrames(program *ast.Program, scopeTable *symbols.ScopeTable) *scopeFrames {
 	f := &scopeFrames{
-		scopeTable:  scopeTable,
-		arenaScopes: map[*symbols.Scope]bool{},
-		forInScopes: map[*symbols.Scope]bool{},
+		scopeTable:   scopeTable,
+		lambdaFrames: map[*ast.LambdaExpr]scopeBindings{},
+		lambdaMut:    map[*ast.LambdaExpr]map[string]bool{},
+		lambdaParams: map[*ast.LambdaExpr]map[string]int{},
+		methodFrames: map[*ast.TraitMethodImpl]scopeBindings{},
+		methodParams: map[*ast.TraitMethodImpl]map[string]int{},
+		arenaScopes:  map[*symbols.Scope]bool{},
+		forInScopes:  map[*symbols.Scope]bool{},
 	}
 	if scopeTable == nil {
 		return f
@@ -1245,6 +1264,56 @@ func newScopeFrames(program *ast.Program, scopeTable *symbols.ScopeTable) *scope
 // patterns are not registered in the scope tree); body declarations come from
 // the recorded Scope subtree.
 func (f *scopeFrames) forLambda(lambda *ast.LambdaExpr) scopeBindings {
+	if frame, ok := f.lambdaFrames[lambda]; ok {
+		return frame
+	}
+	frame := f.buildLambdaFrame(lambda)
+	f.lambdaFrames[lambda] = frame
+	return frame
+}
+
+// mutBorrowsFor is mutBorrowParams, memoized. See scopeFrames.
+func (f *scopeFrames) mutBorrowsFor(lambda *ast.LambdaExpr) map[string]bool {
+	if mut, ok := f.lambdaMut[lambda]; ok {
+		return mut
+	}
+	mut := mutBorrowParams(lambda)
+	f.lambdaMut[lambda] = mut
+	return mut
+}
+
+// paramsFor is callableParams, memoized. Its match-alias walk is the expensive half.
+func (f *scopeFrames) paramsFor(lambda *ast.LambdaExpr) map[string]int {
+	if params, ok := f.lambdaParams[lambda]; ok {
+		return params
+	}
+	params := callableParams(lambda)
+	f.lambdaParams[lambda] = params
+	return params
+}
+
+// forMethod is directScopeBindingsForClause, memoized.
+func (f *scopeFrames) forMethod(m *ast.TraitMethodImpl) scopeBindings {
+	if frame, ok := f.methodFrames[m]; ok {
+		return frame
+	}
+	frame := directScopeBindingsForClause(&m.Clause)
+	f.methodFrames[m] = frame
+	return frame
+}
+
+// methodParamsFor is clauseParams, memoized.
+func (f *scopeFrames) methodParamsFor(m *ast.TraitMethodImpl) map[string]int {
+	if params, ok := f.methodParams[m]; ok {
+		return params
+	}
+	params := clauseParams(m)
+	f.methodParams[m] = params
+	return params
+}
+
+// buildLambdaFrame is forLambda's uncached walk.
+func (f *scopeFrames) buildLambdaFrame(lambda *ast.LambdaExpr) scopeBindings {
 	frame := scopeBindings{mutable: map[string]bool{}, functions: map[string]*ast.LambdaExpr{}}
 	for i := range lambda.Parameters {
 		for _, n := range patternBoundNames(lambda.Parameters[i].Pattern) {
@@ -2213,8 +2282,8 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *inferen
 		// lam's own frame too (a call to a sibling helper declared alongside lam in the
 		// same body), not just the scope it was defined in.
 		capture:    pushScope(defCapture, scope),
-		mutBorrows: mutBorrowParams(lam),
-		params:     callableParams(lam),
+		mutBorrows: inf.frames.mutBorrowsFor(lam),
+		params:     inf.frames.paramsFor(lam),
 		note:       func(ex ast.Expression) { inf.allocSites.noteLambda(lam, ex) },
 		boundAt:    func(idx int) *types.LambdaType { return declaredBound(lam, idx) },
 		walk: func(onStmt func(ast.Statement) bool, onExpr func(ast.Expression) bool) {
@@ -2233,12 +2302,12 @@ func lambdaEffects(lam *ast.LambdaExpr, defCapture []scopeBindings, inf *inferen
 // a method's parameter types live. A nil signature falls back to treating every called
 // parameter as unconstrained, which is the conservative answer.
 func methodEffects(m *ast.TraitMethodImpl, base []scopeBindings, inf *inference) (Effect, map[string]int) {
-	scope := directScopeBindingsForClause(&m.Clause)
+	scope := inf.frames.forMethod(m)
 	signature := inf.signatures[m]
 	c := &callable{
 		scope:   scope,
 		capture: pushScope(base, scope),
-		params:  clauseParams(m),
+		params:  inf.frames.methodParamsFor(m),
 		note:    func(ex ast.Expression) { inf.allocSites.noteMethod(m, ex) },
 		boundAt: func(idx int) *types.LambdaType { return signatureBound(signature, idx) },
 		walk: func(onStmt func(ast.Statement) bool, onExpr func(ast.Expression) bool) {

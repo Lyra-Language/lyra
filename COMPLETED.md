@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 08/24/26 (2)
+**The purity fixpoint stopped rebuilding what never changes.**
+
+`inferImpurity` recomputes every callable's effect on every round, and must: a function
+found to allocate early can still gain an io bit from a callee resolved later, so a
+"skip the ones already impure" early-out would miss it. What it does not have to recompute
+is the **inputs** each body walk needs — the scope frame (a walk of the collector's scope
+subtree plus two maps), the `mut` parameter set, and the parameter positions including the
+body-level match-alias walk. All three are pure functions of the AST and the scope tree,
+both immutable once collection has finished, and all three were being rebuilt once per
+round per callable, with the reporting walk asking for them a third time.
+
+They are memoized on `scopeFrames` now, along with the per-method equivalents.
+
+**Measured, because the audit's claim deserved a number.** A new
+`BenchmarkCheckPurity_*` runs the pass in isolation over the real prelude:
+
+| | before | after |
+|---|---|---|
+| Small | 0.664 ms, 12,846 allocs | 0.465 ms, 8,292 allocs |
+| Medium | 1.086 ms, 20,957 allocs | 0.799 ms, 13,695 allocs |
+| Large | 2.532 ms, 46,370 allocs | 1.856 ms, 29,702 allocs |
+
+~27–30% faster, ~35% fewer allocations. **End to end it is 2–4%**, and that gap is the
+part worth recording: a CPU profile of `BenchmarkAnalyze_Large` does not show `CheckPurity`
+at all — parsing and collection dominate so thoroughly that the pass is below the sampling
+threshold. The isolated benchmark exists because of that, in both directions: a regression
+here is invisible end-to-end, and an optimization here should not be sold as a pipeline win.
+
+**What makes it safe rather than merely fast** is that nothing writes to a cached map after
+it is built. That holds by construction — every write to a frame or parameter map is inside
+its builder — and `TestPurity_IsIdempotent` is the standing check, since a mutated map
+would make a second run disagree with the first. `TestPurity_DeepChainStillReachesTheFixpoint`
+guards the other direction: the *outputs* still change between rounds, so a memo that
+captured an effect rather than an input would report nothing on a chain deeper than one
+round can settle.
+
+Four map copies went with it. Three call sites built `funcScope.locals` by copying a scope
+frame's key set into a fresh all-true map, because `isLocal` tested the mapped value while
+the frame's map stores *mutability* under each name. `isLocal` tests key presence now, so
+they share the frame's own map; the fourth copy was the per-body `locals` the previous
+commit had already removed.
+
 ### 08/24/26 (1)
 **A `pure` function could print. Effect inference was two walks, and they disagreed.**
 
