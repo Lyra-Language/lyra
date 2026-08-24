@@ -158,6 +158,17 @@ real failure, and none is local to one package.
      including both loop forms, which had made navigation dead inside every loop body in
      every program. What it cannot do is find a switch nobody registered; adding an entry
      when you add a *consumer* is still manual, and adding a *node* is not.
+
+     **A registered mirror is second best, and retiring one is the real fix** (08/23).
+     Two hand-copied walkers were deleted rather than registered — the collector's
+     constructor rewriter, now `ast.RewriteStmt`, and the LSP's position lookup, now
+     `ast.WalkStmt`. Each had been written because the canonical walker could not do the
+     job: one needed to *replace* a slot, which a visitor cannot, and the other to find
+     the innermost node containing a position. Both are ordinary uses of a walker once
+     the walker offers them, and the drift they had already suffered was invisible
+     precisely where a test was absent — the LSP's *expression* switch was registered and
+     in step, while its *statement* switch, which nothing watched, sat eight kinds behind
+     and made navigation dead inside every trait-impl body in every program.
    - **A new *type* kind pays the same tax as a new declaration kind, and has no
      checklist.** `RawPointerType` landed 08/18 and was found missing from **two**
      composite-type switches on 08/22, each with a symptom nowhere near the cause:
@@ -200,6 +211,9 @@ real failure, and none is local to one package.
    | does this value transitively own a reference? | `ownership.OwnsManaged` |
    | is that sharing observable? | `ownership.SharesMutableState` |
    | substitute type variables in a type | `types.Substitute` |
+   | what are this node's children? | `ast.WalkStmt`/`ast.WalkExpr` (`…Children` to skip the node itself) |
+   | rewrite expressions in place | `ast.RewriteStmt`/`ast.RewriteExpr` |
+   | where is the expression at this position? | `findExprAtPos` (`cmd/lyra-lsp/hover.go`) |
 
 9. **A name does not identify a declaration, and may not even identify one function.**
    A *key* is module-qualified for a private declaration (rule 4), and a
@@ -301,10 +315,13 @@ language-level rules are in the workspace `CLAUDE.md`; what matters inside this 
   claimed is only knowable once every collector that might have claimed it has run. The
   claim set is keyed by start byte and reset per file (`ctx.ResetDocs`).
 - **Every position-based feature starts at `findExprAtPos`** (`hover.go`), and
-  `definition.go`'s `scopeInExpr` is its twin for scopes. A node kind missing from one of
-  them makes hover, definition, rename and highlight silently answer nothing in that
-  construct; missing from only *one* is worse, since the expression is found and its name
-  then resolved in the wrong scope. Add a kind to both or to neither.
+  `definition.go`'s `scopeInExpr` is its twin for scopes. `findExprAtPos` **no longer
+  switches on node kinds** — it walks with `ast.WalkStmt`/`ast.WalkExpr` and keeps the
+  narrowest span containing the position — so only the twin can now fall behind, and a
+  kind missing from it means the expression is found and its name resolved in the wrong
+  scope. It deliberately does **not** prune at a node failing to contain the position: a
+  node with an unset `Location` (hazard 14) would otherwise take its whole subtree out of
+  reach.
 - **LSP hover** renders the doc under the type (`cmd/lyra-lsp/hoverdoc.go`).
   `resolveDoc` mirrors `resolveDefinition` case for case; keep them in step, or hover
   shows one symbol's docs above another symbol's type. **A typeless expression may still

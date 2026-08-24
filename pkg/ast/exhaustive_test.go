@@ -38,8 +38,8 @@ import (
 // are. Everything else that walks the AST is measured against them.
 const (
 	walkFile     = "walk.go"
-	walkExprFunc = "walkExprChildren"
-	walkStmtFunc = "walkStmtChildren"
+	walkExprFunc = "WalkExprChildren"
+	walkStmtFunc = "WalkStmtChildren"
 	repoRoot     = "../.."
 )
 
@@ -48,6 +48,11 @@ const (
 // A mirror may legitimately omit a kind — `scopeInExpr` only cares about the constructs
 // that *introduce a scope* — so each entry carries its exclusions, in writing, next to the
 // reason. An exclusion is a claim; an omission is a bug.
+//
+// The LSP's expression walker used to be listed here. It is gone because the switch is
+// gone: cmd/lyra-lsp/hover.go now finds a position through ast.WalkStmt/ast.WalkExpr, so
+// there is no second list of node kinds to keep in step. Retiring a mirror is a better
+// outcome than passing its test.
 var mirrors = []struct {
 	name      string // what to call it in a failure
 	file, fn  string
@@ -55,16 +60,24 @@ var mirrors = []struct {
 	excused   map[string]string
 }{
 	{
-		name:      "the LSP's expression walker",
-		file:      repoRoot + "/cmd/lyra-lsp/hover.go",
-		fn:        "findInChildren",
+		name:      "the AST rewriter's expression switch",
+		file:      "rewrite.go",
+		fn:        "rewriteExprChildren",
 		canonical: walkExprFunc,
 		excused:   map[string]string{
-			// Every position-based LSP feature — hover, definition, rename, highlight —
-			// descends through this switch, so a kind missing from it is that construct
-			// being invisible to all of them at once. There is no construct a user does
-			// not navigate inside, which is why nothing is excused here.
+			// The rewriter is the writing half of the same traversal, so it owes a case
+			// for exactly what the reader descends into. Nothing is excused: a kind
+			// missing here is a rewrite that silently does not happen inside that
+			// construct, which is how the collector's hand-copy came to skip
+			// `TupleIndexExpr`, `BitwiseNotExpr` and a deref assignment's target.
 		},
+	},
+	{
+		name:      "the AST rewriter's statement switch",
+		file:      "rewrite.go",
+		fn:        "rewriteStmtChildren",
+		canonical: walkStmtFunc,
+		excused:   map[string]string{},
 	},
 }
 

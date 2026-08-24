@@ -59,7 +59,9 @@ table is complete, so a forward-referenced constructor resolves) rewrites a bare
 nullary-constructor name into a `DataConstructorExpr` and an applied constructor/named-tuple
 call into a named `TupleLiteralExpr` — the exact nodes PascalCase produces — so all downstream
 passes handle them identically with no special-casing. It reassigns each expression slot in
-place (mirroring `ast.walkExprChildren`, since a visitor can't). A value binding of the same
+place through **`ast.RewriteStmt`**, the writing half of the canonical walker — it used to
+mirror `ast.walkExprChildren` by hand, which a visitor cannot do, and the copy had fallen
+three node kinds behind (see COMPLETED.md, 08/23). A value binding of the same
 name (a `const N`, checked against the global scope) shadows the constructor and skips the
 rewrite, so existing constant code is untouched. Pattern position already resolved these
 constructors, so only expressions needed it.

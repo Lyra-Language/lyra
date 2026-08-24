@@ -1244,39 +1244,67 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 			a.markMergeTemp(e)
 		}
 
-	case *ast.BooleanBinaryOpExpr:
-		// Comparisons (incl. string ==/!=) borrow both operands.
-		a.expr(e.Left, false)
-		a.expr(e.Right, false)
-
-	case *ast.MathBinaryOpExpr:
-		// Arithmetic borrows its operands — they are numbers, so the operation never
-		// owns a managed value itself. Recursing is still required, because a managed
-		// value can sit *inside* an operand: `consume(p.name) + 1` passes a managed
-		// field to an `own` parameter, which is an owning position needing a retain.
+	case *ast.BooleanBinaryOpExpr, *ast.MathBinaryOpExpr, *ast.MathAssignOpExpr,
+		*ast.BitwiseNotExpr, *ast.NegationExpr, *ast.NotBooleanExpr,
+		*ast.AddressOfExpr, *ast.DerefExpr, *ast.RangeExpr, *ast.GuardExpr:
+		// **Borrow-only forms**: the operation owns nothing itself — its result is a
+		// number, a bool or a raw pointer — so every child sits in a borrowing
+		// position. Recursing is still required, because a managed value can sit
+		// *inside* an operand: `consume(p.name) + 1` passes a managed field to an `own`
+		// parameter, which is an owning position needing a retain.
 		//
-		// These forms used to fall through to the default (record nothing), justified
-		// as safe because "a missed release only leaks". That premise is wrong in the
-		// same way the stack-aggregate use-after-free was: a missed *retain* at an
-		// owning position is not a leak but a dangling reference — the callee released
-		// a reference the caller never granted, so the struct's own drop then freed an
-		// already-freed box (ASan-confirmed heap-use-after-free).
-		a.expr(e.Left, false)
-		a.expr(e.Right, false)
+		// The arithmetic forms used to fall through to the default (record nothing),
+		// justified as safe because "a missed release only leaks". That premise is
+		// wrong in the same way the stack-aggregate use-after-free was: a missed
+		// *retain* at an owning position is not a leak but a dangling reference — the
+		// callee released a reference the caller never granted, so the struct's own
+		// drop then freed an already-freed box (ASan-confirmed heap-use-after-free).
+		//
+		// The last five kinds were still reaching the default until this case gathered
+		// them: `!consume(p)`, `&mut p.name`, `q^`, `a..<consume(n)` and a match arm's
+		// guard each recorded nothing at all. `&x` borrowing is not merely the
+		// conservative choice but the correct one — a raw pointer is not an owner
+		// (ownership never crosses the FFI boundary), so taking one must not retain.
+		//
+		// One asymmetry worth naming: this walks a compound assignment's **left** side,
+		// which the hand-written arm skipped. It is inert rather than a change — all
+		// eleven compound assignments are arithmetic or bitwise, so the target is a
+		// numeric binding and `ownsManaged` answers false before anything is recorded.
+		ast.WalkExprChildren(e, func(child ast.Statement) bool {
+			a.stmt(child)
+			return false
+		}, func(child ast.Expression) bool {
+			a.expr(child, false)
+			return false
+		})
 
-	case *ast.MathAssignOpExpr:
-		// `total += consume(s)` — the target is a numeric slot; the RHS may contain
-		// managed values in owning positions, exactly as above.
-		a.expr(e.Right, false)
-
-	case *ast.BitwiseNotExpr:
-		// Same reasoning as the arithmetic forms below: the operation itself owns
-		// nothing, but a managed value can sit inside its operand, and skipping the
-		// node records nothing rather than something conservative.
-		a.expr(e.Operand, false)
-
-	case *ast.NegationExpr:
-		a.expr(e.Operand, false)
+	case *ast.ArrayCompExpr:
+		// A comprehension builds a fresh array, so its **result is an owning position**
+		// exactly as an array literal's elements are: the new array keeps a reference
+		// to whatever each iteration produced. The generators are borrowed (it reads
+		// elements out of the source, as a for-in does) and so are the guards, which
+		// only test.
+		//
+		// The result is analyzed under `conditional`, for the reason the two loop forms
+		// below set it: the result expression runs **once per iteration**, so an owning
+		// read of a binding must record a retain rather than a single transfer of a
+		// reference that N slots then hold.
+		//
+		// This is why the silent default could not simply be replaced by a borrow-walk
+		// of children. Borrowing the result records a *last-use drop* on
+		// `[i in 0..<2 | t]`, so the backend would free `t` inside the loop while the
+		// array kept both pointers — turning a latent double-free at scope exit into an
+		// immediate one.
+		for i := range e.Generators {
+			a.expr(e.Generators[i].Value, false)
+		}
+		for _, g := range e.Guards {
+			a.expr(g, false)
+		}
+		savedCond := a.conditional
+		a.conditional = true
+		a.expr(e.Result, true)
+		a.conditional = savedCond
 
 	case *ast.TupleLiteralExpr:
 		// A newtype construction shares this node and is **not** an aggregate: the
@@ -1394,14 +1422,49 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 		a.block(e.Body, false)
 		a.conditional = savedCond
 
-	// Anything not listed above records nothing. That is only sound for forms with
-	// no managed value *anywhere beneath them* — note this is a stronger condition
-	// than "this form's own value isn't managed", which is what the arithmetic cases
-	// above got wrong: they carried owning positions inside their operands. Skipping
-	// a node is emphatically **not** the safe default it was once documented to be
-	// ("a missed release only leaks"), because a missed retain at an owning position
-	// dangles rather than leaks. When adding an expression kind, recurse into every
-	// sub-expression that can hold a value.
+	// **What legitimately reaches here, and why nothing else may.** Recording nothing
+	// is sound only for a form with no managed value *anywhere beneath it* — a stronger
+	// condition than "this form's own value isn't managed", which is what the arithmetic
+	// cases got wrong: they carried owning positions inside their operands. Skipping a
+	// node is emphatically **not** the safe default it was once documented to be ("a
+	// missed release only leaks"), because a missed retain at an owning position dangles
+	// rather than leaks.
+	//
+	// Six kinds land here, each for a stated reason rather than by omission:
+	//
+	//   - DataConstructorExpr — a *nullary* constructor, and only ever nullary: the
+	//     applied spelling collects to a named TupleLiteralExpr and the backend rejects
+	//     a payload-carrying one outright. So it has no child to walk, and it is a fresh
+	//     value already at +1.
+	//   - AwaitExpr, YieldExpr, YieldFromExpr, ComposeExpr — no backend case exists, so
+	//     a program containing one fails to lower before ownership matters. Each needs
+	//     an arm here in the same change that lowers it, not later.
+	//   - UnsafeBlockExpr — **the one that is here against its will**, and the reason is
+	//     worth the paragraph.
+	//
+	// `unsafe { … }` is its body and nothing else, so the obvious arm is
+	// `a.block(e.Body, needOwned)`. Writing it breaks every FFI test in the backend
+	// suite, and instructively: in
+	//
+	//     let buf = CBuffer { ptr: unsafe { &xs[0] }, len: 3 }
+	//
+	// walking the block makes `&xs[0]` the textually last mention of `xs`, so Perceus
+	// records a last-use drop and the array is freed while `buf.ptr` still points into
+	// its buffer — `buf.get(i)` then reads zeros. The premise last-use rests on is that
+	// a binding's final *mention* is its final *use*, and `&x` is precisely the
+	// operation that breaks it: a raw pointer is not an owner (ownership never crosses
+	// the FFI boundary), so it keeps storage alive without counting as a reference to it.
+	//
+	// So this is not a missing case but a missing **rule**: taking a binding's address
+	// must pin it against last-use optimization, the way `loopUsed` already excludes a
+	// loop-referenced binding in computeLastUse. Until that exists, recording nothing
+	// inside an unsafe block is what makes raw pointers work — conservatively, by
+	// deferring every drop to scope exit. Add the arm and the pin in one change; adding
+	// the arm alone is an ASan-visible use-after-free in the standard library's own
+	// `std.ffi`.
+	//
+	// When adding an expression kind, add its arm; if it borrows its children and owns
+	// nothing, that is the multi-type case above rather than a new one.
 	default:
 	}
 }

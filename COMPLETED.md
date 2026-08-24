@@ -9,6 +9,76 @@ Newest first.
 
 ## Dated log
 
+### 08/23/26 (1)
+**The hand-copied AST walkers, and the four bugs they were hiding.**
+
+Four passes walked the AST through a private copy of `pkg/ast`'s canonical
+`walkStmtChildren`/`walkExprChildren` rather than through the walkers themselves. Every
+copy had drifted, and none of the drift was visible as drift — each showed up as a feature
+quietly not working in one syntax.
+
+**Why the copies existed, and why they did not need to.** Two of them could not use the
+canonical walker as it stood: the collector's constructor reclassification needs to
+*replace* a slot, which a visitor cannot do, and the LSP's position lookup needs the
+innermost node containing a line/col. Both are ordinary uses of a walker once the walker
+offers them, so `pkg/ast` gained `RewriteStmt`/`RewriteExpr` (post-order, slot-reassigning)
+and the child walkers were exported as `WalkStmtChildren`/`WalkExprChildren` for the
+flow-sensitive passes, which had been calling `WalkStmt` on a node and discarding the first
+callback with `if child == stmt { return true }` in four places.
+
+**What each copy had lost.**
+
+- **`constructor_reclassify.go`** (~200 lines, now a 20-line callback) had no case for
+  `TupleIndexExpr`, `BitwiseNotExpr` or a deref assignment's *target*, so an all-caps data
+  constructor beneath one kept its `const_identifier` spelling: `~to_num(N)`,
+  `pair_of(S).0` and `pick(N, &mut x, &mut y)^ = 7` each failed with
+  `undefined identifier "N"` — a diagnostic naming a constructor the program declares three
+  lines up.
+- **`cmd/lyra-lsp/hover.go`** (282 lines, now 87) was three switches. The *expression* one
+  was registered in `exhaustive_test.go` and so was in step; the *statement* one never was,
+  and sat **eight kinds** behind — `WithStmt`, both destructuring-if forms,
+  `LValueAssignmentStmt`, `BreakStmt`, `DestructuringDeclStmt`, `TraitDeclStmt` and
+  `TraitImplStmt`. The last two mean hover, go-to-definition, references, rename and
+  document-highlight all returned nothing anywhere inside an `impl` body or a trait default
+  method: every operator overload and every `Show` impl in every program.
+- **`ownership.go`**'s expression switch fell to a `default:` that recorded nothing for
+  **twelve** kinds, against a comment saying skipping a node is "emphatically not the safe
+  default". Ten are now one multi-type borrow-only case over `WalkExprChildren`
+  (`!consume(p)`, `&mut p.name`, `q^`, `a..<consume(n)` and a match guard had recorded
+  nothing at all), and `ArrayCompExpr` got a real arm.
+
+**The comprehension was an ASan-confirmed double free.** A comprehension builds a fresh
+array, so its result is an owning position exactly as an array literal's elements are, and
+it runs once per iteration, so an owning read records a *retain* rather than one transfer
+of a reference N slots then hold. `[i in 0..<3 | t]` on a heap string aborted under
+AddressSanitizer before the arm existed.
+
+**The one that was left in the default, and why.** `unsafe { … }` is its body and nothing
+else, so `a.block(e.Body, needOwned)` is the obvious arm. Writing it breaks every FFI test
+in the backend suite: in `let buf = CBuffer { ptr: unsafe { &xs[0] }, len: 3 }`, walking
+the block makes `&xs[0]` the last *mention* of `xs`, so Perceus records a last-use drop and
+frees the array while `buf.ptr` still points into it — `buf.get(i)` reads zeros. Last-use
+rests on the premise that a binding's final mention is its final use, and `&x` is exactly
+the operation that breaks it: a raw pointer keeps storage alive without counting as a
+reference to it. **This is a missing rule, not a missing case** — taking an address must
+pin the binding against last-use optimization, the way `loopUsed` already excludes a
+loop-referenced one in `computeLastUse`. Until that exists, recording nothing inside an
+unsafe block is what makes raw pointers work, conservatively, by deferring every drop to
+scope exit. The reasoning is in the `default:` comment so the next person does not
+rediscover it through a use-after-free.
+
+**The same reasoning is why the default was not simply made a borrow-walk of children**,
+which is the obvious mechanical fix. Borrowing a comprehension's result records a last-use
+drop on `[i in 0..<2 | t]`, freeing `t` *inside* the loop while the array keeps both
+pointers — turning a latent double free at scope exit into an immediate one. A generic
+traversal can say what the children are; only a per-kind arm can say whether a position
+owns.
+
+**Two mirrors were retired rather than registered**, which is the better outcome: there is
+no longer a second list of node kinds to fall behind. `rewriteExprChildren`/
+`rewriteStmtChildren` are registered in their place, since a rewriter is the writing half
+of the same traversal and owes a case for exactly what the reader descends into.
+
 ### 08/22/26 (6)
 **A specialization's type argument resolves in the module that asked for it.**
 

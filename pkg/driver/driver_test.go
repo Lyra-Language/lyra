@@ -342,6 +342,29 @@ func TestAnalyze_ScreamingCaseConstructors(t *testing.T) {
 	// With no shadowing const, the same name is the constructor.
 	clean("constructor when unshadowed", `data Color = RED | GREEN
 	 let c: Color = RED`)
+	// **The node kinds the hand-copied rewriter had fallen behind on.** Reclassification
+	// used to walk the AST through a copy of ast.walkExprChildren; the copy had no case
+	// for TupleIndexExpr, BitwiseNotExpr or a deref assignment's *target*, so a
+	// constructor anywhere beneath one of them kept its const-identifier spelling and
+	// surfaced as `undefined identifier "N"` — a diagnostic naming a constructor the
+	// program plainly declares. The pass now goes through ast.RewriteStmt, which pkg/ast's
+	// exhaustiveness test holds to the canonical walker.
+	clean("constructor under a bitwise not", `data Dir = N | S
+	 let to_num = pure (d: Dir) -> i64 => match d { N => 0, S => 1 }
+	 let a: i64 = ~to_num(N)`)
+	clean("constructor under a tuple index", `data Dir = N | S
+	 let to_num = pure (d: Dir) -> i64 => match d { N => 0, S => 1 }
+	 let pair_of = pure (d: Dir) -> (i64, i64) => (to_num(d), 9)
+	 let b: i64 = pair_of(S).0`)
+	clean("constructor under a deref assignment target", `data Dir = N | S
+	 let to_num = pure (d: Dir) -> i64 => match d { N => 0, S => 1 }
+	 let pick = unsafe pure (d: Dir, a: ^mut i64, b: ^mut i64) -> ^mut i64 =>
+	   if to_num(d) == 0 { a } else { b }
+	 let main = () -> void => {
+	   var x = 1
+	   var y = 2
+	   unsafe { pick(N, &mut x, &mut y)^ = 7 }
+	 }`)
 }
 
 // TestAnalyze_DeepExpressionIsLinear is a coarse guard against the quadratic

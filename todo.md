@@ -227,6 +227,41 @@ write today:
 
 ## Known bugs
 
+- **[OPEN] Taking a binding's address must pin it against last-use optimization.**
+  Ownership's expression switch has no arm for `UnsafeBlockExpr`, so **nothing** —
+  no retain, drop or transfer — is recorded anywhere inside an `unsafe` block, which is
+  the whole of a program's FFI and raw-pointer code. That is a conservative hole (every
+  drop defers to scope exit) rather than an unsound one, and it cannot simply be closed:
+  adding the obvious `a.block(e.Body, needOwned)` breaks every FFI test in the backend
+  suite.
+
+  ```lyra
+  let buf = CBuffer { ptr: unsafe { &xs[0] }, len: 3 }
+  ```
+
+  Walking the block makes `&xs[0]` the last *mention* of `xs`, so Perceus records a
+  last-use drop and frees the array while `buf.ptr` still points into its buffer —
+  `buf.get(i)` then reads zeros. Last-use rests on "a binding's final mention is its final
+  use", and `&x` is precisely the operation that breaks it: a raw pointer keeps storage
+  alive without counting as a reference to it.
+
+  **So this is a missing rule, not a missing case.** The fix is an address-taken set
+  excluded from last-use in `computeLastUse`, exactly as `loopUsed` already excludes a
+  loop-referenced binding, and then the `UnsafeBlockExpr` arm in the same change. Adding
+  the arm alone is an ASan-visible use-after-free in `std.ffi` itself. The reasoning is
+  written out at the `default:` in `pkg/analyzer/ownership/ownership.go`.
+
+  Related, and cheap once the pin exists: `AwaitExpr`, `YieldExpr`, `YieldFromExpr` and
+  `ComposeExpr` also reach that default. They are sound there only because no backend case
+  exists for them, so each owes an arm in whatever change lowers it.
+
+- **[OPEN] `TestExec_WithCStringsFlatAndNested` fails on linux/arm64**, so `./asan.sh` is
+  red before any change is made — which is the worst state for a gate CLAUDE.md tells you
+  to run before pushing memory-model work. It is not a memory fault: the test asserts
+  `strcmp` returns exactly `-1`, and glibc's arm64 implementation answers `-32`. Only the
+  *sign* of `strcmp` is specified, so the assertion is what is wrong. Verified pre-existing
+  on a clean tree (08/23); the rest of the suite passes under Linux ASan.
+
 - **[DONE 08/13] A fixed-array *binding* no longer takes a `[]T` slot** — it
   segfaulted.
 

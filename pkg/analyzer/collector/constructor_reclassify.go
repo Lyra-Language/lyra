@@ -25,20 +25,29 @@ import (
 func (c *Collector) reclassifyConstructorExprs() {
 	for _, stmt := range c.ast.Statements {
 		if s, ok := stmt.(ast.Statement); ok {
-			c.rewriteCtorStmt(s)
+			ast.RewriteStmt(s, c.reclassifyCtorExpr)
 		}
 	}
 }
 
-// rewriteCtorExpr returns e with any constructor/named-tuple expression inside it
-// (or e itself) reclassified. Children are rewritten first, then e itself: a bare
-// nullary-constructor name becomes a DataConstructorExpr, an applied
-// constructor/named-tuple call becomes a named TupleLiteralExpr.
-func (c *Collector) rewriteCtorExpr(e ast.Expression) ast.Expression {
-	if e == nil {
-		return nil
-	}
-	c.rewriteCtorChildren(e)
+// reclassifyCtorExpr is the rewrite applied to every expression in the program: a bare
+// nullary-constructor name becomes a DataConstructorExpr, an applied constructor or
+// named-tuple call becomes a named TupleLiteralExpr, and everything else is returned
+// unchanged. ast.RewriteStmt rewrites children first, so each node here already has its
+// final operands.
+//
+// **This used to be a hand-copy of ast.walkExprChildren**, ~200 lines reassigning each
+// slot in place, and it had fallen three node kinds behind the walker it mirrored:
+// `TupleIndexExpr`, `BitwiseNotExpr` and a deref assignment's target were never
+// descended into, so `~FLAG`, `PAIR(1, 2).0` and `p^ = N` kept the const-identifier
+// spelling and surfaced as "undefined identifier". ast.RewriteStmt is that traversal
+// once, checked against the canonical walker by pkg/ast's exhaustiveness test.
+//
+// The one thing the shared rewriter cannot do is replace a slot typed *IdentifierExpr —
+// a record-update base and a compound assignment's left side. Neither can be a
+// constructor (the first names a struct value to copy, the second a mutable binding), so
+// leaving them alone is what this pass wanted anyway.
+func (c *Collector) reclassifyCtorExpr(e ast.Expression) ast.Expression {
 	switch n := e.(type) {
 	case *ast.IdentifierExpr:
 		// A bare uppercase name that is a *nullary* constructor and not shadowed by a
@@ -61,190 +70,6 @@ func (c *Collector) rewriteCtorExpr(e ast.Expression) ast.Expression {
 		}
 	}
 	return e
-}
-
-// rewriteCtorStmt rewrites the expressions a statement holds. It mirrors
-// ast.walkStmtChildren, but reassigns each expression slot (a visitor can't).
-func (c *Collector) rewriteCtorStmt(stmt ast.Statement) {
-	switch s := stmt.(type) {
-	case *ast.VarDeclStmt:
-		s.Value = c.rewriteCtorExpr(s.Value)
-	case *ast.DestructuringDeclStmt:
-		s.Value = c.rewriteCtorExpr(s.Value)
-	case *ast.ExpressionStmt:
-		s.Expression = c.rewriteCtorExpr(s.Expression)
-	case *ast.VarReassignmentStmt:
-		s.Value = c.rewriteCtorExpr(s.Value)
-	case *ast.DerefAssignmentStmt:
-		s.Value = c.rewriteCtorExpr(s.Value)
-	case *ast.LValueAssignmentStmt:
-		s.Target = c.rewriteCtorExpr(s.Target)
-		s.Value = c.rewriteCtorExpr(s.Value)
-	case *ast.ReturnStmt:
-		s.Value = c.rewriteCtorExpr(s.Value)
-	case *ast.BreakStmt:
-		s.Value = c.rewriteCtorExpr(s.Value)
-	case *ast.WithStmt:
-		s.Arena = c.rewriteCtorExpr(s.Arena)
-		c.rewriteCtorBlock(s.Body)
-	case *ast.IfDestructuringStmt:
-		s.DestructuringStatement.Value = c.rewriteCtorExpr(s.DestructuringStatement.Value)
-		c.rewriteCtorBlock(s.Then)
-		c.rewriteCtorBlock(s.Else) // nil-safe
-	case *ast.ElseDestructuringStmt:
-		s.DestructuringStatement.Value = c.rewriteCtorExpr(s.DestructuringStatement.Value)
-		c.rewriteCtorBlock(s.Else)
-	case *ast.TraitImplStmt:
-		for i := range s.Methods {
-			s.Methods[i].Clause.Body = c.rewriteCtorExpr(s.Methods[i].Clause.Body)
-		}
-	case *ast.TraitDeclStmt:
-		for i := range s.Methods {
-			if s.Methods[i].DefaultMethod != nil {
-				s.Methods[i].DefaultMethod.Body = c.rewriteCtorExpr(s.Methods[i].DefaultMethod.Body)
-			}
-		}
-	}
-}
-
-// rewriteCtorChildren rewrites the expressions/statements a *container* expression
-// holds. It mirrors ast.walkExprChildren, reassigning each slot in place.
-func (c *Collector) rewriteCtorChildren(expr ast.Expression) {
-	switch e := expr.(type) {
-	case *ast.BlockExpr:
-		c.rewriteCtorBlock(e)
-	case *ast.IfExpr:
-		e.Condition = c.rewriteCtorExpr(e.Condition)
-		e.Then = c.rewriteCtorExpr(e.Then)
-		e.Else = c.rewriteCtorExpr(e.Else)
-	case *ast.MatchExpr:
-		e.Scrutinee = c.rewriteCtorExpr(e.Scrutinee)
-		for i := range e.MatchArms {
-			if e.MatchArms[i].Guard != nil {
-				e.MatchArms[i].Guard.Condition = c.rewriteCtorExpr(e.MatchArms[i].Guard.Condition)
-			}
-			e.MatchArms[i].Body = c.rewriteCtorExpr(e.MatchArms[i].Body)
-		}
-	case *ast.LambdaExpr:
-		for i := range e.Parameters {
-			e.Parameters[i].DefaultValue = c.rewriteCtorExpr(e.Parameters[i].DefaultValue)
-		}
-		e.Body = c.rewriteCtorExpr(e.Body)
-		for i := range e.LambdaClauses {
-			e.LambdaClauses[i].Body = c.rewriteCtorExpr(e.LambdaClauses[i].Body)
-		}
-	case *ast.ForLoopExpr:
-		if e.Init != nil {
-			e.Init.Value = c.rewriteCtorExpr(e.Init.Value)
-		}
-		if e.Condition != nil {
-			*e.Condition = c.rewriteCtorExpr(*e.Condition)
-		}
-		if e.Post != nil {
-			*e.Post = c.rewriteCtorExpr(*e.Post)
-		}
-		c.rewriteCtorBlock(e.Body)
-	case *ast.ForInLoopExpr:
-		e.Iterable = c.rewriteCtorExpr(e.Iterable)
-		c.rewriteCtorBlock(e.Body)
-	case *ast.FunctionCallExpr:
-		e.Function = c.rewriteCtorExpr(e.Function)
-		for i := range e.Arguments {
-			e.Arguments[i] = c.rewriteCtorExpr(e.Arguments[i])
-		}
-	case *ast.MemberExpr:
-		e.Object = c.rewriteCtorExpr(e.Object)
-	case *ast.IndexExpr:
-		e.Object = c.rewriteCtorExpr(e.Object)
-		e.Index = c.rewriteCtorExpr(e.Index)
-	case *ast.TryExpr:
-		e.Operand = c.rewriteCtorExpr(e.Operand)
-	case *ast.MathBinaryOpExpr:
-		e.Left = c.rewriteCtorExpr(e.Left)
-		e.Right = c.rewriteCtorExpr(e.Right)
-	case *ast.MathAssignOpExpr:
-		e.Right = c.rewriteCtorExpr(e.Right)
-	case *ast.BooleanBinaryOpExpr:
-		e.Left = c.rewriteCtorExpr(e.Left)
-		e.Right = c.rewriteCtorExpr(e.Right)
-	case *ast.NotBooleanExpr:
-		e.Expression = c.rewriteCtorExpr(e.Expression)
-	case *ast.NegationExpr:
-		e.Operand = c.rewriteCtorExpr(e.Operand)
-	case *ast.AwaitExpr:
-		e.Operand = c.rewriteCtorExpr(e.Operand)
-	case *ast.AddressOfExpr:
-		e.Operand = c.rewriteCtorExpr(e.Operand)
-	case *ast.DerefExpr:
-		e.Operand = c.rewriteCtorExpr(e.Operand)
-	case *ast.ArrayLiteralExpr:
-		for i := range e.Elements {
-			e.Elements[i] = c.rewriteCtorExpr(e.Elements[i])
-		}
-	case *ast.TupleLiteralExpr:
-		for i := range e.Elements {
-			e.Elements[i] = c.rewriteCtorExpr(e.Elements[i])
-		}
-	case *ast.InterpolatedStringExpr:
-		for i := range e.Segments {
-			e.Segments[i] = c.rewriteCtorExpr(e.Segments[i])
-		}
-	case *ast.StructInstanceExpr:
-		// BaseStruct is a bare *IdentifierExpr (the record-update target); it can't be
-		// a constructor, so it needs no rewrite.
-		for i := range e.Fields {
-			e.Fields[i].Value = c.rewriteCtorExpr(e.Fields[i].Value)
-		}
-	case *ast.AnonymousStructInstanceExpr:
-		// BaseStruct is a bare *IdentifierExpr (the record-update target); it can't be
-		// a constructor, so it needs no rewrite.
-		for i := range e.Fields {
-			e.Fields[i].Value = c.rewriteCtorExpr(e.Fields[i].Value)
-		}
-	case *ast.ArrayCompExpr:
-		for i := range e.Generators {
-			e.Generators[i].Value = c.rewriteCtorExpr(e.Generators[i].Value)
-		}
-		for i := range e.Guards {
-			e.Guards[i] = c.rewriteCtorExpr(e.Guards[i])
-		}
-		e.Result = c.rewriteCtorExpr(e.Result)
-	case *ast.RangeExpr:
-		e.Start = c.rewriteCtorExpr(e.Start)
-		e.End = c.rewriteCtorExpr(e.End)
-		e.Step = c.rewriteCtorExpr(e.Step)
-	case *ast.NullCoalescingExpr:
-		e.Optional = c.rewriteCtorExpr(e.Optional)
-		e.Default = c.rewriteCtorExpr(e.Default)
-	case *ast.StringConcatExpr:
-		e.Left = c.rewriteCtorExpr(e.Left)
-		e.Right = c.rewriteCtorExpr(e.Right)
-	case *ast.ArrayRepeatExpr:
-		e.Value = c.rewriteCtorExpr(e.Value)
-		e.Count = c.rewriteCtorExpr(e.Count)
-	case *ast.ComposeExpr:
-		e.Left = c.rewriteCtorExpr(e.Left)
-		e.Right = c.rewriteCtorExpr(e.Right)
-	case *ast.YieldExpr:
-		e.Value = c.rewriteCtorExpr(e.Value)
-	case *ast.YieldFromExpr:
-		e.Generator = c.rewriteCtorExpr(e.Generator)
-	case *ast.UnsafeBlockExpr:
-		c.rewriteCtorBlock(e.Body)
-	case *ast.DataConstructorExpr:
-		e.Value = c.rewriteCtorExpr(e.Value)
-	case *ast.GuardExpr:
-		e.Condition = c.rewriteCtorExpr(e.Condition)
-	}
-}
-
-func (c *Collector) rewriteCtorBlock(b *ast.BlockExpr) {
-	if b == nil {
-		return
-	}
-	for i := range b.Statements {
-		c.rewriteCtorStmt(b.Statements[i])
-	}
 }
 
 // isNullaryConstructor reports whether name is a payload-free constructor of a

@@ -291,10 +291,7 @@ func (c *rangeChecker) evalStmt(st rangeEnv, s ast.Statement) rangeEnv {
 	}
 	// Any other statement: visit children in order, routing each back through this
 	// walker so nesting keeps its flow-sensitivity (pruning the generic recursion).
-	ast.WalkStmt(s, func(child ast.Statement) bool {
-		if child == s {
-			return true
-		}
+	ast.WalkStmtChildren(s, func(child ast.Statement) bool {
 		st = c.evalStmt(st, child)
 		return false
 	}, func(e ast.Expression) bool {
@@ -513,13 +510,10 @@ func (c *rangeChecker) eval(st rangeEnv, e ast.Expression) (interval, bool, rang
 
 	// Any other expression (call, member, index, string, …): walk its children for
 	// their diagnostics, threading the env, and report the value as untracked.
-	ast.WalkExpr(e, func(child ast.Statement) bool {
+	ast.WalkExprChildren(e, func(child ast.Statement) bool {
 		st = c.evalStmt(st, child)
 		return false
 	}, func(child ast.Expression) bool {
-		if child == e {
-			return true
-		}
 		_, _, st = c.eval(st, child)
 		return false
 	})

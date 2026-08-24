@@ -1,6 +1,7 @@
 package llvm
 
 import (
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -307,5 +308,50 @@ let main = () -> u8 => {
 }`)
 	if got != 29 {
 		t.Errorf("expected 29 (2 survivors → 20, then 1|8 = 9), got %d", got)
+	}
+}
+
+// **A comprehension's result is an owning position**, which the ownership pass did not
+// used to know: `ArrayCompExpr` had no arm and fell to the silent default, so a managed
+// value stored into the new array had no retain recorded. The array then held N pointers
+// to a box the source binding still owned alone, and both released it — a double free
+// that scope-exit ordering usually hid, which is what makes the class expensive.
+//
+// The shape below is the minimal one: a heap string (`++` allocates) bound once and
+// stored twice by a comprehension over a range, so the box needs two retains it was not
+// getting. Under ASan the un-fixed compiler reports an invalid free at exit.
+func TestExec_ArrayComp_ManagedResultIsRetainedASan(t *testing.T) {
+	t.Parallel()
+	clang, err := exec.LookPath("clang")
+	if err != nil {
+		t.Skip("clang not found on PATH; skipping ASan test")
+	}
+	if !asanAvailable(t, clang) {
+		t.Skip("ASan runtime not available; skipping")
+	}
+	for _, src := range []string{
+		// The result is a binding read once per iteration: N retains, not one transfer.
+		`let main = () -> u8 => {
+  let t: string = "a" ++ "b"
+  let xs: []string = [i in 0..<3 | t]
+  print(xs[0])
+  print(xs[2])
+  0
+}
+`,
+		// The same over an array source, with a guard, so the generators and guards are
+		// walked as borrowed while the result stays owning.
+		`let main = () -> u8 => {
+  let t: string = "p" ++ "q"
+  let src: []i64 = [1, 2, 3]
+  let xs: []string = [n in src | n > 1 | t]
+  print(xs[0])
+  0
+}
+`,
+	} {
+		if code := buildAndRunASan(t, clang, src); code != 0 && code != 1 {
+			t.Errorf("ASan run: unexpected exit %d for %q", code, src)
+		}
 	}
 }

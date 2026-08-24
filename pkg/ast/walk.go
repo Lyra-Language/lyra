@@ -10,7 +10,7 @@ func WalkStmt(stmt Statement, onStmt func(Statement) bool, onExpr func(Expressio
 	if onStmt != nil && !onStmt(stmt) {
 		return
 	}
-	walkStmtChildren(stmt, onStmt, onExpr)
+	WalkStmtChildren(stmt, onStmt, onExpr)
 }
 
 // WalkExpr visits expr and, if onExpr(expr) returns true, recurses into all
@@ -23,10 +23,17 @@ func WalkExpr(expr Expression, onStmt func(Statement) bool, onExpr func(Expressi
 	if onExpr != nil && !onExpr(expr) {
 		return
 	}
-	walkExprChildren(expr, onStmt, onExpr)
+	WalkExprChildren(expr, onStmt, onExpr)
 }
 
-func walkStmtChildren(stmt Statement, onStmt func(Statement) bool, onExpr func(Expression) bool) {
+// WalkStmtChildren visits stmt's children *without* visiting stmt itself.
+//
+// It is exported for the flow-sensitive passes, which cannot use WalkStmt: they handle a
+// node themselves (a branch joins two states, a loop iterates to a fixpoint) and then walk
+// only what is beneath it. Before this they called WalkStmt on the node and discarded the
+// first callback with `if child == stmt { return true }` — the same traversal spelled as a
+// filter, in four places.
+func WalkStmtChildren(stmt Statement, onStmt func(Statement) bool, onExpr func(Expression) bool) {
 	switch s := stmt.(type) {
 	case *VarDeclStmt:
 		WalkExpr(s.Value, onStmt, onExpr)
@@ -82,7 +89,9 @@ func walkStmtChildren(stmt Statement, onStmt func(Statement) bool, onExpr func(E
 	}
 }
 
-func walkExprChildren(expr Expression, onStmt func(Statement) bool, onExpr func(Expression) bool) {
+// WalkExprChildren visits expr's children *without* visiting expr itself. See
+// WalkStmtChildren for why it is exported.
+func WalkExprChildren(expr Expression, onStmt func(Statement) bool, onExpr func(Expression) bool) {
 	switch e := expr.(type) {
 	case *BlockExpr:
 		for _, stmt := range e.Statements {

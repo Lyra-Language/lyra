@@ -176,3 +176,37 @@ call. And this pass had the receiver gap above. Both are the same shape as the o
 documented here, which is the argument for treating "a method call is a call whose first
 parameter is the receiver" as one fact with several readers rather than a special case each
 pass discovers for itself.
+
+## What the expression switch's `default:` still catches
+
+`analyzer.expr` records nothing for a node kind it has no arm for, and the comment there
+is emphatic that this is **not** a safe default: a missed *release* leaks, but a missed
+*retain* at an owning position dangles. Twelve kinds were reaching it until 08/23. Ten are
+now one multi-type **borrow-only** case — the operation's own result is a number, a bool or
+a raw pointer, so every child is borrowed, and it walks them with `ast.WalkExprChildren`
+rather than naming each one's fields — and `ArrayCompExpr` got a real arm (its result is an
+owning position, analyzed under `conditional` because it runs once per iteration).
+
+Five kinds are still there, each deliberately:
+
+- **`DataConstructorExpr`** is nullary and only ever nullary (the applied spelling collects
+  to a named `TupleLiteralExpr`), so it has no child and is already a fresh `+1`.
+- **`AwaitExpr`, `YieldExpr`, `YieldFromExpr`, `ComposeExpr`** have no backend case, so a
+  program containing one fails to lower first. Each owes an arm in the change that lowers
+  it.
+- **`UnsafeBlockExpr`** is the one that is there against its will, and it is worth knowing
+  why before "fixing" it. `unsafe { … }` is its body, so `a.block(e.Body, needOwned)` is
+  the obvious arm — and it breaks every FFI test in the backend suite. In
+  `let buf = CBuffer { ptr: unsafe { &xs[0] }, len: 3 }`, walking the block makes `&xs[0]`
+  the last **mention** of `xs`, so last-use frees the array while `buf.ptr` still points
+  into it. The premise Perceus rests on is that a binding's final mention is its final
+  *use*, and `&x` is exactly the operation that breaks it: a raw pointer keeps storage
+  alive without counting as a reference to it. **The missing thing is a rule, not a case** —
+  an address-taken set excluded from last-use in `computeLastUse`, the way `loopUsed`
+  already excludes a loop-referenced binding — and the arm belongs in that same change.
+
+The general lesson, since it is why the default could not just be turned into a borrow-walk
+of children: a shared traversal can say what a node's children *are*, and only a per-kind
+arm can say whether a position **owns**. Borrowing a comprehension's result records a
+last-use drop on `[i in 0..<2 | t]`, freeing `t` inside the loop while the array keeps both
+pointers — an immediate double free in place of a latent one.

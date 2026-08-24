@@ -175,10 +175,7 @@ func (c *useAfterMove) stmt(st moveState, s ast.Statement) moveState {
 	// Anything else: visit its children in order, routing each back through this
 	// walker so nesting keeps its flow-sensitivity. Returning false prunes the
 	// generic walker's own recursion, since we do it ourselves.
-	ast.WalkStmt(s, func(child ast.Statement) bool {
-		if child == s {
-			return true
-		}
+	ast.WalkStmtChildren(s, func(child ast.Statement) bool {
 		st = c.stmt(st, child)
 		return false
 	}, func(e ast.Expression) bool {
@@ -249,13 +246,10 @@ func (c *useAfterMove) expr(st moveState, e ast.Expression) moveState {
 	// Straight-line expression: no joins, so just visit the children in order,
 	// routing each back through expr (which re-establishes flow-sensitivity if a
 	// child turns out to be a nested block/if/match/loop).
-	ast.WalkExpr(e, func(s ast.Statement) bool {
+	ast.WalkExprChildren(e, func(s ast.Statement) bool {
 		st = c.stmt(st, s)
 		return false
 	}, func(child ast.Expression) bool {
-		if child == e {
-			return true
-		}
 		st = c.expr(st, child)
 		return false
 	})
