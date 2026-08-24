@@ -1,14 +1,38 @@
 package diagnostic
 
 const (
-	CodeTypeError                = "lyra-E001"
-	CodeUseBeforeDeclaration     = "lyra-E002"
-	CodeReturnOutsideFunction    = "lyra-E003"
+	// Diagnostic codes, in numeric order — `lyra-E…` then `lyra-W…`.
+	//
+	// **The order is enforced** (codes_test.go), because it was not kept: E045–E048 sat
+	// between E023 and E024, the W014–W020 run came before W001, and E051–E054 were
+	// scattered through the fifties. A reader looking for the next free number had to
+	// scan all 886 lines, and the obvious way to get it wrong is to reuse one.
+	//
+	// **A code names a rule, not a severity.** `lyra-E009` is reported as an error for a
+	// `bool` or `data` scrutinee and as a warning for the open types, which is why there
+	// is no severity in this file to read — the reporting site decides, and E009's own
+	// comment explains the split.
+	//
+	// **A retired code is never reused**: `lyra-W007` was the `??`-on-non-optional
+	// warning until 08/13, when it became the hard error `lyra-E049`, and a program or
+	// a README naming W007 means the old rule. The gap is deliberate and codes_test.go
+	// keeps it.
+	// ── Errors ────────────────────────────────────────────────────────────────
+	CodeTypeError = "lyra-E001"
+
+	CodeUseBeforeDeclaration = "lyra-E002"
+
+	CodeReturnOutsideFunction = "lyra-E003"
+
 	CodeBreakContinueOutsideLoop = "lyra-E004"
-	CodeAwaitOutsideAsync        = "lyra-E005"
-	CodeYieldOutsideGenerator    = "lyra-E006"
-	CodePurityViolation          = "lyra-E007"
-	CodeTryOutsideResult         = "lyra-E008"
+
+	CodeAwaitOutsideAsync = "lyra-E005"
+
+	CodeYieldOutsideGenerator = "lyra-E006"
+
+	CodePurityViolation = "lyra-E007"
+
+	CodeTryOutsideResult = "lyra-E008"
 
 	// CodeNonExhaustiveMatch: a match on a closed type (`bool` or a `data`/sum
 	// type) leaves cases uncovered. Error rather than warning because the set of
@@ -127,67 +151,6 @@ const (
 	// to the value-range analysis / runtime (not yet wired), so this is a
 	// definite-only, compile-time check like the literal integer range check.
 	CodeRangeConstraintViolation = "lyra-E023"
-
-	// CodeValuesConstraintViolation: a compile-time literal assigned to a newtype with
-	// a `values(...)` constraint is not one of them (`newtype Status = i32 where
-	// values(200, 404, 500)` given `302`). The literal-union analogue of E023.
-	//
-	// Nothing enforced this until 08/12 — the constraint was collected, its shape
-	// validated, and then read by nobody, so `values(...)` was a declaration the
-	// compiler acknowledged and ignored. That is this project's recurring
-	// collected-and-unread shape in the one place where being checked is the
-	// declaration's entire purpose.
-	CodeValuesConstraintViolation = "lyra-E045"
-
-	// CodeImplicitNewtypeConversion: a value that already has a type used where a
-	// newtype over that base is expected, without writing the conversion —
-	// `take(plain_i64)` against `(c: Cents)`. An untyped *literal* is still adopted
-	// implicitly (`let c: Cents = 150`); a typed value needs `Cents(x)`.
-	//
-	// The line is provenance, not convenience. A literal has no unit yet, so adopting
-	// it costs nothing; a typed value came from somewhere, and that somewhere is where
-	// a unit mixup lives. Until 08/12 base → newtype was assignable everywhere, so a
-	// newtype declared a distinction the compiler then declined to enforce at any call
-	// boundary — which also made lyra-E043 (the overflow-arithmetic refusal) narrower
-	// than its own rationale, since the same laundering was available through any
-	// user-written function.
-	//
-	// Ada's rule for derived types, and for its reason: `M : Meters := 3.0` is legal
-	// because the literal is universal, `M := F` for a Float F is not, and `Meters(F)`
-	// is the conversion.
-	CodeImplicitNewtypeConversion = "lyra-E046"
-
-	// CodeImplicitNewtypeReadout: a newtype value used where its *base* is expected,
-	// without writing the conversion — `f(cents)` against `(x: i64)`,
-	// `let raw: i64 = c`. The read-out spelling is the base's own name applied:
-	// `i64(c)`, `string(e)`, `bool(f)` — the mirror of the constructor, and an
-	// identity at runtime just as the constructor is.
-	//
-	// E046's mirror, closing the same hole in the other direction: reading out
-	// silently discards the name the newtype carries, and a discarded unit at a call
-	// boundary is the mixup the type exists to prevent. Unlike E046 there is no
-	// literal exemption — a newtype value is never a literal — so the refusal is
-	// unconditional where it applies. It applies only where the base is *nameable*
-	// (a primitive, string, bool, rune): a newtype over an array or a function type
-	// keeps its implicit read-out, because refusing with no spelling to offer would
-	// make it write-only. Ada is the precedent in both directions: `Meters(F)` in,
-	// `Integer(M)` out.
-	CodeImplicitNewtypeReadout = "lyra-E047"
-
-	// CodePatternOutOfRange: an integer literal in a match pattern — bare, a range
-	// bound, or inside a data/tuple/struct/array sub-pattern — whose value the
-	// scrutinee's type cannot hold (`300` on a u8, `-1` on any unsigned), or that a
-	// newtype's range constraint excludes (`200` on `Percent = u8 where
-	// range(0..<=100)`). The arm can never match, so it is an error, not a warning.
-	//
-	// Until 08/13 these were not merely dead: the backend lowered the constant at
-	// the scrutinee's width, so `match x { 300 => … }` on a u8 **matched 44** and
-	// `{ -1 => … }` matched 255 — a silent wrong *branch*, found by the audit's
-	// second sweep hours after negative indexing was removed for making the same
-	// off-by-one silently mean a value at the other end. Every value here is a
-	// compile-time constant by grammar, so the provable→error rung is the whole
-	// ladder; Rust refuses the same bounds ("range endpoint is out of range").
-	CodePatternOutOfRange = "lyra-E048"
 
 	// CodeCapturedAssignment: a lambda assigns to a binding it captured from an
 	// enclosing scope. A closure captures **by value** — the copy is taken when the
@@ -466,6 +429,377 @@ const (
 	// the code now covers what is still malformed rather than the form itself.
 	CodeNewtypeConstructorCall = "lyra-E044"
 
+	// CodeValuesConstraintViolation: a compile-time literal assigned to a newtype with
+	// a `values(...)` constraint is not one of them (`newtype Status = i32 where
+	// values(200, 404, 500)` given `302`). The literal-union analogue of E023.
+	//
+	// Nothing enforced this until 08/12 — the constraint was collected, its shape
+	// validated, and then read by nobody, so `values(...)` was a declaration the
+	// compiler acknowledged and ignored. That is this project's recurring
+	// collected-and-unread shape in the one place where being checked is the
+	// declaration's entire purpose.
+	CodeValuesConstraintViolation = "lyra-E045"
+
+	// CodeImplicitNewtypeConversion: a value that already has a type used where a
+	// newtype over that base is expected, without writing the conversion —
+	// `take(plain_i64)` against `(c: Cents)`. An untyped *literal* is still adopted
+	// implicitly (`let c: Cents = 150`); a typed value needs `Cents(x)`.
+	//
+	// The line is provenance, not convenience. A literal has no unit yet, so adopting
+	// it costs nothing; a typed value came from somewhere, and that somewhere is where
+	// a unit mixup lives. Until 08/12 base → newtype was assignable everywhere, so a
+	// newtype declared a distinction the compiler then declined to enforce at any call
+	// boundary — which also made lyra-E043 (the overflow-arithmetic refusal) narrower
+	// than its own rationale, since the same laundering was available through any
+	// user-written function.
+	//
+	// Ada's rule for derived types, and for its reason: `M : Meters := 3.0` is legal
+	// because the literal is universal, `M := F` for a Float F is not, and `Meters(F)`
+	// is the conversion.
+	CodeImplicitNewtypeConversion = "lyra-E046"
+
+	// CodeImplicitNewtypeReadout: a newtype value used where its *base* is expected,
+	// without writing the conversion — `f(cents)` against `(x: i64)`,
+	// `let raw: i64 = c`. The read-out spelling is the base's own name applied:
+	// `i64(c)`, `string(e)`, `bool(f)` — the mirror of the constructor, and an
+	// identity at runtime just as the constructor is.
+	//
+	// E046's mirror, closing the same hole in the other direction: reading out
+	// silently discards the name the newtype carries, and a discarded unit at a call
+	// boundary is the mixup the type exists to prevent. Unlike E046 there is no
+	// literal exemption — a newtype value is never a literal — so the refusal is
+	// unconditional where it applies. It applies only where the base is *nameable*
+	// (a primitive, string, bool, rune): a newtype over an array or a function type
+	// keeps its implicit read-out, because refusing with no spelling to offer would
+	// make it write-only. Ada is the precedent in both directions: `Meters(F)` in,
+	// `Integer(M)` out.
+	CodeImplicitNewtypeReadout = "lyra-E047"
+
+	// CodePatternOutOfRange: an integer literal in a match pattern — bare, a range
+	// bound, or inside a data/tuple/struct/array sub-pattern — whose value the
+	// scrutinee's type cannot hold (`300` on a u8, `-1` on any unsigned), or that a
+	// newtype's range constraint excludes (`200` on `Percent = u8 where
+	// range(0..<=100)`). The arm can never match, so it is an error, not a warning.
+	//
+	// Until 08/13 these were not merely dead: the backend lowered the constant at
+	// the scrutinee's width, so `match x { 300 => … }` on a u8 **matched 44** and
+	// `{ -1 => … }` matched 255 — a silent wrong *branch*, found by the audit's
+	// second sweep hours after negative indexing was removed for making the same
+	// off-by-one silently mean a value at the other end. Every value here is a
+	// compile-time constant by grammar, so the provable→error rung is the whole
+	// ladder; Rust refuses the same bounds ("range endpoint is out of range").
+	CodePatternOutOfRange = "lyra-E048"
+
+	// CodeNonOptionalCoalescing: the left operand of `??` is not a Maybe<T>, so
+	// it can never be null and the coalescing is pointless — the default is dead
+	// code that reads as a handled case. A warning until 08/13 (as lyra-W007, the
+	// slot below, now retired); an error since, on the E034/E035 reasoning: a
+	// construct that cannot mean anything is refused where it is written, not
+	// compiled around. The typechecker still recovers by treating the left type
+	// as the payload, so one dead `??` does not cascade into spurious
+	// incompatible-type errors downstream.
+	CodeNonOptionalCoalescing = "lyra-E049"
+
+	// CodeArenaNotImplemented: a `with <handle> = <arena> { … }` statement. Arena
+	// allocation was designed early — the grammar, the collector, a reserved runtime
+	// shim (`lyra_arena_alloc`) and the `PinnedRC` sentinel are all in place — and
+	// never implemented: nothing type-checks the arena expression and nothing lowers
+	// the statement.
+	//
+	// It is refused at the statement (08/13) rather than left to the backend's
+	// "lowering not implemented", on the lyra-E035 reasoning: one diagnostic at the
+	// source beats one per consumer, and a construct that cannot mean anything is
+	// refused where it is written. The stronger reason here is that the phantom was
+	// not merely inert — the purity pass *discharged* every allocation lexically
+	// inside a `with` body, so wrapping a `shared` construction in
+	// `with a = 42 { … }` silently turned off lyra-E016 and `noalloc` stopped
+	// binding. A bound that quietly stops binding is worse than no bound (the
+	// pkg/backend/llvm README's fifth hazard-8 instance, in the other direction), and
+	// the arena expression was never checked at all — `with a = 42` was as acceptable
+	// as `with a = Arena.new(1024)`, which itself only escaped lyra-E035 because
+	// nothing looked at it.
+	CodeArenaNotImplemented = "lyra-E050"
+
+	// CodeRawPointersNotImplemented: **retired 08/18**, when raw pointers gained
+	// inference and lowering. It refused `&x`, `p^`, `p^ = v` and `unsafe { … }` from
+	// 08/13, in the register of "not implemented" rather than the internal-sounding
+	// "unknown expression type" they drew before that.
+	//
+	// Kept as a reserved code rather than reused: a diagnostic code is a thing people
+	// search for, and pointing lyra-E051 at some later feature would make every hit for
+	// it before this date describe the wrong thing. The operations report as ordinary
+	// type errors now (lyra-E059/E060/E061) and the unsafe-context rule is lyra-E011.
+	CodeRawPointersNotImplemented = "lyra-E051"
+
+	// CodeRegexValuesNotImplemented: a regex literal used as a **value**
+	// (`let re = r"[a-z]+"`) or as a **match pattern**
+	// (`match s { r"^[0-9]+$" => … }`). Both type-checked clean and then died in the
+	// backend — `expression lowering not implemented for *ast.RegexLiteralExpr`, and
+	// `match pattern *ast.RegexPattern not implemented … (regex patterns deferred)`.
+	//
+	// Refused since 08/13, on the lyra-E035/E050/E051 reasoning. A regex *value*
+	// needs a regex engine in the runtime, and Lyra's runtime is hand-written C
+	// shims with no FFI — the `regexp` this compiler uses to validate patterns runs
+	// at compile time and cannot ship into the compiled program. So this is a
+	// project, not a fix, and the `regex` primitive type existed only to type the
+	// literal: nothing else read it, and `regex` is not even a spellable annotation
+	// (a lowercase type name parses as a type *variable*, so `(re: regex)` declared
+	// one named `regex`).
+	//
+	// **`where pattern(r"…")` on a newtype is unaffected and keeps working**, which
+	// is why this refuses the two value positions rather than the literal syntax:
+	// a constraint stores the pattern's *source text* and compiles it at
+	// type-check time, so it never produces a value of type `regex` and never needs
+	// a runtime engine.
+	CodeRegexValuesNotImplemented = "lyra-E052"
+
+	// CodeStepConstraintViolation: a compile-time constant that is not on the grid a
+	// newtype's `step(...)` describes — `start, start+step, start+2*step, …`, with
+	// `start` from its `range(...)` when it declares one and 0 otherwise. So
+	// `newtype CompassHeading = i64 where range(0..<360), step(15)` refuses 7.
+	//
+	// Nothing read StepConstraint until 08/13: the constraint was collected and
+	// validated for well-formedness (types/step.go refuses a zero step, and a
+	// fractional step over an integer domain) and then enforced against no value at
+	// all — the collected-and-unread shape, with its own comment recording it as a
+	// known asymmetry. A runtime value gets the trap that `range` and `values` do.
+	CodeStepConstraintViolation = "lyra-E053"
+
+	// CodePatternValueNotProvable: a newtype whose `pattern(...)` constraint **cannot
+	// be compiled to a runtime matcher**, constructed from a value that is not a
+	// compile-time string literal.
+	//
+	// It is a property of the pattern, not of the value, so the message names the
+	// pattern. Two shapes qualify: a **lookbehind**, whose gate depends on text
+	// preceding the input and which a flat byte table cannot represent, and a DFA
+	// larger than regex.MaxTableStates, which would emit a table bigger than the
+	// program using it.
+	//
+	// **This was briefly much broader.** For one day it refused *every* non-literal,
+	// because the other constraint kinds had gained runtime traps and `pattern` could
+	// not follow — matching one needed a regex engine the runtime does not have. What
+	// removed the reason is that a pattern never needs compiling at run time: a
+	// constraint's pattern is part of a type, so pkg/regex runs at compile time and
+	// ships only its answer, as DFA tables the emitted driver walks (regex_match.go).
+	// Refusing the rest is still right, and for the same reason it was right then: the
+	// compile-time and run-time answers for one constraint must agree, so a pattern
+	// that cannot be matched the same way twice is refused rather than matched by some
+	// other rule.
+	CodePatternValueNotProvable = "lyra-E054"
+
+	// CodeFixedPointNotImplemented: the `fixed<I, F>` type annotation. It parses, it
+	// collects into a real `types.FixedPointType`, and **no pass after the collector
+	// knows what it is** — so the type is *uninhabitable*: every literal and every
+	// conversion is refused, and no value of it can be constructed by any spelling.
+	//
+	// Refused since 08/14, on the lyra-E035/E052 reasoning: the state of affairs is
+	// "unimplemented", and saying so is better than letting the absence be inferred
+	// from a series of type errors. What an author got instead was
+	// *"cannot assign integer literal to `fixed<16,16>`"* — which reads as a fixable
+	// mistake and invites trying `1.5`, then `f64(1.5)`, then `i32(1)`, each
+	// answered by the same sentence with one noun changed. Three plausible attempts
+	// to learn what one diagnostic can say.
+	//
+	// **Not deleted, because the intent is to build it**, and the syntax is the part
+	// worth keeping — a value-parameterized `fixed<I, F>` commits to binary scaling,
+	// which is the design that serves *determinism* (lockstep simulation, replays).
+	// Decimal money wants a different type and already has a better answer here
+	// (`newtype Cents = i64` with a range constraint), so the grammar has already
+	// made the choice this diagnostic is holding open.
+	//
+	// The one design question it does not settle is what arithmetic does to the
+	// parameters: `fixed<16,16> * fixed<16,16>` naturally wants `fixed<32,32>`. A
+	// static array is already value-parameterized, so that much has precedent — but
+	// an array's size never changes under an operator, and this would be the first
+	// type whose parameters are themselves arithmetic.
+	CodeFixedPointNotImplemented = "lyra-E055"
+
+	// CodeNonConstantArraySize: `[v; n]` with a runtime count, used where a **fixed**
+	// array is wanted — `let a: [3]u32 = [0; n]`.
+	//
+	// The count was a compile-time constant *by grammar* until 08/14, which is right for
+	// a fixed array — its length is part of its type, and a type cannot depend on a value
+	// the compiler has not got — and was inherited rather than reasoned for a dynamic
+	// one, whose length rides the value at run time. So a buffer sized by a window resize
+	// (`let buf: []u32 = [0; n]`) was a *syntax* error, and `push` in a loop was the only
+	// way to build one.
+	//
+	// The grammar now accepts any expression there and this draws the line, because only
+	// the typechecker can: which of the two `[0; n]` builds is decided by the type it is
+	// checked against, which the parser cannot see. That is the split `rangeBounds`
+	// already documents — the grammar refuses what has no meaning anywhere, the checker
+	// refuses what has a plausible meaning in the wrong place, and gets to name the fix.
+	CodeNonConstantArraySize = "lyra-E056"
+
+	// CodeCapitalizedBindingName: a `let`/`var` whose name is capitalized —
+	// `let RAMP = [" ", "."]`, `let Foo = 10`.
+	//
+	// Capitalization is *syntax* here, not convention. A SCREAMING_CASE name is a
+	// `const_identifier` (`/[A-Z][A-Z0-9_]*/`) and a capitalized one a constructor, so
+	// either in binding position parses as a **pattern to match** rather than a name to
+	// bind — and the value is then destructured against a constructor that does not
+	// exist.
+	//
+	// Which left the mistake describing the parse instead of itself: `let RAMP = 10`
+	// reported "cannot destructure integer literal with a data pattern", and every use of
+	// the name cascaded into `undefined identifier`. Neither line named the one-word fix,
+	// which is `const` for the SCREAMING_CASE spelling and a lowercase initial for the
+	// other — an asymmetry worth reporting rather than hiding, since `const Foo = 10` is a
+	// *syntax* error and so is not advice that could be given uniformly.
+	//
+	// A bare name that *is* a real constructor keeps the shape mismatch: `let None = 10`
+	// is a genuine attempt to destructure an integer, and "cannot destructure" is what is
+	// wrong with it. The name is bound anyway (best-effort, as the struct-pattern arm
+	// beside it already does) so one mistake draws one diagnostic.
+	CodeCapitalizedBindingName = "lyra-E057"
+
+	// CodeDestructureOfInferredReturn: destructuring the result of a function whose
+	// return type is inferred and could not be worked out.
+	//
+	// A destructure needs the element types where the pattern is walked — each name's
+	// type comes from decomposing the value there and then, and nothing later revisits
+	// it — so it is the one position that cannot defer. Binding the whole value is
+	// unaffected, and so is a scalar return.
+	//
+	// **Declaration order stopped being a cause on 08/18.** A callee declared below its
+	// caller is now checked on demand, which is what the house style (helpers below
+	// main) makes the ordinary arrangement. What remains is the case with no answer at
+	// all: two un-annotated functions destructuring each other's results, where
+	// computing either return type requires the other. The annotation on either one
+	// resolves it, which is what the message asks for.
+	CodeDestructureOfInferredReturn = "lyra-E058"
+
+	// CodeNotAddressable: `&` applied to something that is not storage — a call's
+	// result, an arithmetic expression, a literal. Only a binding, a field or an
+	// element has an address; a temporary stops existing at the end of the statement,
+	// so the pointer would dangle immediately.
+	CodeNotAddressable = "lyra-E059"
+
+	// CodeNotAPointer: `^` applied to a value that is not a raw pointer, reading or
+	// writing. Separate from the ordinary type mismatch because the operator is the
+	// thing to explain: `^` is postfix dereference here and prefix `^T` is the pointer
+	// *type*, so a reader who has met one may be reaching for the other.
+	CodeNotAPointer = "lyra-E060"
+
+	// CodeImmutablePointerWrite: `p^ = v` through a `^T` rather than a `^mut T`.
+	//
+	// Mutability is checked twice for raw pointers, and the two checks are not
+	// interchangeable: taking `&mut x` requires *x* to be mutable, while writing `p^ = v`
+	// requires *p* to be a mutable pointer. A `^mut T` may be copied into a `let`, and a
+	// `^T` may be taken of a `var`, so neither answer implies the other.
+	CodeImmutablePointerWrite = "lyra-E061"
+
+	// CodeExternBoundNeedsUnsafe: an `extern` that narrows its effect bound without
+	// `unsafe`.
+	//
+	// An extern with no bound carries every effect and is safe to declare, because it
+	// claims nothing. `pure`, `det` or `noalloc` on one claims something no compiler can
+	// check, and a wrong claim does not fail at the declaration — it is *believed*, and
+	// silently corrupts the effect analysis of every caller. So for Lyra code a bound is a
+	// promise the compiler checks; for an extern it is a promise the compiler records, and
+	// `unsafe` is what marks the difference.
+	//
+	// The inverse is deliberately not an error: `unsafe extern` with no bound asserts
+	// nothing and is merely redundant, and a program mid-edit should not stop compiling.
+	CodeExternBoundNeedsUnsafe = "lyra-E062"
+
+	// CodeNotFFISafe: a parameter or return type in an `extern` signature that has no C
+	// spelling — `string`, `[]T`, a closure, a tuple, a `data` type, anything `shared` or
+	// `weak`, and `bool`.
+	//
+	// Refusing at the *signature* is what leaves no room for an implicit conversion, and
+	// therefore no nul-termination policy to get wrong: `std.ffi` builds what Lyra wants
+	// on top, in ordinary Lyra, where the copy is visible and `noalloc` can see it. The
+	// same division of labour `read_line` and `parse_i64` have, one layer up.
+	//
+	// **`bool` is excluded on an ABI ground rather than a representational one**: Lyra's
+	// lowers to `i1` and C's `_Bool` is a byte, so passing one would silently disagree
+	// about the calling convention — the class of wrongness this language traps for
+	// everywhere else. A newtype is looked *through*, since it is nominal only.
+	CodeNotFFISafe = "lyra-E063"
+
+	// CodeAliasIsNotConstructible: a type **alias** applied to an operand — `CULong(n)`,
+	// or the juxtaposed `CULong n`. An alias is transparent, so it declares no
+	// constructor: a value of the aliased type already *is* a value of the alias, and
+	// there is nothing for the application to do.
+	//
+	// It exists because the failure was a *parse* being reported instead of the
+	// language. `Name(x)` parses as a tuple literal, so the message was "CULong: not a
+	// tuple type" — which names a construct the author did not write, about a type that
+	// is not a tuple and was never going to be. Exactly the wording lyra-E044's own
+	// history records having replaced for `newtype`, arrived at again by a different
+	// route.
+	//
+	// The message says which spelling was wanted, and there are two. Where the alias
+	// names a type a conversion can name, the operand needs `u64(n)` — the base's
+	// conversion, since a width change is the only thing the wrapper could have meant.
+	// Where it does not (an alias for an array, a function type), there is no conversion
+	// to offer and none is needed: the operand is already of that type. Refusing without
+	// naming the difference is what makes an author reach for a wrapper again.
+	CodeAliasIsNotConstructible = "lyra-E064"
+
+	// ── Warnings ──────────────────────────────────────────────────────────────
+
+	CodeShadowing = "lyra-W001"
+
+	CodeUnreachableCode = "lyra-W002"
+
+	CodeUnusedVariable = "lyra-W003"
+
+	CodeUnusedImport = "lyra-W004"
+
+	CodeUnusedParameter = "lyra-W005"
+
+	CodeUnusedResult = "lyra-W006"
+
+	// CodeImpreciseFloatEquality: an exact floating-point equality test — the
+	// `==`/`!=` operator on floats, or a float literal `match` pattern (which
+	// lowers to `fcmp oeq`). A value off by an ULP silently compares unequal, so
+	// results may be surprising; a tolerance check or a range pattern is safer.
+	CodeImpreciseFloatEquality = "lyra-W008"
+
+	// CodeScreamingCaseTypeName: a type declared with an all-uppercase
+	// (SCREAMING_CASE) name. Such a name lexes as a `const_identifier`, not a
+	// `user_defined_type_name`, so a struct literal `NAME { … }` won't parse — the
+	// type can be referenced but never constructed. Give it a PascalCase name.
+	CodeScreamingCaseTypeName = "lyra-W009"
+
+	// CodeInertBorrowModifier: an `own`/`ref`/`mut` modifier on a parameter whose
+	// type is a copied scalar primitive (a numeric type, `bool`, or `rune`). These
+	// modifiers are calling conventions over a *reference* — `own` transfers
+	// ownership, `ref`/`mut` borrow — but a scalar is passed by value with no
+	// interior to borrow or transfer, so the modifier is equivalent to a plain
+	// parameter and only misleads a reader into expecting move/borrow semantics.
+	// `string` (a managed fat pointer) and generic type parameters are NOT scalars
+	// and are never flagged. A warning, since the code is correct as written.
+	CodeInertBorrowModifier = "lyra-W010"
+
+	// CodeConstantComparison: an integer comparison whose operand ranges (tracked by
+	// the value-range analysis) prove it always evaluates to the same result — e.g.
+	// `x < 0` on a `u8` (always false), or a comparison made trivial by a branch
+	// refinement. The branch it guards is dead code or a likely bug; a warning since
+	// the code still compiles and runs.
+	CodeConstantComparison = "lyra-W011"
+
+	// CodePreludeShadowed: a declaration takes a name the prelude exports. The
+	// declaration wins. A warning rather than an error because the prelude is
+	// implicitly in scope everywhere: rejecting the clash would make every name it
+	// exports permanently unusable, and adding a name to the prelude later would
+	// break programs that never mentioned it.
+	CodePreludeShadowed = "lyra-W012"
+
+	// CodeUnusedTypeParameter: a generic parameter declared in a written list that
+	// the signature never mentions — `let f<t, u> = (a: t) -> t => a`.
+	//
+	// The sibling of E031, and the other half of reconciling a written list with
+	// its signature. A warning rather than an error because the code is correct as
+	// written: an unused variable is solved by nothing, constrains nothing, and
+	// changes no call site. What makes it worth reporting is that the list is the
+	// only place a *bound* can be written, so `<u: Show>` on a variable the
+	// signature never mentions is a constraint that silently constrains nothing —
+	// the reading a programmer is least likely to expect.
+	CodeUnusedTypeParameter = "lyra-W013"
+
 	// CodeInertDerive: a `@derive(X)` naming a trait the compiler does not synthesize,
 	// so the attribute does nothing. A warning rather than an error — the derive is not
 	// wrong, the trait simply does not exist yet — but reported, because an attribute
@@ -580,307 +914,4 @@ const (
 	// is exempt, matching the unused-local rule — `_i` is the older spelling of the same
 	// intent and still reads as deliberate.
 	CodeUnusedLoopBinding = "lyra-W020"
-
-	CodeShadowing       = "lyra-W001"
-	CodeUnreachableCode = "lyra-W002"
-	CodeUnusedVariable  = "lyra-W003"
-	CodeUnusedImport    = "lyra-W004"
-	CodeUnusedParameter = "lyra-W005"
-	CodeUnusedResult    = "lyra-W006"
-
-	// CodeStepConstraintViolation: a compile-time constant that is not on the grid a
-	// newtype's `step(...)` describes — `start, start+step, start+2*step, …`, with
-	// `start` from its `range(...)` when it declares one and 0 otherwise. So
-	// `newtype CompassHeading = i64 where range(0..<360), step(15)` refuses 7.
-	//
-	// Nothing read StepConstraint until 08/13: the constraint was collected and
-	// validated for well-formedness (types/step.go refuses a zero step, and a
-	// fractional step over an integer domain) and then enforced against no value at
-	// all — the collected-and-unread shape, with its own comment recording it as a
-	// known asymmetry. A runtime value gets the trap that `range` and `values` do.
-	CodeStepConstraintViolation = "lyra-E053"
-
-	// CodePatternValueNotProvable: a newtype whose `pattern(...)` constraint **cannot
-	// be compiled to a runtime matcher**, constructed from a value that is not a
-	// compile-time string literal.
-	//
-	// It is a property of the pattern, not of the value, so the message names the
-	// pattern. Two shapes qualify: a **lookbehind**, whose gate depends on text
-	// preceding the input and which a flat byte table cannot represent, and a DFA
-	// larger than regex.MaxTableStates, which would emit a table bigger than the
-	// program using it.
-	//
-	// **This was briefly much broader.** For one day it refused *every* non-literal,
-	// because the other constraint kinds had gained runtime traps and `pattern` could
-	// not follow — matching one needed a regex engine the runtime does not have. What
-	// removed the reason is that a pattern never needs compiling at run time: a
-	// constraint's pattern is part of a type, so pkg/regex runs at compile time and
-	// ships only its answer, as DFA tables the emitted driver walks (regex_match.go).
-	// Refusing the rest is still right, and for the same reason it was right then: the
-	// compile-time and run-time answers for one constraint must agree, so a pattern
-	// that cannot be matched the same way twice is refused rather than matched by some
-	// other rule.
-	CodePatternValueNotProvable = "lyra-E054"
-
-	// CodeRegexValuesNotImplemented: a regex literal used as a **value**
-	// (`let re = r"[a-z]+"`) or as a **match pattern**
-	// (`match s { r"^[0-9]+$" => … }`). Both type-checked clean and then died in the
-	// backend — `expression lowering not implemented for *ast.RegexLiteralExpr`, and
-	// `match pattern *ast.RegexPattern not implemented … (regex patterns deferred)`.
-	//
-	// Refused since 08/13, on the lyra-E035/E050/E051 reasoning. A regex *value*
-	// needs a regex engine in the runtime, and Lyra's runtime is hand-written C
-	// shims with no FFI — the `regexp` this compiler uses to validate patterns runs
-	// at compile time and cannot ship into the compiled program. So this is a
-	// project, not a fix, and the `regex` primitive type existed only to type the
-	// literal: nothing else read it, and `regex` is not even a spellable annotation
-	// (a lowercase type name parses as a type *variable*, so `(re: regex)` declared
-	// one named `regex`).
-	//
-	// **`where pattern(r"…")` on a newtype is unaffected and keeps working**, which
-	// is why this refuses the two value positions rather than the literal syntax:
-	// a constraint stores the pattern's *source text* and compiles it at
-	// type-check time, so it never produces a value of type `regex` and never needs
-	// a runtime engine.
-	CodeRegexValuesNotImplemented = "lyra-E052"
-
-	// CodeFixedPointNotImplemented: the `fixed<I, F>` type annotation. It parses, it
-	// collects into a real `types.FixedPointType`, and **no pass after the collector
-	// knows what it is** — so the type is *uninhabitable*: every literal and every
-	// conversion is refused, and no value of it can be constructed by any spelling.
-	//
-	// Refused since 08/14, on the lyra-E035/E052 reasoning: the state of affairs is
-	// "unimplemented", and saying so is better than letting the absence be inferred
-	// from a series of type errors. What an author got instead was
-	// *"cannot assign integer literal to `fixed<16,16>`"* — which reads as a fixable
-	// mistake and invites trying `1.5`, then `f64(1.5)`, then `i32(1)`, each
-	// answered by the same sentence with one noun changed. Three plausible attempts
-	// to learn what one diagnostic can say.
-	//
-	// **Not deleted, because the intent is to build it**, and the syntax is the part
-	// worth keeping — a value-parameterized `fixed<I, F>` commits to binary scaling,
-	// which is the design that serves *determinism* (lockstep simulation, replays).
-	// Decimal money wants a different type and already has a better answer here
-	// (`newtype Cents = i64` with a range constraint), so the grammar has already
-	// made the choice this diagnostic is holding open.
-	//
-	// The one design question it does not settle is what arithmetic does to the
-	// parameters: `fixed<16,16> * fixed<16,16>` naturally wants `fixed<32,32>`. A
-	// static array is already value-parameterized, so that much has precedent — but
-	// an array's size never changes under an operator, and this would be the first
-	// type whose parameters are themselves arithmetic.
-	CodeFixedPointNotImplemented = "lyra-E055"
-
-	// CodeNonConstantArraySize: `[v; n]` with a runtime count, used where a **fixed**
-	// array is wanted — `let a: [3]u32 = [0; n]`.
-	//
-	// The count was a compile-time constant *by grammar* until 08/14, which is right for
-	// a fixed array — its length is part of its type, and a type cannot depend on a value
-	// the compiler has not got — and was inherited rather than reasoned for a dynamic
-	// one, whose length rides the value at run time. So a buffer sized by a window resize
-	// (`let buf: []u32 = [0; n]`) was a *syntax* error, and `push` in a loop was the only
-	// way to build one.
-	//
-	// The grammar now accepts any expression there and this draws the line, because only
-	// the typechecker can: which of the two `[0; n]` builds is decided by the type it is
-	// checked against, which the parser cannot see. That is the split `rangeBounds`
-	// already documents — the grammar refuses what has no meaning anywhere, the checker
-	// refuses what has a plausible meaning in the wrong place, and gets to name the fix.
-	CodeNonConstantArraySize = "lyra-E056"
-
-	// CodeCapitalizedBindingName: a `let`/`var` whose name is capitalized —
-	// `let RAMP = [" ", "."]`, `let Foo = 10`.
-	//
-	// Capitalization is *syntax* here, not convention. A SCREAMING_CASE name is a
-	// `const_identifier` (`/[A-Z][A-Z0-9_]*/`) and a capitalized one a constructor, so
-	// either in binding position parses as a **pattern to match** rather than a name to
-	// bind — and the value is then destructured against a constructor that does not
-	// exist.
-	//
-	// Which left the mistake describing the parse instead of itself: `let RAMP = 10`
-	// reported "cannot destructure integer literal with a data pattern", and every use of
-	// the name cascaded into `undefined identifier`. Neither line named the one-word fix,
-	// which is `const` for the SCREAMING_CASE spelling and a lowercase initial for the
-	// other — an asymmetry worth reporting rather than hiding, since `const Foo = 10` is a
-	// *syntax* error and so is not advice that could be given uniformly.
-	//
-	// A bare name that *is* a real constructor keeps the shape mismatch: `let None = 10`
-	// is a genuine attempt to destructure an integer, and "cannot destructure" is what is
-	// wrong with it. The name is bound anyway (best-effort, as the struct-pattern arm
-	// beside it already does) so one mistake draws one diagnostic.
-	CodeCapitalizedBindingName = "lyra-E057"
-
-	// CodeDestructureOfInferredReturn: destructuring the result of a function whose
-	// return type is inferred and could not be worked out.
-	//
-	// A destructure needs the element types where the pattern is walked — each name's
-	// type comes from decomposing the value there and then, and nothing later revisits
-	// it — so it is the one position that cannot defer. Binding the whole value is
-	// unaffected, and so is a scalar return.
-	//
-	// **Declaration order stopped being a cause on 08/18.** A callee declared below its
-	// caller is now checked on demand, which is what the house style (helpers below
-	// main) makes the ordinary arrangement. What remains is the case with no answer at
-	// all: two un-annotated functions destructuring each other's results, where
-	// computing either return type requires the other. The annotation on either one
-	// resolves it, which is what the message asks for.
-	CodeDestructureOfInferredReturn = "lyra-E058"
-
-	// CodeRawPointersNotImplemented: **retired 08/18**, when raw pointers gained
-	// inference and lowering. It refused `&x`, `p^`, `p^ = v` and `unsafe { … }` from
-	// 08/13, in the register of "not implemented" rather than the internal-sounding
-	// "unknown expression type" they drew before that.
-	//
-	// Kept as a reserved code rather than reused: a diagnostic code is a thing people
-	// search for, and pointing lyra-E051 at some later feature would make every hit for
-	// it before this date describe the wrong thing. The operations report as ordinary
-	// type errors now (lyra-E059/E060/E061) and the unsafe-context rule is lyra-E011.
-	CodeRawPointersNotImplemented = "lyra-E051"
-
-	// CodeNotAddressable: `&` applied to something that is not storage — a call's
-	// result, an arithmetic expression, a literal. Only a binding, a field or an
-	// element has an address; a temporary stops existing at the end of the statement,
-	// so the pointer would dangle immediately.
-	CodeNotAddressable = "lyra-E059"
-
-	// CodeNotAPointer: `^` applied to a value that is not a raw pointer, reading or
-	// writing. Separate from the ordinary type mismatch because the operator is the
-	// thing to explain: `^` is postfix dereference here and prefix `^T` is the pointer
-	// *type*, so a reader who has met one may be reaching for the other.
-	CodeNotAPointer = "lyra-E060"
-
-	// CodeImmutablePointerWrite: `p^ = v` through a `^T` rather than a `^mut T`.
-	//
-	// Mutability is checked twice for raw pointers, and the two checks are not
-	// interchangeable: taking `&mut x` requires *x* to be mutable, while writing `p^ = v`
-	// requires *p* to be a mutable pointer. A `^mut T` may be copied into a `let`, and a
-	// `^T` may be taken of a `var`, so neither answer implies the other.
-	CodeImmutablePointerWrite = "lyra-E061"
-
-	// CodeExternBoundNeedsUnsafe: an `extern` that narrows its effect bound without
-	// `unsafe`.
-	//
-	// An extern with no bound carries every effect and is safe to declare, because it
-	// claims nothing. `pure`, `det` or `noalloc` on one claims something no compiler can
-	// check, and a wrong claim does not fail at the declaration — it is *believed*, and
-	// silently corrupts the effect analysis of every caller. So for Lyra code a bound is a
-	// promise the compiler checks; for an extern it is a promise the compiler records, and
-	// `unsafe` is what marks the difference.
-	//
-	// The inverse is deliberately not an error: `unsafe extern` with no bound asserts
-	// nothing and is merely redundant, and a program mid-edit should not stop compiling.
-	CodeExternBoundNeedsUnsafe = "lyra-E062"
-
-	// CodeNotFFISafe: a parameter or return type in an `extern` signature that has no C
-	// spelling — `string`, `[]T`, a closure, a tuple, a `data` type, anything `shared` or
-	// `weak`, and `bool`.
-	//
-	// Refusing at the *signature* is what leaves no room for an implicit conversion, and
-	// therefore no nul-termination policy to get wrong: `std.ffi` builds what Lyra wants
-	// on top, in ordinary Lyra, where the copy is visible and `noalloc` can see it. The
-	// same division of labour `read_line` and `parse_i64` have, one layer up.
-	//
-	// **`bool` is excluded on an ABI ground rather than a representational one**: Lyra's
-	// lowers to `i1` and C's `_Bool` is a byte, so passing one would silently disagree
-	// about the calling convention — the class of wrongness this language traps for
-	// everywhere else. A newtype is looked *through*, since it is nominal only.
-	CodeNotFFISafe = "lyra-E063"
-
-	// CodeAliasIsNotConstructible: a type **alias** applied to an operand — `CULong(n)`,
-	// or the juxtaposed `CULong n`. An alias is transparent, so it declares no
-	// constructor: a value of the aliased type already *is* a value of the alias, and
-	// there is nothing for the application to do.
-	//
-	// It exists because the failure was a *parse* being reported instead of the
-	// language. `Name(x)` parses as a tuple literal, so the message was "CULong: not a
-	// tuple type" — which names a construct the author did not write, about a type that
-	// is not a tuple and was never going to be. Exactly the wording lyra-E044's own
-	// history records having replaced for `newtype`, arrived at again by a different
-	// route.
-	//
-	// The message says which spelling was wanted, and there are two. Where the alias
-	// names a type a conversion can name, the operand needs `u64(n)` — the base's
-	// conversion, since a width change is the only thing the wrapper could have meant.
-	// Where it does not (an alias for an array, a function type), there is no conversion
-	// to offer and none is needed: the operand is already of that type. Refusing without
-	// naming the difference is what makes an author reach for a wrapper again.
-	CodeAliasIsNotConstructible = "lyra-E064"
-
-	// CodeArenaNotImplemented: a `with <handle> = <arena> { … }` statement. Arena
-	// allocation was designed early — the grammar, the collector, a reserved runtime
-	// shim (`lyra_arena_alloc`) and the `PinnedRC` sentinel are all in place — and
-	// never implemented: nothing type-checks the arena expression and nothing lowers
-	// the statement.
-	//
-	// It is refused at the statement (08/13) rather than left to the backend's
-	// "lowering not implemented", on the lyra-E035 reasoning: one diagnostic at the
-	// source beats one per consumer, and a construct that cannot mean anything is
-	// refused where it is written. The stronger reason here is that the phantom was
-	// not merely inert — the purity pass *discharged* every allocation lexically
-	// inside a `with` body, so wrapping a `shared` construction in
-	// `with a = 42 { … }` silently turned off lyra-E016 and `noalloc` stopped
-	// binding. A bound that quietly stops binding is worse than no bound (the
-	// pkg/backend/llvm README's fifth hazard-8 instance, in the other direction), and
-	// the arena expression was never checked at all — `with a = 42` was as acceptable
-	// as `with a = Arena.new(1024)`, which itself only escaped lyra-E035 because
-	// nothing looked at it.
-	CodeArenaNotImplemented = "lyra-E050"
-
-	// CodeNonOptionalCoalescing: the left operand of `??` is not a Maybe<T>, so
-	// it can never be null and the coalescing is pointless — the default is dead
-	// code that reads as a handled case. A warning until 08/13 (as lyra-W007, the
-	// slot below, now retired); an error since, on the E034/E035 reasoning: a
-	// construct that cannot mean anything is refused where it is written, not
-	// compiled around. The typechecker still recovers by treating the left type
-	// as the payload, so one dead `??` does not cascade into spurious
-	// incompatible-type errors downstream.
-	CodeNonOptionalCoalescing = "lyra-E049"
-
-	// CodeImpreciseFloatEquality: an exact floating-point equality test — the
-	// `==`/`!=` operator on floats, or a float literal `match` pattern (which
-	// lowers to `fcmp oeq`). A value off by an ULP silently compares unequal, so
-	// results may be surprising; a tolerance check or a range pattern is safer.
-	CodeImpreciseFloatEquality = "lyra-W008"
-
-	// CodeScreamingCaseTypeName: a type declared with an all-uppercase
-	// (SCREAMING_CASE) name. Such a name lexes as a `const_identifier`, not a
-	// `user_defined_type_name`, so a struct literal `NAME { … }` won't parse — the
-	// type can be referenced but never constructed. Give it a PascalCase name.
-	CodeScreamingCaseTypeName = "lyra-W009"
-
-	// CodeInertBorrowModifier: an `own`/`ref`/`mut` modifier on a parameter whose
-	// type is a copied scalar primitive (a numeric type, `bool`, or `rune`). These
-	// modifiers are calling conventions over a *reference* — `own` transfers
-	// ownership, `ref`/`mut` borrow — but a scalar is passed by value with no
-	// interior to borrow or transfer, so the modifier is equivalent to a plain
-	// parameter and only misleads a reader into expecting move/borrow semantics.
-	// `string` (a managed fat pointer) and generic type parameters are NOT scalars
-	// and are never flagged. A warning, since the code is correct as written.
-	CodeInertBorrowModifier = "lyra-W010"
-
-	// CodeConstantComparison: an integer comparison whose operand ranges (tracked by
-	// the value-range analysis) prove it always evaluates to the same result — e.g.
-	// `x < 0` on a `u8` (always false), or a comparison made trivial by a branch
-	// refinement. The branch it guards is dead code or a likely bug; a warning since
-	// the code still compiles and runs.
-	CodeConstantComparison = "lyra-W011"
-
-	// CodePreludeShadowed: a declaration takes a name the prelude exports. The
-	// declaration wins. A warning rather than an error because the prelude is
-	// implicitly in scope everywhere: rejecting the clash would make every name it
-	// exports permanently unusable, and adding a name to the prelude later would
-	// break programs that never mentioned it.
-	CodePreludeShadowed = "lyra-W012"
-
-	// CodeUnusedTypeParameter: a generic parameter declared in a written list that
-	// the signature never mentions — `let f<t, u> = (a: t) -> t => a`.
-	//
-	// The sibling of E031, and the other half of reconciling a written list with
-	// its signature. A warning rather than an error because the code is correct as
-	// written: an unused variable is solved by nothing, constrains nothing, and
-	// changes no call site. What makes it worth reporting is that the list is the
-	// only place a *bound* can be written, so `<u: Show>` on a variable the
-	// signature never mentions is a constraint that silently constrains nothing —
-	// the reading a programmer is least likely to expect.
-	CodeUnusedTypeParameter = "lyra-W013"
 )

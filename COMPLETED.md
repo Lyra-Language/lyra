@@ -9,6 +9,45 @@ Newest first.
 
 ## Dated log
 
+### 08/24/26 (9)
+**codes.go: ordered, and guarded by a test that names its own policy.**
+
+Eight hundred lines of diagnostic-code constants whose doc comments are, for most of these
+rules, the only written record of why the rule exists — and nothing checking three things
+about the list.
+
+**Two constants could share a code.** Nothing would have noticed, and the effect is that two
+unrelated rules become one to anyone filtering, suppressing or searching by code. None did;
+nothing was stopping it.
+
+**The numbering had drifted.** E045–E048 sat between E023 and E024, the W014–W020 run came
+before W001, and E051–E054 were scattered through the fifties. Someone looking for the next
+free number had to scan the file, and the way that goes wrong is reuse. The 83 constants are
+in numeric order now — verified as a pure move: the name→code mapping is identical before and
+after and no doc line was lost.
+
+**A code could stop being used without being retired**, which is the one with a real policy
+behind it. lyra-E051's own comment states it: a retired code keeps its number rather than
+being reassigned, because a diagnostic code is a thing people search for, and pointing it at
+a later feature makes every older hit describe the wrong thing. Two codes are in that state
+(E030, the lifted trait-borrow restriction; E051, raw pointers) and one number is a hole
+(W007, promoted to the hard error E049 on 08/13). All three are declared in the test, and the
+claim is checked both ways — an unused code missing from the list fails, and a listed code
+that *is* used fails as stale.
+
+**No severity table**, though the audit asked for one. A code names a rule, not how loudly it
+is reported: lyra-E009 is an error for a `bool` or `data` scrutinee and a warning for the
+open types, decided at the reporting site, and its own comment already explains that split. A
+`Severity` field would have been wrong for it on the day it was written. The summary table
+the audit also wanted was skipped for a plainer reason — its two proposed consumers
+(`lyrac --explain`, a table-driven LSP code-action switch) do not exist.
+
+Each of the four guards was checked against the failure it claims to catch, by making that
+mistake and watching it fail. Worth doing: two of the four *silently passed* on the first
+attempt, because the mutation had not applied — gofmt had re-aligned the constant block and
+my exact-string edit no longer matched. A guard test that has never been seen to fail is a
+guard test nobody has tested.
+
 ### 08/24/26 (8)
 **The typechecker's match ladder and store ladder — one folded, one mostly not.**
 
