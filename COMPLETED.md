@@ -9,6 +9,48 @@ Newest first.
 
 ## Dated log
 
+### 08/24/26 (8)
+**The typechecker's match ladder and store ladder — one folded, one mostly not.**
+
+Two consolidations the audit called for, with different answers.
+
+**`checkMatchExpr` was eight `else if` arms**, each a copy of "walk the arms with this
+checker, then test exhaustiveness and report". The three things that differed are now the
+three fields of a `matchKind`, chosen once by `matchKindOf`. The severity is the one worth
+lifting into the open: **bool and `data` gaps are errors and every other kind's is a
+warning**, because those two are the shapes where the compiler can name what is missing
+rather than only observe that nothing catches the rest — a distinction invisible when it
+sits in the eighth arm of a ladder that reads as eight copies. Two pure aliases went with
+it: `stringMatchIsExhaustive` and `numericMatchIsExhaustive` were both
+`return hasUnguardedCatchAll(arms)` with one caller each.
+
+**The store ladder is not one ladder.** Five positions store a value into a slot — an
+annotated `let`, a destructuring's whole value, a reassignment, an assignment through a
+member or index path, and a `return` — and the audit proposed one `checkStore` with options.
+Reading them, they share exactly two checks and diverge in seven: which push a literal's
+width down, which record the annotation on the value node, which run the implicit-newtype
+rules, whether allocation compatibility comes first or last, and whether it runs at all (a
+return checks it only when owned). One of those divergences is a documented open question —
+`checkLValueAssignment` does no literal propagation, and says the other paths do and that
+whether it should is separate.
+
+So only the shared prefix was extracted, as `checkStorable`: assignable, then
+allocation-compatible. Four sites, one line each. Folding the rest behind flags would turn a
+visible difference into an option nobody reads, which is worse than the repetition.
+
+Two details of the extraction are load-bearing and nearly lost. **`shown`** is what the
+message names the target as, and it is not always the target: the annotated sites print the
+annotation *as written*, so `let a: Alias = "no"` says `cannot assign string to Alias`
+rather than naming the `i64` it resolves to. **`subject`** prefixes the message with a
+binding's name where there is one — which is why an lvalue assignment reads `cannot assign
+…` while a reassignment reads `x: cannot assign …`.
+
+**Verified on diagnostics, not only on tests**, since exact message text is what these arms
+carry. Two programs — one with a non-exhaustive match of every kind including a newtype over
+u8 to exercise the strip, one hitting every store position including the annotation-vs-
+resolved distinction — produce identical output before and after: same messages, same
+severities, same locations.
+
 ### 08/24/26 (7)
 **The LSP's thirteen prologues, and its two symbol switches.**
 

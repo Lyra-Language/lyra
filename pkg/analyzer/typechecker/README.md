@@ -961,3 +961,30 @@ generic bodies with `where` bounds, which is where bound dispatch fires. A concr
 of a generic function pays none of it — the candidates were published once, at the bound
 call site inside the generic body — so a benchmark built from concrete callers measures
 nothing, which was the first version of it.
+
+## Storing a value into a slot
+
+Five positions store a value somewhere: an annotated `let`, a destructuring's whole value, a
+reassignment, an assignment through a member or index path, and a `return`. They look like
+one ladder repeated five times, and they are not.
+
+What they genuinely share is two checks — the value must be **assignable** to the target,
+and the two must **agree about allocation** — which is `checkStorable`. Beyond that they
+diverge in nearly every step: which push a literal's width down onto its leaves, which
+record the annotation on the value node, which run the implicit-newtype conversion and
+read-out rules, whether allocation compatibility is checked first or last, and whether it is
+checked at all (a `return` checks it only when the return is owned).
+
+Some of those differences are open questions rather than oversights.
+`checkLValueAssignment` does no literal propagation, deliberately and with a comment saying
+the other two paths do and that whether it should is a separate question. Folding the five
+into one function with a bag of options would turn that visible difference into a flag, and
+a reader would have to decode the flags to learn what any one position does.
+
+**Two details in `checkStorable` are load-bearing.** `shown` is what the message names the
+target as, which is not always the target: the two annotated sites print the annotation *as
+written*, so `let a: Alias = "no"` reads `cannot assign string to Alias` rather than naming
+the `i64` it resolves to — the diagnostic reads back as the source. And `subject` prefixes
+the message with a binding's name where there is one and is empty where there is not, which
+is why an lvalue assignment says `cannot assign …` with no prefix while a reassignment says
+`x: cannot assign …`.

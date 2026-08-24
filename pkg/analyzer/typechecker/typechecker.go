@@ -441,14 +441,9 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	if reportedByContext {
 		return // the propagation named the offending value
 	}
-	if !tc.assignableValue(decl.Value, inferredType, resolvedDeclType) {
-		tc.typeTable.Set(decl.Value, inferredType)
-		tc.addError(decl.GetLocation(), SeverityError,
-			"%s: cannot assign %s to %s", decl.Name, inferredType, decl.Type)
-		return
-	}
-
-	if !tc.checkAllocationCompat(inferredType, resolvedDeclType, decl.GetLocation(), decl.Name) {
+	if !tc.checkStorable(decl.Value, inferredType, resolvedDeclType, decl.Type, decl.GetLocation(), decl.Name) {
+		// The inferred type is recorded even on the failing path, so a later pass reading
+		// this node sees what the value actually is rather than nothing.
 		tc.typeTable.Set(decl.Value, inferredType)
 		return
 	}
@@ -549,12 +544,7 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 	// If there's a whole-expression type annotation, verify assignability.
 	if decl.Type != nil {
 		resolvedDeclType := tc.resolveType(decl.Type, decl.Location)
-		if !tc.assignableValue(decl.Value, inferredType, resolvedDeclType) {
-			tc.addError(decl.GetLocation(), SeverityError,
-				"cannot assign %s to %s", inferredType, decl.Type)
-			return
-		}
-		if !tc.checkAllocationCompat(inferredType, resolvedDeclType, decl.GetLocation(), "") {
+		if !tc.checkStorable(decl.Value, inferredType, resolvedDeclType, decl.Type, decl.GetLocation(), "") {
 			return
 		}
 		inferredType = resolvedDeclType
@@ -1166,6 +1156,39 @@ func (tc *TypeChecker) assignTargetType(name string) types.Type {
 	return tc.effectiveType(decl)
 }
 
+// checkStorable is the part every store into a slot genuinely shares: the value must be
+// assignable to the target, and the two must agree about allocation. It reports the first
+// failure and answers false; a caller that gets true still owes the checks its own position
+// needs.
+//
+// **Only this prefix is shared, and that is the finding rather than a shortcoming.** Five
+// sites store a value into a slot — a `let` with an annotation, a destructuring's whole
+// value, a reassignment, an assignment through a member or index path, and a `return` — and
+// beyond these two checks they diverge in almost every step: which of them push a literal's
+// width down, which record the annotation on the value node, which run the implicit-newtype
+// rules, and in what order. Some of those differences are open questions rather than
+// oversights (checkLValueAssignment does no literal propagation, deliberately, and says so),
+// and folding them into one function with a bag of options would turn a visible difference
+// into a flag nobody reads.
+//
+// `shown` is what the message names the target as, which is not always `target`: the two
+// annotated sites print the annotation *as written* so the diagnostic reads back as the
+// source, while the others print the resolved type. `subject` prefixes the message with the
+// binding's name where there is one, and is empty where there is not.
+func (tc *TypeChecker) checkStorable(
+	value ast.Expression, valueType, target types.Type, shown any, loc ast.Location, subject string,
+) bool {
+	if !tc.assignableValue(value, valueType, target) {
+		if subject != "" {
+			tc.addError(loc, SeverityError, "%s: cannot assign %s to %s", subject, valueType, shown)
+		} else {
+			tc.addError(loc, SeverityError, "cannot assign %s to %s", valueType, shown)
+		}
+		return false
+	}
+	return tc.checkAllocationCompat(valueType, target, loc, subject)
+}
+
 // checkAssignedValue infers value and verifies it can be stored in a binding of
 // type target, reporting an assignability or allocation-flavor mismatch. Returns
 // target on success and nil on any failure. Shared by the variable and parameter
@@ -1176,12 +1199,7 @@ func (tc *TypeChecker) checkAssignedValue(name string, value ast.Expression, tar
 	if rhsType == nil {
 		return nil
 	}
-	if !tc.assignableValue(value, rhsType, target) {
-		tc.addError(loc, SeverityError,
-			"%s: cannot assign %s to %s", name, rhsType, target)
-		return nil
-	}
-	if !tc.checkAllocationCompat(rhsType, target, loc, name) {
+	if !tc.checkStorable(value, rhsType, target, target, loc, name) {
 		return nil
 	}
 	return target
@@ -1272,12 +1290,7 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	if reportedByContext || valueType == nil {
 		return
 	}
-	if !tc.assignableValue(stmt.Value, valueType, targetType) {
-		tc.addError(stmt.GetLocation(), SeverityError,
-			"cannot assign %s to %s", valueType, targetType)
-		return
-	}
-	if !tc.checkAllocationCompat(valueType, targetType, stmt.GetLocation(), "") {
+	if !tc.checkStorable(stmt.Value, valueType, targetType, targetType, stmt.GetLocation(), "") {
 		return
 	}
 	tc.checkIntegerLiteralRange(stmt.Target.GetName(), stmt.Value, targetType)
