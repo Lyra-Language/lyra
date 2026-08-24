@@ -91,3 +91,48 @@ func TestLiteralWidth_OverflowLeftUntyped(t *testing.T) {
 	res := parseCollectAndCheck(t, `let x: u8 = 300`, false)
 	assertErrorsAre(t, res, "x: literal value 300 overflows u8")
 }
+
+// **An argument is a value position, and the rule holds in every value position.**
+//
+// propagateLiteralType deliberately leaves an unfitting literal untyped, "expecting a
+// *downstream* site to report it" — which is why the declaration, reassignment and return
+// positions each pair it with checkIntegerLiteralRange. An argument has no downstream: the
+// literal reached the backend, was narrowed to the parameter's width, and `direct(300)`
+// against a `u8` parameter checked clean and printed **44**.
+//
+// The four call shapes are separate code paths that had all missed it, which is why each is
+// asserted here rather than one standing in for the rest.
+func TestLiteralWidth_ArgumentOverflow_DirectCall_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let direct = pure (n: u8) -> u8 => n
+let f = () -> u8 => direct(300)`, false)
+	assertErrorsAre(t, res, "direct: argument 1 (n): literal value 300 overflows u8")
+}
+
+// Through a function-typed *value*, where there is no declaration to read a parameter name
+// from — so the subject is positional.
+func TestLiteralWidth_ArgumentOverflow_IndirectCall_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let indirect = pure (f: (u8) -> u8) -> u8 => f(300)`, false)
+	assertErrorsAre(t, res, "f: argument 1: literal value 300 overflows u8")
+}
+
+// A trait method's declared parameter width is the argument's context too.
+func TestLiteralWidth_ArgumentOverflow_TraitMethod_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+struct Box { tag: i64 }
+trait Taker { pure take: (Self, u8) -> u8 }
+impl Taker for Box { take = pure (self, n) => n }
+let f = (b: Box) -> u8 => b.take(300)`, false)
+	assertErrorsAre(t, res, "take: argument 1: literal value 300 overflows u8")
+}
+
+// The boundary values must still be accepted — a check that rejects 255 for a u8 would be
+// worse than the gap it closes.
+func TestLiteralWidth_ArgumentAtTheBoundary_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let take = pure (n: u8, m: i8) -> i64 => i64(n) + i64(m)
+let f = () -> i64 => take(255, -128)
+let g = () -> i64 => take(0, 127)`, false)
+	assertNoErrors(t, res)
+}

@@ -478,6 +478,16 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 			// width, not the i64 default. Applies to every assignable arg, not just
 			// `own` ones (width is orthogonal to ownership).
 			tc.propagateLiteralType(arg, resolvedParamType)
+			// And the width must actually hold it. propagateLiteralType deliberately
+			// leaves an unfitting literal untyped, "expecting a downstream site to
+			// report" — but an argument has no downstream, so `direct(300)` against a
+			// `u8` parameter checked clean and printed 44. This is the same pairing the
+			// declaration, reassignment and return positions already make; the language
+			// rule is that a literal which cannot hold its value is an error in *every*
+			// position.
+			tc.checkIntegerLiteralRange(
+				fmt.Sprintf("%s: argument %d (%s)", calleeName, i+1, paramName),
+				arg, resolvedParamType)
 			if param.TypeModifier == types.Mut {
 				tc.checkMutArgument(calleeName, i+1, paramName, arg, resolvedParamType)
 			}
@@ -541,7 +551,13 @@ func (tc *TypeChecker) inferLambdaCallFromType(calleeName string, lambdaType *ty
 			tc.addError(arg.GetLocation(), SeverityError,
 				"%s: argument %d: cannot assign %s to %s",
 				calleeName, i+1, argType, param.Type)
+			continue
 		}
+		// A call *through a function-typed value* is still an argument position, and a
+		// literal too wide for the parameter is the same error here as at a direct call.
+		// A function type has no parameter names to quote, so the subject is positional.
+		tc.checkIntegerLiteralRange(
+			fmt.Sprintf("%s: argument %d", calleeName, i+1), arg, param.Type)
 	}
 
 	return tc.resolveTypeIfKnown(lambdaType.ReturnType.Type, call.GetLocation())
