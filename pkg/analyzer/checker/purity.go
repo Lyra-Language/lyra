@@ -12,18 +12,6 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
-// PurityError reports an observable side effect that occurs inside a function
-// marked `pure`.
-type PurityError struct {
-	Code     string
-	Message  string
-	Location ast.Location
-}
-
-func (e PurityError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Location.Pretty(), e.Message)
-}
-
 // CheckPurity walks the program and reports observable side effects that occur
 // inside any function marked `pure`, plus — as warnings, the second result — the
 // inverse: a function that could have been marked `pure` and was not
@@ -71,7 +59,7 @@ func (e PurityError) Error() string {
 //   - bottom-up purity *inference* for methods — today only an explicit
 //     `pure` marker on the method itself is trusted; an unannotated method is
 //     always treated as potentially impure, unlike a free function
-func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable, methodTable *typetable.MethodTable, caps *captures.Table) ([]PurityError, []diag.Diagnostic) {
+func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable, methodTable *typetable.MethodTable, caps *captures.Table) ([]diag.Diagnostic, []diag.Diagnostic) {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
 	frames := newScopeFrames(program, scopeTable)
 	boundGroups := collectTraitMethodGroups(program)
@@ -622,7 +610,7 @@ func newInference(
 }
 
 type purityChecker struct {
-	errors []PurityError
+	errors []diag.Diagnostic
 	// The effect tables and the context they were computed against, shared with the
 	// fixpoint rather than copied out of it. Embedded, so `c.impureLambdas`,
 	// `c.methodTable`, `c.frames` and the rest read exactly what inference holds.
@@ -1119,7 +1107,7 @@ func (c *purityChecker) report(loc ast.Location, format string, args ...any) {
 // bound checks (CodeEffectBoundViolation), which share this pass with `pure`
 // (CodePurityViolation) but are a distinct diagnostic.
 func (c *purityChecker) reportCode(code string, loc ast.Location, format string, args ...any) {
-	c.errors = append(c.errors, PurityError{
+	c.errors = append(c.errors, diag.Diagnostic{Severity: diag.SeverityError,
 		Code:     code,
 		Message:  fmt.Sprintf(format, args...),
 		Location: loc,

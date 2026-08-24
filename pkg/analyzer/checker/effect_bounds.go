@@ -1,23 +1,9 @@
 package checker
 
 import (
-	"fmt"
-
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
-
-// EffectBoundsError reports an invalid combination of effect-bound modifiers
-// (`pure`, `det`, `noalloc`) on a function or trait method.
-type EffectBoundsError struct {
-	Code     string
-	Message  string
-	Location ast.Location
-}
-
-func (e EffectBoundsError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Location.Pretty(), e.Message)
-}
 
 // CheckEffectBounds walks the program AST and reports any callable annotated
 // with a contradictory pair of effect bounds. The bounds form two axes:
@@ -29,7 +15,7 @@ func (e EffectBoundsError) Error() string {
 //     rung (`pure noalloc`, `det noalloc`), so it is never part of a conflict.
 //
 // Today the only conflict is therefore `pure` together with `det`.
-func CheckEffectBounds(program *ast.Program) []EffectBoundsError {
+func CheckEffectBounds(program *ast.Program) []diag.Diagnostic {
 	c := &effectBoundsChecker{}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -56,7 +42,7 @@ func CheckEffectBounds(program *ast.Program) []EffectBoundsError {
 }
 
 type effectBoundsChecker struct {
-	errors []EffectBoundsError
+	errors []diag.Diagnostic
 }
 
 func (c *effectBoundsChecker) stmtVisitor() func(ast.Statement) bool {
@@ -76,7 +62,7 @@ func (c *effectBoundsChecker) exprVisitor() func(ast.Expression) bool {
 // a callable marked both `pure` and `det`.
 func (c *effectBoundsChecker) check(isPure, isDet bool, loc ast.Location) {
 	if isPure && isDet {
-		c.errors = append(c.errors, EffectBoundsError{
+		c.errors = append(c.errors, diag.Diagnostic{Severity: diag.SeverityError,
 			Code:     diag.CodeConflictingEffectBounds,
 			Message:  "`pure` and `det` are mutually exclusive: `pure` already implies determinism (it is the stronger bound) — use one, not both",
 			Location: loc,

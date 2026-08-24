@@ -7,19 +7,6 @@ import (
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
-// UnsafeOutsideUnsafeError reports a raw-pointer operation (`&x`, `*p`, a write
-// through a pointer) or a call to an `unsafe` function that appears outside an
-// `unsafe` block or `unsafe` function body.
-type UnsafeOutsideUnsafeError struct {
-	Code     string
-	Message  string
-	Location ast.Location
-}
-
-func (e UnsafeOutsideUnsafeError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Location.Pretty(), e.Message)
-}
-
 // CheckUnsafeOutsideUnsafe walks the program AST and reports the **raw-pointer**
 // operations that are not enclosed by an `unsafe { ... }` block or an `unsafe` function
 // body: taking a pointer (`&x`), dereferencing one (`p^`), and writing through one
@@ -36,7 +23,7 @@ func (e UnsafeOutsideUnsafeError) Error() string {
 // The unsafe context does NOT leak across a function boundary: a non-unsafe
 // lambda declared inside an `unsafe` block is its own safe context (just as
 // `inAsync` resets per-lambda in the await checker).
-func CheckUnsafeOutsideUnsafe(program *ast.Program) []UnsafeOutsideUnsafeError {
+func CheckUnsafeOutsideUnsafe(program *ast.Program) []diag.Diagnostic {
 	c := &unsafeChecker{}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -48,11 +35,11 @@ func CheckUnsafeOutsideUnsafe(program *ast.Program) []UnsafeOutsideUnsafeError {
 }
 
 type unsafeChecker struct {
-	errors []UnsafeOutsideUnsafeError
+	errors []diag.Diagnostic
 }
 
 func (c *unsafeChecker) report(loc ast.Location, format string, args ...any) {
-	c.errors = append(c.errors, UnsafeOutsideUnsafeError{
+	c.errors = append(c.errors, diag.Diagnostic{Severity: diag.SeverityError,
 		Code:     diag.CodeUnsafeOutsideUnsafe,
 		Message:  fmt.Sprintf(format, args...),
 		Location: loc,

@@ -6,6 +6,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 )
 
@@ -13,7 +14,7 @@ import (
 // Test helpers
 // ---------------------------------------------------------------------------
 
-func parseCollectAndCheck(t *testing.T, source string) []checker.UseBeforeDeclarationError {
+func parseCollectAndCheck(t *testing.T, source string) []diag.Diagnostic {
 	t.Helper()
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -24,21 +25,21 @@ func parseCollectAndCheck(t *testing.T, source string) []checker.UseBeforeDeclar
 	return checker.CheckUseBeforeDeclaration(program)
 }
 
-func assertNoErrors(t *testing.T, errs []checker.UseBeforeDeclarationError) {
+func assertNoErrors(t *testing.T, errs []diag.Diagnostic) {
 	t.Helper()
 	if len(errs) > 0 {
 		t.Errorf("expected no errors, got %d: %v", len(errs), errs)
 	}
 }
 
-func assertErrorCount(t *testing.T, errs []checker.UseBeforeDeclarationError, count int) {
+func assertErrorCount(t *testing.T, errs []diag.Diagnostic, count int) {
 	t.Helper()
 	if len(errs) != count {
 		t.Errorf("expected %d error(s), got %d: %v", count, len(errs), errs)
 	}
 }
 
-func assertErrorContains(t *testing.T, errs []checker.UseBeforeDeclarationError, substr string) {
+func assertErrorContains(t *testing.T, errs []diag.Diagnostic, substr string) {
 	t.Helper()
 	for _, e := range errs {
 		if strings.Contains(e.Error(), substr) {

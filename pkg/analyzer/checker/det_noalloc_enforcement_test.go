@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
 // assertBoundError asserts exactly one diagnostic with the given code.
-func assertBoundError(t *testing.T, errs []checker.PurityError, wantCode string) {
+func assertBoundError(t *testing.T, errs []diag.Diagnostic, wantCode string) {
 	t.Helper()
 	if len(errs) != 1 {
 		t.Fatalf("expected 1 error, got %d: %v", len(errs), errs)

@@ -5,10 +5,11 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 )
 
-func parseCollectAndCheckBCL(t *testing.T, source string) []checker.BreakContinueOutsideLoopError {
+func parseCollectAndCheckBCL(t *testing.T, source string) []diag.Diagnostic {
 	t.Helper()
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -19,14 +20,14 @@ func parseCollectAndCheckBCL(t *testing.T, source string) []checker.BreakContinu
 	return checker.CheckBreakContinueOutsideLoop(program)
 }
 
-func assertNoBCLErrors(t *testing.T, errs []checker.BreakContinueOutsideLoopError) {
+func assertNoBCLErrors(t *testing.T, errs []diag.Diagnostic) {
 	t.Helper()
 	if len(errs) > 0 {
 		t.Errorf("expected no errors, got %d: %v", len(errs), errs)
 	}
 }
 
-func assertBCLErrorCount(t *testing.T, errs []checker.BreakContinueOutsideLoopError, count int) {
+func assertBCLErrorCount(t *testing.T, errs []diag.Diagnostic, count int) {
 	t.Helper()
 	if len(errs) != count {
 		t.Errorf("expected %d error(s), got %d: %v", count, len(errs), errs)

@@ -1,26 +1,11 @@
 package checker
 
 import (
-	"fmt"
-
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
-
-// TryOutsideResultError reports a `?` (try) postfix operator that appears in a
-// function whose declared return type is neither Result nor Maybe — there is no
-// channel for the operator to short-circuit the Err/None into.
-type TryOutsideResultError struct {
-	Code     string
-	Message  string
-	Location ast.Location
-}
-
-func (e TryOutsideResultError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Location.Pretty(), e.Message)
-}
 
 // CheckTryOutsideResult walks the program AST and reports any `?` operator whose
 // nearest enclosing lambda does not declare a Result/Maybe return type (or which
@@ -30,7 +15,7 @@ func (e TryOutsideResultError) Error() string {
 // CheckAwaitOutsideAsync. Whether the operand's *kind* matches the enclosing
 // return kind (e.g. propagating a Maybe out of a Result-returning function) is
 // checked in the typechecker, which has access to inferred types.
-func CheckTryOutsideResult(program *ast.Program, symTable *symbols.SymbolTable) []TryOutsideResultError {
+func CheckTryOutsideResult(program *ast.Program, symTable *symbols.SymbolTable) []diag.Diagnostic {
 	c := &tryChecker{symTable: symTable}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -42,7 +27,7 @@ func CheckTryOutsideResult(program *ast.Program, symTable *symbols.SymbolTable) 
 }
 
 type tryChecker struct {
-	errors   []TryOutsideResultError
+	errors   []diag.Diagnostic
 	symTable *symbols.SymbolTable
 }
 
@@ -55,7 +40,7 @@ func (c *tryChecker) exprVisitor(enclosing *types.ReturnType) func(ast.Expressio
 		switch e := expr.(type) {
 		case *ast.TryExpr:
 			if enclosing == nil || c.canonicalKindOfType(enclosing.Type) == "" {
-				c.errors = append(c.errors, TryOutsideResultError{
+				c.errors = append(c.errors, diag.Diagnostic{Severity: diag.SeverityError,
 					Code:     diag.CodeTryOutsideResult,
 					Message:  "`?` can only be used inside a function returning Result or Maybe",
 					Location: e.GetLocation(),

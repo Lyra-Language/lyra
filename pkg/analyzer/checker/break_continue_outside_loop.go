@@ -7,22 +7,10 @@ import (
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
-// BreakContinueOutsideLoopError reports a break or continue that appears outside
-// any loop body, or a labeled break/continue whose label is not in scope.
-type BreakContinueOutsideLoopError struct {
-	Code     string
-	Message  string
-	Location ast.Location
-}
-
-func (e BreakContinueOutsideLoopError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Location.Pretty(), e.Message)
-}
-
 // CheckBreakContinueOutsideLoop walks the program AST and reports any break or
 // continue statement that appears outside a loop body, as well as labeled
 // break/continue statements whose label does not name an enclosing loop.
-func CheckBreakContinueOutsideLoop(program *ast.Program) []BreakContinueOutsideLoopError {
+func CheckBreakContinueOutsideLoop(program *ast.Program) []diag.Diagnostic {
 	c := &bclChecker{}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -33,7 +21,7 @@ func CheckBreakContinueOutsideLoop(program *ast.Program) []BreakContinueOutsideL
 }
 
 type bclChecker struct {
-	errors []BreakContinueOutsideLoopError
+	errors []diag.Diagnostic
 }
 
 func (c *bclChecker) reportBreak(loc ast.Location, label string) {
@@ -43,7 +31,7 @@ func (c *bclChecker) reportBreak(loc ast.Location, label string) {
 	} else {
 		msg = "break statement outside of a loop"
 	}
-	c.errors = append(c.errors, BreakContinueOutsideLoopError{Code: diag.CodeBreakContinueOutsideLoop, Message: msg, Location: loc})
+	c.errors = append(c.errors, diag.Diagnostic{Severity: diag.SeverityError, Code: diag.CodeBreakContinueOutsideLoop, Message: msg, Location: loc})
 }
 
 func (c *bclChecker) reportContinue(loc ast.Location, label string) {
@@ -53,7 +41,7 @@ func (c *bclChecker) reportContinue(loc ast.Location, label string) {
 	} else {
 		msg = "continue statement outside of a loop"
 	}
-	c.errors = append(c.errors, BreakContinueOutsideLoopError{Code: diag.CodeBreakContinueOutsideLoop, Message: msg, Location: loc})
+	c.errors = append(c.errors, diag.Diagnostic{Severity: diag.SeverityError, Code: diag.CodeBreakContinueOutsideLoop, Message: msg, Location: loc})
 }
 
 func hasLabel(labels []string, label string) bool {

@@ -159,51 +159,42 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 		}
 	}
 
-	// Standalone AST checker passes that run before typechecking. Each of these
-	// reports only errors (never warnings) in the current pipeline.
-	for _, e := range checker.CheckUseBeforeDeclaration(program) {
-		res.err(e.Location, e.Code, e.Message)
+	// The standalone AST checker passes, which run before typechecking and need nothing
+	// from it. The driver's job here is only to run them in order and collect: each
+	// returns diagnostics carrying their own severity.
+	//
+	// Ten identical three-line loops stood here, because ten passes each declared their
+	// own `{Code, Message, Location}` struct with an identical `Error()` for the one
+	// thing they all report, and the driver unpacked each back into a diag.Diagnostic
+	// field by field.
+	for _, diags := range [][]diag.Diagnostic{
+		checker.CheckUseBeforeDeclaration(program),
+		checker.CheckReturnOutsideFunction(program),
+		checker.CheckBreakContinueOutsideLoop(program),
+		checker.CheckAwaitOutsideAsync(program),
+		checker.CheckTryOutsideResult(program, symTable),
+		checker.CheckYieldOutsideGenerator(program),
+		// The unsafe-context policy (lyra-E011): a raw-pointer operation or a call to
+		// an `unsafe` function needs an enclosing `unsafe` block or function, and
+		// unsafe-ness does not leak across a lambda boundary. Written and tested since
+		// 07/xx and *not* run between 08/13 and 08/18, because its advice was to write
+		// an `unsafe` block that was itself an unknown expression — a diagnostic whose
+		// fix does not compile is worse than none. Pointers lower now, so the advice can
+		// be followed and the check is back.
+		checker.CheckUnsafeOutsideUnsafe(program),
+		checker.CheckRecursiveTypes(program),
+		checker.CheckEffectBounds(program),
+		// Generic parameter lists, reconciled against the signature they belong to. It
+		// runs before typechecking because reporting at the *declaration* is the point —
+		// the failure it closes is a diagnostic landing at a call site or in the backend
+		// instead. It was already appended rather than unpacked, being the one pass that
+		// reported both severities: an undeclared type variable is an error, a
+		// declared-but-unmentioned one a warning. Every pass here carries its own
+		// severity now, which is what lets them share this loop.
+		checker.CheckGenericParams(program),
+	} {
+		res.Diagnostics = append(res.Diagnostics, diags...)
 	}
-	for _, e := range checker.CheckReturnOutsideFunction(program) {
-		res.err(e.Location, e.Code, e.Message)
-	}
-	for _, e := range checker.CheckBreakContinueOutsideLoop(program) {
-		res.err(e.Location, e.Code, e.Message)
-	}
-	for _, e := range checker.CheckAwaitOutsideAsync(program) {
-		res.err(e.Location, e.Code, e.Message)
-	}
-	for _, e := range checker.CheckTryOutsideResult(program, symTable) {
-		res.err(e.Location, e.Code, e.Message)
-	}
-	for _, e := range checker.CheckYieldOutsideGenerator(program) {
-		res.err(e.Location, e.Code, e.Message)
-	}
-	// The unsafe-context policy (lyra-E011): a raw-pointer operation or a call to an
-	// `unsafe` function needs an enclosing `unsafe` block or function, and unsafe-ness
-	// does not leak across a lambda boundary. Written and tested since 07/xx and *not*
-	// run between 08/13 and 08/18, because its advice was to write an `unsafe` block
-	// that was itself an unknown expression — a diagnostic whose fix does not compile is
-	// worse than none. Pointers lower now, so the advice can be followed and the check
-	// is back.
-	for _, e := range checker.CheckUnsafeOutsideUnsafe(program) {
-		res.err(e.Location, e.Code, e.Message)
-	}
-	for _, e := range checker.CheckRecursiveTypes(program) {
-		res.err(e.Location, e.Code, e.Message)
-	}
-	for _, e := range checker.CheckEffectBounds(program) {
-		res.err(e.Location, e.Code, e.Message)
-	}
-
-	// Generic parameter lists, reconciled against the signature they belong to.
-	// Appended rather than run through res.err because, alone among the
-	// pre-typecheck passes, it reports both severities: an undeclared type
-	// variable is an error, a declared-but-unmentioned one a warning. It runs
-	// here, before typechecking, because reporting at the declaration is the
-	// point — the failure it closes is a diagnostic that lands at a call site or
-	// in the backend instead.
-	res.Diagnostics = append(res.Diagnostics, checker.CheckGenericParams(program)...)
 
 	// Typecheck: AST → TypeTable (+ MethodTable for dispatch resolutions).
 	tt := typetable.New()
@@ -225,9 +216,7 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	// Purity must run after typechecking — it consumes the resolved MethodTable —
 	// and after captures, which is how it knows a closure construction's cost.
 	purityErrors, purityWarnings := checker.CheckPurity(program, scopeTable, tt, tc.MethodTable(), res.Captures)
-	for _, e := range purityErrors {
-		res.err(e.Location, e.Code, e.Message)
-	}
+	res.Diagnostics = append(res.Diagnostics, purityErrors...)
 	// Appended rather than routed through res.err: these are the missing-`pure`-bound
 	// advisories (lyra-W018), which carry their own severity already.
 	res.Diagnostics = append(res.Diagnostics, purityWarnings...)
@@ -327,18 +316,7 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 	// Type errors are appended last (matching the previous LSP ordering). They
 	// carry their own severity, tags, and related information.
 	for _, te := range typeErrors {
-		sev := diag.SeverityError
-		if te.Severity == typechecker.SeverityWarning {
-			sev = diag.SeverityWarning
-		}
-		res.Diagnostics = append(res.Diagnostics, diag.Diagnostic{
-			Severity:           sev,
-			Code:               te.Code,
-			Location:           te.Location,
-			Message:            te.Message,
-			Tags:               te.Tags,
-			RelatedInformation: te.RelatedInformation,
-		})
+		res.Diagnostics = append(res.Diagnostics, te.Diagnostic())
 	}
 
 	return res

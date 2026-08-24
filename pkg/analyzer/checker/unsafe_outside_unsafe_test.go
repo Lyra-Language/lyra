@@ -5,10 +5,11 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/checker"
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 )
 
-func checkUnsafe(t *testing.T, source string) []checker.UnsafeOutsideUnsafeError {
+func checkUnsafe(t *testing.T, source string) []diag.Diagnostic {
 	t.Helper()
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -19,7 +20,7 @@ func checkUnsafe(t *testing.T, source string) []checker.UnsafeOutsideUnsafeError
 	return checker.CheckUnsafeOutsideUnsafe(program)
 }
 
-func assertUnsafeCount(t *testing.T, errs []checker.UnsafeOutsideUnsafeError, want int) {
+func assertUnsafeCount(t *testing.T, errs []diag.Diagnostic, want int) {
 	t.Helper()
 	if len(errs) != want {
 		t.Fatalf("expected %d unsafe error(s), got %d: %v", want, len(errs), errs)

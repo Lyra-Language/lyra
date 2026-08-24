@@ -666,3 +666,27 @@ value. A frame's `mutable` map records mutability under each name, while "is thi
 declared in this body" is a different question; three call sites used to copy the key set
 into a fresh all-true map so a value test would work, once per round per callable. The
 presence test lets them share the frame's own map, and those copies are gone.
+
+## Every pass reports `diag.Diagnostic`
+
+Ten passes each declared their own error struct — `AwaitOutsideAsyncError`,
+`ReturnOutsideFunctionError`, `PurityError` and seven more — and all ten were
+`{Code, Message string; Location ast.Location}` with an identical `Error()`. The driver
+then unpacked each one back into a `diag.Diagnostic`, field by field, in ten identical
+three-line loops.
+
+They return `[]diag.Diagnostic` now, which half the package already did
+(`CheckGenericParams`, `CheckUseAfterMove`, `CheckUnreachableCode`, and the warnings half of
+`CheckPurity`). The driver's ladder is one loop over a slice of results.
+
+**The severity moves with the diagnostic**, which is what makes the loop possible. Before,
+the driver stamped `SeverityError` on everything coming out of these passes, and
+`CheckGenericParams` had to be appended separately because it alone reports both — an
+undeclared type variable is an error, a declared-but-unmentioned one a warning. A pass that
+wants to report a warning no longer needs the driver to learn about it.
+
+`typechecker.TypeError` keeps its own type, because it genuinely differs: it carries the
+typechecker's own two-valued `Severity` rather than `diag`'s. That one mapping is now
+`TypeError.Diagnostic()`, beside the two types it bridges, rather than six fields copied
+across in the driver — so a field added to `TypeError` cannot silently fail to reach the
+output.

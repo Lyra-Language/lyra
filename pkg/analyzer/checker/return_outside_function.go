@@ -1,28 +1,14 @@
 package checker
 
 import (
-	"fmt"
-
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
-// ReturnOutsideFunctionError reports a return statement that appears outside
-// any function body.
-type ReturnOutsideFunctionError struct {
-	Code     string
-	Message  string
-	Location ast.Location
-}
-
-func (e ReturnOutsideFunctionError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Location.Pretty(), e.Message)
-}
-
 // CheckReturnOutsideFunction walks the program AST and reports any return
 // statements that appear at the top level or in any context that is not
 // nested inside a lambda / function body.
-func CheckReturnOutsideFunction(program *ast.Program) []ReturnOutsideFunctionError {
+func CheckReturnOutsideFunction(program *ast.Program) []diag.Diagnostic {
 	c := &rofChecker{}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -33,11 +19,11 @@ func CheckReturnOutsideFunction(program *ast.Program) []ReturnOutsideFunctionErr
 }
 
 type rofChecker struct {
-	errors []ReturnOutsideFunctionError
+	errors []diag.Diagnostic
 }
 
 func (c *rofChecker) report(loc ast.Location) {
-	c.errors = append(c.errors, ReturnOutsideFunctionError{
+	c.errors = append(c.errors, diag.Diagnostic{Severity: diag.SeverityError,
 		Code:     diag.CodeReturnOutsideFunction,
 		Message:  "return statement outside of a function body",
 		Location: loc,

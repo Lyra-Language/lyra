@@ -8,17 +8,6 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
-// RecursiveTypeError is emitted when a struct, data type, or named tuple
-// contains itself by value (directly or through a cycle of by-value
-// references), which would give it unbounded size.
-type RecursiveTypeError struct {
-	Code     string
-	Message  string
-	Location ast.Location
-}
-
-func (e RecursiveTypeError) Error() string { return e.Message }
-
 // CheckRecursiveTypes walks all type declarations in the program and reports
 // any by-value recursive cycle. A cycle is safe only when a recursive
 // field/constructor-parameter is annotated `shared` (heap-allocated,
@@ -27,7 +16,7 @@ func (e RecursiveTypeError) Error() string { return e.Message }
 //
 // The check does not require the typechecker output; it runs directly on the
 // collected AST.
-func CheckRecursiveTypes(program *ast.Program) []RecursiveTypeError {
+func CheckRecursiveTypes(program *ast.Program) []diag.Diagnostic {
 	// Build a name→decl index of all struct/data/named-tuple declarations.
 	decls := make(map[string]*ast.TypeDeclStmt)
 	for _, s := range program.Statements {
@@ -64,7 +53,7 @@ func CheckRecursiveTypes(program *ast.Program) []RecursiveTypeError {
 	)
 	color := make(map[string]int, len(decls))
 	reported := make(map[string]bool)
-	var errors []RecursiveTypeError
+	var errors []diag.Diagnostic
 
 	var dfs func(name string)
 	dfs = func(name string) {
@@ -80,7 +69,7 @@ func CheckRecursiveTypes(program *ast.Program) []RecursiveTypeError {
 				if !reported[dep] {
 					reported[dep] = true
 					decl := decls[dep]
-					errors = append(errors, RecursiveTypeError{
+					errors = append(errors, diag.Diagnostic{Severity: diag.SeverityError,
 						Code: diag.CodeRecursiveType,
 						Message: fmt.Sprintf(
 							"type %q is recursive without indirection: by-value self-reference gives it unbounded size; "+

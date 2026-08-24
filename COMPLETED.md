@@ -9,6 +9,43 @@ Newest first.
 
 ## Dated log
 
+### 08/24/26 (6)
+**Ten checker passes, ten identical error structs, ten identical driver loops.**
+
+`AwaitOutsideAsyncError`, `BreakContinueOutsideLoopError`, `EffectBoundsError`,
+`PurityError`, `RecursiveTypeError`, `ReturnOutsideFunctionError`, `TryOutsideResultError`,
+`UnsafeOutsideUnsafeError`, `UseBeforeDeclarationError` and `YieldOutsideGeneratorError`
+were all `{Code, Message string; Location ast.Location}` with an identical `Error()`. The
+driver unpacked each back into a `diag.Diagnostic` field by field, in ten copies of
+
+```go
+for _, e := range checker.CheckX(program) {
+    res.err(e.Location, e.Code, e.Message)
+}
+```
+
+They return `[]diag.Diagnostic` now — which half the package already did — and the ladder is
+one loop over a slice of results. The transformation was smaller than it looks: the three
+field names already matched `diag.Diagnostic`'s, so each struct literal needed only its type
+swapped and a severity added.
+
+**Moving the severity into the pass is what made the loop possible.** The driver used to
+stamp `SeverityError` on everything from these passes, which is why `CheckGenericParams` sat
+outside the ladder — it alone reports both severities, an undeclared type variable being an
+error and a declared-but-unmentioned one a warning. It is in the list now, and a pass that
+later wants to warn no longer needs the driver to learn about it.
+
+`typechecker.TypeError` keeps its own type: it carries the typechecker's two-valued
+`Severity` rather than `diag`'s, and that mapping is real work rather than a copy. It became
+`TypeError.Diagnostic()`, beside the two types it bridges — so a field added to `TypeError`
+cannot silently fail to reach the output, which the six-field hand copy in the driver
+allowed.
+
+Net −118 lines. Nothing outside the checker package and its own tests referenced any of the
+ten type names, which is what made this cheap; the 40 test references needed only their type
+annotations changed, since `.Code`, `.Message` and `.Location` read the same on the
+replacement.
+
 ### 08/24/26 (5)
 **The LLVM backend's small duplications.**
 

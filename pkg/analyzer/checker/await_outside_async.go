@@ -1,27 +1,13 @@
 package checker
 
 import (
-	"fmt"
-
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
-// AwaitOutsideAsyncError reports an await expression that appears outside an
-// async function body.
-type AwaitOutsideAsyncError struct {
-	Code     string
-	Message  string
-	Location ast.Location
-}
-
-func (e AwaitOutsideAsyncError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Location.Pretty(), e.Message)
-}
-
 // CheckAwaitOutsideAsync walks the program AST and reports any await expression
 // that is not enclosed within an async lambda (LambdaExpr.IsAsync == true).
-func CheckAwaitOutsideAsync(program *ast.Program) []AwaitOutsideAsyncError {
+func CheckAwaitOutsideAsync(program *ast.Program) []diag.Diagnostic {
 	c := &aoaChecker{}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -32,7 +18,7 @@ func CheckAwaitOutsideAsync(program *ast.Program) []AwaitOutsideAsyncError {
 }
 
 type aoaChecker struct {
-	errors []AwaitOutsideAsyncError
+	errors []diag.Diagnostic
 }
 
 func (c *aoaChecker) stmtVisitor(_ bool) func(ast.Statement) bool {
@@ -44,7 +30,7 @@ func (c *aoaChecker) exprVisitor(inAsync bool) func(ast.Expression) bool {
 		switch e := expr.(type) {
 		case *ast.AwaitExpr:
 			if !inAsync {
-				c.errors = append(c.errors, AwaitOutsideAsyncError{
+				c.errors = append(c.errors, diag.Diagnostic{Severity: diag.SeverityError,
 					Code:     diag.CodeAwaitOutsideAsync,
 					Message:  "await expression outside of an async function",
 					Location: expr.GetLocation(),

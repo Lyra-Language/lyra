@@ -10,6 +10,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
+	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	"github.com/Lyra-Language/lyra/pkg/parser"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
@@ -18,7 +19,7 @@ import (
 // resolved, same as the real LSP pipeline) and passes its MethodTable into
 // CheckPurity, so tests exercising trait-method purity work through the same
 // helper as every other purity test.
-func checkPurity(t *testing.T, source string) []checker.PurityError {
+func checkPurity(t *testing.T, source string) []diag.Diagnostic {
 	t.Helper()
 	tree, err := parser.Parse(source)
 	if err != nil {
@@ -36,7 +37,7 @@ func checkPurity(t *testing.T, source string) []checker.PurityError {
 	return errs
 }
 
-func assertPurityCount(t *testing.T, errs []checker.PurityError, want int) {
+func assertPurityCount(t *testing.T, errs []diag.Diagnostic, want int) {
 	t.Helper()
 	if len(errs) != want {
 		t.Fatalf("expected %d purity error(s), got %d: %v", want, len(errs), errs)

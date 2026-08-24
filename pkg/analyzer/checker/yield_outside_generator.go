@@ -7,22 +7,10 @@ import (
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
-// YieldOutsideGeneratorError reports a yield or yield-from expression that
-// appears outside a generator function body.
-type YieldOutsideGeneratorError struct {
-	Code     string
-	Message  string
-	Location ast.Location
-}
-
-func (e YieldOutsideGeneratorError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Location.Pretty(), e.Message)
-}
-
 // CheckYieldOutsideGenerator walks the program AST and reports any yield or
 // yield-from expression that is not enclosed within a generator lambda
 // (LambdaExpr.IsGenerator == true).
-func CheckYieldOutsideGenerator(program *ast.Program) []YieldOutsideGeneratorError {
+func CheckYieldOutsideGenerator(program *ast.Program) []diag.Diagnostic {
 	c := &yogChecker{}
 	for _, node := range program.Statements {
 		if stmt, ok := node.(ast.Statement); ok {
@@ -33,7 +21,7 @@ func CheckYieldOutsideGenerator(program *ast.Program) []YieldOutsideGeneratorErr
 }
 
 type yogChecker struct {
-	errors []YieldOutsideGeneratorError
+	errors []diag.Diagnostic
 }
 
 func (c *yogChecker) report(loc ast.Location, isYieldFrom bool) {
@@ -41,7 +29,7 @@ func (c *yogChecker) report(loc ast.Location, isYieldFrom bool) {
 	if isYieldFrom {
 		kw = "yield from"
 	}
-	c.errors = append(c.errors, YieldOutsideGeneratorError{
+	c.errors = append(c.errors, diag.Diagnostic{Severity: diag.SeverityError,
 		Code:     diag.CodeYieldOutsideGenerator,
 		Message:  fmt.Sprintf("%s expression outside of a generator function", kw),
 		Location: loc,

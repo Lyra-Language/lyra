@@ -7,22 +7,10 @@ import (
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 )
 
-// UseBeforeDeclarationError reports a variable that was used before its
-// declaration within the same lexical scope.
-type UseBeforeDeclarationError struct {
-	Code     string
-	Message  string
-	Location ast.Location
-}
-
-func (e UseBeforeDeclarationError) Error() string {
-	return fmt.Sprintf("%s: %s", e.Location.Pretty(), e.Message)
-}
-
 // CheckUseBeforeDeclaration analyzes the given program for uses of variables
 // before their declaration within the same scope. It returns a (possibly empty)
 // slice of errors.
-func CheckUseBeforeDeclaration(program *ast.Program) []UseBeforeDeclarationError {
+func CheckUseBeforeDeclaration(program *ast.Program) []diag.Diagnostic {
 	c := &ubeChecker{}
 
 	stmts := make([]ast.Statement, 0, len(program.Statements))
@@ -37,11 +25,11 @@ func CheckUseBeforeDeclaration(program *ast.Program) []UseBeforeDeclarationError
 
 // ubeChecker accumulates use-before-declaration errors as it walks the AST.
 type ubeChecker struct {
-	errors []UseBeforeDeclarationError
+	errors []diag.Diagnostic
 }
 
 func (c *ubeChecker) report(loc ast.Location, name string) {
-	c.errors = append(c.errors, UseBeforeDeclarationError{
+	c.errors = append(c.errors, diag.Diagnostic{Severity: diag.SeverityError,
 		Code:     diag.CodeUseBeforeDeclaration,
 		Message:  fmt.Sprintf("variable %q used before its declaration", name),
 		Location: loc,
