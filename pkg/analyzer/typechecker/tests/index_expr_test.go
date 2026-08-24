@@ -98,7 +98,7 @@ func TestIndexExpr_FromEndTypes(t *testing.T) {
 		let b: string = ds.from_end(2)
 		let s = "abc"
 		let c: rune = s.from_end(1)
-	`, true)
+	`, false)
 	assertNoErrors(t, res)
 }
 

@@ -166,7 +166,7 @@ let xs: []Percent = [10, 150, 20]`, false)
 func TestConstraint_PatternCheckedInArgumentPosition(t *testing.T) {
 	res := parseCollectAndCheck(t, `newtype Hex = string where pattern(r"^#[0-9a-fA-F]{6}$")
 let paint = (c: Hex) -> i64 => 1
-let x = paint("nope")`, true)
+let x = paint("nope")`, false)
 	assertErrorsAre(t, res,
 		`value "nope" does not satisfy pattern constraint r"^#[0-9a-fA-F]{6}$" of Hex`)
 }
@@ -175,7 +175,7 @@ let x = paint("nope")`, true)
 // reading `pattern constraint r"r"^#…$""`. Pinned by the assertion above and here.
 func TestConstraint_PatternMessageIsNotDoubleQuoted(t *testing.T) {
 	res := parseCollectAndCheck(t, `newtype Hex = string where pattern(r"^#[0-9a-fA-F]{6}$")
-let h: Hex = "nope"`, true)
+let h: Hex = "nope"`, false)
 	assertErrorsAre(t, res,
 		`value "nope" does not satisfy pattern constraint r"^#[0-9a-fA-F]{6}$" of Hex`)
 }
@@ -209,7 +209,7 @@ let x = handle(302)`, false)
 // A string union compares by value, not by source spelling.
 func TestValuesConstraint_StringUnion(t *testing.T) {
 	res := parseCollectAndCheck(t, `newtype Mode = string where values("r", "w")
-let m: Mode = "x"`, true)
+let m: Mode = "x"`, false)
 	assertErrorsAre(t, res, `value "x" is not one of the values allowed by Mode ("r", "w")`)
 }
 
@@ -441,7 +441,7 @@ newtype Name = string
 let n: Name = "abc"
 let a = n.len()
 let b = n.slice(0, 2)
-`, true))
+`, false))
 }
 
 // A method written *for* the newtype wins over the base's, matching the
@@ -452,7 +452,7 @@ newtype Name = string
 pub let len = (self: Name) -> string => "mine"
 let n: Name = "abc"
 let a: string = n.len()
-`, true)
+`, false)
 	assertNoErrors(t, res)
 }
 
@@ -523,7 +523,7 @@ func TestNewtype_ConstructorOperandMustFitTheBase(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 newtype Cents = i64
 let c = Cents("hi")
-`, true)
+`, false)
 	assertErrorsAre(t, res, "cannot construct Cents from string: its base is i64")
 }
 
@@ -552,7 +552,7 @@ let b = Boxed("hi")
 let rb = string(b)
 let c = Boxed(u8(7))
 let rc = u8(c)
-`, true))
+`, false))
 }
 
 // The turbofish binds the parameters explicitly — `::<>`, the spelling the grammar
@@ -677,7 +677,7 @@ newtype Row = []i64
 let n: Name = "abc"
 let f: Flag = true
 let r: Row = [1, 2, 3]
-`, true))
+`, false))
 }
 
 // A *computed* string is not a literal, so it needs the constructor even though a
@@ -687,7 +687,7 @@ func TestImplicitNewtype_ComputedStringNeedsTheConstructor(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 newtype Email = string
 let mk = (a: string, b: string) -> Email => a ++ b
-`, true)
+`, false)
 	assertErrorsAre(t, res,
 		"cannot use string as Email implicitly: Email is a distinct type over string, so the conversion must be written — `Email(...)`")
 }
@@ -745,7 +745,7 @@ let r = take(i64(c))
 let unwrap = (c2: Cents) -> i64 => i64(c2)
 let e: Email = "x@y"
 let s = string(e)
-`, true))
+`, false))
 }
 
 // `string(...)` and `bool(...)` are identity-only: there is no stringification and
@@ -754,7 +754,7 @@ let s = string(e)
 func TestIdentityConversion_RefusesNonIdentity(t *testing.T) {
 	res := parseCollectAndCheck(t, `
 let s = string(42)
-`, true)
+`, false)
 	assertErrorsAre(t, res,
 		"cannot convert integer literal to string: `string(...)` only reads a value of that type — or a newtype over it — back out")
 }
@@ -767,7 +767,7 @@ func TestImplicitReadout_UnnameableBaseStaysImplicit(t *testing.T) {
 newtype Row = []i64
 let r: Row = [1, 2, 3]
 let base: []i64 = r
-`, true))
+`, false))
 }
 
 // A same-newtype flow is not a read-out, including through match/if arms — the walk
@@ -840,7 +840,7 @@ newtype Cents = i64
 let a: Cents = 150
 let b: Cents = 275
 let c = a.checked_add(b)
-`, true)
+`, false)
 	assertErrorsAre(t, res,
 		"arithmetic on a newtype is opt-in: Cents is nominal over i64, so \"checked_add\" does not reach through the wrapper — give Cents an operator impl, or convert to its base (`i64(...)`) and operate there")
 }
