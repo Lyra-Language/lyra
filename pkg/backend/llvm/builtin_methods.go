@@ -61,86 +61,110 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 	if op, ok := checkedIntOps[member.Property.Name]; ok {
 		return l.lowerCheckedIntMethod(block, call, member, op)
 	}
-	// `len` is two methods sharing a name, told apart by the receiver: an array's is
-	// a field read of its box, a string's of its fat pointer (string_methods.go);
-	// both O(1) since the rune count began riding the value (08/12). Dispatch
-	// on the recorded receiver type rather than on the lowered value, so an
-	// unrecorded receiver is an error here instead of silently taking the array path.
-	if member.Property.Name == "len" || member.Property.Name == "slice" {
-		recvT, ok := l.recordedType(member.Object)
-		if !ok {
-			return nil, nil, fmt.Errorf("llvm: no type recorded for %s() receiver", member.Property.Name)
+	// The rest dispatch on the method's **name**, which was an if-chain of
+	// `member.Property.Name == "…"` before — and five of the arms fetched the receiver's
+	// recorded type with their own copy of the same error. One switch, one fetch, one
+	// message.
+	//
+	// An arm that falls out rather than returning continues past the switch, which is
+	// load-bearing: `slice` on a non-string and `offset` on a non-pointer are *not*
+	// errors here, they are names a user type may also have, and they belong to the
+	// bound-dispatch and float-math rungs below.
+	name := member.Property.Name
+	// receiver is the recorded type of the value the method is called on, fetched at most
+	// once. Dispatching on the *recorded* type rather than on the lowered value is what
+	// makes an unrecorded receiver an error instead of silently taking the array path.
+	var (
+		recvT       types.Type
+		recvKnown   bool
+		recvFetched bool
+	)
+	receiver := func() (types.Type, error) {
+		if !recvFetched {
+			recvT, recvKnown = l.recordedType(member.Object)
+			recvFetched = true
 		}
-		if types.IsString(recvT) {
-			if member.Property.Name == "len" {
+		if !recvKnown {
+			return nil, fmt.Errorf("llvm: no type recorded for %s() receiver", name)
+		}
+		return recvT, nil
+	}
+
+	switch name {
+	case "len", "slice":
+		// Two methods sharing each name, told apart by the receiver: an array's `len` is
+		// a field read of its box, a string's of its fat pointer (string_methods.go);
+		// both O(1) since the rune count began riding the value (08/12).
+		t, err := receiver()
+		if err != nil {
+			return nil, nil, err
+		}
+		if types.IsString(t) {
+			if name == "len" {
 				return l.lowerStringLen(block, call, member)
 			}
 			return l.lowerStringSlice(block, call, member)
 		}
-		if member.Property.Name == "len" {
+		if name == "len" {
 			return l.lowerArrayLen(block, call, member)
 		}
-	}
-	// `from_end` is two methods sharing a name, told apart exactly as `len` is: a
-	// string's is the backward byte walk, an array's is `len - k` with one check.
-	if member.Property.Name == "from_end" {
-		recvT, ok := l.recordedType(member.Object)
-		if !ok {
-			return nil, nil, fmt.Errorf("llvm: no type recorded for from_end() receiver")
+
+	case "from_end":
+		// Told apart exactly as `len` is: a string's is the backward byte walk, an
+		// array's is `len - k` with one check.
+		t, err := receiver()
+		if err != nil {
+			return nil, nil, err
 		}
-		if types.IsString(recvT) {
+		if types.IsString(t) {
 			return l.lowerStringFromEnd(block, call, member)
 		}
-		return l.lowerArrayFromEnd(block, call, member, recvT)
-	}
-	if member.Property.Name == "push" {
-		recvT, ok := l.recordedType(member.Object)
-		if !ok {
-			return nil, nil, fmt.Errorf("llvm: no type recorded for push() receiver")
+		return l.lowerArrayFromEnd(block, call, member, t)
+
+	case "push":
+		t, err := receiver()
+		if err != nil {
+			return nil, nil, err
 		}
-		dyn, ok := l.resolveForLayout(recvT).(types.DynamicArrayType)
+		dyn, ok := l.resolveForLayout(t).(types.DynamicArrayType)
 		if !ok {
-			return nil, nil, fmt.Errorf("llvm: push() on a non-dynamic-array receiver (%s)", recvT)
+			return nil, nil, fmt.Errorf("llvm: push() on a non-dynamic-array receiver (%s)", t)
 		}
 		return l.lowerDynArrayPush(block, call, member, dyn)
-	}
-	// `p.offset(n)` — pointer arithmetic, the one form of it the language has
-	// (pointers.go). Dispatched on the recorded receiver type, because `offset` is a
-	// perfectly ordinary method name a user type may also have.
-	if member.Property.Name == "offset" {
-		recvT, ok := l.recordedType(member.Object)
-		if !ok {
-			return nil, nil, fmt.Errorf("llvm: no type recorded for offset() receiver")
+
+	case "offset":
+		// `p.offset(n)` — pointer arithmetic, the one form of it the language has
+		// (pointers.go). A non-pointer receiver falls through: `offset` is a perfectly
+		// ordinary method name a user type may also have.
+		t, err := receiver()
+		if err != nil {
+			return nil, nil, err
 		}
-		if ptrT, isPtr := l.resolveForLayout(recvT).(types.RawPointerType); isPtr {
+		if ptrT, isPtr := l.resolveForLayout(t).(types.RawPointerType); isPtr {
 			return l.lowerPointerOffset(block, call, member, ptrT)
 		}
-	}
-	if member.Property.Name == "encode_utf8" {
-		return l.lowerEncodeUTF8(block, call, member)
-	}
-	if member.Property.Name == "decode_utf8" {
-		recvT, ok := l.recordedType(member.Object)
-		if !ok {
-			return nil, nil, fmt.Errorf("llvm: no type recorded for decode_utf8() receiver")
+
+	case "decode_utf8":
+		t, err := receiver()
+		if err != nil {
+			return nil, nil, err
 		}
-		return l.lowerDecodeUTF8(block, call, member, l.resolveForLayout(recvT))
-	}
-	if member.Property.Name == "compare_bytes" {
+		return l.lowerDecodeUTF8(block, call, member, l.resolveForLayout(t))
+
+	case "encode_utf8":
+		return l.lowerEncodeUTF8(block, call, member)
+	case "compare_bytes":
 		return l.lowerStringCompareBytes(block, call, member)
-	}
-	if member.Property.Name == "compare_bytes_at" {
+	case "compare_bytes_at":
 		return l.lowerStringCompareBytesAt(block, call, member)
-	}
-	if member.Property.Name == "byte_len" {
+	case "byte_len":
 		return l.lowerStringByteLen(block, call, member)
-	}
-	if member.Property.Name == "byte_offset" {
+	case "byte_offset":
 		return l.lowerStringByteOffset(block, call, member)
-	}
-	if member.Property.Name == "weak" {
+	case "weak":
 		return l.lowerWeakDowngrade(block, call, member)
 	}
+
 	// A call dispatched through a `where` bound (`v.show()` on a bounded type
 	// parameter) resolves *abstractly* in the typechecker — to a trait and a method
 	// name, not to an impl — because the concrete impl is only known once a
