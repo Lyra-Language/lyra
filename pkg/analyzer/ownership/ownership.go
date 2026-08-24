@@ -214,6 +214,20 @@ func IsManaged(t types.Type) bool {
 // +1 is minted and the backend decides where one is released, so any divergence is
 // either a leak or a double free.
 func OwnsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) bool {
+	return ownsManaged(t, symTable, loc, nil)
+}
+
+// ownsManaged is OwnsManaged with the cycle guard threaded through.
+//
+// **seen tracks newtype names, and it exists because this pass runs on invalid programs.**
+// The termination argument below holds for every *well-formed* type: a recursive one must
+// break its cycle with a `shared` or `weak` field (lyra-E014), and both are managed
+// outright. A newtype cycle — `newtype A = B` beside `newtype B = A` — satisfies none of
+// that and is refused by the typechecker, but the driver runs every pass regardless so an
+// editor still gets diagnostics from all of them, so "the typechecker rejected it" is not
+// a guarantee this walk may rely on. Without the set it recursed until the stack ended,
+// taking `lyrac` and the language server down with it.
+func ownsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location, seen map[string]bool) bool {
 	if t == nil {
 		return false
 	}
@@ -241,10 +255,21 @@ func OwnsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) 
 		// recordedType, which normalizes an instantiation to its substituted struct — so it
 		// framed and deep-released *both* bindings. Drop twice, dup never.
 		inst, ok := instantiateDecl(pt, symTable, loc)
-		return ok && OwnsManaged(inst, symTable, loc)
+		return ok && ownsManaged(inst, symTable, loc, seen)
 	}
-	return eachComponent(resolved, func(_ string, ct types.Type) bool {
-		return OwnsManaged(ct, symTable, loc)
+	// A newtype is the one component that can lead back to itself without passing through
+	// something managed, so it is the one whose name is remembered.
+	if ct, ok := resolved.(*types.ConstrainedType); ok {
+		if seen[ct.Name] {
+			return false
+		}
+		if seen == nil {
+			seen = map[string]bool{}
+		}
+		seen[ct.Name] = true
+	}
+	return eachComponent(resolved, func(_ string, comp types.Type) bool {
+		return ownsManaged(comp, symTable, loc, seen)
 	})
 }
 

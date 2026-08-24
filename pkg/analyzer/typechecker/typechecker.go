@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"sort"
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -61,8 +62,12 @@ type TypeChecker struct {
 	instantiations    *typetable.InstantiationTable // generic call site -> the specialization it resolves to (instantiate.go); the backend monomorphizes from it
 	inferring         map[ast.Expression]bool       // expression nodes whose inference is on the stack right now; the cycle guard in inferExprType
 	resolvingTypes    map[string]bool               // type names whose resolution is on the stack right now; the alias-cycle guard in resolveType
-	ufcsModules       map[string]map[string]bool    // file -> modules it reached through a UFCS call; see UFCSModules
-	defaultedCtors    map[ast.Expression]bool       // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
+	// circularNewtypes are newtypes whose base chain leads back to themselves, found up
+	// front by checkNewtypeCycles. Resolution refuses to hand one back, which is what
+	// makes every newtype-stripping walk in the compiler terminate — see that function.
+	circularNewtypes map[string]bool
+	ufcsModules      map[string]map[string]bool // file -> modules it reached through a UFCS call; see UFCSModules
+	defaultedCtors   map[ast.Expression]bool    // data constructions whose instantiation came from defaulting an untyped payload; see markDefaultedConstruction
 	// overflowReported guards checkIntegerLiteralRange: a leaf can be narrowed by more
 	// than one context on the way down, and one too-large literal is one mistake.
 	overflowReported map[ast.Expression]bool
@@ -90,10 +95,11 @@ func New(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTabl
 		// The entry module's scope, not the global one: top-level declarations live in
 		// their module's scope now, and checkInModule swaps in the right one per
 		// statement — this is only the starting point.
-		scope:          symTable.EntryScope(),
-		resolvedTypes:  make(map[string]types.Type),
-		inferring:      make(map[ast.Expression]bool),
-		resolvingTypes: make(map[string]bool),
+		scope:            symTable.EntryScope(),
+		resolvedTypes:    make(map[string]types.Type),
+		inferring:        make(map[ast.Expression]bool),
+		resolvingTypes:   make(map[string]bool),
+		circularNewtypes: make(map[string]bool),
 	}
 }
 
@@ -159,6 +165,10 @@ func (tc *TypeChecker) Check(program *ast.Program) []TypeError {
 	// further down the file, and getting from the callee back to its declaration is what
 	// lets that be checked on demand (typechecker_on_demand.go).
 	tc.collectTopLevelFuncs(program)
+	// Before *anything* resolves a type: a circular newtype has to be known before the
+	// first walk that would follow its base chain, and that is not a walk this pass
+	// controls the order of.
+	tc.checkNewtypeCycles()
 	tc.checkImplCoherence()
 	// Trait default-method bodies, checked once each with Self abstract. After the impls
 	// are collected: a call inside a default publishes one candidate per implementing
@@ -301,6 +311,11 @@ func (tc *TypeChecker) checkTypeDecl(decl *ast.TypeDeclStmt) {
 // declaration. Currently this means compiling every PatternConstraint regex
 // at type-declaration time so users see syntax errors immediately.
 func (tc *TypeChecker) checkConstrainedTypeDecl(decl *ast.TypeDeclStmt, ct *types.ConstrainedType) {
+	// Refused up front by checkNewtypeCycles; the rest of the checks all walk the base
+	// chain, so there is nothing further to say about one that has none.
+	if tc.circularNewtypes[ct.Name] {
+		return
+	}
 	tc.checkNewtypeBaseIsStructural(decl, ct)
 	for _, c := range ct.Constraints {
 		pc, ok := c.(*types.PatternConstraint)
@@ -1889,6 +1904,15 @@ func (tc *TypeChecker) resolveNameReporting(tt types.UnresolvedType, loc ast.Loc
 		}
 		tc.addError(loc, SeverityError, "unknown type %q", tt)
 		tc.resolvedTypes[key] = tt // cache unresolved itself so the error fires only once
+		return tt
+	}
+	// A circular newtype resolves to its own *name* and no further. That is what makes
+	// every newtype-stripping walk terminate: each one advances by resolving the base and
+	// asking whether it is another ConstrainedType, so handing back an unresolved name
+	// stops it. See checkNewtypeCycles for why guarding the walks individually is not the
+	// fix — there are more than a dozen of them, and StripNewtype is used everywhere.
+	if tc.circularNewtypes[tt.Name] {
+		tc.resolvedTypes[key] = tt
 		return tt
 	}
 	// **Resolve what the declaration holds, too.** One hop is not enough once
@@ -4071,6 +4095,69 @@ func (tc *TypeChecker) expandParameterizedNewtype(p types.ParameterizedType, loc
 // type-checked and then crashed the backend with `data constructor "Red" did not record a
 // data type`. Neither had ever been usable, so this refuses two forms rather than
 // removing anything that worked.
+// checkNewtypeCycles refuses every newtype whose base chain leads back to itself, before
+// anything else in this pass resolves a type.
+//
+// **The alias-cycle guard does not cover this.** resolveTypeWith deliberately never descends
+// into a ConstrainedType's base — a newtype is nominal, so resolving its *name* finishes
+// once the newtype itself is in hand — so a cycle of newtypes never enters the resolution
+// stack that guard watches. Nothing else looked, and `newtype A = B` beside `newtype B = A`
+// was accepted.
+//
+// What then happened depended on which walk reached it first, and all of them are fatal:
+// literalTakesShape and propagateLiteral *recurse* on the resolved base, so `let a: A = 0`
+// died with `fatal error: stack overflow`, while inferTypeConversion's and
+// checkImplicitNewtypeReadout's `for` loops simply never terminated — a hung compiler, and
+// a hung editor.
+//
+// **Guarding the walks was not the fix.** More than a dozen places in this package strip a
+// newtype, and types.StripNewtype is used across the whole compiler; adding a visited set to
+// each is a list nobody can finish. Making the *cycle* not survive resolution fixes all of
+// them at once, which is why the name is recorded here and honoured at the one leaf every
+// walk advances through.
+//
+// Both ends of a cycle are reported: each declaration is circular on its own terms, and an
+// author fixing either one fixes the program.
+func (tc *TypeChecker) checkNewtypeCycles() {
+	keys := make([]string, 0, len(tc.symTable.Types))
+	for k := range tc.symTable.Types {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		decl := tc.symTable.Types[k]
+		ct, ok := decl.Type.(*types.ConstrainedType)
+		if !ok {
+			continue
+		}
+		if !tc.newtypeChainReturnsTo(ct, decl.GetLocation()) {
+			continue
+		}
+		tc.circularNewtypes[ct.Name] = true
+		tc.addError(decl.GetLocation(), SeverityError,
+			"newtype %q is circular: its base leads back to itself", ct.Name)
+	}
+}
+
+// newtypeChainReturnsTo walks a newtype's base chain and reports whether it comes back to a
+// name it has already been through. The visited set is what makes this terminate on the very
+// input it is looking for.
+func (tc *TypeChecker) newtypeChainReturnsTo(ct *types.ConstrainedType, loc ast.Location) bool {
+	seen := map[string]bool{ct.Name: true}
+	cur := ct
+	for {
+		base, ok := tc.resolveTypeIfKnown(cur.Type, loc).(*types.ConstrainedType)
+		if !ok {
+			return false // the chain ends at a real base
+		}
+		if seen[base.Name] {
+			return true
+		}
+		seen[base.Name] = true
+		cur = base
+	}
+}
+
 func (tc *TypeChecker) checkNewtypeBaseIsStructural(decl *ast.TypeDeclStmt, ct *types.ConstrainedType) {
 	base := tc.resolveTypeIfKnown(ct.Type, decl.GetLocation())
 	// Strip a chain of newtypes: `newtype B = A` over `newtype A = Pt` is the same

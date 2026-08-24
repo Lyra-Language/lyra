@@ -896,3 +896,54 @@ let y: Cents = 275
 let total: Cents = x + y + x
 `, false))
 }
+
+// **A newtype whose base leads back to itself is refused, and refused before anything walks
+// it.**
+//
+// The alias-cycle guard does not cover this: resolution deliberately never descends into a
+// newtype's base — a newtype is nominal, so resolving its *name* finishes once the newtype
+// is in hand — so a cycle of newtypes never enters the resolution stack that guard watches.
+// Nothing else looked, and the declaration was accepted.
+//
+// What happened next depended on which walk reached it first, and all of them were fatal:
+// the walks that *recurse* on the resolved base died with `fatal error: stack overflow`,
+// while the ones written as `for` loops never terminated at all — a hung compiler, and a
+// hung editor.
+//
+// Both ends are reported, because each declaration is circular on its own terms and fixing
+// either one fixes the program.
+func TestNewtype_CircularBase_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype A = B
+newtype B = A
+let a: A = 0`, false)
+	assertErrorsAre(t, res,
+		`newtype "A" is circular: its base leads back to itself`,
+		`newtype "B" is circular: its base leads back to itself`,
+		"a: cannot assign integer literal to A")
+}
+
+// A cycle of any length, and the degenerate one-element cycle.
+func TestNewtype_LongerCycleAndSelfCycle_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype P = Q
+newtype Q = R
+newtype R = P`, false)
+	assertErrorsAre(t, res,
+		`newtype "P" is circular: its base leads back to itself`,
+		`newtype "Q" is circular: its base leads back to itself`,
+		`newtype "R" is circular: its base leads back to itself`)
+
+	res = parseCollectAndCheck(t, `newtype S = S`, false)
+	assertErrorsAre(t, res, `newtype "S" is circular: its base leads back to itself`)
+}
+
+// A newtype chain that *does* terminate is untouched — the guard must refuse cycles, not
+// chains.
+func TestNewtype_TerminatingChain_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+newtype Meters = f64
+newtype Distance = Meters
+let f = (d: Distance) -> Distance => d`, false)
+	assertNoErrors(t, res)
+}
