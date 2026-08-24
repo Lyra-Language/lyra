@@ -255,12 +255,15 @@ write today:
   `ComposeExpr` also reach that default. They are sound there only because no backend case
   exists for them, so each owes an arm in whatever change lowers it.
 
-- **[OPEN] `TestExec_WithCStringsFlatAndNested` fails on linux/arm64**, so `./asan.sh` is
-  red before any change is made — which is the worst state for a gate CLAUDE.md tells you
-  to run before pushing memory-model work. It is not a memory fault: the test asserts
-  `strcmp` returns exactly `-1`, and glibc's arm64 implementation answers `-32`. Only the
-  *sign* of `strcmp` is specified, so the assertion is what is wrong. Verified pre-existing
-  on a clean tree (08/23); the rest of the suite passes under Linux ASan.
+- **[DONE 08/23] `TestExec_WithCStringsFlatAndNested` asserts `strcmp`'s sign, not its
+  magnitude**, so `./asan.sh` is green on linux/arm64 — it had been red on a clean tree,
+  which is the worst state for a gate CLAUDE.md tells you to run before pushing
+  memory-model work, since a failure that is always there is a failure nobody reads. Never
+  a memory fault: C specifies only that the result is negative, zero or positive, and Apple
+  libc happens to answer the byte difference (`'c' - 'd'` is -1) where glibc arm64 answers
+  -32. The test still proves what it is for — that the bytes Lyra hands over are the bytes
+  C reads, and that the nested spelling (a closure capturing a `^u8`) agrees with the flat
+  one.
 
 - **[DONE 08/13] A fixed-array *binding* no longer takes a `[]T` slot** — it
   segfaulted.

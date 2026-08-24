@@ -3,6 +3,7 @@ package llvm
 import (
 	"errors"
 	"os/exec"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -408,8 +409,39 @@ let main = () -> void => {
   print("${"abc".with_cstring((x) => "abd".with_cstring((y) => unsafe { strcmp(x, y) }))}")
 }
 `, "")
-	if got := strings.TrimSpace(out); got != "-1 0 -1" {
-		t.Errorf("with_cstrings = %q; want \"-1 0 -1\"", got)
+	// **Only the *sign* of `strcmp` is specified**, so this asserts the sign and not the
+	// magnitude. C says the result is negative, zero or positive and nothing more: Apple
+	// libc happens to answer the byte difference (`'c' - 'd'` is -1) while glibc on arm64
+	// answers -32, so asserting "-1 0 -1" made `./asan.sh` fail on Linux for a reason
+	// having nothing to do with memory — and a gate CLAUDE.md tells you to run before
+	// pushing memory-model work is worth less than nothing when it is red on a clean tree.
+	//
+	// What the test is actually for survives intact: that the bytes Lyra hands over are
+	// the bytes C reads (so an ordering comparison lands on the right side of zero, and
+	// equal strings compare equal), and that the nested spelling — a closure capturing a
+	// `^u8` — agrees with the flat one.
+	fields := strings.Fields(out)
+	if len(fields) != 3 {
+		t.Fatalf("with_cstrings = %q; want three whitespace-separated results", out)
+	}
+	for _, w := range []struct {
+		i      int
+		what   string
+		ok     func(int) bool
+		expect string
+	}{
+		{0, `with_cstrings("abc", "abd")`, func(n int) bool { return n < 0 }, "negative"},
+		{1, `with_cstrings("abc", "abc")`, func(n int) bool { return n == 0 }, "zero"},
+		{2, `nested with_cstring, "abc" vs "abd"`, func(n int) bool { return n < 0 }, "negative"},
+	} {
+		n, err := strconv.Atoi(fields[w.i])
+		if err != nil {
+			t.Errorf("%s = %q; want an integer", w.what, fields[w.i])
+			continue
+		}
+		if !w.ok(n) {
+			t.Errorf("%s = %d; want %s", w.what, n, w.expect)
+		}
 	}
 }
 
