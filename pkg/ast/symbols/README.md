@@ -121,3 +121,28 @@ callee the typechecker resolved (`typetable.TypeTable.Callee`).
 `ast.OverloadableWith` refuses a set whose members disagree on `pub` precisely so that
 question has an answer, since a half-exported set would be findable from another module for
 some receivers and not others.
+
+## `declKey` is not worth memoizing (measured 08/24)
+
+Every `Lookup*From` goes through `declKeyIn`, from 54 call sites outside this package, on
+the typechecker's hot path, re-run by the LSP on every keystroke. Each call runs a
+prelude-shadow test, a walk of the module's imports asking `ModuleExports` of each, and a
+module-scope lookup — and once collection has finished it is a pure function of
+`(module, name)`. That reads like an obvious memo.
+
+It was implemented — a `frozen` flag set by `Collector.Finish` after `PopulateImportScopes`
+(the last thing that can change a key), with a `map[declKeyQuery]string` behind it — and
+measured at **nothing**: −0.3% and −0.4% on a back-to-back run, inside noise. Hashing a
+two-string key costs about what the computation it replaces costs. A CPU profile puts
+`declKey` at 1.64% of the pipeline cumulatively, so that was the whole ceiling, and the
+cache gives it back at the door.
+
+It was reverted rather than kept, because it is not free to carry: the memo is only sound
+while nothing registers or imports afterwards, which makes an ordering constraint between
+`Collector.Finish` and this file that a future change could break silently — a wrongly
+qualified key hides a declaration from every module including its own. A correctness
+liability for a measured zero.
+
+**What would actually move it** is not caching the key but not asking for it repeatedly:
+resolving a reference to its declaration once, rather than recomputing a key at each
+lookup. That is a different change, and a much larger one.

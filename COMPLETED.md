@@ -9,6 +9,37 @@ Newest first.
 
 ## Dated log
 
+### 08/24/26 (4)
+**`declKey` memoization: implemented, measured at zero, reverted.**
+
+`declKeyIn` is on every `Lookup*From` — 54 call sites outside `pkg/ast/symbols`, the
+typechecker's hot path, re-run per keystroke by the LSP — and after collection it is a pure
+function of `(module, name)`. The audit called for memoizing it, and a profile agreed it was
+worth looking at: `declKey` is 1.64% of the pipeline cumulatively.
+
+Built it: a `frozen` flag set by `Collector.Finish` after `PopulateImportScopes` (the last
+thing that can change a key, since `shadowsImport` reads the import graph), with a
+`map[declKeyQuery]string` behind it and an unfrozen table falling through uncached so a
+hand-built table stays correct.
+
+Measured **nothing**. Back to back, −0.3% and −0.4% — inside noise. Hashing a two-string key
+costs about what the computation it replaces costs, so 1.64% was the ceiling and the cache
+hands it back at the door.
+
+Reverted, because it is not free to carry. The memo is sound only while nothing registers or
+imports after the freeze, which is an ordering constraint between `Collector.Finish` and the
+symbol table that a later change could break silently — and the failure mode is a wrongly
+qualified key, which hides a declaration from every module including its own. A correctness
+liability in exchange for a measured zero.
+
+**Four performance findings from the audit have now been measured, and the split is the
+thing worth keeping.** The two that paid were both about *allocation*: the purity fixpoint
+rebuilding maps every round (−27% on the pass), and `implTargetMatches` allocating a map it
+threw away (−25% allocations pipeline-wide). The two that did not were both about *repeated
+computation that was already cheap*: indexing `traitImpls` by trait name, and this. Reasoning
+about complexity from the shape of the code picked the wrong two; `pprof -list` on the hot
+function picked the right ones on the first look, both times.
+
 ### 08/24/26 (3)
 **Trait dispatch: the quadratic was not the cost, and the map was.**
 
