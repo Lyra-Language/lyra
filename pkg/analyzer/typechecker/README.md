@@ -936,3 +936,28 @@ One consequence reaches the backend: a call resolved this way finds its callee b
 **identity**, and that callee is usually an ordinary singly-declared function rather than an
 overload member — so every user function is recorded by declaration (`recordByDecl`), not
 just the overloads.
+
+## What dispatch actually costs
+
+`resolveTraitMethodNamed` is the single scan behind every `.method()` call, every
+overloaded operator, and every `==` / `<` (those route through `dispatchEq` /
+`dispatchOrdCompare` before the structural rule). It walks `tc.traitImpls` — 108 entries
+from the prelude alone — and asks `implTargetMatches` of each.
+
+Two things about its cost are easy to get wrong, and both were:
+
+- **`boundCandidatesByType` looks quadratic and is not the problem.** It calls
+  `resolveTraitMethodNamed` once per impl of a trait, and that scans every impl again — but
+  the trait-name filter is applied *before* the expensive comparison, so the inner scan does
+  cheap string compares and the same number of real comparisons either way. Indexing
+  `traitImpls` by trait name was tried and measured at zero (see COMPLETED.md, 08/24).
+- **The cost was `implTargetMatches` allocating a map it usually threw away.** Most calls
+  are a concrete impl that does not match the receiver, and `bindings` was allocated before
+  the equality test that returns. That single line was 82% of the function. It is allocated
+  on the paths that can fill it now, and the no-match path returns nil.
+
+`BenchmarkDispatch_*` in `pkg/driver` is what makes this measurable: it puts the pipeline on
+generic bodies with `where` bounds, which is where bound dispatch fires. A concrete caller
+of a generic function pays none of it — the candidates were published once, at the bound
+call site inside the generic body — so a benchmark built from concrete callers measures
+nothing, which was the first version of it.

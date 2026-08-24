@@ -9,6 +9,60 @@ Newest first.
 
 ## Dated log
 
+### 08/24/26 (3)
+**Trait dispatch: the quadratic was not the cost, and the map was.**
+
+The audit's finding was that `boundCandidatesByType` asks `resolveTraitMethodNamed` once
+per impl of a trait, and each of those scans every impl in the program — O(impls²), with
+108 impls shipping in the prelude. The shape is real. **The cost is not**, and measuring it
+is what showed why.
+
+A new `BenchmarkDispatch_*` (pkg/driver) puts the pipeline on a program of generic bodies
+with `where` bounds, which is where bound dispatch actually fires — a concrete caller of a
+generic function pays none of it, since the candidates were published once at the bound call
+site. A CPU profile of it puts `boundCandidatesByType` at ~80% of the typechecker.
+
+Indexing `traitImpls` by trait name, so each scan sees only that trait's impls, changed
+**nothing**: +1.4%, −0.8%, +1.7% across the three sizes — noise straddling zero. The reason
+is visible once the loop is read carefully rather than counted: the trait-name filter was
+already applied *before* the expensive work, so the inner scan was doing 108 cheap string
+compares and then the same ~15 real comparisons either way. Indexing removed the compares
+and nothing else. **The index was written, measured, and reverted**; it is recorded here so
+the next reader does not re-derive it.
+
+The real cost was one line. `implTargetMatches` allocated its `bindings` map up front:
+
+```go
+bindings := map[string]types.Type{}          // 90ms of this function's 110ms
+if types.TypesEqual(implType, receiverType) {
+    return bindings, true
+}
+```
+
+It is called once per impl of the trait being dispatched — on every method call, every
+overloaded operator, and every `==`/`<`, since those route through `dispatchEq` /
+`dispatchOrdCompare` before the structural rule — and the overwhelming majority of those
+calls are a concrete impl that does not match. `runtime.makemap_small` was **82% of
+implTargetMatches** and roughly two thirds of `resolveTraitMethodNamed`, all of it discarded
+on the next line. Allocating on the paths that can fill it, and returning nil on the one
+that cannot:
+
+| | time | allocations | bytes |
+|---|---|---|---|
+| Dispatch_Large | −5.1% | **−25.6%** | −16.0% |
+| Dispatch_Medium | −2.1% | −20.7% | −16.5% |
+| Analyze_Large | −2.6% | −13.5% | −8.2% |
+| Analyze_WideTypes | −2.1% | −17.1% | −9.3% |
+
+Whole-pipeline numbers, not one pass in isolation — and the pipeline is dominated by parsing
+and collection, which is what makes a 25% allocation cut on the analysis side show up as
+5% wall clock.
+
+**The lesson worth keeping is the order of operations.** The audit reasoned about complexity
+from the shape of two nested loops and named the wrong thing; the profile named the right
+one on the first look, and it was not an algorithm at all. A `-list` on the hot function was
+worth more than the complexity argument that motivated opening the file.
+
 ### 08/24/26 (2)
 **The purity fixpoint stopped rebuilding what never changes.**
 

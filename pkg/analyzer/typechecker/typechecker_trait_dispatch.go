@@ -158,16 +158,25 @@ func (tc *TypeChecker) defaultMatch(trait *ast.TraitDeclStmt, methodName ast.Met
 // corresponding subterms. (The impl's `<…>` after the trait name is the trait's
 // argument list, not a parameter binder, so the variables are read off the
 // target itself rather than a separate binder list.)
+//
+// **The bindings map is allocated only on a path that can fill it.** This function is
+// called once per impl of the trait being dispatched, on every method call, every
+// overloaded operator and every `==`/`<`, and the overwhelming majority of those calls are
+// a concrete impl that does not match — 108 impls ship in the prelude alone, and a
+// receiver matches one. Allocating the map up front made `runtime.makemap_small` **82% of
+// this function's cost** and roughly two thirds of resolveTraitMethodNamed's, all of it
+// thrown away on the next line. A nil map is a valid empty map to read, and no caller
+// writes to what it gets back.
 func implTargetMatches(implType, receiverType types.Type) (map[string]types.Type, bool) {
-	bindings := map[string]types.Type{}
 	if types.TypesEqual(implType, receiverType) {
-		return bindings, true
+		return map[string]types.Type{}, true
 	}
 	generics := map[string]bool{}
 	collectTypeVars(implType, generics)
 	if len(generics) == 0 {
-		return bindings, false
+		return nil, false
 	}
+	bindings := map[string]types.Type{}
 	ok := unifyGenericTarget(implType, receiverType, generics, bindings)
 	return bindings, ok
 }
