@@ -5,6 +5,7 @@ import (
 
 	lltypes "github.com/llir/llvm/ir/types"
 
+	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
@@ -59,12 +60,7 @@ func (l *lowerer) resolveInstantiation(t types.Type) (types.Type, error) {
 	if !ok {
 		return t, fmt.Errorf("llvm: undefined generic type %q", p.Name)
 	}
-	subst := make(map[string]types.Type, len(decl.GenericParams))
-	for i, gp := range decl.GenericParams {
-		if i < len(p.TypeArguments) {
-			subst[gp.Name] = p.TypeArguments[i]
-		}
-	}
+	subst := ast.BindGenericParams(decl.GenericParams, p.TypeArguments)
 	name := l.instantiationSymbol(p)
 	switch inst := substituteTypeVars(decl.Type, subst).(type) {
 	case types.NamedStructType:
@@ -111,10 +107,7 @@ func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Typ
 	// Pair the declaration's parameters positionally with this instantiation's
 	// arguments. Positional because a type's parameters are ordered by declaration —
 	// unlike a generic function's, which are solved by name from the argument types.
-	subst := make(map[string]types.Type, len(decl.GenericParams))
-	for i, gp := range decl.GenericParams {
-		subst[gp.Name] = p.TypeArguments[i]
-	}
+	subst := ast.BindGenericParams(decl.GenericParams, p.TypeArguments)
 
 	// Declare before defining: a recursive reference below must find this.
 	if err := l.declareNamedStruct(name, name); err != nil {

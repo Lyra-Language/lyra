@@ -1731,3 +1731,29 @@ file is ~1ms):
   programs' IR) pays the serialized assessment (~2min for the full set). Only
   tests whose emitted IR changed recompile. Entries untouched for 30 days are
   pruned at init; deleting the directory just forces a full recompile.
+
+## `owned_walk.go` — the retain/drop walk, written once
+
+`emitRetainValue` and `emitDropValue` are the two halves of one invariant: a copy of an
+aggregate must add a reference to **exactly** the managed values its death removes one
+from. Miss a field on the retain side and it leaks; miss it on the drop side and it is
+freed while a copy still points at it.
+
+They were ~150 duplicated lines each — identical down to the tag switch in the `data` arm —
+and the history is what the duplication cost: both lacked `AnonymousStructType` until 08/08
+(`{ m: string }` leaked one reference per value) and both lacked `ParameterizedType` until
+08/07. Note *both* each time. Two copies agreeing and being wrong together is the failure a
+side-by-side reading cannot find, which is why the durable fix is one walk rather than a
+test that the two match.
+
+`emitOwnedValue(block, v, t, retainWalk|dropWalk)` is that walk. The `ownedWalk` constant
+selects what happens at a managed **leaf** — the single place a retain and a release
+genuinely differ — and everything above it (which fields exist, which variant is live, how
+a newtype resolves, how an instantiation substitutes) is shared. `emitRetainValue` and
+`emitDropValue` remain as the names every call site already uses.
+
+**`emitEqValue` is not folded in with them**, though it has the same arms in the same order.
+Retain and drop stop *at* a managed value, because its own box owns whatever it holds;
+equality descends *into* one to compare it, and it returns a value rather than performing an
+effect. Nothing breaks if it visits a different set of fields than these two do, and that is
+precisely what makes it a different walk instead of a third copy of this one.

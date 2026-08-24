@@ -188,8 +188,17 @@ real failure, and none is local to one package.
      `iterableElementType`) have no pointer case and are right not to. So the family to
      check when adding a type kind is the walks that must reach *every* composite —
      resolution, layout, substitution, retain/drop — not every switch that mentions one.
-   - **Paired walks must be fixed in one change.** `emitRetainValue`/`emitDropValue` both
-     lacked `ParameterizedType`; fixing only the drop is an instant double free.
+   - **Paired walks must be fixed in one change** — and better still, stop being a pair.
+     `emitRetainValue`/`emitDropValue` both lacked `ParameterizedType`, and fixing only the
+     drop is an instant double free. Note *both* lacked it, and both lacked
+     `AnonymousStructType` too: two copies can agree and be wrong, which is the failure a
+     side-by-side reading cannot find. They are now one walk over
+     `emitOwnedValue(…, retainWalk|dropWalk)` (`owned_walk.go`), differing only at a
+     managed leaf, so a copy and its death cover the same fields by construction.
+     **Equality is deliberately not folded in with them**: it looks like a third copy but
+     stops at a different place (it descends *into* a managed value to compare it) and
+     nothing breaks if it visits a different set — that makes it a different walk, not a
+     third copy of this one.
    - **A copy that admits it is a copy is still a copy.** The typechecker's
      `substituteGenerics` said in its own comment that it walked only "the handful of
      compound type shapes a data constructor's payload realistically takes today" — and
@@ -214,6 +223,9 @@ real failure, and none is local to one package.
    | what are this node's children? | `ast.WalkStmt`/`ast.WalkExpr` (`…Children` to skip the node itself) |
    | rewrite expressions in place | `ast.RewriteStmt`/`ast.RewriteExpr` |
    | where is the expression at this position? | `findExprAtPos` (`cmd/lyra-lsp/hover.go`) |
+   | bind a generic type's arguments to its parameters | `ast.BindGenericParams` |
+   | what does a value of this type hold inline? | `ownership.eachComponent` |
+   | retain or release what a value owns | `emitOwnedValue` (`backend/llvm/owned_walk.go`) |
 
 9. **A name does not identify a declaration, and may not even identify one function.**
    A *key* is module-qualified for a private declaration (rule 4), and a

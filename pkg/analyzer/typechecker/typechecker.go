@@ -904,12 +904,7 @@ func (tc *TypeChecker) resolveGenericAggregate(t types.Type, loc ast.Location) t
 	// The generic parameter names live on the declaration (the NamedStructType's own
 	// GenericParams field is not populated by the collector today); pair them
 	// positionally with the usage-site type arguments.
-	subst := make(map[string]types.Type, len(decl.GenericParams))
-	for i, gp := range decl.GenericParams {
-		if i < len(p.TypeArguments) {
-			subst[gp.Name] = p.TypeArguments[i]
-		}
-	}
+	subst := ast.BindGenericParams(decl.GenericParams, p.TypeArguments)
 	switch d := decl.Type.(type) {
 	case types.NamedStructType:
 		fields := make([]types.StructField, len(d.Fields))
@@ -3992,12 +3987,7 @@ func (tc *TypeChecker) expandParameterizedNewtype(p types.ParameterizedType, loc
 	if !ok {
 		return nil, false
 	}
-	subst := make(map[string]types.Type, len(decl.GenericParams))
-	for i, gp := range decl.GenericParams {
-		if i < len(p.TypeArguments) {
-			subst[gp.Name] = p.TypeArguments[i]
-		}
-	}
+	subst := ast.BindGenericParams(decl.GenericParams, p.TypeArguments)
 	return &types.ConstrainedType{
 		Name:        ct.Name,
 		Type:        substituteGenerics(ct.Type, subst),

@@ -9,6 +9,74 @@ Newest first.
 
 ## Dated log
 
+### 08/23/26 (2)
+**The type-walk and substitution copies outside `pkg/types`.**
+
+Rule 8's "one answer" table exists because a switch over composite types that exists twice
+drifts. Six copies were still outside it, and the sweep found one live bug, one latent one,
+and one class of bug made structurally impossible.
+
+**Three walkers deleted outright.**
+
+- `ownership.substituteTypeVars` was a stale copy of `types.Substitute` missing
+  `RawPointerType`, `*LambdaType`, `*ConstrainedType` and `RangeType`. It is the copy that
+  was *missed* when `types.Substitute` was created: the driver's and the backend's were both
+  converted to thin wrappers then, with a comment on each saying why. 73 lines gone.
+- `collectGenericNames` in trait dispatch was a copy of `types.CollectTypeVars` with no
+  `AnonymousStructType`, `WeakType`, `RawPointerType`, `RangeType` or `*ConstrainedType`
+  case, **and this one was a live bug**: `unifyGenericTarget` has always had a
+  `RawPointerType` arm, so `impl Describe for ^t` *could* unify — but the walk that reads
+  the target's implicit variables found none, so `implTargetMatches` returned false one step
+  earlier. The symptom named neither switch: `member access on non-struct type ^i64`. This
+  is rule 8's "two switches can disagree about a case neither one names", and the fix is a
+  one-line call.
+- `mentionsGenericParam` was a third subset, missing five composites. It is now
+  `CollectTypeVars` ∪ `CollectTypeNames` — both, because a parameter reaches that code under
+  two spellings (a resolved `GenericType`, an unresolved `UnresolvedType` of the same name),
+  and collecting the nominal names cannot produce a false positive since a type parameter is
+  lowercase by lexer rule and a nominal name is not. **No observable behaviour change was
+  found** — the old switch's trailing `params[t.GetName()]` fallback was covering for the
+  missing arms. Latent drift, removed before it mattered.
+
+**`ast.BindGenericParams`.** Nine sites built the same positional map from a declaration's
+`GenericParams` and a `ParameterizedType`'s `TypeArguments` — in the typechecker, the
+ownership pass and the backend — and they disagreed about the bounds guard: five tested
+`i < len(args)` inline, four indexed straight in and were safe only because of a
+`len(…) != len(…)` check several lines earlier. That is the shape that arrives as a panic
+once someone moves the earlier check.
+
+**The retain/drop pair is now one walk** (`backend/llvm/owned_walk.go`). `emitRetainValue`
+and `emitDropValue` were ~150 duplicated lines each, identical down to the tag-switch in
+their `data` arm, differing only in what they do at a managed **leaf**. They are now
+`emitOwnedValue(…, retainWalk)` / `(…, dropWalk)`, so a copy and its death cover the same
+fields by construction rather than by two switches happening to agree.
+
+That matters more than the line count. The history in those files is that both copies
+lacked `AnonymousStructType` (until 08/08) and both lacked `ParameterizedType` (until
+08/07) — they were symmetric *in being broken*, which is the failure a side-by-side reading
+cannot find. A missing arm can now only be missing from both walks in the sense of being
+absent from the language.
+
+**Equality was deliberately left out**, though it reads as a third copy of the same arms in
+the same order. It answers a different question with a different stopping rule — retain and
+drop stop *at* a managed value, because its own box owns what it holds, while `emitEqValue`
+descends *into* one to compare it — and it returns a value rather than performing an effect.
+Nothing breaks if it visits a different set of fields than the other two, and that is what
+makes it a different walk rather than a third copy. Folding it in would have parameterized
+the stopping rule and the return type to share six lines of dispatch.
+
+**`OwnsManaged` and `SharedMutablePath` share their fold** (`eachComponent`), which yields
+each structural component with its field name where it has one. The generic-instantiation
+arm is *not* in there and each keeps its own: `SharedMutablePath` needs a `seen` cycle guard
+because it keeps looking past a shared value with no writable field, and `OwnsManaged` does
+not because a recursive type must break its cycle with a `shared`/`weak` field (lyra-E014)
+and `IsManaged` answers those before it can recurse. That difference used to be buried in
+forty lines of otherwise-identical arms; it is now the only thing not shared, with the
+reason written next to it.
+
+Verified with the full suite and `./asan.sh ./...` green end to end — which the previous
+commit is what made possible.
+
 ### 08/23/26 (1)
 **The hand-copied AST walkers, and the four bugs they were hiding.**
 

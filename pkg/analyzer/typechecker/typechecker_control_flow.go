@@ -650,10 +650,7 @@ func (tc *TypeChecker) resolveToDataType(t types.Type, loc ast.Location) (types.
 		if !ok || len(decl.GenericParams) != len(p.TypeArguments) {
 			return types.DataType{}, false
 		}
-		subst := make(map[string]types.Type, len(decl.GenericParams))
-		for i, gp := range decl.GenericParams {
-			subst[gp.Name] = p.TypeArguments[i]
-		}
+		subst := ast.BindGenericParams(decl.GenericParams, p.TypeArguments)
 		substituted := dt
 		substituted.Constructors = make([]types.DataTypeConstructor, len(dt.Constructors))
 		for i, ctor := range dt.Constructors {

@@ -210,3 +210,23 @@ of children: a shared traversal can say what a node's children *are*, and only a
 arm can say whether a position **owns**. Borrowing a comprehension's result records a
 last-use drop on `[i in 0..<2 | t]`, freeing `t` inside the loop while the array keeps both
 pointers — an immediate double free in place of a latent one.
+
+## One fold, two predicates
+
+`OwnsManaged` ("does this value transitively own a reference?") and `SharedMutablePath`
+("is that sharing observable, and by what path?") ask different questions of the same tree,
+and both used to spell out the same seven-arm switch over composite types. They now share
+`eachComponent`, which yields every structural component of a type with its field name
+where it has one and `""` where the position is positional — a tuple element, a `data`
+payload, an array element, a newtype's base. That is why the path a struct reports is
+prefixed and a tuple's is not: the caller prefixes when it is handed a name.
+
+**The generic-instantiation arm is deliberately not shared**, and the difference is the
+interesting part. Both substitute a declaration's parameters and recurse
+(`instantiateDecl`), but `SharedMutablePath` carries a `seen` set keyed on the type's name
+and `OwnsManaged` does not need one: a recursive type must break its cycle with a `shared`
+or `weak` field (lyra-E014), and both are managed outright, so `IsManaged` answers them
+before `OwnsManaged` can recurse. `SharedMutablePath` keeps looking *past* a shared value
+that has no writable field — which is exactly the shape that can come back around to
+itself. That asymmetry used to sit inside forty lines of otherwise identical arms; it is now
+the only thing the two do not share, with the reason next to it.

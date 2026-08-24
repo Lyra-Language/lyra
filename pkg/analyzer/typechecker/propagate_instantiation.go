@@ -148,10 +148,7 @@ func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, e
 	if !ok || decl == nil || len(decl.GenericParams) != len(inst.TypeArguments) {
 		return false
 	}
-	subst := make(map[string]types.Type, len(decl.GenericParams))
-	for i, gp := range decl.GenericParams {
-		subst[gp.Name] = inst.TypeArguments[i]
-	}
+	subst := ast.BindGenericParams(decl.GenericParams, inst.TypeArguments)
 
 	var declaredFields []types.Type
 	for _, c := range dt.Constructors {
@@ -277,32 +274,32 @@ func (tc *TypeChecker) stampableDataType(node ast.Expression, inst types.Paramet
 // It walks the type rather than testing its name, because a parameter hides at any
 // depth: `t`, `Maybe<t>`, `[3]t`, `(t, i64)` and `shared List<t>` are all incomplete,
 // and only the first is caught by a name comparison.
+//
+// **Both walks, because a parameter reaches here under two spellings.** A resolved one is
+// a `GenericType`, which `CollectTypeVars` finds; an unresolved one is an `UnresolvedType`
+// carrying the same name, which `CollectTypeNames` finds. This used to be a third private
+// switch over composite types and had drifted the way CLAUDE.md rule 8 says one will —
+// no case for `AnonymousStructType`, `RawPointerType`, `RangeType`, `*LambdaType` or
+// `*ConstrainedType`, so a field typed `{ v: t }`, `^t` or `(t) -> u` read as fully
+// concrete and was stamped as an instantiation that still had a variable in it.
+//
+// Collecting the nominal names too cannot produce a false positive: a type parameter is
+// lowercase by lexer rule and a nominal type name is not, so the two name spaces do not
+// meet. That is also what the old switch's trailing `params[t.GetName()]` fallback was
+// reaching for, less precisely.
 func mentionsGenericParam(t types.Type, params map[string]bool) bool {
-	switch v := t.(type) {
-	case types.GenericType:
-		return params[v.Name]
-	case types.UnresolvedType:
-		return params[v.Name]
-	case types.ParameterizedType:
-		for _, a := range v.TypeArguments {
-			if mentionsGenericParam(a, params) {
-				return true
-			}
-		}
-	case types.TupleType:
-		for _, e := range v.Elements {
-			if mentionsGenericParam(e, params) {
-				return true
-			}
-		}
-	case types.StaticArrayType:
-		return mentionsGenericParam(v.ElementType, params)
-	case types.DynamicArrayType:
-		return mentionsGenericParam(v.ElementType, params)
-	case types.WeakType:
-		return mentionsGenericParam(v.Inner, params)
+	if t == nil || len(params) == 0 {
+		return false
 	}
-	return params[t.GetName()]
+	found := map[string]bool{}
+	types.CollectTypeVars(t, found)
+	types.CollectTypeNames(t, found)
+	for name := range found {
+		if params[name] {
+			return true
+		}
+	}
+	return false
 }
 
 // stampAggregate is stampDataConstruction's counterpart for a generic **struct** or
@@ -325,10 +322,7 @@ func (tc *TypeChecker) stampAggregate(node ast.Expression, values []ast.Expressi
 	if !ok || decl == nil || len(decl.GenericParams) != len(inst.TypeArguments) {
 		return false
 	}
-	subst := make(map[string]types.Type, len(decl.GenericParams))
-	for i, gp := range decl.GenericParams {
-		subst[gp.Name] = inst.TypeArguments[i]
-	}
+	subst := ast.BindGenericParams(decl.GenericParams, inst.TypeArguments)
 	for i, v := range values {
 		if i >= len(declared) || v == nil {
 			break

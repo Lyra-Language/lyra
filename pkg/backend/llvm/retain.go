@@ -4,7 +4,6 @@ import (
 	"fmt"
 
 	"github.com/llir/llvm/ir"
-	"github.com/llir/llvm/ir/constant"
 	lltypes "github.com/llir/llvm/ir/types"
 	"github.com/llir/llvm/ir/value"
 
@@ -139,140 +138,12 @@ func (l *lowerer) retainFuncFor(t types.Type) (*ir.Func, error) {
 	return fn, nil
 }
 
-// emitRetainValue retains everything the first-class value v (of Lyra type t) owns.
-// It returns the block control ends in — a `data` value switches on its tag, so
-// retaining it is not straight-line code. The structure mirrors emitDropValue
-// exactly; the two must stay in step or a copy and its death won't balance.
+// emitRetainValue retains everything the first-class value v (of Lyra type t) owns,
+// returning the block control ends in (a `data` value switches on its tag).
+//
+// The walk is owned_walk.go's — shared with emitDropValue, so a copy and its death cover
+// the same fields by construction rather than by two switches agreeing. See that file for
+// why having two of it was the bug rather than the style.
 func (l *lowerer) emitRetainValue(block *ir.Block, v value.Value, t types.Type) (*ir.Block, error) {
-	if !l.needsDrop(t) {
-		return block, nil
-	}
-	// Resolved once up front (mirroring emitDropValue), which also strips any
-	// newtype wrapper so the managed check sees the base.
-	resolved := l.resolveNamedType(t)
-	// A managed value is retained as a unit; whatever *it* owns is already accounted
-	// for by its own box. This is where the walk stops.
-	if ownership.IsManaged(resolved) {
-		l.lowerManagedRetain(block, v, resolved)
-		return block, nil
-	}
-
-	switch rt := resolved.(type) {
-	case types.NamedStructType:
-		return l.emitRetainFields(block, v, fieldTypesOf(rt))
-	case types.AnonymousStructType:
-		// The mirror of emitDropValue's arm; see the note there for why the two land
-		// together.
-		return l.emitRetainFields(block, v, anonFieldTypesOf(rt))
-	case types.TupleType:
-		return l.emitRetainFields(block, v, rt.Elements)
-	case types.DataType:
-		return l.emitRetainData(block, v, rt)
-	case types.StaticArrayType:
-		return l.emitRetainArray(block, v, rt)
-	case types.ParameterizedType:
-		// The mirror of emitDropValue's arm, and it must be added in the same commit:
-		// this pair is the ownership invariant for aggregates, so a retain without its
-		// drop leaks and a drop without its retain is a double free. Adding the drop
-		// alone crashed TestExec_WeakOptionalField, which is the invariant catching a
-		// half-fix exactly as the header says it should.
-		//
-		// Both switches previously lacked the case, so they were symmetric *in being
-		// broken*: a tuple holding a `Maybe<string>` neither retained nor dropped that
-		// element through its glue. (The element is still retained at the construction
-		// site, where the type arrives already substituted via recordedType — which is
-		// why the leak showed up only on the drop side.)
-		inst := l.resolveShape(rt)
-		if _, unresolved := inst.(types.ParameterizedType); unresolved {
-			return nil, fmt.Errorf("llvm: cannot retain a value of generic type %s: "+
-				"its instantiation did not resolve", rt)
-		}
-		return l.emitRetainValue(block, v, inst)
-	}
-	return block, nil
-}
-
-// emitRetainArray retains each element of an inline `[N]T`. N is a compile-time
-// constant, so the element retains are unrolled — the mirror of emitDropArray.
-func (l *lowerer) emitRetainArray(block *ir.Block, v value.Value, at types.StaticArrayType) (*ir.Block, error) {
-	if !l.needsDrop(at.ElementType) {
-		return block, nil
-	}
-	var err error
-	for i := 0; i < at.Size; i++ {
-		block, err = l.emitRetainValue(block, block.NewExtractValue(v, uint64(i)), at.ElementType)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return block, nil
-}
-
-// emitRetainFields retains each element of an inline aggregate that owns something,
-// reading it out with extractvalue (no branch — a struct/tuple has one shape). The
-// mirror of emitDropFields.
-func (l *lowerer) emitRetainFields(block *ir.Block, v value.Value, fieldTypes []types.Type) (*ir.Block, error) {
-	for i, ft := range fieldTypes {
-		if !l.needsDrop(ft) {
-			continue
-		}
-		var err error
-		block, err = l.emitRetainValue(block, block.NewExtractValue(v, uint64(i)), ft)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return block, nil
-}
-
-// emitRetainData retains a `data` value's managed fields: which fields it owns
-// depends on which variant is live, so this switches on the tag and gives each owning
-// variant its own block, reinterpreting the payload blob as that variant's payload
-// struct before retaining its fields. The mirror of emitDropData — same shape, same
-// tag order, so a variant's retain and its drop cover exactly the same fields.
-func (l *lowerer) emitRetainData(block *ir.Block, v value.Value, dt types.DataType) (*ir.Block, error) {
-	llType, err := l.lowerType(types.WithAllocation(dt, types.Stack))
-	if err != nil {
-		return nil, err
-	}
-	unionTy, ok := llType.(*lltypes.StructType)
-	if !ok || len(unionTy.Fields) == 0 {
-		return nil, fmt.Errorf("llvm: data type %q did not lower to a tagged union", dt.Name)
-	}
-
-	fn := block.Parent
-	// Store the union so a variant's payload can be reinterpreted out of the blob.
-	slot := fn.Blocks[0].NewAlloca(unionTy)
-	block.NewStore(v, slot)
-	tagTy := unionTy.Fields[0].(*lltypes.IntType)
-	tagPtr := block.NewGetElementPtr(unionTy, slot,
-		constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 0))
-	tag := block.NewLoad(tagTy, tagPtr)
-
-	exit := fn.NewBlock("")
-	var cases []*ir.Case
-	for i, ctor := range dt.Constructors {
-		fields := ctor.FieldTypes()
-		if !anyNeedsDrop(l, fields) {
-			continue // nullary, or a variant owning nothing — nothing to do for this tag
-		}
-		armBlock := fn.NewBlock("")
-		payloadStructTy, err := l.dataPayloadStructType(ctor)
-		if err != nil {
-			return nil, err
-		}
-		blobPtr := armBlock.NewGetElementPtr(unionTy, slot,
-			constant.NewInt(lltypes.I32, 0), constant.NewInt(lltypes.I32, 1))
-		typedPtr := armBlock.NewBitCast(blobPtr, lltypes.NewPointer(payloadStructTy))
-		payload := armBlock.NewLoad(payloadStructTy, typedPtr)
-
-		end, err := l.emitRetainFields(armBlock, payload, fields)
-		if err != nil {
-			return nil, err
-		}
-		end.NewBr(exit)
-		cases = append(cases, ir.NewCase(constant.NewInt(tagTy, int64(i)), armBlock))
-	}
-	block.NewSwitch(tag, exit, cases...)
-	return exit, nil
+	return l.emitOwnedValue(block, v, t, retainWalk)
 }

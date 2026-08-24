@@ -164,41 +164,12 @@ func implTargetMatches(implType, receiverType types.Type) (map[string]types.Type
 		return bindings, true
 	}
 	generics := map[string]bool{}
-	collectGenericNames(implType, generics)
+	collectTypeVars(implType, generics)
 	if len(generics) == 0 {
 		return bindings, false
 	}
 	ok := unifyGenericTarget(implType, receiverType, generics, bindings)
 	return bindings, ok
-}
-
-// collectGenericNames adds the name of every GenericType reachable within t to
-// set — the implicit type variables of a generic impl target. It descends the
-// composite types a target can take (parameterized, array, tuple).
-func collectGenericNames(t types.Type, set map[string]bool) {
-	switch v := t.(type) {
-	case types.GenericType:
-		set[v.Name] = true
-	case types.ParameterizedType:
-		for _, a := range v.TypeArguments {
-			collectGenericNames(a, set)
-		}
-	case types.StaticArrayType:
-		collectGenericNames(v.ElementType, set)
-	case types.DynamicArrayType:
-		collectGenericNames(v.ElementType, set)
-	case types.TupleType:
-		for _, e := range v.Elements {
-			collectGenericNames(e, set)
-		}
-	case *types.LambdaType:
-		for _, p := range v.Parameters {
-			collectGenericNames(p.Type, set)
-		}
-		if v.ReturnType.Type != nil {
-			collectGenericNames(v.ReturnType.Type, set)
-		}
-	}
 }
 
 // unifyGenericTarget reports whether implType matches receiverType, treating any

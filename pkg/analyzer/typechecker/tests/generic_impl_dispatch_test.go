@@ -128,6 +128,32 @@ let f = (xs: []i64) -> string => {
 	assertNoErrors(t, res)
 }
 
+// **The target may be a raw pointer**, and this is the case two switches disagreed about
+// without either naming it. `unifyGenericTarget` has always had a `RawPointerType` arm, so
+// `^t` *could* unify — but the walk that reads an impl target's implicit variables was a
+// private copy of `types.CollectTypeVars` with no pointer case, so `generics` came back
+// empty and `implTargetMatches` returned false before unification was ever attempted. The
+// symptom named neither: `member access on non-struct type ^i64`.
+//
+// It is CollectTypeVars now (CLAUDE.md rule 8's "one answer" table), which is also why
+// `weak t`, `{ v: t }`, a range and a constrained target now reach unification — those
+// need arms in `unifyGenericTarget` before they dispatch, but they are no longer rejected
+// one step earlier for a different reason.
+func TestGenericImplDispatch_RawPointerTarget(t *testing.T) {
+	source := `
+trait Describe {
+    describe: (Self) -> string
+}
+impl Describe for ^t {
+    describe = (self) => "ptr"
+}
+let f = (p: ^i64) -> string => {
+    p.describe()
+}`
+	res := parseCollectAndCheck(t, source, false)
+	assertNoErrors(t, res)
+}
+
 // A bounded generic impl (`impl Ord<t> for Box<t> where t: Ord`) applies when the
 // receiver's element type satisfies the bound — i64 implements Ord, so a call on
 // Box<i64> is accepted.

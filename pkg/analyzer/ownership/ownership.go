@@ -220,79 +220,95 @@ func OwnsManaged(t types.Type, symTable *symbols.SymbolTable, loc ast.Location) 
 	if IsManaged(t) {
 		return true
 	}
-	switch v := resolveNamedType(t, symTable, loc).(type) {
-	case *types.ConstrainedType:
-		// A newtype owns exactly what its base owns. IsManaged above already
-		// stripped a *direct* wrapper; this case catches the one that arrives as
-		// an UnresolvedType — how a field or element typed `Email` is recorded.
-		return OwnsManaged(v.Type, symTable, loc)
-	case types.NamedStructType:
-		return slices.ContainsFunc(v.Fields, func(f types.StructField) bool {
-			return OwnsManaged(f.Type, symTable, loc)
-		})
-	case types.AnonymousStructType:
-		// The third half of the retain/drop model (see emitDropValue's arm): this is
-		// what decides whether a value needs the glue at all, so missing it here means
-		// the other two are never asked.
-		return slices.ContainsFunc(v.Fields, func(f types.StructField) bool {
-			return OwnsManaged(f.Type, symTable, loc)
-		})
-	case types.TupleType:
-		return slices.ContainsFunc(v.Elements, func(e types.Type) bool {
-			return OwnsManaged(e, symTable, loc)
-		})
-	case types.DataType:
-		return slices.ContainsFunc(v.Constructors, func(c types.DataTypeConstructor) bool {
-			return slices.ContainsFunc(c.FieldTypes(), func(f types.Type) bool {
-				return OwnsManaged(f, symTable, loc)
-			})
-		})
-	case types.StaticArrayType:
-		// A `[N]T` owns whatever T owns, once per element.
-		return OwnsManaged(v.ElementType, symTable, loc)
-	case types.ParameterizedType:
-		// One instantiation of a generic type owns what its *substituted* contents
-		// own: `Box<string>` owns a string, `Box<i64>` owns nothing — so the question
-		// cannot be answered from the declaration alone, whose field type is the
-		// variable `t` and owns nothing at all.
+	resolved := resolveNamedType(t, symTable, loc)
+	// A generic instantiation is the one arm this does not share with SharedMutablePath,
+	// and the difference is a cycle guard rather than an oversight: that walk carries a
+	// `seen` set keyed on the type's name, and this one does not need it. A recursive type
+	// must break its cycle with a `shared` or `weak` field (lyra-E014), and both are
+	// managed outright — IsManaged answers them above before this can recurse — so a cycle
+	// is always cut. SharedMutablePath keeps looking *past* a shared value that has no
+	// writable field, which is exactly the case that can come back around.
+	if pt, ok := resolved.(types.ParameterizedType); ok {
+		// One instantiation of a generic type owns what its *substituted* contents own:
+		// `Box<string>` owns a string, `Box<i64>` owns nothing — so the question cannot be
+		// answered from the declaration alone, whose field type is the variable `t` and
+		// owns nothing at all.
 		//
 		// Missing this case was a real double free, not a leak. The two halves of the
-		// model read the type through different paths: this pass (which decides where
-		// a +1 is minted) saw the raw ParameterizedType and recorded no retain for a
-		// copy, while the backend (which decides where one is released) reads types
-		// through recordedType, which normalizes an instantiation to its substituted
-		// struct — so it framed and deep-released *both* bindings. Drop twice, dup
-		// never. That is precisely the drift this predicate exists to prevent, and it
-		// is the generic-function lesson again: a decision made against an
-		// un-substituted generic is wrong at a managed type argument.
-		return parameterizedOwnsManaged(v, symTable, loc)
+		// model read the type through different paths: this pass (which decides where a +1
+		// is minted) saw the raw ParameterizedType and recorded no retain for a copy, while
+		// the backend (which decides where one is released) reads types through
+		// recordedType, which normalizes an instantiation to its substituted struct — so it
+		// framed and deep-released *both* bindings. Drop twice, dup never.
+		inst, ok := instantiateDecl(pt, symTable, loc)
+		return ok && OwnsManaged(inst, symTable, loc)
+	}
+	return eachComponent(resolved, func(_ string, ct types.Type) bool {
+		return OwnsManaged(ct, symTable, loc)
+	})
+}
+
+// eachComponent calls yield for every **structural component** of t — the types a value of
+// t holds inline — passing the field's name where it has one and "" where the position is
+// positional (a tuple element, a `data` payload, an array element, a newtype's base). It
+// stops and reports true as soon as a yield does.
+//
+// This is the fold OwnsManaged and SharedMutablePath share. Both used to spell it out, and
+// a switch over composite types that exists twice drifts (CLAUDE.md rule 8) — this is the
+// family `AnonymousStructType` was missing from in three places at once. Generic
+// instantiation is deliberately *not* here: it is a substitution rather than a component,
+// and the two callers guard it differently. See OwnsManaged.
+func eachComponent(t types.Type, yield func(name string, ct types.Type) bool) bool {
+	switch v := t.(type) {
+	case *types.ConstrainedType:
+		// A newtype owns exactly what its base owns. IsManaged strips a *direct* wrapper;
+		// this catches the one arriving as an UnresolvedType — how a field typed `Email`
+		// is recorded.
+		return yield("", v.Type)
+	case types.NamedStructType:
+		for _, f := range v.Fields {
+			if yield(f.Name, f.Type) {
+				return true
+			}
+		}
+	case types.AnonymousStructType:
+		for _, f := range v.Fields {
+			if yield(f.Name, f.Type) {
+				return true
+			}
+		}
+	case types.TupleType:
+		for _, e := range v.Elements {
+			if yield("", e) {
+				return true
+			}
+		}
+	case types.DataType:
+		for _, c := range v.Constructors {
+			for _, f := range c.FieldTypes() {
+				if yield("", f) {
+					return true
+				}
+			}
+		}
+	case types.StaticArrayType:
+		// A `[N]T` holds whatever T holds, once per element.
+		return yield("", v.ElementType)
 	}
 	return false
 }
 
-// parameterizedOwnsManaged answers OwnsManaged for one instantiation by pairing the
-// declaration's parameters positionally with the instantiation's arguments and asking
-// the same question of the substituted declaration.
-//
-// Termination rests on the same invariant that makes the backend's layout resolution
-// finite: a recursive type must break its cycle with a `shared` (or `weak`) field
-// (lyra-E014), and both are managed outright — IsManaged answers them before this
-// recurses — so a cycle is always cut before it repeats.
-func parameterizedOwnsManaged(p types.ParameterizedType, symTable *symbols.SymbolTable, loc ast.Location) bool {
+// instantiateDecl substitutes a generic type's arguments into its declaration, giving the
+// concrete type one instantiation actually is. False when the name does not resolve.
+func instantiateDecl(p types.ParameterizedType, symTable *symbols.SymbolTable, loc ast.Location) (types.Type, bool) {
 	if symTable == nil {
-		return false
+		return nil, false
 	}
 	decl, ok := symTable.LookupTypeFrom(p.Name, loc)
 	if !ok {
-		return false
+		return nil, false
 	}
-	subst := make(map[string]types.Type, len(decl.GenericParams))
-	for i, gp := range decl.GenericParams {
-		if i < len(p.TypeArguments) {
-			subst[gp.Name] = p.TypeArguments[i]
-		}
-	}
-	return OwnsManaged(substituteTypeVars(decl.Type, subst), symTable, loc)
+	return types.Substitute(decl.Type, ast.BindGenericParams(decl.GenericParams, p.TypeArguments)), true
 }
 
 // resolveNamedType resolves an UnresolvedType to the declaration's actual type,
@@ -399,51 +415,41 @@ func SharedMutablePath(t types.Type, symTable *symbols.SymbolTable, loc ast.Loca
 	if types.AllocationOf(resolved) == types.Shared && hasWritableField(resolved, symTable, loc) {
 		return nil, true
 	}
-	switch v := resolved.(type) {
-	case *types.ConstrainedType:
-		return SharedMutablePath(v.Type, symTable, loc, seen)
-	case types.NamedStructType:
-		return firstSharingField(v.Fields, symTable, loc, seen)
-	case types.AnonymousStructType:
-		return firstSharingField(v.Fields, symTable, loc, seen)
-	case types.TupleType:
-		// No name is prefixed for a tuple or a `data` payload, unlike a struct field:
-		// both render their contents in their own spelling — `(i64, []i64)`,
-		// `Maybe<[]i64>` — so the sharing part is already on the page, and `.1` or
-		// `.Some` would only repeat it. A struct is the case that needs the path,
-		// since `Row` says nothing about what it holds.
-		for _, e := range v.Elements {
-			if path, shares := SharedMutablePath(e, symTable, loc, seen); shares {
-				return path, true
-			}
+	// The generic arm keeps its own cycle guard — see OwnsManaged for why only this walk
+	// needs one: it looks *past* a shared value with no writable field, which is exactly
+	// the shape that can come back around to itself.
+	if pt, ok := resolved.(types.ParameterizedType); ok {
+		// Substituted, for OwnsManaged's reason: `Maybe<[]i64>` shares, `Maybe<i64>` does
+		// not, and the declaration alone — whose payload is the variable `t` — cannot tell
+		// them apart.
+		if seen[pt.Name] {
+			return nil, false
 		}
-	case types.DataType:
-		for _, c := range v.Constructors {
-			for _, f := range c.FieldTypes() {
-				if path, shares := SharedMutablePath(f, symTable, loc, seen); shares {
-					return path, true
-				}
-			}
+		seen[pt.Name] = true
+		inst, ok := instantiateDecl(pt, symTable, loc)
+		if !ok {
+			return nil, false
 		}
-	case types.StaticArrayType:
-		// `[2][]i64` is two box pointers copied inline: the array is independent per
-		// slot and each of its elements is not.
-		return SharedMutablePath(v.ElementType, symTable, loc, seen)
-	case types.ParameterizedType:
-		// Substituted, for OwnsManaged's reason: `Maybe<[]i64>` shares, `Maybe<i64>`
-		// does not, and the declaration alone — whose payload is the variable `t` —
-		// cannot tell them apart.
-		return parameterizedSharedMutablePath(v, symTable, loc, seen)
+		return SharedMutablePath(inst, symTable, loc, seen)
 	}
-	return nil, false
-}
-
-// firstSharingField returns the first field that shares, prefixed to its own path.
-func firstSharingField(fields []types.StructField, symTable *symbols.SymbolTable, loc ast.Location, seen map[string]bool) ([]string, bool) {
-	for _, f := range fields {
-		if path, shares := SharedMutablePath(f.Type, symTable, loc, seen); shares {
-			return append([]string{f.Name}, path...), true
+	// A struct's field name is prefixed to the path; a tuple element, `data` payload or
+	// array element contributes none. No name is prefixed for those because they render
+	// their contents in their own spelling — `(i64, []i64)`, `Maybe<[]i64>` — so the
+	// sharing part is already on the page, and `.1` or `.Some` would only repeat it. A
+	// struct is the case that needs the path, since `Row` says nothing about what it holds.
+	var path []string
+	if eachComponent(resolved, func(name string, ct types.Type) bool {
+		p, shares := SharedMutablePath(ct, symTable, loc, seen)
+		if !shares {
+			return false
 		}
+		if name != "" {
+			p = append([]string{name}, p...)
+		}
+		path = p
+		return true
+	}) {
+		return path, true
 	}
 	return nil, false
 }
@@ -477,27 +483,6 @@ func hasWritableField(t types.Type, symTable *symbols.SymbolTable, loc ast.Locat
 		return hasWritableField(decl.Type, symTable, loc)
 	}
 	return false
-}
-
-// parameterizedSharedMutablePath answers SharedMutablePath for one instantiation,
-// pairing the declaration's parameters with the instantiation's arguments exactly as
-// parameterizedOwnsManaged does.
-func parameterizedSharedMutablePath(p types.ParameterizedType, symTable *symbols.SymbolTable, loc ast.Location, seen map[string]bool) ([]string, bool) {
-	if symTable == nil || seen[p.Name] {
-		return nil, false
-	}
-	seen[p.Name] = true
-	decl, ok := symTable.LookupTypeFrom(p.Name, loc)
-	if !ok {
-		return nil, false
-	}
-	subst := make(map[string]types.Type, len(decl.GenericParams))
-	for i, gp := range decl.GenericParams {
-		if i < len(p.TypeArguments) {
-			subst[gp.Name] = p.TypeArguments[i]
-		}
-	}
-	return SharedMutablePath(substituteTypeVars(decl.Type, subst), symTable, loc, seen)
 }
 
 // Analyze walks the typed program and returns the retain/release-temp Table.
@@ -911,79 +896,7 @@ func (a *analyzer) typeOf(e ast.Expression) (types.Type, bool) {
 	if !ok {
 		return nil, false
 	}
-	return substituteTypeVars(t, a.subst), true
-}
-
-// substituteTypeVars replaces type variables with their bindings for the
-// instantiation being analyzed, descending through the composite types a value can
-// have. A nil substitution is the identity, so ordinary code pays nothing.
-func substituteTypeVars(t types.Type, subst map[string]types.Type) types.Type {
-	if len(subst) == 0 || t == nil {
-		return t
-	}
-	switch tt := t.(type) {
-	case types.GenericType:
-		if concrete, ok := subst[tt.Name]; ok {
-			return concrete
-		}
-		return tt
-	case types.StaticArrayType:
-		tt.ElementType = substituteTypeVars(tt.ElementType, subst)
-		return tt
-	case types.DynamicArrayType:
-		tt.ElementType = substituteTypeVars(tt.ElementType, subst)
-		return tt
-	case types.TupleType:
-		elems := make([]types.Type, len(tt.Elements))
-		for i, e := range tt.Elements {
-			elems[i] = substituteTypeVars(e, subst)
-		}
-		tt.Elements = elems
-		return tt
-	case types.WeakType:
-		tt.Inner = substituteTypeVars(tt.Inner, subst)
-		return tt
-	case types.ParameterizedType:
-		args := make([]types.Type, len(tt.TypeArguments))
-		for i, a := range tt.TypeArguments {
-			args[i] = substituteTypeVars(a, subst)
-		}
-		tt.TypeArguments = args
-		return tt
-	case types.NamedStructType:
-		// Substituting a *declaration's* contents is how an instantiation's ownership
-		// is decided (parameterizedOwnsManaged). Fields are copied, not written in
-		// place: the declaration is shared by every instantiation, so mutating it
-		// would let the first one analyzed decide the rest.
-		fields := make([]types.StructField, len(tt.Fields))
-		copy(fields, tt.Fields)
-		for i := range fields {
-			fields[i].Type = substituteTypeVars(fields[i].Type, subst)
-		}
-		tt.Fields = fields
-		return tt
-	case types.AnonymousStructType:
-		fields := make([]types.StructField, len(tt.Fields))
-		copy(fields, tt.Fields)
-		for i := range fields {
-			fields[i].Type = substituteTypeVars(fields[i].Type, subst)
-		}
-		tt.Fields = fields
-		return tt
-	case types.DataType:
-		ctors := make([]types.DataTypeConstructor, len(tt.Constructors))
-		copy(ctors, tt.Constructors)
-		for i := range ctors {
-			params := make([]types.Type, len(ctors[i].Params))
-			for j, p := range ctors[i].Params {
-				params[j] = substituteTypeVars(p, subst)
-			}
-			ctors[i].Params = params
-		}
-		tt.Constructors = ctors
-		return tt
-	}
-	return t
+	return types.Substitute(t, a.subst), true
 }
 
 // markMergeTemp marks an if/match expression as an owned temporary to release
@@ -1004,7 +917,7 @@ func (a *analyzer) bindingOwnsManaged(vds *ast.VarDeclStmt) bool {
 		// the enclosing function's type variables inside a generic body — substitute
 		// for the instantiation being analyzed (a `let copy: t = x` is managed exactly
 		// when this instantiation's `t` is).
-		return OwnsManaged(substituteTypeVars(vds.Type, a.subst), a.symTable, vds.GetLocation())
+		return OwnsManaged(types.Substitute(vds.Type, a.subst), a.symTable, vds.GetLocation())
 	}
 	return a.ownsManaged(vds.Value)
 }
