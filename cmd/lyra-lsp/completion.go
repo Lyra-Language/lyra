@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
-	"runtime/debug"
 	"sort"
 	"strings"
 
@@ -28,25 +26,13 @@ import (
 // CompletionHandler interface; Initialize additionally advertises `.` as a
 // trigger character so member completion fires as soon as the dot is typed.
 func (h *Handler) Completion(_ context.Context, params *lsp.CompletionParams) (result *lsp.CompletionList, retErr error) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("completion panic: %v\n%s", r, debug.Stack())
-			result, retErr = nil, nil
-		}
-	}()
+	defer recoverHandler("completion", &result, &retErr)
 
-	uri := string(params.TextDocument.URI)
-	h.mu.Lock()
-	analysis, ok := h.analysisStore[uri]
-	source := h.docStore[uri]
-	h.mu.Unlock()
+	c, ok := h.cursorAt(string(params.TextDocument.URI), params.Position)
 	if !ok {
 		return nil, nil
 	}
-
-	// LSP positions are 0-based UTF-16; ast.Location is 1-based bytes.
-	line := params.Position.Line + 1
-	col := byteColumn(source, params.Position.Line, params.Position.Character)
+	analysis, source, line, col := c.analysis, c.source, c.line, c.col
 
 	// Text on the cursor's line up to the caret, used to detect a `receiver.`
 	// member-access prefix the broken/partial parse can't be relied upon for.

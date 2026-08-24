@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"runtime/debug"
 
 	"github.com/owenrumney/go-lsp/lsp"
 
@@ -15,18 +14,10 @@ import (
 // always includes the declaration site. The go-lsp library registers this
 // capability automatically via the DocumentHighlightHandler interface.
 func (h *Handler) DocumentHighlight(_ context.Context, params *lsp.DocumentHighlightParams) (result []lsp.DocumentHighlight, retErr error) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("documentHighlight panic: %v\n%s", r, debug.Stack())
-			result, retErr = nil, nil
-		}
-	}()
+	defer recoverHandler("documentHighlight", &result, &retErr)
 
 	uri := string(params.TextDocument.URI)
-	h.mu.Lock()
-	analysis, ok := h.analysisStore[uri]
-	source := h.docStore[uri]
-	h.mu.Unlock()
+	analysis, source, ok := h.docFor(uri)
 	if !ok {
 		return nil, nil
 	}

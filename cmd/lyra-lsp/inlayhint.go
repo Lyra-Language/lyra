@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"runtime/debug"
 
 	"github.com/owenrumney/go-lsp/lsp"
 
@@ -15,18 +13,10 @@ import (
 // InlayHint implements textDocument/inlayHint, returning type hints for
 // unannotated let/var/const bindings within the requested range.
 func (h *Handler) InlayHint(_ context.Context, params *lsp.InlayHintParams) (result []lsp.InlayHint, retErr error) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("inlayHint panic: %v\n%s", r, debug.Stack())
-			result, retErr = nil, nil
-		}
-	}()
+	defer recoverHandler("inlayHint", &result, &retErr)
 
 	uri := string(params.TextDocument.URI)
-	h.mu.Lock()
-	analysis, ok := h.analysisStore[uri]
-	source := h.docStore[uri]
-	h.mu.Unlock()
+	analysis, source, ok := h.docFor(uri)
 	if !ok {
 		return nil, nil
 	}

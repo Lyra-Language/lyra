@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"runtime/debug"
 
 	"github.com/owenrumney/go-lsp/lsp"
 
@@ -218,18 +217,10 @@ func locationContains(loc ast.Location, line, col int) bool {
 // itself is always included in the edits. The go-lsp library registers this
 // capability automatically via the RenameHandler interface.
 func (h *Handler) Rename(_ context.Context, params *lsp.RenameParams) (result *lsp.WorkspaceEdit, retErr error) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("rename panic: %v\n%s", r, debug.Stack())
-			result, retErr = nil, nil
-		}
-	}()
+	defer recoverHandler("rename", &result, &retErr)
 
 	uri := string(params.TextDocument.URI)
-	h.mu.Lock()
-	analysis, ok := h.analysisStore[uri]
-	source := h.docStore[uri]
-	h.mu.Unlock()
+	analysis, source, ok := h.docFor(uri)
 	if !ok {
 		return nil, nil
 	}
@@ -284,18 +275,10 @@ func (h *Handler) Rename(_ context.Context, params *lsp.RenameParams) (result *l
 // text as the rename placeholder. The go-lsp library registers this capability
 // automatically via the PrepareRenameHandler interface.
 func (h *Handler) PrepareRename(_ context.Context, params *lsp.PrepareRenameParams) (result *lsp.PrepareRenameResult, retErr error) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("prepareRename panic: %v\n%s", r, debug.Stack())
-			result, retErr = nil, nil
-		}
-	}()
+	defer recoverHandler("prepareRename", &result, &retErr)
 
 	uri := string(params.TextDocument.URI)
-	h.mu.Lock()
-	analysis, ok := h.analysisStore[uri]
-	source := h.docStore[uri]
-	h.mu.Unlock()
+	analysis, source, ok := h.docFor(uri)
 	if !ok {
 		return nil, nil
 	}

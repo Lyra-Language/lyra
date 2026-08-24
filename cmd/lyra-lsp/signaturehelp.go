@@ -3,8 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
-	"runtime/debug"
 	"strings"
 
 	"github.com/owenrumney/go-lsp/lsp"
@@ -20,25 +18,13 @@ import (
 // interface; Initialize also sets an explicit SignatureHelpProvider to advertise
 // `(` and `,` as trigger characters.
 func (h *Handler) SignatureHelp(_ context.Context, params *lsp.SignatureHelpParams) (result *lsp.SignatureHelp, retErr error) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("signatureHelp panic: %v\n%s", r, debug.Stack())
-			result, retErr = nil, nil
-		}
-	}()
+	defer recoverHandler("signatureHelp", &result, &retErr)
 
-	uri := string(params.TextDocument.URI)
-	h.mu.Lock()
-	analysis, ok := h.analysisStore[uri]
-	source := h.docStore[uri]
-	h.mu.Unlock()
+	c, ok := h.cursorAt(string(params.TextDocument.URI), params.Position)
 	if !ok {
 		return nil, nil
 	}
-
-	// LSP positions are 0-based UTF-16; ast.Location is 1-based bytes.
-	line := params.Position.Line + 1
-	col := byteColumn(source, params.Position.Line, params.Position.Character)
+	analysis, source, line, col := c.analysis, c.source, c.line, c.col
 
 	// Scan the source prefix up to the cursor to find the enclosing call site.
 	prefix := source[:posToOffset(source, params.Position.Line, params.Position.Character)]

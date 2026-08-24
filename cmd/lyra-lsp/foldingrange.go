@@ -2,8 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
-	"runtime/debug"
 
 	"github.com/owenrumney/go-lsp/lsp"
 
@@ -14,17 +12,10 @@ import (
 // match expressions, data/struct/trait declarations, and block expressions.
 // The go-lsp library registers the capability automatically when this method is present.
 func (h *Handler) FoldingRange(_ context.Context, params *lsp.FoldingRangeParams) (result []lsp.FoldingRange, retErr error) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("foldingRange panic: %v\n%s", r, debug.Stack())
-			result, retErr = nil, nil
-		}
-	}()
+	defer recoverHandler("foldingRange", &result, &retErr)
 
 	uri := string(params.TextDocument.URI)
-	h.mu.Lock()
-	analysis, ok := h.analysisStore[uri]
-	h.mu.Unlock()
+	analysis, _, ok := h.docFor(uri)
 	if !ok {
 		return nil, nil
 	}

@@ -9,6 +9,50 @@ Newest first.
 
 ## Dated log
 
+### 08/24/26 (7)
+**The LSP's thirteen prologues, and its two symbol switches.**
+
+Every request handler opened with the same twenty lines: a deferred `recover` closure that
+logged and answered empty, a locked lookup of the document's analysis and source, and — for
+the nine acting on a cursor — the conversion of an LSP position into ast.Location's terms.
+Fourteen recover closures in total.
+
+They are three helpers in `handler.go` now: `recoverHandler`, `docFor` and `cursorAt`.
+
+**The guard is the part worth being careful about.** `defer recoverHandler(name, &result,
+&retErr)` works because `recover()` reports a panic only when called *by the deferred
+function itself* — which is this one, deferred directly. Wrapping it in a closure, the
+obvious tidy-up, silently stops it working, and every existing test would still pass.
+`TestRecoverHandler_ReturnsZeroValueAndNoError` is what notices, along with its companion
+asserting the guard is inert when nothing panics. What it protects is not one feature: a
+handler that takes the process down costs the editor *every* feature, and the user sees a
+language server that "stopped working" with nothing to report.
+
+Two prologues stayed. `analyze` recovers differently — it publishes a diagnostic to the
+client and returns a real error — and `WorkspaceSymbol` snapshots every open document rather
+than looking one up.
+
+**`stmtToSymbol` and `stmtToSymbolInfo`** derived their symbols from parallel switches over
+the same four declaration kinds, with the same `Name == ""` guards, the same kind derivation
+and the same extern special case. They share `symbolOf` now, which answers `{name, kind,
+span, nameLoc}`.
+
+The merge turned on noticing that the two want the *same* location for different reasons:
+the outline highlights `nameLoc` as its selection range, and the workspace index locates a
+hit at `nameLoc` — which equals the span for three kinds and differs only for an extern,
+whose declaration begins at its `@link` or `unsafe` token. The workspace index's extra rule
+(only functions and constants, since a plain `var` is a symbol in its own file and noise
+across a workspace) stays at that call site, as its policy rather than something `symbolOf`
+should know.
+
+`pkg/ast/exhaustive_test.go` registered *both* switches, so a new declaration kind failed
+twice; one entry now. It also caught the merge: the two stale registrations failed
+immediately with "no type switch found — the entry in declarationConsumers is stale, which
+makes this check pass while testing nothing", which is the failure that test was written to
+produce.
+
+Net −164 lines.
+
 ### 08/24/26 (6)
 **Ten checker passes, ten identical error structs, ten identical driver loops.**
 

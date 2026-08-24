@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"runtime/debug"
 
 	"github.com/owenrumney/go-lsp/lsp"
 
@@ -14,25 +13,13 @@ import (
 // Definition implements textDocument/definition, returning the source location
 // where the symbol under the cursor is declared.
 func (h *Handler) Definition(_ context.Context, params *lsp.DefinitionParams) (result []lsp.Location, retErr error) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("definition panic: %v\n%s", r, debug.Stack())
-			result, retErr = nil, nil
-		}
-	}()
+	defer recoverHandler("definition", &result, &retErr)
 
-	uri := string(params.TextDocument.URI)
-	h.mu.Lock()
-	analysis, ok := h.analysisStore[uri]
-	source := h.docStore[uri]
-	h.mu.Unlock()
+	c, ok := h.cursorAt(string(params.TextDocument.URI), params.Position)
 	if !ok {
 		return nil, nil
 	}
-
-	// LSP positions are 0-based UTF-16; ast.Location is 1-based bytes.
-	line := params.Position.Line + 1
-	col := byteColumn(source, params.Position.Line, params.Position.Character)
+	uri, analysis, source, line, col := c.uri, c.analysis, c.source, c.line, c.col
 
 	log.Printf("definition: request at %s line=%d col=%d", uri, line, col)
 

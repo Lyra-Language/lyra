@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
-	"runtime/debug"
 	"strings"
 
 	"github.com/owenrumney/go-lsp/lsp"
@@ -23,18 +21,10 @@ import (
 // variable/import" (lyra-W003/W004) — plus a range-driven "Insert inferred type
 // annotation" refactor for unannotated `let`/`var` bindings.
 func (h *Handler) CodeAction(_ context.Context, params *lsp.CodeActionParams) (result []lsp.CodeAction, retErr error) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("codeAction panic: %v\n%s", r, debug.Stack())
-			result, retErr = nil, nil
-		}
-	}()
+	defer recoverHandler("codeAction", &result, &retErr)
 
 	uri := params.TextDocument.URI
-	h.mu.Lock()
-	analysis, ok := h.analysisStore[string(uri)]
-	source := h.docStore[string(uri)]
-	h.mu.Unlock()
+	analysis, source, ok := h.docFor(string(uri))
 	if !ok {
 		return nil, nil
 	}

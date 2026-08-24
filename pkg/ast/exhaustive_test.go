@@ -148,13 +148,13 @@ var declarationConsumers = []struct {
 	{"documentation model", repoRoot + "/pkg/docgen/docgen.go", "declFor", map[string]string{
 		"ModuleDeclStmt": "the module's own doc is the page header, not a declaration on it",
 	}},
-	{"LSP document outline", repoRoot + "/cmd/lyra-lsp/documentsymbol.go", "stmtToSymbol", map[string]string{
-		"ModuleDeclStmt": "the file's module header is not a symbol in it",
+	// One entry where there were two. The document outline and the workspace symbol index
+	// derived their symbols from parallel switches over the same four kinds; they share
+	// `symbolOf` now, so a new declaration kind fails here once rather than twice — and
+	// cannot be added to one list and forgotten in the other.
+	{"LSP symbol lists", repoRoot + "/cmd/lyra-lsp/documentsymbol.go", "symbolOf", map[string]string{
+		"ModuleDeclStmt": "a file's module header is neither an outline entry nor a searchable symbol",
 		"TraitImplStmt":  "an impl has no name; its methods would be the symbols, and are not listed yet",
-	}},
-	{"LSP workspace symbols", repoRoot + "/cmd/lyra-lsp/workspacesymbols.go", "stmtToSymbolInfo", map[string]string{
-		"ModuleDeclStmt": "not a searchable symbol",
-		"TraitImplStmt":  "an impl has no name to search for",
 	}},
 	{"LSP rename anchors", repoRoot + "/cmd/lyra-lsp/rename.go", "namedNameLoc", map[string]string{
 		"ModuleDeclStmt": "a module is renamed by moving the file, not by this server",

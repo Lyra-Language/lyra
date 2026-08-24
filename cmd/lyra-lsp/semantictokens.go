@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"log"
-	"runtime/debug"
 	"sort"
 
 	"github.com/owenrumney/go-lsp/lsp"
@@ -57,18 +56,10 @@ type semToken struct {
 // go-lsp library registers this capability automatically via the
 // SemanticTokensFullHandler interface; Initialize advertises the legend.
 func (h *Handler) SemanticTokensFull(_ context.Context, params *lsp.SemanticTokensParams) (result *lsp.SemanticTokens, retErr error) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("semanticTokens panic: %v\n%s", r, debug.Stack())
-			result, retErr = nil, nil
-		}
-	}()
+	defer recoverHandler("semanticTokens", &result, &retErr)
 
 	uri := string(params.TextDocument.URI)
-	h.mu.Lock()
-	analysis, ok := h.analysisStore[uri]
-	source := h.docStore[uri]
-	h.mu.Unlock()
+	analysis, source, ok := h.docFor(uri)
 	if !ok {
 		return nil, nil
 	}

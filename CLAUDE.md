@@ -336,6 +336,14 @@ language-level rules are in the workspace `CLAUDE.md`; what matters inside this 
   as a post-pass over the file's tree — after the walk, because whether a `///` was
   claimed is only knowable once every collector that might have claimed it has run. The
   claim set is keyed by start byte and reset per file (`ctx.ResetDocs`).
+- **A request handler's prologue is `handler.go`'s**: `defer recoverHandler(name, &result,
+  &retErr)` for the panic guard, `h.docFor(uri)` for the analysis and source under one lock,
+  and `h.cursorAt(uri, pos)` for those plus the cursor already converted into
+  ast.Location's terms. Thirteen handlers spelled those twenty lines out. The guard is the
+  one to be careful with: an LSP server must not die on a single bad request, and
+  `recover()` reports a panic only when called *by the deferred function itself* — so
+  wrapping `recoverHandler` in a closure silently disables it. `TestRecoverHandler_*` is
+  what notices.
 - **Every position-based feature starts at `findExprAtPos`** (`hover.go`), and
   `definition.go`'s `scopeInExpr` is its twin for scopes. `findExprAtPos` **no longer
   switches on node kinds** — it walks with `ast.WalkStmt`/`ast.WalkExpr` and keeps the

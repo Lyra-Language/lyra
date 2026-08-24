@@ -359,25 +359,13 @@ func toLSPRelatedInfo(uri lsp.DocumentURI, source string, related []diag.Related
 // The go-lsp library registers textDocument/hover automatically when this
 // method is present on the handler.
 func (h *Handler) Hover(_ context.Context, params *lsp.HoverParams) (result *lsp.Hover, retErr error) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("hover panic: %v\n%s", r, debug.Stack())
-			result, retErr = nil, nil
-		}
-	}()
+	defer recoverHandler("hover", &result, &retErr)
 
-	uri := string(params.TextDocument.URI)
-	h.mu.Lock()
-	analysis, ok := h.analysisStore[uri]
-	source := h.docStore[uri]
-	h.mu.Unlock()
+	c, ok := h.cursorAt(string(params.TextDocument.URI), params.Position)
 	if !ok {
 		return nil, nil
 	}
-
-	// LSP positions are 0-based UTF-16; ast.Location is 1-based bytes.
-	line := params.Position.Line + 1
-	col := byteColumn(source, params.Position.Line, params.Position.Character)
+	analysis, line, col := c.analysis, c.line, c.col
 
 	expr := findExprAtPos(analysis.program, line, col)
 	if expr == nil {
