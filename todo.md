@@ -227,23 +227,18 @@ write today:
 
 ## Known bugs
 
-- **[OPEN] A destructured untyped literal keeps `i64` and mixes widths into invalid IR.**
-  `let (i, j) = (10, 1)` types `j` as the untyped-literal default rather than adapting to
-  its use, so `xs[0] + j` on a `[3]u8` reaches the backend as a `u8 + i64` add and clang
-  rejects the module:
+- **[DONE 08/24] A destructured binding settles to its default width**, exactly as a scalar
+  one does. `let (i, j) = (10, 1)` left `j` *untyped* where `let j = 1` gives it i64, so
+  `xs[0] + j` on a `[3]u8` was neither adapted nor refused — the operator check had no
+  concrete type to object to, and the backend emitted `u8 + i64`, which clang rejects
+  ("Intrinsic called with incompatible signature"). Rule 5 inverted: the front end accepted
+  a form the backend cannot build.
 
-  ```
-  invalid LLVM IR input: Intrinsic called with incompatible signature
-    %13 = call { i8, i1 } @llvm.uadd.with.overflow.i8(i8 %11, i64 %12)
-  ```
+  Promoted per bound name rather than on the whole value, so the shape-mismatch error still
+  names what was written — `let (a, b) = 5` says it cannot destructure an *integer literal*,
+  not the i64 that literal would have settled to. Found 08/24 while writing the destructuring
+  range-analysis test.
 
-  Two things are wrong and either would close it: a destructuring declaration does not
-  propagate an element's context onto its untyped-literal leaves the way every other
-  binding form does (`checkDestructuringDecl` never calls `propagateLiteralType` per
-  element), and the mixed-width add should be a type error rather than something the
-  backend tries to lower — rule 5 inverted, the front end accepting a form the backend
-  cannot build. Found 08/24 while writing the destructuring range-analysis test; the
-  workaround in that test is to index with a bare name.
 
 - **[DONE 08/24] Taking a binding's address pins it against last-use optimization**, which
   is what let ownership walk into an `unsafe` block at all. Two changes that are one change:

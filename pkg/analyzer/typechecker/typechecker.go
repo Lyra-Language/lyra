@@ -550,11 +550,34 @@ func (tc *TypeChecker) checkDestructuringDecl(decl *ast.DestructuringDeclStmt) {
 		inferredType = resolvedDeclType
 	}
 
+	// **With no annotation the value settles to its defaults, exactly as an unannotated
+	// scalar binding does** (checkVarDecl's no-annotation path) — `(10, 1)` is an
+	// `(i64, i64)`, so the backend lowers the tuple at those widths.
+	//
+	// Recorded on the value but *not* substituted for inferredType, which the pattern walk
+	// below reports shape mismatches against: `let (a, b) = 5` should say it cannot
+	// destructure an *integer literal*, naming what was written, rather than the i64 that
+	// literal would have settled to.
+	if decl.Type == nil {
+		tc.typeTable.Set(decl.Value, promoteToDefault(inferredType))
+	}
+
 	bindingKind := ast.BindingLet
 	if decl.Keyword == "var" {
 		bindingKind = ast.BindingVar
 	}
 	tc.walkDestructuredPattern(decl.Pattern, inferredType, func(name string, typ types.Type) {
+		// Each bound name settles to its default too, for the reason the scalar form does.
+		// Without it a destructured name kept an *untyped* type where `let j = 1` gives it
+		// i64 — so `a + j` on a `u8` was neither adapted nor refused: the operator check
+		// had no concrete type to object to, and the backend emitted `u8 + i64`, which
+		// clang rejects outright ("Intrinsic called with incompatible signature"). The
+		// scalar spelling reports `operator +: incompatible types: u8 and i64`, and both
+		// spellings should give that answer.
+		//
+		// An annotation has already fixed the widths, and promoting a concrete type is
+		// the identity, so this needs no condition.
+		typ = promoteToDefault(typ)
 		// Overwrite (rather than Define) so this typed entry replaces the
 		// untyped DestructuringDeclStmt placeholder the collector registered for
 		// this name; later identifier references then resolve to the leaf's

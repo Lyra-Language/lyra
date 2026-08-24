@@ -101,3 +101,36 @@ func TestTupleDestructuring_RestAtBeginning_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `let (...rest, x) = (1, 2, 3)`, false)
 	assertNoErrors(t, res)
 }
+
+// **A destructured binding settles to its default width, exactly as a scalar one does.**
+//
+// `let j = 1` gives `j` the i64 default, so `a + j` on a `u8` is refused as a mixed-width
+// add. The destructured spelling left the element *untyped*, so the operator check had no
+// concrete type to object to and let it through — and the backend then emitted `u8 + i64`,
+// which clang rejects outright:
+//
+//	invalid LLVM IR input: Intrinsic called with incompatible signature
+//	  %13 = call { i8, i1 } @llvm.uadd.with.overflow.i8(i8 %11, i64 %12)
+//
+// The front end accepting a form the backend cannot build is rule 5 inverted; the two
+// spellings now give the same answer.
+func TestTupleDestructuring_UntypedElementSettlesToDefault_Error(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let main = () -> void => {
+  let (i, j) = (10, 1)
+  let a: u8 = 5
+  println(a + j)
+}`, false)
+	assertErrorsAre(t, res, "operator +: incompatible types: u8 and i64")
+}
+
+// An annotation still fixes the widths, and narrow values still fit them — promoting must
+// not reach past a declared type.
+func TestTupleDestructuring_AnnotatedWidthsSurvive_Ok(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let main = () -> void => {
+  let (a, b): (u8, i8) = (200, -100)
+  println(i64(a) + i64(b))
+}`, false)
+	assertNoErrors(t, res)
+}
