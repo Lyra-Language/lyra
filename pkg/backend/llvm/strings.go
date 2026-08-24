@@ -605,6 +605,9 @@ func (l *lowerer) byteBufferOf(block *ir.Block, obj ast.Expression, recvT types.
 		if err != nil {
 			return nil, nil, nil, err
 		}
+		if diverged(addr, block) {
+			return nil, nil, block, nil
+		}
 		return block.NewBitCast(addr, i8ptr), i64c(int64(it.Size)), block, nil
 	}
 	return nil, nil, nil, fmt.Errorf("llvm: decode_utf8() on non-array receiver %s", recvT)

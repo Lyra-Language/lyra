@@ -29,7 +29,7 @@ func collectCallGenericArguments(node *sitter.Node, ctx *collector_ctx.Ctx) []ty
 	genericArguments := []types.Type{}
 	for i := uint(0); i < genericArgumentsNode.ChildCount(); i++ {
 		child := genericArgumentsNode.Child(i)
-		if child.IsNamed() {
+		if child.IsNamed() && !cst.IsComment(child) {
 			genericArguments = append(genericArguments, ctx.ParseType(child))
 		}
 	}
@@ -40,7 +40,7 @@ func collectArgumentList(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.Expres
 	arguments := []ast.Expression{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
-		if child.IsNamed() {
+		if child.IsNamed() && !cst.IsComment(child) {
 			arguments = append(arguments, CollectExpression(child, ctx))
 		}
 	}

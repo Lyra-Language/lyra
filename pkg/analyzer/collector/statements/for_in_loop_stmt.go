@@ -5,6 +5,8 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
 	sitter "github.com/tree-sitter/go-tree-sitter"
+
+	"github.com/Lyra-Language/lyra/pkg/cst"
 )
 
 func CollectForInLoopExpr(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.ForInLoopExpr {
@@ -78,7 +80,9 @@ func collectForInCondition(node *sitter.Node, ctx *collector_ctx.Ctx) (key, valu
 			valueLoc = ctx.NodeLocation(child)
 			registerLoopVar(child, value, ctx)
 		default:
-			if child.IsNamed() {
+			// Not `else`: a comment after `in` would overwrite the iterable with a nil,
+			// which is rule 3's typed nil in the one slot the loop cannot do without.
+			if child.IsNamed() && !cst.IsComment(child) {
 				iterable = ctx.CollectExpr(child)
 			}
 		}

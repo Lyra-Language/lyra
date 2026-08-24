@@ -456,6 +456,9 @@ func (l *lowerer) lowerPrintCall(block *ir.Block, e *ast.FunctionCallExpr, newli
 	if err != nil {
 		return nil, nil, err
 	}
+	if diverged(val, block) {
+		return nil, block, nil
+	}
 	dataPtr, length, err := l.formatForPrint(block, val, argType)
 	if err != nil {
 		return nil, nil, err

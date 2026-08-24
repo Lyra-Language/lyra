@@ -30,7 +30,7 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 			continue
 		}
 		child := node.Child(i)
-		if child.IsNamed() {
+		if child.IsNamed() && !cst.IsComment(child) {
 			if arg := ctx.ParseType(child); arg != nil {
 				traitArgs = append(traitArgs, arg)
 			}

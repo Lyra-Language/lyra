@@ -28,7 +28,7 @@ func collectGenericArgs(node *sitter.Node, ctx *collector_ctx.Ctx) []types.Type 
 	args := []types.Type{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
-		if child.IsNamed() {
+		if child.IsNamed() && !cst.IsComment(child) {
 			args = append(args, ctx.ParseType(child))
 		}
 	}

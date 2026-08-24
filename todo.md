@@ -227,6 +227,25 @@ write today:
 
 ## Known bugs
 
+- **An unreachable `match` arm is not reported.** A second arm naming a constructor an
+  earlier bind-only arm already claimed (`Wrap(a) => …, Wrap(b) => …`) is dead code, and
+  nothing says so — not the exhaustiveness pass, which asks the opposite question.
+
+  The **crash** it caused is fixed (08/24): the backend emitted both as cases of one LLVM
+  `switch`, and two `i8 0` cases is IR that llir builds and clang refuses ("duplicate case
+  value in switch"), so a program `lyrac check` passed clean failed at the C compiler
+  quoting a generated `.ll`. `unreachableDataArms` drops the later arm, which is what
+  first-match-wins already means.
+
+  What is left is the diagnostic. The arm is silently discarded today, so a typo — a second
+  `Wrap` where `Nil` was meant — compiles and runs with one branch quietly missing, and the
+  `Nil` case falls to the trap. A warning rather than an error, matching how the
+  non-exhaustive scalar match is treated. Note the check is **not** "two arms with the same
+  constructor": a refutable first arm (`Wrap(0) => …`) or a guarded one leaves the second
+  genuinely reachable, and both take the ladder path rather than the switch. The predicate is
+  the one lowering already computes — bind-only and unguarded — which suggests it belongs
+  beside the exhaustiveness check, reading the same arm list.
+
 - **[DONE 08/24] A destructured binding settles to its default width**, exactly as a scalar
   one does. `let (i, j) = (10, 1)` left `j` *untyped* where `let j = 1` gives it i64, so
   `xs[0] + j` on a `[3]u8` was neither adapted nor refused — the operator check had no

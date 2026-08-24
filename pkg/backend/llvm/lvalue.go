@@ -44,6 +44,9 @@ func (l *lowerer) lowerLValueAssignment(block *ir.Block, stmt *ast.LValueAssignm
 	if err != nil {
 		return nil, err
 	}
+	if diverged(v, block) {
+		return block, nil
+	}
 	// The typechecker already narrowed the value to the target type; coerce
 	// defensively so a residual int-width mismatch fixes rather than emitting bad IR.
 	v, err = l.coerceAggregateElem(block, v, targetLL, stmt.Value)

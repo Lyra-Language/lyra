@@ -171,6 +171,9 @@ func (l *lowerer) emitCompBody(block *ir.Block, e *ast.ArrayCompExpr, boxTy *llt
 	if err != nil {
 		return nil, err
 	}
+	if diverged(result, cur) {
+		return skip, nil
+	}
 	result, err = l.coerceAggregateElem(cur, result, elemLL, e.Result)
 	if err != nil {
 		return nil, err

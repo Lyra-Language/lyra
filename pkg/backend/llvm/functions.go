@@ -550,6 +550,9 @@ func (l *lowerer) lowerCallArgs(block *ir.Block, args []value.Value, argExprs []
 			if err != nil {
 				return nil, nil, false, err
 			}
+			if diverged(ptr, block) {
+				return nil, block, false, nil
+			}
 			args = append(args, ptr)
 			continue
 		}
@@ -587,6 +590,9 @@ func (l *lowerer) argumentAddress(block *ir.Block, arg ast.Expression) (value.Va
 	v, block, err := l.lowerExpr(block, arg)
 	if err != nil {
 		return nil, nil, err
+	}
+	if diverged(v, block) {
+		return nil, block, nil
 	}
 	entry := block.Parent.Blocks[0]
 	slot := entry.NewAlloca(v.Type())

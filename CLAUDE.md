@@ -236,6 +236,8 @@ real failure, and none is local to one package.
    | bind a generic type's arguments to its parameters | `ast.BindGenericParams` |
    | what does a value of this type hold inline? | `ownership.eachComponent` |
    | retain or release what a value owns | `emitOwnedValue` (`backend/llvm/owned_walk.go`) |
+   | did this operand diverge? | `diverged(v, block)` (`backend/llvm/trap.go`) |
+   | is this CST node a comment? | `cst.IsComment` |
 
 9. **A name does not identify a declaration, and may not even identify one function.**
    A *key* is module-qualified for a private declaration (rule 4), and a
@@ -301,7 +303,33 @@ real failure, and none is local to one package.
     node, set its span; when adding a diagnostic, check that the node you report against
     has one.
 
-15. **A builtin returning an owned managed value needs two things the defaults get wrong.**
+15. **A diverging operand hands back a nil, and every consumer must stop.** `panic(msg)`
+    has type `never`, so the typechecker accepts it anywhere — a struct field's value, an
+    array element, a call argument. Lowering it terminates the block and returns a **nil**
+    value; `diverged(v, block)` is the test, and a consumer that skips it builds an
+    instruction around the nil.
+
+    llir accepts that operand when the instruction is built and dies at **module
+    serialization**, so the stack trace is one frame in the emitter at `m.String()`, naming
+    neither the expression nor the pass. Thirteen sites consume such a value; **four had the
+    guard and nine did not**, and the four were exactly those a bug report had once landed
+    on — which is the shape to expect from a protocol enforced by convention rather than by
+    a type. `coerceAggregateElem` is the funnel for the aggregate half and now rejects a nil
+    with rule 5's loud error naming the expression, so a site added later fails legibly
+    instead of at serialization.
+
+16. **A comment is a *named* node, so `child.IsNamed()` does not mean "an element".**
+    All three comment kinds are grammar `extras`, free to sit between any two tokens —
+    including inside a comma-separated list, which is ordinary formatting in a multi-line
+    call. Every list collector told an element from a comma by asking `IsNamed()`, so seven
+    of them collected the comment as an element: a nil `ast.Expression`, which is rule 3's
+    typed nil. `f(1, /*a comment*/ 2)` was reported as *"expected 2 argument(s), got 3"* and
+    `[1, /*a comment*/ 2]` type-checked clean and died in the backend. `for … in` was worse
+    than either — it assigned the iterable from any named child, so a comment **overwrote**
+    it with nil. Use `cst.IsComment`; blocks had survived by discarding nil *statements*,
+    which is the symptom rather than the cause and does not generalize to an expression list.
+
+17. **A builtin returning an owned managed value needs two things the defaults get wrong.**
     `read_line` is the model: the ownership pass must know it owns its result
     (`calleeIsOwningBuiltin`), because the unresolved-callee default treats a *result* as
     borrowed and that direction leaks rather than being leak-safe; and its call site must

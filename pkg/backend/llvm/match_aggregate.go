@@ -532,7 +532,21 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 	// Per-arm binding scope — see lowerScalarMatch.
 	armScope := l.pushLocalScope()
 	defer armScope()
-	for _, arm := range e.MatchArms {
+	// A tag already claimed by an earlier arm. Reaching this function at all means every
+	// arm is a bind-only `DataPattern` with no guard (line ~484 routes a payload test or a
+	// guard to the ladder instead), so an arm repeating a constructor is **unreachable** —
+	// the earlier one matches that tag unconditionally. First-match-wins is what `match`
+	// already means, so dropping the later arm is the semantics rather than a choice.
+	//
+	// Emitting it produced two `i8 0` cases in one `switch`, which llir builds happily and
+	// clang refuses: *"duplicate case value in switch"*. That is a compile failure pointing
+	// at generated IR, on a program `lyrac check` passed clean — the front end does not yet
+	// report an unreachable match arm (see todo.md), so nothing upstream refuses it either.
+	unreachableArms := unreachableDataArms(e.MatchArms)
+	for armIdx, arm := range e.MatchArms {
+		if unreachableArms[armIdx] {
+			continue
+		}
 		armScope()
 		armBlock := fn.NewBlock("")
 		switch p := arm.Pattern.(type) {
@@ -759,4 +773,28 @@ func payloadFieldPatterns(p *ast.DataPattern, ctor types.DataTypeConstructor) ([
 	// one, so it keeps the honest error rather than being guessed at.
 	return nil, fmt.Errorf("llvm: binding a whole multi-field payload as one value (%q) is not implemented yet; "+
 		"name the fields instead, as %s(…)", p.Name, p.Name)
+}
+
+// unreachableDataArms reports which arms repeat a constructor an earlier arm already
+// claimed, so the caller can skip them before it builds a block for one.
+//
+// A pre-pass rather than a check inside the lowering loop: the block is created before the
+// pattern kind is known, and an empty block with no terminator is invalid IR — so the
+// alternative was to create one and pop it back off `fn.Blocks`, which is correct only
+// while nothing else appends a block in between.
+func unreachableDataArms(arms []ast.MatchArm) map[int]bool {
+	claimed := map[string]bool{}
+	dead := map[int]bool{}
+	for i, arm := range arms {
+		p, ok := arm.Pattern.(*ast.DataPattern)
+		if !ok {
+			continue
+		}
+		if claimed[p.Name] {
+			dead[i] = true
+			continue
+		}
+		claimed[p.Name] = true
+	}
+	return dead
 }

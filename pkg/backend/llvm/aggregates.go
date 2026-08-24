@@ -68,6 +68,9 @@ func (l *lowerer) lowerTupleLiteralExpr(block *ir.Block, e *ast.TupleLiteralExpr
 		if err != nil {
 			return nil, nil, err
 		}
+		if diverged(elemVal, block) {
+			return nil, block, nil
+		}
 		elemVal, err = l.coerceAggregateElem(block, elemVal, structType.Fields[i], elemExpr)
 		if err != nil {
 			return nil, nil, err
@@ -148,6 +151,9 @@ func (l *lowerer) lowerStructInstanceExpr(block *ir.Block, e *ast.StructInstance
 		v, block, err = l.lowerExpr(block, valExpr)
 		if err != nil {
 			return nil, nil, err
+		}
+		if diverged(v, block) {
+			return nil, block, nil
 		}
 		// Reconcile a residual width mismatch, as the tuple-literal and data-payload
 		// paths above already do. A struct literal is the third way into an aggregate
@@ -311,6 +317,9 @@ func (l *lowerer) lowerDataConstruction(block *ir.Block, dt types.DataType, ctor
 			if err != nil {
 				return nil, nil, err
 			}
+			if diverged(v, block) {
+				return nil, block, nil
+			}
 			v, err = l.coerceAggregateElem(block, v, payloadStructTy.Fields[i], argExpr)
 			if err != nil {
 				return nil, nil, err
@@ -468,6 +477,15 @@ func findConstructor(dt types.DataType, name string) (types.DataTypeConstructor,
 // NewInsertValue (as `insertvalue elem type mismatch, expected i8, got i64`); a
 // non-int mismatch it can't reconcile is a loud error, never a panic.
 func (l *lowerer) coerceAggregateElem(block *ir.Block, v value.Value, dst lltypes.Type, src ast.Expression) (value.Value, error) {
+	// A nil value means its expression diverged — `panic(…)` in element position — and the
+	// caller's `diverged` guard was missing. Every such site funnels here, so this turns the
+	// residue into rule 5's loud error rather than the nil-deref one line down: llir builds
+	// the instruction with a nil operand and dies at module serialization, a stack trace
+	// pointing at `m.String()` with nothing to say which expression was at fault.
+	if v == nil {
+		return nil, fmt.Errorf("llvm: element value is nil, its expression having diverged: %T at %s",
+			src, src.GetLocation().Pretty())
+	}
 	if v.Type().Equal(dst) {
 		return v, nil
 	}

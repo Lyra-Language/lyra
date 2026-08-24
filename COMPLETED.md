@@ -1154,7 +1154,7 @@ its start, so a string cannot point into an array's buffer — the same fact tha
 `slice` copy. A test pins the consequence, mutating and growing the array afterwards and
 checking the string did not follow.
 
-Ownership needed nothing, which was worth checking rather than assuming (hazard 15). The
+Ownership needed nothing, which was worth checking rather than assuming (hazard 17). The
 typechecker records the builtin's signature on the MemberExpr, and its return carries no
 `ref`/`mut`, so `isOwnedReturn` already answers *owned* — which is why `slice` has no
 entry in `calleeIsOwningBuiltin` either. That list is for builtins called as free

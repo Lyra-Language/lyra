@@ -823,7 +823,7 @@ func (c *Collector) parseParameterizedType(node *sitter.Node) types.Type {
 	argNodes := node.ChildrenByFieldName("type_arguments", cursor)
 	typeArguments := make([]types.Type, 0, len(argNodes))
 	for i := range argNodes {
-		if argNodes[i].IsNamed() {
+		if argNodes[i].IsNamed() && !cst.IsComment(&argNodes[i]) {
 			typeArguments = append(typeArguments, c.parseType(&argNodes[i]))
 		}
 	}

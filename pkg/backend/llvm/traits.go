@@ -178,6 +178,9 @@ func (l *lowerer) lowerTraitMethodCall(block *ir.Block, call *ast.FunctionCallEx
 			return nil, nil, err
 		}
 		block = next
+		if diverged(v, block) {
+			return nil, block, nil
+		}
 		args = append(args, v)
 	}
 	if len(args) != len(fn.Params) {
@@ -436,6 +439,9 @@ func (l *lowerer) lowerTraitPathCall(block *ir.Block, call *ast.FunctionCallExpr
 			return nil, nil, err
 		}
 		block = next
+		if diverged(v, block) {
+			return nil, block, nil
+		}
 		args = append(args, v)
 	}
 	if len(args) != len(fn.Params) {

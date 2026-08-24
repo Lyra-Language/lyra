@@ -78,9 +78,15 @@ func (l *lowerer) lowerDerefAssignment(block *ir.Block, stmt *ast.DerefAssignmen
 	if err != nil {
 		return nil, err
 	}
+	if diverged(ptr, block) {
+		return block, nil
+	}
 	v, block, err := l.lowerExpr(block, stmt.Value)
 	if err != nil {
 		return nil, err
+	}
+	if diverged(v, block) {
+		return block, nil
 	}
 	// Coerced for the reason an aggregate element is: an untyped literal reaches here at
 	// its default width, and storing an i64 through a pointer to i8 is a module clang

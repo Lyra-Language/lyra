@@ -57,6 +57,9 @@ func (l *lowerer) lowerDynArrayConstruction(block *ir.Block, e *ast.ArrayLiteral
 		if err != nil {
 			return nil, nil, err
 		}
+		if diverged(v, block) {
+			return nil, block, nil
+		}
 		v, err = l.coerceAggregateElem(block, v, elemLL, elemExpr)
 		if err != nil {
 			return nil, nil, err
@@ -525,9 +528,15 @@ func (l *lowerer) lowerDynArrayPush(block *ir.Block, call *ast.FunctionCallExpr,
 	if err != nil {
 		return nil, nil, err
 	}
+	if diverged(box, block) {
+		return nil, block, nil
+	}
 	v, block, err := l.lowerExpr(block, call.Arguments[0])
 	if err != nil {
 		return nil, nil, err
+	}
+	if diverged(v, block) {
+		return nil, block, nil
 	}
 	v, err = l.coerceAggregateElem(block, v, elemLL, call.Arguments[0])
 	if err != nil {
