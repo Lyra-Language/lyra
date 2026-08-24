@@ -1484,27 +1484,13 @@ func mutBorrowParams(lambda *ast.LambdaExpr) map[string]bool {
 // function-call result). Note it follows only the *object* spine: an index
 // expression's index (`i` in `grid[i]`) is a separate sub-read, not the root.
 func rootIdentExpr(expr ast.Expression) *ast.IdentifierExpr {
-	for {
-		switch e := expr.(type) {
-		case *ast.IdentifierExpr:
-			return e
-		case *ast.MemberExpr:
-			expr = e.Object
-		case *ast.IndexExpr:
-			expr = e.Object
-		default:
-			return nil
-		}
-	}
+	return ast.RootIdentifier(expr)
 }
 
 // rootIdentName is rootIdentExpr's name, or "" when the target is not rooted at a
 // plain identifier, in which case the write cannot be attributed to a binding.
 func rootIdentName(expr ast.Expression) string {
-	if id := rootIdentExpr(expr); id != nil {
-		return id.Name
-	}
-	return ""
+	return ast.RootIdentifierName(expr)
 }
 
 // mutableGlobals returns the names of top-level bindings whose *value* can change

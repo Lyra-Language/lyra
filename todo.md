@@ -227,33 +227,23 @@ write today:
 
 ## Known bugs
 
-- **[OPEN] Taking a binding's address must pin it against last-use optimization.**
-  Ownership's expression switch has no arm for `UnsafeBlockExpr`, so **nothing** —
-  no retain, drop or transfer — is recorded anywhere inside an `unsafe` block, which is
-  the whole of a program's FFI and raw-pointer code. That is a conservative hole (every
-  drop defers to scope exit) rather than an unsound one, and it cannot simply be closed:
-  adding the obvious `a.block(e.Body, needOwned)` breaks every FFI test in the backend
-  suite.
+- **[DONE 08/24] Taking a binding's address pins it against last-use optimization**, which
+  is what let ownership walk into an `unsafe` block at all. Two changes that are one change:
+  `noteAddressTaken` excludes an address-taken binding from last-use (the way `loopUsed`
+  already excludes a loop-referenced one), and `UnsafeBlockExpr` gained its arm.
 
-  ```lyra
-  let buf = CBuffer { ptr: unsafe { &xs[0] }, len: 3 }
-  ```
+  Perceus rests on "a binding's final textual mention is its final use", and `&` is exactly
+  the operation that separates them — a raw pointer keeps storage alive without counting as a
+  reference to it. In `CBuffer { ptr: unsafe { &xs[0] }, len: 3 }` the array was freed at its
+  last mention while the pointer still named it.
 
-  Walking the block makes `&xs[0]` the last *mention* of `xs`, so Perceus records a
-  last-use drop and frees the array while `buf.ptr` still points into its buffer —
-  `buf.get(i)` then reads zeros. Last-use rests on "a binding's final mention is its final
-  use", and `&x` is precisely the operation that breaks it: a raw pointer keeps storage
-  alive without counting as a reference to it.
+  The two halves fail differently, which is why each has its own test. Removing the **pin**
+  is a use-after-free: a read through the pointer in a later statement returns 0. Removing
+  the **arm** is a double free, and only for a value shared *out* of the block — a missing
+  drop defers to scope exit where the managed frame is a leak-safe backstop, but a missing
+  retain has no backstop. The whole suite passed with the arm removed until a test for that
+  case existed. See COMPLETED.md.
 
-  **So this is a missing rule, not a missing case.** The fix is an address-taken set
-  excluded from last-use in `computeLastUse`, exactly as `loopUsed` already excludes a
-  loop-referenced binding, and then the `UnsafeBlockExpr` arm in the same change. Adding
-  the arm alone is an ASan-visible use-after-free in `std.ffi` itself. The reasoning is
-  written out at the `default:` in `pkg/analyzer/ownership/ownership.go`.
-
-  Related, and cheap once the pin exists: `AwaitExpr`, `YieldExpr`, `YieldFromExpr` and
-  `ComposeExpr` also reach that default. They are sound there only because no backend case
-  exists for them, so each owes an arm in whatever change lowers it.
 
 - **[DONE 08/23] `TestExec_WithCStringsFlatAndNested` asserts `strcmp`'s sign, not its
   magnitude**, so `./asan.sh` is green on linux/arm64 — it had been red on a clean tree,

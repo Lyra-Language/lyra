@@ -636,20 +636,25 @@ func (a *analyzer) computeLastUse(lam *ast.LambdaExpr) map[ast.Expression]bool {
 		return true
 	}
 
-	// Names referenced anywhere inside a loop body are ineligible.
+	// Names referenced anywhere inside a loop body are ineligible, and so are names whose
+	// address has been taken — see addressTakenNames.
 	loopUsed := map[string]bool{}
+	addrTaken := map[string]bool{}
 	ast.WalkExpr(lam.Body, onStmt, func(e ast.Expression) bool {
 		switch le := e.(type) {
 		case *ast.ForLoopExpr:
 			collectNames(le.Body, loopUsed)
 		case *ast.ForInLoopExpr:
 			collectNames(le.Body, loopUsed)
+		case *ast.AddressOfExpr:
+			noteAddressTaken(le, addrTaken)
 		}
 		return true
 	})
 
 	eligible := func(name string) bool {
-		return declCount[name] == 1 && !params[name] && !reassigned[name] && !loopUsed[name]
+		return declCount[name] == 1 && !params[name] && !reassigned[name] &&
+			!loopUsed[name] && !addrTaken[name]
 	}
 
 	// Pre-order walk records references in program order; the final one per eligible
@@ -702,18 +707,24 @@ func (a *analyzer) computeOwnedLastRef(lam *ast.LambdaExpr) map[string]ast.Expre
 		return true
 	}
 	loopUsed := map[string]bool{}
+	addrTaken := map[string]bool{}
 	ast.WalkExpr(lam.Body, onStmt, func(e ast.Expression) bool {
 		switch le := e.(type) {
 		case *ast.ForLoopExpr:
 			collectNames(le.Body, loopUsed)
 		case *ast.ForInLoopExpr:
 			collectNames(le.Body, loopUsed)
+		case *ast.AddressOfExpr:
+			noteAddressTaken(le, addrTaken)
 		}
 		return true
 	})
 
 	owned := func(name string) bool {
-		if loopUsed[name] {
+		// An address-taken binding is excluded here for the reason it is excluded from
+		// last-use: reuse would hand its cells to something else while a pointer still
+		// names them.
+		if loopUsed[name] || addrTaken[name] {
 			return false
 		}
 		if ownParams[name] {
@@ -861,6 +872,33 @@ func tailConstruction(e ast.Expression) ast.Expression {
 		}
 	}
 	return nil
+}
+
+// noteAddressTaken records the binding an `&x` names, which is then excluded from last-use
+// optimization.
+//
+// **Perceus rests on a premise `&` breaks.** Last-use says a binding's final *textual
+// mention* is its final *use*, so the reference can be transferred rather than duplicated,
+// or dropped there rather than at scope exit. Taking an address is precisely the operation
+// that separates the two: a raw pointer keeps storage alive without counting as a reference
+// to it, so the mention is not the use and the storage outlives it.
+//
+// The shape it is written for is `std.ffi`'s own:
+//
+//	let buf = CBuffer { ptr: unsafe { &xs[0] }, len: 3 }
+//
+// `&xs[0]` is the last mention of `xs`. Without this, last-use frees the array there and
+// `buf.get(i)` reads whatever the allocator did next. It is an *element's* address, which is
+// why the root of the place is what gets pinned rather than the operand itself — pinning
+// `xs[0]` would pin nothing, since the thing that dies is `xs`.
+//
+// Pinning is the conservative direction: the binding falls back to a scope-exit release,
+// which is where it was before Perceus and is memory-safe. It costs precision in exactly the
+// functions that take an address, which is the trade `unsafe` code already makes.
+func noteAddressTaken(e *ast.AddressOfExpr, into map[string]bool) {
+	if root := ast.RootIdentifierName(e.Operand); root != "" {
+		into[root] = true
+	}
 }
 
 // collectNames records every identifier name referenced within a block.
@@ -1157,6 +1195,24 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 			a.markMergeTemp(e)
 		}
 
+	case *ast.UnsafeBlockExpr:
+		// `unsafe { … }` **is its body** — the keyword grants a permission and changes
+		// nothing about values — so it is analyzed exactly as a BlockExpr, tail
+		// expression included.
+		//
+		// It could not be, until taking an address stopped defeating last-use
+		// (noteAddressTaken). Before that this arm was an ASan-visible use-after-free in
+		// `std.ffi` itself: walking the block made `&xs[0]` the last *mention* of `xs` in
+		// `CBuffer { ptr: unsafe { &xs[0] }, len: 3 }`, so the array was freed while the
+		// pointer still named it. The two changes are one change, and reverting either
+		// alone reopens the fault.
+		//
+		// What this closes is that no retain, drop or transfer was recorded anywhere
+		// inside an unsafe block — the whole of a program's FFI and raw-pointer code —
+		// which was conservative rather than unsound (every drop deferred to scope exit)
+		// and cost a leak per managed value that lived only in there.
+		a.block(e.Body, needOwned)
+
 	case *ast.BooleanBinaryOpExpr, *ast.MathBinaryOpExpr, *ast.MathAssignOpExpr,
 		*ast.BitwiseNotExpr, *ast.NegationExpr, *ast.NotBooleanExpr,
 		*ast.AddressOfExpr, *ast.DerefExpr, *ast.RangeExpr, *ast.GuardExpr:
@@ -1352,29 +1408,13 @@ func (a *analyzer) expr(e ast.Expression, needOwned bool) {
 	//   - AwaitExpr, YieldExpr, YieldFromExpr, ComposeExpr — no backend case exists, so
 	//     a program containing one fails to lower before ownership matters. Each needs
 	//     an arm here in the same change that lowers it, not later.
-	//   - UnsafeBlockExpr — **the one that is here against its will**, and the reason is
-	//     worth the paragraph.
 	//
-	// `unsafe { … }` is its body and nothing else, so the obvious arm is
-	// `a.block(e.Body, needOwned)`. Writing it breaks every FFI test in the backend
-	// suite, and instructively: in
-	//
-	//     let buf = CBuffer { ptr: unsafe { &xs[0] }, len: 3 }
-	//
-	// walking the block makes `&xs[0]` the textually last mention of `xs`, so Perceus
-	// records a last-use drop and the array is freed while `buf.ptr` still points into
-	// its buffer — `buf.get(i)` then reads zeros. The premise last-use rests on is that
-	// a binding's final *mention* is its final *use*, and `&x` is precisely the
-	// operation that breaks it: a raw pointer is not an owner (ownership never crosses
-	// the FFI boundary), so it keeps storage alive without counting as a reference to it.
-	//
-	// So this is not a missing case but a missing **rule**: taking a binding's address
-	// must pin it against last-use optimization, the way `loopUsed` already excludes a
-	// loop-referenced binding in computeLastUse. Until that exists, recording nothing
-	// inside an unsafe block is what makes raw pointers work — conservatively, by
-	// deferring every drop to scope exit. Add the arm and the pin in one change; adding
-	// the arm alone is an ASan-visible use-after-free in the standard library's own
-	// `std.ffi`.
+	// **UnsafeBlockExpr used to be here**, and getting it out took a rule rather than a
+	// case. `unsafe { … }` is its body, so the arm is obvious — and adding it alone broke
+	// every FFI test, because walking the block made `&xs[0]` the last *mention* of `xs`
+	// and last-use freed the array while the pointer still named it. Perceus rests on
+	// "final mention is final use", and `&` is the operation that separates them. The rule
+	// is noteAddressTaken; the arm came with it.
 	//
 	// When adding an expression kind, add its arm; if it borrows its children and owns
 	// nothing, that is the multi-type case above rather than a new one.

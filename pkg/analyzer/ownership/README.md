@@ -194,16 +194,34 @@ Five kinds are still there, each deliberately:
 - **`AwaitExpr`, `YieldExpr`, `YieldFromExpr`, `ComposeExpr`** have no backend case, so a
   program containing one fails to lower first. Each owes an arm in the change that lowers
   it.
-- **`UnsafeBlockExpr`** is the one that is there against its will, and it is worth knowing
-  why before "fixing" it. `unsafe { … }` is its body, so `a.block(e.Body, needOwned)` is
-  the obvious arm — and it breaks every FFI test in the backend suite. In
-  `let buf = CBuffer { ptr: unsafe { &xs[0] }, len: 3 }`, walking the block makes `&xs[0]`
-  the last **mention** of `xs`, so last-use frees the array while `buf.ptr` still points
-  into it. The premise Perceus rests on is that a binding's final mention is its final
-  *use*, and `&x` is exactly the operation that breaks it: a raw pointer keeps storage
-  alive without counting as a reference to it. **The missing thing is a rule, not a case** —
-  an address-taken set excluded from last-use in `computeLastUse`, the way `loopUsed`
-  already excludes a loop-referenced binding — and the arm belongs in that same change.
+`UnsafeBlockExpr` used to be on that list, and getting it off took a rule rather than a
+case — see below.
+
+## Taking an address pins the binding
+
+`unsafe { … }` is its body, so `a.block(e.Body, needOwned)` is the obvious arm. It broke
+every FFI test until `noteAddressTaken` existed, and the two landed together (08/24).
+
+**Perceus rests on a premise `&` breaks.** Last-use says a binding's final *textual mention*
+is its final *use*, so the reference can be transferred rather than duplicated, or dropped
+there rather than at scope exit. Taking an address separates the two: a raw pointer keeps
+storage alive without counting as a reference to it. In `std.ffi`'s own shape —
+`CBuffer { ptr: unsafe { &xs[0] }, len: 3 }` — `&xs[0]` is the last mention of `xs`, and the
+array was freed there while the pointer still named it.
+
+`noteAddressTaken` excludes an address-taken binding from last-use in **both** walks
+(`computeLastUse` and `computeOwnedLastRef`), exactly as `loopUsed` excludes a
+loop-referenced one. It pins the **root** of the place, since `&xs[0]` is an element's
+address and `xs` is what dies. Pinning is the conservative direction — the binding falls
+back to a scope-exit release, which is where it was before Perceus — and it costs precision
+only in functions that take an address.
+
+**The two halves fail differently**, which is worth knowing before touching either. Remove
+the pin and it is a use-after-free: a read through the pointer in a later statement returns
+0. Remove the arm and it is a double free, but *only* for a value shared out of the block —
+a missing drop defers to scope exit, where the managed frame is a leak-safe backstop, while
+a missing retain has no backstop. The whole test suite passed with the arm removed until
+`TestExec_UnsafeBlockRetainsWhatItShares` existed to catch it.
 
 The general lesson, since it is why the default could not just be turned into a borrow-walk
 of children: a shared traversal can say what a node's children *are*, and only a per-kind

@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 08/24/26 (10)
+**Taking an address pins the binding, and `unsafe` blocks joined the ownership pass.**
+
+Two changes that are one change, and the last open item from the 08/23 audit.
+
+Ownership's expression walk had no arm for `UnsafeBlockExpr`, so **nothing** — no retain,
+drop or transfer — was recorded anywhere inside an unsafe block, which is the whole of a
+program's FFI and raw-pointer code. `unsafe { … }` is its body, so the arm is obvious, and
+adding it alone broke every FFI test in the backend suite.
+
+**Perceus rests on a premise `&` breaks.** Last-use says a binding's final *textual mention*
+is its final *use*. Taking an address separates the two: a raw pointer keeps storage alive
+without counting as a reference to it. In `std.ffi`'s own shape —
+`CBuffer { ptr: unsafe { &xs[0] }, len: 3 }` — `&xs[0]` is the last mention of `xs`, and
+walking the block freed the array there while `buf.ptr` still named it.
+
+`noteAddressTaken` is the rule: an address-taken binding is excluded from last-use in both
+walks, exactly as `loopUsed` excludes a loop-referenced one. It pins the **root** of the
+place, since `&xs[0]` is an element's address and `xs` is what dies — pinning `xs[0]` would
+pin nothing. Pinning is the conservative direction; the binding falls back to a scope-exit
+release, which is where it was before Perceus.
+
+The root-of-a-place question is now `ast.RootIdentifier`, since two passes ask it about two
+different things and want the same answer: purity asks it of an assignment target (mutating
+`grid[i].y` is mutating `grid`), ownership of `&x`'s operand. A tuple index is deliberately
+absent — `&p.0` is refused as lyra-E059, so it cannot appear beneath an address-of.
+
+**The two halves fail differently, and finding that out took work.** Removing the pin is a
+use-after-free: a read through the pointer in a later statement returns 0. Removing the arm
+is a double free — but only for a value shared *out* of the block, because a missing drop
+defers to scope exit where the managed frame is a leak-safe backstop, while a missing retain
+has no backstop.
+
+That asymmetry cost three wrong tests before a right one. A first attempt read through the
+pointer in the **same statement** that took the address, which passes with or without the
+pin — last-use drops are emitted after the statement they belong to, so the read happens
+first either way. A second attempt counted emitted `lyra_rc_release` calls to detect the
+missing arm; the counts match, because the frame backstop still releases at scope exit. And
+the whole test suite — every ASan test in it — **passed with the arm removed** until a
+program that shares a managed value out of an unsafe block existed to crash on it.
+
+Each half is now guarded by a test that was watched to fail when that half is reverted.
+
 ### 08/24/26 (9)
 **codes.go: ordered, and guarded by a test that names its own policy.**
 
