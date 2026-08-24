@@ -17,6 +17,7 @@ import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
 	diag "github.com/Lyra-Language/lyra/pkg/diagnostic"
+	"github.com/Lyra-Language/lyra/pkg/modules"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
@@ -63,12 +64,21 @@ type Handler struct {
 	mu            sync.Mutex
 	docStore      map[string]string       // URI → current full document text
 	analysisStore map[string]*docAnalysis // URI → last successful analysis
+
+	// parseCache survives across requests, which is the whole point: every keystroke
+	// re-resolves the document's import graph and so re-parses every unit in it, and for a
+	// small file with the standard prelude that is 12 files of which 11 cannot have
+	// changed. It is keyed on file contents, so an edit invalidates exactly the file
+	// edited and nothing else. Its own locking makes it safe to share across concurrent
+	// requests.
+	parseCache *modules.ParseCache
 }
 
 func newHandler() *Handler {
 	return &Handler{
 		docStore:      make(map[string]string),
 		analysisStore: make(map[string]*docAnalysis),
+		parseCache:    modules.NewParseCache(),
 	}
 }
 

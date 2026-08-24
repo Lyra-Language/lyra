@@ -782,6 +782,32 @@ Two things follow from being an editor rather than a compiler, and both are load
   returned against *that* file's URI (`locationIn`), and a rename whose declaration lives in
   another file is declined rather than applied at those coordinates in this buffer.
 
+**Per keystroke the server re-resolves and re-analyzes the whole import graph**, and that —
+not the user's file — is the cost. Measured on a small file with the standard prelude: 20.1 ms
+total, of which the edited file is 0.09 ms. The other 99% is 11 prelude files that cannot have
+changed.
+
+Two caches address the half of that which is cacheable, and both are keyed on *content*:
+
+- **`modules.Options.ParseCache`** (opt-in; the Handler owns one, `lyrac` passes nil) reuses a
+  file's syntax tree when its bytes are unchanged — Resolve 8.4 ms → 1.7 ms. Keyed on bytes
+  rather than path or mtime because the file is read either way and only the parse is skipped,
+  so a stale tree is unreachable: a git checkout under a running server misses instead of
+  serving the old parse.
+- **`position.go`'s line index** makes a byte-column → UTF-16 conversion a slice read instead
+  of a scan from the top of the file. A Range costs two conversions, so this was O(N·L) —
+  93 ms for 2000 conversions over 5000 lines, now 0.18 ms.
+
+The line index is keyed on the source's **data pointer and length, not its contents**: string
+equality falls through to `runtime.memequal` over the whole text, which on a large file cost
+more than the scan it replaced (94% of the profile). Equal pointer and length means the same
+bytes, so a hit is sound; equal contents in distinct storage misses and pays one rebuild.
+
+What remains is **re-collection**, 11.7 ms of the 13.4 ms left, which needs a unit's collected
+AST and symbols to survive a keystroke — see `todo.md`. Optimizing inside collection is the
+wrong move first: the profile's biggest item there is the doc-comment walk at ~30%, and not
+re-collecting an unchanged prelude retires it without touching it.
+
 Logs to `/tmp/lyra-lsp.log`. Build with `go build ./cmd/lyra-lsp`.
 
 ### `cmd/lyrac`

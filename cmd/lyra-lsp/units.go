@@ -47,6 +47,7 @@ func (h *Handler) analyzeDocument(uri lsp.DocumentURI, source string) (*driver.R
 
 	opts := modules.DefaultOptions()
 	opts.Overlay = h.overlay(uri, source)
+	opts.ParseCache = h.parseCache
 	units, diags := modules.Resolve(path, modules.DefaultRoots(path), opts)
 	if len(units) == 0 {
 		// The entry file itself could not be loaded or parsed. Fall back to the

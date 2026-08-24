@@ -227,6 +227,46 @@ write today:
 
 ## Known bugs
 
+- **[DONE 08/24] LSP latency: profiled first, and the profile disagreed with the audit.**
+  Per keystroke the server re-resolves the document's import graph and re-analyzes every
+  unit. Measured over the real prelude, on a small file: **20.1 ms**, of which the file the
+  user is typing in is **0.09 ms — under 1%.** Everything else is the standard prelude's 11
+  files, which cannot have changed.
+
+  Two fixes landed, both measured:
+
+  - **A content-keyed parse cache** (`modules.Options.ParseCache`, opt-in, nil for `lyrac`).
+    Resolve 8.4 ms → **1.7 ms**, so per keystroke 20.1 → 13.4 ms. Keyed on the file's
+    *bytes*, not its path or mtime: the bytes are read either way and only the parse is
+    skipped, which makes a stale tree unreachable rather than unlikely — the case that
+    matters is a git checkout under a running server, which an mtime key gets wrong exactly
+    when being wrong is most confusing.
+  - **A memoized line index** for position conversion. Every conversion scanned from the top
+    of the file counting newlines and a Range costs two, so a request converting N positions
+    over an L-line file did O(N·L) work: 93 ms at 5000 lines / 2000 conversions. Now
+    **0.18 ms — 524×**, and linear.
+
+  **Three of the five audit findings were declined with numbers.** Ownership and captures are
+  1.2% each of analysis; a `noalloc` regex recompile does not appear in the profile at all;
+  and the prelude's `split` is *Lyra* code that runs in compiled programs, never in the
+  server. Each is real as a description and none is a cost.
+
+  **What the profile found instead** is that documentation-comment handling is ~30% of
+  collection — `ReportStrayDocs` walks every node in the tree with `ChildCount`/`Child`, two
+  CGO calls and an allocation apiece, and `DocFor` reaches `PrevSibling` per declaration.
+  Left alone deliberately: it is inside the 11.7 ms that a *parse* cache cannot touch, and
+  the fix that subsumes it is not a faster walk but not re-collecting an unchanged prelude at
+  all.
+
+- **The remaining 11.7 ms per keystroke is re-collection, and needs incremental analysis.**
+  The parse cache stops at the tree; collection still merges all 12 units into one Program
+  and SymbolTable, and the typechecker still runs over the lot. Caching that means a unit's
+  collected AST and symbols surviving across keystrokes, which is a real design question —
+  the collector merges into shared tables, and `declKey` makes a name's meaning depend on
+  which module is asking, so a per-unit cache cannot simply be concatenated. Worth doing:
+  it is 87% of what is left, and it would also retire the doc-comment walk cost above
+  without anyone optimizing it.
+
 - **[DONE 08/24] Four false rejections, and a crash behind one of them.** Each refused a
   correct program, so each was a feature the language claimed to have and did not.
 

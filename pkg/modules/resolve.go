@@ -69,10 +69,11 @@ type Unit struct {
 // reporting them alongside the rest means a compile shows all of them at once.
 func Resolve(entryFile string, roots []string, opts Options) ([]Unit, []diag.Diagnostic) {
 	r := &resolver{
-		roots:   roots,
-		overlay: cleanOverlay(opts.Overlay),
-		byPath:  map[string]bool{},
-		onStack: map[string]bool{},
+		roots:      roots,
+		overlay:    cleanOverlay(opts.Overlay),
+		parseCache: opts.ParseCache,
+		byPath:     map[string]bool{},
+		onStack:    map[string]bool{},
 	}
 	entry, ok := r.load(entryFile, "", ast.Location{}, entryFile)
 	if !ok {
@@ -127,6 +128,25 @@ type Options struct {
 	// them; they do have to be absolute if the roots are (they are, since the entry
 	// file's own directory is the first root).
 	Overlay map[string][]byte
+
+	// ParseCache reuses the syntax tree of a file whose bytes have not changed.
+	//
+	// **For a language server this is nearly the whole cost of a keystroke.** The server
+	// re-resolves the document's import graph on every change, which re-reads and re-parses
+	// every unit — and for a small file with the standard prelude that is 12 files, of which
+	// 11 cannot have changed. Measured over the real prelude: 0.09 ms to analyze the user's
+	// file alone against 11.7 ms with the prelude, so the file the user is typing in is under
+	// 1% of the work.
+	//
+	// Nil (the default) disables it, which is what a one-shot `lyrac` invocation wants —
+	// there is no second parse to save.
+	//
+	// **Keyed on the file's contents, not its path or mtime**, so a stale tree is not a
+	// state the cache can reach: the bytes are read either way, and only the parse is
+	// skipped. That keeps the editor honest about a file changed on disk by something other
+	// than the editor — a git checkout under a running server — which an mtime key gets
+	// wrong exactly when it matters and a content key cannot.
+	ParseCache *ParseCache
 }
 
 // cleanOverlay normalizes an overlay's keys once, at entry, so every later lookup is a
@@ -165,12 +185,13 @@ func (r *resolver) includePrelude(opts Options, entry Unit) {
 }
 
 type resolver struct {
-	roots   []string
-	overlay map[string][]byte // filesystem path → in-memory source (see Options.Overlay)
-	units   []Unit
-	byPath  map[string]bool // module path → already emitted
-	onStack map[string]bool // module path → currently being visited (cycle detection)
-	diags   []diag.Diagnostic
+	roots      []string
+	overlay    map[string][]byte // filesystem path → in-memory source (see Options.Overlay)
+	parseCache *ParseCache       // nil disables reuse (see Options.ParseCache)
+	units      []Unit
+	byPath     map[string]bool // module path → already emitted
+	onStack    map[string]bool // module path → currently being visited (cycle detection)
+	diags      []diag.Diagnostic
 }
 
 // exists reports whether a candidate file is available to be loaded — on disk, or as an
@@ -425,7 +446,7 @@ func (r *resolver) load(file, path string, loc ast.Location, fromFile string) (U
 		r.errorf(fromFile, loc, diag.CodeUnresolvedImport, "cannot read %s: %v", file, err)
 		return Unit{}, false
 	}
-	tree, err := parser.Parse(string(source))
+	tree, err := r.parse(file, source)
 	if err != nil || tree == nil {
 		r.errorf(file, ast.Location{}, "", "parse error: %v", err)
 		return Unit{}, false
@@ -435,6 +456,22 @@ func (r *resolver) load(file, path string, loc ast.Location, fromFile string) (U
 		u.Path = declaredModulePath(u)
 	}
 	return u, true
+}
+
+// parse returns file's syntax tree, from the cache when the bytes are unchanged.
+func (r *resolver) parse(file string, source []byte) (*sitter.Tree, error) {
+	if r.parseCache == nil {
+		return parser.Parse(string(source))
+	}
+	if tree := r.parseCache.get(file, source); tree != nil {
+		return tree, nil
+	}
+	tree, err := parser.Parse(string(source))
+	if err != nil || tree == nil {
+		return tree, err
+	}
+	r.parseCache.put(file, source, tree)
+	return tree, nil
 }
 
 func (r *resolver) errorf(file string, loc ast.Location, code, format string, args ...any) {
