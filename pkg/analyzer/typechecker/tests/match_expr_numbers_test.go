@@ -54,7 +54,6 @@ func TestTypeCheck_NumericMatchExpr_IdentifierPattern_Ok(t *testing.T) {
   let bar = 7
   match foo {
     bar => "ok",
-    _ => "ok",
   }
 	`, false)
 	assertNoErrors(t, res)

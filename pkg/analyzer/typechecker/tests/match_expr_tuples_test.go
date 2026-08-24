@@ -9,7 +9,6 @@ func TestTypeCheck_TupleMatch_TuplePattern_Ok(t *testing.T) {
   let p = (1, "hello")
   match p {
     (x, y) => "ok",
-    _ => "other",
   }`, false)
 	assertNoErrors(t, res)
 }
@@ -103,7 +102,7 @@ func TestTypeCheck_TupleMatch_WildcardIsExhaustive_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, `
   let p = (1, 2)
   match p {
-    (x, y) => "ok",
+    (1, y) => "ok",
     _ => "other",
   }`, false)
 	assertNoErrors(t, res)

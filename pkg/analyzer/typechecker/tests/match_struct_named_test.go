@@ -17,7 +17,6 @@ struct Pt {
 let p = Pt { x: 1, y: 2 }
 match p {
   Pt { x, y } => x + y,
-  _ => 0,
 }
 `, false)
 	assertNoErrors(t, res)
@@ -32,7 +31,6 @@ struct Pt {
 let p = Pt { x: 1, y: 2 }
 match p {
   { x, y } => x + y,
-  _ => 0,
 }
 `, false)
 	assertNoErrors(t, res)

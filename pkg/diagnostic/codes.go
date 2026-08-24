@@ -914,4 +914,28 @@ const (
 	// is exempt, matching the unused-local rule — `_i` is the older spelling of the same
 	// intent and still reads as deliberate.
 	CodeUnusedLoopBinding = "lyra-W020"
+
+	// CodeUnreachableMatchArm: a match arm an earlier arm already covers
+	// unconditionally, so it can never run.
+	//
+	// Two shapes, one rule — an earlier **unguarded** arm whose pattern only binds:
+	// an irrefutable one (`_`, a bare name, `(a, b)`, `Pt { x, y }`) covers every arm
+	// after it, and a bind-only `Wrap(a)` covers any later arm for that same
+	// constructor. A guard on the earlier arm stops both, since a guard may fail; a
+	// *test* in it does too, which is why `Wrap(0)` covers nothing.
+	//
+	// Separate from the older duplicate-literal and overlapping-range warnings beside
+	// it in checkDuplicateMatchArms: those compare values within one arm's space,
+	// this asks whether an earlier arm's *shape* subsumes a later one. Neither fires
+	// where the other does.
+	//
+	// **A warning, matching how a non-exhaustive scalar match is treated**, and it is
+	// the second half of a bug rather than a new opinion: the backend used to emit two
+	// arms for one constructor as two cases of one LLVM `switch`, which clang refuses
+	// ("duplicate case value in switch") — a compile error against generated IR on a
+	// program that checked clean. The backend now drops the later arm, which is what
+	// first-match-wins already means; without this warning the drop would be silent,
+	// so a second `Wrap` written where `Nil` was meant would compile and run with one
+	// branch quietly missing.
+	CodeUnreachableMatchArm = "lyra-W021"
 )

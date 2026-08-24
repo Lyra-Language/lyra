@@ -917,6 +917,18 @@ go test ./...
 go test -run TestFunctionName ./pkg/...
 ```
 
+**A test file's *name* can silently exclude it.** Go applies an implicit build constraint
+from a filename's last underscore-separated segment when that segment is a GOOS or GOARCH,
+so `match_unreachable_arm_test.go` is ARM-only — on arm64 it is not compiled, and
+`go test ./...` prints `ok` with every test in it missing. The failure mode is the bad one:
+a test that never runs looks exactly like a test that passes. `arm`, `ios`, `js`, `plan9`,
+`android`, `wasm`, `mips`, `s390x` and `windows` are all plausible endings for a test about
+a *match arm*, a JS target, or Windows paths.
+
+`go list -f '{{.IgnoredGoFiles}}' ./...` names anything being skipped, and a non-empty
+answer on this repo is a bug — nothing here is meant to be platform-gated by filename. Worth
+running after adding a test file whose name ends in a word that could be a platform.
+
 ## Foreign functions
 
 **Built, front to back**: an `extern` declares, type-checks, is charged effects, lowers to

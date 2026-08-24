@@ -15,7 +15,6 @@ func TestTypeCheck_StructMatch_StructPattern_Ok(t *testing.T) {
   let p = Person { name: "Alice", age: 30 }
   match p {
     { name, age } => "ok",
-    _ => "other",
   }`, false)
 	assertNoErrors(t, res)
 }
@@ -44,7 +43,6 @@ func TestTypeCheck_StructMatch_PartialFields_Ok(t *testing.T) {
   let p = Person { name: "Alice", age: 30 }
   match p {
     { name } => "ok",
-    _ => "other",
   }`, false)
 	assertNoErrors(t, res)
 }
@@ -99,7 +97,7 @@ func TestTypeCheck_StructMatch_WildcardIsExhaustive_Ok(t *testing.T) {
 	res := parseCollectAndCheck(t, personDecl+`
   let p = Person { name: "Alice", age: 30 }
   match p {
-    { name } => "ok",
+    { name: "Alice" } => "ok",
     _ => "other",
   }`, false)
 	assertNoErrors(t, res)

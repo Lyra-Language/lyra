@@ -436,6 +436,14 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) typ
 	// (lyra-E048, pattern_literals.go). Before this, a pattern literal was checked
 	// for kind and never for value, and the backend lowered it at the scrutinee's
 	// width: `300` on a u8 matched 44.
+	// Everything from here to checkUnreachableMatchArms is one region for a reason: a
+	// pattern that failed its own kind check must not then be reasoned about *structurally*.
+	// `(x, y, z)` against a 2-tuple is an arity error, and it binds three names, so the
+	// shape-only rule reads it as irrefutable and condemns the `_` that follows — which is
+	// the arm keeping the match exhaustive while the real mistake is fixed. Advice derived
+	// from a pattern the compiler has already rejected is noise at best and misdirection at
+	// worst, so the reachability pass sits out when this match has an error in it.
+	errorsBefore := len(tc.errors)
 	for _, arm := range expr.MatchArms {
 		tc.checkPatternLiterals(arm.Pattern, scrutineeType)
 	}
@@ -455,6 +463,9 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) typ
 		}
 	}
 	tc.checkDuplicateMatchArms(expr.MatchArms)
+	if !tc.addedErrorSince(errorsBefore) {
+		tc.checkUnreachableMatchArms(expr.MatchArms)
+	}
 	if len(expr.MatchArms) == 0 {
 		return nil
 	}
@@ -1293,6 +1304,93 @@ func structHasField(st types.NamedStructType, name string) bool {
 
 // checkDuplicateMatchArms warns about identical literal arms and overlapping
 // numeric range intervals (which make later arms unreachable).
+// checkUnreachableMatchArms reports an arm an earlier arm already covers unconditionally
+// (lyra-W021).
+//
+// The rule is one question asked pairwise: does an earlier **unguarded** arm's pattern
+// subsume this one's? A guard on the earlier arm answers no whatever the patterns are — it
+// may fail, leaving the later arm to run — which is why the guard test comes first and
+// applies to the *earlier* arm only. A guard on the later arm is irrelevant: an arm that
+// never runs never runs its guard either.
+//
+// Deliberately narrow. It reports what it can prove from the arms' shapes alone and says
+// nothing about coverage spread across several arms — `Wrap(a) => …, Nil => …, _ => …` has
+// a dead wildcard, and finding that means asking whether the *prefix* is exhaustive, which
+// is a different analysis with a different failure mode (an imprecise "yes" would condemn a
+// reachable arm). Under-reporting is the safe direction for a warning; see todo.md.
+//
+// Separate from checkDuplicateMatchArms, which compares values *within* the literal and
+// range spaces. The two do not overlap: a literal pattern is neither irrefutable nor a
+// constructor, so it is invisible here, and an irrefutable pattern has no value to compare
+// there.
+// addedErrorSince reports whether any diagnostic recorded since index n is an *error*.
+// Warnings do not count: a non-exhaustive numeric match is a warning and says nothing about
+// whether the patterns themselves are well-formed.
+func (tc *TypeChecker) addedErrorSince(n int) bool {
+	for _, e := range tc.errors[n:] {
+		if e.Severity == SeverityError {
+			return true
+		}
+	}
+	return false
+}
+
+func (tc *TypeChecker) checkUnreachableMatchArms(arms []ast.MatchArm) {
+	for i, arm := range arms {
+		for j := 0; j < i; j++ {
+			earlier := arms[j]
+			if earlier.Guard != nil {
+				continue
+			}
+			reason, covers := patternCovers(earlier.Pattern, arm.Pattern)
+			if !covers {
+				continue
+			}
+			tc.addErrorCode(arm.Pattern.GetLocation(), SeverityWarning,
+				diag.CodeUnreachableMatchArm,
+				"unreachable match arm: %s, so this arm can never run",
+				fmt.Sprintf(reason, earlier.Pattern.GetLocation().Pretty()))
+			break // one report per arm; the first covering arm is the one to name
+		}
+	}
+}
+
+// patternCovers reports whether `earlier` matches every value `later` could, and if so a
+// message fragment naming why — with one `%s` for the earlier arm's position, so the caller
+// decides how to render it.
+//
+// Two cases, and what each turns on:
+//
+//   - **An irrefutable earlier pattern covers anything.** `_`, a bare binding, and a
+//     destructure that only binds (`(a, b)`, `Pt { x, y }`) match every value of the type,
+//     so nothing after them is reachable. patternIsIrrefutable is the same predicate
+//     exhaustiveness uses, and the backend's aggPatternTest agrees with it by construction —
+//     it emits no runtime test for exactly these.
+//
+//   - **A bind-only constructor covers that constructor.** `Wrap(a)` matches every `Wrap`,
+//     so any later `Wrap(…)` is dead. The sub-pattern must itself be irrefutable: `Wrap(0)`
+//     tests the payload and leaves `Wrap(b)` genuinely reachable, which is the distinction
+//     that keeps this from condemning correct code.
+func patternCovers(earlier, later ast.Pattern) (string, bool) {
+	if patternIsIrrefutable(earlier) {
+		return "the arm at %s matches every value", true
+	}
+	e, ok := earlier.(*ast.DataPattern)
+	if !ok {
+		return "", false
+	}
+	l, ok := later.(*ast.DataPattern)
+	if !ok || l.Name != e.Name {
+		return "", false
+	}
+	// `Wrap(0)` tests its payload, so it covers only some `Wrap`s. A nullary constructor's
+	// nil sub-pattern is irrefutable, which is what makes a repeated `Nil` a hit.
+	if !patternIsIrrefutable(e.Pattern) {
+		return "", false
+	}
+	return "constructor " + e.Name + " is already matched unconditionally by the arm at %s", true
+}
+
 func (tc *TypeChecker) checkDuplicateMatchArms(arms []ast.MatchArm) {
 	// Detect duplicate literal patterns across all scrutinee types.
 	seen := make(map[string]bool)

@@ -227,24 +227,29 @@ write today:
 
 ## Known bugs
 
-- **An unreachable `match` arm is not reported.** A second arm naming a constructor an
-  earlier bind-only arm already claimed (`Wrap(a) => …, Wrap(b) => …`) is dead code, and
-  nothing says so — not the exhaustiveness pass, which asks the opposite question.
+- **[DONE 08/24] An unreachable `match` arm is reported** (`lyra-W021`). An arm an earlier
+  **unguarded** arm already covers unconditionally: an irrefutable pattern (`_`, a bare name,
+  `(a, b)`, `Pt { x, y }`) covers everything after it, and a bind-only `Wrap(a)` covers any
+  later arm for that constructor.
 
-  The **crash** it caused is fixed (08/24): the backend emitted both as cases of one LLVM
-  `switch`, and two `i8 0` cases is IR that llir builds and clang refuses ("duplicate case
-  value in switch"), so a program `lyrac check` passed clean failed at the C compiler
-  quoting a generated `.ll`. `unreachableDataArms` drops the later arm, which is what
-  first-match-wins already means.
+  The second half of a miscompile fixed the same day. The backend emitted two arms for one
+  constructor as two cases of one LLVM `switch`, which clang refuses ("duplicate case value
+  in switch") — a compile error against generated IR on a program that checked clean. It now
+  drops the later arm, which is what first-match-wins already means; the warning is what
+  keeps the drop from being silent, so a second `Wrap` written where `Nil` was meant is
+  reported rather than compiled with one branch quietly missing.
 
-  What is left is the diagnostic. The arm is silently discarded today, so a typo — a second
-  `Wrap` where `Nil` was meant — compiles and runs with one branch quietly missing, and the
-  `Nil` case falls to the trap. A warning rather than an error, matching how the
-  non-exhaustive scalar match is treated. Note the check is **not** "two arms with the same
-  constructor": a refutable first arm (`Wrap(0) => …`) or a guarded one leaves the second
-  genuinely reachable, and both take the ladder path rather than the switch. The predicate is
-  the one lowering already computes — bind-only and unguarded — which suggests it belongs
-  beside the exhaustiveness check, reading the same arm list.
+  **Two things it deliberately does not do.** It says nothing about coverage spread across
+  arms — `Wrap(a) => …, Nil => …, _ => …` has a dead wildcard, and finding it means asking
+  whether the *prefix* is exhaustive, a different analysis whose imprecision would run the
+  other way and condemn a live arm. And it **sits out when the match has an error in it**:
+  `(x, y, z)` against a 2-tuple is an arity error that still binds three names, so the
+  shape-only rule reads it as irrefutable and would condemn the `_` keeping the match
+  exhaustive while the real mistake is fixed.
+
+  It found dead arms in **eleven existing test fixtures** on its first run, all true
+  positives — including two named `WildcardIsExhaustive_Ok` whose first arm was already
+  irrefutable, so the wildcard they were named for had never been what made them exhaustive.
 
 - **[DONE 08/24] A destructured binding settles to its default width**, exactly as a scalar
   one does. `let (i, j) = (10, 1)` left `j` *untyped* where `let j = 1` gives it i64, so
