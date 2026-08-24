@@ -206,6 +206,45 @@ let main = () -> u8 => f(3, 4) + f(1, 9)
 	}
 }
 
+// **A compound shift takes its signedness from the target, not the count.**
+//
+// `>>` is `ashr` on a signed value and `lshr` on an unsigned one, and the compound form
+// read the signedness off its *right* operand — the count. For every other compound
+// operator that is harmless, because the count is propagated to the target's type; a shift
+// is the one where it is deliberately typed independently, and an untyped count defaults to
+// signed. So `r >>= 1` on a `u8` emitted `ashr` and answered 228 for 200.
+//
+// The test beside this one had it and could not see it: `var r: u8 = 64` has its top bit
+// clear, so `ashr` and `lshr` agree on it. Every value here has the top bit set, which is
+// the only place the two differ — and each unsigned case is asserted against the *binary*
+// spelling of the same shift, since the two must agree by construction.
+func TestExec_CompoundShiftUsesTheTargetsSignedness(t *testing.T) {
+	t.Parallel()
+	const src = `let main = () -> u8 => {
+  var a: u8 = 200
+  a >>= 1
+  var b: u16 = 40000
+  b >>= 1
+  var c: u32 = 4000000000
+  c >>= 1
+  var d: u64 = 18000000000000000000
+  d >>= 1
+  var e: i8 = -56
+  e >>= 1
+  var f: i64 = -100
+  f >>= 2
+  let a0: u8 = 200
+  let b0: u16 = 40000
+  let sameAsBinary = a == a0 >> 1 && b == b0 >> 1
+  if a == 100 && b == 20000 && c == 2000000000 && d == 9000000000000000000
+     && e == -28 && f == -25 && sameAsBinary { 42 } else { 0 }
+}
+`
+	if got := buildAndRun(t, src); got != 42 {
+		t.Errorf("exited %d; want 42 — a compound shift disagreed with its binary spelling\n%s", got, src)
+	}
+}
+
 func TestExec_BitwiseCompoundAssignment(t *testing.T) {
 	t.Parallel()
 	const src = `let main = () -> u8 => {

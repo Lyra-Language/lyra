@@ -1429,6 +1429,21 @@ func (tc *TypeChecker) addParamImmutableError(loc ast.Location, name string, mod
 }
 
 func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
+	// **Record the target's own type on the target node.** `&expr.Left` is the node
+	// walk.go visits for this form, and nothing had ever given it a type — so a consumer
+	// asking what `x` is in `x >>= n` had to ask about something else instead, and the
+	// backend asked about the *count*. For every non-shift operator the count shares the
+	// target's type (propagateLiteralType below sees to it), which is why that read the
+	// right answer everywhere except a shift, where the count is deliberately typed
+	// independently: `r >>= 1` on a `u8` took the untyped literal's signed default and
+	// emitted `ashr`, so 200 >> 1 was 228 rather than 100.
+	//
+	// assignTargetType rather than resolveAssignTarget: this is a recording step, and the
+	// reporting one runs below — asking twice prints an immutable-binding error twice.
+	if target := tc.assignTargetType(expr.Left.Name); target != nil {
+		tc.typeTable.Set(&expr.Left, target)
+	}
+
 	// `x <<= n` is `x = x << n`, and a shift's right operand is a *count* rather than
 	// a value in the target's domain — so it is typed independently, exactly as the
 	// binary form does (inferMathBinaryExpr). Routing it through checkAssignToBinding

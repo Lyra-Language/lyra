@@ -650,7 +650,12 @@ func (l *lowerer) lowerMathAssignOp(block *ir.Block, e *ast.MathAssignOpExpr) (v
 		result, err = l.applyFloatMathOp(block, binOp, cur, rhs)
 	} else {
 		var signed bool
-		if signed, err = l.getIntSignedness(e.Right); err == nil {
+		// **The target's signedness, not the operand's** — the same source the binary
+		// form reads (`e.Left` in lowerMathBinaryOpExpr). For `+ - * / % & | ~` the two
+		// agree, because the count is propagated to the target's type; for a shift they
+		// do not, since a count is typed independently and an untyped one defaults to
+		// signed. Reading the count picked `ashr` for `u8 200 >>= 1` and answered 228.
+		if signed, err = l.getIntSignedness(&e.Left); err == nil {
 			// The checked int op may split the block (overflow/divide trap); keep
 			// lowering (the store) into the block it returns.
 			result, block, err = l.applyIntMathOp(block, binOp, cur, rhs, signed, e)
