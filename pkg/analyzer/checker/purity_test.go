@@ -33,7 +33,7 @@ func checkPurity(t *testing.T, source string) []diag.Diagnostic {
 	// Captures before purity, as the driver orders them: a closure construction's
 	// allocation charge is keyed on whether it captures.
 	caps := captures.Analyze(program, symTable, tt)
-	errs, _ := checker.CheckPurity(program, scopeTable, tt, tc.MethodTable(), caps)
+	errs, _ := checker.CheckPurity(program, symTable, scopeTable, tt, tc.MethodTable(), caps)
 	return errs
 }
 
@@ -65,19 +65,6 @@ func TestPurity_IfLetBoundReassign_Ok(t *testing.T) {
 let f = pure (arr: [3]i64) -> i64 => {
     if let [a, b, c] = arr {
         a = 5
-    }
-    0
-}`
-	assertPurityCount(t, checkPurity(t, src), 0)
-}
-
-// A named `with`-arena handle is a local owned binding, so mutating its interior
-// from a pure function is allowed (the mutation never escapes the call).
-func TestPurity_WithArenaInteriorMutation_Ok(t *testing.T) {
-	src := `
-let f = pure () -> i64 => {
-    with frame = Arena.new(megabytes(4)) {
-        frame.counter = 1
     }
     0
 }`

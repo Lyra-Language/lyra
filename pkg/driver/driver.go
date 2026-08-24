@@ -215,7 +215,7 @@ func AnalyzeUnits(units []modules.Unit) *Result {
 
 	// Purity must run after typechecking — it consumes the resolved MethodTable —
 	// and after captures, which is how it knows a closure construction's cost.
-	purityErrors, purityWarnings := checker.CheckPurity(program, scopeTable, tt, tc.MethodTable(), res.Captures)
+	purityErrors, purityWarnings := checker.CheckPurity(program, symTable, scopeTable, tt, tc.MethodTable(), res.Captures)
 	res.Diagnostics = append(res.Diagnostics, purityErrors...)
 	// Appended rather than routed through res.err: these are the missing-`pure`-bound
 	// advisories (lyra-W018), which carry their own severity already.

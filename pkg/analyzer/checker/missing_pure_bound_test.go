@@ -27,7 +27,7 @@ func missingPureBounds(t *testing.T, source string) []string {
 	tc := typechecker.New(symTable, scopeTable, tt)
 	tc.Check(program)
 	caps := captures.Analyze(program, symTable, tt)
-	_, warnings := checker.CheckPurity(program, scopeTable, tt, tc.MethodTable(), caps)
+	_, warnings := checker.CheckPurity(program, symTable, scopeTable, tt, tc.MethodTable(), caps)
 	var names []string
 	for _, w := range warnings {
 		if w.Code != diag.CodeMissingPureBound {
@@ -159,7 +159,7 @@ let pair = (a: i64, b: i64) -> []i64 => [a, b]
 	tc := typechecker.New(symTable, scopeTable, tt)
 	tc.Check(program)
 	caps := captures.Analyze(program, symTable, tt)
-	_, warnings := checker.CheckPurity(program, scopeTable, tt, tc.MethodTable(), caps)
+	_, warnings := checker.CheckPurity(program, symTable, scopeTable, tt, tc.MethodTable(), caps)
 	if len(warnings) != 1 {
 		t.Fatalf("want 1 warning, got %d: %v", len(warnings), warnings)
 	}

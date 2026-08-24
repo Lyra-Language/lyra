@@ -96,16 +96,35 @@ func (e Effect) Has(flag Effect) bool { return e&flag != 0 }
 func (e Effect) IsPure() bool { return e == EffectNone }
 
 // builtinEffects maps a builtin's dotted call name to the effect(s) it performs.
+//
+// **Every key must name a builtin a program can actually call.** Nine did not — `fmt.print`,
+// `fmt.println`, `read`, `write`, `megabytes`, `kilobytes`, `bytes` and the two `Arena.*`
+// entries, the last of which named a form the language refuses outright (`lyra-E035`: there
+// are no type-namespaced associated functions). They were removed 08/24.
+//
+// None was exploitable when it was removed, and the reason is worth keeping: both lookup
+// sites consult this table only **after** `resolveCallee` fails, and resolution reaches
+// imported and namespaced callees, so a user function sharing a phantom's name is still
+// classified by its own inferred effect. That was checked by construction rather than
+// assumed — a `pub let bytes` that prints, called from a `pure` function across a module
+// boundary, is reported exactly as a differently-named one is.
+//
+// They are gone anyway, because a name that resolves to nothing lands on the conservative
+// default (AllEffects) and a phantom **intercepts** that — five of the nine were EffectNone,
+// which is the difference between "assume the worst" and "certified pure". The ordering that
+// makes them harmless is one refactor from not holding, and this table has already been on
+// the wrong side of exactly that: consulting it *before* resolution classified a user's own
+// function by a builtin's entry, and once `panic` joined as EffectNone a user `panic` that
+// wrote to the world would have been waved through (see the note at purity.go's
+// callIsImpure). A dead entry is a live one that has not been reached yet.
 // Each entry's classification is what drives the named bounds: an Output-only
 // builtin is allowed in `det` (but not `pure`), an Input builtin is forbidden in
 // both, an alloc-only builtin (none today) would be forbidden only in `noalloc`.
 var builtinEffects = map[string]Effect{
 	// Output — program → world, void result. Determinism-safe (allowed in `det`),
 	// but still forbidden in `pure` (observable).
-	"print":       EffectOutput,
-	"println":     EffectOutput,
-	"fmt.print":   EffectOutput,
-	"fmt.println": EffectOutput,
+	"print":   EffectOutput,
+	"println": EffectOutput,
 	// `panic` is EffectNone — allowed in `pure`, `det` and `noalloc` alike.
 	//
 	// It writes to stderr and exits, so tagging it EffectOutput looks right at first.
@@ -126,7 +145,6 @@ var builtinEffects = map[string]Effect{
 	"panic": EffectNone,
 	// Input — world → program. The returned value depends on external state, so
 	// it is non-deterministic: forbidden in both `pure` and `det`.
-	"read": EffectInput,
 	// `read_line` consumes a line of stdin. Input for the obvious reason (the value
 	// comes from outside), but note it is also *destructive* — the line is gone, so
 	// two identical calls do not return the same thing. That is what Input already
@@ -163,20 +181,11 @@ var builtinEffects = map[string]Effect{
 	// precedes. A `det` function that could observe whether a key is waiting would not be
 	// reproducible.
 	"wait_for_key_ms": EffectInput,
-	// A write returns a status (bytes written / error) the program can branch on,
-	// so external state can leak back into the computation — tagged Input
-	// (non-deterministic, forbidden in `det`) as well as Output.
-	"write": EffectInput | EffectOutput,
 	// Arena helpers: pure (EffectNone). An arena is the *solution* to heap
 	// allocation tracking — its creation is a one-time bounded setup, not a
 	// per-frame GC-visible alloc; constructions built *inside* a `with`-arena
 	// block that would ordinarily be EffectAlloc are discharged by the block.
 	// Size helpers (megabytes, kilobytes, bytes) are pure arithmetic.
-	"Arena.new":   EffectNone,
-	"Arena.alloc": EffectNone,
-	"megabytes":   EffectNone,
-	"kilobytes":   EffectNone,
-	"bytes":       EffectNone,
 	// Ambient nondeterminism sources — the entries that give `det` its teeth.
 	// Only the *ambient* (un-threaded) sources are tagged: their results depend on
 	// state the caller never passed in, so they are forbidden in both `pure` and

@@ -73,7 +73,7 @@ func benchmarkCheckPurity(b *testing.B, scale int) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		checker.CheckPurity(res.Program, res.ScopeTable, res.TypeTable, res.MethodTable, res.Captures)
+		checker.CheckPurity(res.Program, res.SymbolTable, res.ScopeTable, res.TypeTable, res.MethodTable, res.Captures)
 	}
 }
 

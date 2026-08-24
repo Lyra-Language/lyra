@@ -55,16 +55,16 @@ import (
 // though no effect escapes — for state captured from any enclosing scope,
 // again not just the top level. Both resolve names via the capture stack of
 // scopeBindings frames built as the walk descends through lambda boundaries.
-// Not yet handled (needs symbol-table backing; see todo items #3/#4):
+// Not yet handled (see todo items #3/#4 — the SymbolTable these wanted is now a parameter,
+// so what remains is the inference itself rather than the plumbing):
 //   - bottom-up purity *inference* for methods — today only an explicit
 //     `pure` marker on the method itself is trusted; an unannotated method is
 //     always treated as potentially impure, unlike a free function
-func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable, methodTable *typetable.MethodTable, caps *captures.Table) ([]diag.Diagnostic, []diag.Diagnostic) {
+func CheckPurity(program *ast.Program, symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable, typeTable *typetable.TypeTable, methodTable *typetable.MethodTable, caps *captures.Table) ([]diag.Diagnostic, []diag.Diagnostic) {
 	base := []scopeBindings{{mutable: mutableGlobals(program), functions: topLevelFunctions(program)}}
 	frames := newScopeFrames(program, scopeTable)
 	boundGroups := collectTraitMethodGroups(program)
-	traitDecls := collectTraitDecls(program)
-	signatures := collectMethodSignatures(program, traitDecls)
+	signatures := collectMethodSignatures(program, symTable)
 	// Bound rather than built inline: the inference fills in the allocation *sites* as it
 	// goes, and `lyra-E016` reads them back to point at the offending expression.
 	// The captures table is here so a *closure construction* can be charged exactly:
@@ -76,7 +76,7 @@ func CheckPurity(program *ast.Program, scopeTable *symbols.ScopeTable, typeTable
 	c := &purityChecker{
 		inference:     inf,
 		assignTargets: map[*ast.IdentifierExpr]bool{},
-		traitDecls:    traitDecls,
+		symTable:      symTable,
 		typeTable:     typeTable,
 	}
 	for _, node := range program.Statements {
@@ -159,7 +159,7 @@ func (c *purityChecker) checkTraitDefaultBounds(trait *ast.TraitDeclStmt, base [
 // advice to write down something the compiler is already enforcing.
 func (c *purityChecker) effectiveMethodBounds(impl *ast.TraitImplStmt, m *ast.TraitMethodImpl) (isPure, isDet, isNoAlloc bool) {
 	isPure, isDet, isNoAlloc = m.IsPure, m.IsDet, m.IsNoAlloc
-	if td := traitMethodDecl(c.traitDecls, impl.TraitName, m.Name); td != nil {
+	if td := traitMethodDecl(c.symTable, impl, m.Name); td != nil {
 		isPure = isPure || td.IsPure
 		isDet = isDet || td.IsDet
 		isNoAlloc = isNoAlloc || td.IsNoAlloc
@@ -221,7 +221,12 @@ func InferredEffects(program *ast.Program, scopeTable *symbols.ScopeTable) map[s
 	// function's *base* effect, which is what a caller asking "what does this function
 	// itself do" wants — the callback contribution is per call site by construction.
 	inf := newInference(
-		collectMethodSignatures(program, collectTraitDecls(program)),
+		// No SymbolTable either, so a trait method's declared signature is not available
+		// here — LookupTraitFrom is nil-receiver-safe and answers "not found", which costs
+		// this helper the declared *callback bounds* on trait methods and nothing else.
+		// Resolving a trait by bare name instead would be the rule 4 violation this
+		// entry point's limits exist to avoid faking a way around.
+		collectMethodSignatures(program, nil),
 		nil, // no MethodTable: nil-safe, and this entry point runs without a typechecker
 		collectTraitMethodGroups(program),
 		frames,
@@ -619,7 +624,14 @@ type purityChecker struct {
 	// target (the LHS of `x += …`, or the base of `x.f = …`). The write is reported
 	// by the mutation checks, so the same node must not be re-reported as a read.
 	assignTargets map[*ast.IdentifierExpr]bool
-	// traitDecls indexes trait declarations by name, so an impl method inherits
+	// symTable resolves a trait name **as the module that wrote the impl sees it**, which
+	// is rule 4: a bare-name index is last-writer-wins, and two modules may each declare a
+	// trait of one name. Keyed by name alone, an impl inherited whichever declaration was
+	// walked last — so a `pure` the impl's own trait declared was silently dropped when
+	// another module happened to name a trait the same thing. See traitMethodDecl.
+	symTable *symbols.SymbolTable
+
+	// (was: traitDecls, a map[string]*ast.TraitDeclStmt) — an impl method inherits
 	// and is checked against the effect bounds its trait declares on that method.
 	traitDecls map[string]*ast.TraitDeclStmt
 	// typeTable carries the resolved callee of an overloaded call (see calleeFor).
@@ -1089,9 +1101,10 @@ func (c *purityChecker) isImpureCallee(capture []scopeBindings, name string) boo
 		return c.impureLambdas[lam]&PurityEffects != 0
 	}
 	if e, ok := builtinEffects[name]; ok {
-		// Known builtin: only flag if it has a purity-violating effect.
-		// Builtins with EffectAlloc only (e.g. Arena.new) are fine to call from
-		// a pure function — allocation is orthogonal to purity.
+		// Known builtin: only flag if it has a purity-violating effect. An alloc-only
+		// builtin would be fine to call from a pure function — allocation is orthogonal
+		// to purity — but no entry sets EffectAlloc today, and the one this comment used
+		// to name (`Arena.new`) was a phantom, removed 08/24 along with eight others.
 		return e&PurityEffects != 0
 	}
 	// Unresolvable — could be an imported/external function. Conservatively
@@ -1939,7 +1952,7 @@ func collectMethodImpls(program *ast.Program) []*ast.TraitMethodImpl {
 //
 // A method with no matching declaration (an impl of an undeclared method, already an error)
 // simply gets no entry, and the passes fall back to their conservative behaviour.
-func collectMethodSignatures(program *ast.Program, traitDecls map[string]*ast.TraitDeclStmt) map[*ast.TraitMethodImpl]*types.LambdaType {
+func collectMethodSignatures(program *ast.Program, symTable *symbols.SymbolTable) map[*ast.TraitMethodImpl]*types.LambdaType {
 	sigs := map[*ast.TraitMethodImpl]*types.LambdaType{}
 	for _, node := range program.Statements {
 		impl, ok := node.(*ast.TraitImplStmt)
@@ -1947,7 +1960,7 @@ func collectMethodSignatures(program *ast.Program, traitDecls map[string]*ast.Tr
 			continue
 		}
 		for i := range impl.Methods {
-			if decl := traitMethodDecl(traitDecls, impl.TraitName, impl.Methods[i].Name); decl != nil {
+			if decl := traitMethodDecl(symTable, impl, impl.Methods[i].Name); decl != nil {
 				sigs[&impl.Methods[i]] = decl.Signature
 			}
 		}
@@ -1991,24 +2004,19 @@ func methodArgumentAt(call *ast.FunctionCallExpr, idx int) (ast.Expression, bool
 	return call.Arguments[idx-1], true
 }
 
-// collectTraitDecls indexes the program's trait declarations by name, so an
-// impl method can be checked against the effect bounds (`pure`/`det`/`noalloc`)
-// its trait declares on the corresponding method.
-func collectTraitDecls(program *ast.Program) map[string]*ast.TraitDeclStmt {
-	decls := map[string]*ast.TraitDeclStmt{}
-	for _, node := range program.Statements {
-		if td, ok := node.(*ast.TraitDeclStmt); ok {
-			decls[td.Name] = td
-		}
-	}
-	return decls
-}
-
-// traitMethodDecl returns the declaration of the named method in trait
-// traitName, or nil if the trait or method isn't found.
-func traitMethodDecl(traitDecls map[string]*ast.TraitDeclStmt, traitName string, name ast.MethodName) *ast.TraitMethod {
-	td, ok := traitDecls[traitName]
-	if !ok {
+// traitMethodDecl returns the declaration of the named method in the trait `impl`
+// implements, or nil if the trait or method isn't found.
+//
+// **Resolved through LookupTraitFrom at the impl's own location**, never by indexing a
+// name-keyed map — rule 4, and the corollary that names traits specifically. A bare-name
+// index is last-writer-wins, so with two modules each declaring a `Speak`, an impl of the
+// one that declares `pure say` inherited the *other* trait's (absent) bound and printed
+// from a method its contract said was pure. Nothing reported it: the name shadowing draws
+// lyra-W016, which is about which declaration a *reference* means and says nothing about a
+// bound going missing.
+func traitMethodDecl(symTable *symbols.SymbolTable, impl *ast.TraitImplStmt, name ast.MethodName) *ast.TraitMethod {
+	td, ok := symTable.LookupTraitFrom(impl.TraitName, impl.GetLocation())
+	if !ok || td == nil {
 		return nil
 	}
 	for i := range td.Methods {
@@ -2464,12 +2472,16 @@ func isTypeConversionCall(name string) bool {
 	return ok
 }
 
-// calleeName renders a call target as a dotted name ("foo", "fmt.println",
-// "Arena.new") for lookup against builtinEffects. Returns "" for callees that
-// aren't a plain identifier/constructor or member chain (e.g. an
-// immediately-invoked lambda). Uppercase names like `Arena` are collected as
-// DataConstructorExpr (user_defined_type_name), so that case is handled here
-// too — otherwise `Arena.new(...)` would produce just "new".
+// calleeName renders a call target as a dotted name ("foo", "seq.map") for lookup against
+// builtinEffects. Returns "" for callees that aren't a plain identifier/constructor or
+// member chain (e.g. an immediately-invoked lambda).
+//
+// The DataConstructorExpr arm is what makes an **uppercase** head part of the name: such a
+// head collects as a constructor rather than an identifier, so without it `T.f(...)` would
+// render as bare "f" and could collide with a builtin of that name. No builtin is keyed that
+// way today — the two that were (`Arena.new`, `Arena.alloc`) named a form the language
+// refuses outright, lyra-E035 — so the arm guards the rendering rather than serving a
+// live key.
 func calleeName(fn ast.Expression) string {
 	switch f := fn.(type) {
 	case *ast.IdentifierExpr:

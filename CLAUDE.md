@@ -83,7 +83,15 @@ real failure, and none is local to one package.
    - The same applies to a **trait**: `checkImplCoherence` keys duplicate impls on the
      resolved `*ast.TraitDeclStmt` (via `LookupTraitFrom`), not on `impl.TraitName`, or a
      program's own `trait Add` plus `impl Add for i64` is reported as a duplicate of the
-     prelude's.
+     prelude's. **The purity pass had the same bug and kept it two months longer**, because
+     it was not indexing the symbol table wrongly — it had *no symbol table at all* and
+     built its own `map[traitName]*TraitDeclStmt` by walking the merged program, which is
+     last-writer-wins by construction. An impl inherits its trait's effect bound through
+     that map, so with two modules each declaring a `Speak`, an impl of the one declaring
+     `pure say` inherited the other's absent bound and printed from a method its contract
+     said was pure. Nothing reported it: the collision draws lyra-W016, which is about
+     which declaration a *reference* means and says nothing about a bound going missing.
+     A pass that cannot do a rule-4 lookup needs the table threaded in, not a local index.
    - The backend pays it too: `namespaceCallee` must not test membership with
      `DeclaringModule` and read `l.funcs[name]`, or a shadowed name called through a
      namespace (`seq.map(…)`) dies as `llvm: unsupported method call` on a program the
@@ -231,6 +239,7 @@ real failure, and none is local to one package.
    | is that sharing observable? | `ownership.SharesMutableState` |
    | substitute type variables in a type | `types.Substitute` |
    | what are this node's children? | `ast.WalkStmt`/`ast.WalkExpr` (`…Children` to skip the node itself) |
+   | does this statement carry an expression ownership must see? | `ownership.analyzer.stmt` — **all** statement kinds, not the five that were obvious |
    | rewrite expressions in place | `ast.RewriteStmt`/`ast.RewriteExpr` |
    | where is the expression at this position? | `findExprAtPos` (`cmd/lyra-lsp/hover.go`) |
    | bind a generic type's arguments to its parameters | `ast.BindGenericParams` |

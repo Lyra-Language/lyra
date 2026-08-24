@@ -999,11 +999,59 @@ func (a *analyzer) stmt(s ast.AstNode) {
 		// the new value (+1) — the backend releases whatever the slot held before. A
 		// non-managed target borrows (nothing to own).
 		a.expr(s.Value, a.ownsManaged(s.Value))
+	case *ast.DerefAssignmentStmt:
+		// `p^ = v`. The pointee slot takes ownership of the new value, exactly as an
+		// interior assignment's does — without the retain, writing a managed value
+		// through a pointer leaves two names on one box with one reference between
+		// them, and the second release is an ASan-confirmed use-after-free.
+		//
+		// The pointer operand is walked borrowing: it is a place being written
+		// through, not a value being consumed.
+		a.expr(s.Target.Operand, false)
+		a.expr(s.Value, a.ownsManaged(s.Value))
+	case *ast.DestructuringDeclStmt:
+		a.destructuringValue(s)
+	case *ast.IfDestructuringStmt:
+		a.destructuringValue(&s.DestructuringStatement)
+		a.block(s.Then, false)
+		if s.Else != nil {
+			a.block(s.Else, false)
+		}
+	case *ast.ElseDestructuringStmt:
+		a.destructuringValue(&s.DestructuringStatement)
+		a.block(s.Else, false)
+	case *ast.WithStmt:
+		a.expr(s.Arena, false)
+		a.block(s.Body, false)
+	case *ast.BreakStmt:
+		// A loop's value. `break` with a value does not lower yet, so this arm records
+		// what the backend will need rather than anything it reads today — but leaving
+		// it out is how the *next* feature inherits a silent hole.
+		a.expr(s.Value, a.ownsManaged(s.Value))
 	case *ast.ReturnStmt:
 		if s.Value != nil {
 			// Pass the return's ownership need down; managed leaves decide the retain.
 			a.expr(s.Value, a.curReturnOwned)
 		}
+	}
+}
+
+// destructuringValue walks the value a destructuring binds from, **borrowing**.
+//
+// A pattern's bindings borrow out of the scrutinee rather than taking references from it:
+// `if let Some(s) = m` reads the payload for the duration of the branch, and the only
+// reference is the one `m` already holds and releases at scope exit. Claiming ownership
+// here mints a retain the branch never gives back, and suppresses the scrutinee's own
+// release — TestExec_DestructuringManagedPayload counts exactly that.
+//
+// So why walk it at all, if the answer is the same +0 that not walking gave?  Because
+// "borrowed" and "unvisited" differ for a **temporary**: `if let Some(s) = make()` has a
+// value nothing else names, and only a walk records the release that disposes of it. The
+// arm's absence was harmless for the common case of a scrutinee that is a binding, and a
+// leak for the one that is a call.
+func (a *analyzer) destructuringValue(d *ast.DestructuringDeclStmt) {
+	if d.Value != nil {
+		a.expr(d.Value, false)
 	}
 }
 

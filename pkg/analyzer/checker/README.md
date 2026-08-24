@@ -2,10 +2,17 @@
 
 Standalone AST-level semantic passes. Most (e.g. `use_before_declaration.go`, `shadowing.go`,
 `unused_variables.go`) run after collection but before typechecking and only need the AST.
-**`purity.go` is the exception** — `CheckPurity(program, methodTable)` takes the typechecker's
+**`purity.go` is the exception** — `CheckPurity` takes the typechecker's
 `*typetable.MethodTable` (nil-safe) so a pure function/method calling a trait method can be
 checked against the method it actually dispatches to; it must run *after* `typechecker.Check`,
 not before (see `cmd/lyra-lsp/main.go`'s ordering).
+
+It also takes the **`*symbols.SymbolTable`**, and that is a correctness requirement rather
+than a convenience: an impl inherits its trait's declared effect bound, so the pass must
+resolve a trait name the way the module writing the impl sees it (`LookupTraitFrom`, rule 4).
+Until 08/24 it built its own `map[traitName]` by walking the merged program, which is
+last-writer-wins — two modules each declaring a trait of one name meant an impl inherited
+whichever was walked last, and a `pure` its own trait declared went silently unenforced.
 
 
 ## `use_before_declaration.go`

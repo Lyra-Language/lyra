@@ -227,6 +227,64 @@ write today:
 
 ## Known bugs
 
+- **[DONE 08/24] Ownership walks every statement kind that carries an expression.**
+  `analyzer.stmt` switched over five of eighteen; six of the missing thirteen hold an
+  expression, so nothing — no retain, release or transfer — was recorded for it. Hazard 8,
+  in the shape the `UnsafeBlockExpr` hole already took once.
+
+  **`p^ = v` was the memory-unsafe one.** The pointee slot takes ownership, and with no
+  retain the box ended with one reference and two owners — ASan reports a
+  heap-use-after-free inside `lyra_rc_release`, and the module carried two releases against
+  one live value. The three destructuring forms (`let (a, b) =`, `if let`, `else`) were
+  *conservative* rather than unsafe, and needed a **borrowing** walk rather than an owning
+  one: a pattern's bindings read out of the scrutinee, so claiming ownership mints a retain
+  the branch never returns. What the walk buys there is temporaries — "borrowed" and
+  "unvisited" are the same +0 for a value someone else owns and differ for one nobody does,
+  so `if let Some(s) = make()` leaked its box while `if let Some(s) = m` did not.
+
+  Each arm is justified by a measured before/after, not by inspection: releases went 0 → 1
+  for both temporary-scrutinee shapes, 2 → 1 for the pointer write, and stayed 1 for a
+  scrutinee that is a binding.
+
+- **[DONE 08/24] Nine phantom entries removed from `builtinEffects`.** `fmt.print`,
+  `fmt.println`, `read`, `write`, `megabytes`, `kilobytes`, `bytes`, `Arena.new`,
+  `Arena.alloc` — none callable, and the last two named a form the language refuses outright
+  (`lyra-E035`).
+
+  **None was exploitable when removed**, which was checked by construction rather than
+  assumed: both lookup sites consult the table only after `resolveCallee` fails, and
+  resolution reaches imported and namespaced callees, so a `pub let bytes` that prints is
+  still reported impure across a module boundary. They went anyway because a name resolving
+  to nothing lands on the conservative AllEffects default and a phantom *intercepts* it —
+  five of the nine were EffectNone, the difference between "assume the worst" and "certified
+  pure" — and this table has been on the wrong side of that ordering before.
+
+  Two tests pin it now, and neither is sufficient alone: one inside the package asserts the
+  key set (so a new key fails loudly), one in the driver calls each name through the real
+  front end (so every key is a builtin that exists).
+
+- **[DONE 08/24] The purity pass resolves a trait through the symbol table**, not a
+  bare-name map of its own — see the rule 4 note in `CLAUDE.md`. It had no `SymbolTable`
+  parameter at all, which is why it could not; threading one in is the fix, and it also
+  removes the "needs symbol-table backing" caveat blocking method-level purity inference.
+
+- **`p^ = v` does not release the value the pointee slot held.** The write mints a retain for
+  the new value (fixed 08/24 — without it the box had one reference and two owners, an
+  ASan-confirmed use-after-free), but the old value is dropped on the floor and leaks.
+
+  The reason it is not simply symmetric with `xs[i] = v`: that path decides through
+  `releaseOldTarget`, which asks whether the slot's final hop went through a ref-counted box,
+  because a managed slot inside *inline* storage may be aliased by any number of unretained
+  copies and releasing it would dangle every one. **A raw pointer carries no provenance** — a
+  `^mut string` may address a local binding or an element inside a box, and nothing in the
+  type says which — so the backend cannot ask that question at all. Leaking is the safe
+  direction; dangling is not.
+
+  What would fix it is provenance the pointer does not currently carry, which is a bigger
+  change than the leak justifies today. Worth revisiting if raw pointers to managed values
+  become a shape real code uses — at present the FFI boundary refuses `string` and `[]T`
+  outright, so a `^T` over a managed `T` only arises within Lyra.
+
 - **[DONE 08/24] An unreachable `match` arm is reported** (`lyra-W021`). An arm an earlier
   **unguarded** arm already covers unconditionally: an irrefutable pattern (`_`, a bare name,
   `(a, b)`, `Pt { x, y }`) covers everything after it, and a bind-only `Wrap(a)` covers any
@@ -590,6 +648,22 @@ write today:
   all four standalone passes that special-case `UnsafeBlockExpr` descend into the
   body rather than skipping it. One test inverted: `ptr^ = 42` asserted *no errors*,
   which was the phantom in miniature. See COMPLETED.md.
+
+- **When `with` lands, it needs its own purity test.** The rule to pin: a named arena handle
+  is a **local owned binding**, so mutating its interior from a `pure` function is allowed —
+  the mutation never escapes the call.
+
+  There was a test for exactly that (`TestPurity_WithArenaInteriorMutation_Ok`), removed
+  08/24, and how it passed is the point. Its fixture does not compile — three errors:
+  `lyra-E050` for `with` itself, `lyra-E035` for `Arena` (no such type, and no
+  type-namespaced calls in the language), and `lyra-E001` because `frame.counter = 1`
+  mutates a `let`. It passed because `Arena.new` and `megabytes` sat in `builtinEffects` as
+  EffectNone, so the purity pass certified two names that resolve to nothing as pure. A
+  checker unit test runs the purity pass alone, so none of the three type errors was ever
+  in view.
+
+  A test for an unimplemented feature, over a program that cannot compile, kept green by
+  table entries for builtins that do not exist — and each half hid the others.
 
 - **[DONE 08/13] The `with`-arena phantom is closed** (`lyra-E050`). Arenas were
   designed early — grammar, collector, a reserved runtime shim (`lyra_arena_alloc`),
