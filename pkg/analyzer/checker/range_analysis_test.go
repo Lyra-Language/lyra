@@ -953,3 +953,58 @@ func TestRange_Constraint_ConstructedConstantNotDoubleReported(t *testing.T) {
 		let main = () -> u8 => 0
 	`)
 }
+
+// **A destructuring binds fresh names, so what the environment knew about them is stale.**
+//
+// The pass had no case for any of the destructuring statements, so an outer binding's
+// interval survived into an inner binding that merely shares its name. Both directions are
+// wrong and only one of them is visible:
+//
+//   - the false-positive direction refuses a valid program, which is what surfaced this;
+//   - the unsound direction feeds SafetyTable, and the backend *deletes* runtime traps on
+//     the strength of it — `xs[i]` on a `[3]i64` with `i` destructured to 10 read
+//     out-of-bounds stack memory with no trap at all
+//     (TestExec_DestructuredIndexStillBoundsChecked pins that half).
+func TestRange_DestructuredBindingIsNotTheOuterOne(t *testing.T) {
+	diags := checkRanges(t, `
+let main = () -> void => {
+  let a = 0
+  {
+    let (a, b) = (5, 6)
+    println(60 / a + b)
+  }
+}`)
+	for _, d := range diags {
+		t.Errorf("expected no range diagnostics — `a` here is the destructured 5, not the "+
+			"outer 0; got %s: %s", d.Code, d.Message)
+	}
+}
+
+// The if-let form binds in its then-branch, and the pattern may fail — so neither the
+// binding nor the branch's writes are certain.
+func TestRange_IfDestructuredBindingIsNotTheOuterOne(t *testing.T) {
+	diags := checkRanges(t, `
+data Box = Full(i64) | Empty
+let main = () -> void => {
+  let n = 0
+  if let Full(n) = Full(4) {
+    println(80 / n)
+  }
+}`)
+	for _, d := range diags {
+		t.Errorf("expected no range diagnostics — `n` in the branch is the bound 4; got %s: %s",
+			d.Code, d.Message)
+	}
+}
+
+// The genuine division-by-zero must still be reported: widening at a destructuring must not
+// turn the pass off for names it never touched.
+func TestRange_DivisionByZeroStillReportedAroundADestructuring(t *testing.T) {
+	onlyDiag(t, `
+let main = () -> void => {
+  let z = 0
+  let (a, b) = (5, 6)
+  println(a + b)
+  println(60 / z)
+}`, "lyra-E021", "divides by zero")
+}

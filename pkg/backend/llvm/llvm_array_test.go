@@ -201,3 +201,31 @@ func TestEmit_ArrayIR(t *testing.T) {
 		t.Error("expected a [3 x i8] return")
 	}
 }
+
+// **A destructured index is still bounds-checked** — the memory-safety half of the value-
+// range pass being blind to destructuring declarations.
+//
+// The range pass had no case for `let (i, j) = …`, so an *outer* binding's interval survived
+// into an inner binding that merely shares its name. Here the outer `i` is 0, which the pass
+// believed of the inner one too — and a proven-in-bounds index is exactly what SafetyTable
+// tells this backend it may stop checking. `xs[10]` on a `[3]i64` then read out-of-bounds
+// stack memory and returned it, with no trap.
+//
+// A fixed-size array is what makes the elision reachable: a `[]T`'s length is a runtime
+// value, so the index can never be *proven* in bounds and the check always survives.
+func TestExec_DestructuredIndexStillBoundsChecked(t *testing.T) {
+	t.Parallel()
+	const src = `let main = () -> u8 => {
+  let i = 0
+  {
+    let (i, j) = (10, 1)
+    var xs: [3]u8 = [7, 8, 9]
+    xs[i]
+  }
+}
+`
+	if got := buildAndRun(t, src); got != trapExitCode {
+		t.Errorf("exited %d, want %d (trap) — the bounds check was elided on the strength of "+
+			"the *outer* i's interval, and the read went off the end of the array", got, trapExitCode)
+	}
+}

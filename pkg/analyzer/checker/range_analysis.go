@@ -251,6 +251,40 @@ func mergeEnv(a, b rangeEnv) rangeEnv {
 
 // ── statement evaluation (threads the environment) ───────────────────────────
 
+// evalDestructuring walks a destructuring's value for its own diagnostics and then
+// **clears every name the pattern binds**.
+//
+// The clearing is the point. A destructured name is a *fresh* binding, so whatever the
+// environment knew about that name belonged to something else — and the pass had no case
+// for any of the destructuring statements at all, so an outer interval survived into the
+// inner binding's uses. That is wrong in both directions and the unsound one is the reason
+// this is a bug rather than an imprecision: a false `x is always 0 here` is a refused
+// program, but a stale *non*-zero or in-bounds interval reaches SafetyTable, and the
+// backend deletes runtime traps on the strength of it.
+//
+// Clearing rather than computing the element intervals is deliberate: knowing that
+// `let (a, b) = (5, 6)` gives `a ∈ [5,5]` would be a precision win, and unknown is the
+// sound answer until someone writes it.
+func (c *rangeChecker) evalDestructuring(st rangeEnv, d *ast.DestructuringDeclStmt) rangeEnv {
+	_, _, st = c.eval(st, d.Value)
+	for _, n := range patternBoundNames(d.Pattern) {
+		delete(st.vars, n)
+	}
+	return st
+}
+
+// forgetAssigned drops what the environment knows about every name a subtree writes to —
+// the widening a branch whose execution is uncertain needs.
+func (c *rangeChecker) forgetAssigned(st rangeEnv, body *ast.BlockExpr) rangeEnv {
+	if body == nil {
+		return st
+	}
+	for n := range assignedNames(body) {
+		delete(st.vars, n)
+	}
+	return st
+}
+
 func (c *rangeChecker) evalStmt(st rangeEnv, s ast.Statement) rangeEnv {
 	if !st.reachable {
 		return st
@@ -258,6 +292,23 @@ func (c *rangeChecker) evalStmt(st rangeEnv, s ast.Statement) rangeEnv {
 	switch v := s.(type) {
 	case nil:
 		return st
+
+	case *ast.DestructuringDeclStmt:
+		return c.evalDestructuring(st, v)
+
+	case *ast.IfDestructuringStmt:
+		// The bindings are the then-branch's, and the pattern may fail — so neither
+		// branch's writes are certain. Evaluating the value (for its own diagnostics)
+		// and then clearing the bound names is the sound approximation, the same one
+		// the branch join reaches by widening.
+		st = c.evalDestructuring(st, &v.DestructuringStatement)
+		st = c.forgetAssigned(st, v.Then)
+		return c.forgetAssigned(st, v.Else)
+
+	case *ast.ElseDestructuringStmt:
+		st = c.evalDestructuring(st, &v.DestructuringStatement)
+		return c.forgetAssigned(st, v.Else)
+
 	case *ast.VarDeclStmt:
 		iv, tracked, after := c.eval(st, v.Value)
 		st = after
@@ -556,8 +607,17 @@ func (c *rangeChecker) evalBlock(st rangeEnv, v *ast.BlockExpr) (interval, bool,
 	var lastVal interval
 	var lastTracked bool
 	for _, s := range v.Statements {
-		if vds, ok := s.(*ast.VarDeclStmt); ok {
-			declared[vds.Name] = true
+		switch d := s.(type) {
+		case *ast.VarDeclStmt:
+			declared[d.Name] = true
+		case *ast.DestructuringDeclStmt:
+			// A destructuring declares names exactly as a `let` does; without this a
+			// block-local `let (a, b) = …` shadowing an outer `a` leaked the *inner*
+			// binding's absence back out, and the outer interval survived into uses of
+			// the inner one.
+			for _, n := range patternBoundNames(d.Pattern) {
+				declared[n] = true
+			}
 		}
 		if es, ok := s.(*ast.ExpressionStmt); ok {
 			lastVal, lastTracked, inner = c.eval(inner, es.Expression)
@@ -1393,6 +1453,18 @@ func assignedNames(node ast.AstNode) map[string]bool {
 			out[v.Name] = true
 		case *ast.VarReassignmentStmt:
 			out[v.Name] = true
+		case *ast.DestructuringDeclStmt:
+			for _, n := range patternBoundNames(v.Pattern) {
+				out[n] = true
+			}
+		case *ast.IfDestructuringStmt:
+			for _, n := range patternBoundNames(v.DestructuringStatement.Pattern) {
+				out[n] = true
+			}
+		case *ast.ElseDestructuringStmt:
+			for _, n := range patternBoundNames(v.DestructuringStatement.Pattern) {
+				out[n] = true
+			}
 		}
 		return true
 	}
