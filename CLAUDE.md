@@ -832,11 +832,19 @@ A file's **imports** are extracted once at load and cached beside its tree (`Uni
 because two passes want them — resolution follows them, the driver builds the import graph
 from them — and each used to walk the CST for itself.
 
-What remains is genuinely whole-program analysis: typechecker 31% of a cached run, purity 15%,
-ownership 8%, shadowing 7%, with no duplicated work and no CGO left in the path. `Finish` is
-3%, which is worth recording because it was predicted to be the bottleneck and is not. Making
-the typechecker incremental would buy ~17% for a change much larger than the collector's — see
-`todo.md` before starting it.
+- **`typechecker.Snapshot`** carries the typechecking of that same prefix, in the same cache
+  and under the same key — two caches keyed identically are two chances to invalidate one and
+  not the other. It holds the four output tables and the error list and nothing else: `Check`
+  is four whole-program setup passes and then a per-statement loop, the setup is under 1% and
+  re-runs, and the loop is where the ~1.0 ms goes. The prefix can be skipped because the
+  prelude cannot see user code.
+
+Per keystroke, end to end: **17.3 ms with no cache, 2.68 ms with all of them.**
+
+`Finish` is 3% of a cached run, worth recording because it was predicted to be the bottleneck
+and was not — the import-graph rebuild was, and it was duplicated work rather than analysis.
+What is left is purity, ownership and shadowing, each whole-program, with no duplicated work
+and no CGO in the path.
 
 Logs to `/tmp/lyra-lsp.log`. Build with `go build ./cmd/lyra-lsp`.
 

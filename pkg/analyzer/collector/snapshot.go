@@ -62,3 +62,14 @@ func (s *Snapshot) Restore(source []byte) *Collector {
 	c.table.CurrentScope = c.table.GlobalScope
 	return c
 }
+
+// StatementCount is how many top-level statements the snapshot covers — the boundary the
+// typechecker resumes from. Read from the snapshot rather than recomputed from the units,
+// because Finish may append a statement (a synthesized derive) and the count at capture time
+// is the only thing that says where the prefix actually ends.
+func (s *Snapshot) StatementCount() int {
+	if s == nil {
+		return 0
+	}
+	return len(s.statements)
+}

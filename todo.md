@@ -307,19 +307,38 @@ write today:
   remaining time. Measured, `Finish` is **3%** of a cached analysis. The import-graph rebuild
   was 16%, and it was not re-*analysis* at all — it was the same CST walked twice.
 
-- **Making the typechecker and the checker passes incremental is a bad trade at today's
-  numbers, and that is a measurement rather than a preference.** What remains in a cached
-  analysis is genuinely whole-program: typechecker 31%, purity 15%, ownership 8%, shadowing
-  7%. There is no duplicated work left in the path — the profile shows no CGO in it at all.
+- **[DONE 08/24] The typechecker resumes from a snapshot of the unchanged prefix.**
+  3.37 ms → **2.68 ms** per keystroke; 17.3 ms → 2.68 ms against no cache at all, 6.5×.
 
-  A typechecker snapshot on the collector's model would save perhaps 0.6 ms of a 3.4 ms
-  keystroke, ~17%, for a much larger and riskier change: the typechecker's state is far
-  bigger than the collector's, and cross-module obligations (impl coherence, the instantiation
-  closure) are whole-program by definition, so a snapshot would have to be right about which
-  checks may be skipped as well as which state may be reused. Compare the import fix — 29% for
-  about sixty lines. Worth revisiting only if the per-keystroke budget starts mattering again
-  or a program much larger than the prelude changes the ratios.
+  **What made it tractable is that `Check` is setup plus a loop, and the cost is all in the
+  loop.** The four whole-program passes above it — impl collection, coherence, newtype cycles,
+  trait defaults — are together under 1% and simply re-run, so the snapshot holds only what
+  the per-statement loop accumulates: four tables and the error list. The TypeChecker's other
+  thirty-odd fields are either rebuilt by those passes or are caches. That is why this landed
+  in one sitting when the field count suggested otherwise.
 
+  The prefix can be skipped because **the prelude cannot see user code** — a module resolves
+  through its own scope, its imports and the prelude, never downward. Where a user's type does
+  reach prelude code (a generic instantiated at it, an impl of a prelude trait), it is
+  discovered while checking the user's own statements or published by the setup passes.
+
+  `CheckSplit` changes the order consts are checked in — the prefix's non-consts now precede
+  the suffix's consts — which is safe for the same reason, and stated where it happens.
+
+  **I estimated this at ~17% and declined it; measured, the ceiling was ~24% and it delivered
+  20%.** The estimate was wrong because it assumed the typechecker's cost was spread over the
+  whole of `Check` rather than concentrated in the skippable part. Worth remembering as the
+  mirror of the `Finish` prediction: guessing where time goes was wrong in both directions.
+
+- **The differential gate now covers the type tables, and did not before.** The first version
+  compared diagnostics and the symbol table only — it would have passed a snapshot that
+  dropped every recorded type. Comparison is by *content* (the sorted multiset of recorded
+  types, resolution counts, instantiation keys), because the maps are keyed by AST pointer and
+  two analyses of one program collect two sets of nodes.
+
+  Sweeping the four restore steps caught three; `errors` was invisible because every prefix in
+  the test was the prelude, which is clean. The test now puts a **failing user module in the
+  prefix**, and all four are caught.
 - **The remaining 11.7 ms per keystroke is re-collection, and needs incremental analysis.**
 - **[DONE 08/24] Four false rejections, and a crash behind one of them.** Each refused a
   correct program, so each was a feature the language claimed to have and did not.

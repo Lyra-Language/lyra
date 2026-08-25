@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/Lyra-Language/lyra/pkg/analyzer/collector"
+	"github.com/Lyra-Language/lyra/pkg/analyzer/typechecker"
 	"github.com/Lyra-Language/lyra/pkg/modules"
 )
 
@@ -27,6 +28,11 @@ type CollectCache struct {
 	mu   sync.Mutex
 	key  string
 	snap *collector.Snapshot
+	// types is the typechecking of that same prefix. It rides here rather than in a cache
+	// of its own because it is valid under exactly the same condition — the prefix's bytes,
+	// the prelude path and the import graph — and two caches keyed identically are two
+	// chances to invalidate one and not the other.
+	types *typechecker.Snapshot
 }
 
 // NewCollectCache returns an empty cache. Safe for concurrent use.
@@ -85,5 +91,30 @@ func (c *CollectCache) put(key string, snap *collector.Snapshot) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.key, c.snap = key, snap
+	// A new prefix invalidates the typechecking of the old one.
+	c.key, c.snap, c.types = key, snap, nil
+}
+
+func (c *CollectCache) getTypes(key string) *typechecker.Snapshot {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.key != key {
+		return nil
+	}
+	return c.types
+}
+
+func (c *CollectCache) putTypes(key string, snap *typechecker.Snapshot) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.key != key {
+		return
+	}
+	c.types = snap
 }

@@ -30,6 +30,16 @@ func fingerprint(res *driver.Result) string {
 	}
 	st := res.SymbolTable
 	b.WriteString(fmt.Sprintf("statements=%d\n", len(res.Program.Statements)))
+	// The type tables are what the typechecker snapshot carries, so they have to be in the
+	// comparison — the first version of this fingerprint covered diagnostics and the symbol
+	// table only, and would have passed a snapshot that dropped every recorded type.
+	//
+	// Compared by *content* rather than by key: the maps are keyed by AST pointer and two
+	// analyses of one program collect two sets of nodes, so only the multiset of what was
+	// recorded is comparable across runs.
+	b.WriteString("types: " + strings.Join(res.TypeTable.Fingerprint(), ",") + "\n")
+	b.WriteString("methods: " + strings.Join(res.MethodTable.Fingerprint(), ",") + "\n")
+	b.WriteString("insts: " + strings.Join(res.Instantiations.Fingerprint(), ",") + "\n")
 	for _, section := range []struct {
 		name string
 		keys []string
@@ -138,6 +148,15 @@ let main = () -> void => println("one")
 let helper = pure (n: i64) -> i64 => n * 2
 let main = () -> void => println(helper(21))
 `,
+		// Pulls the broken module into the prefix: its error must survive the snapshot.
+		`module main
+import lib.{ broken }
+let main = () -> void => println(broken(1))
+`,
+		`module main
+import lib.{ broken }
+let main = () -> void => println(broken(2))
+`,
 		`module main
 trait Shout { pure shout: (Self) -> string }
 struct Cat { n: i64 }
@@ -191,6 +210,16 @@ let main = () -> void => println(Box { n: 1 }.size() + Bag { n: 2 }.size())
 		`module main
 let main = () -> void => println("one")
 `,
+	}
+
+	// A second user module, in the *prefix* — everything but the entry file — and one that
+	// does not type-check. Without it every prefix in this test is the prelude, which is
+	// clean, so a snapshot that dropped the prefix's diagnostics entirely would go
+	// unnoticed. That was true of the first version of this test, and the field sweep is
+	// what showed it.
+	if err := os.WriteFile(filepath.Join(dir, "lib.lyra"), []byte(
+		"module lib\npub let broken = pure (n: i64) -> string => n\n"), 0o644); err != nil {
+		t.Fatal(err)
 	}
 
 	cache := driver.NewCollectCache()

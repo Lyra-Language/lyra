@@ -149,9 +149,11 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 
 	var c *collector.Collector
 	start := 0
+	prefixStatements := 0
 	if snap := cache.get(key); snap != nil {
 		c = snap.Restore(units[0].Source)
 		start = boundary
+		prefixStatements = snap.StatementCount()
 	} else {
 		c = collector.NewCollector(units[0].Source)
 	}
@@ -175,7 +177,9 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 		}
 		if i == boundary && cache != nil && start == 0 {
 			// About to collect the edited file: capture everything before it.
-			cache.put(key, c.Snapshot())
+			snap := c.Snapshot()
+			cache.put(key, snap)
+			prefixStatements = snap.StatementCount()
 		}
 		c.AddFile(u.Root, u.Source, u.File, u.Path)
 	}
@@ -228,9 +232,27 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	}
 
 	// Typecheck: AST → TypeTable (+ MethodTable for dispatch resolutions).
+	//
+	// With a cache, the statements the collect snapshot covered are already checked, and
+	// the run resumes after them. The boundary comes from the snapshot rather than being
+	// recomputed: `Finish` may append statements (a synthesized derive), so the count at
+	// snapshot time is the only thing that reliably says where the prefix ends.
 	tt := typetable.New()
-	tc := typechecker.New(symTable, scopeTable, tt)
-	typeErrors := tc.Check(program)
+	var typeErrors []typechecker.TypeError
+	var tc *typechecker.TypeChecker
+	if ts := cache.getTypes(key); ts != nil && ts.Statements <= len(program.Statements) {
+		tc = typechecker.NewFrom(symTable, scopeTable, tt, ts)
+		typeErrors = tc.CheckFrom(program, ts.Statements)
+	} else {
+		tc = typechecker.New(symTable, scopeTable, tt)
+		if cache != nil && prefixStatements > 0 && prefixStatements <= len(program.Statements) {
+			typeErrors = tc.CheckSplit(program, prefixStatements, func(snap *typechecker.Snapshot) {
+				cache.putTypes(key, snap)
+			})
+		} else {
+			typeErrors = tc.Check(program)
+		}
+	}
 	res.TypeTable = tt
 	res.MethodTable = tc.MethodTable()
 	res.Instantiations = tc.Instantiations()

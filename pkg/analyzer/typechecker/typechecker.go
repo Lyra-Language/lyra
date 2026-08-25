@@ -151,6 +151,13 @@ func (tc *TypeChecker) enterScope(node ast.AstNode, fn func()) {
 }
 
 func (tc *TypeChecker) Check(program *ast.Program) []TypeError {
+	return tc.CheckFrom(program, 0)
+}
+
+// prepare runs the whole-program passes that must precede the per-statement loop. Split out
+// so Check and CheckFrom cannot drift about what "before checking" means — they are the same
+// function, differing only in where the loop starts.
+func (tc *TypeChecker) prepare(program *ast.Program) {
 	// Collected up front (not lazily) so a method call site can dispatch
 	// against an impl declared later in the same file — Lyra has no
 	// declare-before-use requirement for top-level type/trait/impl blocks.
@@ -180,17 +187,6 @@ func (tc *TypeChecker) Check(program *ast.Program) []TypeError {
 	// reason type/trait/impl blocks are collected up front above), and a const has
 	// no storage, so its value must be typed before a use can read the width the
 	// backend inlines. Each const is skipped in the main pass so it's checked once.
-	for _, stmt := range program.Statements {
-		if isTopLevelConst(stmt) {
-			tc.checkInModule(stmt)
-		}
-	}
-	for _, stmt := range program.Statements {
-		if !isTopLevelConst(stmt) {
-			tc.checkInModule(stmt)
-		}
-	}
-	return tc.errors
 }
 
 // isTopLevelConst reports whether a top-level statement is a `const` declaration.
