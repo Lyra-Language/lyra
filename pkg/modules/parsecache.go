@@ -5,6 +5,8 @@ import (
 	"sync"
 
 	sitter "github.com/tree-sitter/go-tree-sitter"
+
+	"github.com/Lyra-Language/lyra/pkg/ast"
 )
 
 // ParseCache holds the syntax tree of each file whose bytes have not changed.
@@ -27,8 +29,9 @@ type ParseCache struct {
 }
 
 type parseEntry struct {
-	source []byte
-	tree   *sitter.Tree
+	source  []byte
+	tree    *sitter.Tree
+	imports []*ast.ImportStmt
 }
 
 // NewParseCache returns an empty cache. Safe for concurrent use.
@@ -49,6 +52,37 @@ func (c *ParseCache) get(file string, source []byte) *sitter.Tree {
 	return e.tree
 }
 
+// getImports and putImports cache what a file imports, derived from the same tree and keyed
+// the same way. Two passes want it — resolution, to follow imports, and the driver, to build
+// the import graph — and each was walking the CST for itself.
+func (c *ParseCache) getImports(file string, source []byte) []*ast.ImportStmt {
+	if c == nil {
+		return nil
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[file]
+	if !ok || !bytes.Equal(e.source, source) {
+		return nil
+	}
+	return e.imports
+}
+
+func (c *ParseCache) putImports(file string, source []byte, imports []*ast.ImportStmt) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	e, ok := c.entries[file]
+	if ok && bytes.Equal(e.source, source) {
+		e.imports = imports
+		c.entries[file] = e
+		return
+	}
+	c.entries[file] = parseEntry{source: bytes.Clone(source), imports: imports}
+}
+
 func (c *ParseCache) put(file string, source []byte, tree *sitter.Tree) {
 	if c == nil {
 		return
@@ -59,5 +93,12 @@ func (c *ParseCache) put(file string, source []byte, tree *sitter.Tree) {
 	// overlay's bytes belong to the editor's document store — either may be reused or
 	// mutated after this returns, which would silently turn a later comparison into a
 	// false hit.
+	// Preserve any imports already cached for these exact bytes.
+	e, ok := c.entries[file]
+	if ok && bytes.Equal(e.source, source) {
+		e.tree = tree
+		c.entries[file] = e
+		return
+	}
 	c.entries[file] = parseEntry{source: bytes.Clone(source), tree: tree}
 }

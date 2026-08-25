@@ -295,11 +295,30 @@ write today:
   arguments depend on facts that could change. Worth strengthening if someone adds a field
   whose staleness the gate would not see.
 
-- **What is left is `Finish` and the post-collection passes**, which still run over the whole
-  merged program on every keystroke — that is most of the remaining 4.9 ms. `Finish` is
-  whole-program by construction (it resolves canonical types, synthesizes derives, populates
-  import scopes), so it cannot simply be snapshotted; making it incremental is a separate
-  question from making collection incremental.
+- **[DONE 08/24] A file's imports are extracted once, not twice per keystroke.** `importsOf`
+  walked the CST — a CGO call per top-level node — and *two* passes wanted the answer:
+  resolution, to follow imports, and the driver, to build the import graph before collecting.
+  `Unit.Imports` is now filled at load and cached beside the tree under the same content key.
+  Resolve 1.75 ms → 0.97 ms, analysis 3.35 ms → 2.65 ms; end to end **17.4 ms → 3.37 ms** per
+  keystroke, 5.2×.
+
+  **`Finish` was not the problem, which is what profiling said and the plan did not.** The
+  item this replaced predicted `Finish` and the post-collection passes were most of the
+  remaining time. Measured, `Finish` is **3%** of a cached analysis. The import-graph rebuild
+  was 16%, and it was not re-*analysis* at all — it was the same CST walked twice.
+
+- **Making the typechecker and the checker passes incremental is a bad trade at today's
+  numbers, and that is a measurement rather than a preference.** What remains in a cached
+  analysis is genuinely whole-program: typechecker 31%, purity 15%, ownership 8%, shadowing
+  7%. There is no duplicated work left in the path — the profile shows no CGO in it at all.
+
+  A typechecker snapshot on the collector's model would save perhaps 0.6 ms of a 3.4 ms
+  keystroke, ~17%, for a much larger and riskier change: the typechecker's state is far
+  bigger than the collector's, and cross-module obligations (impl coherence, the instantiation
+  closure) are whole-program by definition, so a snapshot would have to be right about which
+  checks may be skipped as well as which state may be reused. Compare the import fix — 29% for
+  about sixty lines. Worth revisiting only if the per-keystroke budget starts mattering again
+  or a program much larger than the prelude changes the ratios.
 
 - **The remaining 11.7 ms per keystroke is re-collection, and needs incremental analysis.**
 - **[DONE 08/24] Four false rejections, and a crash behind one of them.** Each refused a

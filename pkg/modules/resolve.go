@@ -53,6 +53,16 @@ type Unit struct {
 	Source []byte
 	Tree   *sitter.Tree
 	Root   *sitter.Node
+
+	// Imports is the file's `import` statements, extracted once when it is loaded.
+	//
+	// It is a field rather than something each caller derives because two of them do:
+	// resolution follows imports to find the next unit, and the driver builds the whole
+	// import graph from them before collecting. Both walked the CST separately — a CGO
+	// call per top-level node, twice per unit per keystroke — which was 16% of a cached
+	// analysis. Non-nil once loaded, empty for a file with no imports, so `importsOf` can
+	// tell "none" from "not extracted yet".
+	Imports []*ast.ImportStmt
 }
 
 // Resolve reads the entry file and everything it imports, transitively, and returns
@@ -452,6 +462,7 @@ func (r *resolver) load(file, path string, loc ast.Location, fromFile string) (U
 		return Unit{}, false
 	}
 	u := Unit{Path: path, File: file, Source: source, Tree: tree, Root: tree.RootNode()}
+	u.Imports = r.imports(file, source, u)
 	if u.Path == "" {
 		u.Path = declaredModulePath(u)
 	}
@@ -472,6 +483,21 @@ func (r *resolver) parse(file string, source []byte) (*sitter.Tree, error) {
 	}
 	r.parseCache.put(file, source, tree)
 	return tree, nil
+}
+
+// imports returns the file's import statements, from the cache when the bytes are unchanged.
+// Cached beside the tree and under the same key, since it is derived from exactly that tree.
+func (r *resolver) imports(file string, source []byte, u Unit) []*ast.ImportStmt {
+	if r.parseCache != nil {
+		if imps := r.parseCache.getImports(file, source); imps != nil {
+			return imps
+		}
+	}
+	imps := scanImports(u)
+	if r.parseCache != nil {
+		r.parseCache.putImports(file, source, imps)
+	}
+	return imps
 }
 
 func (r *resolver) errorf(file string, loc ast.Location, code, format string, args ...any) {

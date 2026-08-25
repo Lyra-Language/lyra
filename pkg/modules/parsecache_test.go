@@ -3,6 +3,7 @@ package modules_test
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -133,5 +134,101 @@ func TestParseCache_NilIsDisabledNotACrash(t *testing.T) {
 	units, _ := modules.Resolve(app, []string{dir}, modules.Options{ParseCache: nil})
 	if len(units) != 1 {
 		t.Fatalf("resolve with a nil cache produced %d units", len(units))
+	}
+}
+
+// A file's imports are cached beside its tree, so an edit that changes them must be seen.
+//
+// Both resolution (to follow imports) and the driver (to build the import graph) need this
+// list, and each walked the CST for itself — a CGO call per top-level node, twice per unit
+// per keystroke, 16% of a cached analysis. Computing it once at load is the fix; the risk it
+// introduces is a stale list, which is worse than the cost it removes: resolution would
+// follow the modules the file used to import.
+//
+// The cache is keyed on contents, so this is the same guarantee the tree has. The test walks
+// an import in, then out again, and checks the resolved unit set both times — the observable
+// consequence, rather than the field.
+//
+// **Two layers protect this, and that made the first attempt to verify the test inconclusive.**
+// Making the imports lookup path-keyed alone does not produce a stale read, because `put`
+// replaces the whole entry when a file's bytes change and so clears the imports with it.
+// Only neutering both halves makes this test fail. Worth knowing before relying on the
+// incidental layer: `put`'s behaviour is about caching a *tree*, and nothing about it
+// promises to keep an imports field honest.
+func TestParseCache_ChangedImportsAreRescanned(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, src string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("lib.lyra", "module lib\npub let helper = pure (n: i64) -> i64 => n\n")
+	write("other.lyra", "module other\npub let second = pure (n: i64) -> i64 => n\n")
+	app := filepath.Join(dir, "main.lyra")
+	cache := modules.NewParseCache()
+
+	paths := func(src string) []string {
+		write("main.lyra", src)
+		units, _ := modules.Resolve(app, []string{dir}, modules.Options{ParseCache: cache})
+		var out []string
+		for _, u := range units {
+			out = append(out, u.Path)
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	for _, c := range []struct {
+		name, src string
+		want      string
+	}{
+		{"no imports", "module main\nlet main = () -> void => println(1)\n", "main"},
+		{"one import", "module main\nimport lib.{ helper }\nlet main = () -> void => println(helper(1))\n", "lib,main"},
+		{"two imports", "module main\nimport lib.{ helper }\nimport other.{ second }\nlet main = () -> void => println(helper(second(1)))\n", "lib,main,other"},
+		{"back to none", "module main\nlet main = () -> void => println(1)\n", "main"},
+	} {
+		if got := strings.Join(paths(c.src), ","); got != c.want {
+			t.Errorf("%s: resolved %q; want %q — a cached import list went stale", c.name, got, c.want)
+		}
+	}
+}
+
+// A Unit built by hand has no extracted imports, and importsOf must fall back to scanning
+// rather than reporting none. Tests construct Units directly, and "no imports" and "not
+// looked yet" being the same value is what makes that a real hazard.
+func TestImportsOf_FallsBackForAHandBuiltUnit(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, src string) string {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	write("lib.lyra", "module lib\npub let helper = pure (n: i64) -> i64 => n\n")
+	app := write("main.lyra", "module main\nimport lib.{ helper }\nlet main = () -> void => println(helper(1))\n")
+
+	units, _ := modules.Resolve(app, []string{dir}, modules.Options{})
+	if len(units) < 2 {
+		t.Fatalf("resolve produced %d units", len(units))
+	}
+	// Strip the extracted field, as a hand-built Unit would have it.
+	stripped := make([]modules.Unit, len(units))
+	for i, u := range units {
+		u.Imports = nil
+		stripped[i] = u
+	}
+	full := modules.ImportGraph(units)
+	fallback := modules.ImportGraph(stripped)
+	if len(full) != len(fallback) {
+		t.Fatalf("graph sizes differ: %d vs %d", len(full), len(fallback))
+	}
+	for k, v := range full {
+		if strings.Join(v, ",") != strings.Join(fallback[k], ",") {
+			t.Errorf("module %q: %v with the field, %v without", k, v, fallback[k])
+		}
+	}
+	if len(full["main"]) == 0 {
+		t.Error("the fixture resolved no imports for main, so this test proves nothing")
 	}
 }

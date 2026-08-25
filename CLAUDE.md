@@ -828,8 +828,15 @@ bytes, because `SetPreludeModule` and `SetImports` are applied before the first 
 and both change how a declaration is keyed. Editing an `import` line invalidates the snapshot,
 which is correct: it changes how every name in the program resolves.
 
-What remains is `Finish` and the post-collection passes, which are whole-program by
-construction and still run every keystroke — see `todo.md`.
+A file's **imports** are extracted once at load and cached beside its tree (`Unit.Imports`),
+because two passes want them — resolution follows them, the driver builds the import graph
+from them — and each used to walk the CST for itself.
+
+What remains is genuinely whole-program analysis: typechecker 31% of a cached run, purity 15%,
+ownership 8%, shadowing 7%, with no duplicated work and no CGO left in the path. `Finish` is
+3%, which is worth recording because it was predicted to be the bottleneck and is not. Making
+the typechecker incremental would buy ~17% for a change much larger than the collector's — see
+`todo.md` before starting it.
 
 Logs to `/tmp/lyra-lsp.log`. Build with `go build ./cmd/lyra-lsp`.
 

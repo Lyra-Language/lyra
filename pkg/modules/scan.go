@@ -59,6 +59,15 @@ func ImportGraph(units []Unit) map[string][]string {
 
 // importsOf returns the imports declared at the top level of a unit.
 func importsOf(u Unit) []*ast.ImportStmt {
+	if u.Imports != nil {
+		return u.Imports
+	}
+	return scanImports(u)
+}
+
+// scanImports walks the CST for a file's `import` statements. Prefer Unit.Imports, which is
+// this result computed once at load; a Unit built by hand (a test) has none and falls here.
+func scanImports(u Unit) []*ast.ImportStmt {
 	var out []*ast.ImportStmt
 	forEachTopLevel(u.Root, "import_statement", func(node *sitter.Node) {
 		path := cst.Field(node, "path")
@@ -70,6 +79,10 @@ func importsOf(u Unit) []*ast.ImportStmt {
 			Path:    modulePathOf(path, u.Source),
 		})
 	})
+	if out == nil {
+		// Non-nil so a file with no imports reads as extracted rather than unvisited.
+		out = []*ast.ImportStmt{}
+	}
 	return out
 }
 
