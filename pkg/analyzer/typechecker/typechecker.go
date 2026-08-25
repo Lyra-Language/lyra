@@ -1324,14 +1324,26 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	if reportedByContext || valueType == nil {
 		return
 	}
+	// The value takes the target's type, exactly as the other two assignment paths make
+	// it take a binding's. This path did no propagation at all until 08/22, and the note
+	// here called that a separate question; writing `self.prev = []` in `std.tui` is what
+	// answered it. An array literal is the case that *cannot* work without it, because a
+	// literal's flavour is chosen by what it is used as: `["x"]` against a `[]string`
+	// field inferred as a fixed `[1]string` and reached the backend as
+	// `cannot store [1 x { i8*, i64, i64 }] into { i64, … }*`, and the empty `[]` had no
+	// element type at all and arrived as `unknown type: %!s(<nil>)`. Both are hard
+	// backend errors on programs the front end passed, which is rule 5 inverted — the
+	// backend refusing to guess about something nobody had told it.
+	//
+	// Before checkStorable, so the check sees the type the value will actually have.
+	tc.propagateLiteralType(stmt.Value, targetType)
+	if t, ok := tc.typeTable.Get(stmt.Value); ok && t != nil {
+		valueType = t
+	}
 	if !tc.checkStorable(stmt.Value, valueType, targetType, targetType, stmt.GetLocation(), "") {
 		return
 	}
 	tc.checkIntegerLiteralRange(stmt.Target.GetName(), stmt.Value, targetType)
-	// Called directly rather than via propagateLiteralType, because this path — an
-	// assignment through a member/index target — does no literal propagation at all.
-	// Whether it *should* is a separate question (the other two assignment paths do);
-	// leaving that alone keeps this change to the checks it is about.
 	if ct, ok := targetType.(*types.ConstrainedType); ok {
 		tc.checkImplicitNewtypeConversion(stmt.Value, valueType, ct)
 	}

@@ -200,3 +200,53 @@ let main = () -> void => {
 		t.Errorf("assigning Some(7) to a Maybe field gave %q, want \"some 7\"", got)
 	}
 }
+
+// **An array literal assigned to a field takes the field's type.** Until 08/22 this path
+// did no literal propagation at all, so the literal chose its own flavour — a *fixed*
+// `[1]string` for the non-empty one and nothing at all for the empty one — and both
+// reached the backend as hard errors on a program the front end had passed:
+// `cannot store [1 x { i8*, i64, i64 }] into { i64, … }*`, and `unknown type: %!s(<nil>)`.
+//
+// A literal's flavour is chosen by what it is *used as*, and an assignment through a
+// member target never told it. Found writing `std.tui`'s `Renderer`, where `self.prev = []`
+// is simply how a field is cleared.
+func TestExec_AnArrayLiteralAssignedToAFieldTakesItsType(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+struct Log { lines: []string, counts: []i64 }
+let clear_it = (self: mut Log) -> void => { self.lines = [] }
+let refill = (self: mut Log) -> void => { self.lines = ["a", "b"] }
+let widen = (self: mut Log) -> void => { self.counts = [7] }
+let main = () -> void => {
+  var l = Log { lines: ["x"], counts: [1, 2, 3] }
+  l.clear_it()
+  print("${l.lines.len()} ")
+  l.refill()
+  print("${l.lines.len()} ${l.lines[1]} ")
+  l.widen()
+  print("${l.counts.len()} ${l.counts[0]}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "0 2 b 1 7" {
+		t.Errorf("field assignment = %q; want \"0 2 b 1 7\"", got)
+	}
+}
+
+// The same rule one target-kind over: an *element* of an array of arrays is a member/index
+// target too, and takes the element type for the same reason.
+func TestExec_AnArrayLiteralAssignedToAnElementTakesItsType(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+let main = () -> void => {
+  var grid: [][]i64 = [[1], [2]]
+  grid[0] = []
+  grid[1] = [7, 8, 9]
+  print("${grid[0].len()} ${grid[1].len()} ${grid[1][2]}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "0 3 9" {
+		t.Errorf("element assignment = %q; want \"0 3 9\"", got)
+	}
+}
