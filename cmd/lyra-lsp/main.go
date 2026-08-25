@@ -385,6 +385,21 @@ func (h *Handler) Hover(_ context.Context, params *lsp.HoverParams) (result *lsp
 	}
 	analysis, line, col := c.analysis, c.line, c.col
 
+	// **A written type name is checked first here, and last in `Definition`**, and the
+	// asymmetry has a reason rather than being an oversight. A type in a type position is
+	// not an expression, so neither handler reaches it through `findExprAtPos` — but the
+	// *enclosing* node is one: the cursor on `Point` in `(p: Point) -> i64` sits inside
+	// the whole `LambdaExpr`, which has a recorded type, so hover would answer with the
+	// function's signature and never fall through. `resolveDefinition` has no case for a
+	// LambdaExpr and returns nil, so there the fallback is reached on its own.
+	//
+	// Checking first is safe because a type reference's span is a type *position*: a
+	// struct literal's name is collected as an expression and never recorded here, so the
+	// two sets do not overlap and nothing that already answered changes.
+	if hov := hoverTypeReference(analysis, line, col); hov != nil {
+		return hov, nil
+	}
+
 	expr := findExprAtPos(analysis.program, line, col)
 	if expr == nil {
 		return nil, nil

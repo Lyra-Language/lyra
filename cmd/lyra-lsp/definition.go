@@ -26,6 +26,16 @@ func (h *Handler) Definition(_ context.Context, params *lsp.DefinitionParams) (r
 	expr := findExprAtPos(analysis.program, line, col)
 	loc := resolveDefinition(expr, line, col, analysis)
 	if loc == nil {
+		// **A type in a type position is not an expression**, so the walk above cannot
+		// reach it however far it descends — `Node { … }` resolved while `(n: Node)`,
+		// `-> Node` and a field's `n: Node` all did nothing, which reads as the server
+		// not supporting types at all. The collector records where each type name is
+		// *written* (symbols/typerefs.go), because a type value cannot carry a position
+		// of its own without breaking structural equality; resolving it is then the same
+		// LookupTypeFrom the struct-literal case above already uses.
+		loc = resolveTypeReference(analysis, line, col)
+	}
+	if loc == nil {
 		log.Printf("definition: no definition found (expr %T)", expr)
 		return nil, nil
 	}
@@ -36,6 +46,30 @@ func (h *Handler) Definition(_ context.Context, params *lsp.DefinitionParams) (r
 		return nil, nil
 	}
 	return []lsp.Location{target}, nil
+}
+
+// resolveTypeReference answers for a cursor sitting on a type *name* — in a parameter, a
+// return type, a field, a local annotation, a generic argument, an `impl` target.
+//
+// Tried after the expression walk rather than before it, so nothing that already resolves
+// changes: a struct literal's name is both an expression and a written type, and the
+// expression answer is the one with a scope behind it.
+func resolveTypeReference(analysis *docAnalysis, line, col int) *ast.Location {
+	if analysis.symTable == nil {
+		return nil
+	}
+	ref, ok := analysis.symTable.TypeRefs.At(analysis.file, line, col)
+	if !ok {
+		return nil
+	}
+	decl, ok := analysis.symTable.LookupTypeFrom(ref.Name, ref.Loc)
+	if !ok {
+		return nil
+	}
+	// The name's location, not the declaration's — the same reason the identifier case
+	// gives, and the same one answer to the question (namedNameLoc, rename.go).
+	loc := namedNameLoc(decl)
+	return &loc
 }
 
 // locationIn builds the lsp.Location for a definition, which since the server resolves
@@ -82,7 +116,12 @@ func resolveDefinition(expr ast.Expression, line, col int, analysis *docAnalysis
 		// Cursor is on the struct type name (the name occupies the start of the expression).
 		if cursorOnName(e.GetLocation(), e.Name, line, col) {
 			if decl, ok := analysis.symTable.LookupTypeFrom(e.Name, e.GetLocation()); ok {
-				loc := decl.GetLocation()
+				// namedNameLoc, not GetLocation: these two arms landed on the
+				// *declaration's* first token while every other path landed on its name,
+				// so `Point` in `Point { … }` and `Point` in `(p: Point)` jumped to
+				// different columns of the same line. Invisible until types resolved at
+				// all, since there was nothing to be inconsistent with.
+				loc := namedNameLoc(decl)
 				return &loc
 			}
 		}
@@ -91,7 +130,7 @@ func resolveDefinition(expr ast.Expression, line, col int, analysis *docAnalysis
 		// Cursor is on a data-type constructor name (e.g. Some, None, Ok, Err).
 		if cursorOnName(e.GetLocation(), e.Constructor, line, col) {
 			if decl, ok := analysis.symTable.LookupTypeFrom(e.Constructor, e.GetLocation()); ok {
-				loc := decl.GetLocation()
+				loc := namedNameLoc(decl)
 				return &loc
 			}
 		}

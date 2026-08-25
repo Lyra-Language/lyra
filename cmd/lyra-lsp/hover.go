@@ -2,6 +2,9 @@ package main
 
 import (
 	"fmt"
+	"strings"
+
+	"github.com/owenrumney/go-lsp/lsp"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/types"
@@ -84,4 +87,59 @@ func hoverContent(expr ast.Expression, typ types.Type) string {
 		return fmt.Sprintf("```lyra\n%s: %s\n```", ident.Name, typ)
 	}
 	return fmt.Sprintf("```lyra\n%s\n```", typ)
+}
+
+// hoverTypeReference renders the declaration a written type name refers to, for a cursor
+// that no expression covers — `(p: Point)`, `-> Maybe<Point>`, a field's `n: Node`.
+//
+// It shows the *kind* and name rather than a rendered definition: a struct's fields are
+// already on screen two lines up as often as not, and what a reader hovering a name in a
+// signature wants first is "what is this, and what is it for". The doc comment carries the
+// second half.
+func hoverTypeReference(analysis *docAnalysis, line, col int) *lsp.Hover {
+	if analysis.symTable == nil {
+		return nil
+	}
+	ref, ok := analysis.symTable.TypeRefs.At(analysis.file, line, col)
+	if !ok {
+		return nil
+	}
+	decl, ok := analysis.symTable.LookupTypeFrom(ref.Name, ref.Loc)
+	if !ok {
+		return nil
+	}
+	content := renderHover("```lyra\n"+typeDeclSummary(decl)+"\n```", decl.Doc)
+	return &lsp.Hover{Contents: lsp.MarkupContent{Kind: lsp.Markdown, Value: content}}
+}
+
+// typeDeclSummary is the one-line spelling of what a type declaration is: the keyword a
+// reader would have written, then the name. `type X = …` says its target too, since an
+// alias's whole content is what it aliases and hiding it would leave the hover saying
+// nothing the name did not.
+func typeDeclSummary(decl *ast.TypeDeclStmt) string {
+	name := decl.Name
+	if len(decl.GenericParams) > 0 {
+		params := make([]string, 0, len(decl.GenericParams))
+		for _, p := range decl.GenericParams {
+			params = append(params, p.Name)
+		}
+		name += "<" + strings.Join(params, ", ") + ">"
+	}
+	if decl.IsAlias {
+		return "type " + name + " = " + decl.Type.GetName()
+	}
+	switch decl.Type.(type) {
+	case types.NamedStructType:
+		return "struct " + name
+	case types.DataType:
+		return "data " + name
+	case types.TupleType:
+		return "tuple " + name
+	case *types.ConstrainedType:
+		// The **base**, not `decl.Type.GetName()`: a ConstrainedType's name is the
+		// newtype's own, so asking it produced `newtype Cents = Cents`.
+		ct := decl.Type.(*types.ConstrainedType)
+		return "newtype " + name + " = " + ct.Type.GetName()
+	}
+	return "type " + name
 }

@@ -89,3 +89,48 @@ func TestHover_ClosedDoc_ReturnsNil(t *testing.T) {
 		t.Errorf("expected nil hover for unknown URI, got: %+v", hover)
 	}
 }
+
+// Hover on a written type name — the other half of the same gap go-to-definition had, and
+// through the same table. It shows what kind of declaration the name refers to and its
+// documentation, which is what a reader hovering a name in a signature is asking.
+func TestHover_TypeInATypePosition(t *testing.T) {
+	for _, tc := range []struct {
+		name, needle, wantCode, wantDoc string
+	}{
+		{"struct", "Point,", "struct Point", "A point in the plane."},
+		{"alias", "Coord,", "type Coord = i64", "A column index."},
+		{"newtype", "Cents,", "newtype Cents = i64", "Money, in cents."},
+		{"data", "Shape)", "data Shape", "A shape, one way or another."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := servertest.New(t, newHandler())
+			src := `
+/// A point in the plane.
+struct Point { x: i64, y: i64 }
+/// A column index.
+type Coord = i64
+/// Money, in cents.
+newtype Cents = i64
+/// A shape, one way or another.
+data Shape = Dot | Box i64
+let f = pure (p: Point, c: Coord, m: Cents, s: Shape) -> i64 => 0`
+			openAndWait(t, h, src)
+			col := strings.Index(strings.Split(src, "\n")[9], tc.needle)
+			hover, err := h.Hover(testURI, 9, col)
+			if err != nil {
+				t.Fatalf("Hover: %v", err)
+			}
+			if hover == nil {
+				t.Fatal("no hover on a written type name")
+			}
+			if !strings.Contains(hover.Contents.Value, tc.wantCode) {
+				t.Errorf("hover = %q; want it to contain %q", hover.Contents.Value, tc.wantCode)
+			}
+			// The doc is the half that says what the type is *for*, and it is the reason
+			// a signature's type name is worth hovering at all.
+			if !strings.Contains(hover.Contents.Value, tc.wantDoc) {
+				t.Errorf("hover = %q; want the declaration's doc comment", hover.Contents.Value)
+			}
+		})
+	}
+}

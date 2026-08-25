@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/owenrumney/go-lsp/servertest"
@@ -106,5 +107,80 @@ func TestDefinition_OuterScopeFromInner(t *testing.T) {
 	// "let x = 99" is on line 1.
 	if locs[0].Range.Start.Line != 1 {
 		t.Errorf("expected definition on line 1, got line %d", locs[0].Range.Start.Line)
+	}
+}
+
+// **Go-to-definition on a type in a *type* position.** Until 08/25 this did nothing at
+// all: `Definition` starts from `findExprAtPos`, which walks expressions, and a type in a
+// signature is not an expression — so `Node { … }` resolved while `(n: Node)`, `-> Node`
+// and a field's `n: Node` silently answered nothing. It reads as the server not
+// supporting types, which is why it was reported as an editor limitation.
+//
+// The positions are enumerated rather than sampled, because each is a different collector
+// path — a generic argument recurses through parseType, a parameterized *head* does not,
+// an `impl` target is a third — and one working says nothing about the others.
+func TestDefinition_TypeInATypePosition(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		line     int
+		needle   string
+		wantLine int
+	}{
+		{"parameter", 5, "Point)", 1},
+		{"return type", 6, "Point =>", 1},
+		{"local annotation", 8, "Point = p", 1},
+		{"generic argument", 7, "Point>", 1},
+		{"parameterized head", 7, "Maybe<", 0},
+		{"array element", 7, "Point)", 1},
+		{"field type", 2, "Point, b", 1},
+		{"impl target", 4, "Point {", 1},
+		{"alias target", 3, "Point", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := servertest.New(t, newHandler())
+			src := `data Maybe<t> = None | Some t
+struct Point { x: i64, y: i64 }
+struct Line { a: Point, b: Point }
+type Spot = Point
+impl Shownish for Point { }
+let takes = pure (p: Point) -> i64 => p.x
+let gives = pure (n: i64) -> Point => Point { x: n, y: n }
+let holds = pure (m: Maybe<Point>, xs: []Point) -> i64 => 0
+let main = () -> void => { let p = Point { x: 1, y: 2 }; let q: Point = p; println(q.x) }`
+			openAndWait(t, h, src)
+			col := strings.Index(strings.Split(src, "\n")[tc.line], tc.needle)
+			if col < 0 {
+				t.Fatalf("%q not on line %d", tc.needle, tc.line)
+			}
+			locs, err := h.Definition(testURI, tc.line, col)
+			if err != nil {
+				t.Fatalf("Definition: %v", err)
+			}
+			if len(locs) != 1 {
+				t.Fatalf("expected 1 location, got %d", len(locs))
+			}
+			if got := int(locs[0].Range.Start.Line); got != tc.wantLine {
+				t.Errorf("jumped to line %d; want %d", got, tc.wantLine)
+			}
+		})
+	}
+}
+
+// **A primitive has no declaration to jump to**, so the answer is nothing rather than a
+// guess. Asserted because the fallback resolves by *name*, and a name that resolves to no
+// declaration must fall through rather than land somewhere plausible.
+func TestDefinition_APrimitiveTypeResolvesToNothing(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	src := `
+struct Point { x: i64 }
+let f = pure (n: i64) -> i64 => n`
+	openAndWait(t, h, src)
+	col := strings.Index(strings.Split(src, "\n")[2], "i64)")
+	locs, err := h.Definition(testURI, 2, col)
+	if err != nil {
+		t.Fatalf("Definition: %v", err)
+	}
+	if len(locs) != 0 {
+		t.Errorf("a primitive must resolve to nothing; got %v", locs)
 	}
 }

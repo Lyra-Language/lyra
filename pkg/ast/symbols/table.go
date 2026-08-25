@@ -92,6 +92,11 @@ type SymbolTable struct {
 	// reaches precisely as far as the scope that declares it.
 	PreludeScope *Scope
 
+	// TypeRefs records where each named type is *written* — the question every
+	// position-based editor feature has to answer before it can resolve anything, and
+	// the one a type value cannot answer for itself (see typerefs.go).
+	TypeRefs *TypeRefTable
+
 	// Quick lookup tables - these point to AST nodes directly
 	Types     map[string]*ast.TypeDeclStmt
 	Functions map[string]*ast.LambdaExpr
@@ -175,6 +180,7 @@ func NewSymbolTable() *SymbolTable {
 		// different question: it is the program-wide name registry that makes two modules
 		// exporting one name an error, and the map ImportScopeFor draws from.
 		PreludeScope: NewScope(nil, ScopePrelude),
+		TypeRefs:     NewTypeRefTable(),
 		Types:        make(map[string]*ast.TypeDeclStmt),
 		Functions:    make(map[string]*ast.LambdaExpr),
 		Traits:       make(map[string]*ast.TraitDeclStmt),

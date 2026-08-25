@@ -779,7 +779,13 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 	case "rune_type":
 		return types.PrimitiveType{Name: types.Rune}
 	case "user_defined_type_name":
-		return types.UnresolvedType{Name: c.ctx.NodeText(node)}
+		// The one place a type *reference* is built from source, which makes it the one
+		// place its span can be recorded. A type value cannot carry a position of its
+		// own — structural equality — so the position goes in a side table instead; see
+		// symbols/typerefs.go for why, and cmd/lyra-lsp for what it is for.
+		name := c.ctx.NodeText(node)
+		c.table.TypeRefs.Add(name, c.ctx.NodeLocation(node))
+		return types.UnresolvedType{Name: name}
 	case "generic_type":
 		return types.GenericType{Name: c.ctx.NodeText(node)}
 	case "parameterized_type":
@@ -812,7 +818,13 @@ func (c *Collector) parseType(node *sitter.Node) types.Type {
 }
 
 func (c *Collector) parseParameterizedType(node *sitter.Node) types.Type {
-	name := c.ctx.NodeText(cst.Field(node, "name"))
+	nameNode := cst.Field(node, "name")
+	name := c.ctx.NodeText(nameNode)
+	// The *head* is read straight from its field rather than through parseType, so the
+	// arm that records a reference never sees it — `Maybe` in `Maybe<Point>` would have
+	// no span while `Point` had one. Recorded here for that reason; the arguments below
+	// recurse and are covered by parseType itself.
+	c.table.TypeRefs.Add(name, c.ctx.NodeLocation(nameNode))
 	// The grammar applies the "type_arguments" field to each type in the
 	// comma-separated list (field("type_arguments", commaSep1($.type))), so the
 	// args are sibling fields on this node, not children of one container.

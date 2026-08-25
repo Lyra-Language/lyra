@@ -355,3 +355,76 @@ unsafe extern pure abs: (i32) -> i32
 	}
 	t.Fatal("no ExternDeclStmt collected")
 }
+
+// **Where each type name is written**, which is the question a type value cannot answer
+// for itself: `TypesEqual` is structural, so a `Location` on `types.UnresolvedType` would
+// make `Point` on one line unequal to `Point` on another. The span goes in a side table.
+//
+// Every position here is a *different* collector path, and one working says nothing about
+// the others: a generic argument recurses through `parseType`, a parameterized **head** is
+// read straight from its field and had to be recorded separately, and a trait method's
+// signature is a `*types.LambdaType` hanging off the declaration.
+func TestTypeRefs_EveryWrittenPositionIsRecorded(t *testing.T) {
+	_, table, _, _ := parseAndCollect(t, `module main
+struct Point { x: i64 }
+struct Holder { p: Point, ps: []Point, m: Maybe<Point> }
+type Coord = Point
+trait Shown { pure show: (Self) -> Point }
+data Wrap = W Point
+tuple Pair(Point, i64)
+let param = pure (p: Point) -> Point => p
+let ptr = unsafe (q: ^Point) -> i64 => 0
+let fn = pure (f: (Point) -> Point) -> i64 => 0
+unsafe extern pure ext: (^Point) -> i64
+let ann = pure () -> i64 => { let z: Point = Point { x: 1 }; z.x }
+impl Shown for Point { show = pure (self) => Point { x: 0 } }
+`)
+	byLine := map[int]int{}
+	for _, ref := range table.TypeRefs.Refs("") {
+		byLine[ref.Loc.StartLine]++
+	}
+	for _, want := range []struct {
+		line, count int
+		what        string
+	}{
+		{3, 4, "a field, an array element, a generic head and its argument"},
+		{4, 1, "an alias's target"},
+		{5, 1, "a trait method's signature"},
+		{6, 1, "a data constructor's payload"},
+		{7, 1, "a named tuple's element"},
+		{8, 2, "a parameter and a return type"},
+		{9, 1, "a raw pointer's pointee"},
+		{10, 2, "a function type's parameter and return"},
+		{11, 1, "an extern's signature"},
+		{12, 1, "a local annotation (the struct *literal* is an expression, not a type ref)"},
+		{13, 1, "an impl's target"},
+	} {
+		if got := byLine[want.line]; got != want.count {
+			t.Errorf("line %d (%s): recorded %d references, want %d", want.line, want.what, got, want.count)
+		}
+	}
+}
+
+// The innermost span wins, so a cursor inside `Maybe<Point>` resolves to the argument
+// rather than to whatever encloses it.
+func TestTypeRefs_TheInnermostSpanWins(t *testing.T) {
+	src := `module main
+struct Point { x: i64 }
+let f = pure (m: Maybe<Point>) -> i64 => 0
+`
+	_, table, _, _ := parseAndCollect(t, src)
+	// Column of the `P` in `Maybe<Point>`, 1-based.
+	col := strings.Index(strings.Split(src, "\n")[2], "Point>") + 1
+	ref, ok := table.TypeRefs.At("", 3, col)
+	if !ok {
+		t.Fatal("no reference under a cursor on Point")
+	}
+	if ref.Name != "Point" {
+		t.Errorf("cursor on Point resolved to %q", ref.Name)
+	}
+	// And on the head, the head.
+	headCol := strings.Index(strings.Split(src, "\n")[2], "Maybe<") + 1
+	if head, ok := table.TypeRefs.At("", 3, headCol); !ok || head.Name != "Maybe" {
+		t.Errorf("cursor on Maybe resolved to %v (ok=%v)", head, ok)
+	}
+}
