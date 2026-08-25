@@ -397,7 +397,7 @@ impl Shown for Point { show = pure (self) => Point { x: 0 } }
 		{10, 2, "a function type's parameter and return"},
 		{11, 1, "an extern's signature"},
 		{12, 1, "a local annotation (the struct *literal* is an expression, not a type ref)"},
-		{13, 1, "an impl's target"},
+		{13, 2, "an impl's trait and its target"},
 	} {
 		if got := byLine[want.line]; got != want.count {
 			t.Errorf("line %d (%s): recorded %d references, want %d", want.line, want.what, got, want.count)

@@ -134,3 +134,32 @@ let f = pure (p: Point, c: Coord, m: Cents, s: Shape) -> i64 => 0`
 		})
 	}
 }
+
+// Hovering a trait name shows the trait, its supertraits and its documentation. The
+// supertraits are part of the summary because `trait B: A` makes two claims at once —
+// every implementer of B implements A, and a `where t: B` bound reaches A's methods — so
+// hiding the `: A` would hide half of what the name means.
+func TestHover_TraitNameInABoundPosition(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	src := `
+/// Anything that can render itself.
+trait Shown { pure show: (Self) -> string }
+/// Shown, and more.
+trait Sub: Shown { }
+let a<t> where t: Sub = pure (v: t) -> string => v.show()`
+	openAndWait(t, h, src)
+	col := strings.Index(strings.Split(src, "\n")[5], "Sub =")
+	hover, err := h.Hover(testURI, 5, col)
+	if err != nil {
+		t.Fatalf("Hover: %v", err)
+	}
+	if hover == nil {
+		t.Fatal("no hover on a trait name in a where bound")
+	}
+	if !strings.Contains(hover.Contents.Value, "trait Sub: Shown") {
+		t.Errorf("hover = %q; want it to show the trait and its supertrait", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "Shown, and more.") {
+		t.Errorf("hover = %q; want the trait's doc comment", hover.Contents.Value)
+	}
+}

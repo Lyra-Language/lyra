@@ -53,6 +53,11 @@ type Collector interface {
 	CollectGenericParams(*sitter.Node) []ast.GenericParam
 	MergeWhereConstraints([]ast.GenericParam, *sitter.Node) []ast.GenericParam
 	CollectBounds(*sitter.Node) []string
+	// RecordTypeRef notes where a type or trait name is *written*, for the position
+	// lookups every editor feature starts from. Most names are recorded inside
+	// ParseType and CollectBounds; this is for the two read straight from a field —
+	// a parameterized type's head and an impl's trait.
+	RecordTypeRef(name string, loc ast.Location)
 }
 
 // Ctx carries shared mutable state (source text, error sink) plus a [Collector]

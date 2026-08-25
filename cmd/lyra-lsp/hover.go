@@ -104,12 +104,40 @@ func hoverTypeReference(analysis *docAnalysis, line, col int) *lsp.Hover {
 	if !ok {
 		return nil
 	}
-	decl, ok := analysis.symTable.LookupTypeFrom(ref.Name, ref.Loc)
+	named, ok := lookupTypeOrTrait(analysis, ref)
 	if !ok {
 		return nil
 	}
-	content := renderHover("```lyra\n"+typeDeclSummary(decl)+"\n```", decl.Doc)
+	summary, doc := "", (*ast.Doc)(nil)
+	switch decl := named.(type) {
+	case *ast.TypeDeclStmt:
+		summary, doc = typeDeclSummary(decl), decl.Doc
+	case *ast.TraitDeclStmt:
+		summary, doc = traitDeclSummary(decl), decl.Doc
+	default:
+		return nil
+	}
+	content := renderHover("```lyra\n"+summary+"\n```", doc)
 	return &lsp.Hover{Contents: lsp.MarkupContent{Kind: lsp.Markdown, Value: content}}
+}
+
+// traitDeclSummary is a trait's one-line spelling, supertraits included: `trait B: A` is
+// two claims at once (every implementer of B implements A, and a `where t: B` bound
+// reaches A's methods), so a hover that hid the `: A` would hide half of what the name
+// means.
+func traitDeclSummary(decl *ast.TraitDeclStmt) string {
+	out := "trait " + decl.Name
+	if len(decl.GenericParams) > 0 {
+		params := make([]string, 0, len(decl.GenericParams))
+		for _, p := range decl.GenericParams {
+			params = append(params, p.Name)
+		}
+		out += "<" + strings.Join(params, ", ") + ">"
+	}
+	if len(decl.Bounds) > 0 {
+		out += ": " + strings.Join(decl.Bounds, " + ")
+	}
+	return out
 }
 
 // typeDeclSummary is the one-line spelling of what a type declaration is: the keyword a

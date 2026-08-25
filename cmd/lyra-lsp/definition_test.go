@@ -184,3 +184,48 @@ let f = pure (n: i64) -> i64 => n`
 		t.Errorf("a primitive must resolve to nothing; got %v", locs)
 	}
 }
+
+// **A trait name is written in positions that look like a type's and are not** — a
+// `where` bound, an inline `<t: Shown>`, an `impl`'s trait, a supertrait list. None of
+// them passes through `parseType`, since a bound is collected as a `[]string`, so each
+// needed its own recording; and a trait is not in `SymbolTable.Types`, so resolving one
+// needs `LookupTraitFrom` beside `LookupTypeFrom`.
+func TestDefinition_TraitNameInABoundPosition(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		line   int
+		needle string
+	}{
+		{"where bound", 5, "Shown ="},
+		{"inline bound", 6, "Shown>"},
+		{"impl trait", 3, "Shown for"},
+		{"supertrait", 2, "Shown {"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := servertest.New(t, newHandler())
+			src := `
+trait Shown { pure show: (Self) -> string }
+trait Sub: Shown { }
+impl Shown for Point { show = pure (self) => "p" }
+struct Point { x: i64 }
+let a<t> where t: Shown = pure (v: t) -> string => v.show()
+let b<t: Shown> = pure (v: t) -> string => v.show()`
+			openAndWait(t, h, src)
+			col := strings.Index(strings.Split(src, "\n")[tc.line], tc.needle)
+			if col < 0 {
+				t.Fatalf("%q not on line %d", tc.needle, tc.line)
+			}
+			locs, err := h.Definition(testURI, tc.line, col)
+			if err != nil {
+				t.Fatalf("Definition: %v", err)
+			}
+			if len(locs) != 1 {
+				t.Fatalf("expected 1 location, got %d", len(locs))
+			}
+			// `trait Shown` is on line 1.
+			if got := int(locs[0].Range.Start.Line); got != 1 {
+				t.Errorf("jumped to line %d; want 1", got)
+			}
+		})
+	}
+}

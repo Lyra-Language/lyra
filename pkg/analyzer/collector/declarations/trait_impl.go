@@ -16,6 +16,10 @@ func CollectTraitImplementation(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.
 		return nil
 	}
 	traitName := ctx.NodeText(traitNameNode)
+	// The impl's *trait* — its target type goes through ParseType below and records
+	// itself, but the trait name is read straight from its field, so `Shown` in
+	// `impl Shown for Point` had no span while `Point` did.
+	ctx.RecordTypeRef(traitName, ctx.NodeLocation(traitNameNode))
 
 	genericParams := []ast.GenericParam{}
 	// The `<…>` after the trait name is the trait's argument list, whose grammar

@@ -676,12 +676,21 @@ func (c *Collector) MergeWhereConstraints(params []ast.GenericParam, whereNode *
 	return params
 }
 
+// CollectBounds reads the trait names in a bound list — a `where` clause's, an inline
+// `<t: Shown>`, a trait's supertraits, an impl's constraints. It is the funnel for all
+// four, which is why recording their spans here covers every one.
+//
+// A bound is a `[]string` rather than a type, so these names never pass through
+// `parseType` and the span it records; without this, a cursor on `Shown` in
+// `where t: Shown` resolved to nothing while one on `Point` in `(p: Point)` resolved.
 func (c *Collector) CollectBounds(node *sitter.Node) []string {
 	bounds := []string{}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		if child.Kind() == "trait_name" {
-			bounds = append(bounds, c.ctx.NodeText(child))
+			name := c.ctx.NodeText(child)
+			c.table.TypeRefs.Add(name, c.ctx.NodeLocation(child))
+			bounds = append(bounds, name)
 		}
 	}
 	return bounds
@@ -689,6 +698,10 @@ func (c *Collector) CollectBounds(node *sitter.Node) []string {
 
 func (c *Collector) ParseType(node *sitter.Node) types.Type {
 	return c.parseType(node)
+}
+
+func (c *Collector) RecordTypeRef(name string, loc ast.Location) {
+	c.table.TypeRefs.Add(name, loc)
 }
 
 func (c *Collector) ParseLambdaType(node *sitter.Node) *types.LambdaType {

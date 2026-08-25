@@ -62,14 +62,31 @@ func resolveTypeReference(analysis *docAnalysis, line, col int) *ast.Location {
 	if !ok {
 		return nil
 	}
-	decl, ok := analysis.symTable.LookupTypeFrom(ref.Name, ref.Loc)
+	named, ok := lookupTypeOrTrait(analysis, ref)
 	if !ok {
 		return nil
 	}
 	// The name's location, not the declaration's — the same reason the identifier case
 	// gives, and the same one answer to the question (namedNameLoc, rename.go).
-	loc := namedNameLoc(decl)
+	loc := namedNameLoc(named)
 	return &loc
+}
+
+// lookupTypeOrTrait resolves a written name to the declaration it refers to.
+//
+// **Two tables, because a trait is not a type.** `where t: Shown`, `impl Shown for Point`
+// and `trait Sub: Shown` all write a name in a position that looks like a type's and is
+// not — traits live in `SymbolTable.Traits` and are reached by `LookupTraitFrom`. Types
+// first, since a bound is the only position a trait can appear in and nothing else
+// competes for the name.
+func lookupTypeOrTrait(analysis *docAnalysis, ref symbols.TypeRef) (ast.Named, bool) {
+	if decl, ok := analysis.symTable.LookupTypeFrom(ref.Name, ref.Loc); ok {
+		return decl, true
+	}
+	if decl, ok := analysis.symTable.LookupTraitFrom(ref.Name, ref.Loc); ok {
+		return decl, true
+	}
+	return nil, false
 }
 
 // locationIn builds the lsp.Location for a definition, which since the server resolves
