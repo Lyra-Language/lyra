@@ -128,24 +128,55 @@ func Analyze(source []byte) *Result {
 // Each unit's diagnostics are stamped with its file, since a line and column alone
 // cannot say which file they came from once there is more than one.
 func AnalyzeUnits(units []modules.Unit) *Result {
+	return AnalyzeUnitsCached(units, nil)
+}
+
+// AnalyzeUnitsCached is AnalyzeUnits with an optional CollectCache, which reuses the
+// collection of every unit but the last. Passing nil is exactly AnalyzeUnits.
+func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	res := &Result{}
 	if len(units) == 0 {
 		res.err(ast.Location{}, "", "no source units to analyze")
 		return res
 	}
 
-	c := collector.NewCollector(units[0].Source)
+	prelude := preludeOf(units)
+	graph := modules.ImportGraph(units)
+	// The boundary is "everything except the file being edited": units arrive in
+	// dependency order with the entry file last.
+	boundary := len(units) - 1
+	key := prefixKey(units, boundary, prelude, graph)
+
+	var c *collector.Collector
+	start := 0
+	if snap := cache.get(key); snap != nil {
+		c = snap.Restore(units[0].Source)
+		start = boundary
+	} else {
+		c = collector.NewCollector(units[0].Source)
+	}
 	// Named before any file is walked: type registration happens *during* the walk, so
 	// a prelude module set later would leave every type registered before it unable to
-	// tell a prelude name from a user one.
-	c.SetPreludeModule(preludeOf(units))
+	// tell a prelude name from a user one. Set on a restored collector too — they are
+	// part of the key, so the values match what the snapshot was built with.
+	c.SetPreludeModule(prelude)
 	// Likewise before the walk: a declaration that takes a name an imported module
 	// exports is keyed apart from it, and a type is keyed as it is registered.
-	c.SetImports(modules.ImportGraph(units))
-	for _, u := range units {
+	c.SetImports(graph)
+	for i, u := range units {
+		// Parse diagnostics are per unit and cheap, so they are recollected for the
+		// reused prefix too rather than being carried in the snapshot — one fewer thing
+		// the snapshot has to be right about.
 		before := len(res.Diagnostics)
 		res.Diagnostics = append(res.Diagnostics, collectParseErrors(u.Root, u.Source)...)
 		stampFile(res.Diagnostics[before:], u.File)
+		if i < start {
+			continue
+		}
+		if i == boundary && cache != nil && start == 0 {
+			// About to collect the edited file: capture everything before it.
+			cache.put(key, c.Snapshot())
+		}
 		c.AddFile(u.Root, u.Source, u.File, u.Path)
 	}
 	program, symTable, scopeTable, collectorErrors := c.Finish()

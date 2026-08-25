@@ -59,7 +59,7 @@ func (h *Handler) analyzeDocument(uri lsp.DocumentURI, source string) (*driver.R
 		return res, path
 	}
 
-	res := driver.AnalyzeUnits(units)
+	res := driver.AnalyzeUnitsCached(units, h.collectCache)
 	// Resolver diagnostics come first: an unreadable import explains the errors that
 	// follow from the names it failed to provide.
 	res.Diagnostics = append(diags, res.Diagnostics...)

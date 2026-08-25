@@ -258,15 +258,50 @@ write today:
   the fix that subsumes it is not a faster walk but not re-collecting an unchanged prelude at
   all.
 
-- **The remaining 11.7 ms per keystroke is re-collection, and needs incremental analysis.**
-  The parse cache stops at the tree; collection still merges all 12 units into one Program
-  and SymbolTable, and the typechecker still runs over the lot. Caching that means a unit's
-  collected AST and symbols surviving across keystrokes, which is a real design question —
-  the collector merges into shared tables, and `declKey` makes a name's meaning depend on
-  which module is asking, so a per-unit cache cannot simply be concatenated. Worth doing:
-  it is 87% of what is left, and it would also retire the doc-comment walk cost above
-  without anyone optimizing it.
+- **[DONE 08/24] Collection is reused across keystrokes** (`driver.CollectCache`, opt-in;
+  the LSP owns one, `lyrac` passes nil). End to end, with a real edit each iteration:
+  **19.9 ms → 4.9 ms per keystroke, 4.1×.**
 
+  The cache holds one snapshot, taken after every unit **except the last** — units arrive in
+  dependency order with the entry file last, so that boundary is exactly "everything the user
+  is not editing". Reuse is by **clone, not restore**: the master is never mutated and each
+  keystroke gets a fresh copy. A copy has to be right once; an undo has to be right every
+  time, and getting an undo slightly wrong is analysis that drifts as a session runs.
+
+  **The premise was checked, not assumed.** Reusing collection means reusing the *AST*, and
+  the typechecker rewrites the AST it analyzes — `desugarClauses` replaces a multi-clause body
+  with a match and clears the clauses. That looked like a blocker on reading, and the code
+  reading was right about the mutation: `apply` goes from clauses=2 to clauses=0 after one
+  run. It was wrong about the consequence. Re-analyzing one collected AST three times over the
+  real prelude gives identical diagnostics across five varied programs, including the
+  multi-clause/renamed-callback shape rule 11 is about. The AST cannot be copied instead —
+  ScopeTable, TypeTable and MethodTable are all keyed by AST pointer.
+
+  **The key covers more than the prefix's bytes**, because collection is configured from the
+  whole unit set before the first file is walked: `SetPreludeModule` and `SetImports` both
+  affect how a declaration is keyed, so the prelude path and the import graph are in the key.
+  Editing an `import` line invalidates, which is right — it changes how every name resolves.
+
+- **The clone's test gate reaches 7 of 16 SymbolTable fields, and that is written down.**
+  Sharing a field instead of copying it was tried one at a time: the differential test catches
+  Types, Functions, Traits, ModuleOf, ModuleDocs, ModuleScopes and OverloadSets. The first
+  sweep caught only five — the extra edits in the test exist because of what it missed, and
+  the overload edit had to be rewritten when it turned out to declare two differently-*named*
+  functions rather than a receiver-keyed overload.
+
+  The nine misses each have a reason (the import graph is in the key; PreludeScope is inside
+  the keyed prefix; GlobalScope is empty — measured; `append` on a cloned slice cannot change
+  the master's length), and the clone copies all sixteen anyway, because six of those
+  arguments depend on facts that could change. Worth strengthening if someone adds a field
+  whose staleness the gate would not see.
+
+- **What is left is `Finish` and the post-collection passes**, which still run over the whole
+  merged program on every keystroke — that is most of the remaining 4.9 ms. `Finish` is
+  whole-program by construction (it resolves canonical types, synthesizes derives, populates
+  import scopes), so it cannot simply be snapshotted; making it incremental is a separate
+  question from making collection incremental.
+
+- **The remaining 11.7 ms per keystroke is re-collection, and needs incremental analysis.**
 - **[DONE 08/24] Four false rejections, and a crash behind one of them.** Each refused a
   correct program, so each was a feature the language claimed to have and did not.
 

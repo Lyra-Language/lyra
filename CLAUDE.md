@@ -803,10 +803,33 @@ equality falls through to `runtime.memequal` over the whole text, which on a lar
 more than the scan it replaced (94% of the profile). Equal pointer and length means the same
 bytes, so a hit is sound; equal contents in distinct storage misses and pays one rebuild.
 
-What remains is **re-collection**, 11.7 ms of the 13.4 ms left, which needs a unit's collected
-AST and symbols to survive a keystroke — see `todo.md`. Optimizing inside collection is the
-wrong move first: the profile's biggest item there is the doc-comment walk at ~30%, and not
-re-collecting an unchanged prelude retires it without touching it.
+- **`driver.CollectCache`** (opt-in; the Handler owns one, `lyrac` passes nil) reuses the
+  *collection* of every unit but the last — collection is ~75% of analysis and folds all 12
+  units into one Program and SymbolTable every time. End to end: **19.9 ms → 4.9 ms per
+  keystroke**.
+
+Reuse is by **clone, not restore**: `SymbolTable.Clone` copies the table's own state and the
+master is never mutated, so each keystroke starts from a fresh copy. A copy has to be right
+once; an undo has to be right every time, and a slightly wrong undo is analysis that drifts as
+a session runs. `TestClone_MentionsEverySymbolTableField` parses the clone's literal and fails
+if a field is added without being copied — a shared field leaks between keystrokes and is
+reported nowhere.
+
+**The AST is shared, and that is checked rather than assumed.** It cannot be copied —
+ScopeTable, TypeTable and MethodTable are all keyed by AST pointer — and it *is* mutated after
+collection: `desugarClauses` replaces a multi-clause body with a match and clears the clauses.
+What makes sharing safe is that re-analyzing one collected AST is idempotent, which
+`TestZZDiff`-style re-analysis over the real prelude establishes directly. Note the shape of
+that finding: reading the code said "blocker", and the code reading was right about the
+mutation and wrong about its consequence.
+
+The snapshot's key covers the prelude path and the **import graph** as well as the prefix's
+bytes, because `SetPreludeModule` and `SetImports` are applied before the first file is walked
+and both change how a declaration is keyed. Editing an `import` line invalidates the snapshot,
+which is correct: it changes how every name in the program resolves.
+
+What remains is `Finish` and the post-collection passes, which are whole-program by
+construction and still run every keystroke — see `todo.md`.
 
 Logs to `/tmp/lyra-lsp.log`. Build with `go build ./cmd/lyra-lsp`.
 
