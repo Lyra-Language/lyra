@@ -211,6 +211,22 @@ real failure, and none is local to one package.
      over composite types, which is the family `emitRetainValue`/`emitDropValue` and
      `mentionsTypeVar` also belong to.
 
+     **A newtype is the same tax, and `*ConstrainedType` is its `RawPointerType`.**
+     `resolveInstantiation` (backend/llvm/generic_types.go) is the choke point that turns a
+     `ParameterizedType` into the shape it denotes precisely so a dozen downstream switches
+     need no generic case — and it had arms for NamedStructType, TupleType and DataType and
+     none for the wrapper a parameterized newtype expands to, so `newtype Sorted<t> = []t`
+     checked clean and failed the build. A *scalar* base hid it: no drop glue is generated,
+     so nothing asks for the instantiation.
+
+     **Sweeping the family by reading switches is the wrong move; probing behaviours is the
+     right one.** 35 switches mention two or more of the composite kinds and 19 have no
+     ConstrainedType arm — but most are container-shaped and correctly lack it, so the list is
+     mostly false leads. Seven small programs putting a newtype in each position that matters
+     (in a struct, in an array, captured by a closure, compared, matched, nested in a generic)
+     found the one real second bug in minutes: the read-out conversion `i64(c)` was refused
+     for a *pattern-bound* binding, having been resolved only after the first strip.
+
      **The sweep, when it was run, found only those two**: the type-variable walks
      (`Substitute`, `CollectTypeVars`, `mentionsGenericParam`, ownership's
      `substituteTypeVars`) already handle pointers, because generics over `^t` landed with

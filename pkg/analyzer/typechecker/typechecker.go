@@ -2285,6 +2285,14 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 	// non-identity target behaves as it would on the bare base, so `u8(cents)` is
 	// admitted or refused by the same rules as `u8(plain_i64)`. Resolved as it strips,
 	// since a chained newtype's base is stored as a name.
+	//
+	// **Resolved on the way in too**, and that was the bug: the loop resolved every base
+	// after the first but took the operand's own type as it came, and a *pattern*-bound
+	// binding arrives as the bare name. So `i64(d)` was accepted for `let d: Meters` and
+	// for `l.d`, and refused — *"cannot convert Meters to i64"* — for the `d` in
+	// `match l { { d, n } => i64(d) }` or `let { d, n } = l`. That is the read-out spelling
+	// lyra-E047 names as the fix, rejected in two of the four places it can be written.
+	argType = tc.resolveTypeIfKnown(argType, call.GetLocation())
 	for {
 		ct, isCT := argType.(*types.ConstrainedType)
 		if !isCT {

@@ -72,6 +72,29 @@ func (l *lowerer) resolveInstantiation(t types.Type) (types.Type, error) {
 	case types.DataType:
 		inst.Name = name
 		return types.WithAllocation(inst, p.Allocation), nil
+	case *types.ConstrainedType:
+		// A **generic newtype**: `newtype Sorted<t> = []t`. The wrapper is nominal only —
+		// a Sorted value *is* its base at run time — so the instantiation is the base's,
+		// substituted, and there is nothing here to rename: the mangled name belongs to a
+		// declaration with a layout of its own, and this one borrows the base's.
+		//
+		// `Boxed<i64>` over a scalar base worked without this arm only because a scalar
+		// needs no drop glue, so nothing ever asked for the instantiation. The moment the
+		// base is managed — `[]t`, a string — the glue asks, and the answer was
+		// *"\"Sorted\" is not a generic type that can be instantiated"* on a program that
+		// type-checked clean: rule 5 inverted, the front end accepting what the backend
+		// cannot build.
+		//
+		// Stripped through StripNewtype rather than by reading `.Type` once, since a
+		// newtype over a newtype is legal and every other representation decision in the
+		// compiler goes through that same accessor.
+		base := types.StripNewtype(inst)
+		if pt, ok := base.(types.ParameterizedType); ok {
+			// The base is itself generic (`newtype Wrapper<t> = Box<t>`), so it has an
+			// instantiation of its own to resolve rather than a shape to hand back.
+			return l.resolveInstantiation(types.WithAllocation(pt, p.Allocation))
+		}
+		return types.WithAllocation(base, p.Allocation), nil
 	default:
 		return t, fmt.Errorf("llvm: %q is not a generic type that can be instantiated (%T)", p.Name, decl.Type)
 	}
@@ -109,6 +132,18 @@ func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Typ
 	// unlike a generic function's, which are solved by name from the argument types.
 	subst := ast.BindGenericParams(decl.GenericParams, p.TypeArguments)
 
+	// **A generic newtype is handled before anything is declared**, because it has no
+	// layout of its own: `newtype Sorted<t> = []t` is its base at run time, so the type
+	// wanted here is the base's. Declaring the placeholder first and dropping it later is
+	// not equivalent — `declareNamedStruct` registers the name with the *module*, and
+	// deleting the map entry leaves `%Sorted$i64 = type {}` in the emitted IR, which clang
+	// rejects as a redefinition once the real one appears.
+	if ct, ok := substituteTypeVars(decl.Type, subst).(*types.ConstrainedType); ok {
+		restore := l.pushTypeSubst(subst)
+		defer restore()
+		return l.lowerType(types.WithAllocation(types.StripNewtype(ct), p.Allocation))
+	}
+
 	// Declare before defining: a recursive reference below must find this.
 	if err := l.declareNamedStruct(name, name); err != nil {
 		return nil, err
@@ -132,6 +167,14 @@ func (l *lowerer) lowerParameterizedType(p types.ParameterizedType) (lltypes.Typ
 		err = l.lowerTupleDefInto(st, t)
 	case types.DataType:
 		err = l.lowerDataDefInto(st, t)
+	case *types.ConstrainedType:
+		// Unreachable: the early return above takes a generic newtype before the
+		// placeholder is declared. Kept so this switch still names every shape a
+		// declaration can have — an arm that says "handled elsewhere" is a claim, and a
+		// silent default here would be the hazard-8 failure this whole change is one of.
+		err = fmt.Errorf("llvm: generic newtype %q reached the layout switch; it should have "+
+			"been resolved to its base before the placeholder was declared", p.Name)
+		_ = t
 	default:
 		err = fmt.Errorf("llvm: %q is not a generic type that can be instantiated (%T)", p.Name, decl.Type)
 	}

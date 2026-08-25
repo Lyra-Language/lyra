@@ -339,7 +339,6 @@ write today:
   Sweeping the four restore steps caught three; `errors` was invisible because every prefix in
   the test was the prelude, which is clean. The test now puts a **failing user module in the
   prefix**, and all four are caught.
-- **The remaining 11.7 ms per keystroke is re-collection, and needs incremental analysis.**
 - **[DONE 08/24] Four false rejections, and a crash behind one of them.** Each refused a
   correct program, so each was a feature the language claimed to have and did not.
 
@@ -1185,24 +1184,48 @@ write today:
   instantiation machinery, but a newtype *is* its base plus a name, so it must become a
   `ConstrainedType` or `StripNewtype` finds nothing and every assignment to it is rejected.
 
-- **[OPEN] A generic `newtype` over a *managed* base does not lower.** `newtype Sorted<t> = []t`
-  checks clean and then fails the build with `llvm: cannot generate drop glue for Sorted<i64>:
-  llvm: "Sorted" is not a generic type that can be instantiated (*types.ConstrainedType)`.
-  Hazard 8: `instantiateGenericType`'s switch (`backend/llvm/generic_types.go:69`) has arms for
-  `NamedStructType`, `TupleType` and `DataType` but not `*ConstrainedType` — which is exactly
-  what the front end expands a parameterized newtype into, and the asymmetry the DONE entry
-  above says to remember. `Boxed<i64>` works because a scalar base needs no drop glue, so the
-  path is never taken; the wrapper is transparent, so the arm should substitute and hand back
-  the base's own instantiation. Found 08/19.
+- **[DONE 08/24] A generic `newtype` over a managed base lowers.** `resolveInstantiation` is
+  the choke point that normalizes a `ParameterizedType` into the shape it denotes, so that
+  construction, field access, match, layout and the retain/drop glue can all keep switching on
+  NamedStructType / TupleType / DataType. It had arms for those three and none for
+  `*ConstrainedType`, which is what a parameterized newtype expands to.
 
-- **[OPEN] Two things a `newtype` is not transparent to: indexing and calling.** `s[0]` on a
-  `newtype Sorted = []i64` is `lyra-E001` *"cannot index into type Sorted"*, and `f(2)` on a
-  `newtype Fn = (i64) -> i64` is *"identifier `f` is not callable"* — the method fallback
-  covers `.len()` but no operator rung looks through the wrapper. Both bases are ones a
-  conversion cannot *name*, so the read-out is the implicit one (`let xs: []i64 = s`), which
-  makes the workaround a rebinding rather than a cast. Whether these should fall through is a
-  design question, not obviously a bug: an array newtype exists partly to *stop* raw indexing.
-  Found 08/19.
+  A scalar base hid it for months: `Boxed<i64>` works because a scalar needs no drop glue, so
+  nothing ever asks for the instantiation. A managed base asks immediately.
+
+  The fix resolves to the base **before the placeholder struct is declared**, which is not the
+  same as declaring it and deleting the map entry afterwards — `declareNamedStruct` registers
+  the name with the *module*, so the orphan `%Sorted$i64 = type {}` reaches the IR and clang
+  refuses it as a redefinition. That was the second error on the way to the first fix.
+
+- **[DONE 08/24] The newtype read-out conversion works from every binding position**, found by
+  sweeping the switches around the fix above. `i64(c)` is the spelling lyra-E047 names as the
+  way to read a newtype back out; it was accepted for a plain binding and a field access and
+  refused for a **match pattern** and a **destructuring** — *"cannot convert Meters to i64"*,
+  which is the error telling you to write what you just wrote.
+
+  The conversion strips wrappers in a loop, resolving each base as it goes because a chained
+  newtype's base is stored as a name — but it took the operand's own type as it came, and a
+  pattern-bound binding arrives as a bare name rather than a resolved `*ConstrainedType`. One
+  resolve on the way in, matching what the loop already did for every base after the first.
+
+  **The sweep is the part worth repeating.** 35 switches in the composite family were
+  enumerated and 19 lacked a `*ConstrainedType` arm — but most are container-shaped and right
+  not to have one, so reading them would have produced a long list of false leads. Probing the
+  *behaviours* instead (a newtype in a struct, in an array, captured, compared, matched,
+  nested in a generic) took seven small programs: six passed and the seventh found this.
+
+- **[DONE — verified fixed 08/24] A `newtype` is transparent to indexing and calling.** The
+  entry here said `s[0]` on a `newtype Sorted = []i64` was `lyra-E001` *"cannot index into
+  type Sorted"* and `f(2)` on a `newtype Fn = (i64) -> i64` was *"identifier `f` is not
+  callable"*. Both work now — `s[0] + s[2]` and `f(21)` each evaluate — so something between
+  08/19 and today closed it without the entry being updated.
+
+  Recorded rather than deleted because of how it was found: it was checked while deciding
+  what to work on next, and two of the three open bugs in this section turned out to have
+  rotted in different directions — this one fixed, and a latency note of mine describing a
+  figure four changes out of date. **A todo entry is a claim about the present, and an old
+  one is worth re-running before it is worth acting on.**
 
 - **[DONE 08/07] The non-parsing test sources are fixed and the class is closed.**
   Both `parseCollectAndCheck` and the collector's golden helper now check
