@@ -1,6 +1,10 @@
 package symbols
 
-import "github.com/Lyra-Language/lyra/pkg/ast"
+import (
+	"sort"
+
+	"github.com/Lyra-Language/lyra/pkg/ast"
+)
 
 // Where each **named type reference** appears in the source — `Point` in `(p: Point)`,
 // in `-> Maybe<Point>`, in a field's declared type, in a `where` bound.
@@ -78,6 +82,37 @@ func (t *TypeRefTable) Refs(file string) []TypeRef {
 		return nil
 	}
 	return t.byFile[file]
+}
+
+// Named returns every reference to `name`, across every file in the program.
+//
+// Program-wide rather than per-file because that is what "find every use of this type"
+// means, and because the table already holds it: the collector walks the whole import
+// graph, so no second pass is needed to reach another module's uses. A caller still has
+// to check *which declaration* each one resolves to — two modules may each declare a
+// private `Point`, and matching on the name alone would answer with both.
+func (t *TypeRefTable) Named(name string) []TypeRef {
+	if t == nil {
+		return nil
+	}
+	var out []TypeRef
+	for _, refs := range t.byFile {
+		for _, ref := range refs {
+			if ref.Name == name {
+				out = append(out, ref)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Loc.File != out[j].Loc.File {
+			return out[i].Loc.File < out[j].Loc.File
+		}
+		if out[i].Loc.StartLine != out[j].Loc.StartLine {
+			return out[i].Loc.StartLine < out[j].Loc.StartLine
+		}
+		return out[i].Loc.StartCol < out[j].Loc.StartCol
+	})
+	return out
 }
 
 func contains(loc ast.Location, line, col int) bool {

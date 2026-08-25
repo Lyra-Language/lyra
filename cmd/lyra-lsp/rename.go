@@ -105,6 +105,32 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 		})
 	}
 
+	// A **type or trait name in a type position** — a parameter, a field, a bound, an
+	// `impl`. Not an expression, so none of the paths above can see it; answered from the
+	// collector's index, exactly as go-to-definition is. Last, so nothing that already
+	// resolved changes: a struct literal's name is both an expression and a written type.
+	if name == "" && analysis.symTable != nil {
+		if ref, ok := analysis.symTable.TypeRefs.At(analysis.file, line, col); ok {
+			if n, ok := lookupTypeOrTrait(analysis, ref); ok {
+				name, named = ref.Name, n
+			}
+		}
+	}
+
+	// A struct literal's or constructor's name is a *value* position naming a type, and
+	// is where a reader is as likely to start a rename as any signature. It resolves
+	// through the same table; the walk above cannot reach it because it matches only an
+	// IdentifierExpr.
+	if name == "" && analysis.symTable != nil {
+		if e := findExprAtPos(analysis.program, line, col); e != nil {
+			if exprName, span, ok := typeExprOccurrence(e); ok && locationContains(span, line, col) {
+				if decl, ok := analysis.symTable.LookupTypeFrom(exprName, span); ok {
+					name, named = exprName, decl
+				}
+			}
+		}
+	}
+
 	if name == "" || named == nil {
 		return renameAnchor{}, false
 	}
@@ -145,7 +171,39 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 		return renameAnchor{}, false
 	}
 
+	// **An exported type cannot be renamed, because its users are not in view.** The
+	// server resolves the open document's import graph *downward* — the modules it
+	// imports, and its own module's sibling files — and never upward, so a module that
+	// imports this one is never analyzed and its uses are not in the index. Renaming a
+	// `pub` type would therefore edit every occurrence the server can see and leave the
+	// importers naming something that no longer exists: the partial rename this function
+	// already refuses to perform for a cross-file declaration, arrived at from the other
+	// direction.
+	//
+	// A **private** type is safe by the same reasoning that makes it private: nothing
+	// outside its module can name it, and every file of that module is analyzed together.
+	// So an unexported type renames completely, siblings included.
+	//
+	// Lifting this needs the server to find a type's *importers*, which means walking the
+	// workspace rather than the graph — see todo.md.
+	if isExportedType(named) {
+		log.Printf("rename: %q is exported and its importers are not analyzed — declining", name)
+		return renameAnchor{}, false
+	}
+
 	return anchor, true
+}
+
+// isExportedType reports whether a declaration is visible outside its own module, and so
+// may have uses the server has not analyzed.
+func isExportedType(named ast.Named) bool {
+	switch d := named.(type) {
+	case *ast.TypeDeclStmt:
+		return d.IsPublic
+	case *ast.TraitDeclStmt:
+		return d.IsPublic
+	}
+	return false
 }
 
 // namedNameLoc returns the span covering just the bound name of a Named node
@@ -262,12 +320,64 @@ func (h *Handler) Rename(_ context.Context, params *lsp.RenameParams) (result *l
 		}
 	})
 
-	log.Printf("rename: %q → %q, %d edit(s)", anchor.name, newName, len(edits))
-	return &lsp.WorkspaceEdit{
-		Changes: map[lsp.DocumentURI][]lsp.TextEdit{
-			lsp.DocumentURI(uri): edits,
-		},
-	}, nil
+	// Keyed by file, and this document's entry is written *after* the loop below: addEdit
+	// reassigns the `edits` slice, so a map entry taken before the last append holds a
+	// stale header and silently loses edits.
+	changes := map[lsp.DocumentURI][]lsp.TextEdit{}
+
+	// A **type or trait** is also written in signatures, and those live in the index
+	// rather than in the expression tree — and in *other files*, since the index covers
+	// the whole import graph. This is the multi-file WorkspaceEdit the single-file note
+	// on this function said doing it properly would need; it is affordable here only
+	// because the index already holds every occurrence with its file.
+	//
+	// The declaration must still be in this document (checked in resolveRenameAnchor),
+	// so renaming a prelude type from a use site is still declined. What changes is that
+	// renaming *your own* type now reaches its uses in your other modules instead of
+	// silently editing one file and leaving the program broken.
+	if analysis.symTable != nil {
+		for _, ref := range analysis.symTable.TypeRefs.Named(anchor.name) {
+			named, ok := lookupTypeOrTrait(analysis, ref)
+			if !ok || namedNameLoc(named) != anchor.nameLoc {
+				continue
+			}
+			if sameFile(ref.Loc.File, analysis.file) {
+				addEdit(ref.Loc)
+				continue
+			}
+			otherURI, otherSource, ok := h.sourceOf(ref.Loc.File)
+			if !ok {
+				// A file that cannot be read cannot be edited, and a rename that is
+				// carried out partially is worse than one declined: the program would
+				// stop compiling with no indication of where. Decline the whole thing.
+				log.Printf("rename: cannot read %s — declining rather than editing partially", ref.Loc.File)
+				return nil, nil
+			}
+			key := lsp.DocumentURI(otherURI)
+			changes[key] = append(changes[key], lsp.TextEdit{
+				Range:   locToRange(otherSource, ref.Loc),
+				NewText: newName,
+			})
+		}
+	}
+
+	// The expression-position uses — a struct literal, a constructor — which the index
+	// does not hold. **Renaming without these produces a broken program**: the type would
+	// be renamed everywhere except where it is constructed, and the editor would report
+	// success. The same walk `references` uses, so the two cannot come to disagree about
+	// what a use is.
+	for _, loc := range typeExprOccurrences(analysis, anchor.name, anchor.nameLoc) {
+		addEdit(loc)
+	}
+
+	changes[lsp.DocumentURI(uri)] = edits
+
+	total := 0
+	for _, e := range changes {
+		total += len(e)
+	}
+	log.Printf("rename: %q → %q, %d edit(s) across %d file(s)", anchor.name, newName, total, len(changes))
+	return &lsp.WorkspaceEdit{Changes: changes}, nil
 }
 
 // PrepareRename implements textDocument/prepareRename, validating that the

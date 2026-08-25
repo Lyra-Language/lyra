@@ -9,6 +9,56 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (12)
+**References and rename on a type — and the direction the import graph is resolved in.**
+
+The other two position features built on the type index. `references.go` and `rename.go`
+both began `findExprAtPos(...).(*ast.IdentifierExpr)`, so "find every use of `Point`"
+answered nothing at all — the same expression-only assumption go-to-definition had, one
+feature over. References' own comment said types were "handled by go-to-definition", which
+had become half true and read as a decision.
+
+**One walk shared by both**, because the two must agree about what a use is. A struct
+literal's name and a constructor's are *expressions*, so they are not in the index — and a
+rename that missed them would rename the type everywhere except where it is constructed
+and report success. `typeExprOccurrences` is that walk; references calls it to report and
+rename calls it to edit.
+
+**Then the test found the thing that matters.** A cross-file case written the obvious way —
+a module that *imports* the type — reached one file, not two. The server resolves the open
+document's import graph **downward**: what it imports, plus its own module's sibling files.
+It never resolves upward, so a module that imports this one is never analyzed and its uses
+are not in the index. "Find every use of my exported type" is precisely the upward
+question.
+
+That is tolerable for references, which is informational, and **not** tolerable for rename:
+editing every occurrence in view would leave the importers naming something that no longer
+exists. So an **exported** type is declined, and a private one renames completely — safe by
+the same reasoning that makes it private, since nothing outside its module can name it and
+every file of that module is analyzed together. It is the rule this handler already
+followed for a cross-file declaration, arrived at from the other direction.
+
+The reachable cross-file case is therefore a module split across *files* — what
+`std.prelude` and `std.tui` are — and the test says so. It failed twice before it passed,
+each time teaching something: once because the importing module was never analyzed, and
+once because two files with the same `module` header in an unrelated directory are not one
+module. A multi-file module is a **directory named for the module**, which the fixture now
+builds.
+
+**One bug caught by writing it down.** The first version of the multi-file edit took
+`changes[uri] = edits` before the loop that appends to `edits`, so the map held a stale
+slice header and silently lost every edit added afterwards. Assigning once, after the last
+append, is the fix; the shape is worth remembering, since a stale slice header in a map
+loses data with no error anywhere.
+
+Also recorded rather than fixed: **a dead language server leaves its diagnostics on
+screen.** That is what cost an hour earlier the same day — an error reported against a file
+that compiled and ran, which neither `lyrac check` nor the server's own `analyzeDocument`
+could reproduce, because the markers were published by an instance that had since been
+replaced. The server can publish an empty set for every open document on shutdown; a crash
+still needs the client to clear on exit. It presents as a compiler bug, and the editor is
+what the author is looking at.
+
 ### 08/22/26 (9)
 **`std.tui` above the decoder: a frame diff, box drawing, a status bar — and the array
 literal that could not be assigned to a field.**

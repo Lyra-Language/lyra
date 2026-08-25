@@ -1531,11 +1531,36 @@ two editor features single-file where the program no longer is:
   `resolveRenameAnchor` returns false rather than splicing the new name into this buffer at
   the *other* file's coordinates. Declining is right until the multi-file form exists — the
   alternative is a silent corruption — but the message the user gets is nothing at all.
-- **References only searches the open document.** Uses of a name in sibling modules are
-  missing from the result, which reads as "no other uses" rather than "not looked".
+- **References only searches the open document** — for an *identifier*. A **type or trait**
+  is answered from the collector's index as of 08/22 and reaches every file in the analyzed
+  unit set, and rename follows it with a multi-file `WorkspaceEdit`. The identifier half
+  still wants the same treatment: walking every unit's program, keyed by `Location.File`.
 
-Both want the same thing: walking every unit's program, which the server now has, keyed by
-each node's `Location.File`.
+- **[OPEN] The import graph is resolved *downward* only, so a type's users are invisible.**
+  The server analyzes what the open document imports (plus its module's sibling files) and
+  never what imports *it*. So "find references" on an exported type reports the uses in its
+  own module and none of its consumers' — and rename of a `pub` type is **declined**
+  outright, because editing every occurrence in view would leave the importers naming
+  something that no longer exists. A private type is safe by the same reasoning that makes
+  it private, and renames completely. Lifting this means walking the workspace for
+  importers rather than following the graph, which is a different piece of machinery: a
+  file index, invalidation on change, and a decision about what "the workspace" is when the
+  server was handed one file.
+
+- **[OPEN] A dead language server leaves its diagnostics on screen.** When `lyra-lsp` exits
+  — killed, crashed, or replaced by a rebuild — the editor keeps the last diagnostics it
+  published, so the file still shows errors from a program that no longer exists. It cost
+  an hour on 08/22: an error was reported against `examples/mandelbrot_tui.lyra` that
+  neither `lyrac check` nor the server's own `analyzeDocument` could reproduce, on a file
+  that compiled and ran, and the markers were stale ones from a mid-edit buffer. Nothing in
+  the extension notices, and the user's own instinct — restart the extension — did not
+  clear them because the restart did not take.
+  - The server cannot fix this alone once it is dead. What it *can* do is publish an empty
+    set for every open document on shutdown, which covers the ordinary "restart the
+    server" path; a crash still needs the client to clear on exit, which is the
+    extension's job in both `lyra-vscode-ext` and `lyra-zed-ext`.
+  - Worth doing because the failure presents as a *compiler* bug — the editor and the
+    compiler disagree, and the editor is the one the author is looking at.
 
 ## Constructor syntax — juxtaposition
 
