@@ -8,6 +8,19 @@ status report.
 Tags: **[OPEN]** not started · **[PARTIAL]** landed in part · **[DECIDED]** settled, not
 built · **[IDEA]** not committed to · **[ROADMAP]**/**[DEFERRED]** deliberately later.
 
+**An entry is a claim about the present, and claims rot.** Every `[OPEN]` item making a
+concrete, testable statement about current behaviour was re-run on **08/24**; three had gone
+stale and were closed — a `newtype` was said not to be transparent to indexing and calling
+(both work), a `step()` constraint was said to be unenforced (it is refused at compile time as
+`lyra-E053` and traps at run time), and a latency note quoted a figure four changes out of
+date. Two entries survived the check only because the *first* probe was wrong: the
+bare-type-parameter UFCS item reproduces, but a `pure` marker surfaces a different error
+first, and the `[]t`-combinator item is about `.map`/`.join`, not `.len()`.
+
+So: **re-run an open entry before acting on it**, and prefer a probe that reproduces the
+entry's own words to one that tests something adjacent. What is *not* re-runnable — design
+items, `[DECIDED]`, `[ROADMAP]` — cannot rot this way and was left alone.
+
 ## I/O and the number-guessing program
 
 **The program works.** Console input (`read_line() -> Maybe<string>`), string→int parsing
@@ -1140,6 +1153,20 @@ write today:
   visibility, and why the existing tests missed it: they declare types `pub`, or in no
   module at all. See COMPLETED.md.
 
+- **[OPEN] A newtype over a managed base loses its wrapper in return and parameter position.**
+  `newtype Bag = []string`; a `var b: Bag = ["x"]` returned as a function's tail is
+  `lyra-E046` — *"cannot use DynamicArray<string> as Bag implicitly"* — as is passing it to a
+  `(b: Bag)` parameter, and indexing the call's result is *"cannot index into type Bag"*.
+
+  The same value works when it stays a local: `let s: Bag = [...]` then `s[0]` is fine, and
+  the read-out conversion works from every binding position as of 08/24. So the wrapper
+  survives a binding and is lost crossing a call boundary, which points at where a declared
+  return or parameter type is reconciled against the inferred one rather than at the newtype
+  machinery itself.
+
+  **Not generic-specific** — found 08/24 while sweeping the generic-newtype lowering fix, and
+  confirmed to reproduce identically with that change stashed, with a non-generic newtype.
+
 - **[OPEN] A struct literal with every field defaulted cannot be written.** `Person {}` is a
   syntax error — a literal body requires at least one field — so defaults stop being usable
   at exactly the point they are most useful, and the workaround is to name a field you
@@ -1857,11 +1884,16 @@ The three range grammars were unified 08/01 (`rangeBounds`, one `range_end_opera
 `lyra-E032` for a missing end operator at all three sites, open-ended patterns,
 `lyra-E033` for an ill-formed step). See COMPLETED.md. What is left:
 
-- **[OPEN] A `step()` constraint is not enforced against values.** Nothing reads
-  `types.StepConstraint` after collection, so `newtype Quarter = f32 where range(0..<=100),
-  step(0.25)` validates the *step* but still accepts 0.3. Unlike `range(…)`, which the
-  value-range pass checks (`lyra-E023`), a step is a divisibility test — cheap for a
-  compile-time constant, a runtime check otherwise, which is the decision to make first.
+- **[DONE — verified fixed 08/24] A `step()` constraint is enforced against values**, on both
+  rungs. `newtype Quarter = f32 where range(0..<=100), step(0.25)` now refuses 0.3 at compile
+  time as `lyra-E053` — *"value 0.3 is not a multiple of the step 0.25 of Quarter"* — and a
+  value the compiler cannot see through traps at construction with *"value violates its
+  newtype's constraint"*, which is the same two-rung ladder `range(…)` uses.
+
+  This entry said "nothing reads `types.StepConstraint` after collection", and the workspace
+  CLAUDE.md has documented `lyra-E053` as the step diagnostic for some time — the two had
+  disagreed for a while before anyone re-ran it.
+
 - **[DONE 08/04] Descending ranges.** `5..>1` and `5..>=1` count down, in `for-in` and in a
   comprehension. The inclusive end moved from `..=` to `..<=`, so the four operators are
   `..<` `..<=` `..>` `..>=` — two axes, direction and whether the end is included, each
