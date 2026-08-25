@@ -13,9 +13,13 @@ import (
 // renameAnchor holds the resolved name and locations for a rename operation,
 // whether the cursor was on a usage (IdentifierExpr) or on a declaration name.
 type renameAnchor struct {
-	name    string
-	declLoc ast.Location // whole-decl location: identity key for reference matching
-	nameLoc ast.Location // name-only span: the range to replace at the declaration site
+	name string
+	// exported says whether the name can be seen outside its module, which decides
+	// whether the workspace has to be searched for importers at all — a private
+	// declaration has none, and the search is tens of milliseconds.
+	exported bool
+	declLoc  ast.Location // whole-decl location: identity key for reference matching
+	nameLoc  ast.Location // name-only span: the range to replace at the declaration site
 }
 
 // resolveRenameAnchor returns the rename anchor for the symbol at (line, col).
@@ -143,9 +147,10 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 	}
 
 	anchor := renameAnchor{
-		name:    name,
-		declLoc: named.GetLocation(),
-		nameLoc: namedNameLoc(named),
+		name:     name,
+		exported: isExportedDecl(named),
+		declLoc:  named.GetLocation(),
+		nameLoc:  namedNameLoc(named),
 	}
 
 	// A name can now resolve into another file — the prelude, or another module of
@@ -178,39 +183,18 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 		return renameAnchor{}, false
 	}
 
-	// **An exported type cannot be renamed, because its users are not in view.** The
-	// server resolves the open document's import graph *downward* — the modules it
-	// imports, and its own module's sibling files — and never upward, so a module that
-	// imports this one is never analyzed and its uses are not in the index. Renaming a
-	// `pub` type would therefore edit every occurrence the server can see and leave the
-	// importers naming something that no longer exists: the partial rename this function
-	// already refuses to perform for a cross-file declaration, arrived at from the other
-	// direction.
+	// An **exported** type was declined here for a few hours on 08/22, on the grounds that
+	// its importers were not analyzed and the rename would therefore be partial. That was
+	// the right refusal for the server as it stood and the wrong thing to leave standing:
+	// rename was unavailable for exactly the types that matter most, a module's public
+	// surface, because of a limitation in what the server bothered to look at rather than
+	// anything about the language. The search now exists (importers.go), so the rename can
+	// be complete and the refusal is gone.
 	//
-	// A **private** type is safe by the same reasoning that makes it private: nothing
-	// outside its module can name it, and every file of that module is analyzed together.
-	// So an unexported type renames completely, siblings included.
-	//
-	// Lifting this needs the server to find a type's *importers*, which means walking the
-	// workspace rather than the graph — see todo.md.
-	if isExportedType(named) {
-		log.Printf("rename: %q is exported and its importers are not analyzed — declining", name)
-		return renameAnchor{}, false
-	}
+	// What it cannot see is a file outside the workspace root that imports this module.
+	// No tool can; that is what a workspace root means.
 
 	return anchor, true
-}
-
-// isExportedType reports whether a declaration is visible outside its own module, and so
-// may have uses the server has not analyzed.
-func isExportedType(named ast.Named) bool {
-	switch d := named.(type) {
-	case *ast.TypeDeclStmt:
-		return d.IsPublic
-	case *ast.TraitDeclStmt:
-		return d.IsPublic
-	}
-	return false
 }
 
 // namedNameLoc returns the span covering just the bound name of a Named node
@@ -349,9 +333,10 @@ func (h *Handler) Rename(_ context.Context, params *lsp.RenameParams) (result *l
 	// so renaming a prelude type from a use site is still declined. What changes is that
 	// renaming *your own* type now reaches its uses in your other modules instead of
 	// silently editing one file and leaving the program broken.
-	if analysis.symTable != nil {
-		for _, ref := range analysis.symTable.TypeRefs.Named(anchor.name) {
-			named, ok := lookupTypeOrTrait(analysis, ref)
+	indexed := h.importerAnalysis(analysis, source, anchor.exported)
+	if indexed.symTable != nil {
+		for _, ref := range indexed.symTable.TypeRefs.Named(anchor.name) {
+			named, ok := lookupTypeOrTrait(indexed, ref)
 			if !ok || namedNameLoc(named) != anchor.nameLoc {
 				continue
 			}

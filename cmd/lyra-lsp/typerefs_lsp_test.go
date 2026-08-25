@@ -132,22 +132,45 @@ func TestReferencesAndRename_ReachAModuleSibling(t *testing.T) {
 	}
 }
 
-// **An exported type is declined**, because the server never analyzes the modules that
-// *import* one: the graph is resolved downward only. Renaming it would edit every
-// occurrence in view and leave the importers broken, which is the partial rename this
-// handler refuses to perform for a cross-file declaration, reached from the other side.
-func TestRename_AnExportedTypeIsDeclined(t *testing.T) {
+// **An exported type renames across the modules that import it.** Resolution runs
+// downward only, so an importer is never in the open document's unit set; the server finds
+// them by searching the workspace instead (importers.go). Without that, this rename would
+// edit the declaring module and leave `other` naming a type that no longer exists — and
+// for a few hours on 08/22 the server refused the rename outright for exactly that reason.
+func TestRename_AnExportedTypeReachesItsImporters(t *testing.T) {
 	t.Setenv("LYRA_STD", stdRootDir(t))
 	h := servertest.New(t, newHandler())
-	src := "module shapes\npub struct Point { x: i64 }\nlet here = pure (p: Point) -> i64 => p.x\n"
-	uri := openFileAndWait(t, h, t.TempDir(), "shapes.lyra", src)
+	dir := t.TempDir()
+
+	other := "module other\nimport shapes.{ Point }\nlet area = pure (p: Point) -> i64 => p.x\n"
+	if err := os.WriteFile(filepath.Join(dir, "other.lyra"), []byte(other), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := "module shapes\npub struct Point { x: i64, y: i64 }\nlet here = pure (p: Point) -> i64 => p.x\n"
+	uri := openFileAndWait(t, h, dir, "shapes.lyra", src)
+
+	locs, err := h.References(uri, 1, colOf(t, src, "Point {", 1), false)
+	if err != nil {
+		t.Fatalf("References: %v", err)
+	}
+	files := map[lsp.DocumentURI]bool{}
+	for _, l := range locs {
+		files[l.URI] = true
+	}
+	if len(files) != 2 {
+		t.Errorf("references reached %d file(s), want 2 — an importer's use is the whole "+
+			"point of searching upward: %v", len(files), locs)
+	}
 
 	we, err := h.Rename(uri, 1, colOf(t, src, "Point {", 1), "Coord")
 	if err != nil {
 		t.Fatalf("Rename: %v", err)
 	}
-	if we != nil {
-		t.Errorf("renaming an exported type must be declined while importers are unanalyzed; got %v", we.Changes)
+	if we == nil {
+		t.Fatal("renaming an exported type must no longer be declined")
+	}
+	if len(we.Changes) != 2 {
+		t.Errorf("rename edited %d file(s), want 2: %v", len(we.Changes), we.Changes)
 	}
 }
 
@@ -167,5 +190,38 @@ func TestRename_APreludeTypeIsStillDeclined(t *testing.T) {
 	}
 	if we != nil {
 		t.Errorf("renaming a prelude type must be declined; got edits in %d file(s)", len(we.Changes))
+	}
+}
+
+// **A private type does not trigger the workspace search.** It cannot be named outside its
+// module, so it has no importers, and the walk is tens of milliseconds against the
+// microseconds the rest of a lookup takes. Asserted through behaviour rather than timing:
+// a file that imports nothing and would be scanned only by the walk must not appear.
+func TestReferences_APrivateTypeSkipsTheWorkspaceSearch(t *testing.T) {
+	t.Setenv("LYRA_STD", stdRootDir(t))
+	h := servertest.New(t, newHandler())
+	dir := t.TempDir()
+
+	// A decoy declaring its own same-named type. If the search ran and matching were by
+	// name rather than by declaration, its uses would leak into the answer.
+	decoy := "module other\nstruct Point { z: i64 }\nlet f = pure (p: Point) -> i64 => p.z\n"
+	if err := os.WriteFile(filepath.Join(dir, "other.lyra"), []byte(decoy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := "module shapes\nstruct Point { x: i64 }\nlet here = pure (p: Point) -> i64 => p.x\n"
+	uri := openFileAndWait(t, h, dir, "shapes.lyra", src)
+
+	locs, err := h.References(uri, 1, colOf(t, src, "Point {", 1), true)
+	if err != nil {
+		t.Fatalf("References: %v", err)
+	}
+	for _, l := range locs {
+		if strings.Contains(string(l.URI), "other.lyra") {
+			t.Errorf("a private type's references must not include another module's "+
+				"same-named type: %v", locs)
+		}
+	}
+	if len(locs) != 2 {
+		t.Errorf("got %d references, want 2 (the declaration and its one use): %v", len(locs), locs)
 	}
 }

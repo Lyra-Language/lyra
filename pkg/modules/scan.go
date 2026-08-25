@@ -7,6 +7,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/cst"
+	"github.com/Lyra-Language/lyra/pkg/parser"
 )
 
 // The import graph has to be known *before* collection, because collection needs
@@ -135,4 +136,54 @@ func nodeLocation(node *sitter.Node) ast.Location {
 		EndLine:   int(end.Row) + 1,
 		EndCol:    int(end.Column) + 1,
 	}
+}
+
+// FileHeader is what a file says about its place in the program, read without resolving
+// anything: the module it declares and the modules it imports.
+type FileHeader struct {
+	// Module is the dotted path from `module a.b`, or "" for a file that declares none —
+	// which is legal for a single-file module, whose path is its location.
+	Module string
+	// Imports are the dotted paths of its `import` statements, deduplicated and sorted.
+	Imports []string
+}
+
+// ScanFile reads one file's header.
+//
+// **The inverse direction of Resolve**, and that is what it is for. Resolution follows a
+// file's imports *downward* to find what it depends on; a tool asking "who depends on
+// **me**" — the language server, answering "find every use of this exported type" — has to
+// look at files the graph never reaches, so it needs a way to ask about a file without
+// pulling its whole graph in. This is that: one parse, two shallow CST walks, no I/O
+// beyond the source it is handed and no recursion.
+//
+// The parse cache may be nil, in which case the file is parsed afresh. A caller scanning a
+// workspace should pass one: the same files are scanned again on the next such request,
+// and the cache is keyed on contents so an edit invalidates exactly the file edited.
+func ScanFile(file string, source []byte, cache *ParseCache) (FileHeader, bool) {
+	var tree *sitter.Tree
+	if cache != nil {
+		tree = cache.get(file, source)
+	}
+	if tree == nil {
+		t, err := parser.Parse(string(source))
+		if err != nil || t == nil {
+			return FileHeader{}, false
+		}
+		tree = t
+		if cache != nil {
+			cache.put(file, source, tree)
+		}
+	}
+	u := Unit{File: file, Source: source, Tree: tree, Root: tree.RootNode()}
+	seen := map[string]bool{}
+	var imports []string
+	for _, imp := range scanImports(u) {
+		if path := joinPath(imp.Path); path != "" && !seen[path] {
+			seen[path] = true
+			imports = append(imports, path)
+		}
+	}
+	sort.Strings(imports)
+	return FileHeader{Module: declaredModulePath(u), Imports: imports}, true
 }

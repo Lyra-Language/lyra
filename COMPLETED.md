@@ -9,6 +9,52 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (13)
+**The server finds a module's importers, so an exported type can be renamed.**
+
+Rename was reported not working in Zed. Probing every target kind split it into two causes,
+one of them mine: a declaration-position rename had never worked for locals or parameters
+(fixed separately), and an **exported type was declined** — a rule added hours earlier,
+because the modules that import a type were not analyzed and the rename would have been
+partial.
+
+That refusal was right for the server as it stood and wrong to leave standing: rename was
+unavailable for exactly the types that matter most, a module's public surface, because of a
+limitation in what the server bothered to look at rather than anything about the language.
+
+**Resolution cannot answer an upward question.** `modules.Resolve` follows a file's imports
+*downward*: what it needs, plus its own module's sibling files. Nothing follows them the
+other way, so no amount of resolving finds the consumers. It has to be **searched** for.
+
+`modules.ScanFile` is the piece that made that affordable — one file's module and imports,
+read from a shallow CST walk with no recursion and no I/O beyond the source it is handed.
+The resolver already had every part of it internally; what was missing was a way to ask
+about a file *without* pulling its whole graph in.
+
+**A walk, not an index**, and that is a decision rather than a shortcut. The obvious
+optimisation is a persistent map rebuilt on change, and the obvious hazard is invalidation
+that is wrong in a way nobody notices until a rename misses a file. This runs on an explicit
+user action, reads through the shared parse cache, and skips entirely for a **private**
+declaration — which can have no importers, by the same reasoning that makes it private.
+Measured at ~60 ms across this repository, against microseconds for the rest of a lookup.
+
+**The first version found nothing, and the reason is worth keeping.** It skipped the
+standard library, on the grounds that every program can see it and none can be imported by
+it. But `StdRoot` is the directory *containing* `std/` — that is what makes `std.prelude`
+resolve to `<root>/std/prelude` — so in a checkout where the library lives inside the
+project, the std root **is** the project root and skipping it skipped the entire walk. The
+premise was also wrong on its own terms: `std.tui` imports `std.prelude`, so a prelude type
+has importers inside the library.
+
+Proved on this repository rather than only on a fixture: references to `std.tui`'s
+`Renderer` now answer 10 occurrences across `frame.lyra` and both TUI examples, where
+before they answered 8 in one file.
+
+The analysis over the widened unit set is deliberately kept **out of** what gets published.
+That program is larger than the one the user is editing, so its diagnostics belong to files
+they did not ask about, and two modules that each export a name would be reported as
+colliding. Only the type index is taken from it.
+
 ### 08/22/26 (12)
 **References and rename on a type — and the direction the import graph is resolved in.**
 

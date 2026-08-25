@@ -92,10 +92,17 @@ func (h *Handler) typeReferences(uri, source string, analysis *docAnalysis, line
 	if analysis.symTable == nil {
 		return nil, nil
 	}
-	name, declLoc, ok := typeAnchorAt(analysis, line, col)
+	name, declLoc, exported, ok := typeAnchorAt(analysis, line, col)
 	if !ok {
 		return nil, nil
 	}
+
+	// Widen to the modules that import this one. Resolution runs downward only, so a use
+	// of an exported type in a consumer is not in the index the document's own analysis
+	// built — and "find every use" is exactly the upward question (importers.go). Done
+	// here rather than in the analysis every keystroke runs, because it walks the
+	// workspace and this is an explicit action.
+	indexed := h.importerAnalysis(analysis, source, exported)
 
 	var out []lsp.Location
 	seen := map[ast.Location]bool{}
@@ -109,8 +116,8 @@ func (h *Handler) typeReferences(uri, source string, analysis *docAnalysis, line
 		}
 	}
 
-	for _, ref := range analysis.symTable.TypeRefs.Named(name) {
-		if named, ok := lookupTypeOrTrait(analysis, ref); ok && namedNameLoc(named) == declLoc {
+	for _, ref := range indexed.symTable.TypeRefs.Named(name) {
+		if named, ok := lookupTypeOrTrait(indexed, ref); ok && namedNameLoc(named) == declLoc {
 			add(ref.Loc)
 		}
 	}
@@ -180,24 +187,25 @@ func typeExprOccurrence(expr ast.Expression) (string, ast.Location, bool) {
 // typeAnchorAt resolves the cursor to a type or trait, from either side: a *use* (found in
 // the index) or the declaration's own name, which is where "find references" is most often
 // asked from and which the index does not contain — a declaration is not a reference.
-func typeAnchorAt(analysis *docAnalysis, line, col int) (string, ast.Location, bool) {
+func typeAnchorAt(analysis *docAnalysis, line, col int) (string, ast.Location, bool, bool) {
 	if ref, ok := analysis.symTable.TypeRefs.At(analysis.file, line, col); ok {
 		if named, ok := lookupTypeOrTrait(analysis, ref); ok {
-			return ref.Name, namedNameLoc(named), true
+			return ref.Name, namedNameLoc(named), isExportedDecl(named), true
 		}
-		return "", ast.Location{}, false
+		return "", ast.Location{}, false, false
 	}
 	// A struct literal's or constructor's name — an expression, and the position a reader
 	// is as likely to ask from as any signature.
 	if e, ok := findExprAtPos(analysis.program, line, col).(ast.Expression); ok && e != nil {
 		if exprName, span, ok := typeExprOccurrence(e); ok && locationContains(span, line, col) {
 			if decl, ok := analysis.symTable.LookupTypeFrom(exprName, span); ok {
-				return exprName, namedNameLoc(decl), true
+				return exprName, namedNameLoc(decl), isExportedDecl(decl), true
 			}
 		}
 	}
 	var name string
 	var loc ast.Location
+	exported := false
 	for _, node := range analysis.program.Statements {
 		stmt, ok := node.(ast.Statement)
 		if !ok {
@@ -207,12 +215,12 @@ func typeAnchorAt(analysis *docAnalysis, line, col int) (string, ast.Location, b
 			switch x := s.(type) {
 			case *ast.TypeDeclStmt:
 				if locationContains(x.NameLocation, line, col) {
-					name, loc = x.Name, x.NameLocation
+					name, loc, exported = x.Name, x.NameLocation, x.IsPublic
 					return false
 				}
 			case *ast.TraitDeclStmt:
 				if locationContains(x.NameLocation, line, col) {
-					name, loc = x.Name, x.NameLocation
+					name, loc, exported = x.Name, x.NameLocation, x.IsPublic
 					return false
 				}
 			}
@@ -222,7 +230,18 @@ func typeAnchorAt(analysis *docAnalysis, line, col int) (string, ast.Location, b
 			break
 		}
 	}
-	return name, loc, name != ""
+	return name, loc, exported, name != ""
+}
+
+// isExportedDecl reports whether a type or trait declaration is visible outside its module.
+func isExportedDecl(named ast.Named) bool {
+	switch d := named.(type) {
+	case *ast.TypeDeclStmt:
+		return d.IsPublic
+	case *ast.TraitDeclStmt:
+		return d.IsPublic
+	}
+	return false
 }
 
 // nameSpanAt narrows a node's whole span to the name that begins it, so a reference to

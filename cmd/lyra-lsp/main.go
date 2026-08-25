@@ -79,6 +79,12 @@ type Handler struct {
 	// collection folds all 12 units into one Program and SymbolTable every time. Together
 	// they take a keystroke on a small file from 20.1 ms to 5.7 ms.
 	collectCache *driver.CollectCache
+
+	// rootPath is the workspace the client opened, from `initialize`. It is the search
+	// root for a module's **importers**, which resolution cannot find: the graph runs
+	// downward only (see importers.go). Empty when the client sent none, in which case
+	// the document's own directory stands in — the same thing modules.DefaultRoots uses.
+	rootPath string
 }
 
 func newHandler() *Handler {
@@ -90,6 +96,30 @@ func newHandler() *Handler {
 	}
 }
 
+// initializeRoot is the workspace the client opened, preferring the first workspace
+// folder over the deprecated rootUri and falling back to rootPath. Any of them may be
+// absent — a client is entitled to open a single file with no workspace at all — and the
+// empty answer is handled by falling back to the document's directory.
+func initializeRoot(params *lsp.InitializeParams) string {
+	if params == nil {
+		return ""
+	}
+	if len(params.WorkspaceFolders) > 0 {
+		if p := uriToPath(string(params.WorkspaceFolders[0].URI)); p != "" {
+			return p
+		}
+	}
+	if params.RootURI != nil {
+		if p := uriToPath(string(*params.RootURI)); p != "" {
+			return p
+		}
+	}
+	if params.RootPath != nil && *params.RootPath != "" {
+		return *params.RootPath
+	}
+	return ""
+}
+
 // SetClient is called by the server after the connection is established.
 func (h *Handler) SetClient(c *server.Client) {
 	h.client = c
@@ -98,7 +128,13 @@ func (h *Handler) SetClient(c *server.Client) {
 // Initialize returns server capabilities. We use SyncIncremental so the client
 // only sends changed ranges on each edit; the server applies them to its own
 // document store and keeps the full text in memory.
-func (h *Handler) Initialize(_ context.Context, _ *lsp.InitializeParams) (*lsp.InitializeResult, error) {
+func (h *Handler) Initialize(_ context.Context, params *lsp.InitializeParams) (*lsp.InitializeResult, error) {
+	if root := initializeRoot(params); root != "" {
+		h.mu.Lock()
+		h.rootPath = root
+		h.mu.Unlock()
+		log.Printf("initialize: workspace root %s", root)
+	}
 	openClose := true
 	enabled := true
 	return &lsp.InitializeResult{

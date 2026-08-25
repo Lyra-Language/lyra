@@ -1536,16 +1536,22 @@ two editor features single-file where the program no longer is:
   unit set, and rename follows it with a multi-file `WorkspaceEdit`. The identifier half
   still wants the same treatment: walking every unit's program, keyed by `Location.File`.
 
-- **[OPEN] The import graph is resolved *downward* only, so a type's users are invisible.**
-  The server analyzes what the open document imports (plus its module's sibling files) and
-  never what imports *it*. So "find references" on an exported type reports the uses in its
-  own module and none of its consumers' — and rename of a `pub` type is **declined**
-  outright, because editing every occurrence in view would leave the importers naming
-  something that no longer exists. A private type is safe by the same reasoning that makes
-  it private, and renames completely. Lifting this means walking the workspace for
-  importers rather than following the graph, which is a different piece of machinery: a
-  file index, invalidation on change, and a decision about what "the workspace" is when the
-  server was handed one file.
+- **[DONE 08/22] The server finds a module's importers.** Resolution runs *downward* — what
+  the open document imports, plus its module's sibling files — so the modules that depend on
+  it were never loaded, and "find every use of this exported type" is exactly the upward
+  question. It is answered by **searching** rather than resolving: `modules.ScanFile` reads
+  one file's module and imports without pulling its graph in, and the server walks the
+  workspace root (from `initialize`) for files importing the open document's module, then
+  analyzes the union. Renaming an exported type is no longer declined. See `COMPLETED.md`.
+  - **A walk, not an index**, deliberately: it runs on an explicit action, never per
+    keystroke, and a persistent index's invalidation is wrong in ways nobody notices until
+    a rename misses a file. Measured at ~60 ms across this repository, against microseconds
+    for the rest of a lookup — and skipped entirely for a **private** declaration, which
+    can have no importers.
+  - **[OPEN] What it still cannot see** is a file outside the workspace root that imports
+    the module. No tool can — that is what a root means — but a rename is the one operation
+    where being silently incomplete matters, so if this ever bites, the answer is to say
+    what was searched rather than to search harder.
 
 - **[OPEN] A dead language server leaves its diagnostics on screen.** When `lyra-lsp` exits
   — killed, crashed, or replaced by a rebuild — the editor keeps the last diagnostics it
