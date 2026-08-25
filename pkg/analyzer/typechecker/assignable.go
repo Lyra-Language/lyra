@@ -354,6 +354,18 @@ func isSyntacticLiteral(expr ast.Expression) bool {
 			}
 		}
 		return true
+	case *ast.ArrayRepeatExpr:
+		// `[7; 3]` is as much a literal as `[7, 7, 7]`, and was missing here — so
+		// `let n: Nums = [7; 3]` over `newtype Nums = []i64` was lyra-E046 demanding
+		// `Nums(...)` while the comma form went through. The **count** is deliberately not
+		// consulted: it is a length, not an element, and provenance is about where the
+		// values came from. What that buys is agreement with the arm above — `[x; 3]` is
+		// not a literal for the same reason `[x, x, x]` is not.
+		//
+		// Hazard 8's "when adding an expression kind, grep for the kind it is a variant
+		// of": ArrayRepeatExpr had already been found missing in five places
+		// ArrayLiteralExpr appears. This is the sixth.
+		return isSyntacticLiteral(e.Value)
 	}
 	return false
 }

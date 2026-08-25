@@ -144,7 +144,14 @@ real failure, and none is local to one package.
      gives a newtype a head, so a method written *for* a newtype was silently unreachable.
    - **When adding an expression kind, grep for the kind it is a variant of.** The purity
      pass's allocation walk names allocating *forms*, not types, so `ArrayRepeatExpr` was
-     missed in five places `ArrayLiteralExpr` appeared in. **A *binder* is its own such
+     missed in five places `ArrayLiteralExpr` appeared in — and two more on 08/24, in
+     `isSyntacticLiteral` (so `let n: Nums = [7; 3]` over a newtype was refused while
+     `[7, 7, 7]` was not) and `firstNonConstant` (so `const XS = [7; 3]` was "not a
+     compile-time constant"). **Seven instances of one omission.** The sweep that finds them
+     is mechanical and takes a minute: list every file mentioning `ArrayLiteralExpr` and check
+     each for `ArrayRepeatExpr`; the node and collector definitions correctly have their own,
+     everything else is a candidate. The second 08/24 instance was found that way, having been
+     invisible to the bug report that produced the first. **A *binder* is its own such
      family**, and the captures pass proves it: its free-variable walk binds a `for-in`
      variable and a C-style loop counter — with a comment explaining that a binder it does
      not know reads as a capture — and had no case for a comprehension's generator, so a

@@ -1179,12 +1179,29 @@ write today:
   doing its stripping. Two needs were resting on one recorded type, and the fix is both halves
   or neither.
 
-- **[OPEN] The array-*repeat* form does not widen under a newtype annotation.** `let n: Nums =
-  [7; 3]` over `newtype Nums = []i64` is `lyra-E046` — *"cannot use StaticArray<integer
-  literal, 3> as Nums"* — while the literal form `[7, 7, 7]` works and the plain `let n: []i64
-  = [7; 3]` works. So the static→dynamic widening a `[]T` context performs does not reach
-  through a newtype wrapper for the repeat form specifically. Pre-existing: it fails
-  identically with the 08/24 wrapper fix stashed. Found 08/24 while testing that fix.
+- **[DONE 08/24] `[v; n]` is a literal wherever `[v, v, v]` is.** Two places consulted
+  `*ast.ArrayLiteralExpr` and had no arm for `*ast.ArrayRepeatExpr`, so the two spellings of
+  one thing diverged:
+
+  - `isSyntacticLiteral` decides whether a value has "provenance to lose" for the
+    implicit-newtype rule, so `let n: Nums = [7; 3]` over `newtype Nums = []i64` was
+    `lyra-E046` demanding `Nums(...)` while `[7, 7, 7]` went through.
+  - `firstNonConstant` decides what a `const` may hold, so `const XS = [7; 3]` was "not a
+    compile-time constant" while `const XS = [1, 2, 3]` was fine.
+
+  **The second was found by sweeping for the first** — every file mentioning ArrayLiteralExpr,
+  checked for whether it also mentions ArrayRepeatExpr. Four did not; two were node and
+  collector definitions that correctly have their own, and the third was this.
+
+  The two arms consult different things, deliberately. The literal rule looks only at the
+  *value*, because provenance is about where the elements came from and a runtime length is
+  still a fine `[]T` — so `[7; k]` with a runtime `k` is admitted. The const rule looks at the
+  value *and* the count, because a const's whole value must be known at compile time; that
+  recursion also improves the message, which now names the offending variable rather than the
+  expression.
+
+  Hazard 8's "grep for the kind it is a variant of": ArrayRepeatExpr had already been found
+  missing in five places ArrayLiteralExpr appears. These are the sixth and seventh.
 
 - **[OPEN] A struct literal with every field defaulted cannot be written.** `Person {}` is a
   syntax error — a literal body requires at least one field — so defaults stop being usable

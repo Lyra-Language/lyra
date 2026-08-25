@@ -122,6 +122,25 @@ func (tc *TypeChecker) firstNonConstant(expr ast.Expression) (ast.Expression, bo
 		}
 		return nil, true
 
+	case *ast.ArrayRepeatExpr:
+		// `const XS = [7; 3]` is as constant as `const XS = [1, 2, 3]`, and was refused as
+		// "not a compile-time constant" without this arm.
+		//
+		// **Both halves must be constant here**, unlike the newtype-literal rule in
+		// assignable.go where only the value is consulted. The questions differ: there,
+		// provenance is about where the *elements* came from and a runtime length is still
+		// a fine `[]T`; here the whole value has to be known at compile time, and a runtime
+		// count means it is not.
+		if off, ok := tc.firstNonConstant(e.Value); !ok {
+			return off, false
+		}
+		if e.Count != nil {
+			if off, ok := tc.firstNonConstant(e.Count); !ok {
+				return off, false
+			}
+		}
+		return nil, true
+
 	case *ast.TupleLiteralExpr:
 		for _, el := range e.Elements {
 			if off, ok := tc.firstNonConstant(el); !ok {
