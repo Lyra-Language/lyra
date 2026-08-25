@@ -78,12 +78,23 @@ func (tc *TypeChecker) resolveDeclaredParam(lambda *ast.LambdaExpr, i int) types
 // inconsistently by two arguments — in which case the caller reports against the
 // *declared* signature, which is the error the programmer can act on.
 //
-// An **untyped literal** argument settles to its default width before binding
-// (`identity(7)` gives `t = i64`, not `t = untyped_int`). A type variable is a real
-// type in the specialized function — it decides an alloca's width and an
-// instruction's signedness — so leaving it untyped would push an unresolved
-// literal type into codegen, the same class of bug as an int literal in a float
-// slot. Where a *narrower* width is wanted, the call site says so: `identity(u8(7))`.
+// An **untyped literal** argument settles to its default width, but **last**: it takes
+// the type the rest of the call already bound the variable to, and its default only if
+// nothing did. `identity(7)` still gives `t = i64`, and `count.min(80)` on a `u8` gives
+// `t = u8` rather than failing.
+//
+// It settled *before* unifying until 08/22, and the failure that hid in that is the
+// reason the pass exists in this shape: a literal promoted to `i64` bound the variable
+// as `i64`, so a `u8` argument beside it bound the same variable as `u8`, and the call
+// was rejected as inconsistent — "cannot infer type variable t from these arguments",
+// about a call that determines it perfectly well. Every width but the default was
+// affected, and the workaround was to write the conversion the compiler could have
+// inferred (`count.min(u8(80))`).
+//
+// What has not changed is that a variable is never left *untyped*: it is a real type in
+// the specialized function, deciding an alloca's width and an instruction's signedness,
+// so an unresolved literal type reaching codegen is the same class of bug as an int
+// literal in a float slot. The default still applies — one pass later.
 func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionCallExpr, vars map[string]bool) (map[string]types.Type, bool) {
 	subst := map[string]types.Type{}
 	// **Two passes, and the order is the point.** A lambda literal missing annotations
@@ -96,6 +107,13 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 	// variables itself (`unwrap_or_else(None, () -> i64 => 0)` solves `t` from the
 	// callback's return), and deferring it would lose that.
 	var deferred []int
+	// An untyped literal's own inferred type, carried to the third pass so the argument
+	// is inferred once rather than twice.
+	type untypedArg struct {
+		index int
+		typ   types.Type
+	}
+	var untyped []untypedArg
 	for i, arg := range call.Arguments {
 		if i >= len(lambda.Parameters) {
 			break
@@ -112,6 +130,15 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 		if argType == nil {
 			return nil, false
 		}
+		// A literal with no width of its own has nothing to say about which type the
+		// variable is — only about which types it *could* be — so it does not get to
+		// speak first. Deferred whole rather than by parameter shape: what makes it
+		// deferrable is the argument being untyped, and asking that question of the
+		// type is more reliable than asking it of the syntax.
+		if isUntypedLiteralType(argType) {
+			untyped = append(untyped, untypedArg{index: i, typ: argType})
+			continue
+		}
 		if !unifyGenericTarget(declared, arrayLiteralAsDeclared(arg, declared, promoteToDefault(argType)), vars, subst) {
 			return nil, false
 		}
@@ -126,6 +153,34 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 			return nil, false
 		}
 		if !unifyGenericTarget(declared, promoteToDefault(argType), vars, subst) {
+			return nil, false
+		}
+	}
+	// Third: the untyped literals, now that everything with a width has spoken. A
+	// literal whose parameter is a variable the call has already bound simply adopts that
+	// binding — the argument check below narrows the literal to it (propagateLiteralType),
+	// exactly as it does for a non-generic parameter of that type. Only a variable still
+	// free falls back to the literal's default width.
+	//
+	// Adoption is conditional on the literal being *able* to have that type, which is
+	// what keeps a genuinely inconsistent call reported as one. `same(7, true)` against
+	// `(a: t, b: t)` binds `t = bool` from the second argument, and an integer literal is
+	// not assignable to a bool — so the solve fails here and the caller reports "cannot
+	// infer type variable t", naming the real problem. Adopting unconditionally instead
+	// let the call type as `bool` and produced two errors: an argument mismatch plus
+	// whatever the wrongly-typed *result* then broke.
+	for _, u := range untyped {
+		declared := tc.resolveDeclaredParam(lambda, u.index)
+		if g, isVar := declared.(types.GenericType); isVar && vars[g.Name] {
+			if bound, isBound := subst[g.Name]; isBound {
+				if !isAssignable(u.typ, bound) {
+					return nil, false
+				}
+				continue
+			}
+		}
+		arg := call.Arguments[u.index]
+		if !unifyGenericTarget(declared, arrayLiteralAsDeclared(arg, declared, promoteToDefault(u.typ)), vars, subst) {
 			return nil, false
 		}
 	}

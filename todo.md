@@ -3680,17 +3680,25 @@ recommending — write the program someone would actually write, and see what it
     inherit it. `min(1.5, 2.5)` is a compile error, and on concrete floats
     `if a < b { a } else { b }` is a machine compare and works.
 
-- **[OPEN] An untyped literal argument defaults before a type variable is solved.**
-  `count.min(80)` on a `u8` reports *"cannot infer type variable t from these arguments"* —
-  `solveTypeVars` promotes the literal to `i64` **before** unifying, so the two arguments
-  bind `t` inconsistently. Documented behaviour with a stated workaround (`count.min(u8(80))`),
-  and on `i64` nothing is needed; what makes it worth revisiting is that `min`/`max`/`clamp`
-  put it in front of every program that uses a narrow width. The mechanism to reuse already
-  exists in the same function: an un-annotated lambda is **deferred** to a second pass
-  precisely because it cannot be inferred until it knows what is expected of it, and an
-  untyped literal is the same shape. Defer it, adopt a solved binding if there is one, and
-  default only if the variable is still free. Purely additive — every call that compiles
-  today compiles the same way. The diagnostic should name the conversion either way.
+- **[DONE 08/22] An untyped literal argument adopts the width the call settled.**
+  `count.min(80)` on a `u8` reported *"cannot infer type variable t from these arguments"*
+  about a call that determines it perfectly well: `solveTypeVars` promoted the literal to
+  `i64` **before** unifying, so it bound the variable first and every other width was then
+  a conflict. The fix is the mechanism that was already in the same function — an
+  un-annotated lambda is deferred to a second pass because it cannot be inferred until it
+  knows what is expected of it, and an untyped literal is that shape exactly. Literals now
+  run in a **third** pass: a variable the call already bound is adopted, and only a still-free
+  one falls back to the literal's default. See `COMPLETED.md`.
+  - **Adoption is conditional on the literal being able to have that type**, which is what
+    keeps a genuinely inconsistent call reported as one error. `same(7, true)` binds
+    `t = bool` and an integer literal is not assignable to a bool, so the solve fails and
+    the message stays *"cannot infer type variable t"*. Adopting unconditionally typed the
+    call as `bool` and produced a second, cascading error from the wrongly-typed result.
+  - **[OPEN] A literal *receiver* is still pinned to its default**, in a different pass:
+    `200.min(w)` on a `u8` `w` fails where `w.min(200)` works. The pin happens before any
+    of the three member-call resolution paths run, and it is there so the builtin-method
+    rung can see through an untyped receiver (`1.wrapping_add(2)`). Deferring it wants the
+    same treatment this entry got, applied at that site.
 
 - **[OPEN] A method call on a bare type parameter does not reach UFCS.** Inside
   `where t: Ord`, `best.max(x)` reports *"type parameter t has no method max; add a

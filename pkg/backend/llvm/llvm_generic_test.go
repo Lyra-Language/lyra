@@ -388,3 +388,24 @@ let main = () -> u8 => if ignores(mk) { 7 } else { 0 }`,
 		})
 	}
 }
+
+// The runtime half of the untyped-literal rule (08/22): a literal adopts the width the
+// call settled, so the specialization is emitted at that width and the value that comes
+// back is the narrow one. Checked by running rather than by inference alone, because what
+// the rule decides is an alloca's width and an instruction's signedness.
+func TestExec_UntypedLiteralAdoptsASolvedWidth(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+let pick<t> = pure (a: t, b: t) -> t => b
+let main = () -> void => {
+  let w: u8 = 200
+  let f: f32 = 1.5
+  let big: u64 = 9
+  print("${pick(w, 100)} ${pick(100, w)} ${pick(f, 2.5)} ${pick(big, 3)} ${pick(7, 8)}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "100 200 2.5 3 8" {
+		t.Errorf("literal adoption = %q; want \"100 200 2.5 3 8\"", got)
+	}
+}

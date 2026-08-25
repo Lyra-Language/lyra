@@ -177,13 +177,14 @@ impl Ord for rune { compare = pure noalloc (self, other) => self <=> other }
 // call and an author picks whichever reads better at the site. They are `pure noalloc`,
 // so they are usable from code with either bound.
 //
-// **One sharp edge, on a width narrower or wider than `i64`.** An untyped literal argument
-// settles to its default width *before* the type variable is solved (`solveTypeVars`), so
-// `count.min(80)` on a `u8` reports *"cannot infer type variable t"* rather than binding
-// `t = u8` — the literal has already become an `i64` and the two bindings disagree. The
-// spelling that works is `count.min(u8(80))`, and on an `i64` (the default, and what a
-// terminal coordinate is) nothing is needed. Solving this wants the untyped argument
-// deferred the way an un-annotated lambda already is; it is in `todo.md`.
+// **A literal argument takes the receiver's width**, so `count.min(80)` on a `u8` is a
+// `u8` comparison rather than an inference failure. That was not free: an untyped literal
+// used to settle to `i64` before the type variable was solved, so every width but the
+// default was rejected, and it is fixed in `solveTypeVars` (08/22) rather than worked
+// around here.
+//
+// The **receiver** is still pinned to its default before dispatch, which is a different
+// pass — so `200.min(w)` on a `u8` `w` fails where `w.min(200)` works. In `todo.md`.
 
 /// The smaller of two values, or `self` when they compare equal.
 ///

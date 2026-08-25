@@ -9,6 +9,49 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (8)
+**An untyped literal argument adopts the width the call settled.**
+
+`count.min(80)` on a `u8` reported *"cannot infer type variable t from these arguments"*
+— about a call that determines `t` perfectly well. `solveTypeVars` promoted an untyped
+literal to its default width **before** unifying, so the literal bound the variable as
+`i64` and the `u8` beside it then bound the same variable as `u8`; two bindings, rejected
+as inconsistent. Every width but the default was affected, and the workaround was to write
+the conversion the compiler could have inferred (`count.min(u8(80))`).
+
+**The mechanism to fix it was already in the same function.** An un-annotated lambda is
+deferred to a second pass, for a reason that reads across word for word: it *cannot be
+inferred until it knows what is expected of it*. An untyped literal is that shape exactly
+— it has nothing to say about which type the variable is, only about which types it could
+be. So literals get a third pass, after the concrete arguments and after the lambdas: a
+variable the call already bound is **adopted**, and only a still-free one falls back to the
+literal's default. `identity(7)` is still `t = i64`; nothing is ever left untyped, which is
+what the old rule existed to guarantee.
+
+Deferral keys on the argument's **inferred type** being untyped rather than on its syntax.
+The type is the reliable question — constant arithmetic (`100 + 50`) stays untyped too, and
+a syntactic test would have to know that.
+
+**Adoption is conditional, and that condition is the whole difference between one error and
+two.** The first version adopted unconditionally, and the suite caught it: `same(7, true)`
+against `(a: t, b: t)` bound `t = bool` from the second argument, the literal adopted it,
+and the call then typed as `bool` — producing an argument mismatch *plus* a cascading error
+from the wrongly-typed result, where the honest answer is the single "cannot infer type
+variable t" the existing test asserts. So a literal adopts only a type it could actually
+have (`isAssignable`), and otherwise the solve fails as before. The pre-existing test is
+what made the difference visible; it is worth noting that it failed by reporting a *better*
+message than it expected, which is exactly the kind of change worth stopping on.
+
+**What it does not change**: an adopted width still bounds the literal. The argument check
+runs against the instantiated signature, so `pick(w, 300)` on a `u8` is refused with
+*"literal value 300 overflows u8"*, the same rule that catches `takes(300)` on a plain `u8`
+parameter.
+
+**Still open, and it is a different pass**: a literal *receiver* is pinned to its default
+before any of the three member-call resolution paths run, so `200.min(w)` fails where
+`w.min(200)` works. The pin is there so the builtin-method rung can see through an untyped
+receiver (`1.wrapping_add(2)`); deferring it wants this same treatment applied at that site.
+
 ### 08/22/26 (7)
 **A constructor call is a postfix head — `Some(1).unwrap_or(0)` parses.**
 
