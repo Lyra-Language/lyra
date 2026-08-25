@@ -2,6 +2,7 @@ package main
 
 import (
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/owenrumney/go-lsp/lsp"
@@ -262,5 +263,54 @@ func TestPrepareRename_OnLiteral(t *testing.T) {
 	}
 	if result != nil {
 		t.Errorf("expected nil result on a literal, got %+v", result)
+	}
+}
+
+// **A declaration position must be renameable**, and for a local or a parameter it was
+// not: the walk that finds a declaration name returned false from its expression
+// callback, so it stopped at the LambdaExpr that every function body lives under. Renaming
+// from a *use* worked, which is why it went unnoticed — the obvious place to start a
+// rename is the `let` itself.
+func TestRename_FromALocalDeclarationName(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	src := `
+let f = pure (n: i64) -> i64 => {
+	let doubled = n * 2
+	doubled + 1
+}`
+	openAndWait(t, h, src)
+	// `doubled` at its own `let`, line 2 (0-based), just past the tab.
+	we, err := h.Rename(testURI, 2, 5, "scaled")
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if we == nil {
+		t.Fatal("renaming a local from its declaration must not be declined")
+	}
+	edits := we.Changes[testURI]
+	if len(edits) != 2 {
+		t.Errorf("got %d edit(s), want 2 (the declaration and its use): %v", len(edits), edits)
+	}
+}
+
+// A **parameter of an expression-bodied function**, which is the shape most of the
+// standard library is written in. Its uses resolve through the lambda's own scope — a body
+// that is not a block records none of its own — so before 08/22 the rename edited the
+// declaration and left every use behind, which is worse than declining.
+func TestRename_FromAParameterOfAnExpressionBody(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	src := `
+let f = pure (n: i64) -> i64 => n + n`
+	openAndWait(t, h, src)
+	we, err := h.Rename(testURI, 1, strings.Index(strings.Split(src, "\n")[1], "n: i64"), "count")
+	if err != nil {
+		t.Fatalf("Rename: %v", err)
+	}
+	if we == nil {
+		t.Fatal("renaming a parameter of an expression-bodied function must not be declined")
+	}
+	edits := we.Changes[testURI]
+	if len(edits) != 3 {
+		t.Errorf("got %d edit(s), want 3 (the parameter and both uses): %v", len(edits), edits)
 	}
 }

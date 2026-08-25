@@ -68,7 +68,14 @@ func resolveRenameAnchor(line, col int, analysis *docAnalysis) (renameAnchor, bo
 					named = n
 				}
 				return false // found; stop walking
-			}, func(ast.Expression) bool { return false })
+				// **Descend into expressions**, or this walk never reaches a *local*
+				// declaration: every `let` inside a function body sits under a
+				// LambdaExpr, and returning false here stopped at it. So renaming a
+				// local from its own `let` — the obvious place to start a rename —
+				// silently did nothing, while renaming it from a *use* worked, which is
+				// why it went unnoticed. Nothing else changes: the statement callback
+				// still decides what matches.
+			}, func(ast.Expression) bool { return true })
 			if name != "" {
 				break
 			}
@@ -245,6 +252,13 @@ func paramBodyScope(lambda *ast.LambdaExpr, analysis *docAnalysis) *symbols.Scop
 		if sc, ok := analysis.scopeTable.Get(lambda.Body); ok {
 			return sc
 		}
+	}
+	// The lambda's own scope is where the parameters are bound, and it exists whether or
+	// not the body is a block — only a *block* body records one of its own. Falling
+	// straight to the file scope, where no parameter is bound, is what made a parameter
+	// of an expression-bodied function unrenameable.
+	if sc, ok := analysis.scopeTable.Get(lambda); ok {
+		return sc
 	}
 	return analysis.fileScope()
 }

@@ -214,7 +214,19 @@ func scopeInExpr(expr ast.Expression, scopeTable *symbols.ScopeTable, line, col 
 			}
 		}
 	case *ast.LambdaExpr:
-		return scopeInExpr(e.Body, scopeTable, line, col)
+		// The body's scope is the more specific one when the body is a block, so it wins.
+		if inner := scopeInExpr(e.Body, scopeTable, line, col); inner != nil {
+			return inner
+		}
+		// **Otherwise the lambda's own**, which is where its parameters are bound. A body
+		// that is not a block records no scope of its own, so this returned nil and a
+		// parameter of `pure (n: i64) -> i64 => n + 1` resolved nowhere — no hover, no
+		// definition, and a rename that edited the declaration and left the uses, which
+		// is worse than declining. The collector records the function scope against the
+		// lambda (lambda_expr.go), so it has always been reachable; nothing asked.
+		if sc, ok := scopeTable.Get(e); ok {
+			return sc
+		}
 	case *ast.ForLoopExpr:
 		// The **body**, not its statements: a loop's own bindings — the counter, or
 		// `for i, c in s`'s pair — live in the body block's scope, so iterating the
