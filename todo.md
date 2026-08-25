@@ -1553,6 +1553,19 @@ two editor features single-file where the program no longer is:
     where being silently incomplete matters, so if this ever bites, the answer is to say
     what was searched rather than to search harder.
 
+- **[OPEN] A constructor's payload type is resolved at the *use* site, not where it was
+  written.** `data Event = … | Mouse MouseEvent` stores the payload as a bare name, and a
+  matcher writing `Mouse(m) => m.button` resolves it from its own module — which cannot
+  necessarily name it, and should not have to: the value came from a constructor it did
+  import, and `m.button` names no type. It works today because `resolvedTypes` is keyed by
+  resolved identity and a `pub` type shares that key across modules, so the entry the
+  declaring module put there answers. Consistent as of 08/22 (the snapshot carries the
+  cache) but resting on a cache hit rather than on a rule.
+  - The principled fix — resolve the payload against the declaring type's location — was
+    tried and **stack-overflows the backend**: leaving it an `UnresolvedType` is what breaks
+    the cycle for a recursive `data` type, so `resolveForLayout` chases itself. Any real fix
+    has to keep a lazy edge somewhere.
+
 - **[OPEN] A dead language server leaves its diagnostics on screen.** When `lyra-lsp` exits
   — killed, crashed, or replaced by a rebuild — the editor keeps the last diagnostics it
   published, so the file still shows errors from a program that no longer exists. It cost

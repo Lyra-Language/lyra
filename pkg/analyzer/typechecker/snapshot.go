@@ -1,8 +1,11 @@
 package typechecker
 
 import (
+	"maps"
+
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
+	"github.com/Lyra-Language/lyra/pkg/types"
 	"github.com/Lyra-Language/lyra/pkg/typetable"
 )
 
@@ -15,7 +18,8 @@ import (
 // under 1%. That split is what makes this tractable — the setup passes simply re-run over
 // the whole program, so a snapshot holds only what the *loop* accumulates, and the
 // TypeChecker's other thirty-odd fields are either rebuilt by those passes (declOfFunc,
-// circularNewtypes, traitImpls) or are caches that cost nothing to lose (resolvedTypes).
+// circularNewtypes, traitImpls). `resolvedTypes` is carried — see the field for why it is
+// not the free cache it was taken for.
 //
 // The reason the loop can be skipped for the prefix at all is that **the prelude cannot see
 // user code**: a module resolves through its own scope, then its imports, then the prelude,
@@ -28,7 +32,24 @@ type Snapshot struct {
 	methodTable    *typetable.MethodTable
 	instantiations *typetable.InstantiationTable
 	constraints    *typetable.ConstraintTable
-	errors         []TypeError
+	// resolvedTypes is carried, and the note above used to call it "a cache that costs
+	// nothing to lose". It is not a cache in that sense: it is keyed by *resolved
+	// identity* (symTable.TypeKey), and a `pub` type shares that key with every module
+	// that can see it — so an entry put there while the declaring module was checked is
+	// what lets a name resolve from a module that cannot itself name it.
+	//
+	// A `data Event = … | Mouse MouseEvent` stores its payload as the bare name, and a
+	// matcher writing `Mouse(m) => m.button` need not have imported `MouseEvent` — nor
+	// should it have to, since the value came from a constructor it did import and
+	// `m.button` names no type. Dropping the cache made that resolution depend on whether
+	// the declaring module happened to be checked in *this* run: a full analysis resolved
+	// it, and one that restored a snapshot did not.
+	//
+	// The visible result was the language server disagreeing with the compiler on a file
+	// that compiles — `member access on non-struct type MouseEvent`, on the second and
+	// every later analysis, which is every keystroke after the first.
+	resolvedTypes map[string]types.Type
+	errors        []TypeError
 	// Statements is how many of the program's statements this snapshot covers. The caller
 	// passes it back to CheckFrom, which starts there.
 	Statements int
@@ -42,6 +63,7 @@ func (tc *TypeChecker) Snapshot(statements int) *Snapshot {
 		methodTable:    tc.methodTable.Clone(),
 		instantiations: tc.instantiations.Clone(),
 		constraints:    tc.constraintChecks.Clone(),
+		resolvedTypes:  maps.Clone(tc.resolvedTypes),
 		errors:         append([]TypeError(nil), tc.errors...),
 		Statements:     statements,
 	}
@@ -63,6 +85,10 @@ func NewFrom(symTable *symbols.SymbolTable, scopeTable *symbols.ScopeTable,
 	tc.instantiations = snap.instantiations.Clone()
 	tc.constraintChecks = snap.constraints.Clone()
 	tc.errors = append([]TypeError(nil), snap.errors...)
+	// Cloned rather than shared: the restored checker goes on resolving names as it checks
+	// the remaining statements, and those entries belong to this run, not to the snapshot
+	// every later run also starts from.
+	tc.resolvedTypes = maps.Clone(snap.resolvedTypes)
 	return tc
 }
 

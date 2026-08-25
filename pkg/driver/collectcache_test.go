@@ -243,3 +243,76 @@ let main = () -> void => println("one")
 		}
 	}
 }
+
+// **A second analysis of unchanged content must answer identically to the first.**
+//
+// It did not, and this is the bug behind an editor reporting `member access on non-struct
+// type MouseEvent` on a file `lyrac check` accepts. No edit is needed to provoke it: the
+// same bytes, analyzed twice against one cache, gave 0 errors and then 7. A user sees that
+// as "errors appeared after I edited, and undoing does not clear them", because every
+// keystroke after the first is a second analysis and none of them is ever clean again.
+//
+// The cause is that `typechecker.Snapshot` dropped `resolvedTypes`, on the reasoning —
+// written into that file — that it is "a cache that costs nothing to lose". It is not a
+// cache in that sense. It is keyed by *resolved identity*, and a `pub` type shares that key
+// with every module that can see it, so an entry put there while the declaring module was
+// checked is what lets a name resolve from a module that cannot itself name it.
+//
+// `data Event = … | Mouse MouseEvent` stores its payload as a bare name, and a matcher
+// writing `Mouse(m) => m.button` need not have imported `MouseEvent` — nor should it, since
+// the value came from a constructor it did import and `m.button` names no type. Losing the
+// cache made that resolution depend on whether the declaring module happened to be checked
+// in this run: a full analysis resolved it, a restored one did not.
+//
+// The fixture mirrors that shape exactly, because nothing simpler reproduces it: a
+// *separate* module declaring a data type whose constructor carries a payload the entry
+// **does not import**.
+func TestCollectCache_ASecondAnalysisOfUnchangedContent(t *testing.T) {
+	repoRoot, _ := filepath.Abs("../..")
+	dir := t.TempDir()
+	roots := []string{repoRoot, dir}
+
+	lib := `module lib
+pub struct Payload { n: i64 }
+pub data Signal = Quiet | Loud Payload
+pub let loud = pure (n: i64) -> Signal => Loud(Payload { n: n })
+`
+	if err := os.WriteFile(filepath.Join(dir, "lib.lyra"), []byte(lib), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	app := filepath.Join(dir, "main.lyra")
+	// `Payload` is deliberately **not** imported: the value arrives through `Signal`, and
+	// `p.n` names no type. This is the shape whose resolution depended on cache warmth.
+	source := `module main
+import lib.{ Signal, loud }
+let main = () -> void => {
+  match loud(7) {
+    Loud(p) => println(p.n),
+    Quiet => println(0),
+  }
+}
+`
+	if err := os.WriteFile(app, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	cache := driver.NewCollectCache()
+	analyze := func() []string {
+		units, _ := modules.Resolve(app, roots, modules.DefaultOptions())
+		res := driver.AnalyzeUnitsCached(units, cache)
+		var out []string
+		for _, d := range res.Errors() {
+			out = append(out, d.Message)
+		}
+		return out
+	}
+
+	if got := analyze(); len(got) != 0 {
+		t.Fatalf("first analysis must be clean; got %v", got)
+	}
+	if got := analyze(); len(got) != 0 {
+		t.Errorf("a second analysis of identical content reported %d error(s): %v\n"+
+			"the answer depends on how much of the program this run happened to check, "+
+			"which is what the editor sees on every keystroke after the first", len(got), got)
+	}
+}

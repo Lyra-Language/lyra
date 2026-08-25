@@ -9,6 +9,60 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (14)
+**The editor disagreed with the compiler because a "free cache" was load-bearing.**
+
+Reported from Zed: `member access on non-struct type MouseEvent` in
+`examples/mandelbrot_tui.lyra`, appearing after an edit and **surviving an undo**, on a file
+`lyrac check` accepts and that runs.
+
+**No edit is needed to provoke it.** The same bytes, analyzed twice against one cache, give
+0 errors and then 7. A user sees "it appeared when I edited" because every keystroke after
+the first is a second analysis, and none of them is ever clean again until the server
+restarts.
+
+**The cause is one sentence of reasoning in `typechecker/snapshot.go`**, which justified
+dropping a field as *"a cache that costs nothing to lose (`resolvedTypes`)"*. It is not a
+cache in that sense: it is keyed by **resolved identity** (`symTable.TypeKey`), and a `pub`
+type shares that key with every module that can see it — so an entry put there while the
+*declaring* module was checked is what lets a name resolve from a module that cannot itself
+name it.
+
+`std.tui` declares `data Event = … | Mouse MouseEvent`, storing the payload as a bare name.
+`mandelbrot_tui.lyra` imports `Event` and **not** `MouseEvent` — correctly, since the value
+arrives through a constructor it did import and `m.button` names no type. A full analysis
+checks `std.tui`, warms the cache, and resolves it; a restored analysis skips the prefix, has
+no cache, and resolves nothing.
+
+Carried in the snapshot and cloned on restore, so a restored run resolves exactly as a full
+one does.
+
+### Two wrong turns, both caught by testing rather than by reasoning
+
+**The first diagnosis was fiction.** The reported symptom — appears on edit, survives undo —
+reads as cache poisoning, and a probe seemed to confirm it: a half-typed `m.` poisoned the
+cache and an undo did not clear it. A fix was written (bypass the cache while the entry fails
+to parse), and *then* checked against the reproducing case, where it did nothing. Widening the
+probe showed no edit was needed at all, which retired the whole story. The lesson is the
+ordering: the fix was plausible, matched the symptom, and was wrong, and only running it
+against the real case said so.
+
+**The second fix stack-overflowed the backend.** Resolving a constructor's payload in its
+declaring module — which is what rule 4 argues for and would have been the principled fix —
+makes `resolveForLayout` chase a recursive `data` type forever. Leaving the payload as an
+`UnresolvedType` is **load-bearing as a cycle breaker**, which nothing said and which is now
+worth knowing on its own.
+
+**The regression test needs no edit**: the same bytes analyzed twice, with a fixture mirroring
+the exact shape — a separate module whose constructor carries a payload the entry does not
+import. Nothing simpler reproduced it, which is why `TestCollectCache_MatchesUncachedAnalysis`
+never caught it: every broken state in that sequence is a *semantic* error, and this needs the
+prefix to hold a resolution the entry cannot make for itself.
+
+**Still open**: this now works *because* of a cross-module cache key, which is consistent but
+not obviously right. Whether a constructor's payload should be resolved in its declaring
+module's context is a real question, and the overflow above shows it cannot be done naively.
+
 ### 08/22/26 (13)
 **The server finds a module's importers, so an exported type can be renamed.**
 
