@@ -3709,17 +3709,14 @@ recommending — write the program someone would actually write, and see what it
   `lookupNamedType` falls back to that module's key when the callee's own does not know the
   name. Second, not first, so it can only turn an error into a success. See `COMPLETED.md`.
 
-- **[OPEN] A method call on a constructor-call receiver does not parse.**
-  `Some(1).unwrap_or(0)` — the most idiomatic expression in the language — reports
-  `` `let _or` must be initialized ``, and so do `Some(1).is_some()` and
-  `Some(1).unwrap_or_else(…)`. A *literal* receiver is fine (`(1).wrapping_add(2)`,
-  `"ab".starts_with("a")`), and a **binding** receiver is fine (`let m = Some(1)` then
-  `m.unwrap_or(0)`), which is why every program written so far has worked and why the
-  standard library's own tests never tripped it. The split at `_or` says the constructor
-  **juxtaposition** rule is taking `Some` as applied to `(1).unwrap`, leaving `_or(0)` to
-  start a new statement — `_or` being a legal identifier. Confirmed pre-existing (checked
-  against HEAD before today's monomorphization change). Grammar work: the juxtaposed
-  constructor operand must not swallow a postfix `.method` chain.
+- **[DONE 08/22] A method call on a constructor-call receiver parses.**
+  `Some(1).unwrap_or(0)` reported `` `let _or` must be initialized `` — the constructor
+  **juxtaposition** rule took `Some` as applied to `(1).unwrap` and left `_or(0)` to start
+  a statement, `_or` being a legal identifier. The fix is two lines in the grammar:
+  `tuple_literal` joins `_primary_expr` (the head of every postfix form), and comes *out*
+  of `_math_operand`, which now reaches it through `_postfix_expr` and would otherwise
+  derive it twice. **+10 parser states**, 7856 → 7866. See `COMPLETED.md` and
+  `tree-sitter-lyra`'s CLAUDE.md.
 
 ### [DONE 08/15] A terminal UI needs three builtins, not a library
 

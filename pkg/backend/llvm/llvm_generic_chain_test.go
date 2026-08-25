@@ -145,3 +145,33 @@ let main = () -> u8 => {
 		t.Errorf("expected 15 (9 + 6), got %d", got)
 	}
 }
+
+// **A constructor call is a postfix head.** `Some(1).unwrap_or(0)` — the most idiomatic
+// expression in the language — did not parse until 08/22: `tuple_literal` was reachable
+// only through `_literal`, so the juxtaposition rule took `Some` as applied to
+// `(1).unwrap` and left `_or(0)` to begin a statement, `_or` being a legal identifier. It
+// reported `let _or must be initialized`, which names nothing an author could act on.
+//
+// A *binding* receiver worked (`let m = Some(1)` then `m.unwrap_or(0)`) and so did a
+// literal one, which is why every program written so far compiled and why the standard
+// library's own tests never tripped it: the idiom that failed is the one nobody had
+// written down.
+//
+// Run rather than only parsed, and chained, because the grammar corpus already proves the
+// shape — what this adds is that the collector, the typechecker and the backend all read a
+// `tuple_literal` in object position without special-casing it.
+func TestExec_AConstructorCallIsAPostfixHead(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+let double = pure (n: i64) -> i64 => n * 2
+let main = () -> void => {
+  let r: Result<i64, string> = Ok(1)
+  print("${Some(1).unwrap_or(0)} ${Some("hi").unwrap_or("x")} ")
+  print("${Some(3).map(double).unwrap_or(0)} ${r.unwrap_or(0)} ${Some(1).is_some()}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "1 hi 6 1 true" {
+		t.Errorf("constructor-call head = %q; want \"1 hi 6 1 true\"", got)
+	}
+}

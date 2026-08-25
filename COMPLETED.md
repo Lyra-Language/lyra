@@ -9,6 +9,53 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (7)
+**A constructor call is a postfix head — `Some(1).unwrap_or(0)` parses.**
+
+It did not, and the error named nothing: `` `let _or` must be initialized ``. `Some(1)` is
+a `tuple_literal`, which lived in `_literal` and nowhere else, so it was not a head any
+postfix form could hang off. The juxtaposition rule then read `Some` as applied to
+`(1).unwrap` — a legal constructor application — and `_or(0)` began a new statement, `_or`
+being a legal identifier by the leading-underscore rule. Two valid readings, and the parser
+took the wrong one.
+
+**Why it survived this long.** A *binding* receiver worked (`let m = Some(1)` then
+`m.unwrap_or(0)`), and so did a literal one (`(1).wrapping_add(2)`, `"abc".len()`). So
+every program written to date compiled, and the standard library's own tests never tripped
+it: the failing idiom is the one nobody had written down, because everyone binds first out
+of habit. It was found by testing something else — a private struct in a `Maybe`, for the
+monomorphization fix earlier the same day.
+
+**The fix is two lines, and the second is not optional.** `tuple_literal` joins
+`_primary_expr`; and it comes *out* of `_math_operand`, where it had been listed
+specifically (08/07) so that `Cents(150) + Cents(275)` would parse while the node stayed
+out of `_primary_expr`. With it in `_primary_expr`, `_math_operand` reaches it through
+`_postfix_expr`, and naming it again is the duplicate derivation that file's own rule
+forbids — tree-sitter refuses to generate, naming both rules. So the change that adds a
+head must remove the workaround the head makes redundant, in the same edit.
+
+**It is not a violation of the one-derivation rule but the exception `named_struct_literal`
+already had.** That node has been in both lists since 08/03, carried by a conflict entry;
+`tuple_literal` needs no new entry at all — the ones the juxtaposition region already has
+cover it.
+
+**+10 states**, 7856 → 7866 (+0.13%), and no new conflict warnings: generation emits the
+same two "unnecessary conflicts" it emitted before, byte for byte, which are the two
+CLAUDE.md already documents as unreliable in this region and deliberately kept.
+
+**Four readings had to be checked, not assumed**, since this is the region grammar.js's own
+notes call finely balanced. All four hold, and are now pinned by a corpus test: `Some(42)`
+stays a `tuple_literal`; `Some 42` stays a `data_constructor_expr`; `Cents(150) +
+Cents(275)` stays a `binary_expr` over two of them; and `(Some(x): Maybe<i64>) -> i64`
+stays a lambda whose parameter is a `data_pattern` — the parameter-position race the
+conflict notes warn a wrong move here would tip. `0 - 200` still reduces to a `sub_operator`
+binary_expr, this region's standing regression.
+
+Corpus 488/488, and the whole `lyra` suite passes after `go clean -cache`. A behavioural
+test runs the chained form (`Some(3).map(double).unwrap_or(0)`), because the corpus proves
+the parse and what was left to prove is that the collector, typechecker and backend all read
+a `tuple_literal` in object position with no special case.
+
 ### 08/24/26 (10)
 **Taking an address pins the binding, and `unsafe` blocks joined the ownership pass.**
 
