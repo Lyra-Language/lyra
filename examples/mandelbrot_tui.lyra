@@ -2,7 +2,8 @@ import std.math.{ Complex }
 import std.tui.{
   event_reader, Event, Key, event_available,
   mouse_enable, mouse_disable,
-  alt_screen_enter, alt_screen_leave, clear, cursor_hide, cursor_show, cursor_home, move_to,
+  alt_screen_enter, alt_screen_leave, clear, cursor_hide, cursor_show,
+  Renderer, renderer, render, invalidate,
   bg_rgb, reset, bold, inverse, fit
 }
 
@@ -68,8 +69,9 @@ let main = () -> void => {
   var running = true
   var events = event_reader()
 
+  var screen = renderer()
   let (cols0, rows0) = terminal_size()
-  draw(cols0, rows0, view, mx, my)
+  screen.draw(cols0, rows0, view, mx, my)
 
   var last_cols = cols0
   var last_rows = rows0
@@ -82,7 +84,8 @@ let main = () -> void => {
         mx = clamp(mx, 0, poll_cols - 1)
         my = clamp(my, 0, poll_rows - 2)
         clear()
-        draw(poll_cols, poll_rows, view, mx, my)
+        screen.invalidate()
+        screen.draw(poll_cols, poll_rows, view, mx, my)
       }
     } else {
       // **Drain everything pending, then draw once.** A wheel spin delivers a notch per
@@ -111,8 +114,8 @@ let main = () -> void => {
               Mouse(m) => match m.button {
                 // Wheel up zooms *out*, matching the direction chosen for this viewer.
                 // Swap the two factors to invert it.
-                WheelUp => { view = zoom_at(view, fcols, frows, left, top, m.col, m.row, 1.0 / ZOOM_STEP) },
-                WheelDown => { view = zoom_at(view, fcols, frows, left, top, m.col, m.row, ZOOM_STEP) },
+                WheelUp => { view = view.zoom_at(fcols, frows, left, top, m.col, m.row, 1.0 / ZOOM_STEP) },
+                WheelDown => { view = view.zoom_at(fcols, frows, left, top, m.col, m.row, ZOOM_STEP) },
                 _ => { mx = m.col; my = m.row }
               },
               _ => { }
@@ -123,7 +126,7 @@ let main = () -> void => {
         }
         if more && !events.event_available(0) { more = false }
       }
-      if running { draw(cols, rows, view, mx, my) }
+      if running { screen.draw(cols, rows, view, mx, my) }
     }
   }
 
@@ -159,15 +162,15 @@ let window_for = pure (v: View, cols: i64, rows: i64) -> Window => {
 /// The arithmetic: the pointer sits at fraction `u` across the window, so the point under
 /// it is `x_min + u * x_len`. After scaling, the centre that puts the same point at the
 /// same fraction is `p + x_len' * (0.5 - u)`.
-let zoom_at = pure (v: View, cols: i64, rows: i64, left: i64, top: i64, mx: i64, my: i64, factor: f64) -> View => {
-  let w = window_for(v, cols, rows)
+let zoom_at = pure (self: View, cols: i64, rows: i64, left: i64, top: i64, mx: i64, my: i64, factor: f64) -> View => {
+  let w = window_for(self, cols, rows)
   // `+ 1` on each, matching `render_row`'s far-edge mapping — the pointer must resolve
   // to the same complex point the cell under it was drawn from.
   let u = f64(clamp(mx - left + 1, 0, cols)) / f64(cols)
   let t = f64(clamp(my - top + 1, 0, rows)) / f64(rows)
   let px = w.x_min + u * w.x_len
   let py = w.y_min + t * w.y_len
-  let nx = v.x_len * factor
+  let nx = self.x_len * factor
   let ny = w.y_len * factor
   View { cx: px + nx * (0.5 - u), cy: py + ny * (0.5 - t), x_len: nx }
 }
@@ -207,7 +210,7 @@ let teardown = () => {
 /// through. The frame was correct until you touched anything, then stretched to full
 /// width. A parameter that must be pre-processed by every caller is a parameter that will
 /// eventually not be.
-let draw = (term_cols: i64, term_rows: i64, view: View, mx: i64, my: i64) -> void => {
+let draw = (self: mut Renderer, term_cols: i64, term_rows: i64, view: View, mx: i64, my: i64) -> void => {
   // The status bar owns the last row, so the set is fitted into what is left rather than
   // into the whole terminal — otherwise it is one row too tall and the bottom is lost
   // under the bar.
@@ -239,8 +242,7 @@ let draw = (term_cols: i64, term_rows: i64, view: View, mx: i64, my: i64) -> voi
     lines.push(spaces(term_cols))
   }
   lines.push(status(term_cols, term_rows, view))
-  cursor_home()
-  print(lines.join("\r\n"))
+  self.render(lines)
 }
 
 /// `n` spaces, and none for a negative count — the padding arithmetic can ask for a

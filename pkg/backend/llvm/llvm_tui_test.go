@@ -1,6 +1,8 @@
 package llvm
 
 import (
+	"errors"
+	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -336,5 +338,141 @@ let main = () -> void => {
 	got := strings.TrimSpace(buildAndRunWithPrelude(t, src, "\x1bx"))
 	if got != "first pending-ready=true" {
 		t.Errorf("got %q, want \"first pending-ready=true\"", got)
+	}
+}
+
+// `std.tui`'s frame layer (frame.lyra / box.lyra / status.lyra), which needs no terminal
+// at all: every one of these is string arithmetic, so what a test process lacks — a tty —
+// is not what they depend on. The escape sequences are asserted as bytes, since a wrong
+// row number or a missing reset is invisible in rendered output.
+
+// **A renderer writes only the rows that differ, and adjacent ones share a cursor move.**
+// That is the whole point of the layer: a viewer where only the status line changes should
+// write one row, not the screen. Asserted against the exact bytes, because a wrong row
+// number renders as a frame drawn one line off and reads as a flicker rather than a fault.
+func TestExec_RendererWritesOnlyChangedRows(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.tui.{ renderer, render, invalidate }
+let main = () -> void => {
+  var r = renderer()
+  var a: []string = ["aaa", "bbb", "ccc", "ddd"]
+  var b: []string = ["aaa", "XXX", "YYY", "ddd"]
+  var c: []string = ["ZZZ", "XXX", "YYY", "ddd"]
+  r.render(a)   // nothing known on screen: the whole frame
+  r.render(b)   // two adjacent rows: one cursor move
+  r.render(c)   // one row
+  r.render(c)   // identical: no write at all
+  r.invalidate()
+  r.render(c)   // told to forget: the whole frame again
+}
+`, "")
+	got := strings.ReplaceAll(strings.ReplaceAll(out, "\x1b", "<E>"), "\r\n", "|")
+	want := "<E>[1;1Haaa|bbb|ccc|ddd" + // whole frame, one move
+		"<E>[2;1HXXX|YYY" + // the changed band, one move for the pair
+		"<E>[1;1HZZZ" + // one row
+		// the identical frame writes nothing
+		"<E>[1;1HZZZ|XXX|YYY|ddd" // after invalidate
+	if got != want {
+		t.Errorf("renderer wrote\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+// A frame with fewer rows than the last must not compare against rows it no longer draws:
+// the record is truncated, so a row that comes *back* at its old content is still written.
+// Without that, shrinking and regrowing a frame leaves a row blank on screen while the
+// renderer believes it is painted.
+func TestExec_RendererForgetsRowsAFrameNoLongerDraws(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.tui.{ renderer, render }
+let main = () -> void => {
+  var r = renderer()
+  var tall: []string = ["aaa", "bbb"]
+  var short: []string = ["aaa"]
+  r.render(tall)
+  r.render(short)
+  r.render(tall)
+}
+`, "")
+	got := strings.ReplaceAll(strings.ReplaceAll(out, "\x1b", "<E>"), "\r\n", "|")
+	// The second frame writes nothing — row 0 is unchanged and row 1 is simply not drawn —
+	// and the third must write row 1 again rather than think it is still there.
+	want := "<E>[1;1Haaa|bbb" + "<E>[2;1Hbbb"
+	if got != want {
+		t.Errorf("renderer wrote\n  %q\nwant\n  %q", got, want)
+	}
+}
+
+// Box drawing is exact-width arithmetic, which is the part worth pinning: an off-by-one
+// puts the right border in the wrong column, and on a titled top it did — the row came
+// back a column short and the title touched the rule.
+func TestExec_BoxPiecesAreExactlyTheirWidth(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.tui.{ box_top, box_bottom, box_row, box_top_titled }
+let main = () -> void => {
+  print("${box_top(12)}|${box_row("hi", 12)}|${box_bottom(12)}|")
+  print("${box_top_titled("Title", 20)}|${box_top_titled("A title far too long", 12)}|")
+  print("${box_top(2)}|${box_row("", 2)}|")
+  print("${box_top(12).len()} ${box_top_titled("Title", 20).len()} ${box_top_titled("A title far too long", 12).len()}")
+}
+`, "")
+	want := "┌──────────┐|│hi        │|└──────────┘|" +
+		"┌─ Title ──────────┐|┌─ A title ┐|" +
+		"┌┐|││|" +
+		"12 20 12"
+	if got := strings.TrimSpace(out); got != want {
+		t.Errorf("box pieces = %q; want %q", got, want)
+	}
+}
+
+// A box narrower than its own borders is a wrong call rather than a tight one, and every
+// form goes through the same check — box_top(1) returned a two-column "┌┐" while its own
+// documentation said it trapped, for as long as the check lived at one call site.
+func TestExec_ABoxNarrowerThanItsBordersTraps(t *testing.T) {
+	t.Parallel()
+	for _, form := range []string{`box_top(1)`, `box_bottom(1)`, `box_row("x", 1)`, `box_top_titled("t", 1)`} {
+		out, err := exec.Command(preludeBinary(t, `
+module main
+import std.tui.{ box_top, box_bottom, box_row, box_top_titled }
+let main = () -> void => { println(`+form+`) }
+`)).CombinedOutput()
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != 101 {
+			t.Fatalf("%s must trap; got %v", form, err)
+		}
+		if !strings.Contains(string(out), "at least 2 columns") {
+			t.Errorf("%s: output = %q; want the too-narrow message", form, out)
+		}
+	}
+}
+
+// The status bar is always the full width — a bar redrawn shorter leaves the tail of the
+// old one, and inverse video makes that stale text obvious. `status_split` keeps the right
+// segment when the two do not fit, since it is the one a reader is tracking.
+func TestExec_StatusBarIsAlwaysFullWidth(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+import std.tui.{ status_bar, status_split }
+let visible = pure (s: string) -> i64 => s.len() - 8
+let main = () -> void => {
+  print("[${status_bar("q quits", 16)}]")
+  print("[${status_split("name.txt", "3:14", 20)}]")
+  print("[${status_split("a-very-long-name.txt", "3:14", 12)}]")
+  print("${visible(status_bar("q quits", 16))} ${visible(status_split("name.txt", "3:14", 20))}")
+}
+`, "")
+	// Eight bytes of escape per bar: `\e[7m` in and `\e[0m` out.
+	want := "[\x1b[7mq quits         \x1b[0m]" +
+		"[\x1b[7mname.txt        3:14\x1b[0m]" +
+		"[\x1b[7ma-very-l3:14\x1b[0m]" +
+		"16 20"
+	if got := strings.TrimSpace(out); got != want {
+		t.Errorf("status bars = %q; want %q", got, want)
 	}
 }

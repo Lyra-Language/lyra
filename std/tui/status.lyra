@@ -1,0 +1,49 @@
+module std.tui
+
+// The status bar: one row of chrome, at full width.
+//
+// Its own file because it is the one thing here that both *fits* text and *styles* it, and
+// the two live apart on purpose — `text.lyra` does string work and knows nothing about
+// escape sequences, `style.lyra` returns escape sequences and knows nothing about width.
+// A status bar is the composition, and putting it in either would make that file's header
+// stop being true.
+//
+// **Inverse rather than a colour pair.** A bar has to stand out against whatever the user's
+// theme is, and the one attribute that does so on every theme is swapping foreground and
+// background — a program that picks white-on-blue is unreadable for somebody. `bold` and a
+// colour are still there for a caller who wants them; this is the default that cannot be
+// wrong.
+
+/// `text` as a full-width status row.
+///
+/// ```lyra
+/// rows.push(status_bar("${count} items · q quits", cols))
+/// ```
+///
+/// **Full width is the point, not the styling.** A bar redrawn shorter than the one before
+/// leaves the tail of the old one on screen, and an inverse bar makes that obvious — the
+/// stale text is inverted too. `fit` pads, so the row always covers the whole line.
+///
+/// The trailing `reset` closes the inversion, so the row composes into a frame without
+/// tinting whatever follows it.
+pub let status_bar = pure (text: string, cols: i64) -> string =>
+  inverse() ++ (fit(text, cols) ++ reset())
+
+/// A status row with `left` at the left edge and `right` at the right, padded between.
+///
+/// ```lyra
+/// rows.push(status_split(path, "${row}:${col}", cols))
+/// ```
+///
+/// **The right segment wins when there is not room for both.** It is the one that changes
+/// — a position, a count, a clock — and a reader tracking it needs it in a fixed place;
+/// the left is usually a name, which reads fine truncated. So `left` is cut to whatever is
+/// left over, and only if `right` alone overflows the row is *it* cut.
+pub let status_split = pure (left: string, right: string, cols: i64) -> string => {
+  let room = cols - right.len()
+  if room <= 0 {
+    status_bar(right, cols)
+  } else {
+    status_bar(fit(left, room) ++ right, cols)
+  }
+}

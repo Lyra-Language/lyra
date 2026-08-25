@@ -9,6 +9,89 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (9)
+**`std.tui` above the decoder: a frame diff, box drawing, a status bar — and the array
+literal that could not be assigned to a field.**
+
+Three files, and the shape of each was decided by what the library already is: a frame is
+built as text and printed once, so everything here returns rows rather than drawing.
+
+**`frame.lyra` — the diff is by row, and that is a limit rather than a shortcut.** A row
+string carries escape sequences, and nothing in this library can tell which of its runes
+are visible cells — `text.lyra`'s header makes the same point about `fit`. A per-cell diff
+would need a parser for every sequence a caller might use and a cell model to diff against,
+which is a different library. A per-row diff needs neither, and takes a frame's cost from
+"every cell" to "the rows that moved".
+
+**Consecutive changed rows share one cursor move**, which is the entry's own instruction
+("emit runs rather than cells") at the granularity the data has. The measurement behind that
+instruction is that positioning per cell costs more than the text does; positioning per
+*row* is the same mistake one order of magnitude down, and a frame whose top half scrolls
+would pay it on every row.
+
+**Measured, on `examples/tui_viewer.lyra` converted to it:**
+
+| what happened | bytes written |
+|---|---|
+| first frame | 21,585 |
+| marker moves down (two adjacent rows, one run, + status) | 1,949 |
+| marker moves right (one row + status) | 1,023 |
+| a keypress that changes nothing but the event count | 95 |
+
+Every one of those was 21,585 before. `examples/mandelbrot_tui.lyra` is converted too,
+where a keypress that changes nothing writes **nothing at all**.
+
+**`invalidate` is not optional and the examples show why.** A resize reflows what the
+terminal is showing, so the remembered rows stop describing the screen; without it the next
+frame writes only what the renderer thinks changed, over a screen that changed underneath
+it. It goes in the same branch as the `clear()` that was already there.
+
+**Two decisions that could have gone the other way.** The renderer does *not* append an
+erase-to-end-of-line after each row: `\e[K` erases with the **current background colour**,
+so on a row ending inside a coloured span it paints the rest of the line in that colour — a
+worse artifact than the short-row tail it fixes, and one that appears only on the frames
+where colour is used. Full-width rows are the caller's job, which is what `fit` is for. And
+the previous frame is **copied** rather than aliased: a `[]string` has reference semantics,
+so keeping the caller's array would let a caller who reuses one buffer per frame see the
+diff go permanently empty — a frozen screen, with nothing to point at.
+
+**`box.lyra` traps under two columns, and every form goes through the one check.** It did
+not at first: `box_top` and `box_bottom` did their own arithmetic, so `box_top(1)` returned
+a two-column `┌┐` while its own documentation said it trapped. Unlike `fit`, there is no
+smaller box to return — the borders *are* the box — so a width that cannot hold them is a
+wrong call rather than a tight one.
+
+`box_top_titled` was a column short and let the title touch the rule, because five columns
+are spoken for whatever the title is (two corners, the `─` and space that introduce it, the
+space that closes it) and the first version counted three. Both are pinned by a test that
+asserts the exact glyphs *and* the widths, since either alone would have passed.
+
+**`status.lyra` is its own file** because it is the one thing here that both fits text and
+styles it, and the two live apart on purpose — `text.lyra` knows nothing about escape
+sequences, `style.lyra` nothing about widths. Putting a status bar in either would make that
+file's header stop being true. `status_split` keeps the **right** segment when the two do
+not fit: it is the one that changes and that a reader is tracking, while the left is usually
+a name that reads fine truncated.
+
+### The compiler bug it found
+
+`self.prev = []` reached the backend as `unknown type: %!s(<nil>)`, and `self.prev = ["x"]`
+as `cannot store [1 x { i8*, i64, i64 }] into { i64, … }*`. **An assignment through a
+member or index target did no literal propagation at all**, so an array literal on the right
+inferred its own flavour — a *fixed* `[1]string` for the non-empty one, and nothing at all
+for the empty one — instead of the `[]string` the field declares. A literal's flavour is
+chosen by what it is *used as*, and this path never told it.
+
+The path's own comment had already named this as the open question — *"Called directly
+rather than via propagateLiteralType, because this path does no literal propagation at all.
+Whether it **should** is a separate question (the other two assignment paths do)"* — so the
+fix is one call, placed before `checkStorable` so the check sees the type the value will
+have. Writing `Renderer` is what turned the question into an answer: `self.prev = []` is
+not an exotic spelling, it is how you clear a field.
+
+Both symptoms were hard backend errors on programs the front end passed, which is rule 5
+working — the backend refusing to guess rather than emitting something plausible.
+
 ### 08/22/26 (8)
 **An untyped literal argument adopts the width the call settled.**
 

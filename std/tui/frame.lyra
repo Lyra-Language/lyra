@@ -1,0 +1,119 @@
+module std.tui
+
+// Drawing a frame without redrawing what has not changed.
+//
+// The library's standing advice — build the whole frame as one string and `print` it once
+// — is what `screen.lyra` and `text.lyra` are shaped around, and it is right as far as it
+// goes. What it leaves on the table is that most frames differ from the one before by very
+// little: a viewer where only the status line moves rewrites every gradient cell on the
+// screen to change six characters. `Renderer` keeps the last frame and writes only the
+// rows that differ, still in a single `print`.
+//
+// **The diff is by row, and that is a limit rather than a shortcut.** A row string carries
+// escape sequences — colour, attributes — and nothing here can tell which of its runes are
+// visible cells and which are part of a sequence; `text.lyra`'s header makes the same point
+// about `fit`. A per-cell diff would need a parser for every sequence a caller might use
+// and a cell model to diff against, which is a different library. A per-row diff needs
+// neither, and takes the cost of a frame from "every cell" to "the rows that moved", which
+// is the difference that shows.
+
+/// A frame writer that remembers what is on the screen.
+///
+/// Construct one, hand each frame to `render`, and it writes the difference. It holds no
+/// terminal state of its own — `alt_screen_enter`, `cursor_hide` and the rest are still the
+/// caller's to pair — only the rows it last wrote.
+pub struct Renderer {
+  /// The rows as last written to the screen. Empty means nothing is known to be there, so
+  /// the next frame is written whole.
+  prev: []string,
+}
+
+/// A renderer that assumes nothing is on the screen, so the first frame is written whole.
+pub let renderer = pure () -> Renderer => Renderer { prev: [] }
+
+/// Write the rows that differ from the previous frame, in one `print`.
+///
+/// ```lyra
+/// var r = renderer()
+/// for _ in 0..<frames {
+///   var rows: []string = []
+///   for y in 0..<rows_count { rows.push(paint_row(y, cols)) }
+///   rows.push(status_bar("q quits", cols))
+///   r.render(rows)
+/// }
+/// ```
+///
+/// **Consecutive changed rows share one cursor move.** The measurement this library is
+/// built on is that positioning per cell costs more than the text does; positioning per
+/// *row* is the same mistake one order of magnitude down, and a frame where the top half
+/// scrolls would pay it on every row. A run of adjacent changed rows is written as one
+/// position escape followed by the rows joined with `\r\n`, so the common cases — one row
+/// changed, or a contiguous band — cost one move each.
+///
+/// **Every row must be the full width of the screen.** A row shorter than the one it
+/// replaces leaves the tail of the old one on screen, which is `fit`'s reason for
+/// existing. This deliberately does *not* append an erase-to-end-of-line: that erases with
+/// the **current background colour**, so on a row that ends inside a coloured span it
+/// paints the rest of the line in that colour — a worse artifact than the one it fixes,
+/// and one that appears only on the frames where colour is used.
+///
+/// # Panics
+/// Never traps. A frame with more or fewer rows than the last is handled by writing the
+/// rows that are new; see `invalidate` for what a *resize* needs on top of that.
+pub let render = (self: mut Renderer, rows: []string) -> void => {
+  var out = ""
+  let n = rows.len()
+  for i in 0..<n {
+    if self.row_changed(i, rows[i]) {
+      // Start a run here, then extend it over every following row that also changed. The
+      // position is written once for the whole run.
+      out = out ++ at(0, i)
+      for j in i..<n {
+        if !self.row_changed(j, rows[j]) { break }
+        if j > i { out = out ++ "\r\n" }
+        out = out ++ rows[j]
+        self.mark(j, rows[j])
+      }
+    }
+  }
+  self.truncate(n)
+  if out != "" { print(out) }
+}
+
+/// Forget what is on the screen, so the next `render` writes the whole frame.
+///
+/// Needed after anything that changes the screen behind the renderer's back — `clear()`,
+/// leaving and re-entering the alternate buffer, and above all a **resize**, where the
+/// terminal reflows what was there and the remembered rows no longer describe it. A
+/// program that redraws on `terminal_size` changing should call this in the same branch.
+pub let invalidate = (self: mut Renderer) -> void => { self.prev = [] }
+
+/// Whether row `i` differs from what was last written there. A row past the end of the
+/// previous frame counts as changed, which is what makes a first frame write in full.
+let row_changed = pure (self: Renderer, i: i64, row: string) -> bool =>
+  i >= self.prev.len() || self.prev[i] != row
+
+/// Record what row `i` now holds, growing the record if this frame is taller than the last.
+let mark = (self: mut Renderer, i: i64, row: string) -> void => {
+  if i < self.prev.len() { self.prev[i] = row } else { self.prev.push(row) }
+}
+
+/// Drop the record of any row beyond `n`, so a frame that got shorter does not compare
+/// against rows it no longer draws. What is still *on* the screen there is the caller's to
+/// erase — the renderer writes rows, it does not own the screen.
+let truncate = (self: mut Renderer, n: i64) -> void => {
+  if self.prev.len() <= n { return }
+  var kept: []string = []
+  for i in 0..<n { kept.push(self.prev[i]) }
+  self.prev = kept
+}
+
+/// The escape sequence that puts the cursor at `col`, `row` — **0-based, column first**,
+/// exactly as `move_to`, which is this printed.
+///
+/// The returning half exists because a diff has to compose positioning *into* the string
+/// it prints once; `move_to` performs its sequence, which is right for placing a cursor and
+/// useless for building a frame. It is the same split `style.lyra` and `screen.lyra` draw,
+/// and the `+ 1`s that reconcile the terminal's 1-based numbering live here alone —
+/// `move_to` is now `print(at(col, row))`.
+pub let at = pure (col: i64, row: i64) -> string => "\e[${row + 1};${col + 1}H"

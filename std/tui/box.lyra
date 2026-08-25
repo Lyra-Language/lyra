@@ -1,0 +1,92 @@
+module std.tui
+
+// Box drawing, as three strings a caller assembles.
+//
+// Pieces rather than a `draw_box(x, y, w, h)`, for the reason the whole library is shaped
+// around: a frame is built as text and printed once, so anything that positions the cursor
+// and writes on its own cannot be part of one. These return rows, and rows are what
+// `Renderer` takes.
+//
+// **One character set, single-line.** A caller who wants double lines or heavy rules writes
+// three functions of their own — they are one concatenation each, and the alternative is
+// this file growing a style enum to save nobody any work. What is worth having in a library
+// is the arithmetic, which is where the off-by-ones live.
+//
+// Every piece is exactly `width` columns, so a box composes into a frame whose rows must be
+// full width (see `Renderer`). The corner glyphs are one column each, as are `─` and `│`.
+
+/// The top edge: `┌───────┐` at exactly `width` columns.
+///
+/// # Panics
+/// Traps if `width` is less than 2, which cannot hold the two corners. Unlike `fit`, there
+/// is no smaller box to return — the borders *are* the box, so a width that cannot hold
+/// them is a wrong call rather than a tight one, and a layout that computed it will not be
+/// improved by silently drawing something else. Nearly every real width here is a constant
+/// or comes from `terminal_size()`, which answers 80x24 rather than something degenerate
+/// when there is no window.
+pub let box_top = pure (width: i64) -> string => "┌" ++ (rule(interior(width)) ++ "┐")
+
+/// The bottom edge: `└───────┘`. Traps on a width under 2, as `box_top` does.
+pub let box_bottom = pure (width: i64) -> string => "└" ++ (rule(interior(width)) ++ "┘")
+
+/// A content row: `│ text  │`, the text fitted to the space between the borders.
+///
+/// The text is `fit` to `width - 2`, so it is cut when long and padded when short and the
+/// right border always lands in the same column. An escape sequence inside `text` breaks
+/// that, exactly as it breaks `fit` — it occupies no columns while counting as runes — so
+/// colour goes *around* the whole row rather than inside it.
+///
+/// # Panics
+/// Traps on a width under 2, as `box_top` does.
+pub let box_row = pure (text: string, width: i64) -> string =>
+  "│" ++ (fit(text, interior(width)) ++ "│")
+
+/// A top edge carrying a title: `┌─ Title ────┐`.
+///
+/// The title is cut to whatever room is left after the corners, the two rule characters
+/// that frame it and its two spaces, so a long title shortens the rule to nothing rather
+/// than pushing the corner off the row. That is the `fit` rule applied to a smaller
+/// interior, and it is why the width arithmetic is worth having in one place.
+///
+/// # Panics
+/// Traps on a width under 2, as `box_top` does.
+pub let box_top_titled = pure (title: string, width: i64) -> string => {
+  // Called for the trap; the interior is not the arithmetic this form needs.
+  let _ = interior(width)
+  // Five columns are spoken for whatever the title is: the two corners, the `─` and space
+  // that introduce it, and the space that closes it. What is left is the room the title
+  // and the trailing rule share.
+  let room = width - 5
+  if room <= 0 {
+    box_top(width)
+  } else {
+    // `fit` to the *smaller* of the two, so a short title is not padded out to the whole
+    // room — that would push the rule off the end and leave the corner one column late.
+    let shown = fit(title, title.len().min(room))
+    "┌─ " ++ (shown ++ (" " ++ (rule(room - shown.len()) ++ "┐")))
+  }
+}
+
+/// `n` horizontal rule characters, or the empty string when `n` is not positive — a box
+/// exactly two columns wide has no interior, which is a real box and not an error.
+let rule = pure (n: i64) -> string => {
+  var out = ""
+  for _ in 0..<n { out = out ++ "─" }
+  out
+}
+
+/// The interior width — what is left after the two borders — having checked there is room
+/// for them.
+///
+/// Every public form goes through this, which is what makes the trap a property of the
+/// file rather than of the three functions that remembered to check. `box_top(1)` returned
+/// a two-column `┌┐` while its own documentation said it trapped, for exactly as long as
+/// the check lived at one call site.
+///
+/// # Panics
+/// Traps if `width` is less than 2. The message is a constant, so nothing here allocates
+/// beyond the string it is building.
+let interior = pure (width: i64) -> i64 => {
+  if width < 2 { panic("std.tui: a box needs at least 2 columns for its borders") }
+  width - 2
+}

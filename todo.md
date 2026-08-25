@@ -3748,15 +3748,39 @@ Both motivating cases are closed. A lone Escape is reported immediately rather t
 keypress late, and `tui_viewer.lyra` redraws on a window resize with no key pressed
 (measured: 40x12 to 60x20, no input sent).
 
-### [OPEN] `std.tui` above the decoder: frames, boxes, a status bar
+### [DONE 08/22] `std.tui` above the decoder: frames, boxes, a status bar
 
-What the original entry listed and is still unwritten: **frame diffing** (redrawing only
-the cells that changed, which is what makes a full-screen redraw not flicker), box
-drawing, and a status bar. None of it needs anything from the compiler.
+All three landed, in three files, and none of it needed anything from the compiler —
+though writing it found a compiler bug (below).
 
-Frame diffing is the one with a measurement behind it already: `todo.md`'s rendering
-section found that a terminal frame is better assembled into one string and printed once
-than positioned and printed per cell, so a diff wants to emit runs rather than cells.
+- **`frame.lyra`** — `Renderer`, `render`, `invalidate`, and `at` (the returning half of
+  `move_to`, which is now `print(at(col, row))` so the 1-based arithmetic exists once).
+  The diff is **by row**, which is a limit rather than a shortcut: a row carries escape
+  sequences and nothing can tell which of its runes are visible cells, so a per-cell diff
+  needs a parser for every sequence a caller might use. **Consecutive changed rows share
+  one cursor move** — that is the entry's "emit runs rather than cells", at the granularity
+  the data actually has.
+- **`box.lyra`** — `box_top`, `box_bottom`, `box_row`, `box_top_titled`. Pieces rather than
+  a `draw_box(x, y, w, h)`, because anything that positions the cursor itself cannot be part
+  of a frame that is printed once. Traps under 2 columns, and *every* form goes through the
+  one check — `box_top(1)` returned a two-column `┌┐` while its own doc said it trapped, for
+  as long as the check lived at a single call site.
+- **`status.lyra`** — `status_bar` and `status_split`. Its own file because it is the one
+  thing here that both fits text and styles it, and `text.lyra` (no escapes) and
+  `style.lyra` (no widths) each say in their header that they do not do the other.
+
+**Measured on `examples/tui_viewer.lyra`**, converted to it: the first frame is 21,585
+bytes, a marker move is 1,949 (two adjacent rows in one run, plus the status row), a
+horizontal move 1,023, and a keypress that changes nothing at all is 95 — the status row
+alone. Before, every one of those was 21,585. `examples/mandelbrot_tui.lyra` is converted
+too, where an unbound keypress now writes **nothing**.
+
+**One compiler bug, fixed with it**: assigning an array literal to a struct field did not
+propagate the field's type into the literal, so `self.prev = ["x"]` reached the backend as
+`cannot store [1 x { i8*, i64, i64 }] into { i64, … }*` and `self.prev = []` as
+`unknown type: %!s(<nil>)`. The path's own comment already called this out as an open
+question — "whether it *should* is a separate question (the other two assignment paths
+do)" — and writing `Renderer` answered it. See `COMPLETED.md`.
 
 ### [DONE 08/18] An import's member list restricts visibility
 

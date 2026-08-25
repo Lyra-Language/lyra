@@ -1,8 +1,9 @@
 import std.tui.{
   event_reader, Event, Key, event_available,
   mouse_enable, mouse_disable,
-  alt_screen_enter, alt_screen_leave, clear, cursor_hide, cursor_show, cursor_home, move_to,
-  fg, bg, rgb, reset, bold, inverse, fit
+  alt_screen_enter, alt_screen_leave, clear, cursor_hide, cursor_show,
+  Renderer, renderer, render, invalidate,
+  fg, bg, rgb, reset, inverse, status_split
 }
 
 // A full-screen interactive skeleton: the shape a terminal viewer wants, with a colour
@@ -13,9 +14,13 @@ import std.tui.{
 //   * **Setup and teardown pair up.** Four things are switched on and all four must be
 //     switched off, in reverse. Leave any of them and the user's shell is broken after
 //     the program exits.
-//   * **One frame, one `print`.** Every cell goes into a single string and reaches the
-//     terminal in one write. Positioning and printing per cell is the obvious way and is
-//     far slower.
+//   * **One frame, one `print`, and only the rows that moved.** Every cell goes into a
+//     single string and reaches the terminal in one write; `Renderer` then narrows that to
+//     the rows differing from the last frame. Moving the marker one cell rewrites two rows
+//     and the status bar instead of the whole screen.
+//   * **The renderer is told when the screen changed behind it.** A resize reflows what the
+//     terminal is showing, so the remembered rows stop describing it — `invalidate` before
+//     the redraw, in the same branch as `clear`.
 //   * **The size is read every frame**, so a resize is picked up. See the note on that
 //     at the bottom — it is not free.
 //   * Arrows and mouse both move the marker, the wheel changes a zoom number: the input
@@ -38,8 +43,9 @@ let main = () => {
   var running = true
   var events = event_reader()
 
+  var screen = renderer()
   let (cols0, rows0) = terminal_size()
-  draw(cols0, rows0, zoom, mx, my, count)
+  screen.draw(cols0, rows0, zoom, mx, my, count)
 
   var last_cols = cols0
   var last_rows = rows0
@@ -57,7 +63,11 @@ let main = () => {
         mx = clamp(mx, 0, poll_cols - 1)
         my = clamp(my, 0, poll_rows - 2)
         clear()
-        draw(poll_cols, poll_rows, zoom, mx, my, count)
+        // The terminal has reflowed what it was showing, so the rows the renderer
+        // remembers no longer describe the screen. Without this the next frame writes only
+        // what *it* thinks changed, over a screen that changed underneath it.
+        screen.invalidate()
+        screen.draw(poll_cols, poll_rows, zoom, mx, my, count)
       }
     } else {
     match events.next_event() {
@@ -87,7 +97,7 @@ let main = () => {
         mx = clamp(mx, 0, cols - 1)
         my = clamp(my, 0, rows - 2)
         zoom = clamp(zoom, 0, 99)
-        draw(cols, rows, zoom, mx, my, count)
+        screen.draw(cols, rows, zoom, mx, my, count)
       }
     }
     }
@@ -119,7 +129,12 @@ let teardown = () => {
 }
 
 /// Draw one whole frame: rows of gradient, then the status line, in a single write.
-let draw = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> void => {
+///
+/// The frame is built in full every time and the diffing is left to `Renderer` — building
+/// is cheap and comparing is cheaper than a wrong answer about what changed. A program that
+/// tried to skip building the unchanged rows would need to know which inputs each row
+/// depends on, which is the bookkeeping this design exists to avoid.
+let draw = (self: mut Renderer, cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> void => {
   var lines: []string = []
   // rows - 1, leaving the last line for the status bar. Drawing into the final row and
   // then emitting a newline scrolls the screen, which is what makes a full-height frame
@@ -130,8 +145,7 @@ let draw = (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> v
     lines.push(render_row(row, cols, span_rows, zoom, mx, my))
   }
   lines.push(status(cols, rows, zoom, mx, my, events))
-  cursor_home()
-  print(lines.join("\r\n"))
+  self.render(lines)
 }
 
 /// One row of the frame, as a string. Built by concatenation into a single row rather
@@ -176,8 +190,14 @@ let band = pure noalloc (pos: i64, span: i64) -> i64 =>
   if span <= 0 { 0 } else { 6 * pos / span }
 
 /// The status line, always exactly one terminal row wide.
-let status = pure (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> string => {
-  let text = " ${cols}x${rows}  zoom ${zoom}  marker ${mx},${my}  events ${events}  " ++
-    "arrows/click move · wheel zooms · q quits "
-  inverse() ++ (bold() ++ (fit(text, cols) ++ reset()))
-}
+///
+/// Split rather than one string: the help never changes and the state changes constantly,
+/// so pinning the help to the right edge keeps the numbers from sliding under it as they
+/// gain and lose digits. `status_split` cuts the *left* when the two do not fit, which is
+/// the right way round here — a narrow window loses the end of the state, not the key that
+/// quits.
+let status = pure (cols: i64, rows: i64, zoom: i64, mx: i64, my: i64, events: i64) -> string =>
+  status_split(
+    " ${cols}x${rows}  zoom ${zoom}  marker ${mx},${my}  events ${events}",
+    "arrows/click move · wheel zooms · q quits ",
+    cols)

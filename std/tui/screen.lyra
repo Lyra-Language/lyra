@@ -45,12 +45,17 @@ pub let cursor_home = () -> void => print("\e[H")
 ///
 /// **0-based on the same reasoning**, which is the argument the line above already makes
 /// applied to the origin rather than the order. The terminal counts from one — `\e[1;1H`
-/// is the top-left cell — and the `+ 1` that reconciles it lives here, paired with the
-/// `- 1` in `mouse_event`. Everything else in Lyra indexes from zero, so a coordinate that
-/// came from a click lands in `grid[row][col]` with no arithmetic and a loop written
-/// `0..<rows` compares against it directly. Hiding the terminal's numbering is what this
-/// library is for; a program that hand-checks an escape sequence is reading this line.
-pub let move_to = (col: i64, row: i64) -> void => print("\e[${row + 1};${col + 1}H")
+/// is the top-left cell — and the `+ 1` that reconciles it lives in `at` (frame.lyra),
+/// paired with the `- 1` in `mouse_event`. Everything else in Lyra indexes from zero, so a
+/// coordinate that came from a click lands in `grid[row][col]` with no arithmetic and a
+/// loop written `0..<rows` compares against it directly. Hiding the terminal's numbering is
+/// what this library is for; a program that hand-checks an escape sequence is reading this
+/// line.
+///
+/// This *is* `at`, printed: a frame diff has to compose the same sequence into a string
+/// rather than perform it, and one of the two had to be written in terms of the other or
+/// the arithmetic would exist twice.
+pub let move_to = (col: i64, row: i64) -> void => print(at(col, row))
 
 /// Hide the cursor. Worth doing for the duration of a full-screen redraw: a visible
 /// cursor skitters across the screen as the frame is written.
