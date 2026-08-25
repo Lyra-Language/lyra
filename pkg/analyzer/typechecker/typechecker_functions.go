@@ -1135,7 +1135,11 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// backend reads the node too (its `recordedType` already strips newtypes, so this
 	// only agrees with what lowering was going to do anyway). It is this *occurrence*
 	// of the receiver, not the binding, so the variable keeps its newtype elsewhere.
-	if base := types.StripNewtype(objType); base != nil {
+	// Resolved as it strips: a *generic* newtype's base is a ParameterizedType that has to
+	// be resolved before the wrapper underneath it is visible, so `newtype Outer<t> =
+	// Inner<t>` over `newtype Inner<t> = []t` stopped one layer short and `o.len()` reported
+	// "member access on non-struct type Outer".
+	if base := tc.stripNewtypeResolving(objType, member.Object.GetLocation()); base != nil {
 		if _, isNewtype := objType.(*types.ConstrainedType); isNewtype {
 			if fn, res := tc.ufcsCandidate(base, methodName, member, call); res != ufcsNoMatch {
 				if res == ufcsRefused {

@@ -2259,6 +2259,32 @@ func promoteToDefault(t types.Type) types.Type {
 // is a concrete numeric primitive — or `string`/`bool`, the two identity-only
 // targets that exist as the newtype read-out spelling. Returns nil for ordinary
 // function calls.
+// stripNewtypeResolving removes every newtype wrapper from t, resolving at each step.
+//
+// `types.StripNewtype` alone is not enough anywhere a *declared* type can appear, for two
+// reasons that compound. A binding's type may arrive as the bare declared name rather than a
+// resolved `*ConstrainedType` — which is how a pattern-bound `d: Meters` reached the
+// conversion check and was refused — and a **generic** newtype's base is a
+// `ParameterizedType` that has to be resolved before the next wrapper underneath it is
+// visible, so `newtype Outer<t> = Inner<t>` over `newtype Inner<t> = []t` stops one layer
+// short.
+//
+// Resolution is the quiet variant: a name this cannot resolve is reported by whatever is
+// asking, not here.
+func (tc *TypeChecker) stripNewtypeResolving(t types.Type, loc ast.Location) types.Type {
+	for i := 0; t != nil && i < 32; i++ {
+		resolved := tc.resolveTypeIfKnown(t, loc)
+		ct, isCT := resolved.(*types.ConstrainedType)
+		if !isCT {
+			return resolved
+		}
+		t = ct.Type
+	}
+	// A cycle among newtype bases is refused by checkNewtypeCycles before anything reaches
+	// here; the bound is a backstop so a hole there cannot hang the typechecker.
+	return t
+}
+
 func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Type {
 	ident, ok := call.Function.(*ast.IdentifierExpr)
 	if !ok {
@@ -2292,14 +2318,7 @@ func (tc *TypeChecker) inferTypeConversion(call *ast.FunctionCallExpr) types.Typ
 	// for `l.d`, and refused — *"cannot convert Meters to i64"* — for the `d` in
 	// `match l { { d, n } => i64(d) }` or `let { d, n } = l`. That is the read-out spelling
 	// lyra-E047 names as the fix, rejected in two of the four places it can be written.
-	argType = tc.resolveTypeIfKnown(argType, call.GetLocation())
-	for {
-		ct, isCT := argType.(*types.ConstrainedType)
-		if !isCT {
-			break
-		}
-		argType = tc.resolveTypeIfKnown(ct.Type, call.GetLocation())
-	}
+	argType = tc.stripNewtypeResolving(argType, call.GetLocation())
 	// The identity-only targets: `string(x)` and `bool(x)` read a newtype over them
 	// back out, and do nothing else — no stringification, no truthiness. Anything
 	// whose stripped type is not already the target is refused, naming that.
@@ -2514,6 +2533,22 @@ func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type
 		}
 		tc.checkNewtypeConstraints(expr, ct)
 		tc.propagateLiteral(expr, tc.resolveTypeIfKnown(ct.Type, expr.GetLocation()), true)
+		// **Put the wrapper back on the root.** The recursion narrows the leaves against the
+		// base, and the array arms re-record the node they were handed with the base's own
+		// shape — so `let b: Bag = ["x"]` over `newtype Bag = []string` came out recorded as
+		// `DynamicArray<string>`, and every later reference to `b` read that: returning it
+		// was lyra-E046 ("cannot use DynamicArray<string> as Bag implicitly") and passing it
+		// to a `(b: Bag)` parameter the same.
+		//
+		// A *scalar* base never showed it: its re-record is guarded by
+		// `currentTypeIsUntyped`, false once checkVarDecl has recorded the annotation. The
+		// array arms re-record unconditionally — deliberately, since a return body or an
+		// argument has nothing else recording the node — so the two differed only in whether
+		// anything overwrote the wrapper.
+		//
+		// The consumers that want the *shape* strip for themselves; inferIndexExpr above is
+		// the one that had been relying on this overwrite to do it.
+		tc.typeTable.Set(expr, ct)
 		return
 	}
 
@@ -3491,6 +3526,20 @@ func (tc *TypeChecker) resolveConstantInt(expr ast.Expression) (int64, bool) {
 func (tc *TypeChecker) inferIndexExpr(expr *ast.IndexExpr) types.Type {
 	objectType := tc.inferExprType(expr.Object)
 	indexType := tc.inferExprType(expr.Index)
+
+	// **Indexing looks through a newtype**, the way the method fallback and the read-out
+	// conversion already do: `newtype Sorted = []i64` is a `[]i64` at run time, so `s[0]`
+	// is the base's index. Resolved first, since a binding's type can arrive as the bare
+	// declared name rather than as a resolved `*ConstrainedType`.
+	//
+	// This used to happen by accident. An annotated binding's value node was re-recorded
+	// with the *stripped* array type by literal propagation, so `s` read as `[]i64` and the
+	// switch below matched — while the same value crossing a call boundary was still a
+	// `Sorted` and failed assignability. Making the strip explicit here is what lets the
+	// binding keep its wrapper (below, in propagateLiteral) without breaking indexing.
+	if objectType != nil {
+		objectType = types.StripNewtype(tc.resolveTypeIfKnown(objectType, expr.GetLocation()))
+	}
 
 	if objectType == nil {
 		return nil

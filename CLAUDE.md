@@ -211,6 +211,22 @@ real failure, and none is local to one package.
      over composite types, which is the family `emitRetainValue`/`emitDropValue` and
      `mentionsTypeVar` also belong to.
 
+     **Every rung that reads a value's type must strip newtypes *itself*, and resolve
+     between strips.** `stripNewtypeResolving` is the one answer — used by the read-out
+     conversion, indexing and the method fallback. Two things make a plain
+     `types.StripNewtype` insufficient: a binding's type can arrive as the bare declared name
+     rather than a resolved `*ConstrainedType` (which is how a pattern-bound `d: Meters`
+     reached the conversion check and was refused), and a **generic** newtype's base is a
+     `ParameterizedType` that has to be resolved before the wrapper under it is visible, so
+     `newtype Outer<t> = Inner<t>` over `newtype Inner<t> = []t` stops one layer short.
+
+     This became load-bearing on 08/24. Literal propagation re-recorded an annotated *array*
+     binding's root with the base's shape, so `let b: Bag = ["x"]` read as
+     `DynamicArray<string>` — which made indexing work **by accident** and made the value fail
+     assignability the moment it crossed a call boundary. Two needs were resting on one
+     recorded type, and the first attempt at the fix (restore the wrapper, change nothing
+     else) broke indexing and two tests. It is both halves or neither.
+
      **A newtype is the same tax, and `*ConstrainedType` is its `RawPointerType`.**
      `resolveInstantiation` (backend/llvm/generic_types.go) is the choke point that turns a
      `ParameterizedType` into the shape it denotes precisely so a dozen downstream switches
@@ -269,6 +285,7 @@ real failure, and none is local to one package.
    | what are this node's children? | `ast.WalkStmt`/`ast.WalkExpr` (`…Children` to skip the node itself) |
    | does this statement carry an expression ownership must see? | `ownership.analyzer.stmt` — **all** statement kinds, not the five that were obvious |
    | rewrite expressions in place | `ast.RewriteStmt`/`ast.RewriteExpr` |
+   | see through a newtype to its base | `stripNewtypeResolving` (typechecker) |
    | where is the expression at this position? | `findExprAtPos` (`cmd/lyra-lsp/hover.go`) |
    | bind a generic type's arguments to its parameters | `ast.BindGenericParams` |
    | what does a value of this type hold inline? | `ownership.eachComponent` |

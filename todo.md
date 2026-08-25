@@ -1153,19 +1153,38 @@ write today:
   visibility, and why the existing tests missed it: they declare types `pub`, or in no
   module at all. See COMPLETED.md.
 
-- **[OPEN] A newtype over a managed base loses its wrapper in return and parameter position.**
-  `newtype Bag = []string`; a `var b: Bag = ["x"]` returned as a function's tail is
-  `lyra-E046` — *"cannot use DynamicArray<string> as Bag implicitly"* — as is passing it to a
-  `(b: Bag)` parameter, and indexing the call's result is *"cannot index into type Bag"*.
+- **[DONE 08/24] A newtype over an array keeps its wrapper across a call boundary.** `let b:
+  Bag = ["x"]` over `newtype Bag = []string` recorded the binding as `DynamicArray<string>`,
+  so returning it was `lyra-E046` and passing it to a `(b: Bag)` parameter said the same.
 
-  The same value works when it stays a local: `let s: Bag = [...]` then `s[0]` is fine, and
-  the read-out conversion works from every binding position as of 08/24. So the wrapper
-  survives a binding and is lost crossing a call boundary, which points at where a declared
-  return or parameter type is reconciled against the inferred one rather than at the newtype
-  machinery itself.
+  The cause was **literal propagation**: it narrows an array literal's leaves against the
+  context type's *base*, then re-records the root with the base's shape. A scalar base never
+  showed it — its re-record is guarded by `currentTypeIsUntyped`, false once the annotation is
+  recorded — while the array arms re-record unconditionally, deliberately, since a return body
+  or an argument has nothing else recording that node.
 
-  **Not generic-specific** — found 08/24 while sweeping the generic-newtype lowering fix, and
-  confirmed to reproduce identically with that change stashed, with a non-generic newtype.
+  **Keeping the wrapper moved work onto the rungs that read a value's type**, which had been
+  relying on that overwrite to strip for them. Indexing and the method fallback now
+  resolve-and-strip for themselves, through one shared `stripNewtypeResolving` — the same
+  helper the read-out conversion uses. It resolves *between* strips because a generic
+  newtype's base is a `ParameterizedType`: `newtype Outer<t> = Inner<t>` over
+  `newtype Inner<t> = []t` stops one layer short of the array otherwise.
+
+  A diagnostic improved as a side effect: `Bag` → `Sack` (two newtypes over one base) now
+  reports *"cannot assign Bag to Sack"* where it used to describe the base, because the
+  wrapper it needed to name was the thing being lost.
+
+  **The first attempt was wrong and is worth recording.** Restoring the wrapper alone broke
+  indexing and two existing tests, because indexing worked only by accident — the clobber was
+  doing its stripping. Two needs were resting on one recorded type, and the fix is both halves
+  or neither.
+
+- **[OPEN] The array-*repeat* form does not widen under a newtype annotation.** `let n: Nums =
+  [7; 3]` over `newtype Nums = []i64` is `lyra-E046` — *"cannot use StaticArray<integer
+  literal, 3> as Nums"* — while the literal form `[7, 7, 7]` works and the plain `let n: []i64
+  = [7; 3]` works. So the static→dynamic widening a `[]T` context performs does not reach
+  through a newtype wrapper for the repeat form specifically. Pre-existing: it fails
+  identically with the 08/24 wrapper fix stashed. Found 08/24 while testing that fix.
 
 - **[OPEN] A struct literal with every field defaulted cannot be written.** `Person {}` is a
   syntax error — a literal body requires at least one field — so defaults stop being usable
