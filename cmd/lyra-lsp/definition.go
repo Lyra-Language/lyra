@@ -56,6 +56,28 @@ func (h *Handler) Definition(_ context.Context, params *lsp.DefinitionParams) (r
 	return []lsp.Location{target}, nil
 }
 
+// Declaration implements textDocument/declaration, which in Lyra is the same question as
+// textDocument/definition.
+//
+// The two are distinct in a language where a name is *declared* in one place and *defined*
+// in another — a C header against its translation unit, an Objective-C `@interface` against
+// its `@implementation`. Lyra has no such split: a `let`, a `type`, a `trait` and an
+// `extern` each introduce a name exactly once, at the place their body or signature is
+// written, and there is nothing else for a client to jump to.
+//
+// Implemented rather than left absent because an editor's menu is static: Zed offers "Go to
+// Declaration" whether or not a server answers it, so declining leaves the item there doing
+// nothing — which reads as a broken feature rather than an inapplicable one. Answering with
+// the definition is both correct here and what every other single-declaration language
+// server does.
+func (h *Handler) Declaration(ctx context.Context, params *lsp.DeclarationParams) (result []lsp.Location, retErr error) {
+	return h.Definition(ctx, &lsp.DefinitionParams{
+		TextDocumentPositionParams: params.TextDocumentPositionParams,
+		WorkDoneProgressParams:     params.WorkDoneProgressParams,
+		PartialResultParams:        params.PartialResultParams,
+	})
+}
+
 // resolveTypeReference answers for a cursor sitting on a type *name* — in a parameter, a
 // return type, a field, a local annotation, a generic argument, an `impl` target.
 //

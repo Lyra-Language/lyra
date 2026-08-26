@@ -297,3 +297,27 @@ let area = pure (s: Shape) -> i64 => match s {
 		t.Errorf("jumped to line %d; want 4 (the binding itself)", got)
 	}
 }
+
+// **Go to Declaration is Go to Definition here.** The two differ in a language where a name
+// is declared in one place and defined in another; Lyra has no such split, so answering with
+// the definition is correct — and answering at all matters, because an editor's menu is
+// static and an unimplemented item sits there doing nothing, which reads as broken.
+func TestDeclaration_AnswersAsDefinitionDoes(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	src := `
+let helper = pure (n: i64) -> i64 => n
+let main = () -> void => println(helper(1))`
+	openAndWait(t, h, src)
+	col := strings.Index(strings.Split(src, "\n")[2], "helper(1)")
+	decl, err := h.Declaration(testURI, 2, col)
+	if err != nil {
+		t.Fatalf("Declaration: %v", err)
+	}
+	def, err := h.Definition(testURI, 2, col)
+	if err != nil {
+		t.Fatalf("Definition: %v", err)
+	}
+	if len(decl) != 1 || len(def) != 1 || decl[0] != def[0] {
+		t.Errorf("declaration %v and definition %v must agree", decl, def)
+	}
+}

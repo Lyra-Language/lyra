@@ -9,6 +9,62 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (15)
+**Patterns become visible to the editor: definition, hover, references — and Go to
+Declaration exists.**
+
+Reported from Zed: right-clicking the `Keyboard` of `Keyboard(Up) => …` and choosing any of
+the three "Go to …" items did nothing. Three separate causes behind one symptom.
+
+**Patterns are the third supertype and nothing walked them.** `Statement`, `Expression`,
+`Pattern` — and `WalkStmt`/`WalkExpr` take an `onStmt` and an `onExpr`. So every
+position-based feature was blind to a whole category of the language, and a constructor used
+as a *value* resolved while the same constructor in a `match` arm did not.
+
+**The failure was worse than silence.** Pattern and expression spans overlap, so
+`findExprAtPos` always has an answer for a position inside a pattern: at `Keyboard` it
+returned a nearby tuple literal, at `Up` an array literal. The wrong node was resolved
+rather than none, which is why patterns got a lookup of their own rather than a fallback
+inside the expression one.
+
+`ast.WalkPattern`/`ast.WalkPatternChildren`/`ast.PatternsOf` are the canonical walk. Ten
+passes still hand-roll their own; converting them is rule 8's fix and is recorded rather
+than done.
+
+**A constructor is not a name any lookup maps.** `import std.tui.{ Event }` admits `Event`
+and not `Keyboard`, and should not have to — a module using a type's constructors has
+already imported the type. `SymbolTable.DeclaringDataType` is the scan that finds a
+constructor's owner, moved off the TypeChecker so navigation and typing share one ordering
+rather than two that can disagree about which `Some` a program means.
+
+**One deliberate concession**, documented at its call site. `match m.button { WheelUp => … }`
+never mentions `MouseButton`: the typechecker resolves that arm through the *scrutinee's*
+type, which navigation does not have. So a constructor whose owning type the file cannot
+name falls back to a scan that ignores visibility. It picks a declaration to jump to and is
+explicitly not a second rule about which constructor a program *means* — where two types
+share a constructor name it may pick the other one. A wrong jump is visible and correctable;
+refusing looks broken on ordinary code.
+
+**References answers for a constructor across both halves of the AST** — the pattern
+occurrences and the value occurrences. Reporting one half would be worse than reporting
+neither, since a reader takes the answer as complete.
+
+**And it declines for a `match`-arm binding, which is the third cause.** Arms create no
+scope and register nothing, so `m` is invisible to every scope-based question — which is
+also why a *use* of it resolves to nothing. Answering with the binding alone and none of its
+uses is a result read as "never used", so references declines instead;
+`TestReferences_AMatchArmBindingIsNotYetResolvable` is written to fail when the collector
+gains arm scopes, so the LSP half is not forgotten.
+
+**Go to Declaration is Go to Definition here**, and now exists. The two are distinct in a
+language where a name is declared in one place and defined in another; Lyra has no such
+split. Implemented rather than left absent because an editor's menu is static: an
+unimplemented item sits there doing nothing, which reads as broken rather than
+inapplicable.
+
+Still missing: **Go to Type Definition**, which is the one genuinely different question of
+the three — on `Keyboard` it should answer `Event`, on a binding its type.
+
 ### 08/22/26 (14)
 **The editor disagreed with the compiler because a "free cache" was load-bearing.**
 
