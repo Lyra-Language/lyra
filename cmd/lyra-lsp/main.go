@@ -174,7 +174,47 @@ func (h *Handler) Initialize(_ context.Context, params *lsp.InitializeParams) (*
 	}, nil
 }
 
-func (h *Handler) Shutdown(_ context.Context) error { return nil }
+// Shutdown clears every diagnostic this server published before it goes away.
+//
+// **A diagnostic outlives the server that published it.** The client holds the last set it
+// was sent and has no reason to drop it when the connection ends, so a server that exits
+// without clearing leaves the editor marking errors from a program that no longer exists.
+// Reported on 08/22 as an error against a file `lyrac check` accepted and that ran — and
+// it survived the user's own remedy, restarting the extension, because the restart did not
+// take and nothing had cleared the markers meanwhile.
+//
+// It reads as a *compiler* bug: the editor and the compiler disagree, and the editor is the
+// one being looked at. That is why a stale marker costs far more than its size suggests.
+//
+// This covers the ordinary path — a restart, a rebuild, a client shutting the server down.
+// It cannot cover a crash or a kill, where no handler runs at all; clearing there belongs
+// to the client, which is the one thing still holding state (see todo.md).
+func (h *Handler) Shutdown(ctx context.Context) error {
+	if h.client == nil {
+		return nil
+	}
+	h.mu.Lock()
+	uris := make([]string, 0, len(h.docStore))
+	for uri := range h.docStore {
+		uris = append(uris, uri)
+	}
+	h.mu.Unlock()
+
+	for _, uri := range uris {
+		// An empty list is how LSP says "nothing wrong here"; there is no separate
+		// retraction. Errors are logged and not returned: shutdown must not fail because
+		// one notification could not be delivered, and by this point the connection may
+		// already be going away.
+		if err := h.client.PublishDiagnostics(ctx, &lsp.PublishDiagnosticsParams{
+			URI:         lsp.DocumentURI(uri),
+			Diagnostics: []lsp.Diagnostic{},
+		}); err != nil {
+			log.Printf("shutdown: could not clear diagnostics for %s: %v", uri, err)
+		}
+	}
+	log.Printf("shutdown: cleared diagnostics for %d document(s)", len(uris))
+	return nil
+}
 
 // DidOpen stores the initial document text and runs the first analysis.
 func (h *Handler) DidOpen(ctx context.Context, params *lsp.DidOpenTextDocumentParams) error {

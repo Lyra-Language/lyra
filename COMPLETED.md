@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (19)
+**A server now clears its diagnostics before it goes away.**
+
+The failure that cost an hour earlier the same day, fixed at the end of it: an error reported
+against a file `lyrac check` accepts and that runs, which neither the compiler nor the
+server's own `analyzeDocument` could reproduce, because the markers were published by an
+instance that had since been replaced.
+
+**A diagnostic outlives the server that published it.** The client holds the last set it was
+sent and has no reason to drop it when the connection ends — the protocol has no retraction
+beyond publishing an empty list — so a server that exits without clearing leaves the editor
+marking a program that no longer exists.
+
+What makes it expensive out of proportion to its size is how it presents: the editor and the
+compiler disagree, and the editor is the one being looked at. Every instinct says the
+compiler is wrong.
+
+`Shutdown` was `return nil`. It now publishes an empty set for every open document, which
+covers a restart, a rebuild and a client shutting the server down — the case actually hit,
+since the remedy attempted was rebuilding the extension. `DidClose` already cleared, so
+closing a file was never the gap.
+
+**A crash or a kill cannot be covered from here**, and the two clients differ. The VS Code
+extension pushes its `LanguageClient` into `context.subscriptions`, so the client library's
+diagnostic collection is disposed with it. **Zed owns its LSP client itself** — our extension
+only resolves the binary path — so there is nothing on our side to clear, and what happens
+there is Zed's behaviour. Recorded rather than guessed at.
+
+The test asserts through the **client**, not the handler: what matters is that a clearing
+notification is actually delivered, and a test reading internal state would pass on a server
+that computed the right answer and never sent it. Verified by reverting the fix and watching
+it fail with the stale diagnostic named in the failure message.
+
 ### 08/22/26 (18)
 **`name @ pattern` binds something — and five places had to learn what an arm matches.**
 

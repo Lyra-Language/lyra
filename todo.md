@@ -1602,52 +1602,23 @@ two editor features single-file where the program no longer is:
     exception is `walkDestructuredPattern`, which is a dispatch that has silently fallen
     behind the language — see the entry above.
 
-- **[OPEN] A dead language server leaves its diagnostics on screen.** When `lyra-lsp` exits
-  — killed, crashed, or replaced by a rebuild — the editor keeps the last diagnostics it
-  published, so the file still shows errors from a program that no longer exists. It cost
-  an hour on 08/22: an error was reported against `examples/mandelbrot_tui.lyra` that
-  neither `lyrac check` nor the server's own `analyzeDocument` could reproduce, on a file
-  that compiled and ran, and the markers were stale ones from a mid-edit buffer. Nothing in
-  the extension notices, and the user's own instinct — restart the extension — did not
-  clear them because the restart did not take.
-  - The server cannot fix this alone once it is dead. What it *can* do is publish an empty
-    set for every open document on shutdown, which covers the ordinary "restart the
-    server" path; a crash still needs the client to clear on exit, which is the
-    extension's job in both `lyra-vscode-ext` and `lyra-zed-ext`.
-  - Worth doing because the failure presents as a *compiler* bug — the editor and the
-    compiler disagree, and the editor is the one the author is looking at.
-
-## Constructor syntax — juxtaposition
-
-**[DECIDED 08/02; BUILT]** `Some 42` is back alongside `Some(42)`. **One operand, never
-curried** — there is no `Rect 3 4`, because a constructor's positional payload is already a
-single anonymous tuple internally (`Rect(f64, f64)` → one `TupleType` param), so `Rect(3, 4)`
-re-reads as "Rect applied to the tuple `(3, 4)`": the parens belong to the tuple, not to a
-call, and the tree is byte-for-byte what it was.
-
-*Why now, when it was removed 06/18.* That commit is explicit that the machinery existed
-"solely to prevent a nullary constructor from greedily consuming the next statement **in the
-terminator-less grammar**" — `let c = None` ⏎ `match c {…}` parsing as `None(match …)`.
-Statements gained a terminator on 07/31, six weeks later. The sole stated reason expired.
-It also closes a real asymmetry: `Some 42` has always been legal in *pattern* position
-(`data_pattern` is `Name pattern`), so the two positions disagreed about the language's own
-constructor syntax.
-
-### `Some -1` is `Some(-1)` — application, not subtraction
-
-**[DECIDED 08/02]** Application binds tighter than binary operators, and `negation` is in the
-operand set, so `Some -1` applies `Some` to `-1`. `Some 42 ?? d` is `(Some 42) ?? d` and
-`Some a + b` is `(Some a) + b`, the ML reading.
-
-*Why this is not the Haskell ambiguity.* In Haskell `Some -1` is genuinely ambiguous because
-any identifier can be a value, so the subtraction reading has an operand. **Lyra's lexer has
-already split the cases**: `identifier` is `/(_[a-zA-Z0-9_]+|[a-z][a-zA-Z0-9_]*)/`
-(lowercase-leading) and `const_identifier` is `/[A-Z][A-Z0-9_]*/` (SCREAMING_CASE). A
-PascalCase name in expression position is therefore *always* a constructor — never a
-variable, never a constant — so the subtraction reading has nothing to bind and `MAX - 1`
-(a constant) is untouched arithmetic. The previous incarnation of the rule reached the same
-answer, keeping `negation` "so `Err -1` … still work[s]".
-
+- **[PARTIAL] A dead language server leaves its diagnostics on screen.** The client holds
+  the last set it was sent and has no reason to drop it when the connection ends, so a
+  server that exits without clearing leaves the editor marking a program that no longer
+  exists. It cost an hour on 08/22: an error reported against `examples/mandelbrot_tui.lyra`
+  that neither `lyrac check` nor the server's own `analyzeDocument` could reproduce, on a
+  file that compiled and ran — and it survived the user's own remedy, restarting the
+  extension, because the restart did not take and nothing had cleared the markers meanwhile.
+  It presents as a *compiler* bug, which is why it costs far more than its size.
+  - **[DONE 08/22] The graceful path.** `Shutdown` publishes an empty set for every open
+    document, covering a restart, a rebuild, and a client shutting the server down — the
+    case actually hit. `DidClose` already cleared, so closing a file was never the gap.
+  - **[OPEN] A crash or a kill**, where no handler runs at all. Clearing there belongs to
+    the client, and the two differ: the **VS Code** extension hands its `LanguageClient` to
+    `context.subscriptions`, so the client library's diagnostic collection is disposed with
+    it; **Zed owns its LSP client itself** and our extension only resolves the binary path,
+    so there is nothing on our side to clear and the behaviour is Zed's. Worth confirming
+    what Zed actually does on a server crash before assuming there is something to fix.
 - **[OPEN] The residual hazard: an operator overload on a data type.** `-` is overloadable
   (`(_-_)` in a trait), so `Empty - 1` on a `data` type with a `Sub` impl now parses as
   `Empty(-1)` rather than as subtraction. It needs all of: a `-` overload on a *sum* type, a
