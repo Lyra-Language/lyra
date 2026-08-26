@@ -99,6 +99,23 @@ func (tc *TypeChecker) checkOneDefaultMethod(trait *ast.TraitDeclStmt, tm *ast.T
 	// from the signature, the return type checked against the body, `?` resolving through
 	// the enclosing return. Reusing it is what keeps a default and an override from being
 	// checked by two rules that can disagree.
+	// **In the trait's own module's scope**, which is the thing a setup pass does not get
+	// for free. The per-statement loop wraps every top-level statement in `checkInModule`;
+	// this pass runs before that loop, so `tc.scope` was the *global* scope — which holds
+	// only what modules export. A bare reference to one of the module's own top-level
+	// names therefore resolved to nothing, and the miss was silent: the "undefined
+	// function" arm is guarded by a visibility check that answers "found but private" for
+	// a name the global scope cannot see, so the call was abandoned with no diagnostic and
+	// no recorded instantiation, and the build failed later as `call to unknown function`.
+	//
+	// A single-module program hid it completely — with no prelude the global scope holds
+	// the program's own declarations, so every reproduction small enough to paste worked.
+	// The same shape as hazard 13's module header, and the same lesson.
+	if scope := tc.moduleScopeOf(trait); scope != nil {
+		prevScope := tc.scope
+		tc.scope = scope
+		defer func() { tc.scope = prevScope }()
+	}
 	tc.checkTraitImplMethodBody(tm.Name.GetName(), *tm.DefaultImpl(), sig)
 }
 

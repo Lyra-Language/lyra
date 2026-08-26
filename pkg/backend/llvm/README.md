@@ -331,7 +331,18 @@ it by subtracting the header and retain/release/drop work on a closure with no n
 (`IsManaged` covers a `LambdaType`). Every *nested* lambda is lifted to a top-level
 `@lyra_closure_N` (`collectNestedLambdas` + `declareClosure`/`defineClosure`), all declared
 before any body and their bodies lowered **last** — never re-entrantly at the creation site,
-which would mean saving and restoring the whole per-function lowering state mid-expression. A
+which would mean saving and restoring the whole per-function lowering state mid-expression.
+**Inside a generic body there is one per *specialization*, not one per lambda node** (08/26):
+the lifted signature mentions the enclosing type variables, so `(x: t) -> t` is a different
+function at `t = i64` than at `t = string`, exactly as the function containing it is. So
+`collectNestedLambdas` skips a generic body — the same reason `forEachUserFunction` skips
+the function itself — `declareSpecialization` emits its closures under the substitution, and
+`l.closures` is keyed by `closureKey{lambda, spec}`, with `spec` empty for ordinary code.
+A capture's type comes from the same shared body, so it is read through **`capturesOf`**,
+the one accessor that substitutes it: the third funnel a type enters codegen by, beside
+`lowerType` and `recordedType`. Six sites read a capture's type — the environment's LLVM
+type, its byte size, its per-field drop glue, the retain at creation, the drop glue itself —
+and substituting at each would be five more chances to miss one. A
 **named** function used as a value gets a thunk (`@name.closure`) that ignores the environment
 and forwards, so a direct call by name keeps its plain signature (every existing call site and
 its IR are untouched, and the thunk exists only for functions actually used as values). A
@@ -1480,7 +1491,12 @@ Two halves, and the interesting one is not in this package:
   `expect<t=i64>`. Outside a generic body the substitution is empty and composition is the
   identity, so an ordinary call is unchanged.
 - **In the driver** (`driver/instantiations.go`): the set of specializations is closed
-  under that same composition *before* the per-instantiation ownership pass runs. That
+  under that same composition *before* the per-instantiation ownership pass runs. **A
+  trait-method body is seeded too** (08/26), from `MethodTable.Specializations()` — it is
+  the other generic body in a program and is not in the instantiation table at all, being
+  reached through dispatch. A *default* body's variable is `Self`, so its calls record
+  `callee<t=Self>` and go nowhere without composing; a non-default impl method escaped only
+  by accident, its receiver being the concrete impl type. That
   ordering is the whole reason it does not live here. `OwnershipBySpec` is built from the
   instantiation set, so a specialization discovered later would find no table of its own
   and fall back to the program-wide one — analyzed generically, where a type variable is

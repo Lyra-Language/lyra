@@ -10,6 +10,71 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**Two "checks clean, fails to build" gaps, and neither was the bug its first description
+named.**
+
+Both were found while testing the UFCS fix below, and the first useful move was telling
+them apart from a regression in it: **rewrite the failing program in the spelling that
+already worked**. Both reproduced identically as bare calls, so neither was UFCS's — five
+minutes that would otherwise have been spent unpicking a change that was fine.
+
+**A closure inside a generic body.** `let f = (x: t) -> t => x` inside `let up<t>` failed
+with *"type variable t has no concrete type here"* — a message naming neither the lambda nor
+the function containing it. The first description blamed passing a closure *to* another
+generic; narrowing found the callee irrelevant, and the minimal case calls nothing.
+
+Nested lambdas were collected once, program-wide, and one lifted function was emitted per
+lambda **node**. But a lambda's signature inside a generic mentions the enclosing type
+variables, so it has no single representation — `(x: t) -> t` is a different function at
+`t = i64` than at `t = string`, exactly as the function containing it is. So: one lifted
+function per (lambda, specialization). `collectNestedLambdas` no longer walks a generic
+body, for the same reason `forEachUserFunction` skips the function itself, and
+`declareSpecialization`/`defineSpecialization` emit its closures under the substitution
+instead.
+
+A second fault sat underneath, reachable only once the first was fixed: *"cannot size
+captured binding v (type t)"*. A **capture's** type also comes from the shared body, and six
+sites read it — the environment's LLVM type, its byte size, whether each field needs drop
+glue, the retain at capture time, the drop glue itself. `capturesOf` is now the one accessor
+that substitutes: the third funnel a type enters codegen by, beside `lowerType` for a type
+written in the source and `recordedType` for one read off the TypeTable. Substituting at the
+six sites would have been five more chances to miss one.
+
+**A trait default body — two bugs stacked, both invisible without a prelude.**
+`boxed(self)` in a default body failed as *"call to unknown function"*.
+
+The first is a **scope** bug, and it is the one worth remembering. A default body is checked
+by a *setup* pass, which runs before the per-statement loop that wraps every top-level
+statement in `checkInModule` — so `tc.scope` was the **global** scope, which holds only what
+modules export. A bare reference to one of the module's own top-level names resolved to
+nothing, and did so **silently**: the "undefined function" arm is guarded by a visibility
+check that answers *found but private* for a name the global scope cannot see, so the call
+was abandoned with no diagnostic at all. The build then failed three passes later, naming a
+function the reader can see declared ten lines up.
+
+The second only becomes reachable once the first is fixed: the resolved call records
+`boxed<t=Self>`, a *template*, and `closeInstantiations` seeded only from generic
+**functions**. A trait method is not one — it is reached through dispatch — so nothing
+composed it. It now seeds from `MethodTable.Specializations()`, the same reached set the
+per-method ownership pass reads, so the two cannot disagree about which bodies exist. A
+*non-default* impl method had escaped by accident: its receiver is the concrete impl type,
+so its calls were concrete already.
+
+**A single-module program hid every part of it**, since with no prelude the global scope
+holds the program's own declarations — so every reproduction small enough to paste worked,
+and the no-prelude harness in `pkg/analyzer/typechecker/tests` cannot express the failure at
+all. That is hazard 13's module header in a different pass, and the reason these tests live
+in the backend package, which compiles against the real prelude.
+
+**What the debugging actually cost, and what made it cheap.** Four wrong theories in a row —
+the composition, the node identity, the caches, `DefaultImpl` being copied — each plausible
+from reading the code. What settled it in one step was instrumenting the *one* recording site
+(`InstantiationTable.Set`) and the *one* resolution site (`inferIdentifierCall`'s scope
+lookup) and running the two spellings side by side: `found=false`, with no diagnostic, is a
+fact no amount of reading was going to produce. When two nearly-identical programs differ,
+print at the fork rather than reasoning toward it.
+
+### 08/26/26
 **A method call on a bare type parameter reaches UFCS — the ladder's last rung was
 unreachable from its own first branch.**
 

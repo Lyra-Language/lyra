@@ -109,6 +109,16 @@ func (l *lowerer) declareSpecialization(inst typetable.Instantiation) error {
 	symbol := "lyra." + inst.Symbol()
 	l.specialized[inst.Key()] = l.module.NewFunc(symbol, retType, irParams...)
 	l.specializedParams[inst.Key()] = inst.Func.Parameters
+	// A lambda written inside this body is lifted to a function of its own, and its
+	// signature mentions the type variables this instantiation binds — so it is declared
+	// **here**, under the substitution, once per specialization. The program-wide pass
+	// deliberately skips a generic body for exactly this reason (collectNestedLambdas).
+	defer l.pushSpecKey(inst.Key())()
+	for _, lam := range nestedLambdasIn(inst.Func) {
+		if err := l.declareClosure(lam); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -136,7 +146,34 @@ func (l *lowerer) defineSpecialization(inst typetable.Instantiation) error {
 	if irFn == nil {
 		return fmt.Errorf("llvm: specialization %s was not declared", inst.Key())
 	}
-	return l.defineFunctionInto(irFn, inst.Func, inst.Name)
+	// Installed for the body as well as for the closures below it: the **creation site**
+	// inside the body resolves the lifted function through the same closureKeyFor, so
+	// the two agree only while this specialization is named.
+	defer l.pushSpecKey(inst.Key())()
+	if err := l.defineFunctionInto(irFn, inst.Func, inst.Name); err != nil {
+		return err
+	}
+	// The bodies of this specialization's own closures, after the body that creates
+	// them — never during it, which is the re-entrancy collectNestedLambdas' comment
+	// explains. They see this instantiation's substitution *and* its ownership table,
+	// both of which are installed by the caller: a closure over a `t = string` is
+	// reference-counted where the same node at `t = i64` is not.
+	for _, lam := range nestedLambdasIn(inst.Func) {
+		if err := l.defineClosure(lam); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// pushSpecKey installs the name of the instantiation being lowered, and is what
+// closureKeyFor reads. It travels with pushTypeSubst rather than standing alone — the
+// key is meaningless without the substitution it names — but is pushed separately
+// because declareSpecialization needs it only after the signature is emitted.
+func (l *lowerer) pushSpecKey(key string) func() {
+	prev := l.specKey
+	l.specKey = key
+	return func() { l.specKey = prev }
 }
 
 // ownership returns the ownership table for the code currently being lowered: the

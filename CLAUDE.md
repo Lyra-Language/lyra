@@ -355,6 +355,17 @@ real failure, and none is local to one package.
     has one. When a bug's trigger is a header, snippet-sized testing is structurally
     blind to it — the backend suite prepends `module main` for exactly this reason.
 
+    **The general shape is a name resolved from the wrong scope, and its tell is that the
+    bug disappears in a one-module program.** A second instance, 08/26: trait default
+    bodies are checked by a *setup* pass, before the per-statement loop that installs each
+    statement's module scope — so `tc.scope` was the **global** scope, which holds only
+    what modules export, and a bare reference to the module's own top-level name resolved
+    to nothing. With no prelude the global scope happens to hold the program's own
+    declarations, so it worked in every small reproduction *and* in the typechecker's own
+    test harness, which has no prelude. The rule that follows: **a pass that checks a body
+    outside `checkInModule` must install the module scope itself**, and a test for one
+    belongs where the prelude is real.
+
 14. **A diagnostic with no Location is not merely imprecise — it appears on every file.**
     `diagnosticsFor` keeps a location-less diagnostic deliberately, on the grounds that it
     is program-level and has nowhere else to go (a missing `main`), so a *per-node* warning
@@ -542,7 +553,7 @@ substitutes `Resolution.Bindings` at each specialization.
 The name is unforgeable — a type variable is lowercase by lexer rule, so no program can
 declare one called `Self`.
 
-Three things to know before touching it:
+Four things to know before touching it:
 
 - **`ast.TraitMethod.DefaultImpl()` is the one instance**, cached on the AST rather than
   per pass. Dispatch, the MethodTable, the purity fixpoint, the ownership table and the
@@ -555,6 +566,17 @@ Three things to know before touching it:
   (`publishDefaultBodyCandidates`). Without it the body type-checks — the bound is
   abstract — and then cannot be lowered, because the candidate table would hold only what
   `boundCandidatesByType` keys by the impl's *declared* target.
+- **It is checked by a setup pass, so it must install the module scope itself**
+  (`checkOneDefaultMethod` → `moduleScopeOf`). The per-statement loop wraps each top-level
+  statement in `checkInModule`; this pass runs before that loop, so `tc.scope` is the
+  *global* scope, which holds only what modules export. Without it a bare reference to the
+  declaring module's own top-level name resolved to nothing — **silently**, since the
+  "undefined function" arm is guarded by a visibility check that answers *found but private*
+  for a name the global scope cannot see — and the program failed three passes later with
+  `llvm: call to unknown function`. Any setup pass that checks a body has this obligation.
+  And a **generic call** in that body records `callee<t=Self>`, a template, which
+  `closeInstantiations` composes only because it seeds from `MethodTable.Specializations()`
+  as well as from the instantiation table.
 
 The alternative considered and rejected was deep-copying the default clause into every
 impl that lacks it. That needs a full expression/statement cloner this compiler does not

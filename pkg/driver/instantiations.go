@@ -181,20 +181,22 @@ func closeInstantiations(res *Result) []diag.Diagnostic {
 			worklist = append(worklist, inst)
 		}
 	}
-	for len(worklist) > 0 {
-		current := worklist[0]
-		worklist = worklist[1:]
-		for _, call := range genericCallsIn(current.Func) {
+	// compose walks one generic body's calls, substituting `subst` into each callee's
+	// recorded bindings, and queues whatever that makes concrete. One function rather than
+	// two loops, because the trait-method seeding below asks the identical question of a
+	// different kind of body — and two copies of a composition rule drift (hazard 8).
+	compose := func(body *ast.LambdaExpr, subst map[string]types.Type, site ast.Location) []diag.Diagnostic {
+		for _, call := range genericCallsIn(body) {
 			callee, ok := table.Get(call)
 			if !ok {
 				continue
 			}
-			composed := callee.Substituted(current.Subst, substituteTypeVars)
-			// The bindings just substituted in are `current`'s, and they were resolved
-			// where *it* was requested — not at this inner call, which sits inside a
-			// generic body in some library's module. So the site travels outward with the
-			// types it explains.
-			composed.Site = current.Site
+			composed := callee.Substituted(subst, substituteTypeVars)
+			// The bindings just substituted in were resolved where the *enclosing* body
+			// was requested — not at this inner call, which sits inside a generic body in
+			// some library's module. So the site travels outward with the types it
+			// explains.
+			composed.Site = site
 			if !composed.IsConcrete() {
 				// A binding this specialization cannot settle. Reachable when a body
 				// mentions a variable that is not one of its own — the front end reports
@@ -216,6 +218,47 @@ func closeInstantiations(res *Result) []diag.Diagnostic {
 			seen[composed.Key()] = true
 			table.Add(composed)
 			worklist = append(worklist, composed)
+		}
+		return nil
+	}
+
+	// **A trait-method body is the other generic body in the program**, and it is not in
+	// this table — an impl method is reached through dispatch, not through an
+	// instantiation. Its type variables are the impl's, and a *default* body's is `Self`,
+	// which every implementing type binds differently. So a generic call written there
+	// records a template exactly as one in a generic function does, and needs the same
+	// composition against the bindings each reached specialization fixes.
+	//
+	// Without this, a default body calling a generic free function failed to build with
+	// `llvm: call to unknown function` — the specialization it names was never added, so
+	// nothing emitted it. A *non-default* impl method escaped only by accident: its
+	// receiver is the concrete impl type, so its calls were already concrete and needed no
+	// composing.
+	//
+	// `Specializations()` is the reached set, deduped by SpecKey — the same source the
+	// per-method ownership pass reads, so the two cannot disagree about which bodies exist.
+	for _, r := range res.MethodTable.Specializations() {
+		lam, err := r.Lambda()
+		if err != nil {
+			// No declared signature. The backend reports it at the call, with a location.
+			continue
+		}
+		site := ast.Location{}
+		if r.Impl != nil {
+			// The impl is where the bindings were resolved, which is the module a
+			// private type argument is keyed under (rule 4).
+			site = r.Impl.GetLocation()
+		}
+		if d := compose(lam, r.Bindings, site); d != nil {
+			return d
+		}
+	}
+
+	for len(worklist) > 0 {
+		current := worklist[0]
+		worklist = worklist[1:]
+		if d := compose(current.Func, current.Subst, current.Site); d != nil {
+			return d
 		}
 	}
 	return nil

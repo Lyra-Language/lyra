@@ -3768,11 +3768,47 @@ recommending — write the program someone would actually write, and see what it
   in `Arguments[0]` before any other pass runs, so this is the spelling that already
   compiled. See `COMPLETED.md`.
   - Two **lowering** gaps found while testing it, both pre-existing and both reproducing
-    identically with the bare-call spelling, so neither is UFCS's: a generic body passing a
-    **type-variable-typed closure** to another generic (`twice(v, (x: t) -> t => …)`) dies
-    as *"type variable t has no concrete type here"*, and a **trait default body** calling a
-    generic free function dies as *"call to unknown function"*. Both are the composed-
-    specialization path; neither is diagnosed by the front end.
+    identically with the bare-call spelling, so neither was UFCS's. **[DONE 08/26]**, and
+    neither turned out to be what the first description said — see the two entries below.
+    The check that saved the time: rewrite the failing program in the spelling that already
+    worked before believing a change caused it.
+
+- **[DONE 08/26] A closure inside a generic body lowers.** `let f = (x: t) -> t => x`
+  inside `let up<t>` failed to build with *"type variable t has no concrete type here"*, a
+  message naming neither the lambda nor the function containing it, on a program the front
+  end checks clean. Nothing to do with the callee: the first description blamed passing a
+  closure *to* another generic, and the minimal case calls nothing at all.
+  Nested lambdas were collected once program-wide and one lifted function emitted per
+  lambda **node** — but the signature mentions the enclosing type variables, so there is one
+  per *specialization*, exactly as for the function containing it. `closureKey` is
+  (lambda, spec); `collectNestedLambdas` skips a generic body and `declareSpecialization`
+  emits its closures instead. A second fix underneath: a capture's type also comes from the
+  shared body, and six sites read it — `capturesOf` is the one accessor that substitutes,
+  the third such funnel beside `lowerType` and `recordedType`. See `COMPLETED.md`.
+
+- **[DONE 08/26] A trait default body is checked in its own module's scope**, and a generic
+  call it makes is now composed. Two bugs stacked, both invisible without a prelude.
+  `boxed(self)` in a default body failed as *"call to unknown function"*: the body is
+  checked by a **setup pass**, which runs before the per-statement loop that wraps each
+  statement in `checkInModule` — so `tc.scope` was the *global* scope, which holds only what
+  modules export, and a bare reference to the module's own top-level name resolved to
+  nothing. **Silently**: the "undefined function" arm is guarded by a visibility check that
+  answers *found but private* for a name the global scope cannot see, so the call was
+  abandoned with no diagnostic. Second, once it resolved it recorded `boxed<t=Self>` — a
+  template — and the instantiation closure seeded only from generic *functions*, so nothing
+  composed it. It now seeds from `MethodTable.Specializations()`, the same reached set the
+  per-method ownership pass reads.
+  - **A single-module program hid all of it**, since with no prelude the global scope holds
+    the program's own declarations. Hazard 13's module header, in a different pass.
+  - **[OPEN] The diagnostic for an unsatisfied bound in a default body names something
+    unwritable.** `twice(self, …)` against `where t: Show` says *"add `where Self: Show` to
+    the enclosing declaration"*, and there is nowhere on a trait method to write one — the
+    answer is a **supertrait**, `trait Doubled: Show`, which works. The message should say
+    so when the type variable is `Self`.
+  - **[OPEN] A trait imported only for a method call warns as unused** (lyra-W004).
+    `import lib.{ Tag }` plus `(7).tag()` reports *"imported name Tag is never used"*: the
+    syntactic check cannot see a use that is a dispatch, the same blind spot `UFCSModules()`
+    fixed for a UFCS call. Noticed while testing the above; unrelated to it.
 
 - **[DONE 08/22] A prelude generic at a *privately* declared type now lowers.**
   `let m = Some(card); m.unwrap_or(other)` failed with `llvm: unknown named type "Card"`

@@ -86,6 +86,51 @@ func (l *lowerer) closureFnSignature(params []types.Type, ret types.Type) (lltyp
 	return retTy, paramTys, nil
 }
 
+// capturesOf is the one accessor every closure-environment decision reads its capture
+// types through — the third channel a type enters codegen by, beside `lowerType` for a
+// type written in the source and `recordedType` for one read off the TypeTable, and it
+// needs the same substitution for the same reason.
+//
+// The captures pass runs once over the shared body, so inside a generic function a
+// capture's type is written in that function's own type variables. Six sites read it —
+// the environment's LLVM type, its byte size, whether each field needs drop glue, the
+// retain at capture time, the drop glue itself — and substituting at each is five more
+// chances to miss one. `SizeAndAlign` is where a miss surfaced: *"cannot size captured
+// binding v (type t)"*, a `t` with no width because nothing had told it which one.
+func (l *lowerer) capturesOf(fn *ast.LambdaExpr) []captures.Capture {
+	caps := l.res.Captures.Of(fn)
+	if len(l.typeSubst) == 0 || len(caps) == 0 {
+		return caps
+	}
+	// A fresh slice: the table is shared across every specialization of this body, so
+	// substituting in place would leave the previous instantiation's bindings behind.
+	out := make([]captures.Capture, len(caps))
+	for i, c := range caps {
+		c.Type = l.applyTypeSubst(c.Type)
+		out[i] = c
+	}
+	return out
+}
+
+// closureKey identifies one *emitted* lifted function. The node alone is not enough:
+// a lambda written inside a generic body has a signature mentioning the enclosing type
+// variables, so it has no single representation — `(x: t) -> t` is a different function
+// at `t = i64` than at `t = string`, exactly as the generic function containing it is.
+// So one lifted function per (lambda, specialization), with `spec` empty for the ordinary
+// case of a lambda in non-generic code.
+type closureKey struct {
+	fn   *ast.LambdaExpr
+	spec string
+}
+
+// closureKeyFor names the lifted function for fn *in the code currently being lowered*.
+// `l.specKey` is the specialization's key inside a generic body and empty outside one, so
+// a creation site and the declaration it resolves to agree by construction rather than by
+// each deriving the key its own way.
+func (l *lowerer) closureKeyFor(fn *ast.LambdaExpr) closureKey {
+	return closureKey{fn: fn, spec: l.specKey}
+}
+
 // collectNestedLambdas returns every lambda that is *not* a top-level function
 // body, in a deterministic (source) order.
 //
@@ -113,6 +158,22 @@ func collectNestedLambdas(program *ast.Program, entry *ast.LambdaExpr) []*ast.La
 		return true
 	}
 	for _, node := range program.Statements {
+		// **A generic function's body is not walked here**, for the same reason
+		// forEachUserFunction skips the function itself: a lambda inside it has a
+		// signature written in the enclosing type variables, and a type variable has no
+		// representation. One lifted function per *specialization* is emitted instead
+		// (nestedLambdasIn, called from declareSpecialization), which is the same
+		// substitute-don't-clone arrangement the enclosing function already gets.
+		//
+		// Walking it here is what produced *"type variable t has no concrete type
+		// here"* on `let f = (x: t) -> t => x` inside a generic — a program the front
+		// end checks clean, failing at a point that names neither the lambda nor the
+		// function containing it.
+		if decl, ok := node.(*ast.VarDeclStmt); ok {
+			if lam, ok := decl.Value.(*ast.LambdaExpr); ok && isGenericLambda(lam) {
+				continue
+			}
+		}
 		switch n := node.(type) {
 		case ast.Statement:
 			ast.WalkStmt(n, nil, onExpr)
@@ -120,6 +181,24 @@ func collectNestedLambdas(program *ast.Program, entry *ast.LambdaExpr) []*ast.La
 			ast.WalkExpr(n, nil, onExpr)
 		}
 	}
+	return out
+}
+
+// nestedLambdasIn returns every lambda nested inside fn's own body, in source order —
+// the per-function half of collectNestedLambdas, for a generic function whose closures
+// are emitted once per specialization rather than once per node.
+func nestedLambdasIn(fn *ast.LambdaExpr) []*ast.LambdaExpr {
+	var out []*ast.LambdaExpr
+	onExpr := func(e ast.Expression) bool {
+		if lam, ok := e.(*ast.LambdaExpr); ok && lam != fn {
+			out = append(out, lam)
+		}
+		return true
+	}
+	// Children, not the node: fn itself is the specialization, not a closure of it.
+	// Nested-in-nested lambdas arrive in the same flat list, since the walk does not
+	// stop at a lambda boundary.
+	ast.WalkExprChildren(fn, nil, onExpr)
 	return out
 }
 
@@ -160,7 +239,7 @@ func (l *lowerer) declareClosure(fn *ast.LambdaExpr) error {
 		params = append(params, irParam)
 	}
 	l.closureCount++
-	l.closures[fn] = l.module.NewFunc(fmt.Sprintf("lyra_closure_%d", l.closureCount), retTy, params...)
+	l.closures[l.closureKeyFor(fn)] = l.module.NewFunc(fmt.Sprintf("lyra_closure_%d", l.closureCount), retTy, params...)
 	return nil
 }
 
@@ -177,7 +256,7 @@ func (l *lowerer) declareClosure(fn *ast.LambdaExpr) error {
 // record a plain retain: a capture is never last-use-eligible, having no
 // declaration inside the lambda.
 func (l *lowerer) defineClosure(fn *ast.LambdaExpr) error {
-	irFn := l.closures[fn]
+	irFn := l.closures[l.closureKeyFor(fn)]
 	retTy, err := l.lowerType(fn.ReturnType.Type)
 	if err != nil {
 		return err
@@ -185,7 +264,7 @@ func (l *lowerer) defineClosure(fn *ast.LambdaExpr) error {
 	l.beginFunction(retTy, fn.ReturnType.Type, returnSigned(fn), false)
 
 	entry := irFn.NewBlock("entry")
-	caps := l.res.Captures.Of(fn)
+	caps := l.capturesOf(fn)
 	if len(caps) > 0 {
 		envTy, err := l.envPayloadType(caps)
 		if err != nil {
@@ -257,11 +336,11 @@ func (l *lowerer) envPayloadType(caps []captures.Capture) (*lltypes.StructType, 
 // (it analyzes a nested lambda as a separate function, so the enclosing function's
 // walk never visits them), which is exactly why the +1 is minted here instead.
 func (l *lowerer) lowerLambdaExpr(block *ir.Block, e *ast.LambdaExpr) (value.Value, *ir.Block, error) {
-	irFn, ok := l.closures[e]
+	irFn, ok := l.closures[l.closureKeyFor(e)]
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: lambda was not lifted (an unsupported form, or a lambda outside a function body)")
 	}
-	caps := l.res.Captures.Of(e)
+	caps := l.capturesOf(e)
 	var env value.Value
 	if len(caps) == 0 {
 		env = l.emptyEnv()

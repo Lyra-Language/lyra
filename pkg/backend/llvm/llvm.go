@@ -161,7 +161,7 @@ func (b *Backend) emitModule(res *driver.Result, entry *driver.EntryPoint) (*ir.
 		regexTables:        map[string]*regexTables{},
 		specialized:        map[string]*ir.Func{},
 		specializedParams:  map[string][]ast.Parameter{},
-		closures:           map[*ast.LambdaExpr]*ir.Func{},
+		closures:           map[closureKey]*ir.Func{},
 		closureThunks:      map[string]*ir.Func{},
 		envDropFns:         map[string]*ir.Func{},
 		externs:            map[string]externDecl{},
@@ -380,8 +380,9 @@ type lowerer struct {
 	// Closures (closures.go). A function value is `{ i8* fn, i8* env }`, so every
 	// lambda used as one is lifted to a top-level function taking its environment
 	// as a leading parameter.
-	//   - closures maps each nested lambda to its lifted function; all are declared
-	//     before any body, like named functions, so a creation site resolves.
+	//   - closures maps each nested lambda to its lifted function, keyed by the
+	//     specialization it belongs to as well as by the node (see closureKey); all are
+	//     declared before any body, like named functions, so a creation site resolves.
 	//   - closureThunks caches the per-function adapter that lets a *named* function
 	//     be used as a value without giving every direct call an env parameter.
 	//   - emptyEnvPtr is the one pinned static environment every captureless
@@ -403,13 +404,18 @@ type lowerer struct {
 	// specOwnership is the ownership table computed for the instantiation currently
 	// being lowered — see the `ownership()` accessor, which every read goes through.
 	specOwnership *ownership.Table
+	// specKey names that instantiation, and is what makes a **closure inside a generic
+	// body** emittable: the lifted function's signature mentions the enclosing type
+	// variables, so there is one per specialization rather than one per lambda node.
+	// Empty outside a specialization, which is the key the ordinary closures use.
+	specKey string
 
 	// externs is every foreign function declared so far, keyed by the C symbol — which
 	// is what a `declare` is unique by, so two modules naming one library function share
 	// this entry rather than emitting two `declare`s of one name (extern.go).
 	externs map[string]externDecl
 
-	closures       map[*ast.LambdaExpr]*ir.Func
+	closures       map[closureKey]*ir.Func
 	closureThunks  map[string]*ir.Func
 	envDropFns     map[string]*ir.Func
 	closureEnvDrop *ir.Func
