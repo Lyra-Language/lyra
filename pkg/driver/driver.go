@@ -344,7 +344,7 @@ func AnalyzeUnitsCached(units []modules.Unit, cache *CollectCache) *Result {
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedVariables(program)...)
 	// The UFCS map comes from the typechecker: a method-style call into another module
 	// never writes that module's name, so the syntactic check cannot see the use.
-	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedImports(program, tc.UFCSModules())...)
+	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedImports(program, checker.ImportUse{Modules: tc.UFCSModules(), Names: tc.DispatchedTraits()})...)
 	res.Diagnostics = append(res.Diagnostics, checker.CheckUnusedParameters(program)...)
 	res.Diagnostics = append(res.Diagnostics, checker.CheckTypeNames(program)...)
 	res.Diagnostics = append(res.Diagnostics, checker.CheckInertBorrowModifiers(program)...)

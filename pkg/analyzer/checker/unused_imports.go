@@ -13,12 +13,14 @@ import (
 // imported name (member alias/name, or module alias) that never appears as an
 // identifier reference anywhere in the program.
 //
-// ufcsModules maps a file to the modules it reached through a **UFCS call**
-// (typechecker.UFCSModules), and may be nil for a caller with no typechecker pass. Such
-// a call never writes the module's name — `m.map(f)`, not `maybe.map(m, f)` — so the
-// syntactic test below cannot see it, while the import is exactly what permitted the
-// call. Without this the warning tells you to delete an import the program needs.
-func CheckUnusedImports(program *ast.Program, ufcsModules map[string]map[string]bool) []diag.Diagnostic {
+// `used` carries what this check cannot see for itself (typechecker.ImportedModulesUsed);
+// its zero value is fine for a caller with no typechecker pass. Two spellings reach an
+// import without writing the name it bound, and the syntactic test below is blind to both:
+// a **UFCS call** writes no module name — `m.map(f)`, not `maybe.map(m, f)` — and a
+// **trait-method or operator dispatch** writes no trait name — `(7).tag()`, not
+// `Tag::tag(7)`. The import is exactly what permitted each, so without this the warning
+// tells you to delete an import the program needs.
+func CheckUnusedImports(program *ast.Program, used ImportUse) []diag.Diagnostic {
 	// Collected **per file**, because `program` spans every unit the import graph pulled
 	// in: an imported module's own source mentions its own types constantly, so a
 	// program-wide set answers "is this name used anywhere" when the question is "is it
@@ -36,12 +38,13 @@ func CheckUnusedImports(program *ast.Program, ufcsModules map[string]map[string]
 		}
 		loc := stmt.GetLocation()
 		refs := refsByFile[loc.File]
-		// A module this file called into method-style is used, whatever its name does
-		// or does not appear in the source. Checked before the name-based tests below,
-		// which cannot see such a use at all.
-		if ufcsModules[loc.File][modulePath(stmt)] {
+		// A module this file called into method-style is used, whatever its name does or
+		// does not appear in the source. Checked before the name-based tests below, which
+		// cannot see such a use at all.
+		if used.Modules[loc.File][modulePath(stmt)] {
 			continue
 		}
+		dispatched := used.Names[loc.File]
 
 		switch {
 		case len(stmt.Members) > 0:
@@ -52,6 +55,13 @@ func CheckUnusedImports(program *ast.Program, ufcsModules map[string]map[string]
 					effective = m.Alias
 				}
 				if strings.HasPrefix(effective, "_") {
+					continue
+				}
+				// A trait this file dispatched to is used. Keyed on `m.Name`, the
+				// **declared** name, not the effective one: the trait knows what it is
+				// called, not what this import chose to call it, so `import lib.{ Tag as
+				// T }` matches here exactly as the unaliased form does.
+				if dispatched[m.Name] {
 					continue
 				}
 				if !refs[effective] {
@@ -103,8 +113,25 @@ func CheckUnusedImports(program *ast.Program, ufcsModules map[string]map[string]
 	return warnings
 }
 
+// ImportUse is what the unused-import check cannot determine from the syntax, gathered by
+// the typechecker (ImportedModulesUsed).
+//
+// **Two granularities, because the two resolutions differ in what they can name.** A UFCS
+// call resolves to a function the member list admitted, and the call site names neither
+// the module nor — after desugaring — anything the import wrote, so the whole import is
+// what has to be spared: `Modules` is file → module path. A dispatch does have a name to
+// point at, the trait's, so `Names` is file → declared trait name and only that member is
+// spared. Sparing the whole import there would silence its other members, which turns one
+// wrong warning into several missing ones.
+type ImportUse struct {
+	// Modules maps a file to the module paths it reached through a UFCS call.
+	Modules map[string]map[string]bool
+	// Names maps a file to the *declared* names of traits it reached by dispatch.
+	Names map[string]map[string]bool
+}
+
 // modulePath renders an import's dotted module path ("util.math"), the form the
-// typechecker records a UFCS-reached module under.
+// typechecker records a resolution-reached module under.
 func modulePath(stmt *ast.ImportStmt) string {
 	parts := make([]string, len(stmt.Path))
 	for i, p := range stmt.Path {

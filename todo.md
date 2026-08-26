@@ -3805,10 +3805,19 @@ recommending — write the program someone would actually write, and see what it
     the enclosing declaration"*, and there is nowhere on a trait method to write one — the
     answer is a **supertrait**, `trait Doubled: Show`, which works. The message should say
     so when the type variable is `Self`.
-  - **[OPEN] A trait imported only for a method call warns as unused** (lyra-W004).
-    `import lib.{ Tag }` plus `(7).tag()` reports *"imported name Tag is never used"*: the
-    syntactic check cannot see a use that is a dispatch, the same blind spot `UFCSModules()`
-    fixed for a UFCS call. Noticed while testing the above; unrelated to it.
+  - **[DONE 08/26] A trait imported only for a method call warned as unused** (lyra-W004).
+    `import lib.{ Tag }` plus `(7).tag()` reported *"imported name Tag is never used"* —
+    advice that breaks the build, since without the import `lib` is not even loaded and the
+    call fails as *"i64 has no method tag"*. The syntactic check cannot see a use that is a
+    dispatch, the same blind spot `UFCSModules()` closed for a UFCS call. `DispatchedTraits()`
+    is the other half, *derived* from `MethodTable.DispatchedImpls()` rather than recorded at
+    each of the ten dispatch sites. An operator is a dispatch too and names its trait even
+    less. See `COMPLETED.md`.
+    - **Keyed by the trait's declared name, where the UFCS half is keyed by module**, and
+      that difference is the point: a member list is per-name, so sparing the enclosing
+      *import* silences its other members — one wrong warning traded for several missing
+      ones, which is worse. Each half is keyed by the finest thing it knows; the declared
+      name is also what makes `Tag as T` work.
 
 - **[DONE 08/22] A prelude generic at a *privately* declared type now lowers.**
   `let m = Some(card); m.unwrap_or(other)` failed with `llvm: unknown named type "Card"`

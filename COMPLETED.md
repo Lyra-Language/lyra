@@ -10,6 +10,40 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**A trait imported only for a method call no longer warns as unused (lyra-W004).**
+
+`import lib.{ Tag }` beside `(7).tag()` reported *"imported name Tag is never used"* — and
+acting on it breaks the build twice over: the import is not merely how the name is visible,
+it is what pulls `lib` into the compile at all, so without it the impl does not exist and
+the call fails as *"i64 has no method tag"*. This is the exact failure `UFCSModules` was
+built to prevent one rung over, and the check's own comment names it twice: *advice to
+delete an import the program needs*.
+
+The check is syntactic — an import is used if its bound name appears — and a dispatch
+never writes the trait's name. An **operator** is the same thing and names it even less:
+`a + b` writes neither `Plus` nor `lib`.
+
+**Derived, not recorded.** There are ten call sites that resolve a trait method and one
+table that stores the result, so `DispatchedTraits()` reads `MethodTable.DispatchedImpls()`
+rather than adding a note at each site — hazard 8 avoided by asking what the typechecker
+published (rule 9). Every table holding a resolution is read, the per-type *candidate* maps
+included: a bound-dispatched call names no single impl at check time, and each candidate is
+still an impl some import made reachable.
+
+**The two halves are keyed differently, and that is the whole design.** A UFCS call is
+recorded by *module*; a dispatch by the trait's *declared name*. Keying the new half by
+module too is the obvious implementation and it is wrong — it was the first thing tried, and
+the test that caught it took thirty seconds to write: `import lib.{ Tag, Point, helper }`
+with only `Tag` dispatched stopped reporting `Point` and `helper` at all. That trades one
+false warning for several false silences, which is the worse direction, because a warning
+nobody sees is one that never gets acted on. Each half is keyed by the finest thing it
+knows: a dispatch has a name to point at and the UFCS spelling does not.
+
+The declared name, specifically — not the effective one. A trait knows what it is called
+and not what an import renamed it to, so `import lib.{ Tag as T }` matches on `m.Name` and
+is spared exactly as the plain spelling is.
+
+### 08/26/26
 **Two "checks clean, fails to build" gaps, and neither was the bug its first description
 named.**
 

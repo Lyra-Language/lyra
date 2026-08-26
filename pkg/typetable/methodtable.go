@@ -385,6 +385,70 @@ func (t *MethodTable) GetResolution(call *ast.FunctionCallExpr) (Resolution, boo
 	return r, ok
 }
 
+// DispatchedImpl is one place a trait impl was reached by dispatch: the expression that
+// dispatched, and the impl it resolved to.
+type DispatchedImpl struct {
+	At   ast.Location
+	Impl *ast.TraitImplStmt
+}
+
+// DispatchedImpls returns every impl this table records as dispatched to, paired with the
+// site that reached it.
+//
+// It exists for the unused-import warning, which is otherwise *wrong* about exactly these
+// imports: dispatch never writes the trait's name — `(7).tag()`, not `Tag::tag(7)` — so a
+// syntactic "is the bound name mentioned" test cannot see the use, while the import is what
+// brought the impl into the compile at all. That is the same failure `UFCSModules` exists to
+// prevent one rung over, and the same remedy: the resolution happened here, so the fact
+// comes from here rather than being re-derived by the checker.
+//
+// **Every table that records a resolution is read**, including the per-type *candidate*
+// maps: a bound-dispatched call and a bound operator name no single impl at check time, and
+// each candidate is still an impl some import made reachable. Over-reporting is the safe
+// direction — a site listed here can only ever *suppress* a warning, and a warning wrongly
+// suppressed is one nobody sees, while a warning wrongly raised is advice that breaks the
+// build.
+//
+// Sorted by file and position so a caller's output does not depend on map order.
+func (t *MethodTable) DispatchedImpls() []DispatchedImpl {
+	if t == nil {
+		return nil
+	}
+	var out []DispatchedImpl
+	add := func(at ast.Location, r Resolution) {
+		if r.Impl != nil {
+			out = append(out, DispatchedImpl{At: at, Impl: r.Impl})
+		}
+	}
+	for call, r := range t.resolutions {
+		add(call.GetLocation(), r)
+	}
+	for call, byType := range t.boundCandidates {
+		for _, r := range byType {
+			add(call.GetLocation(), r)
+		}
+	}
+	for expr, r := range t.operatorResolutions {
+		add(expr.GetLocation(), r)
+	}
+	for expr, byType := range t.operatorCandidates {
+		for _, r := range byType {
+			add(expr.GetLocation(), r)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i].At, out[j].At
+		if a.File != b.File {
+			return a.File < b.File
+		}
+		if a.StartLine != b.StartLine {
+			return a.StartLine < b.StartLine
+		}
+		return a.StartCol < b.StartCol
+	})
+	return out
+}
+
 // Specializations returns one resolution per distinct SpecKey — every method body the
 // program actually reaches, at every set of bindings it reaches it with.
 //

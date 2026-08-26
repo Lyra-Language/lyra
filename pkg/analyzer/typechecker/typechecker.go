@@ -123,6 +123,41 @@ func (tc *TypeChecker) UFCSModules() map[string]map[string]bool {
 	return tc.ufcsModules
 }
 
+// DispatchedTraits reports, per file, the **declared names** of the traits that file
+// reached by a trait-method or operator dispatch — `(7).tag()` finding an imported
+// module's `impl Tag for i64`, or `a + b` finding its `impl Add`.
+//
+// Same purpose as UFCSModules and the same failure without it: a dispatch never writes the
+// trait's name, so the syntactic check advised deleting the import that brought the impl
+// into the compile at all.
+//
+// **Keyed by name rather than by module, unlike the UFCS half**, and that is the whole
+// difference between the two. A member list is per-name, so sparing the enclosing *import*
+// would silence its other members too — trading one wrong warning for several missing ones,
+// which is the worse direction: a warning nobody sees never gets acted on. A dispatch has a
+// name to point at and the UFCS spelling does not, so each is keyed by the finest thing it
+// knows.
+//
+// It is *derived* from what was published (`MethodTable.DispatchedImpls`) rather than
+// recorded at each dispatch site, because there are ten of those and one table.
+//
+// Only a cross-module dispatch counts, on UFCSModules' rule: a file's own module and the
+// prelude need no import, so neither can be the reason one exists.
+func (tc *TypeChecker) DispatchedTraits() map[string]map[string]bool {
+	byFile := map[string]map[string]bool{}
+	for _, d := range tc.methodTable.DispatchedImpls() {
+		module := tc.symTable.ModuleOfFile[d.Impl.GetLocation().File]
+		if module == "" || module == tc.symTable.ModuleOfFile[d.At.File] || module == tc.symTable.PreludeModule {
+			continue
+		}
+		if byFile[d.At.File] == nil {
+			byFile[d.At.File] = map[string]bool{}
+		}
+		byFile[d.At.File][d.Impl.TraitName] = true
+	}
+	return byFile
+}
+
 // Instantiations returns the generic specializations the program uses — each call
 // site's solved type-variable bindings. The backend monomorphizes from it.
 func (tc *TypeChecker) Instantiations() *typetable.InstantiationTable {

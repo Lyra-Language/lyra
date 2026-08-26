@@ -875,7 +875,13 @@ Two rules that are decisions rather than mechanics:
   be named in that file's imports. What a file may call stays a property of its own import
   list, rather than of what some unrelated file happened to import. The cost is that the
   syntactic unused-import check cannot see such a use — a UFCS call never writes the module's
-  name — so `UFCSModules()` carries the fact to it. Without that, the warning advises deleting
+  name — so `UFCSModules()` carries the fact to it. **`DispatchedTraits()` is the other half**
+  (08/26): a trait-method or operator dispatch never writes the *trait's* name either, and
+  the import is what brought the impl into the compile. It is keyed by the trait's declared
+  name where the UFCS half is keyed by module, since a member list is per-name and sparing
+  the whole import would silence its other members; and it is derived from
+  `MethodTable.DispatchedImpls()` rather than noted at each of the ten dispatch sites.
+  Without either, the warning advises deleting
   the import that makes the program compile.
 - **An `own` receiver is refused**, with its own error naming the call form. `own` transfers,
   and the receiver syntax hides the transfer; use-after-move catches a later read either way,
