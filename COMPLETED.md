@@ -9,6 +9,52 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (17)
+**One answer to what a pattern binds, and Go to Type Definition.**
+
+**The bound-name walks are now one.** Three passes each had their own — the captures
+analysis, use-before-declaration, and the checker's helpers — and they had already drifted:
+the third handled neither `name @ pattern` nor a struct pattern's shorthand `{ x }`, so a
+name bound either way was invisible to it. Rule 8 in its quietest form, with the copies
+agreeing about the easy kinds and disagreeing about the two that are easy to forget.
+
+`ast.EachPatternBinding` returns a **Named** per binding, not just a string, because the
+collector needs one to enter into a scope — and needs it *built* rather than taken from the
+node, since `BindingPattern.GetName` renders `name @ pattern`, which is right for a
+diagnostic and wrong as a scope key. That is why the previous day's `definePatternBindings`
+could not simply define the nodes it found, handled two kinds and missed the other two.
+
+**"Ten passes" was an overstatement, and correcting it is the useful part.** Only three were
+copies of one question. Ownership's `patternHasValueTest`, the exhaustiveness checker, the
+backend's match lowering and the typechecker's `walkDestructuredPattern` each do *different
+work per kind* — they are dispatches, not traversals, and folding them into a visitor would
+obscure rather than share. The todo entry says so now rather than counting them as pending.
+
+**It found a real gap.** `walkDestructuredPattern` has no `BindingPattern` or `RestPattern`
+case, so `whole @ P { x }` parses, collects, is registered in the arm's scope — and binds
+nothing: every use is *undefined identifier*. The unified walk is what made it visible,
+since `EachPatternBinding` says those names are bound and the binder disagrees. Recorded
+rather than fixed, with the question of whether the grammar should accept a form that binds
+nothing.
+
+**Go to Type Definition** answers "what is this thing", where the other two answer "where
+does this name come from". Three positions answer: an expression, through its recorded type;
+a constructor in a pattern, through the data type declaring it; and a **declaration's own
+name**, which is neither — a `VarDeclStmt` holds its name as a bare string, so no walk sees
+it, and asking a `let` what it holds is an ordinary thing to want.
+
+It answers **nothing** for a structural type, which is the design rather than a gap: `i64`, a
+tuple, an array and a function are types no program declared, and the nearest enclosing
+something would be a worse answer than none.
+
+Measured on `examples/mandelbrot_tui.lyra`: `Keyboard` answers `Event`, `m` at a use answers
+`MouseEvent` (which the arm scope from earlier today is what makes reachable), `screen`
+answers `Renderer` from both its declaration and its uses, and `mx` — an `i64` — answers
+nothing.
+
+Still open: `m` at its *binding* answers nothing, since the TypeTable is keyed by expression
+and a pattern is not one.
+
 ### 08/22/26 (16)
 **A `match` arm is a scope — and fixing that exposed two walks that could not reach one.**
 
