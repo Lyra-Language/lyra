@@ -9,6 +9,39 @@ Newest first.
 
 ## Dated log
 
+### 08/26/26
+**`name @ pattern` on a scalar scrutinee — the sixth site, found by sweeping rather than by
+a report.**
+
+The 08/22 fix covered data, struct and tuple scrutinees. A scalar match takes a different
+lowering, and there `match n { w @ 1 => … }` still failed to build: *"match pattern
+BindingPattern not implemented for a scalar scrutinee"*.
+
+Found by running the sweep that entry recommended — grep for a direct type assertion on an
+arm's pattern — rather than by waiting for it to be reported. Two candidates came back and
+only one was live: `let whole @ (a, b) = pair` already worked, so the destructuring path was
+never part of the family.
+
+Three parts, and the shape is by now familiar: the **test** must see through the wrapper
+(`w @ 1` tests exactly what `1` tests), the **bind** must happen (the scalar path bound
+nothing, on the reasoning — true until this form existed — that "a scalar pattern is a test,
+never a binding"), and the ladder's **catch-all detection** must peel too, since `all @ _`
+catches everything `_` does and binds a name besides.
+
+`matchCatchAll` now returns the **names** to bind rather than an identifier node, which is
+what lets both facts come back at once: the name a binding pattern introduces lives on the
+wrapper, and there is no sub-pattern node to hand back for it. `matchBindsWhole` goes through
+the same function, so a `shared` scrutinee bound by `all @ _` keeps its box pointer rather
+than binding the unboxed union.
+
+Proved across every scalar kind, since each dispatches to its own test: integer, range,
+string, bool and float.
+
+**The generalisation worth keeping**: this family has now cost six sites across three days,
+and every one was a question about *what an arm matches* answered by asserting on the arm's
+pattern directly. `ast.UnwrapBinding` exists so the answer is written once; the sweep for
+`.Pattern.(*ast.` is what finds the places that still do not ask it.
+
 ### 08/22/26 (19)
 **A server now clears its diagnostics before it goes away.**
 

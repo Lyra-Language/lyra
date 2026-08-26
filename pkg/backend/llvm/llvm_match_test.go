@@ -1191,3 +1191,37 @@ let main = () -> void => { print("${describe(Box(0))} ${describe(Box(5))} ${desc
 		t.Errorf("value test under an @ = %q; want \"empty box 5 dot\"", got)
 	}
 }
+
+// **`name @ pattern` on a *scalar* scrutinee**, which the aggregate fix (08/22) did not
+// reach: a scalar match takes a different lowering, where "a pattern is a test, never a
+// binding" was true until a binding wrapper could sit around one. Found by sweeping for
+// direct type assertions on an arm's pattern — the same family as the five sites the
+// aggregate fix corrected.
+//
+// Every scalar kind, because each dispatches to its own test: integer, range, string, bool
+// and float. The `@` catch-all is included since it takes the ladder's catch-all path rather
+// than the test path, and that path had to learn to peel too.
+func TestExec_BindingPatternOnScalarScrutinees(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+let describe = pure (n: i64) -> string => match n {
+  z @ 0 => "zero ${z}",
+  r @ 1..<=9 => "digit ${r}",
+  neg @ _ => "other ${neg}",
+}
+let word = pure (s: string) -> string => match s { w @ "hi" => "greeting ${w}", o @ _ => "other ${o}" }
+let flag = pure (b: bool) -> string => match b { t @ true => "yes ${t}", f @ _ => "no ${f}" }
+let approx = pure (x: f64) -> string => match x { p @ 1.5 => "exact ${p}", q @ _ => "other ${q}" }
+let main = () -> void => {
+  print("${describe(0)} ${describe(5)} ${describe(50)} ")
+  print("${word("hi")} ${word("bye")} ")
+  print("${flag(true)} ${flag(false)} ")
+  print("${approx(1.5)} ${approx(2.5)}")
+}
+`, "")
+	want := "zero 0 digit 5 other 50 greeting hi other bye yes true no false exact 1.5 other 2.5"
+	if got := strings.TrimSpace(out); got != want {
+		t.Errorf("scalar @-bindings = %q; want %q", got, want)
+	}
+}

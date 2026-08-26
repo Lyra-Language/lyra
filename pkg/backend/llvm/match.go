@@ -62,7 +62,9 @@ func (l *lowerer) lowerMatch(block *ir.Block, e *ast.MatchExpr) (value.Value, *i
 // box pointer must be kept available for the binding, not only the unboxed union.
 func matchBindsWhole(e *ast.MatchExpr) bool {
 	for _, arm := range e.MatchArms {
-		if ip, ok := arm.Pattern.(*ast.IdentifierPattern); ok && ip.Name != "_" {
+		// Unwrapped: `all @ _` binds the whole scrutinee exactly as a bare `all` does, and a
+		// `shared` scrutinee whose box pointer was not kept would bind the unboxed union.
+		if names, isCatchAll := matchCatchAll(arm.Pattern); isCatchAll && len(names) > 0 {
 			return true
 		}
 	}
@@ -213,9 +215,24 @@ func (l *lowerer) lowerScalarMatch(block *ir.Block, e *ast.MatchExpr, scrutPrim 
 		func(b *ir.Block, pat ast.Pattern) (value.Value, error) {
 			return l.scalarMatchTest(b, scrut, pat, isBool, signed)
 		},
-		// A scalar pattern is a test, never a binding: the only name a scalar arm can
-		// introduce is a catch-all identifier, and the driver binds that from `whole`.
-		func(*ir.Block, ast.Pattern) error { return nil },
+		// A scalar pattern is a test — with one exception: `w @ 1` binds the scrutinee and
+		// then tests it. A catch-all identifier is still the driver's to bind from `whole`;
+		// this is for a *binding wrapper around a testing pattern*, which is the only way a
+		// scalar arm introduces a name of its own.
+		func(b *ir.Block, pat ast.Pattern) error {
+			for {
+				bp, isBinding := pat.(*ast.BindingPattern)
+				if !isBinding {
+					return nil
+				}
+				if bp.Name != "_" {
+					slot := b.Parent.Blocks[0].NewAlloca(scrut.Type())
+					b.NewStore(scrut, slot)
+					l.locals[bp.Name] = slot
+				}
+				pat = bp.Pattern
+			}
+		},
 	)
 }
 
@@ -226,6 +243,10 @@ func (l *lowerer) lowerScalarMatch(block *ir.Block, e *ast.MatchExpr, scrutPrim 
 // floatScalarMatchTest (dispatched on the already-lowered value's LLVM type, so
 // isBool/signed are ignored there).
 func (l *lowerer) scalarMatchTest(block *ir.Block, scrut value.Value, pattern ast.Pattern, isBool, signed bool) (value.Value, error) {
+	// `w @ 1` tests exactly what `1` tests — a binding tests nothing. Unwrapped here rather
+	// than given a case, so the three delegates below (float, string, integer) each need no
+	// knowledge of the wrapper.
+	pattern = ast.UnwrapBinding(pattern)
 	if _, isFloat := scrut.Type().(*lltypes.FloatType); isFloat {
 		return l.floatScalarMatchTest(block, scrut, pattern)
 	}

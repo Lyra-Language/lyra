@@ -1585,6 +1585,11 @@ two editor features single-file where the program no longer is:
   `COMPLETED.md`.
   - A **named rest** turned out not to be missing: `...xs` is bound contextually by the
     array and tuple cases, which know the element type, rather than by a case of its own.
+  - **[DONE 08/26] The scalar scrutinee**, which the first fix did not reach: a scalar match
+    takes a different lowering, where "a pattern is a test, never a binding" held until a
+    binding wrapper could sit around one. Found by running the `.Pattern.(*ast.` sweep this
+    entry recommends rather than waiting for a report — two candidates, one live.
+    `let whole @ (a, b) = pair` already worked.
 
 - **[PARTIAL] Passes hand-roll their own pattern traversal.** `ast.WalkPattern` /
   `ast.PatternsOf` landed 08/22 as the canonical walk — patterns were the one supertype

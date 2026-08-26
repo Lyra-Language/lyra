@@ -95,11 +95,13 @@ func (l *lowerer) lowerMatchLadder(
 	defer armScope()
 	for _, arm := range e.MatchArms {
 		armScope()
-		if ip, isCatchAll := matchCatchAll(arm.Pattern); isCatchAll {
-			if ip != nil { // an identifier catch-all binds the whole aggregate value
+		if names, isCatchAll := matchCatchAll(arm.Pattern); isCatchAll {
+			if len(names) > 0 { // a catch-all that binds: `x => …`, `all @ _ => …`
 				slot := fn.Blocks[0].NewAlloca(whole.Type())
 				current.NewStore(whole, slot)
-				l.locals[ip.Name] = slot
+				for _, name := range names {
+					l.locals[name] = slot
+				}
 			}
 			if arm.Guard == nil {
 				if err := lowerArmInto(current, arm.Body); err != nil {
@@ -162,15 +164,31 @@ func (l *lowerer) lowerMatchLadder(
 // wildcard or an identifier). The returned *IdentifierPattern is non-nil only for
 // a real binding identifier (name != "_") — the name the whole scrutinee value
 // binds to — and nil for a wildcard or `_`.
-func matchCatchAll(pat ast.Pattern) (*ast.IdentifierPattern, bool) {
+func matchCatchAll(pat ast.Pattern) ([]string, bool) {
+	// **Peeled, and the names collected on the way down.** `all @ _` catches everything `_`
+	// does and binds `all` besides, so a wrapper neither disqualifies an arm from being a
+	// catch-all nor is free to be dropped. Returning names rather than the identifier node
+	// is what lets both come back: the name a binding pattern introduces lives on the
+	// wrapper, not on a sub-pattern there is one of.
+	var names []string
+	for {
+		bp, isBinding := pat.(*ast.BindingPattern)
+		if !isBinding {
+			break
+		}
+		if bp.Name != "_" {
+			names = append(names, bp.Name)
+		}
+		pat = bp.Pattern
+	}
 	switch p := pat.(type) {
 	case *ast.WildcardPattern:
-		return nil, true
+		return names, true
 	case *ast.IdentifierPattern:
-		if p.Name == "_" {
-			return nil, true
+		if p.Name != "_" {
+			names = append(names, p.Name)
 		}
-		return p, true
+		return names, true
 	}
 	return nil, false
 }
