@@ -2,6 +2,7 @@ package symbols
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -1129,4 +1130,57 @@ func (st *SymbolTable) ModuleDeclares(module, name string) bool {
 	}
 	_, ok := scope.LookupLocal(name)
 	return ok
+}
+
+// DeclaringDataType is the declaration of the data type owning a constructor, as the file
+// at loc sees it — the answer to "what does `Keyboard` in `Keyboard(Up)` belong to".
+//
+// A constructor is not a name the lookup maps: `data Event = Keyboard Key | …` registers
+// `Event`, and a module importing `Event` may use its constructors without naming them, so
+// no import admits `Keyboard` and no lookup finds it. Finding its owner means asking which
+// data type has it, which is a scan — and the scan has to be ordered and visibility-checked,
+// which is why it lives here rather than being rewritten by each caller.
+//
+// **Ordered by locality, then by key.** A module's own declaration shadows an ambient one
+// for every other kind of name, and a constructor is not the exception: a program declaring
+// `data Opt = Some(i64) | None` means *its* `Some`, not the prelude's. Alphabetical order
+// alone is deterministic but picks by spelling, which would hand `Some` to `Maybe` on the
+// strength of "Maybe" < "Opt".
+//
+// The candidate must also resolve, from *this* file, to *this* declaration: a type the file
+// cannot see does not resolve, and one shadowed by a same-named local declaration resolves
+// to the other one.
+func (st *SymbolTable) DeclaringDataType(ctorName string, loc ast.Location) (*ast.TypeDeclStmt, bool) {
+	if st == nil {
+		return nil, false
+	}
+	asking := st.ModuleOfFile[loc.File]
+	keys := make([]string, 0, len(st.Types))
+	for k := range st.Types {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		li := st.ModuleOfFile[st.Types[keys[i]].GetLocation().File] == asking
+		lj := st.ModuleOfFile[st.Types[keys[j]].GetLocation().File] == asking
+		if li != lj {
+			return li
+		}
+		return keys[i] < keys[j]
+	})
+	for _, k := range keys {
+		decl := st.Types[k]
+		dt, ok := decl.Type.(types.DataType)
+		if !ok {
+			continue
+		}
+		if !slices.ContainsFunc(dt.Constructors, func(c types.DataTypeConstructor) bool {
+			return c.Name == ctorName
+		}) {
+			continue
+		}
+		if resolved, ok := st.LookupTypeFrom(decl.Name, loc); ok && resolved == decl {
+			return decl, true
+		}
+	}
+	return nil, false
 }

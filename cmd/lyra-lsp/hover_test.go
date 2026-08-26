@@ -163,3 +163,31 @@ let a<t> where t: Sub = pure (v: t) -> string => v.show()`
 		t.Errorf("hover = %q; want the trait's doc comment", hover.Contents.Value)
 	}
 }
+
+// Hovering a constructor in a pattern shows which data type it belongs to, and that type's
+// documentation — the same blindness definition had, in the feature next door.
+func TestHover_ConstructorInAPattern(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	src := `
+/// A shape, of which there are two.
+data Shape = Dot | Box(i64)
+let area = pure (s: Shape) -> i64 => match s {
+	Dot => 0,
+	Box(n) => n,
+}`
+	openAndWait(t, h, src)
+	col := strings.Index(strings.Split(src, "\n")[4], "Dot =>")
+	hover, err := h.Hover(testURI, 4, col)
+	if err != nil {
+		t.Fatalf("Hover: %v", err)
+	}
+	if hover == nil {
+		t.Fatal("no hover on a constructor in a pattern")
+	}
+	if !strings.Contains(hover.Contents.Value, "Dot: Shape") {
+		t.Errorf("hover = %q; want it to name the constructor and its type", hover.Contents.Value)
+	}
+	if !strings.Contains(hover.Contents.Value, "A shape, of which there are two.") {
+		t.Errorf("hover = %q; want the data type's doc comment", hover.Contents.Value)
+	}
+}

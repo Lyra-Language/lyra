@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -687,43 +686,19 @@ func arrayMatchIsExhaustive(arms []ast.MatchArm, _ types.Type) bool {
 // beside the prelude's — resolved to a different one on each compile. Sorted keys plus the
 // visibility filter make the answer a property of the program rather than of the run.
 func (tc *TypeChecker) declaringDataType(ctorName string, loc ast.Location) (*ast.TypeDeclStmt, types.DataType, bool) {
-	// Ordered by locality, then by key. A module's own declaration shadows an ambient one
-	// for every other kind of name, and a constructor should not be the exception: a
-	// program declaring `data Opt = Some(i64) | None` means *its* `Some`, not the
-	// prelude's. Alphabetical order alone is deterministic but picks by spelling, which
-	// would hand `Some` to `Maybe` on the strength of "Maybe" < "Opt".
-	asking := tc.symTable.ModuleOfFile[loc.File]
-	keys := make([]string, 0, len(tc.symTable.Types))
-	for k := range tc.symTable.Types {
-		keys = append(keys, k)
+	// The scan, its ordering and its visibility check live on the symbol table
+	// (DeclaringDataType), because the language server needs the same answer for
+	// go-to-definition on a constructor *pattern* and a second copy of an ordering rule is
+	// how two features come to disagree about which `Some` a program means.
+	decl, ok := tc.symTable.DeclaringDataType(ctorName, loc)
+	if !ok {
+		return nil, types.DataType{}, false
 	}
-	sort.Slice(keys, func(i, j int) bool {
-		li := tc.symTable.ModuleOfFile[tc.symTable.Types[keys[i]].GetLocation().File] == asking
-		lj := tc.symTable.ModuleOfFile[tc.symTable.Types[keys[j]].GetLocation().File] == asking
-		if li != lj {
-			return li
-		}
-		return keys[i] < keys[j]
-	})
-	for _, k := range keys {
-		decl := tc.symTable.Types[k]
-		dt, ok := decl.Type.(types.DataType)
-		if !ok {
-			continue
-		}
-		if !slices.ContainsFunc(dt.Constructors, func(c types.DataTypeConstructor) bool {
-			return c.Name == ctorName
-		}) {
-			continue
-		}
-		// The name must resolve, from *this* file, to *this* declaration. A type it
-		// cannot see does not resolve; one shadowed by a same-named local declaration
-		// resolves to the other one, and this is not it.
-		if resolved, ok := tc.symTable.LookupTypeFrom(decl.Name, loc); ok && resolved == decl {
-			return decl, dt, true
-		}
+	dt, ok := decl.Type.(types.DataType)
+	if !ok {
+		return nil, types.DataType{}, false
 	}
-	return nil, types.DataType{}, false
+	return decl, dt, true
 }
 
 // findDataTypeByConstructor is declaringDataType without the declaration — the shape most

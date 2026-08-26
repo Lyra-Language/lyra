@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/owenrumney/go-lsp/lsp"
 	"strings"
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
@@ -109,4 +110,43 @@ func renderHover(signature string, doc *ast.Doc) string {
 	b.WriteString("\n\n---\n\n")
 	b.WriteString(doc.Text)
 	return b.String()
+}
+
+// hoverPatternReference renders a constructor named in a pattern: which data type it
+// belongs to, and that type's documentation.
+//
+// It answers for the constructor and not for a **binding**: `m` in `Mouse(m)` has a type
+// the typechecker knows and nothing records, since the TypeTable is keyed by *expression*
+// and a pattern is not one. Showing a name with no type would be worse than showing
+// nothing — hover is read as "here is what this is" — so the binding case is left to the
+// definition jump, which does answer for it.
+func hoverPatternReference(analysis *docAnalysis, line, col int) *lsp.Hover {
+	pat := findPatternAtPos(analysis.program, line, col)
+	if pat == nil || analysis.symTable == nil {
+		return nil
+	}
+	name := ""
+	switch p := pat.(type) {
+	case *ast.DataPattern:
+		name = p.Name
+	case *ast.StructPattern:
+		name = p.Name
+	default:
+		return nil
+	}
+	if name == "" || !cursorOnName(pat.GetLocation(), name, line, col) {
+		return nil
+	}
+	decl, ok := analysis.symTable.DeclaringDataType(name, pat.GetLocation())
+	if !ok {
+		if decl, ok = anyDeclaringDataType(analysis, name); !ok {
+			// A struct pattern names its own type rather than a constructor.
+			if decl, ok = analysis.symTable.LookupTypeFrom(name, pat.GetLocation()); !ok {
+				return nil
+			}
+		}
+	}
+	summary := name + ": " + decl.Name
+	content := renderHover("```lyra\n"+summary+"\n```", decl.Doc)
+	return &lsp.Hover{Contents: lsp.MarkupContent{Kind: lsp.Markdown, Value: content}}
 }

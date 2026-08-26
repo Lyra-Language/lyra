@@ -229,3 +229,71 @@ let b<t: Shown> = pure (v: t) -> string => v.show()`
 		})
 	}
 }
+
+// **A constructor in a `match` arm is a pattern, not an expression**, and every
+// position-based feature starts from a walk over expressions — so go-to-definition on the
+// `Keyboard` of `Keyboard(Up) => …` did nothing, while the same constructor used as a value
+// resolved fine. Reported from the editor, where all three "Go to …" items appear to do
+// nothing on a constructor.
+//
+// The failure was worse than silence: `findExprAtPos` returned whatever *expression* spanned
+// the cursor — a nearby tuple literal — so the wrong node was resolved rather than none.
+// That is why patterns get their own lookup rather than a fallback inside the expression one.
+func TestDefinition_ConstructorInAPattern(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	src := `
+data Shape = Dot | Box(i64)
+let area = pure (s: Shape) -> i64 => match s {
+	Dot => 0,
+	Box(n) => n,
+}`
+	openAndWait(t, h, src)
+	for _, tc := range []struct {
+		name   string
+		line   int
+		needle string
+	}{
+		{"nullary constructor", 3, "Dot =>"},
+		{"constructor with a payload", 4, "Box(n)"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			col := strings.Index(strings.Split(src, "\n")[tc.line], tc.needle)
+			locs, err := h.Definition(testURI, tc.line, col)
+			if err != nil {
+				t.Fatalf("Definition: %v", err)
+			}
+			if len(locs) != 1 {
+				t.Fatalf("expected 1 location, got %d", len(locs))
+			}
+			// `data Shape` is on line 1.
+			if got := int(locs[0].Range.Start.Line); got != 1 {
+				t.Errorf("jumped to line %d; want 1 (the data declaration)", got)
+			}
+		})
+	}
+}
+
+// A name the pattern **binds** is itself a declaration, so definition on it answers with
+// itself — the same as on a `let`. Returning nothing there is what makes the editor look
+// broken on a name that is plainly a binding site.
+func TestDefinition_APatternBindingResolvesToItself(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	src := `
+data Shape = Dot | Box(i64)
+let area = pure (s: Shape) -> i64 => match s {
+	Dot => 0,
+	Box(n) => n,
+}`
+	openAndWait(t, h, src)
+	col := strings.Index(strings.Split(src, "\n")[4], "n)")
+	locs, err := h.Definition(testURI, 4, col)
+	if err != nil {
+		t.Fatalf("Definition: %v", err)
+	}
+	if len(locs) != 1 {
+		t.Fatalf("expected 1 location, got %d", len(locs))
+	}
+	if got := int(locs[0].Range.Start.Line); got != 4 {
+		t.Errorf("jumped to line %d; want 4 (the binding itself)", got)
+	}
+}

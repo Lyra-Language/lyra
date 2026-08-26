@@ -436,6 +436,13 @@ func (h *Handler) Hover(_ context.Context, params *lsp.HoverParams) (result *lsp
 		return hov, nil
 	}
 
+	// A **pattern**, checked first for the same reason: a constructor in a `match` arm is
+	// not an expression, and the arm around it is — so falling through would answer with
+	// whatever encloses the pattern rather than with the pattern.
+	if hov := hoverPatternReference(analysis, line, col); hov != nil {
+		return hov, nil
+	}
+
 	expr := findExprAtPos(analysis.program, line, col)
 	if expr == nil {
 		return nil, nil

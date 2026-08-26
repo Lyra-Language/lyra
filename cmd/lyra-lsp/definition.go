@@ -8,6 +8,7 @@ import (
 
 	"github.com/Lyra-Language/lyra/pkg/ast"
 	"github.com/Lyra-Language/lyra/pkg/ast/symbols"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // Definition implements textDocument/definition, returning the source location
@@ -34,6 +35,13 @@ func (h *Handler) Definition(_ context.Context, params *lsp.DefinitionParams) (r
 		// of its own without breaking structural equality; resolving it is then the same
 		// LookupTypeFrom the struct-literal case above already uses.
 		loc = resolveTypeReference(analysis, line, col)
+	}
+	if loc == nil {
+		// **A pattern is the third supertype**, and the walk above reaches only
+		// expressions — so `Keyboard(Up) => …` in a `match` arm resolved to nothing while
+		// `Keyboard(k)` as a *value* resolved fine. Same shape as the type-position gap:
+		// not a missing feature but a category the lookup could not see.
+		loc = resolvePatternReference(analysis, line, col)
 	}
 	if loc == nil {
 		log.Printf("definition: no definition found (expr %T)", expr)
@@ -70,6 +78,104 @@ func resolveTypeReference(analysis *docAnalysis, line, col int) *ast.Location {
 	// gives, and the same one answer to the question (namedNameLoc, rename.go).
 	loc := namedNameLoc(named)
 	return &loc
+}
+
+// resolvePatternReference answers for a cursor inside a **pattern**: a constructor in a
+// `match` arm or a destructuring, a struct pattern's type name, or a name the pattern binds.
+//
+// Tried last, after the expression walk and the type index, so nothing that already resolves
+// changes. That ordering also matters for a reason particular to patterns: their spans sit
+// *inside* an enclosing expression's, so the expression walk always has an answer for these
+// positions — the wrong one — and only a lookup that knows about patterns can tell that the
+// cursor is on `Keyboard` rather than on the arm around it.
+func resolvePatternReference(analysis *docAnalysis, line, col int) *ast.Location {
+	pat := findPatternAtPos(analysis.program, line, col)
+	if pat == nil || analysis.symTable == nil {
+		return nil
+	}
+	switch p := pat.(type) {
+	case *ast.DataPattern:
+		// The constructor's own name, not the payload's: `Keyboard(Up)` with the cursor on
+		// `Up` finds the *inner* pattern first, since findPatternAtPos keeps the narrowest
+		// span. A constructor is registered under its own name, which is how the
+		// expression-position case above resolves `Some` — so both spellings of a
+		// constructor reach the same declaration.
+		if cursorOnName(p.GetLocation(), p.Name, line, col) {
+			// By the data type that *owns* the constructor, not by the constructor's own
+			// name: `import std.tui.{ Event }` admits `Event` and not `Keyboard`, and it
+			// should not have to — a module using a type's constructors has already
+			// imported the type. DeclaringDataType is the same scan the typechecker uses
+			// to decide which `Some` a `match` arm means.
+			if decl, ok := analysis.symTable.DeclaringDataType(p.Name, p.GetLocation()); ok {
+				loc := namedNameLoc(decl)
+				return &loc
+			}
+			// **A constructor whose type the file cannot name at all.** `match m.button {
+			// WheelUp => … }` never mentions `MouseButton`, and need not: the value came
+			// from a field, and the typechecker resolves the arm through the *scrutinee's*
+			// type rather than by looking the constructor up. Navigation has no scrutinee
+			// in hand, so the scan above — which requires the owning type to resolve from
+			// this file — finds nothing.
+			//
+			// Answered best-effort, and deliberately not by inventing a second rule about
+			// which constructor a program *means*: this picks a declaration to jump to,
+			// and where two types share a constructor name it may pick the other one. That
+			// is a wrong jump, which a reader sees and corrects; refusing is a feature that
+			// looks broken on ordinary code.
+			if decl, ok := anyDeclaringDataType(analysis, p.Name); ok {
+				loc := namedNameLoc(decl)
+				return &loc
+			}
+		}
+	case *ast.StructPattern:
+		if p.Name != "" && cursorOnName(p.GetLocation(), p.Name, line, col) {
+			if decl, ok := analysis.symTable.LookupTypeFrom(p.Name, p.GetLocation()); ok {
+				loc := namedNameLoc(decl)
+				return &loc
+			}
+		}
+	case *ast.IdentifierPattern:
+		// A pattern binding *is* a declaration — `m` in `Mouse(m)` is where `m` comes from
+		// — so definition on it answers with itself, the same as on a `let`. Returning it
+		// rather than nothing is what makes the editor's "jump to definition" land
+		// somewhere instead of appearing broken on a name that is plainly a binding.
+		loc := p.GetLocation()
+		return &loc
+	case *ast.BindingPattern:
+		if cursorOnName(p.GetLocation(), p.Name, line, col) {
+			loc := p.GetLocation()
+			loc.EndLine, loc.EndCol = loc.StartLine, loc.StartCol+len(p.Name)
+			return &loc
+		}
+	}
+	return nil
+}
+
+// anyDeclaringDataType finds a data type owning a constructor without requiring the type to
+// be nameable from the asking file. See its one caller for why that is a navigation
+// concession rather than a resolution rule.
+func anyDeclaringDataType(analysis *docAnalysis, ctorName string) (*ast.TypeDeclStmt, bool) {
+	var best *ast.TypeDeclStmt
+	for _, decl := range analysis.symTable.Types {
+		dt, ok := decl.Type.(types.DataType)
+		if !ok {
+			continue
+		}
+		for _, ctor := range dt.Constructors {
+			if ctor.Name != ctorName {
+				continue
+			}
+			// Prefer a declaration in the file being edited, then settle deterministically
+			// by location — a map iterates in a different order every run, and an editor
+			// jumping somewhere different each time is worse than jumping somewhere wrong.
+			if best == nil ||
+				(sameFile(decl.GetLocation().File, analysis.file) && !sameFile(best.GetLocation().File, analysis.file)) ||
+				(decl.GetLocation().File == best.GetLocation().File && decl.GetLocation().StartLine < best.GetLocation().StartLine) {
+				best = decl
+			}
+		}
+	}
+	return best, best != nil
 }
 
 // lookupTypeOrTrait resolves a written name to the declaration it refers to.

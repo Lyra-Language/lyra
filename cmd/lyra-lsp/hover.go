@@ -53,6 +53,53 @@ func findExprAtPos(program *ast.Program, line, col int) ast.Expression {
 	return best
 }
 
+// findPatternAtPos is findExprAtPos for the pattern half of the AST, and exists for the
+// same reason: `Keyboard(Up) => …` is a *pattern*, and every position feature walked only
+// expressions, so go-to-definition on a constructor in a `match` arm did nothing.
+//
+// Worse than nothing, in fact, which is why this is a lookup of its own rather than a
+// fallback on the expression one: patterns hold no expressions and expressions no patterns,
+// but their *spans overlap*, so asking `findExprAtPos` about a position inside a pattern
+// returns whatever expression encloses the arm — a nearby tuple literal, in the reported
+// case. Answering from the wrong node is how a feature comes to be confidently wrong rather
+// than silent.
+//
+// Patterns hang off ordinary nodes, so this walks statements and expressions as usual
+// (`ast.WalkStmt`) and descends into whatever each holds (`ast.PatternsOf`,
+// `ast.WalkPattern`). The narrowest span containing the position wins, exactly as above.
+func findPatternAtPos(program *ast.Program, line, col int) ast.Pattern {
+	if program == nil {
+		return nil
+	}
+	var best ast.Pattern
+	onPattern := func(p ast.Pattern) bool {
+		loc := p.GetLocation()
+		if containsPos(loc, line, col) && (best == nil || spanWithin(loc, best.GetLocation())) {
+			best = p
+		}
+		return true
+	}
+	consider := func(node ast.AstNode) {
+		for _, p := range ast.PatternsOf(node) {
+			ast.WalkPattern(p, onPattern)
+		}
+	}
+	for _, node := range program.Statements {
+		stmt, ok := node.(ast.Statement)
+		if !ok {
+			continue
+		}
+		ast.WalkStmt(stmt, func(s ast.Statement) bool {
+			consider(s)
+			return true
+		}, func(e ast.Expression) bool {
+			consider(e)
+			return true
+		})
+	}
+	return best
+}
+
 // spanWithin reports whether inner's span lies within outer's, inclusive — so two nodes
 // with the same span are each within the other, and the later-visited one wins.
 func spanWithin(inner, outer ast.Location) bool {
