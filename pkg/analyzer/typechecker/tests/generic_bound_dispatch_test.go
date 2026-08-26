@@ -143,3 +143,32 @@ let main = () => { let n = Box { v: Box { v: 1 } }; println(twice(n).v.v) }
 `, false)
 	assertNoErrors(t, res)
 }
+
+// **A method call on a bare type parameter reaches UFCS**, below the bound and above the
+// error. A free function generic in its own receiver — which is how the prelude writes
+// `min`/`max`/`clamp` — accepts a type-variable receiver, so `a.pick(b)` resolves to
+// `pick(a, b)` and the two spellings of one call agree. Before 08/26 the method spelling
+// reported *"type parameter t has no method"*, whose advice names a `where` bound the
+// author has already written.
+func TestGenericReceiver_ReachesAUFCSFunction(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+trait Pickable { pure rank: (Self) -> i64 }
+let pick<t> where t: Pickable = pure (self: t, other: t) -> t =>
+  if self.rank() >= other.rank() { self } else { other }
+let best<t> where t: Pickable = pure (a: t, b: t, c: t) -> t => a.pick(b).pick(c)
+`, false)
+	assertNoErrors(t, res)
+}
+
+// And the rung cannot conjure a method out of a free function written for some other
+// receiver: a concrete `self` does not unify with a type variable, so the diagnostic a
+// genuine miss deserves is unchanged.
+func TestGenericReceiver_AConcreteSelfDoesNotMatchATypeParameter(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+trait Pickable { pure rank: (Self) -> i64 }
+let shout = pure (self: string) -> string => self
+let nope<t> where t: Pickable = pure (a: t) -> string => a.shout()
+`, false)
+	assertErrorsAre(t, res,
+		`type parameter t has no method "shout"; add a `+"`where t: Trait`"+` bound whose trait declares it`)
+}

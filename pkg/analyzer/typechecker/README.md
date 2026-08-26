@@ -812,8 +812,18 @@ by **naming its first parameter `self`**. Everything else stays call-only, so ad
 to a module cannot change what `x.f()` means elsewhere in it. The rung sits in
 `inferMemberCall`, giving the ladder **field → trait method → UFCS → builtin**: a real impl
 wins, and a `self` function may shadow a compiler-provided method the way user code does
-everywhere else. A receiver that is a bare type parameter never reaches it — that case exits
-at the generic-bound rung above, so UFCS never competes with a `where` bound.
+everywhere else.
+
+**A bare type parameter reaches the rung too** (08/26), through `callViaUFCS` in the
+generic-receiver branch — below the `where` bound, so UFCS never competes with it, and above
+the branch's own errors, since a match means there was nothing to report. `receiverAccepts`
+is the whole of what makes that sound: the candidate's declared `self` is unified against the
+receiver with the *candidate's* type variables as wildcards, so `self: t` binds a type
+variable and `self: string` does not. Only a function generic in its own receiver is
+reachable there, which is exactly the prelude's `min`/`max`/`clamp`. Before it, `best.max(x)`
+inside `where t: Ord` reported *"type parameter t has no method max; add a `where t: Trait`
+bound"* while `max(best, x)` compiled — one call whose two spellings disagreed, and a
+diagnostic asking for a bound already written.
 
 **A matching call is rewritten in place** (`desugarUFCSCall`): the receiver becomes
 `Arguments[0]` and the callee an ordinary `IdentifierExpr`. Everything after this point —

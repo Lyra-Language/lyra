@@ -212,11 +212,8 @@ let main = () -> void => { println("${(5).clamp(10, 0)}") }
 // recursion, because a primitive is never routed through an impl. Asserted by demanding
 // the bound of a number at all, which is what failed before they existed.
 //
-// The **free-function** form is deliberate: `best.max(x)` on a receiver whose type is a
-// bare type parameter does not resolve — UFCS dispatches on the receiver's type, and a
-// type variable has none, so the ladder consults only the trait bounds. `max(best, x)` is
-// the same call and works. In todo.md; the diagnostic there is misleading, since it asks
-// for a `where` bound that is already written.
+// The **free-function** form here is the one that has always worked; the method spelling
+// of the same call is TestExec_AMethodCallOnATypeParameterReachesUFCS below.
 func TestExec_APrimitiveSatisfiesAnOrdBound(t *testing.T) {
 	t.Parallel()
 	out := buildAndRunWithPrelude(t, `
@@ -234,5 +231,34 @@ let main = () -> void => {
 `, "")
 	if got := strings.TrimSpace(out); got != "11 11" {
 		t.Errorf("bounded max = %q; want \"11 11\"", got)
+	}
+}
+
+// **A method call on a bare type parameter reaches UFCS**, as of 08/26. `best.max(x)`
+// inside `where t: Ord` is the prelude's `max(self: t, other: t)`, and until the ladder
+// tried the UFCS rung for a type-variable receiver it reported *"type parameter t has no
+// method max; add a `where t: Trait` bound"* — advice naming a bound already written.
+//
+// Run rather than checked, because the front end is only half of it: the desugared call
+// records a *template* instantiation, in the enclosing body's own type variables, which
+// has to compose into a real specialization at each of `largest`'s.
+func TestExec_AMethodCallOnATypeParameterReachesUFCS(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+let largest<t> where t: Ord = pure noalloc (xs: []t, seed: t) -> t => {
+  var best = seed
+  for x in xs { best = best.max(x) }
+  best
+}
+let span<t> where t: Ord = pure (lo: t, hi: t, v: t) -> t => v.clamp(lo, hi).min(hi)
+let main = () -> void => {
+  var ns: []i64 = [3, 11, 7]
+  var ws: []u8 = [3, 11, 7]
+  print("${largest(ns, 0)} ${largest(ws, u8(0))} ${span(1, 10, 42)} ${span('a', 'y', 'z')}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "11 11 10 y" {
+		t.Errorf("method-style bound call = %q; want \"11 11 10 y\"", got)
 	}
 }

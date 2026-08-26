@@ -1054,6 +1054,22 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		if ret, ok := tc.dispatchViaGenericBound(g, methodName, call); ok {
 			return ret
 		}
+		// A **free function with a generic receiver** is the other thing `t` can have a
+		// method from, and it is the rung the ladder was missing: `a.max(b)` inside
+		// `where t: Ord` resolves to the prelude's `max(self: t, other: t)` exactly as
+		// `max(a, b)` already did. Written method-style it used to report *"type
+		// parameter t has no method max; add a `where t: Trait` bound"* — advice naming
+		// a bound the author had already written — so the two spellings of one call
+		// disagreed, in the code the prelude's own `self` receivers exist to encourage.
+		//
+		// Below the bound, so a trait method the receiver genuinely declares still wins,
+		// and above the errors rather than after them, since a candidate matching means
+		// there was nothing wrong to report. `receiverAccepts` is what keeps it honest:
+		// a concrete `self: string` does not unify with a type variable, so only a
+		// candidate generic in its own receiver is reachable here.
+		if ret, handled := tc.callViaUFCS(objType, methodName, member, call); handled {
+			return ret
+		}
 		// Inside a trait's default body the receiver is `Self`, which is a type variable
 		// by construction and not one the author wrote — so the generic advice names a
 		// `where Self: Trait` clause that no program can write. The question there is
@@ -1081,20 +1097,8 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// until this call's arguments solve them, and solving is also what records the
 	// specialization the backend emits. With the receiver prepended, a `Maybe<i64>`
 	// receiver binds `t` exactly as it does when the call is written `map(m, f)`.
-	if fn, res := tc.ufcsCandidate(objType, methodName, member, call); res != ufcsNoMatch {
-		if res == ufcsRefused {
-			return nil
-		}
-		desugarUFCSCall(member, call)
-		// The same E011 check the bare-call path makes, because this *is* the bare call
-		// now — and the rung a reader would assume shares it. It did not: `unsafe` on a
-		// free function was enforced at `data(xs)` and silently not at `xs.data()`, so
-		// the method spelling of the standard library's own FFI helpers was the way
-		// around the keyword. Latent since UFCS landed, and invisible until the first
-		// unsafe function with a `self` receiver (`std.ffi`'s `data`) — hazard 8, in a
-		// resolution ladder rather than a switch.
-		tc.requireUnsafeCall(methodName, fn, call)
-		return tc.inferLambdaCall(methodName, fn, call)
+	if ret, handled := tc.callViaUFCS(objType, methodName, member, call); handled {
+		return ret
 	}
 
 	// A compiler-provided method on a primitive receiver (e.g. `x.wrapping_add(y)`

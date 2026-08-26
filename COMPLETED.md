@@ -10,6 +10,47 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**A method call on a bare type parameter reaches UFCS — the ladder's last rung was
+unreachable from its own first branch.**
+
+Inside `where t: Ord`, `best.max(x)` reported *"type parameter t has no method max; add a
+`where t: Trait` bound whose trait declares it"* — advice naming a bound the author had
+already written — while `max(best, x)` is the same call and compiled. Two spellings of one
+call disagreed, in exactly the code the prelude's `self` receivers exist to encourage.
+
+The cause is structural rather than a missing case: `inferMemberCall`'s ladder has a branch
+for a type-variable receiver that tries the `where` bound and then **returns**, so the UFCS
+rung three lines below it was reachable only for a concrete receiver. A type variable has no
+impl, which is what the branch was written for — but a *free function generic in its own
+receiver* is the other thing it can have a method from, and the prelude's `min`/`max`/`clamp`
+are precisely that.
+
+**No new predicate was needed, and that is the point.** `receiverAccepts` unifies the
+candidate's declared `self` against the receiver with the candidate's own type variables as
+wildcards, so `self: t` binds a type-variable receiver and `self: string` does not — the
+concrete-receiver miss keeps the diagnostic it always had. The rung goes below the bound
+(a trait method the receiver genuinely declares still wins) and above the errors (a match
+means there was nothing to report).
+
+**Nothing downstream changed**, because `desugarUFCSCall` puts the receiver in
+`Arguments[0]` before any other pass runs: what the backend sees is the bare call that
+already worked. The bound is then checked at the instantiation like any other, which is why
+`where t: Show` calling `a.max(b)` reports *"t is instantiated at the type parameter t,
+which is not bound by Ord; add `where t: Ord` to the enclosing declaration"* — a message
+that names the fix, where the old one named a bound already present.
+
+The rung was extracted into `callViaUFCS` rather than copied, since a second copy of a
+resolution rung is hazard 8 with the E011 unsafe check inside it.
+
+**Two lowering gaps surfaced while testing, and neither is this one.** A generic body
+passing a type-variable-typed closure to another generic, and a trait default body calling a
+generic free function, both die in the backend — and both reproduce identically written as
+bare calls, which is how they were told apart from a regression in five minutes. Recorded in
+`todo.md` under this entry. The check worth repeating: when a change makes a spelling reach
+further, rewrite the failing program in the spelling that already worked before believing
+the change caused it.
+
+### 08/26/26
 **`name @ pattern` on a scalar scrutinee — the sixth site, found by sweeping rather than by
 a report.**
 

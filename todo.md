@@ -3756,13 +3756,23 @@ recommending — write the program someone would actually write, and see what it
     rung can see through an untyped receiver (`1.wrapping_add(2)`). Deferring it wants the
     same treatment this entry got, applied at that site.
 
-- **[OPEN] A method call on a bare type parameter does not reach UFCS.** Inside
-  `where t: Ord`, `best.max(x)` reports *"type parameter t has no method max; add a
+- **[DONE 08/26] A method call on a bare type parameter reaches UFCS.** Inside
+  `where t: Ord`, `best.max(x)` reported *"type parameter t has no method max; add a
   `where t: Trait` bound"* — advice naming a bound that is already written — while
-  `max(best, x)` is the same call and works. UFCS dispatches on the receiver's *type* and a
-  type variable has none, so the ladder consults only the trait's own methods. Two ways
-  through: resolve a UFCS candidate whose `self` parameter is itself generic, or at minimum
-  stop the diagnostic from asking for what is there.
+  `max(best, x)` was the same call and worked. The type-variable branch of the member-call
+  ladder returned before the UFCS rung, so a receiver with no impl consulted only the
+  trait's own methods. It now tries UFCS below the bound and above the error;
+  `receiverAccepts` is what makes that safe without a new rule, since a concrete
+  `self: string` does not unify with a type variable and only a candidate generic in its
+  **own** receiver is reachable. Nothing downstream changed — the rewrite puts the receiver
+  in `Arguments[0]` before any other pass runs, so this is the spelling that already
+  compiled. See `COMPLETED.md`.
+  - Two **lowering** gaps found while testing it, both pre-existing and both reproducing
+    identically with the bare-call spelling, so neither is UFCS's: a generic body passing a
+    **type-variable-typed closure** to another generic (`twice(v, (x: t) -> t => …)`) dies
+    as *"type variable t has no concrete type here"*, and a **trait default body** calling a
+    generic free function dies as *"call to unknown function"*. Both are the composed-
+    specialization path; neither is diagnosed by the front end.
 
 - **[DONE 08/22] A prelude generic at a *privately* declared type now lowers.**
   `let m = Some(card); m.unwrap_or(other)` failed with `llvm: unknown named type "Card"`
