@@ -263,36 +263,10 @@ func collect(body []ast.Expression, bound map[string]bool, reads map[string]ast.
 // addPatternNames adds every binding name a pattern introduces. A literal,
 // range, regex, or wildcard pattern binds nothing; the composite forms recurse.
 func addPatternNames(bound map[string]bool, p ast.Pattern) {
-	switch v := p.(type) {
-	case *ast.IdentifierPattern:
-		bound[v.Name] = true
-	case *ast.BindingPattern:
-		bound[v.Name] = true
-		addPatternNames(bound, v.Pattern)
-	case *ast.TuplePattern:
-		for _, e := range v.Elements {
-			addPatternNames(bound, e)
-		}
-	case *ast.ArrayPattern:
-		for _, e := range v.Elements {
-			addPatternNames(bound, e)
-		}
-	case *ast.RestPattern:
-		if v.Identifier != "" {
-			bound[v.Identifier] = true
-		}
-	case *ast.StructPattern:
-		for i := range v.Fields {
-			f := v.Fields[i]
-			if f.Pattern != nil {
-				addPatternNames(bound, f.Pattern)
-				continue
-			}
-			bound[f.Name] = true // shorthand `{ x }` binds the field name
-		}
-	case *ast.DataPattern:
-		addPatternNames(bound, v.Pattern)
-	}
+	// `ast.EachPatternBinding` is the one answer to what a pattern binds; this pass had its
+	// own copy, and a binder that misses a kind reads a bound name as a *capture* — see the
+	// note on the free-variable walk.
+	ast.EachPatternBinding(p, func(b ast.PatternBinding) { bound[b.Name] = true })
 }
 
 // globalNames is the set of names a lambda body can reach without capturing:

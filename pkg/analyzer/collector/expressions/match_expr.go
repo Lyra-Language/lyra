@@ -97,21 +97,15 @@ func CollectMatchArm(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.MatchArm {
 
 // definePatternBindings enters every name a pattern binds into the current scope.
 //
-// Walked with `ast.WalkPattern` rather than by a switch of its own: that walker exists
-// precisely so a new consumer does not add an eleventh hand-rolled pattern traversal, and a
-// binder that misses a kind is the quiet failure — a name bound by the language and known to
-// no pass, which is what this function is fixing.
+// Through `ast.EachPatternBinding`, which is the one answer to what a pattern binds — and
+// the first version of this function did not use it, having been written the same day the
+// walker was. It handled `IdentifierPattern` and `BindingPattern` and so missed the two
+// kinds that bind a name no sub-pattern carries: a struct pattern's shorthand (`{ x }`) and
+// a named rest (`...xs`). A binder that misses a kind puts a name in no scope at all, which
+// is the bug this whole function exists to fix, one kind down.
 func definePatternBindings(pattern ast.Pattern, ctx *collector_ctx.Ctx) {
-	ast.WalkPattern(pattern, func(p ast.Pattern) bool {
-		switch b := p.(type) {
-		case *ast.IdentifierPattern:
-			ctx.DefinePatternBinding(b)
-		case *ast.BindingPattern:
-			// `name @ pattern` binds the name *and* everything inside, so the walk
-			// continues past it.
-			ctx.DefinePatternBinding(b)
-		}
-		return true
+	ast.EachPatternBinding(pattern, func(b ast.PatternBinding) {
+		ctx.DefinePatternBinding(b.At())
 	})
 }
 

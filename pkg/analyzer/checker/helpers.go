@@ -57,48 +57,16 @@ func directDeclaredNamesWithLocations(stmt ast.Statement) []nameLocation {
 
 // patternBoundNames collects all variable names introduced by a pattern.
 func patternBoundNames(pat ast.Pattern) []string {
-	if pat == nil {
-		return nil
-	}
-	switch p := pat.(type) {
-	case *ast.IdentifierPattern:
-		if p.Name == "_" {
-			return nil
+	// **This one had drifted**, which is why the three are now one: it handled neither
+	// `name @ pattern` nor a struct pattern's shorthand `{ x }`, so a name bound either way
+	// was invisible to whatever this feeds. The `_` filter stays here rather than moving
+	// into the shared walk — a wildcard binds a name the language makes unforgeable, and
+	// the passes that register bindings *want* it.
+	var out []string
+	ast.EachPatternBinding(pat, func(b ast.PatternBinding) {
+		if b.Name != "_" {
+			out = append(out, b.Name)
 		}
-		return []string{p.Name}
-
-	case *ast.TuplePattern:
-		var names []string
-		for _, el := range p.Elements {
-			names = append(names, patternBoundNames(el)...)
-		}
-		return names
-
-	case *ast.ArrayPattern:
-		var names []string
-		for _, el := range p.Elements {
-			names = append(names, patternBoundNames(el)...)
-		}
-		return names
-
-	case *ast.StructPattern:
-		var names []string
-		for _, f := range p.Fields {
-			names = append(names, patternBoundNames(f.Pattern)...)
-		}
-		return names
-
-	case *ast.DataPattern:
-		if p.Pattern != nil {
-			return patternBoundNames(p.Pattern)
-		}
-
-	case *ast.RestPattern:
-		if p.Identifier != "" {
-			return []string{p.Identifier}
-		}
-
-		// WildcardPattern, LiteralPattern, RangePattern bind no names.
-	}
-	return nil
+	})
+	return out
 }

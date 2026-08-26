@@ -225,34 +225,5 @@ func parameterNames(lambda *ast.LambdaExpr) map[string]bool {
 // pass's equivalent walker: a parameter may destructure, so the names it brings into
 // scope are not always just the parameter's own identifier.
 func collectPatternNames(p ast.Pattern, names map[string]bool) {
-	switch v := p.(type) {
-	case *ast.IdentifierPattern:
-		names[v.Name] = true
-	case *ast.BindingPattern:
-		names[v.Name] = true
-		collectPatternNames(v.Pattern, names)
-	case *ast.TuplePattern:
-		for _, e := range v.Elements {
-			collectPatternNames(e, names)
-		}
-	case *ast.ArrayPattern:
-		for _, e := range v.Elements {
-			collectPatternNames(e, names)
-		}
-	case *ast.RestPattern:
-		if v.Identifier != "" {
-			names[v.Identifier] = true
-		}
-	case *ast.StructPattern:
-		for i := range v.Fields {
-			f := v.Fields[i]
-			if f.Pattern != nil {
-				collectPatternNames(f.Pattern, names)
-				continue
-			}
-			names[f.Name] = true // shorthand `{ x }` binds the field name
-		}
-	case *ast.DataPattern:
-		collectPatternNames(v.Pattern, names)
-	}
+	ast.EachPatternBinding(p, func(b ast.PatternBinding) { names[b.Name] = true })
 }

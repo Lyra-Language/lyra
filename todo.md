@@ -1574,13 +1574,32 @@ two editor features single-file where the program no longer is:
   against the **pattern**, since recording it against the body would overwrite a braced
   body's own scope with its parent. See `COMPLETED.md`.
 
-- **[OPEN] Ten passes hand-roll their own pattern traversal.** `ast.WalkPattern` /
+- **[OPEN] `name @ pattern` binds nothing, and neither does a named rest.** The
+  typechecker's `walkDestructuredPattern` has cases for identifier, tuple, array, struct and
+  data patterns — and none for `BindingPattern` or `RestPattern`. So `whole @ P { x }`
+  parses, collects, is registered in the arm's scope by the collector, and then binds
+  neither `whole` nor anything inside it: every use is *undefined identifier*. Found on
+  08/22 by unifying the bound-name walks — `ast.EachPatternBinding` says these names are
+  bound and the binder disagrees, which is the two-answers hazard showing up as a language
+  feature that does not work rather than as a wrong message.
+  - Worth checking whether the *grammar* should accept them at all if they are not going to
+    bind; a form that parses and silently binds nothing is worse than one that is refused.
+
+- **[PARTIAL] Passes hand-roll their own pattern traversal.** `ast.WalkPattern` /
   `ast.PatternsOf` landed 08/22 as the canonical walk — patterns were the one supertype
   nothing walked, which is why every position feature was blind to them — but only the LSP
-  uses it. The collector, captures, ownership, use-before-declaration, exhaustiveness, the
-  backend's match lowering and three typechecker passes each still have their own switch.
-  That is rule 8's standing hazard with ten copies rather than two; converting them is
-  mechanical and each conversion is checkable on its own.
+  uses it. **The three that were copies of one question are now one** (08/22):
+  `ast.EachPatternBinding` answers "what names does this pattern bind", and the captures
+  analysis, use-before-declaration and the checker's helpers call it — they had already
+  drifted, with the third handling neither `name @ pattern` nor a struct pattern's shorthand.
+  The collector's arm-binding walk uses it too.
+  - **What is left is not the same question**, which is why it is not simply more of the
+    same work: ownership's `patternHasValueTest`, the exhaustiveness checker, the backend's
+    match lowering and the typechecker's `walkDestructuredPattern` each do *different work
+    per kind* rather than walking to collect something. Those are dispatches, not
+    traversals, and folding them into a visitor would obscure rather than share. The
+    exception is `walkDestructuredPattern`, which is a dispatch that has silently fallen
+    behind the language — see the entry above.
 
 - **[OPEN] A dead language server leaves its diagnostics on screen.** When `lyra-lsp` exits
   — killed, crashed, or replaced by a rebuild — the editor keeps the last diagnostics it

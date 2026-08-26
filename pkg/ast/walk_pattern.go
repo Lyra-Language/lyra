@@ -96,3 +96,78 @@ func PatternsOf(node AstNode) []Pattern {
 	}
 	return nil
 }
+
+// PatternBinding is one name a pattern introduces, and the node to attribute it to.
+//
+// Node is nil where the language binds a name that no node carries on its own: a struct
+// pattern's shorthand (`{ x }` binds the field) and a rest pattern's `...xs` each name
+// something the pattern spells rather than a sub-pattern. A caller that needs a `Named` —
+// the collector, entering these into a scope — uses `At` for those.
+type PatternBinding struct {
+	Name string
+	Node Named
+	Loc  Location
+}
+
+// At is the binding as a Named, whatever kind of pattern spelled it.
+//
+// Node is preferred where it exists *and* agrees: `BindingPattern.GetName()` renders
+// `name @ pattern`, which is right for a diagnostic and wrong as a scope key, so it is not
+// used here. This is why the collector could not simply define the sub-pattern nodes it
+// found.
+func (b PatternBinding) At() Named {
+	if b.Node != nil && b.Node.GetName() == b.Name {
+		return b.Node
+	}
+	return &boundName{AstBase: AstBase{Location: b.Loc}, name: b.Name}
+}
+
+// boundName is a Named for a name with no node of its own.
+type boundName struct {
+	AstBase
+	name string
+}
+
+func (b *boundName) node()           {}
+func (b *boundName) GetName() string { return b.name }
+
+// EachPatternBinding calls fn for every name a pattern introduces.
+//
+// **The one answer to "what does this pattern bind".** Three passes each had their own
+// version — the captures analysis, use-before-declaration, and the checker's helpers — and
+// they had already drifted: the third handled neither `name @ pattern` nor a struct
+// pattern's shorthand, so a name bound either way was invisible to it. That is rule 8 with
+// the copies agreeing about the easy kinds and disagreeing about the two that are easy to
+// forget.
+//
+// Every kind that binds is listed, including the two that bind without a sub-pattern:
+//
+//   - `{ x }` — a struct pattern's shorthand field, which binds the field's own name;
+//   - `...rest` — a rest pattern, when it is named.
+func EachPatternBinding(p Pattern, fn func(PatternBinding)) {
+	WalkPattern(p, func(sub Pattern) bool {
+		switch b := sub.(type) {
+		case *IdentifierPattern:
+			fn(PatternBinding{Name: b.Name, Node: b, Loc: b.GetLocation()})
+		case *BindingPattern:
+			// The name *and* whatever the inner pattern binds, so the walk continues.
+			fn(PatternBinding{Name: b.Name, Loc: b.GetLocation()})
+		case *RestPattern:
+			if b.Identifier != "" {
+				fn(PatternBinding{Name: b.Identifier, Loc: b.GetLocation()})
+			}
+		case *StructPatternField:
+			if b.Pattern == nil {
+				fn(PatternBinding{Name: b.Name, Node: b, Loc: b.GetLocation()})
+			}
+		}
+		return true
+	})
+}
+
+// PatternBoundNames is EachPatternBinding's names, in source order.
+func PatternBoundNames(p Pattern) []string {
+	var out []string
+	EachPatternBinding(p, func(b PatternBinding) { out = append(out, b.Name) })
+	return out
+}
