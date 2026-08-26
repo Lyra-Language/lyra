@@ -144,6 +144,57 @@ let main = () -> void => {
 `, false))
 }
 
+// **A literal *receiver* is deferred on the same rule**, as of 08/26 — the one operand
+// that was exempt from it. The promotion happens in `inferMemberCall`, before any of the
+// resolution rungs, so `200.min(w)` on a `u8` bound `t` to the literal's default and
+// reported "cannot infer type variable t from these arguments" while `w.min(200)` — the
+// same call — worked. The receiver becomes argument 0 the moment UFCS desugars, so once
+// the *node* stops being pinned it adopts exactly as any other argument does.
+func TestGeneric_UntypedLiteralReceiverAdoptsASolvedWidth(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+let pick = (self: t, other: t) -> t => self
+let main = () -> void => {
+  let w: u8 = 200
+  println(100.pick(w))
+}
+`, false))
+}
+
+// **A concrete `self` still pins it**, which is what the promotion was there for: against
+// `(self: f64)` the literal has to be its default width before the argument is checked,
+// and there is no variable for it to adopt anything from. The deferral is conditional on
+// the candidate's receiver mentioning a type variable, so this path is untouched.
+func TestGeneric_AConcreteReceiverStillTakesTheDefaultWidth(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+let scaled = (self: f64, by: f64) -> f64 => self * by
+let main = () -> void => println((2.5).scaled(2.0))
+`, false))
+}
+
+// And with nothing to adopt from, a literal receiver falls back to its default like any
+// other argument — the invariant the old unconditional pin existed to guarantee.
+func TestGeneric_AnAllUntypedReceiverCallStillDefaults(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+let pick = (self: t, other: t) -> t => self
+let main = () -> i64 => 7.pick(8)
+`, false))
+}
+
+// Adoption does not exempt a *receiver* from fitting either: `300` cannot be a u8 however
+// the call is spelled. It is reported as argument 1 because by then it is one — UFCS
+// desugars before anything downstream sees the call, which is the property that keeps
+// every later pass from needing to know UFCS exists.
+func TestGeneric_ALiteralReceiverMustFitTheSolvedWidth(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+let pick = (self: t, other: t) -> t => self
+let main = () -> void => {
+  let w: u8 = 200
+  println(300.pick(w))
+}
+`, false)
+	assertErrorsAre(t, res, "pick: argument 1: literal value 300 overflows u8")
+}
+
 // **Nothing settles it, so the default still applies.** This is the behaviour the old
 // rule existed to guarantee, and it has to survive: a type variable is a real type in the
 // specialized function, so leaving one untyped would push an unresolved literal type into

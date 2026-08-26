@@ -90,13 +90,26 @@ func (tc *TypeChecker) ufcsCandidate(objType types.Type, methodName string, memb
 // are free until this call's arguments solve them, and solving is also what records the
 // specialization the backend emits. With the receiver prepended, a `Maybe<i64>` receiver
 // binds `t` exactly as it does when the call is written `map(m, f)`.
-func (tc *TypeChecker) callViaUFCS(objType types.Type, methodName string, member *ast.MemberExpr, call *ast.FunctionCallExpr) (types.Type, bool) {
+func (tc *TypeChecker) callViaUFCS(objType types.Type, methodName string, member *ast.MemberExpr, call *ast.FunctionCallExpr, pinReceiver func()) (types.Type, bool) {
 	fn, res := tc.ufcsCandidate(objType, methodName, member, call)
 	switch res {
 	case ufcsNoMatch:
 		return nil, false
 	case ufcsRefused:
 		return nil, true
+	}
+	// **An untyped literal receiver is settled here or not at all**, and which it is turns
+	// on the candidate. Against a concrete `self` — the prelude's `(2.5).to_fixed(4)` — the
+	// literal has to be its default width before the argument is checked, exactly as it
+	// always was. Against a `self` mentioning a type variable, settling it *is* the bug:
+	// the receiver becomes argument 0 below, and a call solves its variables from every
+	// argument at once, so a receiver pinned to `i64` bound `t` before `w: u8` was
+	// consulted and the call reported "cannot infer type variable t". Left untyped it
+	// adopts what the other arguments bind, and falls back to its default only if nothing
+	// does — the rule an untyped literal argument has followed since 08/22, now reaching
+	// the one operand that was exempt from it.
+	if recv, ok := ufcsReceiverParam(fn); !ok || !receiverIsGeneric(recv) {
+		pinReceiver()
 	}
 	desugarUFCSCall(member, call)
 	// The same E011 check the bare-call path makes, because this *is* the bare call now —
@@ -241,6 +254,16 @@ func (tc *TypeChecker) noteUFCSModule(fn *ast.LambdaExpr, loc ast.Location) {
 		tc.ufcsModules[loc.File] = map[string]bool{}
 	}
 	tc.ufcsModules[loc.File][callee] = true
+}
+
+// receiverIsGeneric reports whether a `self` parameter's declared type mentions a type
+// variable — `self: t` and `self: Maybe<t>` do, `self: string` does not. It is the question
+// "can this call still settle its receiver's type?", which is what decides whether an
+// untyped literal receiver may be deferred.
+func receiverIsGeneric(recv *ast.Parameter) bool {
+	vars := map[string]bool{}
+	collectTypeVars(recv.Type, vars)
+	return len(vars) > 0
 }
 
 // ufcsReceiverParam returns the function's `self` parameter, and whether it has one.

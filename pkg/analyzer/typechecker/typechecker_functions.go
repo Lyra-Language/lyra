@@ -1011,13 +1011,27 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// worked. That is the same gap the 08/06 grammar change closed one layer up, left
 	// open in the layer below it.
 	//
-	// The node is pinned, not just the local: the backend reads the receiver's recorded
-	// type, and a literal left untyped there fails to lower.
+	// The node is pinned too, not just the local: the backend reads the receiver's
+	// recorded type, and a literal left untyped there fails to lower.
+	//
+	// **But not yet, and that is the whole of the second fix here.** Pinning the *node*
+	// settles the receiver before the call is solved, so a callee generic in its own
+	// receiver had its variable bound by the literal's default rather than by the call:
+	// `200.min(w)` on a `u8` reported *"cannot infer type variable t from these
+	// arguments"* about a call that determines it perfectly well, while `w.min(200)`
+	// worked — one call whose two spellings disagreed, in the prelude's own `min`/`max`.
+	// So the promotion is applied to the local, which is what every rung *matches*
+	// against, and `pinReceiver` writes it to the node only where the rung taken needs a
+	// settled type. The UFCS rung defers instead, and the receiver — argument 0 by then —
+	// adopts what the call binds, on exactly the rule an untyped literal *argument*
+	// already followed since 08/22.
+	pinReceiver := func() {}
 	if p, ok := objType.(types.PrimitiveType); ok {
 		switch p.Name {
 		case types.UntypedInt, types.UntypedSignedInt, types.UntypedFloat:
 			objType = promoteToDefault(objType)
-			tc.typeTable.Set(member.Object, objType)
+			promoted := objType
+			pinReceiver = func() { tc.typeTable.Set(member.Object, promoted) }
 		}
 	}
 	methodName := member.Property.Name
@@ -1027,6 +1041,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// generic receiver is the ParameterizedType still carrying the type
 	// arguments the unifier needs.
 	if f, ok := structFieldByName(tc.resolveGenericAggregate(objType, member.Object.GetLocation()), methodName); ok {
+		pinReceiver()
 		tc.typeTable.Set(member, f.Type)
 		if lambdaType, ok := f.Type.(*types.LambdaType); ok {
 			return tc.inferLambdaCallFromType(methodName, lambdaType, call)
@@ -1043,6 +1058,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 				methodName, traitNamesOf(matches), methodName)
 			return nil
 		}
+		pinReceiver()
 		return tc.inferResolvedTraitMethodCall(methodName, matches[0], call, member.Object)
 	}
 
@@ -1067,7 +1083,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		// there was nothing wrong to report. `receiverAccepts` is what keeps it honest:
 		// a concrete `self: string` does not unify with a type variable, so only a
 		// candidate generic in its own receiver is reachable here.
-		if ret, handled := tc.callViaUFCS(objType, methodName, member, call); handled {
+		if ret, handled := tc.callViaUFCS(objType, methodName, member, call, pinReceiver); handled {
 			return ret
 		}
 		// Inside a trait's default body the receiver is `Self`, which is a type variable
@@ -1097,7 +1113,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// until this call's arguments solve them, and solving is also what records the
 	// specialization the backend emits. With the receiver prepended, a `Maybe<i64>`
 	// receiver binds `t` exactly as it does when the call is written `map(m, f)`.
-	if ret, handled := tc.callViaUFCS(objType, methodName, member, call); handled {
+	if ret, handled := tc.callViaUFCS(objType, methodName, member, call, pinReceiver); handled {
 		return ret
 	}
 
@@ -1105,9 +1121,12 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 	// on an integer). Checked last so a user type or trait impl of the same name
 	// always takes priority (see builtins.go).
 	if sig, ok := tc.builtinMethodSignature(objType, methodName, member.GetLocation()); ok {
-		// The receiver was already pinned to its default width above, before any of the
-		// three resolution paths ran — it used to happen here, which is why only the
-		// builtin path could see through an untyped literal.
+		// Pinned to its default width, which is what this rung has always needed:
+		// `1.wrapping_add(2)` is i64 arithmetic and `(1.5).floor()` is f64's. The
+		// promotion itself used to happen *here*, which is why only this path could see
+		// through an untyped literal at all; it now happens above, for every rung, and
+		// only the write to the node is still this rung's to make.
+		pinReceiver()
 		tc.typeTable.Set(member, sig)
 		// Publish the resolution: a later pass sees only a MemberExpr callee, and the
 		// dotted name it can derive from that (`x.wrapping_mul`) names nothing in any

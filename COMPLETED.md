@@ -10,6 +10,37 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**An untyped literal *receiver* adopts the width the call settles.**
+
+`200.min(w)` on a `u8` reported *"cannot infer type variable t from these arguments"* about
+a call that determines it perfectly well, while `w.min(200)` — the same call — worked. The
+last operand still exempt from the rule the 08/22 fix established for arguments, and the
+last place `min`/`max`/`clamp` behaved differently depending on which side you wrote the
+literal on.
+
+`inferMemberCall` promotes an untyped receiver to its default before any resolution rung
+runs, and wrote that straight to the **node**. The promotion itself is necessary and stays:
+it is what lets a rung *match* through an untyped literal, which is why `(2.5).abs()` and
+`1.wrapping_add(2)` work at all. Writing it to the node is the separate act, and it settles
+the receiver before the call is solved — so for a callee generic in its own receiver, `t`
+was bound by the literal's default and `w: u8` was then a conflict.
+
+So the two were split. The promoted type is still what every rung matches against;
+`pinReceiver` is a closure the rung that was *taken* calls, and the UFCS rung calls it only
+when the candidate's `self` does not mention a type variable. Against `(self: f64)` the
+literal is pinned exactly as before — there is no variable for it to adopt from. Against
+`(self: t)` it is left alone, and since UFCS desugars the receiver into `Arguments[0]`
+before anything downstream runs, it then adopts by the argument rule that already existed.
+Nothing new had to be taught about receivers.
+
+**Two invariants the old unconditional pin was guaranteeing, both preserved and both
+tested**: with nothing to adopt from the literal still falls back to its default, so no
+untyped type reaches codegen; and adoption does not exempt it from fitting — `300.min(w)`
+on a `u8` is refused. The behavioural test is the one that matters, because the pin existed
+for the backend's sake: `200` at `t = u8` and `200` at `t = i64` lower to different
+instructions, and only running the program says which happened.
+
+### 08/26/26
 **A trait imported only for a method call no longer warns as unused (lyra-W004).**
 
 `import lib.{ Tag }` beside `(7).tag()` reported *"imported name Tag is never used"* — and

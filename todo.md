@@ -3750,11 +3750,16 @@ recommending — write the program someone would actually write, and see what it
     `t = bool` and an integer literal is not assignable to a bool, so the solve fails and
     the message stays *"cannot infer type variable t"*. Adopting unconditionally typed the
     call as `bool` and produced a second, cascading error from the wrongly-typed result.
-  - **[OPEN] A literal *receiver* is still pinned to its default**, in a different pass:
-    `200.min(w)` on a `u8` `w` fails where `w.min(200)` works. The pin happens before any
-    of the three member-call resolution paths run, and it is there so the builtin-method
-    rung can see through an untyped receiver (`1.wrapping_add(2)`). Deferring it wants the
-    same treatment this entry got, applied at that site.
+  - **[DONE 08/26] A literal *receiver* is deferred too**, which was the same rule at a
+    different site: `200.min(w)` on a `u8` failed where `w.min(200)` worked. The promotion
+    in `inferMemberCall` runs before any of the resolution rungs and wrote straight to the
+    *node*, so the receiver was settled before the call was solved and bound `t` to the
+    literal's default. It is there so a rung can *match* through an untyped receiver
+    (`(2.5).abs()`, `1.wrapping_add(2)`), and that half is unchanged — the promoted type is
+    still what every rung matches against. Only the write to the node moved: `pinReceiver`
+    is called by the rung that was taken, and the UFCS rung skips it when the candidate's
+    `self` mentions a type variable, leaving the receiver — argument 0 by then — to adopt
+    what the call binds. See `COMPLETED.md`.
 
 - **[DONE 08/26] A method call on a bare type parameter reaches UFCS.** Inside
   `where t: Ord`, `best.max(x)` reported *"type parameter t has no method max; add a

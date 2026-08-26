@@ -262,3 +262,31 @@ let main = () -> void => {
 		t.Errorf("method-style bound call = %q; want \"11 11 10 y\"", got)
 	}
 }
+
+// **A literal receiver adopts the width the call settles**, as of 08/26: `200.min(w)` on a
+// `u8` used to report *"cannot infer type variable t from these arguments"* while
+// `w.min(200)` — the same call — worked, because `inferMemberCall` pinned an untyped
+// receiver to its default before any resolution rung ran.
+//
+// Run rather than checked, because the check is only half of it: pinning the node was there
+// so the backend would not meet an untyped literal, so the question this answers is whether
+// a *deferred* receiver still reaches codegen with a concrete width — and the right one.
+// `200` at `t = u8` and `200` at `t = i64` lower to different instructions, and only
+// running says which happened.
+func TestExec_ALiteralReceiverAdoptsTheSolvedWidth(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+let main = () -> void => {
+  let w: u8 = 5
+  let big: u8 = 200
+  print("${200.min(w)} ${200.max(w)} ${7.clamp(w, big)} ")
+  // Nothing to adopt from: the default still applies, and the builtin rung — which the
+  // pin was originally added for — is unaffected either way.
+  print("${3.min(9)} ${(1.5).floor()} ${2.wrapping_add(3)}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "5 200 7 3 1 5" {
+		t.Errorf("literal receiver = %q; want \"5 200 7 3 1 5\"", got)
+	}
+}

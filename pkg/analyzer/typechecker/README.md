@@ -805,6 +805,23 @@ otherwise report *"type parameter Self has no method; add a `where Self: Trait` 
 advice naming a clause no program can write, `Self` being a variable the compiler introduced.
 Inside a default (`tc.currentDefaultTrait`) it names the trait instead.
 
+### An untyped literal receiver is promoted for matching, pinned only where the rung needs it
+
+`inferMemberCall` promotes an untyped receiver to its default before any rung runs — that is
+what lets a rung *match* through a literal, and why `(2.5).abs()` and `1.wrapping_add(2)`
+resolve at all. Writing that type to the **node** is a separate act, and it settles the
+receiver before the call is solved: for a callee generic in its own receiver that bound the
+type variable to the literal's default, so `200.min(w)` on a `u8` reported *"cannot infer
+type variable t"* while `w.min(200)` worked (fixed 08/26).
+
+The promoted type is still what every rung matches against. `pinReceiver` is a closure the
+rung that was *taken* calls, and the UFCS rung calls it only when the candidate's `self` does
+not mention a type variable. A deferred receiver is `Arguments[0]` after the desugar, so it
+adopts by the untyped-literal-argument rule that already existed — no new rule about
+receivers. The two things the unconditional pin was guaranteeing still hold: with nothing to
+adopt from, the default applies (so nothing untyped reaches codegen), and the literal must
+still fit the width it adopted.
+
 ## UFCS — method syntax for free functions (`typechecker_ufcs.go`)
 
 `m.unwrap_or(0)` resolves to the free function `unwrap_or(m, 0)` when that function opts in
