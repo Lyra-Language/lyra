@@ -277,6 +277,9 @@ func (l *lowerer) aggPatternTest(block *ir.Block, val value.Value, pat ast.Patte
 			}
 		}
 		return cond, nil
+	case *ast.BindingPattern:
+		// The name binds unconditionally, so the test is entirely the inner pattern's.
+		return l.aggPatternTest(block, val, p.Pattern, valType)
 	default:
 		return nil, fmt.Errorf("llvm: match sub-pattern %T not implemented yet", pat)
 	}
@@ -294,6 +297,13 @@ func (l *lowerer) aggPatternBind(block *ir.Block, val value.Value, pat ast.Patte
 			l.bindValue(block, p.Name, val)
 		}
 		return nil
+	case *ast.BindingPattern:
+		// `name @ pattern` binds the name to the **whole** value at this position and then
+		// binds whatever the inner pattern does — the same shape the typechecker gives it.
+		if p.Name != "_" {
+			l.bindValue(block, p.Name, val)
+		}
+		return l.aggPatternBind(block, val, p.Pattern, valType)
 	case nil, *ast.WildcardPattern, *ast.LiteralPattern, *ast.RangePattern:
 		return nil // no binding
 	case *ast.StructPattern:
@@ -429,7 +439,11 @@ func (l *lowerer) lowerTupleMatch(block *ir.Block, e *ast.MatchExpr, tt types.Tu
 // ladder. A non-data or unknown-constructor arm contributes no payload test here.
 func dataMatchHasPayloadTest(e *ast.MatchExpr, dt types.DataType) bool {
 	for _, arm := range e.MatchArms {
-		dp, ok := arm.Pattern.(*ast.DataPattern)
+		// Unwrapped, or an `@` hides the test from the routing decision: `w @ Box(0)` would
+		// take the compact tag switch, which cannot express "this tag *and* this value",
+		// and the literal would then reach a path that refuses it. A binding contributes no
+		// test of its own, so what an arm tests is always what is inside the wrapper.
+		dp, ok := ast.UnwrapBinding(arm.Pattern).(*ast.DataPattern)
 		if !ok {
 			continue
 		}
@@ -549,7 +563,22 @@ func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.Dat
 		}
 		armScope()
 		armBlock := fn.NewBlock("")
-		switch p := arm.Pattern.(type) {
+		// **`name @ pattern` binds the whole scrutinee and then matches what is inside.**
+		// Peeled here rather than given a case of its own, because the wrapper contributes
+		// a binding and no test: after peeling, the arm dispatches exactly as the pattern
+		// it wraps. Written as a loop since `a @ b @ p` parses.
+		armPattern := arm.Pattern
+		for {
+			bp, isBinding := armPattern.(*ast.BindingPattern)
+			if !isBinding {
+				break
+			}
+			if bp.Name != "_" {
+				l.locals[bp.Name] = wholeSlot
+			}
+			armPattern = bp.Pattern
+		}
+		switch p := armPattern.(type) {
 		case *ast.DataPattern:
 			idx := -1
 			for i, c := range dt.Constructors {
@@ -727,6 +756,11 @@ func patternHasTest(pat ast.Pattern) bool {
 		})
 	case *ast.TuplePattern:
 		return slices.ContainsFunc(p.Elements, patternHasTest)
+	case *ast.BindingPattern:
+		// See through it: `whole @ Box(n)` tests exactly what `Box(n)` tests. Missing here
+		// and the test is never *emitted* — the arm would be taken whatever the value is,
+		// which is a wrong program rather than a failed build.
+		return patternHasTest(p.Pattern)
 	}
 	return false
 }
@@ -786,7 +820,9 @@ func unreachableDataArms(arms []ast.MatchArm) map[int]bool {
 	claimed := map[string]bool{}
 	dead := map[int]bool{}
 	for i, arm := range arms {
-		p, ok := arm.Pattern.(*ast.DataPattern)
+		// Unwrapped: `w @ Box(n)` claims Box's tag exactly as `Box(n)` does, and missing
+		// that emits two cases for one tag — IR llir builds happily and clang refuses.
+		p, ok := ast.UnwrapBinding(arm.Pattern).(*ast.DataPattern)
 		if !ok {
 			continue
 		}

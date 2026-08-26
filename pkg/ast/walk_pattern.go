@@ -171,3 +171,23 @@ func PatternBoundNames(p Pattern) []string {
 	EachPatternBinding(p, func(b PatternBinding) { out = append(out, b.Name) })
 	return out
 }
+
+// UnwrapBinding strips any `name @ …` wrappers, returning the pattern that decides whether a
+// value *matches*.
+//
+// A binding pattern binds unconditionally and tests nothing, so every question about what an
+// arm matches — which constructor it covers, whether it is a catch-all, whether it is
+// irrefutable — is a question about what is inside it. Asking with a direct type assertion
+// instead is how `w @ Box(n)` came to cover no constructor at all, which reported a match as
+// non-exhaustive that covered every case.
+//
+// Loops rather than recursing once: `a @ b @ p` is unusual but parses.
+func UnwrapBinding(p Pattern) Pattern {
+	for {
+		bp, ok := p.(*BindingPattern)
+		if !ok || bp.Pattern == nil {
+			return p
+		}
+		p = bp.Pattern
+	}
+}

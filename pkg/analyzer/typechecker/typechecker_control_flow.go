@@ -18,7 +18,8 @@ func hasUnguardedCatchAll(arms []ast.MatchArm) bool {
 		if arm.Guard != nil {
 			continue
 		}
-		switch arm.Pattern.(type) {
+		// Unwrapped: `rest @ _` catches everything `_` does, and a binding tests nothing.
+		switch ast.UnwrapBinding(arm.Pattern).(type) {
 		case *ast.WildcardPattern, *ast.IdentifierPattern:
 			return true
 		}
@@ -830,7 +831,11 @@ func dataMatchIsExhaustive(arms []ast.MatchArm, dt types.DataType) (bool, []stri
 		if arm.Guard != nil {
 			continue
 		}
-		if dp, ok := arm.Pattern.(*ast.DataPattern); ok {
+		// Unwrapped, or `w @ Box(n)` covers nothing: a binding pattern binds and tests
+		// nothing, so what an arm *matches* is always what is inside it. Asserting on the
+		// arm's pattern directly reported an exhaustive match as missing the very
+		// constructor it covered.
+		if dp, ok := ast.UnwrapBinding(arm.Pattern).(*ast.DataPattern); ok {
 			covered[dp.Name] = true
 		}
 	}

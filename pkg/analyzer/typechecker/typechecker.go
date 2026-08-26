@@ -680,6 +680,19 @@ func (tc *TypeChecker) walkDestructuredPattern(pat ast.Pattern, t types.Type, bi
 			bind(p.Name, t)
 		}
 
+	case *ast.BindingPattern:
+		// `name @ pattern` binds the name to the **whole** value and destructures it too,
+		// which is the point of the form: `whole @ P { x }` gives you both `whole` and `x`.
+		// Missing until 08/22, so the form parsed, collected, was entered into the arm's
+		// scope by the collector — and bound nothing, leaving every use of either name as
+		// *undefined identifier*. Found by unifying the bound-name walks: `EachPatternBinding`
+		// said these names were bound and this, the pass that actually binds them,
+		// disagreed.
+		if p.Name != "_" {
+			bind(p.Name, t)
+		}
+		tc.walkDestructuredPattern(p.Pattern, t, bind)
+
 	case *ast.TuplePattern:
 		tt, ok := t.(types.TupleType)
 		if !ok {

@@ -9,6 +9,45 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (18)
+**`name @ pattern` binds something — and five places had to learn what an arm matches.**
+
+The form parsed, collected, and was entered into the arm's scope by the collector. It bound
+nothing: `walkDestructuredPattern` had cases for identifier, tuple, array, struct and data
+patterns and none for `BindingPattern`, so `whole @ P { x }` left both names *undefined
+identifier*. Found by unifying the bound-name walks earlier the same day —
+`EachPatternBinding` said those names were bound and the pass that binds them disagreed,
+which is what having one answer is for.
+
+The binder itself is four lines: bind the name to the whole value, then destructure it with
+the inner pattern. **What the fix cost was everything else that asks what an arm matches**,
+each with a direct type assertion that a wrapper defeats:
+
+- the **constructor-coverage scan**, so `w @ Box(n)` covered nothing — an *exhaustive* match
+  reported as missing the very constructor it handles, which rejects correct code;
+- the **catch-all test**, so `all @ _` was not a catch-all;
+- the backend's **routing decision** between the compact tag switch and the if-else ladder,
+  so `w @ Box(0)` took a path that cannot express "this tag *and* this value";
+- the backend's **unreachable-arm scan**, where missing it emits two cases for one tag —
+  IR llir builds happily and clang refuses;
+- `patternHasTest`, where missing it means the test is never emitted at all: the arm is
+  taken whatever the value is, which is a wrong program rather than a failed build.
+
+`ast.UnwrapBinding` is the one answer, with the reasoning written where it lives: a binding
+pattern binds unconditionally and tests nothing, so every question about what an arm
+*matches* is a question about what is inside it. The two backend sites that also had to
+*bind* peel in a loop instead, since `a @ b @ p` parses.
+
+**The named rest was not missing after all.** The todo entry claimed `...xs` bound nothing
+either; it is bound contextually by the array and tuple cases, which know the element type,
+rather than by a case of its own — the right design, and the reason a generic dispatch would
+have been the wrong place to look.
+
+Proved across the three scrutinee shapes, because each takes a different lowering: a data
+match through the tag switch, a struct and a tuple through the aggregate path. Nested `@`
+works (`outer @ Box(inner @ Pt { x })`), a captured `@`-binding works, and a value test under
+one works.
+
 ### 08/22/26 (17)
 **One answer to what a pattern binds, and Go to Type Definition.**
 

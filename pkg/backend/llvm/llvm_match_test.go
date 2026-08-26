@@ -1138,3 +1138,56 @@ func TestExec_OpenEndedRangePatterns(t *testing.T) {
 		})
 	}
 }
+
+// **`name @ pattern` binds the whole value and destructures it too**, which is the point of
+// the form. It parsed, collected and was registered in the arm's scope long before anything
+// bound it: the typechecker's binder had no case, so every use of either name was *undefined
+// identifier*. Found on 08/22 by unifying the bound-name walks — one said these names were
+// bound and the pass that binds them disagreed.
+//
+// Run rather than checked, and across the three scrutinee shapes, because each takes a
+// different lowering: a data match has a compact tag switch, a struct and a tuple go through
+// the aggregate path.
+func TestExec_BindingPatternBindsWholeAndParts(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+struct Pt { x: i64, y: i64 }
+data Shape = Dot | Box(Pt)
+let box_x = pure (s: Shape) -> i64 => match s { Box(q) => q.x, Dot => 0 }
+let main = () -> void => {
+  let p = Pt { x: 1, y: 2 }
+  print("${match p { all @ Pt { x, y } => x + y + all.x }} ")
+  let s: Shape = Box(p)
+  print("${match s { outer @ Box(inner @ Pt { x }) => x + inner.y + box_x(outer), Dot => 0 }} ")
+  let t = (1, 2)
+  print("${match t { whole @ (a, b) => a + b + whole.0 }}")
+}
+`, "")
+	if got := strings.TrimSpace(out); got != "4 4 4" {
+		t.Errorf("@-bindings = %q; want \"4 4 4\"", got)
+	}
+}
+
+// **A binding wrapper must not hide the test inside it.** `w @ Box(0)` tests exactly what
+// `Box(0)` tests, and three separate places asked with a direct type assertion: the routing
+// decision between the tag switch and the if-else ladder, the unreachable-arm scan, and
+// patternHasTest. Missing it in the first sent a value-testing arm down a path that cannot
+// express "this tag *and* this value"; missing it in the second emits two cases for one tag,
+// which llir builds and clang refuses.
+func TestExec_BindingPatternDoesNotHideAPayloadTest(t *testing.T) {
+	t.Parallel()
+	out := buildAndRunWithPrelude(t, `
+module main
+data Shape = Dot | Box(i64)
+let describe = pure (s: Shape) -> string => match s {
+  w @ Box(0) => "empty",
+  Box(n) => "box ${n}",
+  Dot => "dot",
+}
+let main = () -> void => { print("${describe(Box(0))} ${describe(Box(5))} ${describe(Dot)}") }
+`, "")
+	if got := strings.TrimSpace(out); got != "empty box 5 dot" {
+		t.Errorf("value test under an @ = %q; want \"empty box 5 dot\"", got)
+	}
+}

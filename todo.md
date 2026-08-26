@@ -1574,16 +1574,17 @@ two editor features single-file where the program no longer is:
   against the **pattern**, since recording it against the body would overwrite a braced
   body's own scope with its parent. See `COMPLETED.md`.
 
-- **[OPEN] `name @ pattern` binds nothing, and neither does a named rest.** The
-  typechecker's `walkDestructuredPattern` has cases for identifier, tuple, array, struct and
-  data patterns — and none for `BindingPattern` or `RestPattern`. So `whole @ P { x }`
-  parses, collects, is registered in the arm's scope by the collector, and then binds
-  neither `whole` nor anything inside it: every use is *undefined identifier*. Found on
-  08/22 by unifying the bound-name walks — `ast.EachPatternBinding` says these names are
-  bound and the binder disagrees, which is the two-answers hazard showing up as a language
-  feature that does not work rather than as a wrong message.
-  - Worth checking whether the *grammar* should accept them at all if they are not going to
-    bind; a form that parses and silently binds nothing is worse than one that is refused.
+- **[DONE 08/22] `name @ pattern` binds the whole value and destructures it.** The form
+  parsed, collected and was registered in the arm's scope, and bound nothing: the
+  typechecker's binder had no case, so every use of either name was *undefined identifier*.
+  Fixing the binder then exposed **four** more places that asked what an arm matches with a
+  direct type assertion and so could not see through the wrapper — the constructor-coverage
+  scan (which reported an *exhaustive* match as non-exhaustive), the catch-all test, the
+  backend's tag-switch routing, its unreachable-arm scan and `patternHasTest`.
+  `ast.UnwrapBinding` is the one answer to "what does this arm actually match". See
+  `COMPLETED.md`.
+  - A **named rest** turned out not to be missing: `...xs` is bound contextually by the
+    array and tuple cases, which know the element type, rather than by a case of its own.
 
 - **[PARTIAL] Passes hand-roll their own pattern traversal.** `ast.WalkPattern` /
   `ast.PatternsOf` landed 08/22 as the canonical walk — patterns were the one supertype
