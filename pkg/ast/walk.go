@@ -232,9 +232,13 @@ func WalkExprChildren(expr Expression, onStmt func(Statement) bool, onExpr func(
 	case *YieldFromExpr:
 		WalkExpr(e.Generator, onStmt, onExpr)
 	case *UnsafeBlockExpr:
-		for _, stmt := range e.Body.Statements {
-			WalkStmt(stmt, onStmt, onExpr)
-		}
+		// The body is visited **as an expression**, not unwrapped into its statements. It
+		// is a BlockExpr like any other and carries a scope of its own, so skipping the
+		// node itself hid that scope from anything walking for one — a binding declared
+		// inside an `unsafe` block resolved in the enclosing scope, or nowhere. Every
+		// other block-holding node passes the block through WalkExpr; this was the one
+		// that reached past it.
+		WalkExpr(e.Body, onStmt, onExpr)
 	case *DataConstructorExpr:
 		WalkExpr(e.Value, onStmt, onExpr)
 	case *GuardExpr:

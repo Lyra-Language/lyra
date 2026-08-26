@@ -50,6 +50,10 @@ type Collector interface {
 	PushLoopScope() *symbols.Scope
 	PopScope()
 	RecordScope(node ast.AstNode, scope *symbols.Scope)
+	// DefinePatternBinding enters a name a pattern binds into the current scope — a
+	// `match` arm's, today. A duplicate is not an error here the way a duplicate
+	// declaration is: two arms may bind the same name, and each has its own scope.
+	DefinePatternBinding(named ast.Named)
 	CollectGenericParams(*sitter.Node) []ast.GenericParam
 	MergeWhereConstraints([]ast.GenericParam, *sitter.Node) []ast.GenericParam
 	CollectBounds(*sitter.Node) []string

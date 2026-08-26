@@ -51,6 +51,18 @@ func CollectMatchArm(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.MatchArm {
 		return nil
 	}
 	pattern := ctx.CollectPattern(patternNode)
+
+	// **An arm is a scope, and its pattern's bindings live in it.** Until 08/22 no scope
+	// was pushed here and nothing was registered, so `m` in `Mouse(m) => m.button` was
+	// bound by the typechecker for its own purposes and known to nobody else: every
+	// scope-based question — go-to-definition on a *use* of `m`, hover, find-references —
+	// answered nothing, because the name was in no scope at all.
+	//
+	// Pushed before the guard, not just before the body: `Some(v) if v > 0 => …` is
+	// exactly where a guard is worth having, and the guard sees what the pattern binds.
+	armScope := ctx.PushBlockScope()
+	definePatternBindings(pattern, ctx)
+
 	guardNode := cst.Field(node, "guard")
 	var guard *ast.GuardExpr = nil
 	if guardNode != nil {
@@ -58,19 +70,49 @@ func CollectMatchArm(node *sitter.Node, ctx *collector_ctx.Ctx) *ast.MatchArm {
 	}
 	bodyNode, ok := ctx.MustField(node, "body")
 	if !ok {
+		ctx.PopScope()
 		ctx.AddError(node, diag.SeverityError, "CollectMatchArm: body node is missing")
 		return nil
 	}
 	body := collectMatchArmBody(bodyNode, ctx)
+	ctx.PopScope()
 	if body == nil {
 		ctx.AddError(node, diag.SeverityError, "CollectMatchArm: body is nil")
 		return nil
 	}
+
+	// Recorded against the **pattern**, not the body. A braced body is a BlockExpr that
+	// pushed and recorded a scope of its own — a child of this one — so recording the arm
+	// scope against the body would overwrite the block's entry with its own parent, and
+	// every binding declared inside the block would resolve nowhere. The pattern is the
+	// one node an arm always has and nothing else claims.
+	ctx.RecordScope(pattern, armScope)
+
 	return &ast.MatchArm{
 		Pattern: pattern,
 		Guard:   guard,
 		Body:    body,
 	}
+}
+
+// definePatternBindings enters every name a pattern binds into the current scope.
+//
+// Walked with `ast.WalkPattern` rather than by a switch of its own: that walker exists
+// precisely so a new consumer does not add an eleventh hand-rolled pattern traversal, and a
+// binder that misses a kind is the quiet failure — a name bound by the language and known to
+// no pass, which is what this function is fixing.
+func definePatternBindings(pattern ast.Pattern, ctx *collector_ctx.Ctx) {
+	ast.WalkPattern(pattern, func(p ast.Pattern) bool {
+		switch b := p.(type) {
+		case *ast.IdentifierPattern:
+			ctx.DefinePatternBinding(b)
+		case *ast.BindingPattern:
+			// `name @ pattern` binds the name *and* everything inside, so the walk
+			// continues past it.
+			ctx.DefinePatternBinding(b)
+		}
+		return true
+	})
 }
 
 // armJumpKinds are the statement forms a match arm may hold *bare*, without the

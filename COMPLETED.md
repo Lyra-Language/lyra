@@ -9,6 +9,54 @@ Newest first.
 
 ## Dated log
 
+### 08/22/26 (16)
+**A `match` arm is a scope — and fixing that exposed two walks that could not reach one.**
+
+Arms pushed no scope and registered nothing, so a name a pattern bound existed only inside
+the typechecker's own binding callbacks. `m` in `Mouse(m) => m.button` was in no scope at
+all: definition on a *use* of it, hover and find-references each answered nothing, and the
+editor looked broken on the most ordinary code there is.
+
+`CollectMatchArm` now pushes a scope before the **guard** — `Some(v) if v > 0` is where a
+guard earns its keep, and it sees what the pattern binds — registers the names with
+`ast.WalkPattern`, and records the scope against the **pattern**. Not against the body: a
+braced body is a BlockExpr that recorded a scope of its own, a *child* of this one, so
+recording the arm scope there would overwrite the block's entry with its parent and every
+binding declared inside the block would resolve nowhere.
+
+That walker's first non-LSP consumer, incidentally: it was added the same day so a new
+binder would not become the eleventh hand-rolled pattern traversal, and this is the first
+thing that would have been.
+
+### The two walks that could not reach it
+
+**`findScopeAtPos` was three hand-written switches**, and the innermost — `nodeToExpr`,
+mapping a statement to the expression inside it — knew *three* statement kinds. So the
+descent stopped at the first statement it did not recognise and answered with whatever
+enclosing scope it had reached. A `match` nested inside another match's arm was unreachable,
+which is why the fix worked in a two-line fixture and did nothing in `mandelbrot_tui.lyra` —
+the worst shape a bug can have, since the small reproduction says it is fixed.
+
+It is now a walk over `ast.WalkStmt`/`ast.WalkExpr` keeping the **narrowest recorded scope**
+containing the position — the same rule `findExprAtPos` uses, and three fewer mirrors
+(rule 8: retiring a mirror beats registering one). The one explicit case left is the match
+arm, because its scope is recorded against the pattern while it governs the whole arm.
+
+**And the canonical walker could not reach an `unsafe` block's scope.** Its case iterated
+`e.Body.Statements` rather than visiting `e.Body`, so the BlockExpr that *carries* the scope
+was never handed to a visitor. Every other block-holding node passes the block through
+`WalkExpr`; this was the one that reached past it. Caught by
+`TestNavigation_InsideAnUnsafeBlock`, which exists because that exact position was broken
+once before — the second time by a different mechanism, which is what a good regression test
+is for.
+
+**The placeholder test fired, as designed.**
+`TestReferences_AMatchArmBindingIsNotYetResolvable` was written to fail when arms gained
+scopes so the LSP half would not be forgotten. It did, and became two tests that assert what
+now works: a binding resolves from its uses, and two arms binding the same name are two
+different bindings — each arm being its own scope is what makes shadowing between arms
+ordinary rather than a collision.
+
 ### 08/22/26 (15)
 **Patterns become visible to the editor: definition, hover, references — and Go to
 Declaration exists.**

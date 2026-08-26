@@ -1566,18 +1566,13 @@ two editor features single-file where the program no longer is:
     the cycle for a recursive `data` type, so `resolveForLayout` chases itself. Any real fix
     has to keep a lazy edge somewhere.
 
-- **[OPEN] A `match` arm registers nothing, so what it binds is invisible to name
-  resolution.** Arms create no scope and their pattern bindings are never entered in the
-  symbol table, so `m` in `Mouse(m) => m.button` cannot be found by any scope-based
-  question: `findScopeAtPos` has nothing to hand back, references declines rather than
-  answering partially (08/22), and a *use* of the binding resolves to nothing either.
-  Go-to-definition answers only because a binding resolves to itself without needing a
-  scope.
-  - The fix is in the collector: push a scope per arm and register what the pattern binds,
-    which is what a lambda already does for its parameters. Every position feature then
-    works on an arm binding with no further change, and `references` should start answering
-    — `TestReferences_AMatchArmBindingIsNotYetResolvable` is written to fail when it does,
-    so the LSP side is not forgotten.
+- **[DONE 08/22] A `match` arm is a scope, and registers what its pattern binds.** Arms
+  pushed no scope and registered nothing, so `m` in `Mouse(m) => m.button` was in no scope
+  at all: go-to-definition on a *use* of it, hover and find-references all answered nothing.
+  `CollectMatchArm` now pushes a block scope before the guard — `Some(v) if v > 0` needs the
+  binding — registers the pattern's names through `ast.WalkPattern`, and records the scope
+  against the **pattern**, since recording it against the body would overwrite a braced
+  body's own scope with its parent. See `COMPLETED.md`.
 
 - **[OPEN] Ten passes hand-roll their own pattern traversal.** `ast.WalkPattern` /
   `ast.PatternsOf` landed 08/22 as the canonical walk — patterns were the one supertype

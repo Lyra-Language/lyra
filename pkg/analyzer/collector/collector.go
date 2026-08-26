@@ -757,6 +757,20 @@ func (c *Collector) RegisterDestructuredName(name string, decl *ast.Destructurin
 	c.table.RegisterDestructuredName(name, decl)
 }
 
+// DefinePatternBinding enters a pattern's binding into the current scope.
+//
+// Errors are deliberately dropped. `Define` reports a redeclaration, which is the right
+// answer for two `let`s of one name in a block and the wrong one here: a pattern may bind a
+// name that shadows an outer one, which is ordinary and intended, and an arm is its own
+// scope so the only way to collide *within* it is a malformed pattern the pattern collector
+// has already reported.
+func (c *Collector) DefinePatternBinding(named ast.Named) {
+	if c.table.CurrentScope == nil || named == nil || named.GetName() == "" {
+		return
+	}
+	_ = c.table.CurrentScope.Define(named)
+}
+
 func (c *Collector) RegisterParameter(p *ast.Parameter) error {
 	return c.table.RegisterParameter(p)
 }

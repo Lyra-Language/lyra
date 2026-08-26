@@ -296,96 +296,68 @@ func cursorOnName(loc ast.Location, name string, line, col int) bool {
 // single file the LSP analyzes), *not* the global scope: a file's own top-level
 // declarations live in its module scope, and the chain out from there reaches the
 // prelude's names and other modules' exports in the order the language resolves them.
+// findScopeAtPos is the innermost scope covering a position: the one a name at that point
+// resolves in.
+//
+// **A walk, not a descent.** It was three hand-written switches — scopeInNode, scopeInExpr
+// and nodeToExpr, the last mapping a statement to the expression inside it — and nodeToExpr
+// knew three statement kinds out of a dozen. So the descent stopped at the first statement
+// it did not recognise and answered with whatever enclosing scope it had reached: a `match`
+// nested inside another match's arm was unreachable, and every name bound in the inner arm
+// resolved in the outer block instead. The symptom was a feature that worked in a small file
+// and not in a real one, which is the worst shape for a bug like this to have.
+//
+// Now it walks with `ast.WalkStmt`/`ast.WalkExpr` — the canonical children — and keeps the
+// **narrowest** recorded scope whose node contains the position. Same rule findExprAtPos
+// uses, and it retires three mirrors (CLAUDE.md rule 8: a registered mirror is second best,
+// retiring one is the real fix).
 func findScopeAtPos(program *ast.Program, scopeTable *symbols.ScopeTable, fileScope *symbols.Scope, line, col int) *symbols.Scope {
+	if program == nil || scopeTable == nil {
+		return fileScope
+	}
+	best := fileScope
+	var bestLoc *ast.Location
+
+	consider := func(node ast.AstNode, loc ast.Location) {
+		sc, ok := scopeTable.Get(node)
+		if !ok || !containsPos(loc, line, col) {
+			return
+		}
+		if bestLoc == nil || spanWithin(loc, *bestLoc) {
+			best, bestLoc = sc, &loc
+		}
+	}
+
 	for _, node := range program.Statements {
-		if s := scopeInNode(node, scopeTable, line, col); s != nil {
-			return s
+		stmt, ok := node.(ast.Statement)
+		if !ok {
+			continue
 		}
-	}
-	return fileScope
-}
-
-// scopeInNode descends into an AST node looking for the innermost BlockExpr
-// that contains (line, col), returning its scope from scopeTable.
-func scopeInNode(node ast.AstNode, scopeTable *symbols.ScopeTable, line, col int) *symbols.Scope {
-	if node == nil || !containsPos(node.GetLocation(), line, col) {
-		return nil
-	}
-	return scopeInExpr(nodeToExpr(node), scopeTable, line, col)
-}
-
-func scopeInExpr(expr ast.Expression, scopeTable *symbols.ScopeTable, line, col int) *symbols.Scope {
-	if expr == nil {
-		return nil
-	}
-	switch e := expr.(type) {
-	case *ast.BlockExpr:
-		sc, hasScope := scopeTable.Get(e)
-		// Recurse first — a deeper nested block is more specific.
-		for _, stmt := range e.Statements {
-			if inner := scopeInNode(stmt, scopeTable, line, col); inner != nil {
-				return inner
+		ast.WalkStmt(stmt, func(s ast.Statement) bool {
+			consider(s, s.GetLocation())
+			return true
+		}, func(e ast.Expression) bool {
+			consider(e, e.GetLocation())
+			// **A match arm's scope is recorded against its pattern** (see
+			// CollectMatchArm), whose span covers only the pattern — but the scope
+			// governs the guard and the body too. So the arm is offered under its whole
+			// extent rather than under the pattern's, which is what lets a name bound by
+			// the pattern resolve at a *use* in the body.
+			if me, ok := e.(*ast.MatchExpr); ok {
+				for _, arm := range me.MatchArms {
+					if arm.Pattern == nil || arm.Body == nil {
+						continue
+					}
+					extent := arm.Pattern.GetLocation()
+					end := arm.Body.GetLocation()
+					extent.EndLine, extent.EndCol = end.EndLine, end.EndCol
+					consider(arm.Pattern, extent)
+				}
 			}
-		}
-		if hasScope {
-			return sc
-		}
-	case *ast.IfExpr:
-		if r := scopeInExpr(e.Then, scopeTable, line, col); r != nil {
-			return r
-		}
-		return scopeInExpr(e.Else, scopeTable, line, col)
-	case *ast.MatchExpr:
-		for _, arm := range e.MatchArms {
-			if r := scopeInExpr(arm.Body, scopeTable, line, col); r != nil {
-				return r
-			}
-		}
-	case *ast.LambdaExpr:
-		// The body's scope is the more specific one when the body is a block, so it wins.
-		if inner := scopeInExpr(e.Body, scopeTable, line, col); inner != nil {
-			return inner
-		}
-		// **Otherwise the lambda's own**, which is where its parameters are bound. A body
-		// that is not a block records no scope of its own, so this returned nil and a
-		// parameter of `pure (n: i64) -> i64 => n + 1` resolved nowhere — no hover, no
-		// definition, and a rename that edited the declaration and left the uses, which
-		// is worse than declining. The collector records the function scope against the
-		// lambda (lambda_expr.go), so it has always been reachable; nothing asked.
-		if sc, ok := scopeTable.Get(e); ok {
-			return sc
-		}
-	case *ast.ForLoopExpr:
-		// The **body**, not its statements: a loop's own bindings — the counter, or
-		// `for i, c in s`'s pair — live in the body block's scope, so iterating the
-		// statements finds every nested scope and misses the one the loop introduced.
-		// The loop variable is then the one name inside a loop that cannot be resolved,
-		// which is a strange enough hole to look like something else.
-		return scopeInExpr(e.Body, scopeTable, line, col)
-	case *ast.ForInLoopExpr:
-		return scopeInExpr(e.Body, scopeTable, line, col)
-	case *ast.UnsafeBlockExpr:
-		// An `unsafe` block *is* its body, including for scoping: a binding declared
-		// inside one is scoped to it (which is why UnsafeBlockExpr.Body is a pointer —
-		// see the collector). Its twin is findExprInExpr in hover.go; a position lookup
-		// that finds the expression but not its scope resolves the name in the wrong
-		// place, so the two have to gain a node together.
-		return scopeInExpr(e.Body, scopeTable, line, col)
+			return true
+		})
 	}
-	return nil
-}
-
-// nodeToExpr extracts the primary expression from a statement node.
-func nodeToExpr(node ast.AstNode) ast.Expression {
-	switch s := node.(type) {
-	case *ast.VarDeclStmt:
-		return s.Value
-	case *ast.ExpressionStmt:
-		return s.Expression
-	case *ast.ReturnStmt:
-		return s.Value
-	}
-	return nil
+	return best
 }
 
 // astLocToLSPLocation converts a 1-based, byte-based ast.Location to an

@@ -187,12 +187,14 @@ let two = pure () -> Shape => Box(2)`
 	}
 }
 
-// **A `match` arm registers nothing**, so a name it binds is invisible to every scope-based
-// question — and references declines rather than answering with the binding alone, which a
-// reader would take as "this is never used". Pinned so that fixing the collector (todo.md)
-// is noticed here: when arms gain scopes this should start answering, and this test should
-// be rewritten to assert the uses rather than their absence.
-func TestReferences_AMatchArmBindingIsNotYetResolvable(t *testing.T) {
+// **A name bound by a `match` arm resolves like any other local**, as of 08/22 — arms push
+// a scope and register what their pattern binds, which they had never done. Before that the
+// name was in no scope at all: references answered nothing, and so did go-to-definition on a
+// *use* of it.
+//
+// This test previously asserted the absence, written to fail when the collector gained arm
+// scopes so the LSP half would not be forgotten. It fired, and this is what it became.
+func TestReferences_AMatchArmBinding(t *testing.T) {
 	h := servertest.New(t, newHandler())
 	src := `
 data Shape = Dot | Box(i64)
@@ -206,8 +208,41 @@ let area = pure (s: Shape) -> i64 => match s {
 	if err != nil {
 		t.Fatalf("References: %v", err)
 	}
-	if len(locs) != 0 {
-		t.Errorf("a match-arm binding has no scope entry, so references must decline "+
-			"rather than answer partially; got %v", locs)
+	// The binding and both uses, all on line 4.
+	if len(locs) != 3 {
+		t.Fatalf("got %d references, want 3 (the binding and its two uses): %v", len(locs), locs)
+	}
+	for _, l := range locs {
+		if got := int(l.Range.Start.Line); got != 4 {
+			t.Errorf("reference on line %d; want 4", got)
+		}
+	}
+}
+
+// And a name bound in one arm is **not** a reference to the same name bound in another: each
+// arm is its own scope, which is what makes shadowing between arms ordinary rather than a
+// collision.
+func TestReferences_ArmBindingsDoNotLeakBetweenArms(t *testing.T) {
+	h := servertest.New(t, newHandler())
+	src := `
+data Shape = Dot(i64) | Box(i64)
+let area = pure (s: Shape) -> i64 => match s {
+	Dot(n) => n,
+	Box(n) => n + n,
+}`
+	openAndWait(t, h, src)
+	col := strings.Index(strings.Split(src, "\n")[3], "n)")
+	locs, err := h.References(testURI, 3, col, true)
+	if err != nil {
+		t.Fatalf("References: %v", err)
+	}
+	// Line 3's binding and its single use — nothing from line 4.
+	if len(locs) != 2 {
+		t.Fatalf("got %d references, want 2: %v", len(locs), locs)
+	}
+	for _, l := range locs {
+		if got := int(l.Range.Start.Line); got != 3 {
+			t.Errorf("reference on line %d; want 3 — the other arm's `n` is a different binding", got)
+		}
 	}
 }
