@@ -172,3 +172,51 @@ let nope<t> where t: Pickable = pure (a: t) -> string => a.shout()
 	assertErrorsAre(t, res,
 		`type parameter t has no method "shout"; add a `+"`where t: Trait`"+` bound whose trait declares it`)
 }
+
+// **`Self` needs different advice**, because a trait method has no `where` clause to write
+// one on. Inside a default body the type variable is `Self`, which no program declares and
+// no method may constrain — so advising `where Self: Trait` names a spelling that does not
+// exist, which is the failure mode lyra-E035 and lyra-E066 were both written to avoid.
+//
+// The answer is a **supertrait**: `trait Doubled: Marked` is how a default body demands
+// something of every implementer, and it is what lyra-E040 then requires of each `impl`.
+func TestBoundSatisfaction_SelfIsToldToUseASupertrait(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+trait Marked { pure mark: (Self) -> i64 }
+let twice<t> where t: Marked = pure (v: t) -> i64 => v.mark() * 2
+trait Doubled {
+  pure one: (Self) -> Self
+  pure both: (Self) -> i64 = (self) => twice(self.one())
+}
+impl Doubled for i64 { one = pure (self) => self }
+`, false)
+	assertHasErrorContaining(t, res, "is instantiated at `Self`, which is not required to implement Marked")
+	assertHasErrorContaining(t, res, "A trait method has no `where` clause")
+	assertHasErrorContaining(t, res, "write `trait Doubled: Marked`")
+}
+
+// And taking that advice compiles: the supertrait puts the bound on `Self` for every
+// implementer, which is exactly what the default body needed.
+func TestBoundSatisfaction_ASupertraitSatisfiesSelfsBound(t *testing.T) {
+	assertNoErrors(t, parseCollectAndCheck(t, `
+trait Marked { pure mark: (Self) -> i64 }
+let twice<t> where t: Marked = pure (v: t) -> i64 => v.mark() * 2
+trait Doubled: Marked {
+  pure one: (Self) -> Self
+  pure both: (Self) -> i64 = (self) => twice(self.one())
+}
+impl Marked for i64 { mark = pure (self) => self }
+impl Doubled for i64 { one = pure (self) => self }
+`, false))
+}
+
+// An ordinary type parameter keeps the `where` advice, which is the spelling that *does*
+// exist for it — the two messages differ because the two fixes differ.
+func TestBoundSatisfaction_AnOrdinaryParameterKeepsTheWhereAdvice(t *testing.T) {
+	res := parseCollectAndCheck(t, `
+trait Marked { pure mark: (Self) -> i64 }
+let twice<t> where t: Marked = pure (v: t) -> i64 => v.mark() * 2
+let outer<u> = pure (v: u) -> i64 => twice(v)
+`, false)
+	assertHasErrorContaining(t, res, "add `where u: Marked` to the enclosing declaration")
+}

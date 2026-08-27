@@ -553,7 +553,7 @@ substitutes `Resolution.Bindings` at each specialization.
 The name is unforgeable — a type variable is lowercase by lexer rule, so no program can
 declare one called `Self`.
 
-Four things to know before touching it:
+Five things to know before touching it:
 
 - **`ast.TraitMethod.DefaultImpl()` is the one instance**, cached on the AST rather than
   per pass. Dispatch, the MethodTable, the purity fixpoint, the ownership table and the
@@ -566,6 +566,14 @@ Four things to know before touching it:
   (`publishDefaultBodyCandidates`). Without it the body type-checks — the bound is
   abstract — and then cannot be lowered, because the candidate table would hold only what
   `boundCandidatesByType` keys by the impl's *declared* target.
+- **An unsatisfied bound in a default body is told to use a supertrait**, not a `where`
+  clause (`reportUnboundTypeParameter`). `Self` is a type variable no program declares and a
+  trait method has no `where` clause to constrain it on, so `trait B: A` is the only
+  spelling that exists — the old message advised `where Self: A` and sent a reader looking
+  for syntax the language does not have. A test **takes the advice** and checks the program
+  then compiles, which is the only way to know a diagnostic's fix is real rather than
+  plausible; one asserting the wording alone would have passed for as long as the message
+  was wrong.
 - **It is checked by a setup pass, so it must install the module scope itself**
   (`checkOneDefaultMethod` → `moduleScopeOf`). The per-statement loop wraps each top-level
   statement in `checkInModule`; this pass runs before that loop, so `tc.scope` is the

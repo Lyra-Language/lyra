@@ -10,6 +10,31 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**A diagnostic that named a spelling the language does not have.**
+
+An unsatisfied bound inside a trait *default body* advised *"add `where Self: Show` to the
+enclosing declaration"*. There is nowhere to write that: a trait method has no `where`
+clause, and `Self` is a type variable no program declares. So the message sent a reader
+looking for syntax that does not exist — the failure mode lyra-E035 and lyra-E066 were both
+written to avoid, arrived at here by a message that was simply generic over the variable's
+name.
+
+The answer for `Self` is a **supertrait**, which is how a default body demands something of
+every implementer and what lyra-E040 then requires of each `impl`. The message now names it,
+with the declaring trait filled in from `currentDefaultTrait` — set for exactly the stretch
+where `Self` is in scope as a variable:
+
+> A trait method has no `where` clause, so the demand goes on the trait as a supertrait —
+> write `trait Doubled: Show`, which then requires an `impl Show` of every implementer
+
+An ordinary type parameter keeps the `where` advice, because for it that spelling does exist.
+The two messages differ because the two fixes differ, which is the whole point.
+
+**A test takes the advice and checks the program then compiles.** That is the only way to
+know a diagnostic's fix is real rather than plausible, and it is what the old message would
+have failed — a test asserting its *wording* would have passed happily for two months.
+
+### 08/26/26
 **A provable negative slice bound is a compile error.**
 
 `xs[-1]` has been refused since 08/12 — an index does not count from the end, and in a

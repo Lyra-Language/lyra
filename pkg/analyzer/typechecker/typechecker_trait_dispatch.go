@@ -762,9 +762,7 @@ func (tc *TypeChecker) checkGenericBounds(calleeName string, lambda *ast.LambdaE
 			}
 			if g, isVar := concrete.(types.GenericType); isVar {
 				if !slices.Contains(tc.genericBounds[g.Name], traitName) {
-					tc.addErrorCode(call.GetLocation(), SeverityError, diag.CodeUnsatisfiedTraitBound,
-						"%s: %s is instantiated at the type parameter %s, which is not bound by %s; add `where %s: %s` to the enclosing declaration",
-						calleeName, param, g.Name, traitName, g.Name, traitName)
+					tc.reportUnboundTypeParameter(calleeName, param, g.Name, traitName, call)
 				}
 				continue
 			}
@@ -1249,4 +1247,36 @@ func (tc *TypeChecker) shadowedOrdHint() string {
 		}
 	}
 	return ""
+}
+
+// reportUnboundTypeParameter names the fix for a call whose callee needs a bound the
+// enclosing declaration does not give.
+//
+// **`Self` needs different advice, and that is the whole of this function.** Ordinarily the
+// answer is a `where` clause on the enclosing declaration — but inside a trait *default
+// body* the type variable is `Self`, which no program declares and which no method may
+// constrain: a trait method has no `where` clause to write one on. Advising
+// `where Self: Show` names a spelling that does not exist, which is the failure mode
+// lyra-E035 and lyra-E066 were both written to avoid.
+//
+// The answer there is a **supertrait**: `trait Doubled: Show` is how a default body demands
+// something of every implementer, and it is what E040 then requires of each `impl`. The
+// declaring trait's name comes from `currentDefaultTrait`, which is set for exactly the
+// stretch where `Self` is in scope as a variable.
+func (tc *TypeChecker) reportUnboundTypeParameter(calleeName, param, varName, traitName string, call *ast.FunctionCallExpr) {
+	if varName == selfVar {
+		where := "the declaring trait"
+		if tc.currentDefaultTrait != "" {
+			where = "`trait " + tc.currentDefaultTrait + ": " + traitName + "`"
+		}
+		tc.addErrorCode(call.GetLocation(), SeverityError, diag.CodeUnsatisfiedTraitBound,
+			"%s: %s is instantiated at `Self`, which is not required to implement %s. A trait "+
+				"method has no `where` clause, so the demand goes on the trait as a supertrait — "+
+				"write %s, which then requires an `impl %s` of every implementer",
+			calleeName, param, traitName, where, traitName)
+		return
+	}
+	tc.addErrorCode(call.GetLocation(), SeverityError, diag.CodeUnsatisfiedTraitBound,
+		"%s: %s is instantiated at the type parameter %s, which is not bound by %s; add `where %s: %s` to the enclosing declaration",
+		calleeName, param, varName, traitName, varName, traitName)
 }

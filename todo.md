@@ -4096,11 +4096,15 @@ recommending — write the program someone would actually write, and see what it
   per-method ownership pass reads.
   - **A single-module program hid all of it**, since with no prelude the global scope holds
     the program's own declarations. Hazard 13's module header, in a different pass.
-  - **[OPEN] The diagnostic for an unsatisfied bound in a default body names something
-    unwritable.** `twice(self, …)` against `where t: Show` says *"add `where Self: Show` to
-    the enclosing declaration"*, and there is nowhere on a trait method to write one — the
-    answer is a **supertrait**, `trait Doubled: Show`, which works. The message should say
-    so when the type variable is `Self`.
+  - **[DONE 08/26] The diagnostic for an unsatisfied bound in a default body names the
+    supertrait.** It used to advise *"add `where Self: Show` to the enclosing declaration"*
+    — a spelling that does not exist, since a trait method has no `where` clause and `Self`
+    is a variable no program declares. It now says *"A trait method has no `where` clause,
+    so the demand goes on the trait as a supertrait — write `trait Doubled: Show`, which
+    then requires an `impl Show` of every implementer"*, naming the declaring trait from
+    `currentDefaultTrait`. A test takes the advice and checks the program then compiles,
+    which is the only way to know a diagnostic's fix is real. An ordinary type parameter
+    keeps the `where` advice, because for it that spelling *does* exist.
   - **[DONE 08/26] A trait imported only for a method call warned as unused** (lyra-W004).
     `import lib.{ Tag }` plus `(7).tag()` reported *"imported name Tag is never used"* —
     advice that breaks the build, since without the import `lib` is not even loaded and the
