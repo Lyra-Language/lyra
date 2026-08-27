@@ -1732,6 +1732,19 @@ The fixture tests go through `emitWithPrelude`, not `emitSource`: they import `s
 `driver.Analyze` resolves no import graph, so every use of an imported name reports
 "undefined".
 
+### A match whose arms all diverge (08/26)
+
+`matchMerge.value()` distinguishes two nil results. A **void** merge is reached and carries
+nothing — control continues past it. A merge **no arm reached** is unreachable, because every
+arm ended in a `return`, a `break` or a `panic`, and it is sealed with `unreachable` to say
+so. Conflating them left the merge unsealed and valueless, which `lowerBlock` correctly reads
+as a block that fell through with nothing to give — refusing
+`let main = () -> u8 => match x { A => return 1, B => return 2 }`, which the front end
+accepts and which is well-defined.
+
+Sealing it means every consumer's existing `end.Term == nil` test does the right thing, so a
+diverging match needs no case of its own anywhere.
+
 ### A match owns its scrutinee's temporaries (08/26)
 
 `lowerMatch` lowers the scrutinee **once**, for all five shapes, and places its temporaries

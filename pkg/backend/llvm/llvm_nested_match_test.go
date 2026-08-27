@@ -140,3 +140,71 @@ let main = () -> void => match noisy() { Dot => println("dot"), Box(v) => printl
 		t.Errorf("got %q; want the scrutinee evaluated exactly once", got)
 	}
 }
+
+// **A match whose arms all diverge is a diverging expression**, not a valueless one, and the
+// two are different block states. `let main = () -> u8 => match x { A => return 1, B =>
+// return 2 }` was refused with `llvm: block has no value` — on a program the front end had
+// already accepted and which is perfectly well-defined, since the function returns from
+// inside the arms.
+//
+// The merge came back **unsealed and valueless**, which `lowerBlock` reads as "a block that
+// fell through with nothing to give". A merge no arm reached is unreachable instead, and
+// sealing it with `unreachable` is what makes it say so — after which a diverging match
+// reads exactly like the diverging `return` it is made of, with no case of its own anywhere.
+func TestExec_MatchWhereEveryArmDiverges(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, src string
+		want      int
+	}{
+		{"scalar scrutinee", `
+let pick = (n: i64) -> u8 => match n { 0 => { return 1 }, _ => { return 2 } }
+let main = () -> u8 => pick(0)`, 1},
+		{"data scrutinee", `
+data Sh = A | B | C
+let pick = (s: Sh) -> u8 => match s { A => { return 1 }, B => { return 2 }, C => { return 3 } }
+let main = () -> u8 => pick(B)`, 2},
+		{"panic counts as divergence", `
+let pick = (n: i64) -> u8 => match n { 0 => panic("zero"), _ => { return 7 } }
+let main = () -> u8 => pick(5)`, 7},
+		{"the match is the function's whole body", `
+data Sh = A | B
+let main = () -> u8 => match A { A => { return 4 }, B => { return 5 } }`, 4},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("exited %d; want %d", got, c.want)
+			}
+		})
+	}
+}
+
+// **Only *some* arms diverging must still merge**, which is the case the fix must not
+// disturb: the merge is reached, so it carries a phi over the arms that got there.
+func TestExec_MatchWhereSomeArmsDiverge(t *testing.T) {
+	t.Parallel()
+	out, _ := buildAndRunCapture(t, `
+data Sh = A | B | C
+let pick = (s: Sh) -> u8 => match s { A => { return 9 }, B => 5, C => 6 }
+let main = () -> void => println("${pick(A)} ${pick(B)} ${pick(C)}")
+`)
+	if got := strings.TrimSpace(out); got != "9 5 6" {
+		t.Errorf("got %q; want \"9 5 6\"", got)
+	}
+}
+
+// `break` diverges too, and a loop is where a match most often has an arm that leaves.
+func TestExec_MatchArmsThatBreakOutOfALoop(t *testing.T) {
+	t.Parallel()
+	out, _ := buildAndRunCapture(t, `
+let main = () -> void => {
+  var acc = 0
+  for i in 0..<10 { match i { 3 => { break }, _ => { acc = acc + 1 } } }
+  println(acc)
+}
+`)
+	if got := strings.TrimSpace(out); got != "3" {
+		t.Errorf("got %q; want \"3\"", got)
+	}
+}

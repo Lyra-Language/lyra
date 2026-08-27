@@ -229,15 +229,36 @@ func (m *matchMerge) arm(val value.Value, end *ir.Block) {
 	m.incomings = append(m.incomings, ir.NewIncoming(val, end))
 }
 
-// value finishes the merge, yielding the phi and the block to keep lowering into. A
-// nil value means every arm diverged, so there is nothing to merge.
+// value finishes the merge, yielding the phi and the block to keep lowering into.
+//
+// **A nil value has two meanings, and they are not the same block state.** A *void* merge
+// is reached and carries nothing — the match was used as a statement, and control continues
+// past it. A merge **no arm reached** is a different thing: every arm diverged (each ended
+// in a `return`, a `break`, or a `panic`), so control does not continue at all and the
+// block is unreachable.
+//
+// Conflating them is what refused `let main = () -> u8 => match x { A => return 1, B =>
+// return 2 }`. The merge came back unsealed and valueless, and `lowerBlock` — which
+// correctly accepts a valueless block that *sealed* — saw neither a value nor a terminator
+// and reported `block has no value`, on a program the front end had already accepted and
+// which is perfectly well-defined: the function returns from inside the arms.
+//
+// Sealing an unreached merge with `unreachable` is what makes it say so. Every consumer
+// already tests `end.Term == nil` before continuing, so a diverging match now reads exactly
+// like the diverging `return` it is made of, with no case of its own anywhere.
 func (m *matchMerge) value() (value.Value, *ir.Block) {
+	if !m.void && len(m.incomings) == 0 {
+		// llir needs a terminator on a block it emits, and `unreachable` is the honest
+		// one: nothing branches here.
+		m.block.NewUnreachable()
+		return nil, m.block
+	}
 	// A void arm means the match is a statement, so there is no value even though
 	// other arms may have produced one — mixing them into a phi would give the match
 	// a value on some paths and not others. (The typechecker has already established
 	// the arms agree; a mix here means the match is being used for effect and one arm
 	// happens to end in an expression.)
-	if m.void || len(m.incomings) == 0 {
+	if m.void {
 		return nil, m.block
 	}
 	return m.block.NewPhi(m.incomings...), m.block

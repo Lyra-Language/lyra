@@ -2747,11 +2747,17 @@ See `COMPLETED.md`.
     terminators, and a `data` match emits its `switch` only after every arm is lowered — so
     while an inner match is being lowered the *entry* block is still unsealed and every
     block reads as unreachable. Safe for `resolveExitReleases` (it leaks); wrong here.
-  - **[OPEN] A match in tail position whose arms all diverge is refused**, with
-    `llvm: block has no value (empty, or last statement is not an expression)` — a message
-    naming neither the match nor the arms. Noticed while probing the edge cases above and
-    pre-existing; a loud refusal rather than wrong code (rule 5), so low severity, but the
-    message should say what it means.
+  - **[DONE 08/26] A match whose arms all diverge lowers.** It was refused with
+    `llvm: block has no value (empty, or last statement is not an expression)` — and the
+    fix turned out to be the *lowering*, not the message. **A nil merge value had two
+    meanings**: a *void* merge is reached and carries nothing (control continues past it),
+    while a merge **no arm reached** is unreachable (every arm ended in a `return`, a
+    `break` or a `panic`). Conflating them left the merge unsealed and valueless, which
+    `lowerBlock` correctly reads as "fell through with nothing to give" — on a program the
+    front end had accepted and which is well-defined, since the function returns from
+    inside the arms. Sealing an unreached merge with `unreachable` makes it say so, after
+    which a diverging match reads exactly like the diverging `return` it is made of, with
+    no case of its own anywhere. Partial divergence still merges.
 
 - **[DONE 08/26] A provable negative slice bound is `lyra-E022`**, which is the rule an
   index already followed and the one position that had been left out. `s.slice(-1, 2)` and

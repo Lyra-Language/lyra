@@ -10,6 +10,37 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**A match whose arms all diverge: the bad message was a missing lowering.**
+
+`let main = () -> u8 => match x { A => return 1, B => return 2 }` was refused with
+`llvm: block has no value (empty, or last statement is not an expression)`, a message naming
+neither the match nor the arms. It went on the list as a wording fix. It was not one — the
+program is well-defined and the front end had already accepted it, since the function
+returns from inside the arms.
+
+**A nil merge value had two meanings, and they are different block states.** A *void* merge
+is reached and carries nothing: the match was a statement, and control continues past it. A
+merge **no arm reached** is unreachable: every arm ended in a `return`, a `break` or a
+`panic`. `value()` returned `(nil, block)` for both, so the unreached case came back unsealed
+and valueless — which `lowerBlock` reads, correctly, as a block that fell through with
+nothing to give.
+
+Sealing an unreached merge with `unreachable` is what makes it say what it is. After that a
+diverging match reads exactly like the diverging `return` it is made of: every consumer
+already tests `end.Term == nil` before continuing, so none of them needed a case for this.
+That is the shape to prefer — teaching the value to describe itself, rather than teaching
+each reader to recognise a second exception.
+
+Worth noting for the list: **an item filed as "improve this message" deserves a minute
+asking whether the message is right.** This one said the block had no value, which was true;
+what was wrong was that the block should not have existed. Two of today's items turned out
+that way — the other was struct-by-value, filed as "a codegen question" and actually a
+per-target ABI classifier.
+
+Partial divergence still merges, which is the case the fix must not disturb, and there is a
+test for it beside the four for full divergence.
+
+### 08/26/26
 **A diagnostic that named a spelling the language does not have.**
 
 An unsatisfied bound inside a trait *default body* advised *"add `where Self: Show` to the
