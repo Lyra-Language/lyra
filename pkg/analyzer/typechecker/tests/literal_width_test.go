@@ -94,7 +94,7 @@ func TestLiteralWidth_OverflowLeftUntyped(t *testing.T) {
 
 // **An argument is a value position, and the rule holds in every value position.**
 //
-// propagateLiteralType deliberately leaves an unfitting literal untyped, "expecting a
+// propagateExpectedType deliberately leaves an unfitting literal untyped, "expecting a
 // *downstream* site to report it" — which is why the declaration, reassignment and return
 // positions each pair it with checkIntegerLiteralRange. An argument has no downstream: the
 // literal reached the backend, was narrowed to the parameter's width, and `direct(300)`

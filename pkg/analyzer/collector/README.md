@@ -79,7 +79,7 @@ unrecoverable value error (e.g. a numeric literal that overflows `int64`) must e
 `nil`. A `nil` returned up as an `ast.Expression` becomes a *typed-nil* interface (`(*T)(nil)`,
 non-nil interface with a nil pointer) that slips past `expr == nil` checks and crashes a later
 pass on the first field access — this is exactly how an out-of-range literal panicked
-`propagateLiteralType` (fixed 07/24/26, `numeric_literals.go`). The error diagnostic keeps the
+`propagateExpectedType` (fixed 07/24/26, `numeric_literals.go`). The error diagnostic keeps the
 program from compiling, so the placeholder value is inert. **The statement analogue (block
 bodies):** `CollectBlockExpr` skips a child that collects to nil (`isNilStmt` — untyped and
 typed nils) rather than appending it, because a block's *value is its final statement* — a

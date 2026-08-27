@@ -66,7 +66,7 @@ func icmpPred(rel icmpRel, signed bool) enum.IPred {
 // at: the concrete width the typechecker recorded for it (via context-directed
 // literal-width inference), or i64 when the literal has no resolved context (an
 // unannotated binding, or a literal whose value didn't fit the context width so
-// the typechecker deliberately left it untyped — see propagateLiteralType).
+// the typechecker deliberately left it untyped — see propagateExpectedType).
 func (l *lowerer) literalIntType(e ast.Expression) *lltypes.IntType {
 	if t, ok := l.recordedType(e); ok {
 		if p, ok := t.(types.PrimitiveType); ok {

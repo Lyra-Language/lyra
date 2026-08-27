@@ -31,7 +31,7 @@ let main = () -> u8 => {
 		},
 		{
 			// The argument path: the flavor comes from the parameter, pushed down onto a
-			// bare construction at the call site by propagateAllocation.
+			// bare construction at the call site by propagateExpectedType.
 			"argument position, both spellings agree",
 			`tuple Pair(u8, u8)
 let sum = pure (p: shared Pair) -> u8 => p.0 + p.1
@@ -159,6 +159,61 @@ let main = () -> u8 => {
   xs[1]
 }`,
 			7,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			if got := buildAndRun(t, c.src); got != c.want {
+				t.Errorf("exited %d; want %d", got, c.want)
+			}
+		})
+	}
+}
+
+// The flavor rides the full expected type through the one propagation walk
+// (propagateExpectedType, 08/27) rather than arriving as a pre-extracted modifier, so
+// it reaches construction positions the two-walk split could not: a reassignment's
+// value (the reassignment site had only the width call — the old fourth-context
+// checklist, still growing — and `n = Node { v: 6 }` on a `shared` var was a compiler
+// panic), and the element of a nested `[][]shared T` (the element side channel read
+// one level of the recorded type, so the inner elements were stamped by nothing and
+// the backend refused the store). The match-wrapped element is the regression guard
+// for the arm recursion the merge absorbed from the old flavor walk.
+func TestExec_SharedFlavorRidesExpectedType(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			"reassignment stamps the new construction",
+			`struct Node { v: u8 }
+let main = () -> u8 => {
+  var n: shared Node = Node { v: 1 }
+  n = Node { v: 6 }
+  n.v
+}`,
+			6,
+		},
+		{
+			"nested []shared elements",
+			`tuple Pair(u8, u8)
+let main = () -> u8 => {
+  let xs: [][]shared Pair = [[Pair(1, 2)], [Pair(3, 4)]]
+  xs[0][0].1 + xs[1][0].0
+}`,
+			5,
+		},
+		{
+			"element built inside a match arm",
+			`tuple Pair(u8, u8)
+let main = () -> u8 => {
+  let xs: []shared Pair = [match 1 { 0 => Pair(9, 9), _ => Pair(1, 2) }, Pair(3, 4)]
+  xs[0].1 + xs[1].0
+}`,
+			5,
 		},
 	}
 	for _, c := range cases {

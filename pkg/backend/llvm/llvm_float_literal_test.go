@@ -6,7 +6,7 @@ import (
 )
 
 // An int literal in a float context lowers as a float constant of the recorded
-// width — before the fix it fell back to i64 (typechecker: propagateLiteralType
+// width — before the fix it fell back to i64 (typechecker: propagateExpectedType
 // bailed on float contexts; backend: literalIntType's i64 default), so
 // `let x: f64 = -5` printed 18446744073709551611 and `x + 0.5` emitted
 // invalid IR (`@llvm.uadd.with.overflow.i64(i64, double)`) only clang caught.

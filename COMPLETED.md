@@ -9,6 +9,56 @@ Newest first.
 
 ## Dated log
 
+### 08/27/26 — Width and flavor ride one expected-type propagation
+
+**`propagateLiteralType` and `propagateAllocation` are now one walk,
+`propagateExpectedType`** (typechecker.go). The two were called pairwise at every context
+site, and the pairing is exactly what had been drifting: the argument context got the width
+call without the flavor one (08/26, a segfault), and the element context (08/27) was patched
+*inside* the flavor walk — with "a container that can hold a flavored element is the shape
+to check next" left as an open-ended checklist.
+
+**The flaw was the signature, not the call sites.** `propagateAllocation` took
+`AllocationOf(expected)` — a pre-extracted *modifier*, a lossy projection of the expected
+type. That one reduction forced every patch that followed: `[]shared Node` projects to
+`Unspecified`, so the element flavor needed a side channel through the *recorded* type
+(`propagateElementAllocation`), which read one level only and never crossed a `match`/`if`
+boundary — the `mod != Shared` guard returned before the arm recursion. Passing the full
+expected type dissolves all of it: the element recursion's resolved element type *is*
+`shared Node`, so a construction is stamped by the same recursion that narrows its width,
+wherever that recursion reaches.
+
+Probed before and after, two shapes went from broken to working:
+
+- **Reassignment** — `var n: shared Node = …; n = Node { v: 6 }` was a **compiler panic**:
+  the reassignment site had only the width call, i.e. the next context the old checklist
+  had not reached yet. Every site that pushes a width now pushes the flavor with it —
+  match-arm common types, struct fields, data payloads, generic and operator arguments
+  included — so there is no list of stamped contexts left to fall off of.
+- **Nested `[][]shared Pair`** — the side channel read one level of the recorded type, so
+  the inner elements were stamped by nothing: the backend's rule-5 refusal
+  `cannot store %Pair into { i64, i64, %Pair }*`.
+
+And one deliberately untouched: a `match` whose *arms are array literals* under a `[]shared`
+annotation is still refused — byte-identical error before and after — because the arms infer
+`StaticArray<Pair, 2>` before any context reaches them and assignability runs on that. That
+is inference ordering, a different (pre-existing) question from propagation.
+
+Two structural notes for later readers:
+
+- The `match`/`if`/block arms moved **above the primitive guard**: the width walk used to
+  recurse into value arms only under a primitive context, so the merged walk is also the
+  first time an *aggregate* context (a tuple, an array) narrows and re-records literals
+  built inside an arm — and the first time a literal there that cannot hold its value is
+  reported, per the every-position rule. The old flavor walk carried its own copy of the
+  arm recursion precisely because the width walk's was gated; now there is one.
+- `propagateInstantiation` remains a sibling walk (it returns whether it reported, and
+  re-checks payloads), and is the natural candidate if this fold is ever taken further.
+
+Tests: `TestExec_SharedFlavorRidesExpectedType` (reassignment, nested elements, and the
+match-wrapped element as a regression guard for the absorbed arm recursion); the whole
+suite green before adding them, meaning the merge changed no already-tested behaviour.
+
 ### 08/27/26 — `[...xs, v]` spread
 **A feature the grammar parsed, the collector built, and every lint pass counted — with no
 typechecker arm under it.** `[...xs, 3]` reported `unknown expression type "...xs"`, and

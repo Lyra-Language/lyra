@@ -2253,6 +2253,12 @@ interior assignment, and deep retain-on-copy.
       reason that surfaced as a refusal instead of an answer.
     Still out of reach and unrelated: `p.0 = v` on any tuple, shared or not, is a **grammar**
     gap — a positional assignment target does not parse.
+  - **[DONE 08/27] Width and flavor merged into one expected-type walk**
+    (`propagateExpectedType`; COMPLETED.md). The flavor now rides the full expected type
+    instead of a pre-extracted modifier, so the per-context call pairing and the element
+    side channel are gone — and the two contexts the old checklist had not reached yet
+    (reassignment, which panicked the compiler; nested `[][]shared T`, which failed the
+    build) work rather than awaiting their own entries here.
   Still open: a *nested* `shared data` sub-pattern — destructuring a tail
   through its own box — errors loudly; construction-site `shared T {…}` syntax;
   implicit-alloc / escape analysis; atomic refcounts (deferred to the job system).

@@ -523,10 +523,10 @@ func (tc *TypeChecker) checkMatchExpr(expr *ast.MatchExpr, requireType bool) typ
 	// match-arm context propagation site), so every arm lowers at the match's
 	// result type. When the common type is itself still untyped (all arms were
 	// untyped literals), this is a no-op — an outer context (a declared return
-	// type, an annotation) narrows the whole match later via propagateLiteralType.
+	// type, an annotation) narrows the whole match later via propagateExpectedType.
 	for _, arm := range expr.MatchArms {
 		tc.withPatternBindings(arm.Pattern, scrutineeType, func() {
-			tc.propagateLiteralType(arm.Body, commonType)
+			tc.propagateExpectedType(arm.Body, commonType)
 		})
 	}
 	return commonType
@@ -1702,7 +1702,7 @@ func (tc *TypeChecker) inferNullCoalescingExpr(expr *ast.NullCoalescingExpr) typ
 	// backend's phi requires), and one that cannot hold its value is refused rather
 	// than truncated — the same pair of calls every decl site makes.
 	tc.checkIntegerLiteralRange("`??` default", expr.Default, common)
-	tc.propagateLiteralType(expr.Default, common)
+	tc.propagateExpectedType(expr.Default, common)
 	return common
 }
 

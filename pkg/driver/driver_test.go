@@ -74,7 +74,7 @@ func hasMessageContaining(res *Result, substrs ...string) bool {
 // TestAnalyze_LargeU64Literal_TypeChecks: a literal that overflows int64 but
 // fits u64 (18446744073709551615) is a valid u64 value — it type-checks in a
 // u64 context. This is also the original crash reproducer (a nil literal node
-// once panicked propagateLiteralType); it must analyze without panic or error.
+// once panicked propagateExpectedType); it must analyze without panic or error.
 func TestAnalyze_LargeU64Literal_TypeChecks(t *testing.T) {
 	src := "let big = (n: u64) -> u64 => n\n" +
 		"let main = () -> u8 => {\n  let x = big(18446744073709551615)\n  0\n}\n"
@@ -368,7 +368,7 @@ func TestAnalyze_ScreamingCaseConstructors(t *testing.T) {
 }
 
 // TestAnalyze_DeepExpressionIsLinear is a coarse guard against the quadratic
-// propagateLiteralType behavior fixed in typechecker.go: it re-descended a
+// propagateExpectedType behavior fixed in typechecker.go: it re-descended a
 // left-nested arithmetic chain at every level, so a chain of n operators cost
 // O(n²). A 50k-operator chain (a stand-in for long flat `a + b + … + z`
 // expressions or generated code) took >25s before the fix and ~0.3s after. The
@@ -385,7 +385,7 @@ func TestAnalyze_DeepExpressionIsLinear(t *testing.T) {
 		t.Fatalf("deep chain should type-check cleanly, got: %v", res.Diagnostics)
 	}
 	if elapsed > 5*time.Second {
-		t.Fatalf("analyzing a %d-operator chain took %v (>5s) — propagateLiteralType may be quadratic again", n, elapsed)
+		t.Fatalf("analyzing a %d-operator chain took %v (>5s) — propagateExpectedType may be quadratic again", n, elapsed)
 	}
 }
 

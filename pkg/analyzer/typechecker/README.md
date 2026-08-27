@@ -14,7 +14,7 @@ Walks the collected AST and infers/verifies types, writing results into a `TypeT
 
 Returns the `types.Type` for an expression and records it in the `TypeTable`
 
-### `propagateLiteralType(expr, concrete)`
+### `propagateExpectedType(expr, concrete)`
 
 **context-directed literal-width inference.** Bottom-up inference computes each expression's
 result type but leaves an untyped literal (`5`, `3`) recorded as `untyped_int` until context
@@ -66,19 +66,23 @@ type (`inferTupleLiteralExpr`'s data-constructor branch, via
 type (`checkMatchExpr`, so a bare `0` arm adapts to a concrete sibling or the match's outer
 context rather than defaulting to i64). The backend reads these recorded leaf widths.
 
-### `propagateAllocation(expr, mod)`
+### Allocation flavor rides the same walk
 
-The allocation-flavor analogue of `propagateLiteralType`: pushes a context `shared` flavor down
-onto the *construction* leaves (a data constructor, struct instance, or named-tuple literal)
-that produce the value, recursing through the same `match`/`if`/block arm structure. Allocation
-is a use-site flavor, so only a construction — whose flavor is context-determined — is stamped
-(via `WithAllocation`); an identifier or call already carries its own definite flavor. Called
-from the annotated `let` (`checkVarDecl`) and the three return-body sites
-(`checkLambdaBody`/`checkBlockReturn`), so `(xs) -> shared List => match xs { … => Cons(…) }`
-heap-boxes the value the arm builds (and the ownership pass then sees it as a managed /
-reuse-eligible value). This closes the alloc-detection half of the deferred "`shared`
-construction in a return position" gap for these contexts; a bare-argument-position construction
-still isn't stamped.
+Since 08/27 there is no separate flavor propagator: `propagateExpectedType` also stamps the
+context's `shared` flavor onto every *construction* leaf its recursion reaches (a data
+constructor, struct instance, tuple literal — the applied-constructor spelling included — or
+either array construction form), via `stampSharedConstruction`/`WithAllocation`. Allocation is
+a use-site flavor, so only a construction — whose flavor is context-determined — is stamped;
+an identifier or call already carries its own definite flavor. Because the flavor rides the
+full expected type rather than a pre-extracted modifier, an array's *element* flavor
+(`[]shared T`) reaches each element through the ordinary element recursion — including an
+element built inside a `match`/`if` arm, which the old side channel through the recorded type
+never reached. The former twins (`propagateLiteralType` + `propagateAllocation`) were called
+pairwise at each context site, and the pairing is what drifted: the argument context got the
+width call without the flavor one (a segfault, fixed 08/26). A context site now makes one call
+and cannot take one half without the other; every site that pushes a width — reassignment,
+match-arm common types, struct fields, data payloads, generic and operator arguments — pushes
+the flavor with it.
 - `inferTupleLiteralExpr` / `inferNamedTupleLiteralExpr` — a `TupleLiteralExpr` (`(1, 2)` or
   `Point(1, 2)`, both the same AST node — call syntax on a capitalized name is the only
   applied-constructor form, see the grammar notes below) splits three ways: a data-constructor
@@ -86,7 +90,7 @@ still isn't stamped.
   "?"` (the collector's placeholder for no leading name) is a plain anonymous tuple, structural
   as always — its element leaves are left **untyped** (not eagerly promoted to i64/f64),
   mirroring `inferArrayLiteralType`, so a surrounding context (a tuple annotation, a
-  data-ctor/struct tuple field) can narrow them via `propagateLiteralType`; with no such context
+  data-ctor/struct tuple field) can narrow them via `propagateExpectedType`; with no such context
   they settle to their defaults at the no-annotation site (`promoteToDefault` now has a
   `TupleType` case). This is what makes `let a: (i32, i32) = (1, 2)` and a tuple-typed data
   payload (`Wrapped((20, 22))`) narrow correctly; `isAssignable` gained a structural
@@ -97,7 +101,7 @@ still isn't stamped.
   `inferStructInstanceExpr` for structs — construction is validated against the declaration, not
   synthesized freely from the literal), then checks arity and each element positionally against
   the declared (turbofish-substituted, or left-unconstrained-if-still-generic) element type —
-  propagating that declared type onto an untyped literal element (`propagateLiteralType`) before
+  propagating that declared type onto an untyped literal element (`propagateExpectedType`) before
   checking assignability, the same treatment `inferLambdaCall` gives a call argument. **Not yet
   done:** per-position generic *inference* when no turbofish is given (structs infer a field's
   generic param from the supplied value; named tuples don't attempt the positional analogue yet
@@ -321,7 +325,7 @@ from context" problem.
 resolution misses, so a user `let print = …` shadows them. `print`/`println` are **polymorphic
 over the printable scalar types** (string, any integer/float, bool, rune → void) rather than a
 single `LambdaType`, so `inferPrintCall` checks the one argument against `isPrintableType` and
-settles an untyped numeric literal to its default width (`propagateLiteralType(arg,
+settles an untyped numeric literal to its default width (`propagateExpectedType(arg,
 promoteToDefault(argType))`) so the backend has a concrete type to format. Effect classification
 `EffectOutput` lives separately in `checker/effects.go`'s `builtinEffects` — allowed in `det`,
 forbidden in `pure`. The backend lowers per-type formatting to libc `write`/`snprintf` + a rune

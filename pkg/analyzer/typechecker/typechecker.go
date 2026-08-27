@@ -72,7 +72,7 @@ type TypeChecker struct {
 	// than one context on the way down, and one too-large literal is one mistake.
 	overflowReported map[ast.Expression]bool
 	// constraintReported is that same guard for checkNewtypeConstraints, and it is
-	// needed for the same reason one layer up: the check now rides propagateLiteralType,
+	// needed for the same reason one layer up: the check now rides propagateExpectedType,
 	// which a generic call site reaches more than once for one argument (against the
 	// declared signature and again against the instantiated one).
 	constraintReported map[ast.Expression]bool
@@ -495,14 +495,14 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	}
 
 	// Check that the literal value fits within the annotated integer type's range.
-	// (The *newtype* constraint checks are not here: they ride propagateLiteralType
+	// (The *newtype* constraint checks are not here: they ride propagateExpectedType
 	// below, so they reach every position a newtype context flows to rather than only
 	// a binding — see checkNewtypeConstraints.)
 	tc.checkIntegerLiteralRange(decl.Name, decl.Value, resolvedDeclType)
 
 	// The implicit-conversion rules are checked *here*, before the annotation is
 	// recorded on the value below — after that the value node reads as the annotation
-	// and the checks (which ride propagateLiteralType for every other position) would
+	// and the checks (which ride propagateExpectedType for every other position) would
 	// see nothing being converted, in either direction. The later calls through
 	// propagation are harmless for exactly that reason.
 	if ct, isNewtype := resolvedDeclType.(*types.ConstrainedType); isNewtype {
@@ -513,13 +513,12 @@ func (tc *TypeChecker) checkVarDecl(decl *ast.VarDeclStmt) {
 	// Store the annotation type — this is the effective type the expression is used as.
 	// e.g. literal 42 annotated as i32 should be recorded as i32, not the untyped int.
 	tc.typeTable.Set(decl.Value, resolvedDeclType)
-	// Push the annotation width down onto untyped literal leaves too, so the
-	// backend lowers `let x: u8 = 5 + 3` with u8 leaves, not i64 ones.
-	tc.propagateLiteralType(decl.Value, resolvedDeclType)
-	// Push the annotation's `shared` flavor down onto construction leaves (incl.
-	// inside `match`/`if` arms), so `let n: shared Node = match … { … => Node{…} }`
+	// Push the annotation down onto the value too — its width onto untyped literal
+	// leaves, so the backend lowers `let x: u8 = 5 + 3` with u8 leaves, not i64
+	// ones, and its `shared` flavor onto construction leaves (incl. inside
+	// `match`/`if` arms), so `let n: shared Node = match … { … => Node{…} }`
 	// heap-boxes the value the arm builds.
-	tc.propagateAllocation(decl.Value, types.AllocationOf(resolvedDeclType))
+	tc.propagateExpectedType(decl.Value, resolvedDeclType)
 }
 
 // checkDestructuringDecl type-checks a destructuring declaration. It infers
@@ -1293,11 +1292,11 @@ func (tc *TypeChecker) checkVarReassignment(stmt *ast.VarReassignmentStmt) {
 		return
 	}
 	// Check that the literal value fits within the variable's integer type's range.
-	// (Newtype constraints ride propagateLiteralType below — see checkNewtypeConstraints.)
+	// (Newtype constraints ride propagateExpectedType below — see checkNewtypeConstraints.)
 	tc.checkIntegerLiteralRange(stmt.Name, stmt.Value, effective)
 	// Record the variable's width on untyped literal leaves of the RHS (`x = x + 1`
 	// where x: i8 lowers `1` as i8), matching an annotated let binding.
-	tc.propagateLiteralType(stmt.Value, effective)
+	tc.propagateExpectedType(stmt.Value, effective)
 }
 
 // checkDerefAssignment handles the two statements that share this node. The
@@ -1384,7 +1383,7 @@ func (tc *TypeChecker) checkLValueAssignment(stmt *ast.LValueAssignmentStmt) {
 	// backend refusing to guess about something nobody had told it.
 	//
 	// Before checkStorable, so the check sees the type the value will actually have.
-	tc.propagateLiteralType(stmt.Value, targetType)
+	tc.propagateExpectedType(stmt.Value, targetType)
 	if t, ok := tc.typeTable.Get(stmt.Value); ok && t != nil {
 		valueType = t
 	}
@@ -1527,7 +1526,7 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 	// walk.go visits for this form, and nothing had ever given it a type — so a consumer
 	// asking what `x` is in `x >>= n` had to ask about something else instead, and the
 	// backend asked about the *count*. For every non-shift operator the count shares the
-	// target's type (propagateLiteralType below sees to it), which is why that read the
+	// target's type (propagateExpectedType below sees to it), which is why that read the
 	// right answer everywhere except a shift, where the count is deliberately typed
 	// independently: `r >>= 1` on a `u8` took the untyped literal's signed default and
 	// emitted `ashr`, so 200 >> 1 was 228 rather than 100.
@@ -1622,7 +1621,7 @@ func (tc *TypeChecker) checkMathAssignOp(expr *ast.MathAssignOpExpr) {
 	// Record the target's width on untyped literal leaves of the RHS, so
 	// `i += 1` with a narrow `i` lowers `1` at that width (matching plain
 	// reassignment — see checkVarReassignment) rather than the i64 default.
-	tc.propagateLiteralType(expr.Right, effective)
+	tc.propagateExpectedType(expr.Right, effective)
 }
 
 func (tc *TypeChecker) checkBooleanLiteralExpr(expr *ast.BooleanLiteralExpr) {
@@ -1762,8 +1761,8 @@ func (tc *TypeChecker) propagateComparisonWidth(expr *ast.BooleanBinaryOpExpr, l
 	if common == nil {
 		return
 	}
-	tc.propagateLiteralType(expr.Left, common)
-	tc.propagateLiteralType(expr.Right, common)
+	tc.propagateExpectedType(expr.Left, common)
+	tc.propagateExpectedType(expr.Right, common)
 }
 
 func (tc *TypeChecker) addImmutableBindingError(loc ast.Location, name string, kind ast.BindingKind) {
@@ -2543,7 +2542,7 @@ func (tc *TypeChecker) inferMathBinaryExpr(expr *ast.MathBinaryOpExpr) types.Typ
 // walk at every level of a chain — quadratic in the chain's length (the measured
 // hot spot on long flat `a + b + … + z` expressions). A leaf or a not-yet-typed
 // operand is narrowed as before. This guard is deliberately here and not in
-// propagateLiteralType itself: the annotation sites (`checkVarDecl` et al.) set the
+// propagateExpectedType itself: the annotation sites (`checkVarDecl` et al.) set the
 // value node's type to the annotation *before* narrowing, so they must re-descend.
 func (tc *TypeChecker) propagateOperandType(operand ast.Expression, result types.Type) {
 	if cur, ok := tc.typeTable.Get(operand); ok {
@@ -2553,29 +2552,47 @@ func (tc *TypeChecker) propagateOperandType(operand ast.Expression, result types
 			}
 		}
 	}
-	tc.propagateLiteralType(operand, result)
+	tc.propagateExpectedType(operand, result)
 }
 
-// propagateLiteralType pushes a concrete numeric context type down onto the
-// untyped integer/float literal leaves of expr, recording it in the TypeTable in
-// place of the leaf's untyped default. This is the "context-directed" half of
-// literal-width inference: bottom-up inference already computes each expression's
-// result type, but leaves an untyped literal (`5`, `3`) recorded as untyped_int
-// until a context — an annotation, a concrete sibling operand, a declared return
-// type — fixes its width. The backend reads these recorded widths, so without
-// this a mixed-width expression like `i8(x) < 3` would leave `3` as i64.
+// propagateExpectedType pushes a context ("expected") type down onto the value that
+// must take it — both of the facts a value in that position cannot determine for
+// itself:
 //
-// It recurses only through width-preserving arithmetic (`+ - * / % %%` and unary
-// `-`), where an operand's width equals the result's, and stops at anything with
-// its own independent type (identifiers, calls, conversions) — a conversion like
-// `i8(x)` is exactly the boundary where a new width begins. concrete must be a
-// resolved concrete numeric primitive; a nil or non-primitive concrete is a
-// no-op, as is a leaf that is already concretely typed.
-func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.Type) {
-	tc.propagateLiteral(expr, concrete, false)
+//   - The **width** of its untyped integer/float literal leaves, recorded in the
+//     TypeTable in place of the untyped default. Bottom-up inference already computes
+//     each expression's result type, but leaves an untyped literal (`5`, `3`) recorded
+//     as untyped_int until a context — an annotation, a concrete sibling operand, a
+//     declared return type, a parameter — fixes its width. The backend reads these
+//     recorded widths, so without this a mixed-width expression like `i8(x) < 3`
+//     would leave `3` as i64.
+//   - The **allocation flavor** of its construction leaves (today only `shared`): a
+//     construction has no flavor of its own — `Node { v: 2 }` is inline or heap-boxed
+//     depending on what it is used *as* — so the context's `shared` is stamped onto
+//     each data constructor, struct instance, tuple literal and array construction
+//     the walk reaches (stampSharedConstruction), and the backend heap-boxes those.
+//
+// Width and flavor were two walks until 08/27 (propagateExpectedType and
+// propagateAllocation), called pairwise at each context site — and the pairing is
+// what drifted: the argument context got the width call without the flavor one (a
+// segfault, 08/26), and the flavor walk received only a *modifier*, a lossy
+// projection of the expected type, so an array's element flavor needed a side channel
+// through the recorded type and never reached a construction inside a `match` arm at
+// all. One walk over the full expected type closes both structurally: a new context
+// site is one call, and every position the recursion reaches carries the flavor of
+// the expected type at that position.
+//
+// The width half recurses only through width-preserving arithmetic (`+ - * / % %%`
+// and unary `-`), where an operand's width equals the result's, and stops at anything
+// with its own independent type (identifiers, calls, conversions) — a conversion like
+// `i8(x)` is exactly the boundary where a new width begins. A nil expected type, or
+// one that is neither an aggregate shape nor a concrete numeric primitive, pushes no
+// widths; a leaf that is already concretely typed is left alone.
+func (tc *TypeChecker) propagateExpectedType(expr ast.Expression, expected types.Type) {
+	tc.propagateExpected(expr, expected, false)
 }
 
-// propagateLiteral is propagateLiteralType's body. viaNewtype records that the
+// propagateExpected is propagateExpectedType's body. viaNewtype records that the
 // context arrived by stripping a newtype: below the newtype arm the walk carries the
 // *base* (a leaf can only be narrowed to a primitive), but the true context is still
 // the newtype — so the implicit-read-out check (lyra-E047) must not fire there, or
@@ -2584,7 +2601,7 @@ func (tc *TypeChecker) propagateLiteralType(expr ast.Expression, concrete types.
 // arms, block tails, arithmetic operands: the same value in the same context) and
 // resets through the aggregate arms, whose element recursions are genuinely new
 // contexts.
-func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type, viaNewtype bool) {
+func (tc *TypeChecker) propagateExpected(expr ast.Expression, expected types.Type, viaNewtype bool) {
 	// A newtype context propagates its *base*: `newtype Percent = u8` is nominal
 	// only, so `let p: Percent = 40 + 2` must narrow its leaves to u8 exactly as an
 	// annotated u8 would. Without this the leaves stay untyped and the backend
@@ -2596,12 +2613,12 @@ func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type
 	// reaches a value in *all* the positions it can arrive from — an annotation, an
 	// argument, a return, an array element. Attached to the two assignment sites, as it
 	// was until 08/12, `let p: Percent = 150` was checked and `show_it(150)` was not.
-	if ct, ok := concrete.(*types.ConstrainedType); ok {
+	if ct, ok := expected.(*types.ConstrainedType); ok {
 		if from, ok := tc.typeTable.Get(expr); ok {
 			tc.checkImplicitNewtypeConversion(expr, from, ct)
 		}
 		tc.checkNewtypeConstraints(expr, ct)
-		tc.propagateLiteral(expr, tc.resolveTypeIfKnown(ct.Type, expr.GetLocation()), true)
+		tc.propagateExpected(expr, tc.resolveTypeIfKnown(ct.Type, expr.GetLocation()), true)
 		// **Put the wrapper back on the root.** The recursion narrows the leaves against the
 		// base, and the array arms re-record the node they were handed with the base's own
 		// shape — so `let b: Bag = ["x"]` over `newtype Bag = []string` came out recorded as
@@ -2642,7 +2659,7 @@ func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type
 	// one has no declaration, so the annotation reaching it here is the only source of a
 	// width. Fixed 08/08; hazard 8, in a list of aggregate forms with one missing.
 	if asl, ok := expr.(*ast.AnonymousStructInstanceExpr); ok {
-		ast_, ok := concrete.(types.AnonymousStructType)
+		ast_, ok := expected.(types.AnonymousStructType)
 		if !ok {
 			return
 		}
@@ -2657,7 +2674,7 @@ func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type
 				continue
 			}
 			resolved := tc.resolveType(want, expr.GetLocation())
-			tc.propagateLiteralType(f.Value, resolved)
+			tc.propagateExpectedType(f.Value, resolved)
 			tc.checkIntegerLiteralRange("field "+f.Name, f.Value, resolved)
 		}
 		// Re-record with the context's field types, so the value the backend lowers has
@@ -2667,14 +2684,20 @@ func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type
 	}
 
 	if tl, ok := expr.(*ast.TupleLiteralExpr); ok {
-		tt, ok := concrete.(types.TupleType)
+		tt, ok := expected.(types.TupleType)
 		if !ok || len(tt.Elements) != len(tl.Elements) {
+			// Not a tuple-shaped context — but the node may still be a construction the
+			// context flavors: an *applied data constructor* (`Some(1)`) is this same
+			// node kind, and its context is a ParameterizedType, so `shared Maybe<i64>`
+			// lands its flavor here. (A genuine shape mismatch is assignability's to
+			// report; the stamp on that path is inert.)
+			tc.stampSharedConstruction(tl, expected)
 			return
 		}
 		resolved := make([]types.Type, len(tt.Elements))
 		for i, elem := range tl.Elements {
 			resolved[i] = tc.resolveType(tt.Elements[i], elem.GetLocation())
-			tc.propagateLiteralType(elem, resolved[i])
+			tc.propagateExpectedType(elem, resolved[i])
 			// …and a leaf that does not fit the width it was just narrowed to is
 			// reported here, because nothing downstream will. The scalar form has
 			// checkIntegerLiteralRange at its assignment sites, but those look at the
@@ -2701,6 +2724,10 @@ func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type
 		if types.IsAnonymousTupleName(tl.Name) {
 			tc.typeTable.Set(tl, types.TupleType{Name: tt.Name, Elements: resolved})
 		}
+		// The construction's own flavor, after the re-record above — which is
+		// flavorless, so the order within this arm is what used to be a cross-walk
+		// ordering rule repeated at every context site.
+		tc.stampSharedConstruction(tl, expected)
 		return
 	}
 
@@ -2717,50 +2744,56 @@ func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type
 	// list, and the re-record is the same either way.
 	if ar, ok := expr.(*ast.ArrayRepeatExpr); ok {
 		var ctxElem types.Type
-		switch at := concrete.(type) {
+		switch at := expected.(type) {
 		case types.StaticArrayType:
 			ctxElem = at.ElementType
 		case types.DynamicArrayType:
 			ctxElem = at.ElementType
-		default:
-			return
 		}
-		if ctxElem == nil {
-			return
+		if ctxElem != nil {
+			resolved := tc.resolveType(ctxElem, expr.GetLocation())
+			// The element recursion carries the element's own flavor with it:
+			// `[]shared T` is an ordinary dynamic array whose *slots* hold boxes, and
+			// resolved here is `shared T`, so the value's construction is stamped by
+			// the same recursion that narrows it — the element case needs no side
+			// channel through the recorded type, and it reaches a value built inside
+			// a `match`/`if` arm, which the separate flavor walk never did.
+			tc.propagateExpectedType(ar.Value, resolved)
+			tc.checkIntegerLiteralRange("repeated element", ar.Value, resolved)
+			// A *dynamic* context stays dynamic, for the reason the array-literal arm
+			// below gives: the value is used as a dynamic array, and rewriting it to
+			// static would mask a later dynamic→static assignment error. The backend
+			// recovers the count by folding `ar.Count` with the same helper the check
+			// used.
+			if _, isDyn := expected.(types.DynamicArrayType); isDyn {
+				tc.typeTable.Set(expr, types.DynamicArrayType{ElementType: resolved})
+			} else if n, ok := tc.arrayRepeatCount(ar); ok {
+				tc.typeTable.Set(expr, types.StaticArrayType{ElementType: resolved, Size: n})
+			}
 		}
-		resolved := tc.resolveType(ctxElem, expr.GetLocation())
-		tc.propagateLiteralType(ar.Value, resolved)
-		tc.checkIntegerLiteralRange("repeated element", ar.Value, resolved)
-		// A *dynamic* context stays dynamic, for the reason the array-literal arm below
-		// gives: the value is used as a dynamic array, and rewriting it to static would
-		// mask a later dynamic→static assignment error. The backend recovers the count
-		// by folding `ar.Count` with the same helper the check used.
-		if _, isDyn := concrete.(types.DynamicArrayType); isDyn {
-			tc.typeTable.Set(expr, types.DynamicArrayType{ElementType: resolved})
-			return
-		}
-		if n, ok := tc.arrayRepeatCount(ar); ok {
-			tc.typeTable.Set(expr, types.StaticArrayType{ElementType: resolved, Size: n})
-		}
+		// The array's own flavor (`shared [3]i64 = [7; 3]`), after the re-record above.
+		tc.stampSharedConstruction(ar, expected)
 		return
 	}
 
 	if al, ok := expr.(*ast.ArrayLiteralExpr); ok {
 		var ctxElem types.Type
-		switch at := concrete.(type) {
+		switch at := expected.(type) {
 		case types.StaticArrayType:
 			ctxElem = at.ElementType
 		case types.DynamicArrayType:
 			ctxElem = at.ElementType
-		default:
-			return
 		}
 		if ctxElem == nil {
+			tc.stampSharedConstruction(al, expected)
 			return
 		}
 		resolved := tc.resolveType(ctxElem, expr.GetLocation())
 		for i, elem := range al.Elements {
-			tc.propagateLiteralType(elem, resolved)
+			// As in the repeat arm: resolved carries the element's own flavor, so a
+			// `[]shared T` context stamps each element's construction through the
+			// same recursion that narrows its width.
+			tc.propagateExpectedType(elem, resolved)
 			tc.checkIntegerLiteralRange(fmt.Sprintf("element %d", i+1), elem, resolved)
 		}
 		// Re-record with the concrete element type so the backend builds the right
@@ -2771,16 +2804,63 @@ func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type
 		// dynamic re-record matters where nothing else records the type onto the
 		// literal node — a return body (`() -> []i64 => [1,2,3]`) or an argument
 		// position — since only an annotated `let` sets it via checkVarDecl.
-		switch concrete.(type) {
+		switch expected.(type) {
 		case types.StaticArrayType:
 			tc.typeTable.Set(al, types.StaticArrayType{ElementType: resolved, Size: len(al.Elements)})
 		case types.DynamicArrayType:
 			tc.typeTable.Set(al, types.DynamicArrayType{ElementType: resolved})
 		}
+		// The array's own flavor (`shared [3]T`), after the flavorless re-record above.
+		tc.stampSharedConstruction(al, expected)
 		return
 	}
 
-	cp, ok := concrete.(types.PrimitiveType)
+	// A construction leaf the width recursion has nothing to push into — a named
+	// construction narrows its fields against its own declaration
+	// (inferStructInstanceExpr) — so only the context's flavor lands here. Falls
+	// through rather than returning: under a primitive context these nodes were and
+	// remain terminal (the default arm below), and a primitive context's AllocationOf
+	// is Unspecified, so the stamp is a no-op there.
+	switch expr.(type) {
+	case *ast.DataConstructorExpr, *ast.StructInstanceExpr:
+		tc.stampSharedConstruction(expr, expected)
+	}
+
+	// A match/if/block is a value made of its arm/branch/tail bodies, so the context
+	// pushes through to each of them — *whatever* kind the context is. These arms sat
+	// under the primitive guard below until 08/27, so an aggregate context stopped at
+	// the node instead of reaching the construction inside the arm: the width half
+	// left an arm's tuple or array literal at its untyped default (the invalid-IR
+	// class the aggregate arms' re-records exist for), and the flavor half was the
+	// reason the old allocation walk carried its own copy of exactly this recursion.
+	switch e := expr.(type) {
+	case *ast.MatchExpr:
+		for _, arm := range e.MatchArms {
+			tc.propagateExpected(arm.Body, expected, viaNewtype)
+		}
+		tc.recordUntypedValueNode(e, expected)
+		return
+	case *ast.IfExpr:
+		if e.Then != nil {
+			tc.propagateExpected(e.Then, expected, viaNewtype)
+		}
+		if e.Else != nil {
+			tc.propagateExpected(e.Else, expected, viaNewtype)
+		}
+		tc.recordUntypedValueNode(e, expected)
+		return
+	case *ast.BlockExpr:
+		// A block's value is its last statement, when that's an expression.
+		if n := len(e.Statements); n > 0 {
+			if es, ok := e.Statements[n-1].(*ast.ExpressionStmt); ok {
+				tc.propagateExpected(es.Expression, expected, viaNewtype)
+			}
+		}
+		tc.recordUntypedValueNode(e, expected)
+		return
+	}
+
+	cp, ok := expected.(types.PrimitiveType)
 	if !ok {
 		return
 	}
@@ -2830,16 +2910,16 @@ func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type
 		}
 		tc.typeTable.Set(e, cp)
 	case *ast.MathBinaryOpExpr:
-		tc.propagateLiteral(e.Left, concrete, viaNewtype)
+		tc.propagateExpected(e.Left, expected, viaNewtype)
 		// A shift is width-preserving on the *left* only: its right operand is a
 		// count with its own type, so pushing the shifted value's width onto it
 		// would narrow an unrelated leaf (and, for a small signed target, fail the
 		// fits-check and leave it untyped for no reason).
 		if !e.Operator.IsShift() {
-			tc.propagateLiteral(e.Right, concrete, viaNewtype)
+			tc.propagateExpected(e.Right, expected, viaNewtype)
 		}
 	case *ast.BitwiseNotExpr:
-		tc.propagateLiteral(e.Operand, concrete, viaNewtype)
+		tc.propagateExpected(e.Operand, expected, viaNewtype)
 	case *ast.NegationExpr:
 		// A negated integer literal whose *negation* is exactly the signed
 		// target's minimum (i8 -128, i16 -32768, i32 -2147483648) must narrow to
@@ -2857,38 +2937,7 @@ func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type
 				return
 			}
 		}
-		tc.propagateLiteral(e.Operand, concrete, viaNewtype)
-	case *ast.MatchExpr:
-		// A match/if is a value made of its arm/branch bodies, so a context width
-		// pushes through to each of them (the match-arm/branch context site) — and
-		// if the whole expression was left untyped (all arms were untyped literals),
-		// it now takes the concrete width too.
-		for _, arm := range e.MatchArms {
-			tc.propagateLiteral(arm.Body, concrete, viaNewtype)
-		}
-		if tc.currentTypeIsUntyped(e) {
-			tc.typeTable.Set(e, cp)
-		}
-	case *ast.IfExpr:
-		if e.Then != nil {
-			tc.propagateLiteral(e.Then, concrete, viaNewtype)
-		}
-		if e.Else != nil {
-			tc.propagateLiteral(e.Else, concrete, viaNewtype)
-		}
-		if tc.currentTypeIsUntyped(e) {
-			tc.typeTable.Set(e, cp)
-		}
-	case *ast.BlockExpr:
-		// A block's value is its last statement, when that's an expression.
-		if n := len(e.Statements); n > 0 {
-			if es, ok := e.Statements[n-1].(*ast.ExpressionStmt); ok {
-				tc.propagateLiteral(es.Expression, concrete, viaNewtype)
-			}
-		}
-		if tc.currentTypeIsUntyped(e) {
-			tc.typeTable.Set(e, cp)
-		}
+		tc.propagateExpected(e.Operand, expected, viaNewtype)
 	default:
 		// A terminal node — one the walk does not descend into: an identifier, a
 		// call, a member or index read. This is where a newtype meets a base-typed
@@ -2898,103 +2947,41 @@ func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type
 		// context is the newtype itself and nothing is being read out.
 		if !viaNewtype {
 			if from, ok := tc.typeTable.Get(expr); ok {
-				tc.checkImplicitNewtypeReadout(expr, from, concrete)
+				tc.checkImplicitNewtypeReadout(expr, from, expected)
 			}
 		}
 	}
 }
 
-// propagateAllocation pushes a context allocation flavor (today only `shared`)
-// down onto the *construction* leaves that produce the value — a data
-// constructor, struct instance, or named-tuple literal — recursing through the
-// arm/branch/tail structure of a match/if/block the same way propagateLiteralType
-// pushes a width. It's how a `shared`-annotated binding or a `shared` return type
-// stamps the value actually built inside a `match` arm (`match xs { … => Cons(…) }`)
-// as `shared`, so the backend heap-boxes it (and the ownership pass sees it as a
-// managed / reuse-eligible value). Allocation is a use-site flavor, so only a
-// construction — whose flavor is context-determined — is stamped; an identifier or
-// call already carries its own definite flavor and is left alone. Stamping the
-// recorded type via WithAllocation is safe: assignability/allocation-compat already
-// passed against the annotated/declared type, and Unspecified (the default) is a
-// no-op, so a non-shared context changes nothing.
-func (tc *TypeChecker) propagateAllocation(expr ast.Expression, mod types.AllocationModifier) {
-	// An array's **elements** carry a flavor of their own, independent of the array's:
-	// `[]shared Node` is an ordinary dynamic array whose slots hold boxes. That flavor
-	// reaches a construction leaf only by being pushed into each element from here — the
-	// array's own `mod` is Unspecified in exactly that spelling, so the early return
-	// below would otherwise drop it and `[]shared Pair = [Pair(1, 2)]` would store an
-	// unboxed payload into a box-pointer slot.
-	tc.propagateElementAllocation(expr)
-
-	if mod != types.Shared {
-		return // only `shared` needs pushing; stack/unspecified is the inline default
+// stampSharedConstruction stamps a construction node's recorded type with the
+// context's `shared` flavor, so the backend heap-boxes it (and the ownership pass
+// sees it as a managed / reuse-eligible value). Allocation is a use-site flavor, so
+// only a construction — whose flavor is context-determined — is ever passed here; an
+// identifier or call already carries its own definite flavor and the walk leaves it
+// alone. Stamping via WithAllocation is safe: assignability/allocation-compat already
+// passed against the context type, and a context whose AllocationOf is not Shared
+// changes nothing.
+func (tc *TypeChecker) stampSharedConstruction(expr ast.Expression, expected types.Type) {
+	if types.AllocationOf(expected) != types.Shared {
+		return
 	}
-	switch e := expr.(type) {
-	case *ast.TupleLiteralExpr, *ast.DataConstructorExpr, *ast.StructInstanceExpr,
-		*ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr:
-		// A construction leaf: stamp the flavor onto its recorded type so the backend
-		// heap-boxes it. An array literal is stamped here too (`let xs: shared [3]T =
-		// [...]`), and this must run *after* propagateLiteralType, which re-records the
-		// literal as a flavorless StaticArrayType — checkVarDecl orders it that way.
-		if t, ok := tc.typeTable.Get(expr); ok {
-			tc.typeTable.Set(expr, types.WithAllocation(t, mod))
-		}
-	case *ast.MatchExpr:
-		for _, arm := range e.MatchArms {
-			tc.propagateAllocation(arm.Body, mod)
-		}
-	case *ast.IfExpr:
-		if e.Then != nil {
-			tc.propagateAllocation(e.Then, mod)
-		}
-		if e.Else != nil {
-			tc.propagateAllocation(e.Else, mod)
-		}
-	case *ast.BlockExpr:
-		if n := len(e.Statements); n > 0 {
-			if es, ok := e.Statements[n-1].(*ast.ExpressionStmt); ok {
-				tc.propagateAllocation(es.Expression, mod)
-			}
-		}
+	if t, ok := tc.typeTable.Get(expr); ok {
+		tc.typeTable.Set(expr, types.WithAllocation(t, types.Shared))
 	}
 }
 
-// propagateElementAllocation pushes an array's *element* flavor into the elements of an
-// array construction. It is the element-wise half of propagateAllocation: the array's own
-// flavor and its elements' are separate questions, and `[]shared T` asks only the second.
-//
-// Both array construction forms are handled, because they are one family — ArrayRepeatExpr
-// is a variant of ArrayLiteralExpr that has now been omitted from a walk eight times
-// (hazard 8), and it was missing from propagateAllocation's own leaf case too.
-func (tc *TypeChecker) propagateElementAllocation(expr ast.Expression) {
-	t, ok := tc.typeTable.Get(expr)
-	if !ok {
-		return
-	}
-	var elem types.Type
-	switch a := t.(type) {
-	case types.DynamicArrayType:
-		elem = a.ElementType
-	case types.StaticArrayType:
-		elem = a.ElementType
-	default:
-		return
-	}
-	if types.AllocationOf(elem) != types.Shared {
-		return
-	}
-	switch e := expr.(type) {
-	case *ast.ArrayLiteralExpr:
-		for _, el := range e.Elements {
-			tc.propagateAllocation(el, types.Shared)
-		}
-	case *ast.ArrayRepeatExpr:
-		tc.propagateAllocation(e.Value, types.Shared)
+// recordUntypedValueNode gives a match/if/block node itself the context's width when
+// its arms left it untyped (all of them were untyped literals). Meaningful only for a
+// primitive context: an aggregate context has nothing to record here, since the
+// aggregate arms re-record their own nodes.
+func (tc *TypeChecker) recordUntypedValueNode(expr ast.Expression, expected types.Type) {
+	if cp, ok := expected.(types.PrimitiveType); ok && tc.currentTypeIsUntyped(expr) {
+		tc.typeTable.Set(expr, cp)
 	}
 }
 
 // currentTypeIsUntyped reports whether expr's currently recorded type is an
-// untyped literal type (so propagateLiteralType may overwrite it with a concrete
+// untyped literal type (so propagateExpectedType may overwrite it with a concrete
 // width). A leaf that already has a concrete type is left alone.
 func (tc *TypeChecker) currentTypeIsUntyped(expr ast.Expression) bool {
 	t, ok := tc.typeTable.Get(expr)
@@ -3201,7 +3188,7 @@ func (tc *TypeChecker) inferInterpolatedStringExpr(e *ast.InterpolatedStringExpr
 			continue
 		}
 		if types.IsNumeric(segType) {
-			tc.propagateLiteralType(seg, promoteToDefault(segType))
+			tc.propagateExpectedType(seg, promoteToDefault(segType))
 		}
 	}
 	return str
@@ -3360,7 +3347,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 						continue
 					}
 					expected := tc.resolveType(substituteGenerics(declaredFields[i], subst), elem.GetLocation())
-					tc.propagateLiteralType(elem, expected)
+					tc.propagateExpectedType(elem, expected)
 					// A payload that is itself a construction narrows too, so a
 					// concrete declared field reaches all the way down.
 					tc.propagateInstantiation(elem, expected)
@@ -3387,11 +3374,11 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 			}
 			// Keep an untyped leaf untyped (don't promote to i64/f64 here) so a
 			// surrounding context — a tuple annotation, a data-ctor or struct tuple
-			// field — can still narrow it via propagateLiteralType, mirroring how
+			// field — can still narrow it via propagateExpectedType, mirroring how
 			// inferArrayLiteralType keeps array elements untyped for annotation
 			// widening. inferExprType already recorded the (untyped) leaf type; with
 			// no narrowing context the no-annotation settle (promoteToDefault plus a
-			// settling propagateLiteralType) fixes the default width later.
+			// settling propagateExpectedType) fixes the default width later.
 			elements[i] = t
 		}
 		return types.TupleType{Name: name, Elements: elements}
@@ -3416,7 +3403,7 @@ func (tc *TypeChecker) inferTupleLiteralExpr(expr *ast.TupleLiteralExpr) types.T
 // ones.
 //
 // Constraints are enforced through the constructor for free, by propagating the
-// *newtype* onto the operand: propagateLiteralType's newtype arm runs
+// *newtype* onto the operand: propagateExpectedType's newtype arm runs
 // checkNewtypeConstraints and then narrows the leaves to the base width, so
 // `Percent(150)` is caught exactly as `let p: Percent = 150` is, and `Cents(150)` over
 // a u8 base lowers its literal at u8.
@@ -3487,7 +3474,7 @@ func (tc *TypeChecker) inferNewtypeConstruction(expr *ast.TupleLiteralExpr, name
 	// and a constructor is the explicit form, so routing through it would have
 	// `Cents(x)` refuse the very operand it exists to accept.
 	tc.checkNewtypeConstraints(operand, ct)
-	tc.propagateLiteralType(operand, base)
+	tc.propagateExpectedType(operand, base)
 	tc.typeTable.Set(expr, ct)
 	return ct
 }
@@ -3650,7 +3637,7 @@ func (tc *TypeChecker) inferNamedTupleLiteralExpr(expr *ast.TupleLiteralExpr, na
 		// then record the declared type as the element's effective type,
 		// mirroring how checkVarDecl records an annotation over the raw
 		// inferred type.
-		tc.propagateLiteralType(elemExpr, expected)
+		tc.propagateExpectedType(elemExpr, expected)
 		tc.typeTable.Set(elemExpr, expected)
 	}
 	if inst, ok := parameterizedResult(declType, decl, typeSubst); ok {
@@ -3701,7 +3688,7 @@ func (tc *TypeChecker) inferIndexExpr(expr *ast.IndexExpr) types.Type {
 	// with the *stripped* array type by literal propagation, so `s` read as `[]i64` and the
 	// switch below matched — while the same value crossing a call boundary was still a
 	// `Sorted` and failed assignability. Making the strip explicit here is what lets the
-	// binding keep its wrapper (below, in propagateLiteral) without breaking indexing.
+	// binding keep its wrapper (below, in propagateExpected) without breaking indexing.
 	if objectType != nil {
 		objectType = types.StripNewtype(tc.resolveTypeIfKnown(objectType, expr.GetLocation()))
 	}
@@ -3884,7 +3871,7 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 			// Without this a narrow field's literal (`Node { value: 3 }` with
 			// `value: u8`) stays untyped_int and the backend lowers it at the i64
 			// default, mismatching the struct's i8 field.
-			tc.propagateLiteralType(f.Value, expected)
+			tc.propagateExpectedType(f.Value, expected)
 			tc.typeTable.Set(f.Value, expected)
 		}
 	}
@@ -4323,7 +4310,7 @@ func (tc *TypeChecker) expandParameterizedNewtype(p types.ParameterizedType, loc
 // was accepted.
 //
 // What then happened depended on which walk reached it first, and all of them are fatal:
-// literalTakesShape and propagateLiteral *recurse* on the resolved base, so `let a: A = 0`
+// literalTakesShape and propagateExpected *recurse* on the resolved base, so `let a: A = 0`
 // died with `fatal error: stack overflow`, while inferTypeConversion's and
 // checkImplicitNewtypeReadout's `for` loops simply never terminated — a hung compiler, and
 // a hung editor.

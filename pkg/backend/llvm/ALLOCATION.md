@@ -198,7 +198,7 @@ mechanism: uniqueness is a runtime test, so aliased graphs stay correct.
   so `map`/`filter`/tree rebuilds remain zero-allocation-per-cell. Eliding the
   dup/drop pair when the box is known unique is stage 4 (below).
 - **Return of a `shared` value** (`emitReturn` pointer case) and the typechecker's
-  **`propagateAllocation`** (a `shared` return type / annotation stamps the
+  **`propagateExpectedType`** (a `shared` return type / annotation stamps the
   construction leaves inside `match`/`if` arms `shared`, so the arm's value is
   heap-boxed) are the two supporting pieces this needed.
 
@@ -255,7 +255,7 @@ handled and errors loudly.
 `{ i64 rc, [N x T] }` (the ordinary `shared`-flavored `lowerType` path), so it
 reuses the whole shared-box runtime. `lowerArrayLiteralExpr` builds the inline
 `[N x T]` and boxes it (`lowerBoxShared`) when the recorded type is `shared` — the
-typechecker's `propagateAllocation` stamps the flavor onto the array-literal node
+typechecker's `propagateExpectedType` stamps the flavor onto the array-literal node
 (same as struct/data construction). `lowerIndexExpr` geps through the box's payload
 (`sharedArrayPayloadPtr` — box → field 1 → element), for both a constant and a
 bounds-checked runtime index, borrowing the box (no reference consumed). The

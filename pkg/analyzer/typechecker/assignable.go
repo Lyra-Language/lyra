@@ -22,7 +22,7 @@ import (
 // (`M : Meters := 3.0` is legal, `M := F` for a Float F is not, `Meters(F)` is the
 // conversion), and Ada is the language that has taken this problem most seriously.
 //
-// It is checked here — from propagateLiteralType's newtype arm, and the one assignment
+// It is checked here — from propagateExpectedType's newtype arm, and the one assignment
 // path that does no propagation — rather than inside isAssignable, for two reasons.
 // isAssignable sees only *types*, and the rule needs the expression: a string or bool
 // literal has the same type as a variable holding one (there is no `untyped_string`),

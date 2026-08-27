@@ -105,7 +105,7 @@ func (tc *TypeChecker) checkDerefWrite(stmt *ast.DerefAssignmentStmt) {
 			"cannot assign %s through a pointer to %s", value, ptr.Pointee)
 		return
 	}
-	tc.propagateLiteralType(stmt.Value, ptr.Pointee)
+	tc.propagateExpectedType(stmt.Value, ptr.Pointee)
 }
 
 // isAddressable reports whether e names storage rather than a temporary — an identifier,

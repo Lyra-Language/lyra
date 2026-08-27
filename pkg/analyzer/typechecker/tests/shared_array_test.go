@@ -28,7 +28,7 @@ let y: u8 = xs[1]`,
 }
 
 // The `shared` flavor from the annotation is stamped onto the array-literal
-// construction node (propagateAllocation), which is what tells the backend to
+// construction node (propagateExpectedType), which is what tells the backend to
 // heap-box it rather than build an inline value.
 func TestTypeCheck_SharedArray_StampsConstructionFlavor(t *testing.T) {
 	res := parseCollectAndCheck(t, `let xs: shared [3]i64 = [1, 2, 3]`, false)

@@ -373,8 +373,7 @@ func (tc *TypeChecker) checkReturnValue(funcName string, value ast.Expression, l
 	// expecting a *downstream* site to report it — and a return has no downstream,
 	// so this is the same call the decl/reassign sites make, with the same dedup.
 	tc.checkIntegerLiteralRange(funcName, value, declaredReturn)
-	tc.propagateLiteralType(value, declaredReturn)
-	tc.propagateAllocation(value, types.AllocationOf(declaredReturn))
+	tc.propagateExpectedType(value, declaredReturn)
 	if ownedReturn {
 		tc.checkAllocationCompat(valueType, declaredReturn, loc, funcName)
 	}
@@ -803,7 +802,7 @@ func (tc *TypeChecker) inferPrintCall(name string, call *ast.FunctionCallExpr) t
 	// Settle an untyped numeric literal to its default width so the backend reads a
 	// concrete type (a non-literal or already-concrete arg is left unchanged).
 	if types.IsNumeric(argType) {
-		tc.propagateLiteralType(arg, promoteToDefault(argType))
+		tc.propagateExpectedType(arg, promoteToDefault(argType))
 	}
 	return types.VoidType{}
 }
@@ -901,7 +900,7 @@ func (tc *TypeChecker) inferWaitForKeyCall(call *ast.FunctionCallExpr) types.Typ
 			"wait_for_key_ms: expected a timeout in milliseconds (an integer), got %s",
 			promoteToDefault(argT))
 	}
-	tc.propagateLiteralType(call.Arguments[0], types.PrimitiveType{Name: types.Int64})
+	tc.propagateExpectedType(call.Arguments[0], types.PrimitiveType{Name: types.Int64})
 	return types.PrimitiveType{Name: types.Boolean}
 }
 
@@ -1464,22 +1463,16 @@ func (tc *TypeChecker) checkNamedArgument(calleeName string, param ast.Parameter
 	} else {
 		// The parameter type is the argument's context: push its width onto
 		// untyped literal args so the backend lowers `add(200)` at the param's
-		// width, not the i64 default. Applies to every assignable arg, not just
-		// `own` ones (width is orthogonal to ownership).
-		tc.propagateLiteralType(arg, resolvedParamType)
-		// **And the parameter's allocation flavor**, for the same reason and by the same
-		// rule: a construction's flavor is context-determined, and an argument position is
-		// a context. `take(Node { v: 2 })` against a `shared Node` parameter built the
-		// struct *inline* and passed it by value to a callee expecting a box pointer — a
-		// segfault on macOS, and on Linux the typed-pointer error `'@take' defined with
-		// type 'i64 ({i64, i64, %Node}*)*' but expected 'i64 (%Node)*'`. An annotated
-		// binding and a declared return were already stamped; the argument was the third
-		// such context and the only one left out.
-		//
-		// After propagateLiteralType, which re-records an array literal as a flavorless
-		// StaticArrayType — the ordering checkVarDecl already relies on.
-		tc.propagateAllocation(arg, types.AllocationOf(resolvedParamType))
-		// And the width must actually hold it. propagateLiteralType deliberately
+		// width, not the i64 default — and its allocation flavor onto construction
+		// args, because a construction's flavor is context-determined and an
+		// argument position is a context. `take(Node { v: 2 })` against a `shared
+		// Node` parameter built the struct *inline* and passed it by value to a
+		// callee expecting a box pointer — a segfault on macOS, and on Linux the
+		// typed-pointer error `'@take' defined with type 'i64 ({i64, i64, %Node}*)*'
+		// but expected 'i64 (%Node)*'`. Width applies to every assignable arg, not
+		// just `own` ones (width is orthogonal to ownership).
+		tc.propagateExpectedType(arg, resolvedParamType)
+		// And the width must actually hold it. propagateExpectedType deliberately
 		// leaves an unfitting literal untyped, "expecting a downstream site to
 		// report" — but an argument has no downstream, so `direct(300)` against a
 		// `u8` parameter checked clean and printed 44. This is the same pairing the

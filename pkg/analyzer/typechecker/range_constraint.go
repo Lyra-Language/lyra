@@ -15,7 +15,7 @@ import (
 // kind a newtype can declare — `range(...)`, `values(...)` and `pattern(...)` — and is
 // the one place any of them is enforced.
 //
-// **It is called from propagateLiteralType's newtype arm, which is what makes the
+// **It is called from propagateExpectedType's newtype arm, which is what makes the
 // check follow the type instead of the binding.** Until 08/12 the three checks were
 // called from the two assignment sites only, so `let p: Percent = 150` was caught while
 // the same literal reaching the same newtype through an **argument**

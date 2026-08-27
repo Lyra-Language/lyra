@@ -180,7 +180,7 @@ func (tc *TypeChecker) dispatchOperator(
 		// Narrow an untyped literal operand to the declared parameter first, so
 		// `v * 2` against a `(Self, i64) -> Self` impl is the i64 the impl asked for
 		// rather than the literal default — the same courtesy an ordinary call gets.
-		tc.propagateLiteralType(argExprs[i], param)
+		tc.propagateExpectedType(argExprs[i], param)
 		if got, ok := tc.typeTable.Get(argExprs[i]); ok {
 			arg = got
 		}
@@ -257,7 +257,7 @@ func (tc *TypeChecker) dispatchOperatorViaBound(
 			if arg == nil || param == nil {
 				continue
 			}
-			tc.propagateLiteralType(argExprs[i], param)
+			tc.propagateExpectedType(argExprs[i], param)
 			if got, ok := tc.typeTable.Get(argExprs[i]); ok {
 				arg = got
 			}

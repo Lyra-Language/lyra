@@ -33,7 +33,7 @@ import (
 // The element type is left **untyped** where v is an untyped literal, exactly as
 // inferArrayLiteralType leaves its elements untyped, so `let g: [4]u8 = [0; 4]` narrows
 // the 0 to u8 instead of lowering it at the i64 default and mismatching the annotation.
-// propagateLiteralType has the matching arm.
+// propagateExpectedType has the matching arm.
 func (tc *TypeChecker) inferArrayRepeatType(expr *ast.ArrayRepeatExpr) types.Type {
 	elem := tc.inferExprType(expr.Value)
 	if elem == nil {

@@ -158,7 +158,7 @@ func (tc *TypeChecker) solveTypeVars(lambda *ast.LambdaExpr, call *ast.FunctionC
 	}
 	// Third: the untyped literals, now that everything with a width has spoken. A
 	// literal whose parameter is a variable the call has already bound simply adopts that
-	// binding — the argument check below narrows the literal to it (propagateLiteralType),
+	// binding — the argument check below narrows the literal to it (propagateExpectedType),
 	// exactly as it does for a non-generic parameter of that type. Only a variable still
 	// free falls back to the literal's default width.
 	//
@@ -344,7 +344,7 @@ func (tc *TypeChecker) inferGenericCall(calleeName string, lambda *ast.LambdaExp
 		// `unwrap_or(None, 42)` lower — `None` fixes nothing, and the parameter type
 		// is only `Maybe<i64>` once the *other* argument has solved `t`, so the
 		// concrete-callee propagation site never sees an instantiation to push.
-		tc.propagateLiteralType(arg, params[i])
+		tc.propagateExpectedType(arg, params[i])
 		// A solved parameter is a width like any other, and the same "no downstream to
 		// report it" rule applies.
 		tc.checkIntegerLiteralRange(

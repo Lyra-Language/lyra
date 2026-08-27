@@ -172,7 +172,7 @@ func TestEmit_TraitMethodSymbolIsQualified(t *testing.T) {
 
 // A trait method's body is narrowed by its declared return type, exactly as a free
 // function's is. The check that does this was written four times and the trait-impl
-// copy had drifted: it ran neither contextualType nor propagateLiteralType, so the
+// copy had drifted: it ran neither contextualType nor propagateExpectedType, so the
 // body computed at the i64 default and was truncated at the return boundary.
 //
 // That was a *semantic* difference, not only a width one, because Lyra's arithmetic

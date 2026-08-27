@@ -105,7 +105,7 @@ backend half is `pkg/backend/llvm`'s `lyra_rc_drop_reuse` (runtime.go), `lowerBo
 (shared.go), the token threading in `lowerDataMatch`, and `dropReclaimedPayload` — the reclaimed
 shell's *old* payload is dropped at the match's merge block, past every arm, guarded on the
 token being non-null (dropping it at reclaim time would free a field an arm hasn't duplicated
-yet); the typechecker's `propagateAllocation` stamps `shared` onto construction leaves inside
+yet); the typechecker's `propagateExpectedType` stamps `shared` onto construction leaves inside
 match arms so the arm's value is heap-boxed. See ALLOCATION.md.
 
 ## A third predicate: `SharesMutableState`

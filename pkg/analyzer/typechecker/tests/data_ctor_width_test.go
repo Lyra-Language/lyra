@@ -44,7 +44,7 @@ let b = Wrap(200)
 }
 
 // A data constructor whose declared payload field is a *tuple* of narrow ints
-// narrows the tuple literal's element leaves too: propagateLiteralType now
+// narrows the tuple literal's element leaves too: propagateExpectedType now
 // recurses into a TupleLiteralExpr against its tuple context type, so
 // `Wrapped((20, 22))` with `Wrapped((u8, u8))` records `20`/`22` as u8. Before,
 // the tuple literal's elements defaulted to i64 and the backend panicked

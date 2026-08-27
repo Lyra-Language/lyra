@@ -147,9 +147,9 @@ real failure, and none is local to one package.
      missed in five places `ArrayLiteralExpr` appeared in — and two more on 08/24, in
      `isSyntacticLiteral` (so `let n: Nums = [7; 3]` over a newtype was refused while
      `[7, 7, 7]` was not) and `firstNonConstant` (so `const XS = [7; 3]` was "not a
-     compile-time constant"), and an eighth on 08/27 in the typechecker's
-     `propagateAllocation` (so `let xs: shared [3]i64 = [7; 3]` did not build while
-     `[7, 7, 7]` did). **Eight instances of one omission.** The sweep that finds them
+     compile-time constant"), and an eighth on 08/27 in the typechecker's flavor walk
+     — since merged into `propagateExpectedType` — (so `let xs: shared [3]i64 = [7; 3]`
+     did not build while `[7, 7, 7]` did). **Eight instances of one omission.** The sweep that finds them
      is mechanical and takes a minute: list every file mentioning `ArrayLiteralExpr` and check
      each for `ArrayRepeatExpr`; the node and collector definitions correctly have their own,
      everything else is a candidate. The second 08/24 instance was found that way, having been
@@ -312,23 +312,24 @@ real failure, and none is local to one package.
    The backend pays the same tax: `l.funcs` cannot hold two functions of one name, so an
    overload is keyed by its *declaration* and its emitted symbol carries the receiver head.
 
-    **Allocation is context-determined, and a construction has three contexts.** A
+    **Allocation is context-determined, and the flavor rides the expected type.** A
     construction leaf has no flavor of its own — `Node { v: 2 }` is inline or heap-boxed
-    depending on what it is used *as* — so `propagateAllocation` pushes the flavor down from
-    an annotated binding, a declared return, **and an argument** (08/26). The argument was
-    the one left out, and the symptom was not a missing box but the struct passed *by value*
-    to a callee expecting a box pointer: a segfault on macOS, and on Linux the typed-pointer
-    error `'@take' defined with type 'i64 ({…}*)*' but expected 'i64 (%Node)*'`. Add a
-    fourth context and it needs the call; the width rule (`propagateLiteralType`) is its twin
-    and sits on the adjacent line at each site.
-
-    **The fourth context arrived on 08/27, and it is not a fourth call site.** An array's
-    *element* carries a flavor independent of the array's own, and `[]shared Node` gives the
-    array none — so `propagateAllocation` returned at its `mod != Shared` guard and the
-    element's construction leaf was stamped by nothing. It is answered *inside*
-    `propagateAllocation` (`propagateElementAllocation`, run before that guard), because the
-    question is about the type being propagated rather than about where the propagation was
-    requested from. A container that can hold a flavored element is the shape to check next.
+    depending on what it is used *as* — and the context's flavor reaches it through
+    `propagateExpectedType`, the **one** walk that pushes a context type down onto a value:
+    literal width and `shared` flavor together, from every context site (an annotated
+    binding, a declared return, an argument, a reassignment, a struct field, a data
+    payload, an array element). It used to be two walks called pairwise per context
+    (`propagateLiteralType` + `propagateAllocation`), and the pairing is what drifted: the
+    argument context got the width call without the flavor one — the struct passed *by
+    value* to a callee expecting a box pointer, a segfault on macOS and on Linux the
+    typed-pointer error `'@take' defined with type 'i64 ({…}*)*' but expected
+    'i64 (%Node)*'` (08/26) — and the flavor walk received only a pre-extracted *modifier*,
+    so an array's element flavor (`[]shared Node`) needed a side channel through the
+    recorded type, a nested `[][]shared T` failed the build, and a construction reassigned
+    to a `shared` var panicked the compiler. Merged 08/27 (COMPLETED.md): a new context is
+    one `propagateExpectedType` call that cannot take one half without the other, and any
+    position the recursion reaches — an element, a `match`/`if` arm, a nested container —
+    carries the flavor of the expected type at that position.
 
 10. **A pass that indexes a call's arguments positionally is one AST shape away from
     being silently wrong.** Purity reads `call.Arguments[idx]` against the *declaration's*

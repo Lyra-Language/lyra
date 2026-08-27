@@ -71,7 +71,7 @@ func collectIntegerLiteralExpr(node *sitter.Node, ctx *collector_ctx.Ctx, loc as
 		// Beyond 128 bits (or otherwise unparseable): emit a clear diagnostic and fall
 		// back to a placeholder literal (Value 0), never nil — a nil child would
 		// enter the AST as a typed-nil expression and crash a later pass (e.g.
-		// propagateLiteralType) that dereferences it. The error keeps the program
+		// propagateExpectedType) that dereferences it. The error keeps the program
 		// from compiling, so the placeholder value is inert.
 		if errors.Is(err, strconv.ErrRange) {
 			ctx.AddError(node, diag.SeverityError,

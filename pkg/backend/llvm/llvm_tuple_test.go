@@ -86,7 +86,7 @@ func TestEmit_TupleInstanceIR(t *testing.T) {
 // the untyped-literal default.
 //
 // inferTupleLiteralExpr deliberately leaves an anonymous tuple's elements untyped so a
-// surrounding context can narrow them, and propagateLiteralType did narrow the leaves —
+// surrounding context can narrow them, and propagateExpectedType did narrow the leaves —
 // but it never re-recorded the type of the tuple **node**, which is what the backend
 // builds the aggregate from. So `f((10, 40))` against a `(u8, u8)` parameter emitted
 // `call i8 @lyra.f({ i64, i64 })` into a `{ i8, i8 }` parameter: invalid IR.
@@ -95,7 +95,7 @@ func TestEmit_TupleInstanceIR(t *testing.T) {
 // two function types are indistinguishable, and arm64 passes small structs in registers
 // so the low bytes happen to carry the right values and the program "works". Debian's
 // older typed-pointer clang rejects it outright, which is how ./asan.sh found it. The
-// array case next to it in propagateLiteralType had always re-recorded, with a comment
+// array case next to it in propagateExpectedType had always re-recorded, with a comment
 // explaining why; tuples simply didn't.
 func TestExec_AnonymousTupleTakesContextWidth(t *testing.T) {
 	t.Parallel()

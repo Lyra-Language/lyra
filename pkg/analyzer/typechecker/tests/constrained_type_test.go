@@ -137,7 +137,7 @@ let f = () -> u8 => {
 // The three constraint checks used to be called from the assignment sites only, so
 // `let p: Percent = 150` was caught and the *same literal* reaching the *same newtype*
 // through an argument, a return or an array element was not — silently, in the feature
-// whose entire purpose is to be checked. They ride propagateLiteralType now, which is
+// whose entire purpose is to be checked. They ride propagateExpectedType now, which is
 // the one point a newtype context reaches a value in every position it can arrive from.
 //
 // Each of these asserts the *exact* error set, so a duplicate report would fail them

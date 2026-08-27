@@ -8,7 +8,7 @@ import (
 // A narrow signed type's minimum written as a negated literal (i8 -128,
 // i16 -32768, i32 -2147483648) must lower at that type's own width, not fall
 // back to i64. The magnitude (2^(bits-1)) overflows the type as a positive
-// value, so before the width fix propagateLiteralType left the operand untyped
+// value, so before the width fix propagateExpectedType left the operand untyped
 // → i64: the value truncated correctly on a plain read, but the moment it met a
 // proper-width operand in typed integer arithmetic the backend emitted an
 // `sdiv`/etc. mixing i64 and the narrow type, which clang rejects.

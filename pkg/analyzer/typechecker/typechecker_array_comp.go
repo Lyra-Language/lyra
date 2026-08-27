@@ -44,7 +44,7 @@ func (tc *TypeChecker) inferArrayCompType(comp *ast.ArrayCompExpr) types.Type {
 	// untyped once the comprehension has a type.
 	if types.IsNumeric(result) {
 		result = promoteToDefault(result)
-		tc.propagateLiteralType(comp.Result, result)
+		tc.propagateExpectedType(comp.Result, result)
 	}
 	out := types.DynamicArrayType{ElementType: result}
 	tc.typeTable.Set(comp, out)

@@ -10,7 +10,7 @@ import (
 //
 // A construction has no flavor of its own — `Node { v: 2 }` is inline or heap-boxed
 // depending on what it is being used *as* — so the flavor is pushed down from the context
-// (`propagateAllocation`). An annotated binding and a declared return already did that; an
+// (`propagateExpectedType`). An annotated binding and a declared return already did that; an
 // argument did not, so `take(Node { v: 2 })` against a `shared Node` parameter built the
 // struct inline and passed it **by value** to a callee expecting a box pointer.
 //
@@ -29,7 +29,7 @@ let s_arr = pure (a: shared [3]i64) -> i64 => a[1]
 let plain = pure (n: Node) -> i64 => n.v
 let main = () -> void => {
   // A construction inside a match arm reaches the argument through the same recursion
-  // propagateAllocation already used for a binding.
+  // propagateExpectedType already used for a binding.
   let viaArm = s_data(match 1 { 0 => Nil, _ => Cons(9) })
   println("${s_struct(Node { v: 1 })} ${s_data(Cons(2))} ${s_arr([0, 4, 0])} ${plain(Node { v: 5 })} ${viaArm}")
 }

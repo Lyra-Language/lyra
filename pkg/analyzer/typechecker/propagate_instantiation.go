@@ -7,8 +7,8 @@ import (
 
 // propagateInstantiation pushes a context's generic instantiation down onto the
 // construction leaves that produce the value — the generic-type analogue of
-// propagateLiteralType (which pushes a width) and propagateAllocation (which pushes a
-// storage flavor), recursing through the same match/if/block arm structure.
+// propagateExpectedType (which pushes a width and a storage flavor), recursing
+// through the same match/if/block arm structure.
 //
 // It exists because a construction only evaluates to an instantiation when it solves
 // *every* type parameter by itself. `Some(v)` fixes `t` and is a `Maybe<i64>`; `None`
@@ -168,7 +168,7 @@ func (tc *TypeChecker) stampDataConstruction(node ast.Expression, ctor string, e
 		// Narrow an untyped literal to the context's width first, so `Ok(1)` against
 		// `Result<u8, string>` records a u8 payload rather than the i64 default —
 		// exactly what the local solve does, but with the arguments it lacked.
-		tc.propagateLiteralType(elem, expected)
+		tc.propagateExpectedType(elem, expected)
 		// …and a payload that is itself a construction takes the same treatment, so
 		// the context reaches all the way down: `Maybe<Maybe<u8>> = Some(Some 7)`
 		// narrows the inner 7, not just the outer instantiation. stampAggregate does
@@ -331,7 +331,7 @@ func (tc *TypeChecker) stampAggregate(node ast.Expression, values []ast.Expressi
 		if expected == nil {
 			continue
 		}
-		tc.propagateLiteralType(v, expected)
+		tc.propagateExpectedType(v, expected)
 		tc.propagateInstantiation(v, expected) // a nested partly solved construction
 		actual := tc.inferExprType(v)
 		if actual != nil && !tc.assignableValue(v, actual, expected) {

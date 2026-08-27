@@ -171,7 +171,7 @@ case): optional borrowed as a scrutinee, default a conditional arm coerced to ow
 its own node's marks, merged value a uniformly-owned temp released once by the enclosing
 statement's flush. The Some payload is the one value with no node of its own to mark, so
 its +1 (deepRetain, duplicate-never-move) is emitted in the lowering directly — `?`'s
-failure-rewrap arrangement. The typechecker's half is `propagateLiteralType` on the
+failure-rewrap arrangement. The typechecker's half is `propagateExpectedType` on the
 default against the unified type, because the phi requires the arms to agree
 (`m ?? 7` on a `Maybe<u8>` lowers the 7 at u8; `?? 300` is refused).
 
@@ -384,7 +384,7 @@ initializer's lowered `.Type()` (so a `let`/`var` doesn't need `lowerType` on it
 `res.TypeTable`, fallback i64 for an untyped/absent entry; a literal the typechecker adapted to
 a **float** context lowers as a float constant of the recorded width instead, via
 `literalRecordedFloatType`) — context-directed literal-width inference
-(`typechecker.propagateLiteralType`) resolves narrow widths, so `i8(x) < 3` lowers `3` as i8 and
+(`typechecker.propagateExpectedType`) resolves narrow widths, so `i8(x) < 3` lowers `3` as i8 and
 u8 arithmetic happens at u8 (where `+`/`-`/`*` overflow **traps** — see the checked-arithmetic
 note above). The comparison width-mismatch guard is now defensive-only: it fires when a literal
 too large for its context width was left untyped and fell back to i64 (`i8(x) < 300`), which is
@@ -563,12 +563,12 @@ indexed through its own alloca (no copy, `arrayLValue`); any other array *value*
 into a temp first. Arrays flow through `let`/params/args and **returns** (`emitReturn` gained an
 `ArrayType` by-value case) as first-class aggregates. The typechecker narrows an
 annotated/return element width onto the literal's leaves and re-records it as a concrete `[N x
-elem]` (a new `propagateLiteralType` `ArrayLiteralExpr` case — static context only, so a `[]T`
+elem]` (a new `propagateExpectedType` `ArrayLiteralExpr` case — static context only, so a `[]T`
 dynamic annotation keeps its `DynamicArrayType`), so `() -> [3]u8 => [4, 5, 6]` builds `[3 x
 i8]` matching the signature rather than `[3 x i64]`. A **`shared [N]T`** array lowers too
 (`shared`-array support): it's a `ptr` to `{ i64 rc, [N x T] }` (the ordinary `shared`-box
 `lowerType` path), so `lowerArrayLiteralExpr` builds the inline `[N x T]` and boxes it via
-`lowerBoxShared` when the recorded type is `shared` (the typechecker's `propagateAllocation`
+`lowerBoxShared` when the recorded type is `shared` (the typechecker's `propagateExpectedType`
 stamps the array-literal node, same as struct/data construction); `lowerIndexExpr` geps through
 the box's payload (`sharedArrayPayloadPtr` — box → field 1 → element) for both a constant and a
 bounds-checked runtime index, borrowing the box (no reference consumed). The per-type drop glue
@@ -592,7 +592,7 @@ len-0 box, so the representation is uniform — no null case); `lowerDynArrayInd
 runtime len, bounds-checks the negative-from-end index against it, and GEP+loads (always checked
 — the value-range pass doesn't track dynamic lengths). By-value flow through
 `let`/params/returns is the ordinary pointer path; a `[]T` return-body/arg literal is recorded
-as `DynamicArrayType` by `propagateLiteralType` (it re-records the dynamic case, not only the
+as `DynamicArrayType` by `propagateExpectedType` (it re-records the dynamic case, not only the
 static one, since only an annotated `let` records the type via `checkVarDecl`).
 
 ### Managed element types
@@ -1143,7 +1143,7 @@ the token (`free(NULL)` is a no-op). Arm-binding *transfer* (`LastUseTransfer` o
 exactly once in a consuming match — no dup) is what keeps a reused cell unique so a recursive
 `map` reclaims every cell (zero allocation per cell) instead of leaking the tail. A **`shared`
 value is returned** as its box pointer (`emitReturn`'s pointer case), and the typechecker's
-`propagateAllocation` stamps the arm-tail constructions `shared`. A *borrowed* scrutinee is
+`propagateExpectedType` stamps the arm-tail constructions `shared`. A *borrowed* scrutinee is
 never reused.
 
 ### Deferred, loud errors

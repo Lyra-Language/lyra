@@ -82,7 +82,7 @@ let main = () -> u8 => {
 
 // An untyped default narrows to the payload's width — `?? 7` on a Maybe<u8> lowers
 // the 7 at u8, which the phi requires. This is the typechecker's
-// propagateLiteralType call on the default; without it the literal lowered at the
+// propagateExpectedType call on the default; without it the literal lowered at the
 // i64 default and the phi's incoming types disagreed (invalid IR, loud but wrong).
 func TestExec_NullCoalescingNarrowsUntypedDefault(t *testing.T) {
 	t.Parallel()

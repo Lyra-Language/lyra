@@ -701,7 +701,7 @@ func (l *lowerer) lowerExprDispatch(block *ir.Block, expr ast.Expression) (value
 	switch e := expr.(type) {
 	case *ast.IntegerLiteralExpr:
 		// An int literal the typechecker adapted to a float context (`let x: f64
-		// = 5` — propagateLiteralType, or the annotation record in checkVarDecl)
+		// = 5` — propagateExpectedType, or the annotation record in checkVarDecl)
 		// is a float constant, not an i64 one.
 		if ft, ok := l.literalRecordedFloatType(e); ok {
 			v := float64(e.Value)

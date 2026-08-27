@@ -21,7 +21,7 @@ func TestTupleLiteral_ElementTypesInTypeTable(t *testing.T) {
 	// same "unannotated leaf stays untyped, the backend maps it to the i64
 	// default" rule scalars follow (TestLiteralWidth_Unannotated_StaysUntyped).
 	// This is what lets a *narrowing* context (a tuple annotation, a data-ctor or
-	// struct tuple field) later fix the element width via propagateLiteralType.
+	// struct tuple field) later fix the element width via propagateExpectedType.
 	elem0, ok := res.typeTable.Get(tup.Elements[0])
 	if !ok {
 		t.Fatal("no TypeTable entry for first tuple element")
