@@ -421,10 +421,6 @@ func referenceOccurrence(expr ast.Expression) (string, ast.Location, bool) {
 	switch e := expr.(type) {
 	case *ast.IdentifierExpr:
 		return e.Name, e.GetLocation(), true
-	case *ast.SpreadExpr:
-		loc := e.GetLocation()
-		loc.StartCol += len("...")
-		return e.Name, loc, true
 	}
 	return "", ast.Location{}, false
 }

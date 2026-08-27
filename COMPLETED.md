@@ -9,6 +9,84 @@ Newest first.
 
 ## Dated log
 
+### 08/27/26 — `[...xs, v]` spread
+**A feature the grammar parsed, the collector built, and every lint pass counted — with no
+typechecker arm under it.** `[...xs, 3]` reported `unknown expression type "...xs"`, and
+`lyra-website`'s arrays guide had documented it as working the whole time.
+
+**The widening was the work; the arm was the easy part.** `SpreadExpr.Name` was a bare
+`string`, which made `[...f(x), 1]` and `[...a.b, 1]` **unrepresentable rather than
+unimplemented** — no pass could have accepted them however it was written. Adding the
+typechecker arm first would have shipped a feature that worked at bare names and failed
+everywhere else, and looked finished.
+
+So: the grammar's operand went from `$.identifier` to the **postfix** tier — the widest that
+stops before a binary operator, so `...a` in `[...a, 1]` cannot swallow its neighbours — the
+field was renamed `spread_name` → `value`, and the AST node's field became an `Expression`.
+
+**Then the part worth recording.** Making it a real node meant taking it out of the leaf list
+in `walk.go`/`rewrite.go`, and that **retired five hand-written special cases**: four lint
+passes and the LSP's reference lookup each carried
+
+```go
+case *ast.SpreadExpr:
+    refs[ex.Name] = true
+```
+
+directly beside their `IdentifierExpr` arm. Every one existed because a `string` field is
+invisible to every walk — hazard 8's "a field that is a bare `string` rather than a node is
+invisible to every walk", the same shape as `VarReassignmentStmt.Name`. With the walker
+descending into the operand, the ordinary identifier arm covers all five, and the LSP's
+`loc.StartCol += len("...")` fudge became a real node with a real span. **The compiler named
+every one of them** the moment the field changed type, which is the argument for widening a
+`string` into a node rather than reading the switches for it.
+
+Three decisions:
+
+- **A spread makes the result a `[]T`, always** — even where every operand is a fixed `[N]T`
+  whose lengths would add up. A `[N]T` carries its size in its type, so deriving the arity
+  from whether the operands *happen* to be fixed would make `[...xs, 1]` change type when
+  `xs`'s declaration changes from `[3]i64` to `[]i64`, with the literal reading identically.
+  One rule instead, and it is the growable flavor an author reaching for append-shaped syntax
+  wanted anyway.
+- **It is an array literal's element and nothing else** (`lyra-E068`). The grammar admits a
+  spread wherever an *expression* is admitted, so `let y = ...xs` and `f(...xs)` parse and
+  mean nothing. Argument spread is refused rather than deferred — it would make a call's
+  arity a run-time property, which the language has nowhere else.
+- **A non-array operand is refused by name where the mistake is plausible.** `[..."ab"]` says
+  `to_runes()`, the same refuse-and-name-the-fix the `split("")` trap and the `++` conversion
+  hint follow.
+
+**The backend needed a whole second construction path, which the todo entry had said it
+would not.** That entry read *"the backend never sees it, so this is a front-end gap rather
+than a lowering one"* — true only while the typechecker refused it. A spread makes the length
+a run-time **sum** rather than a count of elements, so the box cannot be sized until every
+operand has been evaluated. Hence two phases: evaluate every operand in source order
+accumulating the total, then allocate **once** and write each piece at a running cursor. The
+alternative (allocate small, `push`) reallocates mid-literal, which is the cost the spread
+exists to spare an author who would otherwise have written that loop by hand. Copied elements
+are retained per element, the rule `slice` already follows.
+
+**Where the test for the diagnostic's advice had to live.** The string message names
+`to_runes()`, and CLAUDE.md's rule is that a test *takes* the advice and checks the program
+compiles — asserting the wording alone passes for as long as the advice is wrong. It failed
+in the typechecker's harness **and** in the backend's, both with `string has no method
+"to_runes"`, because `to_runes` is a **prelude** function and neither harness has a prelude.
+It is a `cmd/lyrac` CLI test, beside the zlib one, for the same reason. The generalization:
+**a diagnostic whose fix names a standard-library function needs a test where the standard
+library is real**, which is neither of the two places such a test would naturally go.
+
+Cost: **+9 GLR states (+0.1%)**. `[...xs, 1]` became ambiguous between a spread expression
+and a `rest_pattern` — both are `'...' identifier` over the same tokens — the moment the
+operand wrapped in `_primary_expr` instead of holding the `identifier` token directly, since
+the reduction can no longer be deferred. One `conflicts:` entry, which is what GLR is for.
+
+Still open, and found on the way out: **struct spread is the same phantom one layer over.**
+`Point { ...base, ...extra }` has a grammar rule, a collector, and collector golden tests —
+and does not parse in a program with a `module` header at all. Hazard 13's blindness exactly:
+the golden harness takes headerless snippets, so the tests that "cover" it are the only
+context in which it works.
+
 ### 08/27/26
 **A `shared` named tuple did not lower at all, and probing every position it could occupy
 found two more gaps that had nothing to do with tuples.**

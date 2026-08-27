@@ -2276,6 +2276,15 @@ func (tc *TypeChecker) inferExprTypeUncached(expr ast.Expression) types.Type {
 		tc.addError(e.GetLocation(), SeverityError, "undefined symbol %q", e.Name)
 		return nil
 	}
+	if sp, ok := expr.(*ast.SpreadExpr); ok {
+		// Reached only *outside* an array literal — inferArrayLiteralType consumes a
+		// spread element itself and never asks for its type as a value. A spread has no
+		// type of its own: it stands for zero or more elements of a surrounding list, and
+		// only an array literal has one.
+		tc.addErrorCode(sp.GetLocation(), SeverityError, diag.CodeSpreadOutsideArray,
+			"a spread `...` is only valid inside an array literal")
+		return nil
+	}
 	tc.addError(expr.GetLocation(), SeverityError, "unknown expression type %q", expr.GetName())
 	return nil
 }
@@ -3030,8 +3039,25 @@ func isLiteralZero(expr ast.Expression) bool {
 // segfaulted while `isAssignable` carried the rule (08/13).
 func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.Type {
 	var elemType types.Type
+	spread := false
 	for _, el := range expr.Elements {
-		t := tc.inferExprType(el) // keep untyped (UntypedInt, etc.) so the annotation can widen
+		var t types.Type
+		if sp, ok := el.(*ast.SpreadExpr); ok {
+			// `...xs` contributes xs's *element* type, not xs's type, and makes the
+			// result dynamic (see below).
+			t = tc.inferSpreadElementType(sp)
+			spread = true
+			if t == nil {
+				// A spread that did not type has already been reported, and unlike an
+				// ordinary element it cannot be skipped: continuing would infer the
+				// literal from its *other* elements and then fail assignability against
+				// the annotation, reporting a second error about a type the author never
+				// wrote. Give up on the literal instead.
+				return nil
+			}
+		} else {
+			t = tc.inferExprType(el) // keep untyped (UntypedInt, etc.) so the annotation can widen
+		}
 		if t == nil {
 			continue
 		}
@@ -3048,7 +3074,43 @@ func (tc *TypeChecker) inferArrayLiteralType(expr *ast.ArrayLiteralExpr) types.T
 		}
 		elemType = common
 	}
+	if spread {
+		// **A spread makes the result a `[]T`, always** — even when every operand happens
+		// to be a fixed `[N]T` whose lengths would add up. A `[N]T` carries its size in
+		// its type, so deciding the arity from whether the operands' types happen to be
+		// fixed would make `[...xs, 1]` change type when `xs`'s *declaration* changes from
+		// `[3]i64` to `[]i64` — the literal reads identically and means something else.
+		// One rule instead: splicing produces the growable flavor, which is also the one
+		// an author reaching for append-shaped syntax wants.
+		return types.DynamicArrayType{ElementType: elemType}
+	}
 	return types.StaticArrayType{ElementType: elemType, Size: len(expr.Elements)}
+}
+
+// inferSpreadElementType types `...xs` in element position: the operand must be an array,
+// and what it contributes is that array's element type.
+//
+// A string is refused by name rather than by shape. It is the one other thing a reader
+// might expect to splice, and `to_runes()` is the spelling that does it — the same
+// refuse-and-name-the-fix the `split` trap and the `++` conversion hint follow.
+func (tc *TypeChecker) inferSpreadElementType(sp *ast.SpreadExpr) types.Type {
+	operand := tc.inferExprType(sp.Value)
+	if operand == nil {
+		return nil
+	}
+	switch a := tc.stripNewtypeResolving(operand, sp.GetLocation()).(type) {
+	case types.DynamicArrayType:
+		return a.ElementType
+	case types.StaticArrayType:
+		return a.ElementType
+	}
+	hint := ""
+	if types.IsString(tc.stripNewtypeResolving(operand, sp.GetLocation())) {
+		hint = " — spread an array; `to_runes()` turns a string into one"
+	}
+	tc.addError(sp.GetLocation(), SeverityError,
+		"a spread `...` needs an array, got %s%s", operand, hint)
+	return nil
 }
 
 func (tc *TypeChecker) inferStringConcatExpr(expr *ast.StringConcatExpr) types.Type {

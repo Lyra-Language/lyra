@@ -8,15 +8,23 @@ Program(1 statements) {
 					Fields: {
 						StructField {
 							Value: {
-								SpreadExpr(base) {
-									Name: base
+								SpreadExpr {
+									Value: {
+										IdentifierExpr(base) {
+											Name: base
+										}
+									}
 								}
 							}
 						}
 						StructField {
 							Value: {
-								SpreadExpr(extra) {
-									Name: extra
+								SpreadExpr {
+									Value: {
+										IdentifierExpr(extra) {
+											Name: extra
+										}
+									}
 								}
 							}
 						}

@@ -91,8 +91,6 @@ func referencedNames(stmts []ast.Statement) map[string]bool {
 				switch ex := e.(type) {
 				case *ast.IdentifierExpr:
 					refs[ex.Name] = true
-				case *ast.SpreadExpr:
-					refs[ex.Name] = true
 				case *ast.MathAssignOpExpr:
 					refs[ex.Left.Name] = true
 				}

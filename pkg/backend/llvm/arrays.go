@@ -32,10 +32,22 @@ func (l *lowerer) lowerArrayLiteralExpr(block *ir.Block, e *ast.ArrayLiteralExpr
 		return nil, nil, fmt.Errorf("llvm: no type recorded for array literal")
 	}
 	if dynType, ok := recorded.(types.DynamicArrayType); ok {
+		// A spread makes the length a run-time sum rather than a count of elements, so it
+		// takes the two-phase construction. The typechecker records a spread-bearing
+		// literal as dynamic for exactly this reason, so a static array can never hold one.
+		if hasSpread(e) {
+			return l.lowerDynArraySpreadConstruction(block, e, dynType)
+		}
 		return l.lowerDynArrayConstruction(block, e, dynType)
 	}
 	arrType, ok := recorded.(types.StaticArrayType)
 	if !ok {
+		if hasSpread(e) {
+			// Rule 5, and it should be unreachable: inferArrayLiteralType returns a
+			// DynamicArrayType for any literal containing a spread. Saying so beats
+			// lowering the spread as if it were one element.
+			return nil, nil, fmt.Errorf("llvm: a spread array literal was recorded as %s, not a dynamic array", recorded)
+		}
 		return nil, nil, fmt.Errorf("llvm: array literal lowering not implemented for %s (only fixed-size arrays)", recorded)
 	}
 	// Lower the element aggregate against the by-value array type (strip any `shared`
@@ -319,4 +331,14 @@ func (l *lowerer) lowerArrayRepeatExpr(block *ir.Block, e *ast.ArrayRepeatExpr) 
 		return boxed, block, err
 	}
 	return agg, block, nil
+}
+
+// hasSpread reports whether an array literal splices anything in.
+func hasSpread(e *ast.ArrayLiteralExpr) bool {
+	for _, el := range e.Elements {
+		if _, ok := el.(*ast.SpreadExpr); ok {
+			return true
+		}
+	}
+	return false
 }

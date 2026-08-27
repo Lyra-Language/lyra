@@ -228,8 +228,6 @@ func collectRefsByFile(program *ast.Program) map[string]map[string]bool {
 			switch ex := e.(type) {
 			case *ast.IdentifierExpr:
 				refs[ex.Name] = true
-			case *ast.SpreadExpr:
-				refs[ex.Name] = true
 			case *ast.StructInstanceExpr:
 				refs[ex.Name] = true
 			case *ast.LambdaExpr:

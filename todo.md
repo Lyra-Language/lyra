@@ -1758,21 +1758,50 @@ allocates nothing — so the walk asks it of the construction cases only. See CO
   pass moved ahead of purity in the driver to answer the capture question; the residual
   LSS decision is only ever a **loosening** (a non-escaping capturing closure could
   become free), which is the compatible direction. See COMPLETED.md.
-- **[OPEN] `[...xs, v]` spread does not type-check.** The grammar has `spread_expr`,
-  the collector builds an `ast.SpreadExpr`, and every lint pass counts it as a use of
-  the name — but the typechecker has no arm, so it falls to the default and reports
-  `unknown expression type "...xs"`. The backend never sees it, so this is a front-end
-  gap rather than a lowering one. Exactly where `[v; n]` array-repeat sat before it
-  landed.
+- **[DONE 08/27] `[...xs, v]` spread.** The grammar had `spread_expr`, the collector built
+  an `ast.SpreadExpr` and every lint pass counted it as a use of the name; only the
+  typechecker had no arm, so it fell to the default and reported
+  `unknown expression type "...xs"`. The website's arrays guide documented it as working and
+  its two snippets failed `pnpm check:snippets`; both pass now.
 
-  **Widen the node before adding the arm.** `SpreadExpr.Name` is a `string` and
-  `walk.go` lists the node as a leaf, so only `...identifier` is representable —
-  `[...f(x), 1]` and `[...a.b, 1]` cannot be built even once the typechecker accepts
-  spread. Doing the arm first would silently fix the feature at bare names.
+  **Widening the node came first, and was most of the value.** `SpreadExpr.Name` was a bare
+  `string`, so `[...f(x), 1]` and `[...a.b, 1]` were *unrepresentable* rather than
+  unimplemented — adding the typechecker arm first would have silently fixed the feature at
+  bare names only. The operand is now an `Expression`, the grammar's `spread_name` field is
+  a `value` over the **postfix** tier (the widest that stops before a binary operator), and
+  the node stopped being a leaf in `walk.go`/`rewrite.go`.
 
-  It is the one append-shaped syntax the language has, so it is also what a reader
-  reaches for before finding `push`; `lyra-website`'s arrays guide documents it as
-  working, and its snippets fail `pnpm check:snippets` until this lands.
+  That last change **retired five hand-written special cases** — four lint passes and the
+  LSP's reference lookup each had a `case *ast.SpreadExpr: refs[ex.Name] = true` beside
+  their `IdentifierExpr` arm, existing purely because a `string` field is invisible to every
+  walk (hazard 8). With the walker descending, the ordinary identifier arm handles them, and
+  the LSP's `loc.StartCol += len("...")` fudge became a real node with a real span.
+
+  Three decisions:
+
+  - **A spread makes the result a `[]T`, always**, even where every operand is fixed and the
+    lengths would add up. Otherwise `[...xs, 1]` changes type when `xs`'s *declaration*
+    changes from `[3]i64` to `[]i64` while the literal reads identically.
+  - **It is an array literal's element and nothing else** (`lyra-E068`). The grammar admits a
+    spread wherever an *expression* is admitted, so `let y = ...xs` and `f(...xs)` parse and
+    mean nothing. Argument spread is refused rather than deferred: it would make a call's
+    arity a run-time property.
+  - **The backend needed a second construction path.** The todo entry said the backend never
+    sees a spread "so this is a front-end gap rather than a lowering one" — true only while
+    the typechecker refused it. A spread makes the length a run-time *sum* rather than a
+    count, so the box cannot be sized until every operand is evaluated; hence two phases
+    (evaluate in source order accumulating the total, then allocate once and write each piece
+    at a running cursor) instead of allocate-then-store. Copied elements are retained per
+    element, the rule `slice` already follows.
+
+  The GLR cost was **+9 states (+0.1%)**: `[...xs, 1]` became ambiguous between a spread
+  expression and a `rest_pattern` once the operand wrapped in `_primary_expr` instead of
+  holding the `identifier` token directly, and one `conflicts:` entry resolves it.
+
+  Still open, and unrelated: **struct spread is the same phantom one layer over.**
+  `Point { ...base }` has a grammar rule, a collector and collector golden tests, and does
+  not parse in a program with a `module` header at all — hazard 13's blindness exactly, since
+  the golden harness takes headerless snippets. Unchanged by this work.
 
 ## Lazy sequences — `gen` and `Seq<t>`
 

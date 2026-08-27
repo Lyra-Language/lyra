@@ -236,6 +236,8 @@ func rewriteExprChildren(expr Expression, rewrite func(Expression) Expression) {
 		e.Value = RewriteExpr(e.Value, rewrite)
 	case *GuardExpr:
 		e.Condition = RewriteExpr(e.Condition, rewrite)
-		// Leaf nodes: IdentifierExpr, SpreadExpr, all literal types, SizeofExpr — no children.
+	case *SpreadExpr:
+		e.Value = RewriteExpr(e.Value, rewrite)
+		// Leaf nodes: IdentifierExpr, all literal types, SizeofExpr — no children.
 	}
 }

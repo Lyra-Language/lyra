@@ -1,5 +1,7 @@
 package ast
 
+import "fmt"
+
 type AwaitExpr struct {
 	ExprBase
 	Operand Expression
@@ -41,13 +43,33 @@ type DerefExpr struct {
 
 func (e *DerefExpr) GetName() string { return "deref_expr" }
 
+// SpreadExpr is `...xs` inside an array literal — the elements of `xs` spliced in where
+// it stands.
+//
+// **The operand is an expression, not a name.** It held a bare `string` until 08/27, which
+// made `[...f(x), 1]` and `[...a.b, 1]` unrepresentable rather than unimplemented: no pass
+// could have accepted them however it was written, and a `string` field is invisible to
+// every walk (hazard 8), so nothing pointed at the hole either.
 type SpreadExpr struct {
 	ExprBase
-	Name string
+	Value Expression
 }
 
-func (e *SpreadExpr) GetName() string { return "..." + e.Name }
+func (e *SpreadExpr) GetName() string { return "..." + exprName(e.Value) }
 
-func (e *SpreadExpr) String() string {
-	return "..." + e.Name
+func (e *SpreadExpr) String() string { return "..." + exprName(e.Value) }
+
+// exprName renders a spread's operand for a diagnostic. A Named operand gives its own
+// name; anything else falls back to its String(), which every expression has.
+func exprName(e Expression) string {
+	if e == nil {
+		return ""
+	}
+	if n, ok := e.(Named); ok {
+		return n.GetName()
+	}
+	if s, ok := e.(fmt.Stringer); ok {
+		return s.String()
+	}
+	return "expression"
 }

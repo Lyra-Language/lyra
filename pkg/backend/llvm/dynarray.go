@@ -734,3 +734,168 @@ func sliceElementType(recvT types.Type) (types.Type, error) {
 	}
 	return nil, fmt.Errorf("llvm: slice() on non-array receiver %s not implemented", recvT)
 }
+
+// spreadPiece is one element of an array literal containing a spread: either a single
+// value, or a run copied out of a spread's operand. `length` is what it contributes to the
+// total, which for a `[]T` operand is a run-time load.
+type spreadPiece struct {
+	val    value.Value // a plain element (nil for a spread)
+	length value.Value
+
+	// copyTo writes this piece's run into out[dst .. dst+length). Nil for a plain element,
+	// which is a single store the caller makes itself.
+	copyTo func(b *ir.Block, out, dst value.Value) (*ir.Block, error)
+}
+
+// lowerDynArraySpreadConstruction builds an array literal containing at least one `...xs`.
+//
+// It is separate from lowerDynArrayConstruction for one reason: **the length stops being a
+// count of elements.** A spread contributes its operand's length, which for a `[]T` operand
+// is a run-time load, so the box cannot be sized until every operand has been evaluated —
+// and evaluating them all first is required anyway, since `[...f(), g()]` must run `f`
+// before `g` whatever the sizes turn out to be.
+//
+// Hence two phases: evaluate every operand in source order accumulating the total, then
+// allocate **once** and write each piece at a running cursor. The alternative — allocate
+// small and `push` — reallocates mid-literal, which is the cost the spread exists to spare
+// an author who would otherwise have written the `push` loop by hand.
+func (l *lowerer) lowerDynArraySpreadConstruction(block *ir.Block, e *ast.ArrayLiteralExpr, dynType types.DynamicArrayType) (value.Value, *ir.Block, error) {
+	elemLyra := dynType.ElementType
+	if elemLyra == nil {
+		return nil, nil, fmt.Errorf("llvm: spread array literal has no element type")
+	}
+	elemLL, err := l.lowerType(elemLyra)
+	if err != nil {
+		return nil, nil, err
+	}
+	elemSize, elemAlign, sized := SizeAndAlign(l.resolveForLayout(elemLyra))
+	if !sized {
+		return nil, nil, fmt.Errorf("llvm: cannot size array element type %s", elemLyra)
+	}
+	stride := int64(alignUp(elemSize, elemAlign))
+	boxTy := DynArrayBoxType(elemLL)
+
+	// Phase 1 — evaluate every operand once, in source order, summing the lengths.
+	pieces := make([]spreadPiece, 0, len(e.Elements))
+	var total value.Value = i64c(0)
+	for _, elemExpr := range e.Elements {
+		sp, isSpread := elemExpr.(*ast.SpreadExpr)
+		if !isSpread {
+			var v value.Value
+			v, block, err = l.lowerExpr(block, elemExpr)
+			if err != nil {
+				return nil, nil, err
+			}
+			if diverged(v, block) {
+				return nil, block, nil
+			}
+			v, err = l.coerceAggregateElem(block, v, elemLL, elemExpr)
+			if err != nil {
+				return nil, nil, err
+			}
+			pieces = append(pieces, spreadPiece{val: v, length: i64c(1)})
+			total = block.NewAdd(total, i64c(1))
+			continue
+		}
+		var p spreadPiece
+		p, block, err = l.lowerSpreadOperand(block, sp, elemLyra, elemLL, boxTy)
+		if err != nil {
+			return nil, nil, err
+		}
+		if p.length == nil {
+			return nil, block, nil // the operand diverged
+		}
+		pieces = append(pieces, p)
+		total = block.NewAdd(total, p.length)
+	}
+
+	// Phase 2 — one allocation, then each piece at the running cursor.
+	out := l.dynArrayAlloc(block, boxTy, elemLL, total, total, stride)
+	var cursor value.Value = i64c(0)
+	for _, p := range pieces {
+		if p.copyTo == nil {
+			// A plain element is moved into the box, not copied, so it takes no retain —
+			// the same rule the non-spread literal follows.
+			block.NewStore(p.val, dynArrayElemPtr(block, boxTy, out, cursor))
+			cursor = block.NewAdd(cursor, i64c(1))
+			continue
+		}
+		if block, err = p.copyTo(block, out, cursor); err != nil {
+			return nil, nil, err
+		}
+		cursor = block.NewAdd(cursor, p.length)
+	}
+	return out, block, nil
+}
+
+// lowerSpreadOperand evaluates one `...xs` and returns the piece that copies it.
+//
+// The two array kinds get two shapes rather than one parameterised loop, because they
+// differ in both places it matters: a `[N]T` is a first-class LLVM aggregate whose elements
+// come out by `extractvalue` and whose count is known now (and small by construction, so
+// the run unrolls), while a `[]T` is a box whose length is a load and whose copy is a
+// counted loop.
+//
+// **Each copied element is retained, per element**, because the new box becomes a second
+// owner of every one of them — the same rule slice() follows, and for the same reason. The
+// operand itself is untouched: a spread reads its source and leaves it alive.
+func (l *lowerer) lowerSpreadOperand(block *ir.Block, sp *ast.SpreadExpr, elemLyra types.Type, elemLL lltypes.Type, boxTy *lltypes.StructType) (spreadPiece, *ir.Block, error) {
+	var none spreadPiece
+
+	srcT, ok := l.recordedType(sp.Value)
+	if !ok {
+		return none, nil, fmt.Errorf("llvm: no type recorded for spread operand")
+	}
+	if types.AllocationOf(srcT) == types.Shared {
+		// Rule 5: refuse rather than guess. A `shared` array is a box holding the array,
+		// so the copy would have to unbox first — nothing hard, but nothing exercised
+		// either, and guessing wrong here silently copies a box header as elements.
+		return none, nil, fmt.Errorf("llvm: spreading a `shared` array is not implemented")
+	}
+
+	src, block, err := l.lowerExpr(block, sp.Value)
+	if err != nil {
+		return none, nil, err
+	}
+	if diverged(src, block) {
+		return none, block, nil
+	}
+	needRetain := l.needsDrop(elemLyra)
+
+	switch st := l.resolveNamedType(srcT).(type) {
+	case types.StaticArrayType:
+		n := int64(st.Size)
+		return spreadPiece{
+			length: i64c(n),
+			copyTo: func(b *ir.Block, out, dst value.Value) (*ir.Block, error) {
+				for i := int64(0); i < n; i++ {
+					v := b.NewExtractValue(src, uint64(i))
+					b.NewStore(v, dynArrayElemPtr(b, boxTy, out, b.NewAdd(dst, i64c(i))))
+					if needRetain {
+						if b, err = l.emitRetainValue(b, v, elemLyra); err != nil {
+							return nil, err
+						}
+					}
+				}
+				return b, nil
+			},
+		}, block, nil
+	case types.DynamicArrayType:
+		srcBoxTy := DynArrayBoxType(elemLL)
+		length := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, srcBoxTy, src))
+		return spreadPiece{
+			length: length,
+			copyTo: func(b *ir.Block, out, dst value.Value) (*ir.Block, error) {
+				return l.emitCountedLoop(b, i64c(0), length, func(body *ir.Block, i value.Value) (*ir.Block, error) {
+					v := body.NewLoad(elemLL, dynArrayElemPtr(body, srcBoxTy, src, i))
+					body.NewStore(v, dynArrayElemPtr(body, boxTy, out, body.NewAdd(dst, i)))
+					if !needRetain {
+						return body, nil
+					}
+					return l.emitRetainValue(body, v, elemLyra)
+				})
+			},
+		}, block, nil
+	}
+	return none, nil, fmt.Errorf("llvm: cannot spread a value of type %s", srcT)
+}

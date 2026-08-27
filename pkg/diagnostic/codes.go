@@ -806,6 +806,21 @@ const (
 	// a parameter of a shape has nothing to be named.
 	CodeExternParamName = "lyra-E067"
 
+	// CodeSpreadOutsideArray: `...xs` somewhere other than an array literal's element list.
+	//
+	// The grammar admits a spread wherever an *expression* is admitted, because it is one
+	// alternative of `expression` rather than a form of `array_literal` — so `let y = ...xs`
+	// and `f(...xs)` parse and mean nothing. Neither is a feature waiting to be built: a
+	// spread splices a sequence into a surrounding *list*, and only an array literal has
+	// one. (Argument spread would be a real feature — it needs the callee's arity to be
+	// decided at run time, which the language has nowhere else and does not want here.)
+	//
+	// Reported by the typechecker rather than refused by the grammar: narrowing the rule to
+	// array-literal position is a parse-time question the GLR conflict with `rest_pattern`
+	// makes expensive, and a typed message naming *where* a spread is legal beats a syntax
+	// error naming a token.
+	CodeSpreadOutsideArray = "lyra-E068"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

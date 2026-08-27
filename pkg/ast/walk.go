@@ -243,6 +243,8 @@ func WalkExprChildren(expr Expression, onStmt func(Statement) bool, onExpr func(
 		WalkExpr(e.Value, onStmt, onExpr)
 	case *GuardExpr:
 		WalkExpr(e.Condition, onStmt, onExpr)
-		// Leaf nodes: IdentifierExpr, SpreadExpr, all literal types, SizeofExpr — no children.
+	case *SpreadExpr:
+		WalkExpr(e.Value, onStmt, onExpr)
+		// Leaf nodes: IdentifierExpr, all literal types, SizeofExpr — no children.
 	}
 }
