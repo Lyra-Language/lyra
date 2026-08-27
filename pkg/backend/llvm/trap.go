@@ -42,6 +42,7 @@ const (
 	// traps rather than quietly yielding "".
 	stringIndexOOBTrapMessage = "lyra: string index out of bounds\n"
 	stringSliceOOBTrapMessage = "lyra: string slice out of range\n"
+	arraySliceOOBTrapMessage  = "lyra: array slice out of range\n"
 	matchFailedTrapMessage    = "lyra: match not exhaustive\n"
 	shiftOverflowTrapMessage  = "lyra: shift amount out of range\n"
 	rangeStepTrapMessage      = "lyra: range step must be positive\n"
@@ -109,6 +110,12 @@ func (l *lowerer) panicStringIndexOOBFunc() *ir.Func {
 
 func (l *lowerer) panicStringSliceOOBFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_string_slice_out_of_range", stringSliceOOBTrapMessage)
+}
+
+// Its own message rather than the index trap's: a slice names two bounds and an inverted
+// range is one of the ways it goes wrong, none of which "index out of range" describes.
+func (l *lowerer) panicArraySliceOOBFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_array_slice_out_of_range", arraySliceOOBTrapMessage)
 }
 
 func (l *lowerer) panicMatchFailedFunc() *ir.Func {

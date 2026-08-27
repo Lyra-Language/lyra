@@ -10,6 +10,56 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**Array `slice`, and the FFI assessment that asked for it.**
+
+`xs.slice(start, end) -> []T`. It came out of an audit of how bindings are written, where
+the sharpest single finding was that **arrays had no `slice`** — only `push`, plus the
+prelude's `map`/`filter`/`join`/`data`. Strings had one; arrays did not.
+
+That one gap blocked the commonest C output convention there is: *here is a buffer, here is
+how much of it I used*. A right-sized `[]u8` could not be returned without a byte-by-byte
+`push` loop, so `examples/zlib.lyra` does the other thing — the caller pre-allocates, gets a
+length back, and carries both around. C's shape surviving intact into Lyra. The reference
+binding was the evidence that the path of least resistance led away from idiomatic code,
+which is a better argument for a feature than a wish for one.
+
+**It copies, and that is forced rather than chosen.** Sharing the parent's element buffer
+would need that buffer ref-counted apart from the box that owns it, and a `push` on the
+parent reallocates it — so the slice would dangle while the array it came from is perfectly
+alive. The string method copies for its own version of the problem (a box header sits at the
+start, so a string cannot point into the middle of another). So `noalloc` refuses both, by
+one rule rather than two.
+
+**A `[N]T` slices too and yields a `[]T`**, since `end - start` is a run-time value and no
+fixed size could be written down — which also makes the result `push`-able. The case a
+reader expects the other way is `noalloc`: the receiver is stack storage and the *result*
+still allocates, so it is refused, and there is a test saying so.
+
+**Two things a memcpy alone would miss.** The bounds are checked before anything is read,
+with the string method's one-test-for-every-way-this-is-wrong shape (`end == len` is legal,
+`start == end` is empty, an inverted range traps because the empty array it would otherwise
+yield is indistinguishable from a correct one). And **every copied element is retained**,
+because each slot in the new box is an owner: a `[]string` slice holds the same pointers the
+parent does, so without the retains the parent's drop frees strings the slice still points
+at. That is `[v; n]`'s per-slot rule applied to n *different* values, and the output is
+identical either way — an ASan test is what checks it.
+
+**The non-obvious part was the element type.** An array of untyped literals keeps untyped
+leaves until something narrows them, and a *sliced* one has nothing left to be narrowed by:
+`DynamicArray<integer literal>` is not assignable to `DynamicArray<i64>`, an element type
+being invariant, so `[1, 2, 3].slice(0, 2)` against a `[]i64` return was refused for a type
+it could perfectly well have had. `from_end` had escaped this only by handing back the bare
+element, which *is* assignable. The signature settles the element to its default, which is
+the last chance it has.
+
+**One thing checked before copying the string method rather than after**: whether the
+string version's ownership was actually right, since the pass treats a builtin method's
+result as borrowed by the general rule. It is right — the typechecker records the builtin's
+signature on the MemberExpr, so `calleeType` answers first and an unwritten return modifier
+reads as owned — and a 200k-iteration loop holds at 1.4 MB. Worth the two minutes: copying a
+pattern whose invariant you have not confirmed is how a leak gets inherited.
+
+### 08/26/26
 **Variadic externs — and the question of whether Lyra needed variadic functions.**
 
 Declaring a variadic C function at fixed arity compiled, linked, and printed garbage:

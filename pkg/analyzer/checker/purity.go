@@ -1153,7 +1153,7 @@ func (c *purityChecker) checkBoundedEffects(isDet, isNoAlloc bool, effects Effec
 				describeAllocation(allocSite), allocSite.GetLocation().Pretty())
 		} else {
 			c.reportCode(diag.CodeEffectBoundViolation, loc,
-				"`noalloc` function heap-allocates by calling something that allocates; a `noalloc` function must not allocate. Allocating forms are a `shared`-typed construction, a dynamic array (`[]T`, including a comprehension), a newly built string (`++`, interpolation, or `slice`), and a closure that captures")
+				"`noalloc` function heap-allocates by calling something that allocates; a `noalloc` function must not allocate. Allocating forms are a `shared`-typed construction, a dynamic array (`[]T`, including a comprehension or a `slice`), a newly built string (`++`, interpolation, or `slice`), and a closure that captures")
 		}
 	}
 }

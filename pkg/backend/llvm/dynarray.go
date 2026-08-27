@@ -580,3 +580,157 @@ func (l *lowerer) reallocFunc() *ir.Func {
 	fn, _ := l.declareLibc("realloc", i8ptr, i8ptr, lltypes.I64)
 	return fn
 }
+
+// lowerArraySlice lowers `xs.slice(start, end)` → a fresh `[]T` holding the half-open
+// element range `[start, end)`.
+//
+// **It copies.** Sharing the parent's element buffer would need that buffer ref-counted
+// apart from the box that owns it, and a `push` on the parent reallocates it — so the
+// slice would dangle while the array it came from is perfectly alive. That is the same
+// answer the string method gives for its own version of the problem, and the reason
+// `noalloc` refuses both.
+//
+// Two things the copy has to get right, and the second is the one a memcpy alone misses:
+//
+//   - **The bounds are checked before anything is read**, with the string method's
+//     one-test-for-every-way-this-is-wrong shape: a negative bound, either bound past the
+//     length, or an inverted range. `end == len` is legal (it names the position one past
+//     the last element, so `xs.slice(0, xs.len())` is a copy) and `start == end` yields an
+//     empty array rather than a trap, matching `..<`.
+//   - **Every copied element is retained**, because each slot in the new box is an owner:
+//     a `[]string` slice holds the same pointers the parent does, and without the retains
+//     the parent's drop would free strings the slice still points at. This is `[v; n]`'s
+//     per-slot rule applied to n *different* values, which is why the loop is over the
+//     destination rather than a single retain repeated.
+//
+// A `[N]T` slices too and yields a `[]T`, since `end - start` is a run-time value and no
+// fixed size could be written down.
+func (l *lowerer) lowerArraySlice(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, recvT types.Type) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 2 {
+		return nil, nil, fmt.Errorf("llvm: slice() expects 2 arguments, got %d", len(call.Arguments))
+	}
+	elemLyra, err := sliceElementType(recvT)
+	if err != nil {
+		return nil, nil, err
+	}
+	elemLL, err := l.lowerType(elemLyra)
+	if err != nil {
+		return nil, nil, err
+	}
+	elemSize, elemAlign, sized := SizeAndAlign(l.resolveForLayout(elemLyra))
+	if !sized {
+		return nil, nil, fmt.Errorf("llvm: cannot size array element type %s", elemLyra)
+	}
+	stride := int64(alignUp(elemSize, elemAlign))
+
+	// `srcAt` yields the address of the source's i-th element, and `length` its count.
+	// The two receiver kinds differ in exactly this and nothing else, so they are resolved
+	// into one shape here rather than duplicating the copy below.
+	var (
+		length value.Value
+		srcAt  func(b *ir.Block, i value.Value) value.Value
+	)
+	switch it := recvT.(type) {
+	case types.StaticArrayType:
+		var arrPtr value.Value
+		var arrayTy *lltypes.ArrayType
+		if types.AllocationOf(recvT) == types.Shared {
+			arrPtr, arrayTy, block, err = l.sharedArrayPayloadPtr(block, member.Object)
+		} else {
+			arrPtr, arrayTy, block, err = l.arrayLValue(block, member.Object)
+		}
+		if err != nil {
+			return nil, nil, err
+		}
+		length = i64c(int64(it.Size))
+		srcAt = func(b *ir.Block, i value.Value) value.Value {
+			return b.NewGetElementPtr(arrayTy, arrPtr, i64c(0), i)
+		}
+	case types.DynamicArrayType:
+		boxTy := DynArrayBoxType(elemLL)
+		var box value.Value
+		box, block, err = l.lowerExpr(block, member.Object)
+		if err != nil {
+			return nil, nil, err
+		}
+		if diverged(box, block) {
+			return nil, block, nil
+		}
+		length = block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
+		srcAt = func(b *ir.Block, i value.Value) value.Value {
+			return dynArrayElemPtr(b, boxTy, box, i)
+		}
+	default:
+		return nil, nil, fmt.Errorf("llvm: slice() on non-array receiver %s not implemented", recvT)
+	}
+
+	start, block, err := l.lowerSliceBound(block, call.Arguments[0])
+	if err != nil {
+		return nil, nil, err
+	}
+	end, block, err := l.lowerSliceBound(block, call.Arguments[1])
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// One test for every way this can be wrong, in the order the string method uses: a
+	// negative bound, either bound past the length, or an inverted range. `end == length`
+	// is legal — it names the position one past the last element — so the comparison is
+	// strictly-greater rather than the unsigned trick the *index* paths use, which has no
+	// room for an end position.
+	zero := i64c(0)
+	bad := block.NewOr(
+		block.NewOr(
+			block.NewICmp(enum.IPredSLT, start, zero),
+			block.NewICmp(enum.IPredSLT, end, zero)),
+		block.NewOr(
+			block.NewICmp(enum.IPredSGT, end, length),
+			block.NewICmp(enum.IPredSGT, start, end)))
+	block = l.emitTrapIf(block, bad, l.panicArraySliceOOBFunc())
+
+	n := block.NewSub(end, start)
+	boxTy := DynArrayBoxType(elemLL)
+	out := l.dynArrayAlloc(block, boxTy, elemLL, n, n, stride)
+
+	needRetain := l.needsDrop(elemLyra)
+	block, err = l.emitCountedLoop(block, zero, n, func(body *ir.Block, i value.Value) (*ir.Block, error) {
+		v := body.NewLoad(elemLL, srcAt(body, body.NewAdd(start, i)))
+		body.NewStore(v, dynArrayElemPtr(body, boxTy, out, i))
+		if !needRetain {
+			return body, nil
+		}
+		// Per element rather than once: these are n different values, each of which the
+		// new box now owns a reference to.
+		return l.emitRetainValue(body, v, elemLyra)
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, block, nil
+}
+
+// lowerSliceBound lowers one bound of a slice call to an i64, widening from whatever
+// integer width it was written at. Signed, because the trap tests for a negative one and
+// a bound zero-extended from a narrow type could never be negative.
+func (l *lowerer) lowerSliceBound(block *ir.Block, arg ast.Expression) (value.Value, *ir.Block, error) {
+	v, block, err := l.lowerExpr(block, arg)
+	if err != nil {
+		return nil, nil, err
+	}
+	if diverged(v, block) {
+		return nil, block, nil
+	}
+	signed, _ := l.getIntSignedness(arg)
+	return coerceIntWidth(block, v, signed, lltypes.I64), block, nil
+}
+
+// sliceElementType is the element type of the array `slice` was called on.
+func sliceElementType(recvT types.Type) (types.Type, error) {
+	switch it := recvT.(type) {
+	case types.StaticArrayType:
+		return it.ElementType, nil
+	case types.DynamicArrayType:
+		return it.ElementType, nil
+	}
+	return nil, fmt.Errorf("llvm: slice() on non-array receiver %s not implemented", recvT)
+}

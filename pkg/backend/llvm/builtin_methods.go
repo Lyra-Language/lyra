@@ -108,6 +108,7 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 		if name == "len" {
 			return l.lowerArrayLen(block, call, member)
 		}
+		return l.lowerArraySlice(block, call, member, t)
 
 	case "from_end":
 		// Told apart exactly as `len` is: a string's is the backward byte walk, an

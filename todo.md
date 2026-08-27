@@ -2632,6 +2632,48 @@ these links cleanly when it is wrong, which is why they are worth having.
   and a step. A fixture whose both sides we wrote still cannot demonstrate talking to a
   library nobody wrote for us, which is the reason the split above exists.
 
+### Array `slice` — **[DONE 08/26]**
+
+`xs.slice(start, end) -> []T`, the array twin of the string method. It exists for the
+**commonest C output convention there is**: a function fills a buffer you sized and tells
+you how much it used, so the answer is `(buf, n)` and what a caller wants is the first `n`
+elements. Without it the only spelling was a `push` loop — one bounds check and one capacity
+check per element — which is why `examples/zlib.lyra` hands its buffers and lengths around
+separately instead of returning a right-sized `[]u8`. With it, the idiomatic wrapper is
+writable:
+
+```lyra
+let squeeze = (src: []u8) -> Result<[]u8, ZErr> => {
+  var dst: []u8 = [0; 512]
+  var room: CULong = u64(512)
+  let rc = unsafe { compress(dst.data_mut(), &mut room, src.data(), u64(src.len())) }
+  if rc != 0 { return Err(TooSmall) }
+  Ok(dst.slice(0, i64(room)))
+}
+```
+
+- **It copies, and that is forced.** Sharing the parent's element buffer would need that
+  buffer ref-counted apart from the box that owns it, and a `push` on the parent
+  reallocates it — so the slice would dangle while the array it came from is alive. The
+  string method copies for its own version of that reason. So `noalloc` refuses it.
+- **A `[N]T` yields a `[]T`**, since `end - start` is a run-time value. That also makes the
+  result `push`-able.
+- **Every copied element is retained**, because each slot in the new box is an owner — a
+  `[]string` slice holds the same pointers the parent does. Covered by an ASan test; the
+  output is identical either way.
+- **The element type settles to its default in the signature**, which is the one thing that
+  is not obvious: an array of untyped literals keeps untyped leaves, and a *sliced* one has
+  nothing left to narrow them, so `[1, 2, 3].slice(0, 2)` against a `[]i64` return was
+  refused for a type it could perfectly well have. `from_end` escapes it only by handing
+  back the bare element, which is assignable where `DynamicArray<integer literal>` is not.
+
+See `COMPLETED.md`.
+
+- **[OPEN] A provable negative slice bound is a run-time trap, not `lyra-E022`.**
+  `xs.slice(-1, 2)` and `s.slice(-1, 2)` both trap where `xs[-1]` is a compile error naming
+  the `from_end` spelling. Pre-existing on the string side and matched here for consistency;
+  the fix is one check over both, at the two call sites the fold already reaches.
+
 ### Variadics — **[DONE 08/26]**
 
 `unsafe extern printf: (^u8, ...) -> i32`, and a call to one. Declaring a variadic at

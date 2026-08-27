@@ -163,6 +163,51 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 			}, true
 		}
 	}
+	// `xs.slice(start, end) -> []T` — the half-open element range `[start, end)`, the
+	// array twin of the string method and matching `..<`.
+	//
+	// **It exists for the commonest C output convention there is**: a function fills a
+	// buffer you sized and tells you how much it used, so the answer is `(buf, n)` and what
+	// a caller wants is the first `n` elements. Without this the only spelling was a
+	// `push` loop — one bounds check and one capacity check per element, and the reason
+	// `examples/zlib.lyra` hands its buffers and lengths around separately instead of
+	// returning a right-sized `[]u8`.
+	//
+	// **It copies, and that is forced rather than chosen.** Sharing the parent's buffer
+	// would need the buffer ref-counted apart from the box that owns it, and a `push` on
+	// the parent reallocates it — so the slice would dangle while the array it came from
+	// is perfectly alive. The string method copies for its own version of that reason (a
+	// box header sits at the start, so a string cannot point into the middle of another).
+	// So `noalloc` refuses it, like `slice` on a string.
+	//
+	// **A `[N]T` slices too, and the result is still `[]T`**: the length is `end - start`,
+	// which is a run-time value, so no fixed size could be written down. That also makes
+	// the result `push`-able, which is what a caller building a buffer up wants.
+	if name == "slice" {
+		i64t := types.PrimitiveType{Name: types.Int64}
+		sig := func(elem types.Type) (*types.LambdaType, bool) {
+			// **The element type settles to its default here**, because the result's is
+			// the last chance it has. An array of untyped literals keeps untyped leaves
+			// until something narrows them, and a *sliced* one has nothing left to be
+			// narrowed by: `DynamicArray<integer literal>` is not assignable to
+			// `DynamicArray<i64>` (an element type is invariant), so
+			// `[1, 2, 3].slice(0, 2)` against a `[]i64` return was refused for a type it
+			// could perfectly well have. `from_end` escapes this only because it hands
+			// back the bare element, which *is* assignable.
+			return &types.LambdaType{
+				Parameters: []types.ParameterType{{Type: i64t}, {Type: i64t}},
+				ReturnType: types.ReturnType{Type: types.DynamicArrayType{
+					ElementType: promoteToDefault(elem),
+				}},
+			}, true
+		}
+		switch r := recv.(type) {
+		case types.StaticArrayType:
+			return sig(r.ElementType)
+		case types.DynamicArrayType:
+			return sig(r.ElementType)
+		}
+	}
 	// `s.encode_utf8()` — a string's bytes, as a `[]u8`.
 	//
 	// `decode_utf8`'s inverse, and a builtin for the mirror-image reason: **nothing in the
@@ -485,8 +530,16 @@ func builtinMethodAllocates(recv types.Type, name string) bool {
 	if name == "encode_utf8" && types.IsString(recv) {
 		return true
 	}
-	if name == "slice" && types.IsString(recv) {
-		return true
+	// `slice` allocates whatever it is called on: a string box, or a `[]T` box and its
+	// element buffer. See builtinMethodSignature for why neither can borrow instead.
+	if name == "slice" {
+		if types.IsString(recv) {
+			return true
+		}
+		switch recv.(type) {
+		case types.StaticArrayType, types.DynamicArrayType:
+			return true
+		}
 	}
 	// `push` grows the element buffer when it is full. It does not allocate on *every*
 	// call — amortized doubling means most pushes are a store — but `noalloc` is a
