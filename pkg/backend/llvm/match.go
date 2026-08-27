@@ -26,17 +26,92 @@ func (l *lowerer) lowerMatch(block *ir.Block, e *ast.MatchExpr) (value.Value, *i
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: no type recorded for match scrutinee")
 	}
+	// **The scrutinee is lowered here, once, and its temporaries are the match's to
+	// place.** Every lowering below used to do this for itself, which left the temp in
+	// the pending list while the *arms* were lowered — and an arm body that is a block
+	// flushes per statement, from `pendingBase`, so the scrutinee was released partway
+	// through the arm that was still reading its payload. Raising `pendingBase` over it
+	// is what puts it out of their reach; the `try` lowering does the same thing for the
+	// same reason.
+	base := len(l.pendingReleases)
+	scrutinee, block, err := l.lowerExpr(block, e.Scrutinee)
+	if err != nil {
+		return nil, nil, err
+	}
+	if diverged(scrutinee, block) {
+		return nil, block, nil
+	}
+	after := len(l.pendingReleases)
+	savedBase := l.pendingBase
+	l.pendingBase = after
+	v, end, err := l.lowerMatchByScrutinee(block, e, scrutinee, scrutType)
+	l.pendingBase = savedBase
+	if err != nil {
+		return nil, nil, err
+	}
+	l.releaseScrutineeAtMerge(base, after, end)
+	return v, end, nil
+}
+
+// releaseScrutineeAtMerge moves the temporaries produced by the **scrutinee** — those
+// recorded in `[base, after)` — to the match's merge block.
+//
+// # The bug this fixes
+//
+// A match scrutinee is the one temporary whose *uses* are in successor blocks: the value
+// is produced in one block, the `switch` sends control elsewhere, and the arms read the
+// payload out of it. `flushStmtTemps` releases a temp at its production block whenever
+// that block does not dominate the statement's end — right for a temp produced *inside* a
+// branch, wrong here. By the time that flush runs the scrutinee's block has been
+// terminated, and appending to a terminated block puts the release **before** the branch
+// into the arms. Reading the payload afterwards is a use-after-free that ASan reports and
+// that otherwise prints a plausible number:
+//
+//	match first() { Err(_) => 1, Ok(p) => match second(p) { …, Ok(q) => q.len() } }
+//
+// It needs the *nested* position to bite. Written as a statement the scrutinee's block is
+// the statement's own start block, so `flushStmtTemps` takes its `p.block == start` fast
+// path and moves the release past the whole match. As an arm body it is neither that block
+// nor a dominator of the enclosing statement's end, so it falls to the third case and stays
+// put. Hence the `let`-binding workaround, and hence `string` and `i64` payloads being
+// unaffected — nothing is released for them at all.
+//
+// # Why the merge, and why this asks no question about the CFG
+//
+// The merge is where every arm rejoins, so a value produced *before* the branch is defined
+// on every path that reaches it and past its last use once it does. That is structural: it
+// follows from the scrutinee being evaluated first, not from any property of the graph.
+//
+// **Dominance cannot be consulted here**, which is worth recording because it is the
+// obvious implementation and it silently answers "no". `newDomTree` derives edges from
+// terminators, and a `data` match emits its `switch` only after every arm is lowered — so
+// while an inner match is being lowered inside an outer arm, the *entry* block is still
+// unsealed and every block reads as unreachable. Every dominance query at that moment is
+// false, which is the safe direction for `resolveExitReleases` (it leaks) and the wrong
+// one here (it left the release in the terminated block).
+func (l *lowerer) releaseScrutineeAtMerge(base, after int, merge *ir.Block) {
+	if merge == nil {
+		return
+	}
+	for i := base; i < after && i < len(l.pendingReleases); i++ {
+		l.pendingReleases[i].block = merge
+	}
+}
+
+// lowerMatchByScrutinee picks the lowering the scrutinee's type calls for. Split from
+// lowerMatch so the one dispatcher can bracket every path — see repointTempsToMerge.
+func (l *lowerer) lowerMatchByScrutinee(block *ir.Block, e *ast.MatchExpr, scrutinee value.Value, scrutType types.Type) (value.Value, *ir.Block, error) {
 	if dt, ok := l.resolveDataType(scrutType); ok {
-		return l.lowerDataMatch(block, e, dt)
+		return l.lowerDataMatch(block, e, scrutinee, dt)
 	}
 	if st, ok := l.resolveStructType(scrutType); ok {
-		return l.lowerStructMatch(block, e, st)
+		return l.lowerStructMatch(block, e, scrutinee, st)
 	}
 	if tt, ok := l.resolveTupleType(scrutType); ok {
-		return l.lowerTupleMatch(block, e, tt)
+		return l.lowerTupleMatch(block, e, scrutinee, tt)
 	}
 	if dyn, ok := scrutType.(types.DynamicArrayType); ok {
-		return l.lowerArrayMatch(block, e, dyn)
+		return l.lowerArrayMatch(block, e, scrutinee, dyn)
 	}
 	// A scalar scrutinee (bool, a concrete integer, a float, or a string) lowers to
 	// an if-else ladder of comparisons. Detected by whether the scrutinee's
@@ -46,10 +121,10 @@ func (l *lowerer) lowerMatch(block *ir.Block, e *ast.MatchExpr) (value.Value, *i
 		if ll, ok := LLVMPrimitive(prim.Name); ok {
 			switch ll.(type) {
 			case *lltypes.IntType, *lltypes.FloatType:
-				return l.lowerScalarMatch(block, e, prim)
+				return l.lowerScalarMatch(block, e, scrutinee, prim)
 			case *lltypes.StructType: // string
 				if prim.Name == types.String {
-					return l.lowerScalarMatch(block, e, prim)
+					return l.lowerScalarMatch(block, e, scrutinee, prim)
 				}
 			}
 		}
@@ -189,11 +264,7 @@ func (m *matchMerge) value() (value.Value, *ir.Block) {
 // true/false, or an exhaustive integer match, never reaches it; a non-exhaustive
 // (or float, which always needs a wildcard) match was already warned by the
 // typechecker.
-func (l *lowerer) lowerScalarMatch(block *ir.Block, e *ast.MatchExpr, scrutPrim types.PrimitiveType) (value.Value, *ir.Block, error) {
-	scrut, block, err := l.lowerExpr(block, e.Scrutinee)
-	if err != nil {
-		return nil, nil, err
-	}
+func (l *lowerer) lowerScalarMatch(block *ir.Block, e *ast.MatchExpr, scrut value.Value, scrutPrim types.PrimitiveType) (value.Value, *ir.Block, error) {
 	scrutTy := scrut.Type()
 	switch scrutTy.(type) {
 	case *lltypes.IntType, *lltypes.FloatType:

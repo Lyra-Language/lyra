@@ -1732,6 +1732,27 @@ The fixture tests go through `emitWithPrelude`, not `emitSource`: they import `s
 `driver.Analyze` resolves no import graph, so every use of an imported name reports
 "undefined".
 
+### A match owns its scrutinee's temporaries (08/26)
+
+`lowerMatch` lowers the scrutinee **once**, for all five shapes, and places its temporaries
+at the **merge** — where the value is defined on every path and past its last use. Two
+supports: the five lowerings take the value rather than lowering it themselves, and
+`pendingBase` is raised over those temps while the arms are lowered, because an arm body
+that is a block flushes per statement and would otherwise release them mid-arm.
+
+It replaces a use-after-free. A scrutinee is the one temporary whose *uses* are in successor
+blocks, so `flushStmtTemps`' "release it at its production block" — right for a temp produced
+inside a branch — put the release before the `switch`, since appending to a terminated block
+lands before its terminator. Only the nested position was affected: as a statement the
+scrutinee's block *is* the statement's start block and the flush's fast path moves the
+release past the whole match.
+
+**Do not reach for dominance here.** `newDomTree` derives edges from terminators and a `data`
+match emits its `switch` only after every arm is lowered, so while an inner match is lowered
+the entry block is unsealed, every block reads as unreachable, and every query answers false —
+safe where `resolveExitReleases` uses it, wrong here. The merge is the right answer for a
+structural reason instead: the scrutinee is evaluated before the branch.
+
 ## Behavioural tests
 
 **AddressSanitizer only works because the harness adds the `sanitize_address` function

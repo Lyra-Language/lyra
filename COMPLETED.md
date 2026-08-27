@@ -10,6 +10,57 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**A nested `match` freed its scrutinee before the arms read it.**
+
+```lyra
+match first() { Err(_) => 1, Ok(p) => match second(p) { …, Ok(q) => q.len() } }
+```
+
+printed `len=8419866224`, and ASan called it what it is: `heap-use-after-free`, on the load
+of the box's length field. Found writing the zlib example's first draft — ordinary code, on
+the first attempt.
+
+**A match scrutinee is the one temporary whose uses are in successor blocks.** The value is
+produced in one block, the `switch` sends control elsewhere, and the arms read the payload
+out of it. `flushStmtTemps` releases a temp at its production block whenever that block does
+not dominate the statement's end — correct for a temp produced *inside* a branch, and wrong
+here, because by then the scrutinee's block has been terminated and **appending to a
+terminated block lands before its terminator**. The release preceded the branch into the
+arms.
+
+It took the *nested* position to bite, which is why it survived. Written as a statement, the
+scrutinee's block is the statement's own start block, so the flush takes its `p.block ==
+start` fast path and moves the release past the whole match. As an arm body it is neither
+that block nor a dominator of the enclosing statement's end, so it falls to the third case
+and stays put. That also explains the two things that made it look narrower than it was: the
+`let`-binding workaround, and `string`/`i64` payloads being fine — nothing is released for
+them at all.
+
+**`lowerMatch` now lowers the scrutinee once, for all five shapes**, and places its
+temporaries at the merge. That is where the value is defined on every path and past its last
+use, and it is *structural* — it follows from the scrutinee being evaluated before the
+branch, not from any property of the graph. Two things had to move for it: the five
+lowerings take the value instead of lowering it themselves, and `pendingBase` is raised over
+the scrutinee's temps while the arms are lowered, because an arm body that is a block
+flushes per statement and would otherwise reach them first. `try` already does the second
+for the same reason.
+
+**Dominance cannot answer this, and that is the finding worth keeping.** It is the obvious
+implementation — I wrote it first, it compiled, the tests still failed, and the reason was
+invisible from the code: `newDomTree` derives edges from terminators, and a `data` match
+emits its `switch` only *after* every arm is lowered. So while an inner match is being
+lowered inside an outer arm, the **entry block is still unsealed** and every block reads as
+unreachable, making every dominance query false. That is the safe direction where
+`resolveExitReleases` uses it (it leaks) and the wrong one here. The lesson generalizes: a
+CFG question asked during lowering is answerable only about the part of the graph already
+built, and "already built" is not "already visited".
+
+Debugging note, since it cost a wrong turn: `lyrac run prog >/dev/null` hides a *compile*
+error, so three probes that looked like wrong exit codes were the backend refusing the
+program. A match in tail position whose arms all diverge is one such refusal — pre-existing,
+loud, and now recorded separately.
+
+### 08/26/26
 **Array `slice`, and the FFI assessment that asked for it.**
 
 `xs.slice(start, end) -> []T`. It came out of an audit of how bindings are written, where

@@ -2669,32 +2669,34 @@ let squeeze = (src: []u8) -> Result<[]u8, ZErr> => {
 
 See `COMPLETED.md`.
 
-- **[OPEN] A nested `match` over a `Result<[]T, E>` reads freed memory.** Found while
-  rewriting `examples/zlib.lyra`; **pre-existing** and nothing to do with `slice` — it
-  reproduces on the commit before it, and with no slice anywhere. The inner call's result is
-  garbage (`len=8419866224`) or the program traps.
+- **[DONE 08/26] A nested `match` over a `Result<[]T, E>` no longer reads freed memory.**
+  Found while rewriting `examples/zlib.lyra`. **A match scrutinee is the one temporary whose
+  uses are in successor blocks**: the value is produced in one block, the `switch` sends
+  control elsewhere, and the arms read the payload out of it. `flushStmtTemps` releases a
+  temp at its production block whenever that block does not dominate the statement's end —
+  right for a temp produced *inside* a branch, wrong here — and appending to an
+  already-terminated block lands **before** its terminator, so the release preceded the
+  branch into the arms that use the value.
 
-  ```lyra
-  data E = Bad
-  let first = () -> Result<[]u8, E> => Ok([1, 2, 3])
-  let second = (src: []u8) -> Result<[]u8, E> => { var b: []u8 = [0; 7]; Ok(b) }
-  let main = () -> u8 => {
-    match first() {
-      Err(_) => 1,
-      Ok(p) => match second(p) { Err(_) => 1, Ok(q) => { println("len=${q.len()}"); 0 } },
-    }
-  }
-  ```
+  It needed the *nested* position to bite: written as a statement the scrutinee's block is
+  the statement's own start block, so the flush takes its `p.block == start` fast path and
+  moves the release past the whole match. Hence the `let`-binding workaround, and hence
+  `string` and `i64` payloads being unaffected — nothing is released for them at all.
 
-  Bisected to three conditions together: the inner match's **scrutinee is a call written
-  directly in the arm** (binding it to a `let` first works), the callee's **body is a block
-  that builds a fresh dynamic array**, and the payload is a **managed** type — `string` and
-  `i64` payloads are both fine, as is an inner callee that just returns its argument. The
-  shape says the outer arm is releasing something the inner scrutinee still holds, so
-  `flushStmtTemps` around a match-arm body is where to look first.
-
-  Worth having a plain `let` binding as the workaround written down, since the failure is a
-  wrong *value* rather than a diagnostic.
+  `lowerMatch` now lowers the scrutinee **once** for all five shapes and places its
+  temporaries at the merge, where the value is defined on every path and past its last use.
+  Raising `pendingBase` over them is what keeps an arm's own per-statement flush from
+  reaching them first. See `COMPLETED.md`.
+  - **Dominance cannot answer this, which is the trap worth recording**: it is the obvious
+    implementation, it compiles, and it silently says "no". `newDomTree` derives edges from
+    terminators, and a `data` match emits its `switch` only after every arm is lowered — so
+    while an inner match is being lowered the *entry* block is still unsealed and every
+    block reads as unreachable. Safe for `resolveExitReleases` (it leaks); wrong here.
+  - **[OPEN] A match in tail position whose arms all diverge is refused**, with
+    `llvm: block has no value (empty, or last statement is not an expression)` — a message
+    naming neither the match nor the arms. Noticed while probing the edge cases above and
+    pre-existing; a loud refusal rather than wrong code (rule 5), so low severity, but the
+    message should say what it means.
 
 - **[OPEN] A provable negative slice bound is a run-time trap, not `lyra-E022`.**
   `xs.slice(-1, 2)` and `s.slice(-1, 2)` both trap where `xs[-1]` is a compile error naming

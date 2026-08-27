@@ -29,16 +29,12 @@ import (
 // (needs an allocation + copy), a rest anywhere but last, and a nested non-scalar
 // element pattern. A fixed-size-array (`[N]T`) scrutinee is also deferred here (it
 // reaches lowerMatch's array case only for `[]T`).
-func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, arrType types.DynamicArrayType) (value.Value, *ir.Block, error) {
+func (l *lowerer) lowerArrayMatch(block *ir.Block, e *ast.MatchExpr, box value.Value, arrType types.DynamicArrayType) (value.Value, *ir.Block, error) {
 	elemLL, err := l.lowerType(arrType.ElementType)
 	if err != nil {
 		return nil, nil, err
 	}
 	boxTy := DynArrayBoxType(elemLL)
-	box, block, err := l.lowerExpr(block, e.Scrutinee)
-	if err != nil {
-		return nil, nil, err
-	}
 	length := block.NewLoad(lltypes.I64, dynArrayLenPtr(block, boxTy, box))
 	elemAt := func(b *ir.Block, i int64) value.Value {
 		return b.NewLoad(elemLL, dynArrayElemPtr(b, boxTy, box, i64c(i)))

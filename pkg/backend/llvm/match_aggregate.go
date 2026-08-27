@@ -18,11 +18,7 @@ import (
 // ladder: a struct pattern `{ x, y }` binds fields (structPatternTest returns nil
 // → unconditional), while a literal field sub-pattern (`{ x: 0, y }`) makes it
 // conditional on that field.
-func (l *lowerer) lowerStructMatch(block *ir.Block, e *ast.MatchExpr, st types.NamedStructType) (value.Value, *ir.Block, error) {
-	whole, block, err := l.lowerExpr(block, e.Scrutinee)
-	if err != nil {
-		return nil, nil, err
-	}
+func (l *lowerer) lowerStructMatch(block *ir.Block, e *ast.MatchExpr, whole value.Value, st types.NamedStructType) (value.Value, *ir.Block, error) {
 	scrut, err := l.unboxSharedData(block, whole) // a `shared` struct is a box pointer
 	if err != nil {
 		return nil, nil, err
@@ -428,11 +424,7 @@ func isBindingLeaf(pat ast.Pattern) bool {
 // ladder — the positional counterpart to lowerStructMatch: a tuple pattern
 // `(a, b)` binds elements by position, and a literal element (`(0, b)`) makes the
 // arm conditional on that position.
-func (l *lowerer) lowerTupleMatch(block *ir.Block, e *ast.MatchExpr, tt types.TupleType) (value.Value, *ir.Block, error) {
-	whole, block, err := l.lowerExpr(block, e.Scrutinee)
-	if err != nil {
-		return nil, nil, err
-	}
+func (l *lowerer) lowerTupleMatch(block *ir.Block, e *ast.MatchExpr, whole value.Value, tt types.TupleType) (value.Value, *ir.Block, error) {
 	scrut, err := l.unboxSharedData(block, whole) // a `shared` tuple is a box pointer
 	if err != nil {
 		return nil, nil, err
@@ -487,11 +479,7 @@ func dataMatchHasPayloadTest(e *ast.MatchExpr, dt types.DataType) bool {
 // feed a merge phi, so the match is a value (like `if`). The front-end guarantees
 // exhaustiveness (lyra-E009), so a match with no catch-all gets an `unreachable`
 // default.
-func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, dt types.DataType) (value.Value, *ir.Block, error) {
-	whole, block, err := l.lowerExpr(block, e.Scrutinee)
-	if err != nil {
-		return nil, nil, err
-	}
+func (l *lowerer) lowerDataMatch(block *ir.Block, e *ast.MatchExpr, whole value.Value, dt types.DataType) (value.Value, *ir.Block, error) {
 	// A `shared` data value is a pointer to its ref-counted box; load the inline
 	// union out of it so the tag/payload logic below (and aggPattern*) sees a
 	// first-class struct. `whole` stays the box pointer — the value an identifier
