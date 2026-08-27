@@ -2638,9 +2638,9 @@ these links cleanly when it is wrong, which is why they are worth having.
 **commonest C output convention there is**: a function fills a buffer you sized and tells
 you how much it used, so the answer is `(buf, n)` and what a caller wants is the first `n`
 elements. Without it the only spelling was a `push` loop — one bounds check and one capacity
-check per element — which is why `examples/zlib.lyra` hands its buffers and lengths around
-separately instead of returning a right-sized `[]u8`. With it, the idiomatic wrapper is
-writable:
+check per element — which is why `examples/zlib.lyra` *used to* hand its buffers and lengths
+around separately instead of returning a right-sized `[]u8`; it is now written the other
+way (08/26). The idiomatic wrapper:
 
 ```lyra
 let squeeze = (src: []u8) -> Result<[]u8, ZErr> => {
@@ -2668,6 +2668,33 @@ let squeeze = (src: []u8) -> Result<[]u8, ZErr> => {
   back the bare element, which is assignable where `DynamicArray<integer literal>` is not.
 
 See `COMPLETED.md`.
+
+- **[OPEN] A nested `match` over a `Result<[]T, E>` reads freed memory.** Found while
+  rewriting `examples/zlib.lyra`; **pre-existing** and nothing to do with `slice` — it
+  reproduces on the commit before it, and with no slice anywhere. The inner call's result is
+  garbage (`len=8419866224`) or the program traps.
+
+  ```lyra
+  data E = Bad
+  let first = () -> Result<[]u8, E> => Ok([1, 2, 3])
+  let second = (src: []u8) -> Result<[]u8, E> => { var b: []u8 = [0; 7]; Ok(b) }
+  let main = () -> u8 => {
+    match first() {
+      Err(_) => 1,
+      Ok(p) => match second(p) { Err(_) => 1, Ok(q) => { println("len=${q.len()}"); 0 } },
+    }
+  }
+  ```
+
+  Bisected to three conditions together: the inner match's **scrutinee is a call written
+  directly in the arm** (binding it to a `let` first works), the callee's **body is a block
+  that builds a fresh dynamic array**, and the payload is a **managed** type — `string` and
+  `i64` payloads are both fine, as is an inner callee that just returns its argument. The
+  shape says the outer arm is releasing something the inner scrutinee still holds, so
+  `flushStmtTemps` around a match-arm body is where to look first.
+
+  Worth having a plain `let` binding as the workaround written down, since the failure is a
+  wrong *value* rather than a diagnostic.
 
 - **[OPEN] A provable negative slice bound is a run-time trap, not `lyra-E022`.**
   `xs.slice(-1, 2)` and `s.slice(-1, 2)` both trap where `xs[-1]` is a compile error naming
