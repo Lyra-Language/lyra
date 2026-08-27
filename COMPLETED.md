@@ -10,6 +10,75 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**Struct-by-value at the FFI boundary: investigated, and refused on the evidence.**
+
+The FFI audit listed this as "now a codegen question rather than a representational one",
+since the fixture proves Lyra's struct layout matches C's `sizeof` and every `offsetof`. That
+framing was right and the conclusion it invited was wrong: the missing piece is not codegen
+for a known shape, it is the platform's **calling convention**, and LLVM does not supply one.
+Clang rewrites the signature per target, and the three this project can reach disagree —
+
+| C struct | aarch64 (mac) | aarch64 (linux) | x86-64 SysV |
+|---|---|---|---|
+| `{i32×4}` 16B | `[2 x i64]` | `[2 x i64]` | `i64, i64` — two params |
+| `{i32,double}` 16B | `[2 x i64]` | `[2 x i64]` | `i32, double` |
+| `{float,float}` 8B | `[2 x float]` | `[2 x float] alignstack(8)` | `<2 x float>` |
+| `{u8,u8}` 2B | `i64` | `i64` | `i16` |
+
+— so it needs AAPCS64's HFA rules *and* SysV's per-eightbyte INTEGER/SSE classification.
+**x86-64 changes the arity**, so it reaches call lowering rather than declarations alone. The
+failure mode is the worst one available: links cleanly, computes wrong.
+
+The subset that classifies identically on all three is essentially "an 8-byte struct of
+integers", which is arbitrary enough that a feature built on it would mislead rather than
+help. So: refused, with the table recorded as the evidence, and reopened only with a real
+classifier validated case-by-case against clang — the fixture and its pure-C oracle are the
+harness for exactly that.
+
+**What landed is the diagnostic.** An aggregate had been getting no hint at all, so
+lyra-E063 said only "has no C spelling", which reads as unimplemented syntax. It now names
+the pointer *and* the reason, keeping the two apart: the layouts already match, so `^T` is
+the right shape rather than a workaround.
+
+Fixing that turned up a **stale sibling**: the *string* hint still said a Lyra string "is not
+NUL-terminated, so it needs a copy" and pointed at a `CString` that does not exist — both
+untrue since the NUL work three entries up. A diagnostic that describes the representation
+goes stale when the representation changes, and nothing had noticed. Both hints are now
+pinned by tests.
+
+### 08/26/26
+**The bulk foreign-bytes primitive: 548 µs → 256 µs, which is the floor.**
+
+The FFI audit's third finding. Reading a C buffer into a string went through
+`CBuffer.get(i)` in a loop — a bounds check and a capacity-checked `push` per byte — into a
+`[]u8`, and then *that* array's `decode_utf8` copied it again. Two passes and two
+allocations for bytes that only ever needed one memcpy.
+
+`p.decode_utf8(byte_len)` is the `^u8` spelling of the array method: the same operation on
+memory Lyra does not own, which is the only kind a raw pointer can address. Over 400 KB it
+now costs **256 µs against the array builtin's 254 µs** — one memcpy and one
+`lyra_utf8_count` pass, so the foreign path costs what the owned one does and there is
+nothing left to take out.
+
+**The length is an argument because a pointer carries none, and that is the same fact that
+makes it `unsafe`** — nothing here can check that many bytes are readable. What *can* be
+checked is checked: a negative length traps, since it would reach `memcpy` as a huge
+unsigned size. A merely too-large one cannot be, and saying so is better than implying
+otherwise; `std.ffi`'s `CBuffer` is the checked pairing built on top.
+
+Two smaller decisions worth recording. The trap got **its own message** rather than reusing
+the array-length one — the value is a byte count handed to a pointer read, and naming an
+array in it points the reader at the wrong thing. And the copy stays, which is the point
+rather than the cost: foreign memory may be freed or rewritten the moment the call returns,
+and a string is a ref-counted box whose header sits at its start, so it could not point into
+memory it does not own. A test mutates the source afterwards and checks the string did not
+follow it.
+
+The mirror direction — `^u8 → []u8` in bulk — was deliberately **not** built. A buffer C
+fills is usually one Lyra handed over with `data_mut()`, so it is already an array; nothing
+today needs the copy, and a builtin is language surface forever.
+
+### 08/26/26
 **NUL-terminated string boxes: 146 ns → 8 ns per crossing into C.**
 
 The FFI audit's second finding, after array `slice`. Handing a string to C meant

@@ -55,9 +55,15 @@ func TestExtern_UnsafeWithoutABoundIsAllowed(t *testing.T) {
 
 // **FFI-safe types.** Refusing at the signature is what leaves no room for an implicit
 // conversion, and so no nul-termination policy to get wrong.
+//
+// **A hint that describes the representation goes stale when the representation changes**,
+// and this test was the reason nothing noticed: it asserted the string hint's claim that a
+// Lyra string "is not NUL-terminated, so it needs a copy", which stopped being true on
+// 08/26 — so the pin held the *stale* wording in place rather than catching it. Assert what
+// a reader is told to *do*, which is stable, rather than the sentence explaining why.
 func TestExtern_SignatureRefusesTypesWithNoCSpelling(t *testing.T) {
 	for _, c := range []struct{ name, src, want string }{
-		{"string", `unsafe extern pure puts: (string) -> i32`, "not NUL-terminated"},
+		{"string", `unsafe extern pure puts: (string) -> i32`, "`std.ffi`'s `with_cstring`"},
 		{"array", `unsafe extern pure sum: ([]i64) -> i64`, "xs.data()"},
 		{"closure", `unsafe extern pure go: ((i64) -> i64) -> i32`, "not a C function pointer"},
 		{"bool", `unsafe extern pure ok: (bool) -> i32`, "C's `_Bool` is a byte"},

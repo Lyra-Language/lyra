@@ -124,8 +124,11 @@ func ffiHint(t types.Type) string {
 	case types.PrimitiveType:
 		switch {
 		case types.IsString(v):
-			return ". A Lyra string is a fat pointer and is not NUL-terminated, so it needs " +
-				"a copy: take `^u8` and build one with `std.ffi`'s CString"
+			// Kept current with the representation: a string *is* NUL-terminated past
+			// its bytes as of 08/26, so the crossing no longer needs a copy and the
+			// advice is the scoped lender rather than a builder.
+			return ". A Lyra string is a fat pointer, not a `char*`: take `^u8` and hand " +
+				"the bytes over with `std.ffi`'s `with_cstring`, which needs no copy"
 		case v.Name == types.Boolean:
 			return ". `bool` is deliberately excluded: Lyra's is one bit and C's `_Bool` is a " +
 				"byte, so passing one silently disagrees about the ABI — take `i8` and compare it"
@@ -136,6 +139,16 @@ func ffiHint(t types.Type) string {
 	case *types.LambdaType:
 		return ". A Lyra closure is a code pointer plus a ref-counted environment, which is " +
 			"not a C function pointer; passing callbacks to C is not designed yet"
+	case types.NamedStructType, types.AnonymousStructType, types.TupleType, types.DataType:
+		// **The layouts already agree** — `TestExec_FFIFixture_StructLayoutMatchesC` proves
+		// Lyra's `{i32, u8, f64, i64}` matches C's `sizeof` and every `offsetof` — so a
+		// pointer is not a workaround for a representational mismatch. What is missing is
+		// the *calling convention*, which is a different thing and a per-target one.
+		return ". A struct crosses by pointer: take `^T` and pass `&value` — no copy, and " +
+			"the layouts already match C's. By *value* is a per-target calling convention " +
+			"rather than a missing spelling (aarch64 and x86-64 classify the same struct " +
+			"differently, and x86-64 can change the parameter count), which this compiler " +
+			"does not implement"
 	}
 	return ""
 }

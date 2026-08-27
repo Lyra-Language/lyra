@@ -2632,6 +2632,35 @@ these links cleanly when it is wrong, which is why they are worth having.
   and a step. A fixture whose both sides we wrote still cannot demonstrate talking to a
   library nobody wrote for us, which is the reason the split above exists.
 
+### The bulk foreign-bytes primitive — **[DONE 08/26]**
+
+`p.decode_utf8(byte_len) -> string`, the `^u8` spelling of the array method: the same
+operation on memory Lyra does **not** own, which is the only kind a raw pointer can address.
+`std.ffi`'s `CBuffer.decode_utf8` is now one line over it.
+
+It used to be a bounds-checked `get` and a capacity-checked `push` per byte into a `[]u8`,
+and then that array's own `decode_utf8` — two full passes and two allocations for bytes that
+only ever needed one memcpy. Over 400 KB: **548 µs → 256 µs**, against **254 µs** for the
+array builtin doing the same job on memory Lyra already owned. That is the floor — one
+memcpy and one `lyra_utf8_count` pass — so the foreign path now costs what the owned one
+does.
+
+- **The length is an argument** because a raw pointer carries none, and that is the same
+  fact that makes it `unsafe`: nothing here can check that `byte_len` bytes are readable.
+  A negative length traps (it would reach `memcpy` as a huge unsigned size); a merely
+  too-large one cannot be caught at all.
+- **The copy is not avoidable and is the point.** Foreign memory may be freed or rewritten
+  the moment the call returns, and a string is a ref-counted box whose header sits at its
+  start — so it could not point into memory it does not own even if it wanted to. A test
+  mutates the source afterwards and checks the string did not follow.
+- **[OPEN] The other direction, `^u8 → []u8`, has no bulk spelling.** `CBuffer.get(i)` in a
+  loop is still how foreign bytes reach an array, which is the same per-byte cost this
+  entry removed for strings. Nothing needs it today — a buffer C fills is usually one Lyra
+  handed over with `data_mut()`, so it is already an array — which is why it was not built
+  on spec.
+
+See `COMPLETED.md`.
+
 ### NUL-terminated string boxes — **[DONE 08/26]**
 
 Every string now carries a **NUL at `data[byte_len]`**, so handing one to C copies nothing.
@@ -2766,13 +2795,43 @@ language default differently from every other would be a rule with no way to see
 **It makes the ABI right, not the call safe.** A format-string mismatch is undetectable
 without parsing format strings, which would be a second language embedded in this one.
 
+### Struct-by-value — **[DECIDED 08/26] refused, and the reason is the ABI, not the layout**
+
+Investigated and deliberately not built. The two halves are worth keeping apart:
+
+- **Layout is settled and matches.** `TestExec_FFIFixture_StructLayoutMatchesC` proves Lyra's
+  `{i32, u8, f64, i64}` agrees with C's `sizeof` and every `offsetof`, so `^T` to a Lyra
+  struct is already correct and copies nothing.
+- **Passing by value is a per-target *calling convention*, and LLVM does not supply it.**
+  Clang rewrites the signature per target, and the three this project can reach disagree:
+
+  | C struct | aarch64 (mac) | aarch64 (linux) | x86-64 SysV |
+  |---|---|---|---|
+  | `{i32,i32}` 8B | `i64` | `i64` | `i64` |
+  | `{i32×4}` 16B | `[2 x i64]` | `[2 x i64]` | `i64, i64` — **two params** |
+  | `{i32,double}` 16B | `[2 x i64]` | `[2 x i64]` | `i32, double` |
+  | `{float,float}` 8B | `[2 x float]` | `[2 x float] alignstack(8)` | `<2 x float>` |
+  | `{float×4}` 16B | `[4 x float]` | `[4 x float] alignstack(8)` | `<2 x float>, <2 x float>` |
+  | `{u8,u8}` 2B | `i64` | `i64` | `i16` |
+  | `{i32×5}` 20B | `ptr` | `ptr` | `ptr byval(…) align 8` |
+
+  So it needs AAPCS64's HFA rules *and* SysV's per-eightbyte INTEGER/SSE classification.
+  **x86-64 changes the arity**, so it reaches call lowering rather than declarations alone,
+  and the failure mode is the worst one available: links cleanly, computes wrong.
+
+  The subset that classifies identically everywhere is essentially "an 8-byte struct of
+  integers" — arbitrary enough that a feature built on it would mislead.
+
+**What landed instead**: lyra-E063's hint now names the pointer *and* says why by-value is
+not merely a missing spelling, so a reader is not left thinking the shape is unimplemented
+syntax. Reopen this only with a real classifier for both ABIs, validated case-by-case
+against clang — the fixture and its pure-C oracle are the harness for exactly that.
+
 ### What is deliberately not decided here
 
-Callbacks passed *to* C (a Lyra closure is a code pointer plus a ref-counted
-environment, so it is not a C function pointer), and struct-by-value layout compatibility —
-though the layout half is now *measured* rather than open: `TestExec_FFIFixture_StructLayoutMatchesC`
-proves Lyra's `{i32, u8, f64, i64}` matches C's `sizeof` and every `offsetof`, so what remains
-is a codegen question rather than a representational one.
+Callbacks passed *to* C: a Lyra closure is a code pointer plus a ref-counted environment,
+which is not a C function pointer. The biggest remaining FFI gap — it blocks `qsort`, every
+event loop, every GUI toolkit, sqlite and curl.
 
 **Non-LP64 targets**, per the width section above: the decision there is to state the
 assumption rather than abstract over it, and `CLong`/`CULong` is the one grep target a

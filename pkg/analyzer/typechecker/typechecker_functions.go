@@ -1400,6 +1400,14 @@ func (tc *TypeChecker) requireUnsafeBuiltin(recv types.Type, name string, member
 		}
 		tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeUnsafeOutsideUnsafe,
 			"pointer arithmetic with `offset` requires an `unsafe` block or function")
+	case "decode_utf8":
+		if _, isPtr := recv.(types.RawPointerType); !isPtr {
+			return
+		}
+		// Reading `byte_len` bytes through a raw pointer: nothing here can check that they
+		// are readable, and a wrong length reads whatever follows.
+		tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeUnsafeOutsideUnsafe,
+			"`decode_utf8` on a raw pointer reads through it, so it requires an `unsafe` block or function")
 	case "cstring_ptr":
 		if !types.IsString(recv) {
 			return

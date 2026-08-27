@@ -1162,6 +1162,12 @@ needs before touching anything nearby:
   tuples, `data` types and anything `shared` are refused at the signature, so there is no
   implicit conversion and therefore no nul-termination policy to get wrong. `std.ffi`
   supplies `s.cstring()` and `xs.data()` as ordinary Lyra.
+- **A struct is refused on an ABI ground, not a layout one** (08/26), and E063's hint says
+  so. The layouts match — the fixture proves `sizeof` and every `offsetof` — so `^T` is the
+  right shape rather than a workaround. By *value* needs a per-target classifier LLVM does
+  not supply: aarch64 coalesces a ≤16-byte struct into registers while x86-64 SysV
+  classifies it per eightbyte and can change the parameter count. The table is in
+  `todo.md`; do not reopen without one for both ABIs.
 - **Ownership never crosses.** Neither side adopts the other's buffer; both directions
   would need the other to understand the rc header. A `^T` into a live array dangles at the
   next `push`.
@@ -1188,6 +1194,15 @@ and a method call has nowhere to put the word — `data_mut` takes a `mut` recei
 array with their own message rather than the index check's, and both are **dynamic arrays
 only**: a `[N]T` carries its size in its type, so it cannot be a generic parameter until
 const generics exist.
+
+**A C buffer comes back in one copy** (08/26): `p.decode_utf8(byte_len)` is the `^u8`
+spelling of the array method — the same operation on memory Lyra does *not* own, which is
+the only kind a raw pointer can address. `std.ffi`'s `CBuffer.decode_utf8` is one line over
+it, where it used to be a bounds-checked `get` and a capacity-checked `push` per byte into a
+`[]u8` and then that array's own copy: **548 µs → 256 µs** over 400 KB, against 254 µs for
+the array builtin, which is the floor (one memcpy, one count pass). The length is an
+argument because a pointer carries none, which is also why it is `unsafe`; a negative one
+traps, and a too-large one cannot be caught at all.
 
 **A string crosses without a copy** (08/26): every string carries a NUL past its own bytes
 (`pkg/backend/llvm/STRING_LAYOUT.md`), so `s.cstring_ptr()` — an `unsafe` builtin — checks

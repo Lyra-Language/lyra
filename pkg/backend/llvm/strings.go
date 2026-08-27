@@ -565,12 +565,29 @@ func (l *lowerer) strRuneOffsetFunc() *ir.Func {
 // result independent of the array: a later `push` may move the buffer, and the string
 // must not follow.
 func (l *lowerer) lowerDecodeUTF8(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr, recvT types.Type) (value.Value, *ir.Block, error) {
-	if len(call.Arguments) != 0 {
-		return nil, nil, fmt.Errorf("llvm: decode_utf8() expects 0 arguments, got %d", len(call.Arguments))
+	var (
+		src, byteLen value.Value
+		err          error
+	)
+	if _, isPtr := recvT.(types.RawPointerType); isPtr {
+		// **The `^u8` spelling: the same operation on memory Lyra does not own.** A raw
+		// pointer carries no length, so it is an argument — and that is exactly what makes
+		// this one `unsafe`, since nothing can check it.
+		if len(call.Arguments) != 1 {
+			return nil, nil, fmt.Errorf("llvm: decode_utf8() on a pointer expects 1 argument, got %d", len(call.Arguments))
+		}
+		src, byteLen, block, err = l.foreignByteBuffer(block, member.Object, call.Arguments[0])
+	} else {
+		if len(call.Arguments) != 0 {
+			return nil, nil, fmt.Errorf("llvm: decode_utf8() expects 0 arguments, got %d", len(call.Arguments))
+		}
+		src, byteLen, block, err = l.byteBufferOf(block, member.Object, recvT)
 	}
-	src, byteLen, block, err := l.byteBufferOf(block, member.Object, recvT)
 	if err != nil {
 		return nil, nil, err
+	}
+	if diverged(src, block) {
+		return nil, block, nil
 	}
 	_, dst := l.rcAllocStringPayload(block, byteLen)
 	// memcpy over a zero length is a valid no-op, so an empty buffer needs no special
@@ -588,6 +605,34 @@ func (l *lowerer) lowerDecodeUTF8(block *ir.Block, call *ast.FunctionCallExpr, m
 // A `[N]u8` *is* its elements, held by value, so it has no address until one is taken —
 // `argumentAddress`, the same helper `&xs[0]` goes through, which spills a temporary to a
 // slot when the receiver is not storage (`makeBytes().decode_utf8()`).
+// foreignByteBuffer lowers a `^u8` receiver and its explicit length into the (bytes,
+// length) pair the copy below wants.
+//
+// **A negative length traps.** It would otherwise reach `memcpy` as a huge unsigned size —
+// the one way this can go wrong that costs nothing to catch. A length that is merely *too
+// large* cannot be caught at all: a raw pointer carries no extent, which is the whole
+// reason the caller had to say `unsafe`.
+func (l *lowerer) foreignByteBuffer(block *ir.Block, ptrExpr, lenExpr ast.Expression) (value.Value, value.Value, *ir.Block, error) {
+	ptr, block, err := l.lowerExpr(block, ptrExpr)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if diverged(ptr, block) {
+		return nil, nil, block, nil
+	}
+	n, block, err := l.lowerExpr(block, lenExpr)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if diverged(n, block) {
+		return nil, nil, block, nil
+	}
+	signed, _ := l.getIntSignedness(lenExpr)
+	byteLen := coerceIntWidth(block, n, signed, lltypes.I64)
+	block = l.emitTrapIf(block, block.NewICmp(enum.IPredSLT, byteLen, i64c(0)), l.panicNegativeByteLenFunc())
+	return block.NewBitCast(ptr, lltypes.NewPointer(lltypes.I8)), byteLen, block, nil
+}
+
 func (l *lowerer) byteBufferOf(block *ir.Block, obj ast.Expression, recvT types.Type) (value.Value, value.Value, *ir.Block, error) {
 	i8ptr := lltypes.NewPointer(lltypes.I8)
 	switch it := recvT.(type) {

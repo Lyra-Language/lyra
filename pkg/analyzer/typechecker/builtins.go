@@ -220,6 +220,30 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 	// **Dynamic, not `[N]u8`**: the length is a run-time property of the string, so a
 	// fixed size could not be written down. That also makes the result `push`-able, which
 	// is what `std.ffi`'s NUL-terminated form needs.
+	// `p.decode_utf8(byte_len) -> string` — foreign bytes read as UTF-8 text, in **one
+	// copy**.
+	//
+	// The `[]u8` spelling below it is the same operation on memory Lyra owns; this one is
+	// for memory it does not, which is the only kind a `^u8` can point at. Without it the
+	// route from a C buffer to a string was `CBuffer.get(i)` in a loop into a `[]u8` and
+	// *then* the array's `decode_utf8` — a bounds check and a capacity check per byte, and
+	// a second full copy at the end. Measured over 400 KB: **548 µs against the array
+	// builtin's 253 µs**, for bytes that only ever needed one memcpy.
+	//
+	// The length is an argument because a raw pointer carries none — which is also why
+	// this is `unsafe`: nothing here can check that `byte_len` bytes are readable, and a
+	// wrong one reads whatever follows. `std.ffi`'s `CBuffer` is the checked pairing, and
+	// its `decode_utf8` is one line over this.
+	if name == "decode_utf8" {
+		if ptr, ok := recv.(types.RawPointerType); ok {
+			if p, ok := types.StripNewtype(ptr.Pointee).(types.PrimitiveType); ok && p.Name == types.UInt8 {
+				return &types.LambdaType{
+					Parameters: []types.ParameterType{{Type: types.PrimitiveType{Name: types.Int64}}},
+					ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.String}},
+				}, true
+			}
+		}
+	}
 	if name == "encode_utf8" && types.IsString(recv) {
 		return &types.LambdaType{
 			ReturnType: types.ReturnType{Type: types.DynamicArrayType{
@@ -548,8 +572,14 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 // parameter exists to prevent; it was live for as long as it took to write the
 // prelude's `trim`.
 func builtinMethodAllocates(recv types.Type, name string) bool {
-	if name == "decode_utf8" && isByteArray(recv) {
-		return true
+	if name == "decode_utf8" {
+		if isByteArray(recv) {
+			return true
+		}
+		// The pointer spelling allocates the same string box; only the source differs.
+		if _, isPtr := recv.(types.RawPointerType); isPtr {
+			return true
+		}
 	}
 	if name == "encode_utf8" && types.IsString(recv) {
 		return true

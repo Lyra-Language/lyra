@@ -40,14 +40,15 @@ const (
 	// slice message says "range" rather than "index" because it covers a second
 	// mistake the index form cannot make: `start > end`, an inverted range, which
 	// traps rather than quietly yielding "".
-	stringIndexOOBTrapMessage = "lyra: string index out of bounds\n"
-	stringSliceOOBTrapMessage = "lyra: string slice out of range\n"
-	arraySliceOOBTrapMessage  = "lyra: array slice out of range\n"
-	interiorNULTrapMessage    = "lyra: a C string cannot contain a NUL byte\n"
-	matchFailedTrapMessage    = "lyra: match not exhaustive\n"
-	shiftOverflowTrapMessage  = "lyra: shift amount out of range\n"
-	rangeStepTrapMessage      = "lyra: range step must be positive\n"
-	constraintTrapMessage     = "lyra: value violates its newtype's constraint\n"
+	stringIndexOOBTrapMessage  = "lyra: string index out of bounds\n"
+	stringSliceOOBTrapMessage  = "lyra: string slice out of range\n"
+	arraySliceOOBTrapMessage   = "lyra: array slice out of range\n"
+	interiorNULTrapMessage     = "lyra: a C string cannot contain a NUL byte\n"
+	negativeByteLenTrapMessage = "lyra: byte length must not be negative\n"
+	matchFailedTrapMessage     = "lyra: match not exhaustive\n"
+	shiftOverflowTrapMessage   = "lyra: shift amount out of range\n"
+	rangeStepTrapMessage       = "lyra: range step must be positive\n"
+	constraintTrapMessage      = "lyra: value violates its newtype's constraint\n"
 	// A rounded float that no i64 can hold, or a NaN. Named for the *conversion*
 	// rather than for `floor`/`ceil`/`round`, because that is where the loss happens —
 	// the rounding itself is exact and total.
@@ -123,6 +124,12 @@ func (l *lowerer) panicArraySliceOOBFunc() *ir.Func {
 // cannot represent an interior NUL, so a string holding one would arrive truncated.
 func (l *lowerer) panicInteriorNULFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_interior_nul", interiorNULTrapMessage)
+}
+
+// Its own message rather than the array-length trap's: the value here is a *byte* count
+// handed to a pointer read, and naming an array in it points the reader at the wrong thing.
+func (l *lowerer) panicNegativeByteLenFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_negative_byte_len", negativeByteLenTrapMessage)
 }
 
 func (l *lowerer) panicMatchFailedFunc() *ir.Func {

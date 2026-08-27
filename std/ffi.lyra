@@ -101,20 +101,20 @@ pub let cstring_len = unsafe pure noalloc (p: ^u8) -> i64 => {
 /// bytes — only the container differs, and a reader should not have to remember two words
 /// for it. The receiver tells them apart.
 ///
-/// **It copies, twice**, and neither copy is avoidable. A string is a ref-counted box whose
+/// **It copies once**, and that copy is not avoidable: a string is a ref-counted box whose
 /// header sits at its start, so it cannot point into memory it does not own — foreign
-/// memory least of all, which may be freed or rewritten the moment the call returns. The
-/// bytes are gathered into a `[]u8` and then decoded into a fresh string; each pass is
-/// O(n), and the array's growth is amortized doubling.
+/// memory least of all, which may be freed or rewritten the moment the call returns.
+///
+/// It used to copy *twice* — a bounds-checked `get` and a capacity-checked `push` per byte
+/// into a `[]u8`, then that array's own `decode_utf8` into the string. Measured over
+/// 400 KB: 548 µs, against 253 µs for the array builtin doing the same job on memory Lyra
+/// already owned. The pointer spelling of `decode_utf8` is the one memcpy it always needed.
 ///
 /// Invalid UTF-8 is not rejected, matching `read_line` and the builtin: the rune count is
 /// the number of non-continuation bytes, so malformed input yields a string whose length
 /// disagrees with what it holds. One unvalidated answer is better than two different ones.
-pub let decode_utf8 = pure (self: CBuffer) -> string => {
-  var bytes: []u8 = []
-  for i in 0..<self.len { bytes.push(self.get(i)) }
-  bytes.decode_utf8()
-}
+pub let decode_utf8 = pure (self: CBuffer) -> string =>
+  unsafe { self.ptr.decode_utf8(self.len) }
 
 /// A NUL-terminated copy of `self`, to hand to a C function taking `char*`.
 ///

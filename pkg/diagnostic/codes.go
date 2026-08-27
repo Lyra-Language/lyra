@@ -716,6 +716,18 @@ const (
 	// lowers to `i1` and C's `_Bool` is a byte, so passing one would silently disagree
 	// about the calling convention — the class of wrongness this language traps for
 	// everywhere else. A newtype is looked *through*, since it is nominal only.
+	//
+	// **A struct is excluded on an ABI ground too, and not on a layout one** — the two are
+	// worth telling apart, because the layouts *do* match (the FFI fixture proves Lyra's
+	// `{i32, u8, f64, i64}` agrees with C's `sizeof` and every `offsetof`). What a
+	// by-value crossing needs is the platform's *classification*, which LLVM does not
+	// supply: clang rewrites the signature per target, and the three this project can
+	// reach disagree — a 16-byte all-int struct is `[2 x i64]` on aarch64 and two separate
+	// `i64` parameters under x86-64 SysV, `{i32,double}` is `[2 x i64]` there and
+	// `i32, double` here, and a two-byte struct is `i64` on one and `i16` on the other.
+	// x86-64 changes the *arity*, so it reaches call lowering rather than declarations
+	// alone. That is a per-target classifier with a links-cleanly-computes-wrong failure
+	// mode, so the message names the pointer instead, which is correct everywhere.
 	CodeNotFFISafe = "lyra-E063"
 
 	// CodeAliasIsNotConstructible: a type **alias** applied to an operand — `CULong(n)`,
