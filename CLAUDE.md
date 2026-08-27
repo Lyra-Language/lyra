@@ -1276,8 +1276,14 @@ What they have in common is that **each links cleanly when it is wrong**, so the
 a wrong answer rather than a build error. Two rules if you add to it: the expected value
 must come from `testdata/ffi_oracle.c`, a pure-C caller, since a value read off Lyra's own
 output asserts only that Lyra agrees with itself; and the compile cache must stay salted
-with the fixture's bytes, since its key otherwise names the *path*. What is left is zlib in
-CI (`zlib1g-dev` in `asan.Dockerfile`). See `todo.md`.
+with the fixture's bytes, since its key otherwise names the *path*.
+
+**And zlib is the third layer, run rather than only compiled** (08/26):
+`TestExample_ZlibRoundTrips` builds and runs `examples/zlib.lyra` through the **CLI**, since
+the backend harness hardcodes `-lm` and `@link("z")` reaching `-lz` is part of what it
+proves. It self-skips when zlib is absent, which is safe only because `asan.Dockerfile` and
+the CI workflow both install `zlib1g-dev` — the reason is written beside each `apt-get` line,
+since a package whose purpose is undocumented is one a future cleanup removes.
 
 **A libc function that Lyra can express is written in Lyra, not bound.** `cstring_len` is
 `strlen` in prelude-style code, because scanning for a zero byte stopped needing C the

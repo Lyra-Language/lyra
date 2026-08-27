@@ -10,6 +10,37 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**zlib runs in CI, which closes the FFI's testing story.**
+
+Open since 08/19. `examples/zlib.lyra` has proved the round trip by hand for a week; now
+`TestExample_ZlibRoundTrips` builds and runs it, and `zlib1g-dev` is in both
+`asan.Dockerfile` and the CI workflow.
+
+**Why a real library and not only the fixture**, which is the split this entry has always
+been about: the vendored C fixture shows the ABI is self-consistent across a boundary this
+project wrote *both sides of*. Only a library nobody wrote for Lyra shows it matching a
+convention it had to obey rather than choose. The two are not substitutes, and the fixture is
+the one that can be hermetic — which is why zlib needed a package and waited.
+
+Three decisions in a small piece of work:
+
+- **A Go test rather than a CI step**, so the same coverage runs on macOS (where `-lz` links
+  with no package), in the ASan container, and in CI. One thing to keep working instead of
+  three, and it runs in the local loop rather than only after a push.
+- **Through the CLI, not the backend harness.** That harness hardcodes `-lm`, so a test
+  written there would exercise a link line no user gets — and `@link("z")` reaching `-lz` is
+  part of what this is proving. `LYRA_STD` points the in-process CLI at the working copy,
+  which is exactly the override's documented purpose.
+- **It self-skips when zlib is absent**, so a contributor without the package is not blocked.
+  That is only safe because the environments whose job is to catch what macOS misses now
+  install it — and the reason is written beside each `apt-get` line, because a package whose
+  purpose is undocumented is one a future cleanup removes.
+
+The assertions are the program's own — 96 bytes in, 96 out, byte-identical, and a version
+string that came back through a pointer — rather than the compressed size, which is zlib's
+business and may move between versions.
+
+### 08/26/26
 **A match whose arms all diverge: the bad message was a missing lowering.**
 
 `let main = () -> u8 => match x { A => return 1, B => return 2 }` was refused with

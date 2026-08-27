@@ -2628,9 +2628,22 @@ these links cleanly when it is wrong, which is why they are worth having.
   string, so an edited fixture would have been linked against a stale binary. Same shape as
   the regenerated-`parser.c` staleness in rule 1, and verified by editing the fixture and
   watching the test fail rather than pass.
-- **[OPEN] zlib in CI** is what remains of this entry: `zlib1g-dev` in `asan.Dockerfile`
-  and a step. A fixture whose both sides we wrote still cannot demonstrate talking to a
+- **[DONE 08/26] zlib runs automatically**, which closes this entry. `zlib1g-dev` is in
+  `asan.Dockerfile` and in the CI workflow, and `TestExample_ZlibRoundTrips` builds and runs
+  `examples/zlib.lyra` — compress, uncompress, compare, with the version string read back
+  through `std.ffi`. A fixture whose both sides we wrote cannot demonstrate talking to a
   library nobody wrote for us, which is the reason the split above exists.
+  - **A Go test rather than a CI-only step**, so the same coverage runs on macOS (where
+    `-lz` links without a package), in the ASan container, and in CI — one thing to keep
+    working instead of three, and it runs in the local loop rather than only after a push.
+  - **Through the CLI, not the backend harness.** That harness hardcodes `-lm`, so a test
+    written there would exercise a link line no user gets; `@link("z")` reaching `-lz` is
+    part of what this proves. `LYRA_STD` points the in-process CLI at the working copy,
+    which is the override's documented purpose.
+  - **It self-skips when zlib is absent**, so a contributor without the package is not
+    blocked — safe only because the two environments whose job is to catch what macOS misses
+    now install it, with the reason written beside each `apt-get` line, since a package whose
+    purpose is undocumented is one a future cleanup removes.
 
 ### The bulk foreign-bytes primitive — **[DONE 08/26]**
 

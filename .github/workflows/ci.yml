@@ -67,10 +67,17 @@ jobs:
       # run it (they self-skip when clang is absent). Installing clang here
       # keeps that coverage live in CI. libm (-lm), which the float tests
       # link against, ships with the runner's libc dev package.
-      - name: Install clang
+      #
+      # zlib1g-dev is for the FFI's **real-library** proof (`examples/zlib.lyra`, run by
+      # TestExample_ZlibRoundTrips). The vendored C fixture shows the ABI is self-consistent
+      # across a boundary this project wrote both sides of; only a library nobody wrote for
+      # Lyra shows it matching a convention it had to obey rather than choose. `-lz` links
+      # on macOS without a package and not on Linux, so the test self-skips when it is
+      # missing — which is exactly why it is installed here rather than left to chance.
+      - name: Install clang and zlib
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang
+          sudo apt-get install -y clang zlib1g-dev
 
       - name: Build
         working-directory: lyra
