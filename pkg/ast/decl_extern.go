@@ -65,6 +65,7 @@ func (e *ExternDeclStmt) Func() *LambdaExpr {
 	}
 	if e.Signature != nil {
 		lam.ReturnType = e.Signature.ReturnType
+		lam.IsVariadic = e.Signature.IsVariadic
 		for i, p := range e.Signature.Parameters {
 			lam.Parameters = append(lam.Parameters, Parameter{
 				AstBase: AstBase{Location: e.GetLocation()},

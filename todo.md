@@ -2607,13 +2607,75 @@ against Python's `zlib`, with the version string read back through `std.ffi`. Wh
 still open is putting it in CI, which is the part the split above is about: the suite's own
 extern tests call **libc and libm** (`abs`, `sqrt`, `frexp`, `strlen`, `srand`), which need
 no package on either platform and still prove the thing that matters — an ABI Lyra had to
-match rather than choose. A vendored C fixture would add float and struct cases; `zlib1g-dev`
-in `asan.Dockerfile` would let the round-trip run there too.
+match rather than choose.
+
+**[DONE 08/26] The vendored C fixture** is `pkg/backend/llvm/testdata/ffi_fixture.c`, with
+eleven tests in `llvm_ffi_fixture_test.go`. It covers what libc's i32/i64/f64-and-pointers
+surface cannot reach, which is most of the ABI: the **narrow integer widths** (where a
+sign- vs zero-extension mixup is invisible in the IR and wrong only for some values),
+**`float`** (libm is double-only, and a f32 lowered as a double still links), a **mixed
+register-class** argument list, one **long enough to spill** past the register budget on
+both AArch64 and x86-64, **`CLong`/`CULong`**, **out-parameters** at three widths, a
+**struct by pointer** — the whole of the aggregate boundary, since by value is lyra-E063 —
+and **`data()`/`data_mut()`** against a C function rather than against Lyra. Every one of
+these links cleanly when it is wrong, which is why they are worth having.
+- **The expectations are C's, not Lyra's.** `testdata/ffi_oracle.c` makes the same calls
+  from C and prints them the same way; a test compares the two. An expected value read off
+  what the Lyra program printed would assert that Lyra agrees with itself — true by
+  construction, and not the claim.
+- **The compile cache is salted with the fixture's bytes** (`compileCachedSalted`). Its key
+  held `extraArgs`, which names the *file*; everything else in it is content or a version
+  string, so an edited fixture would have been linked against a stale binary. Same shape as
+  the regenerated-`parser.c` staleness in rule 1, and verified by editing the fixture and
+  watching the test fail rather than pass.
+- **[OPEN] zlib in CI** is what remains of this entry: `zlib1g-dev` in `asan.Dockerfile`
+  and a step. A fixture whose both sides we wrote still cannot demonstrate talking to a
+  library nobody wrote for us, which is the reason the split above exists.
+
+### Variadics — **[DONE 08/26]**
+
+`unsafe extern printf: (^u8, ...) -> i32`, and a call to one. Declaring a variadic at
+**fixed arity** was the FFI's worst failure: it compiled, linked, and printed garbage
+(`printf(p, 42)` gave `value=-172916480`), because Apple aarch64 passes variadic arguments
+on the stack while the fixed convention passes them in registers. Named arguments were fine;
+only those landing in the `...` part were wrong, and nothing reported it.
+
+**It did not give Lyra variadic functions**, which is the question worth having asked: two
+features share the spelling, and only one was needed. *Calling* a C variadic requires nothing
+from the language, since every argument is known at the call site; *defining* one would need
+an argument pack and a way to iterate it that nothing else here would use. `lyra-E065` refuses
+the marker anywhere but an extern.
+
+Three parts, and the third is the one with teeth:
+
+- **Grammar** — `...` as a member of `parameter_type_list`, **+1 state** (7,866 → 7,867).
+  A trailing `optional` on `lambda_type` would have wrapped the parenthesized list in a new
+  sequence; a list member grows the tables by the marker alone.
+- **Typecheck** — the arity gains a floor rather than losing a ceiling (C needs the named
+  parameters), and a variadic argument is still FFI-safe or nothing.
+- **C's default argument promotions**, which the compiler owes the caller: narrower-than-`int`
+  widens to `int`, `float` to `double`. Not a convention a caller can be asked to remember —
+  an unpromoted `u8` occupies a different slot from the `i32` the callee reads. The
+  **signedness comes from the Lyra type**, since an i16 and a u16 are the same `i16` in the
+  IR: without that, `-300` arrived as `65236`. Decided in `checkVariadicArguments`, published
+  through `TypeTable.VariadicPromotion`, emitted by the backend, which keeps no table of its
+  own. See `COMPLETED.md`.
+
+**An untyped literal keeps its own default** in a variadic position — `printf(fmt, 42)`
+passes an i64, so `%ld` is its format and `i32(42)` is how `%d` is spelled. Nothing is there
+to adopt from (a variadic parameter has no declared type), and making one position of the
+language default differently from every other would be a rule with no way to see it.
+
+**It makes the ABI right, not the call safe.** A format-string mismatch is undetectable
+without parsing format strings, which would be a second language embedded in this one.
 
 ### What is deliberately not decided here
 
-Variadics, callbacks passed *to* C (a Lyra closure is a code pointer plus a ref-counted
-environment, so it is not a C function pointer), and struct-by-value layout compatibility.
+Callbacks passed *to* C (a Lyra closure is a code pointer plus a ref-counted
+environment, so it is not a C function pointer), and struct-by-value layout compatibility —
+though the layout half is now *measured* rather than open: `TestExec_FFIFixture_StructLayoutMatchesC`
+proves Lyra's `{i32, u8, f64, i64}` matches C's `sizeof` and every `offsetof`, so what remains
+is a codegen question rather than a representational one.
 
 **Non-LP64 targets**, per the width section above: the decision there is to state the
 assumption rather than abstract over it, and `CLong`/`CULong` is the one grep target a

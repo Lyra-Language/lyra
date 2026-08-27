@@ -18,7 +18,17 @@ type LambdaExpr struct {
 	// call a foreign function pure, and the backend would emit a definition with no
 	// blocks. Effects come from the declared bound instead, and the backend declares
 	// rather than defines.
-	IsExtern    bool
+	IsExtern bool
+	// IsVariadic marks the body-less function an `extern printf: (^u8, ...) -> i32` is.
+	// Only an extern can carry it — Lyra has no variadic functions, and the collector
+	// refuses the marker anywhere else (lyra-E065) — so it travels beside IsExtern rather
+	// than being a general property of a lambda.
+	//
+	// It is lifted off the signature into the lambda for the same reason the effect bounds
+	// are: every consumer that matters has the lambda and not the declaration, and the
+	// call path is the one that needs it (an "at least N arguments" arity rule, and C's
+	// default argument promotions on the rest).
+	IsVariadic  bool
 	IsUnsafe    bool
 	IsPure      bool
 	IsDet       bool

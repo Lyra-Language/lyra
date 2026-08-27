@@ -139,3 +139,91 @@ func ffiHint(t types.Type) string {
 	}
 	return ""
 }
+
+// checkVariadicArguments checks a call to a variadic `extern`, and records the type each
+// argument in the `...` part is actually passed at.
+//
+// # The named half is an ordinary call
+//
+// Everything up to the declared parameter count is checked exactly as a fixed-arity call's
+// arguments are — same assignability, same literal-range rule, same contextual narrowing.
+// `...` widens the arity ceiling and nothing else.
+//
+// # The variadic half is C's, and the compiler owes the promotions
+//
+// An argument in the `...` part undergoes C's **default argument promotions**: an integer
+// narrower than `int` widens to `int` (sign-extended if signed, zero-extended if not), and
+// a `float` widens to `double`. That is not a convention a caller can be asked to remember
+// — a `u8` passed unpromoted occupies a different slot from the `i32` the callee reads, and
+// the result is the silent garbage this whole feature exists to stop. The promoted type is
+// recorded on the argument node so the backend emits the widening without re-deriving the
+// rule.
+//
+// # What is not checked, and cannot be
+//
+// The *format string*. `printf("%d", x)` with the wrong `x` is undetectable by any compiler
+// that does not parse format strings, and parsing them would be a second language embedded
+// in this one. `unsafe` already covers the claim; this makes the ABI right, not the call
+// correct.
+func (tc *TypeChecker) checkVariadicArguments(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr) {
+	named := len(lambda.Parameters)
+	tc.elaborateLambdaArgsFromParams(lambda.Parameters, call.Arguments)
+	for i, arg := range call.Arguments {
+		if i < named {
+			tc.checkNamedArgument(calleeName, lambda.Parameters[i], i, arg)
+			continue
+		}
+		argType := tc.inferExprType(arg)
+		if argType == nil {
+			continue
+		}
+		// An untyped literal settles to its **own default** here, not to C's `int`. There
+		// is nothing to adopt from — a variadic parameter has no declared type — and
+		// making one position of the language default differently from every other would
+		// be a rule with no way to see it at the call site. So `printf(fmt, 42)` passes an
+		// i64, and `%ld` is its format; `i32(42)` is how `%d` is spelled.
+		argType = promoteToDefault(argType)
+		tc.typeTable.Set(arg, argType)
+
+		promoted := promoteForVariadic(argType)
+		if !isFFISafe(tc.resolveTypeIfKnown(promoted, arg.GetLocation())) {
+			tc.addErrorCode(arg.GetLocation(), SeverityError, diag.CodeNotFFISafe,
+				"%s: argument %d is %s, which has no C spelling. A variadic argument takes the "+
+					"integer and float widths, `rune`, and a raw pointer `^T`%s",
+				calleeName, i+1, argType, ffiHint(argType))
+			continue
+		}
+		if !types.TypesEqual(promoted, argType) {
+			// The widening C would have applied, recorded where the backend reads it.
+			// Recording the *promoted* type rather than emitting a conversion node keeps
+			// this a property of the call rather than a rewrite of the author's argument,
+			// which is what lets a diagnostic still name what was written.
+			tc.typeTable.SetVariadicPromotion(arg, promoted)
+		}
+	}
+}
+
+// promoteForVariadic is C's default argument promotion: anything narrower than `int`
+// becomes `int`, `float` becomes `double`, everything else is passed as it is.
+//
+// Verified against clang rather than recalled — it emits `sext i8 → i32`, `zext i16 → i32`
+// and `fpext float → double` ahead of the varargs call, which is exactly this table.
+//
+// **`bool` cannot reach here** (lyra-E063 refuses it at every boundary, a bit against a
+// byte), and a newtype is looked through for the same reason it is in `isFFISafe`: it is
+// nominal only, so it is passed as its base and promoted as its base.
+func promoteForVariadic(t types.Type) types.Type {
+	p, ok := types.StripNewtype(t).(types.PrimitiveType)
+	if !ok {
+		return t
+	}
+	switch p.Name {
+	case types.Int8, types.Int16:
+		return types.PrimitiveType{Name: types.Int32}
+	case types.UInt8, types.UInt16:
+		return types.PrimitiveType{Name: types.UInt32}
+	case types.Float32:
+		return types.PrimitiveType{Name: types.Float64}
+	}
+	return t
+}

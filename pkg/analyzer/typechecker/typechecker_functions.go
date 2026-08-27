@@ -435,6 +435,19 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 	total := len(lambda.Parameters)
 	got := len(call.Arguments)
 
+	// A **variadic extern** takes at least its named parameters and then anything: the
+	// arity ceiling is what `...` removes, and it is the only thing it removes. The floor
+	// still holds, since C requires the named ones (they are how a `va_list` is started).
+	if lambda.IsVariadic {
+		if got < required {
+			tc.addError(call.GetLocation(), SeverityError,
+				"%s: expected at least %d argument(s), got %d", calleeName, required, got)
+			return tc.resolveTypeIfKnown(lambda.ReturnType.Type, lambda.GetLocation())
+		}
+		tc.checkVariadicArguments(calleeName, lambda, call)
+		return tc.resolveTypeIfKnown(lambda.ReturnType.Type, lambda.GetLocation())
+	}
+
 	if got < required || got > total {
 		if required == total {
 			tc.addError(call.GetLocation(), SeverityError,
@@ -454,51 +467,7 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 
 	// Check each argument's inferred type against the parameter's declared type.
 	for i, arg := range call.Arguments {
-		param := lambda.Parameters[i]
-		if param.Type == nil {
-			continue // no type annotation on this parameter; cannot check
-		}
-		resolvedParamType := tc.resolveType(param.Type, param.GetLocation())
-		argType := tc.inferExprType(arg)
-		if argType == nil {
-			continue // cannot infer argument type; skip silently
-		}
-		paramName := param.Pattern.GetName()
-		argType, reported := tc.contextualType(arg, resolvedParamType, argType)
-		if reported {
-			continue // already named the offending value
-		}
-		if !tc.assignableValue(arg, argType, resolvedParamType) {
-			tc.addError(arg.GetLocation(), SeverityError,
-				"%s: argument %d (%s): cannot assign %s to %s",
-				calleeName, i+1, paramName, argType, param.Type)
-		} else {
-			// The parameter type is the argument's context: push its width onto
-			// untyped literal args so the backend lowers `add(200)` at the param's
-			// width, not the i64 default. Applies to every assignable arg, not just
-			// `own` ones (width is orthogonal to ownership).
-			tc.propagateLiteralType(arg, resolvedParamType)
-			// And the width must actually hold it. propagateLiteralType deliberately
-			// leaves an unfitting literal untyped, "expecting a downstream site to
-			// report" — but an argument has no downstream, so `direct(300)` against a
-			// `u8` parameter checked clean and printed 44. This is the same pairing the
-			// declaration, reassignment and return positions already make; the language
-			// rule is that a literal which cannot hold its value is an error in *every*
-			// position.
-			tc.checkIntegerLiteralRange(
-				fmt.Sprintf("%s: argument %d (%s)", calleeName, i+1, paramName),
-				arg, resolvedParamType)
-			if param.TypeModifier == types.Mut {
-				tc.checkMutArgument(calleeName, i+1, paramName, arg, resolvedParamType)
-			}
-			if paramOwnsArgument(param.TypeModifier) {
-				// An `own` parameter adopts the argument into its own storage, so
-				// the flavors must match; a borrowed parameter is allocation-
-				// polymorphic and is skipped.
-				tc.checkAllocationCompat(argType, resolvedParamType, arg.GetLocation(),
-					fmt.Sprintf("%s: argument %d (%s)", calleeName, i+1, paramName))
-			}
-		}
+		tc.checkNamedArgument(calleeName, lambda.Parameters[i], i, arg)
 	}
 
 	// `mut`/`ref` arguments are pointers to the caller's storage, so two of them
@@ -1437,4 +1406,59 @@ func (tc *TypeChecker) requireUnsafeCall(name string, callee *ast.LambdaExpr, ca
 	}
 	tc.addErrorCode(call.GetLocation(), SeverityError, diag.CodeUnsafeOutsideUnsafe,
 		"calling unsafe function %q requires an `unsafe` block or function", name)
+}
+
+// checkNamedArgument checks one argument against the parameter it is passed to: contextual
+// narrowing, assignability, the literal-range rule, and the borrow and allocation checks a
+// `mut` or `own` parameter adds.
+//
+// It is a function rather than a loop body because a **variadic extern** has to run exactly
+// this over its named half and something else over the rest, and two copies of an argument
+// check is the shape that drifts (hazard 8) — with a soundness hole at the end of it, since
+// every rule here is one a caller could otherwise slip past.
+func (tc *TypeChecker) checkNamedArgument(calleeName string, param ast.Parameter, i int, arg ast.Expression) {
+	if param.Type == nil {
+		return // no type annotation on this parameter; cannot check
+	}
+	resolvedParamType := tc.resolveType(param.Type, param.GetLocation())
+	argType := tc.inferExprType(arg)
+	if argType == nil {
+		return // cannot infer argument type; skip silently
+	}
+	paramName := param.Pattern.GetName()
+	argType, reported := tc.contextualType(arg, resolvedParamType, argType)
+	if reported {
+		return // already named the offending value
+	}
+	if !tc.assignableValue(arg, argType, resolvedParamType) {
+		tc.addError(arg.GetLocation(), SeverityError,
+			"%s: argument %d (%s): cannot assign %s to %s",
+			calleeName, i+1, paramName, argType, param.Type)
+	} else {
+		// The parameter type is the argument's context: push its width onto
+		// untyped literal args so the backend lowers `add(200)` at the param's
+		// width, not the i64 default. Applies to every assignable arg, not just
+		// `own` ones (width is orthogonal to ownership).
+		tc.propagateLiteralType(arg, resolvedParamType)
+		// And the width must actually hold it. propagateLiteralType deliberately
+		// leaves an unfitting literal untyped, "expecting a downstream site to
+		// report" — but an argument has no downstream, so `direct(300)` against a
+		// `u8` parameter checked clean and printed 44. This is the same pairing the
+		// declaration, reassignment and return positions already make; the language
+		// rule is that a literal which cannot hold its value is an error in *every*
+		// position.
+		tc.checkIntegerLiteralRange(
+			fmt.Sprintf("%s: argument %d (%s)", calleeName, i+1, paramName),
+			arg, resolvedParamType)
+		if param.TypeModifier == types.Mut {
+			tc.checkMutArgument(calleeName, i+1, paramName, arg, resolvedParamType)
+		}
+		if paramOwnsArgument(param.TypeModifier) {
+			// An `own` parameter adopts the argument into its own storage, so
+			// the flavors must match; a borrowed parameter is allocation-
+			// polymorphic and is skipped.
+			tc.checkAllocationCompat(argType, resolvedParamType, arg.GetLocation(),
+				fmt.Sprintf("%s: argument %d (%s)", calleeName, i+1, paramName))
+		}
+	}
 }

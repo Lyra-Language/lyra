@@ -10,6 +10,111 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**Variadic externs — and the question of whether Lyra needed variadic functions.**
+
+Declaring a variadic C function at fixed arity compiled, linked, and printed garbage:
+`printf(p, 42)` gave `value=-172916480`. Apple aarch64 passes variadic arguments on the
+stack while the fixed convention passes them in registers, so the callee read whatever the
+stack held. Named arguments were fine — I checked, `printf(p)` with nothing in the `...`
+part is correct — so the hole was narrow, undiagnosed, and sat under `printf`, `open`,
+`ioctl`, `fcntl`, `execl`, `sqlite3_mprintf`: exactly the declarations a binding author
+writes without thinking.
+
+**The design question was the good one: does supporting this mean Lyra gets variadics?**
+No, and separating the three things that share the word is most of the work. *Calling* a C
+variadic needs nothing from the language — every argument is known at the call site.
+*Defining* a Lyra variadic function needs an argument pack and a way to iterate it, which
+nothing else here would use. *Being* a C variadic callback is moot, since callbacks into C
+are not supported at all. Only the first was built, and `lyra-E065` refuses the marker
+anywhere but an extern.
+
+**The grammar cost +1 state** (7,866 → 7,867), because `...` is a *member* of
+`parameter_type_list` rather than a trailing `optional` on `lambda_type` — an optional would
+have wrapped the parenthesized list in a new sequence and paid for it across every function
+type in the language. It is therefore admitted wherever a function type is written and
+refused by the collector, which is this project's standing trade; the extern rule already
+aliases `lambda_type` to `extern_signature`, so the discriminator was free.
+
+**The real work is C's default argument promotions**, and it is the reason the feature is
+worth having rather than refusing. An argument in the `...` part widens: narrower-than-`int`
+to `int`, `float` to `double`. That is not something a caller can be asked to remember —
+an unpromoted `u8` occupies a different slot from the `i32` the callee reads — so the
+compiler applies it. I read the table off clang rather than recalling it (`sext i8 → i32`,
+`zext i16 → i32`, `fpext float → double`, then `call i32 (ptr, ...) @printf`), and the
+emitted IR now matches that shape instruction for instruction.
+
+**The half that cannot be recovered downstream is signedness.** An i16 and a u16 are the
+same `i16` in LLVM, so a backend deciding the extension on its own zero-extends both — which
+is not hypothetical: `-300` arrived as `65236` until `promoteVariadicArg` consulted the
+recorded Lyra type. The rule lives in `checkVariadicArguments` and is *published*
+(`TypeTable.VariadicPromotion`) rather than re-derived; a second copy of the table in codegen
+would be one that can disagree with the one the diagnostics were written against, and both
+versions produce valid IR, so the disagreement would be silent.
+
+**One decision, taken deliberately.** An untyped literal keeps its own default in a variadic
+position, so `printf(fmt, 42)` passes an i64 and `%ld` is its format. There is nothing to
+adopt from — a variadic parameter has no declared type — and defaulting one position of the
+language differently from every other would be a rule with no way to see it at the call site.
+
+**And a limit stated rather than papered over.** This makes the ABI right, not the call safe.
+A format-string mismatch is undetectable without parsing format strings, which would be a
+second language embedded in this one; `unsafe` already covers that claim.
+
+Tested through the fixture's own `va_arg` readers rather than through printf — a format
+string would be testing the C library's formatter rather than the boundary. Green on macOS
+and on Debian aarch64, which is the comparison that matters for an ABI feature.
+
+### 08/26/26
+**A vendored C fixture for the FFI boundary — the half of the ABI libc cannot reach.**
+
+`extern` has been built front to back since 08/18 and proven end to end against real zlib,
+but the automated coverage was libc and libm: `abs`, `sqrt`, `frexp`, `strlen`, `srand`.
+That is deliberate and worth keeping — a library nobody wrote for Lyra is the thing most
+worth proving — but its *surface* is i32/i64/f64 and pointers, so most of the boundary was
+untested. `testdata/ffi_fixture.c` is the rest of it, and it exists to be an ABI
+counterparty rather than a library.
+
+What it covers, and why each one is worth a test: the **narrow integer widths**, where a
+sign- vs zero-extension mixup is invisible in the IR and wrong only for some values (-3 read
+zero-extended is 253); **`float`**, which libm's double-only surface never crosses and which
+still *links* if Lyra lowers a f32 as a double; a **mixed register-class** argument list,
+where integers and floats come from separate banks so a width error anywhere shifts
+everything after it; a list **long enough to spill** past the register budget on both
+AArch64 and x86-64; **`CLong`/`CULong`**; **out-parameters** at three widths; a **struct by
+pointer**, which is the whole of the aggregate boundary since by value is lyra-E063; and
+**`data()`/`data_mut()`** run against a C function rather than against Lyra.
+
+The common property is the point: **every one of these links cleanly when it is wrong.** A
+struct whose fields Lyra padded differently is not a link error, it is a wrong number, so
+the fixture reports its own `sizeof` and `offsetof` and the test asserts against them
+directly rather than leaving somebody to work backwards from a bad sum.
+
+**The expectations are C's, not Lyra's**, and `testdata/ffi_oracle.c` is what says so. Two
+of the cases are computed rather than obvious, and reading their expected values off what
+the Lyra program printed would assert that Lyra agrees with itself — true by construction,
+and not the claim being made. The oracle makes the same calls from C, prints them the same
+way, and a test compares the two; edit the fixture's arithmetic and both sides move
+together, so a change that moves only one is exactly the bug worth catching. Writing it also
+caught the first two expectations, which I had computed by hand and got wrong — the compiler
+was right both times.
+
+**One harness fix underneath.** The compile cache keyed on the IR, the clang version, the
+platform and `extraArgs` — and `extraArgs` is where the fixture's path goes. A path is not
+its contents, and everything else in that key *is* content, so an edited fixture would have
+been linked against the previously cached binary: a test passing or failing for a reason
+nowhere in the source. `compileCachedSalted` mixes the fixture's bytes in. Verified the way
+this kind of thing has to be — by editing the fixture and watching the test fail.
+
+Also a harness trap worth naming: the fixture tests go through the **prelude** path rather
+than `emitSource`, because they import `std.ffi` and `driver.Analyze` resolves no import
+graph at all. An unresolved import binds nothing, so every use reports *"undefined"* — which
+reads as a language bug and is a harness one. `emitWithPrelude` is now the shared front half.
+
+What is still open from this entry is zlib **in CI**, which needs `zlib1g-dev` in
+`asan.Dockerfile`: a fixture whose both sides we wrote cannot demonstrate the thing zlib
+does.
+
+### 08/26/26
 **An untyped literal *receiver* adopts the width the call settles.**
 
 `200.min(w)` on a `u8` reported *"cannot infer type variable t from these arguments"* about

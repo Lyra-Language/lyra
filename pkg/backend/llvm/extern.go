@@ -84,6 +84,20 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 	if err != nil {
 		return nil, err
 	}
+	// **Variadic-ness is on the emitted signature, not on the call.** LLVM renders a
+	// variadic declaration as `declare i32 @printf(ptr, ...)` and requires every call to
+	// it to name that signature explicitly — `call i32 (ptr, ...) @printf(…)` — which llir
+	// does off `Sig.Variadic` alone. Setting it here is therefore the whole of the
+	// backend's part: the call path needs no case for it, and cannot get it wrong for a
+	// symbol declared through this function.
+	//
+	// Without it the call is emitted at fixed arity, which links and is silently wrong on
+	// every target whose variadic convention differs from its ordinary one — Apple aarch64
+	// puts variadic arguments on the stack while the fixed convention puts them in
+	// registers, so the callee reads whatever the stack happened to hold.
+	if ext.Signature != nil && ext.Signature.IsVariadic {
+		declared.Sig.Variadic = true
+	}
 	l.externs[ext.Name] = externDecl{fn: declared, signature: ext.Signature, at: ext.NameLocation}
 	return declared, nil
 }

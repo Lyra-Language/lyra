@@ -738,6 +738,21 @@ const (
 	// naming the difference is what makes an author reach for a wrapper again.
 	CodeAliasIsNotConstructible = "lyra-E064"
 
+	// CodeVariadicOutsideExtern: the C variadic marker `...` in a function type that is
+	// not an `extern` signature — `let f: (i32, ...) -> i32`, or a lambda's own parameter
+	// list.
+	//
+	// **Lyra has no variadic functions, and adding `...` to externs did not give it any.**
+	// The two are separate features that share a spelling: *calling* a C variadic needs
+	// nothing from the language, since every argument is known at the call site, while
+	// *defining* one needs an argument pack and a way to iterate it that nothing else here
+	// would use. So the marker means "this symbol is C's `...`" and nothing else.
+	//
+	// The grammar admits it wherever a function type is written, on this project's
+	// standing trade (the collector gives a better message than a syntax error pointing at
+	// whichever token failed to shift), so this is the diagnostic that trade is paid for.
+	CodeVariadicOutsideExtern = "lyra-E065"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

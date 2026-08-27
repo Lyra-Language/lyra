@@ -93,6 +93,20 @@ func binCacheDir() string {
 // and keeps the key uniform.
 func compileCached(t *testing.T, clang, ir string, extraArgs ...string) string {
 	t.Helper()
+	return compileCachedSalted(t, clang, ir, "", extraArgs...)
+}
+
+// compileCachedSalted is compileCached with extra bytes mixed into the key.
+//
+// It exists because `extraArgs` names a *file* for the FFI fixture, and a file name is not
+// its contents. Everything else in the key is either the content itself (the IR) or a
+// version string, so an unsalted key would hand back a binary linked against the previous
+// fixture after it was edited — a cache serving a stale artifact whose symptom is a test
+// failing, or worse passing, for reasons nowhere in the source. That is the same staleness
+// the workspace hits with a regenerated `parser.c` (CLAUDE.md rule 1), and it is cheaper to
+// key on content here than to notice it later.
+func compileCachedSalted(t *testing.T, clang, ir, salt string, extraArgs ...string) string {
+	t.Helper()
 
 	compile := func(binPath string) {
 		llPath := filepath.Join(t.TempDir(), "prog.ll")
@@ -114,7 +128,7 @@ func compileCached(t *testing.T, clang, ir string, extraArgs ...string) string {
 	}
 
 	h := sha256.New()
-	h.Write([]byte(clangTool.ver + "|" + runtime.GOOS + "/" + runtime.GOARCH + "|" + strings.Join(extraArgs, " ") + "\x00"))
+	h.Write([]byte(clangTool.ver + "|" + runtime.GOOS + "/" + runtime.GOARCH + "|" + strings.Join(extraArgs, " ") + "|" + salt + "\x00"))
 	h.Write([]byte(ir))
 	bin := filepath.Join(dir, hex.EncodeToString(h.Sum(nil)))
 	if _, err := os.Stat(bin); err == nil {

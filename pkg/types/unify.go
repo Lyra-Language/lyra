@@ -55,6 +55,15 @@ func TypesEqual(a, b Type) bool {
 		if at.IsPure != bt.IsPure || at.IsDet != bt.IsDet || at.IsNoAlloc != bt.IsNoAlloc {
 			return false
 		}
+		// So is variadic-ness, and for a sharper reason than the bounds: a variadic call
+		// is a *different LLVM instruction* from a fixed-arity one, and the two disagree
+		// about where arguments live. Two declarations of one C symbol that differ only
+		// here must therefore be refused (`lyra-E064`'s conflicting-signatures check keys
+		// on this), or one call site would pass in registers what the other reads off the
+		// stack.
+		if at.IsVariadic != bt.IsVariadic {
+			return false
+		}
 		return TypesEqual(at.ReturnType.Type, bt.ReturnType.Type)
 	case NamedStructType:
 		bt, ok := b.(NamedStructType)

@@ -27,8 +27,9 @@ func (t *TypeTable) Clone() *TypeTable {
 		return nil
 	}
 	return &TypeTable{
-		entries: cloneMap(t.entries),
-		callees: cloneMap(t.callees),
+		entries:            cloneMap(t.entries),
+		callees:            cloneMap(t.callees),
+		variadicPromotions: cloneMap(t.variadicPromotions),
 	}
 }
 
@@ -118,6 +119,11 @@ func (t *TypeTable) Absorb(other *TypeTable) {
 			if _, ok := t.callees[k]; !ok {
 				t.callees[k] = v
 			}
+		}
+	}
+	for k, v := range other.variadicPromotions {
+		if _, ok := t.variadicPromotions[k]; !ok {
+			t.SetVariadicPromotion(k, v)
 		}
 	}
 }

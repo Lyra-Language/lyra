@@ -1116,6 +1116,34 @@ compiler already hardcodes LP64 in three places — `layout.go`'s `pointerSize`,
 | `int` | `i32` | `float` | `f32` |
 | `unsigned int` | `u32` | `double` | `f64` |
 | `void` | `void` | `T*`, `void*` | `^T` / `^u8` |
+| `...` | `...` (extern only) | | |
+
+**`...` declares a C variadic** — `unsafe extern printf: (^u8, ...) -> i32` — and it is the
+only place the marker is legal (`lyra-E065`), because **Lyra has no variadic functions of
+its own**. Two features share the spelling and only one is needed: calling a C variadic
+requires nothing from the language, since every argument is known at the call site, while
+defining one would need an argument pack nothing else here would use.
+
+Three rules, of which the third is the reason the feature exists:
+
+- **The arity gains a floor, not a ceiling.** C needs the named parameters (they are how a
+  `va_list` starts), so `(...)` alone is refused and `...` must come last.
+- **A variadic argument is still FFI-safe or nothing.** `...` widens the arity, not the set
+  of types that cross.
+- **The compiler owes C's default argument promotions.** An integer narrower than `int`
+  widens to `int` — *signed by the Lyra type*, since an i16 and a u16 are the same `i16` in
+  the IR — and a `float` widens to `double`. `checkVariadicArguments` decides them and
+  publishes them (`TypeTable.VariadicPromotion`); the backend emits the sext/zext/fpext and
+  keeps no table of its own.
+
+Declaring one at **fixed arity** is what this replaces, and it was the worst failure the FFI
+had: it compiled, linked, and printed garbage, because Apple aarch64 passes variadic
+arguments on the stack while the fixed convention passes them in registers. Named arguments
+were fine; only those landing in the `...` part were wrong.
+
+**This makes the ABI right, not the call safe.** A format-string mismatch is undetectable
+without parsing format strings, which would be a second language embedded in this one;
+`unsafe` already covers that claim.
 
 `_Bool` is absent deliberately (`lyra-E063`): Lyra's `bool` is one bit and C's is a byte.
 So is a borrow modifier — `mut`/`ref` is Lyra's own by-reference passing, which at the
@@ -1179,8 +1207,20 @@ either harmless or already a width error.
 
 **Both directions work.** A buffer goes *out* as `xs.data_mut()` plus a length, which is
 what zlib's `compress` takes; a `^u8` coming *back* is read through `p.offset(n)^`, and
-`std.ffi`'s `CBuffer` is the checked wrapper over it (see "Raw pointers" above). What is
-left at the boundary is the extern tests in CI. See `todo.md`.
+`std.ffi`'s `CBuffer` is the checked wrapper over it (see "Raw pointers" above).
+
+**The boundary is tested in two layers, and the split is deliberate.** `llvm_extern_test.go`
+calls **libc and libm**, because a library nobody wrote for Lyra is the thing most worth
+proving and those need no package on either platform;
+`pkg/backend/llvm/testdata/ffi_fixture.c` covers what libc's i32/i64/f64-and-pointers
+surface cannot reach — the narrow widths, `float`, mixed register classes, a spilling
+argument list, `CLong`/`CULong`, out-parameters, a struct by pointer, `data()`/`data_mut()`.
+What they have in common is that **each links cleanly when it is wrong**, so the failure is
+a wrong answer rather than a build error. Two rules if you add to it: the expected value
+must come from `testdata/ffi_oracle.c`, a pure-C caller, since a value read off Lyra's own
+output asserts only that Lyra agrees with itself; and the compile cache must stay salted
+with the fixture's bytes, since its key otherwise names the *path*. What is left is zlib in
+CI (`zlib1g-dev` in `asan.Dockerfile`). See `todo.md`.
 
 **A libc function that Lyra can express is written in Lyra, not bound.** `cstring_len` is
 `strlen` in prelude-style code, because scanning for a zero byte stopped needing C the

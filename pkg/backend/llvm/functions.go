@@ -504,6 +504,20 @@ func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 	// A short argument list means a default the front end should have filled did not reach
 	// here. Emitting the call anyway would produce IR whose argument count disagrees with
 	// the callee — invalid, and on a good day caught by clang rather than by us.
+	// A **variadic** callee has a floor rather than an exact count: `fn.Params` is the
+	// named half and everything past it is the `...`. The front end has already checked
+	// the floor and refused a non-FFI-safe argument, so what is left here is only to not
+	// mistake a legal call for a short one.
+	if fn.Sig.Variadic {
+		if len(args) < len(fn.Params) {
+			return nil, nil, fmt.Errorf("llvm: %s expects at least %d argument(s), got %d",
+				fn.GlobalIdent.Ident(), len(fn.Params), len(args))
+		}
+		return block.NewCall(fn, args...), block, nil
+	}
+	// A short argument list means a default the front end should have filled did not reach
+	// here. Emitting the call anyway would produce IR whose argument count disagrees with
+	// the callee — invalid, and on a good day caught by clang rather than by us.
 	if len(params) > 0 && len(args) != len(fn.Params) {
 		return nil, nil, fmt.Errorf("llvm: %s expects %d argument(s), got %d",
 			fn.GlobalIdent.Ident(), len(fn.Params), len(args))
@@ -563,9 +577,56 @@ func (l *lowerer) lowerCallArgs(block *ir.Block, args []value.Value, argExprs []
 		if diverged(v, block) {
 			return nil, block, false, nil
 		}
+		v = l.promoteVariadicArg(block, argExpr, v)
 		args = append(args, v)
 	}
 	return args, block, true, nil
+}
+
+// promoteVariadicArg applies C's default argument promotion to an argument the typechecker
+// recorded as landing in a `...` position: an integer narrower than `int` widens to `int`,
+// a `float` to `double`.
+//
+// **The widening is here and the rule is not.** Which arguments are variadic, and what each
+// promotes to, is the boundary's question and the typechecker answered it
+// (`checkVariadicArguments`); this reads the answer and emits sext/zext/fpext. A second copy
+// of the table in codegen is a table that can disagree with the one the diagnostics were
+// written against — and the disagreement would be silent, since either version produces
+// valid IR.
+//
+// The signedness comes from the *source* Lyra type, which is the only place it lives: LLVM
+// integers do not carry it, so an i16 and a u16 are the same `i16` here and would both
+// zero-extend. That is not hypothetical — it is what this function was written to fix, and
+// `printf("%d", some_i16)` printed 65236 for -300 until it existed.
+func (l *lowerer) promoteVariadicArg(block *ir.Block, argExpr ast.Expression, v value.Value) value.Value {
+	promoted, ok := l.res.TypeTable.VariadicPromotion(argExpr)
+	if !ok {
+		return v
+	}
+	target, err := l.lowerType(promoted)
+	if err != nil {
+		return v // the front end already refused anything that cannot lower
+	}
+	switch dst := target.(type) {
+	case *lltypes.IntType:
+		src, ok := v.Type().(*lltypes.IntType)
+		if !ok || src.BitSize >= dst.BitSize {
+			return v
+		}
+		signed := false
+		if srcT, ok := l.recordedType(argExpr); ok {
+			if p, ok := types.StripNewtype(srcT).(types.PrimitiveType); ok {
+				signed = IsSignedInt(p.Name)
+			}
+		}
+		return coerceIntWidth(block, v, signed, dst)
+	case *lltypes.FloatType:
+		if _, ok := v.Type().(*lltypes.FloatType); !ok {
+			return v
+		}
+		return coerceFloatWidth(block, v, dst)
+	}
+	return v
 }
 
 // argumentAddress yields the address to pass for a by-reference parameter

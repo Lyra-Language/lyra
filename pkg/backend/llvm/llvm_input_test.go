@@ -66,8 +66,18 @@ func buildAndRunWithPrelude(t *testing.T, src, input string) string {
 // that printed nothing for any other reason.
 func preludeBinary(t *testing.T, src string) string {
 	t.Helper()
-	clang := lookClang(t)
+	return compileCached(t, lookClang(t), emitWithPrelude(t, src))
+}
 
+// emitWithPrelude is preludeBinary's front half: resolve src's import graph against the
+// real standard library, analyze it, and return the emitted IR.
+//
+// Split out because a test may need to compile that IR against something else — the FFI
+// fixture links a C file alongside it — and because `emitSource` cannot stand in: it goes
+// through driver.Analyze, which resolves no imports at all, so an `import std.ffi.{ … }`
+// silently binds nothing and every use of it reports "undefined".
+func emitWithPrelude(t *testing.T, src string) string {
+	t.Helper()
 	dir := t.TempDir()
 	entry := filepath.Join(dir, "app.lyra")
 	if err := os.WriteFile(entry, []byte(src), 0o644); err != nil {
@@ -90,8 +100,7 @@ func preludeBinary(t *testing.T, src string) string {
 	if err != nil {
 		t.Fatalf("emit: %v", err)
 	}
-
-	return compileCached(t, clang, string(ir))
+	return string(ir)
 }
 
 // read_line's contract, one case per thing that can come off a stream. The EOF

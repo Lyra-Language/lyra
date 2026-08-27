@@ -1687,9 +1687,50 @@ Three things are decisions rather than details:
   and at the boundary it is either inert (a `mut` scalar still goes by value) or an ABI
   mismatch (`mut ^i64` reads as a pointer and passes an `i64**`).
 
+**A variadic extern sets `Sig.Variadic` on the *declaration*, and that is the whole of the
+backend's part** (08/26). LLVM renders it as `declare i32 @printf(ptr, ...)` and requires
+every call to name that signature explicitly — `call i32 (ptr, ...) @printf(…)` — which llir
+emits off that flag alone, so the call path needs no case for it. `lowerDirectCall`'s arity
+check becomes a floor rather than an equality, and `promoteVariadicArg` emits the widening
+the typechecker recorded (`TypeTable.VariadicPromotion`). **The promotion table is not
+here**: which arguments are variadic and what each widens to is the boundary's question, and
+a second copy in codegen is one that can disagree with the one the diagnostics were written
+against — silently, since both versions produce valid IR. What this file does own is the
+*signedness* of an integer widening, read from the recorded Lyra type, because an i16 and a
+u16 are the same `i16` in LLVM and a backend guessing zero-extension turns `-300` into
+`65236`.
+
 `@link("z")` reaches the link line through `driver.Result.Links` and `lyrac`'s
 `linkFlags` — and through every "compile with" hint, which must name the same libraries as
 the build it stands in for.
+
+### Testing the boundary: real libraries, then a fixture
+
+**`llvm_extern_test.go` calls libc and libm on purpose** — `abs`, `sqrt`, `frexp`, `strlen`,
+`srand` — because a library nobody wrote for Lyra is the thing most worth proving, and those
+need no package on either platform. What they cannot reach is most of the ABI: libc's surface
+is i32/i64/f64 and pointers.
+
+**`testdata/ffi_fixture.c` is the rest**, exercised by `llvm_ffi_fixture_test.go` (08/26):
+the narrow integer widths, `float`, a mixed register-class argument list, one long enough to
+spill on both AArch64 and x86-64, `CLong`/`CULong`, out-parameters, a struct by pointer, and
+`data()`/`data_mut()` against a C function. The property they share is why they exist —
+**every one of them links cleanly when it is wrong**, so a mismatch is a wrong answer rather
+than a build failure. The fixture reports its own `sizeof`/`offsetof` so a layout
+disagreement is reported as one.
+
+Two rules for anything added here:
+
+- **The expected value must be C's.** `testdata/ffi_oracle.c` makes the computed calls from
+  C and a test compares its output to the Lyra program's. A value read off what Lyra printed
+  asserts that Lyra agrees with itself, which is true by construction and is not the claim.
+- **The compile cache is salted with the fixture's bytes** (`compileCachedSalted`), because
+  the key otherwise holds the fixture's *path* — and a path is not its contents, so an edit
+  would be linked against the previously cached binary.
+
+The fixture tests go through `emitWithPrelude`, not `emitSource`: they import `std.ffi`, and
+`driver.Analyze` resolves no import graph, so every use of an imported name reports
+"undefined".
 
 ## Behavioural tests
 

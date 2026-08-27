@@ -883,8 +883,10 @@ func (c *Collector) parseAnonymousTupleType(node *sitter.Node) types.Type {
 }
 
 func (c *Collector) parseLambdaType(node *sitter.Node) *types.LambdaType {
+	params, variadic := c.parseParameterTypes(cst.Field(node, "parameter_types"), node)
 	return &types.LambdaType{
-		Parameters: c.parseParameterTypes(cst.Field(node, "parameter_types")),
+		Parameters: params,
+		IsVariadic: variadic,
 		ReturnType: types.ReturnType{Type: c.parseType(cst.Field(node, "return_type"))},
 		// The declared effect bounds (`f: pure () -> t`). They are labelled fields on
 		// lambda_type, so presence alone is the answer — no text comparison.
@@ -894,8 +896,16 @@ func (c *Collector) parseLambdaType(node *sitter.Node) *types.LambdaType {
 	}
 }
 
-func (c *Collector) parseParameterTypes(node *sitter.Node) []types.ParameterType {
+// parseParameterTypes collects a function type's parameters, and reports whether the list
+// ended with the C variadic marker.
+//
+// `owner` is the enclosing function type, needed for two things the parameter list cannot
+// answer for itself: whether `...` is allowed here at all — it is an `extern`'s and nothing
+// else's, and the alias the grammar puts on an extern's signature is what says so — and
+// where to report it.
+func (c *Collector) parseParameterTypes(node, owner *sitter.Node) ([]types.ParameterType, bool) {
 	parameterTypes := []types.ParameterType{}
+	variadic := false
 	if node == nil {
 		// `parameter_types` is an optional field (lambda_type.js): a
 		// zero-parameter lambda type like `() -> string` omits it entirely,
@@ -903,15 +913,50 @@ func (c *Collector) parseParameterTypes(node *sitter.Node) []types.ParameterType
 		// parameters. Calling a *sitter.Node accessor (ChildCount, Child, …)
 		// on a nil node hangs inside the go-tree-sitter CGO binding instead
 		// of panicking, so this guard is load-bearing, not defensive fluff.
-		return parameterTypes
+		return parameterTypes, false
 	}
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
-		if child.Kind() == "parameter_type" {
+		switch child.Kind() {
+		case "parameter_type":
+			// A named parameter *after* the marker. C has no such position — everything
+			// past `...` is variadic — so this is the author writing the list in the
+			// wrong order rather than describing a signature the ABI has.
+			if variadic {
+				c.ctx.AddErrorCoded(child, CollectorErrorSeverityError, diag.CodeVariadicOutsideExtern,
+					"`...` must be the last parameter: everything after it in a C signature is variadic")
+				continue
+			}
 			parameterTypes = append(parameterTypes, c.parseParameterType(child))
+		case "variadic_parameter":
+			if variadic {
+				c.ctx.AddErrorCoded(child, CollectorErrorSeverityError, diag.CodeVariadicOutsideExtern,
+					"`...` may appear only once in a signature")
+				continue
+			}
+			// **Only an `extern`.** The grammar admits the marker wherever a function
+			// type is written, on the standing trade that a named diagnostic beats a
+			// syntax error; this is where that is paid. The discriminator is free: the
+			// extern rule aliases `lambda_type` to `extern_signature`, so the node knows
+			// which it is without anything being threaded down to here.
+			if owner == nil || owner.Kind() != "extern_signature" {
+				c.ctx.AddErrorCoded(child, CollectorErrorSeverityError, diag.CodeVariadicOutsideExtern,
+					"`...` is the C variadic marker and belongs only to an `extern` signature; Lyra has no variadic functions of its own")
+				continue
+			}
+			// C requires at least one named parameter before `...` (a `va_list` has to
+			// start somewhere), and every real variadic API has one — a format string, a
+			// count, a sentinel. Refusing `(...)` costs nothing and keeps a declaration
+			// from promising a shape no C compiler would accept.
+			if len(parameterTypes) == 0 {
+				c.ctx.AddErrorCoded(child, CollectorErrorSeverityError, diag.CodeVariadicOutsideExtern,
+					"a variadic `extern` needs at least one named parameter before `...`")
+				continue
+			}
+			variadic = true
 		}
 	}
-	return parameterTypes
+	return parameterTypes, variadic
 }
 
 func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {

@@ -20,6 +20,17 @@ type LambdaType struct {
 	IsPure    bool
 	IsDet     bool
 	IsNoAlloc bool
+	// IsVariadic marks a C variadic signature — `(^u8, ...) -> i32`. It exists only for
+	// an `extern`: Lyra has no variadic functions of its own, because calling one needs
+	// nothing from the language (every argument is known at the call site) while
+	// *defining* one needs an argument pack that nothing else here would use. The
+	// collector refuses the marker anywhere but an extern for that reason.
+	//
+	// Part of the *type* rather than of the declaration because the backend needs it at
+	// the call: an LLVM varargs call is emitted against the callee's explicit signature,
+	// which is a different instruction from an ordinary one, and TypesEqual must tell the
+	// two apart or a variadic and a fixed-arity declaration of one symbol would agree.
+	IsVariadic bool
 }
 
 func (*LambdaType) typeNode() {}
@@ -28,6 +39,9 @@ func (t *LambdaType) GetName() string {
 	paramTypeNames := make([]string, len(t.Parameters))
 	for i, param := range t.Parameters {
 		paramTypeNames[i] = param.String()
+	}
+	if t.IsVariadic {
+		paramTypeNames = append(paramTypeNames, "...")
 	}
 	return fmt.Sprintf("%s(%s) -> %s", t.EffectPrefix(),
 		strings.Join(paramTypeNames, ", "), t.ReturnType.String())
