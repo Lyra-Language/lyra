@@ -88,17 +88,23 @@ let main = () -> void => {
 // bug, and the empty string it would otherwise produce is indistinguishable from a
 // correct empty slice. A negative bound traps rather than wrapping to a huge
 // unsigned value and merely failing to be found.
+//
+// **The bounds arrive through parameters.** A *provable* negative bound is a compile error
+// (lyra-E022, 08/26), so a literal one never reaches this trap — written literally these
+// rows would silently stop testing the trap and start testing the front end.
 func TestExec_StringSliceTrapsOutOfRange(t *testing.T) {
 	t.Parallel()
-	for name, expr := range map[string]string{
-		"end past the rune count": `s.slice(0, 6)`,
-		"start past the end":      `s.slice(3, 1)`,
-		"negative start":          `s.slice(-1, 2)`,
-		"start past the string":   `s.slice(6, 6)`,
+	for name, bounds := range map[string]string{
+		"end past the rune count": `0, 6`,
+		"start past the end":      `3, 1`,
+		"negative start":          `-1, 2`,
+		"start past the string":   `6, 6`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+			expr := "cut(s, " + bounds + ")"
 			src := `
+let cut = (s: string, a: i64, b: i64) -> string => s.slice(a, b)
 let main = () -> void => {
   let s = "héllo";
   println("[${` + expr + `}]");
@@ -545,12 +551,20 @@ let main = () -> void => {
 // bound (08/12; it counted from the end before, and this pins the change). The
 // negative rows must trap *before* the helper's backward walk could resolve them to a
 // valid offset, which is exactly what the guard on the written bounds is for.
+//
+// **The bounds arrive through parameters**, which is not incidental: a *provable* negative
+// is a compile error as of 08/26 (lyra-E022, the rule an index already followed), so a
+// literal one never reaches this trap. Written literally, these rows would have stopped
+// testing the trap and started testing the front end — silently, since the harness would
+// have failed on the diagnostic rather than on the exit code. The trap is still the answer
+// for a bound the compiler cannot settle, and that is what these now exercise.
 func TestExec_NegativeStringSliceOutOfRangeTraps(t *testing.T) {
 	t.Parallel()
-	for _, expr := range []string{"s.slice(3, 1)", "s.slice(1, -1)", "s.slice(-1, 5)", "s.slice(-3, -1)", "s.slice(0, 6)", "s.slice(6, 6)"} {
-		t.Run(expr, func(t *testing.T) {
+	for _, bounds := range []string{"3, 1", "1, -1", "-1, 5", "-3, -1", "0, 6", "6, 6"} {
+		t.Run("s.slice("+bounds+")", func(t *testing.T) {
 			t.Parallel()
-			src := "\nmodule main\nlet main = () -> void => {\n  let s = \"héllo\";\n  println(\"[${" + expr + "}]\");\n}\n"
+			expr := "cut(s, " + bounds + ")"
+			src := "\nmodule main\nlet cut = (s: string, a: i64, b: i64) -> string => s.slice(a, b)\nlet main = () -> void => {\n  let s = \"héllo\";\n  println(\"[${" + expr + "}]\");\n}\n"
 			stderr, code := buildAndRunPanic(t, src)
 			if code != trapExitCode {
 				t.Errorf("%s exited %d; want %d (the trap)", expr, code, trapExitCode)

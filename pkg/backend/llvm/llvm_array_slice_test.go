@@ -84,19 +84,24 @@ func TestExec_ArraySliceRetainsManagedElementsASan(t *testing.T) {
 // indistinguishable from a correct empty slice.
 func TestExec_ArraySliceTraps(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct{ name, expr string }{
-		{"end past the length", "xs.slice(0, 6)"},
-		{"start past the length", "xs.slice(9, 9)"},
-		{"inverted", "xs.slice(3, 1)"},
-		{"negative start", "xs.slice(-1, 2)"},
-		{"negative end", "xs.slice(0, -1)"},
+	// **The bounds arrive through parameters.** A *provable* negative bound is a compile
+	// error (lyra-E022, 08/26), so a literal one never reaches this trap — written
+	// literally these rows would silently stop testing the trap and start testing the
+	// front end. The trap is still the answer for a bound the compiler cannot settle.
+	for _, c := range []struct{ name, bounds string }{
+		{"end past the length", "0, 6"},
+		{"start past the length", "9, 9"},
+		{"inverted", "3, 1"},
+		{"negative start", "-1, 2"},
+		{"negative end", "0, -1"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
 			out, code := buildAndRunPanic(t, `
+let cut = (xs: []i64, a: i64, b: i64) -> []i64 => xs.slice(a, b)
 let main = () -> void => {
   var xs: []i64 = [1, 2, 3, 4, 5]
-  println(`+c.expr+`.len())
+  println(cut(xs, `+c.bounds+`).len())
 }
 `)
 			if code != 101 {

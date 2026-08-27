@@ -2753,10 +2753,20 @@ See `COMPLETED.md`.
     pre-existing; a loud refusal rather than wrong code (rule 5), so low severity, but the
     message should say what it means.
 
-- **[OPEN] A provable negative slice bound is a run-time trap, not `lyra-E022`.**
-  `xs.slice(-1, 2)` and `s.slice(-1, 2)` both trap where `xs[-1]` is a compile error naming
-  the `from_end` spelling. Pre-existing on the string side and matched here for consistency;
-  the fix is one check over both, at the two call sites the fold already reaches.
+- **[DONE 08/26] A provable negative slice bound is `lyra-E022`**, which is the rule an
+  index already followed and the one position that had been left out. `s.slice(-1, 2)` and
+  `xs.slice(0, -1)` reached the run-time trap where `xs[-1]` was refused at compile time.
+  - **The message cannot name `from_end`**, which is what the index rule offers: a slice
+    takes two *positions* rather than one element, so the end-relative accessor answers a
+    different question. It names computing the position — `slice(0, len() - 1)`.
+  - **The reach is exactly the index rule's**, because both go through
+    `resolveConstantInt`: a literal, a negation of one, and a `const` bound to either.
+    Constant *arithmetic* (`const LO = 0 - 2`) folds in neither, so the two cannot drift.
+  - **Three tests were pinning the run-time trap for a literal bound**, including one
+    written this morning for array `slice`. Each now passes its bounds through parameters,
+    so the trap path stays covered for a bound the compiler cannot settle — written
+    literally they would have stopped testing the trap and started testing the front end,
+    and the harness would have failed on the diagnostic rather than on the exit code.
 
 ### Variadics — **[DONE 08/26]**
 

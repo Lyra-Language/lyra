@@ -10,6 +10,37 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**A provable negative slice bound is a compile error.**
+
+`xs[-1]` has been refused since 08/12 — an index does not count from the end, and in a
+language whose thesis is trap-over-silently-wrong the most common off-by-one deserves the
+error rather than a valid read of the wrong element. A slice *bound* is the same value in
+the same kind of position and had been left out: `s.slice(-1, 2)` reached the run-time trap.
+
+Two details worth keeping. **The message cannot name `from_end`**, which is what the index
+rule offers, because a slice takes two *positions* rather than one element and the
+end-relative accessor answers a different question; it names computing the position instead.
+And **the reach is exactly the index rule's** — both go through `resolveConstantInt`, so a
+literal, a negation of one, and a `const` bound to either are caught while constant
+*arithmetic* is caught by neither. Sharing the helper is what stops the two from drifting;
+the documented "a literal, a folded constant" is accurate about what it does and loose about
+arithmetic.
+
+**Three tests were pinning the run-time trap for a *literal* bound** — including one written
+this morning for array `slice`. Each now passes its bounds through parameters, which keeps
+the trap path covered for a bound the compiler cannot settle. Written literally they would
+have stopped testing the trap and started testing the front end, and the harness would have
+reported the diagnostic rather than a wrong exit code — a test that quietly changes what it
+tests.
+
+That is the **fourth** time in this stretch a test pinned behaviour a change was meant to
+move: the stale string hint, the extern-closure refusal that became a feature, the two
+docgen renderings, and now these. The pattern is worth stating: a test written against a
+*refusal* or a *fallback* has to be revisited when that becomes a rule, and only the suite
+says so — which is an argument for asserting the thing a reader is told to do rather than
+the mechanism that tells them.
+
+### 08/26/26
 **An extern names its parameters.**
 
 ```lyra

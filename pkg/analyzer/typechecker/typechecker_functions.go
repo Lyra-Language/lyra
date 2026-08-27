@@ -1110,6 +1110,7 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 		tc.methodTable.SetBuiltinMethod(call, builtinMethodAllocates(objType, methodName))
 		tc.checkBuiltinMutatesReceiver(objType, methodName, member)
 		tc.requireUnsafeBuiltin(objType, methodName, member)
+		tc.checkSliceBounds(methodName, call)
 		return tc.inferLambdaCallFromType(methodName, sig, call)
 	}
 
@@ -1165,6 +1166,10 @@ func (tc *TypeChecker) inferMemberCall(member *ast.MemberExpr, call *ast.Functio
 				tc.typeTable.Set(member.Object, base)
 				tc.typeTable.Set(member, sig)
 				tc.methodTable.SetBuiltinMethod(call, builtinMethodAllocates(base, methodName))
+				// A newtype is transparent to its base's methods, so it is transparent to
+				// their argument rules too — `newtype Name = string` slices exactly as a
+				// string does, and a negative bound is as wrong through the wrapper.
+				tc.checkSliceBounds(methodName, call)
 				return tc.inferLambdaCallFromType(methodName, sig, call)
 			}
 		}
@@ -1482,5 +1487,35 @@ func (tc *TypeChecker) checkNamedArgument(calleeName string, param ast.Parameter
 			tc.checkAllocationCompat(argType, resolvedParamType, arg.GetLocation(),
 				fmt.Sprintf("%s: argument %d (%s)", calleeName, i+1, paramName))
 		}
+	}
+}
+
+// checkSliceBounds refuses a **provable negative** bound on `slice`, which is the rule an
+// index already followed and the one position that had been left out.
+//
+// `xs[-1]` has been a compile error since 08/12 — an index does not count from the end, and
+// in a language whose thesis is trap-over-silently-wrong the most common off-by-one deserves
+// the error rather than a valid read of the wrong element. A slice bound is the same value
+// in the same kind of position, and `s.slice(-1, 2)` was reaching the run-time trap
+// instead. Provable → compile error here; a runtime negative → the same bounds trap as
+// before, which both backends already emit.
+//
+// **The message cannot name `from_end`**, which is what the index rule offers: a slice takes
+// two *positions* rather than one element, and the end-relative accessor answers a different
+// question. The fix is to compute the position, so that is what it says.
+func (tc *TypeChecker) checkSliceBounds(name string, call *ast.FunctionCallExpr) {
+	// No receiver test: this runs only where `builtinMethodSignature` already resolved
+	// `slice`, so the receiver is a string or an array by construction.
+	if name != "slice" || len(call.Arguments) != 2 {
+		return
+	}
+	for i, which := range []string{"start", "end"} {
+		n, ok := tc.resolveConstantInt(call.Arguments[i])
+		if !ok || n >= 0 {
+			continue
+		}
+		tc.addErrorCode(call.Arguments[i].GetLocation(), SeverityError, diag.CodeIndexOutOfBounds,
+			"slice %s bound %d is negative — a bound is a position, not an offset from the end; "+
+				"compute it, as in `slice(0, len() - 1)`", which, n)
 	}
 }
