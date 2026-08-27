@@ -10,6 +10,50 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**NUL-terminated string boxes: 146 ns → 8 ns per crossing into C.**
+
+The FFI audit's second finding, after array `slice`. Handing a string to C meant
+`encode_utf8` into a fresh array, a scan for an interior NUL, and a `push(0)` — an
+allocation and two passes at **every** call, which for a 26-byte string measured 146 ns
+against 0.7 ns for the call it wrapped. The cause was representational: a Lyra string is
+`{ptr, byte_len, rune_count}` and was not NUL-terminated, so the terminator had to be
+manufactured each time.
+
+Now every string carries a NUL at `data[byte_len]`. `s.cstring_ptr()` is an `unsafe` builtin
+that checks for an interior NUL with one `memchr` and yields `data` itself; `with_cstring`
+is one line over it. Measured the honest way — the same program, 200,000 crossings through
+`strlen`, identical output — **146 ns → 8 ns**, and `with_cstring` gained `noalloc`, which
+the copying spelling could never have.
+
+**Nothing else about a string changed**, and that is the design rather than luck: the length
+remains authoritative, so the terminator is past the end and no reader consults it. An
+interior NUL is still a legal byte, and a test says so. `STRING_LAYOUT.md`'s "**Not**
+NUL-terminated" rationale turned out to be arguing against a *different* choice — making the
+terminator load-bearing, which costs O(n) length and forbids interior NULs — and neither
+follows from merely carrying one.
+
+**The invariant is "every producer allocates the extra byte and writes it."** Six sites, and
+it was worth counting them before starting: four heap allocations funnel through one helper,
+a literal's bytes get the byte in their global constant, and `read_line` — the one producer
+that *grows* its buffer — reserves it by testing `len + 1 < cap`. That last one is the only
+place the change is subtle, and it is subtle in the direction of a line that exactly fills
+the capacity. `TestExec_EveryStringProducerIsNULTerminated` asks C, through `strlen`, whether
+the terminator sits exactly at the length, which is the question a seventh producer would
+fail.
+
+**One observable behaviour change, and it surfaced as a test failure rather than as a
+thought.** A literal's bytes live in a `private constant` global, so they are genuinely
+read-only — which the heap copy had been hiding. An FFI test was passing `p` as `strtoul`'s
+`char**` endptr and letting C write eight bytes through it: undefined behaviour that worked
+while the buffer was a copy and segfaults now that it is the literal. The pointer's type is
+`^u8` precisely because these bytes are immutable, so Lyra cannot write through it; C can,
+and `unsafe` is what stands between. The test now gives the endptr storage of its own.
+
+Both failures in the suite were the right kind: one caught the latent UB, the other pinned
+the literal's shape (`[2 x i8]` → `[3 x i8] c"hi\00"`) and simply needed updating to the new
+truth.
+
+### 08/26/26
 **A nested `match` freed its scrutinee before the arms read it.**
 
 ```lyra

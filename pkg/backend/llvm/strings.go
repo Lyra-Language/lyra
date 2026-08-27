@@ -42,7 +42,11 @@ func makeString(block *ir.Block, data, byteLen, runeCount value.Value) value.Val
 // insertvalues don't branch).
 func (l *lowerer) lowerStringConstant(block *ir.Block, content string) value.Value {
 	bytes := []byte(content)
-	boxConst, boxTy := pinnedBoxConstant(constant.NewCharArray(bytes))
+	// The trailing NUL every string carries (rcAllocStringPayload). A literal's bytes
+	// live in a global rather than a box, so the byte is added to the *constant* — which
+	// costs nothing at run time and keeps the invariant uniform, so a consumer never has
+	// to ask whether a string is a literal before handing it to C.
+	boxConst, boxTy := pinnedBoxConstant(constant.NewCharArray(append(bytes[:len(bytes):len(bytes)], 0)))
 	g := l.privateConst(fmt.Sprintf(".str.%d", l.strLitCount), boxConst)
 	l.strLitCount++
 
@@ -301,7 +305,7 @@ func (l *lowerer) lowerStringConcat(block *ir.Block, e *ast.StringConcatExpr) (v
 	// count can afford to ride the value (StringLLVMType).
 	count := block.NewAdd(block.NewExtractValue(left, 2), block.NewExtractValue(right, 2))
 
-	_, dst := l.rcAllocPayload(block, total)
+	_, dst := l.rcAllocStringPayload(block, total)
 	memcpy := l.memcpyFunc()
 	block.NewCall(memcpy, dst, dataA, lenA) // dst[0 .. lenA)  = a
 	tail := block.NewGetElementPtr(lltypes.I8, dst, lenA)
@@ -350,7 +354,7 @@ func (l *lowerer) lowerInterpolatedString(block *ir.Block, e *ast.InterpolatedSt
 		total = block.NewAdd(total, length)
 	}
 
-	_, dst := l.rcAllocPayload(block, total)
+	_, dst := l.rcAllocStringPayload(block, total)
 	memcpy := l.memcpyFunc()
 	offset := value.Value(i64c(0))
 	for _, s := range segs {
@@ -568,7 +572,7 @@ func (l *lowerer) lowerDecodeUTF8(block *ir.Block, call *ast.FunctionCallExpr, m
 	if err != nil {
 		return nil, nil, err
 	}
-	_, dst := l.rcAllocPayload(block, byteLen)
+	_, dst := l.rcAllocStringPayload(block, byteLen)
 	// memcpy over a zero length is a valid no-op, so an empty buffer needs no special
 	// case — it decodes to the empty string, which is the right answer.
 	block.NewCall(l.memcpyFunc(), dst, src, byteLen)

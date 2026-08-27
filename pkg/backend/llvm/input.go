@@ -103,7 +103,12 @@ func (l *lowerer) ensureReadLineRuntime(dt types.DataType, someC types.DataTypeC
 	// and preserves the refcount header along with the bytes already read.
 	curLen := notNewline.NewLoad(lltypes.I64, lenSlot)
 	curCap := notNewline.NewLoad(lltypes.I64, capSlot)
-	notNewline.NewCondBr(notNewline.NewICmp(enum.IPredULT, curLen, curCap), appendCh, grow)
+	// **One byte is reserved for the terminator**, so the test is `len + 1 < cap` rather
+	// than `len < cap`: every string carries a NUL past its end (rcAllocStringPayload),
+	// and this producer grows its own buffer rather than sizing it once. Without the
+	// reserve a line that exactly filled the capacity would have nowhere to put it.
+	notNewline.NewCondBr(notNewline.NewICmp(enum.IPredULT,
+		notNewline.NewAdd(curLen, one), curCap), appendCh, grow)
 
 	newCap := grow.NewMul(curCap, i64c(2))
 	grow.NewStore(newCap, capSlot)
@@ -149,6 +154,10 @@ func (l *lowerer) ensureReadLineRuntime(dt types.DataType, someC types.DataTypeC
 	payload := done.NewGetElementPtr(lltypes.I8, doneBox, i64c(rcHeaderSize))
 	// The bytes came from libc, so the rune count needs the one linear pass no
 	// arithmetic can replace — negligible beside the read it annotates.
+	// The terminator, in the byte the growth test above kept free. Written after the
+	// CR strip, so it lands at the reported length rather than one past the raw read.
+	done.NewStore(constant.NewInt(lltypes.I8, 0),
+		done.NewGetElementPtr(lltypes.I8, payload, doneLen))
 	count := done.NewCall(l.utf8CountFunc(), payload, doneLen)
 	str := makeString(done, payload, doneLen, count)
 	someVal, err := l.buildDataValue(done, dt, someTag, someC, []value.Value{str})

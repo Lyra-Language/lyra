@@ -277,7 +277,11 @@ func TestEmit_StringLiteralIsPinnedBox(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		`private constant { i64, i64, [2 x i8] } { i64 -1, i64 -1,`, // pinned box: both counts
+		// **`[3 x i8]` for a two-byte literal**: every string carries a NUL past its own
+		// bytes (rcAllocStringPayload), and a literal's live in this global rather than
+		// in a box, so the byte is part of the constant. The length still says 2 — the
+		// terminator is past the end and no reader consults it.
+		`private constant { i64, i64, [3 x i8] } { i64 -1, i64 -1, [3 x i8] c"hi\00" }`,
 		`i32 0, i32 2, i32 0`, // data points past the header
 	} {
 		if !strings.Contains(got, want) {

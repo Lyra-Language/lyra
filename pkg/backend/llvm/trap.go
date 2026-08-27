@@ -43,6 +43,7 @@ const (
 	stringIndexOOBTrapMessage = "lyra: string index out of bounds\n"
 	stringSliceOOBTrapMessage = "lyra: string slice out of range\n"
 	arraySliceOOBTrapMessage  = "lyra: array slice out of range\n"
+	interiorNULTrapMessage    = "lyra: a C string cannot contain a NUL byte\n"
 	matchFailedTrapMessage    = "lyra: match not exhaustive\n"
 	shiftOverflowTrapMessage  = "lyra: shift amount out of range\n"
 	rangeStepTrapMessage      = "lyra: range step must be positive\n"
@@ -116,6 +117,12 @@ func (l *lowerer) panicStringSliceOOBFunc() *ir.Func {
 // range is one of the ways it goes wrong, none of which "index out of range" describes.
 func (l *lowerer) panicArraySliceOOBFunc() *ir.Func {
 	return l.panicFunc("lyra_panic_array_slice_out_of_range", arraySliceOOBTrapMessage)
+}
+
+// The same message `std.ffi`'s `cstring` traps with, because it is the same promise: C
+// cannot represent an interior NUL, so a string holding one would arrive truncated.
+func (l *lowerer) panicInteriorNULFunc() *ir.Func {
+	return l.panicFunc("lyra_panic_interior_nul", interiorNULTrapMessage)
 }
 
 func (l *lowerer) panicMatchFailedFunc() *ir.Func {

@@ -472,16 +472,25 @@ let main = () -> void => {
 // `CLong`/`CULong` cross an extern boundary and are the plain widths on the other side —
 // the point of the alias being that it names the one C type whose width moves between
 // LP64 and Windows' LLP64, without taxing every call site the way a newtype would.
+//
+// **`strtoul`'s `endptr` gets storage of its own, and that is not incidental.** This test
+// used to pass `p` for it — a `char*` where C wants `char**` — and `strtoul` wrote eight
+// bytes through it. That was invisible while `with_cstring` handed over a *heap copy* of
+// the string, and became a segfault the moment it handed over the string's own bytes
+// (08/26), which for a literal live in a `private constant` global. The pointer is a `^u8`
+// precisely because those bytes are immutable; a C function that writes through one is
+// undefined behaviour that only `unsafe` stands between.
 func TestExec_CLongCrossesTheBoundaryAsItsWidth(t *testing.T) {
 	t.Parallel()
 	out := buildAndRunWithPrelude(t, `
 module main
-import std.ffi.{ CLong, CULong, with_cstring }
+import std.ffi.{ CLong, CULong, with_cstring, data_mut }
 unsafe extern pure labs: (CLong) -> CLong
-unsafe extern pure strtoul: (^u8, ^u8, i32) -> CULong
+unsafe extern pure strtoul: (^u8, ^mut u8, i32) -> CULong
 let main = () -> void => {
   let n: i64 = -42
-  let m: u64 = "1234".with_cstring((p) => unsafe { strtoul(p, p, 10) })
+  var endptr: []u8 = [0; 8]
+  let m: u64 = "1234".with_cstring((p) => unsafe { strtoul(p, endptr.data_mut(), 10) })
   print("${unsafe { labs(n) }} ${m}")
 }
 `, "")

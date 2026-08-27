@@ -1189,6 +1189,15 @@ array with their own message rather than the index check's, and both are **dynam
 only**: a `[N]T` carries its size in its type, so it cannot be a generic parameter until
 const generics exist.
 
+**A string crosses without a copy** (08/26): every string carries a NUL past its own bytes
+(`pkg/backend/llvm/STRING_LAYOUT.md`), so `s.cstring_ptr()` — an `unsafe` builtin — checks
+for an interior NUL with one `memchr` and yields `data` itself. `with_cstring` is one line
+over it and is `pure noalloc`; measured at **146 ns → 8 ns** per crossing. `cstring()` still
+copies, because it hands out an owned `[]u8` the caller keeps. The pointer is a `^u8` and a
+*literal*'s bytes live in a read-only global, so a C function that writes through one
+faults — which is what turned a latent UB in the `strtoul` FFI test (passing `p` for its
+`char**` endptr) into a visible segfault.
+
 **`with_cstring(s, f)` is the scoped string form, and it is deliberately *not* marked
 `unsafe`.** The rule it establishes: **`unsafe` marks handing a pointer out to keep
 (`data`), not lending one for the duration of a call.** Marking it would have made the

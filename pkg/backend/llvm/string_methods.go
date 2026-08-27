@@ -154,7 +154,7 @@ func (l *lowerer) lowerStringSlice(block *ir.Block, call *ast.FunctionCallExpr, 
 	// A fresh box, exactly as `++` builds one (lowerStringConcat), so the result is an
 	// ordinary owned heap string the ownership pass already knows how to release. A
 	// memcpy of length 0 is a valid no-op, so the empty slice needs no special case.
-	_, dst := l.rcAllocPayload(buildBlock, nOut)
+	_, dst := l.rcAllocStringPayload(buildBlock, nOut)
 	buildBlock.NewCall(l.memcpyFunc(), dst, buildBlock.NewGetElementPtr(lltypes.I8, data, startOff), nOut)
 
 	// The bounds *are* rune indices, so the result's rune count is their difference —
@@ -414,4 +414,39 @@ func (l *lowerer) lowerStringByteOffset(block *ir.Block, call *ast.FunctionCallE
 		return nil, nil, err
 	}
 	return block.NewSelect(missing, none, some), block, nil
+}
+
+// lowerStringCStringPtr lowers `s.cstring_ptr()` → a pointer to the string's own bytes,
+// which are NUL-terminated past their length (rcAllocStringPayload).
+//
+// **No copy, which is the whole point.** A string handed to C used to be encoded into a
+// fresh `[]u8`, scanned for an interior NUL, and NUL-appended — an allocation and two
+// passes at every crossing. Here the bytes already exist and already end in a NUL, so what
+// is left is the check that could not be skipped.
+//
+// **The interior-NUL check stays**, because C cannot represent one: a string containing a
+// zero byte would arrive truncated at it, which is the silently-wrong answer this language
+// traps for everywhere else. `memchr` is one pass and allocates nothing, so keeping the
+// promise now costs a scan rather than a copy.
+func (l *lowerer) lowerStringCStringPtr(block *ir.Block, call *ast.FunctionCallExpr, member *ast.MemberExpr) (value.Value, *ir.Block, error) {
+	if len(call.Arguments) != 0 {
+		return nil, nil, fmt.Errorf("llvm: cstring_ptr() expects 0 arguments, got %d", len(call.Arguments))
+	}
+	str, block, err := l.lowerExpr(block, member.Object)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !isStringLLVMType(str.Type()) {
+		return nil, nil, fmt.Errorf("llvm: cstring_ptr() receiver did not lower to a string (%s)", str.Type())
+	}
+	data := block.NewExtractValue(str, 0)
+	byteLen := block.NewExtractValue(str, 1)
+
+	i8ptr := lltypes.NewPointer(lltypes.I8)
+	memchr, _ := l.declareLibc("memchr", i8ptr, i8ptr, lltypes.I32, lltypes.I64)
+	found := block.NewCall(memchr, data, i32c(0), byteLen)
+	block = l.emitTrapIf(block,
+		block.NewICmp(enum.IPredNE, found, constant.NewNull(i8ptr)),
+		l.panicInteriorNULFunc())
+	return data, block, nil
 }

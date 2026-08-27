@@ -331,6 +331,30 @@ func (tc *TypeChecker) builtinMethodSignature(recv types.Type, name string, loc 
 				Parameters: []types.ParameterType{{Type: i64t}, {Type: i64t}},
 				ReturnType: types.ReturnType{Type: types.PrimitiveType{Name: types.String}},
 			}, true
+		case "cstring_ptr":
+			// `s.cstring_ptr() -> ^u8` — a pointer to the string's own bytes, which are
+			// **NUL-terminated past their length** (STRING_LAYOUT.md), so what C is handed
+			// is the string Lyra is already holding rather than a copy of it.
+			//
+			// **A builtin because nothing in the language can produce it.** `byte_len`
+			// measures, `byte_offset` maps a rune position to a byte one and
+			// `compare_bytes_at` compares; none of them yields an address, and
+			// `encode_utf8` allocates a fresh array. That is the `random_seed` rule: the
+			// primitive is the part that cannot be written in Lyra, and `std.ffi`'s
+			// `with_cstring` is the ordinary Lyra written over it.
+			//
+			// **It traps on an interior NUL**, because C cannot represent one — the string
+			// would arrive truncated at that byte, which is the silently-wrong answer this
+			// language traps for everywhere else. `cstring()` already made that promise;
+			// this keeps it without the copy that used to carry it.
+			//
+			// `noalloc`, which the copying spelling could never be: the whole point is that
+			// the bytes already exist.
+			return &types.LambdaType{
+				ReturnType: types.ReturnType{Type: types.RawPointerType{
+					Pointee: types.PrimitiveType{Name: types.UInt8},
+				}},
+			}, true
 		case "compare_bytes":
 			// The primitive under the prelude's `impl Ord for string`: negative, zero or
 			// positive, memcmp's convention. It returns an `i64` rather than an

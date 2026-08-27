@@ -11,9 +11,11 @@ A `string` is an **immutable fat pointer**:
 { i8* data, i64 byte_len, i64 rune_count }   ; StringLLVMType()
 ```
 
-- **`data`** — a pointer to the first UTF-8 byte. **Not** NUL-terminated (the
-  length is carried explicitly), so embedded NULs are fine and the bytes can point
-  into read-only memory shared with other strings.
+- **`data`** — a pointer to the first UTF-8 byte. The length is carried explicitly and is
+  **authoritative**, so embedded NULs are fine and the bytes can point into read-only
+  memory shared with other strings. Since 08/26 a NUL also sits **past** the end, at
+  `data[byte_len]` — see below; no reader consults it, and it changes nothing about how a
+  string is measured, indexed or compared.
 - **`byte_len`** — the length in **bytes** (`i64`). `s.byte_len()` reads it.
 - **`rune_count`** — the length in **code points** (`i64`), added 08/12 so that
   `s.len()` — which is rune-indexed, agreeing with `s[i]` and `for c in s` — is a
@@ -32,8 +34,10 @@ it. `SizeAndAlign(string) = 24, 8`.
 ### Why a fat pointer (not `i8*` / not a length-prefixed heap object)
 
 - vs. NUL-terminated `i8*` (C): that costs O(n) length, forbids embedded NULs, and
-  forces every literal to carry a terminator. A modern UTF-8 language wants O(1)
-  length and NUL-clean bytes — matches Lyra's Unicode-scalar `char`.
+  makes the terminator load-bearing. A modern UTF-8 language wants O(1) length and
+  NUL-clean bytes — matches Lyra's Unicode-scalar `char`. **Carrying a terminator is not
+  the same choice**: the length still decides everything, so an interior NUL is still a
+  legal byte and nothing is O(n) that was not before.
 - vs. a heap object `{ rc, len, [bytes] }`: that forces an allocation (and a
   refcount) even for a literal. The fat pointer lets a **literal** point straight
   into a global constant with **no allocation**, while a future **heap** string
@@ -41,6 +45,39 @@ it. `SizeAndAlign(string) = 24, 8`.
   `{ptr, len}` shape serves both; only the ownership/free story differs.
 
 This is the Go `string` / Rust `&str` / Swift contiguous-UTF-8 representation.
+
+## The trailing NUL (08/26)
+
+Every string carries a **NUL at `data[byte_len]`**, one byte past its own bytes. Nothing in
+the language reads it: the length remains authoritative, so `len`, `byte_len`, indexing,
+`slice`, equality and iteration are all exactly what they were, and a string may still hold
+an interior NUL.
+
+**It exists so a string can be handed to C without copying it.** `s.cstring_ptr()` (an
+`unsafe` builtin) checks for an interior NUL with one `memchr` pass and yields `data`
+directly; `std.ffi`'s `with_cstring` is one line over it and is now `pure noalloc`. Before,
+crossing meant `encode_utf8` into a fresh array, a scan, and a `push(0)` — an allocation and
+two passes at **every** call. Measured on 200,000 crossings of a 26-byte string through
+`strlen`, same program either way:
+
+| | per crossing |
+|---|---|
+| copy (`encode_utf8` + scan + `push`) | **146 ns** |
+| the string's own bytes | **8 ns** |
+
+**The invariant is "every producer allocates the extra byte and writes it"**, and it holds by
+construction at six sites: the four heap allocations funnel through `rcAllocStringPayload`,
+a literal's bytes get the NUL in their global constant (`[N+1 x i8]`), and `read_line`
+reserves it by testing `len + 1 < cap` as it grows. A seventh producer that forgets is what
+`TestExec_EveryStringProducerIsNULTerminated` is for — it asks C, through `strlen`, whether
+the terminator sits exactly at the length.
+
+**The bytes are immutable, and a literal's are genuinely read-only.** `cstring_ptr` yields a
+`^u8`, so Lyra cannot write through it (lyra-E061), but C can — and for a literal that is a
+`private constant` global, so it faults. This is not theoretical: it turned an FFI test that
+had been passing `p` as `strtoul`'s `char**` endptr — writing eight bytes through it — from
+quietly working into a segfault, because the buffer had been a heap copy and became the
+literal itself.
 
 ## What lowers today (no allocator needed)
 

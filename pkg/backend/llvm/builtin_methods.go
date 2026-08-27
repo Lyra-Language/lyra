@@ -110,6 +110,9 @@ func (l *lowerer) lowerBuiltinMethodCall(block *ir.Block, call *ast.FunctionCall
 		}
 		return l.lowerArraySlice(block, call, member, t)
 
+	case "cstring_ptr":
+		return l.lowerStringCStringPtr(block, call, member)
+
 	case "from_end":
 		// Told apart exactly as `len` is: a string's is the backward byte walk, an
 		// array's is `len - k` with one check.

@@ -1390,14 +1390,26 @@ func (tc *TypeChecker) checkBuiltinMutatesReceiver(recv types.Type, name string,
 // `xs.offset(n)` are the same three tokens, and a name-keyed check would either refuse
 // both or neither.
 func (tc *TypeChecker) requireUnsafeBuiltin(recv types.Type, name string, member *ast.MemberExpr) {
-	if tc.inUnsafe || name != "offset" {
+	if tc.inUnsafe {
 		return
 	}
-	if _, isPtr := recv.(types.RawPointerType); !isPtr {
-		return
+	switch name {
+	case "offset":
+		if _, isPtr := recv.(types.RawPointerType); !isPtr {
+			return
+		}
+		tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeUnsafeOutsideUnsafe,
+			"pointer arithmetic with `offset` requires an `unsafe` block or function")
+	case "cstring_ptr":
+		if !types.IsString(recv) {
+			return
+		}
+		// Handing out a pointer into a string's own bytes is the `data()` side of
+		// `std.ffi`'s line — a pointer to *keep*, whose validity ends with the string —
+		// so it is marked where every other such crossing is.
+		tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeUnsafeOutsideUnsafe,
+			"`cstring_ptr` hands out a pointer into the string's own bytes, so it requires an `unsafe` block or function")
 	}
-	tc.addErrorCode(member.GetLocation(), SeverityError, diag.CodeUnsafeOutsideUnsafe,
-		"pointer arithmetic with `offset` requires an `unsafe` block or function")
 }
 
 func (tc *TypeChecker) requireUnsafeCall(name string, callee *ast.LambdaExpr, call *ast.FunctionCallExpr) {

@@ -2632,6 +2632,32 @@ these links cleanly when it is wrong, which is why they are worth having.
   and a step. A fixture whose both sides we wrote still cannot demonstrate talking to a
   library nobody wrote for us, which is the reason the split above exists.
 
+### NUL-terminated string boxes — **[DONE 08/26]**
+
+Every string now carries a **NUL at `data[byte_len]`**, so handing one to C copies nothing.
+`s.cstring_ptr()` is an `unsafe` builtin that checks for an interior NUL with one `memchr`
+and yields the address; `std.ffi`'s `with_cstring` is one line over it and is now
+`pure noalloc`. Measured on 200,000 crossings of a 26-byte string through `strlen`, same
+program either way: **146 ns → 8 ns**.
+
+Nothing else changes. The length stays authoritative, so an interior NUL is still a legal
+byte and `len`/`byte_len`/indexing/`slice`/equality/iteration are exactly what they were.
+`cstring()` still copies, because it hands out an owned `[]u8` the caller keeps.
+
+- **The invariant is "every producer allocates the extra byte and writes it"**, holding by
+  construction at six sites: four heap allocations through `rcAllocStringPayload`, a
+  literal's global constant (`[N+1 x i8]`), and `read_line`, which reserves the byte by
+  testing `len + 1 < cap` as it grows. A seventh that forgets is what
+  `TestExec_EveryStringProducerIsNULTerminated` catches — it asks C, through `strlen`,
+  whether the terminator sits exactly at the length.
+- **A literal's bytes are genuinely read-only**, which the copy used to hide. The pointer is
+  a `^u8` so Lyra cannot write through it, but C can — and it turned a latent UB in the
+  `strtoul` FFI test (passing `p` for its `char**` endptr, which C then wrote eight bytes
+  through) from quietly working into a segfault. Recorded because it is the one behaviour
+  change a caller can observe.
+
+See `COMPLETED.md` and `pkg/backend/llvm/STRING_LAYOUT.md`.
+
 ### Array `slice` — **[DONE 08/26]**
 
 `xs.slice(start, end) -> []T`, the array twin of the string method. It exists for the

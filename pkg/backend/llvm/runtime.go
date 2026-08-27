@@ -298,6 +298,30 @@ func (l *lowerer) rcAllocPayload(block *ir.Block, payloadSize value.Value) (box,
 	return box, payload
 }
 
+// rcAllocStringPayload allocates a string's payload with **one byte more than its
+// length, holding a NUL**.
+//
+// Every string a Lyra program can name is NUL-terminated past its end, which is what lets
+// one be handed to C without copying it (`s.cstring_ptr()`, and `std.ffi`'s
+// `with_cstring` over it). The terminator is *past* `byte_len` and no reader consults it,
+// so nothing else about the representation changes: the length stays authoritative,
+// interior NULs stay legal, and `byte_len` is what every operation still uses.
+//
+// **One byte per string, and it buys a copy per crossing.** A string handed to C used to
+// be encoded into a fresh `[]u8`, scanned, and NUL-appended — an allocation and two passes
+// at every call. See STRING_LAYOUT.md for the measurement.
+//
+// The invariant is "every producer allocates the extra byte and writes it", which holds by
+// construction at the four heap sites that call this, plus the literal global
+// (pinnedBoxConstant) and read_line (which reserves the byte in its growth test).
+// `TestExec_EveryStringProducerIsNULTerminated` is what notices a fifth.
+func (l *lowerer) rcAllocStringPayload(block *ir.Block, byteLen value.Value) (box, payload value.Value) {
+	box, payload = l.rcAllocPayload(block, block.NewAdd(byteLen, i64c(1)))
+	block.NewStore(constant.NewInt(lltypes.I8, 0),
+		block.NewGetElementPtr(lltypes.I8, payload, byteLen))
+	return box, payload
+}
+
 // weakCountPtr GEPs to a box's weak count. Written in raw byte terms (the box
 // arrives as an i8* in the runtime shims, where the payload type is unknown) —
 // the count words are the first two i64s of every box, whatever it wraps.
