@@ -9,6 +9,67 @@ Newest first.
 
 ## Dated log
 
+### 08/27/26
+**A `shared` named tuple did not lower at all, and probing every position it could occupy
+found two more gaps that had nothing to do with tuples.**
+
+```lyra
+tuple Pair(i64, i64)
+let p: shared Pair = Pair(3, 0)   // lyrac: llvm: tuple type Pair did not lower to a struct
+```
+
+**The named tuple was the one member of a trio with neither half of the pattern.** A
+construction leaf carries no flavor of its own, so its *recorded* type is the annotated one —
+which for `shared` lowers to a box pointer, not a struct. `lowerStructInstanceExpr` and
+`lowerAnonymousStruct` therefore both strip to `Stack` before building the payload and call
+`lowerBoxShared` at the end; `lowerTupleLiteralExpr` did neither, and asked `lowerType` for a
+struct it had just guaranteed would be a pointer. `lowerTupleIndexExpr` had no unboxing arm
+either, so `p.0` could not have worked even where construction did.
+
+`match` had always unboxed one — `match_aggregate.go` says "a `shared` tuple is a box
+pointer" in as many words — which is what made this a *half*-usable type rather than an
+obviously missing one: it could be destructured but neither built nor indexed. Hazard 8's
+shape, with the extra twist that the third copy was not merely stale but absent.
+
+**Then the useful part.** With construction fixed, the question was what else a `shared`
+tuple touches, and the cheap way to answer it is not to read the switches — 35 of them
+mention two or more composite kinds and most are container-shaped and correctly partial. It
+is to write the value into every position the language offers: an annotated binding, an
+argument, a return, a struct field, an array element, a `match`, a destructuring, `==`,
+`println`. Nine one-line programs found two more failures, and **neither was tuple-specific**
+— both hit a `shared` struct identically, so both had been sitting in the feature the whole
+time:
+
+- **An array's element flavor reached nothing.** `[]shared Pair` gives the *array* no
+  flavor, so `propagateAllocation` returned at its `mod != Shared` guard before it ever
+  looked at the elements, and the construction leaf was stamped by nobody — an unboxed
+  payload stored into a box-pointer slot. This is 08/26's argument-position fault one level
+  down, and the entry for that one predicted it in the wrong shape: *"add a fourth context
+  and it needs the call"*. The fourth context is not a fourth call site. An element's flavor
+  is a property of the type being propagated rather than of where the propagation was
+  requested, so it is answered inside `propagateAllocation` and runs *before* the guard that
+  was swallowing it.
+- **`ArrayRepeatExpr` was missing from that same leaf case** — the **eighth** instance of
+  an omission whose list stood at seven, so `shared [3]i64 = [7; 3]` did not build while
+  `[7, 7, 7]` did. Eight is the number worth recording: this one is not a lesson about
+  vigilance, it is evidence that a *node* and its *variant* need to stop being two things.
+- **Equality compared the box rather than the payload.** `equality.go`'s own header already
+  promised that a `shared` box "compares through the path that already exists rather than by
+  pointer identity" — and no arm did it, so the field walk ran over `{strong, weak, payload}`
+  and compared two **refcounts** before failing on the payload field. A documented intention
+  with no implementation under it is worse than a gap, because reading the code says the case
+  is handled. What kept it from being a wrong answer is rule 5: the walk refused rather than
+  guessing, so this surfaced as a build error the first time anyone compared two shared
+  values.
+
+Fixed together, tested together (`llvm_shared_aggregate_test.go`, plus an ASan case for the
+refcounting), and clean under `./asan.sh ./...` — which matters more than usual here, since a
+box/payload confusion is precisely what Debian's typed pointers catch and Apple clang's
+opaque ones cannot represent.
+
+Still out of reach and unrelated: `p.0 = v` on **any** tuple, shared or not, is a grammar
+gap — a positional assignment target does not parse, and reports as a syntax error.
+
 ### 08/26/26
 **A `shared` argument built from a bare construction passed the struct by value.**
 

@@ -147,7 +147,9 @@ real failure, and none is local to one package.
      missed in five places `ArrayLiteralExpr` appeared in — and two more on 08/24, in
      `isSyntacticLiteral` (so `let n: Nums = [7; 3]` over a newtype was refused while
      `[7, 7, 7]` was not) and `firstNonConstant` (so `const XS = [7; 3]` was "not a
-     compile-time constant"). **Seven instances of one omission.** The sweep that finds them
+     compile-time constant"), and an eighth on 08/27 in the typechecker's
+     `propagateAllocation` (so `let xs: shared [3]i64 = [7; 3]` did not build while
+     `[7, 7, 7]` did). **Eight instances of one omission.** The sweep that finds them
      is mechanical and takes a minute: list every file mentioning `ArrayLiteralExpr` and check
      each for `ArrayRepeatExpr`; the node and collector definitions correctly have their own,
      everything else is a candidate. The second 08/24 instance was found that way, having been
@@ -319,6 +321,14 @@ real failure, and none is local to one package.
     error `'@take' defined with type 'i64 ({…}*)*' but expected 'i64 (%Node)*'`. Add a
     fourth context and it needs the call; the width rule (`propagateLiteralType`) is its twin
     and sits on the adjacent line at each site.
+
+    **The fourth context arrived on 08/27, and it is not a fourth call site.** An array's
+    *element* carries a flavor independent of the array's own, and `[]shared Node` gives the
+    array none — so `propagateAllocation` returned at its `mod != Shared` guard and the
+    element's construction leaf was stamped by nothing. It is answered *inside*
+    `propagateAllocation` (`propagateElementAllocation`, run before that guard), because the
+    question is about the type being propagated rather than about where the propagation was
+    requested from. A container that can hold a flavored element is the shape to check next.
 
 10. **A pass that indexes a call's arguments positionally is one AST shape away from
     being silently wrong.** Purity reads `call.Arguments[idx]` against the *declaration's*

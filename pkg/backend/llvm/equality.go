@@ -71,6 +71,28 @@ func (l *lowerer) eqFuncFor(t types.Type) (*ir.Func, error) {
 // value (a string, a `shared` box) compares through the path that already exists rather
 // than by pointer identity: two equal strings in different boxes are equal.
 func (l *lowerer) emitEqValue(block *ir.Block, a, b value.Value, t types.Type) (value.Value, *ir.Block, error) {
+	// A `shared` aggregate is a box pointer, so unbox before comparing — which is what
+	// this function's own header already promised ("compares through the path that
+	// already exists rather than by pointer identity") and did not do. Without it the
+	// field walk ran over the *box*, so `a == b` on two shared structs compared their
+	// refcounts and then failed to lower the payload field; rule 5 is why that was an
+	// error rather than an answer.
+	//
+	// Two boxes with equal payloads are equal, matching the string case beside it.
+	if types.AllocationOf(t) == types.Shared {
+		if _, isPtr := a.Type().(*lltypes.PointerType); isPtr {
+			stack := types.WithAllocation(t, types.Stack)
+			av, err := l.loadSharedPayload(block, a, stack)
+			if err != nil {
+				return nil, nil, err
+			}
+			bv, err := l.loadSharedPayload(block, b, stack)
+			if err != nil {
+				return nil, nil, err
+			}
+			return l.emitEqValue(block, av, bv, stack)
+		}
+	}
 	resolved := l.resolveNamedType(t)
 	switch rt := resolved.(type) {
 	case types.NamedStructType:
@@ -114,6 +136,19 @@ func (l *lowerer) emitEqValue(block *ir.Block, a, b value.Value, t types.Type) (
 		return block.NewICmp(enum.IPredEQ, a, b), block, nil
 	}
 	return nil, nil, fmt.Errorf("llvm: structural equality on %s is not implemented", t)
+}
+
+// loadSharedPayload reads a box's payload as a first-class value. `stack` is the payload's
+// type with the `shared` flavor already stripped, so lowering it yields the payload struct
+// rather than the box pointer it came from.
+func (l *lowerer) loadSharedPayload(block *ir.Block, box value.Value, stack types.Type) (value.Value, error) {
+	payloadTy, err := l.lowerType(stack)
+	if err != nil {
+		return nil, err
+	}
+	boxTy := SharedBoxType(payloadTy)
+	ptr := block.NewGetElementPtr(boxTy, box, i32c(0), i32c(boxPayloadField))
+	return block.NewLoad(payloadTy, ptr), nil
 }
 
 // emitEqFields ANDs the field-wise comparisons of an aggregate.

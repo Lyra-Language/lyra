@@ -2197,10 +2197,33 @@ interior assignment, and deep retain-on-copy.
   `'@take' defined with type 'i64 ({i64, i64, %Node}*)*' but expected 'i64 (%Node)*'` — which
   is the class of fault `asan.sh` exists to catch and did. One call beside
   `propagateLiteralType`, which is the same rule for *width*.
-  - **[OPEN] `shared` on a named tuple does not lower** — `let p: shared Pair = Pair(3, 0)`
-    fails with `llvm: tuple type Pair did not lower to a struct`, through the *annotated
-    binding* path as much as the argument one, so it is a separate gap rather than part of
-    the above. Found while testing it; a struct, a `data` type and a `[N]T` all work.
+  - **[DONE 08/27] `shared` on a named tuple, and two more the same probe found.** The
+    entry point was `let p: shared Pair = Pair(3, 0)` failing outright as *"tuple type Pair
+    did not lower to a struct"* — the construction lowered the **recorded** type, which
+    carries the flavor and so lowers to a box pointer, and then asked for a struct. The
+    struct and anonymous-struct paths both stripped to `Stack` first and boxed at the end;
+    the named tuple was the third of that trio with **neither** half, and `p.0` had no
+    unboxing arm either. `match` had always unboxed one, so the type was half-usable: it
+    could be destructured but neither built nor indexed.
+    Two further gaps, neither tuple-specific — both hit a `shared` **struct** identically,
+    which is why probing every position a value can occupy was worth more than reading the
+    switches:
+    - **An array's element flavor reached nothing.** `[]shared Pair` gives the *array*
+      no flavor, so `propagateAllocation` returned at its `mod != Shared` guard and the
+      element's construction leaf was never stamped — an unboxed payload stored into a
+      box-pointer slot. It is the argument position's fault one level down: the flavor is
+      context-determined and an element is a fourth context. Fixed with an element-wise
+      pass over both array forms.
+    - **`ArrayRepeatExpr` was missing from the flavor's own leaf case** — the **eighth**
+      instance of that omission (hazard 8's list stood at seven), so `shared [3]i64 = [7; 3]`
+      did not build while `[7, 7, 7]` did.
+    - **Equality compared the box, not the payload.** `equality.go`'s header already said a
+      `shared` box "compares through the path that already exists rather than by pointer
+      identity"; no arm did it, so the field walk ran over `{strong, weak, payload}` and
+      compared two **refcounts** before failing on the payload field. Rule 5 is the whole
+      reason that surfaced as a refusal instead of an answer.
+    Still out of reach and unrelated: `p.0 = v` on any tuple, shared or not, is a **grammar**
+    gap — a positional assignment target does not parse.
   Still open: a *nested* `shared data` sub-pattern — destructuring a tail
   through its own box — errors loudly; construction-site `shared T {…}` syntax;
   implicit-alloc / escape analysis; atomic refcounts (deferred to the job system).

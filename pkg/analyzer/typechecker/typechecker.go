@@ -2909,11 +2909,20 @@ func (tc *TypeChecker) propagateLiteral(expr ast.Expression, concrete types.Type
 // passed against the annotated/declared type, and Unspecified (the default) is a
 // no-op, so a non-shared context changes nothing.
 func (tc *TypeChecker) propagateAllocation(expr ast.Expression, mod types.AllocationModifier) {
+	// An array's **elements** carry a flavor of their own, independent of the array's:
+	// `[]shared Node` is an ordinary dynamic array whose slots hold boxes. That flavor
+	// reaches a construction leaf only by being pushed into each element from here — the
+	// array's own `mod` is Unspecified in exactly that spelling, so the early return
+	// below would otherwise drop it and `[]shared Pair = [Pair(1, 2)]` would store an
+	// unboxed payload into a box-pointer slot.
+	tc.propagateElementAllocation(expr)
+
 	if mod != types.Shared {
 		return // only `shared` needs pushing; stack/unspecified is the inline default
 	}
 	switch e := expr.(type) {
-	case *ast.TupleLiteralExpr, *ast.DataConstructorExpr, *ast.StructInstanceExpr, *ast.ArrayLiteralExpr:
+	case *ast.TupleLiteralExpr, *ast.DataConstructorExpr, *ast.StructInstanceExpr,
+		*ast.ArrayLiteralExpr, *ast.ArrayRepeatExpr:
 		// A construction leaf: stamp the flavor onto its recorded type so the backend
 		// heap-boxes it. An array literal is stamped here too (`let xs: shared [3]T =
 		// [...]`), and this must run *after* propagateLiteralType, which re-records the
@@ -2938,6 +2947,40 @@ func (tc *TypeChecker) propagateAllocation(expr ast.Expression, mod types.Alloca
 				tc.propagateAllocation(es.Expression, mod)
 			}
 		}
+	}
+}
+
+// propagateElementAllocation pushes an array's *element* flavor into the elements of an
+// array construction. It is the element-wise half of propagateAllocation: the array's own
+// flavor and its elements' are separate questions, and `[]shared T` asks only the second.
+//
+// Both array construction forms are handled, because they are one family — ArrayRepeatExpr
+// is a variant of ArrayLiteralExpr that has now been omitted from a walk eight times
+// (hazard 8), and it was missing from propagateAllocation's own leaf case too.
+func (tc *TypeChecker) propagateElementAllocation(expr ast.Expression) {
+	t, ok := tc.typeTable.Get(expr)
+	if !ok {
+		return
+	}
+	var elem types.Type
+	switch a := t.(type) {
+	case types.DynamicArrayType:
+		elem = a.ElementType
+	case types.StaticArrayType:
+		elem = a.ElementType
+	default:
+		return
+	}
+	if types.AllocationOf(elem) != types.Shared {
+		return
+	}
+	switch e := expr.(type) {
+	case *ast.ArrayLiteralExpr:
+		for _, el := range e.Elements {
+			tc.propagateAllocation(el, types.Shared)
+		}
+	case *ast.ArrayRepeatExpr:
+		tc.propagateAllocation(e.Value, types.Shared)
 	}
 }
 

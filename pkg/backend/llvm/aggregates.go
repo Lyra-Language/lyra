@@ -52,7 +52,13 @@ func (l *lowerer) lowerTupleLiteralExpr(block *ir.Block, e *ast.TupleLiteralExpr
 	if !ok {
 		return nil, nil, fmt.Errorf("llvm: tuple literal lowering not implemented for %s", recorded)
 	}
-	llType, err := l.lowerType(tupleType)
+	// Build the inline payload first, stripping any `shared` flavor — which would
+	// otherwise lower to a box pointer, and did: `let p: shared Pair = Pair(3, 0)` failed
+	// as *"tuple type Pair did not lower to a struct"*, because the recorded type was the
+	// box and this asked for a struct. The struct and anonymous-struct paths already did
+	// this; the named tuple was the third of the trio and had neither half.
+	stackTupleType := types.WithAllocation(tupleType, types.Stack).(types.TupleType)
+	llType, err := l.lowerType(stackTupleType)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -77,6 +83,11 @@ func (l *lowerer) lowerTupleLiteralExpr(block *ir.Block, e *ast.TupleLiteralExpr
 		}
 		agg = block.NewInsertValue(agg, elemVal, uint64(i))
 	}
+	// And box it if the flavor says so — the other half the named tuple was missing.
+	if types.AllocationOf(recorded) == types.Shared {
+		boxed, err := l.lowerBoxShared(block, agg, stackTupleType)
+		return boxed, block, err
+	}
 	return agg, block, nil
 }
 
@@ -84,10 +95,29 @@ func (l *lowerer) lowerTupleLiteralExpr(block *ir.Block, e *ast.TupleLiteralExpr
 // `extractvalue` on the (already first-class) struct value the object lowers to.
 // The typechecker validated the index is in range, so it maps straight to the
 // struct element position.
+//
+// A **`shared` tuple is a box pointer**, so the element is read through the box exactly as
+// lowerMemberExpr reads a `shared` struct's field. The two are the same operation on the
+// two shapes, and having only one of them is what made a `shared` named tuple unusable even
+// where it built: `match` had always unboxed one (match_aggregate.go says so in as many
+// words), so the gap was construction and positional access, not the type.
 func (l *lowerer) lowerTupleIndexExpr(block *ir.Block, e *ast.TupleIndexExpr) (value.Value, *ir.Block, error) {
 	obj, block, err := l.lowerExpr(block, e.Object)
 	if err != nil {
 		return nil, nil, err
+	}
+	if ptr, ok := obj.Type().(*lltypes.PointerType); ok {
+		boxTy, ok := ptr.ElemType.(*lltypes.StructType)
+		if !ok || len(boxTy.Fields) != boxPayloadField+1 {
+			return nil, nil, fmt.Errorf("llvm: tuple index on non-box pointer %s", obj.Type())
+		}
+		payloadTy, ok := boxTy.Fields[boxPayloadField].(*lltypes.StructType)
+		if !ok || int(e.Index) >= len(payloadTy.Fields) {
+			return nil, nil, fmt.Errorf("llvm: `shared` tuple index on non-tuple payload %s", boxTy.Fields[boxPayloadField])
+		}
+		elemPtr := block.NewGetElementPtr(boxTy, obj,
+			i32c(0), i32c(boxPayloadField), i32c(int64(e.Index)))
+		return block.NewLoad(payloadTy.Fields[e.Index], elemPtr), block, nil
 	}
 	if _, ok := obj.Type().(*lltypes.StructType); !ok {
 		return nil, nil, fmt.Errorf("llvm: tuple index on non-struct value of type %s", obj.Type())
