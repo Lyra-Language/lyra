@@ -310,6 +310,16 @@ real failure, and none is local to one package.
    The backend pays the same tax: `l.funcs` cannot hold two functions of one name, so an
    overload is keyed by its *declaration* and its emitted symbol carries the receiver head.
 
+    **Allocation is context-determined, and a construction has three contexts.** A
+    construction leaf has no flavor of its own — `Node { v: 2 }` is inline or heap-boxed
+    depending on what it is used *as* — so `propagateAllocation` pushes the flavor down from
+    an annotated binding, a declared return, **and an argument** (08/26). The argument was
+    the one left out, and the symptom was not a missing box but the struct passed *by value*
+    to a callee expecting a box pointer: a segfault on macOS, and on Linux the typed-pointer
+    error `'@take' defined with type 'i64 ({…}*)*' but expected 'i64 (%Node)*'`. Add a
+    fourth context and it needs the call; the width rule (`propagateLiteralType`) is its twin
+    and sits on the adjacent line at each site.
+
 10. **A pass that indexes a call's arguments positionally is one AST shape away from
     being silently wrong.** Purity reads `call.Arguments[idx]` against the *declaration's*
     parameter at `idx` (`callableParams`), so any call form whose receiver sits outside

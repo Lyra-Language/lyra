@@ -10,6 +10,46 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**A `shared` argument built from a bare construction passed the struct by value.**
+
+```lyra
+let take = pure (n: shared Node) -> i64 => n.v
+take(Node { v: 2 })                      // segfault
+```
+
+Found by probing the allocation entry's open list rather than from a report, which is worth
+noting: the item read "a `shared` construction in a bare argument/return position is not
+stamped with its flavor", and what that sentence describes is a **segfault on a program the
+front end accepts**.
+
+**A construction has no allocation flavor of its own.** `Node { v: 2 }` is inline or
+heap-boxed depending on what it is being used *as*, so the flavor is pushed down from the
+context — `propagateAllocation`, which already recursed through match arms and if branches
+to reach the construction leaf. It was called from exactly two places: an annotated binding
+and a declared return. An **argument** is the third such context and was the only one left
+out, so the value was built inline and passed by value to a callee expecting a box pointer.
+
+The fix is one call beside `propagateLiteralType`, which is the identical rule for *width* —
+the comment there already said "the parameter type is the argument's context", and the
+allocation flavor is the other half of that sentence.
+
+**Both platforms were needed to see it clearly.** macOS segfaulted, which says only that
+something is wrong. Debian's clang, whose pointers are still typed, named it exactly:
+
+> error: '@lyra.main.take' defined with type 'i64 ({ i64, i64, %main__Node }*)*' but expected
+> 'i64 (%main__Node)*'
+
+That is verbatim the class of fault the workspace's `asan.sh` note says the Linux run exists
+to catch — "invalid IR that modern clang cannot even diagnose" — and it is the first time in
+this session that rationale has been exercised on a fault found rather than a regression
+feared.
+
+**A neighbouring gap fell out and was recorded rather than folded in**: `shared` on a *named
+tuple* does not lower at all (`llvm: tuple type Pair did not lower to a struct`), through the
+annotated-binding path as much as the argument one. A struct, a `data` type and a `[N]T` all
+work. Different bug, own entry.
+
+### 08/26/26
 **zlib runs in CI, which closes the FFI's testing story.**
 
 Open since 08/19. `examples/zlib.lyra` has proved the round trip by hand for a week; now

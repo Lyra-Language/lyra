@@ -1467,6 +1467,18 @@ func (tc *TypeChecker) checkNamedArgument(calleeName string, param ast.Parameter
 		// width, not the i64 default. Applies to every assignable arg, not just
 		// `own` ones (width is orthogonal to ownership).
 		tc.propagateLiteralType(arg, resolvedParamType)
+		// **And the parameter's allocation flavor**, for the same reason and by the same
+		// rule: a construction's flavor is context-determined, and an argument position is
+		// a context. `take(Node { v: 2 })` against a `shared Node` parameter built the
+		// struct *inline* and passed it by value to a callee expecting a box pointer — a
+		// segfault on macOS, and on Linux the typed-pointer error `'@take' defined with
+		// type 'i64 ({i64, i64, %Node}*)*' but expected 'i64 (%Node)*'`. An annotated
+		// binding and a declared return were already stamped; the argument was the third
+		// such context and the only one left out.
+		//
+		// After propagateLiteralType, which re-records an array literal as a flavorless
+		// StaticArrayType — the ordering checkVarDecl already relies on.
+		tc.propagateAllocation(arg, types.AllocationOf(resolvedParamType))
 		// And the width must actually hold it. propagateLiteralType deliberately
 		// leaves an unfitting literal untyped, "expecting a downstream site to
 		// report" — but an argument has no downstream, so `direct(300)` against a

@@ -2187,9 +2187,21 @@ interior assignment, and deep retain-on-copy.
   `checkTraitImplMethodBody`.
 - **[OPEN] (#4) `ref`/`mut`/`own` outside parameter position**, and driving move/copy/borrow
   semantics from them.
-- **[OPEN] (#5) Allocation, remaining pieces:** a `shared` construction in a bare
-  argument/return position is not stamped with its flavor (only annotated bindings and
-  `shared` payload args are); a *nested* `shared data` sub-pattern — destructuring a tail
+- **[OPEN] (#5) Allocation, remaining pieces.** **[DONE 08/26] the argument position**: a
+  construction has no flavor of its own — `Node { v: 2 }` is inline or heap-boxed depending
+  on what it is used *as* — so the flavor is pushed down from the context
+  (`propagateAllocation`). An annotated binding and a declared return already did that; an
+  **argument** did not, so `take(Node { v: 2 })` against a `shared Node` parameter built the
+  struct inline and passed it **by value** to a callee expecting a box pointer. The front
+  end accepted it; macOS segfaulted, and Debian's typed-pointer clang named it exactly —
+  `'@take' defined with type 'i64 ({i64, i64, %Node}*)*' but expected 'i64 (%Node)*'` — which
+  is the class of fault `asan.sh` exists to catch and did. One call beside
+  `propagateLiteralType`, which is the same rule for *width*.
+  - **[OPEN] `shared` on a named tuple does not lower** — `let p: shared Pair = Pair(3, 0)`
+    fails with `llvm: tuple type Pair did not lower to a struct`, through the *annotated
+    binding* path as much as the argument one, so it is a separate gap rather than part of
+    the above. Found while testing it; a struct, a `data` type and a `[N]T` all work.
+  Still open: a *nested* `shared data` sub-pattern — destructuring a tail
   through its own box — errors loudly; construction-site `shared T {…}` syntax;
   implicit-alloc / escape analysis; atomic refcounts (deferred to the job system).
   - **[DONE 08/09] Dynamic-array growth.** `xs.push(v)`, amortized doubling. It needed a
