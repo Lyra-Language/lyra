@@ -425,6 +425,13 @@ func (l *lowerer) lowerType(lyraType types.Type) (lltypes.Type, error) {
 		}
 		return lltypes.NewArray(uint64(t.Size), elem), nil
 	case *types.LambdaType:
+		// **At a C boundary a function type is a bare function pointer.** C has one word
+		// for a callback, and a `{code, env}` pair passed where it expects that word is
+		// what made the first `qsort` attempt segfault. Inside Lyra the boxed closure is
+		// the right answer and stays below.
+		if l.externSignature {
+			return l.lowerCFunctionPointer(t)
+		}
 		// A function value is a boxed closure `{ i8* fn, i8* env }` (closures.go) —
 		// one representation for every function type, which is what lets a
 		// `(i64) -> i64` parameter accept a named function, a captureless lambda, and
@@ -619,4 +626,39 @@ func (l *lowerer) resolveStructType(t types.Type) (types.NamedStructType, bool) 
 func (l *lowerer) resolveTupleType(t types.Type) (types.TupleType, bool) {
 	tt, ok := l.resolveShape(t).(types.TupleType)
 	return tt, ok
+}
+
+// lowerCFunctionPointer is a callback parameter's type at the boundary: a pointer to a
+// function with the C signature the callback declares.
+//
+// It is what a **Lyra top-level function already emits**. `declareFunctionAs` lowers a
+// function's parameters directly, with no environment word, so `let cmp = (a: ^u8, b: ^u8)
+// -> i32` becomes `define i32 @lyra.main.cmp(i8*, i8*)` — which *is*
+// `int (*)(const void*, const void*)`, not something convertible to it. That coincidence is
+// the whole reason this feature is small; a closure, whose lifted body takes the
+// environment as a leading parameter, is refused at the call instead.
+func (l *lowerer) lowerCFunctionPointer(t *types.LambdaType) (lltypes.Type, error) {
+	ret, err := l.lowerType(t.ReturnType.Type)
+	if err != nil {
+		return nil, err
+	}
+	params := make([]lltypes.Type, 0, len(t.Parameters))
+	for _, p := range t.Parameters {
+		pt, err := l.lowerType(p.Type)
+		if err != nil {
+			return nil, err
+		}
+		params = append(params, pt)
+	}
+	return lltypes.NewPointer(lltypes.NewFunc(ret, params...)), nil
+}
+
+// pushExternSignature makes the type lowerings below read as C's for the duration of one
+// declaration — today that is the function-type case alone. Scoped rather than a parameter
+// threaded through `lowerType`, because it is a property of *where* a type is being lowered
+// rather than of the type, and every other case is unaffected.
+func (l *lowerer) pushExternSignature() func() {
+	prev := l.externSignature
+	l.externSignature = true
+	return func() { l.externSignature = prev }
 }

@@ -494,7 +494,7 @@ func (l *lowerer) lowerFunctionCallExpr(block *ir.Block, e *ast.FunctionCallExpr
 // Shared by an ordinary call by name and a call to a generic *specialization*, so
 // the by-reference `mut`/`ref` argument handling below has one definition.
 func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *ir.Func, params []ast.Parameter) (value.Value, *ir.Block, error) {
-	args, block, ok, err := l.lowerCallArgs(block, make([]value.Value, 0, len(e.Arguments)), e.Arguments, params)
+	args, block, ok, err := l.lowerCallArgs(block, make([]value.Value, 0, len(e.Arguments)), e.Arguments, params, calleeParamTypes(fn, 0))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -540,8 +540,26 @@ func (l *lowerer) lowerDirectCall(block *ir.Block, e *ast.FunctionCallExpr, fn *
 // `panic` through a function value handed a nil argument to NewCall and segfaulted
 // inside llir — a Go crash out of lyrac, which is exactly what the guard exists to
 // prevent (hazard 8: the two argument loops travel in pairs).
-func (l *lowerer) lowerCallArgs(block *ir.Block, args []value.Value, argExprs []ast.Expression, params []ast.Parameter) ([]value.Value, *ir.Block, bool, error) {
+func (l *lowerer) lowerCallArgs(block *ir.Block, args []value.Value, argExprs []ast.Expression, params []ast.Parameter, want []lltypes.Type) ([]value.Value, *ir.Block, bool, error) {
 	for i, argExpr := range argExprs {
+		// **A C function-pointer slot takes the function's own symbol**, not Lyra's boxed
+		// closure. The expected type is the signal rather than a flag on the call: only an
+		// extern's declaration lowers a function type this way (pushExternSignature), so a
+		// slot shaped like one *is* a callback parameter. Passing the closure here is what
+		// segfaulted the first `qsort`.
+		if i < len(want) {
+			if ptr, ok := want[i].(*lltypes.PointerType); ok {
+				if _, isFn := ptr.ElemType.(*lltypes.FuncType); isFn {
+					v, blk, err := l.lowerCFunctionArgument(block, argExpr, want[i])
+					if err != nil {
+						return nil, nil, false, err
+					}
+					block = blk
+					args = append(args, v)
+					continue
+				}
+			}
+		}
 		var (
 			v   value.Value
 			err error
@@ -765,4 +783,41 @@ func (l *lowerer) funcKey(name string, loc ast.Location) string {
 		return name
 	}
 	return l.res.SymbolTable.FunctionKey(name, loc)
+}
+
+// calleeParamTypes is the callee's declared LLVM parameter types, offset past the leading
+// arguments already placed (a receiver, or a closure's environment). Empty for a callee
+// with none, which is every ordinary call.
+func calleeParamTypes(fn *ir.Func, placed int) []lltypes.Type {
+	if fn == nil || placed >= len(fn.Params) {
+		return nil
+	}
+	out := make([]lltypes.Type, 0, len(fn.Params)-placed)
+	for _, p := range fn.Params[placed:] {
+		out = append(out, p.Typ)
+	}
+	return out
+}
+
+// lowerCFunctionArgument lowers the argument in a **C function-pointer** slot: the address
+// of a Lyra top-level function, which already emits the C signature (lowerCFunctionPointer
+// says why).
+//
+// Only a top-level function is accepted, and the front end says so first (lyra-E066) — this
+// is rule 5's repeat of a check the typechecker already made, because emitting a guess here
+// would be a wild jump rather than a diagnostic.
+func (l *lowerer) lowerCFunctionArgument(block *ir.Block, arg ast.Expression, want lltypes.Type) (value.Value, *ir.Block, error) {
+	id, ok := arg.(*ast.IdentifierExpr)
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: a C callback argument must be a top-level function, got %T", arg)
+	}
+	fn, ok := l.funcs[l.funcKey(id.Name, arg.GetLocation())]
+	if !ok {
+		return nil, nil, fmt.Errorf("llvm: no emitted function named %q for a C callback argument", id.Name)
+	}
+	// The signatures agree by construction — the front end checked every type in the
+	// callback against the same FFI-safe predicate the extern's own parameters take — so
+	// the bitcast is a re-labelling rather than a conversion, and llir wants the slot's
+	// exact pointer type.
+	return block.NewBitCast(fn, want), block, nil
 }

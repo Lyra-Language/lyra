@@ -410,7 +410,18 @@ func typeName(t types.Type) string {
 	case *types.LambdaType:
 		params := make([]string, len(v.Parameters))
 		for i, p := range v.Parameters {
+			// **A named parameter renders its name**, which only an `extern` has: E067
+			// requires one there and refuses it in a plain function type, so rendering it
+			// whenever present is right everywhere without asking which kind this is.
+			// It also has to be rendered — a page's signature is read as the code to
+			// write, and an extern printed without its names no longer parses.
 			params[i] = typeName(p.Type)
+			if p.Name != "" {
+				params[i] = p.Name + ": " + params[i]
+			}
+		}
+		if v.IsVariadic {
+			params = append(params, "...")
 		}
 		return v.EffectPrefix() + "(" + strings.Join(params, ", ") + ") -> " + typeName(v.ReturnType.Type)
 	}
@@ -461,7 +472,7 @@ func typeNames(ts []types.Type) string {
 // externSignature renders an `extern` declaration in source syntax:
 //
 //	@link("z")
-//	unsafe extern pure crc32: (u64, ^u8, u32) -> u64
+//	unsafe extern pure crc32: (crc: u64, buf: ^u8, len: u32) -> u64
 //
 // **The `@link` lines are part of it**, which is the one way this differs from every
 // other signature on a page. Elsewhere an attribute is metadata a reader can ignore;

@@ -166,8 +166,8 @@ func TestExec_CStringIsReadableByLibc(t *testing.T) {
 	out := buildAndRunWithPrelude(t, `
 module main
 import std.ffi.{ cstring }
-unsafe extern pure strlen: (^u8) -> u64
-unsafe extern pure strcmp: (^u8, ^u8) -> i32
+unsafe extern pure strlen: (buf: ^u8) -> u64
+unsafe extern pure strcmp: (buf: ^u8, buf2: ^u8) -> i32
 let main = () -> void => {
   var a = "hello λ".cstring()
   var b = "hello λ".cstring()
@@ -187,7 +187,7 @@ func TestExec_CStringOfTheEmptyString(t *testing.T) {
 	out := buildAndRunWithPrelude(t, `
 module main
 import std.ffi.{ cstring }
-unsafe extern pure strlen: (^u8) -> u64
+unsafe extern pure strlen: (buf: ^u8) -> u64
 let main = () -> void => {
   var e = "".cstring()
   print("${e.len()} ${unsafe { strlen(&e[0]) }}")
@@ -231,7 +231,7 @@ func TestCheck_PointerIntoATemporaryCStringIsRefused(t *testing.T) {
 	errs := checkWithPrelude(t, `
 module main
 import std.ffi.{ cstring }
-unsafe extern pure strlen: (^u8) -> u64
+unsafe extern pure strlen: (buf: ^u8) -> u64
 let main = () -> void => {
   println("${unsafe { strlen(&"boom".cstring()[0]) }}")
 }
@@ -257,8 +257,8 @@ func TestExec_DataIsTheBufferLibcReadsAndWrites(t *testing.T) {
 	out := buildAndRunWithPrelude(t, `
 module main
 import std.ffi.{ data, data_mut }
-unsafe extern pure strlen: (^u8) -> u64
-unsafe extern memset: (^mut u8, i32, u64) -> ^mut u8
+unsafe extern pure strlen: (buf: ^u8) -> u64
+unsafe extern memset: (out: ^mut u8, n: i32, len: u64) -> ^mut u8
 let main = () -> void => {
   var c = "hello λ".cstring()
   var xs: []u8 = [1, 2, 3, 4]
@@ -346,7 +346,7 @@ func TestExec_WithCStringLendsTheBufferForTheCall(t *testing.T) {
 	out := buildAndRunWithPrelude(t, `
 module main
 import std.ffi.{ with_cstring }
-unsafe extern pure strlen: (^u8) -> u64
+unsafe extern pure strlen: (buf: ^u8) -> u64
 let main = () -> void => {
   print("${"hello λ".with_cstring((p) => unsafe { strlen(p) })}")
 }
@@ -367,7 +367,7 @@ func TestCheck_WithCStringNeedsNoUnsafeAtTheCall(t *testing.T) {
 	errs := checkWithPrelude(t, `
 module main
 import std.ffi.{ with_cstring }
-unsafe extern pure strlen: (^u8) -> u64
+unsafe extern pure strlen: (buf: ^u8) -> u64
 let main = () -> void => { println("${"hi".with_cstring((p) => unsafe { strlen(p) })}") }
 `)
 	if len(errs) != 0 {
@@ -384,7 +384,7 @@ func TestCheck_WithCStringIsPolymorphicInItsCallback(t *testing.T) {
 	errs := checkWithPrelude(t, `
 module main
 import std.ffi.{ with_cstring }
-unsafe extern pure strlen: (^u8) -> u64
+unsafe extern pure strlen: (buf: ^u8) -> u64
 let ok = pure () -> u64 => "hi".with_cstring((p) => unsafe { strlen(p) })
 let bad = pure () -> u64 => "hi".with_cstring((p) => { println("boom"); unsafe { strlen(p) } })
 let main = () -> void => { println("${ok()}") }
@@ -402,7 +402,7 @@ func TestExec_WithCStringsFlatAndNested(t *testing.T) {
 	out := buildAndRunWithPrelude(t, `
 module main
 import std.ffi.{ with_cstring, with_cstrings }
-unsafe extern pure strcmp: (^u8, ^u8) -> i32
+unsafe extern pure strcmp: (buf: ^u8, buf2: ^u8) -> i32
 let main = () -> void => {
   print("${with_cstrings("abc", "abd", (x, y) => unsafe { strcmp(x, y) })} ")
   print("${with_cstrings("abc", "abc", (x, y) => unsafe { strcmp(x, y) })} ")
@@ -485,8 +485,8 @@ func TestExec_CLongCrossesTheBoundaryAsItsWidth(t *testing.T) {
 	out := buildAndRunWithPrelude(t, `
 module main
 import std.ffi.{ CLong, CULong, with_cstring, data_mut }
-unsafe extern pure labs: (CLong) -> CLong
-unsafe extern pure strtoul: (^u8, ^mut u8, i32) -> CULong
+unsafe extern pure labs: (n: CLong) -> CLong
+unsafe extern pure strtoul: (buf: ^u8, out: ^mut u8, n: i32) -> CULong
 let main = () -> void => {
   let n: i64 = -42
   var endptr: []u8 = [0; 8]

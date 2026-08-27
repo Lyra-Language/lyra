@@ -765,6 +765,47 @@ const (
 	// whichever token failed to shift), so this is the diagnostic that trade is paid for.
 	CodeVariadicOutsideExtern = "lyra-E065"
 
+	// CodeCallbackMustBeTopLevel: the argument in a C callback slot is not a top-level
+	// function — a lambda literal, a closure, a parameter of function type, or a local
+	// binding shadowing one.
+	//
+	// **The restriction is representational, not a policy.** C takes one word for a
+	// callback, and only a Lyra *top-level* function is one: `declareFunctionAs` lowers its
+	// parameters directly, so `let cmp = (a: ^u8, b: ^u8) -> i32` emits
+	// `i32 @lyra.main.cmp(i8*, i8*)`, which *is* `int (*)(const void*, const void*)`. A
+	// closure is `{code, env}` and its lifted body takes the environment as a leading
+	// parameter, so there is no word to pass and nothing to cast — passing one anyway is
+	// what made the first `qsort` attempt segfault.
+	//
+	// The fix is to name the function at the top level. What that costs is a captured
+	// value, which C callbacks carry in a `void*` the API supplies — so the context travels
+	// through that parameter as a `^u8`, explicitly, rather than through an environment C
+	// has no way to receive.
+	CodeCallbackMustBeTopLevel = "lyra-E066"
+
+	// CodeExternParamName: an `extern` parameter without a name, or a name on a parameter
+	// of a plain function *type*.
+	//
+	// **An extern is a declaration, not a type**, which is the whole argument. It stands in
+	// for a body someone else supplies, so it should read like the `let` it substitutes for
+	// — and `let f = (a: i64, b: i64) -> i64` names its parameters. Writing the extern as a
+	// bare type list was the anomaly.
+	//
+	// It matters most here because the boundary is where a positional mistake **links
+	// cleanly and computes garbage**: `bsearch: (^u8, ^u8, u64, u64, …)` gives a reader no
+	// way to tell the key from the base, or the count from the element size, and the
+	// information exists — in the C header being transcribed, which authors were pasting
+	// into a doc comment beside a signature that could not carry it.
+	//
+	// **The name is documentation the compiler cannot check.** Nothing here can compare it
+	// to the header, so a *wrong* name is as silent as none. What it buys is a transcription
+	// a reader can verify against `man qsort`, and a diagnostic that says
+	// `argument 2 (destLen)` rather than `argument 2 (arg1)`.
+	//
+	// A plain function type is refused the other way: `(i64) -> i64` describes a shape, and
+	// a parameter of a shape has nothing to be named.
+	CodeExternParamName = "lyra-E067"
+
 	// ── Warnings ──────────────────────────────────────────────────────────────
 
 	CodeShadowing = "lyra-W001"

@@ -20,7 +20,7 @@ func TestExec_EveryStringProducerIsNULTerminated(t *testing.T) {
 	t.Parallel()
 	out := buildAndRunWithPrelude(t, `
 module main
-unsafe extern pure strlen: (^u8) -> u64
+unsafe extern pure strlen: (buf: ^u8) -> u64
 /// Whether the terminator sits exactly at the string's own length.
 let terminated = (s: string) -> bool => i64(unsafe { strlen(s.cstring_ptr()) }) == s.byte_len()
 let main = () -> void => {
@@ -50,7 +50,7 @@ func TestExec_ReadLineIsNULTerminated(t *testing.T) {
 	line := strings.Repeat("x", 128)
 	out := buildAndRunWithPrelude(t, `
 module main
-unsafe extern pure strlen: (^u8) -> u64
+unsafe extern pure strlen: (buf: ^u8) -> u64
 let main = () -> void => match read_line() {
   Some(s) => println("${s.byte_len()} ${unsafe { strlen(s.cstring_ptr()) }}"),
   None => println("eof"),
@@ -69,7 +69,7 @@ func TestExec_CStringPtrTrapsOnAnInteriorNUL(t *testing.T) {
 	t.Parallel()
 	out, code := buildAndRunPanicWithPrelude(t, `
 module main
-unsafe extern pure strlen: (^u8) -> u64
+unsafe extern pure strlen: (buf: ^u8) -> u64
 let main = () -> void => {
   let s = "a${rune(0)}b"
   println(unsafe { strlen(s.cstring_ptr()) })

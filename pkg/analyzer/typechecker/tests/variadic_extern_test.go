@@ -10,7 +10,7 @@ import "testing"
 // A variadic extern takes at least its named parameters and then anything.
 func TestVariadic_TakesAnyNumberOfExtraArguments(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-unsafe extern take: (i32, ...) -> i32
+unsafe extern take: (n: i32, ...) -> i32
 let main = () -> void => unsafe {
   take(1)
   take(1, 2)
@@ -24,7 +24,7 @@ let main = () -> void => unsafe {
 // the named parameters, since they are how a `va_list` is started.
 func TestVariadic_TheNamedParametersAreStillRequired(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-unsafe extern take: (i32, i32, ...) -> i32
+unsafe extern take: (n: i32, n2: i32, ...) -> i32
 let main = () -> void => unsafe { take(1); () }
 `, false)
 	assertErrorsAre(t, res, "take: expected at least 2 argument(s), got 1")
@@ -34,7 +34,7 @@ let main = () -> void => unsafe { take(1); () }
 // types that can cross.
 func TestVariadic_AnExtraArgumentMustStillBeFFISafe(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-unsafe extern take: (i32, ...) -> i32
+unsafe extern take: (n: i32, ...) -> i32
 let main = () -> void => unsafe { take(1, "nope"); () }
 `, false)
 	assertHasErrorContaining(t, res, `argument 2 is string, which has no C spelling`)
@@ -50,9 +50,9 @@ let main = () -> void => unsafe { take(1, "nope"); () }
 // this compiler does not have. See lyra-E063's note.
 func TestFFISafe_AnAggregateIsToldToCrossByPointer(t *testing.T) {
 	for _, sig := range []string{
-		"struct Pt { x: i32, y: i32 }\nunsafe extern pure f: (Pt) -> i32",
-		"unsafe extern pure f: ((i32, i32)) -> i32",
-		"data Sh = A | B\nunsafe extern pure f: (Sh) -> i32",
+		"struct Pt { x: i32, y: i32 }\nunsafe extern pure f: (n: Pt) -> i32",
+		"unsafe extern pure f: (n: (i32, i32)) -> i32",
+		"data Sh = A | B\nunsafe extern pure f: (n: Sh) -> i32",
 	} {
 		res := parseCollectAndCheck(t, sig+"\n", false)
 		assertHasErrorContaining(t, res, "A struct crosses by pointer: take `^T` and pass `&value`")
@@ -64,6 +64,6 @@ func TestFFISafe_AnAggregateIsToldToCrossByPointer(t *testing.T) {
 // a string carries a NUL past its bytes as of 08/26, so the crossing needs no copy and
 // advising one would send a reader to build something that already exists.
 func TestFFISafe_AStringIsToldAboutWithCString(t *testing.T) {
-	res := parseCollectAndCheck(t, "unsafe extern pure f: (string) -> i32\n", false)
+	res := parseCollectAndCheck(t, "unsafe extern pure f: (n: string) -> i32\n", false)
 	assertHasErrorContaining(t, res, "`std.ffi`'s `with_cstring`, which needs no copy")
 }

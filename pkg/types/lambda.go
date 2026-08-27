@@ -99,7 +99,16 @@ type ParameterType struct {
 	// (`(mut Self, own i64) -> void`) — distinct from Modifier, which is the
 	// `stack`/`shared` allocation flavor. A function type is where a trait method's
 	// parameter modes live, since an impl binds patterns rather than typed parameters.
-	Borrow       TypeModifier
+	Borrow TypeModifier
+	// Name is the parameter's written name — `(dest: ^mut u8)`. **Required in an `extern`
+	// signature and refused everywhere else** (lyra-E067): an extern is a declaration
+	// standing in for a C prototype, where a positional mistake links cleanly and computes
+	// garbage, while a plain function *type* has no parameters to name.
+	//
+	// It is documentation the compiler cannot check — nothing here can compare it to the C
+	// header — so what it buys is a transcription a reader can verify by eye, and a
+	// diagnostic that says `argument 2 (destLen)` instead of `argument 2 (arg1)`.
+	Name         string
 	Type         Type
 	DefaultValue any
 }

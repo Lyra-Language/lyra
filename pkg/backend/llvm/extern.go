@@ -80,7 +80,9 @@ func (l *lowerer) declareExtern(ext *ast.ExternDeclStmt) (*ir.Func, error) {
 		}
 		return prior.fn, nil
 	}
+	restore := l.pushExternSignature()
 	declared, err := l.declareFunctionAs(ext.Name, ext.Func())
+	restore()
 	if err != nil {
 		return nil, err
 	}

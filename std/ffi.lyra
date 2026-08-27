@@ -304,7 +304,7 @@ pub let data_mut = unsafe pure noalloc (self: mut []t) -> ^mut t => {
 /// ```
 /// import std.ffi.{ CLong }
 ///
-/// unsafe extern pure labs: (CLong) -> CLong
+/// unsafe extern pure labs: (n: CLong) -> CLong
 /// ```
 ///
 /// **An alias rather than a `newtype`**, which reverses what `todo.md` recorded, and the

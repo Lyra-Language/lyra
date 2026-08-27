@@ -222,8 +222,9 @@ impl Show for string { show = (self) => self }
 pub data Shape = Circle(f64) | Empty
 /// Foreign.
 @link("m")
-unsafe extern pure sqrt: (f64) -> f64
-unsafe extern det noalloc fill: (^mut u8, u64) -> void
+unsafe extern pure sqrt: (x: f64) -> f64
+unsafe extern det noalloc fill: (out: ^mut u8, len: u64) -> void
+unsafe extern printf: (fmt: ^u8, ...) -> i32
 `
 	m := collectOne(t, src, docgen.Options{})
 
@@ -451,7 +452,7 @@ func TestCollect_ExternIsDocumented(t *testing.T) {
 	src := `
 /// Square root, from libm.
 @link("m")
-unsafe extern pure sqrt: (f64) -> f64
+unsafe extern pure sqrt: (x: f64) -> f64
 pub let ordinary = pure () -> i64 => 1
 `
 	m := collectOne(t, src, docgen.Options{IncludePrivate: true})
@@ -474,7 +475,7 @@ pub let ordinary = pure () -> i64 => 1
 	// **The `@link` line is part of the signature.** Elsewhere an attribute is metadata
 	// a reader can skip; here it is a build requirement riding the declaration, so a
 	// page omitting it documents a function the reader cannot successfully call.
-	want := "@link(\"m\")\nunsafe extern pure sqrt: (f64) -> f64"
+	want := "@link(\"m\")\nunsafe extern pure sqrt: (x: f64) -> f64"
 	if found.Signature != want {
 		t.Errorf("signature =\n%q\nwant\n%q", found.Signature, want)
 	}

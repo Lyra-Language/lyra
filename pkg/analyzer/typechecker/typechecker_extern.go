@@ -55,6 +55,15 @@ func (tc *TypeChecker) checkExternSignatureIsFFISafe(decl *ast.ExternDeclStmt) {
 		return
 	}
 	for i, p := range decl.Signature.Parameters {
+		// **A function type is a C function pointer, and only in parameter position.**
+		// Returning one would hand back a value Lyra has no way to call — a bare code
+		// address is not a closure — so the type is admitted exactly where a callback is
+		// passed *in*, which is what every callback API does.
+		if fp, ok := types.StripNewtype(p.Type).(*types.LambdaType); ok {
+			tc.requireCallbackIsFFISafe(fp, decl, i+1)
+			tc.requireNoBorrow(p, decl, i+1)
+			continue
+		}
 		tc.requireFFISafe(p.Type, decl, "parameter %d of", i+1)
 		tc.requireNoBorrow(p, decl, i+1)
 	}
@@ -239,4 +248,108 @@ func promoteForVariadic(t types.Type) types.Type {
 		return types.PrimitiveType{Name: types.Float64}
 	}
 	return t
+}
+
+// requireCallbackIsFFISafe checks a **C function pointer** parameter: every type in the
+// callback's own signature must itself cross.
+//
+// `int (*)(const void*, const void*)` is `(^u8, ^u8) -> i32` here, and it is admitted
+// because a Lyra **top-level function** already emits exactly that symbol — `declareFunction`
+// lowers its parameters directly, with no environment word, so `@lyra.main.compare(i8*, i8*)`
+// *is* the C signature rather than something convertible to it.
+//
+// What is refused is at the *call*, not here (checkCallbackArgument): only a top-level
+// function may be passed, because a closure is `{code, env}` and its lifted body takes the
+// environment as a leading parameter. The type says "a C function pointer"; the argument
+// rule says which values are one.
+//
+// A callback's own signature is checked with the same predicate the outer one uses, so
+// `(string) -> void` is refused for the reason `extern f: (string)` is, and the nesting
+// terminates because a callback parameter that is itself a function type is refused here
+// rather than recursed into — C's `void (*)(void (*)(void))` exists but nothing wants it,
+// and admitting it would need the argument rule to reach a second level.
+func (tc *TypeChecker) requireCallbackIsFFISafe(fp *types.LambdaType, decl *ast.ExternDeclStmt, idx int) {
+	bad := func(t types.Type, what string) {
+		tc.addErrorCode(decl.NameLocation, SeverityError, diag.CodeNotFFISafe,
+			"parameter %d of `extern %s` is a callback whose %s is %s, which has no C spelling. "+
+				"Every type in a callback's signature must cross too%s",
+			idx, decl.Name, what, t, ffiHint(tc.resolveTypeIfKnown(t, decl.GetLocation())))
+	}
+	for i, p := range fp.Parameters {
+		if p.Type == nil {
+			continue
+		}
+		if _, nested := types.StripNewtype(p.Type).(*types.LambdaType); nested {
+			bad(p.Type, fmt.Sprintf("parameter %d", i+1))
+			continue
+		}
+		if !isFFISafe(tc.resolveTypeIfKnown(p.Type, decl.GetLocation())) {
+			bad(p.Type, fmt.Sprintf("parameter %d", i+1))
+		}
+	}
+	if rt := fp.ReturnType.Type; rt != nil && !isFFISafe(tc.resolveTypeIfKnown(rt, decl.GetLocation())) {
+		bad(rt, "return type")
+	}
+}
+
+// checkCallbackArguments refuses anything but a **top-level function** in a C callback
+// slot, at every argument of a call to an extern whose parameter is a function type.
+//
+// See lyra-E066 for why the restriction is representational. The rule here is exact rather
+// than approximate, and the awkward case is the reason: the argument must be an identifier
+// that resolves *in scope* to the same lambda `LookupFunctionFrom` names. A **local binding
+// shadowing a top-level function** passes the first test and fails the second — and without
+// the second the backend, which resolves by name through `l.funcs`, would emit the
+// top-level function's symbol for a program that means the local. That is a wrong call
+// rather than a diagnostic.
+func (tc *TypeChecker) checkCallbackArguments(calleeName string, lambda *ast.LambdaExpr, call *ast.FunctionCallExpr) {
+	if !lambda.IsExtern {
+		return
+	}
+	for i, param := range lambda.Parameters {
+		if i >= len(call.Arguments) {
+			return
+		}
+		if _, isFn := types.StripNewtype(param.Type).(*types.LambdaType); !isFn {
+			continue
+		}
+		arg := call.Arguments[i]
+		if tc.isTopLevelFunctionRef(arg) {
+			continue
+		}
+		tc.addErrorCode(arg.GetLocation(), SeverityError, diag.CodeCallbackMustBeTopLevel,
+			"%s: argument %d is a C callback, so it must be a top-level function — a "+
+				"closure is a code pointer plus an environment, and C takes only the "+
+				"code pointer. Give it a name at the top level; anything it needs to "+
+				"capture travels through the callback's own `^u8` context parameter",
+			calleeName, i+1)
+	}
+}
+
+// isTopLevelFunctionRef reports whether expr names a top-level function — the one kind of
+// value whose emitted symbol has a C signature.
+func (tc *TypeChecker) isTopLevelFunctionRef(expr ast.Expression) bool {
+	id, ok := expr.(*ast.IdentifierExpr)
+	if !ok {
+		return false
+	}
+	fn, ok := tc.symTable.LookupFunctionFrom(id.Name, expr.GetLocation())
+	if !ok || fn == nil {
+		return false
+	}
+	// And the name must still *mean* that function here. A local binding of the same name
+	// resolves through the scope chain to a different lambda, and the backend would
+	// nonetheless emit the top-level symbol.
+	sym, found := tc.scope.Lookup(id.Name)
+	if !found {
+		return false
+	}
+	switch v := sym.(type) {
+	case *ast.LambdaExpr:
+		return v == fn
+	case *ast.VarDeclStmt:
+		lam, isLambda := v.Value.(*ast.LambdaExpr)
+		return isLambda && lam == fn
+	}
+	return false
 }

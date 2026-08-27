@@ -10,11 +10,11 @@ import (
 func TestDriver_CollectsLinksSortedAndDeduplicated(t *testing.T) {
 	res := driver.Analyze([]byte(`
 @link("m")
-unsafe extern pure sqrt: (f64) -> f64
+unsafe extern pure sqrt: (x: f64) -> f64
 @link("m")
-unsafe extern pure log: (f64) -> f64
+unsafe extern pure log: (x: f64) -> f64
 @link("z")
-extern compress: (i64) -> i64
+extern compress: (n: i64) -> i64
 extern plain: () -> i32
 `))
 	if got := strings.Join(res.Links, ","); got != "m,z" {

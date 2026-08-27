@@ -239,13 +239,13 @@ let main = () => println("no complex here")
 
 // **An extern's signature is a use**, and it is the *only* place an imported type can
 // appear at the boundary — an extern has no body. Missed until 08/22, which made
-// `import std.ffi.{ CLong }` beside `unsafe extern pure labs: (CLong) -> CLong` advise
+// `import std.ffi.{ CLong }` beside `unsafe extern pure labs: (n: CLong) -> CLong` advise
 // deleting the import the program cannot compile without: the exact failure — advice to
 // break working code — that widening this walk in the first place was for.
 func TestUnusedImports_TypeUsedOnlyInAnExternSignature(t *testing.T) {
 	assertNoUnusedImports(t, parseAndCheckUnusedImports(t, `
 import std.math.{ Complex }
-unsafe extern pure conj: (Complex<f64>) -> Complex<f64>
+unsafe extern pure conj: (n: Complex<f64>) -> Complex<f64>
 let main = () => println(1)
 `))
 }

@@ -21,7 +21,7 @@ import (
 func TestExtern_DeclaresTheCSymbolUnmangled(t *testing.T) {
 	t.Parallel()
 	got, err := emitSource(t, `module main
-unsafe extern pure abs: (i32) -> i32
+unsafe extern pure abs: (n: i32) -> i32
 let main = () -> u8 => unsafe { u8(abs(-7)) }
 `)
 	if err != nil {
@@ -42,7 +42,7 @@ let main = () -> u8 => unsafe { u8(abs(-7)) }
 func TestExec_ExternCallsLibc(t *testing.T) {
 	t.Parallel()
 	src := `module main
-unsafe extern pure abs: (i32) -> i32
+unsafe extern pure abs: (n: i32) -> i32
 let main = () -> u8 => unsafe { u8(abs(-7)) }
 `
 	if got := buildAndRun(t, src); got != 7 {
@@ -56,7 +56,7 @@ func TestExec_ExternFloatsAndLink(t *testing.T) {
 	t.Parallel()
 	src := `module main
 @link("m")
-unsafe extern pure sqrt: (f64) -> f64
+unsafe extern pure sqrt: (x: f64) -> f64
 let main = () -> u8 => unsafe { u8(sqrt(81.0).floor()) }
 `
 	if got := buildAndRun(t, src); got != 9 {
@@ -72,7 +72,7 @@ func TestExec_ExternWritesThroughAPointer(t *testing.T) {
 	t.Parallel()
 	src := `module main
 @link("m")
-unsafe extern pure frexp: (f64, ^mut i32) -> f64
+unsafe extern pure frexp: (x: f64, out: ^mut i32) -> f64
 let main = () -> u8 => {
   var exp: i32 = 0
   unsafe {
@@ -94,7 +94,7 @@ let main = () -> u8 => {
 func TestExec_ExternTakesAPointerIntoAnArray(t *testing.T) {
 	t.Parallel()
 	src := `module main
-unsafe extern pure strlen: (^u8) -> u64
+unsafe extern pure strlen: (buf: ^u8) -> u64
 let main = () -> u8 => {
   var bytes: []u8 = [104, 105, 33, 0]
   unsafe { u8(strlen(&bytes[0])) }
@@ -111,7 +111,7 @@ let main = () -> u8 => {
 func TestExec_ExternReturningVoid(t *testing.T) {
 	t.Parallel()
 	src := `module main
-unsafe extern det srand: (u32) -> void
+unsafe extern det srand: (n: u32) -> void
 let main = () -> u8 => {
   unsafe { srand(42) }
   3
@@ -143,11 +143,11 @@ import lib.b
 let main = () -> u8 => u8(a.twice(3) + b.thrice(2))
 `,
 		"lib/a.lyra": `module lib.a
-unsafe extern pure abs: (i32) -> i32
+unsafe extern pure abs: (n: i32) -> i32
 pub let twice = unsafe (n: i32) -> i64 => i64(unsafe { abs(n) }) * 2
 `,
 		"lib/b.lyra": `module lib.b
-unsafe extern pure abs: (i32) -> i32
+unsafe extern pure abs: (n: i32) -> i32
 pub let thrice = unsafe (n: i32) -> i64 => i64(unsafe { abs(n) }) * 3
 `,
 	}
@@ -170,11 +170,11 @@ import lib.b
 let main = () -> u8 => u8(a.one() + b.two())
 `,
 		"lib/a.lyra": `module lib.a
-unsafe extern pure abs: (i32) -> i32
+unsafe extern pure abs: (n: i32) -> i32
 pub let one = unsafe () -> i64 => i64(unsafe { abs(-1) })
 `,
 		"lib/b.lyra": `module lib.b
-unsafe extern pure abs: (i64) -> i64
+unsafe extern pure abs: (n: i64) -> i64
 pub let two = unsafe () -> i64 => unsafe { abs(-2) }
 `,
 	})
@@ -206,7 +206,7 @@ pub let two = unsafe () -> i64 => unsafe { abs(-2) }
 func TestExec_ExternCalledFromInsideAClosure(t *testing.T) {
 	t.Parallel()
 	src := `module main
-unsafe extern pure strlen: (^u8) -> u64
+unsafe extern pure strlen: (buf: ^u8) -> u64
 let apply<t> = (bytes: mut []u8, f: (^u8) -> t) -> t => unsafe { f(&bytes[0]) }
 let main = () -> u8 => {
   var b: []u8 = [104, 105, 33, 0]

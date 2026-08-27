@@ -1,0 +1,68 @@
+//! Calling back into Lyra from C: `qsort`, with a Lyra comparator.
+//!
+//!     lyrac run examples/callback.lyra
+//!
+//! **A Lyra top-level function already is a C function pointer.** Its parameters lower
+//! directly, with no environment word, so `let by_value = (a: ^u8, b: ^u8) -> i32` emits
+//! `i32 @lyra.main.by_value(i8*, i8*)` — which *is* `int (*)(const void*, const void*)`,
+//! rather than something converted to it at the call. That is why passing one costs
+//! nothing and why the restriction below is where it is.
+//!
+//! **A closure cannot cross, and the reason is representational rather than a policy**: it
+//! is a code pointer *plus* a ref-counted environment, and C takes only the code pointer.
+//! So `lyra-E066` refuses a lambda literal, a captured closure, and a parameter of function
+//! type — a callback argument must be a top-level function.
+//!
+//! What that costs is a capture, and C's own answer is the one to use: a callback API
+//! carries its context in a `void *` the library hands back untouched, and the callback
+//! reads and writes through that instead. `bsearch` below shows the same comparator
+//! serving two APIs; a context-carrying one is declared the same way, with the `void *`
+//! written as a `^mut u8` the caller owns.
+
+import std.ffi.{ data, data_mut }
+
+let main = () -> u8 => {
+  var xs: []u8 = [50, 10, 40, 20, 30]
+  unsafe { qsort(xs.data_mut(), u64(xs.len()), 1, ascending) }
+  println("sorted:  ${show(xs)}")
+
+  // The same function serves a second C API — a function pointer is a value, and nothing
+  // about the callback is specialized to the call that takes it.
+  var needle: []u8 = [40]
+  let hit = unsafe { bsearch(needle.data(), xs.data(), u64(xs.len()), 1, ascending) }
+  let found = unsafe { hit^ }
+  println("found:   ${found}")
+
+  if xs[0] == 10 && xs[4] == 50 && found == 40 { 0 } else { 1 }
+}
+
+/// `qsort`'s comparator: negative, zero or positive, C's convention.
+///
+/// The pointers are into the array C is sorting, so reading them is `unsafe` for the reason
+/// every raw-pointer read is — nothing here knows they are in bounds, and `qsort` is what
+/// promises it.
+let ascending = pure (a: ^u8, b: ^u8) -> i32 => {
+  let x = unsafe { i32(a^) }
+  let y = unsafe { i32(b^) }
+  x - y
+}
+
+let show = pure (xs: []u8) -> string => {
+  var out = ""
+  for i, v in xs { out = out ++ (if i == 0 { "" } else { " " }) ++ "${v}" }
+  out
+}
+
+/// `void qsort(void *base, size_t n, size_t size, int (*cmp)(const void *, const void *))`.
+///
+/// The fourth parameter is a **C function pointer**, written as the Lyra function type it
+/// accepts. Every type in a callback's own signature must cross too, checked with the same
+/// predicate the outer parameters take.
+unsafe extern qsort: (base: ^mut u8, count: u64, size: u64, cmp: (^u8, ^u8) -> i32) -> void
+
+/// `void *bsearch(const void *key, const void *base, size_t n, size_t size, int (*cmp)(…))`
+/// — the same comparator, a different API. A context-carrying callback
+/// (`sqlite3_exec`, `curl`'s write callback, every event loop) is declared the same way,
+/// with C's `void *` written as a `^mut u8`: the callback reads and writes through it
+/// instead of capturing, which is the difference the module note describes.
+unsafe extern bsearch: (key: ^u8, base: ^u8, count: u64, size: u64, cmp: (^u8, ^u8) -> i32) -> ^u8

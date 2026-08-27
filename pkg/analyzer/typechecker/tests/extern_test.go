@@ -9,14 +9,14 @@ import "testing"
 
 func TestExtern_CallChecksAgainstTheSignature(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-unsafe extern pure sqrt: (f64) -> f64
+unsafe extern pure sqrt: (x: f64) -> f64
 let main = () -> void => { unsafe { println("${sqrt(16.0)}") } }
 `, false))
 }
 
 func TestExtern_CallArityIsChecked(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-unsafe extern pure sqrt: (f64) -> f64
+unsafe extern pure sqrt: (x: f64) -> f64
 let main = () -> void => { unsafe { println("${sqrt(16.0, 2.0)}") } }
 `, false)
 	assertHasErrorContaining(t, res, "expected 1 argument(s), got 2")
@@ -26,7 +26,7 @@ let main = () -> void => { unsafe { println("${sqrt(16.0, 2.0)}") } }
 // not about safety.
 func TestExtern_CallNeedsAnUnsafeContext(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-unsafe extern pure sqrt: (f64) -> f64
+unsafe extern pure sqrt: (x: f64) -> f64
 let main = () -> void => { println("${sqrt(16.0)}") }
 `, false)
 	assertHasErrorContaining(t, res, `calling unsafe function "sqrt" requires an `+"`unsafe`")
@@ -39,7 +39,7 @@ let main = () -> void => { println("${sqrt(16.0)}") }
 // safe; claiming `pure` asserts something no compiler can check, and a wrong claim does not
 // fail here — it is believed, and corrupts every caller's effect analysis.
 func TestExtern_BoundWithoutUnsafeIsRefused(t *testing.T) {
-	res := parseCollectAndCheck(t, `extern pure sqrt: (f64) -> f64`, false)
+	res := parseCollectAndCheck(t, `extern pure sqrt: (x: f64) -> f64`, false)
 	assertHasErrorContaining(t, res, "write `unsafe extern` to assert it")
 }
 
@@ -63,10 +63,19 @@ func TestExtern_UnsafeWithoutABoundIsAllowed(t *testing.T) {
 // a reader is told to *do*, which is stable, rather than the sentence explaining why.
 func TestExtern_SignatureRefusesTypesWithNoCSpelling(t *testing.T) {
 	for _, c := range []struct{ name, src, want string }{
-		{"string", `unsafe extern pure puts: (string) -> i32`, "`std.ffi`'s `with_cstring`"},
-		{"array", `unsafe extern pure sum: ([]i64) -> i64`, "xs.data()"},
-		{"closure", `unsafe extern pure go: ((i64) -> i64) -> i32`, "not a C function pointer"},
-		{"bool", `unsafe extern pure ok: (bool) -> i32`, "C's `_Bool` is a byte"},
+		{"string", `unsafe extern pure puts: (n: string) -> i32`, "`std.ffi`'s `with_cstring`"},
+		{"array", `unsafe extern pure sum: (n: []i64) -> i64`, "xs.data()"},
+		// **A function type in *parameter* position is now a C function pointer** (08/26),
+		// so what is refused is a callback whose own signature does not cross — checked
+		// with the same predicate the outer parameters take. A function type in *return*
+		// position is still refused outright: a bare code address is not a Lyra closure,
+		// so the value could not be called.
+		{"callback with a non-C parameter", `unsafe extern pure go: (fn: (string) -> i64) -> i32`, "is a callback whose parameter 1 is string"},
+		// Named through an alias because `() -> ((i64) -> i64)` parses its parenthesized
+		// return as an anonymous *tuple*, so the direct spelling tests the grammar rather
+		// than this rule.
+		{"function returned", "type Cb = (i64) -> i64\nunsafe extern pure get: () -> Cb", "not a C function pointer"},
+		{"bool", `unsafe extern pure ok: (n: bool) -> i32`, "C's `_Bool` is a byte"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			res := parseCollectAndCheck(t, c.src, false)
@@ -77,8 +86,8 @@ func TestExtern_SignatureRefusesTypesWithNoCSpelling(t *testing.T) {
 
 func TestExtern_SignatureAcceptsScalarsPointersAndVoid(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-unsafe extern det memcpy: (^mut u8, ^u8, i64) -> ^mut u8
-unsafe extern pure scale: (f32, i16, rune) -> f64
+unsafe extern det memcpy: (out: ^mut u8, buf: ^u8, n: i64) -> ^mut u8
+unsafe extern pure scale: (x: f32, n: i16, n2: rune) -> f64
 extern flush: () -> void
 `, false))
 }
@@ -89,7 +98,7 @@ extern flush: () -> void
 func TestExtern_SignatureLooksThroughANewtype(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
 newtype Fd = i32
-unsafe extern det close: (Fd) -> i32
+unsafe extern det close: (n: Fd) -> i32
 `, false))
 }
 
@@ -101,7 +110,7 @@ unsafe extern det close: (Fd) -> i32
 // which the signature can already say.
 func TestExtern_BorrowModifierOnAParameterIsRefused(t *testing.T) {
 	res := parseCollectAndCheck(t, `
-unsafe extern pure takes: (mut i64, ref ^u8) -> i64
+unsafe extern pure takes: (n: mut i64, n2: ref ^u8) -> i64
 `, false)
 	assertHasErrorContaining(t, res, "parameter 1 of `extern takes` is `mut`")
 	assertHasErrorContaining(t, res, "parameter 2 of `extern takes` is `ref`")
@@ -112,6 +121,6 @@ unsafe extern pure takes: (mut i64, ref ^u8) -> i64
 // nothing either way. Refusing it would be a rule with no failure behind it.
 func TestExtern_OwnOnAParameterIsNotRefused(t *testing.T) {
 	assertNoErrors(t, parseCollectAndCheck(t, `
-unsafe extern pure takes: (own i64) -> i64
+unsafe extern pure takes: (n: own i64) -> i64
 `, false))
 }

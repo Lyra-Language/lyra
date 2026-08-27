@@ -915,6 +915,7 @@ func (c *Collector) parseParameterTypes(node, owner *sitter.Node) ([]types.Param
 		// of panicking, so this guard is load-bearing, not defensive fluff.
 		return parameterTypes, false
 	}
+	inExtern := owner != nil && owner.Kind() == "extern_signature"
 	for i := uint(0); i < node.ChildCount(); i++ {
 		child := node.Child(i)
 		switch child.Kind() {
@@ -927,7 +928,26 @@ func (c *Collector) parseParameterTypes(node, owner *sitter.Node) ([]types.Param
 					"`...` must be the last parameter: everything after it in a C signature is variadic")
 				continue
 			}
-			parameterTypes = append(parameterTypes, c.parseParameterType(child))
+			pt := c.parseParameterType(child)
+			// **Named in an extern, unnamed everywhere else** (lyra-E067). An extern is a
+			// declaration standing in for a C prototype — where a positional mistake links
+			// cleanly and computes garbage — so it reads like the `let` it substitutes for;
+			// a plain function *type* describes a shape, whose parameters have nothing to
+			// be named. The grammar admits the name in both, on this project's standing
+			// trade, and this is where that is paid.
+			switch {
+			case inExtern && pt.Name == "":
+				c.ctx.AddErrorCoded(child, diag.SeverityError, diag.CodeExternParamName,
+					"an `extern` parameter needs a name: write `name: %s`. The boundary is "+
+						"where a positional mistake links cleanly and computes garbage, and "+
+						"the name is what lets a reader check the declaration against the "+
+						"C header it came from", typeTextOr(c, child, "T"))
+			case !inExtern && pt.Name != "":
+				c.ctx.AddErrorCoded(child, diag.SeverityError, diag.CodeExternParamName,
+					"a parameter of a function *type* has no name to give: `%s` describes a "+
+						"shape, not a declaration. Drop `%s:`", typeTextOr(c, child, "T"), pt.Name)
+			}
+			parameterTypes = append(parameterTypes, pt)
 		case "variadic_parameter":
 			if variadic {
 				c.ctx.AddErrorCoded(child, CollectorErrorSeverityError, diag.CodeVariadicOutsideExtern,
@@ -961,6 +981,12 @@ func (c *Collector) parseParameterTypes(node, owner *sitter.Node) ([]types.Param
 
 func (c *Collector) parseParameterType(node *sitter.Node) types.ParameterType {
 	pt := types.ParameterType{Type: c.parseType(cst.Field(node, "type"))}
+	// `(dest: ^mut u8)`. The name and its colon are one token (lambda_type.js says why), so
+	// the text is trimmed back to the name here — the one place that knows the token's
+	// shape.
+	if n := cst.Field(node, "name"); n != nil {
+		pt.Name = strings.TrimRight(strings.TrimSuffix(strings.TrimSpace(c.ctx.NodeText(n)), ":"), " \t")
+	}
 	// The `ref`/`mut`/`own` modifier on a parameter of a function type. The grammar has
 	// always accepted it here (`parameter_type` carries an optional `type_modifier`); it was
 	// simply never read, which is why a trait signature's borrow modes were silently by
@@ -1357,4 +1383,14 @@ func (c *Collector) collectBindingPattern(node *sitter.Node) ast.Pattern {
 		Name:        c.ctx.NodeText(nameNode),
 		Pattern:     c.CollectPattern(patternNode),
 	}
+}
+
+// typeTextOr renders a parameter's written type for a diagnostic, falling back when the
+// node is missing — the message is more useful naming the type the author wrote than a
+// placeholder, and this is the only place that needs the source text of one.
+func typeTextOr(c *Collector, paramNode *sitter.Node, fallback string) string {
+	if t := cst.Field(paramNode, "type"); t != nil {
+		return c.ctx.NodeText(t)
+	}
+	return fallback
 }

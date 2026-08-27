@@ -469,6 +469,8 @@ func (tc *TypeChecker) inferLambdaCall(calleeName string, lambda *ast.LambdaExpr
 	for i, arg := range call.Arguments {
 		tc.checkNamedArgument(calleeName, lambda.Parameters[i], i, arg)
 	}
+	// And a C callback slot takes only a top-level function, whatever its type says.
+	tc.checkCallbackArguments(calleeName, lambda, call)
 
 	// `mut`/`ref` arguments are pointers to the caller's storage, so two of them
 	// naming one binding alias — checked once for the whole call, since the rule is

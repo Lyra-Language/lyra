@@ -2827,11 +2827,74 @@ not merely a missing spelling, so a reader is not left thinking the shape is uni
 syntax. Reopen this only with a real classifier for both ABIs, validated case-by-case
 against clang — the fixture and its pure-C oracle are the harness for exactly that.
 
+### Named extern parameters — **[DONE 08/26]**
+
+`unsafe extern det compress: (dest: ^mut u8, destLen: ^mut CULong, source: ^u8, sourceLen:
+CULong) -> i32`. Required in an extern (`lyra-E067`), refused in a plain function type.
+
+**The argument is that an extern is a declaration, not a type.** It stands in for a body
+someone else supplies, so it should read like the `let` it substitutes for — and
+`let f = (a: i64, b: i64) -> i64` names its parameters. Writing it as a bare type list was
+the anomaly, and the boundary is the worst place for it: `bsearch: (^u8, ^u8, u64, u64, …)`
+gives a reader no way to tell the key from the base or the count from the element size, and
+getting them backwards links cleanly and computes garbage.
+
+The information already existed — every binding in `examples/` had the C prototype pasted
+into a doc comment, doing the naming work in a place that can go stale beside a signature
+that could not carry it.
+
+- **It is documentation the compiler cannot check.** Nothing compares the name to the
+  header, so a *wrong* name is as silent as none. What it buys is a transcription a reader
+  can verify by eye, and `argument 2 (destLen)` where the numbered fallback said
+  `argument 2 (arg1)`.
+- **A callback's own signature stays unnamed**, since it is a type — the rule follows the
+  construct rather than the enclosing declaration.
+- **The name and its colon are one token** (+4 states), because a lowercase name in type
+  position is a *type variable*: `t` in `(t) -> u` and `n` in `(n: i64) -> u` are the same
+  lexeme, a **lexical** collision a `conflicts:` entry cannot resolve. A declared conflict
+  was tried first and changed nothing, which is the tell.
+- **Two bugs fell out of the migration.** docgen rendered an extern's signature without
+  parameter names *and* without the variadic `...`, so a generated page showed a signature
+  that no longer parsed — `TestSignature_RoundTripsThroughTheParser` covers externs but had
+  no variadic case, which is why the second slipped through when variadics landed. Both
+  fixed, and the round-trip test now carries a variadic extern.
+
+See `COMPLETED.md`.
+
+### Callbacks into C — **[DONE 08/26]**
+
+A function type in an extern's **parameter** position is a C function pointer, and a Lyra
+top-level function may be passed as one. `examples/callback.lyra` sorts with `qsort` and
+searches with `bsearch` using one comparator.
+
+**It rests on a coincidence worth knowing.** `declareFunctionAs` lowers a function's
+parameters directly, with no environment word, so `let cmp = (a: ^u8, b: ^u8) -> i32` emits
+`i32 @lyra.main.cmp(i8*, i8*)` — which *is* `int (*)(const void*, const void*)` rather than
+something converted to it. So the feature is: lower the *declaration's* function type as a
+pointer-to-function instead of Lyra's boxed closure (`pushExternSignature`), and pass the
+symbol at a slot shaped that way. The call site needs no flag — only an extern lowers a
+function type like that, so the slot's type is the signal.
+
+- **Only a top-level function** (`lyra-E066`). A closure is `{code, env}` and its lifted body
+  takes the environment as a leading parameter, so there is no word to hand over; passing one
+  segfaulted before the check existed. Refused: a lambda literal, a capturing closure, a
+  parameter of function type, and — the case that would otherwise **miscompile rather than
+  fail** — a local binding shadowing a top-level function, since the backend resolves the
+  argument by name through `l.funcs` and would emit the top-level symbol. The rule compares
+  the scope's resolution against the symbol table's, which is what makes it exact.
+- **Every type in the callback's own signature must cross**, checked with the same predicate
+  the outer parameters take.
+- **Return position is still refused**: a bare code address is not a Lyra closure, so a
+  returned C function pointer would be a value nothing could call. That needs its own story.
+- **A capture's replacement is C's own `void *` context**, which nearly every callback API
+  carries — the callback reads and writes through it instead of capturing.
+
 ### What is deliberately not decided here
 
-Callbacks passed *to* C: a Lyra closure is a code pointer plus a ref-counted environment,
-which is not a C function pointer. The biggest remaining FFI gap — it blocks `qsort`, every
-event loop, every GUI toolkit, sqlite and curl.
+Returning a C function pointer to Lyra, and passing a *closure* — both need a way to call a
+bare code address, which is the same missing piece. A trampoline per closure would need
+executable memory allocated at run time; the `void *` context parameter is the answer C
+itself uses and costs nothing.
 
 **Non-LP64 targets**, per the width section above: the decision there is to state the
 assumption rather than abstract over it, and `CLong`/`CULong` is the one grep target a

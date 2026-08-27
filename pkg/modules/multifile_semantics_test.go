@@ -189,10 +189,10 @@ func TestMultiFile_ExternIsPrivateToItsModule(t *testing.T) {
 import lib.b
 let main = () -> u8 => u8(a.one() + b.two())`,
 		"lib/a.lyra": `module lib.a
-unsafe extern pure abs: (i32) -> i32
+unsafe extern pure abs: (n: i32) -> i32
 pub let one = unsafe () -> i64 => i64(unsafe { abs(-1) })`,
 		"lib/b.lyra": `module lib.b
-unsafe extern pure abs: (i32) -> i32
+unsafe extern pure abs: (n: i32) -> i32
 pub let two = unsafe () -> i64 => i64(unsafe { abs(-2) })`,
 	})
 	if errs := res.Errors(); len(errs) != 0 {
@@ -207,7 +207,7 @@ func TestMultiFile_ExternIsNotReachableFromAnotherModule(t *testing.T) {
 		"app.lyra": `import lib.a
 let main = () -> u8 => u8(unsafe { abs(-1) })`,
 		"lib/a.lyra": `module lib.a
-unsafe extern pure abs: (i32) -> i32
+unsafe extern pure abs: (n: i32) -> i32
 pub let one = unsafe () -> i64 => i64(unsafe { abs(-1) })`,
 	})
 	if len(res.Errors()) == 0 {

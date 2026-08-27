@@ -160,13 +160,13 @@ let same = pure (a: []u8, b: []u8) -> bool => {
 /// which is `u32` on every target and needs no alias. See `compress` for why the
 /// distinction is worth making in a program that runs on one platform.
 @link("z")
-unsafe extern pure crc32: (CULong, ^u8, u32) -> CULong
+unsafe extern pure crc32: (crc: CULong, buf: ^u8, len: u32) -> CULong
 
 /// `uLong compressBound(uLong sourceLen)` — zlib's worst case for an input of that
 /// length, so a buffer of the answer's size cannot be too small. `pure`: it is arithmetic
 /// on the argument and reads nothing.
 @link("z")
-unsafe extern pure compressBound: (CULong) -> CULong
+unsafe extern pure compressBound: (sourceLen: CULong) -> CULong
 
 /// `int compress(Bytef *dest, uLongf *destLen, const Bytef *source, uLong sourceLen)`.
 ///
@@ -181,11 +181,11 @@ unsafe extern pure compressBound: (CULong) -> CULong
 /// decide which ones meant `long`. The alias is the *boundary's*: the Lyra functions above
 /// convert to a fixed width at their edge, so the target-dependent type stops there.
 @link("z")
-unsafe extern det noalloc compress: (^mut u8, ^mut CULong, ^u8, CULong) -> i32
+unsafe extern det noalloc compress: (dest: ^mut u8, destLen: ^mut CULong, source: ^u8, sourceLen: CULong) -> i32
 
 /// `int uncompress(Bytef *dest, uLongf *destLen, const Bytef *source, uLong sourceLen)`.
 @link("z")
-unsafe extern det noalloc uncompress: (^mut u8, ^mut CULong, ^u8, CULong) -> i32
+unsafe extern det noalloc uncompress: (dest: ^mut u8, destLen: ^mut CULong, source: ^u8, sourceLen: CULong) -> i32
 
 /// `const char *zlibVersion(void)` — a pointer into zlib's own static storage, which is
 /// why nothing here frees it. Ownership does not cross the boundary in either direction.

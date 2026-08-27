@@ -646,7 +646,7 @@ func (l *lowerer) lowerIndirectCall(block *ir.Block, e *ast.FunctionCallExpr, lt
 	// is what gives an indirect call the same diverging-argument guard a direct one
 	// has. No parameter list is passed because a lambda *type* carries no borrow
 	// modes (see lambdaTypeParams), so no argument here is by reference.
-	args, block, ok, err := l.lowerCallArgs(block, []value.Value{env}, e.Arguments, nil)
+	args, block, ok, err := l.lowerCallArgs(block, []value.Value{env}, e.Arguments, nil, nil)
 	if err != nil {
 		return nil, nil, err
 	}

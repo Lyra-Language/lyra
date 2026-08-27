@@ -335,7 +335,7 @@ func TestDocComment_AttachesToAnExtern(t *testing.T) {
 ///
 /// # Panics
 /// Traps on i32::MIN, which has no positive counterpart.
-unsafe extern pure abs: (i32) -> i32
+unsafe extern pure abs: (n: i32) -> i32
 `)
 	for _, stmt := range program.Statements {
 		ext, ok := stmt.(*ast.ExternDeclStmt)
@@ -375,7 +375,7 @@ tuple Pair(Point, i64)
 let param = pure (p: Point) -> Point => p
 let ptr = unsafe (q: ^Point) -> i64 => 0
 let fn = pure (f: (Point) -> Point) -> i64 => 0
-unsafe extern pure ext: (^Point) -> i64
+unsafe extern pure ext: (buf: ^Point) -> i64
 let ann = pure () -> i64 => { let z: Point = Point { x: 1 }; z.x }
 impl Shown for Point { show = pure (self) => Point { x: 0 } }
 `)

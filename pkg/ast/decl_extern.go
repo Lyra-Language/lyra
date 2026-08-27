@@ -69,10 +69,12 @@ func (e *ExternDeclStmt) Func() *LambdaExpr {
 		for i, p := range e.Signature.Parameters {
 			lam.Parameters = append(lam.Parameters, Parameter{
 				AstBase: AstBase{Location: e.GetLocation()},
-				// A foreign signature names no parameters — `(f64) -> f64` is all there
-				// is — so they are numbered. Nothing reads these names: there is no body
-				// to resolve them in, and a call site matches positionally.
-				Pattern:      &IdentifierPattern{Name: externParamName(i)},
+				// **The written name** (`(dest: ^mut u8)`), which lyra-E067 requires. It
+				// is not resolved in a body — an extern has none, and a call matches
+				// positionally — but it is what a diagnostic names, so
+				// `argument 2 (destLen)` replaces the numbered placeholder an unnamed
+				// signature had to fall back to.
+				Pattern:      &IdentifierPattern{Name: externParamNameOr(p.Name, i)},
 				Type:         p.Type,
 				TypeModifier: p.Borrow,
 			})
@@ -82,7 +84,14 @@ func (e *ExternDeclStmt) Func() *LambdaExpr {
 	return lam
 }
 
-func externParamName(i int) string {
+// externParamNameOr is the declared name, or a positional placeholder for a signature that
+// has none. E067 requires the name, so the fallback is reached only by a program that is
+// already being reported — but a diagnostic built on an empty name would read worse than one
+// built on `arg1`, and the two errors would compound.
+func externParamNameOr(name string, i int) string {
+	if name != "" {
+		return name
+	}
 	return "arg" + itoa(i)
 }
 

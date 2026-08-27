@@ -908,7 +908,7 @@ impl Named for Cat { name = pure (self) => "cat" }
 // must never get.
 func TestPurity_ExternWithoutABoundIsImpure(t *testing.T) {
 	errs := checkPurity(t, `
-extern noisy: (i64) -> i64
+extern noisy: (n: i64) -> i64
 let f = pure (n: i64) -> i64 => unsafe { noisy(n) }
 `)
 	assertPurityCount(t, errs, 1)
@@ -921,7 +921,7 @@ let f = pure (n: i64) -> i64 => unsafe { noisy(n) }
 // `pure` today, so a std.math written over libm has to be able to say so.
 func TestPurity_ExternWithAPureBoundIsPure(t *testing.T) {
 	assertPurityCount(t, checkPurity(t, `
-unsafe extern pure sq: (f64) -> f64
+unsafe extern pure sq: (x: f64) -> f64
 let f = pure (x: f64) -> f64 => unsafe { sq(x) }
 `), 0)
 }
@@ -931,7 +931,7 @@ let f = pure (x: f64) -> f64 => unsafe { sq(x) }
 // from `pure`.
 func TestPurity_ExternWithADetBoundIsNotPure(t *testing.T) {
 	errs := checkPurity(t, `
-unsafe extern det emit: (i64) -> void
+unsafe extern det emit: (n: i64) -> void
 let f = pure (n: i64) -> void => unsafe { emit(n) }
 `)
 	assertPurityCount(t, errs, 1)

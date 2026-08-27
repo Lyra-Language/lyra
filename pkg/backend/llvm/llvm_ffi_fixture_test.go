@@ -85,7 +85,7 @@ func checkFixture(t *testing.T, src, want string) {
 func TestExec_FFIFixture_NarrowIntegerWidths(t *testing.T) {
 	t.Parallel()
 	checkFixture(t, `module main
-unsafe extern pure lyra_fixture_narrow: (i8, u8, i16, u16) -> i32
+unsafe extern pure lyra_fixture_narrow: (n: i8, n2: u8, n3: i16, n4: u16) -> i32
 let main = () -> void => unsafe {
   let a: i8 = -3
   let b: u8 = 200
@@ -101,7 +101,7 @@ let main = () -> void => unsafe {
 func TestExec_FFIFixture_Float32(t *testing.T) {
 	t.Parallel()
 	checkFixture(t, `module main
-unsafe extern pure lyra_fixture_f32: (f32, f32) -> f32
+unsafe extern pure lyra_fixture_f32: (x: f32, x2: f32) -> f32
 let main = () -> void => unsafe {
   let x: f32 = 2.5
   let y: f32 = 4.0
@@ -116,7 +116,7 @@ let main = () -> void => unsafe {
 func TestExec_FFIFixture_MixedRegisterClasses(t *testing.T) {
 	t.Parallel()
 	checkFixture(t, `module main
-unsafe extern pure lyra_fixture_mixed: (i32, f64, i64, f32, u8, f64) -> f64
+unsafe extern pure lyra_fixture_mixed: (n: i32, x: f64, n2: i64, x2: f32, n3: u8, x3: f64) -> f64
 let main = () -> void => unsafe {
   let a: i32 = 1
   let d: f32 = 8.0
@@ -132,7 +132,7 @@ let main = () -> void => unsafe {
 func TestExec_FFIFixture_ArgumentsSpillToTheStack(t *testing.T) {
 	t.Parallel()
 	checkFixture(t, `module main
-unsafe extern pure lyra_fixture_many: (i64, i64, i64, i64, i64, i64, i64, i64, i64, i64) -> i64
+unsafe extern pure lyra_fixture_many: (n: i64, n2: i64, n3: i64, n4: i64, n5: i64, n6: i64, n7: i64, n8: i64, n9: i64, n10: i64) -> i64
 let main = () -> void =>
   unsafe { println(lyra_fixture_many(1, 1, 1, 1, 1, 1, 1, 1, 1, 1)) }
 `, "55") // 1+2+3+…+10
@@ -145,7 +145,7 @@ func TestExec_FFIFixture_CLong(t *testing.T) {
 	t.Parallel()
 	checkFixture(t, `module main
 import std.ffi.{ CLong, CULong }
-unsafe extern pure lyra_fixture_long: (CLong, CULong) -> CLong
+unsafe extern pure lyra_fixture_long: (n: CLong, n2: CULong) -> CLong
 let main = () -> void => unsafe {
   let a: CLong = 1000000
   let b: CULong = 500
@@ -159,7 +159,7 @@ let main = () -> void => unsafe {
 func TestExec_FFIFixture_OutParameters(t *testing.T) {
 	t.Parallel()
 	checkFixture(t, `module main
-unsafe extern pure lyra_fixture_out: (^mut i32, ^mut f64, ^mut u8) -> void
+unsafe extern pure lyra_fixture_out: (out: ^mut i32, out2: ^mut f64, out3: ^mut u8) -> void
 let main = () -> void => unsafe {
   var i: i32 = 0
   var d: f64 = 0.0
@@ -183,9 +183,9 @@ func TestExec_FFIFixture_StructLayoutMatchesC(t *testing.T) {
 	checkFixture(t, `module main
 struct Point { x: i32, tag: u8, weight: f64, id: i64 }
 unsafe extern pure lyra_fixture_point_size: () -> i64
-unsafe extern pure lyra_fixture_point_offset: (i32) -> i64
-unsafe extern pure lyra_fixture_read_point: (^Point) -> f64
-unsafe extern pure lyra_fixture_bump_point: (^mut Point) -> void
+unsafe extern pure lyra_fixture_point_offset: (n: i32) -> i64
+unsafe extern pure lyra_fixture_read_point: (buf: ^Point) -> f64
+unsafe extern pure lyra_fixture_bump_point: (out: ^mut Point) -> void
 let main = () -> void => unsafe {
   var p = Point { x: 10, tag: 3, weight: 0.5, id: 1000 }
   let before = lyra_fixture_read_point(&p)
@@ -204,8 +204,8 @@ func TestExec_FFIFixture_ByteBuffers(t *testing.T) {
 	t.Parallel()
 	checkFixture(t, `module main
 import std.ffi.{ data, data_mut }
-unsafe extern pure lyra_fixture_sum_bytes: (^u8, i64) -> i64
-unsafe extern pure lyra_fixture_fill_bytes: (^mut u8, i64, u8) -> void
+unsafe extern pure lyra_fixture_sum_bytes: (buf: ^u8, n: i64) -> i64
+unsafe extern pure lyra_fixture_fill_bytes: (out: ^mut u8, n: i64, n2: u8) -> void
 let main = () -> void => unsafe {
   var xs: []u8 = [0, 0, 0, 0, 0]
   lyra_fixture_fill_bytes(xs.data_mut(), 5, 10)
@@ -237,7 +237,7 @@ let main = () -> void => unsafe {
 func TestExec_FFIFixture_Rune(t *testing.T) {
 	t.Parallel()
 	checkFixture(t, `module main
-unsafe extern pure lyra_fixture_next_rune: (rune) -> rune
+unsafe extern pure lyra_fixture_next_rune: (n: rune) -> rune
 let main = () -> void => unsafe { println(lyra_fixture_next_rune('a')) }
 `, "b")
 }
@@ -300,7 +300,7 @@ func testdataPath(t *testing.T, name string) string {
 func TestExec_FFIFixture_VariadicCall(t *testing.T) {
 	t.Parallel()
 	checkFixture(t, `module main
-unsafe extern lyra_fixture_va_sum: (i32, ...) -> i64
+unsafe extern lyra_fixture_va_sum: (n: i32, ...) -> i64
 let main = () -> void => unsafe {
   let n: i32 = 4
   let a: i32 = 1
@@ -320,7 +320,7 @@ let main = () -> void => unsafe {
 func TestExec_FFIFixture_VariadicPromotions(t *testing.T) {
 	t.Parallel()
 	checkFixture(t, `module main
-unsafe extern lyra_fixture_va_mixed: (i32, ...) -> f64
+unsafe extern lyra_fixture_va_mixed: (n: i32, ...) -> f64
 let main = () -> void => unsafe {
   let n: i32 = 3
   let a: u8 = 1
@@ -338,7 +338,7 @@ let main = () -> void => unsafe {
 func TestExec_FFIFixture_VariadicSignedness(t *testing.T) {
 	t.Parallel()
 	checkFixture(t, `module main
-unsafe extern lyra_fixture_va_signed: (i32, ...) -> i64
+unsafe extern lyra_fixture_va_signed: (n: i32, ...) -> i64
 let main = () -> void => unsafe {
   let n: i32 = 4
   let neg: i16 = -300

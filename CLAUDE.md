@@ -1102,6 +1102,19 @@ the language rules:
   symbol and emits one `declare`. What a module exports is the Lyra wrapper it puts over
   an extern, which is the whole division of labour `std.ffi` rests on.
 
+**An extern names its parameters** (`lyra-E067`, 08/26): `(dest: ^mut u8, destLen: ^mut
+CULong, source: ^u8, sourceLen: CULong)`. The argument is that an extern is a *declaration*
+standing in for a C prototype, not a type — it substitutes for a `let`, and a `let` names its
+parameters — and the boundary is where a positional mistake links cleanly and computes
+garbage. The information exists in the header being transcribed, and was being pasted into a
+doc comment beside a signature that could not carry it. A plain function *type* is refused
+the other way, since a shape has no parameters to name; a **callback's own** signature is a
+type, so its parameters stay unnamed even inside an extern.
+
+**The name is documentation the compiler cannot check** — nothing compares it to the header,
+so a wrong name is as silent as none. What it buys is a transcription a reader can verify by
+eye, and `argument 2 (destLen)` where the numbered fallback said `argument 2 (arg1)`.
+
 **Integer widths at the boundary are Lyra's fixed ones**, with no C-shaped aliases: the
 compiler already hardcodes LP64 in three places — `layout.go`'s `pointerSize`, `clock.go`'s
 `struct timespec` as `[2 x i64]` (a C `long` written as `i64`, in a shipped builtin), and
@@ -1168,6 +1181,18 @@ needs before touching anything nearby:
   not supply: aarch64 coalesces a ≤16-byte struct into registers while x86-64 SysV
   classifies it per eightbyte and can change the parameter count. The table is in
   `todo.md`; do not reopen without one for both ABIs.
+- **A callback crosses as a bare function pointer, and only a top-level function is one**
+  (08/26). A function type in an extern's *parameter* position is C's `int (*)(…)`, with
+  every type in its own signature checked by the same FFI-safe predicate; in *return*
+  position it is still refused, since a bare code address is not a Lyra closure and could
+  not be called. It works on a coincidence worth knowing: `declareFunctionAs` lowers a
+  function's parameters directly, with no environment word, so `@lyra.main.cmp(i8*, i8*)`
+  *is* the C signature. A closure is `{code, env}` and has no such word — `lyra-E066`
+  refuses one, including a **local binding that shadows a top-level function**, which the
+  backend would otherwise resolve by name to the wrong symbol. What a capture would have
+  carried travels through the callback's own `void *` context instead, as a `^u8`.
+  `pushExternSignature` is what makes `lowerType` read a function type as C's for the
+  duration of one declaration; the call site recognises the slot by its lowered type.
 - **Ownership never crosses.** Neither side adopts the other's buffer; both directions
   would need the other to understand the rc header. A `^T` into a live array dangles at the
   next `push`.

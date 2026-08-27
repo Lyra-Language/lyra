@@ -163,3 +163,25 @@ int64_t lyra_fixture_va_signed(int32_t count, ...) {
   va_end(ap);
   return total;
 }
+
+/* A callback API in the shape nearly every real C library uses: a function pointer plus a
+ * `void *` context the library passes back untouched.
+ *
+ * That context parameter is the whole story for callbacks from Lyra. A Lyra closure is a
+ * code pointer plus a ref-counted environment and C takes only the code pointer, so what a
+ * closure would have captured travels through here instead — explicitly, in a pointer the
+ * caller owns. A library without such a parameter can still be called; it just cannot be
+ * given anything to remember. */
+void lyra_fixture_for_each(const uint8_t *data, int64_t n,
+                           void (*fn)(uint8_t value, void *ctx), void *ctx) {
+  for (int64_t i = 0; i < n; i++) fn(data[i], ctx);
+}
+
+/* The same shape with a return value the caller accumulates, so a wrong calling convention
+ * is a wrong number rather than only a wrong side effect. */
+int64_t lyra_fixture_fold(const uint8_t *data, int64_t n,
+                          int64_t (*fn)(int64_t acc, uint8_t value), int64_t seed) {
+  int64_t acc = seed;
+  for (int64_t i = 0; i < n; i++) acc = fn(acc, data[i]);
+  return acc;
+}

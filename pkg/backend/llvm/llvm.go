@@ -414,6 +414,9 @@ type lowerer struct {
 	// is what a `declare` is unique by, so two modules naming one library function share
 	// this entry rather than emitting two `declare`s of one name (extern.go).
 	externs map[string]externDecl
+	// externSignature makes lowerType read a function type as a bare C function pointer
+	// rather than as Lyra's boxed closure, for the duration of one extern declaration.
+	externSignature bool
 
 	closures       map[closureKey]*ir.Func
 	closureThunks  map[string]*ir.Func

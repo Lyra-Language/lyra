@@ -10,6 +10,98 @@ Newest first.
 ## Dated log
 
 ### 08/26/26
+**An extern names its parameters.**
+
+```lyra
+unsafe extern det noalloc compress: (dest: ^mut u8, destLen: ^mut CULong,
+                                     source: ^u8, sourceLen: CULong) -> i32
+```
+
+**The argument is that an extern is a declaration, not a type.** It stands in for a body
+someone else supplies — the project's own framing — so it should read like the `let` it
+substitutes for, and `let f = (a: i64, b: i64) -> i64` names its parameters. The bare type
+list was the anomaly.
+
+The boundary is the worst place to have had it. `bsearch: (^u8, ^u8, u64, u64, …)` gives a
+reader no way to tell the key from the base or the count from the element size, and swapping
+them links cleanly and computes garbage — the category this whole FFI stretch has been
+about. And the evidence that names were needed was already in the tree: every binding in
+`examples/` had its C prototype pasted into a doc comment, doing the naming work in a place
+that can go stale, beside a signature that could not carry it.
+
+**Stated plainly, because it is a real limit**: the name is documentation the compiler cannot
+check. Nothing compares it to the header, so a *wrong* name is as silent as none. What it
+buys is a transcription a reader can verify against `man qsort`, and a diagnostic that says
+`argument 2 (destLen)` where the numbered fallback said `argument 2 (arg1)`.
+
+**The grammar's lesson is the transferable one.** A lowercase name in type position is a
+*type variable*, so `t` in `(t) -> u` and `n` in `(n: i64) -> u` are the same lexeme. I
+declared a `conflicts:` entry first — the reflex in this grammar — and it changed neither the
+state count nor a single test. That is the tell: **if a conflict entry does nothing, the
+ambiguity is in the lexer, not the parser**, because the choice is made before the parser
+sees it. Lexing `n:` as one token settles it by maximal munch, with whitespace inside the
+token so `(n : i64)` still parses. +4 states.
+
+**Two bugs fell out of the migration**, both in docgen, and both of the kind where the output
+is plausible. An extern's rendered signature dropped the parameter names *and* the variadic
+`...`, so a generated page showed a signature that no longer parses — which is exactly what
+`TestSignature_RoundTripsThroughTheParser` exists to prevent. It covers externs; it had no
+*variadic* extern, which is how the second escaped when variadics landed this morning. The
+test now carries one.
+
+Migration was ~9 real declarations and ~175 in tests. The script that did the bulk had a bug
+worth remembering: it counted `>` as a closing bracket, so `->` inside a callback type threw
+off its depth tracking and every parameter *after* a callback went unnamed. The suite caught
+it in two places; a script that touches 175 sites needs the suite, not a reading.
+
+### 08/26/26
+**Callbacks into C — the last of the FFI gaps, and much smaller than it looked.**
+
+`qsort` with a Lyra comparator, `bsearch` with the same one
+(`examples/callback.lyra`). This was listed as the biggest remaining gap — it blocks every
+event loop, every GUI toolkit, sqlite and curl — and the reason it turned out small is a
+coincidence worth knowing:
+
+**A Lyra top-level function already emits the C signature.** `declareFunctionAs` lowers its
+parameters directly, with no environment word, so `let cmp = (a: ^u8, b: ^u8) -> i32` becomes
+`define i32 @lyra.main.cmp(i8*, i8*)` — which *is* `int (*)(const void*, const void*)`, not
+something convertible to it. Verified that first, before designing anything, because the
+whole shape of the feature depended on it.
+
+So the work is two small pieces. `pushExternSignature` makes `lowerType` read a function type
+as a pointer-to-function rather than as Lyra's boxed closure, for the duration of one
+declaration; and a call-site argument in a slot shaped that way is lowered as the function's
+own symbol. **The call site needs no flag** — only an extern lowers a function type that way,
+so the slot's type is the signal, which is a fact rather than a convention two places have to
+agree about.
+
+**The restriction is representational, and the sharp case is shadowing.** A closure is
+`{code, env}` and its lifted body takes the environment as a leading parameter, so there is
+no single word to hand over — the first `qsort` attempt segfaulted, passing `{fn, env}` where
+C wanted a pointer. `lyra-E066` refuses a lambda literal, a capturing closure and a parameter
+of function type. It also refuses a **local binding that shadows a top-level function**, and
+that one is the reason the rule compares the scope's resolution against the symbol table's
+rather than just looking the name up: the backend resolves a callback argument by name
+through `l.funcs`, so it would have emitted the top-level symbol for a program that means the
+local. Wrong call, no diagnostic.
+
+**What a capture would have carried travels through C's own `void *` context**, which nearly
+every callback API supplies. That is not a workaround for a missing feature — it is what C
+does, and it makes the context explicit and caller-owned instead of hidden in an environment
+C has no way to receive.
+
+Two things stayed refused, each with its reason: a function type in **return** position (a
+bare code address is not a Lyra closure, so the value could not be called) and passing a
+closure (same missing piece — calling a bare address — and a per-closure trampoline would
+need executable memory allocated at run time).
+
+An existing test asserted that a closure parameter in an extern signature is refused, which
+is now the feature; it was updated to assert the two things that *are* refused. That is the
+second time today a test pinned a claim the change was supposed to move — worth noticing as a
+pattern: a test written against a refusal has to be revisited when the refusal becomes a
+feature, and only the suite will say so.
+
+### 08/26/26
 **Struct-by-value at the FFI boundary: investigated, and refused on the evidence.**
 
 The FFI audit listed this as "now a codegen question rather than a representational one",

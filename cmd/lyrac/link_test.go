@@ -44,7 +44,7 @@ func TestBuild_EmitLLVMHintCarriesTheLinkedLibraries(t *testing.T) {
 	path := filepath.Join(dir, "linked.lyra")
 	src := `module main
 @link("z")
-unsafe extern pure crc32: (u64, ^u8, u32) -> u64
+unsafe extern pure crc32: (crc: u64, buf: ^u8, len: u32) -> u64
 let main = () -> u8 => {
   var bytes: []u8 = [104, 105]
   unsafe { u8(crc32(0, &bytes[0], 2) %% 251) }
