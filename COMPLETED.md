@@ -9,6 +9,48 @@ Newest first.
 
 ## Dated log
 
+### 08/28/26 — Struct field defaults work, and the grammar gap was hiding a wider one
+
+**`Person {}` now parses, and — the part that mattered — defaults are actually filled.**
+The todo entry framed this as a grammar limit: a literal body required at least one
+field, so an all-defaulted struct could not be written, with the workaround "name a
+field you wanted the default for". Probing the fix showed the workaround was fiction:
+**no default was ever filled**, so `Person { name: "x" }` with a defaulted `age` failed
+identically, one rung lower, in the backend — `field "age" has no value (default values
+not implemented yet)`. The same program fails the same way on the committed grammar,
+which is how the entry's staleness was established rather than assumed.
+
+**Two fixes, in two repos.** The grammar admits an empty body for a **named** literal
+only (`_literal_struct_body`, +22 states, 7880 → 7902): an empty body on the *anonymous*
+form would make every empty block `{}` an anonymous struct literal, which is the one
+shape the brace's-contents rule cannot settle — a named literal is safe because the name
+disambiguates instead of the contents. `if ready { 1 } else { 0 }` still reads as a block
+and `if Point { x: 1 }.x > 0 { … }` still reads as a literal; both are pinned in the
+corpus, along with a bare `{}` staying a block.
+
+The typechecker fills omitted fields from the declaration (`applyDefaultFields`, written
+beside `applyDefaultArguments` and copying its shape: idempotent, skipped for
+record-update syntax where the *base* supplies the missing fields, and sharing the
+declaration's AST node rather than cloning). So the backend lowers an ordinary literal
+and still knows nothing about defaults — the same division the argument side chose.
+
+**The test that was wrong, not the compiler.** The managed-default ASan test asserted
+`allocations + retains == releases` — the accounting the newtype-over-string ASan test
+uses — and it failed at 2 allocations against 1 release, reading exactly like a leak
+from a shared default node. It is not: a struct holding a managed field is freed through
+**generated drop glue**, so the release is emitted once in a shared function that each
+instance calls, and a textual count undercounts by construction. Established by probing
+a program with no defaults at all (two literals supplying the field explicitly produce
+the identical counts) and confirmed by counting glue definitions against calls: one
+definition, two calls. The test now asserts one allocation and one drop per literal,
+which is the invariant that holds.
+
+Also worth recording: the first end-to-end probe of `Person {}` reported `undefined
+identifier "p"`, which looked like a collector bug and was the **stale-parser trap** —
+a `git stash`/`pop` cycle around the grammar had left Go's build cache serving the old
+compiled parser, because it does not hash `#include`d sources. `go clean -cache` is the
+whole fix, and the workspace CLAUDE.md's first hazard is exactly this.
+
 ### 08/28/26 — The regex sequencing, settled: one subset everywhere, and match patterns ship
 
 **The decision**: `r"…"` means the compile-time-compiled, linear-time DFA in every

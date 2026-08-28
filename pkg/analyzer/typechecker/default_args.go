@@ -2,6 +2,7 @@ package typechecker
 
 import (
 	"github.com/Lyra-Language/lyra/pkg/ast"
+	"github.com/Lyra-Language/lyra/pkg/types"
 )
 
 // Default parameter values.
@@ -72,5 +73,60 @@ func (tc *TypeChecker) checkDefaultsAreTrailing(funcName string, lambda *ast.Lam
 				funcName, p.Pattern.GetName())
 			return
 		}
+	}
+}
+
+// applyDefaultFields fills a struct literal's omitted fields with the declaration's
+// default expressions — the struct analogue of applyDefaultArguments above, and
+// deliberately the same shape: the fill happens in the front end, so the rest of the
+// pipeline sees a literal that supplies every field explicitly and the backend needs no
+// notion of defaults at all.
+//
+// It closed a gap the *grammar* was hiding. `Person {}` did not parse (a literal body
+// required at least one field), which read as "defaults are unusable when every field
+// has one" — but the real gap was one rung down and wider: no default was ever filled,
+// so `Person { name: "x" }` with a defaulted `age` also failed, in the backend, with
+// `field "age" has no value (default values not implemented yet)`. The todo entry's own
+// suggested workaround — name a field you wanted the default for — did not work either.
+//
+// Three rules, each mirroring the argument side:
+//
+//   - **Idempotent.** The typechecker revisits nodes; after the first pass every
+//     defaulted field is present, so a second pass adds nothing.
+//   - **Record-update syntax is skipped.** `Player { base | hp: 3 }` takes its missing
+//     fields from the *base*, so filling defaults there would overwrite what the base
+//     supplies with the declaration's default — the one case where "missing" does not
+//     mean "wanted the default".
+//   - **The appended expression is the declaration's own AST node**, not a copy, so two
+//     literals that both omit a field share it. Sound for the same reason it is sound
+//     for a default argument: a default is checked against the field's declared type and
+//     cannot vary by site, and cloning would need the deep AST copier this compiler
+//     deliberately does not have.
+func (tc *TypeChecker) applyDefaultFields(expr *ast.StructInstanceExpr, structType types.NamedStructType) {
+	if expr == nil || expr.BaseStruct != nil {
+		return
+	}
+	supplied := make(map[string]bool, len(expr.Fields))
+	for idx, f := range expr.Fields {
+		name := f.Name
+		if name == "" && idx < len(structType.Fields) {
+			// A shorthand field (`{ x, y }`) carries no name of its own and stands for
+			// the declared field at its position.
+			name = structType.Fields[idx].Name
+		}
+		supplied[name] = true
+	}
+	for _, declared := range structType.Fields {
+		if supplied[declared.Name] || declared.DefaultValue == nil {
+			continue
+		}
+		value, ok := declared.DefaultValue.(ast.Expression)
+		if !ok {
+			continue // not an expression: the declaration's own diagnostic to report
+		}
+		expr.Fields = append(expr.Fields, ast.StructField{
+			Name:  declared.Name,
+			Value: value,
+		})
 	}
 }

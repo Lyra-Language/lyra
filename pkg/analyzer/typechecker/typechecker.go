@@ -3882,6 +3882,8 @@ func (tc *TypeChecker) inferStructInstanceExpr(expr *ast.StructInstanceExpr) typ
 		return nil
 	}
 
+	tc.applyDefaultFields(expr, structType)
+
 	// Build a quick name->type lookup for the declared fields.
 	fieldTypes := make(map[string]types.Type, len(structType.Fields))
 	for _, f := range structType.Fields {

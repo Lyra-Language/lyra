@@ -250,3 +250,129 @@ let main = () -> void => {
 		t.Errorf("element assignment = %q; want \"0 3 9\"", got)
 	}
 }
+
+// Struct field defaults lower (08/28). They never had: the front end checked them and
+// the backend refused with `field "age" has no value (default values not implemented
+// yet)`, so a defaulted field could not be omitted at all — and the *grammar* refused
+// `Person {}` on top of that, which is what made the gap look like it was only about
+// the all-defaulted case. The fix follows default *arguments*: the typechecker fills
+// omitted fields from the declaration (applyDefaultFields), so the backend lowers an
+// ordinary literal and knows nothing about defaults.
+func TestExec_StructFieldDefaults(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name    string
+		src     string
+		wantOut string
+	}{
+		{
+			// The empty literal the grammar used to refuse.
+			"every field defaulted",
+			`struct Person { name: string = "anon", age: i64 = 41 }
+			 let main = () -> u8 => {
+			   let p = Person {}
+			   println("${p.name} ${p.age}")
+			   0
+			 }`,
+			"anon 41\n",
+		},
+		{
+			// The shape the todo entry offered as the workaround, which also failed.
+			"one field defaulted, one supplied",
+			`struct Person { name: string, age: i64 = 7 }
+			 let main = () -> u8 => {
+			   let p = Person { name: "ada" }
+			   println("${p.name} ${p.age}")
+			   0
+			 }`,
+			"ada 7\n",
+		},
+		{
+			// A supplied value wins over the default, in any field order.
+			"a supplied value overrides its default",
+			`struct Person { name: string = "anon", age: i64 = 7 }
+			 let main = () -> u8 => {
+			   let p = Person { age: 30 }
+			   println("${p.name} ${p.age}")
+			   0
+			 }`,
+			"anon 30\n",
+		},
+		{
+			// Two literals omitting one field share the declaration's default AST node
+			// (the same sharing applyDefaultArguments does); each must still evaluate
+			// to its own value.
+			"two literals sharing one default",
+			`struct Counter { label: string = "c", n: i64 = 1 }
+			 let main = () -> u8 => {
+			   let a = Counter {}
+			   let b = Counter { n: 5 }
+			   println("${a.label}${a.n} ${b.label}${b.n}")
+			   0
+			 }`,
+			"c1 c5\n",
+		},
+		{
+			// A *managed* default: the box the default builds is owned by each literal
+			// that uses it, so a shared AST node must not mean a shared reference.
+			"a managed default",
+			`struct Tag { text: string = "a" ++ "b" }
+			 let main = () -> u8 => {
+			   let x = Tag {}
+			   let y = Tag {}
+			   println("${x.text}${y.text}")
+			   0
+			 }`,
+			"abab\n",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			out, code := buildAndRunCapture(t, c.src)
+			if code != 0 {
+				t.Errorf("%s: exited %d; want 0", c.name, code)
+			}
+			if out != c.wantOut {
+				t.Errorf("%s: stdout = %q; want %q", c.name, out, c.wantOut)
+			}
+		})
+	}
+}
+
+// The managed default under AddressSanitizer, with conservation accounting. Two
+// literals that both omit a defaulted field share the declaration's **AST node** (the
+// same sharing applyDefaultArguments does), so the risk is a shared *reference*: the
+// expression is lowered once per site and each box must be owned, retained and released
+// on its own. A shared box would show up as a double free here.
+func TestExec_StructFieldDefaults_ManagedASan(t *testing.T) {
+	t.Parallel()
+	clang := lookClang(t)
+	src := `struct Tag { text: string = "a" ++ "b" }
+	 let main = () -> u8 => {
+	   let x = Tag {}
+	   let y = Tag {}
+	   if x.text == y.text { 0 } else { 1 }
+	 }`
+	if got := buildAndRunASan(t, clang, src); got != 0 {
+		t.Errorf("ASan run exited %d; want 0", got)
+	}
+	ir, err := emitSource(t, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// **Count the drop-glue calls, not the `lyra_rc_release`s.** A struct holding a
+	// managed field is freed through generated glue (`emitOwnedValue`), so the release
+	// is emitted *once* in a shared function that each instance calls — a raw textual
+	// count reads 2 allocations against 1 release and looks like a leak. The invariant
+	// that actually holds is one allocation and one drop per literal; the shared
+	// default node must not collapse them into one box.
+	allocs := strings.Count(ir, "call i8* @lyra_rc_alloc")
+	dropCalls := strings.Count(ir, "call void @lyra_drop_")
+	if allocs != 2 {
+		t.Errorf("expected one allocation per literal (2), got %d", allocs)
+	}
+	if dropCalls != allocs {
+		t.Errorf("expected one drop per allocation: %d allocations, %d drop-glue calls", allocs, dropCalls)
+	}
+}

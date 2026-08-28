@@ -1243,12 +1243,24 @@ write today:
   Hazard 8's "grep for the kind it is a variant of": ArrayRepeatExpr had already been found
   missing in five places ArrayLiteralExpr appears. These are the sixth and seventh.
 
-- **[OPEN] A struct literal with every field defaulted cannot be written.** `Person {}` is a
-  syntax error — a literal body requires at least one field — so defaults stop being usable
-  at exactly the point they are most useful, and the workaround is to name a field you
-  wanted the default for. Found 08/06 by a test that claimed the opposite and passed:
-  `TestTypeCheck_StructLiteralWithAllDefaults_Ok`. It is kept, inverted, so the day the
-  grammar admits an empty body the test fails and says so.
+- **[DONE 08/28] A struct literal with every field defaulted can be written**, and the
+  entry that tracked it was **understating the gap**. `Person {}` was a syntax error, so
+  this read as a grammar limit with a workaround — "name a field you wanted the default
+  for". That workaround did not work either: **no default was ever filled**, so
+  `Person { name: "x" }` with a defaulted `age` also failed, one rung lower, in the
+  backend (`field "age" has no value (default values not implemented yet)`). Two fixes,
+  and the second is the one that made the feature real:
+
+  - the grammar admits an empty body for a **named** literal only (`_literal_struct_body`
+    in `include/literals/struct.js`, +22 states) — not for the anonymous form, where an
+    empty `{}` would make every empty block an anonymous struct literal;
+  - the typechecker fills omitted fields from the declaration (`applyDefaultFields`,
+    beside `applyDefaultArguments`, whose shape it copies), so the backend sees a literal
+    supplying every field and still knows nothing about defaults.
+
+  The inverted test did its job — it failed with its own message the moment the grammar
+  changed. See COMPLETED.md, including the conservation-counting trap the managed-default
+  test walked into.
 
 - **[DONE 08/07] `let _ = expr` discards.** `wildcard_pattern` joined
   `destructuring_only_pattern`, so a bare `_` in binding position evaluates the value and

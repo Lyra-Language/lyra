@@ -92,6 +92,14 @@ func collectBaseStruct(structUpdateNode *sitter.Node, ctx *collector_ctx.Ctx) *a
 
 func collectStructFields(node *sitter.Node, ctx *collector_ctx.Ctx) []ast.StructField {
 	fields := []ast.StructField(nil)
+	// An **empty** literal body — `Person {}`, every field defaulted — has no
+	// `struct_fields` child, so the lookup that produced this node answers nil. Hazard
+	// 2: calling NamedChildCount on it does not panic, it *hangs* inside the CGO
+	// binding, so the guard is the difference between an empty field list and a
+	// wedged compiler.
+	if node == nil {
+		return fields
+	}
 	for i := uint(0); i < node.NamedChildCount(); i++ {
 		child := node.NamedChild(i)
 		if child.Kind() == "struct_field" {
